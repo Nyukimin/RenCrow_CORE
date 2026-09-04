@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -62,6 +63,9 @@ func validateL1MemoryEvent(item L1MemoryEvent) error {
 	if err := ValidateL1Namespace(item.Namespace); err != nil {
 		return err
 	}
+	if err := validateL1SessionThreadTuple(item.SessionID, item.ThreadID, item.ThreadSeq, item.ThreadKind); err != nil {
+		return fmt.Errorf("invalid l1 memory event thread identity: %w", err)
+	}
 	if strings.TrimSpace(item.Message) == "" {
 		return fmt.Errorf("l1 memory event message is required")
 	}
@@ -83,12 +87,64 @@ func validateL1MemoryEvent(item L1MemoryEvent) error {
 	return nil
 }
 
-func validateL1MessageSaveInput(sessionID string, threadID int64, msg domconv.Message) error {
-	if strings.TrimSpace(sessionID) == "" {
-		return fmt.Errorf("l1 memory event session_id is required")
+func validateL1ThreadTuple(threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind) error {
+	if threadID == "" {
+		if threadSeq != 0 || threadKind != "" {
+			return fmt.Errorf("empty thread identity requires thread_seq=0 and thread_kind empty")
+		}
+		return nil
 	}
-	if threadID <= 0 {
-		return fmt.Errorf("l1 memory event thread_id must be > 0")
+	if err := threadID.Validate(); err != nil {
+		return err
+	}
+	if err := threadSeq.Validate(); err != nil {
+		return err
+	}
+	if err := threadKind.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateL1SessionThreadTuple enforces the parent/child identity contract at
+// every L1 boundary.  An entirely unbound event is valid for operational
+// namespaces, but a bound Thread tuple must carry a canonical SessionID.
+func validateL1SessionThreadTuple(sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind) error {
+	if err := validateL1ThreadTuple(threadID, threadSeq, threadKind); err != nil {
+		return err
+	}
+	if sessionID == "" {
+		if !isEmptyL1ThreadTuple(threadID, threadSeq, threadKind) {
+			return fmt.Errorf("session_id is required when thread identity is bound")
+		}
+		return nil
+	}
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return fmt.Errorf("invalid l1 session identity: %w", err)
+	}
+	return nil
+}
+
+func validateL1BoundThreadTuple(threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind) error {
+	if threadID == "" {
+		return fmt.Errorf("thread_id is required")
+	}
+	if err := validateL1ThreadTuple(threadID, threadSeq, threadKind); err != nil {
+		return err
+	}
+	return nil
+}
+
+func isEmptyL1ThreadTuple(threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind) bool {
+	return string(threadID) == "" && threadSeq == 0 && threadKind == ""
+}
+
+func validateL1MessageSaveInput(sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, msg domconv.Message) error {
+	if err := validateL1SessionThreadTuple(sessionID, threadID, threadSeq, threadKind); err != nil {
+		return fmt.Errorf("l1 memory event thread identity is invalid: %w", err)
+	}
+	if isEmptyL1ThreadTuple(threadID, threadSeq, threadKind) {
+		return fmt.Errorf("l1 memory event thread identity is invalid: thread_id is required")
 	}
 	if strings.TrimSpace(string(msg.Speaker)) == "" {
 		return fmt.Errorf("l1 memory event speaker is required")

@@ -14,6 +14,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryVectorHarness struct {
@@ -22,7 +23,7 @@ type memoryVectorHarness struct {
 
 type memoryE2EThreadSummaryEvidence struct {
 	SchemaVersion   string                               `json:"schema_version"`
-	ThreadID        int64                                `json:"thread_id"`
+	ThreadID        string                               `json:"thread_id"`
 	SessionID       string                               `json:"session_id"`
 	SourceTurnCount int                                  `json:"source_turn_count"`
 	Roles           []string                             `json:"roles"`
@@ -38,7 +39,7 @@ type memoryE2EThreadSummaryEvidenceTurn struct {
 func memoryE2EThreadSummaryEvidenceSHA256(thread *domconv.Thread, roles []string) string {
 	evidence := memoryE2EThreadSummaryEvidence{
 		SchemaVersion:   "memory-e2e.thread-summary-evidence.v1",
-		ThreadID:        thread.ID,
+		ThreadID:        string(thread.ID),
 		SessionID:       thread.SessionID,
 		SourceTurnCount: len(thread.Turns),
 		Roles:           append([]string(nil), roles...),
@@ -86,10 +87,11 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 	}
 	defer l2.Close()
 
-	sessionID := "memory-e2e-session"
-	threadID := time.Now().UnixNano()
-	activeThread := domconv.NewThread(sessionID, "daily")
-	activeThread.ID = threadID
+	sessionID := string(modulecore.NewSessionID())
+	activeThread, err := domconv.NewThread(sessionID, "daily", modulecore.ThreadKindUserConversation, 1)
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	vectorStore := &memoryVectorHarness{}
 	var expectedSummaryEvidence string
 	var expectedSummaryTime time.Time
@@ -99,7 +101,7 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			"turn_index": i,
 		})
 		activeThread.AddMessage(msg)
-		if err := l1.SaveMessage(ctx, sessionID, activeThread.ID, fmt.Sprintf("conv:%d", activeThread.ID), msg, l1sqlite.MemoryStateObserved); err != nil {
+		if err := l1.SaveMessage(ctx, sessionID, activeThread.ID, activeThread.ThreadSeq, activeThread.ThreadKind, "conv:"+string(activeThread.ID), msg, l1sqlite.MemoryStateObserved); err != nil {
 			t.Fatalf("SaveMessage turn %d failed: %v", i, err)
 		}
 
@@ -118,6 +120,8 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 					"target_namespace": "user:memory-e2e",
 					"session_id":       sessionID,
 					"thread_id":        activeThread.ID,
+					"thread_seq":       activeThread.ThreadSeq,
+					"thread_kind":      activeThread.ThreadKind,
 				},
 			})
 			if err != nil {
@@ -145,16 +149,18 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			summaryRoles := []string{"chat", "worker"}
 			summaryTime := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC)
 			summary := &domconv.ThreadSummary{
-				ThreadID:  activeThread.ID,
-				SessionID: sessionID,
-				Domain:    "daily",
-				Summary:   "Daily conversation established a RenCrow memory preference.",
-				Keywords:  []string{"RenCrow", "memory", "daily"},
-				Roles:     summaryRoles,
-				Embedding: []float32{0.1, 0.2, 0.3},
-				StartTime: activeThread.StartTime,
-				EndTime:   summaryTime,
-				IsNovel:   true,
+				ThreadID:   activeThread.ID,
+				ThreadSeq:  activeThread.ThreadSeq,
+				ThreadKind: activeThread.ThreadKind,
+				SessionID:  sessionID,
+				Domain:     "daily",
+				Summary:    "Daily conversation established a RenCrow memory preference.",
+				Keywords:   []string{"RenCrow", "memory", "daily"},
+				Roles:      summaryRoles,
+				Embedding:  []float32{0.1, 0.2, 0.3},
+				StartTime:  activeThread.StartTime,
+				EndTime:    summaryTime,
+				IsNovel:    true,
 			}
 			expectedSummaryEvidence = memoryE2EThreadSummaryEvidenceSHA256(activeThread, summaryRoles)
 			expectedSummaryTime = summaryTime
@@ -172,7 +178,10 @@ func TestE2E_MemorySystemDailyConversationL0ToL3RecallPack(t *testing.T) {
 			}
 			vectorStore.SaveThreadSummary(summary)
 
-			activeThread = domconv.NewThread(sessionID, "daily")
+			activeThread, err = domconv.NewThread(sessionID, "daily", modulecore.ThreadKindUserConversation, 2)
+			if err != nil {
+				t.Fatalf("NewThread after flush failed: %v", err)
+			}
 		}
 	}
 

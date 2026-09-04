@@ -51,7 +51,7 @@ func (s *L1SQLiteStore) OwnerListUserMemories(ctx context.Context, userID, state
 	}
 	namespace := NamespaceKindUser + ":" + userID
 	query := `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+	SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ? AND speaker = ? AND layer = ?`
@@ -179,23 +179,23 @@ func (s *L1SQLiteStore) OwnerProposeUserMemory(ctx context.Context, requestID, o
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, evidenceID, namespace, "", 0, string(domconv.SpeakerUser), statement, evidenceMetaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, evidenceID, namespace, "", "", 0, "", string(domconv.SpeakerUser), statement, evidenceMetaJSON,
 		MemoryStateObserved, MemoryLayerL1, ownerMemorySourcePrefix+actorID, now, now); err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, fmt.Errorf("failed to create owner evidence: %w", err))
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, candidateID, namespace, "", 0, string(domconv.SpeakerMemory), statement, candidateMetaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, candidateID, namespace, "", "", 0, "", string(domconv.SpeakerMemory), statement, candidateMetaJSON,
 		MemoryStateCandidate, MemoryLayerL1, ownerMemorySourcePrefix+actorID, now, now); err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, fmt.Errorf("failed to create owner candidate: %w", err))
 	}
-	_, err = appendL1EventLog(ctx, tx, "memory.user_owner_proposed", namespace, "", 0, map[string]interface{}{
+	_, err = appendL1EventLog(ctx, tx, "memory.user_owner_proposed", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":         candidateID,
 		"evidence_event_id": evidenceID,
 		"request_id":        requestID,
@@ -361,7 +361,7 @@ WHERE id = ? AND namespace = ?
 	if updatedItem == nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, errors.New("owner mutation produced invalid user memory"))
 	}
-	_, err = appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, map[string]interface{}{
+	_, err = appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 		"memory_id":      id,
 		"request_id":     requestID,
 		"actor_id":       actorID,

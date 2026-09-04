@@ -14,6 +14,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (s *L1SQLiteStore) ClaimProfilePromotionBatch(
@@ -63,16 +64,18 @@ WHERE state IN (?, ?) AND attempt_count >= ?
 	}
 
 	var sessionID string
-	var threadID int64
+	var threadID modulecore.ThreadID
+	var threadSeq modulecore.ThreadSeq
+	var threadKind modulecore.ThreadKind
 	err = tx.QueryRowContext(ctx, `
-SELECT j.session_id, j.thread_id
+SELECT j.session_id, j.thread_id, j.thread_seq, j.thread_kind
 FROM l1_profile_promotion_job j
 JOIN l1_memory_event e ON e.id = j.evidence_event_id
 WHERE j.state = ? AND j.attempt_count < ?
 ORDER BY CASE WHEN e.source = 'chatgpt_export' THEN 1 ELSE 0 END ASC,
 	j.created_at ASC, j.evidence_event_id ASC
 LIMIT 1
-`, domainmemory.ProfilePromotionPending, maxAttempts).Scan(&sessionID, &threadID)
+`, domainmemory.ProfilePromotionPending, maxAttempts).Scan(&sessionID, &threadID, &threadSeq, &threadKind)
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {
 			return nil, rollbackL1Tx(tx, err)
@@ -82,23 +85,30 @@ LIMIT 1
 	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("select profile promotion batch: %w", err))
 	}
+	if err := validateL1SessionThreadTuple(sessionID, threadID, threadSeq, threadKind); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("invalid profile promotion thread identity: %w", err))
+	}
 	rows, err := tx.QueryContext(ctx, `
-SELECT j.evidence_event_id, j.session_id, j.thread_id, e.message, e.created_at
+SELECT j.evidence_event_id, j.session_id, j.thread_id, j.thread_seq, j.thread_kind, e.message, e.created_at
 FROM l1_profile_promotion_job j
 JOIN l1_memory_event e ON e.id = j.evidence_event_id
-WHERE j.state = ? AND j.attempt_count < ? AND j.session_id = ? AND j.thread_id = ?
+WHERE j.state = ? AND j.attempt_count < ? AND j.session_id = ? AND j.thread_id = ? AND j.thread_seq = ? AND j.thread_kind = ?
 ORDER BY j.created_at ASC, j.evidence_event_id ASC
 LIMIT ?
-`, domainmemory.ProfilePromotionPending, maxAttempts, sessionID, threadID, limit)
+`, domainmemory.ProfilePromotionPending, maxAttempts, sessionID, threadID, threadSeq, threadKind, limit)
 	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("load profile promotion batch: %w", err))
 	}
 	var messages []domainmemory.ProfilePromotionMessage
 	for rows.Next() {
 		var item domainmemory.ProfilePromotionMessage
-		if err := rows.Scan(&item.EventID, &item.SessionID, &item.ThreadID, &item.Text, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.EventID, &item.SessionID, &item.ThreadID, &item.ThreadSeq, &item.ThreadKind, &item.Text, &item.CreatedAt); err != nil {
 			rows.Close()
 			return nil, rollbackL1Tx(tx, fmt.Errorf("scan profile promotion batch: %w", err))
+		}
+		if err := validateL1SessionThreadTuple(item.SessionID, item.ThreadID, item.ThreadSeq, item.ThreadKind); err != nil {
+			rows.Close()
+			return nil, rollbackL1Tx(tx, fmt.Errorf("invalid profile promotion message identity: %w", err))
 		}
 		messages = append(messages, item)
 	}
@@ -134,6 +144,8 @@ WHERE evidence_event_id = ? AND state = ?
 		LeaseToken: leaseToken,
 		SessionID:  sessionID,
 		ThreadID:   threadID,
+		ThreadSeq:  threadSeq,
+		ThreadKind: threadKind,
 		Messages:   messages,
 	}, nil
 }
@@ -154,7 +166,7 @@ func (s *L1SQLiteStore) ListProfilePromotionProjection(ctx context.Context, user
 		limit = domainmemory.ProfilePromotionProjectionLimit
 	}
 	rows, err := s.readDB.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ? AND speaker = ? AND layer = ?
@@ -255,6 +267,9 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 	if err := domainmemory.ValidateProfilePromotionBatchEvidence(batch); err != nil {
 		return 0, err
 	}
+	if err := validateL1SessionThreadTuple(batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind); err != nil {
+		return 0, fmt.Errorf("invalid profile promotion batch identity: %w", err)
+	}
 	if err := domainmemory.ValidateProfilePromotionCandidates(candidates); err != nil {
 		return 0, err
 	}
@@ -300,10 +315,10 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 		}
 		result, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?)
-`, id, namespace, string(domconv.SpeakerMemory), statement, string(metaJSON),
+) VALUES (?, ?, '', '', 0, '', ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, namespace, string(domconv.SpeakerMemory), statement, string(metaJSON),
 			MemoryStateCandidate, MemoryLayerL1, "profile_extractor", now, now)
 		if err != nil {
 			return 0, rollbackL1Tx(tx, fmt.Errorf("save profile candidate: %w", err))
@@ -311,7 +326,7 @@ INSERT INTO l1_memory_event (
 		affected, _ := result.RowsAffected()
 		if affected == 1 {
 			saved++
-			if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, batch.SessionID, batch.ThreadID, map[string]interface{}{
+			if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind, map[string]interface{}{
 				"memory_id": id, "user_id": userID, "type": memoryType,
 				"memory_state": MemoryStateCandidate, "evidence_event_ids": evidenceIDs,
 			}, "profile_extractor"); err != nil {
@@ -334,7 +349,7 @@ WHERE evidence_event_id = ? AND state = ? AND lease_token = ?
 			return 0, rollbackL1Tx(tx, errors.New("profile promotion lease lost before commit"))
 		}
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_completed", "conv:profile-promotion", batch.SessionID, batch.ThreadID, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_completed", "conv:profile-promotion", batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind, map[string]interface{}{
 		"evidence_event_ids": evidenceIDs,
 		"candidate_count":    saved,
 	}, "profile_extractor"); err != nil {
@@ -362,6 +377,9 @@ func (s *L1SQLiteStore) FailProfilePromotionBatch(
 	now time.Time,
 	errorText string,
 ) error {
+	if err := validateL1SessionThreadTuple(batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind); err != nil {
+		return fmt.Errorf("invalid profile promotion batch identity: %w", err)
+	}
 	if maxAttempts <= 0 {
 		maxAttempts = 5
 	}
@@ -443,7 +461,7 @@ WHERE state = ?
 	}
 	requeued := int(requeued64)
 	if requeued > 0 {
-		if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_retry_requested", "conv:profile-promotion", "", 0, map[string]interface{}{
+		if _, err := appendL1EventLog(ctx, tx, "memory.profile_promotion_retry_requested", "conv:profile-promotion", "", "", 0, "", map[string]interface{}{
 			"requeued_count":         requeued,
 			"missing_evidence_count": missingEvidence,
 		}, "viewer"); err != nil {
@@ -530,6 +548,9 @@ func (s *L1SQLiteStore) updateProfilePromotionLease(
 	if strings.TrimSpace(batch.LeaseToken) == "" || len(batch.Messages) == 0 {
 		return errors.New("profile promotion lease is required")
 	}
+	if err := validateL1SessionThreadTuple(batch.SessionID, batch.ThreadID, batch.ThreadSeq, batch.ThreadKind); err != nil {
+		return fmt.Errorf("invalid profile promotion batch identity: %w", err)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -559,7 +580,7 @@ func (s *L1SQLiteStore) ListProfilePromotionJobs(ctx context.Context, limit int)
 		limit = 50
 	}
 	rows, err := s.progressDB.QueryContext(ctx, `
-SELECT evidence_event_id, session_id, thread_id, state, attempt_count,
+SELECT evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
 	lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at
 FROM l1_profile_promotion_job
 ORDER BY created_at DESC, evidence_event_id DESC
@@ -574,10 +595,13 @@ LIMIT ?
 		var item domainmemory.ProfilePromotionJob
 		var leaseExpiresAt, nextAttemptAt sql.NullTime
 		if err := rows.Scan(
-			&item.EvidenceEventID, &item.SessionID, &item.ThreadID, &item.State, &item.AttemptCount,
+			&item.EvidenceEventID, &item.SessionID, &item.ThreadID, &item.ThreadSeq, &item.ThreadKind, &item.State, &item.AttemptCount,
 			&item.LeaseToken, &leaseExpiresAt, &nextAttemptAt, &item.LastError, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if err := validateL1SessionThreadTuple(item.SessionID, item.ThreadID, item.ThreadSeq, item.ThreadKind); err != nil {
+			return nil, fmt.Errorf("invalid profile promotion job identity: %w", err)
 		}
 		if leaseExpiresAt.Valid {
 			item.LeaseExpiresAt = leaseExpiresAt.Time

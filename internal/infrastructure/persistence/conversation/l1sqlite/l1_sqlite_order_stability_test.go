@@ -26,7 +26,7 @@ func TestRecentEventsIsDeterministicWithIdenticalTimestamps(t *testing.T) {
 	const namespace = "conv:order-stability"
 	types := []string{"first.event", "second.event", "third.event", "fourth.event"}
 	for _, eventType := range types {
-		if _, err := store.AppendEvent(ctx, eventType, namespace, "session-order", 1, map[string]interface{}{"n": eventType}, "test"); err != nil {
+		if _, err := store.AppendEvent(ctx, eventType, namespace, l1TestSessionID("session-order"), "", 0, "", map[string]interface{}{"n": eventType}, "test"); err != nil {
 			t.Fatalf("AppendEvent(%s) failed: %v", eventType, err)
 		}
 	}

@@ -3,11 +3,11 @@ package viewer
 import (
 	"context"
 	"fmt"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"net/http"
 	"strings"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 type MemoryLayerHotStore interface {
@@ -127,8 +127,8 @@ func validateMemoryLayersSnapshot(snapshot map[string]any) error {
 		if item == nil {
 			return fmt.Errorf("l2 summary is nil")
 		}
-		if item.ThreadID <= 0 {
-			return fmt.Errorf("l2 summary missing thread_id")
+		if err := validateViewerThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, false); err != nil {
+			return fmt.Errorf("l2 summary invalid thread tuple: %w", err)
 		}
 		if strings.TrimSpace(item.Summary) == "" {
 			return fmt.Errorf("l2 summary missing summary")
@@ -173,6 +173,9 @@ func validateMemoryLayerEventSnapshot(layer string, item memoryEventDTO) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("%s memory missing created_at", layer)
+	}
+	if err := validateViewerThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+		return fmt.Errorf("%s memory invalid thread tuple: %w", layer, err)
 	}
 	return nil
 }

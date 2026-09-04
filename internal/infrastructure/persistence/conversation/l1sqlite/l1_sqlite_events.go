@@ -10,11 +10,12 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
-func (s *L1SQLiteStore) AppendEvent(ctx context.Context, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
-	return appendL1EventLog(ctx, s.db, eventType, namespace, sessionID, threadID, payload, source)
+func (s *L1SQLiteStore) AppendEvent(ctx context.Context, eventType string, namespace string, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
+	return appendL1EventLog(ctx, s.db, eventType, namespace, sessionID, threadID, threadSeq, threadKind, payload, source)
 }
 
 func (s *L1SQLiteStore) RecentEvents(ctx context.Context, namespace string, limit int) ([]L1EventLogEntry, error) {
@@ -26,7 +27,7 @@ func (s *L1SQLiteStore) RecentEvents(ctx context.Context, namespace string, limi
 		limit = 20
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, event_type, namespace, session_id, thread_id, payload_json, source, created_at
+	SELECT id, event_type, namespace, session_id, thread_id, thread_seq, thread_kind, payload_json, source, created_at
 FROM l1_event_log
 WHERE namespace = ?
 ORDER BY created_at DESC, rowid DESC
@@ -45,6 +46,9 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 	}
 	if strings.TrimSpace(trace.SessionID) == "" {
 		return errors.New("session_id is required")
+	}
+	if err := validateL1SessionThreadTuple(trace.SessionID, "", 0, ""); err != nil {
+		return fmt.Errorf("invalid recall trace session identity: %w", err)
 	}
 	if trace.CreatedAt.IsZero() {
 		trace.CreatedAt = time.Now().UTC()
@@ -92,11 +96,16 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 		"items":       trace.Items,
 		"created_at":  trace.CreatedAt.UTC().Format(time.RFC3339),
 	}
-	_, err := s.AppendEvent(ctx, "recall.trace", "conv:"+trace.SessionID, trace.SessionID, 0, payload, "recall")
+	_, err := s.AppendEvent(ctx, "recall.trace", "conv:"+trace.SessionID, trace.SessionID, "", 0, "", payload, "recall")
 	return err
 }
 
 func (s *L1SQLiteStore) RecentRecallTraces(ctx context.Context, sessionID string, limit int) ([]domconv.RecallTrace, error) {
+	if sessionID != "" {
+		if err := validateL1SessionThreadTuple(sessionID, "", 0, ""); err != nil {
+			return nil, fmt.Errorf("invalid recall trace session filter: %w", err)
+		}
+	}
 	if limit <= 0 {
 		limit = 20
 	}

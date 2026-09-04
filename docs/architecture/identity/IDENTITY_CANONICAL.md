@@ -1547,6 +1547,45 @@ Test:
 - `DiscussionID` zero
 - ThreadIDを整数として扱うコードzero
 
+#### Step 05 migration invariant
+
+- 移行入力は、writer停止中の一つの immutable cohort に含まれる L1、Archive、
+  ChatGPT Raw、IdleChat topic、Redis論理snapshot、Qdrant論理snapshotだけとする。
+  各surfaceが別の時点で作ったplanを結合せず、同じsource hash群から一つの
+  migration-only mapping planを決定的に作る。
+- Redisは取得時の相対TTLではなくserverが保持する絶対失効時刻をsnapshotへ保存する。
+  apply時はその時刻から残存時間を決定し、期限切れkeyを復活させない。
+- Qdrant取得は既存collectionに対するread-only scrollだけを使う。collection作成、
+  index作成、upsert、deleteを行うruntime store constructorは移行captureに使わない。
+- RedisのSCANとQdrantのscrollは単独でsnapshot isolationを証明しない。論理artifactは
+  自己hashと件数を持つが、ownerがwriter停止、active config、物理rollback snapshot、
+  artifact hashを同一停止窓のreceiptへ束縛するまで`runtime_ready`を名乗らない。
+- sourceは不変、出力はfresh-onlyとし、in-place更新は行わない。L1、Archive、topic、
+  Redis、Qdrantの全出力が同一mapping hashを持ち、件数、NULL、duplicate、orphan、
+  legacy field zeroを検証した後だけcutover対象にできる。
+- cutoverはwriter停止中にL1、Archive、topic、active config、CORE runtimeを同じbuild／stage
+  receiptへ束縛して置換し、旧5 artifactをhash由来の固定名で保持する。配備後検証に失敗した
+  場合はowner CLIがimmutableなcutover receipt、旧／新hash、SQLite sidecar zeroを再検証して
+  5 artifactを一括復旧する。fresh Redis DBとQdrant collectionは削除せずunclaimedのまま残し、
+  旧configが指す既存routeへ戻す。
+
+#### Step 05 Failure Knowledge: 相対TTLと非停止scrollを移行snapshotと誤認した
+
+- **Failure:** Redisの相対TTLと、writer稼働中のRedis SCAN、Qdrant scrollをそのまま
+  apply-ready snapshotと扱った。
+- **Problem:** applyが遅れるとkeyの寿命が延び、page間の更新で取りこぼし、重複、時点の
+  異なるsurfaceが同じmappingへ混入する。
+- **Cause:** 論理値の読取り成功と、ownerによる停止窓・rollback・source identityの証明を
+  一つの保証とみなした。
+- **Lesson:** 有効期限は絶対時刻で固定し、論理captureとquiescence証明を分離した上で、
+  outer owner receiptが同じ停止窓へ束縛する。
+- **Invariant:** 相対TTL、未停止SCAN／scroll、collectionを作成し得るcapture route、未束縛の
+  `runtime_ready`はすべて拒否する。
+- **Enforcement:** Redis絶対失効時刻型、Qdrant read-only client、bounded pagination、strict snapshot
+  hash、fresh-only publication、owner stop-window receipt、全surface mapping hash照合で強制する。
+- **Tests:** TTLのapply遅延・期限切れ、SCAN／scrollのcursor非進行・重複・中断、Qdrantの
+  mutation zero、artifact tamper、source hash不一致、writer停止未証明、異mapping hashを検査する。
+
 ---
 
 ### Step 06: TurnIDとMessageID

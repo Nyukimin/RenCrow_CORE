@@ -66,7 +66,7 @@ ON CONFLICT(cache_key) DO UPDATE SET
 	if err != nil {
 		return nil, fmt.Errorf("failed to save web gather fetch cache: %w", err)
 	}
-	if _, err := s.AppendEvent(ctx, "web_gather.fetch_cache_saved", "kb:web", "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "web_gather.fetch_cache_saved", "kb:web", "", "", 0, "", map[string]interface{}{
 		"cache_key":      entry.CacheKey,
 		"url":            entry.URL,
 		"fetch_provider": entry.FetchProvider,

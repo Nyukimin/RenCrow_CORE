@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,9 +69,11 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 	}
 	cold := &memoryLayerColdStoreStub{
 		history: []*domconv.ThreadSummary{{
-			ThreadID: 42,
-			Domain:   "chat",
-			Summary:  "今日の流れ",
+			ThreadID:   canonicalViewerTestThreadID(t, "recall-thread"),
+			ThreadSeq:  4,
+			ThreadKind: domconv.ThreadKindUserConversation,
+			Domain:     "chat",
+			Summary:    "今日の流れ",
 		}},
 		kbDocs: []*domconv.Document{{
 			ID:        "kb-1",
@@ -206,7 +209,7 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 	for _, item := range pack.Items {
 		ids[item.MemoryID] = item
 	}
-	for _, want := range []string{"l0-1", "mem-pinned-new", "mem-confirmed-new", "mem-confirmed", "mem-pinned", "mem-confirmed-old", "thread:42", "kb-1"} {
+	for _, want := range []string{"l0-1", "mem-pinned-new", "mem-confirmed-new", "mem-confirmed", "mem-pinned", "mem-confirmed-old", "thread:" + string(cold.history[0].ThreadID), "kb-1"} {
 		if _, ok := ids[want]; !ok {
 			t.Fatalf("missing recall item %q in %+v", want, ids)
 		}
@@ -238,5 +241,25 @@ func TestHandleMemoryRecallPackFiltersUserMemory(t *testing.T) {
 	}
 	if ids["kb-1"].Namespace != "kb:memory" {
 		t.Fatalf("knowledge item must stay in kb namespace: %+v", ids["kb-1"])
+	}
+}
+
+func TestHandleMemoryRecallPackRejectsInvalidThreadTuple(t *testing.T) {
+	hot := &memoryLayerHotStoreStub{}
+	cold := &memoryLayerColdStoreStub{
+		history: []*domconv.ThreadSummary{{
+			ThreadID:   "legacy-thread",
+			ThreadSeq:  1,
+			ThreadKind: domconv.ThreadKindUserConversation,
+			Summary:    "invalid archive summary",
+		}},
+	}
+	rec := httptest.NewRecorder()
+	HandleMemoryRecallPack(hot, cold, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/memory/recall-pack?session_id=session-1", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid l2 recall thread tuple") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }

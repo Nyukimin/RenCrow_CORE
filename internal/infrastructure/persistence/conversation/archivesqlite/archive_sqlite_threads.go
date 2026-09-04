@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // SaveThreadSummary は要約とreceiptを同時に要求する新規保存経路である。
@@ -67,7 +68,9 @@ func (d *ArchiveSQLiteStore) SaveThreadSummaryWithReceipt(ctx context.Context, s
 	}
 
 	if _, err := tx.ExecContext(ctx, threadSummaryInsertQuery(),
-		summary.ThreadID,
+		string(summary.ThreadID),
+		int64(summary.ThreadSeq),
+		string(summary.ThreadKind),
 		summary.SessionID,
 		summary.StartTime,
 		summary.EndTime,
@@ -119,12 +122,15 @@ func (d *ArchiveSQLiteStore) GetSessionHistory(ctx context.Context, sessionID st
 // GetThreadSummary returns one exact archived thread, including its immutable
 // summary receipt. It is intentionally not a session-history lookup: follower
 // replay must bind to the requested thread ID and must not select a neighbor.
-func (d *ArchiveSQLiteStore) GetThreadSummary(ctx context.Context, threadID int64) (*conversation.ThreadSummary, error) {
-	if d == nil || d.db == nil || threadID <= 0 {
+func (d *ArchiveSQLiteStore) GetThreadSummary(ctx context.Context, threadID modulecore.ThreadID) (*conversation.ThreadSummary, error) {
+	if d == nil || d.db == nil {
+		return nil, conversation.ErrThreadNotFound
+	}
+	if err := threadID.Validate(); err != nil {
 		return nil, conversation.ErrThreadNotFound
 	}
 	query := threadSummarySelectQuery(`WHERE st.thread_id = ?`)
-	rows, err := d.db.QueryContext(ctx, query, threadID, 1)
+	rows, err := d.db.QueryContext(ctx, query, string(threadID), 1)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query exact thread summary: %w", err)
 	}
@@ -152,8 +158,8 @@ func (d *ArchiveSQLiteStore) SearchByDomain(ctx context.Context, domain string, 
 
 func threadSummaryInsertQuery() string {
 	return `
-	INSERT INTO session_thread (thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO session_thread (thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 }
 
@@ -178,22 +184,26 @@ func marshalThreadSummaryPayload(summary *conversation.ThreadSummary) (string, s
 }
 
 type storedThreadSummary struct {
-	SessionID string
-	StartTime sql.NullTime
-	EndTime   sql.NullTime
-	Domain    string
-	Summary   string
-	Keywords  string
-	Embedding string
-	IsNovel   bool
+	ThreadSeq  modulecore.ThreadSeq
+	ThreadKind modulecore.ThreadKind
+	SessionID  string
+	StartTime  sql.NullTime
+	EndTime    sql.NullTime
+	Domain     string
+	Summary    string
+	Keywords   string
+	Embedding  string
+	IsNovel    bool
 }
 
-func loadStoredThreadSummary(ctx context.Context, tx *sql.Tx, threadID int64) (*storedThreadSummary, bool, error) {
+func loadStoredThreadSummary(ctx context.Context, tx *sql.Tx, threadID modulecore.ThreadID) (*storedThreadSummary, bool, error) {
 	var stored storedThreadSummary
 	err := tx.QueryRowContext(ctx, `
-	SELECT session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel
+	SELECT thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel
 	FROM session_thread WHERE thread_id = ?
-	`, threadID).Scan(
+	`, string(threadID)).Scan(
+		&stored.ThreadSeq,
+		&stored.ThreadKind,
 		&stored.SessionID,
 		&stored.StartTime,
 		&stored.EndTime,
@@ -209,6 +219,9 @@ func loadStoredThreadSummary(ctx context.Context, tx *sql.Tx, threadID int64) (*
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to inspect existing thread summary")
 	}
+	if err := validateArchiveThreadTuple(threadID, stored.ThreadSeq, stored.ThreadKind, false); err != nil {
+		return nil, false, fmt.Errorf("invalid stored thread identity: %w", err)
+	}
 	return &stored, true, nil
 }
 
@@ -223,13 +236,13 @@ type storedThreadSummaryReceipt struct {
 	CreatedAt       sql.NullTime
 }
 
-func loadStoredThreadSummaryReceipt(ctx context.Context, tx *sql.Tx, threadID int64) (*storedThreadSummaryReceipt, bool, error) {
+func loadStoredThreadSummaryReceipt(ctx context.Context, tx *sql.Tx, threadID modulecore.ThreadID) (*storedThreadSummaryReceipt, bool, error) {
 	var stored storedThreadSummaryReceipt
 	err := tx.QueryRowContext(ctx, `
 	SELECT schema_version, generation_mode, provider, failure_code,
 	       evidence_sha256, source_turn_count, roles_json, created_at
 	FROM conversation_thread_summary_receipt WHERE thread_id = ?
-	`, threadID).Scan(
+	`, string(threadID)).Scan(
 		&stored.SchemaVersion,
 		&stored.GenerationMode,
 		&stored.Provider,
@@ -252,7 +265,9 @@ func storedThreadSummaryEqual(stored *storedThreadSummary, summary *conversation
 	if stored == nil || summary == nil {
 		return false
 	}
-	return stored.SessionID == summary.SessionID &&
+	return stored.ThreadSeq == summary.ThreadSeq &&
+		stored.ThreadKind == summary.ThreadKind &&
+		stored.SessionID == summary.SessionID &&
 		timeValueEqual(summary.StartTime, stored.StartTime) &&
 		timeValueEqual(summary.EndTime, stored.EndTime) &&
 		stored.Domain == summary.Domain &&
@@ -315,8 +330,11 @@ func validateThreadSummary(summary *conversation.ThreadSummary) error {
 	if summary == nil {
 		return fmt.Errorf("thread summary is required")
 	}
-	if summary.ThreadID <= 0 {
-		return fmt.Errorf("thread summary thread_id must be > 0")
+	if err := validateArchiveThreadTuple(summary.ThreadID, summary.ThreadSeq, summary.ThreadKind, false); err != nil {
+		return fmt.Errorf("thread summary thread identity is invalid: %w", err)
+	}
+	if err := modulecore.SessionID(summary.SessionID).Validate(); err != nil {
+		return fmt.Errorf("thread summary session identity is invalid: %w", err)
 	}
 	if strings.TrimSpace(summary.Summary) == "" {
 		return fmt.Errorf("thread summary summary is required")
@@ -355,6 +373,8 @@ func scanThreadSummaryRow(row threadSummaryScanner) (*conversation.ThreadSummary
 	var createdAt sql.NullTime
 	if err := row.Scan(
 		&summary.ThreadID,
+		&summary.ThreadSeq,
+		&summary.ThreadKind,
 		&summary.SessionID,
 		&summary.StartTime,
 		&summary.EndTime,
@@ -373,6 +393,9 @@ func scanThreadSummaryRow(row threadSummaryScanner) (*conversation.ThreadSummary
 		&createdAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to scan row: %w", err)
+	}
+	if err := validateArchiveThreadTuple(summary.ThreadID, summary.ThreadSeq, summary.ThreadKind, false); err != nil {
+		return nil, fmt.Errorf("invalid stored thread identity: %w", err)
 	}
 	if err := json.Unmarshal([]byte(keywordsJSON), &summary.Keywords); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal keywords: %w", err)
@@ -424,7 +447,7 @@ func scanThreadSummaryRow(row threadSummaryScanner) (*conversation.ThreadSummary
 
 func threadSummarySelectQuery(where string) string {
 	return `
-	SELECT st.thread_id, st.session_id, st.ts_start, st.ts_end, st.domain, st.summary,
+	SELECT st.thread_id, st.thread_seq, st.thread_kind, st.session_id, st.ts_start, st.ts_end, st.domain, st.summary,
 	       st.keywords, st.embedding, st.is_novel,
 	       r.schema_version, r.generation_mode, r.provider, r.failure_code,
 	       r.evidence_sha256, r.source_turn_count, r.roles_json, r.created_at

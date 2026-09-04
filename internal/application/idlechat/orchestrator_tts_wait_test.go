@@ -23,7 +23,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 		eventSeen <- struct{}{}
 		return TTSLifecycle{Ready: ttsDone, Done: ttsDone}
 	})
-	activateIdleChatTestSession(o, "idle-wait")
+	activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-wait"))
 	o.mu.Lock()
 	generation := o.activeGeneration
 	o.mu.Unlock()
@@ -31,7 +31,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 	returned := make(chan struct{})
 	go func() {
 		defer close(returned)
-		o.emitTopicToTimeline("idle-wait", "記憶と風景の関係", StrategyExternalStimulus, generation)
+		o.emitTopicToTimeline(canonicalIdleChatTestSessionID("idle-wait"), "記憶と風景の関係", StrategyExternalStimulus, generation)
 	}()
 
 	select {
@@ -49,7 +49,7 @@ func TestEmitTopicToTimelineDoesNotWaitForTTSCompletion(t *testing.T) {
 
 func TestWaitForTTSReadyTimesOut(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-timeout")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-timeout"))
 	o.mu.Lock()
 	traceID := o.activeTraceID
 	o.mu.Unlock()
@@ -64,7 +64,7 @@ func TestWaitForTTSReadyTimesOut(t *testing.T) {
 	blocked := make(chan struct{})
 	start := time.Now()
 	o.waitForTTSReadyForEvent(TimelineEvent{
-		SessionID:  "idle-timeout",
+		SessionID:  canonicalIdleChatTestSessionID("idle-timeout"),
 		MessageID:  "idle-timeout:msg:0001",
 		TurnIndex:  1,
 		TraceID:    traceID,
@@ -74,7 +74,7 @@ func TestWaitForTTSReadyTimesOut(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Fatalf("waitForTTSReady did not time out promptly: %s", elapsed)
 	}
-	if timeoutEvent.Kind != "timeout" || timeoutEvent.SessionID != "idle-timeout" || timeoutEvent.MessageID != "idle-timeout:msg:0001" || timeoutEvent.TurnIndex != 1 {
+	if timeoutEvent.Kind != "timeout" || timeoutEvent.SessionID != canonicalIdleChatTestSessionID("idle-timeout") || timeoutEvent.MessageID != "idle-timeout:msg:0001" || timeoutEvent.TurnIndex != 1 {
 		t.Fatalf("unexpected timeout event: %#v", timeoutEvent)
 	}
 }
@@ -112,7 +112,7 @@ func TestWaitForTTSSessionDrainWaitsForOutstandingPlaybackBeforeNextSession(t *t
 
 func TestWaitForTTSSessionDrainTimesOutInsteadOfStoppingSystem(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-drain-timeout")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-drain-timeout"))
 	old := idleChatTTSSessionDrainTimeout
 	idleChatTTSSessionDrainTimeout = 10 * time.Millisecond
 	defer func() { idleChatTTSSessionDrainTimeout = old }()
@@ -123,19 +123,19 @@ func TestWaitForTTSSessionDrainTimesOutInsteadOfStoppingSystem(t *testing.T) {
 
 	blocked := make(chan struct{})
 	start := time.Now()
-	o.waitForTTSSessionDrain("idle-drain-timeout", generation, []TTSLifecycle{{Done: blocked}})
+	o.waitForTTSSessionDrain(canonicalIdleChatTestSessionID("idle-drain-timeout"), generation, []TTSLifecycle{{Done: blocked}})
 
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
 		t.Fatalf("session drain did not time out promptly: %s", elapsed)
 	}
-	if timeoutEvent.Kind != "session_audio_timeout" || timeoutEvent.SessionID != "idle-drain-timeout" || timeoutEvent.RemainingIndex != 1 || timeoutEvent.RemainingCount != 1 {
+	if timeoutEvent.Kind != "session_audio_timeout" || timeoutEvent.SessionID != canonicalIdleChatTestSessionID("idle-drain-timeout") || timeoutEvent.RemainingIndex != 1 || timeoutEvent.RemainingCount != 1 {
 		t.Fatalf("unexpected drain timeout event: %#v", timeoutEvent)
 	}
 }
 
 func TestIdleChatTTSTimeoutCarriesValidatedTraceAndGeneration(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-timeout-trace")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-timeout-trace"))
 	o.mu.Lock()
 	traceID := o.activeTraceID
 	o.mu.Unlock()
@@ -148,7 +148,7 @@ func TestIdleChatTTSTimeoutCarriesValidatedTraceAndGeneration(t *testing.T) {
 	})
 
 	o.waitForTTSReadyForEvent(TimelineEvent{
-		SessionID:  "idle-timeout-trace",
+		SessionID:  canonicalIdleChatTestSessionID("idle-timeout-trace"),
 		MessageID:  "idle-timeout-trace:msg:0001",
 		TurnIndex:  1,
 		TraceID:    traceID,
@@ -162,7 +162,7 @@ func TestIdleChatTTSTimeoutCarriesValidatedTraceAndGeneration(t *testing.T) {
 
 func TestIdleChatTTSTimeoutReporterRejectsStaleOrMalformedOwnership(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-timeout-owner")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-timeout-owner"))
 	o.mu.Lock()
 	traceID := o.activeTraceID
 	o.mu.Unlock()
@@ -170,9 +170,9 @@ func TestIdleChatTTSTimeoutReporterRejectsStaleOrMalformedOwnership(t *testing.T
 	o.SetTTSTimeoutReporter(func(TTSTimeoutEvent) { called++ })
 
 	for _, ev := range []TTSTimeoutEvent{
-		{Kind: "timeout", SessionID: "idle-timeout-owner", MessageID: "message", TraceID: modulecore.TraceID("not-a-trace"), Generation: generation},
-		{Kind: "timeout", SessionID: "idle-timeout-owner", MessageID: "message", TraceID: modulecore.NewTraceID(), Generation: generation},
-		{Kind: "timeout", SessionID: "idle-timeout-owner", MessageID: "message", TraceID: traceID, Generation: generation + 1},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.TraceID("not-a-trace"), Generation: generation},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.NewTraceID(), Generation: generation},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: traceID, Generation: generation + 1},
 	} {
 		o.reportTTSTimeoutEvent(ev)
 	}
@@ -183,7 +183,7 @@ func TestIdleChatTTSTimeoutReporterRejectsStaleOrMalformedOwnership(t *testing.T
 
 func TestIdleChatTTSSessionDrainTimeoutCarriesOwnerTrace(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-drain-trace")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-drain-trace"))
 	o.mu.Lock()
 	traceID := o.activeTraceID
 	o.mu.Unlock()
@@ -195,7 +195,7 @@ func TestIdleChatTTSSessionDrainTimeoutCarriesOwnerTrace(t *testing.T) {
 		timeoutEvent = ev
 	})
 
-	o.waitForTTSSessionDrain("idle-drain-trace", generation, []TTSLifecycle{{Done: make(chan struct{})}})
+	o.waitForTTSSessionDrain(canonicalIdleChatTestSessionID("idle-drain-trace"), generation, []TTSLifecycle{{Done: make(chan struct{})}})
 
 	if timeoutEvent.Kind != "session_audio_timeout" || timeoutEvent.TraceID != traceID || timeoutEvent.Generation != generation {
 		t.Fatalf("session timeout identity = %+v, want trace:%q generation:%d", timeoutEvent, traceID, generation)

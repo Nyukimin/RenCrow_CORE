@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -183,7 +184,7 @@ func rollbackL1Tx(tx *sql.Tx, err error) error {
 	return err
 }
 
-func appendL1EventLog(ctx context.Context, execer l1SQLExecer, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
+func appendL1EventLog(ctx context.Context, execer l1SQLExecer, eventType string, namespace string, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
 	eventType = strings.TrimSpace(eventType)
 	namespace = strings.TrimSpace(namespace)
 	if eventType == "" {
@@ -191,6 +192,9 @@ func appendL1EventLog(ctx context.Context, execer l1SQLExecer, eventType string,
 	}
 	if err := ValidateL1Namespace(namespace); err != nil {
 		return nil, err
+	}
+	if err := validateL1SessionThreadTuple(sessionID, threadID, threadSeq, threadKind); err != nil {
+		return nil, fmt.Errorf("invalid l1 event thread identity: %w", err)
 	}
 	if payload == nil {
 		payload = map[string]interface{}{}
@@ -201,20 +205,22 @@ func appendL1EventLog(ctx context.Context, execer l1SQLExecer, eventType string,
 	}
 	now := time.Now().UTC()
 	entry := &L1EventLogEntry{
-		ID:        fmt.Sprintf("%s:%s:%d:%d", namespace, eventType, now.UnixNano(), l1IDSequence.Add(1)),
-		EventType: eventType,
-		Namespace: namespace,
-		SessionID: sessionID,
-		ThreadID:  threadID,
-		Payload:   payload,
-		Source:    source,
-		CreatedAt: now,
+		ID:         fmt.Sprintf("%s:%s:%d:%d", namespace, eventType, now.UnixNano(), l1IDSequence.Add(1)),
+		EventType:  eventType,
+		Namespace:  namespace,
+		SessionID:  sessionID,
+		ThreadID:   threadID,
+		ThreadSeq:  threadSeq,
+		ThreadKind: threadKind,
+		Payload:    payload,
+		Source:     source,
+		CreatedAt:  now,
 	}
 	_, err = execer.ExecContext(ctx, `
 INSERT INTO l1_event_log (
-	id, event_type, namespace, session_id, thread_id, payload_json, source, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-`, entry.ID, entry.EventType, entry.Namespace, entry.SessionID, entry.ThreadID, string(payloadJSON), entry.Source, entry.CreatedAt)
+	id, event_type, namespace, session_id, thread_id, thread_seq, thread_kind, payload_json, source, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, entry.ID, entry.EventType, entry.Namespace, entry.SessionID, string(entry.ThreadID), entry.ThreadSeq, string(entry.ThreadKind), string(payloadJSON), entry.Source, entry.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to append l1 event log: %w", err)
 	}

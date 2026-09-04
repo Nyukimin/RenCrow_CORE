@@ -36,6 +36,36 @@ type (
 	ReceiptID    string
 )
 
+// ThreadSeq is the explicit, positive ordering number of a thread in a session.
+type ThreadSeq int64
+
+func (seq ThreadSeq) Validate() error {
+	if seq <= 0 {
+		return fmt.Errorf("thread sequence must be positive")
+	}
+	return nil
+}
+
+// ThreadKind identifies the domain meaning of a thread.
+type ThreadKind string
+
+const (
+	ThreadKindUserConversation ThreadKind = "user_conversation"
+	ThreadKindAgentDiscussion  ThreadKind = "agent_discussion"
+	ThreadKindIdleChat         ThreadKind = "idlechat"
+	ThreadKindDocument         ThreadKind = "document"
+	ThreadKindSystem           ThreadKind = "system"
+)
+
+func (kind ThreadKind) Validate() error {
+	switch kind {
+	case ThreadKindUserConversation, ThreadKindAgentDiscussion, ThreadKindIdleChat, ThreadKindDocument, ThreadKindSystem:
+		return nil
+	default:
+		return fmt.Errorf("invalid thread kind %q", kind)
+	}
+}
+
 // CanonicalIDType selects the target type for deterministic migration IDs.
 type CanonicalIDType string
 

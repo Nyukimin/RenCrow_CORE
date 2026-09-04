@@ -8,7 +8,7 @@ import (
 )
 
 func makeDetectorTestThread(domain string, turnsAgo time.Duration, messages ...string) *domconv.Thread {
-	t := domconv.NewThread("test-session", domain)
+	t := newManagerTestThread("test-session", domain)
 	for _, msg := range messages {
 		m := domconv.NewMessage(domconv.SpeakerUser, msg, nil)
 		m.Timestamp = time.Now().Add(-turnsAgo)

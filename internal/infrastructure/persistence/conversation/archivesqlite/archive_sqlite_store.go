@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
@@ -69,7 +70,9 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	PRAGMA journal_mode=WAL;
 
 	CREATE TABLE IF NOT EXISTS session_thread (
-		thread_id BIGINT PRIMARY KEY,
+		thread_id TEXT PRIMARY KEY NOT NULL,
+		thread_seq INTEGER NOT NULL CHECK (thread_seq > 0),
+		thread_kind TEXT NOT NULL CHECK (thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
 		session_id VARCHAR NOT NULL,
 		ts_start TIMESTAMP NOT NULL,
 		ts_end TIMESTAMP,
@@ -78,7 +81,8 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 		keywords TEXT,
 		embedding TEXT,
 		is_novel BOOLEAN,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE (session_id, thread_seq)
 	);
 
 	-- 単一カラムインデックス（互換性維持）
@@ -91,7 +95,7 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_session_thread_domain_ts ON session_thread(domain, ts_start DESC);
 
 	CREATE TABLE IF NOT EXISTS conversation_thread_summary_receipt (
-		thread_id BIGINT PRIMARY KEY,
+		thread_id TEXT PRIMARY KEY NOT NULL,
 		schema_version TEXT NOT NULL,
 		generation_mode TEXT NOT NULL,
 		provider TEXT NOT NULL,
@@ -108,7 +112,9 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 		id VARCHAR PRIMARY KEY,
 		namespace VARCHAR NOT NULL,
 		session_id VARCHAR NOT NULL,
-		thread_id BIGINT NOT NULL,
+		thread_id TEXT NOT NULL,
+		thread_seq INTEGER NOT NULL,
+		thread_kind TEXT NOT NULL,
 		speaker VARCHAR NOT NULL,
 		message TEXT NOT NULL,
 		meta_json TEXT NOT NULL,
@@ -116,7 +122,11 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 		layer VARCHAR NOT NULL,
 		source VARCHAR NOT NULL,
 		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL
+		updated_at TIMESTAMP NOT NULL,
+		CHECK (
+			(thread_id = '' AND thread_seq = 0 AND thread_kind = '') OR
+			(thread_id <> '' AND thread_seq > 0 AND thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system'))
+		)
 	);
 	CREATE INDEX IF NOT EXISTS idx_l1_memory_archive_namespace_created ON l1_memory_event_archive(namespace, created_at DESC);
 	CREATE INDEX IF NOT EXISTS idx_l1_memory_archive_state_created ON l1_memory_event_archive(memory_state, created_at DESC);
@@ -230,6 +240,80 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
+	if err := d.validateThreadIdentitySchema(ctx); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+// validateThreadIdentitySchema checks the columns whose representation is
+// part of the canonical Thread identity contract. CREATE TABLE IF NOT EXISTS
+// deliberately does not alter an existing table, so this check must run at
+// open and fail closed for a pre-canonical database rather than deferring the
+// failure until the first write.
+func (d *ArchiveSQLiteStore) validateThreadIdentitySchema(ctx context.Context) error {
+	type requiredColumn struct {
+		name         string
+		expectedType string
+	}
+	required := []struct {
+		table   string
+		columns []requiredColumn
+	}{
+		{
+			table: "session_thread",
+			columns: []requiredColumn{
+				{name: "thread_id", expectedType: "TEXT"},
+				{name: "thread_seq", expectedType: "INTEGER"},
+				{name: "thread_kind", expectedType: "TEXT"},
+			},
+		},
+		{
+			table:   "conversation_thread_summary_receipt",
+			columns: []requiredColumn{{name: "thread_id", expectedType: "TEXT"}},
+		},
+		{
+			table: "l1_memory_event_archive",
+			columns: []requiredColumn{
+				{name: "thread_id", expectedType: "TEXT"},
+				{name: "thread_seq", expectedType: "INTEGER"},
+				{name: "thread_kind", expectedType: "TEXT"},
+			},
+		},
+	}
+	for _, table := range required {
+		rows, err := d.db.QueryContext(ctx, "PRAGMA table_info("+table.table+")")
+		if err != nil {
+			return fmt.Errorf("failed to inspect archive sqlite schema for %s: %w", table.table, err)
+		}
+		actual := make(map[string]string)
+		for rows.Next() {
+			var cid, notNull, primaryKey int
+			var name, columnType string
+			var defaultValue sql.NullString
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("failed to inspect archive sqlite schema for %s: %w", table.table, err)
+			}
+			actual[name] = columnType
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("failed to inspect archive sqlite schema for %s: %w", table.table, err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("failed to close archive sqlite schema inspection for %s: %w", table.table, err)
+		}
+		for _, column := range table.columns {
+			actualType, ok := actual[column.name]
+			if !ok {
+				return fmt.Errorf("archive sqlite schema requires writer-stopped migration: %s is missing %s", table.table, column.name)
+			}
+			if !strings.EqualFold(strings.TrimSpace(actualType), column.expectedType) {
+				return fmt.Errorf("archive sqlite schema requires writer-stopped migration: %s.%s has type %q, want %s", table.table, column.name, actualType, column.expectedType)
+			}
+		}
+	}
 	return nil
 }

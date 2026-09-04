@@ -224,7 +224,7 @@ ON CONFLICT(digest_date, category, digest_slot) DO UPDATE SET
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "news.daily_digest_built", newsNamespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "news.daily_digest_built", newsNamespace, "", "", 0, "", map[string]interface{}{
 		"digest_id":   digest.ID,
 		"digest_date": digest.DigestDate,
 		"category":    digest.Category,

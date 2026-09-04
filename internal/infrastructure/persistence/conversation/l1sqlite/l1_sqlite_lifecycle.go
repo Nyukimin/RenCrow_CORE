@@ -106,7 +106,7 @@ func (s *L1SQLiteStore) RunMemoryLifecycleMaintenance(ctx context.Context, opts 
 	}
 	result.VectorCleanupExecuted = n
 	if result.RawCompacted > 0 || result.CandidatesQueued > 0 || result.MonthlyHighlightsBuilt > 0 || result.ThreadSummarySeedsQueued > 0 || result.Decayed > 0 || result.VectorCleanupQueued > 0 || result.VectorCleanupExecuted > 0 {
-		if _, err := s.AppendEvent(ctx, "memory.lifecycle_maintenance_completed", "conv:lifecycle", "", 0, map[string]interface{}{
+		if _, err := s.AppendEvent(ctx, "memory.lifecycle_maintenance_completed", "conv:lifecycle", "", "", 0, "", map[string]interface{}{
 			"raw_compacted":               result.RawCompacted,
 			"candidates_queued":           result.CandidatesQueued,
 			"monthly_highlights_built":    result.MonthlyHighlightsBuilt,
@@ -205,7 +205,7 @@ INSERT INTO conversation_lifecycle_raw_archive_outbox (
 				eventSHA256, L1RawLifecycleArchiveOutboxStatusPending, now, now); err != nil {
 				return rollbackL1Tx(tx, fmt.Errorf("failed to queue raw archive event %s: %w", event.ID, err))
 			}
-			if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_queued", "conv:lifecycle", event.SessionID, event.ThreadID, map[string]interface{}{
+			if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_queued", "conv:lifecycle", event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 				"outbox_id":    outboxID,
 				"event_id":     event.ID,
 				"event_sha256": eventSHA256,
@@ -223,7 +223,7 @@ SET status = ?, last_error = ?, updated_at = ?
 WHERE event_id = ? AND status <> ?`, L1RawLifecycleArchiveOutboxStatusFailed, conflictErr.Error(), now, event.ID, L1RawLifecycleArchiveOutboxStatusArchived); err != nil {
 				return rollbackL1Tx(tx, fmt.Errorf("failed to mark raw archive outbox conflict for %s: %w", event.ID, err))
 			}
-			if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_conflict", "conv:lifecycle", event.SessionID, event.ThreadID, map[string]interface{}{
+			if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_conflict", "conv:lifecycle", event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 				"outbox_id":    existingOutboxID,
 				"event_id":     event.ID,
 				"event_sha256": eventSHA256,
@@ -242,7 +242,7 @@ SET status = ?, last_error = '', updated_at = ?
 WHERE event_id = ?`, L1RawLifecycleArchiveOutboxStatusPending, now, event.ID); err != nil {
 					return rollbackL1Tx(tx, fmt.Errorf("failed to requeue raw archive event %s: %w", event.ID, err))
 				}
-				if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_queued", "conv:lifecycle", event.SessionID, event.ThreadID, map[string]interface{}{
+				if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archive_queued", "conv:lifecycle", event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 					"outbox_id":    existingOutboxID,
 					"event_id":     event.ID,
 					"event_sha256": eventSHA256,
@@ -264,7 +264,7 @@ func (s *L1SQLiteStore) rawLifecycleArchiveCandidates(ctx context.Context, cutof
 		return nil, nil
 	}
 	rows, err := s.readDB.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace LIKE 'conv:%'
@@ -479,7 +479,7 @@ func readL1MemoryEventByID(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }, eventID string) (L1MemoryEvent, bool, error) {
 	row := queryer.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event WHERE id = ?`, eventID)
 	events, err := scanL1EventRows(row)
@@ -567,7 +567,7 @@ SET status = ?, last_error = '', archived_at = ?, updated_at = ?
 WHERE outbox_id = ?`, L1RawLifecycleArchiveOutboxStatusArchived, now, now, entry.OutboxID); err != nil {
 		return false, rollbackL1Tx(tx, fmt.Errorf("failed to mark raw archive outbox %s archived: %w", entry.OutboxID, err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archived_compacted", "conv:lifecycle", event.SessionID, event.ThreadID, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.l1_raw_archived_compacted", "conv:lifecycle", event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
 		"outbox_id":    entry.OutboxID,
 		"event_id":     entry.EventID,
 		"event_sha256": entry.EventSHA256,
@@ -629,7 +629,7 @@ WHERE id = ? AND meta_json = ? AND updated_at = ?` + expectedWhere
 	if affected == 0 {
 		return false, rollbackL1Tx(tx, nil)
 	}
-	if _, err := appendL1EventLog(ctx, tx, eventType, ev.Namespace, ev.SessionID, ev.ThreadID, payload, "memory_lifecycle"); err != nil {
+	if _, err := appendL1EventLog(ctx, tx, eventType, ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, payload, "memory_lifecycle"); err != nil {
 		return false, rollbackL1Tx(tx, err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -784,7 +784,7 @@ ON CONFLICT(month, category) DO NOTHING`, id, month, category, string(sourceJSON
 			}
 			continue
 		}
-		if _, err := appendL1EventLog(ctx, tx, "memory.monthly_highlight_built", "conv:lifecycle", "", 0, map[string]interface{}{
+		if _, err := appendL1EventLog(ctx, tx, "memory.monthly_highlight_built", "conv:lifecycle", "", "", 0, "", map[string]interface{}{
 			"highlight_id": id,
 			"month":        month,
 			"category":     category,
@@ -1066,7 +1066,7 @@ LIMIT ?`, limit)
 
 func (s *L1SQLiteStore) userMemoryEventsForLifecycle(ctx context.Context, where string, args ...interface{}) ([]L1MemoryEvent, error) {
 	query := `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 ` + where

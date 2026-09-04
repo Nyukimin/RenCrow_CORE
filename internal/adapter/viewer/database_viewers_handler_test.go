@@ -14,6 +14,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -82,12 +83,14 @@ func TestHandleConversationArchiveDatabaseListsOnlyArchiveRows(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "memory_archive.db")
 	db := openDatabaseViewerTestDB(t, dbPath)
 	mustExecDatabaseViewerTest(t, db, `CREATE TABLE session_thread (
-		thread_id INTEGER PRIMARY KEY, session_id TEXT, ts_start DATETIME, ts_end DATETIME,
+		thread_id TEXT PRIMARY KEY, thread_seq INTEGER, thread_kind TEXT, session_id TEXT, ts_start DATETIME, ts_end DATETIME,
 		domain TEXT, summary TEXT, keywords TEXT, embedding TEXT, is_novel BOOLEAN
 	)`)
-	mustExecDatabaseViewerTest(t, db, `INSERT INTO session_thread VALUES
-		(1, 'session-a', '2026-08-01T10:00:00Z', '2026-08-01T10:10:00Z', 'movie', '映画の会話', '["映画"]', '[]', 1),
-		(2, 'session-b', '2026-08-02T10:00:00Z', '2026-08-02T10:10:00Z', 'music', '音楽の会話', '["音楽"]', '[]', 0)`)
+	threadID := canonicalViewerTestThreadID(t, "archive-movie")
+	mustExecDatabaseViewerTest(t, db, fmt.Sprintf(`INSERT INTO session_thread VALUES
+		(%q, 1, %q, 'session-a', '2026-08-01T10:00:00Z', '2026-08-01T10:10:00Z', 'movie', '映画の会話', '["映画"]', '[]', 1)`, string(threadID), string(modulecore.ThreadKindUserConversation)))
+	mustExecDatabaseViewerTest(t, db, fmt.Sprintf(`INSERT INTO session_thread VALUES
+		(%q, 1, %q, 'session-b', '2026-08-02T10:00:00Z', '2026-08-02T10:10:00Z', 'music', '音楽の会話', '["音楽"]', '[]', 0)`, string(canonicalViewerTestThreadID(t, "archive-music")), string(modulecore.ThreadKindUserConversation)))
 	db.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/databases/conversation-archive?domain=movie&limit=10", nil)
@@ -100,19 +103,42 @@ func TestHandleConversationArchiveDatabaseListsOnlyArchiveRows(t *testing.T) {
 		Available bool `json:"available"`
 		Total     int  `json:"total"`
 		Items     []struct {
-			ThreadID int64    `json:"thread_id"`
-			Domain   string   `json:"domain"`
-			Keywords []string `json:"keywords"`
+			ThreadID   modulecore.ThreadID   `json:"thread_id"`
+			ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
+			ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+			Domain     string                `json:"domain"`
+			Keywords   []string              `json:"keywords"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if !out.Available || out.Total != 1 || len(out.Items) != 1 || out.Items[0].ThreadID != 1 || out.Items[0].Domain != "movie" {
+	if !out.Available || out.Total != 1 || len(out.Items) != 1 || out.Items[0].ThreadID != threadID || out.Items[0].ThreadSeq != 1 || out.Items[0].ThreadKind != modulecore.ThreadKindUserConversation || out.Items[0].Domain != "movie" {
 		t.Fatalf("unexpected archive response: %+v", out)
 	}
 	if len(out.Items[0].Keywords) != 1 || out.Items[0].Keywords[0] != "映画" {
 		t.Fatalf("keywords = %#v", out.Items[0].Keywords)
+	}
+}
+
+func TestHandleConversationArchiveDatabaseRejectsInvalidThreadTuple(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "memory_archive_invalid.db")
+	db := openDatabaseViewerTestDB(t, dbPath)
+	mustExecDatabaseViewerTest(t, db, `CREATE TABLE session_thread (
+		thread_id TEXT PRIMARY KEY, thread_seq INTEGER, thread_kind TEXT, session_id TEXT, ts_start DATETIME, ts_end DATETIME,
+		domain TEXT, summary TEXT, keywords TEXT, embedding TEXT, is_novel BOOLEAN
+	)`)
+	mustExecDatabaseViewerTest(t, db, `INSERT INTO session_thread VALUES
+		('legacy-thread-1', 1, 'user_conversation', 'session-a', '2026-08-01T10:00:00Z', '2026-08-01T10:10:00Z', 'movie', '映画の会話', '[]', '[]', 1)`)
+	db.Close()
+
+	rec := httptest.NewRecorder()
+	HandleConversationArchiveDatabase(DatabaseViewerOptions{DBPath: dbPath}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/databases/conversation-archive", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "invalid conversation archive thread tuple") {
+		t.Fatalf("body = %q", rec.Body.String())
 	}
 }
 

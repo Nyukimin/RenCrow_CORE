@@ -27,6 +27,7 @@ type RealConversationManager struct {
 	agentStatuses               map[string]*domconv.AgentStatus
 	knowledgeRelationImportHook func(context.Context, l1sqlite.L1KnowledgeItem) error
 	backgroundMu                sync.Mutex
+	threadMu                    sync.Mutex
 	backgroundWG                sync.WaitGroup
 	backgroundClosed            bool
 	backgroundFlushTimeout      time.Duration

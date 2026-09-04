@@ -2,6 +2,7 @@ package idlechat
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func NewIdleChatOrchestrator(
@@ -58,6 +60,7 @@ func NewIdleChatOrchestrator(
 		runCtx:                 ctx,
 		interruptedSessions:    make(map[string]struct{}),
 		messageIDs:             make(map[string]string),
+		topicThreadSeq:         make(map[string]modulecore.ThreadSeq),
 		storyTTSPrefetchWindow: storyTTSPrefetchWindow,
 	}
 }
@@ -196,7 +199,12 @@ func (o *IdleChatOrchestrator) SetTopicStore(path string) error {
 		return err
 	}
 	o.mu.Lock()
+	if len(o.topicThreadSeq) > 0 {
+		o.mu.Unlock()
+		return fmt.Errorf("cannot configure topic store after storeless thread allocation")
+	}
 	o.topicStore = store
+	o.topicThreadSeq = nil
 	o.history = store.GetRecent(200)
 	o.mu.Unlock()
 	return nil

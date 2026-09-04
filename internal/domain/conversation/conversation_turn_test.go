@@ -5,11 +5,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func conversationTurnTestRequest() ConversationTurnRequest {
 	return ConversationTurnRequest{
-		TurnID: "job-domain-1", SessionID: "session-domain-1", OwnerID: "owner-domain-1",
+		TurnID: "job-domain-1", SessionID: string(modulecore.NewSessionID()), OwnerID: "owner-domain-1",
 		UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: SpeakerMio,
 		RecallTraceItems: []RecallTraceItem{{Layer: "L1", Kind: "memory", Summary: "bounded", Status: TraceStatusInjected, Decision: "included", TokenCount: 2}},
 		Targets:          []ConversationTurnTarget{ConversationTurnTargetRedisProjection},
@@ -77,6 +79,11 @@ func TestConversationTurnValidationAndStableDistinctMessageIDs(t *testing.T) {
 	invalid.UserMessage = ""
 	if !errors.Is(invalid.Validate(), ErrConversationTurnInvalid) {
 		t.Fatal("missing user message was accepted")
+	}
+	invalid = request
+	invalid.SessionID = "legacy-session"
+	if !errors.Is(invalid.Validate(), ErrConversationTurnInvalid) {
+		t.Fatal("legacy session ID was accepted")
 	}
 }
 

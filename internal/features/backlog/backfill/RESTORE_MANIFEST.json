@@ -19,13 +19,13 @@
     },
     {
       "path": "atlas_backfill_v1.json",
-      "bytes": 195301,
-      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af"
+      "bytes": 195331,
+      "sha256": "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670"
     },
     {
       "path": "atlas_backfill_v1_test_fixture.json",
-      "bytes": 195301,
-      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af"
+      "bytes": 195331,
+      "sha256": "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670"
     },
     {
       "path": "atlas_item_v2.schema.json",
@@ -34,23 +34,23 @@
     },
     {
       "path": "atlas_items_v2.jsonl",
-      "bytes": 148246,
-      "sha256": "843cf466f5efd63b5e5869eb2a38e724911bbfe4ade913d9ed0ee065d97af02b"
+      "bytes": 148276,
+      "sha256": "633b00989a8a0013121fb014fa7b4cbaef4c8d04f532c2cb0bc2be5c793ae8b9"
     },
     {
       "path": "atlas_seed_v1.json",
-      "bytes": 70106,
-      "sha256": "9fab11fbe4e8d08de2b0e8f323cc0c6a6eff74c6bdeba043b8a6dfb89cc3ee6b"
+      "bytes": 70136,
+      "sha256": "815b8df30fd509701bf0f2d4735b8de2b854d30b98a6e098a210c8f078109a5b"
     },
     {
       "path": "manifest.json",
       "bytes": 2664,
-      "sha256": "e510b5792cdecb62326da767c27b5fe5b5bb73ec90b6cd6e4a4c695047d69347"
+      "sha256": "539ad3e1817e969eb60d93408addd2275038a2251df47f42d9b58e7c7d903e26"
     },
     {
       "path": "specification_artifacts.json",
       "bytes": 4880,
-      "sha256": "7cbd0f1faec33baf4bf2062e74e4f9f28fdf24864eccc6d8ca8efa2bdfe73d0d"
+      "sha256": "fb5e392d13b60b878ea2cc0652bc546b7160e2799d1ea06bb5e90ed47d57dc97"
     },
     {
       "path": "specifications/spec_artificial_motivation.md",
@@ -79,8 +79,8 @@
     },
     {
       "path": "specifications/spec_council_facilitator_chair.md",
-      "bytes": 1295,
-      "sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace"
+      "bytes": 1325,
+      "sha256": "72ea3d6d63453783c3fb62af58450142683ae61571ee062209e5f22131992eff"
     },
     {
       "path": "specifications/spec_knowledge_architecture.md",

@@ -72,7 +72,7 @@ func TestL1SQLiteStoreConcurrentWritesDoNotReturnBusy(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			sessionID := fmt.Sprintf("busy-session-%d", i)
-			err := store.SaveMessage(ctx, sessionID, int64(i+1), fmt.Sprintf("conv:%d", i+1),
+			err := l1TestSaveMessage(store, ctx, sessionID, fmt.Sprintf("busy-thread-%d", i+1), 1,
 				domconv.NewMessage(domconv.SpeakerMio, fmt.Sprintf("message-%d", i), nil), MemoryStateObserved)
 			errs <- err
 		}(i)

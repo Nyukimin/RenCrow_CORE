@@ -9,13 +9,16 @@ import (
 	"strings"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/parquet-go/parquet-go"
 )
 
 // threadSummaryParquetRow は session_thread テーブルの Parquet エクスポート行。
 // ts_end / domain / is_novel はスキーマ上 NOT NULL 制約が無いため optional として扱う。
 type threadSummaryParquetRow struct {
-	ThreadID         int64      `parquet:"thread_id"`
+	ThreadID         string     `parquet:"thread_id"`
+	ThreadSeq        int64      `parquet:"thread_seq"`
+	ThreadKind       string     `parquet:"thread_kind"`
 	SessionID        string     `parquet:"session_id"`
 	TsStart          time.Time  `parquet:"ts_start"`
 	TsEnd            *time.Time `parquet:"ts_end,optional"`
@@ -61,7 +64,9 @@ type l1MemoryEventParquetRow struct {
 	ID          string    `parquet:"id"`
 	Namespace   string    `parquet:"namespace"`
 	SessionID   string    `parquet:"session_id"`
-	ThreadID    int64     `parquet:"thread_id"`
+	ThreadID    string    `parquet:"thread_id"`
+	ThreadSeq   int64     `parquet:"thread_seq"`
+	ThreadKind  string    `parquet:"thread_kind"`
 	Speaker     string    `parquet:"speaker"`
 	Message     string    `parquet:"message"`
 	MetaJSON    string    `parquet:"meta_json"`
@@ -174,7 +179,7 @@ func (d *ArchiveSQLiteStore) ExportL1ArchivesParquet(ctx context.Context, output
 
 func (d *ArchiveSQLiteStore) exportMemoryEventArchiveParquet(ctx context.Context, outputPath string) error {
 	rows, err := d.db.QueryContext(ctx, `
-	SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+	SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	       memory_state, layer, source, created_at, updated_at
 	FROM l1_memory_event_archive
 	ORDER BY created_at ASC, id ASC
@@ -187,12 +192,21 @@ func (d *ArchiveSQLiteStore) exportMemoryEventArchiveParquet(ctx context.Context
 	records := make([]l1MemoryEventParquetRow, 0)
 	for rows.Next() {
 		var rec l1MemoryEventParquetRow
+		var threadID string
+		var threadSeq int64
+		var threadKind string
 		if err := rows.Scan(
-			&rec.ID, &rec.Namespace, &rec.SessionID, &rec.ThreadID, &rec.Speaker, &rec.Message,
+			&rec.ID, &rec.Namespace, &rec.SessionID, &threadID, &threadSeq, &threadKind, &rec.Speaker, &rec.Message,
 			&rec.MetaJSON, &rec.MemoryState, &rec.Layer, &rec.Source, &rec.CreatedAt, &rec.UpdatedAt,
 		); err != nil {
 			return err
 		}
+		if err := validateArchiveThreadTuple(modulecore.ThreadID(threadID), modulecore.ThreadSeq(threadSeq), modulecore.ThreadKind(threadKind), true); err != nil {
+			return fmt.Errorf("invalid archived memory thread identity: %w", err)
+		}
+		rec.ThreadID = threadID
+		rec.ThreadSeq = threadSeq
+		rec.ThreadKind = threadKind
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {

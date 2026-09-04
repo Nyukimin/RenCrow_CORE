@@ -2,6 +2,7 @@ package archivesqlite
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestArchiveSQLiteStore_ExportThreadSummariesParquet(t *testing.T) {
@@ -23,15 +25,18 @@ func TestArchiveSQLiteStore_ExportThreadSummariesParquet(t *testing.T) {
 	defer store.Close()
 
 	summary := &domconv.ThreadSummary{
-		ThreadID:  101,
-		StartTime: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 5, 1, 10, 10, 0, 0, time.UTC),
-		Domain:    "ai",
-		Summary:   "AI discussion",
-		Keywords:  []string{"ai", "local-llm", "conversation"},
-		Roles:     []string{"user", "mio"},
-		Embedding: []float32{0.1, 0.2},
-		IsNovel:   true,
+		ThreadID:   archiveTestThreadID("101"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("export-parquet"),
+		StartTime:  time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 5, 1, 10, 10, 0, 0, time.UTC),
+		Domain:     "ai",
+		Summary:    "AI discussion",
+		Keywords:   []string{"ai", "local-llm", "conversation"},
+		Roles:      []string{"user", "mio"},
+		Embedding:  []float32{0.1, 0.2},
+		IsNovel:    true,
 	}
 	if err := store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles)); err != nil {
 		t.Fatalf("SaveThreadSummary failed: %v", err)
@@ -56,7 +61,7 @@ func TestArchiveSQLiteStore_ExportThreadSummariesParquet(t *testing.T) {
 	if len(readBack) != 1 {
 		t.Fatalf("parquet row count: want 1, got %d", len(readBack))
 	}
-	if readBack[0].ThreadID != 101 {
+	if readBack[0].ThreadID != string(summary.ThreadID) || readBack[0].ThreadSeq != int64(summary.ThreadSeq) || readBack[0].ThreadKind != string(summary.ThreadKind) {
 		t.Fatalf("unexpected thread_id in parquet row: %+v", readBack[0])
 	}
 }
@@ -70,25 +75,71 @@ func TestArchiveSQLiteStore_SaveThreadSummaryArchivesSessionID(t *testing.T) {
 	defer store.Close()
 
 	summary := &domconv.ThreadSummary{
-		ThreadID:  201,
-		SessionID: "sess-l2",
-		StartTime: time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 5, 1, 11, 10, 0, 0, time.UTC),
-		Domain:    "memory",
-		Summary:   "L2 summary archived by session",
-		Keywords:  []string{"l2", "archive", "thread"},
-		Roles:     []string{"user"},
+		ThreadID:   archiveTestThreadID("201"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("sess-l2"),
+		StartTime:  time.Date(2026, 5, 1, 11, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 5, 1, 11, 10, 0, 0, time.UTC),
+		Domain:     "memory",
+		Summary:    "L2 summary archived by session",
+		Keywords:   []string{"l2", "archive", "thread"},
+		Roles:      []string{"user"},
 	}
 	if err := store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles)); err != nil {
 		t.Fatalf("SaveThreadSummary failed: %v", err)
 	}
 
-	got, err := store.GetSessionHistory(ctx, "sess-l2", 10)
+	got, err := store.GetSessionHistory(ctx, summary.SessionID, 10)
 	if err != nil {
 		t.Fatalf("GetSessionHistory failed: %v", err)
 	}
-	if len(got) != 1 || got[0].ThreadID != 201 || got[0].SessionID != "sess-l2" {
+	if len(got) != 1 || got[0].ThreadID != summary.ThreadID || got[0].ThreadSeq != summary.ThreadSeq || got[0].ThreadKind != summary.ThreadKind || got[0].SessionID != summary.SessionID {
 		t.Fatalf("unexpected session history: %+v", got)
+	}
+}
+
+func TestArchiveSQLiteStoreGetThreadSummaryUsesExactCanonicalIdentity(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewArchiveSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	first := &domconv.ThreadSummary{
+		ThreadID:   archiveTestThreadID("get-exact-first"),
+		ThreadSeq:  4,
+		ThreadKind: domconv.ThreadKindAgentDiscussion,
+		SessionID:  archiveTestSessionID("get-exact-session"),
+		Summary:    "first exact thread",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"mio"},
+	}
+	second := &domconv.ThreadSummary{
+		ThreadID:   archiveTestThreadID("get-exact-second"),
+		ThreadSeq:  5,
+		ThreadKind: domconv.ThreadKindDocument,
+		SessionID:  first.SessionID,
+		Summary:    "second exact thread",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"mio"},
+	}
+	for _, summary := range []*domconv.ThreadSummary{first, second} {
+		if err := store.SaveThreadSummaryWithReceipt(ctx, summary, receiptForRoles(summary.Roles)); err != nil {
+			t.Fatalf("save %s: %v", summary.Summary, err)
+		}
+	}
+
+	got, err := store.GetThreadSummary(ctx, first.ThreadID)
+	if err != nil {
+		t.Fatalf("GetThreadSummary failed: %v", err)
+	}
+	if got.ThreadID != first.ThreadID || got.ThreadSeq != first.ThreadSeq || got.ThreadKind != first.ThreadKind || got.Summary != first.Summary {
+		t.Fatalf("exact thread identity was not preserved: got=%+v want=%+v", got, first)
+	}
+	if _, err := store.GetThreadSummary(ctx, modulecore.ThreadID("101")); !errors.Is(err, domconv.ErrThreadNotFound) {
+		t.Fatalf("invalid canonical thread id error=%v, want ErrThreadNotFound", err)
 	}
 }
 
@@ -106,8 +157,11 @@ func TestArchiveSQLiteStore_SaveThreadSummaryRejectsMalformedSummary(t *testing.
 		want    string
 	}{
 		{name: "nil", summary: nil, want: "thread summary is required"},
-		{name: "missing thread id", summary: &domconv.ThreadSummary{Summary: "valid summary"}, want: "thread_id must be > 0"},
-		{name: "missing summary", summary: &domconv.ThreadSummary{ThreadID: 301, Summary: "   "}, want: "summary is required"},
+		{name: "missing thread id", summary: &domconv.ThreadSummary{Summary: "valid summary"}, want: "thread identity"},
+		{name: "invalid thread id", summary: &domconv.ThreadSummary{ThreadID: modulecore.ThreadID("101"), ThreadSeq: 1, ThreadKind: domconv.ThreadKindUserConversation, Summary: "valid summary"}, want: "thread identity"},
+		{name: "missing thread sequence", summary: &domconv.ThreadSummary{ThreadID: archiveTestThreadID("302"), ThreadKind: domconv.ThreadKindUserConversation, Summary: "valid summary"}, want: "thread identity"},
+		{name: "invalid thread kind", summary: &domconv.ThreadSummary{ThreadID: archiveTestThreadID("303"), ThreadSeq: 1, ThreadKind: domconv.ThreadKind("invalid"), Summary: "valid summary"}, want: "thread identity"},
+		{name: "missing summary", summary: &domconv.ThreadSummary{ThreadID: archiveTestThreadID("301"), ThreadSeq: 1, ThreadKind: domconv.ThreadKindUserConversation, SessionID: archiveTestSessionID("missing-summary"), Summary: "   "}, want: "summary is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -129,14 +183,14 @@ func TestArchiveSQLiteStore_ReadThreadSummaryRejectsMalformedRows(t *testing.T) 
 
 	_, err = store.db.ExecContext(ctx, `
 INSERT INTO session_thread (
-	thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, int64(401), "sess-bad-l2", time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC), time.Date(2026, 5, 20, 9, 5, 0, 0, time.UTC), "memory", "", "[]", "[]", false)
+	thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, archiveTestThreadID("401"), 1, domconv.ThreadKindUserConversation, archiveTestSessionID("sess-bad-l2"), time.Date(2026, 5, 20, 9, 0, 0, 0, time.UTC), time.Date(2026, 5, 20, 9, 5, 0, 0, time.UTC), "memory", "", "[]", "[]", false)
 	if err != nil {
 		t.Fatalf("insert malformed thread summary: %v", err)
 	}
 
-	_, err = store.GetSessionHistory(ctx, "sess-bad-l2", 10)
+	_, err = store.GetSessionHistory(ctx, archiveTestSessionID("sess-bad-l2"), 10)
 	if err == nil || !strings.Contains(err.Error(), "summary is required") {
 		t.Fatalf("GetSessionHistory() error = %v, want summary validation", err)
 	}
@@ -158,8 +212,10 @@ func TestArchiveSQLiteStore_ArchiveL1DataParquet(t *testing.T) {
 	if err := store.ArchiveL1MemoryEvents(ctx, []l1sqlite.L1MemoryEvent{{
 		ID:          "mem-1",
 		Namespace:   "user:ren",
-		SessionID:   "sess-1",
-		ThreadID:    1,
+		SessionID:   archiveTestSessionID("sess-1"),
+		ThreadID:    archiveTestThreadID("l1-memory-1"),
+		ThreadSeq:   1,
+		ThreadKind:  domconv.ThreadKindUserConversation,
 		Speaker:     "mio",
 		Message:     "confirmed preference",
 		Meta:        map[string]any{"type": "preference"},
@@ -254,6 +310,9 @@ func TestArchiveSQLiteStore_ArchiveL1DataParquet(t *testing.T) {
 			rows, err := parquet.ReadFile[l1MemoryEventParquetRow](path)
 			if err != nil {
 				t.Fatalf("failed to read back parquet file for %s: %v", name, err)
+			}
+			if len(rows) != 1 || rows[0].ThreadID != string(archiveTestThreadID("l1-memory-1")) || rows[0].ThreadSeq != 1 || rows[0].ThreadKind != string(domconv.ThreadKindUserConversation) {
+				t.Fatalf("thread identity was not preserved in parquet for %s: %+v", name, rows)
 			}
 			count = len(rows)
 		case L1ArchiveNews:
@@ -404,6 +463,43 @@ func TestArchiveSQLiteStore_UserMemoryReceiptIsAtomicIdempotentAndExact(t *testi
 	}
 }
 
+func TestArchiveSQLiteStoreRejectsInvalidAndMismatchedL1ThreadTuples(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewArchiveSQLiteStore(":memory:")
+	if err != nil {
+		t.Fatalf("NewArchiveSQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	invalid := archiveTestUserMemoryEvent("tuple-invalid", "user:archive-user", l1sqlite.MemoryStateConfirmed)
+	invalid.ThreadID = archiveTestThreadID("tuple-invalid")
+	invalid.ThreadKind = domconv.ThreadKindUserConversation
+	invalid.ThreadSeq = 0
+	if _, err := store.ArchiveUserMemoryWithReceipt(ctx, invalid, ArchiveRequestReceipt{
+		RequestID: "tuple-invalid-request", UserID: "archive-user", ActorID: "shiro", PayloadHash: "sha256:tuple-invalid", MemoryID: invalid.ID,
+	}); err == nil {
+		t.Fatal("invalid L1 thread tuple was accepted")
+	}
+
+	first := archiveTestUserMemoryEvent("tuple-first", "user:archive-user", l1sqlite.MemoryStateConfirmed)
+	first.ThreadID = archiveTestThreadID("tuple-first")
+	first.ThreadSeq = 1
+	first.ThreadKind = domconv.ThreadKindUserConversation
+	receipt := ArchiveRequestReceipt{
+		RequestID: "tuple-first-request", UserID: "archive-user", ActorID: "shiro", PayloadHash: "sha256:tuple-first", MemoryID: first.ID,
+	}
+	if _, err := store.ArchiveUserMemoryWithReceipt(ctx, first, receipt); err != nil {
+		t.Fatalf("archive first tuple event: %v", err)
+	}
+	mismatch := first
+	mismatch.ThreadSeq = 2
+	mismatchReceipt := receipt
+	mismatchReceipt.RequestID = "tuple-mismatch-request"
+	if _, err := store.ArchiveUserMemoryWithReceipt(ctx, mismatch, mismatchReceipt); err == nil {
+		t.Fatal("mismatched L1 thread tuple was accepted")
+	}
+}
+
 func TestArchiveSQLiteStore_UserMemoryArchiveRejectsUntrustedStatesAndReadsLegacyRows(t *testing.T) {
 	ctx := context.Background()
 	store, err := NewArchiveSQLiteStore(":memory:")
@@ -422,10 +518,10 @@ func TestArchiveSQLiteStore_UserMemoryArchiveRejectsUntrustedStatesAndReadsLegac
 	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
 	_, err = store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event_archive (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "legacy-memory", "user:archive-user", "", 0, "memory", "legacy exact message", `{"type":"preference"}`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, "legacy-memory", "user:archive-user", "", "", 0, "", "memory", "legacy exact message", `{"type":"preference"}`,
 		l1sqlite.MemoryStateConfirmed, l1sqlite.MemoryLayerL1, "legacy", now, now)
 	if err != nil {
 		t.Fatalf("insert legacy archive row: %v", err)

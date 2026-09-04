@@ -77,7 +77,7 @@ ON CONFLICT(source_id) DO UPDATE SET
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "source_registry.saved", registryNamespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "source_registry.saved", registryNamespace, "", "", 0, "", map[string]interface{}{
 		"source_id":      entry.SourceID,
 		"url":            entry.URL,
 		"kind":           entry.Kind,
@@ -166,7 +166,7 @@ WHERE source_id = ?
 	if err != nil {
 		return err
 	}
-	_, err = s.AppendEvent(ctx, "source_registry.fetched", registryNamespace, "", 0, map[string]interface{}{
+	_, err = s.AppendEvent(ctx, "source_registry.fetched", registryNamespace, "", "", 0, "", map[string]interface{}{
 		"source_id":  sourceID,
 		"status":     status,
 		"last_error": lastError,

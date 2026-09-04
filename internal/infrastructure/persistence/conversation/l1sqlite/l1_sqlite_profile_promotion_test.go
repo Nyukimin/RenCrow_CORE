@@ -27,10 +27,10 @@ func TestProfilePromotionPersistsUserRawJobsAndCompletesAtomically(t *testing.T)
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "ren", 10, "conv:10", domconv.NewMessage(domconv.SpeakerUser, "私はGoが好き", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "10", 1, "conv:10", domconv.NewMessage(domconv.SpeakerUser, "私はGoが好き", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveMessage(ctx, "ren", 10, "conv:10", domconv.NewMessage(domconv.SpeakerMio, "覚えました", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "10", 1, "conv:10", domconv.NewMessage(domconv.SpeakerMio, "覚えました", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,10 +77,10 @@ func TestClaimProfilePromotionDoesNotRepairMissingJobsByScanningRaw(t *testing.T
 	}
 	defer store.Close()
 
-	if err := store.SaveMessage(ctx, "missing-job-session", 1, "conv:missing-job", domconv.NewMessage(domconv.SpeakerUser, "missing job", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "missing-job-session", "missing-job", 1, "conv:missing-job", domconv.NewMessage(domconv.SpeakerUser, "missing job", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `DELETE FROM l1_profile_promotion_job WHERE session_id = ?`, "missing-job-session"); err != nil {
+	if _, err := store.db.ExecContext(ctx, `DELETE FROM l1_profile_promotion_job WHERE session_id = ?`, l1TestSessionID("missing-job-session")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `
@@ -105,7 +105,7 @@ func TestCompleteProfilePromotionRejectsInvalidCandidate(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "ren", 14, "conv:14", domconv.NewMessage(domconv.SpeakerUser, "不正な候補", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "14", 1, "conv:14", domconv.NewMessage(domconv.SpeakerUser, "不正な候補", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
@@ -124,7 +124,7 @@ func TestCompleteProfilePromotionUsesTypeInDeterministicCandidateID(t *testing.T
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "ren", 16, "conv:16", domconv.NewMessage(domconv.SpeakerUser, "同じ文の候補", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "16", 1, "conv:16", domconv.NewMessage(domconv.SpeakerUser, "同じ文の候補", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
@@ -162,14 +162,14 @@ func TestCompleteProfilePromotionRejectsUnboundEvidenceBatch(t *testing.T) {
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "ren", 15, "conv:15", domconv.NewMessage(domconv.SpeakerUser, "根拠", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "15", 1, "conv:15", domconv.NewMessage(domconv.SpeakerUser, "根拠", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 5, time.Minute, now)
 	if err != nil || batch == nil {
 		t.Fatalf("batch=%#v err=%v", batch, err)
 	}
-	batch.Messages[0].SessionID = "other-session"
+	batch.Messages[0].SessionID = l1TestSessionID("other-session")
 	if _, err := store.CompleteProfilePromotionBatch(ctx, *batch, nil, "ren", now); err == nil {
 		t.Fatal("expected evidence binding mismatch to fail")
 	}
@@ -191,9 +191,9 @@ func TestListProfilePromotionProjectionFiltersBoundsAndOrdersStable(t *testing.T
 		}
 		if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
-	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, 'test', ?, ?)`,
+	 id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+	 memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, '', '', 0, '', ?, ?, ?, ?, ?, 'test', ?, ?)`,
 			id, "user:"+owner, string(domconv.SpeakerMemory), statement, string(meta), state, MemoryLayerL1, updatedAt, updatedAt); err != nil {
 			t.Fatal(err)
 		}
@@ -263,9 +263,9 @@ func TestListProfilePromotionProjectionFailsClosedOnCorruptSelectedMetadata(t *t
 	}
 	if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES ('corrupt-projection', 'user:ren', '', 0, ?, 'corrupt', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+) VALUES ('corrupt-projection', 'user:ren', '', '', 0, '', ?, 'corrupt', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		string(domconv.SpeakerMemory), string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
 		t.Fatal(err)
 	}
@@ -287,9 +287,9 @@ func TestListProfilePromotionProjectionRejectsUnknownScopeEnum(t *testing.T) {
 	}
 	if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES ('unknown-scope', 'user:ren', '', 0, ?, 'scope', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+) VALUES ('unknown-scope', 'user:ren', '', '', 0, '', ?, 'scope', ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 		string(domconv.SpeakerMemory), string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
 		t.Fatal(err)
 	}
@@ -314,9 +314,9 @@ func TestListProfilePromotionProjectionUsesTotalRunePrefixWithoutFailingValidRow
 		}
 		if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, 'user:ren', '', 0, ?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+) VALUES (?, 'user:ren', '', '', 0, '', ?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
 			id, string(domconv.SpeakerMemory), statement, string(meta), MemoryStateCandidate, MemoryLayerL1); err != nil {
 			t.Fatal(err)
 		}
@@ -334,7 +334,7 @@ func TestProfilePromotionCancelDoesNotConsumeAttemptAndFailureIsFinite(t *testin
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "ren", 11, "conv:11", domconv.NewMessage(domconv.SpeakerUser, "毎朝コーヒーを飲む", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "11", 1, "conv:11", domconv.NewMessage(domconv.SpeakerUser, "毎朝コーヒーを飲む", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	batch, err := store.ClaimProfilePromotionBatch(ctx, 1, 2, time.Minute, now)
@@ -369,7 +369,7 @@ func TestMemoryLifecycleKeepsRawWhileProfilePromotionIsPending(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	old := now.Add(-60 * 24 * time.Hour)
-	if err := store.SaveMessage(ctx, "ren", 12, "conv:12", domconv.NewMessage(domconv.SpeakerUser, "未処理の根拠", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "12", 1, "conv:12", domconv.NewMessage(domconv.SpeakerUser, "未処理の根拠", nil), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = 'conv:12'`, old, old); err != nil {
@@ -395,7 +395,7 @@ func TestRetryFailedProfilePromotionJobsRequeuesOnlyEvidenceBackedRowsIdempotent
 	store := newProfilePromotionTestStore(t)
 	ctx := context.Background()
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
-	if err := store.SaveMessage(ctx, "ren", 13, "conv:13", domconv.NewMessage(domconv.SpeakerUser, "根拠は保持する", map[string]any{"keep": true}), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "13", 1, "conv:13", domconv.NewMessage(domconv.SpeakerUser, "根拠は保持する", map[string]any{"keep": true}), MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	var evidenceID string
@@ -411,11 +411,12 @@ SELECT id, message, meta_json, memory_state FROM l1_memory_event WHERE namespace
 	if err := store.FailProfilePromotionBatch(ctx, *batch, 1, now, "numeric preference parse failed"); err != nil {
 		t.Fatal(err)
 	}
+	orphanThread := l1TestThread("orphan-evidence", 1)
 	if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)`,
-		"orphan-evidence", "ren", 13, domainmemory.ProfilePromotionFailed, 5, "orphan must remain", now, now); err != nil {
+	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)`,
+		"orphan-evidence", l1TestSessionID("ren"), orphanThread.ID, orphanThread.Seq, orphanThread.Kind, domainmemory.ProfilePromotionFailed, 5, "orphan must remain", now, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -494,7 +495,7 @@ func TestProfilePromotionDiagnosticsCountsAllRowsAndReportsPoolStats(t *testing.
 	}
 	for i, state := range states {
 		namespace := "conv:diagnostics-" + string(rune('a'+i))
-		if err := store.SaveMessage(ctx, "ren", int64(20+i), namespace, domconv.NewMessage(domconv.SpeakerUser, namespace, nil), MemoryStateObserved); err != nil {
+		if err := l1TestSaveMessageInNamespace(store, ctx, "ren", fmt.Sprintf("diagnostic-%d", i), 1, namespace, domconv.NewMessage(domconv.SpeakerUser, namespace, nil), MemoryStateObserved); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := store.db.ExecContext(ctx, `
@@ -506,9 +507,9 @@ WHERE evidence_event_id = (SELECT id FROM l1_memory_event WHERE namespace = ?)`,
 	}
 	if _, err := store.db.ExecContext(ctx, `
 INSERT INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-		"diagnostics-orphan", "ren", 99, domainmemory.ProfilePromotionFailed, 5, "orphan"); err != nil {
+	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		"diagnostics-orphan", l1TestSessionID("ren"), l1TestThread("diagnostics-orphan", 1).ID, 1, l1TestThread("diagnostics-orphan", 1).Kind, domainmemory.ProfilePromotionFailed, 5, "orphan"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -559,7 +560,7 @@ func TestProfilePromotionReadPathsBypassOccupiedWorkerConnections(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			store := newProfilePromotionTestStore(t)
 			ctx := context.Background()
-			if err := store.SaveMessage(ctx, "ren", 30, "conv:read-path-"+tt.name, domconv.NewMessage(domconv.SpeakerUser, "read path", nil), MemoryStateObserved); err != nil {
+			if err := l1TestSaveMessageInNamespace(store, ctx, "ren", "read-path-"+tt.name, 1, "conv:read-path-"+tt.name, domconv.NewMessage(domconv.SpeakerUser, "read path", nil), MemoryStateObserved); err != nil {
 				t.Fatal(err)
 			}
 			writeConn, err := store.db.Conn(ctx)
@@ -640,7 +641,8 @@ func TestClaimProfilePromotionPrefersLiveConversationOverOlderChatGPTBackfill(t 
 	}
 	liveMessage := domconv.NewMessage(domconv.SpeakerUser, "新しい通常会話", nil)
 	liveMessage.Timestamp = now
-	if err := store.SaveMessage(ctx, "live-session", 42, "conv:live-priority", liveMessage, MemoryStateObserved); err != nil {
+	liveThread := l1TestThread("live-priority", 1)
+	if err := l1TestSaveMessageInNamespace(store, ctx, "live-session", "live-priority", 1, "conv:live-priority", liveMessage, MemoryStateObserved); err != nil {
 		t.Fatal(err)
 	}
 	var liveEvidenceID string
@@ -653,7 +655,7 @@ SELECT id FROM l1_memory_event WHERE namespace = ? AND source = ?`, "conv:live-p
 	if err != nil || batch == nil {
 		t.Fatalf("first batch=%#v err=%v", batch, err)
 	}
-	if len(batch.Messages) != 1 || batch.Messages[0].EventID != liveEvidenceID || batch.SessionID != "live-session" || batch.ThreadID != 42 {
+	if len(batch.Messages) != 1 || batch.Messages[0].EventID != liveEvidenceID || batch.SessionID != l1TestSessionID("live-session") || batch.ThreadID != liveThread.ID || batch.ThreadSeq != liveThread.Seq || batch.ThreadKind != liveThread.Kind {
 		t.Fatalf("first batch=%#v want live conversation group", batch)
 	}
 	if _, err := store.CompleteProfilePromotionBatch(ctx, *batch, nil, "ren", now); err != nil {

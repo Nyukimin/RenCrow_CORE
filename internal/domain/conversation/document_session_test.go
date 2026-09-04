@@ -69,8 +69,8 @@ func TestNewSessionConversationInitializesFields(t *testing.T) {
 	if len(session.History) != 0 {
 		t.Fatalf("expected empty history, got %d entries", len(session.History))
 	}
-	if session.LastThreadID != 0 {
-		t.Fatalf("expected zero last thread ID, got %d", session.LastThreadID)
+	if session.LastThreadID != "" {
+		t.Fatalf("expected zero last thread ID, got %q", session.LastThreadID)
 	}
 	if session.CreatedAt.IsZero() || session.UpdatedAt.IsZero() {
 		t.Fatal("expected timestamps to be initialized")

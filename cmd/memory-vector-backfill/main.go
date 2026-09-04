@@ -2,14 +2,13 @@
 // the Qdrant thread-memory collection through the canonical embedding route
 // (RenCrow_LLM Gateway /v1/embeddings). It is deterministic: no generative
 // LLM is used, summaries come from stored archive rows and from fixed-format
-// ChatGPT conversation digests, and point IDs are stable so re-runs converge.
+// ChatGPT conversation digests. Qdrant point identity is derived by the store
+// from canonical ThreadID so re-runs converge without a second identity rule.
 package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -18,28 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
-
-var backfillNamespace = uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-
-func deterministicPointID(key string) string {
-	return uuid.NewSHA1(backfillNamespace, []byte(key)).String()
-}
-
-func stableThreadID(key string) int64 {
-	digest := sha256.Sum256([]byte(key))
-	value := int64(binary.BigEndian.Uint64(digest[:8]) & 0x7fffffffffffffff)
-	if value == 0 {
-		value = 1
-	}
-	return value
-}
 
 func truncateRunes(s string, max int) string {
 	runes := []rune(strings.TrimSpace(s))
@@ -65,6 +49,49 @@ func sanitizeKeywords(values []string) []string {
 
 type embedder interface {
 	Embed(ctx context.Context, text string) ([]float32, error)
+}
+
+type archiveThreadIdentity struct {
+	threadID   modulecore.ThreadID
+	threadSeq  modulecore.ThreadSeq
+	threadKind modulecore.ThreadKind
+}
+
+func validateArchiveThreadIdentity(identity archiveThreadIdentity) error {
+	if err := identity.threadID.Validate(); err != nil {
+		return fmt.Errorf("thread_id: %w", err)
+	}
+	if err := identity.threadSeq.Validate(); err != nil {
+		return fmt.Errorf("thread_seq: %w", err)
+	}
+	if err := identity.threadKind.Validate(); err != nil {
+		return fmt.Errorf("thread_kind: %w", err)
+	}
+	return nil
+}
+
+func chatGPTConversationIdentity(conversationID string) (modulecore.SessionID, modulecore.ThreadID, error) {
+	sessionRaw, err := modulecore.NewMigrationID(modulecore.CanonicalSessionID, "l1_raw_record", "session_id", conversationID)
+	if err != nil {
+		return "", "", fmt.Errorf("derive ChatGPT session ID for conversation %q: %w", conversationID, err)
+	}
+	sessionID := modulecore.SessionID(sessionRaw)
+	if err := sessionID.Validate(); err != nil {
+		return "", "", fmt.Errorf("validate ChatGPT session ID for conversation %q: %w", conversationID, err)
+	}
+
+	threadRaw, err := modulecore.NewMigrationID(modulecore.CanonicalThreadID, "l1_raw_record", "thread_id", conversationID)
+	if err != nil {
+		return "", "", fmt.Errorf("derive ChatGPT thread ID for conversation %q: %w", conversationID, err)
+	}
+	threadID := modulecore.ThreadID(threadRaw)
+	if err := threadID.Validate(); err != nil {
+		return "", "", fmt.Errorf("validate ChatGPT thread ID for conversation %q: %w", conversationID, err)
+	}
+	if string(sessionID) == string(threadID) {
+		return "", "", fmt.Errorf("ChatGPT session and thread IDs must differ for conversation %q", conversationID)
+	}
+	return sessionID, threadID, nil
 }
 
 func main() {
@@ -111,22 +138,32 @@ func backfillArchiveThreads(ctx context.Context, dbPath string, emb embedder, st
 	}
 	defer db.Close()
 	rows, err := db.QueryContext(ctx, `
-SELECT thread_id, session_id, ts_start, ts_end, domain, summary, keywords, is_novel
+SELECT thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, is_novel
 FROM session_thread
 WHERE summary IS NOT NULL AND trim(summary) != ''
-ORDER BY thread_id ASC`)
+ORDER BY thread_id ASC, thread_seq ASC`)
 	if err != nil {
 		return 0, err
 	}
 	defer rows.Close()
 	count := 0
 	for rows.Next() {
-		var threadID int64
+		var rawThreadID, rawThreadKind string
+		var rawThreadSeq int64
+		var threadID modulecore.ThreadID
+		var threadSeq modulecore.ThreadSeq
+		var threadKind modulecore.ThreadKind
 		var sessionID, domain, summaryText, keywordsJSON string
 		var tsStart, tsEnd time.Time
 		var isNovel bool
-		if err := rows.Scan(&threadID, &sessionID, &tsStart, &tsEnd, &domain, &summaryText, &keywordsJSON, &isNovel); err != nil {
+		if err := rows.Scan(&rawThreadID, &rawThreadSeq, &rawThreadKind, &sessionID, &tsStart, &tsEnd, &domain, &summaryText, &keywordsJSON, &isNovel); err != nil {
 			return count, err
+		}
+		threadID = modulecore.ThreadID(rawThreadID)
+		threadSeq = modulecore.ThreadSeq(rawThreadSeq)
+		threadKind = modulecore.ThreadKind(rawThreadKind)
+		if err := validateArchiveThreadIdentity(archiveThreadIdentity{threadID: threadID, threadSeq: threadSeq, threadKind: threadKind}); err != nil {
+			return count, fmt.Errorf("validate archive session_thread identity %q: %w", rawThreadID, err)
 		}
 		var keywords []string
 		_ = json.Unmarshal([]byte(keywordsJSON), &keywords)
@@ -136,17 +173,16 @@ ORDER BY thread_id ASC`)
 		}
 		vector, err := emb.Embed(ctx, sanitizeUTF8(summaryText))
 		if err != nil {
-			return count, fmt.Errorf("embed archive thread %d: %w", threadID, err)
+			return count, fmt.Errorf("embed archive thread %s: %w", threadID, err)
 		}
 		summary := &domconv.ThreadSummary{
-			ThreadID: threadID, SessionID: sanitizeUTF8(sessionID), Domain: sanitizeUTF8(domain),
+			ThreadID: threadID, ThreadSeq: threadSeq, ThreadKind: threadKind, SessionID: sanitizeUTF8(sessionID), Domain: sanitizeUTF8(domain),
 			Summary: sanitizeUTF8(summaryText), Keywords: sanitizeKeywords(keywords), Embedding: vector,
 			StartTime: tsStart.UTC(), EndTime: tsEnd.UTC(),
 			IsNovel: isNovel,
 		}
-		pointID := deterministicPointID(fmt.Sprintf("archive-thread:%s:%d", sessionID, threadID))
-		if err := store.SaveThreadSummaryWithPointID(ctx, summary, pointID); err != nil {
-			return count, fmt.Errorf("save archive thread %d: %w", threadID, err)
+		if err := store.SaveThreadSummary(ctx, summary); err != nil {
+			return count, fmt.Errorf("save archive thread %s: %w", threadID, err)
 		}
 		count++
 		if count%25 == 0 {
@@ -231,6 +267,10 @@ ORDER BY created_at ASC, rowid ASC`)
 		if digest == "" {
 			continue
 		}
+		sessionID, threadID, err := chatGPTConversationIdentity(convID)
+		if err != nil {
+			return count, err
+		}
 		if dryRun {
 			count++
 			continue
@@ -244,16 +284,17 @@ ORDER BY created_at ASC, rowid ASC`)
 			keywords = append([]string{t}, keywords...)
 		}
 		summary := &domconv.ThreadSummary{
-			ThreadID:  stableThreadID("chatgpt-conv:" + convID),
-			SessionID: "chatgpt_export",
-			Domain:    "chatgpt",
-			Summary:   digest,
-			Keywords:  keywords,
-			Embedding: vector,
-			StartTime: agg.start.UTC(), EndTime: agg.end.UTC(),
+			ThreadID:   threadID,
+			ThreadSeq:  1,
+			ThreadKind: modulecore.ThreadKindUserConversation,
+			SessionID:  string(sessionID),
+			Domain:     "chatgpt",
+			Summary:    digest,
+			Keywords:   keywords,
+			Embedding:  vector,
+			StartTime:  agg.start.UTC(), EndTime: agg.end.UTC(),
 		}
-		pointID := deterministicPointID("chatgpt-conv:" + convID)
-		if err := store.SaveThreadSummaryWithPointID(ctx, summary, pointID); err != nil {
+		if err := store.SaveThreadSummary(ctx, summary); err != nil {
 			return count, fmt.Errorf("save chatgpt conversation %s: %w", convID, err)
 		}
 		count++

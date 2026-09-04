@@ -40,7 +40,14 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 		SummaryProvider: "CodexExe (initiator=shiro)",
 		Transcript:      append([]string(nil), transcript...),
 	}
+	o.emitMu.Lock()
 	o.mu.Lock()
+	if !o.copyActiveThreadIdentityLocked(&record, sessionID, generation) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		log.Printf("[Forecast] summary rejected without active thread owner: session=%s generation=%d", sessionID, generation)
+		return ""
+	}
 	o.history = append(o.history, record)
 	if len(o.history) > 200 {
 		o.history = o.history[len(o.history)-200:]
@@ -53,6 +60,7 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 			log.Printf("[Forecast] topic store append failed: %v", err)
 		}
 	}
+	o.emitMu.Unlock()
 
 	// タイムラインに要約を emit
 	msg := domaintransport.NewMessage("shiro", "forecast_summary", sessionID, "", title+"\n"+summary)

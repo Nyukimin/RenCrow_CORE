@@ -18,7 +18,7 @@ func TestEmbeddedBackfillPackageValidatesCanonicalDatasetAndSpecifications(t *te
 	if len(pkg.Items) != 114 || len(pkg.SeedFeatures) != 114 {
 		t.Fatalf("canonical counts items=%d seed=%d", len(pkg.Items), len(pkg.SeedFeatures))
 	}
-	if pkg.DatasetID != CanonicalBackfillDatasetID || pkg.PackageSHA256 != "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af" || pkg.Revision != 1 {
+	if pkg.DatasetID != CanonicalBackfillDatasetID || pkg.PackageSHA256 != "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670" || pkg.Revision != 1 {
 		t.Fatalf("package identity=%+v", pkg)
 	}
 	local, external := 0, 0

@@ -14,13 +14,18 @@ import (
 	"unicode/utf8"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Store はメッセージをActiveThreadに追加
 func (r *RealConversationManager) Store(ctx context.Context, sessionID string, msg domconv.Message) error {
+	r.threadMu.Lock()
+	defer r.threadMu.Unlock()
+
+	var preparedSession *domconv.SessionConversation
 	thread, err := r.GetActiveThread(ctx, sessionID)
 	if err == domconv.ErrThreadNotFound {
-		thread, err = r.CreateThread(ctx, sessionID, "general")
+		thread, preparedSession, err = r.prepareThreadLocked(ctx, sessionID, "general")
 		if err != nil {
 			return fmt.Errorf("failed to create thread: %w", err)
 		}
@@ -28,48 +33,69 @@ func (r *RealConversationManager) Store(ctx context.Context, sessionID string, m
 		return fmt.Errorf("failed to get active thread: %w", err)
 	}
 
-	thread.AddMessage(msg)
+	if err := validateStoreThread(thread, sessionID); err != nil {
+		return err
+	}
+	if err := r.validateLatestStoreThreadReference(ctx, sessionID, thread); err != nil {
+		return err
+	}
+	thread = cloneThreadForStore(thread)
+	if err := thread.AddMessage(msg); err != nil {
+		return fmt.Errorf("failed to append message to thread: %w", err)
+	}
 
 	if len(thread.Turns) >= 12 {
 		oldThreadID := thread.ID
-		newThread, err := r.CreateThread(ctx, sessionID, thread.Domain)
+		newThread, newSession, err := r.prepareThreadLocked(ctx, sessionID, thread.Domain)
 		if err != nil {
 			return fmt.Errorf("failed to create new thread before background flush: %w", err)
 		}
-		newThread.AddMessage(msg)
-		if err := r.saveObservedMessage(ctx, sessionID, newThread.ID, msg); err != nil {
-			log.Printf("Failed to save message to L1 SQLite: %v", err)
+		if err := validateStoreThread(newThread, sessionID); err != nil {
+			return err
 		}
-		if err := r.redisStore.SaveThread(ctx, newThread); err != nil {
-			return fmt.Errorf("failed to save rolled thread to redis: %w", err)
+		newThread = cloneThreadForStore(newThread)
+		if err := newThread.AddMessage(msg); err != nil {
+			return fmt.Errorf("failed to append message to new thread: %w", err)
+		}
+		if err := r.saveObservedMessage(ctx, sessionID, newThread.ID, newThread.ThreadSeq, newThread.ThreadKind, msg); err != nil {
+			return fmt.Errorf("failed to save message to L1 SQLite: %w", err)
+		}
+		if err := r.persistPreparedThreadLocked(ctx, newThread, newSession); err != nil {
+			return fmt.Errorf("failed to persist rolled thread: %w", err)
 		}
 		r.enqueueThreadFlush(ctx, oldThreadID)
 		return nil
 	}
 
-	if err := r.saveObservedMessage(ctx, sessionID, thread.ID, msg); err != nil {
-		log.Printf("Failed to save message to L1 SQLite: %v", err)
+	if err := r.saveObservedMessage(ctx, sessionID, thread.ID, thread.ThreadSeq, thread.ThreadKind, msg); err != nil {
+		return fmt.Errorf("failed to save message to L1 SQLite: %w", err)
 	}
 
+	if preparedSession != nil {
+		if err := r.persistPreparedThreadLocked(ctx, thread, preparedSession); err != nil {
+			return fmt.Errorf("failed to persist created thread: %w", err)
+		}
+		return nil
+	}
 	if err := r.redisStore.SaveThread(ctx, thread); err != nil {
 		return fmt.Errorf("failed to save thread to redis: %w", err)
 	}
 	return nil
 }
 
-func (r *RealConversationManager) saveObservedMessage(ctx context.Context, sessionID string, threadID int64, msg domconv.Message) error {
+func (r *RealConversationManager) saveObservedMessage(ctx context.Context, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, msg domconv.Message) error {
 	if r.l1Store == nil {
 		return nil
 	}
-	namespace := fmt.Sprintf("conv:%d", threadID)
-	return r.l1Store.SaveMessage(ctx, sessionID, threadID, namespace, msg, l1sqlite.MemoryStateObserved)
+	namespace := fmt.Sprintf("conv:%s", threadID)
+	return r.l1Store.SaveMessage(ctx, sessionID, threadID, threadSeq, threadKind, namespace, msg, l1sqlite.MemoryStateObserved)
 }
 
-func (r *RealConversationManager) enqueueThreadFlush(parent context.Context, threadID int64) {
+func (r *RealConversationManager) enqueueThreadFlush(parent context.Context, threadID modulecore.ThreadID) {
 	r.backgroundMu.Lock()
 	if r.backgroundClosed {
 		r.backgroundMu.Unlock()
-		log.Printf("Thread #%d background flush skipped: manager is closing", threadID)
+		log.Printf("Thread %s background flush skipped: manager is closing", threadID)
 		return
 	}
 	r.backgroundWG.Add(1)
@@ -85,10 +111,10 @@ func (r *RealConversationManager) enqueueThreadFlush(parent context.Context, thr
 		defer cancel()
 		_, err := r.FlushThread(ctx, threadID)
 		if err != nil {
-			log.Printf("Thread #%d background flush failed: thread_summary_archive_failed", threadID)
+			log.Printf("Thread %s background flush failed: thread_summary_archive_failed", threadID)
 			return
 		}
-		log.Printf("Thread #%d background flushed: thread_summary_persisted", threadID)
+		log.Printf("Thread %s background flushed: thread_summary_persisted", threadID)
 	}()
 }
 
@@ -97,7 +123,7 @@ func (r *RealConversationManager) waitForBackgroundJobs() {
 }
 
 // FlushThread はThreadを要約してSQLite archive/VectorDBに保存する。
-func (r *RealConversationManager) FlushThread(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+func (r *RealConversationManager) FlushThread(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 	thread, err := r.redisStore.GetThread(ctx, threadID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get thread from redis: %w", err)
@@ -146,17 +172,19 @@ func (r *RealConversationManager) archiveThreadSummary(ctx context.Context, thre
 		return nil, fmt.Errorf("thread summary residual invalid")
 	}
 	summary := &domconv.ThreadSummary{
-		ThreadID:  thread.ID,
-		SessionID: thread.SessionID,
-		Domain:    thread.Domain,
-		Summary:   residual.Summary,
-		Keywords:  residual.Keywords,
-		Roles:     append([]string(nil), roles...),
-		Receipt:   receipt,
-		Embedding: embedding,
-		StartTime: thread.StartTime,
-		EndTime:   archiveAt,
-		IsNovel:   false,
+		ThreadID:   thread.ID,
+		ThreadSeq:  thread.ThreadSeq,
+		ThreadKind: thread.ThreadKind,
+		SessionID:  thread.SessionID,
+		Domain:     thread.Domain,
+		Summary:    residual.Summary,
+		Keywords:   residual.Keywords,
+		Roles:      append([]string(nil), roles...),
+		Receipt:    receipt,
+		Embedding:  embedding,
+		StartTime:  thread.StartTime,
+		EndTime:    archiveAt,
+		IsNovel:    false,
 	}
 
 	if r.archiveStore != nil {
@@ -201,32 +229,208 @@ func (r *RealConversationManager) GetActiveThread(ctx context.Context, sessionID
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
-	if sess.LastThreadID == 0 {
+	if err := validateSessionThreadReference(sess); err != nil {
+		return nil, fmt.Errorf("invalid session active thread: %w", err)
+	}
+	if sess.LastThreadID == "" {
 		return nil, domconv.ErrThreadNotFound
 	}
-	return r.redisStore.GetThread(ctx, sess.LastThreadID)
+	thread, err := r.redisStore.GetThread(ctx, sess.LastThreadID)
+	if err != nil {
+		return nil, err
+	}
+	if thread == nil || thread.ID != sess.LastThreadID || thread.ThreadSeq != sess.LastThreadSeq || thread.ThreadKind != sess.LastThreadKind || thread.SessionID != sess.ID {
+		return nil, fmt.Errorf("active thread does not match session reference")
+	}
+	return thread, nil
 }
 
 // CreateThread は新規 Thread を作成
 func (r *RealConversationManager) CreateThread(ctx context.Context, sessionID string, domain string) (*domconv.Thread, error) {
+	r.threadMu.Lock()
+	defer r.threadMu.Unlock()
+	return r.createThreadLocked(ctx, sessionID, domain)
+}
+
+func (r *RealConversationManager) createThreadLocked(ctx context.Context, sessionID string, domain string) (*domconv.Thread, error) {
+	thread, sess, err := r.prepareThreadLocked(ctx, sessionID, domain)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.persistPreparedThreadLocked(ctx, thread, sess); err != nil {
+		return nil, err
+	}
+	return thread, nil
+}
+
+func (r *RealConversationManager) prepareThreadLocked(ctx context.Context, sessionID string, domain string) (*domconv.Thread, *domconv.SessionConversation, error) {
 	sess, err := r.redisStore.GetSession(ctx, sessionID)
 	if err == domconv.ErrSessionNotFound {
 		sess = domconv.NewSessionConversation(sessionID, "")
 	} else if err != nil {
-		return nil, fmt.Errorf("failed to get session: %w", err)
+		return nil, nil, fmt.Errorf("failed to get session: %w", err)
+	}
+	if sess != nil {
+		sessionCopy := *sess
+		sess = &sessionCopy
+	}
+	if err := r.reconcileSessionThreadReference(ctx, sess); err != nil {
+		return nil, nil, err
 	}
 
-	thread := domconv.NewThread(sessionID, domain)
+	seq, err := nextSessionThreadSequence(sess)
+	if err != nil {
+		return nil, nil, err
+	}
+	thread, err := domconv.NewThread(sessionID, domain, domconv.ThreadKindUserConversation, seq)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create thread: %w", err)
+	}
 	sess.LastThreadID = thread.ID
-	sess.UpdatedAt = time.Now()
+	sess.LastThreadSeq = thread.ThreadSeq
+	sess.LastThreadKind = thread.ThreadKind
+	sess.UpdatedAt = time.Now().UTC()
+	return thread, sess, nil
+}
 
+func (r *RealConversationManager) persistPreparedThreadLocked(ctx context.Context, thread *domconv.Thread, sess *domconv.SessionConversation) error {
 	if err := r.redisStore.SaveThread(ctx, thread); err != nil {
-		return nil, fmt.Errorf("failed to save thread to redis: %w", err)
+		return fmt.Errorf("failed to save thread to redis: %w", err)
 	}
 	if err := r.redisStore.SaveSession(ctx, sess); err != nil {
-		return nil, fmt.Errorf("failed to save session to redis: %w", err)
+		if rollbackErr := r.redisStore.DeleteThread(ctx, thread.ID); rollbackErr != nil {
+			return fmt.Errorf("failed to save session to redis: %w", errors.Join(err, fmt.Errorf("failed to rollback created thread: %w", rollbackErr)))
+		}
+		return fmt.Errorf("failed to save session to redis: %w", err)
 	}
-	return thread, nil
+	return nil
+}
+
+func validateStoreThread(thread *domconv.Thread, sessionID string) error {
+	if thread == nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	if thread.Status != domconv.ThreadActive {
+		return domconv.ErrInvalidThreadStatus
+	}
+	if modulecore.SessionID(sessionID).Validate() != nil || thread.SessionID != sessionID || modulecore.SessionID(thread.SessionID).Validate() != nil || thread.ID.Validate() != nil || thread.ThreadSeq.Validate() != nil || thread.ThreadKind.Validate() != nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	return nil
+}
+
+func (r *RealConversationManager) validateLatestStoreThreadReference(ctx context.Context, sessionID string, thread *domconv.Thread) error {
+	if r.l1Store == nil {
+		return nil
+	}
+	l1ThreadID, l1ThreadSeq, l1ThreadKind, found, err := r.l1Store.LatestConversationThreadReference(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("load latest L1 conversation thread: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	if l1ThreadID.Validate() != nil || l1ThreadSeq.Validate() != nil || l1ThreadKind.Validate() != nil {
+		return fmt.Errorf("invalid latest L1 conversation thread: %w", domconv.ErrConversationTurnInvalid)
+	}
+	if l1ThreadSeq > thread.ThreadSeq || l1ThreadSeq == thread.ThreadSeq && (l1ThreadID != thread.ID || l1ThreadKind != thread.ThreadKind) {
+		return fmt.Errorf("active thread conflicts with latest L1 conversation thread: %w", domconv.ErrConversationTurnConflict)
+	}
+	return nil
+}
+
+func cloneThreadForStore(thread *domconv.Thread) *domconv.Thread {
+	if thread == nil {
+		return nil
+	}
+	clone := *thread
+	clone.Turns = make([]domconv.Message, len(thread.Turns))
+	for index, turn := range thread.Turns {
+		clone.Turns[index] = turn
+		clone.Turns[index].Meta = cloneConversationTurnMeta(turn.Meta)
+	}
+	clone.Targets = append([]string(nil), thread.Targets...)
+	if thread.Cooldown != nil {
+		clone.Cooldown = make(map[string]int, len(thread.Cooldown))
+		for key, value := range thread.Cooldown {
+			clone.Cooldown[key] = value
+		}
+	}
+	if thread.EndTime != nil {
+		endTime := *thread.EndTime
+		clone.EndTime = &endTime
+	}
+	return &clone
+}
+
+func (r *RealConversationManager) reconcileSessionThreadReference(ctx context.Context, sess *domconv.SessionConversation) error {
+	if r == nil || r.l1Store == nil {
+		return nil
+	}
+	if err := validateSessionThreadReference(sess); err != nil {
+		return fmt.Errorf("invalid session active thread: %w", err)
+	}
+	l1ThreadID, l1ThreadSeq, l1ThreadKind, found, err := r.l1Store.LatestConversationThreadReference(ctx, sess.ID)
+	if err != nil {
+		return fmt.Errorf("load latest L1 conversation thread: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	l1Reference := &domconv.SessionConversation{
+		LastThreadID:   l1ThreadID,
+		LastThreadSeq:  l1ThreadSeq,
+		LastThreadKind: l1ThreadKind,
+	}
+	if err := validateSessionThreadReference(l1Reference); err != nil {
+		return fmt.Errorf("invalid latest L1 conversation thread: %w", err)
+	}
+	if sess.LastThreadID == "" || l1ThreadSeq > sess.LastThreadSeq {
+		sess.LastThreadID = l1ThreadID
+		sess.LastThreadSeq = l1ThreadSeq
+		sess.LastThreadKind = l1ThreadKind
+		return nil
+	}
+	if l1ThreadSeq == sess.LastThreadSeq && (l1ThreadID != sess.LastThreadID || l1ThreadKind != sess.LastThreadKind) {
+		return errors.New("session active thread identity conflicts with latest L1 conversation thread")
+	}
+	return nil
+}
+
+func validateSessionThreadReference(sess *domconv.SessionConversation) error {
+	if sess == nil {
+		return errors.New("session is nil")
+	}
+	empty := sess.LastThreadID == "" && sess.LastThreadSeq == 0 && sess.LastThreadKind == ""
+	if empty {
+		return nil
+	}
+	if sess.LastThreadID == "" || sess.LastThreadSeq == 0 || sess.LastThreadKind == "" {
+		return errors.New("session active thread reference must contain thread_id, thread_seq, and thread_kind")
+	}
+	if err := sess.LastThreadID.Validate(); err != nil {
+		return fmt.Errorf("invalid thread ID: %w", err)
+	}
+	if err := sess.LastThreadSeq.Validate(); err != nil {
+		return fmt.Errorf("invalid thread sequence: %w", err)
+	}
+	if err := sess.LastThreadKind.Validate(); err != nil {
+		return fmt.Errorf("invalid thread kind: %w", err)
+	}
+	return nil
+}
+
+func nextSessionThreadSequence(sess *domconv.SessionConversation) (modulecore.ThreadSeq, error) {
+	if err := validateSessionThreadReference(sess); err != nil {
+		return 0, err
+	}
+	if sess.LastThreadID == "" {
+		return 1, nil
+	}
+	if sess.LastThreadSeq == modulecore.ThreadSeq(1<<63-1) {
+		return 0, errors.New("thread sequence overflow")
+	}
+	return sess.LastThreadSeq + 1, nil
 }
 
 func (r *RealConversationManager) generateSummaryResidual(ctx context.Context, thread *domconv.Thread) (domconv.SummaryResidual, string, string) {
@@ -365,7 +569,9 @@ func classifySummaryFailure(err error) string {
 
 type threadSummaryEvidence struct {
 	SchemaVersion   string                      `json:"schema_version"`
-	ThreadID        int64                       `json:"thread_id"`
+	ThreadID        modulecore.ThreadID         `json:"thread_id"`
+	ThreadSeq       modulecore.ThreadSeq        `json:"thread_seq"`
+	ThreadKind      modulecore.ThreadKind       `json:"thread_kind"`
 	SessionID       string                      `json:"session_id"`
 	SourceTurnCount int                         `json:"source_turn_count"`
 	Turns           []threadSummaryEvidenceTurn `json:"turns"`
@@ -381,7 +587,7 @@ func deriveThreadSummaryEvidence(thread *domconv.Thread) ([]string, string, erro
 	if thread == nil {
 		return nil, "", fmt.Errorf("thread summary evidence source is required")
 	}
-	if thread.ID <= 0 || strings.TrimSpace(thread.SessionID) == "" || !utf8.ValidString(thread.SessionID) || len(thread.Turns) == 0 {
+	if thread.ID.Validate() != nil || thread.ThreadSeq.Validate() != nil || thread.ThreadKind.Validate() != nil || strings.TrimSpace(thread.SessionID) == "" || !utf8.ValidString(thread.SessionID) || len(thread.Turns) == 0 {
 		return nil, "", fmt.Errorf("thread summary evidence source identity is invalid")
 	}
 	roles := make([]string, 0, len(thread.Turns))
@@ -389,6 +595,8 @@ func deriveThreadSummaryEvidence(thread *domconv.Thread) ([]string, string, erro
 	evidence := threadSummaryEvidence{
 		SchemaVersion:   "conversation.thread_summary_evidence.v1",
 		ThreadID:        thread.ID,
+		ThreadSeq:       thread.ThreadSeq,
+		ThreadKind:      thread.ThreadKind,
 		SessionID:       thread.SessionID,
 		SourceTurnCount: len(thread.Turns),
 		Turns:           make([]threadSummaryEvidenceTurn, 0, len(thread.Turns)),

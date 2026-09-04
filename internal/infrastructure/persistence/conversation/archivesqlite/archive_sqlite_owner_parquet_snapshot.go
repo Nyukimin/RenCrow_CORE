@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type archiveParquetSnapshot struct {
@@ -59,7 +61,7 @@ func readThreadSummaryRows(ctx context.Context, queryer interface {
 }) ([]threadSummaryParquetRow, error) {
 	rows, err := queryer.QueryContext(ctx, `
 SELECT st.thread_id, st.session_id, st.ts_start, st.ts_end, st.domain, st.summary,
-       st.keywords, st.embedding, st.is_novel, st.created_at,
+       st.thread_seq, st.thread_kind, st.keywords, st.embedding, st.is_novel, st.created_at,
        r.schema_version, r.generation_mode, r.provider, r.failure_code,
        r.evidence_sha256, r.source_turn_count, r.roles_json, r.created_at
 FROM session_thread st
@@ -71,6 +73,9 @@ ORDER BY st.ts_start ASC, st.thread_id ASC`)
 	result := make([]threadSummaryParquetRow, 0)
 	for rows.Next() {
 		var row threadSummaryParquetRow
+		var threadID string
+		var threadSeq int64
+		var threadKind string
 		var tsEnd sql.NullTime
 		var domain sql.NullString
 		var isNovel sql.NullBool
@@ -78,7 +83,8 @@ ORDER BY st.ts_start ASC, st.thread_id ASC`)
 		var sourceTurnCount sql.NullInt64
 		var receiptCreatedAt sql.NullTime
 		if err := rows.Scan(
-			&row.ThreadID, &row.SessionID, &row.TsStart, &tsEnd, &domain, &row.Summary,
+			&threadID, &row.SessionID, &row.TsStart, &tsEnd, &domain, &row.Summary,
+			&threadSeq, &threadKind,
 			&row.Keywords, &row.Embedding, &isNovel, &row.CreatedAt,
 			&schemaVersion, &generationMode, &provider, &failureCode, &evidenceSHA256,
 			&sourceTurnCount, &rolesJSON, &receiptCreatedAt,
@@ -86,6 +92,16 @@ ORDER BY st.ts_start ASC, st.thread_id ASC`)
 			_ = rows.Close()
 			return nil, err
 		}
+		canonicalThreadID := modulecore.ThreadID(threadID)
+		canonicalThreadSeq := modulecore.ThreadSeq(threadSeq)
+		canonicalThreadKind := modulecore.ThreadKind(threadKind)
+		if err := validateArchiveThreadTuple(canonicalThreadID, canonicalThreadSeq, canonicalThreadKind, false); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		row.ThreadID = threadID
+		row.ThreadSeq = threadSeq
+		row.ThreadKind = threadKind
 		if tsEnd.Valid {
 			value := tsEnd.Time
 			row.TsEnd = &value
@@ -147,7 +163,7 @@ func readMemoryArchiveRows(ctx context.Context, queryer interface {
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
 }) ([]l1MemoryEventParquetRow, error) {
 	rows, err := queryer.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at
+	SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event_archive ORDER BY created_at ASC, id ASC`)
 	if err != nil {
 		return nil, err
@@ -155,10 +171,23 @@ FROM l1_memory_event_archive ORDER BY created_at ASC, id ASC`)
 	result := make([]l1MemoryEventParquetRow, 0)
 	for rows.Next() {
 		var row l1MemoryEventParquetRow
-		if err := rows.Scan(&row.ID, &row.Namespace, &row.SessionID, &row.ThreadID, &row.Speaker, &row.Message, &row.MetaJSON, &row.MemoryState, &row.Layer, &row.Source, &row.CreatedAt, &row.UpdatedAt); err != nil {
+		var threadID string
+		var threadSeq int64
+		var threadKind string
+		if err := rows.Scan(&row.ID, &row.Namespace, &row.SessionID, &threadID, &threadSeq, &threadKind, &row.Speaker, &row.Message, &row.MetaJSON, &row.MemoryState, &row.Layer, &row.Source, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
+		canonicalThreadID := modulecore.ThreadID(threadID)
+		canonicalThreadSeq := modulecore.ThreadSeq(threadSeq)
+		canonicalThreadKind := modulecore.ThreadKind(threadKind)
+		if err := validateArchiveThreadTuple(canonicalThreadID, canonicalThreadSeq, canonicalThreadKind, true); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		row.ThreadID = threadID
+		row.ThreadSeq = threadSeq
+		row.ThreadKind = threadKind
 		result = append(result, row)
 	}
 	rowErr, closeErr := rows.Err(), rows.Close()

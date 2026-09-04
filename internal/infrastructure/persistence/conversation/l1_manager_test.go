@@ -7,17 +7,89 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestL1ConversationManagerReusesLatestCanonicalThreadAfterUnthreadedRows(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("restart-session")
+	store := &mockL1Store{}
+	firstManager := NewL1ConversationManager(store)
+	firstMessage := domconv.NewMessage(domconv.SpeakerUser, "first", nil)
+	if err := firstManager.Store(ctx, sessionID, firstMessage); err != nil {
+		t.Fatalf("first Store: %v", err)
+	}
+	if len(store.saved) != 1 {
+		t.Fatalf("first saved rows = %d, want 1", len(store.saved))
+	}
+	canonical := store.saved[0]
+	if canonical.ThreadID == "" || canonical.ThreadSeq != 1 || canonical.ThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("first canonical tuple = %q/%d/%q", canonical.ThreadID, canonical.ThreadSeq, canonical.ThreadKind)
+	}
+
+	// These rows are deliberately newer but carry no conversation tuple. A
+	// bounded RecentBySession page would hide the canonical row after enough of
+	// them; restart recovery must use the owner query instead.
+	for i := 0; i < 13; i++ {
+		store.saved = append(store.saved, l1sqlite.L1MemoryEvent{
+			SessionID:  sessionID,
+			Namespace:  "other",
+			ThreadID:   "",
+			ThreadSeq:  0,
+			ThreadKind: "",
+			Speaker:    domconv.SpeakerSystem,
+			Message:    "unthreaded row",
+		})
+	}
+
+	// A new manager models a process restart. It must recover the persisted
+	// tuple, rather than create a second UUID at sequence one.
+	restartedManager := NewL1ConversationManager(store)
+	if err := restartedManager.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, "after restart", nil)); err != nil {
+		t.Fatalf("restart Store: %v", err)
+	}
+	if len(store.saved) != 15 {
+		t.Fatalf("saved rows after restart = %d, want 15", len(store.saved))
+	}
+	last := store.saved[len(store.saved)-1]
+	if last.ThreadID != canonical.ThreadID || last.ThreadSeq != canonical.ThreadSeq || last.ThreadKind != canonical.ThreadKind {
+		t.Fatalf("recovered tuple = %q/%d/%q, want %q/%d/%q", last.ThreadID, last.ThreadSeq, last.ThreadKind, canonical.ThreadID, canonical.ThreadSeq, canonical.ThreadKind)
+	}
+}
+
+func TestL1ConversationManagerCreateThreadReusesLatestTupleAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("create-restart-session")
+	store := &mockL1Store{}
+	firstManager := NewL1ConversationManager(store)
+	first, err := firstManager.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("first CreateThread: %v", err)
+	}
+	if err := firstManager.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, "persist tuple", nil)); err != nil {
+		t.Fatalf("persist first tuple: %v", err)
+	}
+
+	restartedManager := NewL1ConversationManager(store)
+	second, err := restartedManager.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("restart CreateThread: %v", err)
+	}
+	if second.ID == first.ID || second.ThreadSeq != first.ThreadSeq+1 || second.ThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("restart thread=%+v, first=%+v", second, first)
+	}
+}
 
 func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.T) {
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("viewer-user")
 	dbPath := filepath.Join(t.TempDir(), "l1.db")
 	store, err := l1sqlite.NewL1SQLiteStore(dbPath)
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
 	engine := NewRealConversationEngine(NewL1ConversationManager(store), domconv.NewMioPersona("test")).WithUserMemoryStore(store, "ren")
-	if err := engine.EndTurnAs(ctx, "viewer-user", "shared token RC_L1_ONLY", "remembered", domconv.SpeakerMio); err != nil {
+	if err := engine.EndTurnAs(ctx, sessionID, "shared token RC_L1_ONLY", "remembered", domconv.SpeakerMio); err != nil {
 		t.Fatalf("EndTurnAs: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -30,7 +102,7 @@ func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.
 	}
 	defer reopened.Close()
 	restarted := NewRealConversationEngine(NewL1ConversationManager(reopened), domconv.NewMioPersona("test"))
-	pack, err := restarted.BeginTurn(ctx, "viewer-user", "what was the token?")
+	pack, err := restarted.BeginTurn(ctx, sessionID, "what was the token?")
 	if err != nil {
 		t.Fatalf("BeginTurn after reopen: %v", err)
 	}
@@ -47,6 +119,7 @@ func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.
 
 func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("viewer-user")
 	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
@@ -55,7 +128,7 @@ func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	manager := NewL1ConversationManager(store)
 	trace := domconv.RecallTrace{
 		ResponseID: "response-kuro-1",
-		SessionID:  "viewer-user",
+		SessionID:  sessionID,
 		Role:       string(domconv.SpeakerKuro),
 		Items: []domconv.RecallTraceItem{{
 			Layer:   "L1",
@@ -66,7 +139,7 @@ func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	if err := manager.SaveRecallTrace(ctx, trace); err != nil {
 		t.Fatalf("SaveRecallTrace: %v", err)
 	}
-	got, err := store.RecentRecallTraces(ctx, "viewer-user", 1)
+	got, err := store.RecentRecallTraces(ctx, sessionID, 1)
 	if err != nil {
 		t.Fatalf("RecentRecallTraces: %v", err)
 	}
@@ -84,7 +157,7 @@ func TestL1ConversationManagerCommitConversationTurnDelegatesOnlyWithoutTargets(
 	defer store.Close()
 	manager := NewL1ConversationManager(store)
 	request := domconv.ConversationTurnRequest{
-		TurnID: "l1-turn-empty-targets", SessionID: "l1-session", OwnerID: "owner",
+		TurnID: "l1-turn-empty-targets", SessionID: string(modulecore.NewSessionID()), OwnerID: "owner",
 		UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
 	}
 	result, err := manager.CommitConversationTurn(ctx, request)

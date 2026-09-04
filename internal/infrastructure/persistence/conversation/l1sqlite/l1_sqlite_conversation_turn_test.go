@@ -2,6 +2,8 @@ package l1sqlite
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -10,14 +12,26 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func conversationTurnStoreTestRequest(turnID, sessionID string) domconv.ConversationTurnRequest {
 	return domconv.ConversationTurnRequest{
-		TurnID: turnID, SessionID: sessionID, OwnerID: "owner-1",
+		TurnID: turnID, SessionID: canonicalConversationTurnSessionIDForTest(sessionID), OwnerID: "owner-1",
 		UserMessage: "user-" + turnID, AgentMessage: "agent-" + turnID,
 		AgentSpeaker: domconv.SpeakerMio,
 	}
+}
+
+func canonicalConversationTurnSessionIDForTest(source string) string {
+	if id := modulecore.SessionID(source); id.Validate() == nil {
+		return source
+	}
+	id, err := modulecore.NewMigrationID(modulecore.CanonicalSessionID, "conversation_turn_test", "session_id", source)
+	if err != nil {
+		panic(err)
+	}
+	return id
 }
 
 func TestConversationTurnCommitPersistsTypedResult(t *testing.T) {
@@ -29,7 +43,7 @@ func TestConversationTurnCommitPersistsTypedResult(t *testing.T) {
 
 	result, err := store.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
 		TurnID:       "turn-red-1",
-		SessionID:    "session-red-1",
+		SessionID:    canonicalConversationTurnSessionIDForTest("session-red-1"),
 		OwnerID:      "owner-red-1",
 		UserMessage:  "hello",
 		AgentMessage: "hi",
@@ -148,6 +162,12 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if err != nil || first.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("first result=%+v err=%v", first, err)
 	}
+	if first.ThreadSeq != 1 || first.ClosedThreadID != "" || first.ClosedThreadSeq != 0 {
+		t.Fatalf("first thread tuple=%s/%d closed=%s/%d, want seq1 and no closed thread", first.ThreadID, first.ThreadSeq, first.ClosedThreadID, first.ClosedThreadSeq)
+	}
+	if err := first.ThreadID.Validate(); err != nil {
+		t.Fatalf("first thread ID is not canonical: %v", err)
+	}
 	var outboxCount int
 	if err := store.db.QueryRow(`SELECT count(*) FROM conversation_turn_outbox WHERE turn_id = ?`, first.TurnID).Scan(&outboxCount); err != nil {
 		t.Fatalf("first outbox count: %v", err)
@@ -162,14 +182,36 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if strings.Contains(payload, firstRequest.UserMessage) || strings.Contains(payload, firstRequest.AgentMessage) {
 		t.Fatalf("outbox payload contains message body: %s", payload)
 	}
-	var oldThread int64
+	var firstPayload struct {
+		SessionID  string                `json:"session_id"`
+		ThreadID   modulecore.ThreadID   `json:"thread_id"`
+		ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
+		ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+	}
+	if err := json.Unmarshal([]byte(payload), &firstPayload); err != nil {
+		t.Fatalf("decode first outbox payload: %v", err)
+	}
+	if firstPayload.SessionID != firstRequest.SessionID || firstPayload.ThreadID != first.ThreadID || firstPayload.ThreadSeq != 1 || firstPayload.ThreadKind != domconv.ThreadKindUserConversation {
+		t.Fatalf("first outbox payload tuple=%+v, want session/thread/seq1/kind", firstPayload)
+	}
+
+	var oldThread modulecore.ThreadID
 	if err := store.db.QueryRow(`SELECT thread_id FROM conversation_active_thread WHERE session_id = ?`, firstRequest.SessionID).Scan(&oldThread); err != nil {
 		t.Fatalf("active thread: %v", err)
 	}
 	for i := 2; i <= 6; i++ {
 		request := conversationTurnStoreTestRequest("turn-thread-"+string(rune('0'+i)), firstRequest.SessionID)
-		if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+		reused, err := store.CommitConversationTurn(ctx, request)
+		if err != nil {
 			t.Fatalf("fill turn %d: %v", i, err)
+		}
+		if i == 2 {
+			if reused.ThreadID != first.ThreadID || reused.ThreadSeq != 1 || reused.ClosedThreadID != "" || reused.ClosedThreadSeq != 0 {
+				t.Fatalf("reused thread tuple=%s/%d closed=%s/%d, want same seq1 tuple", reused.ThreadID, reused.ThreadSeq, reused.ClosedThreadID, reused.ClosedThreadSeq)
+			}
+			if err := reused.ThreadID.Validate(); err != nil {
+				t.Fatalf("reused thread ID is not canonical: %v", err)
+			}
 		}
 	}
 	boundary := conversationTurnStoreTestRequest("turn-thread-boundary", firstRequest.SessionID)
@@ -180,8 +222,30 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("boundary commit: %v", err)
 	}
-	if result.ClosedThreadID != oldThread || result.ThreadID == oldThread || result.Status != domconv.ConversationTurnPartial {
-		t.Fatalf("boundary result=%+v old thread=%d", result, oldThread)
+	if result.ClosedThreadID != oldThread || result.ThreadID == oldThread || result.ThreadSeq != 2 || result.ClosedThreadSeq != 1 || result.Status != domconv.ConversationTurnPartial {
+		t.Fatalf("boundary result=%+v old thread=%s", result, oldThread)
+	}
+	if err := result.ThreadID.Validate(); err != nil {
+		t.Fatalf("boundary thread ID is not canonical: %v", err)
+	}
+	if err := result.ClosedThreadID.Validate(); err != nil {
+		t.Fatalf("closed thread ID is not canonical: %v", err)
+	}
+	receipt, err := store.GetConversationTurnReceipt(ctx, boundary.TurnID)
+	if err != nil {
+		t.Fatalf("boundary receipt: %v", err)
+	}
+	if receipt.ThreadID != result.ThreadID || receipt.ThreadSeq != result.ThreadSeq || receipt.ThreadKind != result.ThreadKind || receipt.ClosedThreadID != result.ClosedThreadID || receipt.ClosedThreadSeq != result.ClosedThreadSeq || receipt.ClosedThreadKind != result.ClosedThreadKind {
+		t.Fatalf("boundary receipt tuple=%q/%d/%q closed=%q/%d/%q, result=%q/%d/%q closed=%q/%d/%q", receipt.ThreadID, receipt.ThreadSeq, receipt.ThreadKind, receipt.ClosedThreadID, receipt.ClosedThreadSeq, receipt.ClosedThreadKind, result.ThreadID, result.ThreadSeq, result.ThreadKind, result.ClosedThreadID, result.ClosedThreadSeq, result.ClosedThreadKind)
+	}
+	for i := 0; i < 2; i++ {
+		claim, claimErr := store.ClaimConversationTurnOutbox(ctx, boundary.TurnID, time.Now().UTC(), time.Minute)
+		if claimErr != nil || claim == nil {
+			t.Fatalf("boundary outbox claim %d=%+v err=%v", i, claim, claimErr)
+		}
+		if claim.ThreadID != result.ThreadID || claim.ThreadSeq != result.ThreadSeq || claim.ThreadKind != result.ThreadKind || claim.ClosedThreadID != result.ClosedThreadID || claim.ClosedThreadSeq != result.ClosedThreadSeq || claim.ClosedThreadKind != result.ClosedThreadKind {
+			t.Fatalf("boundary outbox claim %d tuple=%q/%d/%q closed=%q/%d/%q", i, claim.ThreadID, claim.ThreadSeq, claim.ThreadKind, claim.ClosedThreadID, claim.ClosedThreadSeq, claim.ClosedThreadKind)
+		}
 	}
 	var count int
 	if err := store.db.QueryRow(`SELECT message_count FROM conversation_active_thread WHERE session_id = ?`, boundary.SessionID).Scan(&count); err != nil {
@@ -195,6 +259,35 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	}
 	if outboxCount != 2 {
 		t.Fatalf("boundary outbox count=%d, want redis+thread followers", outboxCount)
+	}
+	rows, err := store.db.Query(`SELECT payload_json FROM conversation_turn_outbox WHERE turn_id = ?`, boundary.TurnID)
+	if err != nil {
+		t.Fatalf("boundary payloads: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rawPayload string
+		if err := rows.Scan(&rawPayload); err != nil {
+			t.Fatalf("scan boundary payload: %v", err)
+		}
+		var boundaryPayload struct {
+			SessionID        string                `json:"session_id"`
+			ThreadID         modulecore.ThreadID   `json:"thread_id"`
+			ThreadSeq        modulecore.ThreadSeq  `json:"thread_seq"`
+			ThreadKind       modulecore.ThreadKind `json:"thread_kind"`
+			ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id"`
+			ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq"`
+			ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind"`
+		}
+		if err := json.Unmarshal([]byte(rawPayload), &boundaryPayload); err != nil {
+			t.Fatalf("decode boundary payload: %v", err)
+		}
+		if boundaryPayload.SessionID != boundary.SessionID || boundaryPayload.ThreadID != result.ThreadID || boundaryPayload.ThreadSeq != 2 || boundaryPayload.ThreadKind != domconv.ThreadKindUserConversation || boundaryPayload.ClosedThreadID != oldThread || boundaryPayload.ClosedThreadSeq != 1 || boundaryPayload.ClosedThreadKind != domconv.ThreadKindUserConversation {
+			t.Fatalf("boundary outbox payload tuple=%+v", boundaryPayload)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate boundary payloads: %v", err)
 	}
 }
 
@@ -407,6 +500,124 @@ func TestConversationTurnSchemaUsesExpectedTables(t *testing.T) {
 			t.Fatalf("table %s count=%d", table, count)
 		}
 	}
+	for _, table := range []struct {
+		name   string
+		closed bool
+	}{
+		{name: "l1_memory_event"},
+		{name: "l1_event_log"},
+		{name: "l1_profile_promotion_job"},
+		{name: conversationTurnActiveThreadTable},
+		{name: conversationTurnReceiptTable, closed: true},
+		{name: conversationTurnOutboxTable, closed: true},
+	} {
+		rows, err := store.db.Query(`PRAGMA table_info(` + table.name + `)`)
+		if err != nil {
+			t.Fatalf("table info %s: %v", table.name, err)
+		}
+		columns := map[string]string{}
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, columnType string
+			var defaultValue interface{}
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+				rows.Close()
+				t.Fatalf("scan table info %s: %v", table.name, err)
+			}
+			columns[name] = strings.ToUpper(strings.TrimSpace(columnType))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate table info %s: %v", table.name, err)
+		}
+		rows.Close()
+		for column, want := range map[string]string{"thread_id": "TEXT", "thread_seq": "INTEGER", "thread_kind": "TEXT"} {
+			if columns[column] != want {
+				t.Fatalf("table %s column %s type=%q, want %q", table.name, column, columns[column], want)
+			}
+		}
+		if table.closed {
+			for column, want := range map[string]string{"closed_thread_id": "TEXT", "closed_thread_seq": "INTEGER", "closed_thread_kind": "TEXT"} {
+				if columns[column] != want {
+					t.Fatalf("table %s column %s type=%q, want %q", table.name, column, columns[column], want)
+				}
+			}
+		}
+	}
+}
+
+func TestNewL1SQLiteStoreRejectsLegacyThreadSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-thread-schema.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := db.Exec(`
+CREATE TABLE l1_memory_event (
+	id TEXT PRIMARY KEY,
+	namespace TEXT NOT NULL,
+	session_id TEXT NOT NULL,
+	thread_id INTEGER NOT NULL,
+	speaker TEXT NOT NULL,
+	message TEXT NOT NULL,
+	meta_json TEXT NOT NULL DEFAULT '{}',
+	memory_state TEXT NOT NULL,
+	layer TEXT NOT NULL,
+	source TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL,
+	updated_at TIMESTAMP NOT NULL
+);
+CREATE INDEX idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);`); err != nil {
+		db.Close()
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+	store, err := NewL1SQLiteStore(dbPath)
+	if err == nil {
+		store.Close()
+		t.Fatal("NewL1SQLiteStore accepted legacy INTEGER thread_id schema")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "canonical thread schema") {
+		t.Fatalf("legacy schema error=%v, want canonical schema rejection", err)
+	}
+}
+
+func TestLatestConversationThreadReferenceIgnoresNewerUnthreadedRows(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "latest-thread-reference.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID := canonicalConversationTurnSessionIDForTest("latest-thread-reference-session")
+	threadID := modulecore.NewThreadID()
+	if err := store.SaveMessage(ctx, sessionID, threadID, 7, modulecore.ThreadKindUserConversation, "conv:"+string(threadID), domconv.NewMessage(domconv.SpeakerUser, "canonical row", nil), MemoryStateObserved); err != nil {
+		t.Fatalf("SaveMessage: %v", err)
+	}
+	for i := 0; i < 13; i++ {
+		createdAt := time.Now().UTC().Add(time.Duration(i+1) * time.Second)
+		if _, err := store.db.ExecContext(ctx, `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, '', 0, '', ?, ?, '{}', ?, ?, ?, ?, ?)`,
+			fmt.Sprintf("unthreaded-%02d", i), "other", sessionID, string(domconv.SpeakerSystem), "unthreaded row", MemoryStateObserved, MemoryLayerL1, "test", createdAt, createdAt); err != nil {
+			t.Fatalf("insert unthreaded row %d: %v", i, err)
+		}
+	}
+	lowerThreadID := modulecore.NewThreadID()
+	if err := store.SaveMessage(ctx, sessionID, lowerThreadID, 3, modulecore.ThreadKindUserConversation, "conv:"+string(lowerThreadID), domconv.NewMessage(domconv.SpeakerUser, "later lower sequence", nil), MemoryStateObserved); err != nil {
+		t.Fatalf("SaveMessage lower sequence: %v", err)
+	}
+	gotID, gotSeq, gotKind, found, err := store.LatestConversationThreadReference(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("LatestConversationThreadReference: %v", err)
+	}
+	if !found || gotID != threadID || gotSeq != 7 || gotKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("latest tuple=%q/%d/%q found=%t, want %q/7/%q", gotID, gotSeq, gotKind, found, threadID, modulecore.ThreadKindUserConversation)
+	}
 }
 
 func TestConversationTurnProjectionRequiresExactPairsAndMetadata(t *testing.T) {
@@ -421,7 +632,7 @@ func TestConversationTurnProjectionRequiresExactPairsAndMetadata(t *testing.T) {
 	if _, err := store.CommitConversationTurn(ctx, request); err != nil {
 		t.Fatalf("CommitConversationTurn: %v", err)
 	}
-	threadID := int64(0)
+	var threadID modulecore.ThreadID
 	if err := store.db.QueryRowContext(ctx, `SELECT thread_id FROM conversation_active_thread WHERE session_id = ?`, request.SessionID).Scan(&threadID); err != nil {
 		t.Fatalf("active thread: %v", err)
 	}
@@ -433,7 +644,7 @@ func TestConversationTurnProjectionRequiresExactPairsAndMetadata(t *testing.T) {
 		t.Fatalf("projection=%+v, want exact two-message body", projection)
 	}
 	for index, event := range projection {
-		if event.Source != "conversation" || event.Layer != MemoryLayerL1 || event.MemoryState != MemoryStateObserved || event.SessionID != request.SessionID || event.ThreadID != threadID {
+		if event.Source != "conversation" || event.Layer != MemoryLayerL1 || event.MemoryState != MemoryStateObserved || event.SessionID != request.SessionID || event.ThreadID != threadID || event.ThreadSeq != 1 || event.ThreadKind != domconv.ThreadKindUserConversation {
 			t.Fatalf("projection[%d] ownership=%+v", index, event)
 		}
 		if event.Meta["domain"] != request.Domain || event.Meta["turn_id"] != request.TurnID || event.Meta["speaker"] != string(event.Speaker) {
@@ -455,11 +666,11 @@ func TestConversationTurnProjectionRequiresExactPairsAndMetadata(t *testing.T) {
 	if _, err := store.LoadConversationThreadProjection(ctx, request.SessionID, threadID); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
 		t.Fatalf("wrong namespace error=%v, want invalid", err)
 	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET namespace = ? WHERE id = ?`, fmt.Sprintf("conv:%d", threadID), projection[0].ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET namespace = ? WHERE id = ?`, "conv:"+string(threadID), projection[0].ID); err != nil {
 		t.Fatalf("restore namespace: %v", err)
 	}
 	for i := 0; i < 11; i++ {
-		if _, err := store.db.ExecContext(ctx, `INSERT INTO l1_memory_event (id, namespace, session_id, thread_id, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES (?, ?, ?, ?, 'user', ?, '{}', ?, ?, ?, ?, ?)`, fmt.Sprintf("extra-%d", i), fmt.Sprintf("conv:%d", threadID), request.SessionID, threadID, "extra", MemoryStateObserved, MemoryLayerL1, "conversation", time.Now().UTC(), time.Now().UTC()); err != nil {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO l1_memory_event (id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'user', ?, '{}', ?, ?, ?, ?, ?)`, fmt.Sprintf("extra-%d", i), "conv:"+string(threadID), request.SessionID, threadID, 1, domconv.ThreadKindUserConversation, "extra", MemoryStateObserved, MemoryLayerL1, "conversation", time.Now().UTC(), time.Now().UTC()); err != nil {
 			t.Fatalf("insert excess projection row %d: %v", i, err)
 		}
 	}
@@ -506,7 +717,7 @@ func TestConversationTurnOutboxFailedAttemptsReachTerminalReceipt(t *testing.T) 
 
 func TestConversationTurnProjectionRejectsOddAndMixedPairs(t *testing.T) {
 	ctx := context.Background()
-	newProjection := func(t *testing.T) (*L1SQLiteStore, domconv.ConversationTurnRequest, []L1MemoryEvent, int64) {
+	newProjection := func(t *testing.T) (*L1SQLiteStore, domconv.ConversationTurnRequest, []L1MemoryEvent, modulecore.ThreadID) {
 		t.Helper()
 		store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "projection-corrupt.db"))
 		if err != nil {
@@ -516,7 +727,7 @@ func TestConversationTurnProjectionRejectsOddAndMixedPairs(t *testing.T) {
 		if _, err := store.CommitConversationTurn(ctx, request); err != nil {
 			t.Fatalf("commit: %v", err)
 		}
-		var threadID int64
+		var threadID modulecore.ThreadID
 		if err := store.db.QueryRowContext(ctx, `SELECT thread_id FROM conversation_active_thread WHERE session_id = ?`, request.SessionID).Scan(&threadID); err != nil {
 			store.Close()
 			t.Fatalf("thread id: %v", err)
@@ -660,7 +871,7 @@ func TestConversationTurnCommitPersistsMultiSectionInjectionEvents(t *testing.T)
 
 	result, err := store.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
 		TurnID:       "turn-multi-section-1",
-		SessionID:    "session-multi-section-1",
+		SessionID:    canonicalConversationTurnSessionIDForTest("session-multi-section-1"),
 		OwnerID:      "owner-multi-section-1",
 		UserMessage:  "hello",
 		AgentMessage: "hi",

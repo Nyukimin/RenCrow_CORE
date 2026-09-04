@@ -853,31 +853,35 @@ type MemoryLayersStatus struct {
 }
 
 type MemoryLayerEvent struct {
-	ID          string         `json:"ID"`
-	Namespace   string         `json:"Namespace,omitempty"`
-	SessionID   string         `json:"SessionID,omitempty"`
-	ThreadID    int64          `json:"ThreadID,omitempty"`
-	Speaker     string         `json:"Speaker,omitempty"`
-	Message     string         `json:"Message"`
-	Meta        map[string]any `json:"Meta,omitempty"`
-	MemoryState string         `json:"MemoryState,omitempty"`
-	Layer       string         `json:"Layer"`
-	Source      string         `json:"Source,omitempty"`
-	CreatedAt   string         `json:"CreatedAt"`
-	UpdatedAt   string         `json:"UpdatedAt,omitempty"`
+	ID          string                `json:"ID"`
+	Namespace   string                `json:"Namespace,omitempty"`
+	SessionID   string                `json:"SessionID,omitempty"`
+	ThreadID    modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq   modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind  modulecore.ThreadKind `json:"thread_kind"`
+	Speaker     string                `json:"Speaker,omitempty"`
+	Message     string                `json:"Message"`
+	Meta        map[string]any        `json:"Meta,omitempty"`
+	MemoryState string                `json:"MemoryState,omitempty"`
+	Layer       string                `json:"Layer"`
+	Source      string                `json:"Source,omitempty"`
+	CreatedAt   string                `json:"CreatedAt"`
+	UpdatedAt   string                `json:"UpdatedAt,omitempty"`
 }
 
 type MemoryLayerThreadSummary struct {
-	ThreadID  int64    `json:"thread_id"`
-	SessionID string   `json:"session_id,omitempty"`
-	Domain    string   `json:"domain,omitempty"`
-	Summary   string   `json:"summary"`
-	Keywords  []string `json:"keywords,omitempty"`
-	Roles     []string `json:"roles,omitempty"`
-	StartTime string   `json:"ts_start,omitempty"`
-	EndTime   string   `json:"ts_end,omitempty"`
-	IsNovel   bool     `json:"is_novel,omitempty"`
-	Score     float64  `json:"score,omitempty"`
+	ThreadID   modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+	SessionID  string                `json:"session_id,omitempty"`
+	Domain     string                `json:"domain,omitempty"`
+	Summary    string                `json:"summary"`
+	Keywords   []string              `json:"keywords,omitempty"`
+	Roles      []string              `json:"roles,omitempty"`
+	StartTime  string                `json:"ts_start,omitempty"`
+	EndTime    string                `json:"ts_end,omitempty"`
+	IsNovel    bool                  `json:"is_novel,omitempty"`
+	Score      float64               `json:"score,omitempty"`
 }
 
 type MemoryLayerQdrantDocument struct {
@@ -4622,8 +4626,8 @@ func validateMemoryLayersStatus(resp MemoryLayersStatus) error {
 		}
 	}
 	for _, item := range resp.L2 {
-		if item.ThreadID <= 0 {
-			return fmt.Errorf("l2 summary missing thread_id")
+		if err := validateClientThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, false); err != nil {
+			return fmt.Errorf("l2 summary invalid thread tuple: %w", err)
 		}
 		if strings.TrimSpace(item.Summary) == "" {
 			return fmt.Errorf("l2 summary missing summary")
@@ -4743,10 +4747,29 @@ func validateMemoryLayerEvent(layer string, item MemoryLayerEvent) error {
 	if _, err := time.Parse(time.RFC3339, strings.TrimSpace(item.CreatedAt)); err != nil {
 		return fmt.Errorf("%s memory invalid created_at: %w", layer, err)
 	}
+	if err := validateClientThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+		return fmt.Errorf("%s memory invalid thread tuple: %w", layer, err)
+	}
 	if strings.TrimSpace(item.UpdatedAt) != "" {
 		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(item.UpdatedAt)); err != nil {
 			return fmt.Errorf("%s memory invalid updated_at: %w", layer, err)
 		}
+	}
+	return nil
+}
+
+func validateClientThreadTuple(threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, allowEmpty bool) error {
+	if allowEmpty && threadID == "" && threadSeq == 0 && threadKind == "" {
+		return nil
+	}
+	if err := threadID.Validate(); err != nil {
+		return fmt.Errorf("invalid thread_id: %w", err)
+	}
+	if err := threadSeq.Validate(); err != nil {
+		return fmt.Errorf("invalid thread_seq: %w", err)
+	}
+	if err := threadKind.Validate(); err != nil {
+		return fmt.Errorf("invalid thread_kind: %w", err)
 	}
 	return nil
 }

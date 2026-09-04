@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const ThreadSummaryReceiptSchemaVersion = "conversation.thread_summary_receipt.v1"
@@ -78,16 +80,18 @@ func (r *ThreadSummaryReceipt) ValidateForWrite() error {
 
 // ThreadSummary はThread終了時に生成される要約
 type ThreadSummary struct {
-	ThreadID  int64                 `json:"thread_id"`
-	SessionID string                `json:"session_id"`
-	Domain    string                `json:"domain"`
-	Summary   string                `json:"summary"`
-	Keywords  []string              `json:"keywords"`
-	Roles     []string              `json:"roles,omitempty"`
-	Receipt   *ThreadSummaryReceipt `json:"receipt,omitempty"`
-	Embedding []float32             `json:"embedding,omitempty"`
-	StartTime time.Time             `json:"ts_start"`
-	EndTime   time.Time             `json:"ts_end"`
-	IsNovel   bool                  `json:"is_novel"`
-	Score     float32               `json:"score,omitempty"` // VectorDB類似度スコア（検索結果のみ）
+	ThreadID   modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq  ThreadSeq             `json:"thread_seq"`
+	ThreadKind ThreadKind            `json:"thread_kind"`
+	SessionID  string                `json:"session_id"`
+	Domain     string                `json:"domain"`
+	Summary    string                `json:"summary"`
+	Keywords   []string              `json:"keywords"`
+	Roles      []string              `json:"roles,omitempty"`
+	Receipt    *ThreadSummaryReceipt `json:"receipt,omitempty"`
+	Embedding  []float32             `json:"embedding,omitempty"`
+	StartTime  time.Time             `json:"ts_start"`
+	EndTime    time.Time             `json:"ts_end"`
+	IsNovel    bool                  `json:"is_novel"`
+	Score      float32               `json:"score,omitempty"` // VectorDB類似度スコア（検索結果のみ）
 }

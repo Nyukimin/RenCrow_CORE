@@ -1,15 +1,28 @@
 package conversation
 
 import (
+	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"github.com/google/uuid"
 )
 
+func threadTestSessionID() string {
+	return string(modulecore.NewSessionID())
+}
+
 func TestNewThread(t *testing.T) {
-	sessionID := "test-session-001"
+	sessionID := threadTestSessionID()
 	domain := "programming"
 
-	thread := NewThread(sessionID, domain)
+	thread, err := NewThread(sessionID, domain, ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 
 	if thread.SessionID != sessionID {
 		t.Errorf("Expected session ID %s, got %s", sessionID, thread.SessionID)
@@ -19,8 +32,17 @@ func TestNewThread(t *testing.T) {
 		t.Errorf("Expected domain %s, got %s", domain, thread.Domain)
 	}
 
-	if thread.ID == 0 {
-		t.Error("Expected non-zero thread ID")
+	if thread.ID == "" {
+		t.Error("Expected non-empty thread ID")
+	}
+	if err := thread.ID.Validate(); err != nil {
+		t.Fatalf("Expected valid canonical thread ID: %v", err)
+	}
+	if thread.ThreadSeq != ThreadSeq(1) {
+		t.Errorf("Expected thread sequence 1, got %d", thread.ThreadSeq)
+	}
+	if thread.ThreadKind != ThreadKindUserConversation {
+		t.Errorf("Expected thread kind %q, got %q", ThreadKindUserConversation, thread.ThreadKind)
 	}
 
 	if thread.Status != ThreadActive {
@@ -37,7 +59,10 @@ func TestNewThread(t *testing.T) {
 }
 
 func TestThreadAddMessage(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 
 	msg1 := NewMessage(SpeakerUser, "Hello", nil)
 	thread.AddMessage(msg1)
@@ -63,7 +88,10 @@ func TestThreadAddMessage(t *testing.T) {
 }
 
 func TestThreadAddMessageMaxLimit(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 
 	// 15件のメッセージを追加（上限12件）
 	for i := 0; i < 15; i++ {
@@ -78,7 +106,10 @@ func TestThreadAddMessageMaxLimit(t *testing.T) {
 }
 
 func TestThreadClose(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 
 	if thread.Status != ThreadActive {
 		t.Errorf("Expected status %s, got %s", ThreadActive, thread.Status)
@@ -105,6 +136,80 @@ func TestThreadClose(t *testing.T) {
 	}
 }
 
+func TestThreadAddMessageRejectsInactiveThreadWithoutMutation(t *testing.T) {
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
+	thread.AddMessage(NewMessage(SpeakerUser, "before close", nil))
+	if err := thread.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	closedTurns := append([]Message(nil), thread.Turns...)
+	if err := thread.AddMessage(NewMessage(SpeakerMio, "after close", nil)); err == nil {
+		t.Fatal("expected closed thread append to fail")
+	}
+	if !reflect.DeepEqual(thread.Turns, closedTurns) {
+		t.Fatalf("closed thread turns mutated: got=%v want=%v", thread.Turns, closedTurns)
+	}
+
+	thread.Status = ThreadArchived
+	archivedTurns := append([]Message(nil), thread.Turns...)
+	if err := thread.AddMessage(NewMessage(SpeakerUser, "after archive", nil)); err == nil {
+		t.Fatal("expected archived thread append to fail")
+	}
+	if !reflect.DeepEqual(thread.Turns, archivedTurns) {
+		t.Fatalf("archived thread turns mutated: got=%v want=%v", thread.Turns, archivedTurns)
+	}
+
+	var nilThread *Thread
+	if err := nilThread.AddMessage(NewMessage(SpeakerUser, "nil thread", nil)); err == nil {
+		t.Fatal("expected nil thread append to fail")
+	}
+}
+
+func TestThreadCloseRejectsRepeatedAndArchivedWithoutMutation(t *testing.T) {
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
+	if err := thread.Close(); err != nil {
+		t.Fatalf("first Close failed: %v", err)
+	}
+	firstEndTime := *thread.EndTime
+	if err := thread.Close(); err == nil {
+		t.Fatal("expected repeated close to fail")
+	}
+	if thread.Status != ThreadClosed {
+		t.Fatalf("repeated close changed status to %q", thread.Status)
+	}
+	if thread.EndTime == nil || !thread.EndTime.Equal(firstEndTime) {
+		t.Fatalf("repeated close changed end time: got=%v want=%v", thread.EndTime, firstEndTime)
+	}
+
+	archived, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
+	sentinel := time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC)
+	archived.Status = ThreadArchived
+	archived.EndTime = &sentinel
+	if err := archived.Close(); err == nil {
+		t.Fatal("expected archived close to fail")
+	}
+	if archived.Status != ThreadArchived {
+		t.Fatalf("archived close changed status to %q", archived.Status)
+	}
+	if archived.EndTime == nil || !archived.EndTime.Equal(sentinel) {
+		t.Fatalf("archived close changed end time: got=%v want=%v", archived.EndTime, sentinel)
+	}
+
+	var nilThread *Thread
+	if err := nilThread.Close(); err == nil {
+		t.Fatal("expected nil thread close to fail")
+	}
+}
+
 func TestThreadStatusConstants(t *testing.T) {
 	statuses := []ThreadStatus{
 		ThreadActive,
@@ -126,7 +231,10 @@ func TestThreadStatusConstants(t *testing.T) {
 }
 
 func TestThread_LastMessageTime_Empty(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	// No messages — should return StartTime
 	if thread.LastMessageTime() != thread.StartTime {
 		t.Error("LastMessageTime with no messages should return StartTime")
@@ -134,7 +242,10 @@ func TestThread_LastMessageTime_Empty(t *testing.T) {
 }
 
 func TestThread_LastMessageTime_WithMessages(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	msg1 := NewMessage(SpeakerUser, "first", nil)
 	thread.AddMessage(msg1)
 	msg2 := NewMessage(SpeakerMio, "second", nil)
@@ -146,7 +257,10 @@ func TestThread_LastMessageTime_WithMessages(t *testing.T) {
 }
 
 func TestThread_RecentMessagesText_Empty(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	text := thread.RecentMessagesText(5)
 	if text != "" {
 		t.Errorf("empty thread should return empty string, got %q", text)
@@ -154,7 +268,10 @@ func TestThread_RecentMessagesText_Empty(t *testing.T) {
 }
 
 func TestThread_RecentMessagesText_LessThanN(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	thread.AddMessage(NewMessage(SpeakerUser, "hello", nil))
 	thread.AddMessage(NewMessage(SpeakerMio, "hi", nil))
 	text := thread.RecentMessagesText(5)
@@ -164,7 +281,10 @@ func TestThread_RecentMessagesText_LessThanN(t *testing.T) {
 }
 
 func TestThread_RecentMessagesText_ExactN(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	thread.AddMessage(NewMessage(SpeakerUser, "a", nil))
 	thread.AddMessage(NewMessage(SpeakerMio, "b", nil))
 	text := thread.RecentMessagesText(2)
@@ -174,7 +294,10 @@ func TestThread_RecentMessagesText_ExactN(t *testing.T) {
 }
 
 func TestThread_RecentMessagesText_MoreThanN(t *testing.T) {
-	thread := NewThread("session-001", "test")
+	thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(1))
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	thread.AddMessage(NewMessage(SpeakerUser, "old", nil))
 	thread.AddMessage(NewMessage(SpeakerMio, "mid", nil))
 	thread.AddMessage(NewMessage(SpeakerUser, "new", nil))
@@ -184,16 +307,66 @@ func TestThread_RecentMessagesText_MoreThanN(t *testing.T) {
 	}
 }
 
-func TestGenerateThreadID(t *testing.T) {
-	id1 := generateThreadID()
-	time.Sleep(1 * time.Millisecond)
-	id2 := generateThreadID()
+func TestNewThreadRejectsInvalidKindAndSequence(t *testing.T) {
+	if thread, err := NewThread(threadTestSessionID(), "test", ThreadKind("invalid"), ThreadSeq(1)); err == nil || thread != nil {
+		t.Fatalf("expected invalid thread kind to fail closed, thread=%v err=%v", thread, err)
+	}
+	if thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(0)); err == nil || thread != nil {
+		t.Fatalf("expected zero thread sequence to fail closed, thread=%v err=%v", thread, err)
+	}
+	if thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(-1)); err == nil || thread != nil {
+		t.Fatalf("expected negative thread sequence to fail closed, thread=%v err=%v", thread, err)
+	}
+}
 
-	if id1 == id2 {
-		t.Error("Expected unique thread IDs")
+func TestNewThreadRejectsLegacySessionID(t *testing.T) {
+	if thread, err := NewThread("session-001", "test", ThreadKindUserConversation, ThreadSeq(1)); err == nil || thread != nil {
+		t.Fatalf("expected legacy session ID to fail closed, thread=%v err=%v", thread, err)
+	}
+}
+
+func TestNewThreadConcurrentUUIDv7Uniqueness(t *testing.T) {
+	const count = 128
+	ids := make(chan string, count)
+	errs := make(chan error, count)
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(count)
+	for index := 0; index < count; index++ {
+		go func(index int) {
+			defer waitGroup.Done()
+			thread, err := NewThread(threadTestSessionID(), "test", ThreadKindUserConversation, ThreadSeq(index+1))
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- string(thread.ID)
+		}(index)
+	}
+	waitGroup.Wait()
+	close(ids)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent NewThread failed: %v", err)
 	}
 
-	if id1 >= id2 {
-		t.Error("Expected increasing thread IDs")
+	seen := make(map[string]struct{}, count)
+	for raw := range ids {
+		if !strings.HasPrefix(raw, "thr_") {
+			t.Fatalf("thread ID %q lacks thr_ prefix", raw)
+		}
+		parsed, err := uuid.Parse(strings.TrimPrefix(raw, "thr_"))
+		if err != nil {
+			t.Fatalf("parse generated thread ID %q: %v", raw, err)
+		}
+		if parsed.Version() != 7 {
+			t.Fatalf("thread ID %q uses UUIDv%d, want UUIDv7", raw, parsed.Version())
+		}
+		if _, exists := seen[raw]; exists {
+			t.Fatalf("duplicate generated thread ID %q", raw)
+		}
+		seen[raw] = struct{}{}
+	}
+	if len(seen) != count {
+		t.Fatalf("expected %d generated thread IDs, got %d", count, len(seen))
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -113,8 +115,12 @@ type ConversationTurnResult struct {
 	TurnID           string                    `json:"turn_id"`
 	TraceID          string                    `json:"trace_id"`
 	SessionID        string                    `json:"session_id"`
-	ThreadID         int64                     `json:"thread_id"`
-	ClosedThreadID   int64                     `json:"closed_thread_id,omitempty"`
+	ThreadID         modulecore.ThreadID       `json:"thread_id"`
+	ThreadSeq        ThreadSeq                 `json:"thread_seq"`
+	ThreadKind       ThreadKind                `json:"thread_kind"`
+	ClosedThreadID   modulecore.ThreadID       `json:"closed_thread_id,omitempty"`
+	ClosedThreadSeq  ThreadSeq                 `json:"closed_thread_seq,omitempty"`
+	ClosedThreadKind ThreadKind                `json:"closed_thread_kind,omitempty"`
 	UserMessageID    string                    `json:"user_message_id"`
 	AgentMessageID   string                    `json:"agent_message_id"`
 	MessageIDs       []string                  `json:"message_ids"`
@@ -128,20 +134,24 @@ type ConversationTurnResult struct {
 }
 
 type ConversationTurnOutbox struct {
-	TurnID         string                       `json:"turn_id"`
-	Target         string                       `json:"target"`
-	SessionID      string                       `json:"session_id"`
-	ThreadID       int64                        `json:"thread_id"`
-	ClosedThreadID int64                        `json:"closed_thread_id,omitempty"`
-	PayloadSHA256  string                       `json:"payload_sha256"`
-	PayloadJSON    string                       `json:"payload_json"`
-	Status         ConversationTurnOutboxStatus `json:"status"`
-	LeaseToken     string                       `json:"-"`
-	LeaseExpiresAt time.Time                    `json:"lease_expires_at,omitempty"`
-	Attempts       int                          `json:"attempts"`
-	LastError      ConversationTurnErrorCode    `json:"last_error,omitempty"`
-	CreatedAt      time.Time                    `json:"created_at"`
-	UpdatedAt      time.Time                    `json:"updated_at"`
+	TurnID           string                       `json:"turn_id"`
+	Target           string                       `json:"target"`
+	SessionID        string                       `json:"session_id"`
+	ThreadID         modulecore.ThreadID          `json:"thread_id"`
+	ThreadSeq        ThreadSeq                    `json:"thread_seq"`
+	ThreadKind       ThreadKind                   `json:"thread_kind"`
+	ClosedThreadID   modulecore.ThreadID          `json:"closed_thread_id,omitempty"`
+	ClosedThreadSeq  ThreadSeq                    `json:"closed_thread_seq,omitempty"`
+	ClosedThreadKind ThreadKind                   `json:"closed_thread_kind,omitempty"`
+	PayloadSHA256    string                       `json:"payload_sha256"`
+	PayloadJSON      string                       `json:"payload_json"`
+	Status           ConversationTurnOutboxStatus `json:"status"`
+	LeaseToken       string                       `json:"-"`
+	LeaseExpiresAt   time.Time                    `json:"lease_expires_at,omitempty"`
+	Attempts         int                          `json:"attempts"`
+	LastError        ConversationTurnErrorCode    `json:"last_error,omitempty"`
+	CreatedAt        time.Time                    `json:"created_at"`
+	UpdatedAt        time.Time                    `json:"updated_at"`
 }
 
 func NormalizeConversationTurnRequest(request ConversationTurnRequest) (ConversationTurnRequest, error) {
@@ -152,6 +162,9 @@ func NormalizeConversationTurnRequest(request ConversationTurnRequest) (Conversa
 	sessionID, err := boundedRequired(request.SessionID, ConversationTurnMaxIDRunes, "session_id")
 	if err != nil {
 		return ConversationTurnRequest{}, err
+	}
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("session_id is not canonical")
 	}
 	ownerID, err := boundedRequired(request.OwnerID, ConversationTurnMaxIDRunes, "owner_id")
 	if err != nil {

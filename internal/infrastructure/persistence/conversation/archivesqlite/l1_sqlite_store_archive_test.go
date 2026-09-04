@@ -2,10 +2,12 @@ package archivesqlite
 
 import (
 	"context"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"path/filepath"
 	"testing"
 	"time"
+
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
 func TestL1SQLiteStore_SaveStagingItemArchivesToSQLite(t *testing.T) {
@@ -71,7 +73,13 @@ func TestL1SQLiteStore_PromoterArchivesPromotedItemsToSQLite(t *testing.T) {
 		SummaryDraft: "短い返答を好む",
 		Keywords:     []string{"preference"},
 		LicenseNote:  "user provided",
-		Meta:         map[string]interface{}{"type": "preference", "session_id": "sess-archive", "thread_id": float64(10)},
+		Meta: map[string]interface{}{
+			"type":        "preference",
+			"session_id":  archiveTestSessionID("sess-archive"),
+			"thread_id":   string(archiveTestThreadID("staging-memory-10")),
+			"thread_seq":  float64(1),
+			"thread_kind": string(domconv.ThreadKindUserConversation),
+		},
 	})
 	if err != nil {
 		t.Fatalf("SaveStagingItem memory failed: %v", err)

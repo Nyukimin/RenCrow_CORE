@@ -142,13 +142,13 @@ func TestForecastMarksBoundedDialogueGenerationStage(t *testing.T) {
 	o.chatActive = true
 	o.sessionMode = "forecast"
 	generation := o.beginIdleRunLocked()
-	o.bindIdleSessionLocked("forecast-watchdog-test")
+	o.bindIdleSessionLocked(canonicalIdleChatTestSessionID("forecast-watchdog-test"))
 	o.mu.Unlock()
 	o.emitMu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
-		o.runForecastSessionDomains("forecast-watchdog-test", generation, time.Now().In(jst), []ForecastDomain{domain})
+		o.runForecastSessionDomains(canonicalIdleChatTestSessionID("forecast-watchdog-test"), generation, time.Now().In(jst), []ForecastDomain{domain})
 		close(done)
 	}()
 	select {

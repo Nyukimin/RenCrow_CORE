@@ -110,23 +110,26 @@ func (t *eventPublicationFailureTracker) End(traceID modulecore.TraceID) error {
 
 // OrchestratorEvent represents a significant event in message processing
 type OrchestratorEvent struct {
-	Seq        int64  `json:"seq,omitempty"`         // monotonic event sequence (set by EventHub)
-	Type       string `json:"type"`                  // message.received, routing.decision, agent.start, agent.response
-	From       string `json:"from"`                  // source agent
-	To         string `json:"to,omitempty"`          // target agent
-	Content    string `json:"content"`               // message content
-	RawContent string `json:"raw_content,omitempty"` // unedited model output for diagnostics
-	MessageID  string `json:"message_id,omitempty"`  // globally unique identity of one logical message
-	TurnIndex  int    `json:"turn_index,omitempty"`  // stable turn order within a session
-	Category   string `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
-	Strategy   string `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
-	Route      string `json:"route,omitempty"`       // routing category
-	JobID      string `json:"job_id,omitempty"`      // task identifier
-	TraceID    string `json:"trace_id,omitempty"`    // root interaction correlation identifier
-	SessionID  string `json:"session_id,omitempty"`  // session identifier
-	Channel    string `json:"channel,omitempty"`     // channel identifier
-	ChatID     string `json:"chat_id,omitempty"`     // chat identifier
-	Timestamp  string `json:"timestamp"`
+	Seq        int64                 `json:"seq,omitempty"`         // monotonic event sequence (set by EventHub)
+	Type       string                `json:"type"`                  // message.received, routing.decision, agent.start, agent.response
+	From       string                `json:"from"`                  // source agent
+	To         string                `json:"to,omitempty"`          // target agent
+	Content    string                `json:"content"`               // message content
+	RawContent string                `json:"raw_content,omitempty"` // unedited model output for diagnostics
+	MessageID  string                `json:"message_id,omitempty"`  // globally unique identity of one logical message
+	TurnIndex  int                   `json:"turn_index,omitempty"`  // stable turn order within a session
+	Category   string                `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
+	Strategy   string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
+	Route      string                `json:"route,omitempty"`       // routing category
+	JobID      string                `json:"job_id,omitempty"`      // task identifier
+	TraceID    string                `json:"trace_id,omitempty"`    // root interaction correlation identifier
+	SessionID  string                `json:"session_id,omitempty"`  // session identifier
+	ThreadID   modulecore.ThreadID   `json:"thread_id,omitempty"`   // canonical conversation/work thread identifier
+	ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq,omitempty"`  // canonical thread sequence within the session
+	ThreadKind modulecore.ThreadKind `json:"thread_kind,omitempty"` // canonical thread kind
+	Channel    string                `json:"channel,omitempty"`     // channel identifier
+	ChatID     string                `json:"chat_id,omitempty"`     // chat identifier
+	Timestamp  string                `json:"timestamp"`
 }
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp

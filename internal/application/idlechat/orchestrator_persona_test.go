@@ -55,21 +55,21 @@ func TestIdleChatRecordsPersonaTimelineObservation(t *testing.T) {
 		Category:    "tiredness",
 		Keywords:    []string{"疲れた"},
 	}})
-	generation := activateIdleChatTestSession(o, "idle-1")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-1"))
 
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		From:       "mio",
 		To:         "user",
 		Content:    "今日は疲れた時に効く話にしよう。",
-		SessionID:  "idle-1",
+		SessionID:  canonicalIdleChatTestSessionID("idle-1"),
 		Generation: generation,
 	})
 
 	if len(recorder.sessions) != 1 {
 		t.Fatalf("sessions len = %d, want 1", len(recorder.sessions))
 	}
-	if got := recorder.sessions[0].SessionKey; got != "idlechat:idle-1" {
+	if got := recorder.sessions[0].SessionKey; got != "idlechat:"+canonicalIdleChatTestSessionID("idle-1") {
 		t.Fatalf("session key = %q", got)
 	}
 	if recorder.sessions[0].InterfaceType != "idlechat" || recorder.sessions[0].CharacterID != "mio" {
@@ -99,14 +99,14 @@ func TestIdleChatPersonaRecorderIgnoresTTSAudioChunks(t *testing.T) {
 		Category:    "tiredness",
 		Keywords:    []string{"疲れた"},
 	}})
-	generation := activateIdleChatTestSession(o, "idle-tts")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-tts"))
 
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.tts",
 		From:       "mio",
 		To:         "user",
 		Content:    "疲れた",
-		SessionID:  "idle-tts",
+		SessionID:  canonicalIdleChatTestSessionID("idle-tts"),
 		Generation: generation,
 	})
 
@@ -119,14 +119,14 @@ func TestIdleChatCreatesPendingMetaUpdateCandidateFromTimelineEvent(t *testing.T
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	recorder := &idlePersonaRecorder{}
 	o.SetPersonaRuntimeRecorder(recorder, nil)
-	generation := activateIdleChatTestSession(o, "idle-meta")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-meta"))
 
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		From:       "user",
 		To:         "mio",
 		Content:    "私は映画の話題をアイデア源にする",
-		SessionID:  "idle-meta",
+		SessionID:  canonicalIdleChatTestSessionID("idle-meta"),
 		Generation: generation,
 	})
 

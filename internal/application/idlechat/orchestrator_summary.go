@@ -203,7 +203,14 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 		SummaryProvider: "shiro",
 		Transcript:      append([]string(nil), transcript...),
 	}
+	o.emitMu.Lock()
 	o.mu.Lock()
+	if !o.copyActiveThreadIdentityLocked(&record, sessionID, generation) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		log.Printf("[IdleChat] summary rejected without active thread owner: session=%s generation=%d", sessionID, generation)
+		return ""
+	}
 	o.history = append(o.history, record)
 	if len(o.history) > 200 {
 		o.history = o.history[len(o.history)-200:]
@@ -215,6 +222,7 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 			log.Printf("[IdleChat] topic store append failed: %v", err)
 		}
 	}
+	o.emitMu.Unlock()
 
 	msg := domaintransport.NewMessage("shiro", "idlechat_summary", sessionID, "", title+"\n"+summary)
 	msg.Type = domaintransport.MessageTypeIdleChat

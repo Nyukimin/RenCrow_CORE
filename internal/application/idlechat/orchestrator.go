@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -46,29 +47,32 @@ var errIdleGenerationFailed = errors.New("idlechat generation failed")
 var promptLeakLineRe = regexp.MustCompile(`(?i)(^|[。．\n])[^。．\n]{0,30}(発言として受け|要件[:：]|発言帰属ガード)[^。．\n]*`)
 
 type SessionSummary struct {
-	SessionID         string        `json:"session_id"`
-	Title             string        `json:"title"`
-	Topic             string        `json:"topic"`
-	Category          TopicCategory `json:"category,omitempty"`
-	Strategy          TopicStrategy `json:"strategy"` // 生成戦略（旧 Category）
-	Summary           string        `json:"summary"`
-	QualityReview     string        `json:"quality_review,omitempty"`
-	PromptGuidance    string        `json:"prompt_guidance,omitempty"`
-	SourceTitle       string        `json:"source_title,omitempty"`
-	RewriteStyle      string        `json:"rewrite_style,omitempty"`
-	StoryTitle        string        `json:"story_title,omitempty"`
-	StoryText         string        `json:"story_text,omitempty"`
-	StoryDraftText    string        `json:"story_draft_text,omitempty"`
-	StoryRevisionNote string        `json:"story_revision_note,omitempty"`
-	StoryEndingFlavor string        `json:"story_ending_flavor,omitempty"`
-	StartedAt         string        `json:"started_at"`
-	EndedAt           string        `json:"ended_at"`
-	Turns             int           `json:"turns"`
-	LoopRestarted     bool          `json:"loop_restarted"`
-	LoopReason        string        `json:"loop_reason,omitempty"`
-	TopicProvider     string        `json:"topic_provider"`
-	SummaryProvider   string        `json:"summary_provider"`
-	Transcript        []string      `json:"transcript,omitempty"`
+	SessionID         string                `json:"session_id"`
+	ThreadID          modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq         modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind        modulecore.ThreadKind `json:"thread_kind"`
+	Title             string                `json:"title"`
+	Topic             string                `json:"topic"`
+	Category          TopicCategory         `json:"category,omitempty"`
+	Strategy          TopicStrategy         `json:"strategy"` // 生成戦略（旧 Category）
+	Summary           string                `json:"summary"`
+	QualityReview     string                `json:"quality_review,omitempty"`
+	PromptGuidance    string                `json:"prompt_guidance,omitempty"`
+	SourceTitle       string                `json:"source_title,omitempty"`
+	RewriteStyle      string                `json:"rewrite_style,omitempty"`
+	StoryTitle        string                `json:"story_title,omitempty"`
+	StoryText         string                `json:"story_text,omitempty"`
+	StoryDraftText    string                `json:"story_draft_text,omitempty"`
+	StoryRevisionNote string                `json:"story_revision_note,omitempty"`
+	StoryEndingFlavor string                `json:"story_ending_flavor,omitempty"`
+	StartedAt         string                `json:"started_at"`
+	EndedAt           string                `json:"ended_at"`
+	Turns             int                   `json:"turns"`
+	LoopRestarted     bool                  `json:"loop_restarted"`
+	LoopReason        string                `json:"loop_reason,omitempty"`
+	TopicProvider     string                `json:"topic_provider"`
+	SummaryProvider   string                `json:"summary_provider"`
+	Transcript        []string              `json:"transcript,omitempty"`
 }
 
 type ActiveTranscriptEntry struct {
@@ -89,6 +93,9 @@ type TimelineEvent struct {
 	Content    string
 	RawContent string
 	SessionID  string
+	ThreadID   modulecore.ThreadID
+	ThreadSeq  modulecore.ThreadSeq
+	ThreadKind modulecore.ThreadKind
 	MessageID  string
 	TurnIndex  int
 	Category   TopicCategory
@@ -203,6 +210,8 @@ type IdleChatOrchestrator struct {
 	dailyEnrichmentJob        *dailyEnrichmentJob
 	dailyEnrichmentGeneration uint64
 	activeSessionID           string
+	activeThread              *domconv.Thread
+	topicThreadSeq            map[string]modulecore.ThreadSeq
 	activeTraceID             modulecore.TraceID
 	activeTraceSessionID      string
 	activeGeneration          uint64

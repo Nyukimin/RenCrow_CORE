@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -84,17 +86,19 @@ const (
 )
 
 type ProfilePromotionJob struct {
-	EvidenceEventID string    `json:"evidence_event_id"`
-	SessionID       string    `json:"session_id"`
-	ThreadID        int64     `json:"thread_id"`
-	State           string    `json:"state"`
-	AttemptCount    int       `json:"attempt_count"`
-	LeaseToken      string    `json:"-"`
-	LeaseExpiresAt  time.Time `json:"lease_expires_at,omitempty"`
-	NextAttemptAt   time.Time `json:"next_attempt_at,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	EvidenceEventID string                `json:"evidence_event_id"`
+	SessionID       string                `json:"session_id"`
+	ThreadID        modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq       modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind      modulecore.ThreadKind `json:"thread_kind"`
+	State           string                `json:"state"`
+	AttemptCount    int                   `json:"attempt_count"`
+	LeaseToken      string                `json:"-"`
+	LeaseExpiresAt  time.Time             `json:"lease_expires_at,omitempty"`
+	NextAttemptAt   time.Time             `json:"next_attempt_at,omitempty"`
+	LastError       string                `json:"last_error,omitempty"`
+	CreatedAt       time.Time             `json:"created_at"`
+	UpdatedAt       time.Time             `json:"updated_at"`
 }
 
 // L1DBPoolStats is the cumulative sql.DB pool snapshot exposed with
@@ -127,17 +131,21 @@ type ProfilePromotionRetryResult struct {
 }
 
 type ProfilePromotionMessage struct {
-	EventID   string
-	SessionID string
-	ThreadID  int64
-	Text      string
-	CreatedAt time.Time
+	EventID    string
+	SessionID  string
+	ThreadID   modulecore.ThreadID
+	ThreadSeq  modulecore.ThreadSeq
+	ThreadKind modulecore.ThreadKind
+	Text       string
+	CreatedAt  time.Time
 }
 
 type ProfilePromotionBatch struct {
 	LeaseToken string
 	SessionID  string
-	ThreadID   int64
+	ThreadID   modulecore.ThreadID
+	ThreadSeq  modulecore.ThreadSeq
+	ThreadKind modulecore.ThreadKind
 	Messages   []ProfilePromotionMessage
 }
 
@@ -257,8 +265,14 @@ func ValidateProfilePromotionBatchEvidence(batch ProfilePromotionBatch) error {
 	if strings.TrimSpace(batch.SessionID) == "" {
 		return fmt.Errorf("profile promotion batch session id is required")
 	}
-	if batch.ThreadID <= 0 {
-		return fmt.Errorf("profile promotion batch thread id is required")
+	if err := batch.ThreadID.Validate(); err != nil {
+		return fmt.Errorf("profile promotion batch thread id is invalid: %w", err)
+	}
+	if err := batch.ThreadSeq.Validate(); err != nil {
+		return fmt.Errorf("profile promotion batch thread sequence is invalid: %w", err)
+	}
+	if err := batch.ThreadKind.Validate(); err != nil {
+		return fmt.Errorf("profile promotion batch thread kind is invalid: %w", err)
 	}
 	seen := make(map[string]struct{}, len(batch.Messages))
 	for _, item := range batch.Messages {
@@ -266,7 +280,7 @@ func ValidateProfilePromotionBatchEvidence(batch ProfilePromotionBatch) error {
 		if evidenceID == "" {
 			return fmt.Errorf("profile promotion evidence event id is required")
 		}
-		if item.SessionID != batch.SessionID || item.ThreadID != batch.ThreadID {
+		if item.SessionID != batch.SessionID || item.ThreadID != batch.ThreadID || item.ThreadSeq != batch.ThreadSeq || item.ThreadKind != batch.ThreadKind {
 			return fmt.Errorf("profile promotion evidence %q is not bound to batch", evidenceID)
 		}
 		if strings.TrimSpace(item.Text) == "" {

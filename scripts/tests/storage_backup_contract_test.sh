@@ -74,8 +74,20 @@ assert_contains "${backup_runner}" \
   'raw_source_dir=${backup_config[12]}' \
   "raw source field index must follow cold export"
 assert_contains "${backup_runner}" \
-  "'format_version=4'" \
-  "new backups must emit the Common Raw cohort format"
+  'snapshot_format_version=4' \
+  "ordinary backups must retain the Common Raw cohort format"
+assert_contains "${backup_runner}" \
+  'snapshot_format_version=5' \
+  "CORE migration export must select the ThreadID cohort format"
+assert_contains "${backup_runner}" \
+  '"format_version=${snapshot_format_version}"' \
+  "backup manifest must publish the selected cohort format"
+assert_contains "${backup_runner}" \
+  'thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
+  "CORE migration export manifest must bind the logical ThreadID snapshot path"
+assert_contains "${backup_runner}" \
+  'thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}' \
+  "CORE migration export manifest must bind the logical ThreadID snapshot hash"
 assert_contains "${backup_runner}" \
   'mount "${backup_mount}"' \
   "the backup runner must mount the dedicated backup medium for its window"
@@ -97,6 +109,15 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'if [[ ${core_export} != true ]]; then' \
   "CORE-only export must keep non-CORE durable module handling outside its execution path"
+assert_contains "${checker}" \
+  'verify-external --input' \
+  "restore check must reverify the logical ThreadID snapshot through its owner CLI"
+assert_contains "${checker}" \
+  'timeout --signal=TERM 300s' \
+  "logical ThreadID restore verification must have a bounded deadline"
+assert_contains "${checker}" \
+  'rencrow.threadmigration.verify_external.v1' \
+  "restore check must enforce the logical ThreadID verify receipt schema"
 assert_contains "${backup_runner}" \
   '"${migration_packager}" --snapshot-dir "${candidate_dir}" --output-dir "${migration_output_dir}"' \
   "CORE migration export must package only the restore-checked candidate"
@@ -218,6 +239,104 @@ qdrant_sha256=${qdrant_sha256}
 EOF
 
 "${checker}" "${test_root}/snapshot"
+
+v5_root=${test_root}/format5
+mkdir -p "${v5_root}/source"
+cp -a "${test_root}/source/state" "${v5_root}/source/state"
+cp -a "${test_root}/source/external-memory" "${v5_root}/source/external-memory"
+mkdir -p "${v5_root}/source/external-memory/thread-identity"
+printf 'dummy logical ThreadID snapshot fixture\n' > "${v5_root}/source/external-memory/thread-identity/external-snapshot.json"
+thread_identity_snapshot_sha256=$(printf 'c%.0s' {1..64})
+tar -C "${v5_root}/source" -czf "${v5_root}/rencrow-state.tar.gz" state external-memory
+(cd "${v5_root}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
+sed \
+  -e 's/^format_version=4$/format_version=5/' \
+  -e '$a thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
+  -e "\$a thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}" \
+  "${test_root}/snapshot/manifest.txt" > "${v5_root}/manifest.txt"
+
+mock_thread_migration=${test_root}/mock-rencrow-thread-migrate
+cat > "${mock_thread_migration}" <<'SH'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ ${1:-} != verify-external || ${2:-} != --input || $# != 3 ]]; then
+  exit 41
+fi
+input=${3}
+if [[ ${input} != */external-memory/thread-identity/external-snapshot.json ]]; then
+  exit 42
+fi
+if [[ ! -f ${input} || -L ${input} ]]; then
+  exit 43
+fi
+if [[ ${MOCK_THREAD_IDENTITY_VERIFY_FAILURE:-false} == true ]]; then
+  exit 44
+fi
+if [[ ${MOCK_THREAD_IDENTITY_MALFORMED:-false} == true ]]; then
+  printf '{"schema":"rencrow.threadmigration.verify_external.v1"}\n'
+  exit 0
+fi
+expected_hash=${MOCK_THREAD_IDENTITY_EXPECTED_HASH:-}
+if [[ -z ${expected_hash} ]]; then
+  exit 45
+fi
+receipt_hash=${MOCK_THREAD_IDENTITY_RECEIPT_HASH:-${expected_hash}}
+printf '{"schema":"rencrow.threadmigration.verify_external.v1","status":"verified","redis_count":0,"qdrant_count":0,"redis_sha256":"%s","qdrant_sha256":"%s","snapshot_sha256":"%s","error_code":""}\n' \
+  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
+  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
+  "${receipt_hash}"
+SH
+chmod 0700 "${mock_thread_migration}"
+RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+  MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+  "${checker}" "${v5_root}"
+
+v5_hash_mismatch=${test_root}/format5-hash-mismatch
+mkdir -p "${v5_hash_mismatch}"
+cp "${v5_root}/rencrow-state.tar.gz" "${v5_hash_mismatch}/rencrow-state.tar.gz"
+cp "${v5_root}/SHA256SUMS" "${v5_hash_mismatch}/SHA256SUMS"
+sed "s/^thread_identity_snapshot_sha256=.*/thread_identity_snapshot_sha256=$(printf '0%.0s' {1..64})/" \
+  "${v5_root}/manifest.txt" > "${v5_hash_mismatch}/manifest.txt"
+if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+   "${checker}" "${v5_hash_mismatch}"; then
+  echo "[NG] format5 manifest logical hash mismatch was accepted" >&2
+  exit 1
+fi
+
+v5_receipt_mismatch=${test_root}/format5-receipt-mismatch
+mkdir -p "${v5_receipt_mismatch}"
+cp "${v5_root}/rencrow-state.tar.gz" "${v5_receipt_mismatch}/rencrow-state.tar.gz"
+cp "${v5_root}/SHA256SUMS" "${v5_receipt_mismatch}/SHA256SUMS"
+cp "${v5_root}/manifest.txt" "${v5_receipt_mismatch}/manifest.txt"
+if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+   MOCK_THREAD_IDENTITY_RECEIPT_HASH="$(printf '1%.0s' {1..64})" \
+   "${checker}" "${v5_receipt_mismatch}"; then
+  echo "[NG] format5 verify receipt hash mismatch was accepted" >&2
+  exit 1
+fi
+
+if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+   MOCK_THREAD_IDENTITY_VERIFY_FAILURE=true \
+   "${checker}" "${v5_root}"; then
+  echo "[NG] format5 verify failure was accepted" >&2
+  exit 1
+fi
+
+v5_malformed_receipt=${test_root}/format5-malformed-receipt
+mkdir -p "${v5_malformed_receipt}"
+cp "${v5_root}/rencrow-state.tar.gz" "${v5_malformed_receipt}/rencrow-state.tar.gz"
+cp "${v5_root}/SHA256SUMS" "${v5_malformed_receipt}/SHA256SUMS"
+cp "${v5_root}/manifest.txt" "${v5_malformed_receipt}/manifest.txt"
+if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+   MOCK_THREAD_IDENTITY_MALFORMED=true \
+   "${checker}" "${v5_malformed_receipt}"; then
+  echo "[NG] format5 malformed verify receipt was accepted" >&2
+  exit 1
+fi
 
 slow_python=${test_root}/slow-python
 cat > "${slow_python}" <<'SH'

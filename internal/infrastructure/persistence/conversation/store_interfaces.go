@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // redisStoreIface はRedisStoreのインターフェース（テスト用モック差し替え可能）
@@ -18,8 +19,8 @@ type redisStoreIface interface {
 	DeleteSession(ctx context.Context, sessionID string) error
 	ListActiveSessions(ctx context.Context) ([]string, error)
 	SaveThread(ctx context.Context, thread *conversation.Thread) error
-	GetThread(ctx context.Context, threadID int64) (*conversation.Thread, error)
-	DeleteThread(ctx context.Context, threadID int64) error
+	GetThread(ctx context.Context, threadID modulecore.ThreadID) (*conversation.Thread, error)
+	DeleteThread(ctx context.Context, threadID modulecore.ThreadID) error
 	Close() error
 }
 
@@ -56,20 +57,21 @@ type vectordbStoreIface interface {
 }
 
 type l1StoreIface interface {
-	SaveMessage(ctx context.Context, sessionID string, threadID int64, namespace string, msg conversation.Message, memoryState string) error
+	SaveMessage(ctx context.Context, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, namespace string, msg conversation.Message, memoryState string) error
 	SaveSearchCache(ctx context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*l1sqlite.L1SearchCacheEntry, error)
 	GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error)
 	GetSimilarFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time, threshold float64) (*l1sqlite.L1SearchCacheEntry, error)
 	InvalidateSearchCache(ctx context.Context, provider string, rawQuery string) (int64, error)
 	SearchKnowledgeItemsFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
 	SearchWikiPageIndex(ctx context.Context, query string, limit int) ([]l1sqlite.WikiPageIndexItem, error)
-	AppendEvent(ctx context.Context, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*l1sqlite.L1EventLogEntry, error)
+	AppendEvent(ctx context.Context, eventType string, namespace string, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, payload map[string]interface{}, source string) (*l1sqlite.L1EventLogEntry, error)
 	RecentEvents(ctx context.Context, namespace string, limit int) ([]l1sqlite.L1EventLogEntry, error)
 	UpdateMemoryState(ctx context.Context, id string, memoryState string) error
 	PromoteMemoryToNamespace(ctx context.Context, id string, targetNamespace string, promotedBy string) (*l1sqlite.L1MemoryEvent, error)
 	RecentByNamespace(ctx context.Context, namespace string, limit int) ([]l1sqlite.L1MemoryEvent, error)
 	RecentByState(ctx context.Context, memoryState string, limit int) ([]l1sqlite.L1MemoryEvent, error)
 	RecentBySession(ctx context.Context, sessionID string, limit int) ([]l1sqlite.L1MemoryEvent, error)
+	LatestConversationThreadReference(ctx context.Context, sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool, error)
 	SaveRecallTrace(ctx context.Context, trace conversation.RecallTrace) error
 	RecentRecallTraces(ctx context.Context, sessionID string, limit int) ([]conversation.RecallTrace, error)
 	Close() error
@@ -85,12 +87,12 @@ type conversationTurnL1Store interface {
 	ClaimNextConversationTurnOutbox(context.Context, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
 	CompleteConversationTurnOutbox(context.Context, string, string, string, time.Time) (conversation.ConversationTurnResult, error)
 	FailConversationTurnOutbox(context.Context, string, string, string, conversation.ConversationTurnErrorCode, time.Time) (conversation.ConversationTurnResult, error)
-	LoadConversationThreadProjection(context.Context, string, int64) ([]l1sqlite.L1MemoryEvent, error)
+	LoadConversationThreadProjection(context.Context, string, modulecore.ThreadID) ([]l1sqlite.L1MemoryEvent, error)
 	LoadActiveConversationThreadProjection(context.Context, string) ([]l1sqlite.L1MemoryEvent, error)
 }
 
 type conversationThreadArchiveStore interface {
-	GetThreadSummary(context.Context, int64) (*conversation.ThreadSummary, error)
+	GetThreadSummary(context.Context, modulecore.ThreadID) (*conversation.ThreadSummary, error)
 }
 
 // noveltyThreshold は「新規情報」と判定する類似度の閾値

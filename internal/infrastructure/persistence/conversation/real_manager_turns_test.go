@@ -12,11 +12,12 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type turnTestArchiveStore struct {
 	*mockArchiveSQLiteStore
-	byID      map[int64]*domconv.ThreadSummary
+	byID      map[modulecore.ThreadID]*domconv.ThreadSummary
 	getCalls  int
 	saveCalls int
 }
@@ -33,8 +34,68 @@ func (failingTurnEmbedder) Embed(context.Context, string) ([]float32, error) {
 
 func managerTurnTestRequest(turnID, sessionID string) domconv.ConversationTurnRequest {
 	return domconv.ConversationTurnRequest{
-		TurnID: turnID, SessionID: sessionID, OwnerID: "owner-manager",
+		TurnID: turnID, SessionID: canonicalManagerTurnSessionIDForTest(sessionID), OwnerID: "owner-manager",
 		UserMessage: "user-" + turnID, AgentMessage: "agent-" + turnID, AgentSpeaker: domconv.SpeakerMio,
+	}
+}
+
+func canonicalManagerTurnSessionIDForTest(source string) string {
+	if id := modulecore.SessionID(source); id.Validate() == nil {
+		return source
+	}
+	id, err := modulecore.NewMigrationID(modulecore.CanonicalSessionID, "real_manager_turn_test", "session_id", source)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func canonicalProjectionEventsForTest(sessionID string) []l1sqlite.L1MemoryEvent {
+	threadID := modulecore.NewThreadID()
+	threadSeq := modulecore.ThreadSeq(1)
+	threadKind := modulecore.ThreadKindUserConversation
+	start := time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC)
+	return []l1sqlite.L1MemoryEvent{
+		{ID: string(modulecore.NewEventID()), SessionID: sessionID, ThreadID: threadID, ThreadSeq: threadSeq, ThreadKind: threadKind, Speaker: domconv.SpeakerUser, Message: "hello", Meta: map[string]interface{}{"domain": "test"}, CreatedAt: start},
+		{ID: string(modulecore.NewEventID()), SessionID: sessionID, ThreadID: threadID, ThreadSeq: threadSeq, ThreadKind: threadKind, Speaker: domconv.SpeakerMio, Message: "hi", Meta: map[string]interface{}{"domain": "test"}, CreatedAt: start.Add(time.Second)},
+	}
+}
+
+func TestConversationThreadFromL1ProjectionRejectsLegacySessionID(t *testing.T) {
+	events := canonicalProjectionEventsForTest("legacy-session")
+	thread, err := conversationThreadFromL1Projection(events, domconv.ThreadActive)
+	if !errors.Is(err, domconv.ErrConversationTurnInvalid) || thread != nil {
+		t.Fatalf("legacy session projection thread=%v err=%v, want invalid", thread, err)
+	}
+}
+
+func TestConversationThreadFromL1ProjectionRejectsUnownedStatus(t *testing.T) {
+	events := canonicalProjectionEventsForTest(string(modulecore.NewSessionID()))
+	thread, err := conversationThreadFromL1Projection(events, domconv.ThreadArchived)
+	if !errors.Is(err, domconv.ErrConversationTurnInvalid) || thread != nil {
+		t.Fatalf("archived projection thread=%v err=%v, want invalid", thread, err)
+	}
+}
+
+func TestConversationThreadFromL1ProjectionRejectsMismatchedCanonicalTuple(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*l1sqlite.L1MemoryEvent)
+	}{
+		{name: "session", mutate: func(event *l1sqlite.L1MemoryEvent) { event.SessionID = string(modulecore.NewSessionID()) }},
+		{name: "thread id", mutate: func(event *l1sqlite.L1MemoryEvent) { event.ThreadID = modulecore.NewThreadID() }},
+		{name: "thread sequence", mutate: func(event *l1sqlite.L1MemoryEvent) { event.ThreadSeq = 2 }},
+		{name: "thread kind", mutate: func(event *l1sqlite.L1MemoryEvent) { event.ThreadKind = modulecore.ThreadKindIdleChat }},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			events := canonicalProjectionEventsForTest(string(modulecore.NewSessionID()))
+			testCase.mutate(&events[1])
+			thread, err := conversationThreadFromL1Projection(events, domconv.ThreadActive)
+			if !errors.Is(err, domconv.ErrConversationTurnInvalid) || thread != nil {
+				t.Fatalf("mismatched projection thread=%v err=%v, want invalid", thread, err)
+			}
+		})
 	}
 }
 
@@ -44,10 +105,10 @@ func (s *countingTurnSummarizer) Summarize(_ context.Context, _ *domconv.Thread)
 }
 
 func newTurnTestArchiveStore() *turnTestArchiveStore {
-	return &turnTestArchiveStore{mockArchiveSQLiteStore: &mockArchiveSQLiteStore{}, byID: make(map[int64]*domconv.ThreadSummary)}
+	return &turnTestArchiveStore{mockArchiveSQLiteStore: &mockArchiveSQLiteStore{}, byID: make(map[modulecore.ThreadID]*domconv.ThreadSummary)}
 }
 
-func (s *turnTestArchiveStore) GetThreadSummary(_ context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+func (s *turnTestArchiveStore) GetThreadSummary(_ context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 	s.getCalls++
 	if summary := s.byID[threadID]; summary != nil {
 		return summary, nil
@@ -120,14 +181,17 @@ func TestRealConversationManagerThreadFollowerArchivesBoundaryAndReplaysWithoutS
 	request.BoundaryReason = "new topic"
 	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers}
 	result, err := manager.CommitConversationTurn(ctx, request)
-	if err != nil || result.Status != domconv.ConversationTurnCompleted || result.ClosedThreadID == 0 {
+	if err != nil || result.Status != domconv.ConversationTurnCompleted || result.ClosedThreadID == "" {
 		t.Fatalf("boundary result=%+v err=%v", result, err)
+	}
+	if result.ThreadID == "" || result.ThreadSeq != 2 || result.ThreadKind != domconv.ThreadKindUserConversation || result.ClosedThreadSeq != 1 || result.ClosedThreadKind != domconv.ThreadKindUserConversation {
+		t.Fatalf("boundary tuple=%q/%d/%q closed=%q/%d/%q", result.ThreadID, result.ThreadSeq, result.ThreadKind, result.ClosedThreadID, result.ClosedThreadSeq, result.ClosedThreadKind)
 	}
 	if summarizer.calls != 1 {
 		t.Fatalf("summarizer calls=%d, want one", summarizer.calls)
 	}
 	archived := archive.byID[result.ClosedThreadID]
-	if archived == nil || archived.Receipt == nil || archived.Receipt.SourceTurnCount != 2 || archived.SessionID != seed.SessionID || archived.ThreadID != result.ClosedThreadID {
+	if archived == nil || archived.Receipt == nil || archived.Receipt.SourceTurnCount != 2 || archived.SessionID != seed.SessionID || archived.ThreadID != result.ClosedThreadID || archived.ThreadSeq != result.ClosedThreadSeq || archived.ThreadKind != result.ClosedThreadKind {
 		t.Fatalf("archived=%+v", archived)
 	}
 	if _, ok := redis.threads[result.ClosedThreadID]; ok {
@@ -292,7 +356,7 @@ func TestRealConversationManagerDelayedRedisReplayUsesLatestActiveProjection(t *
 		t.Fatalf("second commit: %v", err)
 	}
 	if firstResult.ThreadID != secondResult.ThreadID {
-		t.Fatalf("thread advanced unexpectedly: first=%d second=%d", firstResult.ThreadID, secondResult.ThreadID)
+		t.Fatalf("thread advanced unexpectedly: first=%s second=%s", firstResult.ThreadID, secondResult.ThreadID)
 	}
 	redis := newMockRedisStore()
 	manager := &RealConversationManager{l1Store: l1, redisStore: redis}
@@ -362,12 +426,40 @@ func TestDecodeConversationTurnOutboxPayloadIsCanonicalAndBound(t *testing.T) {
 	if _, err := decodeConversationTurnOutboxPayload(&valid); err != nil {
 		t.Fatalf("valid payload rejected: %v", err)
 	}
+	var changed conversationTurnOutboxPayload
+	if err := json.Unmarshal([]byte(valid.PayloadJSON), &changed); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	changed.ThreadSeq++
+	seqPayloadChanged := valid
+	seqPayloadJSON, _ := json.Marshal(changed)
+	seqPayloadChanged.PayloadJSON = string(seqPayloadJSON)
+	if _, err := decodeConversationTurnOutboxPayload(&seqPayloadChanged); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
+		t.Fatalf("payload sequence mismatch error=%v, want invalid", err)
+	}
+	outboxSeqChanged := valid
+	outboxSeqChanged.ThreadSeq++
+	if _, err := decodeConversationTurnOutboxPayload(&outboxSeqChanged); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
+		t.Fatalf("outbox sequence mismatch error=%v, want invalid", err)
+	}
+	changed.ThreadSeq = valid.ThreadSeq
+	changed.ThreadKind = domconv.ThreadKindIdleChat
+	kindPayloadChanged := valid
+	kindPayloadJSON, _ := json.Marshal(changed)
+	kindPayloadChanged.PayloadJSON = string(kindPayloadJSON)
+	if _, err := decodeConversationTurnOutboxPayload(&kindPayloadChanged); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
+		t.Fatalf("payload kind mismatch error=%v, want invalid", err)
+	}
+	outboxKindChanged := valid
+	outboxKindChanged.ThreadKind = domconv.ThreadKindIdleChat
+	if _, err := decodeConversationTurnOutboxPayload(&outboxKindChanged); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
+		t.Fatalf("outbox kind mismatch error=%v, want invalid", err)
+	}
 	unknown := valid
 	unknown.PayloadJSON = strings.TrimSuffix(valid.PayloadJSON, "}") + `,"unknown":"x"}`
 	if _, err := decodeConversationTurnOutboxPayload(&unknown); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
 		t.Fatalf("unknown payload error=%v, want invalid", err)
 	}
-	var changed conversationTurnOutboxPayload
 	if err := json.Unmarshal([]byte(valid.PayloadJSON), &changed); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}

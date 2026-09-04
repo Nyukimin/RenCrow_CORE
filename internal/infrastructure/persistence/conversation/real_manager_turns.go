@@ -11,6 +11,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const conversationTurnFollowerLease = time.Minute
@@ -227,17 +228,21 @@ func (r *RealConversationManager) applyConversationTurnOutbox(ctx context.Contex
 }
 
 type conversationTurnOutboxPayload struct {
-	Version        string `json:"version"`
-	TurnID         string `json:"turn_id"`
-	TraceID        string `json:"trace_id"`
-	SessionID      string `json:"session_id"`
-	OwnerID        string `json:"owner_id"`
-	ThreadID       int64  `json:"thread_id"`
-	ClosedThreadID int64  `json:"closed_thread_id,omitempty"`
-	UserMessageID  string `json:"user_message_id"`
-	AgentMessageID string `json:"agent_message_id"`
-	Target         string `json:"target"`
-	PayloadSHA256  string `json:"payload_sha256"`
+	Version          string                `json:"version"`
+	TurnID           string                `json:"turn_id"`
+	TraceID          string                `json:"trace_id"`
+	SessionID        string                `json:"session_id"`
+	OwnerID          string                `json:"owner_id"`
+	ThreadID         modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq        modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind       modulecore.ThreadKind `json:"thread_kind"`
+	ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id,omitempty"`
+	ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq,omitempty"`
+	ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind,omitempty"`
+	UserMessageID    string                `json:"user_message_id"`
+	AgentMessageID   string                `json:"agent_message_id"`
+	Target           string                `json:"target"`
+	PayloadSHA256    string                `json:"payload_sha256"`
 }
 
 func decodeConversationTurnOutboxPayload(outbox *domconv.ConversationTurnOutbox) (conversationTurnOutboxPayload, error) {
@@ -258,13 +263,38 @@ func decodeConversationTurnOutboxPayload(outbox *domconv.ConversationTurnOutbox)
 	if err != nil || !bytes.Equal(canonical, []byte(outbox.PayloadJSON)) {
 		return payload, domconv.ErrConversationTurnInvalid
 	}
-	if payload.Version != "rencrow.conversation_turn_outbox.v1" || payload.TurnID != outbox.TurnID || payload.TraceID != payload.TurnID || payload.SessionID != outbox.SessionID || strings.TrimSpace(payload.OwnerID) == "" || payload.ThreadID != outbox.ThreadID || payload.Target != outbox.Target || payload.PayloadSHA256 != outbox.PayloadSHA256 || payload.UserMessageID == "" || payload.AgentMessageID == "" {
+	if err := validateConversationThreadTuple(payload.ThreadID, payload.ThreadSeq, payload.ThreadKind, true); err != nil {
+		return payload, err
+	}
+	if err := validateConversationThreadTuple(outbox.ThreadID, outbox.ThreadSeq, outbox.ThreadKind, true); err != nil {
+		return payload, err
+	}
+	if err := validateConversationThreadTuple(payload.ClosedThreadID, payload.ClosedThreadSeq, payload.ClosedThreadKind, false); err != nil {
+		return payload, err
+	}
+	if err := validateConversationThreadTuple(outbox.ClosedThreadID, outbox.ClosedThreadSeq, outbox.ClosedThreadKind, false); err != nil {
+		return payload, err
+	}
+	if payload.Version != "rencrow.conversation_turn_outbox.v1" || payload.TurnID != outbox.TurnID || payload.TraceID != payload.TurnID || payload.SessionID != outbox.SessionID || strings.TrimSpace(payload.OwnerID) == "" || payload.ThreadID != outbox.ThreadID || payload.ThreadSeq != outbox.ThreadSeq || payload.ThreadKind != outbox.ThreadKind || payload.Target != outbox.Target || payload.PayloadSHA256 != outbox.PayloadSHA256 || payload.UserMessageID == "" || payload.AgentMessageID == "" {
 		return payload, domconv.ErrConversationTurnInvalid
 	}
-	if payload.ClosedThreadID != outbox.ClosedThreadID {
+	if payload.ClosedThreadID != outbox.ClosedThreadID || payload.ClosedThreadSeq != outbox.ClosedThreadSeq || payload.ClosedThreadKind != outbox.ClosedThreadKind {
 		return payload, domconv.ErrConversationTurnInvalid
 	}
 	return payload, nil
+}
+
+func validateConversationThreadTuple(threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, required bool) error {
+	if threadID == "" {
+		if required || threadSeq != 0 || threadKind != "" {
+			return domconv.ErrConversationTurnInvalid
+		}
+		return nil
+	}
+	if threadID.Validate() != nil || threadSeq.Validate() != nil || threadKind.Validate() != nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	return nil
 }
 
 func (r *RealConversationManager) applyRedisConversationProjection(ctx context.Context, outbox *domconv.ConversationTurnOutbox, ownerID string) error {
@@ -283,6 +313,9 @@ func (r *RealConversationManager) applyRedisConversationProjection(ctx context.C
 	if err != nil {
 		return err
 	}
+	if thread.ID != outbox.ThreadID || thread.ThreadSeq != outbox.ThreadSeq || thread.ThreadKind != outbox.ThreadKind {
+		return domconv.ErrConversationTurnInvalid
+	}
 	session, err := r.redisStore.GetSession(ctx, outbox.SessionID)
 	if errors.Is(err, domconv.ErrSessionNotFound) {
 		session = domconv.NewSessionConversation(outbox.SessionID, strings.TrimSpace(ownerID))
@@ -296,6 +329,8 @@ func (r *RealConversationManager) applyRedisConversationProjection(ctx context.C
 		session.UserID = strings.TrimSpace(ownerID)
 	}
 	session.LastThreadID = thread.ID
+	session.LastThreadSeq = thread.ThreadSeq
+	session.LastThreadKind = thread.ThreadKind
 	session.UpdatedAt = time.Now().UTC()
 	if err := r.redisStore.SaveThread(ctx, thread); err != nil {
 		return domconv.ErrConversationTurnUnavailable
@@ -307,7 +342,10 @@ func (r *RealConversationManager) applyRedisConversationProjection(ctx context.C
 }
 
 func (r *RealConversationManager) applyConversationThreadFollowers(ctx context.Context, outbox *domconv.ConversationTurnOutbox) error {
-	if outbox.ClosedThreadID <= 0 || r.redisStore == nil || r.archiveStore == nil {
+	if err := validateConversationThreadTuple(outbox.ClosedThreadID, outbox.ClosedThreadSeq, outbox.ClosedThreadKind, false); err != nil {
+		return err
+	}
+	if outbox.ClosedThreadID == "" || r.redisStore == nil || r.archiveStore == nil {
 		return domconv.ErrConversationTurnUnavailable
 	}
 	store, ok := r.l1Store.(conversationTurnL1Store)
@@ -325,6 +363,9 @@ func (r *RealConversationManager) applyConversationThreadFollowers(ctx context.C
 	thread, err := conversationThreadFromL1Projection(events, domconv.ThreadClosed)
 	if err != nil {
 		return err
+	}
+	if thread.ID != outbox.ClosedThreadID || thread.ThreadSeq != outbox.ClosedThreadSeq || thread.ThreadKind != outbox.ClosedThreadKind {
+		return domconv.ErrConversationTurnInvalid
 	}
 	summary, err := archive.GetThreadSummary(ctx, outbox.ClosedThreadID)
 	if err != nil && !errors.Is(err, domconv.ErrThreadNotFound) {
@@ -383,7 +424,8 @@ func (r *RealConversationManager) persistConversationThreadFollowerSummary(ctx c
 		return nil, domconv.ErrConversationTurnInvalid
 	}
 	summary := &domconv.ThreadSummary{
-		ThreadID: thread.ID, SessionID: thread.SessionID, Domain: thread.Domain,
+		ThreadID: thread.ID, ThreadSeq: thread.ThreadSeq, ThreadKind: thread.ThreadKind,
+		SessionID: thread.SessionID, Domain: thread.Domain,
 		Summary: residual.Summary, Keywords: append([]string(nil), residual.Keywords...), Roles: append([]string(nil), roles...), Receipt: receipt,
 		Embedding: append([]float32(nil), embedding...), StartTime: thread.StartTime, EndTime: archiveAt.UTC(),
 	}
@@ -394,7 +436,7 @@ func (r *RealConversationManager) persistConversationThreadFollowerSummary(ctx c
 }
 
 func validateConversationThreadFollowerSummary(summary *domconv.ThreadSummary, thread *domconv.Thread) error {
-	if summary == nil || thread == nil || summary.ThreadID != thread.ID || summary.SessionID != thread.SessionID || summary.Receipt == nil {
+	if summary == nil || thread == nil || summary.ThreadID != thread.ID || summary.ThreadSeq != thread.ThreadSeq || summary.ThreadKind != thread.ThreadKind || summary.SessionID != thread.SessionID || summary.Receipt == nil {
 		return domconv.ErrConversationTurnInvalid
 	}
 	roles, evidence, err := deriveThreadSummaryEvidence(thread)
@@ -408,11 +450,17 @@ func conversationThreadFromL1Projection(events []l1sqlite.L1MemoryEvent, status 
 	if len(events) < 2 || len(events) > 12 || len(events)%2 != 0 {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	thread := &domconv.Thread{ID: events[0].ThreadID, SessionID: events[0].SessionID, Domain: stringMeta(events[0].Meta, "domain"), Turns: make([]domconv.Message, 0, len(events)), Targets: []string{}, Cooldown: map[string]int{}, StartTime: events[0].CreatedAt.UTC(), Status: status}
-	if thread.ID <= 0 || thread.SessionID == "" || thread.Domain == "" {
+	if status != domconv.ThreadActive && status != domconv.ThreadClosed {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	thread := &domconv.Thread{ID: events[0].ThreadID, ThreadSeq: events[0].ThreadSeq, ThreadKind: events[0].ThreadKind, SessionID: events[0].SessionID, Domain: stringMeta(events[0].Meta, "domain"), Turns: make([]domconv.Message, 0, len(events)), Targets: []string{}, Cooldown: map[string]int{}, StartTime: events[0].CreatedAt.UTC(), Status: status}
+	if thread.ID.Validate() != nil || thread.ThreadSeq.Validate() != nil || thread.ThreadKind.Validate() != nil || modulecore.SessionID(thread.SessionID).Validate() != nil || thread.Domain == "" {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
 	for _, event := range events {
+		if event.ThreadID != thread.ID || event.ThreadSeq != thread.ThreadSeq || event.ThreadKind != thread.ThreadKind || event.SessionID != thread.SessionID {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
 		thread.Turns = append(thread.Turns, domconv.Message{Speaker: event.Speaker, Msg: event.Message, Timestamp: event.CreatedAt.UTC(), Meta: cloneConversationTurnMeta(event.Meta)})
 		if event.CreatedAt.Before(thread.StartTime) {
 			thread.StartTime = event.CreatedAt.UTC()

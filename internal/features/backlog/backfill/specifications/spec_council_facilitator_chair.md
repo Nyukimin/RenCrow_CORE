@@ -16,7 +16,7 @@ Mio / Shiro / Kuro / Midoriは対等。固定の上下関係を作らない。
 内容面の票や恒久的権力を持たない。
 
 ## Chair
-discussion_id単位で交代する一時Role。
+thread_id（thread_kind=agent_discussion）単位で交代する一時Role。
 - その議題の内容面を主導
 - 論点の掘り下げ
 - 収束へ向けた整理

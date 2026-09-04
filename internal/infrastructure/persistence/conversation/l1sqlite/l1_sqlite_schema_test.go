@@ -60,7 +60,9 @@ CREATE TABLE l1_memory_event (
 	id TEXT PRIMARY KEY,
 	namespace TEXT NOT NULL,
 	session_id TEXT NOT NULL,
-	thread_id INTEGER NOT NULL,
+	thread_id TEXT NOT NULL,
+	thread_seq INTEGER NOT NULL,
+	thread_kind TEXT NOT NULL,
 	speaker TEXT NOT NULL,
 	message TEXT NOT NULL,
 	meta_json TEXT NOT NULL DEFAULT '{}',
@@ -70,16 +72,18 @@ CREATE TABLE l1_memory_event (
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL
 );
-INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
-	memory_state, layer, source, created_at, updated_at
-) VALUES (
-	'event-1', 'user:1', 'session-1', 1, 'memory', 'tea',
-	'{"user_id":"1","type":"preference","statement":"tea"}',
-	'confirmed', 'L1', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-);
 `); err != nil {
 		t.Fatalf("create memory event fixture: %v", err)
+	}
+	thread := l1TestThread("viewer-projection", 1)
+	if _, err := db.ExecContext(context.Background(), `
+INSERT INTO l1_memory_event (
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+`, "event-1", "user:1", l1TestSessionID("viewer-projection"), thread.ID, thread.Seq, thread.Kind, "memory", "tea",
+		`{"user_id":"1","type":"preference","statement":"tea"}`, "confirmed", "L1", "test"); err != nil {
+		t.Fatalf("insert memory event fixture: %v", err)
 	}
 
 	store := &L1SQLiteStore{db: db}

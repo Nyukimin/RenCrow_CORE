@@ -45,7 +45,7 @@ func TestOwnerRecallTraceIsOwnerScopedAndHidesLegacyRows(t *testing.T) {
 		"evidence_event_ids": []string{"sensitive-evidence"}, "confidence": 0.8, "sensitivity": "sensitive",
 		"scope": "all_personas", "active": true,
 	})
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO l1_memory_event (id, namespace, session_id, thread_id, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES (?, ?, '', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO l1_memory_event (id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES (?, ?, '', '', 0, '', ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"owner-a-sensitive", "user:ren", string(domconv.SpeakerMemory), "Ren has sensitive blue detail", string(sensitiveMeta), MemoryStateConfirmed, MemoryLayerL1, "operator:ren", time.Now().UTC(), time.Now().UTC()); err != nil {
 		t.Fatalf("owner A sensitive insert failed: %v", err)
 	}

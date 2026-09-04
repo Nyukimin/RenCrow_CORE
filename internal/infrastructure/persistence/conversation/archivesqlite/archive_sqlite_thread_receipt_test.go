@@ -42,26 +42,28 @@ func TestArchiveSQLiteStoreThreadSummaryReceiptRoundTripAndLegacyRead(t *testing
 
 	receipt := testThreadSummaryReceipt()
 	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{
-		ThreadID:  501,
-		SessionID: "receipt-session",
-		StartTime: time.Date(2026, 8, 16, 17, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 8, 16, 17, 1, 0, 0, time.UTC),
-		Domain:    "memory",
-		Summary:   "receipt summary",
-		Keywords:  []string{"one", "two", "three"},
-		Roles:     []string{"user", "mio"},
+		ThreadID:   archiveTestThreadID("501"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("receipt-session"),
+		StartTime:  time.Date(2026, 8, 16, 17, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 8, 16, 17, 1, 0, 0, time.UTC),
+		Domain:     "memory",
+		Summary:    "receipt summary",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"user", "mio"},
 	}, receipt); err != nil {
 		t.Fatalf("SaveThreadSummaryWithReceipt failed: %v", err)
 	}
 	_, err = store.db.ExecContext(ctx, `
-INSERT INTO session_thread (thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, int64(502), "receipt-session", time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC), time.Date(2026, 8, 16, 16, 1, 0, 0, time.UTC), "memory", "legacy summary", `["old"]`, `[]`, false)
+INSERT INTO session_thread (thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, archiveTestThreadID("502"), 2, domconv.ThreadKindUserConversation, archiveTestSessionID("receipt-session"), time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC), time.Date(2026, 8, 16, 16, 1, 0, 0, time.UTC), "memory", "legacy summary", `["old"]`, `[]`, false)
 	if err != nil {
 		t.Fatalf("insert legacy summary: %v", err)
 	}
 
-	got, err := store.GetSessionHistory(ctx, "receipt-session", 10)
+	got, err := store.GetSessionHistory(ctx, archiveTestSessionID("receipt-session"), 10)
 	if err != nil {
 		t.Fatalf("GetSessionHistory failed: %v", err)
 	}
@@ -71,9 +73,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	var current, legacy *domconv.ThreadSummary
 	for _, summary := range got {
 		switch summary.ThreadID {
-		case 501:
+		case archiveTestThreadID("501"):
 			current = summary
-		case 502:
+		case archiveTestThreadID("502"):
 			legacy = summary
 		}
 	}
@@ -95,7 +97,7 @@ func TestArchiveSQLiteStoreRejectsReceiptlessNewWrite(t *testing.T) {
 	}
 	defer store.Close()
 	if err := store.SaveThreadSummary(context.Background(), &domconv.ThreadSummary{
-		ThreadID: 504, Summary: "must have receipt", Keywords: []string{"one", "two", "three"},
+		ThreadID: archiveTestThreadID("504"), ThreadSeq: 1, ThreadKind: domconv.ThreadKindUserConversation, Summary: "must have receipt", Keywords: []string{"one", "two", "three"},
 	}); err == nil {
 		t.Fatal("receiptless new write was accepted")
 	}
@@ -109,14 +111,16 @@ func TestArchiveSQLiteStoreThreadSummaryReceiptIsImmutable(t *testing.T) {
 	}
 	defer store.Close()
 	initial := &domconv.ThreadSummary{
-		ThreadID:  505,
-		SessionID: "immutable-session",
-		StartTime: time.Date(2026, 8, 16, 18, 1, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 8, 16, 18, 2, 0, 0, time.UTC),
-		Domain:    "memory",
-		Summary:   "first summary",
-		Keywords:  []string{"one", "two", "three"},
-		Roles:     []string{"user", "mio"},
+		ThreadID:   archiveTestThreadID("505"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("immutable-session"),
+		StartTime:  time.Date(2026, 8, 16, 18, 1, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 8, 16, 18, 2, 0, 0, time.UTC),
+		Domain:     "memory",
+		Summary:    "first summary",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"user", "mio"},
 	}
 	receipt := testThreadSummaryReceipt()
 	if err := store.SaveThreadSummaryWithReceipt(ctx, initial, receipt); err != nil {
@@ -135,7 +139,7 @@ func TestArchiveSQLiteStoreThreadSummaryReceiptIsImmutable(t *testing.T) {
 	if err := store.SaveThreadSummaryWithReceipt(ctx, initial, &changedReceipt); err == nil {
 		t.Fatal("changed receipt replay was accepted")
 	}
-	got, err := store.GetSessionHistory(ctx, "immutable-session", 10)
+	got, err := store.GetSessionHistory(ctx, archiveTestSessionID("immutable-session"), 10)
 	if err != nil || len(got) != 1 || got[0].Summary != "first summary" || got[0].Receipt.EvidenceSHA256 != strings.Repeat("a", 64) {
 		t.Fatalf("immutable row was modified: got=%#v err=%v", got, err)
 	}
@@ -150,11 +154,11 @@ func TestArchiveSQLiteStoreRequiresPositiveSourceCountAndExactRoles(t *testing.T
 	defer store.Close()
 	zeroCount := testThreadSummaryReceipt()
 	zeroCount.SourceTurnCount = 0
-	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{ThreadID: 506, Summary: "summary", Keywords: []string{"one", "two", "three"}, Roles: []string{"user", "mio"}}, zeroCount); err == nil {
+	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{ThreadID: archiveTestThreadID("506"), ThreadSeq: 1, ThreadKind: domconv.ThreadKindUserConversation, SessionID: archiveTestSessionID("zero-count"), Summary: "summary", Keywords: []string{"one", "two", "three"}, Roles: []string{"user", "mio"}}, zeroCount); err == nil {
 		t.Fatal("zero source turn count was accepted")
 	}
 	mismatch := testThreadSummaryReceipt()
-	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{ThreadID: 507, Summary: "summary", Keywords: []string{"one", "two", "three"}, Roles: []string{"user"}}, mismatch); err == nil {
+	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{ThreadID: archiveTestThreadID("507"), ThreadSeq: 1, ThreadKind: domconv.ThreadKindUserConversation, SessionID: archiveTestSessionID("mismatch"), Summary: "summary", Keywords: []string{"one", "two", "three"}, Roles: []string{"user"}}, mismatch); err == nil {
 		t.Fatal("mismatched roles were accepted")
 	}
 }
@@ -178,20 +182,22 @@ END;
 	}
 
 	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{
-		ThreadID:  503,
-		SessionID: "rollback-session",
-		StartTime: time.Now().UTC(),
-		Summary:   "rollback summary",
-		Keywords:  []string{"one", "two", "three"},
-		Roles:     []string{"user", "mio"},
+		ThreadID:   archiveTestThreadID("503"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("rollback-session"),
+		StartTime:  time.Now().UTC(),
+		Summary:    "rollback summary",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"user", "mio"},
 	}, testThreadSummaryReceipt()); err == nil {
 		t.Fatal("expected receipt write failure")
 	}
 	var summaryCount, receiptCount int
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM session_thread WHERE thread_id = 503`).Scan(&summaryCount); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM session_thread WHERE thread_id = ?`, archiveTestThreadID("503")).Scan(&summaryCount); err != nil {
 		t.Fatalf("count summary rows: %v", err)
 	}
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM conversation_thread_summary_receipt WHERE thread_id = 503`).Scan(&receiptCount); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM conversation_thread_summary_receipt WHERE thread_id = ?`, archiveTestThreadID("503")).Scan(&receiptCount); err != nil {
 		t.Fatalf("count receipt rows: %v", err)
 	}
 	if summaryCount != 0 || receiptCount != 0 {
@@ -208,20 +214,22 @@ func TestArchiveSQLiteStoreParquetIncludesThreadSummaryReceipt(t *testing.T) {
 	defer store.Close()
 	receipt := receiptForRoles([]string{"user", "mio"})
 	if err := store.SaveThreadSummaryWithReceipt(ctx, &domconv.ThreadSummary{
-		ThreadID:  508,
-		SessionID: "parquet-receipt",
-		StartTime: time.Date(2026, 8, 16, 19, 0, 0, 0, time.UTC),
-		EndTime:   time.Date(2026, 8, 16, 19, 1, 0, 0, time.UTC),
-		Summary:   "parquet summary",
-		Keywords:  []string{"one", "two", "three"},
-		Roles:     []string{"user", "mio"},
+		ThreadID:   archiveTestThreadID("508"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		SessionID:  archiveTestSessionID("parquet-receipt"),
+		StartTime:  time.Date(2026, 8, 16, 19, 0, 0, 0, time.UTC),
+		EndTime:    time.Date(2026, 8, 16, 19, 1, 0, 0, time.UTC),
+		Summary:    "parquet summary",
+		Keywords:   []string{"one", "two", "three"},
+		Roles:      []string{"user", "mio"},
 	}, receipt); err != nil {
 		t.Fatalf("SaveThreadSummaryWithReceipt failed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `
-INSERT INTO session_thread (thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, int64(509), "parquet-legacy", time.Date(2026, 8, 16, 18, 0, 0, 0, time.UTC), time.Date(2026, 8, 16, 18, 1, 0, 0, time.UTC), "memory", "legacy parquet summary", `[]`, `[]`, false); err != nil {
+INSERT INTO session_thread (thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, archiveTestThreadID("509"), 2, domconv.ThreadKindUserConversation, archiveTestSessionID("parquet-legacy"), time.Date(2026, 8, 16, 18, 0, 0, 0, time.UTC), time.Date(2026, 8, 16, 18, 1, 0, 0, time.UTC), "memory", "legacy parquet summary", `[]`, `[]`, false); err != nil {
 		t.Fatalf("insert legacy parquet summary: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), "thread_summaries.parquet")
@@ -238,14 +246,17 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	var current, legacy *threadSummaryParquetRow
 	for i := range rows {
 		switch rows[i].ThreadID {
-		case 508:
+		case string(archiveTestThreadID("508")):
 			current = &rows[i]
-		case 509:
+		case string(archiveTestThreadID("509")):
 			legacy = &rows[i]
 		}
 	}
 	if current == nil || current.SchemaVersion == nil || *current.SchemaVersion != receipt.SchemaVersion || current.GenerationMode == nil || *current.GenerationMode != receipt.GenerationMode || current.Provider == nil || *current.Provider != receipt.Provider || current.FailureCode == nil || *current.FailureCode != receipt.FailureCode || current.EvidenceSHA256 == nil || *current.EvidenceSHA256 != receipt.EvidenceSHA256 || current.SourceTurnCount == nil || *current.SourceTurnCount != int64(receipt.SourceTurnCount) || current.RolesJSON == nil || *current.RolesJSON != `["user","mio"]` || current.ReceiptCreatedAt == nil {
 		t.Fatalf("receipt fields did not round-trip through parquet: %#v", current)
+	}
+	if current.ThreadID != string(archiveTestThreadID("508")) || current.ThreadSeq != 1 || current.ThreadKind != string(domconv.ThreadKindUserConversation) {
+		t.Fatalf("current thread tuple did not round-trip through parquet: %#v", current)
 	}
 	if !current.ReceiptCreatedAt.Equal(receipt.CreatedAt) {
 		t.Fatalf("receipt created_at did not round-trip: got=%v want=%v", current.ReceiptCreatedAt, receipt.CreatedAt)
@@ -253,10 +264,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	if legacy == nil || legacy.SchemaVersion != nil || legacy.GenerationMode != nil || legacy.Provider != nil || legacy.FailureCode != nil || legacy.EvidenceSHA256 != nil || legacy.SourceTurnCount != nil || legacy.RolesJSON != nil || legacy.ReceiptCreatedAt != nil {
 		t.Fatalf("legacy parquet row unexpectedly claims receipt: %#v", legacy)
 	}
+	if legacy.ThreadID != string(archiveTestThreadID("509")) || legacy.ThreadSeq != 2 || legacy.ThreadKind != string(domconv.ThreadKindUserConversation) {
+		t.Fatalf("legacy thread tuple did not round-trip through parquet: %#v", legacy)
+	}
 	snapshot, err := store.readArchiveParquetSnapshot(ctx)
 	var snapshotCurrent *threadSummaryParquetRow
 	for i := range snapshot.Threads {
-		if snapshot.Threads[i].ThreadID == 508 {
+		if snapshot.Threads[i].ThreadID == string(archiveTestThreadID("508")) {
 			snapshotCurrent = &snapshot.Threads[i]
 		}
 	}

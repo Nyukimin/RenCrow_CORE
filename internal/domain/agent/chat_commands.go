@@ -462,7 +462,7 @@ func (m *MioAgent) cmdStatus(ctx context.Context, sessionID string) (ChatCommand
 
 	resp := fmt.Sprintf("📊 セッション状態\n"+
 		"- セッション: %s\n"+
-		"- スレッドID: %d\n"+
+		"- スレッドID: %s\n"+
 		"- ドメイン: %s\n"+
 		"- ターン数: %d\n"+
 		"- 経過時間: %s\n"+

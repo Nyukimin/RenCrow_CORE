@@ -4,11 +4,125 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/redis/go-redis/v9"
 )
+
+const threadKeyPrefix = "thread:"
+
+func threadKey(threadID modulecore.ThreadID) string {
+	return threadKeyPrefix + string(threadID)
+}
+
+func validateThreadID(threadID modulecore.ThreadID) error {
+	if err := threadID.Validate(); err != nil {
+		return fmt.Errorf("invalid thread ID: %w", err)
+	}
+	return nil
+}
+
+func validateSessionID(sessionID string) error {
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return fmt.Errorf("invalid session ID: %w", err)
+	}
+	return nil
+}
+
+func validateThread(thread *conversation.Thread) error {
+	if thread == nil {
+		return fmt.Errorf("thread is nil")
+	}
+	if err := validateThreadID(thread.ID); err != nil {
+		return err
+	}
+	if err := thread.ThreadSeq.Validate(); err != nil {
+		return fmt.Errorf("invalid thread sequence: %w", err)
+	}
+	if err := thread.ThreadKind.Validate(); err != nil {
+		return fmt.Errorf("invalid thread kind: %w", err)
+	}
+	if err := validateSessionID(thread.SessionID); err != nil {
+		return err
+	}
+	if strings.TrimSpace(thread.Domain) == "" {
+		return fmt.Errorf("thread domain is required")
+	}
+	return nil
+}
+
+func validateStoredThread(requestedID modulecore.ThreadID, thread *conversation.Thread) error {
+	if thread == nil {
+		return fmt.Errorf("thread is nil")
+	}
+	if thread.ID != requestedID {
+		return fmt.Errorf("thread ID mismatch: stored %q, requested %q", thread.ID, requestedID)
+	}
+	return validateThread(thread)
+}
+
+func validateSessionConversation(sess *conversation.SessionConversation) error {
+	if sess == nil {
+		return fmt.Errorf("session is nil")
+	}
+	if err := validateSessionID(sess.ID); err != nil {
+		return err
+	}
+	threadIDs := make(map[modulecore.ThreadID]struct{}, len(sess.History))
+	threadSeqs := make(map[modulecore.ThreadSeq]struct{}, len(sess.History))
+	for index := range sess.History {
+		summary := &sess.History[index]
+		if err := validateThreadID(summary.ThreadID); err != nil {
+			return fmt.Errorf("invalid session history entry %d thread ID: %w", index, err)
+		}
+		if err := summary.ThreadSeq.Validate(); err != nil {
+			return fmt.Errorf("invalid session history entry %d thread sequence: %w", index, err)
+		}
+		if err := summary.ThreadKind.Validate(); err != nil {
+			return fmt.Errorf("invalid session history entry %d thread kind: %w", index, err)
+		}
+		if summary.SessionID != sess.ID {
+			return fmt.Errorf("session history entry %d belongs to session %q, want %q", index, summary.SessionID, sess.ID)
+		}
+		if _, exists := threadIDs[summary.ThreadID]; exists {
+			return fmt.Errorf("session history contains duplicate thread ID %q", summary.ThreadID)
+		}
+		threadIDs[summary.ThreadID] = struct{}{}
+		if _, exists := threadSeqs[summary.ThreadSeq]; exists {
+			return fmt.Errorf("session history contains duplicate thread sequence %d", summary.ThreadSeq)
+		}
+		threadSeqs[summary.ThreadSeq] = struct{}{}
+	}
+	if sess.LastThreadID == "" && sess.LastThreadSeq == 0 && sess.LastThreadKind == "" {
+		return nil
+	}
+	if sess.LastThreadID == "" || sess.LastThreadSeq == 0 || sess.LastThreadKind == "" {
+		return fmt.Errorf("session last thread reference must contain thread_id, thread_seq, and thread_kind")
+	}
+	if err := validateThreadID(sess.LastThreadID); err != nil {
+		return fmt.Errorf("invalid session last thread ID: %w", err)
+	}
+	if err := sess.LastThreadSeq.Validate(); err != nil {
+		return fmt.Errorf("invalid session last thread sequence: %w", err)
+	}
+	if err := sess.LastThreadKind.Validate(); err != nil {
+		return fmt.Errorf("invalid session last thread kind: %w", err)
+	}
+	return nil
+}
+
+func validateStoredSession(requestedID string, sess *conversation.SessionConversation) error {
+	if sess == nil {
+		return fmt.Errorf("session is nil")
+	}
+	if sess.ID != requestedID {
+		return fmt.Errorf("session ID mismatch: stored %q, requested %q", sess.ID, requestedID)
+	}
+	return validateSessionConversation(sess)
+}
 
 // RedisStore はRedisを使った会話記憶ストア（短期・中期記憶）
 type RedisStore struct {
@@ -64,6 +178,10 @@ func (r *RedisStore) Close() error {
 
 // SaveSession はセッションをRedisに保存（TTL: 24h）
 func (r *RedisStore) SaveSession(ctx context.Context, sess *conversation.SessionConversation) error {
+	if err := validateSessionConversation(sess); err != nil {
+		return err
+	}
+
 	key := fmt.Sprintf("sess:%s", sess.ID)
 
 	data, err := json.Marshal(sess)
@@ -80,6 +198,9 @@ func (r *RedisStore) SaveSession(ctx context.Context, sess *conversation.Session
 
 // GetSession はセッションをRedisから取得
 func (r *RedisStore) GetSession(ctx context.Context, sessionID string) (*conversation.SessionConversation, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
 	key := fmt.Sprintf("sess:%s", sessionID)
 
 	data, err := r.client.Get(ctx, key).Bytes()
@@ -97,12 +218,18 @@ func (r *RedisStore) GetSession(ctx context.Context, sessionID string) (*convers
 	if err := json.Unmarshal(data, &sess); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
+	if err := validateStoredSession(sessionID, &sess); err != nil {
+		return nil, fmt.Errorf("invalid session in redis: %w", err)
+	}
 
 	return &sess, nil
 }
 
 // DeleteSession はセッションをRedisから削除
 func (r *RedisStore) DeleteSession(ctx context.Context, sessionID string) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
 	key := fmt.Sprintf("sess:%s", sessionID)
 
 	if err := r.client.Del(ctx, key).Err(); err != nil {
@@ -123,7 +250,11 @@ func (r *RedisStore) ListActiveSessions(ctx context.Context) ([]string, error) {
 	sessionIDs := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if len(key) > 5 {
-			sessionIDs = append(sessionIDs, key[5:])
+			sessionID := key[5:]
+			if err := validateSessionID(sessionID); err != nil {
+				return nil, fmt.Errorf("invalid session key in redis: %w", err)
+			}
+			sessionIDs = append(sessionIDs, sessionID)
 		}
 	}
 
@@ -132,7 +263,11 @@ func (r *RedisStore) ListActiveSessions(ctx context.Context) ([]string, error) {
 
 // SaveThread はThreadをRedisに保存（短期記憶）
 func (r *RedisStore) SaveThread(ctx context.Context, thread *conversation.Thread) error {
-	key := fmt.Sprintf("thread:%d", thread.ID)
+	if err := validateThread(thread); err != nil {
+		return err
+	}
+
+	key := threadKey(thread.ID)
 
 	data, err := json.Marshal(thread)
 	if err != nil {
@@ -148,8 +283,12 @@ func (r *RedisStore) SaveThread(ctx context.Context, thread *conversation.Thread
 }
 
 // GetThread はThreadをRedisから取得
-func (r *RedisStore) GetThread(ctx context.Context, threadID int64) (*conversation.Thread, error) {
-	key := fmt.Sprintf("thread:%d", threadID)
+func (r *RedisStore) GetThread(ctx context.Context, threadID modulecore.ThreadID) (*conversation.Thread, error) {
+	if err := validateThreadID(threadID); err != nil {
+		return nil, err
+	}
+
+	key := threadKey(threadID)
 
 	data, err := r.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
@@ -166,13 +305,20 @@ func (r *RedisStore) GetThread(ctx context.Context, threadID int64) (*conversati
 	if err := json.Unmarshal(data, &thread); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal thread: %w", err)
 	}
+	if err := validateStoredThread(threadID, &thread); err != nil {
+		return nil, fmt.Errorf("invalid thread in redis: %w", err)
+	}
 
 	return &thread, nil
 }
 
 // DeleteThread はThreadをRedisから削除
-func (r *RedisStore) DeleteThread(ctx context.Context, threadID int64) error {
-	key := fmt.Sprintf("thread:%d", threadID)
+func (r *RedisStore) DeleteThread(ctx context.Context, threadID modulecore.ThreadID) error {
+	if err := validateThreadID(threadID); err != nil {
+		return err
+	}
+
+	key := threadKey(threadID)
 
 	if err := r.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("failed to delete thread from redis: %w", err)

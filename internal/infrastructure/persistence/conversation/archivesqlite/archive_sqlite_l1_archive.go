@@ -12,6 +12,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // ArchiveUserMemoryWithReceipt persists one already-authorized L1 memory event
@@ -82,10 +83,10 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 	if !eventFound {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event_archive (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON),
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, item.ID, item.Namespace, item.SessionID, string(item.ThreadID), int64(item.ThreadSeq), string(item.ThreadKind), string(item.Speaker), item.Message, string(metaJSON),
 			item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
 			return false, fmt.Errorf("%w: failed to archive user memory event: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 		}
@@ -207,6 +208,9 @@ func validateArchiveUserMemoryBinding(item l1sqlite.L1MemoryEvent, receipt Archi
 	if item.ID == "" || item.ID != receipt.MemoryID {
 		return errors.New("conversation archive memory_id does not match L1 event")
 	}
+	if err := validateArchiveThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+		return fmt.Errorf("conversation archive memory thread identity is invalid: %w", err)
+	}
 	if item.Namespace != "user:"+receipt.UserID {
 		return errors.New("conversation archive memory namespace does not match authenticated user")
 	}
@@ -249,8 +253,8 @@ func findArchiveMemoryEvent(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }, namespace, memoryID string) (l1sqlite.L1MemoryEvent, bool, error) {
 	row := queryer.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
-       memory_state, layer, source, created_at, updated_at
+	SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+	       memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event_archive
 WHERE namespace = ? AND id = ?
 `, namespace, memoryID)
@@ -266,12 +270,21 @@ WHERE namespace = ? AND id = ?
 
 func scanArchiveMemoryEvent(row archiveRowScanner) (l1sqlite.L1MemoryEvent, error) {
 	var item l1sqlite.L1MemoryEvent
+	var threadID string
+	var threadSeq int64
+	var threadKind string
 	var speaker string
 	var metaJSON sql.NullString
 	var createdAt, updatedAt sql.NullTime
-	if err := row.Scan(&item.ID, &item.Namespace, &item.SessionID, &item.ThreadID, &speaker, &item.Message, &metaJSON,
+	if err := row.Scan(&item.ID, &item.Namespace, &item.SessionID, &threadID, &threadSeq, &threadKind, &speaker, &item.Message, &metaJSON,
 		&item.MemoryState, &item.Layer, &item.Source, &createdAt, &updatedAt); err != nil {
 		return l1sqlite.L1MemoryEvent{}, err
+	}
+	item.ThreadID = modulecore.ThreadID(threadID)
+	item.ThreadSeq = modulecore.ThreadSeq(threadSeq)
+	item.ThreadKind = modulecore.ThreadKind(threadKind)
+	if err := validateArchiveThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+		return l1sqlite.L1MemoryEvent{}, fmt.Errorf("invalid archived memory thread identity: %w", err)
 	}
 	item.Speaker = domconv.Speaker(speaker)
 	item.CreatedAt = archiveNullTime(createdAt)
@@ -293,7 +306,7 @@ func archiveNullTime(value sql.NullTime) time.Time {
 }
 
 func archiveL1MemoryEventEqual(left, right l1sqlite.L1MemoryEvent) bool {
-	return left.ID == right.ID && left.Namespace == right.Namespace && left.SessionID == right.SessionID && left.ThreadID == right.ThreadID && left.Speaker == right.Speaker && left.Message == right.Message && canonicalArchiveJSON(left.Meta) == canonicalArchiveJSON(right.Meta) && left.MemoryState == right.MemoryState && left.Layer == right.Layer && left.Source == right.Source && left.CreatedAt.Equal(right.CreatedAt) && left.UpdatedAt.Equal(right.UpdatedAt)
+	return left.ID == right.ID && left.Namespace == right.Namespace && left.SessionID == right.SessionID && left.ThreadID == right.ThreadID && left.ThreadSeq == right.ThreadSeq && left.ThreadKind == right.ThreadKind && left.Speaker == right.Speaker && left.Message == right.Message && canonicalArchiveJSON(left.Meta) == canonicalArchiveJSON(right.Meta) && left.MemoryState == right.MemoryState && left.Layer == right.Layer && left.Source == right.Source && left.CreatedAt.Equal(right.CreatedAt) && left.UpdatedAt.Equal(right.UpdatedAt)
 }
 
 // ArchiveL1RawLifecycleEvent archives one exact old conversation event and
@@ -314,6 +327,9 @@ func (d *ArchiveSQLiteStore) ArchiveL1RawLifecycleEvent(ctx context.Context, ite
 	}
 	if receipt.OutboxID == "" || receipt.EventID == "" || receipt.EventSHA256 == "" || item.ID == "" || item.ID != receipt.EventID {
 		return fmt.Errorf("%w: raw lifecycle archive binding is incomplete", l1sqlite.ErrL1RawLifecycleArchiveConflict)
+	}
+	if err := validateArchiveThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+		return fmt.Errorf("%w: raw lifecycle archive event thread identity is invalid: %v", l1sqlite.ErrL1RawLifecycleArchiveConflict, err)
 	}
 	if !strings.HasPrefix(item.Namespace, "conv:") || item.MemoryState != l1sqlite.MemoryStateObserved || item.Layer != l1sqlite.MemoryLayerL1 {
 		return fmt.Errorf("%w: raw lifecycle archive event is not an L1 conversation event", l1sqlite.ErrL1RawLifecycleArchiveConflict)
@@ -381,9 +397,9 @@ WHERE event_id = ?`, receipt.EventID).Scan(&eventReceiptOutboxID); err == nil {
 		}
 	} else if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event_archive (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON), item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.ID, item.Namespace, item.SessionID, string(item.ThreadID), int64(item.ThreadSeq), string(item.ThreadKind), string(item.Speaker), item.Message, string(metaJSON), item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
 		return fmt.Errorf("%w: insert raw lifecycle archived event: %v", l1sqlite.ErrL1RawLifecycleArchiveUnavailable, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -428,7 +444,7 @@ func findArchiveMemoryEventByID(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 }, eventID string) (l1sqlite.L1MemoryEvent, bool, error) {
 	event, err := scanArchiveMemoryEvent(queryer.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event_archive WHERE id = ?`, eventID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -463,6 +479,11 @@ func canonicalArchiveJSON(value interface{}) string {
 
 func (d *ArchiveSQLiteStore) ArchiveL1MemoryEvents(ctx context.Context, items []l1sqlite.L1MemoryEvent) error {
 	for _, item := range items {
+		if err := validateArchiveThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, true); err != nil {
+			return fmt.Errorf("invalid l1 memory archive thread identity: %w", err)
+		}
+	}
+	for _, item := range items {
 		metaJSON, err := json.Marshal(item.Meta)
 		if err != nil {
 			return fmt.Errorf("failed to marshal l1 memory archive meta: %w", err)
@@ -472,10 +493,10 @@ func (d *ArchiveSQLiteStore) ArchiveL1MemoryEvents(ctx context.Context, items []
 		}
 		if _, err := d.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event_archive (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
-	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, item.ID, item.Namespace, item.SessionID, item.ThreadID, string(item.Speaker), item.Message, string(metaJSON),
+		id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+		memory_state, layer, source, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.ID, item.Namespace, item.SessionID, string(item.ThreadID), int64(item.ThreadSeq), string(item.ThreadKind), string(item.Speaker), item.Message, string(metaJSON),
 			item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
 			return fmt.Errorf("failed to archive l1 memory event: %w", err)
 		}

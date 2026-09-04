@@ -9,6 +9,7 @@ import (
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (o *IdleChatOrchestrator) monitorLoop() {
@@ -90,11 +91,15 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 }
 
 func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared ...TopicGenerationResult) {
-	sessionID := fmt.Sprintf("idle-%d", time.Now().Unix())
+	sessionID := string(modulecore.NewSessionID())
 	startedAt := time.Now().In(jst)
 	turnLimit := o.idleChatTurnLimit()
-	segmentID := fmt.Sprintf("%s-topic-00", sessionID)
-	generation := o.activateIdleSession(segmentID)
+	segmentID := sessionID
+	generation, err := o.activateIdleSession(segmentID)
+	if err != nil {
+		log.Printf("[IdleChat] session start failed before watchdog/timeline: session=%s error=%v", segmentID, err)
+		return
+	}
 	o.markWatchdogStage("session_start", fmt.Sprintf("strategy=%s", strategy), TimelineEvent{SessionID: segmentID})
 	o.markWatchdogStage("topic_generation", fmt.Sprintf("strategy=%s", strategy), TimelineEvent{SessionID: segmentID})
 	var topic string

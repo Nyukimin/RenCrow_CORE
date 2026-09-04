@@ -42,9 +42,9 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 	o.SetTTSPrefetchEmitter(func(ev TTSPrefetchEvent) {
 		got = append(got, ev)
 	})
-	generation := activateIdleChatTestSession(o, "idle-prefetch")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-prefetch"))
 
-	_, raw, err := o.generateResponseWithRawForGeneration("shiro", "mio", "idle-prefetch", 1, 1, "郵便と古書店", generation)
+	_, raw, err := o.generateResponseWithRawForGeneration("shiro", "mio", canonicalIdleChatTestSessionID("idle-prefetch"), 1, 1, "郵便と古書店", generation)
 	if err != nil {
 		t.Fatalf("generateResponseWithRaw() error = %v", err)
 	}
@@ -55,7 +55,7 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 		t.Fatalf("prefetch event count = %d, want %d", len(got), len(provider.tokens))
 	}
 	for i, token := range provider.tokens {
-		if got[i].SessionID != "idle-prefetch" {
+		if got[i].SessionID != canonicalIdleChatTestSessionID("idle-prefetch") {
 			t.Fatalf("event[%d] session_id = %q, want idle-prefetch", i, got[i].SessionID)
 		}
 		if !strings.HasPrefix(got[i].MessageID, "msg_") {

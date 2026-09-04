@@ -120,7 +120,7 @@ WHERE state = ?
 	requeued := int(requeued64)
 	auditReference := chatGPTMachineAuditReference("retry", input.OwnerID, input.ActorID, input.ExportID)
 	if requeued > 0 || missingEvidence > 0 {
-		if _, err := appendL1EventLog(ctx, tx, chatGPTMachineRetryAuditEventType, "user:"+input.OwnerID, "", 0, map[string]interface{}{
+		if _, err := appendL1EventLog(ctx, tx, chatGPTMachineRetryAuditEventType, "user:"+input.OwnerID, "", "", 0, "", map[string]interface{}{
 			"export_id": input.ExportID, "requeued_count": requeued, "missing_evidence_count": missingEvidence,
 		}, "chatgpt_import_machine"); err != nil {
 			return domainmemory.ChatGPTImportRetryResult{}, rollbackL1Tx(tx, chatGPTMachineInternalError())
@@ -201,7 +201,7 @@ func (s *L1SQLiteStore) FinalizeChatGPTImport(ctx context.Context, input domainm
 	if err != nil {
 		return domainmemory.ChatGPTImportFinalizeResult{}, rollbackL1Tx(tx, chatGPTMachineInternalError())
 	}
-	if _, err := appendL1EventLog(ctx, tx, chatGPTMachineAuditEventType, "user:"+input.OwnerID, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, chatGPTMachineAuditEventType, "user:"+input.OwnerID, "", "", 0, "", map[string]interface{}{
 		"export_id": input.ExportID, "apply": input.Apply, "receipt_id": receiptID,
 		"raw_count": progress.RawCount, "projection_count": progress.ProjectionCount, "job_count": progress.JobCount,
 	}, "chatgpt_import_machine"); err != nil {

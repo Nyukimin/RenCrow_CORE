@@ -16,6 +16,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -387,13 +388,12 @@ func (s *L1SQLiteStore) validateChatGPTProjectionPlan(ctx context.Context, owner
 			return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "completed ChatGPT projection receipt has no output row")
 		}
 		if item.Role == "user" && item.OnCurrentBranch {
-			var sessionID, state string
-			var threadID int64
-			err := s.db.QueryRowContext(ctx, `SELECT session_id, thread_id, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, item.EvidenceID).Scan(&sessionID, &threadID, &state)
+			var sessionID, threadID, threadKind, state string
+			var threadSeq int64
+			err := s.db.QueryRowContext(ctx, `SELECT session_id, thread_id, thread_seq, thread_kind, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, item.EvidenceID).Scan(&sessionID, &threadID, &threadSeq, &threadKind, &state)
 			if err == nil {
-				expectedNamespace := chatGPTConversationNamespace(item.ConversationID)
-				expectedSessionID := strings.TrimPrefix(expectedNamespace, "conv:")
-				if sessionID != expectedSessionID || threadID != chatGPTConversationThreadID(item.ConversationID) || !validProfilePromotionState(state) {
+				expectedSessionID := chatGPTConversationSessionID(item.ConversationID)
+				if sessionID != string(expectedSessionID) || modulecore.ThreadID(threadID) != chatGPTConversationThreadID(item.ConversationID) || modulecore.ThreadSeq(threadSeq) != 1 || modulecore.ThreadKind(threadKind) != modulecore.ThreadKindUserConversation || !validProfilePromotionState(state) {
 					return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT promotion job is inconsistent")
 				}
 			} else if !errors.Is(err, sql.ErrNoRows) {
@@ -683,7 +683,7 @@ INSERT OR IGNORE INTO l1_raw_projection_receipt (
 			rawIDs = append(rawIDs, record.RawRecordID)
 		}
 		sort.Strings(rawIDs)
-		if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_raw_l3_projected", "user:"+ownerID, "", 0, map[string]interface{}{
+		if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_raw_l3_projected", "user:"+ownerID, "", "", 0, "", map[string]interface{}{
 			"owner_id":              ownerID,
 			"actor_id":              actorID,
 			"source_type":           chatGPTRawSourceType,
@@ -797,10 +797,10 @@ func ensureChatGPTLegacyEventTx(ctx context.Context, tx *sql.Tx, item ChatGPTL3I
 	}
 	insertResult, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO l1_memory_event (
- id, namespace, session_id, thread_id, speaker, message, meta_json,
- memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		item.EvidenceID, expected.namespace, expected.sessionID, expected.threadID, string(expected.speaker), expected.message, expected.metaJSON,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
+	memory_state, layer, source, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		item.EvidenceID, expected.namespace, expected.sessionID, expected.threadID, expected.threadSeq, expected.threadKind, string(expected.speaker), expected.message, expected.metaJSON,
 		MemoryStateObserved, "L3", chatGPTRawSourceType, expected.occurredAt, time.Now().UTC())
 	if err != nil {
 		return nil, false, fmt.Errorf("insert ChatGPT L3 output: %w", err)
@@ -832,7 +832,7 @@ type chatGPTSQLRowQueryer interface {
 
 func loadChatGPTEventQueryer(ctx context.Context, queryer chatGPTSQLRowQueryer, eventID string) (*L1MemoryEvent, error) {
 	events, err := scanL1EventRows(queryer.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event WHERE id = ?`, eventID))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -847,7 +847,9 @@ FROM l1_memory_event WHERE id = ?`, eventID))
 type chatGPTLegacyEventExpectation struct {
 	namespace   string
 	sessionID   string
-	threadID    int64
+	threadID    modulecore.ThreadID
+	threadSeq   modulecore.ThreadSeq
+	threadKind  modulecore.ThreadKind
 	speaker     domconv.Speaker
 	message     string
 	metaJSON    string
@@ -857,6 +859,11 @@ type chatGPTLegacyEventExpectation struct {
 
 func expectedChatGPTLegacyEvent(item ChatGPTL3ImportRecord) (chatGPTLegacyEventExpectation, error) {
 	namespace := chatGPTConversationNamespace(item.ConversationID)
+	sessionID := chatGPTConversationSessionID(item.ConversationID)
+	threadID := chatGPTConversationThreadID(item.ConversationID)
+	if sessionID == "" || threadID == "" || namespace == "" {
+		return chatGPTLegacyEventExpectation{}, errors.New("ChatGPT conversation canonical identity is unavailable")
+	}
 	message := strings.TrimSpace(item.Text)
 	if message == "" {
 		message = "[non-text ChatGPT content: " + firstNonEmptyString(item.ContentType, "unknown") + "]"
@@ -868,8 +875,10 @@ func expectedChatGPTLegacyEvent(item ChatGPTL3ImportRecord) (chatGPTLegacyEventE
 	}
 	return chatGPTLegacyEventExpectation{
 		namespace:   namespace,
-		sessionID:   strings.TrimPrefix(namespace, "conv:"),
-		threadID:    chatGPTConversationThreadID(item.ConversationID),
+		sessionID:   string(sessionID),
+		threadID:    threadID,
+		threadSeq:   1,
+		threadKind:  modulecore.ThreadKindUserConversation,
 		speaker:     chatGPTRawSpeaker(item.Role),
 		message:     message,
 		metaJSON:    metaJSON,
@@ -883,7 +892,7 @@ func validateChatGPTLegacyEvent(event *L1MemoryEvent, item ChatGPTL3ImportRecord
 	if err != nil {
 		return err
 	}
-	if event.ID != item.EvidenceID || event.Namespace != expected.namespace || event.SessionID != expected.sessionID || event.ThreadID != expected.threadID || event.Speaker != expected.speaker || event.Message != expected.message || event.MemoryState != MemoryStateObserved || event.Layer != "L3" || event.Source != chatGPTRawSourceType {
+	if event.ID != item.EvidenceID || event.Namespace != expected.namespace || event.SessionID != expected.sessionID || event.ThreadID != expected.threadID || event.ThreadSeq != expected.threadSeq || event.ThreadKind != expected.threadKind || event.Speaker != expected.speaker || event.Message != expected.message || event.MemoryState != MemoryStateObserved || event.Layer != "L3" || event.Source != chatGPTRawSourceType {
 		return domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT L3 row binding differs from Raw")
 	}
 	return validateChatGPTLegacyMeta(event.Meta, expected)
@@ -1022,19 +1031,22 @@ func ensureChatGPTPromotionJobTx(ctx context.Context, tx *sql.Tx, ownerID string
 	if item.Role != "user" || !item.OnCurrentBranch {
 		return false, nil
 	}
-	namespace := chatGPTConversationNamespace(item.ConversationID)
-	sessionID := strings.TrimPrefix(namespace, "conv:")
+	sessionID := chatGPTConversationSessionID(item.ConversationID)
 	threadID := chatGPTConversationThreadID(item.ConversationID)
+	if sessionID == "" || threadID == "" {
+		return false, errors.New("ChatGPT conversation canonical identity is unavailable")
+	}
 	var existingSession, existingState string
-	var existingThread int64
-	err := tx.QueryRowContext(ctx, `SELECT session_id, thread_id, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, item.EvidenceID).Scan(&existingSession, &existingThread, &existingState)
+	var existingThread, existingKind string
+	var existingSeq int64
+	err := tx.QueryRowContext(ctx, `SELECT session_id, thread_id, thread_seq, thread_kind, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, item.EvidenceID).Scan(&existingSession, &existingThread, &existingSeq, &existingKind, &existingState)
 	if errors.Is(err, sql.ErrNoRows) {
 		createdAt := chatGPTRawOccurredAt(item)
 		completedInsert, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO l1_profile_promotion_job (
- evidence_event_id, session_id, thread_id, state, attempt_count,
-				 lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, 0, '', '', ?, ?)`, item.EvidenceID, sessionID, threadID, domainmemory.ProfilePromotionPending, createdAt, time.Now().UTC())
+	 evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
+	 lease_token, last_error, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)`, item.EvidenceID, string(sessionID), threadID, 1, modulecore.ThreadKindUserConversation, domainmemory.ProfilePromotionPending, createdAt, time.Now().UTC())
 		if err != nil {
 			return false, fmt.Errorf("queue ChatGPT profile promotion: %w", err)
 		}
@@ -1050,7 +1062,7 @@ INSERT OR IGNORE INTO l1_profile_promotion_job (
 	if err != nil {
 		return false, err
 	}
-	if existingSession != sessionID || existingThread != threadID || !validProfilePromotionState(existingState) {
+	if existingSession != string(sessionID) || modulecore.ThreadID(existingThread) != threadID || modulecore.ThreadSeq(existingSeq) != 1 || modulecore.ThreadKind(existingKind) != modulecore.ThreadKindUserConversation || !validProfilePromotionState(existingState) {
 		return false, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "persisted ChatGPT promotion job is inconsistent")
 	}
 	if err := ensureChatGPTProfilePromotionBindingTx(ctx, tx, ownerID, item.ExportID, item.EvidenceID); err != nil {

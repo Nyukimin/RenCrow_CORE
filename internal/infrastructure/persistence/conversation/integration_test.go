@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -50,7 +51,7 @@ func TestRedisStore_Integration_SessionAndThread(t *testing.T) {
 	defer store.Close()
 
 	ctx := context.Background()
-	sessionID := "integration-sess-" + time.Now().Format("150405")
+	sessionID := string(modulecore.NewSessionID())
 
 	// Session保存・取得
 	sess := domconv.NewSessionConversation(sessionID, "test-user")
@@ -66,7 +67,10 @@ func TestRedisStore_Integration_SessionAndThread(t *testing.T) {
 	}
 
 	// Thread保存・取得
-	thread := domconv.NewThread(sessionID, "integration")
+	thread, err := domconv.NewThread(sessionID, "integration", modulecore.ThreadKindUserConversation, 1)
+	if err != nil {
+		t.Fatalf("NewThread failed: %v", err)
+	}
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "統合テストのメッセージ", nil))
 	if err := store.SaveThread(ctx, thread); err != nil {
 		t.Fatalf("SaveThread failed: %v", err)
@@ -97,18 +101,21 @@ func TestVectorDBStore_Integration_SaveAndSearch(t *testing.T) {
 
 	ctx := context.Background()
 	now := time.Now()
+	threadID := modulecore.NewThreadID()
 
 	// Thread要約を保存（embedding付き）
 	summary := &domconv.ThreadSummary{
-		ThreadID:  now.UnixNano(),
-		SessionID: "integration-sess",
-		Domain:    "test",
-		Summary:   "統合テスト用の会話要約",
-		Keywords:  []string{"統合", "テスト", "Qdrant"},
-		Embedding: make([]float32, 768), // ゼロベクトル（テスト用）
-		StartTime: now.Add(-5 * time.Minute),
-		EndTime:   now,
-		IsNovel:   true,
+		ThreadID:   threadID,
+		ThreadSeq:  1,
+		ThreadKind: modulecore.ThreadKindUserConversation,
+		SessionID:  string(modulecore.NewSessionID()),
+		Domain:     "test",
+		Summary:    "統合テスト用の会話要約",
+		Keywords:   []string{"統合", "テスト", "Qdrant"},
+		Embedding:  make([]float32, 768), // ゼロベクトル（テスト用）
+		StartTime:  now.Add(-5 * time.Minute),
+		EndTime:    now,
+		IsNovel:    true,
 	}
 	// ゼロベクトル以外にする（検索で見つかるように）
 	for i := range summary.Embedding {
@@ -189,7 +196,7 @@ func TestRealConversationManager_Integration_StoreAndRecall(t *testing.T) {
 	_ = mgr
 
 	ctx := context.Background()
-	sessionID := "integration-full-" + time.Now().Format("150405")
+	sessionID := string(modulecore.NewSessionID())
 
 	// メッセージを保存
 	msgs := []string{"こんにちは", "Go言語は素晴らしい", "ありがとう"}
@@ -225,7 +232,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	skipIfQdrantUnavailable(t)
 
 	ctx := context.Background()
-	sessionID := "e2e-engine-" + time.Now().Format("150405.000")
+	sessionID := string(modulecore.NewSessionID())
 
 	// 1. RealConversationManager（Redis + SQLite archive + VectorDB）
 	redisStore, err := redisstore.NewRedisStore(testRedisURL)
@@ -300,7 +307,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	if status.TurnCount < 2 {
 		t.Errorf("Expected at least 2 turns, got %d", status.TurnCount)
 	}
-	t.Logf("Status: session=%s, thread=%d, turns=%d, domain=%s",
+	t.Logf("Status: session=%s, thread=%s, turns=%d, domain=%s",
 		status.SessionID, status.ThreadID, status.TurnCount, status.ThreadDomain)
 
 	// 8. FlushCurrentThread → SQLite archive/VectorDB 保存
@@ -320,7 +327,7 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	if statusAfter.TurnCount != 0 {
 		t.Errorf("New thread should have 0 turns, got %d", statusAfter.TurnCount)
 	}
-	t.Logf("After flush: new thread=%d, turns=%d", statusAfter.ThreadID, statusAfter.TurnCount)
+	t.Logf("After flush: new thread=%s, turns=%d", statusAfter.ThreadID, statusAfter.TurnCount)
 
 	// 9. ResetSession
 	err = engine.ResetSession(ctx, sessionID)

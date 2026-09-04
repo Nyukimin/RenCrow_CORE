@@ -67,7 +67,13 @@ func (s *memoryLayerColdStoreStub) GetSessionHistory(_ context.Context, sessionI
 	if s.history != nil {
 		return s.history, nil
 	}
-	return []*domconv.ThreadSummary{{ThreadID: 10, Domain: "chat", Summary: "monthly summary"}}, nil
+	return []*domconv.ThreadSummary{{
+		ThreadID:   mustCanonicalViewerTestThreadID("history-default"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		Domain:     "chat",
+		Summary:    "monthly summary",
+	}}, nil
 }
 
 func (s *memoryLayerColdStoreStub) SearchByDomain(_ context.Context, domain string, limit int) ([]*domconv.ThreadSummary, error) {
@@ -76,7 +82,13 @@ func (s *memoryLayerColdStoreStub) SearchByDomain(_ context.Context, domain stri
 	if s.byDomain != nil {
 		return s.byDomain, nil
 	}
-	return []*domconv.ThreadSummary{{ThreadID: 11, Domain: domain, Summary: "domain summary"}}, nil
+	return []*domconv.ThreadSummary{{
+		ThreadID:   mustCanonicalViewerTestThreadID("domain-default"),
+		ThreadSeq:  1,
+		ThreadKind: domconv.ThreadKindUserConversation,
+		Domain:     domain,
+		Summary:    "domain summary",
+	}}, nil
 }
 
 func (s *memoryLayerColdStoreStub) ListKBDocuments(_ context.Context, domain string, limit int) ([]*domconv.Document, error) {
@@ -120,6 +132,41 @@ func TestHandleMemoryLayers(t *testing.T) {
 	}
 	if len(out.L0) != 1 || len(out.L1) != 1 || len(out.L2) != 2 || len(out.L3) != 1 || len(out.L3Qdrant) != 1 {
 		t.Fatalf("unexpected layer snapshot: %+v", out)
+	}
+	if out.L2[0].ThreadID != mustCanonicalViewerTestThreadID("history-default") || out.L2[0].ThreadSeq != 1 || out.L2[0].ThreadKind != domconv.ThreadKindUserConversation {
+		t.Fatalf("l2 thread tuple was not preserved: %+v", out.L2[0])
+	}
+}
+
+func TestMemoryEventDTOFromL1PreservesThreadTuple(t *testing.T) {
+	wantID := canonicalViewerTestThreadID(t, "dto-event")
+	item := l1sqlite.L1MemoryEvent{
+		ID:         "event-1",
+		ThreadID:   wantID,
+		ThreadSeq:  3,
+		ThreadKind: domconv.ThreadKindAgentDiscussion,
+		Message:    "message",
+		Layer:      "L1",
+		CreatedAt:  time.Unix(1, 0).UTC(),
+	}
+	dto := memoryEventDTOFromL1(item)
+	if dto.ThreadID != item.ThreadID || dto.ThreadSeq != item.ThreadSeq || dto.ThreadKind != item.ThreadKind {
+		t.Fatalf("event tuple was not copied: %+v", dto)
+	}
+	payload, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal dto: %v", err)
+	}
+	var wire struct {
+		ThreadID   string `json:"thread_id"`
+		ThreadSeq  int64  `json:"thread_seq"`
+		ThreadKind string `json:"thread_kind"`
+	}
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatalf("decode dto: %v", err)
+	}
+	if wire.ThreadID != string(wantID) || wire.ThreadSeq != 3 || wire.ThreadKind != string(domconv.ThreadKindAgentDiscussion) {
+		t.Fatalf("unexpected dto JSON tuple: %+v", wire)
 	}
 }
 
@@ -174,12 +221,44 @@ func TestHandleMemoryLayersRejectsMalformedSnapshot(t *testing.T) {
 			want: "l1 memory missing message",
 		},
 		{
+			name: "l1 partial thread tuple",
+			hot: &memoryLayerHotStoreStub{
+				l1: []l1sqlite.L1MemoryEvent{{
+					ID:         "l1-1",
+					ThreadID:   mustCanonicalViewerTestThreadID("partial-tuple"),
+					ThreadKind: domconv.ThreadKindUserConversation,
+					Layer:      "L1",
+					Message:    "today memory",
+					CreatedAt:  now,
+				}},
+			},
+			cold: &memoryLayerColdStoreStub{},
+			want: "l1 memory invalid thread tuple",
+		},
+		{
 			name: "l2 missing summary",
 			hot:  &memoryLayerHotStoreStub{},
 			cold: &memoryLayerColdStoreStub{
-				history: []*domconv.ThreadSummary{{ThreadID: 10}},
+				history: []*domconv.ThreadSummary{{
+					ThreadID:   mustCanonicalViewerTestThreadID("missing-summary"),
+					ThreadSeq:  1,
+					ThreadKind: domconv.ThreadKindUserConversation,
+				}},
 			},
 			want: "l2 summary missing summary",
+		},
+		{
+			name: "l2 invalid thread tuple",
+			hot:  &memoryLayerHotStoreStub{},
+			cold: &memoryLayerColdStoreStub{
+				history: []*domconv.ThreadSummary{{
+					ThreadID:   "legacy-thread",
+					ThreadSeq:  1,
+					ThreadKind: domconv.ThreadKindUserConversation,
+					Summary:    "monthly summary",
+				}},
+			},
+			want: "l2 summary invalid thread tuple",
 		},
 		{
 			name: "l3 qdrant missing content",

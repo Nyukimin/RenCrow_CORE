@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type mockUserMemoryManager struct {
@@ -484,12 +485,15 @@ func TestUserMemoryPromptFiltersAndFormatsInjectableMemories(t *testing.T) {
 
 func TestChatCommandsWithConversationEngine(t *testing.T) {
 	now := time.Now().Add(-2 * time.Minute)
+	threadID := modulecore.NewThreadID()
 	engine := &mockConversationEngine{
 		persona: conversation.PersonaState{Name: "Mio"},
 		statusFunc: func(context.Context, string) (*conversation.ConversationStatus, error) {
 			return &conversation.ConversationStatus{
 				SessionID:    "session1",
-				ThreadID:     42,
+				ThreadID:     threadID,
+				ThreadSeq:    1,
+				ThreadKind:   modulecore.ThreadKindUserConversation,
 				ThreadDomain: "default",
 				TurnCount:    7,
 				ThreadStart:  now,
@@ -516,7 +520,7 @@ func TestChatCommandsWithConversationEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status error: %v", err)
 	}
-	if !strings.Contains(status.Response, "スレッドID: 42") || !strings.Contains(status.Response, "ターン数: 7") {
+	if !strings.Contains(status.Response, "スレッドID: "+string(threadID)) || !strings.Contains(status.Response, "ターン数: 7") {
 		t.Fatalf("unexpected status response: %s", status.Response)
 	}
 

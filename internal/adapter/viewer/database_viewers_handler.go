@@ -15,6 +15,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -85,14 +86,16 @@ type databaseViewerResponse struct {
 }
 
 type conversationArchiveViewerItem struct {
-	ThreadID  int64    `json:"thread_id"`
-	SessionID string   `json:"session_id"`
-	StartTime string   `json:"start_time"`
-	EndTime   string   `json:"end_time"`
-	Domain    string   `json:"domain"`
-	Summary   string   `json:"summary"`
-	Keywords  []string `json:"keywords"`
-	IsNovel   bool     `json:"is_novel"`
+	ThreadID   modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+	SessionID  string                `json:"session_id"`
+	StartTime  string                `json:"start_time"`
+	EndTime    string                `json:"end_time"`
+	Domain     string                `json:"domain"`
+	Summary    string                `json:"summary"`
+	Keywords   []string              `json:"keywords"`
+	IsNovel    bool                  `json:"is_novel"`
 }
 
 type glossaryDatabaseViewerItem struct {
@@ -153,7 +156,7 @@ func HandleConversationArchiveDatabase(opts DatabaseViewerOptions) http.HandlerF
 		}
 		queryArgs := append(append([]any{}, args...), limit)
 		rows, err := db.QueryContext(r.Context(), `
-			SELECT thread_id, session_id, CAST(ts_start AS TEXT), CAST(ts_end AS TEXT),
+			SELECT thread_id, thread_seq, thread_kind, session_id, CAST(ts_start AS TEXT), CAST(ts_end AS TEXT),
 			       domain, summary, keywords, is_novel
 			FROM session_thread`+clause+`
 			ORDER BY ts_start DESC, rowid DESC LIMIT ?`, queryArgs...)
@@ -165,9 +168,19 @@ func HandleConversationArchiveDatabase(opts DatabaseViewerOptions) http.HandlerF
 		items := make([]conversationArchiveViewerItem, 0, limit)
 		for rows.Next() {
 			var item conversationArchiveViewerItem
+			var rawThreadID string
+			var rawThreadSeq int64
+			var rawThreadKind string
 			var keywordsJSON string
-			if err := rows.Scan(&item.ThreadID, &item.SessionID, &item.StartTime, &item.EndTime, &item.Domain, &item.Summary, &keywordsJSON, &item.IsNovel); err != nil {
+			if err := rows.Scan(&rawThreadID, &rawThreadSeq, &rawThreadKind, &item.SessionID, &item.StartTime, &item.EndTime, &item.Domain, &item.Summary, &keywordsJSON, &item.IsNovel); err != nil {
 				http.Error(w, "failed to scan conversation archive", http.StatusInternalServerError)
+				return
+			}
+			item.ThreadID = modulecore.ThreadID(rawThreadID)
+			item.ThreadSeq = modulecore.ThreadSeq(rawThreadSeq)
+			item.ThreadKind = modulecore.ThreadKind(rawThreadKind)
+			if err := validateViewerThreadTuple(item.ThreadID, item.ThreadSeq, item.ThreadKind, false); err != nil {
+				http.Error(w, "invalid conversation archive thread tuple: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 			if err := json.Unmarshal([]byte(keywordsJSON), &item.Keywords); err != nil {

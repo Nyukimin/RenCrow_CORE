@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // simpleStoryTales は簡易版物語生成で使う昔話リスト。
@@ -102,7 +103,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 		o.RunPreparedStorySession()
 		return
 	}
-	sessionID := fmt.Sprintf("story-simple-%d", time.Now().Unix())
+	sessionID := string(modulecore.NewSessionID())
 	startedAt := time.Now().In(jst)
 
 	o.emitMu.Lock()
@@ -110,7 +111,13 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	o.chatActive = true
 	o.sessionMode = "story-simple"
 	generation := o.beginIdleRunLocked()
-	o.bindIdleSessionLocked(sessionID)
+	if err := o.bindIdleSessionLocked(sessionID); err != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		o.cancelIdleRunIfGeneration(generation)
+		log.Printf("[SimpleStory] session start failed before generation: session=%s error=%v", sessionID, err)
+		return
+	}
 	o.mu.Unlock()
 	o.emitMu.Unlock()
 
@@ -162,7 +169,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	})
 	if err != nil {
 		log.Printf("[SimpleStory] generation failed: %v", err)
-		o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "generation_error")
+		o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "generation_error")
 		return
 	}
 	if !o.isIdleSessionActive(sessionID, generation) {
@@ -174,7 +181,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	raw := strings.TrimSpace(resp.Content)
 	if raw == "" {
 		log.Printf("[SimpleStory] empty response")
-		o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "invalid_response")
+		o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "invalid_response")
 		return
 	}
 	o.emitStoryParagraph(sessionID, generation, intro, &storyUtteranceSeq)
@@ -212,7 +219,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	closing := fmt.Sprintf("『%s』を下敷きにした、主人公%sのお話でした。", tale.title, protagonist)
 	transcript = append(transcript, "mio: "+closing)
 	o.emitStoryParagraph(sessionID, generation, closing, &storyUtteranceSeq)
-	o.saveSimpleStoryReview(sessionID, storyTopic, tale.title, protagonist, titleLine, body, transcript, startedAt, "")
+	o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, titleLine, body, transcript, startedAt, "")
 
 	log.Printf("[SimpleStory] Session complete: %s × %s", tale.title, protagonist)
 }
@@ -286,7 +293,7 @@ func buildSimpleStoryTopicResult(sourceTitle, protagonist string) TopicGeneratio
 	}
 }
 
-func (o *IdleChatOrchestrator) saveSimpleStoryReview(sessionID, topic, sourceTitle, protagonist, storyTitle, storyText string, transcript []string, startedAt time.Time, loopReason string) {
+func (o *IdleChatOrchestrator) saveSimpleStoryReview(sessionID string, generation uint64, topic, sourceTitle, protagonist, storyTitle, storyText string, transcript []string, startedAt time.Time, loopReason string) {
 	endedAt := time.Now().In(jst)
 	summary := fmt.Sprintf("物語モード: %sを主人公%sでリメイク。", sourceTitle, protagonist)
 	qualityReview, promptGuidance := o.reviewSessionEnd(topic, "story-simple", transcript, summary, loopReason)
@@ -311,7 +318,14 @@ func (o *IdleChatOrchestrator) saveSimpleStoryReview(sessionID, topic, sourceTit
 		SummaryProvider: "quality-review",
 		Transcript:      append([]string(nil), transcript...),
 	}
+	o.emitMu.Lock()
 	o.mu.Lock()
+	if !o.copyActiveThreadIdentityLocked(&record, sessionID, generation) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		log.Printf("[SimpleStory] summary rejected without active thread owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
 	o.history = append(o.history, record)
 	if len(o.history) > 200 {
 		o.history = o.history[len(o.history)-200:]
@@ -324,6 +338,7 @@ func (o *IdleChatOrchestrator) saveSimpleStoryReview(sessionID, topic, sourceTit
 			log.Printf("[SimpleStory] topic store append failed: %v", err)
 		}
 	}
+	o.emitMu.Unlock()
 }
 
 // emitStoryParagraph は段落をViewer + TTSに配信する（story_mode.goから移植）

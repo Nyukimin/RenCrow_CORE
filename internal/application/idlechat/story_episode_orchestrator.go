@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const storyTTSPrefetchWindow = 3
@@ -129,7 +130,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 		return
 	}
 
-	sessionID := "story-episode-" + artifact.EpisodeID
+	sessionID := string(modulecore.NewSessionID())
 	startedAt := time.Now().In(jst)
 	o.emitMu.Lock()
 	o.mu.Lock()
@@ -141,7 +142,13 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	if o.runCancel == nil {
 		generation = o.beginIdleRunLocked()
 	}
-	o.bindIdleSessionLocked(sessionID)
+	if err := o.bindIdleSessionLocked(sessionID); err != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		o.cancelIdleRunIfGeneration(generation)
+		log.Printf("[Story] session start failed before playback: session=%s error=%v", sessionID, err)
+		return
+	}
 	o.currentTopic = storyEpisodeDisplayTitle(artifact)
 	o.mu.Unlock()
 	o.emitMu.Unlock()
@@ -205,7 +212,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	if err := service.MarkPlayed(artifact.EpisodeID, time.Now().UTC()); err != nil {
 		log.Printf("[Story] mark played failed: episode=%s error=%v", artifact.EpisodeID, err)
 	}
-	o.savePreparedStoryReview(artifact, sessionID, transcript, startedAt)
+	o.savePreparedStoryReview(artifact, sessionID, generation, transcript, startedAt)
 	o.RefillStoryEpisodesAsync("played")
 }
 
@@ -238,7 +245,7 @@ func (o *IdleChatOrchestrator) recordPreparedStoryTurn(sessionID string, generat
 	}
 }
 
-func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArtifact, sessionID string, transcript []string, startedAt time.Time) {
+func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArtifact, sessionID string, generation uint64, transcript []string, startedAt time.Time) {
 	endedAt := time.Now().In(jst)
 	record := SessionSummary{
 		SessionID:       sessionID,
@@ -257,7 +264,14 @@ func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArti
 		SummaryProvider: "prevalidated",
 		Transcript:      append([]string(nil), transcript...),
 	}
+	o.emitMu.Lock()
 	o.mu.Lock()
+	if !o.copyActiveThreadIdentityLocked(&record, sessionID, generation) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		log.Printf("[Story] summary rejected without active thread owner: session=%s generation=%d", sessionID, generation)
+		return
+	}
 	o.history = append(o.history, record)
 	store := o.topicStore
 	o.mu.Unlock()
@@ -266,6 +280,7 @@ func (o *IdleChatOrchestrator) savePreparedStoryReview(artifact StoryEpisodeArti
 			log.Printf("[Story] topic store append failed: %v", err)
 		}
 	}
+	o.emitMu.Unlock()
 }
 
 func storyEpisodeDisplayTitle(artifact StoryEpisodeArtifact) string {

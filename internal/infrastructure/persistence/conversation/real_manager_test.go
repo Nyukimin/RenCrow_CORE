@@ -8,34 +8,48 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // --- モック実装 ---
 
 type mockRedisStore struct {
-	sessions map[string]*domconv.SessionConversation
-	threads  map[int64]*domconv.Thread
-	pingErr  error
+	mu              sync.Mutex
+	sessions        map[string]*domconv.SessionConversation
+	threads         map[modulecore.ThreadID]*domconv.Thread
+	pingErr         error
+	saveSessionErr  error
+	saveThreadErr   error
+	saveThreadCalls int
+	deleteThreadErr error
 }
 
 func newMockRedisStore() *mockRedisStore {
 	return &mockRedisStore{
 		sessions: make(map[string]*domconv.SessionConversation),
-		threads:  make(map[int64]*domconv.Thread),
+		threads:  make(map[modulecore.ThreadID]*domconv.Thread),
 	}
 }
 
 func (m *mockRedisStore) SaveSession(_ context.Context, sess *domconv.SessionConversation) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.saveSessionErr != nil {
+		return m.saveSessionErr
+	}
 	m.sessions[sess.ID] = sess
 	return nil
 }
 func (m *mockRedisStore) GetSession(_ context.Context, sessionID string) (*domconv.SessionConversation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	s, ok := m.sessions[sessionID]
 	if !ok {
 		return nil, domconv.ErrSessionNotFound
@@ -43,10 +57,14 @@ func (m *mockRedisStore) GetSession(_ context.Context, sessionID string) (*domco
 	return s, nil
 }
 func (m *mockRedisStore) DeleteSession(_ context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	delete(m.sessions, sessionID)
 	return nil
 }
 func (m *mockRedisStore) ListActiveSessions(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	ids := make([]string, 0, len(m.sessions))
 	for id := range m.sessions {
 		ids = append(ids, id)
@@ -54,17 +72,30 @@ func (m *mockRedisStore) ListActiveSessions(_ context.Context) ([]string, error)
 	return ids, nil
 }
 func (m *mockRedisStore) SaveThread(_ context.Context, thread *domconv.Thread) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveThreadCalls++
+	if m.saveThreadErr != nil {
+		return m.saveThreadErr
+	}
 	m.threads[thread.ID] = thread
 	return nil
 }
-func (m *mockRedisStore) GetThread(_ context.Context, threadID int64) (*domconv.Thread, error) {
+func (m *mockRedisStore) GetThread(_ context.Context, threadID modulecore.ThreadID) (*domconv.Thread, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	t, ok := m.threads[threadID]
 	if !ok {
 		return nil, domconv.ErrThreadNotFound
 	}
 	return t, nil
 }
-func (m *mockRedisStore) DeleteThread(_ context.Context, threadID int64) error {
+func (m *mockRedisStore) DeleteThread(_ context.Context, threadID modulecore.ThreadID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.deleteThreadErr != nil {
+		return m.deleteThreadErr
+	}
 	delete(m.threads, threadID)
 	return nil
 }
@@ -166,19 +197,46 @@ func (m *mockVectorDBStore) CleanupMemoryVectors(_ context.Context, items []l1sq
 func (m *mockVectorDBStore) Close() error { return nil }
 
 type mockL1Store struct {
-	saved     []l1sqlite.L1MemoryEvent
-	cache     *l1sqlite.L1SearchCacheEntry
-	knowledge []l1sqlite.L1KnowledgeItem
-	wiki      []l1sqlite.WikiPageIndexItem
-	events    []l1sqlite.L1EventLogEntry
-	traces    []domconv.RecallTrace
+	saved           []l1sqlite.L1MemoryEvent
+	cache           *l1sqlite.L1SearchCacheEntry
+	knowledge       []l1sqlite.L1KnowledgeItem
+	wiki            []l1sqlite.WikiPageIndexItem
+	events          []l1sqlite.L1EventLogEntry
+	traces          []domconv.RecallTrace
+	saveMessageErr  error
+	saveMessageCall int
 }
 
-func (m *mockL1Store) SaveMessage(_ context.Context, sessionID string, threadID int64, namespace string, msg domconv.Message, memoryState string) error {
+func newManagerTestThread(sessionID, domain string) *domconv.Thread {
+	return &domconv.Thread{
+		ID:         modulecore.NewThreadID(),
+		ThreadSeq:  1,
+		ThreadKind: modulecore.ThreadKindUserConversation,
+		SessionID:  sessionID,
+		Domain:     domain,
+		Status:     domconv.ThreadActive,
+	}
+}
+
+func conversationTestSessionID(seed string) string {
+	id, err := modulecore.NewMigrationID(modulecore.CanonicalSessionID, "conversation_test", "session_id", seed)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func (m *mockL1Store) SaveMessage(_ context.Context, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, namespace string, msg domconv.Message, memoryState string) error {
+	m.saveMessageCall++
+	if m.saveMessageErr != nil {
+		return m.saveMessageErr
+	}
 	m.saved = append(m.saved, l1sqlite.L1MemoryEvent{
 		Namespace:   namespace,
 		SessionID:   sessionID,
 		ThreadID:    threadID,
+		ThreadSeq:   threadSeq,
+		ThreadKind:  threadKind,
 		Speaker:     msg.Speaker,
 		Message:     msg.Msg,
 		Meta:        msg.Meta,
@@ -260,16 +318,18 @@ func anyQueryTermMatches(haystack string, query string) bool {
 	}
 	return false
 }
-func (m *mockL1Store) AppendEvent(_ context.Context, eventType string, namespace string, sessionID string, threadID int64, payload map[string]interface{}, source string) (*l1sqlite.L1EventLogEntry, error) {
+func (m *mockL1Store) AppendEvent(_ context.Context, eventType string, namespace string, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, payload map[string]interface{}, source string) (*l1sqlite.L1EventLogEntry, error) {
 	entry := l1sqlite.L1EventLogEntry{
-		ID:        fmt.Sprintf("%s:%s:%d", namespace, eventType, len(m.events)+1),
-		EventType: eventType,
-		Namespace: namespace,
-		SessionID: sessionID,
-		ThreadID:  threadID,
-		Payload:   payload,
-		Source:    source,
-		CreatedAt: time.Now(),
+		ID:         fmt.Sprintf("%s:%s:%d", namespace, eventType, len(m.events)+1),
+		EventType:  eventType,
+		Namespace:  namespace,
+		SessionID:  sessionID,
+		ThreadID:   threadID,
+		ThreadSeq:  threadSeq,
+		ThreadKind: threadKind,
+		Payload:    payload,
+		Source:     source,
+		CreatedAt:  time.Now(),
 	}
 	m.events = append(m.events, entry)
 	return &entry, nil
@@ -335,6 +395,20 @@ func (m *mockL1Store) RecentBySession(_ context.Context, sessionID string, _ int
 		}
 	}
 	return out, nil
+}
+
+func (m *mockL1Store) LatestConversationThreadReference(_ context.Context, sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool, error) {
+	for index := len(m.saved) - 1; index >= 0; index-- {
+		event := m.saved[index]
+		if event.SessionID != sessionID || event.ThreadID == "" {
+			continue
+		}
+		if event.ThreadID.Validate() != nil || event.ThreadSeq.Validate() != nil || event.ThreadKind.Validate() != nil {
+			return "", 0, "", false, fmt.Errorf("invalid mock conversation thread reference")
+		}
+		return event.ThreadID, event.ThreadSeq, event.ThreadKind, true, nil
+	}
+	return "", 0, "", false, nil
 }
 func (m *mockL1Store) SaveRecallTrace(_ context.Context, trace domconv.RecallTrace) error {
 	m.traces = append(m.traces, trace)
@@ -425,6 +499,194 @@ func TestRealConversationManagerRedisHealthDelegatesToExistingStore(t *testing.T
 	}
 }
 
+func TestRealConversationManagerCreateThreadConcurrentAssignsSessionSequences(t *testing.T) {
+	manager := newTestManager(nil, nil)
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("concurrent-session")
+	const count = 32
+	type createResult struct {
+		thread *domconv.Thread
+		err    error
+	}
+	results := make(chan createResult, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			thread, err := manager.CreateThread(ctx, sessionID, "general")
+			results <- createResult{thread: thread, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	bySequence := make(map[modulecore.ThreadSeq]modulecore.ThreadID, count)
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent CreateThread: %v", result.err)
+		}
+		if result.thread == nil {
+			t.Fatal("concurrent CreateThread returned nil thread")
+		}
+		if err := result.thread.ID.Validate(); err != nil {
+			t.Fatalf("thread ID %q invalid: %v", result.thread.ID, err)
+		}
+		if result.thread.SessionID != sessionID || result.thread.ThreadKind != modulecore.ThreadKindUserConversation {
+			t.Fatalf("thread tuple/session = %+v", result.thread)
+		}
+		if _, exists := bySequence[result.thread.ThreadSeq]; exists {
+			t.Fatalf("duplicate sequence %d", result.thread.ThreadSeq)
+		}
+		bySequence[result.thread.ThreadSeq] = result.thread.ID
+	}
+	if len(bySequence) != count {
+		t.Fatalf("distinct sequence count = %d, want %d", len(bySequence), count)
+	}
+	for sequence := modulecore.ThreadSeq(1); sequence <= count; sequence++ {
+		if bySequence[sequence] == "" {
+			t.Fatalf("missing sequence %d", sequence)
+		}
+	}
+
+	session, err := manager.redisStore.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if session.LastThreadSeq != count || session.LastThreadID != bySequence[count] || session.LastThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("last session tuple = %q/%d/%q, want %q/%d/%q", session.LastThreadID, session.LastThreadSeq, session.LastThreadKind, bySequence[count], count, modulecore.ThreadKindUserConversation)
+	}
+}
+
+func TestRealConversationManagerGetActiveThreadRejectsFetchedTupleMismatch(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*domconv.Thread)
+	}{
+		{name: "thread id", mutate: func(thread *domconv.Thread) { thread.ID = modulecore.NewThreadID() }},
+		{name: "thread sequence", mutate: func(thread *domconv.Thread) { thread.ThreadSeq++ }},
+		{name: "thread kind", mutate: func(thread *domconv.Thread) { thread.ThreadKind = modulecore.ThreadKindIdleChat }},
+		{name: "session id", mutate: func(thread *domconv.Thread) { thread.SessionID = "different-session" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager := newTestManager(nil, nil)
+			ctx := context.Background()
+			sessionID := conversationTestSessionID("active-mismatch-session")
+			thread, err := manager.CreateThread(ctx, sessionID, "general")
+			if err != nil {
+				t.Fatalf("CreateThread: %v", err)
+			}
+			test.mutate(manager.redisStore.(*mockRedisStore).threads[thread.ID])
+			if _, err := manager.GetActiveThread(ctx, sessionID); err == nil {
+				t.Fatal("GetActiveThread accepted a fetched thread tuple mismatch")
+			}
+		})
+	}
+}
+
+func TestRealConversationManagerCreateThreadRecoversHigherL1SequenceAfterRedisSessionMissing(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("reconcile-missing-session")
+	l1 := &mockL1Store{}
+	l1ThreadID := modulecore.NewThreadID()
+	l1.saved = append(l1.saved, l1sqlite.L1MemoryEvent{
+		SessionID: sessionID, ThreadID: l1ThreadID, ThreadSeq: 7, ThreadKind: modulecore.ThreadKindUserConversation,
+		Namespace: "conv:" + string(l1ThreadID), Speaker: domconv.SpeakerUser, Message: "persisted",
+	})
+	manager := newTestManager(nil, nil)
+	manager.l1Store = l1
+	thread, err := manager.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if thread.ThreadSeq != 8 || thread.ThreadKind != modulecore.ThreadKindUserConversation || thread.ID == l1ThreadID {
+		t.Fatalf("recovered thread=%+v, want new seq8 after L1 seq7", thread)
+	}
+	session, err := manager.redisStore.GetSession(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if session.LastThreadID != thread.ID || session.LastThreadSeq != 8 || session.LastThreadKind != thread.ThreadKind {
+		t.Fatalf("reconciled session tuple=%q/%d/%q", session.LastThreadID, session.LastThreadSeq, session.LastThreadKind)
+	}
+}
+
+func TestRealConversationManagerCreateThreadUsesHigherL1SequenceThanRedis(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("reconcile-stale-session")
+	redisThreadID := modulecore.NewThreadID()
+	l1ThreadID := modulecore.NewThreadID()
+	l1 := &mockL1Store{saved: []l1sqlite.L1MemoryEvent{{
+		SessionID: sessionID, ThreadID: l1ThreadID, ThreadSeq: 7, ThreadKind: modulecore.ThreadKindUserConversation,
+		Namespace: "conv:" + string(l1ThreadID), Speaker: domconv.SpeakerUser, Message: "persisted",
+	}}}
+	manager := newTestManager(nil, nil)
+	manager.l1Store = l1
+	redis := manager.redisStore.(*mockRedisStore)
+	redis.sessions[sessionID] = &domconv.SessionConversation{
+		ID: sessionID, LastThreadID: redisThreadID, LastThreadSeq: 3, LastThreadKind: modulecore.ThreadKindUserConversation,
+	}
+	thread, err := manager.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if thread.ThreadSeq != 8 || thread.ID == l1ThreadID {
+		t.Fatalf("stale Redis reconciliation thread=%+v, want new seq8", thread)
+	}
+}
+
+func TestRealConversationManagerCreateThreadRejectsEqualSequenceIdentityConflict(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("reconcile-conflict-session")
+	redisThreadID := modulecore.NewThreadID()
+	l1ThreadID := modulecore.NewThreadID()
+	l1 := &mockL1Store{saved: []l1sqlite.L1MemoryEvent{{
+		SessionID: sessionID, ThreadID: l1ThreadID, ThreadSeq: 7, ThreadKind: modulecore.ThreadKindUserConversation,
+		Namespace: "conv:" + string(l1ThreadID), Speaker: domconv.SpeakerUser, Message: "persisted",
+	}}}
+	manager := newTestManager(nil, nil)
+	manager.l1Store = l1
+	redis := manager.redisStore.(*mockRedisStore)
+	redis.sessions[sessionID] = &domconv.SessionConversation{
+		ID: sessionID, LastThreadID: redisThreadID, LastThreadSeq: 7, LastThreadKind: modulecore.ThreadKindUserConversation,
+	}
+	if _, err := manager.CreateThread(ctx, sessionID, "general"); err == nil {
+		t.Fatal("CreateThread accepted equal-sequence identity conflict")
+	}
+	if len(redis.threads) != 0 {
+		t.Fatalf("conflicting CreateThread wrote %d Redis threads", len(redis.threads))
+	}
+}
+
+func TestRealConversationManagerCreateThreadRollsBackNewThreadWhenSessionSaveFails(t *testing.T) {
+	ctx := context.Background()
+	sessionID := conversationTestSessionID("create-rollback-session")
+	existingID := modulecore.NewThreadID()
+	existingThread := &domconv.Thread{
+		ID: existingID, ThreadSeq: 7, ThreadKind: modulecore.ThreadKindUserConversation,
+		SessionID: sessionID, Domain: "general", Status: domconv.ThreadActive,
+	}
+	existingSession := &domconv.SessionConversation{
+		ID: sessionID, LastThreadID: existingID, LastThreadSeq: 7, LastThreadKind: modulecore.ThreadKindUserConversation,
+	}
+	redis := newMockRedisStore()
+	redis.threads[existingID] = existingThread
+	redis.sessions[sessionID] = existingSession
+	saveErr := errors.New("session persistence failed")
+	redis.saveSessionErr = saveErr
+	manager := &RealConversationManager{redisStore: redis}
+	if _, err := manager.CreateThread(ctx, sessionID, "general"); !errors.Is(err, saveErr) {
+		t.Fatalf("CreateThread error=%v, want session save failure", err)
+	}
+	if len(redis.threads) != 1 || redis.threads[existingID] != existingThread {
+		t.Fatalf("rollback changed preexisting Redis threads: %#v", redis.threads)
+	}
+	if redis.sessions[sessionID] != existingSession || existingSession.LastThreadID != existingID || existingSession.LastThreadSeq != 7 || existingSession.LastThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("rollback changed preexisting session: %+v", existingSession)
+	}
+}
+
 // --- テスト ---
 
 func TestFlushThread_WithLLMSummary(t *testing.T) {
@@ -436,7 +698,7 @@ func TestFlushThread_WithLLMSummary(t *testing.T) {
 	mgr := newTestManager(embedder, summarizer)
 	ctx := context.Background()
 
-	thread, err := mgr.CreateThread(ctx, "sess-1", "programming")
+	thread, err := mgr.CreateThread(ctx, conversationTestSessionID("sess-1"), "programming")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -463,7 +725,7 @@ func TestFlushThread_WithLLMSummary(t *testing.T) {
 func TestFlushThread_CurrentPathPersistsReceiptAfterFallback(t *testing.T) {
 	mgr := newTestManager(nil, &mockSummarizer{err: fmt.Errorf("summarizer unavailable")})
 	ctx := context.Background()
-	thread, err := mgr.CreateThread(ctx, "sess-receipt-red", "programming")
+	thread, err := mgr.CreateThread(ctx, conversationTestSessionID("sess-receipt-red"), "programming")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -487,7 +749,7 @@ func TestFlushThread_CurrentPathPersistsReceiptAfterFallback(t *testing.T) {
 func TestFlushThread_FallbackReceiptAndEvidence(t *testing.T) {
 	mgr := newTestManager(nil, nil)
 	ctx := context.Background()
-	thread, err := mgr.CreateThread(ctx, "sess-fallback-receipt", "memory")
+	thread, err := mgr.CreateThread(ctx, conversationTestSessionID("sess-fallback-receipt"), "memory")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -519,7 +781,7 @@ func TestFlushThread_FallbackReceiptAndEvidence(t *testing.T) {
 func TestFlushThread_SummarizerUnavailableReceiptCode(t *testing.T) {
 	mgr := newTestManager(nil, &mockSummarizer{err: domconv.ErrThreadSummarizerUnavailable})
 	ctx := context.Background()
-	thread, _ := mgr.CreateThread(ctx, "sess-unavailable", "general")
+	thread, _ := mgr.CreateThread(ctx, conversationTestSessionID("sess-unavailable"), "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "失敗しても保存", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
@@ -537,7 +799,7 @@ func TestFlushThread_SummarizerUnavailableReceiptCode(t *testing.T) {
 
 func TestFlushThreadUnnamedSummarizerUsesNotConfiguredFallback(t *testing.T) {
 	mgr := newTestManager(nil, unnamedSummarizer{})
-	thread, _ := mgr.CreateThread(context.Background(), "sess-unnamed", "general")
+	thread, _ := mgr.CreateThread(context.Background(), conversationTestSessionID("sess-unnamed"), "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "persist deterministically", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
@@ -555,7 +817,7 @@ func TestFlushThread_ArchiveFailureDoesNotRetryWithAlternateSummary(t *testing.T
 	mgr := newTestManager(nil, nil)
 	mgr.archiveStore = archive
 	ctx := context.Background()
-	thread, _ := mgr.CreateThread(ctx, "sess-archive-failure", "general")
+	thread, _ := mgr.CreateThread(ctx, conversationTestSessionID("sess-archive-failure"), "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "一度だけ保存", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
@@ -568,8 +830,7 @@ func TestFlushThread_ArchiveFailureDoesNotRetryWithAlternateSummary(t *testing.T
 }
 
 func TestDeriveThreadSummaryEvidenceIsDeterministicAndSensitive(t *testing.T) {
-	thread := domconv.NewThread("evidence-session", "general")
-	thread.ID = 9001
+	thread := newManagerTestThread("evidence-session", "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "body-a", nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "body-b", nil))
 	_, first, err := deriveThreadSummaryEvidence(thread)
@@ -617,8 +878,7 @@ func TestDeriveThreadSummaryEvidenceIsDeterministicAndSensitive(t *testing.T) {
 func TestArchiveThreadSummaryUsesStableSourceTimeForReplay(t *testing.T) {
 	mgr := newTestManager(nil, nil)
 	ctx := context.Background()
-	thread := domconv.NewThread("stable-replay", "general")
-	thread.ID = 9100
+	thread := newManagerTestThread("stable-replay", "general")
 	fixed := time.Date(2026, 8, 16, 18, 30, 0, 0, time.UTC)
 	thread.StartTime = fixed.Add(-time.Minute)
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "stable body", nil))
@@ -643,9 +903,9 @@ func TestFlushThreadRejectsInvalidEvidenceBeforeArchive(t *testing.T) {
 		name   string
 		thread *domconv.Thread
 	}{
-		{name: "empty identity", thread: &domconv.Thread{ID: 0, SessionID: "", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: "body"}}}},
-		{name: "invalid utf8 body", thread: &domconv.Thread{ID: 9101, SessionID: "valid-session", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: string([]byte{0xff})}}}},
-		{name: "empty speaker", thread: &domconv.Thread{ID: 9102, SessionID: "valid-session", Turns: []domconv.Message{{Msg: "body", Timestamp: time.Now().UTC()}}}},
+		{name: "empty identity", thread: &domconv.Thread{ID: "", SessionID: "", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: "body"}}}},
+		{name: "invalid utf8 body", thread: &domconv.Thread{ID: modulecore.NewThreadID(), ThreadSeq: 1, ThreadKind: modulecore.ThreadKindUserConversation, SessionID: "valid-session", Turns: []domconv.Message{{Speaker: domconv.SpeakerUser, Msg: string([]byte{0xff})}}}},
+		{name: "empty speaker", thread: &domconv.Thread{ID: modulecore.NewThreadID(), ThreadSeq: 1, ThreadKind: modulecore.ThreadKindUserConversation, SessionID: "valid-session", Turns: []domconv.Message{{Msg: "body", Timestamp: time.Now().UTC()}}}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			mgr := newTestManager(nil, nil)
@@ -665,16 +925,17 @@ func TestStore_MirrorsMessageToL1SQLiteStore(t *testing.T) {
 	l1 := &mockL1Store{}
 	mgr.WithL1Store(l1)
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("sess-l1")
 
 	msg := domconv.NewMessage(domconv.SpeakerUser, "L1にも保存する", map[string]interface{}{"kind": "test"})
-	if err := mgr.Store(ctx, "sess-l1", msg); err != nil {
+	if err := mgr.Store(ctx, sessionID, msg); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 	if len(l1.saved) != 1 {
 		t.Fatalf("expected 1 l1 event, got %d", len(l1.saved))
 	}
 	ev := l1.saved[0]
-	if ev.SessionID != "sess-l1" {
+	if ev.SessionID != sessionID {
 		t.Fatalf("unexpected session: %s", ev.SessionID)
 	}
 	if !strings.HasPrefix(ev.Namespace, "conv:") {
@@ -693,12 +954,16 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	l1 := &mockL1Store{}
 	mgr.WithL1Store(l1)
 	ctx := context.Background()
+	threadID := modulecore.NewThreadID()
+	threadNamespace := "conv:" + string(threadID)
 
 	l1.saved = append(l1.saved,
 		l1sqlite.L1MemoryEvent{
-			Namespace:   "conv:100",
+			Namespace:   threadNamespace,
 			SessionID:   "sess-l1-recall",
-			ThreadID:    100,
+			ThreadID:    threadID,
+			ThreadSeq:   1,
+			ThreadKind:  modulecore.ThreadKindUserConversation,
 			Speaker:     domconv.SpeakerUser,
 			Message:     "前回の話題",
 			Meta:        map[string]interface{}{"kind": "original"},
@@ -708,9 +973,11 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 			CreatedAt:   time.Date(2026, 5, 5, 10, 0, 0, 0, time.UTC),
 		},
 		l1sqlite.L1MemoryEvent{
-			Namespace:   "conv:100",
+			Namespace:   threadNamespace,
 			SessionID:   "sess-l1-recall",
-			ThreadID:    100,
+			ThreadID:    threadID,
+			ThreadSeq:   1,
+			ThreadKind:  modulecore.ThreadKindUserConversation,
 			Speaker:     domconv.SpeakerMio,
 			Message:     "前回の返答",
 			Meta:        map[string]interface{}{},
@@ -731,7 +998,7 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 	if messages[0].Msg != "前回の話題" || messages[1].Msg != "前回の返答" {
 		t.Fatalf("unexpected recall order: %+v", messages)
 	}
-	if messages[0].Meta["namespace"] != "conv:100" {
+	if messages[0].Meta["namespace"] != threadNamespace {
 		t.Fatalf("expected namespace meta, got %+v", messages[0].Meta)
 	}
 	if messages[0].Meta["memory_state"] != l1sqlite.MemoryStateObserved {
@@ -751,6 +1018,7 @@ func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
 	}
 	first := newTestManager(nil, nil)
 	first.WithL1Store(store)
+	sessionID := conversationTestSessionID("shared-restart")
 	want := []domconv.Message{
 		domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil),
 		domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil),
@@ -759,7 +1027,7 @@ func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
 		domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil),
 	}
 	for _, msg := range want {
-		if err := first.Store(ctx, "shared-restart", msg); err != nil {
+		if err := first.Store(ctx, sessionID, msg); err != nil {
 			t.Fatalf("Store(%s) failed: %v", msg.Speaker, err)
 		}
 	}
@@ -775,7 +1043,7 @@ func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
 	second := newTestManager(nil, nil)
 	second.WithL1Store(reopened)
 
-	got, err := second.Recall(ctx, "shared-restart", "合言葉は？", len(want))
+	got, err := second.Recall(ctx, sessionID, "合言葉は？", len(want))
 	if err != nil {
 		t.Fatalf("Recall after restart failed: %v", err)
 	}
@@ -790,7 +1058,7 @@ func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
 }
 
 func TestGenerateSimpleSummaryPreservesCharacterAttribution(t *testing.T) {
-	thread := domconv.NewThread("shared", "general")
+	thread := newManagerTestThread("shared", "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil))
 
@@ -815,8 +1083,8 @@ func TestRecall_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	embedder := &mockEmbeddingProvider{vec: []float32{0.1, 0.2, 0.3}}
 	vdb := &mockVectorDBStore{mockScore: 0.42}
 	vdb.saved = []*domconv.ThreadSummary{{
-		ThreadID: 301,
-		Summary:  "vector fallback summary",
+		ThreadID: modulecore.NewThreadID(), ThreadSeq: 1, ThreadKind: modulecore.ThreadKindUserConversation,
+		Summary: "vector fallback summary",
 	}}
 	mgr := &RealConversationManager{
 		redisStore:    newMockRedisStore(),
@@ -867,7 +1135,7 @@ func TestFlushThread_SkipsSQLiteArchiveWhenArchiveDisabled(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	thread, err := mgr.CreateThread(ctx, "sess-flush-no-archive_sqlite", "memory")
+	thread, err := mgr.CreateThread(ctx, conversationTestSessionID("sess-flush-no-archive_sqlite"), "memory")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -979,7 +1247,7 @@ func TestFlushThread_EmbedderError_FallsBackToSimple(t *testing.T) {
 	mgr := newTestManager(embedder, summarizer)
 	ctx := context.Background()
 
-	thread, _ := mgr.CreateThread(ctx, "sess-2", "general")
+	thread, _ := mgr.CreateThread(ctx, conversationTestSessionID("sess-2"), "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "hello", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
@@ -997,7 +1265,7 @@ func TestFlushThread_NoSummarizer_FallsBackToSimple(t *testing.T) {
 	mgr := newTestManager(nil, nil)
 	ctx := context.Background()
 
-	thread, _ := mgr.CreateThread(ctx, "sess-3", "general")
+	thread, _ := mgr.CreateThread(ctx, conversationTestSessionID("sess-3"), "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "こんにちは", nil))
 	mgr.redisStore.(*mockRedisStore).threads[thread.ID] = thread
 
@@ -1167,15 +1435,16 @@ func TestDeleteOldKBDocuments_Success(t *testing.T) {
 func TestStore_CreatesThreadWhenNotFound(t *testing.T) {
 	mgr := newTestManager(nil, nil)
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("session123")
 
 	msg := domconv.NewMessage(domconv.SpeakerUser, "Hello", nil)
-	err := mgr.Store(ctx, "session123", msg)
+	err := mgr.Store(ctx, sessionID, msg)
 	if err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 
 	// スレッドが作成されたことを確認
-	thread, err := mgr.GetActiveThread(ctx, "session123")
+	thread, err := mgr.GetActiveThread(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("GetActiveThread failed: %v", err)
 	}
@@ -1193,26 +1462,230 @@ func TestStore_CreatesThreadWhenNotFound(t *testing.T) {
 func TestStore_AppendsToExistingThread(t *testing.T) {
 	mgr := newTestManager(nil, nil)
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("session123")
 
 	// 最初のメッセージ
 	msg1 := domconv.NewMessage(domconv.SpeakerUser, "Hello", nil)
-	if err := mgr.Store(ctx, "session123", msg1); err != nil {
+	if err := mgr.Store(ctx, sessionID, msg1); err != nil {
 		t.Fatalf("First Store failed: %v", err)
 	}
 
 	// 2番目のメッセージ
 	msg2 := domconv.NewMessage(domconv.SpeakerMio, "Hi there", nil)
-	if err := mgr.Store(ctx, "session123", msg2); err != nil {
+	if err := mgr.Store(ctx, sessionID, msg2); err != nil {
 		t.Fatalf("Second Store failed: %v", err)
 	}
 
 	// スレッドが2つのメッセージを持つことを確認
-	thread, err := mgr.GetActiveThread(ctx, "session123")
+	thread, err := mgr.GetActiveThread(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("GetActiveThread failed: %v", err)
 	}
 	if len(thread.Turns) != 2 {
 		t.Errorf("Expected 2 turns, got %d", len(thread.Turns))
+	}
+}
+
+func TestStoreInitialThreadCreationDoesNotDeadlock(t *testing.T) {
+	mgr := newTestManager(nil, nil)
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.Store(context.Background(), conversationTestSessionID("store-initial-no-deadlock"), domconv.NewMessage(domconv.SpeakerUser, "first", nil))
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Store failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Store deadlocked while creating the initial thread")
+	}
+}
+
+func TestStoreRejectsInactiveThreadWithoutMutation(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestManager(nil, nil)
+	sessionID := conversationTestSessionID("store-inactive")
+	thread, err := mgr.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	thread.Status = domconv.ThreadClosed
+	thread.Turns = []domconv.Message{domconv.NewMessage(domconv.SpeakerUser, "existing", nil)}
+	before := append([]domconv.Message{}, thread.Turns...)
+
+	err = mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerMio, "must reject", nil))
+	if !errors.Is(err, domconv.ErrInvalidThreadStatus) {
+		t.Fatalf("Store inactive error=%v, want invalid status", err)
+	}
+	if !reflect.DeepEqual(thread.Turns, before) {
+		t.Fatalf("inactive thread mutated: got=%v want=%v", thread.Turns, before)
+	}
+}
+
+func TestStorePropagatesL1ErrorWithoutRedisSaveOrLoadedMutation(t *testing.T) {
+	ctx := context.Background()
+	saveErr := errors.New("l1 save failed")
+	l1 := &mockL1Store{saveMessageErr: saveErr}
+	mgr := newTestManager(nil, nil)
+	mgr.WithL1Store(l1)
+	sessionID := conversationTestSessionID("store-l1-error")
+	thread, err := mgr.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	redis := mgr.redisStore.(*mockRedisStore)
+	redis.mu.Lock()
+	redis.saveThreadCalls = 0
+	redis.mu.Unlock()
+	before := append([]domconv.Message{}, thread.Turns...)
+
+	err = mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, "must persist to l1 first", nil))
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("Store L1 error=%v, want %v", err, saveErr)
+	}
+	redis.mu.Lock()
+	saveThreadCalls := redis.saveThreadCalls
+	redis.mu.Unlock()
+	if saveThreadCalls != 0 {
+		t.Fatalf("Redis SaveThread calls after L1 failure=%d, want 0", saveThreadCalls)
+	}
+	if !reflect.DeepEqual(thread.Turns, before) {
+		t.Fatalf("loaded thread mutated after L1 failure: got=%v want=%v", thread.Turns, before)
+	}
+}
+
+func TestStoreInitialL1ErrorDoesNotCreateRedisProjection(t *testing.T) {
+	ctx := context.Background()
+	saveErr := errors.New("initial l1 save failed")
+	mgr := newTestManager(nil, nil)
+	mgr.WithL1Store(&mockL1Store{saveMessageErr: saveErr})
+	sessionID := conversationTestSessionID("store-initial-l1-error")
+
+	err := mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, "must not project", nil))
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("Store L1 error=%v, want %v", err, saveErr)
+	}
+	redis := mgr.redisStore.(*mockRedisStore)
+	redis.mu.Lock()
+	defer redis.mu.Unlock()
+	if redis.saveThreadCalls != 0 || len(redis.threads) != 0 || len(redis.sessions) != 0 {
+		t.Fatalf("initial L1 failure changed Redis: saves=%d threads=%d sessions=%d", redis.saveThreadCalls, len(redis.threads), len(redis.sessions))
+	}
+}
+
+func TestStoreRolloverL1ErrorDoesNotAdvanceRedisProjection(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestManager(nil, nil)
+	sessionID := conversationTestSessionID("store-rollover-l1-error")
+	thread, err := mgr.CreateThread(ctx, sessionID, "general")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	for index := 0; index < 11; index++ {
+		if err := thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("existing-%d", index), nil)); err != nil {
+			t.Fatalf("seed thread: %v", err)
+		}
+	}
+	saveErr := errors.New("rollover l1 save failed")
+	mgr.WithL1Store(&mockL1Store{saveMessageErr: saveErr})
+	redis := mgr.redisStore.(*mockRedisStore)
+	redis.mu.Lock()
+	redis.saveThreadCalls = 0
+	originalThreadID := redis.sessions[sessionID].LastThreadID
+	redis.mu.Unlock()
+
+	err = mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerMio, "must not advance", nil))
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("Store rollover L1 error=%v, want %v", err, saveErr)
+	}
+	redis.mu.Lock()
+	defer redis.mu.Unlock()
+	if redis.saveThreadCalls != 0 || len(redis.threads) != 1 {
+		t.Fatalf("rollover L1 failure changed Redis threads: saves=%d threads=%d", redis.saveThreadCalls, len(redis.threads))
+	}
+	if redis.sessions[sessionID].LastThreadID != originalThreadID {
+		t.Fatalf("rollover L1 failure advanced session thread: got=%s want=%s", redis.sessions[sessionID].LastThreadID, originalThreadID)
+	}
+	if len(redis.threads[originalThreadID].Turns) != 11 {
+		t.Fatalf("rollover L1 failure mutated old thread: turns=%d want=11", len(redis.threads[originalThreadID].Turns))
+	}
+}
+
+func TestStoreRejectsStaleOrConflictingL1ThreadReference(t *testing.T) {
+	tests := []struct {
+		name       string
+		threadSeq  modulecore.ThreadSeq
+		threadID   modulecore.ThreadID
+		threadKind modulecore.ThreadKind
+	}{
+		{name: "newer sequence", threadSeq: 2, threadID: modulecore.NewThreadID(), threadKind: modulecore.ThreadKindUserConversation},
+		{name: "same sequence different id", threadSeq: 1, threadID: modulecore.NewThreadID(), threadKind: modulecore.ThreadKindUserConversation},
+		{name: "same sequence different kind", threadSeq: 1, threadID: modulecore.NewThreadID(), threadKind: modulecore.ThreadKindIdleChat},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			ctx := context.Background()
+			mgr := newTestManager(nil, nil)
+			sessionID := conversationTestSessionID("store-l1-reference-" + testCase.name)
+			thread, err := mgr.CreateThread(ctx, sessionID, "general")
+			if err != nil {
+				t.Fatalf("CreateThread failed: %v", err)
+			}
+			l1 := &mockL1Store{saved: []l1sqlite.L1MemoryEvent{{
+				SessionID: sessionID, ThreadID: testCase.threadID, ThreadSeq: testCase.threadSeq, ThreadKind: testCase.threadKind,
+			}}}
+			mgr.WithL1Store(l1)
+			before := append([]domconv.Message{}, thread.Turns...)
+
+			err = mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, "must reject stale reference", nil))
+			if !errors.Is(err, domconv.ErrConversationTurnConflict) {
+				t.Fatalf("Store reference error=%v, want conflict", err)
+			}
+			if !reflect.DeepEqual(thread.Turns, before) {
+				t.Fatalf("thread mutated on reference conflict: got=%v want=%v", thread.Turns, before)
+			}
+		})
+	}
+}
+
+func TestStoreConcurrentCallsRetainAllMessages(t *testing.T) {
+	ctx := context.Background()
+	mgr := newTestManager(nil, nil)
+	sessionID := conversationTestSessionID("store-concurrent")
+	const count = 8
+	errs := make(chan error, count)
+	var wg sync.WaitGroup
+	for index := 0; index < count; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			errs <- mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("concurrent-%d", index), nil))
+		}(index)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent Store failed: %v", err)
+		}
+	}
+
+	thread, err := mgr.GetActiveThread(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetActiveThread failed: %v", err)
+	}
+	if len(thread.Turns) != count {
+		t.Fatalf("concurrent Store retained %d turns, want %d", len(thread.Turns), count)
+	}
+	seen := make(map[string]struct{}, count)
+	for _, turn := range thread.Turns {
+		seen[turn.Msg] = struct{}{}
+	}
+	for index := 0; index < count; index++ {
+		if _, ok := seen[fmt.Sprintf("concurrent-%d", index)]; !ok {
+			t.Fatalf("concurrent Store lost message concurrent-%d", index)
+		}
 	}
 }
 
@@ -1233,7 +1706,8 @@ func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
 	}
 	mgr := newTestManager(nil, summarizer)
 	ctx := context.Background()
-	thread, err := mgr.CreateThread(ctx, "session-async-roll", "general")
+	sessionID := conversationTestSessionID("session-async-roll")
+	thread, err := mgr.CreateThread(ctx, sessionID, "general")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -1246,7 +1720,7 @@ func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- mgr.Store(ctx, "session-async-roll", domconv.NewMessage(domconv.SpeakerMio, "latest", nil))
+		done <- mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerMio, "latest", nil))
 	}()
 
 	select {
@@ -1260,7 +1734,7 @@ func TestStore_RollsThreadWithoutWaitingForLLMSummary(t *testing.T) {
 		t.Fatal("Store waited for the LLM summary")
 	}
 
-	active, err := mgr.GetActiveThread(ctx, "session-async-roll")
+	active, err := mgr.GetActiveThread(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("GetActiveThread failed: %v", err)
 	}
@@ -1290,7 +1764,8 @@ func TestStore_BackgroundSummaryTimeoutPersistsSimpleFallback(t *testing.T) {
 	mgr := newTestManager(nil, summarizer)
 	mgr.backgroundFlushTimeout = 5 * time.Millisecond
 	ctx := context.Background()
-	thread, err := mgr.CreateThread(ctx, "session-timeout-roll", "general")
+	sessionID := conversationTestSessionID("session-timeout-roll")
+	thread, err := mgr.CreateThread(ctx, sessionID, "general")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -1301,7 +1776,7 @@ func TestStore_BackgroundSummaryTimeoutPersistsSimpleFallback(t *testing.T) {
 		t.Fatalf("SaveThread failed: %v", err)
 	}
 
-	if err := mgr.Store(ctx, "session-timeout-roll", domconv.NewMessage(domconv.SpeakerMio, "latest", nil)); err != nil {
+	if err := mgr.Store(ctx, sessionID, domconv.NewMessage(domconv.SpeakerMio, "latest", nil)); err != nil {
 		t.Fatalf("Store failed: %v", err)
 	}
 	mgr.waitForBackgroundJobs()

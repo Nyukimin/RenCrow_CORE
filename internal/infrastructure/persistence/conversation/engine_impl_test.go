@@ -10,6 +10,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // === Mocks ===
@@ -18,7 +19,7 @@ type mockManager struct {
 	recallFunc           func(ctx context.Context, sessionID, query string, topK int) ([]domconv.Message, error)
 	storeFunc            func(ctx context.Context, sessionID string, msg domconv.Message) error
 	getActiveThreadFunc  func(ctx context.Context, sessionID string) (*domconv.Thread, error)
-	flushThreadFunc      func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error)
+	flushThreadFunc      func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error)
 	createThreadFunc     func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error)
 	commitTurnFunc       func(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
 	commitRequests       []domconv.ConversationTurnRequest
@@ -48,7 +49,7 @@ func (m *mockManager) CommitConversationTurn(ctx context.Context, request domcon
 		return m.commitTurnFunc(ctx, request)
 	}
 	if request.Boundary {
-		if _, err := m.FlushThread(ctx, 1); err != nil {
+		if _, err := m.FlushThread(ctx, modulecore.NewThreadID()); err != nil {
 			return domconv.ConversationTurnResult{}, err
 		}
 		if _, err := m.CreateThread(ctx, request.SessionID, request.Domain); err != nil {
@@ -74,7 +75,7 @@ func (m *mockManager) LoadActiveConversationThread(ctx context.Context, sessionI
 	return m.GetActiveThread(ctx, sessionID)
 }
 
-func (m *mockManager) FlushThread(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+func (m *mockManager) FlushThread(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 	if m.flushThreadFunc != nil {
 		return m.flushThreadFunc(ctx, threadID)
 	}
@@ -85,14 +86,25 @@ func (m *mockManager) GetActiveThread(ctx context.Context, sessionID string) (*d
 	if m.getActiveThreadFunc != nil {
 		return m.getActiveThreadFunc(ctx, sessionID)
 	}
-	return domconv.NewThread(sessionID, "general"), nil
+	return newEngineTestThread(sessionID, "general"), nil
 }
 
 func (m *mockManager) CreateThread(ctx context.Context, sessionID, domain string) (*domconv.Thread, error) {
 	if m.createThreadFunc != nil {
 		return m.createThreadFunc(ctx, sessionID, domain)
 	}
-	return domconv.NewThread(sessionID, domain), nil
+	return newEngineTestThread(sessionID, domain), nil
+}
+
+func newEngineTestThread(sessionID, domain string) *domconv.Thread {
+	return &domconv.Thread{
+		ID:         modulecore.NewThreadID(),
+		ThreadSeq:  1,
+		ThreadKind: modulecore.ThreadKindUserConversation,
+		SessionID:  sessionID,
+		Domain:     domain,
+		Status:     domconv.ThreadActive,
+	}
 }
 
 func (m *mockManager) IsNovelInformation(ctx context.Context, msg domconv.Message) (bool, float32, error) {
@@ -418,7 +430,8 @@ func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
 }
 
 func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T) {
-	thread := &domconv.Thread{ID: 42, SessionID: "session-typed", Domain: "authoritative", Status: domconv.ThreadActive}
+	sessionID := string(modulecore.NewSessionID())
+	thread := &domconv.Thread{ID: modulecore.NewThreadID(), ThreadSeq: 1, ThreadKind: modulecore.ThreadKindUserConversation, SessionID: sessionID, Domain: "authoritative", Status: domconv.ThreadActive}
 	var got domconv.ConversationTurnRequest
 	mgr := &mockManager{
 		targets: []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers},
@@ -438,7 +451,7 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
 		WithUserMemoryStore(mgr, "trusted-owner").WithDetector(detector)
 	request := domconv.ConversationTurnRequest{
-		TurnID: "job-typed", SessionID: "session-typed", OwnerID: "caller-owner", Domain: "caller-domain",
+		TurnID: "job-typed", SessionID: sessionID, OwnerID: "caller-owner", Domain: "caller-domain",
 		UserMessage: "new topic", AgentMessage: "response", AgentSpeaker: domconv.SpeakerKuro,
 		Boundary: true, BoundaryReason: "caller decision", Targets: []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection},
 	}
@@ -466,7 +479,7 @@ func TestCommitConversationTurnNoActiveThreadUsesGeneralWithoutLegacyWrites(t *t
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "trusted-owner")
 	if _, err := engine.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
-		TurnID: "job-no-thread", SessionID: "session-no-thread", UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
+		TurnID: "job-no-thread", SessionID: string(modulecore.NewSessionID()), UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
 	}); err != nil {
 		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
@@ -622,7 +635,7 @@ func TestBeginTurn_ConversationRecallSourceFailureIsPartialTrace(t *testing.T) {
 }
 
 func TestBeginTurn_AddsL0RollingSummaryFromActiveThread(t *testing.T) {
-	thread := domconv.NewThread("s1", "general")
+	thread := newEngineTestThread("s1", "general")
 	for i := 1; i <= 8; i++ {
 		thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, fmt.Sprintf("user turn %d", i), nil))
 		thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, fmt.Sprintf("mio turn %d", i), nil))
@@ -843,7 +856,7 @@ func TestEndTurn_BasicStore(t *testing.T) {
 func TestEndTurn_WithDetector_NoBoundary(t *testing.T) {
 	flushCalled := false
 	mgr := &mockManager{
-		flushThreadFunc: func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+		flushThreadFunc: func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 			flushCalled = true
 			return &domconv.ThreadSummary{}, nil
 		},
@@ -866,13 +879,13 @@ func TestEndTurn_WithDetector_Boundary(t *testing.T) {
 	flushCalled := false
 	createCalled := false
 	mgr := &mockManager{
-		flushThreadFunc: func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+		flushThreadFunc: func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 			flushCalled = true
 			return &domconv.ThreadSummary{}, nil
 		},
 		createThreadFunc: func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error) {
 			createCalled = true
-			return domconv.NewThread(sessionID, domain), nil
+			return newEngineTestThread(sessionID, domain), nil
 		},
 	}
 	detector := &mockDetector{
@@ -908,13 +921,13 @@ func TestFlushCurrentThread_Success(t *testing.T) {
 	flushCalled := false
 	createCalled := false
 	mgr := &mockManager{
-		flushThreadFunc: func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+		flushThreadFunc: func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 			flushCalled = true
 			return &domconv.ThreadSummary{}, nil
 		},
 		createThreadFunc: func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error) {
 			createCalled = true
-			return domconv.NewThread(sessionID, domain), nil
+			return newEngineTestThread(sessionID, domain), nil
 		},
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})
@@ -946,7 +959,7 @@ func TestFlushCurrentThread_NoActiveThread(t *testing.T) {
 }
 
 func TestGetStatus_WithActiveThread(t *testing.T) {
-	thread := domconv.NewThread("s1", "programming")
+	thread := newEngineTestThread("s1", "programming")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "msg1", nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "msg2", nil))
 
@@ -996,13 +1009,13 @@ func TestResetSession(t *testing.T) {
 	flushCalled := false
 	createDomain := ""
 	mgr := &mockManager{
-		flushThreadFunc: func(ctx context.Context, threadID int64) (*domconv.ThreadSummary, error) {
+		flushThreadFunc: func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
 			flushCalled = true
 			return &domconv.ThreadSummary{}, nil
 		},
 		createThreadFunc: func(ctx context.Context, sessionID, domain string) (*domconv.Thread, error) {
 			createDomain = domain
-			return domconv.NewThread(sessionID, domain), nil
+			return newEngineTestThread(sessionID, domain), nil
 		},
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{})

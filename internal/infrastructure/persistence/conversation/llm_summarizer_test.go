@@ -32,7 +32,7 @@ type unnamedLLMProvider struct{ mockLLMProvider }
 func (*unnamedLLMProvider) Name() string { return "  " }
 
 func newTestThread(msgs ...string) *domconv.Thread {
-	t := domconv.NewThread("sess-test", "programming")
+	t := newManagerTestThread("sess-test", "programming")
 	for i, msg := range msgs {
 		speaker := domconv.SpeakerUser
 		if i%2 == 1 {
@@ -105,7 +105,7 @@ func TestLLMSummarizerRejectsProviderWithoutStableIdentity(t *testing.T) {
 func TestLLMSummarizer_Summarize_EmptyThread(t *testing.T) {
 	provider := &mockLLMProvider{response: `{"summary":"empty","keywords":["a","b","c"]}`}
 	s := NewLLMSummarizer(provider)
-	thread := domconv.NewThread("sess", "general")
+	thread := newManagerTestThread("sess", "general")
 
 	_, err := s.Summarize(context.Background(), thread)
 	if err == nil {
@@ -114,7 +114,7 @@ func TestLLMSummarizer_Summarize_EmptyThread(t *testing.T) {
 }
 
 func TestBuildSummarizePromptPreservesCharacterAttribution(t *testing.T) {
-	thread := domconv.NewThread("shared", "general")
+	thread := newManagerTestThread("shared", "general")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerShiro, "確認しました", nil))

@@ -69,7 +69,7 @@ ON CONFLICT(query_hash) DO UPDATE SET
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "search.cache_saved", searchNamespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "search.cache_saved", searchNamespace, "", "", 0, "", map[string]interface{}{
 		"query_hash":       entry.QueryHash,
 		"normalized_query": entry.NormalizedQuery,
 		"raw_query":        entry.RawQuery,
@@ -175,7 +175,7 @@ func (s *L1SQLiteStore) InvalidateSearchCache(ctx context.Context, provider stri
 	if err != nil {
 		return 0, err
 	}
-	if _, err := s.AppendEvent(ctx, "search.cache_invalidated", searchNamespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "search.cache_invalidated", searchNamespace, "", "", 0, "", map[string]interface{}{
 		"query_hash":       hash,
 		"normalized_query": normalizedQuery,
 		"raw_query":        rawQuery,

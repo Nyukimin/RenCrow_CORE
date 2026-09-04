@@ -87,10 +87,10 @@ func insertOwnerLifecycleMemory(t *testing.T, store *L1SQLiteStore, id, owner, s
 	}
 	_, err = store.db.ExecContext(context.Background(), `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, id, "user:"+owner, "", 0, string(domconv.SpeakerMemory), meta["statement"], string(metaJSON), state, MemoryLayerL1, "lifecycle-test", createdAt.UTC(), updatedAt.UTC())
+) VALUES (?, ?, '', '', 0, '', ?, ?, ?, ?, ?, ?, ?, ?)
+`, id, "user:"+owner, string(domconv.SpeakerMemory), meta["statement"], string(metaJSON), state, MemoryLayerL1, "lifecycle-test", createdAt.UTC(), updatedAt.UTC())
 	if err != nil {
 		t.Fatalf("insert memory %s: %v", id, err)
 	}

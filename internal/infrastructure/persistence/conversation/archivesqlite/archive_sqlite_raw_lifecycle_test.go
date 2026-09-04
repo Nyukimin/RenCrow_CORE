@@ -65,6 +65,18 @@ func TestArchiveSQLiteStore_RawLifecycleArchiveIsAtomicIdempotentAndConflicting(
 	if err := store.ArchiveL1RawLifecycleEvent(ctx, conflictingEvent, receipt); !errors.Is(err, l1sqlite.ErrL1RawLifecycleArchiveConflict) {
 		t.Fatalf("conflicting event error=%v, want raw archive conflict", err)
 	}
+	conflictingTupleEvent := event
+	conflictingTupleEvent.ThreadSeq = event.ThreadSeq + 1
+	conflictingTupleHash, err := l1sqlite.CanonicalL1MemoryEventSHA256(conflictingTupleEvent)
+	if err != nil {
+		t.Fatalf("hash conflicting thread tuple event: %v", err)
+	}
+	if conflictingTupleHash == hash {
+		t.Fatal("canonical raw event hash ignored the thread tuple")
+	}
+	if err := store.ArchiveL1RawLifecycleEvent(ctx, conflictingTupleEvent, receipt); !errors.Is(err, l1sqlite.ErrL1RawLifecycleArchiveConflict) {
+		t.Fatalf("conflicting thread tuple error=%v, want raw archive conflict", err)
+	}
 	assertRawLifecycleArchiveCounts(t, ctx, store, 1, 1)
 
 	invalidReceipt := receipt
@@ -117,7 +129,7 @@ func TestArchiveSQLiteStore_RawLifecycleArchiveDoesNotMutateL1BeforeFinalize(t *
 	l1Store.WithArchiveStore(archiveStore)
 
 	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	if err := l1Store.SaveMessage(ctx, "raw-archive-source", 1, "conv:archive-source", domconv.Message{
+	if err := l1Store.SaveMessage(ctx, archiveTestSessionID("raw-archive-source"), archiveTestThreadID("raw-source"), 1, domconv.ThreadKindUserConversation, "conv:archive-source", domconv.Message{
 		Speaker:   domconv.SpeakerUser,
 		Msg:       "source remains until L1 finalize",
 		Timestamp: old,
@@ -184,8 +196,10 @@ func rawLifecycleArchiveTestEvent() l1sqlite.L1MemoryEvent {
 	return l1sqlite.L1MemoryEvent{
 		ID:          "raw-archive-event-1",
 		Namespace:   "conv:archive-test",
-		SessionID:   "archive-session",
-		ThreadID:    42,
+		SessionID:   archiveTestSessionID("archive-session"),
+		ThreadID:    archiveTestThreadID("raw-lifecycle"),
+		ThreadSeq:   1,
+		ThreadKind:  domconv.ThreadKindUserConversation,
 		Speaker:     domconv.SpeakerUser,
 		Message:     "exact raw event",
 		Meta:        map[string]interface{}{"b": "two", "a": float64(1)},

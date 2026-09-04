@@ -2,6 +2,7 @@ package l1sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 
@@ -41,7 +42,9 @@ CREATE TABLE IF NOT EXISTS l1_memory_event (
 	id TEXT PRIMARY KEY,
 	namespace TEXT NOT NULL,
 	session_id TEXT NOT NULL,
-	thread_id INTEGER NOT NULL,
+	thread_id TEXT NOT NULL DEFAULT '',
+	thread_seq INTEGER NOT NULL DEFAULT 0,
+	thread_kind TEXT NOT NULL DEFAULT '',
 	speaker TEXT NOT NULL,
 	message TEXT NOT NULL,
 	meta_json TEXT NOT NULL DEFAULT '{}',
@@ -49,12 +52,16 @@ CREATE TABLE IF NOT EXISTS l1_memory_event (
 	layer TEXT NOT NULL,
 	source TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL,
-	updated_at TIMESTAMP NOT NULL
+	updated_at TIMESTAMP NOT NULL,
+	CHECK (
+		(thread_id = '' AND thread_seq = 0 AND thread_kind = '') OR
+		(thread_id <> '' AND thread_seq > 0 AND thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system'))
+	)
 );
 CREATE INDEX IF NOT EXISTS idx_l1_memory_namespace_created ON l1_memory_event(namespace, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_session_created ON l1_memory_event(session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_memory_state_created ON l1_memory_event(memory_state, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_l1_memory_thread_created ON l1_memory_event(thread_id, thread_seq, created_at DESC);
 DROP TRIGGER IF EXISTS trg_l1_user_memory_search_insert;
 DROP TRIGGER IF EXISTS trg_l1_user_memory_search_update;
 DROP TRIGGER IF EXISTS trg_l1_user_memory_search_delete;
@@ -160,7 +167,9 @@ END;
 CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	evidence_event_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL,
-	thread_id INTEGER NOT NULL,
+	thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
+	thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
+	thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
 	state TEXT NOT NULL,
 	attempt_count INTEGER NOT NULL DEFAULT 0,
 	lease_token TEXT NOT NULL DEFAULT '',
@@ -173,7 +182,7 @@ CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_state_retry
 	ON l1_profile_promotion_job(state, next_attempt_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_session_thread
-	ON l1_profile_promotion_job(session_id, thread_id, created_at);
+	ON l1_profile_promotion_job(session_id, thread_seq, thread_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_l1_profile_promotion_created
 	ON l1_profile_promotion_job(created_at DESC, evidence_event_id DESC);
 CREATE TABLE IF NOT EXISTS l1_search_cache (
@@ -217,10 +226,16 @@ CREATE TABLE IF NOT EXISTS l1_event_log (
 	event_type TEXT NOT NULL,
 	namespace TEXT NOT NULL,
 	session_id TEXT NOT NULL DEFAULT '',
-	thread_id INTEGER NOT NULL DEFAULT 0,
+	thread_id TEXT NOT NULL DEFAULT '',
+	thread_seq INTEGER NOT NULL DEFAULT 0,
+	thread_kind TEXT NOT NULL DEFAULT '',
 	payload_json TEXT NOT NULL DEFAULT '{}',
 	source TEXT NOT NULL DEFAULT '',
-	created_at TIMESTAMP NOT NULL
+	created_at TIMESTAMP NOT NULL,
+	CHECK (
+		(thread_id = '' AND thread_seq = 0 AND thread_kind = '') OR
+		(thread_id <> '' AND thread_seq > 0 AND thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system'))
+	)
 );
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_namespace_created ON l1_event_log(namespace, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_l1_event_log_type_created ON l1_event_log(event_type, created_at DESC);
@@ -555,6 +570,12 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize l1 sqlite schema: %w", err)
 	}
+	if err := s.applyConversationTurnSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.validateCanonicalThreadSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureL1UserMemoryViewerProjection(ctx); err != nil {
 		return err
 	}
@@ -574,9 +595,6 @@ CREATE INDEX IF NOT EXISTS idx_l1_raw_projection_progress
 		return err
 	}
 	if err := s.applyChatGPTImportFinalizeSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.applyConversationTurnSchema(ctx); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE l1_daily_digest ADD COLUMN digest_slot TEXT NOT NULL DEFAULT 'day'`); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
@@ -618,6 +636,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_l1_monthly_highlight_month_category ON l1_
 CREATE INDEX IF NOT EXISTS idx_l1_monthly_highlight_category_updated ON l1_monthly_highlight(category, updated_at DESC);
 `); err != nil {
 		return fmt.Errorf("failed to initialize l1 daily digest slot indexes: %w", err)
+	}
+	return nil
+}
+
+type canonicalThreadSchemaTable struct {
+	name          string
+	requireClosed bool
+}
+
+func (s *L1SQLiteStore) validateCanonicalThreadSchema(ctx context.Context) error {
+	tables := []canonicalThreadSchemaTable{
+		{name: "l1_memory_event"},
+		{name: "l1_event_log"},
+		{name: "l1_profile_promotion_job"},
+		{name: "conversation_active_thread"},
+		{name: "conversation_turn_receipt", requireClosed: true},
+		{name: "conversation_turn_outbox", requireClosed: true},
+	}
+	for _, table := range tables {
+		rows, err := s.db.QueryContext(ctx, "PRAGMA table_info("+table.name+")")
+		if err != nil {
+			return fmt.Errorf("failed to inspect canonical thread schema for %s: %w", table.name, err)
+		}
+		columns := make(map[string]string)
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, columnType string
+			var defaultValue sql.NullString
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+				rows.Close()
+				return fmt.Errorf("failed to inspect canonical thread schema for %s: %w", table.name, err)
+			}
+			columns[name] = strings.ToUpper(strings.TrimSpace(columnType))
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return fmt.Errorf("failed to inspect canonical thread schema for %s: %w", table.name, err)
+		}
+		rows.Close()
+		required := map[string]string{
+			"thread_id":   "TEXT",
+			"thread_seq":  "INTEGER",
+			"thread_kind": "TEXT",
+		}
+		if table.requireClosed {
+			required["closed_thread_id"] = "TEXT"
+			required["closed_thread_seq"] = "INTEGER"
+			required["closed_thread_kind"] = "TEXT"
+		}
+		for column, wantType := range required {
+			gotType, ok := columns[column]
+			if !ok || gotType != wantType {
+				return fmt.Errorf("l1 canonical thread schema rejected for %s: %s must be %s", table.name, column, wantType)
+			}
+		}
 	}
 	return nil
 }

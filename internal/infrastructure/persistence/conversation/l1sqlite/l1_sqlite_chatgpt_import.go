@@ -3,7 +3,6 @@ package l1sqlite
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const ChatGPTL3ArtifactFormat = domainmemory.ChatGPTL3ArtifactFormat
@@ -47,8 +47,13 @@ func (s *L1SQLiteStore) ImportChatGPTL3Records(ctx context.Context, records []Ch
 	}
 	for _, item := range records {
 		namespace := chatGPTConversationNamespace(item.ConversationID)
-		sessionID := strings.TrimPrefix(namespace, "conv:")
+		sessionID := chatGPTConversationSessionID(item.ConversationID)
 		threadID := chatGPTConversationThreadID(item.ConversationID)
+		if sessionID == "" || threadID == "" {
+			return result, rollbackL1Tx(tx, errors.New("ChatGPT conversation canonical identity is unavailable"))
+		}
+		threadSeq := modulecore.ThreadSeq(1)
+		threadKind := modulecore.ThreadKindUserConversation
 		createdAt := item.MessageCreatedAt.UTC()
 		if createdAt.IsZero() {
 			createdAt = firstNonZeroTime(item.ConversationCreatedAt.UTC(), time.Now().UTC())
@@ -80,10 +85,10 @@ func (s *L1SQLiteStore) ImportChatGPTL3Records(ctx context.Context, records []Ch
 		}
 		inserted, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, item.EvidenceID, namespace, sessionID, threadID, string(speaker), message, metaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, item.EvidenceID, namespace, string(sessionID), threadID, threadSeq, threadKind, string(speaker), message, metaJSON,
 			MemoryStateObserved, "L3", "chatgpt_export", createdAt, now)
 		if err != nil {
 			return result, rollbackL1Tx(tx, fmt.Errorf("insert ChatGPT L3 record: %w", err))
@@ -105,10 +110,10 @@ INSERT OR IGNORE INTO l1_memory_event (
 		if item.Role == "user" && item.OnCurrentBranch {
 			queued, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count,
-	lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, 0, '', '', ?, ?)
-`, item.EvidenceID, sessionID, threadID, domainmemory.ProfilePromotionPending, createdAt, now)
+		evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
+		lease_token, last_error, created_at, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)
+	`, item.EvidenceID, sessionID, threadID, threadSeq, threadKind, domainmemory.ProfilePromotionPending, createdAt, now)
 			if err != nil {
 				return result, rollbackL1Tx(tx, fmt.Errorf("queue ChatGPT L3 projection: %w", err))
 			}
@@ -116,7 +121,7 @@ INSERT OR IGNORE INTO l1_profile_promotion_job (
 			result.Queued += int(queuedRows)
 		}
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_imported", "user:ren", "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_imported", "user:ren", "", "", 0, "", map[string]interface{}{
 		"validated": result.Validated, "imported": result.Imported,
 		"existing": result.Existing, "queued_for_projection": result.Queued,
 	}, "chatgpt_export_importer"); err != nil {
@@ -222,7 +227,7 @@ ORDER BY created_at ASC, id ASC
 		affected, _ := updated.RowsAffected()
 		result.Confirmed += int(affected)
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_candidates_confirmed", "user:ren", "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.chatgpt_l3_candidates_confirmed", "user:ren", "", "", 0, "", map[string]interface{}{
 		"export_id": exportID, "reason": reason, "confirmed": result.Confirmed,
 	}, "chatgpt_export_importer"); err != nil {
 		return result, rollbackL1Tx(tx, err)
@@ -271,17 +276,27 @@ WHERE e.source = 'chatgpt_export'
 }
 
 func chatGPTConversationNamespace(conversationID string) string {
-	digest := sha256.Sum256([]byte(conversationID))
-	return "conv:chatgpt-" + hex.EncodeToString(digest[:8])
+	threadID := chatGPTConversationThreadID(conversationID)
+	if threadID == "" {
+		return ""
+	}
+	return "conv:" + string(threadID)
 }
 
-func chatGPTConversationThreadID(conversationID string) int64 {
-	digest := sha256.Sum256([]byte(conversationID))
-	value := int64(binary.BigEndian.Uint64(digest[:8]) & 0x7fffffffffffffff)
-	if value == 0 {
-		return 1
+func chatGPTConversationSessionID(conversationID string) modulecore.SessionID {
+	canonical, err := modulecore.NewMigrationID(modulecore.CanonicalSessionID, "l1_raw_record", "session_id", conversationID)
+	if err != nil {
+		return ""
 	}
-	return value
+	return modulecore.SessionID(canonical)
+}
+
+func chatGPTConversationThreadID(conversationID string) modulecore.ThreadID {
+	canonical, err := modulecore.NewMigrationID(modulecore.CanonicalThreadID, "l1_raw_record", "thread_id", conversationID)
+	if err != nil {
+		return ""
+	}
+	return modulecore.ThreadID(canonical)
 }
 
 func chatGPTRecordContentHash(item ChatGPTL3ImportRecord) string {

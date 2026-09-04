@@ -10,16 +10,17 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
-func (s *L1SQLiteStore) SaveMessage(ctx context.Context, sessionID string, threadID int64, namespace string, msg domconv.Message, memoryState string) error {
-	if err := validateL1MessageSaveInput(sessionID, threadID, msg); err != nil {
+func (s *L1SQLiteStore) SaveMessage(ctx context.Context, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, namespace string, msg domconv.Message, memoryState string) error {
+	if err := validateL1MessageSaveInput(sessionID, threadID, threadSeq, threadKind, msg); err != nil {
 		return err
 	}
 	if namespace == "" {
 		var err error
-		namespace, err = BuildL1Namespace(NamespaceKindConversation, fmt.Sprintf("%d", threadID))
+		namespace, err = BuildL1Namespace(NamespaceKindConversation, string(threadID))
 		if err != nil {
 			return err
 		}
@@ -48,12 +49,14 @@ func (s *L1SQLiteStore) SaveMessage(ctx context.Context, sessionID string, threa
 	if err != nil {
 		return err
 	}
-	id := fmt.Sprintf("%s:%d:%d:%s:%d", sessionID, threadID, createdAt.UnixNano(), msg.Speaker, l1IDSequence.Add(1))
+	id := fmt.Sprintf("%s:%s:%d:%s:%d", sessionID, threadID, createdAt.UnixNano(), msg.Speaker, l1IDSequence.Add(1))
 	event := L1MemoryEvent{
 		ID:          id,
 		Namespace:   namespace,
 		SessionID:   sessionID,
 		ThreadID:    threadID,
+		ThreadSeq:   threadSeq,
+		ThreadKind:  threadKind,
 		Speaker:     msg.Speaker,
 		Message:     msg.Msg,
 		Meta:        meta,
@@ -72,20 +75,20 @@ func (s *L1SQLiteStore) SaveMessage(ctx context.Context, sessionID string, threa
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
 	message = excluded.message,
 	meta_json = excluded.meta_json,
 	memory_state = excluded.memory_state,
 	updated_at = excluded.updated_at
-`, event.ID, event.Namespace, event.SessionID, event.ThreadID, string(event.Speaker), event.Message, metaJSON,
+	`, event.ID, event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, string(event.Speaker), event.Message, metaJSON,
 		event.MemoryState, event.Layer, event.Source, event.CreatedAt, event.UpdatedAt)
 	if err != nil {
 		return rollbackL1Tx(tx, fmt.Errorf("failed to save l1 memory event: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"memory_id":    id,
 		"speaker":      string(msg.Speaker),
 		"memory_state": memoryState,
@@ -96,10 +99,10 @@ ON CONFLICT(id) DO UPDATE SET
 	if msg.Speaker == domconv.SpeakerUser && memoryState == MemoryStateObserved && strings.HasPrefix(namespace, "conv:") {
 		if _, err := tx.ExecContext(ctx, `
 INSERT OR IGNORE INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count,
+	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
 	lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, 0, '', '', ?, ?)
-`, id, sessionID, threadID, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
+) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)
+	`, id, sessionID, threadID, threadSeq, threadKind, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
 			return rollbackL1Tx(tx, fmt.Errorf("failed to enqueue profile promotion job: %w", err))
 		}
 	}
@@ -118,17 +121,25 @@ func (s *L1SQLiteStore) UpdateMemoryState(ctx context.Context, id string, memory
 	}
 	var namespace string
 	var sessionID string
-	var threadID int64
+	var threadIDRaw string
+	var threadSeqRaw int64
+	var threadKindRaw string
 	var previousState string
 	if err := s.db.QueryRowContext(ctx, `
-SELECT namespace, session_id, thread_id, memory_state
+SELECT namespace, session_id, thread_id, thread_seq, thread_kind, memory_state
 FROM l1_memory_event
 WHERE id = ?
-`, id).Scan(&namespace, &sessionID, &threadID, &previousState); err != nil {
+	`, id).Scan(&namespace, &sessionID, &threadIDRaw, &threadSeqRaw, &threadKindRaw, &previousState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return sql.ErrNoRows
 		}
 		return fmt.Errorf("failed to load l1 memory event before state update: %w", err)
+	}
+	threadID := modulecore.ThreadID(threadIDRaw)
+	threadSeq := modulecore.ThreadSeq(threadSeqRaw)
+	threadKind := modulecore.ThreadKind(threadKindRaw)
+	if err := validateL1SessionThreadTuple(sessionID, threadID, threadSeq, threadKind); err != nil {
+		return fmt.Errorf("failed to validate l1 memory event before state update: %w", err)
 	}
 	result, err := s.db.ExecContext(ctx, `
 UPDATE l1_memory_event
@@ -145,7 +156,7 @@ WHERE id = ?
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	if _, err := s.AppendEvent(ctx, "memory.state_updated", namespace, sessionID, threadID, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "memory.state_updated", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"memory_id":      id,
 		"previous_state": previousState,
 		"memory_state":   memoryState,
@@ -182,6 +193,8 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 		Namespace:   targetNamespace,
 		SessionID:   source.SessionID,
 		ThreadID:    source.ThreadID,
+		ThreadSeq:   source.ThreadSeq,
+		ThreadKind:  source.ThreadKind,
 		Speaker:     source.Speaker,
 		Message:     source.Message,
 		Meta:        meta,
@@ -196,15 +209,15 @@ func (s *L1SQLiteStore) PromoteMemoryToNamespace(ctx context.Context, id string,
 	}
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, promoted.ID, promoted.Namespace, promoted.SessionID, promoted.ThreadID, string(promoted.Speaker), promoted.Message, metaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, promoted.ID, promoted.Namespace, promoted.SessionID, string(promoted.ThreadID), promoted.ThreadSeq, promoted.ThreadKind, string(promoted.Speaker), promoted.Message, metaJSON,
 		promoted.MemoryState, promoted.Layer, promoted.Source, promoted.CreatedAt, promoted.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to promote l1 memory: %w", err)
 	}
-	if _, err := s.AppendEvent(ctx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "memory.promoted", targetNamespace, source.SessionID, source.ThreadID, source.ThreadSeq, source.ThreadKind, map[string]interface{}{
 		"source_memory_id":   source.ID,
 		"promoted_memory_id": promoted.ID,
 		"promoted_by":        promotedBy,
@@ -227,7 +240,7 @@ func (s *L1SQLiteStore) RecentByNamespace(ctx context.Context, namespace string,
 
 func (s *L1SQLiteStore) memoryByID(ctx context.Context, id string) (*L1MemoryEvent, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE id = ?
@@ -256,7 +269,7 @@ func (s *L1SQLiteStore) recentL1MemoryEvents(ctx context.Context, whereClause st
 	}
 	queryArgs := append(args, limit)
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE `+whereClause+`

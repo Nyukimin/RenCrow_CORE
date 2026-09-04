@@ -2,12 +2,15 @@ package idlechat
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"github.com/google/uuid"
 )
 
 type blockingInterruptProvider struct {
@@ -139,11 +142,11 @@ func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T
 		prefetch = append(prefetch, ev)
 	})
 
-	generation := activateIdleChatTestSession(o, "idle-trace-topic-00")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-trace-topic-00"))
 
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: "idle-trace-topic-00", Generation: generation})
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: "idle-trace-topic-00", MessageID: "msg-1", TurnIndex: 1, Generation: generation})
-	o.emitStoryTTSPrefetch("idle-trace-topic-00", generation, StoryEpisodeTurn{Speaker: "mio", MessageID: "msg-1", TurnIndex: 1, SpeechText: "確認です。"})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "msg-1", TurnIndex: 1, Generation: generation})
+	o.emitStoryTTSPrefetch(canonicalIdleChatTestSessionID("idle-trace-topic-00"), generation, StoryEpisodeTurn{Speaker: "mio", MessageID: "msg-1", TurnIndex: 1, SpeechText: "確認です。"})
 
 	if len(timeline) != 2 || len(prefetch) != 1 {
 		t.Fatalf("timeline=%d prefetch=%d, want 2 and 1", len(timeline), len(prefetch))
@@ -152,27 +155,312 @@ func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T
 	if want.Validate() != nil {
 		t.Fatalf("timeline trace_id = %q, want canonical TraceID", want)
 	}
-	if want == modulecore.TraceID("idle-trace-topic-00") {
+	if want == modulecore.TraceID(canonicalIdleChatTestSessionID("idle-trace-topic-00")) {
 		t.Fatal("TraceID must not reuse SessionID")
 	}
 	if timeline[1].TraceID != want || prefetch[0].TraceID != want {
 		t.Fatalf("session traces = topic:%q message:%q prefetch:%q, want one trace", timeline[0].TraceID, timeline[1].TraceID, prefetch[0].TraceID)
 	}
 	o.cancelIdleRunIfGeneration(generation)
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: "idle-trace-topic-00", MessageID: "late-msg", TurnIndex: 2, Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "late-msg", TurnIndex: 2, Generation: generation})
 	if len(timeline) != 2 {
 		t.Fatalf("late timeline event was emitted after trace owner ended: timeline=%d", len(timeline))
 	}
 
 	o.Interrupt("test_complete")
-	secondGeneration := activateIdleChatTestSession(o, "idle-trace-topic-01")
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: "idle-trace-topic-01", Generation: secondGeneration})
+	secondGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-trace-topic-01"))
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-01"), Generation: secondGeneration})
 	if len(timeline) != 3 {
 		t.Fatalf("timeline=%d, want 3 after second session", len(timeline))
 	}
 	if timeline[2].TraceID.Validate() != nil || timeline[2].TraceID == want {
 		t.Fatalf("second session trace_id = %q, want a new canonical trace distinct from %q", timeline[2].TraceID, want)
 	}
+}
+
+func TestIdleChatBindCreatesCanonicalIdleThread(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.emitMu.Lock()
+	o.mu.Lock()
+	o.beginIdleRunLocked()
+	err := o.bindIdleSessionLocked(canonicalIdleChatTestSessionID("idle-thread-canonical"))
+	thread := o.activeThread
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	if err != nil {
+		t.Fatalf("bindIdleSessionLocked() error = %v", err)
+	}
+	if thread == nil {
+		t.Fatal("active thread is nil")
+	}
+	if err := thread.ID.Validate(); err != nil {
+		t.Fatalf("thread id is not canonical: %v", err)
+	}
+	parsed, err := uuid.Parse(strings.TrimPrefix(string(thread.ID), "thr_"))
+	if err != nil {
+		t.Fatalf("thread id parse error: %v", err)
+	}
+	if parsed.Version() != 7 {
+		t.Fatalf("thread id UUID version = %d, want 7", parsed.Version())
+	}
+	if thread.SessionID != canonicalIdleChatTestSessionID("idle-thread-canonical") || thread.Domain != "idlechat" {
+		t.Fatalf("thread owner = session:%q domain:%q", thread.SessionID, thread.Domain)
+	}
+	if thread.ThreadSeq != modulecore.ThreadSeq(1) || thread.ThreadKind != modulecore.ThreadKindIdleChat {
+		t.Fatalf("thread tuple = seq:%d kind:%q", thread.ThreadSeq, thread.ThreadKind)
+	}
+}
+
+func TestIdleChatBindRejectsInvalidSessionWithoutActiveThread(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.emitMu.Lock()
+	o.mu.Lock()
+	o.beginIdleRunLocked()
+	err := o.bindIdleSessionLocked(" ")
+	thread := o.activeThread
+	activeSession := o.activeSessionID
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	if err == nil {
+		t.Fatal("expected invalid session bind to fail")
+	}
+	if thread != nil || activeSession != "" {
+		t.Fatalf("invalid bind left active owner: thread=%v session=%q", thread, activeSession)
+	}
+}
+
+func TestIdleChatBindRejectsNoncanonicalSessionWithoutActiveThread(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.emitMu.Lock()
+	o.mu.Lock()
+	o.beginIdleRunLocked()
+	err := o.bindIdleSessionLocked("idle-not-canonical")
+	thread := o.activeThread
+	activeSession := o.activeSessionID
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	if err == nil {
+		t.Fatal("expected noncanonical session bind to fail")
+	}
+	if thread != nil || activeSession != "" {
+		t.Fatalf("noncanonical bind left active owner: thread=%v session=%q", thread, activeSession)
+	}
+}
+
+func TestIdleChatRunStopsBeforeSideEffectsWhenThreadOpenFails(t *testing.T) {
+	provider := &capturingIdleProvider{response: "応答してはいけません。"}
+	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	events := 0
+	o.SetEventEmitter(func(TimelineEvent) TTSLifecycle {
+		events++
+		return TTSLifecycle{}
+	})
+	if err := o.SetTopicStore(filepath.Join(t.TempDir(), "idlechat_topics.jsonl")); err != nil {
+		t.Fatalf("SetTopicStore() error = %v", err)
+	}
+	o.mu.Lock()
+	o.topicStore.path = filepath.Join(t.TempDir(), "missing-parent", "idlechat_topics.jsonl")
+	o.mu.Unlock()
+
+	if _, err := o.activateIdleSession(canonicalIdleChatTestSessionID("open-failure")); err == nil {
+		t.Fatal("activateIdleSession() unexpectedly accepted TopicStore open failure")
+	}
+	o.runChatSession(StrategySingleGenre, TopicGenerationResult{Topic: "失敗時は公開してはいけない話題", Strategy: string(StrategySingleGenre)})
+
+	o.mu.Lock()
+	activeThread := o.activeThread
+	activeSession := o.activeSessionID
+	runCancel := o.runCancel
+	currentTopic := o.currentTopic
+	historyLen := len(o.history)
+	o.mu.Unlock()
+	if activeThread != nil || activeSession != "" || runCancel != nil || currentTopic != "" || historyLen != 0 {
+		t.Fatalf("failed start left state: thread=%v session=%q runCancel=%v topic=%q history=%d", activeThread, activeSession, runCancel != nil, currentTopic, historyLen)
+	}
+	if len(provider.requests) != 0 || events != 0 {
+		t.Fatalf("failed start reached side effects: llm_requests=%d events=%d", len(provider.requests), events)
+	}
+}
+
+func TestIdleChatDirectStartsFailClosedWhenThreadOpenFails(t *testing.T) {
+	tests := []struct {
+		name  string
+		start func(*IdleChatOrchestrator)
+	}{
+		{name: "forecast", start: func(o *IdleChatOrchestrator) { o.RunForecastSession() }},
+		{name: "simple_story", start: func(o *IdleChatOrchestrator) { o.RunSimpleStorySession() }},
+		{name: "prepared_story", start: func(o *IdleChatOrchestrator) {
+			o.SetStoryEpisodeService(NewStoryEpisodeService(nil, nil, nil))
+			artifact := validStoryEpisodeFixture()
+			artifact.ProductionStatus = StoryProductionReady
+			artifact.Validation.Valid = true
+			o.RunPreparedStorySession(artifact)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			provider := &capturingIdleProvider{response: "応答してはいけません。"}
+			o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+			events := 0
+			o.SetEventEmitter(func(TimelineEvent) TTSLifecycle {
+				events++
+				return TTSLifecycle{}
+			})
+			if err := o.SetTopicStore(filepath.Join(t.TempDir(), "idlechat_topics.jsonl")); err != nil {
+				t.Fatalf("SetTopicStore() error = %v", err)
+			}
+			o.mu.Lock()
+			o.topicStore.path = filepath.Join(t.TempDir(), "missing-parent", "idlechat_topics.jsonl")
+			o.mu.Unlock()
+
+			test.start(o)
+
+			o.mu.Lock()
+			activeThread := o.activeThread
+			activeSession := o.activeSessionID
+			runCancel := o.runCancel
+			chatActive := o.chatActive
+			sessionMode := o.sessionMode
+			historyLen := len(o.history)
+			o.mu.Unlock()
+			if activeThread != nil || activeSession != "" || runCancel != nil || chatActive || sessionMode != "" || historyLen != 0 {
+				t.Fatalf("failed %s start left state: thread=%v session=%q runCancel=%v chatActive=%t mode=%q history=%d", test.name, activeThread, activeSession, runCancel != nil, chatActive, sessionMode, historyLen)
+			}
+			if len(provider.requests) != 0 || events != 0 {
+				t.Fatalf("failed %s start reached side effects: llm_requests=%d events=%d", test.name, len(provider.requests), events)
+			}
+		})
+	}
+}
+
+func TestIdleChatTimelineCopiesStableThreadTupleAndRejectsMismatch(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	var timeline []TimelineEvent
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
+		timeline = append(timeline, ev)
+		return TTSLifecycle{}
+	})
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-events"))
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation})
+	if len(timeline) != 2 {
+		t.Fatalf("timeline len = %d, want 2", len(timeline))
+	}
+	first := timeline[0]
+	if first.ThreadID.Validate() != nil || first.ThreadSeq != modulecore.ThreadSeq(1) || first.ThreadKind != modulecore.ThreadKindIdleChat {
+		t.Fatalf("first event thread tuple = id:%q seq:%d kind:%q", first.ThreadID, first.ThreadSeq, first.ThreadKind)
+	}
+	if timeline[1].ThreadID != first.ThreadID || timeline[1].ThreadSeq != first.ThreadSeq || timeline[1].ThreadKind != first.ThreadKind {
+		t.Fatalf("event thread tuples differ: first=%+v second=%+v", first, timeline[1])
+	}
+
+	for _, mismatched := range []TimelineEvent{
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadID: modulecore.NewThreadID()},
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadSeq: modulecore.ThreadSeq(2)},
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadKind: modulecore.ThreadKindSystem},
+	} {
+		o.emitTimelineEvent(mismatched)
+	}
+	if len(timeline) != 2 {
+		t.Fatalf("mismatched thread tuple was emitted: count=%d", len(timeline))
+	}
+}
+
+func TestIdleChatRebindGetsNewThreadIdentityAndRejectsStaleThread(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	var timeline []TimelineEvent
+	o.SetEventEmitter(func(ev TimelineEvent) TTSLifecycle {
+		timeline = append(timeline, ev)
+		return TTSLifecycle{}
+	})
+	firstGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-replay"))
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), Generation: firstGeneration})
+	first := timeline[0]
+	o.Interrupt("replay")
+	secondGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-replay"))
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), Generation: secondGeneration})
+	if len(timeline) != 2 {
+		t.Fatalf("replay timeline len = %d, want 2", len(timeline))
+	}
+	second := timeline[1]
+	if second.ThreadID == first.ThreadID {
+		t.Fatalf("rebind reused thread id %q", second.ThreadID)
+	}
+	if second.ThreadSeq != first.ThreadSeq+1 || second.ThreadSeq != modulecore.ThreadSeq(2) || second.ThreadKind != first.ThreadKind {
+		t.Fatalf("rebind did not advance thread sequence: first=%+v second=%+v", first, second)
+	}
+	o.emitTimelineEvent(TimelineEvent{
+		Type:       "idlechat.message",
+		SessionID:  canonicalIdleChatTestSessionID("idle-thread-replay"),
+		Generation: secondGeneration,
+		ThreadID:   first.ThreadID,
+		ThreadSeq:  first.ThreadSeq,
+		ThreadKind: first.ThreadKind,
+	})
+	if len(timeline) != 2 {
+		t.Fatalf("stale thread event was emitted: count=%d", len(timeline))
+	}
+}
+
+func TestIdleChatSummaryCopiesAndValidatesActiveThreadTuple(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-summary-thread"))
+	o.emitMu.Lock()
+	o.mu.Lock()
+	record := SessionSummary{SessionID: canonicalIdleChatTestSessionID("idle-summary-thread")}
+	if !o.copyActiveThreadIdentityLocked(&record, canonicalIdleChatTestSessionID("idle-summary-thread"), generation) {
+		t.Fatal("active thread tuple was not copied into summary")
+	}
+	thread := o.activeThread
+	if record.ThreadID != thread.ID || record.ThreadSeq != thread.ThreadSeq || record.ThreadKind != thread.ThreadKind {
+		t.Fatalf("summary thread tuple = id:%q seq:%d kind:%q, thread=%+v", record.ThreadID, record.ThreadSeq, record.ThreadKind, thread)
+	}
+	record.ThreadID = modulecore.NewThreadID()
+	if o.copyActiveThreadIdentityLocked(&record, canonicalIdleChatTestSessionID("idle-summary-thread"), generation) {
+		t.Fatal("mismatched summary thread tuple was accepted")
+	}
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+}
+
+func TestIdleChatSetTopicStoreRejectsAfterStorelessAllocation(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	if generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-storeless")); generation == 0 {
+		t.Fatal("storeless bind did not start a generation")
+	}
+	if err := o.SetTopicStore(filepath.Join(t.TempDir(), "idlechat_topics.jsonl")); err == nil {
+		t.Fatal("SetTopicStore() accepted a prior storeless allocation")
+	}
+	o.emitMu.Lock()
+	o.mu.Lock()
+	if o.topicStore != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		t.Fatal("failed SetTopicStore() changed the active store")
+	}
+	if o.topicThreadSeq[canonicalIdleChatTestSessionID("idle-storeless")] != modulecore.ThreadSeq(1) {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		t.Fatalf("storeless sequence map changed after rejected store setup: %+v", o.topicThreadSeq)
+	}
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+}
+
+func TestIdleChatSetTopicStoreSucceedsBeforeStorelessAllocation(t *testing.T) {
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	if err := o.SetTopicStore(filepath.Join(t.TempDir(), "idlechat_topics.jsonl")); err != nil {
+		t.Fatalf("SetTopicStore() before bind error = %v", err)
+	}
+	o.emitMu.Lock()
+	o.mu.Lock()
+	if o.topicStore == nil || o.topicThreadSeq != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		t.Fatalf("clean store setup state = store:%v fallback:%v", o.topicStore != nil, o.topicThreadSeq)
+	}
+	o.mu.Unlock()
+	o.emitMu.Unlock()
 }
 
 func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing.T) {
@@ -182,13 +470,13 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 		timeline = append(timeline, ev)
 		return TTSLifecycle{}
 	})
-	firstGeneration := activateIdleChatTestSession(o, "idle-replay")
+	firstGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-replay"))
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		From:       "mio",
 		To:         "shiro",
 		Content:    "最初の発話です。",
-		SessionID:  "idle-replay",
+		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
 		Generation: firstGeneration,
 	})
 	if len(timeline) != 1 {
@@ -197,8 +485,8 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 	firstTrace := timeline[0].TraceID
 	o.Interrupt("user_input")
 
-	secondGeneration := activateIdleChatTestSession(o, "idle-replay")
-	if o.isInterruptedSession("idle-replay") {
+	secondGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-replay"))
+	if o.isInterruptedSession(canonicalIdleChatTestSessionID("idle-replay")) {
 		t.Fatal("new bind for the same session must clear the stale interrupted marker")
 	}
 	if secondGeneration == firstGeneration {
@@ -209,7 +497,7 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 		From:       "mio",
 		To:         "shiro",
 		Content:    "再開した発話です。",
-		SessionID:  "idle-replay",
+		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
 		Generation: secondGeneration,
 	})
 	if second.Ready != nil || second.Done != nil {
@@ -224,7 +512,7 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		Content:    "遅れて届いた最初の発話です。",
-		SessionID:  "idle-replay",
+		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
 		TraceID:    firstTrace,
 		Generation: firstGeneration,
 	})
@@ -240,11 +528,11 @@ func TestIdleChatRejectsMalformedExplicitTraceBeforeEmission(t *testing.T) {
 		emitted++
 		return TTSLifecycle{}
 	})
-	generation := activateIdleChatTestSession(o, "idle-invalid-trace")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-invalid-trace"))
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		Content:    "不正なTraceは拒否されるべきです。",
-		SessionID:  "idle-invalid-trace",
+		SessionID:  canonicalIdleChatTestSessionID("idle-invalid-trace"),
 		TraceID:    modulecore.TraceID("not-a-trace"),
 		Generation: generation,
 	})
@@ -260,10 +548,10 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 		timeline = append(timeline, ev)
 		return TTSLifecycle{}
 	})
-	generation := activateIdleChatTestSession(o, "idle-explicit-trace")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-explicit-trace"))
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
-		SessionID:  "idle-explicit-trace",
+		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
 		Generation: generation,
 	})
 	if len(timeline) != 1 || timeline[0].TraceID.Validate() != nil {
@@ -272,7 +560,7 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 	wrongTrace := modulecore.NewTraceID()
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
-		SessionID:  "idle-explicit-trace",
+		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
 		TraceID:    wrongTrace,
 		Generation: generation,
 	})
@@ -281,7 +569,7 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 	}
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
-		SessionID:  "idle-explicit-trace",
+		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
 		TraceID:    timeline[0].TraceID,
 		Generation: generation + 1,
 	})
@@ -292,10 +580,10 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 
 func TestIdleChatInterruptNotifiesRuntimeAfterOwnerTransition(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-runtime-cancel")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-runtime-cancel"))
 	notified := make(chan bool, 1)
 	o.SetInterruptHandler(func() {
-		notified <- !o.ownsIdleSession("idle-runtime-cancel", generation)
+		notified <- !o.ownsIdleSession(canonicalIdleChatTestSessionID("idle-runtime-cancel"), generation)
 	})
 	o.Interrupt("user_input")
 	select {
@@ -311,12 +599,12 @@ func TestIdleChatInterruptNotifiesRuntimeAfterOwnerTransition(t *testing.T) {
 func TestIdleChatGenerationErrorDoesNotRecordAfterInterrupt(t *testing.T) {
 	memory := session.NewCentralMemory()
 	o := NewIdleChatOrchestrator(nil, memory, []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	generation := activateIdleChatTestSession(o, "idle-generation-error")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-generation-error"))
 	o.Interrupt("user_input")
-	o.recordGenerationErrorToTimeline("shiro", "mio", "idle-generation-error", "cancelled", 1, generation)
+	o.recordGenerationErrorToTimeline("shiro", "mio", canonicalIdleChatTestSessionID("idle-generation-error"), "cancelled", 1, generation)
 
 	for _, entry := range memory.GetUnifiedView(0) {
-		if entry.Message.SessionID == "idle-generation-error" {
+		if entry.Message.SessionID == canonicalIdleChatTestSessionID("idle-generation-error") {
 			t.Fatalf("generation error was recorded after owner interruption: %+v", entry.Message)
 		}
 	}

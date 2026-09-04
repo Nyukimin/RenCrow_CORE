@@ -17,7 +17,7 @@ import (
 
 const (
 	CanonicalBackfillDatasetID = "rencrow-atlas-initial-backfill"
-	CanonicalBackfillSHA256    = "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af"
+	CanonicalBackfillSHA256    = "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670"
 	CanonicalBackfillRevision  = 1
 )
 

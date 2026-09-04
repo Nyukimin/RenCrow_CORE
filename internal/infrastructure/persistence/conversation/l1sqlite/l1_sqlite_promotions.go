@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -54,12 +55,19 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToMemory(ctx context.Context,
 		return nil, err
 	}
 	sessionID := metaString(item.Meta, "session_id")
-	threadID := metaInt64(item.Meta, "thread_id")
+	threadID := modulecore.ThreadID(metaString(item.Meta, "thread_id"))
+	threadSeq := modulecore.ThreadSeq(metaInt64(item.Meta, "thread_seq"))
+	threadKind := modulecore.ThreadKind(metaString(item.Meta, "thread_kind"))
+	if err := validateL1ThreadTuple(threadID, threadSeq, threadKind); err != nil {
+		return nil, fmt.Errorf("invalid l1 staging thread identity: %w", err)
+	}
 	promoted := &L1MemoryEvent{
 		ID:          fmt.Sprintf("%s:%s:%d:%d", targetNamespace, item.ID, now.UnixNano(), l1IDSequence.Add(1)),
 		Namespace:   targetNamespace,
 		SessionID:   sessionID,
 		ThreadID:    threadID,
+		ThreadSeq:   threadSeq,
+		ThreadKind:  threadKind,
 		Speaker:     domconv.SpeakerMemory,
 		Message:     message,
 		Meta:        meta,
@@ -81,15 +89,15 @@ func (s *L1SQLiteStore) PromoteValidatedStagingItemToMemory(ctx context.Context,
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, promoted.ID, promoted.Namespace, promoted.SessionID, promoted.ThreadID, string(promoted.Speaker), promoted.Message, metaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, promoted.ID, promoted.Namespace, promoted.SessionID, string(promoted.ThreadID), promoted.ThreadSeq, promoted.ThreadKind, string(promoted.Speaker), promoted.Message, metaJSON,
 		promoted.MemoryState, promoted.Layer, promoted.Source, promoted.CreatedAt, promoted.UpdatedAt)
 	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to promote l1 staging item to memory: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.promoted_from_staging", targetNamespace, sessionID, threadID, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.promoted_from_staging", targetNamespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"staging_id":         item.ID,
 		"promoted_memory_id": promoted.ID,
 		"promoted_by":        promotedBy,
@@ -200,7 +208,7 @@ ON CONFLICT(staging_id) DO UPDATE SET
 	if err != nil {
 		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to promote l1 staging item to news: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "news.promoted_from_staging", newsNamespace, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "news.promoted_from_staging", newsNamespace, "", "", 0, "", map[string]interface{}{
 		"news_id":    news.ID,
 		"staging_id": item.ID,
 		"category":   news.Category,
@@ -310,7 +318,7 @@ ON CONFLICT(staging_id) DO UPDATE SET
 	if err := upsertKnowledgeFTS(ctx, tx, kb); err != nil {
 		return nil, rollbackL1Tx(tx, err)
 	}
-	if _, err := appendL1EventLog(ctx, tx, "knowledge.promoted_from_staging", namespace, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "knowledge.promoted_from_staging", namespace, "", "", 0, "", map[string]interface{}{
 		"knowledge_id": kb.ID,
 		"staging_id":   item.ID,
 		"domain":       kb.Domain,

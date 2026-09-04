@@ -1,17 +1,20 @@
 package viewer
 
 import (
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryEventDTO struct {
 	ID          string
 	Namespace   string
 	SessionID   string
-	ThreadID    int64
+	ThreadID    modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq   modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind  modulecore.ThreadKind `json:"thread_kind"`
 	Speaker     domconv.Speaker
 	Message     string
 	Meta        map[string]interface{}
@@ -23,14 +26,16 @@ type memoryEventDTO struct {
 }
 
 type eventLogEntryDTO struct {
-	ID        string
-	EventType string
-	Namespace string
-	SessionID string
-	ThreadID  int64
-	Payload   map[string]interface{}
-	Source    string
-	CreatedAt time.Time
+	ID         string
+	EventType  string
+	Namespace  string
+	SessionID  string
+	ThreadID   modulecore.ThreadID   `json:"thread_id"`
+	ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
+	ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+	Payload    map[string]interface{}
+	Source     string
+	CreatedAt  time.Time
 }
 
 type searchCacheEntryDTO struct {
@@ -98,6 +103,8 @@ func memoryEventDTOFromL1(item l1sqlite.L1MemoryEvent) memoryEventDTO {
 		Namespace:   item.Namespace,
 		SessionID:   item.SessionID,
 		ThreadID:    item.ThreadID,
+		ThreadSeq:   item.ThreadSeq,
+		ThreadKind:  item.ThreadKind,
 		Speaker:     item.Speaker,
 		Message:     item.Message,
 		Meta:        item.Meta,
@@ -135,14 +142,16 @@ func eventLogEntryDTOsFromL1(items []l1sqlite.L1EventLogEntry) []eventLogEntryDT
 	out := make([]eventLogEntryDTO, 0, len(items))
 	for _, item := range items {
 		out = append(out, eventLogEntryDTO{
-			ID:        item.ID,
-			EventType: item.EventType,
-			Namespace: item.Namespace,
-			SessionID: item.SessionID,
-			ThreadID:  item.ThreadID,
-			Payload:   item.Payload,
-			Source:    item.Source,
-			CreatedAt: item.CreatedAt,
+			ID:         item.ID,
+			EventType:  item.EventType,
+			Namespace:  item.Namespace,
+			SessionID:  item.SessionID,
+			ThreadID:   item.ThreadID,
+			ThreadSeq:  item.ThreadSeq,
+			ThreadKind: item.ThreadKind,
+			Payload:    item.Payload,
+			Source:     item.Source,
+			CreatedAt:  item.CreatedAt,
 		})
 	}
 	return out

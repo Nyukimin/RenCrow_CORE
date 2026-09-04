@@ -463,6 +463,8 @@ JOIN l1_profile_promotion_job j
 	ON j.evidence_event_id = e.id
 	AND j.session_id = e.session_id
 	AND j.thread_id = e.thread_id
+	AND j.thread_seq = e.thread_seq
+	AND j.thread_kind = e.thread_kind
 WHERE r.source_type = 'chatgpt_export'
 	AND r.scope = 'user:' || r.owner_id
 	AND r.role = 'user'

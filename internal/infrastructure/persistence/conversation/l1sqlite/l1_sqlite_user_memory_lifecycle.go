@@ -132,7 +132,7 @@ INSERT INTO l1_user_memory_lifecycle_plan (
 		}
 		return domainmemory.UserMemoryLifecyclePlanResponse{}, rollbackL1Tx(tx, fmt.Errorf("%w: save lifecycle plan: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_plan_created", "user:"+ownerID, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_plan_created", "user:"+ownerID, "", "", 0, "", map[string]interface{}{
 		"plan_request_id": requestID,
 		"owner_id":        ownerID,
 		"actor_id":        actorID,
@@ -226,7 +226,7 @@ INSERT INTO l1_user_memory_lifecycle_run_receipt (
 		}
 		return domainmemory.UserMemoryLifecycleRunResponse{}, rollbackL1Tx(tx, fmt.Errorf("%w: save lifecycle run receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_run_completed", "user:"+ownerID, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.user_lifecycle_run_completed", "user:"+ownerID, "", "", 0, "", map[string]interface{}{
 		"plan_request_id": planRequestID,
 		"request_id":      requestID,
 		"owner_id":        ownerID,
@@ -270,7 +270,7 @@ func lifecycleOwnerMemoryEvents(ctx context.Context, queryer interface {
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
 }, ownerID string) ([]L1MemoryEvent, error) {
 	rows, err := queryer.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ? AND speaker = ? AND layer = ?
@@ -463,7 +463,7 @@ WHERE id = ? AND namespace = ? AND speaker = ? AND layer = ?
 	if action.Operation == domainmemory.UserMemoryLifecycleActionDecay {
 		payload["decay_score"] = action.DecayScore
 	}
-	if _, err := appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, payload, ownerMemorySourcePrefix+actorID); err != nil {
+	if _, err := appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, payload, ownerMemorySourcePrefix+actorID); err != nil {
 		return fmt.Errorf("%w: save lifecycle action audit: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"runtime"
 	"testing"
@@ -13,18 +14,53 @@ import (
 
 func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 	traceID := modulecore.NewTraceID()
+	threadID := modulecore.NewThreadID()
+	threadSeq := modulecore.ThreadSeq(7)
+	threadKind := modulecore.ThreadKindIdleChat
 	event := idleChatViewerEvent(idlechat.TimelineEvent{
-		Type:      "idlechat.message",
-		From:      "mio",
-		To:        "shiro",
-		Content:   "確認です。",
-		SessionID: "idle-trace-topic-00",
-		MessageID: "msg-1",
-		TurnIndex: 1,
-		TraceID:   traceID,
+		Type:       "idlechat.message",
+		From:       "mio",
+		To:         "shiro",
+		Content:    "確認です。",
+		SessionID:  "idle-trace-topic-00",
+		MessageID:  "msg-1",
+		TurnIndex:  1,
+		TraceID:    traceID,
+		ThreadID:   threadID,
+		ThreadSeq:  threadSeq,
+		ThreadKind: threadKind,
 	})
 	if event.TraceID != string(traceID) {
 		t.Fatalf("viewer trace_id = %q, want %q", event.TraceID, traceID)
+	}
+	if event.SessionID != "idle-trace-topic-00" || event.MessageID != "msg-1" {
+		t.Fatalf("viewer owner identity = (session=%q, message=%q), want (session=%q, message=%q)",
+			event.SessionID, event.MessageID, "idle-trace-topic-00", "msg-1")
+	}
+	if event.ThreadID != threadID || event.ThreadSeq != threadSeq || event.ThreadKind != threadKind {
+		t.Fatalf("viewer thread tuple = (%q, %d, %q), want (%q, %d, %q)",
+			event.ThreadID, event.ThreadSeq, event.ThreadKind,
+			threadID, threadSeq, threadKind)
+	}
+
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	var roundtrip orchestrator.OrchestratorEvent
+	if err := json.Unmarshal(encoded, &roundtrip); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if roundtrip.TraceID != string(traceID) ||
+		roundtrip.SessionID != event.SessionID ||
+		roundtrip.MessageID != event.MessageID ||
+		roundtrip.ThreadID != threadID ||
+		roundtrip.ThreadSeq != threadSeq ||
+		roundtrip.ThreadKind != threadKind {
+		t.Fatalf("viewer JSON identity = (trace=%q, session=%q, message=%q, thread=%q, %d, %q), want (trace=%q, session=%q, message=%q, thread=%q, %d, %q)",
+			roundtrip.TraceID, roundtrip.SessionID, roundtrip.MessageID,
+			roundtrip.ThreadID, roundtrip.ThreadSeq, roundtrip.ThreadKind,
+			string(traceID), event.SessionID, event.MessageID, threadID, threadSeq, threadKind)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // StubConversationManager はPhase 1用のスタブ実装
@@ -26,7 +27,7 @@ func (s *StubConversationManager) Store(ctx context.Context, sessionID string, m
 	return nil
 }
 
-func (s *StubConversationManager) FlushThread(ctx context.Context, threadID int64) (*conversation.ThreadSummary, error) {
+func (s *StubConversationManager) FlushThread(ctx context.Context, threadID modulecore.ThreadID) (*conversation.ThreadSummary, error) {
 	// Phase 1: 未実装エラー
 	return nil, fmt.Errorf("FlushThread not implemented in stub")
 }
@@ -43,7 +44,7 @@ func (s *StubConversationManager) GetActiveThread(ctx context.Context, sessionID
 
 func (s *StubConversationManager) CreateThread(ctx context.Context, sessionID string, domain string) (*conversation.Thread, error) {
 	// Phase 1: スタブThread生成（保存はしない）
-	return conversation.NewThread(sessionID, domain), nil
+	return conversation.NewThread(sessionID, domain, conversation.ThreadKindUserConversation, conversation.ThreadSeq(1))
 }
 
 func (s *StubConversationManager) GetAgentStatus(ctx context.Context, agentName string) (*conversation.AgentStatus, error) {

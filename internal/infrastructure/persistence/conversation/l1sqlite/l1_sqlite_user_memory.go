@@ -77,14 +77,14 @@ func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory
 	id := fmt.Sprintf("%s:user_memory:%d:%d", namespace, now.UnixNano(), l1IDSequence.Add(1))
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, id, namespace, "", 0, string(domconv.SpeakerMemory), statement, metaJSON, state, MemoryLayerL1, source, now, now)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, id, namespace, "", "", 0, "", string(domconv.SpeakerMemory), statement, metaJSON, state, MemoryLayerL1, source, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user memory: %w", err)
 	}
-	if _, err := s.AppendEvent(ctx, "memory.user_created", namespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":          id,
 		"user_id":            userID,
 		"type":               memoryType,
@@ -185,14 +185,14 @@ func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, candidateID, namespace, "", 0, string(domconv.SpeakerMemory), normalized.Statement, metaJSON,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, candidateID, namespace, "", "", 0, "", string(domconv.SpeakerMemory), normalized.Statement, metaJSON,
 		MemoryStateCandidate, MemoryLayerL1, source, now, now); err != nil {
 		return nil, false, rollbackL1Tx(tx, fmt.Errorf("failed to create user memory candidate: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", 0, map[string]interface{}{
+	if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":          candidateID,
 		"request_id":         requestID,
 		"actor_id":           actorID,
@@ -271,7 +271,7 @@ func findL1MemoryEventByID(ctx context.Context, queryer l1SQLRowQueryer, id stri
 		return L1MemoryEvent{}, false, errors.New("user memory id is required")
 	}
 	events, err := scanL1EventRows(queryer.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE id = ?
@@ -390,7 +390,7 @@ func (s *L1SQLiteStore) ListUserMemories(ctx context.Context, userID string, sta
 	var rows *sql.Rows
 	if strings.TrimSpace(state) == "" {
 		rows, err = s.db.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ?
@@ -399,7 +399,7 @@ LIMIT ?
 `, namespace, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE namespace = ? AND memory_state = ?
@@ -603,7 +603,7 @@ func (s *L1SQLiteStore) ForgetUserMemory(ctx context.Context, id string, reason 
 	if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{
 		"memory_id": id,
 		"reason":    reason,
 	}, "memory"); err != nil {
@@ -642,7 +642,7 @@ func (s *L1SQLiteStore) SupersedeUserMemory(ctx context.Context, oldID string, n
 	if err := s.updateMemoryMeta(ctx, oldID, meta); err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, old.ThreadSeq, old.ThreadKind, map[string]interface{}{
 		"memory_id":     oldID,
 		"superseded_by": strings.TrimSpace(newID),
 		"reason":        reason,

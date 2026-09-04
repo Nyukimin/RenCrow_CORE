@@ -15,6 +15,7 @@ import (
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/archivesqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type countingConversationCloser struct{ calls int }
@@ -181,7 +182,8 @@ func TestConversationRuntimeOwnerRecallTraceUsesConfiguredOwnerAndRealL1(t *test
 		t.Fatalf("OwnerTransitionUserMemory(confirm) failed: %v", err)
 	}
 
-	pack, err := runtime.Engine.BeginTurn(ctx, "runtime-owner-42-session", "blue")
+	sessionID := string(modulecore.NewSessionID())
+	pack, err := runtime.Engine.BeginTurn(ctx, sessionID, "blue")
 	if err != nil {
 		t.Fatalf("real L1 ConversationEngine BeginTurn failed: %v", err)
 	}
@@ -205,7 +207,7 @@ func TestConversationRuntimeOwnerRecallTraceUsesConfiguredOwnerAndRealL1(t *test
 		t.Fatal("runtime engine does not expose typed conversation commit")
 	}
 	if _, err := typed.CommitConversationTurn(ctx, domconv.ConversationTurnRequest{
-		TurnID: "runtime-owner-42-turn", SessionID: "runtime-owner-42-session", UserMessage: "blue", AgentMessage: "了解", AgentSpeaker: domconv.SpeakerMio,
+		TurnID: string(modulecore.NewTurnID()), SessionID: sessionID, OwnerID: "owner-42", UserMessage: "blue", AgentMessage: "了解", AgentSpeaker: domconv.SpeakerMio,
 		RecallTraceItems: pack.ToTraceItems(),
 	}); err != nil {
 		t.Fatalf("typed conversation commit failed: %v", err)

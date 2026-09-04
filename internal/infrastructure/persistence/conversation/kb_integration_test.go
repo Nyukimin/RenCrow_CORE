@@ -76,15 +76,16 @@ func TestConversationEngine_WithKBSearch(t *testing.T) {
 	engine := NewRealConversationEngine(mgr, persona)
 
 	ctx := context.Background()
+	sessionID := conversationTestSessionID("test-session")
 
 	// Threadを作成
-	_, err := mgr.CreateThread(ctx, "test-session", "programming")
+	_, err := mgr.CreateThread(ctx, sessionID, "programming")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
 	// BeginTurn を呼び出し（KB検索が内部で実行される）
-	pack, err := engine.BeginTurn(ctx, "test-session", "Go言語のチャネルについて教えて")
+	pack, err := engine.BeginTurn(ctx, sessionID, "Go言語のチャネルについて教えて")
 	if err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestConversationEngine_KBSearchError(t *testing.T) {
 	engine := NewRealConversationEngine(mgr, persona)
 
 	ctx := context.Background()
-	_, _ = mgr.CreateThread(ctx, "session2", "general")
+	_, _ = mgr.CreateThread(ctx, conversationTestSessionID("session2"), "general")
 
 	// KB検索がエラーでもBeginTurnは成功する（ログ警告のみ）
 	pack, err := engine.BeginTurn(ctx, "session2", "質問")

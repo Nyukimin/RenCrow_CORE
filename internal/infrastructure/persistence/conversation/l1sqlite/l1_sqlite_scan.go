@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -33,17 +34,26 @@ func scanL1EventLogEntries(rows *sql.Rows) ([]L1EventLogEntry, error) {
 	for rows.Next() {
 		var ev L1EventLogEntry
 		var payloadJSON string
+		var threadID string
+		var threadKind string
 		if err := rows.Scan(
 			&ev.ID,
 			&ev.EventType,
 			&ev.Namespace,
 			&ev.SessionID,
-			&ev.ThreadID,
+			&threadID,
+			&ev.ThreadSeq,
+			&threadKind,
 			&payloadJSON,
 			&ev.Source,
 			&ev.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan l1 event log: %w", err)
+		}
+		ev.ThreadID = modulecore.ThreadID(threadID)
+		ev.ThreadKind = modulecore.ThreadKind(threadKind)
+		if err := validateL1SessionThreadTuple(ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind); err != nil {
+			return nil, fmt.Errorf("invalid l1 event log thread identity: %w", err)
 		}
 		if err := unmarshalL1JSON(payloadJSON, "{}", &ev.Payload, "failed to unmarshal l1 event payload"); err != nil {
 			return nil, err
@@ -277,11 +287,15 @@ func scanL1EventRows(row l1MemoryRow) ([]L1MemoryEvent, error) {
 	var ev L1MemoryEvent
 	var metaJSON string
 	var speaker string
+	var threadID string
+	var threadKind string
 	if err := row.Scan(
 		&ev.ID,
 		&ev.Namespace,
 		&ev.SessionID,
-		&ev.ThreadID,
+		&threadID,
+		&ev.ThreadSeq,
+		&threadKind,
 		&speaker,
 		&ev.Message,
 		&metaJSON,
@@ -297,6 +311,8 @@ func scanL1EventRows(row l1MemoryRow) ([]L1MemoryEvent, error) {
 		return nil, fmt.Errorf("failed to scan l1 memory event: %w", err)
 	}
 	ev.Speaker = domconv.Speaker(speaker)
+	ev.ThreadID = modulecore.ThreadID(threadID)
+	ev.ThreadKind = modulecore.ThreadKind(threadKind)
 	if err := unmarshalL1JSON(metaJSON, "{}", &ev.Meta, "failed to unmarshal l1 memory meta"); err != nil {
 		return nil, err
 	}

@@ -8,7 +8,26 @@ import (
 	"time"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestChatGPTConversationIdentityUsesSeparateCanonicalIDs(t *testing.T) {
+	conversationID := "conversation-identity"
+	sessionID := chatGPTConversationSessionID(conversationID)
+	threadID := chatGPTConversationThreadID(conversationID)
+	if err := sessionID.Validate(); err != nil {
+		t.Fatalf("session ID is not canonical: %v", err)
+	}
+	if err := threadID.Validate(); err != nil {
+		t.Fatalf("thread ID is not canonical: %v", err)
+	}
+	if sessionID == modulecore.SessionID(threadID) {
+		t.Fatalf("session and thread IDs must be distinct: %q", sessionID)
+	}
+	if got, want := chatGPTConversationNamespace(conversationID), "conv:"+string(threadID); got != want {
+		t.Fatalf("namespace=%q want=%q", got, want)
+	}
+}
 
 func TestImportChatGPTL3RecordsIsIdempotentAndQueuesCurrentUserOnly(t *testing.T) {
 	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "l1.db"))
@@ -42,12 +61,22 @@ func TestImportChatGPTL3RecordsIsIdempotentAndQueuesCurrentUserOnly(t *testing.T
 	if len(events) != 2 || events[0].Layer != "L3" || events[0].Source != "chatgpt_export" {
 		t.Fatalf("events=%+v", events)
 	}
+	wantSessionID := chatGPTConversationSessionID("conv-1")
+	wantThreadID := chatGPTConversationThreadID("conv-1")
+	for _, event := range events {
+		if event.SessionID != string(wantSessionID) || event.ThreadID != wantThreadID || event.ThreadSeq != 1 || event.ThreadKind != modulecore.ThreadKindUserConversation {
+			t.Fatalf("unexpected ChatGPT event identity: %+v", event)
+		}
+	}
 	jobs, err := store.ListProfilePromotionJobs(context.Background(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs) != 1 || jobs[0].EvidenceEventID != "chatgpt_export:conv-1:user-1" {
 		t.Fatalf("jobs=%+v", jobs)
+	}
+	if jobs[0].SessionID != string(wantSessionID) || jobs[0].ThreadID != wantThreadID || jobs[0].ThreadSeq != 1 || jobs[0].ThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("unexpected ChatGPT promotion identity: %+v", jobs[0])
 	}
 }
 

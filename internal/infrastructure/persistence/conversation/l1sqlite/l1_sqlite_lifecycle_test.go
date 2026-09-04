@@ -26,7 +26,7 @@ func TestL1SQLiteStore_RawLifecycleRequiresArchiveStoreBeforeDelete(t *testing.T
 
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
-	if err := store.SaveMessage(ctx, "session-raw-no-archive", 1, "conv:raw-no-archive", domconv.NewMessage(domconv.SpeakerUser, "raw source must survive", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "session-raw-no-archive", "raw-no-archive", 1, "conv:raw-no-archive", domconv.NewMessage(domconv.SpeakerUser, "raw source must survive", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = ?`, old, old, "conv:raw-no-archive"); err != nil {
@@ -251,7 +251,7 @@ func newOldRawLifecycleStore(t *testing.T, namespace string) (*L1SQLiteStore, st
 	}
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
-	if err := store.SaveMessage(ctx, "raw-lifecycle-session", 1, namespace, domconv.NewMessage(domconv.SpeakerUser, "raw lifecycle source", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "raw-lifecycle-session", namespace, 1, namespace, domconv.NewMessage(domconv.SpeakerUser, "raw lifecycle source", nil), MemoryStateObserved); err != nil {
 		store.Close()
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenance(t *testing.T) {
 
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
-	if err := store.SaveMessage(ctx, "session-old", 1, "conv:1", domconv.NewMessage(domconv.SpeakerUser, "old raw", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "session-old", "1", 1, "conv:1", domconv.NewMessage(domconv.SpeakerUser, "old raw", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = 'conv:1'`, old, old); err != nil {
@@ -406,7 +406,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenancePreservesChatGPTL3Episodes(t
 
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-120 * 24 * time.Hour)
-	if err := store.SaveMessage(ctx, "session-old", 1, "conv:l1", domconv.NewMessage(domconv.SpeakerUser, "old L1 raw", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "session-old", "l1", 1, "conv:l1", domconv.NewMessage(domconv.SpeakerUser, "old L1 raw", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage L1 failed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE l1_memory_event SET created_at = ?, updated_at = ? WHERE namespace = 'conv:l1'`, old, old); err != nil {
@@ -414,7 +414,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenancePreservesChatGPTL3Episodes(t
 	}
 	markProfilePromotionCompletedForNamespace(t, store, "conv:l1")
 
-	if err := store.SaveMessage(ctx, "session-chatgpt", 1, "conv:chatgpt-l3", domconv.NewMessage(domconv.SpeakerSystem, "immutable ChatGPT L3 episode", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "session-chatgpt", "chatgpt-l3", 1, "conv:chatgpt-l3", domconv.NewMessage(domconv.SpeakerSystem, "immutable ChatGPT L3 episode", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage ChatGPT episode failed: %v", err)
 	}
 	if _, err := store.db.ExecContext(ctx, `
@@ -516,7 +516,7 @@ func TestL1SQLiteStore_RunMemoryLifecycleMaintenanceBuildsMonthlyHighlightsAndTh
 	now := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	insertDailyDigest(t, store, "digest:2026-05-01:ai", "2026-05-01", "ai", "day", "AI daily one")
 	insertDailyDigest(t, store, "digest:2026-05-02:ai", "2026-05-02", "ai", "day", "AI daily two")
-	insertThreadSummary(t, store, "summary-1", "conv:thread", 42, "thread summary for May", now.Add(-20*24*time.Hour))
+	insertThreadSummary(t, store, "summary-1", "conv:thread", "monthly-highlight-thread", "thread summary for May", now.Add(-20*24*time.Hour))
 
 	result, err := store.RunMemoryLifecycleMaintenance(ctx, MemoryLifecycleOptions{
 		Now:                    now,
@@ -664,7 +664,7 @@ func TestL1SQLiteStore_AcceleratedVerificationDB(t *testing.T) {
 	store.WithVectorCleanupSink(&stubVectorCleanupSink{})
 
 	base := time.Now().UTC()
-	if err := store.SaveMessage(ctx, "accel-session", 1, "conv:accel", domconv.NewMessage(domconv.SpeakerUser, "accelerated raw memory", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "accel-session", "accel", 1, "conv:accel", domconv.NewMessage(domconv.SpeakerUser, "accelerated raw memory", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
 	if _, err := store.CreateUserMemory(ctx, domainmemory.CreateUserMemoryInput{
@@ -706,7 +706,7 @@ func TestL1SQLiteStore_AcceleratedVerificationDB(t *testing.T) {
 		t.Fatalf("ForgetUserMemory failed: %v", err)
 	}
 	insertDailyDigest(t, store, "digest:accel:ai", base.Format("2006-01-02"), "ai", "day", "accelerated daily digest")
-	insertThreadSummary(t, store, "summary-accel", "conv:thread", 99, "accelerated thread summary", base)
+	insertThreadSummary(t, store, "summary-accel", "conv:thread", "accelerated-summary-thread", "accelerated thread summary", base)
 
 	totals := MemoryLifecycleResult{}
 	months := acceleratedVerificationMonths(t)
@@ -781,7 +781,7 @@ func TestL1SQLiteStore_MemoryRetentionQualityEvalOneYear(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create must_keep project failed: %v", err)
 	}
-	if err := store.SaveMessage(ctx, "quality-session", 1, "conv:quality-noise", domconv.NewMessage(domconv.SpeakerUser, "must_compact_or_forget: 一時的なCPU確認ログ", nil), MemoryStateObserved); err != nil {
+	if err := l1TestSaveMessageInNamespace(store, ctx, "quality-session", "quality-noise", 1, "conv:quality-noise", domconv.NewMessage(domconv.SpeakerUser, "must_compact_or_forget: 一時的なCPU確認ログ", nil), MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage noise failed: %v", err)
 	}
 	mustDecayEpisode, err := store.CreateUserMemory(ctx, domainmemory.CreateUserMemoryInput{
@@ -1087,18 +1087,19 @@ INSERT INTO l1_daily_digest (
 	}
 }
 
-func insertThreadSummary(t *testing.T, store *L1SQLiteStore, id string, namespace string, threadID int64, text string, at time.Time) {
+func insertThreadSummary(t *testing.T, store *L1SQLiteStore, id string, namespace string, threadSeed string, text string, at time.Time) {
 	t.Helper()
 	meta, err := json.Marshal(map[string]interface{}{"kind": "thread_summary"})
 	if err != nil {
 		t.Fatalf("marshal thread summary meta failed: %v", err)
 	}
+	thread := l1TestThread(threadSeed, 1)
 	if _, err := store.db.ExecContext(context.Background(), `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, namespace, "session-thread", threadID, string(domconv.SpeakerSystem), text, string(meta),
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, namespace, l1TestSessionID("session-thread"), thread.ID, thread.Seq, thread.Kind, string(domconv.SpeakerSystem), text, string(meta),
 		MemoryStateConfirmed, "L2", "thread_summary", at.UTC(), at.UTC()); err != nil {
 		t.Fatalf("insert thread summary failed: %v", err)
 	}

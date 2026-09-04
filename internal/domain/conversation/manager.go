@@ -1,6 +1,10 @@
 package conversation
 
-import "context"
+import (
+	"context"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 // ConversationManager は会話管理の抽象化インターフェース
 // Phase 1ではインターフェースのみ定義、Phase 2以降で実装
@@ -12,7 +16,7 @@ type ConversationManager interface {
 	Store(ctx context.Context, sessionID string, msg Message) error
 
 	// FlushThread はThreadを終了し、要約を中期記憶へ保存
-	FlushThread(ctx context.Context, threadID int64) (*ThreadSummary, error)
+	FlushThread(ctx context.Context, threadID modulecore.ThreadID) (*ThreadSummary, error)
 
 	// IsNovelInformation は新規情報かを判定（類似度 < 0.8）
 	IsNovelInformation(ctx context.Context, msg Message) (bool, float32, error)

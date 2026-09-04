@@ -8,11 +8,12 @@ import (
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // RunForecastSession は6ドメインを順に回す未来展望セッションを実行する。
 func (o *IdleChatOrchestrator) RunForecastSession() {
-	sessionID := fmt.Sprintf("forecast-%d", time.Now().Unix())
+	sessionID := string(modulecore.NewSessionID())
 	startedAt := time.Now().In(jst)
 	sessionDomains := append([]ForecastDomain(nil), forecastDomains...)
 
@@ -23,7 +24,13 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 	o.chatActive = true
 	o.sessionMode = "forecast"
 	generation := o.beginIdleRunLocked()
-	o.bindIdleSessionLocked(sessionID)
+	if err := o.bindIdleSessionLocked(sessionID); err != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		o.cancelIdleRunIfGeneration(generation)
+		log.Printf("[Forecast] session start failed before dialogue: session=%s error=%v", sessionID, err)
+		return
+	}
 	o.mu.Unlock()
 	o.emitMu.Unlock()
 
@@ -46,8 +53,12 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 }
 
 func (o *IdleChatOrchestrator) runForecastDomainSession(domain ForecastDomain, prepared ...PreparedTopic) {
-	sessionID := fmt.Sprintf("forecast-%d", time.Now().Unix())
-	generation := o.activateIdleSession(sessionID)
+	sessionID := string(modulecore.NewSessionID())
+	generation, err := o.activateIdleSession(sessionID)
+	if err != nil {
+		log.Printf("[Forecast] session start failed before dialogue: session=%s error=%v", sessionID, err)
+		return
+	}
 	startedAt := time.Now().In(jst)
 	totalTurns := o.runForecastSessionDomains(sessionID, generation, startedAt, []ForecastDomain{domain}, prepared...)
 	log.Printf("[Forecast] Session %s completed (%d total turns)", sessionID, totalTurns)

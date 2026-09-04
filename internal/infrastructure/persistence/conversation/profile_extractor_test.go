@@ -49,7 +49,7 @@ func TestLLMProfileExtractorAcceptsOnlyStringPreferenceScalars(t *testing.T) {
 		response: `{"preferences":{"文字列":"SF"},"facts":[]}`,
 	}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "SFと数値設定", nil))
 	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestLLMProfileExtractorRejectsNonScalarPreferenceValues(t *testing.T) {
 		t.Run(response, func(t *testing.T) {
 			provider := &profileExtractorRequestProvider{response: response}
 			extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-			thread := domconv.NewThread("profile-session", "profile-thread")
+			thread := newManagerTestThread("profile-session", "profile-thread")
 			thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 			if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
 				t.Fatal("Extract succeeded for non-scalar preference value")
@@ -97,7 +97,7 @@ func TestLLMProfileExtractorRejectsNonExactJSONResponse(t *testing.T) {
 		t.Run(response, func(t *testing.T) {
 			provider := &profileExtractorRequestProvider{response: response}
 			extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-			thread := domconv.NewThread("profile-session", "profile-thread")
+			thread := newManagerTestThread("profile-session", "profile-thread")
 			thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 			if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
 				t.Fatal("Extract accepted non-exact JSON response")
@@ -115,7 +115,7 @@ func TestLLMProfileExtractorRejectsOversizedOrInvalidFactOutput(t *testing.T) {
 		t.Run(response, func(t *testing.T) {
 			provider := &profileExtractorRequestProvider{response: response}
 			extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-			thread := domconv.NewThread("profile-session", "profile-thread")
+			thread := newManagerTestThread("profile-session", "profile-thread")
 			thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 			if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
 				t.Fatal("Extract accepted invalid fact output")
@@ -125,7 +125,7 @@ func TestLLMProfileExtractorRejectsOversizedOrInvalidFactOutput(t *testing.T) {
 
 	provider := &profileExtractorRequestProvider{response: strings.Repeat("x", 64*1024+1)}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 	if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err == nil {
 		t.Fatal("Extract accepted oversized response")
@@ -138,7 +138,7 @@ func TestLLMProfileExtractorRepairsInvalidResponseOnce(t *testing.T) {
 		`{"preferences":{"言語":"Go"},"facts":[]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "言語", nil))
 
 	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -188,7 +188,7 @@ func TestLLMProfileExtractorRepairRebuildsBasePromptWithRepairLimit(t *testing.T
 		`{"preferences":{},"facts":[]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair base prompt", nil))
 
 	if _, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{}); err != nil {
@@ -213,7 +213,7 @@ func TestLLMProfileExtractorRepairsLengthViolation(t *testing.T) {
 		`{"preferences":{"好み":"Go"},"facts":[]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "好み", nil))
 
 	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -241,7 +241,7 @@ func TestLLMProfileExtractorRejectsThreeCandidatesOnRepairBudget(t *testing.T) {
 		`{"preferences":{"one":"1","two":"2"},"facts":["three"]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair candidate budget", nil))
 
 	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -268,7 +268,7 @@ func TestLLMProfileExtractorAcceptsTwoCandidatesOnRepairBudget(t *testing.T) {
 		`{"preferences":{"one":"1"},"facts":["two"]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "repair candidate budget", nil))
 
 	result, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -287,7 +287,7 @@ func TestLLMProfileExtractorDoesNotRepairProviderUnavailable(t *testing.T) {
 	secret := errors.New("provider private payload TOP-SECRET")
 	provider := &profileExtractorRequestProvider{err: secret}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 
 	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -309,7 +309,7 @@ func TestLLMProfileExtractorRepairsAtMostOnce(t *testing.T) {
 		`{"preferences":{},"facts":[]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "値", nil))
 
 	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -329,7 +329,7 @@ func TestLLMProfileExtractorRepairBudgetIsPerExtractAcrossGroups(t *testing.T) {
 		`{"preferences":{},"facts":[]}`,
 	}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, strings.Repeat("a", 5000), nil))
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, strings.Repeat("b", 5000), nil))
 
@@ -564,10 +564,11 @@ func TestBuildMaterialDigestStaysShortAndDeduplicates(t *testing.T) {
 func TestExtractSendsMaterialAsTopicNotEvidence(t *testing.T) {
 	provider := &profileExtractorRequestProvider{response: `{"preferences": {}, "facts": []}`}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := &domconv.Thread{ID: 1, Turns: []domconv.Message{{
+	thread := newManagerTestThread("profile-session", "profile-thread")
+	thread.Turns = []domconv.Message{{
 		Speaker: domconv.SpeakerUser,
 		Msg:     "ちょっと書いてみたよ\n\n" + strings.Repeat("宇宙船スターダスト号の船内は静かだった。カイ・ミナセは操縦席にいた。", 60),
-	}}}
+	}}
 
 	if _, err := extractor.Extract(context.Background(), thread, domconv.NewUserProfile("ren")); err != nil {
 		t.Fatal(err)
@@ -598,10 +599,11 @@ func TestExtractSendsMaterialAsTopicNotEvidence(t *testing.T) {
 func TestLLMProfileExtractorUsesLogicalRequestBudgets(t *testing.T) {
 	provider := &profileExtractorRequestProvider{response: `{"preferences": {}, "facts": []}`}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := &domconv.Thread{ID: 1, Turns: []domconv.Message{
+	thread := newManagerTestThread("profile-session", "profile-thread")
+	thread.Turns = []domconv.Message{
 		{Speaker: domconv.SpeakerUser, Msg: strings.Repeat("e", 7000)},
 		{Speaker: domconv.SpeakerUser, Msg: "資料を確認したい\n\n" + strings.Repeat("資料本文。", 1000)},
-	}}
+	}
 	existing := domconv.UserProfile{
 		Preferences: map[string]string{"topic": strings.Repeat("p", 500)},
 		Facts:       []string{strings.Repeat("f", 500)},
@@ -634,7 +636,7 @@ func TestLLMProfileExtractorStrictlyEnforcesPerGroupCandidateLimit(t *testing.T)
 	overflow := `{"preferences":{"a":"1","b":"2","c":"3","d":"4","e":"5"},"facts":[]}`
 	provider := &profileExtractorRequestProvider{responses: []string{overflow, overflow}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "候補上限", nil))
 
 	_, err := extractor.Extract(context.Background(), thread, domconv.UserProfile{})
@@ -675,7 +677,7 @@ func TestBuildMaterialDigestUsesEightHundredRuneBudget(t *testing.T) {
 func TestLLMProfileExtractorBoundsExistingContextToCompleteLines(t *testing.T) {
 	provider := &profileExtractorRequestProvider{response: `{"preferences": {}, "facts": []}`}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "既知情報の確認", nil))
 	existing := domconv.UserProfile{
 		Preferences: map[string]string{
@@ -755,7 +757,7 @@ func TestProfileExtractorValidationLogDoesNotExposeRawDetails(t *testing.T) {
 	invalid := fmt.Sprintf(`{"preferences":{%q:"ok"},"facts":[]}`, secret+"\n")
 	provider := &profileExtractorRequestProvider{responses: []string{invalid, invalid}}
 	extractor := NewLLMProfileExtractor(provider).WithMinimumUserMessages(1)
-	thread := domconv.NewThread("profile-session", "profile-thread")
+	thread := newManagerTestThread("profile-session", "profile-thread")
 	thread.AddMessage(domconv.NewMessage(domconv.SpeakerUser, "秘密値の検証", nil))
 
 	var logs bytes.Buffer

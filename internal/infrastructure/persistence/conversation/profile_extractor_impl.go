@@ -576,7 +576,7 @@ func (e *LLMProfileExtractor) Extract(ctx context.Context, thread *domconv.Threa
 	}
 	if droppedRunes > 0 {
 		log.Printf(
-			"[ProfileExtractor] evidence exceeded %d groups: thread=%d dropped_runes=%d",
+			"[ProfileExtractor] evidence exceeded %d groups: thread=%s dropped_runes=%d",
 			domainmemory.ProfilePromotionEvidenceGroupMax, thread.ID, droppedRunes,
 		)
 	}

@@ -116,7 +116,7 @@ ON CONFLICT(staging_id) DO UPDATE SET
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.AppendEvent(ctx, "domain_graph.promoted_from_staging", namespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "domain_graph.promoted_from_staging", namespace, "", "", 0, "", map[string]interface{}{
 		"assertion_id":  assertion.ID,
 		"staging_id":    item.ID,
 		"domain":        assertion.Domain,

@@ -527,7 +527,7 @@
       "title": "協議ごとの Chair / 主導役",
       "purpose": "議題ごとに適切なAgentが内容面を主導しつつ、恒久的な上下関係を作らない。",
       "problem": "固定の議論主導者では結論の方向が偏り、全員同格だけでは収束責任が曖昧になる。",
-      "idea": "discussion_id単位でChairを1名選び、論点の内容面を主導する。Chairの票や恒久的影響力は重くしない。",
+      "idea": "thread_id（thread_kind=agent_discussion）単位でChairを1名選び、論点の内容面を主導する。Chairの票や恒久的影響力は重くしない。",
       "background": "れんが『議長は進行役で上下関係ではなく、協議ごとに入れ替わる』と明確化した。",
       "expected_effect": [
         "議題適応性",
@@ -4852,7 +4852,7 @@
       },
       "revision": 1,
       "content_path": "specifications/spec_council_facilitator_chair.md",
-      "content_sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace",
+      "content_sha256": "72ea3d6d63453783c3fb62af58450142683ae61571ee062209e5f22131992eff",
       "captured_at": "2026-08-21T22:26:00+09:00"
     },
     {

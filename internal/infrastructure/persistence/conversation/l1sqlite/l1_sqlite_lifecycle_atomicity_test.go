@@ -76,7 +76,7 @@ func TestL1SQLiteStore_BackgroundLifecycleAuditFailureRollsBackMutation(t *testi
 			eventType: "memory.thread_summary_monthly_seed_queued",
 			prepare: func(t *testing.T, store *L1SQLiteStore, now time.Time) func(*testing.T, *L1SQLiteStore) {
 				t.Helper()
-				insertThreadSummary(t, store, "summary:atomic", "conv:atomic", 7, "atomic thread summary", now.Add(-20*24*time.Hour))
+				insertThreadSummary(t, store, "summary:atomic", "conv:atomic", "atomic-thread", "atomic thread summary", now.Add(-20*24*time.Hour))
 				return func(t *testing.T, store *L1SQLiteStore) {
 					event, err := store.memoryByID(ctx, "summary:atomic")
 					if err != nil {

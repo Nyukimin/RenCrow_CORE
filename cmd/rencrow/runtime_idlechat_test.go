@@ -63,6 +63,24 @@ func TestNewIdleChatCodexRunnerUsesCodexConfig(t *testing.T) {
 	}
 }
 
+func TestBuildIdleChatRuntimeFailsClosedOnInvalidTopicStore(t *testing.T) {
+	storageDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(storageDir, "idlechat_topics.jsonl"), []byte(`{"session_id":"legacy"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		Session:  config.SessionConfig{StorageDir: storageDir},
+		IdleChat: config.IdleChatConfig{Enabled: true},
+	}
+	deps := &Dependencies{}
+
+	buildIdleChatRuntime(cfg, deps, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+
+	if deps.idleChatOrch != nil || deps.idleChatSurfacePresence != nil {
+		t.Fatalf("invalid topic store exposed IdleChat runtime: orchestrator=%v surface=%v", deps.idleChatOrch, deps.idleChatSurfacePresence)
+	}
+}
+
 func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
 	data, err := json.Marshal(map[string]any{"stock": map[string]any{

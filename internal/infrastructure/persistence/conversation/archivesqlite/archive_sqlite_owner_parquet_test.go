@@ -115,14 +115,14 @@ func TestArchiveSQLiteStoreOwnerParquetExportPopulatedAndSourceUnchanged(t *test
 	if err != nil {
 		t.Fatalf("read thread parquet: %v", err)
 	}
-	if len(threadRows) != 2 || threadRows[0].ThreadID != 1 || threadRows[1].ThreadID != 2 {
+	if len(threadRows) != 2 || threadRows[0].ThreadID != string(archiveTestThreadID("owner-thread-2")) || threadRows[1].ThreadID != string(archiveTestThreadID("owner-thread-1")) || threadRows[0].ThreadSeq != 2 || threadRows[1].ThreadSeq != 1 || threadRows[0].ThreadKind != "user_conversation" || threadRows[1].ThreadKind != "user_conversation" {
 		t.Fatalf("thread ordering = %+v", threadRows)
 	}
 	memoryRows, err := parquet.ReadFile[l1MemoryEventParquetRow](filepath.Join(root, result.RunRelPath, "l1", "l1_memory_event.parquet"))
 	if err != nil {
 		t.Fatalf("read memory parquet: %v", err)
 	}
-	if len(memoryRows) != 1 || memoryRows[0].ID != "m-1" {
+	if len(memoryRows) != 1 || memoryRows[0].ID != "m-1" || memoryRows[0].ThreadID != string(archiveTestThreadID("owner-memory-1")) || memoryRows[0].ThreadSeq != 1 || memoryRows[0].ThreadKind != "user_conversation" {
 		t.Fatalf("memory rows = %+v", memoryRows)
 	}
 	after := archiveSourceCounts(t, store.db)
@@ -437,12 +437,12 @@ func testSHA256File(t *testing.T, path string) string {
 func insertArchiveRows(t *testing.T, db *sql.DB, now time.Time) {
 	t.Helper()
 	_, err := db.Exec(`
-INSERT INTO session_thread (thread_id, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel, created_at)
-VALUES (2, 'thread-2', ?, ?, 'memory', 'summary-2', '[]', '[]', 0, ?), (1, 'thread-1', ?, ?, 'memory', 'summary-1', '[]', '[]', 1, ?);`, now.Add(time.Minute), now.Add(2*time.Minute), now, now, now.Add(3*time.Minute), now.Add(4*time.Minute), now)
+INSERT INTO session_thread (thread_id, thread_seq, thread_kind, session_id, ts_start, ts_end, domain, summary, keywords, embedding, is_novel, created_at)
+VALUES (?, 2, 'user_conversation', 'thread-2', ?, ?, 'memory', 'summary-2', '[]', '[]', 0, ?), (?, 1, 'user_conversation', 'thread-1', ?, ?, 'memory', 'summary-1', '[]', '[]', 1, ?);`, archiveTestThreadID("owner-thread-2"), now.Add(time.Minute), now.Add(2*time.Minute), now, archiveTestThreadID("owner-thread-1"), now.Add(3*time.Minute), now.Add(4*time.Minute), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.Exec(`INSERT INTO l1_memory_event_archive (id, namespace, session_id, thread_id, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES ('m-1','conv:1','s',1,'user','m','{}','observed','L1','test',?,?)`, now, now)
+	_, err = db.Exec(`INSERT INTO l1_memory_event_archive (id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at) VALUES ('m-1','conv:1','s',?,1,'user_conversation','user','m','{}','observed','L1','test',?,?)`, archiveTestThreadID("owner-memory-1"), now, now)
 	if err != nil {
 		t.Fatal(err)
 	}

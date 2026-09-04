@@ -13,20 +13,40 @@ import (
 func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle {
 	o.emitMu.Lock()
 	defer o.emitMu.Unlock()
-	if strings.HasPrefix(ev.Type, "idlechat.") && o.isInterruptedSession(ev.SessionID) {
-		log.Printf("[IdleChat] stale event discarded: type=%s session=%s", ev.Type, ev.SessionID)
-		return TTSLifecycle{}
-	}
-	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
-	if !ok {
-		log.Printf("[IdleChat] timeline event rejected without owner generation/trace: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
-		return TTSLifecycle{}
-	}
-	ev.TraceID = traceID
-	o.recordPersonaTimelineEvent(ev)
 	o.mu.Lock()
+	if strings.HasPrefix(ev.Type, "idlechat.") && o.interruptedSessions != nil {
+		if _, interrupted := o.interruptedSessions[strings.TrimSpace(ev.SessionID)]; interrupted {
+			o.mu.Unlock()
+			log.Printf("[IdleChat] stale event discarded: type=%s session=%s", ev.Type, ev.SessionID)
+			return TTSLifecycle{}
+		}
+	}
+	threadID, threadSeq, threadKind, ok := o.ownerThreadIdentityLocked(ev.SessionID, ev.Generation)
+	if !ok {
+		o.mu.Unlock()
+		log.Printf("[IdleChat] timeline event rejected without owner generation/thread: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		return TTSLifecycle{}
+	}
+	if (ev.ThreadID != "" && ev.ThreadID != threadID) ||
+		(ev.ThreadSeq != 0 && ev.ThreadSeq != threadSeq) ||
+		(ev.ThreadKind != "" && ev.ThreadKind != threadKind) {
+		o.mu.Unlock()
+		log.Printf("[IdleChat] timeline event rejected with mismatched thread tuple: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		return TTSLifecycle{}
+	}
+	if ev.TraceID == "" {
+		ev.TraceID = o.activeTraceID
+	} else if ev.TraceID.Validate() != nil || ev.TraceID != o.activeTraceID {
+		o.mu.Unlock()
+		log.Printf("[IdleChat] timeline event rejected with mismatched trace owner: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		return TTSLifecycle{}
+	}
+	ev.ThreadID = threadID
+	ev.ThreadSeq = threadSeq
+	ev.ThreadKind = threadKind
 	emit := o.emitEvent
 	o.mu.Unlock()
+	o.recordPersonaTimelineEvent(ev)
 	if emit != nil {
 		return emit(ev)
 	}

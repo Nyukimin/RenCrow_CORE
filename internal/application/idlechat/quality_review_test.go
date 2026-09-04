@@ -35,7 +35,7 @@ func TestSaveSummaryReviewsQualityButDoesNotInjectPromptGuidance(t *testing.T) {
 		"QUALITY: fail\nBORING_CAUSE: テンプレ反復で聞き手の楽しみが落ちた\nINTEREST_HOOK: 猫市長が市役所の机で魚の予算を隠す選択\nMISSED_TURN: 制度論に逃げず、誰が困るかを出せた\nPROMPT_FIX: INTEREST_HOOKを1つ選び、誰かが損をする選択か隠し事が露出する瞬間に変える。2文以内で余白を残す。",
 	}}
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
-	generation := activateIdleChatTestSession(o, "s1")
+	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("s1"))
 	transcript := []string{
 		"mio: もし猫が市長だったら面白いよね。",
 		"shiro: もし市長なら予算配分が変わりますね。",
@@ -43,7 +43,7 @@ func TestSaveSummaryReviewsQualityButDoesNotInjectPromptGuidance(t *testing.T) {
 		"shiro: もしそうなら制度設計が重要です。",
 	}
 
-	summary := o.saveSummary("s1", "猫市長", TopicStrategy("manual"), transcript, time.Now(), time.Now(), len(transcript), true, "template_repeat", generation)
+	summary := o.saveSummary(canonicalIdleChatTestSessionID("s1"), "猫市長", TopicStrategy("manual"), transcript, time.Now(), time.Now(), len(transcript), true, "template_repeat", generation)
 
 	if !strings.Contains(summary, "注記: テンプレ反復で打ち切り") {
 		t.Fatalf("summary should keep loop note, got %q", summary)

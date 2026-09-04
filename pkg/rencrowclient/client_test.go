@@ -28,6 +28,15 @@ func canonicalTestCommandEvent(occurredAt time.Time, commandName, status, runID,
 	return event
 }
 
+func canonicalClientTestThreadID(t *testing.T, value string) modulecore.ThreadID {
+	t.Helper()
+	raw, err := modulecore.NewMigrationID(modulecore.CanonicalThreadID, "rencrowclient_test", "fixture", value)
+	if err != nil {
+		t.Fatalf("create canonical thread id: %v", err)
+	}
+	return modulecore.ThreadID(raw)
+}
+
 func newNoRequestClient(t *testing.T) (*Client, *bool, func()) {
 	t.Helper()
 	called := false
@@ -2658,16 +2667,21 @@ func TestMemoryLayersStatus(t *testing.T) {
 				CreatedAt: now,
 			}},
 			L1: []MemoryLayerEvent{{
-				ID:        "l1-1",
-				Namespace: "kb:e2e",
-				Message:   "today memory",
-				Layer:     "L1",
-				CreatedAt: now,
+				ID:         "l1-1",
+				Namespace:  "kb:e2e",
+				ThreadID:   canonicalClientTestThreadID(t, "memory-l1"),
+				ThreadSeq:  2,
+				ThreadKind: modulecore.ThreadKindAgentDiscussion,
+				Message:    "today memory",
+				Layer:      "L1",
+				CreatedAt:  now,
 			}},
 			L2: []MemoryLayerThreadSummary{{
-				ThreadID: 10,
-				Domain:   "movie",
-				Summary:  "summary",
+				ThreadID:   canonicalClientTestThreadID(t, "memory-l2"),
+				ThreadSeq:  1,
+				ThreadKind: modulecore.ThreadKindUserConversation,
+				Domain:     "movie",
+				Summary:    "summary",
 			}},
 			L3: []MemoryLayerEvent{{
 				ID:          "l3-1",
@@ -2700,6 +2714,12 @@ func TestMemoryLayersStatus(t *testing.T) {
 	if len(status.L0) != 1 || len(status.L1) != 1 || len(status.L2) != 1 || len(status.L3) != 1 || len(status.L3Qdrant) != 1 {
 		t.Fatalf("unexpected memory layers status: %+v", status)
 	}
+	if status.L1[0].ThreadID != canonicalClientTestThreadID(t, "memory-l1") || status.L1[0].ThreadSeq != 2 || status.L1[0].ThreadKind != modulecore.ThreadKindAgentDiscussion {
+		t.Fatalf("l1 thread tuple was not preserved: %+v", status.L1[0])
+	}
+	if status.L2[0].ThreadID != canonicalClientTestThreadID(t, "memory-l2") || status.L2[0].ThreadSeq != 1 || status.L2[0].ThreadKind != modulecore.ThreadKindUserConversation {
+		t.Fatalf("l2 thread tuple was not preserved: %+v", status.L2[0])
+	}
 	if !strings.Contains(gotPath, "/viewer/memory/layers?") {
 		t.Fatalf("unexpected path: %s", gotPath)
 	}
@@ -2711,7 +2731,12 @@ func TestMemoryLayersRejectsMalformedCurrentView(t *testing.T) {
 		return MemoryLayersStatus{
 			L0: []MemoryLayerEvent{{ID: "l0-1", Message: "current turn", Layer: "L0", CreatedAt: now}},
 			L1: []MemoryLayerEvent{{ID: "l1-1", Message: "today memory", Layer: "L1", CreatedAt: now}},
-			L2: []MemoryLayerThreadSummary{{ThreadID: 10, Summary: "summary"}},
+			L2: []MemoryLayerThreadSummary{{
+				ThreadID:   canonicalClientTestThreadID(t, "malformed-l2"),
+				ThreadSeq:  1,
+				ThreadKind: modulecore.ThreadKindUserConversation,
+				Summary:    "summary",
+			}},
 			L3: []MemoryLayerEvent{{ID: "l3-1", Message: "confirmed memory", Layer: "L3", CreatedAt: now}},
 			L3Qdrant: []MemoryLayerQdrantDocument{{
 				ID:      "kb-1",
@@ -2734,9 +2759,22 @@ func TestMemoryLayersRejectsMalformedCurrentView(t *testing.T) {
 		{name: "invalid l1 created at", mutate: func(s *MemoryLayersStatus) {
 			s.L1[0].CreatedAt = "bad"
 		}, want: "l1 memory invalid created_at"},
+		{name: "invalid l1 thread tuple", mutate: func(s *MemoryLayersStatus) {
+			s.L1[0].ThreadID = canonicalClientTestThreadID(t, "partial-l1")
+			s.L1[0].ThreadKind = modulecore.ThreadKindUserConversation
+		}, want: "l1 memory invalid thread tuple"},
 		{name: "missing l2 summary", mutate: func(s *MemoryLayersStatus) {
 			s.L2[0].Summary = ""
 		}, want: "l2 summary missing summary"},
+		{name: "invalid l2 thread id", mutate: func(s *MemoryLayersStatus) {
+			s.L2[0].ThreadID = "legacy-thread"
+		}, want: "l2 summary invalid thread tuple"},
+		{name: "invalid l2 thread sequence", mutate: func(s *MemoryLayersStatus) {
+			s.L2[0].ThreadSeq = 0
+		}, want: "l2 summary invalid thread tuple"},
+		{name: "invalid l2 thread kind", mutate: func(s *MemoryLayersStatus) {
+			s.L2[0].ThreadKind = "legacy"
+		}, want: "l2 summary invalid thread tuple"},
 		{name: "missing qdrant id", mutate: func(s *MemoryLayersStatus) {
 			s.L3Qdrant[0].ID = ""
 		}, want: "l3_qdrant document missing id"},

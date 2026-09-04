@@ -10,6 +10,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type promotionStoreStub struct {
@@ -71,9 +72,12 @@ func (s promotionExtractorStub) Extract(ctx context.Context, _ *domconv.Thread, 
 }
 
 func testPromotionBatch() *domainmemory.ProfilePromotionBatch {
+	threadID := modulecore.NewThreadID()
+	threadSeq := modulecore.ThreadSeq(1)
+	threadKind := modulecore.ThreadKindUserConversation
 	return &domainmemory.ProfilePromotionBatch{
-		LeaseToken: "lease", SessionID: "session", ThreadID: 1,
-		Messages: []domainmemory.ProfilePromotionMessage{{EventID: "evt-1", SessionID: "session", ThreadID: 1, Text: "私はGoが好き"}},
+		LeaseToken: "lease", SessionID: "session", ThreadID: threadID, ThreadSeq: threadSeq, ThreadKind: threadKind,
+		Messages: []domainmemory.ProfilePromotionMessage{{EventID: "evt-1", SessionID: "session", ThreadID: threadID, ThreadSeq: threadSeq, ThreadKind: threadKind, Text: "私はGoが好き"}},
 	}
 }
 

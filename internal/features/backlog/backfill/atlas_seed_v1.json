@@ -171,7 +171,7 @@
       "category": "協議・判断",
       "display_name": "協議ごとの Chair / 主導役",
       "purpose": "議題ごとに適切なAgentが内容面を主導しつつ、恒久的な上下関係を作らない。",
-      "summary": "discussion_id単位でChairを1名選び、論点の内容面を主導する。Chairの票や恒久的影響力は重くしない。",
+      "summary": "thread_id（thread_kind=agent_discussion）単位でChairを1名選び、論点の内容面を主導する。Chairの票や恒久的影響力は重くしない。",
       "relations": [
         "decision.facilitator",
         "decision.shared_artifact",

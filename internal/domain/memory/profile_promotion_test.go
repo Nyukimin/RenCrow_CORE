@@ -1,6 +1,10 @@
 package memory
 
-import "testing"
+import (
+	"testing"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 func TestProfilePromotionLogicalRequestBudgets(t *testing.T) {
 	if ProfilePromotionEvidenceBlockMax != 3000 {
@@ -56,5 +60,109 @@ func TestValidateProfilePromotionProjectionRequiresCanonicalNonEmptyEnums(t *tes
 		if err := ValidateProfilePromotionProjection([]UserMemory{item}, "ren"); err == nil {
 			t.Fatalf("scope %q was accepted", scope)
 		}
+	}
+}
+
+func profilePromotionEvidenceBatchForTest(t *testing.T) ProfilePromotionBatch {
+	t.Helper()
+	threadID := modulecore.NewThreadID()
+	threadSeq := modulecore.ThreadSeq(1)
+	threadKind := modulecore.ThreadKindUserConversation
+	return ProfilePromotionBatch{
+		LeaseToken: "lease-1",
+		SessionID:  "session-1",
+		ThreadID:   threadID,
+		ThreadSeq:  threadSeq,
+		ThreadKind: threadKind,
+		Messages: []ProfilePromotionMessage{{
+			EventID:    "event-1",
+			SessionID:  "session-1",
+			ThreadID:   threadID,
+			ThreadSeq:  threadSeq,
+			ThreadKind: threadKind,
+			Text:       "evidence",
+		}},
+	}
+}
+
+func TestValidateProfilePromotionBatchEvidenceRejectsInvalidThreadID(t *testing.T) {
+	for _, threadID := range []modulecore.ThreadID{"", "thr_not-a-uuid"} {
+		t.Run(string(threadID), func(t *testing.T) {
+			batch := profilePromotionEvidenceBatchForTest(t)
+			batch.ThreadID = threadID
+			batch.Messages[0].ThreadID = threadID
+			if err := ValidateProfilePromotionBatchEvidence(batch); err == nil {
+				t.Fatalf("thread ID %q was accepted", threadID)
+			}
+		})
+	}
+}
+
+func TestValidateProfilePromotionBatchEvidenceRejectsInvalidThreadSequence(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		threadSeq modulecore.ThreadSeq
+	}{
+		{name: "zero", threadSeq: 0},
+		{name: "negative", threadSeq: -1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			batch := profilePromotionEvidenceBatchForTest(t)
+			batch.ThreadSeq = test.threadSeq
+			batch.Messages[0].ThreadSeq = test.threadSeq
+			if err := ValidateProfilePromotionBatchEvidence(batch); err == nil {
+				t.Fatalf("thread sequence %d was accepted", test.threadSeq)
+			}
+		})
+	}
+}
+
+func TestValidateProfilePromotionBatchEvidenceRejectsInvalidThreadKind(t *testing.T) {
+	batch := profilePromotionEvidenceBatchForTest(t)
+	batch.ThreadKind = modulecore.ThreadKind("invalid")
+	batch.Messages[0].ThreadKind = batch.ThreadKind
+	if err := ValidateProfilePromotionBatchEvidence(batch); err == nil {
+		t.Fatal("invalid thread kind was accepted")
+	}
+}
+
+func TestValidateProfilePromotionBatchEvidenceRequiresExactMessageThreadBinding(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ProfilePromotionBatch)
+	}{
+		{
+			name: "session",
+			mutate: func(batch *ProfilePromotionBatch) {
+				batch.Messages[0].SessionID = "other-session"
+			},
+		},
+		{
+			name: "thread id",
+			mutate: func(batch *ProfilePromotionBatch) {
+				batch.Messages[0].ThreadID = modulecore.NewThreadID()
+			},
+		},
+		{
+			name: "thread sequence",
+			mutate: func(batch *ProfilePromotionBatch) {
+				batch.Messages[0].ThreadSeq = modulecore.ThreadSeq(2)
+			},
+		},
+		{
+			name: "thread kind",
+			mutate: func(batch *ProfilePromotionBatch) {
+				batch.Messages[0].ThreadKind = modulecore.ThreadKindAgentDiscussion
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			batch := profilePromotionEvidenceBatchForTest(t)
+			test.mutate(&batch)
+			if err := ValidateProfilePromotionBatchEvidence(batch); err == nil {
+				t.Fatalf("message %s mismatch was accepted", test.name)
+			}
+		})
 	}
 }

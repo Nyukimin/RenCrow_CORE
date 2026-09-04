@@ -2,14 +2,11 @@ package l1sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +14,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -27,6 +25,23 @@ const (
 	conversationTurnMaxLease          = 24 * time.Hour
 	conversationTurnMaxResultBytes    = 64 * 1024
 )
+
+type conversationThreadIdentity struct {
+	ID   modulecore.ThreadID
+	Seq  modulecore.ThreadSeq
+	Kind modulecore.ThreadKind
+}
+
+func emptyConversationThreadIdentity() conversationThreadIdentity {
+	return conversationThreadIdentity{}
+}
+
+func (identity conversationThreadIdentity) validate(bound bool) error {
+	if bound {
+		return validateL1BoundThreadTuple(identity.ID, identity.Seq, identity.Kind)
+	}
+	return validateL1ThreadTuple(identity.ID, identity.Seq, identity.Kind)
+}
 
 // applyConversationTurnSchema is additive and is called on every L1 open.
 // The tables deliberately keep the semantic receipt separate from follower
@@ -42,32 +57,48 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS conversation_active_thread (
 			session_id TEXT PRIMARY KEY CHECK(length(session_id) > 0),
-			thread_id INTEGER NOT NULL CHECK(thread_id > 0),
+			thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
+			thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
+			thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
 			domain TEXT NOT NULL CHECK(length(domain) > 0 AND length(domain) <= 1024),
 			message_count INTEGER NOT NULL CHECK(message_count >= 0 AND message_count <= 12),
-			updated_at TIMESTAMP NOT NULL
+			updated_at TIMESTAMP NOT NULL,
+			UNIQUE(thread_id),
+			UNIQUE(session_id, thread_seq)
 		)`,
 		`CREATE TABLE IF NOT EXISTS conversation_turn_receipt (
 			turn_id TEXT PRIMARY KEY CHECK(length(turn_id) > 0),
 			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
 			session_id TEXT NOT NULL CHECK(length(session_id) > 0),
 			trace_id TEXT NOT NULL CHECK(length(trace_id) > 0),
-			thread_id INTEGER NOT NULL CHECK(thread_id > 0),
-			closed_thread_id INTEGER,
+			thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
+			thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
+			thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
+			closed_thread_id TEXT NOT NULL DEFAULT '',
+			closed_thread_seq INTEGER NOT NULL DEFAULT 0,
+			closed_thread_kind TEXT NOT NULL DEFAULT '',
 			user_message_id TEXT NOT NULL CHECK(length(user_message_id) > 0),
 			agent_message_id TEXT NOT NULL CHECK(length(agent_message_id) > 0),
 			status TEXT NOT NULL CHECK(status IN ('completed', 'partial', 'failed')),
 			result_json TEXT NOT NULL CHECK(length(result_json) <= 65536),
 			created_at TIMESTAMP NOT NULL,
-			updated_at TIMESTAMP NOT NULL
+			updated_at TIMESTAMP NOT NULL,
+			CHECK (
+				(closed_thread_id = '' AND closed_thread_seq = 0 AND closed_thread_kind = '') OR
+				(closed_thread_id <> '' AND closed_thread_seq > 0 AND closed_thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system'))
+			)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversation_turn_receipt_session_created ON conversation_turn_receipt(session_id, created_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS conversation_turn_outbox (
 			turn_id TEXT NOT NULL CHECK(length(turn_id) > 0),
 			target TEXT NOT NULL CHECK(target IN ('redis_projection', 'thread_followers')),
 			session_id TEXT NOT NULL CHECK(length(session_id) > 0),
-			thread_id INTEGER NOT NULL CHECK(thread_id > 0),
-			closed_thread_id INTEGER,
+			thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
+			thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
+			thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
+			closed_thread_id TEXT NOT NULL DEFAULT '',
+			closed_thread_seq INTEGER NOT NULL DEFAULT 0,
+			closed_thread_kind TEXT NOT NULL DEFAULT '',
 			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
 			payload_json TEXT NOT NULL CHECK(length(payload_json) <= 8192),
 			status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed')),
@@ -78,7 +109,11 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			PRIMARY KEY(turn_id, target),
-			FOREIGN KEY(turn_id) REFERENCES conversation_turn_receipt(turn_id)
+			FOREIGN KEY(turn_id) REFERENCES conversation_turn_receipt(turn_id),
+			CHECK (
+				(closed_thread_id = '' AND closed_thread_seq = 0 AND closed_thread_kind = '') OR
+				(closed_thread_id <> '' AND closed_thread_seq > 0 AND closed_thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system'))
+			)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversation_turn_outbox_claim ON conversation_turn_outbox(status, lease_expires_at, created_at, turn_id, target)`,
 	}
@@ -133,16 +168,23 @@ func (s *L1SQLiteStore) CommitConversationTurn(ctx context.Context, request domc
 	}
 
 	var existingHash, existingJSON string
+	var existingThreadID, existingThreadKind string
+	var existingThreadSeq int64
+	var existingClosedID, existingClosedKind string
+	var existingClosedSeq int64
 	err = tx.QueryRowContext(ctx, `
-SELECT payload_sha256, result_json
+SELECT payload_sha256, thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
 FROM conversation_turn_receipt
-WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
+WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingThreadID, &existingThreadSeq, &existingThreadKind, &existingClosedID, &existingClosedSeq, &existingClosedKind, &existingJSON)
 	if err == nil {
 		if existingHash != payloadHash {
 			return rollback(domconv.ConversationTurnErrorConflict)
 		}
 		var replay domconv.ConversationTurnResult
 		if err := json.Unmarshal([]byte(existingJSON), &replay); err != nil {
+			return rollback(domconv.ConversationTurnErrorInternal, err)
+		}
+		if err := validateConversationTurnResultIdentity(replay, modulecore.ThreadID(existingThreadID), modulecore.ThreadSeq(existingThreadSeq), modulecore.ThreadKind(existingThreadKind), modulecore.ThreadID(existingClosedID), modulecore.ThreadSeq(existingClosedSeq), modulecore.ThreadKind(existingClosedKind)); err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
@@ -156,25 +198,29 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
 	}
 
 	now := time.Now().UTC()
-	threadID, closedThreadID, messageCount, threadDomain, err := selectConversationTurnThread(ctx, tx, normalized, now)
+	thread, closedThread, messageCount, threadDomain, err := selectConversationTurnThread(ctx, tx, normalized, now)
 	if err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
-	base.ThreadID = threadID
-	base.ClosedThreadID = closedThreadID
+	base.ThreadID = thread.ID
+	base.ThreadSeq = thread.Seq
+	base.ThreadKind = thread.Kind
+	base.ClosedThreadID = closedThread.ID
+	base.ClosedThreadSeq = closedThread.Seq
+	base.ClosedThreadKind = closedThread.Kind
 	base.Status = domconv.ConversationTurnCompleted
 	base.ErrorCode = ""
 	base.PendingTargets = nil
 	base.CompletedTargets = nil
-	if target := requestedConversationTurnOutboxTargets(normalized.Targets, closedThreadID != 0); len(target) > 0 {
+	if target := requestedConversationTurnOutboxTargets(normalized.Targets, closedThread.ID != ""); len(target) > 0 {
 		base.Status = domconv.ConversationTurnPartial
 		base.PendingTargets = append([]string(nil), target...)
 	}
 
-	if err := upsertConversationActiveThread(ctx, tx, normalized.SessionID, threadID, threadDomain, messageCount, now); err != nil {
+	if err := upsertConversationActiveThread(ctx, tx, normalized.SessionID, thread, threadDomain, messageCount, now); err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
-	if err := insertConversationTurnMessages(ctx, tx, normalized, threadID, userMessageID, agentMessageID, now); err != nil {
+	if err := insertConversationTurnMessages(ctx, tx, normalized, thread, userMessageID, agentMessageID, now); err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
 	if err := insertConversationTurnRecallTrace(ctx, tx, normalized, now); err != nil {
@@ -188,29 +234,32 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingJSON)
 		}
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
-	var closedValue interface{}
-	if closedThreadID != 0 {
-		closedValue = closedThreadID
-	}
+	closedIDValue := string(closedThread.ID)
+	closedSeqValue := int64(closedThread.Seq)
+	closedKindValue := string(closedThread.Kind)
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_turn_receipt (
-	turn_id, payload_sha256, session_id, trace_id, thread_id, closed_thread_id,
+	turn_id, payload_sha256, session_id, trace_id, thread_id, thread_seq, thread_kind,
+	closed_thread_id, closed_thread_seq, closed_thread_kind,
 	user_message_id, agent_message_id, status, result_json, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.TurnID, payloadHash, normalized.SessionID,
-		normalized.TurnID, threadID, closedValue, userMessageID, agentMessageID, base.Status, string(resultJSON), now, now); err != nil {
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.TurnID, payloadHash, normalized.SessionID,
+		normalized.TurnID, thread.ID, thread.Seq, thread.Kind, closedIDValue, closedSeqValue, closedKindValue,
+		userMessageID, agentMessageID, base.Status, string(resultJSON), now, now); err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
-	for _, target := range requestedConversationTurnOutboxTargets(normalized.Targets, closedThreadID != 0) {
-		payload, err := conversationTurnOutboxPayload(normalized, threadID, closedThreadID, userMessageID, agentMessageID, target, payloadHash)
+	for _, target := range requestedConversationTurnOutboxTargets(normalized.Targets, closedThread.ID != "") {
+		payload, err := conversationTurnOutboxPayload(normalized, thread, closedThread, userMessageID, agentMessageID, target, payloadHash)
 		if err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_turn_outbox (
-	turn_id, target, session_id, thread_id, closed_thread_id, payload_sha256,
+	turn_id, target, session_id, thread_id, thread_seq, thread_kind,
+	closed_thread_id, closed_thread_seq, closed_thread_kind, payload_sha256,
 	payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, '', ?, ?)`, normalized.TurnID, target,
-			normalized.SessionID, threadID, closedValue, payloadHash, payload, domconv.ConversationTurnOutboxPending, now, now); err != nil {
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, '', ?, ?)`, normalized.TurnID, target,
+			normalized.SessionID, thread.ID, thread.Seq, thread.Kind, closedIDValue, closedSeqValue, closedKindValue,
+			payloadHash, payload, domconv.ConversationTurnOutboxPending, now, now); err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 	}
@@ -311,8 +360,9 @@ func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Co
 )`
 	args = append(args, now, domconv.ConversationTurnMaxOutboxAttempts, domconv.ConversationTurnMaxOutboxAttempts)
 	query := `
-SELECT turn_id, target, session_id, thread_id, closed_thread_id, payload_sha256,
-       payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
+	SELECT turn_id, target, session_id, thread_id, thread_seq, thread_kind,
+		closed_thread_id, closed_thread_seq, closed_thread_kind, payload_sha256,
+	       payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
 FROM conversation_turn_outbox
 ` + where + `
 ORDER BY created_at ASC, turn_id ASC, target ASC
@@ -516,7 +566,13 @@ func (s *L1SQLiteStore) GetConversationTurnReceipt(ctx context.Context, turnID s
 		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnUnavailable
 	}
 	var resultJSON string
-	if err := s.db.QueryRowContext(ctx, `SELECT result_json FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&resultJSON); err != nil {
+	var threadID, threadKind string
+	var threadSeq int64
+	var closedID, closedKind string
+	var closedSeq int64
+	if err := s.db.QueryRowContext(ctx, `
+SELECT thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
+FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind, &resultJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnUnavailable
 		}
@@ -526,28 +582,44 @@ func (s *L1SQLiteStore) GetConversationTurnReceipt(ctx context.Context, turnID s
 	if json.Unmarshal([]byte(resultJSON), &result) != nil {
 		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnInternal
 	}
+	if err := validateConversationTurnResultIdentity(result, modulecore.ThreadID(threadID), modulecore.ThreadSeq(threadSeq), modulecore.ThreadKind(threadKind), modulecore.ThreadID(closedID), modulecore.ThreadSeq(closedSeq), modulecore.ThreadKind(closedKind)); err != nil {
+		return domconv.ConversationTurnResult{}, err
+	}
 	return result, nil
+}
+
+func validateConversationTurnResultIdentity(result domconv.ConversationTurnResult, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, closedID modulecore.ThreadID, closedSeq modulecore.ThreadSeq, closedKind modulecore.ThreadKind) error {
+	if err := validateL1ThreadTuple(threadID, threadSeq, threadKind); err != nil || threadID == "" {
+		return domconv.ErrConversationTurnInvalid
+	}
+	if err := validateL1ThreadTuple(closedID, closedSeq, closedKind); err != nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	if result.ThreadID != threadID || result.ThreadSeq != threadSeq || result.ThreadKind != threadKind || result.ClosedThreadID != closedID || result.ClosedThreadSeq != closedSeq || result.ClosedThreadKind != closedKind {
+		return domconv.ErrConversationTurnInvalid
+	}
+	return nil
 }
 
 // LoadConversationThreadProjection loads the canonical conversation messages
 // for one exact L1 thread. The L1 rows, rather than Redis, are authoritative.
 // The returned rows retain their bodies for the summarizer but callers must
 // never copy those bodies into an outbox payload.
-func (s *L1SQLiteStore) LoadConversationThreadProjection(ctx context.Context, sessionID string, threadID int64) ([]L1MemoryEvent, error) {
+func (s *L1SQLiteStore) LoadConversationThreadProjection(ctx context.Context, sessionID string, threadID modulecore.ThreadID) ([]L1MemoryEvent, error) {
 	if s == nil || s.db == nil {
 		return nil, domconv.ErrConversationTurnUnavailable
 	}
 	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" || !utf8.ValidString(sessionID) || threadID <= 0 {
+	if sessionID == "" || !utf8.ValidString(sessionID) || threadID.Validate() != nil {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE session_id = ? AND thread_id = ?
-ORDER BY rowid ASC
-LIMIT 13`, sessionID, threadID)
+	ORDER BY rowid ASC
+	LIMIT 13`, sessionID, string(threadID))
 	if err != nil {
 		return nil, domconv.ErrConversationTurnInternal
 	}
@@ -556,7 +628,7 @@ LIMIT 13`, sessionID, threadID)
 	for rows.Next() {
 		var event L1MemoryEvent
 		var speaker, metaJSON string
-		if err := rows.Scan(&event.ID, &event.Namespace, &event.SessionID, &event.ThreadID, &speaker,
+		if err := rows.Scan(&event.ID, &event.Namespace, &event.SessionID, &event.ThreadID, &event.ThreadSeq, &event.ThreadKind, &speaker,
 			&event.Message, &metaJSON, &event.MemoryState, &event.Layer, &event.Source,
 			&event.CreatedAt, &event.UpdatedAt); err != nil {
 			return nil, domconv.ErrConversationTurnInternal
@@ -576,6 +648,40 @@ LIMIT 13`, sessionID, threadID)
 	return events, nil
 }
 
+// LatestConversationThreadReference returns the highest canonical thread
+// sequence observed for a session. Row order is only a deterministic tie-break
+// when multiple rows carry the same sequence; unthreaded rows are ignored.
+func (s *L1SQLiteStore) LatestConversationThreadReference(ctx context.Context, sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool, error) {
+	if s == nil || s.db == nil {
+		return "", 0, "", false, domconv.ErrConversationTurnUnavailable
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || !utf8.ValidString(sessionID) {
+		return "", 0, "", false, domconv.ErrConversationTurnInvalid
+	}
+	var rawID, rawKind string
+	var rawSeq int64
+	err := s.db.QueryRowContext(ctx, `
+SELECT thread_id, thread_seq, thread_kind
+FROM l1_memory_event
+WHERE session_id = ? AND thread_id <> ''
+	ORDER BY thread_seq DESC, rowid DESC
+LIMIT 1`, sessionID).Scan(&rawID, &rawSeq, &rawKind)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", 0, "", false, nil
+	}
+	if err != nil {
+		return "", 0, "", false, domconv.ErrConversationTurnInternal
+	}
+	threadID := modulecore.ThreadID(rawID)
+	threadSeq := modulecore.ThreadSeq(rawSeq)
+	threadKind := modulecore.ThreadKind(rawKind)
+	if err := validateL1BoundThreadTuple(threadID, threadSeq, threadKind); err != nil {
+		return "", 0, "", false, domconv.ErrConversationTurnInvalid
+	}
+	return threadID, threadSeq, threadKind, true, nil
+}
+
 // LoadActiveConversationThreadProjection resolves the active thread ID from
 // conversation_active_thread before loading the projection. It never guesses
 // an active thread from the newest message row.
@@ -587,17 +693,22 @@ func (s *L1SQLiteStore) LoadActiveConversationThreadProjection(ctx context.Conte
 	if sessionID == "" || !utf8.ValidString(sessionID) {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	var threadID int64
+	var threadID modulecore.ThreadID
+	var threadSeq modulecore.ThreadSeq
+	var threadKind modulecore.ThreadKind
 	var messageCount int
 	var activeDomain string
 	if err := s.db.QueryRowContext(ctx, `
-SELECT thread_id, message_count, domain
+SELECT thread_id, thread_seq, thread_kind, message_count, domain
 FROM conversation_active_thread
-	WHERE session_id = ?`, sessionID).Scan(&threadID, &messageCount, &activeDomain); err != nil {
+	WHERE session_id = ?`, sessionID).Scan(&threadID, &threadSeq, &threadKind, &messageCount, &activeDomain); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domconv.ErrThreadNotFound
 		}
 		return nil, domconv.ErrConversationTurnInternal
+	}
+	if err := validateL1BoundThreadTuple(threadID, threadSeq, threadKind); err != nil {
+		return nil, domconv.ErrConversationTurnInvalid
 	}
 	events, err := s.LoadConversationThreadProjection(ctx, sessionID, threadID)
 	if err != nil {
@@ -610,6 +721,9 @@ FROM conversation_active_thread
 		return nil, domconv.ErrConversationTurnInvalid
 	}
 	for _, event := range events {
+		if event.ThreadSeq != threadSeq || event.ThreadKind != threadKind {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
 		if domain, ok := event.Meta["domain"].(string); !ok || domain != activeDomain {
 			return nil, domconv.ErrConversationTurnInvalid
 		}
@@ -617,14 +731,19 @@ FROM conversation_active_thread
 	return events, nil
 }
 
-func validateConversationThreadProjection(sessionID string, threadID int64, events []L1MemoryEvent) error {
+func validateConversationThreadProjection(sessionID string, threadID modulecore.ThreadID, events []L1MemoryEvent) error {
 	if len(events) < 2 || len(events) > 12 || len(events)%2 != 0 {
+		return domconv.ErrConversationTurnInvalid
+	}
+	expectedSeq := events[0].ThreadSeq
+	expectedKind := events[0].ThreadKind
+	if err := validateL1BoundThreadTuple(threadID, expectedSeq, expectedKind); err != nil {
 		return domconv.ErrConversationTurnInvalid
 	}
 	var domain string
 	for index, event := range events {
 		if event.ID == "" || !utf8.ValidString(event.ID) || strings.IndexByte(event.ID, 0) >= 0 ||
-			event.SessionID != sessionID || event.ThreadID != threadID || event.Namespace != fmt.Sprintf("conv:%d", threadID) ||
+			event.SessionID != sessionID || event.ThreadID != threadID || event.ThreadSeq != expectedSeq || event.ThreadKind != expectedKind || event.Namespace != "conv:"+string(threadID) ||
 			event.Source != "conversation" || event.Layer != MemoryLayerL1 || event.MemoryState != MemoryStateObserved ||
 			!utf8.ValidString(event.Message) || strings.IndexByte(event.Message, 0) >= 0 {
 			return domconv.ErrConversationTurnInvalid
@@ -690,39 +809,51 @@ func validateConversationThreadProjection(sessionID string, threadID int64, even
 	return nil
 }
 
-func selectConversationTurnThread(ctx context.Context, tx *sql.Tx, request domconv.ConversationTurnRequest, _ time.Time) (threadID, closedThreadID, messageCount int64, domain string, err error) {
-	var currentID int64
+func selectConversationTurnThread(ctx context.Context, tx *sql.Tx, request domconv.ConversationTurnRequest, _ time.Time) (thread, closed conversationThreadIdentity, messageCount int64, domain string, err error) {
+	var currentID string
+	var currentSeq int64
+	var currentKind string
 	var currentDomain string
 	var currentCount int
 	err = tx.QueryRowContext(ctx, `
-SELECT thread_id, domain, message_count
+SELECT thread_id, thread_seq, thread_kind, domain, message_count
 FROM conversation_active_thread
-WHERE session_id = ?`, request.SessionID).Scan(&currentID, &currentDomain, &currentCount)
+WHERE session_id = ?`, request.SessionID).Scan(&currentID, &currentSeq, &currentKind, &currentDomain, &currentCount)
 	hasCurrent := err == nil
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, 0, "", err
+		return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", err
 	}
-	if hasCurrent && (currentID <= 0 || currentCount < 0 || currentCount > 12) {
-		return 0, 0, 0, "", errors.New("invalid active thread")
+	if hasCurrent {
+		thread = conversationThreadIdentity{ID: modulecore.ThreadID(currentID), Seq: modulecore.ThreadSeq(currentSeq), Kind: modulecore.ThreadKind(currentKind)}
+		if err := thread.validate(true); err != nil || currentCount < 0 || currentCount > 12 {
+			return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", errors.New("invalid active thread")
+		}
 	}
 	domain = request.Domain
 	if domain == "" {
 		domain = currentDomain
 	}
 	if !hasCurrent {
-		return deterministicConversationThreadID(request.SessionID, request.TurnID, ""), 0, 2, domain, nil
+		thread = conversationThreadIdentity{ID: modulecore.NewThreadID(), Seq: 1, Kind: modulecore.ThreadKindUserConversation}
+		return thread, emptyConversationThreadIdentity(), 2, domain, nil
 	}
 	if request.Boundary || currentCount+2 > 12 {
-		return deterministicConversationThreadID(request.SessionID, request.TurnID, fmt.Sprintf("%d", currentID)), currentID, 2, domain, nil
+		if thread.Seq >= modulecore.ThreadSeq(1<<63-1) {
+			return conversationThreadIdentity{}, conversationThreadIdentity{}, 0, "", errors.New("thread sequence overflow")
+		}
+		return conversationThreadIdentity{ID: modulecore.NewThreadID(), Seq: thread.Seq + 1, Kind: thread.Kind}, thread, 2, domain, nil
 	}
-	return currentID, 0, int64(currentCount + 2), domain, nil
+	return thread, emptyConversationThreadIdentity(), int64(currentCount + 2), domain, nil
 }
 
-func upsertConversationActiveThread(ctx context.Context, tx *sql.Tx, sessionID string, threadID int64, domain string, count int64, now time.Time) error {
+func upsertConversationActiveThread(ctx context.Context, tx *sql.Tx, sessionID string, thread conversationThreadIdentity, domain string, count int64, now time.Time) error {
+	if err := thread.validate(true); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `
 UPDATE conversation_active_thread
-SET thread_id = ?, domain = ?, message_count = ?, updated_at = ?
-WHERE session_id = ?`, threadID, domain, count, now, sessionID)
+SET thread_id = ?, thread_seq = ?, thread_kind = ?, domain = ?, message_count = ?, updated_at = ?
+WHERE session_id = ?`, thread.ID, thread.Seq, thread.Kind, domain, count, now, sessionID)
 	if err != nil {
 		return err
 	}
@@ -734,13 +865,16 @@ WHERE session_id = ?`, threadID, domain, count, now, sessionID)
 		return nil
 	}
 	_, err = tx.ExecContext(ctx, `
-INSERT INTO conversation_active_thread (session_id, thread_id, domain, message_count, updated_at)
-VALUES (?, ?, ?, ?, ?)`, sessionID, threadID, domain, count, now)
+INSERT INTO conversation_active_thread (session_id, thread_id, thread_seq, thread_kind, domain, message_count, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`, sessionID, thread.ID, thread.Seq, thread.Kind, domain, count, now)
 	return err
 }
 
-func insertConversationTurnMessages(ctx context.Context, tx *sql.Tx, request domconv.ConversationTurnRequest, threadID int64, userMessageID, agentMessageID string, now time.Time) error {
-	namespace, err := BuildL1Namespace(NamespaceKindConversation, fmt.Sprintf("%d", threadID))
+func insertConversationTurnMessages(ctx context.Context, tx *sql.Tx, request domconv.ConversationTurnRequest, thread conversationThreadIdentity, userMessageID, agentMessageID string, now time.Time) error {
+	if err := thread.validate(true); err != nil {
+		return err
+	}
+	namespace, err := BuildL1Namespace(NamespaceKindConversation, string(thread.ID))
 	if err != nil {
 		return err
 	}
@@ -772,13 +906,13 @@ func insertConversationTurnMessages(ctx context.Context, tx *sql.Tx, request dom
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.id, namespace, request.SessionID, threadID,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, item.id, namespace, request.SessionID, thread.ID, thread.Seq, thread.Kind,
 			string(item.speaker), item.message, string(metaJSON), MemoryStateObserved, MemoryLayerL1, "conversation", createdAt, now); err != nil {
 			return err
 		}
-		if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, request.SessionID, threadID, map[string]interface{}{
+		if _, err := appendL1EventLog(ctx, tx, "memory.message_saved", namespace, request.SessionID, thread.ID, thread.Seq, thread.Kind, map[string]interface{}{
 			"memory_id": item.id, "turn_id": request.TurnID, "speaker": string(item.speaker), "memory_state": MemoryStateObserved,
 		}, "conversation"); err != nil {
 			return err
@@ -786,9 +920,9 @@ INSERT INTO l1_memory_event (
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, state, attempt_count,
+	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
 	lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, 0, '', '', ?, ?)`, userMessageID, request.SessionID, threadID, domainmemory.ProfilePromotionPending, now, now); err != nil {
+) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)`, userMessageID, request.SessionID, thread.ID, thread.Seq, thread.Kind, domainmemory.ProfilePromotionPending, now, now); err != nil {
 		return err
 	}
 	return nil
@@ -881,22 +1015,33 @@ func conversationTurnTargetStrings(targets []domconv.ConversationTurnTarget) []s
 	return result
 }
 
-func conversationTurnOutboxPayload(request domconv.ConversationTurnRequest, threadID, closedThreadID int64, userMessageID, agentMessageID, target, payloadHash string) (string, error) {
+func conversationTurnOutboxPayload(request domconv.ConversationTurnRequest, thread, closed conversationThreadIdentity, userMessageID, agentMessageID, target, payloadHash string) (string, error) {
+	if err := thread.validate(true); err != nil {
+		return "", err
+	}
+	if err := closed.validate(false); err != nil {
+		return "", err
+	}
 	payload := struct {
-		Version        string `json:"version"`
-		TurnID         string `json:"turn_id"`
-		TraceID        string `json:"trace_id"`
-		SessionID      string `json:"session_id"`
-		OwnerID        string `json:"owner_id"`
-		ThreadID       int64  `json:"thread_id"`
-		ClosedThreadID int64  `json:"closed_thread_id,omitempty"`
-		UserMessageID  string `json:"user_message_id"`
-		AgentMessageID string `json:"agent_message_id"`
-		Target         string `json:"target"`
-		PayloadSHA256  string `json:"payload_sha256"`
+		Version          string                `json:"version"`
+		TurnID           string                `json:"turn_id"`
+		TraceID          string                `json:"trace_id"`
+		SessionID        string                `json:"session_id"`
+		OwnerID          string                `json:"owner_id"`
+		ThreadID         modulecore.ThreadID   `json:"thread_id"`
+		ThreadSeq        modulecore.ThreadSeq  `json:"thread_seq"`
+		ThreadKind       modulecore.ThreadKind `json:"thread_kind"`
+		ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id,omitempty"`
+		ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq,omitempty"`
+		ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind,omitempty"`
+		UserMessageID    string                `json:"user_message_id"`
+		AgentMessageID   string                `json:"agent_message_id"`
+		Target           string                `json:"target"`
+		PayloadSHA256    string                `json:"payload_sha256"`
 	}{
 		Version: "rencrow.conversation_turn_outbox.v1", TurnID: request.TurnID, TraceID: request.TurnID,
-		SessionID: request.SessionID, OwnerID: request.OwnerID, ThreadID: threadID, ClosedThreadID: closedThreadID,
+		SessionID: request.SessionID, OwnerID: request.OwnerID, ThreadID: thread.ID, ThreadSeq: thread.Seq, ThreadKind: thread.Kind,
+		ClosedThreadID: closed.ID, ClosedThreadSeq: closed.Seq, ClosedThreadKind: closed.Kind,
 		UserMessageID: userMessageID, AgentMessageID: agentMessageID, Target: target, PayloadSHA256: payloadHash,
 	}
 	encoded, err := json.Marshal(payload)
@@ -973,35 +1118,40 @@ WHERE turn_id = ? AND payload_sha256 = ?`, result.Status, string(resultJSONBytes
 
 func scanConversationTurnOutbox(row interface{ Scan(...interface{}) error }) (*domconv.ConversationTurnOutbox, error) {
 	var outbox domconv.ConversationTurnOutbox
-	var closed sql.NullInt64
+	var threadID, threadKind string
+	var threadSeq int64
+	var closedID, closedKind string
+	var closedSeq int64
 	var lease sql.NullTime
 	var status, lastError string
-	if err := row.Scan(&outbox.TurnID, &outbox.Target, &outbox.SessionID, &outbox.ThreadID, &closed,
+	if err := row.Scan(&outbox.TurnID, &outbox.Target, &outbox.SessionID, &threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind,
 		&outbox.PayloadSHA256, &outbox.PayloadJSON, &status, &outbox.LeaseToken, &lease, &outbox.Attempts,
 		&lastError, &outbox.CreatedAt, &outbox.UpdatedAt); err != nil {
 		return nil, err
 	}
 	outbox.Status = domconv.ConversationTurnOutboxStatus(status)
 	outbox.LastError = domconv.ConversationTurnErrorCode(lastError)
-	if closed.Valid {
-		outbox.ClosedThreadID = closed.Int64
+	outbox.ThreadID = modulecore.ThreadID(threadID)
+	outbox.ThreadSeq = modulecore.ThreadSeq(threadSeq)
+	outbox.ThreadKind = modulecore.ThreadKind(threadKind)
+	identity := conversationThreadIdentity{ID: outbox.ThreadID, Seq: outbox.ThreadSeq, Kind: modulecore.ThreadKind(threadKind)}
+	if err := identity.validate(true); err != nil {
+		return nil, err
+	}
+	closedIdentity := conversationThreadIdentity{ID: modulecore.ThreadID(closedID), Seq: modulecore.ThreadSeq(closedSeq), Kind: modulecore.ThreadKind(closedKind)}
+	if err := closedIdentity.validate(false); err != nil {
+		return nil, err
+	}
+	if closedID != "" {
+		outbox.ClosedThreadID = closedIdentity.ID
+		outbox.ClosedThreadSeq = closedIdentity.Seq
+		outbox.ClosedThreadKind = closedIdentity.Kind
 	}
 	if lease.Valid {
 		outbox.LeaseExpiresAt = lease.Time
 	}
 	return &outbox, nil
 }
-
-func deterministicConversationThreadID(sessionID, turnID, previous string) int64 {
-	digest := sha256Bytes("rencrow.conversation-thread.v1\x00" + sessionID + "\x00" + turnID + "\x00" + previous)
-	value := int64(binary.BigEndian.Uint64(digest[:8]) & math.MaxInt64)
-	if value <= 0 {
-		return 1
-	}
-	return value
-}
-
-func sha256Bytes(value string) [32]byte { return sha256.Sum256([]byte(value)) }
 
 func boundedConversationTurnLease(value time.Duration) time.Duration {
 	if value <= 0 {

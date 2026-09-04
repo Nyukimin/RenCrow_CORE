@@ -10,27 +10,27 @@
       "bytes": 2077
     },
     "RenCrow_CORE/internal/features/backlog/catalog/atlas_seed_v1.json": {
-      "sha256": "9fab11fbe4e8d08de2b0e8f323cc0c6a6eff74c6bdeba043b8a6dfb89cc3ee6b",
-      "bytes": 70106
+      "sha256": "815b8df30fd509701bf0f2d4735b8de2b854d30b98a6e098a210c8f078109a5b",
+      "bytes": 70136
     },
     "RenCrow_CORE/internal/features/backlog/testdata/atlas_backfill_v1.json": {
-      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af",
-      "bytes": 195301
+      "sha256": "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670",
+      "bytes": 195331
     },
     "atlas_backfill_v1.json": {
-      "sha256": "7fd72429f88ff6eeb4be9e08619087a6c7c7b3038ed1b81a7e0e519dab2fb4af",
-      "bytes": 195301
+      "sha256": "6c7f6eb8c683caabb34bd465a53f878d101d60b9a7e8e881c4eb2154be9cd670",
+      "bytes": 195331
     },
     "atlas_item_v2.schema.json": {
       "sha256": "43a87f86374b06f41c24e5f0657bde9cf87dcc7b7f2cbcca7d11b604bf900a15",
       "bytes": 2019
     },
     "atlas_items_v2.jsonl": {
-      "sha256": "843cf466f5efd63b5e5869eb2a38e724911bbfe4ade913d9ed0ee065d97af02b",
-      "bytes": 148246
+      "sha256": "633b00989a8a0013121fb014fa7b4cbaef4c8d04f532c2cb0bc2be5c793ae8b9",
+      "bytes": 148276
     },
     "specification_artifacts.json": {
-      "sha256": "7cbd0f1faec33baf4bf2062e74e4f9f28fdf24864eccc6d8ca8efa2bdfe73d0d",
+      "sha256": "fb5e392d13b60b878ea2cc0652bc546b7160e2799d1ea06bb5e90ed47d57dc97",
       "bytes": 4880
     },
     "specifications/spec_artificial_motivation.md": {
@@ -54,8 +54,8 @@
       "bytes": 7159
     },
     "specifications/spec_council_facilitator_chair.md": {
-      "sha256": "106799ace4bbde3ef1296edb8d19ee508de6b3c5c75ab47f000ae692c78ecace",
-      "bytes": 1295
+      "sha256": "72ea3d6d63453783c3fb62af58450142683ae61571ee062209e5f22131992eff",
+      "bytes": 1325
     },
     "specifications/spec_knowledge_architecture.md": {
       "sha256": "f6c8688b5cbbf5209df07b0e92219e109d7c4775f51d09a5650f92b7eceefe31",

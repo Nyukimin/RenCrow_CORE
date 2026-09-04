@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -133,6 +134,10 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.watchdogUpdatedAt = time.Now().UTC()
 	o.watchdogStageDeadlineAt = time.Time{}
 	o.activeSessionID = ""
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
 	o.activeTraceID = ""
 	o.activeTraceSessionID = ""
 	o.runCancel = nil
@@ -165,6 +170,10 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 		o.runCancel()
 	}
 	o.activeGeneration++
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
 	o.activeTraceID = modulecore.NewTraceID()
 	o.activeTraceSessionID = ""
 	o.runCtx, o.runCancel = context.WithCancel(o.ctx)
@@ -186,6 +195,10 @@ func (o *IdleChatOrchestrator) cancelIdleRun() {
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
 	o.activeTraceID = ""
 	o.activeTraceSessionID = ""
 	o.mu.Unlock()
@@ -205,6 +218,10 @@ func (o *IdleChatOrchestrator) cancelIdleRunIfGeneration(generation uint64) {
 	cancel := o.runCancel
 	o.runCancel = nil
 	o.runCtx = o.ctx
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
 	o.activeTraceID = ""
 	o.activeTraceSessionID = ""
 	o.mu.Unlock()
@@ -222,20 +239,142 @@ func (o *IdleChatOrchestrator) idleRunContext() context.Context {
 	return llm.WithBusySource(o.ctx, "idlechat")
 }
 
-func (o *IdleChatOrchestrator) activateIdleSession(sessionID string) uint64 {
+func (o *IdleChatOrchestrator) activateIdleSession(sessionID string) (uint64, error) {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if o.runCancel == nil {
 		o.beginIdleRunLocked()
 	}
-	o.bindIdleSessionLocked(sessionID)
-	return o.activeGeneration
+	generation := o.activeGeneration
+	if err := o.bindIdleSessionLocked(sessionID); err != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		o.cancelIdleRunIfGeneration(generation)
+		return generation, fmt.Errorf("bind idlechat session: %w", err)
+	}
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	return generation, nil
 }
 
-func (o *IdleChatOrchestrator) bindIdleSessionLocked(sessionID string) {
-	sessionID = strings.TrimSpace(sessionID)
+func (o *IdleChatOrchestrator) activeThreadIdentityLocked(sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool) {
+	thread := o.activeThread
+	if validateIdleChatSessionID(sessionID) != nil || o.activeSessionID != sessionID || thread == nil || thread.SessionID != sessionID || validateIdleChatSessionID(thread.SessionID) != nil {
+		return "", 0, "", false
+	}
+	if thread.Status != domconv.ThreadActive || thread.Domain != "idlechat" || thread.ThreadKind != domconv.ThreadKindIdleChat || thread.ID.Validate() != nil || thread.ThreadSeq.Validate() != nil || thread.ThreadKind.Validate() != nil {
+		return "", 0, "", false
+	}
+	return thread.ID, thread.ThreadSeq, thread.ThreadKind, true
+}
+
+func (o *IdleChatOrchestrator) ownerThreadIdentityLocked(sessionID string, generation uint64) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool) {
+	if generation == 0 || generation != o.activeGeneration {
+		return "", 0, "", false
+	}
+	threadID, threadSeq, threadKind, ok := o.activeThreadIdentityLocked(sessionID)
+	if !ok || o.activeTraceSessionID != sessionID || o.activeTraceID.Validate() != nil {
+		return "", 0, "", false
+	}
+	return threadID, threadSeq, threadKind, true
+}
+
+func (o *IdleChatOrchestrator) copyActiveThreadIdentityLocked(record *SessionSummary, sessionID string, generation uint64) bool {
+	if record == nil {
+		return false
+	}
+	if validateIdleChatSessionID(sessionID) != nil || record.SessionID != sessionID {
+		return false
+	}
+	threadID, threadSeq, threadKind, ok := o.ownerThreadIdentityLocked(sessionID, generation)
+	if !ok {
+		return false
+	}
+	if (record.ThreadID != "" && record.ThreadID != threadID) ||
+		(record.ThreadSeq != 0 && record.ThreadSeq != threadSeq) ||
+		(record.ThreadKind != "" && record.ThreadKind != threadKind) {
+		return false
+	}
+	record.ThreadID = threadID
+	record.ThreadSeq = threadSeq
+	record.ThreadKind = threadKind
+	return true
+}
+
+func (o *IdleChatOrchestrator) allocateIdleThreadSeqLocked(sessionID string) (modulecore.ThreadSeq, error) {
+	if o.topicThreadSeq == nil {
+		o.topicThreadSeq = make(map[string]modulecore.ThreadSeq)
+	}
+	current := o.topicThreadSeq[sessionID]
+	if current >= maxThreadSeq {
+		return 0, fmt.Errorf("sequence overflow for session %q", sessionID)
+	}
+	next := current + 1
+	o.topicThreadSeq[sessionID] = next
+	return next, nil
+}
+
+func (o *IdleChatOrchestrator) openIdleThreadLocked(sessionID string) (*domconv.Thread, error) {
+	if err := validateIdleChatSessionID(sessionID); err != nil {
+		return nil, err
+	}
+	if o.topicStore != nil {
+		return o.topicStore.OpenThread(sessionID)
+	}
+	threadSeq, err := o.allocateIdleThreadSeqLocked(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	return domconv.NewThread(sessionID, "idlechat", domconv.ThreadKindIdleChat, threadSeq)
+}
+
+func (o *IdleChatOrchestrator) bindIdleSessionLocked(sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		if o.activeThread != nil {
+			o.activeThread.Close()
+			o.activeThread = nil
+		}
+		o.chatActive = false
+		o.manualMode = false
+		o.sessionMode = ""
+		o.currentTopic = ""
+		o.activeSessionID = ""
+		o.activeTraceSessionID = ""
+		o.activeTraceID = ""
+		o.messageIDs = make(map[string]string)
+		return fmt.Errorf("idlechat session id is required")
+	}
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return fmt.Errorf("idlechat session id is invalid: %w", err)
+	}
+	if o.activeThread != nil {
+		o.activeThread.Close()
+		o.activeThread = nil
+	}
+	thread, err := o.openIdleThreadLocked(sessionID)
+	if err != nil {
+		o.chatActive = false
+		o.manualMode = false
+		o.sessionMode = ""
+		o.currentTopic = ""
+		o.activeSessionID = ""
+		o.activeTraceSessionID = ""
+		o.activeTraceID = ""
+		o.messageIDs = make(map[string]string)
+		return fmt.Errorf("open idlechat thread: %w", err)
+	}
+	if thread == nil || thread.Domain != "idlechat" || thread.ThreadKind != domconv.ThreadKindIdleChat || thread.ID.Validate() != nil || thread.ThreadSeq.Validate() != nil || thread.ThreadKind.Validate() != nil || thread.Status != domconv.ThreadActive {
+		o.chatActive = false
+		o.manualMode = false
+		o.sessionMode = ""
+		o.currentTopic = ""
+		o.activeSessionID = ""
+		o.activeTraceSessionID = ""
+		o.activeTraceID = ""
+		o.messageIDs = make(map[string]string)
+		return fmt.Errorf("create idlechat thread: invalid thread identity")
+	}
+	o.activeThread = thread
 	if o.activeTraceID.Validate() != nil || (o.activeTraceSessionID != "" && o.activeTraceSessionID != sessionID) {
 		o.activeTraceID = modulecore.NewTraceID()
 	}
@@ -247,6 +386,7 @@ func (o *IdleChatOrchestrator) bindIdleSessionLocked(sessionID string) {
 		delete(o.interruptedSessions, sessionID)
 	}
 	o.messageIDs = make(map[string]string)
+	return nil
 }
 
 func (o *IdleChatOrchestrator) traceForSession(sessionID string, explicit modulecore.TraceID, generation uint64) (modulecore.TraceID, bool) {
@@ -256,7 +396,8 @@ func (o *IdleChatOrchestrator) traceForSession(sessionID string, explicit module
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if generation != o.activeGeneration || o.activeSessionID != sessionID || o.activeTraceSessionID != sessionID || o.activeTraceID.Validate() != nil {
+	_, _, _, ok := o.ownerThreadIdentityLocked(sessionID, generation)
+	if !ok {
 		return "", false
 	}
 	if explicit == "" {
@@ -269,9 +410,8 @@ func (o *IdleChatOrchestrator) traceForSession(sessionID string, explicit module
 }
 
 func (o *IdleChatOrchestrator) ownsIdleSessionLocked(sessionID string, generation uint64) bool {
-	return generation != 0 && generation == o.activeGeneration &&
-		strings.TrimSpace(sessionID) != "" && o.activeSessionID == strings.TrimSpace(sessionID) &&
-		o.activeTraceSessionID == strings.TrimSpace(sessionID) && o.activeTraceID.Validate() == nil
+	_, _, _, ok := o.ownerThreadIdentityLocked(sessionID, generation)
+	return ok
 }
 
 func (o *IdleChatOrchestrator) ownsIdleSession(sessionID string, generation uint64) bool {

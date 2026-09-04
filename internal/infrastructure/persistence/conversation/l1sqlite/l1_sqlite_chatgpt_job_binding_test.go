@@ -40,6 +40,8 @@ func TestChatGPTImportProgressUsesImmutableCountsForLargeExport(t *testing.T) {
 	if _, err := store.db.Exec(`UPDATE l1_profile_promotion_job SET state = 'completed' WHERE evidence_event_id = ?`, firstEvidenceID); err != nil {
 		t.Fatalf("complete first promotion job: %v", err)
 	}
+	largeSessionID := string(chatGPTConversationSessionID("large-conversation"))
+	largeThreadID := string(chatGPTConversationThreadID("large-conversation"))
 
 	binding := domainmemory.ChatGPTImportBinding{
 		ExportID: exportID, ManifestSHA256: batch.ManifestSHA256, ArtifactSHA256: batch.ArtifactSHA256,
@@ -67,14 +69,14 @@ func TestChatGPTImportProgressUsesImmutableCountsForLargeExport(t *testing.T) {
 	}
 	messageStmt, err := tx.PrepareContext(context.Background(), `
 INSERT INTO l1_memory_event (
- id, namespace, session_id, thread_id, speaker, message, meta_json,
+ id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
  memory_state, layer, source, created_at, updated_at
-) VALUES (?, 'user:large-machine-owner', 'large-session', 1, 'user', 'large', 'malformed-json', 'observed', 'L3', 'chatgpt_export', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+) VALUES (?, 'user:large-machine-owner', ?, ?, 1, 'user_conversation', 'user', 'large', 'malformed-json', 'observed', 'L3', 'chatgpt_export', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < messageCount-1; i++ {
-		if _, err := messageStmt.ExecContext(context.Background(), fmt.Sprintf("large-message-%05d", i)); err != nil {
+		if _, err := messageStmt.ExecContext(context.Background(), fmt.Sprintf("large-message-%05d", i), largeSessionID, largeThreadID); err != nil {
 			_ = messageStmt.Close()
 			_ = tx.Rollback()
 			t.Fatalf("message %d: %v", i, err)
@@ -86,9 +88,9 @@ INSERT INTO l1_memory_event (
 
 	jobStmt, err := tx.PrepareContext(context.Background(), `
 INSERT INTO l1_profile_promotion_job (
- evidence_event_id, session_id, thread_id, state, attempt_count,
+ evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
  lease_token, last_error, created_at, updated_at
-) VALUES (?, 'large-session', 1, 'completed', 0, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
+) VALUES (?, ?, ?, 1, 'user_conversation', 'completed', 0, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +110,7 @@ VALUES (?, ?, ?, CURRENT_TIMESTAMP)`)
 	}
 	for i := 0; i < jobCount-1; i++ {
 		evidenceID := fmt.Sprintf("large-message-%05d", i)
-		if _, err := jobStmt.ExecContext(context.Background(), evidenceID); err != nil {
+		if _, err := jobStmt.ExecContext(context.Background(), evidenceID, largeSessionID, largeThreadID); err != nil {
 			_ = bindingStmt.Close()
 			_ = jobStmt.Close()
 			_ = tx.Rollback()
@@ -422,6 +424,8 @@ func seedChatGPTProfilePromotionBindingBackfillRow(t *testing.T, store *L1SQLite
 	now := time.Now().UTC()
 	manifestID := "manifest-" + evidenceID
 	checksum := strings.Repeat("a", 64)
+	sessionID := string(chatGPTConversationSessionID(evidenceID))
+	threadID := string(chatGPTConversationThreadID(evidenceID))
 	if _, err := store.db.Exec(`
 INSERT INTO l1_raw_source_manifest (
  manifest_id, contract_version, source_type, source_identity, manifest_sha256,
@@ -444,18 +448,18 @@ INSERT INTO l1_raw_record (
 	}
 	if _, err := store.db.Exec(`
 INSERT INTO l1_memory_event (
- id, namespace, session_id, thread_id, speaker, message, meta_json,
+ id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
  memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, 1, ?, 'hello', ?, 'observed', ?, ?, ?, ?)
-`, evidenceID, namespace, "session-"+evidenceID, eventSpeaker, metaJSON, layer, source, now, now); err != nil {
+) VALUES (?, ?, ?, ?, 1, 'user_conversation', ?, 'hello', ?, 'observed', ?, ?, ?, ?)
+`, evidenceID, namespace, sessionID, threadID, eventSpeaker, metaJSON, layer, source, now, now); err != nil {
 		t.Fatalf("insert memory event %s: %v", evidenceID, err)
 	}
 	if _, err := store.db.Exec(`
 INSERT INTO l1_profile_promotion_job (
- evidence_event_id, session_id, thread_id, state, attempt_count,
+ evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
  lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, 1, 'completed', 0, '', '', ?, ?)
-`, evidenceID, "session-"+evidenceID, now, now); err != nil {
+) VALUES (?, ?, ?, 1, 'user_conversation', 'completed', 0, '', '', ?, ?)
+`, evidenceID, sessionID, threadID, now, now); err != nil {
 		t.Fatalf("insert promotion job %s: %v", evidenceID, err)
 	}
 }

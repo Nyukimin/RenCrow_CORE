@@ -59,7 +59,7 @@ WHERE id = ?
 	if affected == 0 {
 		return nil, sql.ErrNoRows
 	}
-	if _, err := s.AppendEvent(ctx, "staging.item_validated", item.Namespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "staging.item_validated", item.Namespace, "", "", 0, "", map[string]interface{}{
 		"staging_id":        item.ID,
 		"passed":            result.Passed,
 		"validation_status": result.Status,

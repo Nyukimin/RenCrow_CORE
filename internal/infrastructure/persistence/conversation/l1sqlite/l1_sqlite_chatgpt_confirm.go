@@ -16,6 +16,7 @@ import (
 	"time"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -202,7 +203,7 @@ func (s *L1SQLiteStore) ConfirmChatGPTImportCandidates(ctx context.Context, inpu
 	}
 	result.Confirmed = matched
 	result.AuditReference = chatGPTConfirmAuditReference(input)
-	_, err = appendL1EventLog(ctx, tx, chatGPTConfirmAuditEventType, "user:"+input.OwnerID, "", 0, map[string]interface{}{
+	_, err = appendL1EventLog(ctx, tx, chatGPTConfirmAuditEventType, "user:"+input.OwnerID, "", "", 0, "", map[string]interface{}{
 		"request_id":            input.RequestID,
 		"export_id":             input.ExportID,
 		"reason":                input.Reason,
@@ -469,10 +470,11 @@ LIMIT 1`, ownerID, ownerScope, chatGPTRawSourceType, exportID, afterRowID).Scan(
 	externalSource, sourceOK := chatGPTConfirmStringMeta(event.Meta, "external_source")
 	storedExport, exportOK := chatGPTConfirmStringMeta(event.Meta, "export_id")
 	expectedNamespace := chatGPTConversationNamespace(threadID)
+	expectedSessionID := chatGPTConversationSessionID(threadID)
 	if !roleOK || !branchOK || !sourceOK || !exportOK {
 		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmInternalError()
 	}
-	if externalSource != chatGPTRawSourceType || storedExport != exportID || role != rawRole || event.ID != sourceID || event.Source != chatGPTRawSourceType || event.Namespace != expectedNamespace || event.SessionID != strings.TrimPrefix(expectedNamespace, "conv:") || event.ThreadID != chatGPTConversationThreadID(threadID) || event.Speaker != chatGPTRawSpeaker(role) {
+	if externalSource != chatGPTRawSourceType || storedExport != exportID || role != rawRole || event.ID != sourceID || event.Source != chatGPTRawSourceType || event.Namespace != expectedNamespace || event.SessionID != string(expectedSessionID) || event.ThreadID != chatGPTConversationThreadID(threadID) || event.ThreadSeq != 1 || event.ThreadKind != modulecore.ThreadKindUserConversation || event.Speaker != chatGPTRawSpeaker(role) {
 		return chatGPTConfirmRawTarget{}, afterRowID, false, chatGPTConfirmError(domainmemory.ChatGPTImportErrorSourceChanged)
 	}
 	if event.Layer != "L3" || event.MemoryState != MemoryStateObserved {
@@ -680,7 +682,7 @@ func verifyChatGPTConfirmProjectionReceipt(receipt chatGPTConfirmProjectionRecei
 
 func validateChatGPTConfirmTargetJob(ctx context.Context, tx *sql.Tx, target chatGPTConfirmRawTarget) (string, error) {
 	rows, err := tx.QueryContext(ctx, `
-SELECT session_id, thread_id, state
+SELECT session_id, thread_id, thread_seq, thread_kind, state
 FROM l1_profile_promotion_job
 WHERE evidence_event_id = ?
 LIMIT 2`, target.SourceRecordID)
@@ -688,21 +690,31 @@ LIMIT 2`, target.SourceRecordID)
 		return "", chatGPTConfirmInternalError(err)
 	}
 	jobs := make([]struct {
-		sessionID string
-		threadID  int64
-		state     string
+		sessionID  string
+		threadID   modulecore.ThreadID
+		threadSeq  modulecore.ThreadSeq
+		threadKind modulecore.ThreadKind
+		state      string
 	}, 0, 2)
 	for rows.Next() {
 		var job struct {
-			sessionID string
-			threadID  int64
-			state     string
+			sessionID  string
+			threadID   string
+			threadSeq  int64
+			threadKind string
+			state      string
 		}
-		if err := rows.Scan(&job.sessionID, &job.threadID, &job.state); err != nil {
+		if err := rows.Scan(&job.sessionID, &job.threadID, &job.threadSeq, &job.threadKind, &job.state); err != nil {
 			_ = rows.Close()
 			return "", chatGPTConfirmInternalError(err)
 		}
-		jobs = append(jobs, job)
+		jobs = append(jobs, struct {
+			sessionID  string
+			threadID   modulecore.ThreadID
+			threadSeq  modulecore.ThreadSeq
+			threadKind modulecore.ThreadKind
+			state      string
+		}{sessionID: job.sessionID, threadID: modulecore.ThreadID(job.threadID), threadSeq: modulecore.ThreadSeq(job.threadSeq), threadKind: modulecore.ThreadKind(job.threadKind), state: job.state})
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
@@ -725,12 +737,12 @@ LIMIT 2`, target.SourceRecordID)
 		if len(jobs) == 0 {
 			return "", nil
 		}
-		if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID {
+		if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID || jobs[0].threadSeq != target.Event.ThreadSeq || jobs[0].threadKind != target.Event.ThreadKind {
 			return "", chatGPTConfirmInternalError()
 		}
 		return jobs[0].state, nil
 	}
-	if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID {
+	if len(jobs) != 1 || jobs[0].sessionID != target.Event.SessionID || jobs[0].threadID != target.Event.ThreadID || jobs[0].threadSeq != target.Event.ThreadSeq || jobs[0].threadKind != target.Event.ThreadKind {
 		return "", chatGPTConfirmInternalError()
 	}
 	return jobs[0].state, nil
@@ -819,7 +831,7 @@ func scanChatGPTConfirmCandidates(ctx context.Context, tx *sql.Tx, ownerID, expo
 		}
 		for _, ref := range page {
 			events, err := scanL1EventRows(tx.QueryRowContext(ctx, `
-SELECT id, namespace, session_id, thread_id, speaker, message, meta_json,
+SELECT id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
        memory_state, layer, source, created_at, updated_at
 FROM l1_memory_event
 WHERE rowid = ? AND id = ?`, ref.RowID, ref.ID))

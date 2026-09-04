@@ -10,7 +10,44 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type l1TestThreadTuple struct {
+	ID        modulecore.ThreadID
+	Seq       modulecore.ThreadSeq
+	Kind      modulecore.ThreadKind
+	Namespace string
+}
+
+func l1TestThread(seed string, seq int64) l1TestThreadTuple {
+	raw, err := modulecore.NewMigrationID(modulecore.CanonicalThreadID, "l1sqlite_test", "thread_id", seed)
+	if err != nil {
+		panic(err)
+	}
+	id := modulecore.ThreadID(raw)
+	return l1TestThreadTuple{
+		ID:        id,
+		Seq:       modulecore.ThreadSeq(seq),
+		Kind:      modulecore.ThreadKindUserConversation,
+		Namespace: "conv:" + string(id),
+	}
+}
+
+func l1TestSaveMessage(store *L1SQLiteStore, ctx context.Context, sessionID, seed string, seq int64, msg domconv.Message, state string) error {
+	thread := l1TestThread(seed, seq)
+	return store.SaveMessage(ctx, l1TestSessionID(sessionID), thread.ID, thread.Seq, thread.Kind, thread.Namespace, msg, state)
+}
+
+func l1TestSaveMessageInNamespace(store *L1SQLiteStore, ctx context.Context, sessionID, seed string, seq int64, namespace string, msg domconv.Message, state string) error {
+	thread := l1TestThread(seed, seq)
+	return store.SaveMessage(ctx, l1TestSessionID(sessionID), thread.ID, thread.Seq, thread.Kind, namespace, msg, state)
+}
+
+func l1TestAppendEvent(store *L1SQLiteStore, ctx context.Context, eventType, sessionID, seed string, seq int64, payload map[string]interface{}, source string) (*L1EventLogEntry, error) {
+	thread := l1TestThread(seed, seq)
+	return store.AppendEvent(ctx, eventType, thread.Namespace, l1TestSessionID(sessionID), thread.ID, thread.Seq, thread.Kind, payload, source)
+}
 
 func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {
 	ctx := context.Background()
@@ -26,11 +63,12 @@ func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {
 		Timestamp: time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC),
 		Meta:      map[string]interface{}{"route": "chat"},
 	}
-	if err := store.SaveMessage(ctx, "session-1", 123, "conv:123", msg, MemoryStateObserved); err != nil {
+	thread := l1TestThread("123", 1)
+	if err := l1TestSaveMessage(store, ctx, "session-1", "123", 1, msg, MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
 
-	events, err := store.RecentByNamespace(ctx, "conv:123", 10)
+	events, err := store.RecentByNamespace(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentByNamespace failed: %v", err)
 	}
@@ -38,7 +76,7 @@ func TestL1SQLiteStore_SaveMessageAndRecentByNamespace(t *testing.T) {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
 	ev := events[0]
-	if ev.Namespace != "conv:123" || ev.SessionID != "session-1" || ev.ThreadID != 123 {
+	if ev.Namespace != thread.Namespace || ev.SessionID != l1TestSessionID("session-1") || ev.ThreadID != thread.ID || ev.ThreadSeq != thread.Seq || ev.ThreadKind != thread.Kind {
 		t.Fatalf("unexpected identity fields: %+v", ev)
 	}
 	if ev.Speaker != domconv.SpeakerUser || ev.Message != "覚えておく候補" {
@@ -61,17 +99,18 @@ func TestL1SQLiteStore_DefaultNamespaceAndState(t *testing.T) {
 	defer store.Close()
 
 	msg := domconv.NewMessage(domconv.SpeakerMio, "返答", nil)
-	if err := store.SaveMessage(ctx, "session-1", 456, "", msg, ""); err != nil {
+	thread := l1TestThread("456", 1)
+	if err := store.SaveMessage(ctx, l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, "", msg, ""); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
-	events, err := store.RecentBySession(ctx, "session-1", 10)
+	events, err := store.RecentBySession(ctx, l1TestSessionID("session-1"), 10)
 	if err != nil {
 		t.Fatalf("RecentBySession failed: %v", err)
 	}
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(events))
 	}
-	if events[0].Namespace != "conv:456" {
+	if events[0].Namespace != thread.Namespace {
 		t.Fatalf("unexpected namespace: %s", events[0].Namespace)
 	}
 	if events[0].MemoryState != MemoryStateObserved {
@@ -88,13 +127,14 @@ func TestL1SQLiteStore_RejectsInvalidNamespace(t *testing.T) {
 	defer store.Close()
 
 	msg := domconv.NewMessage(domconv.SpeakerUser, "bad namespace", nil)
-	if err := store.SaveMessage(ctx, "session-1", 1, "misc:1", msg, MemoryStateObserved); err == nil {
+	thread := l1TestThread("1", 1)
+	if err := store.SaveMessage(ctx, l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, "misc:1", msg, MemoryStateObserved); err == nil {
 		t.Fatal("expected invalid namespace to be rejected")
 	}
 	if _, err := store.RecentByNamespace(ctx, "misc:1", 10); err == nil {
 		t.Fatal("expected invalid RecentByNamespace namespace to be rejected")
 	}
-	if _, err := store.AppendEvent(ctx, "test.event", "misc:1", "session-1", 1, nil, "test"); err == nil {
+	if _, err := store.AppendEvent(ctx, "test.event", "misc:1", l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, nil, "test"); err == nil {
 		t.Fatal("expected invalid event namespace to be rejected")
 	}
 }
@@ -112,10 +152,11 @@ func TestL1SQLiteStore_UpdateMemoryState(t *testing.T) {
 		Msg:       "候補から確定へ",
 		Timestamp: time.Date(2026, 5, 5, 13, 0, 0, 0, time.UTC),
 	}
-	if err := store.SaveMessage(ctx, "session-1", 789, "conv:789", msg, MemoryStateObserved); err != nil {
+	thread := l1TestThread("789", 1)
+	if err := l1TestSaveMessage(store, ctx, "session-1", "789", 1, msg, MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
-	events, err := store.RecentByNamespace(ctx, "conv:789", 10)
+	events, err := store.RecentByNamespace(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentByNamespace failed: %v", err)
 	}
@@ -162,7 +203,8 @@ func TestL1SQLiteStore_RejectsInvalidMemoryState(t *testing.T) {
 	defer store.Close()
 
 	msg := domconv.NewMessage(domconv.SpeakerUser, "bad state", nil)
-	if err := store.SaveMessage(ctx, "session-1", 1, "", msg, "trusted"); err == nil {
+	thread := l1TestThread("1", 1)
+	if err := store.SaveMessage(ctx, l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, "", msg, "trusted"); err == nil {
 		t.Fatal("expected SaveMessage to reject invalid memory state")
 	}
 	if _, err := store.RecentByState(ctx, "trusted", 10); err == nil {
@@ -183,48 +225,76 @@ func TestL1SQLiteStore_SaveMessageRejectsMalformedMemoryEvent(t *testing.T) {
 
 	valid := domconv.NewMessage(domconv.SpeakerUser, "valid memory", nil)
 	tests := []struct {
-		name      string
-		sessionID string
-		threadID  int64
-		msg       domconv.Message
-		want      string
+		name       string
+		sessionID  string
+		threadID   modulecore.ThreadID
+		threadSeq  modulecore.ThreadSeq
+		threadKind modulecore.ThreadKind
+		msg        domconv.Message
+		want       string
 	}{
 		{
-			name:      "missing session",
-			sessionID: "",
-			threadID:  1,
-			msg:       valid,
-			want:      "session_id is required",
+			name:       "missing session",
+			sessionID:  "",
+			threadID:   l1TestThread("1", 1).ID,
+			threadSeq:  1,
+			threadKind: modulecore.ThreadKindUserConversation,
+			msg:        valid,
+			want:       "session_id is required",
 		},
 		{
-			name:      "missing thread",
-			sessionID: "session-1",
-			threadID:  0,
-			msg:       valid,
-			want:      "thread_id must be > 0",
+			name:       "missing thread",
+			sessionID:  l1TestSessionID("session-1"),
+			threadID:   "",
+			threadSeq:  0,
+			threadKind: "",
+			msg:        valid,
+			want:       "thread_id is required",
 		},
 		{
-			name:      "missing speaker",
-			sessionID: "session-1",
-			threadID:  1,
-			msg:       domconv.Message{Msg: "valid memory", Timestamp: time.Now().UTC()},
-			want:      "speaker is required",
+			name:       "whitespace thread",
+			sessionID:  l1TestSessionID("session-1"),
+			threadID:   modulecore.ThreadID("   "),
+			threadSeq:  0,
+			threadKind: "",
+			msg:        valid,
+			want:       "canonical ID",
 		},
 		{
-			name:      "missing message",
-			sessionID: "session-1",
-			threadID:  1,
-			msg:       domconv.NewMessage(domconv.SpeakerUser, "   ", nil),
-			want:      "message is required",
+			name:       "missing speaker",
+			sessionID:  l1TestSessionID("session-1"),
+			threadID:   l1TestThread("1", 1).ID,
+			threadSeq:  1,
+			threadKind: modulecore.ThreadKindUserConversation,
+			msg:        domconv.Message{Msg: "valid memory", Timestamp: time.Now().UTC()},
+			want:       "speaker is required",
+		},
+		{
+			name:       "missing message",
+			sessionID:  l1TestSessionID("session-1"),
+			threadID:   l1TestThread("1", 1).ID,
+			threadSeq:  1,
+			threadKind: modulecore.ThreadKindUserConversation,
+			msg:        domconv.NewMessage(domconv.SpeakerUser, "   ", nil),
+			want:       "message is required",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := store.SaveMessage(ctx, tt.sessionID, tt.threadID, "", tt.msg, MemoryStateObserved)
+			err := store.SaveMessage(ctx, tt.sessionID, tt.threadID, tt.threadSeq, tt.threadKind, "", tt.msg, MemoryStateObserved)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("SaveMessage() error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestValidateL1ThreadTupleAllowsOnlyExactEmptyOptionalTuple(t *testing.T) {
+	if err := validateL1ThreadTuple("", 0, ""); err != nil {
+		t.Fatalf("exact empty optional tuple rejected: %v", err)
+	}
+	if err := validateL1ThreadTuple(modulecore.ThreadID("   "), 0, ""); err == nil {
+		t.Fatal("whitespace-only thread ID was accepted")
 	}
 }
 
@@ -237,18 +307,19 @@ func TestL1SQLiteStore_RecentMemoryRejectsMalformedRows(t *testing.T) {
 	defer store.Close()
 
 	now := time.Date(2026, 5, 20, 8, 50, 0, 0, time.UTC)
+	thread := l1TestThread("850", 1)
 	_, err = store.db.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
-	id, namespace, session_id, thread_id, speaker, message, meta_json,
+	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, "bad-memory-1", "conv:850", "session-850", int64(850), string(domconv.SpeakerUser), "", `{}`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, "bad-memory-1", thread.Namespace, l1TestSessionID("session-850"), thread.ID, thread.Seq, thread.Kind, string(domconv.SpeakerUser), "", `{}`,
 		MemoryStateObserved, MemoryLayerL1, "manual", now, now)
 	if err != nil {
 		t.Fatalf("insert malformed memory row: %v", err)
 	}
 
-	_, err = store.RecentByNamespace(ctx, "conv:850", 10)
+	_, err = store.RecentByNamespace(ctx, thread.Namespace, 10)
 	if err == nil || !strings.Contains(err.Error(), "message is required") {
 		t.Fatalf("RecentByNamespace() error = %v, want message validation", err)
 	}
@@ -405,13 +476,14 @@ func TestL1SQLiteStore_EventLogAppendAndRecent(t *testing.T) {
 	}
 	defer store.Close()
 
-	first, err := store.AppendEvent(ctx, "search.cache_hit", "conv:123", "session-1", 123, map[string]interface{}{
+	thread := l1TestThread("123", 1)
+	first, err := l1TestAppendEvent(store, ctx, "search.cache_hit", "session-1", "123", 1, map[string]interface{}{
 		"query": "RenCrow 最新仕様",
 	}, "search_cache")
 	if err != nil {
 		t.Fatalf("AppendEvent first failed: %v", err)
 	}
-	second, err := store.AppendEvent(ctx, "memory.promoted", "conv:123", "session-1", 123, map[string]interface{}{
+	second, err := l1TestAppendEvent(store, ctx, "memory.promoted", "session-1", "123", 1, map[string]interface{}{
 		"memory_state": MemoryStateConfirmed,
 	}, "memory")
 	if err != nil {
@@ -421,7 +493,7 @@ func TestL1SQLiteStore_EventLogAppendAndRecent(t *testing.T) {
 		t.Fatalf("unexpected event ids: first=%q second=%q", first.ID, second.ID)
 	}
 
-	events, err := store.RecentEvents(ctx, "conv:123", 10)
+	events, err := store.RecentEvents(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentEvents failed: %v", err)
 	}
@@ -434,7 +506,7 @@ func TestL1SQLiteStore_EventLogAppendAndRecent(t *testing.T) {
 	if events[0].Payload["memory_state"] != MemoryStateConfirmed {
 		t.Fatalf("unexpected payload: %+v", events[0].Payload)
 	}
-	if events[1].Source != "search_cache" || events[1].SessionID != "session-1" || events[1].ThreadID != 123 {
+	if events[1].Source != "search_cache" || events[1].SessionID != l1TestSessionID("session-1") || events[1].ThreadID != thread.ID || events[1].ThreadSeq != thread.Seq || events[1].ThreadKind != thread.Kind {
 		t.Fatalf("unexpected event fields: %+v", events[1])
 	}
 }
@@ -447,10 +519,11 @@ func TestL1SQLiteStore_EventLogRejectsInvalidInput(t *testing.T) {
 	}
 	defer store.Close()
 
-	if _, err := store.AppendEvent(ctx, "", "conv:123", "session-1", 123, nil, "test"); err == nil {
+	thread := l1TestThread("123", 1)
+	if _, err := store.AppendEvent(ctx, "", thread.Namespace, l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, nil, "test"); err == nil {
 		t.Fatal("expected blank event type to be rejected")
 	}
-	if _, err := store.AppendEvent(ctx, "test.event", "", "session-1", 123, nil, "test"); err == nil {
+	if _, err := store.AppendEvent(ctx, "test.event", "", l1TestSessionID("session-1"), thread.ID, thread.Seq, thread.Kind, nil, "test"); err == nil {
 		t.Fatal("expected blank namespace to be rejected")
 	}
 }
@@ -468,11 +541,12 @@ func TestL1SQLiteStore_SaveMessageAppendsEventLog(t *testing.T) {
 		Msg:       "イベントにも残す",
 		Timestamp: time.Date(2026, 5, 5, 14, 0, 0, 0, time.UTC),
 	}
-	if err := store.SaveMessage(ctx, "session-1", 123, "conv:123", msg, MemoryStateObserved); err != nil {
+	thread := l1TestThread("123", 1)
+	if err := l1TestSaveMessage(store, ctx, "session-1", "123", 1, msg, MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
 
-	events, err := store.RecentEvents(ctx, "conv:123", 10)
+	events, err := store.RecentEvents(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentEvents failed: %v", err)
 	}
@@ -505,11 +579,12 @@ func TestL1SQLiteStore_SaveMessageRollsBackWhenEventLogInsertFails(t *testing.T)
 		Msg:       "ロールバック対象",
 		Timestamp: time.Date(2026, 5, 5, 14, 30, 0, 0, time.UTC),
 	}
-	err = store.SaveMessage(ctx, "session-rollback", 123, "conv:rollback", msg, MemoryStateObserved)
+	thread := l1TestThread("rollback", 1)
+	err = l1TestSaveMessage(store, ctx, "session-rollback", "rollback", 1, msg, MemoryStateObserved)
 	if err == nil || !strings.Contains(err.Error(), "failed to append l1 message event log") {
 		t.Fatalf("SaveMessage error = %v, want event log failure", err)
 	}
-	if got := countL1Rows(t, ctx, store, `SELECT count(*) FROM l1_memory_event WHERE namespace = ?`, "conv:rollback"); got != 0 {
+	if got := countL1Rows(t, ctx, store, `SELECT count(*) FROM l1_memory_event WHERE namespace = ?`, thread.Namespace); got != 0 {
 		t.Fatalf("expected message insert to rollback, got %d rows", got)
 	}
 }
@@ -555,10 +630,11 @@ func TestL1SQLiteStore_UpdateMemoryStateAppendsEventLog(t *testing.T) {
 		Msg:       "昇格ログ",
 		Timestamp: time.Date(2026, 5, 5, 15, 0, 0, 0, time.UTC),
 	}
-	if err := store.SaveMessage(ctx, "session-1", 456, "conv:456", msg, MemoryStateObserved); err != nil {
+	thread := l1TestThread("456", 1)
+	if err := l1TestSaveMessage(store, ctx, "session-1", "456", 1, msg, MemoryStateObserved); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
-	memories, err := store.RecentByNamespace(ctx, "conv:456", 10)
+	memories, err := store.RecentByNamespace(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentByNamespace failed: %v", err)
 	}
@@ -569,7 +645,7 @@ func TestL1SQLiteStore_UpdateMemoryStateAppendsEventLog(t *testing.T) {
 		t.Fatalf("UpdateMemoryState failed: %v", err)
 	}
 
-	events, err := store.RecentEvents(ctx, "conv:456", 10)
+	events, err := store.RecentEvents(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentEvents failed: %v", err)
 	}
@@ -599,10 +675,11 @@ func TestL1SQLiteStore_PromoteMemoryToNamespace(t *testing.T) {
 		Timestamp: time.Date(2026, 5, 5, 16, 0, 0, 0, time.UTC),
 		Meta:      map[string]interface{}{"type": "preference"},
 	}
-	if err := store.SaveMessage(ctx, "session-1", 100, "conv:100", msg, MemoryStateCandidate); err != nil {
+	thread := l1TestThread("100", 1)
+	if err := l1TestSaveMessage(store, ctx, "session-1", "100", 1, msg, MemoryStateCandidate); err != nil {
 		t.Fatalf("SaveMessage failed: %v", err)
 	}
-	memories, err := store.RecentByNamespace(ctx, "conv:100", 10)
+	memories, err := store.RecentByNamespace(ctx, thread.Namespace, 10)
 	if err != nil {
 		t.Fatalf("RecentByNamespace source failed: %v", err)
 	}
@@ -1072,7 +1149,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToMemory(t *testing.T) {
 		SummaryDraft: "短く要点を好む",
 		Keywords:     []string{"preference"},
 		LicenseNote:  "user provided",
-		Meta:         map[string]interface{}{"type": "preference", "session_id": "session-500", "thread_id": float64(500)},
+		Meta:         map[string]interface{}{"type": "preference", "session_id": l1TestSessionID("session-500"), "thread_id": string(l1TestThread("500", 1).ID), "thread_seq": int64(1), "thread_kind": string(l1TestThread("500", 1).Kind)},
 	})
 	if err != nil {
 		t.Fatalf("SaveStagingItem failed: %v", err)
@@ -1173,7 +1250,7 @@ func TestL1SQLiteStore_PromoteValidatedStagingItemToMemoryRollsBackWhenEventLogI
 		RawText:      "ロールバックされる記憶",
 		SummaryDraft: "記憶要約",
 		LicenseNote:  "user provided",
-		Meta:         map[string]interface{}{"type": "preference", "session_id": "session-rollback-memory", "thread_id": float64(500)},
+		Meta:         map[string]interface{}{"type": "preference", "session_id": l1TestSessionID("session-rollback-memory"), "thread_id": string(l1TestThread("rollback-memory", 1).ID), "thread_seq": int64(1), "thread_kind": string(l1TestThread("rollback-memory", 1).Kind)},
 	})
 	if err != nil {
 		t.Fatalf("SaveStagingItem failed: %v", err)
@@ -1220,8 +1297,10 @@ func TestL1SQLiteStore_ValidateStagingItemAutoPromotesMemoryCandidate(t *testing
 		Meta: map[string]interface{}{
 			"type":             "preference",
 			"target_namespace": "user:U123",
-			"session_id":       "session-501",
-			"thread_id":        float64(501),
+			"session_id":       l1TestSessionID("session-501"),
+			"thread_id":        string(l1TestThread("501", 1).ID),
+			"thread_seq":       int64(1),
+			"thread_kind":      string(l1TestThread("501", 1).Kind),
 		},
 	})
 	if err != nil {
@@ -1390,7 +1469,7 @@ func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 	defer store.Close()
 	trace := domconv.RecallTrace{
 		ResponseID: "job-1",
-		SessionID:  "sess-1",
+		SessionID:  l1TestSessionID("sess-1"),
 		Role:       "worker",
 		Items: []domconv.RecallTraceItem{{
 			Layer:   "L2",
@@ -1401,7 +1480,7 @@ func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 	if err := store.SaveRecallTrace(ctx, trace); err != nil {
 		t.Fatalf("SaveRecallTrace: %v", err)
 	}
-	got, err := store.RecentRecallTraces(ctx, "sess-1", 5)
+	got, err := store.RecentRecallTraces(ctx, l1TestSessionID("sess-1"), 5)
 	if err != nil {
 		t.Fatalf("RecentRecallTraces: %v", err)
 	}

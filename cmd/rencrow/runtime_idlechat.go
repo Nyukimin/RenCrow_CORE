@@ -49,6 +49,12 @@ func buildIdleChatRuntime(
 		cfg.IdleChat.StoryDataDir,
 	)
 	idleChatOrch.SetIntervalSeconds(cfg.IdleChat.IntervalSec)
+	topicStorePath := filepath.Join(cfg.Session.StorageDir, "idlechat_topics.jsonl")
+	if err := idleChatOrch.SetTopicStore(topicStorePath); err != nil {
+		log.Printf("ERROR: IdleChat disabled: canonical topic store unavailable: %v", err)
+		return
+	}
+	log.Printf("IdleChat topic store enabled: %s", topicStorePath)
 	if deps.llmBusyTracker != nil {
 		idleChatOrch.SetExternalLLMBusyFunc(deps.llmBusyTracker.ExternalBusy)
 	}
@@ -110,12 +116,6 @@ func buildIdleChatRuntime(
 		idleChatOrch.SetPersonaCanonicalResponses(deps.personaCanonicalResponses)
 		log.Printf("Persona runtime recorder integrated with IdleChat (%d trigger definitions, %d canonical responses)", len(deps.personaTriggerDefinitions), len(deps.personaCanonicalResponses))
 	}
-	topicStorePath := filepath.Join(cfg.Session.StorageDir, "idlechat_topics.jsonl")
-	if err := idleChatOrch.SetTopicStore(topicStorePath); err != nil {
-		log.Printf("WARN: idleChat topic store disabled: %v", err)
-	} else {
-		log.Printf("IdleChat topic store enabled: %s", topicStorePath)
-	}
 	if deps.eventRelay != nil {
 		idleChatTTSPrefetch = newIdleChatTTSPrefetchManager(ttsBridge)
 		idleChatOrch.SetInterruptHandler(resetIdleChatTTSQueue)
@@ -166,6 +166,9 @@ func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEve
 	viewerEvent.TurnIndex = ev.TurnIndex
 	viewerEvent.Category = string(ev.Category)
 	viewerEvent.Strategy = string(ev.Strategy)
+	viewerEvent.ThreadID = ev.ThreadID
+	viewerEvent.ThreadSeq = ev.ThreadSeq
+	viewerEvent.ThreadKind = ev.ThreadKind
 	return viewerEvent
 }
 

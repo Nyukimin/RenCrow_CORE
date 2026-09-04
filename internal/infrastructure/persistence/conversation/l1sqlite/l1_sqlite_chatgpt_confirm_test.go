@@ -595,18 +595,19 @@ func TestConfirmChatGPTImportCandidatesPreservesExistingTerminalLifecycleRows(t 
 func TestConfirmChatGPTImportCandidatesRejectsOwnerlessLegacyPromotion(t *testing.T) {
 	fixture := newChatGPTConfirmFixture(t, "owner-ownerless", "export-ownerless", domainmemory.ChatGPTImportStateCompleted, true, domainmemory.ProfilePromotionCompleted)
 	legacyID := "chatgpt_export:legacy-conversation:legacy-message"
+	legacyThreadID := chatGPTConversationThreadID("legacy-conversation")
 	if _, err := fixture.store.db.Exec(`
 INSERT INTO l1_memory_event (
- id, namespace, session_id, thread_id, speaker, message, meta_json,
+ id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
  memory_state, layer, source, created_at, updated_at
-) VALUES (?, 'conv:legacy-conversation', 'legacy-conversation', 1, 'user', 'legacy',
- ?, 'observed', 'L3', 'chatgpt_export', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, legacyID, `{"external_source":"chatgpt_export","export_id":"export-ownerless","original_role":"user","on_current_branch":true}`); err != nil {
+) VALUES (?, 'conv:legacy-conversation', 'legacy-conversation', ?, 1, 'user_conversation', 'user', 'legacy',
+ ?, 'observed', 'L3', 'chatgpt_export', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, legacyID, legacyThreadID, `{"external_source":"chatgpt_export","export_id":"export-ownerless","original_role":"user","on_current_branch":true}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fixture.store.db.Exec(`
 INSERT INTO l1_profile_promotion_job (
- evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, last_error, created_at, updated_at
-) VALUES (?, 'legacy-conversation', 1, 'pending', 0, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, legacyID); err != nil {
+ evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, 'legacy-conversation', ?, 1, 'user_conversation', 'pending', 0, '', '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`, legacyID, legacyThreadID); err != nil {
 		t.Fatal(err)
 	}
 	before := confirmTableCounts(t, fixture.store)
@@ -692,7 +693,7 @@ func TestConfirmChatGPTImportCandidatesCorruptProvenanceRollsBack(t *testing.T) 
 		}},
 		{name: "L3 evidence binding changed", mutate: func(t *testing.T, fixture chatGPTConfirmFixture) {
 			t.Helper()
-			if _, err := fixture.store.db.Exec(`UPDATE l1_memory_event SET session_id = ? WHERE id = ?`, "foreign-session", fixture.evidenceID); err != nil {
+			if _, err := fixture.store.db.Exec(`UPDATE l1_memory_event SET session_id = ? WHERE id = ?`, string(chatGPTConversationSessionID("foreign-conversation")), fixture.evidenceID); err != nil {
 				t.Fatal(err)
 			}
 		}},

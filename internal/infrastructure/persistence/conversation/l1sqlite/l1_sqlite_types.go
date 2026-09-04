@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -18,7 +19,9 @@ type L1MemoryEvent struct {
 	ID          string
 	Namespace   string
 	SessionID   string
-	ThreadID    int64
+	ThreadID    modulecore.ThreadID
+	ThreadSeq   modulecore.ThreadSeq
+	ThreadKind  modulecore.ThreadKind
 	Speaker     domconv.Speaker
 	Message     string
 	Meta        map[string]interface{}
@@ -75,23 +78,27 @@ func CanonicalL1MemoryEventBytes(item L1MemoryEvent) ([]byte, error) {
 		return nil, fmt.Errorf("failed to marshal canonical l1 memory metadata: %w", err)
 	}
 	canonical := struct {
-		ID          string          `json:"id"`
-		Namespace   string          `json:"namespace"`
-		SessionID   string          `json:"session_id"`
-		ThreadID    int64           `json:"thread_id"`
-		Speaker     string          `json:"speaker"`
-		Message     string          `json:"message"`
-		Meta        json.RawMessage `json:"meta"`
-		MemoryState string          `json:"memory_state"`
-		Layer       string          `json:"layer"`
-		Source      string          `json:"source"`
-		CreatedAt   string          `json:"created_at"`
-		UpdatedAt   string          `json:"updated_at"`
+		ID          string                `json:"id"`
+		Namespace   string                `json:"namespace"`
+		SessionID   string                `json:"session_id"`
+		ThreadID    modulecore.ThreadID   `json:"thread_id"`
+		ThreadSeq   modulecore.ThreadSeq  `json:"thread_seq"`
+		ThreadKind  modulecore.ThreadKind `json:"thread_kind"`
+		Speaker     string                `json:"speaker"`
+		Message     string                `json:"message"`
+		Meta        json.RawMessage       `json:"meta"`
+		MemoryState string                `json:"memory_state"`
+		Layer       string                `json:"layer"`
+		Source      string                `json:"source"`
+		CreatedAt   string                `json:"created_at"`
+		UpdatedAt   string                `json:"updated_at"`
 	}{
 		ID:          item.ID,
 		Namespace:   item.Namespace,
 		SessionID:   item.SessionID,
 		ThreadID:    item.ThreadID,
+		ThreadSeq:   item.ThreadSeq,
+		ThreadKind:  item.ThreadKind,
 		Speaker:     string(item.Speaker),
 		Message:     item.Message,
 		Meta:        json.RawMessage(metaJSON),
@@ -200,14 +207,16 @@ type L1NewsArticleFetchCompletion struct {
 }
 
 type L1EventLogEntry struct {
-	ID        string
-	EventType string
-	Namespace string
-	SessionID string
-	ThreadID  int64
-	Payload   map[string]interface{}
-	Source    string
-	CreatedAt time.Time
+	ID         string
+	EventType  string
+	Namespace  string
+	SessionID  string
+	ThreadID   modulecore.ThreadID
+	ThreadSeq  modulecore.ThreadSeq
+	ThreadKind modulecore.ThreadKind
+	Payload    map[string]interface{}
+	Source     string
+	CreatedAt  time.Time
 }
 
 type L1StagingItem struct {

@@ -108,6 +108,43 @@ func TestCanonicalIDContracts(t *testing.T) {
 	}
 }
 
+func TestThreadSeqValidation(t *testing.T) {
+	for _, valid := range []ThreadSeq{1, 2, 100} {
+		if err := valid.Validate(); err != nil {
+			t.Fatalf("valid thread sequence %d rejected: %v", valid, err)
+		}
+	}
+	for _, invalid := range []ThreadSeq{0, -1} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("invalid thread sequence %d accepted", invalid)
+		}
+	}
+}
+
+func TestThreadKindValuesAndValidation(t *testing.T) {
+	tests := []struct {
+		kind ThreadKind
+		want string
+	}{
+		{ThreadKindUserConversation, "user_conversation"},
+		{ThreadKindAgentDiscussion, "agent_discussion"},
+		{ThreadKindIdleChat, "idlechat"},
+		{ThreadKindDocument, "document"},
+		{ThreadKindSystem, "system"},
+	}
+	for _, test := range tests {
+		if string(test.kind) != test.want {
+			t.Errorf("thread kind = %q, want %q", test.kind, test.want)
+		}
+		if err := test.kind.Validate(); err != nil {
+			t.Errorf("thread kind %q rejected: %v", test.kind, err)
+		}
+	}
+	if err := ThreadKind("invalid").Validate(); err == nil {
+		t.Fatal("invalid thread kind accepted")
+	}
+}
+
 func TestCanonicalIDGenerationHasNoDuplicatesAcrossOneMillionIDs(t *testing.T) {
 	seen := make(map[TraceID]struct{}, 1_000_000)
 	for i := 0; i < 1_000_000; i++ {

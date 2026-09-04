@@ -223,12 +223,12 @@ func TestEmitTopicUsesTopicEventOutsideConversationTurns(t *testing.T) {
 		emitted = append(emitted, ev)
 		return TTSLifecycle{}
 	})
-	activateIdleChatTestSession(o, "idle-topic-contract")
+	activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-topic-contract"))
 	o.mu.Lock()
 	generation := o.activeGeneration
 	o.mu.Unlock()
 
-	o.emitTopicToTimeline("idle-topic-contract", "記憶と風景の関係", StrategyExternalStimulus, generation)
+	o.emitTopicToTimeline(canonicalIdleChatTestSessionID("idle-topic-contract"), "記憶と風景の関係", StrategyExternalStimulus, generation)
 
 	if len(emitted) != 1 {
 		t.Fatalf("emitted len = %d, want 1", len(emitted))

@@ -100,7 +100,7 @@ ON CONFLICT(namespace, event_id) DO UPDATE SET
 	if err != nil {
 		return nil, fmt.Errorf("failed to save l1 staging item: %w", err)
 	}
-	if _, err := s.AppendEvent(ctx, "staging.item_saved", item.Namespace, "", 0, map[string]interface{}{
+	if _, err := s.AppendEvent(ctx, "staging.item_saved", item.Namespace, "", "", 0, "", map[string]interface{}{
 		"staging_id":        item.ID,
 		"kind":              item.Kind,
 		"event_id":          item.EventID,

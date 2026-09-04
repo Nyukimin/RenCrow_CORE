@@ -43,6 +43,10 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 				return
 			}
 			for _, ev := range l0 {
+				if err := validateViewerThreadTuple(ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, true); err != nil {
+					http.Error(w, "invalid l0 recall thread tuple: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 				pack.Items = append(pack.Items, recallItemFromL1Event("L0", "short_context", ev, 0.75))
 			}
 		}
@@ -98,10 +102,14 @@ func HandleMemoryRecallPack(hot MemoryLayerHotStore, cold MemoryLayerColdStore, 
 					if summary == nil || strings.TrimSpace(summary.Summary) == "" {
 						continue
 					}
+					if err := validateViewerThreadTuple(summary.ThreadID, summary.ThreadSeq, summary.ThreadKind, false); err != nil {
+						http.Error(w, "invalid l2 recall thread tuple: "+err.Error(), http.StatusInternalServerError)
+						return
+					}
 					pack.Items = append(pack.Items, domainmemory.UserMemoryRecallItem{
 						Layer:     "L2",
 						Namespace: "conv:" + sessionID,
-						MemoryID:  fmt.Sprintf("thread:%d", summary.ThreadID),
+						MemoryID:  fmt.Sprintf("thread:%s", string(summary.ThreadID)),
 						Kind:      "thread_summary",
 						Summary:   summary.Summary,
 						Score:     0.55,
