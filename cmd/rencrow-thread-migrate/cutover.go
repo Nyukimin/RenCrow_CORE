@@ -234,6 +234,8 @@ type cutoverSwapSpec struct {
 
 var cutoverRename = os.Rename
 
+var cutoverSameFilesystem = verifyCutoverSameFilesystem
+
 func prepareCutoverSwaps(ctx context.Context, specs []cutoverSwapSpec, buildHash string) error {
 	if !validCutoverSHA256(buildHash) || len(specs) != 5 {
 		return errors.New("invalid cutover spec")
@@ -287,6 +289,9 @@ func prepareCutoverSwaps(ctx context.Context, specs []cutoverSwapSpec, buildHash
 					}
 				}
 			}
+		}
+		if !cutoverSameFilesystem(candidate, target, candidateInfo, targetInfo) {
+			return errors.New("cutover filesystems are not identical")
 		}
 	}
 	return nil

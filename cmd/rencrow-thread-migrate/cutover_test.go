@@ -69,6 +69,45 @@ func TestApplyCutoverSwapsMidFailureCanRollbackCompletedPairs(t *testing.T) {
 	}
 }
 
+func TestPrepareCutoverSwapsRejectsLaterDifferentFilesystemBeforeApply(t *testing.T) {
+	directory := canonicalThreadConfigTestDir(t)
+	specs := cutoverTestSpecs(t, directory)
+	buildHash := strings.Repeat("b", 64)
+	originalSameFilesystem := cutoverSameFilesystem
+	originalRename := cutoverRename
+	checks := 0
+	renameCalls := 0
+	cutoverSameFilesystem = func(candidatePath, targetPath string, candidateInfo, targetInfo os.FileInfo) bool {
+		checks++
+		return checks != len(specs)
+	}
+	cutoverRename = func(oldPath, newPath string) error {
+		renameCalls++
+		return os.Rename(oldPath, newPath)
+	}
+	t.Cleanup(func() {
+		cutoverSameFilesystem = originalSameFilesystem
+		cutoverRename = originalRename
+	})
+
+	if err := prepareCutoverSwaps(context.Background(), specs, buildHash); err == nil {
+		t.Fatal("different filesystem pair was accepted")
+	}
+	if checks != len(specs) {
+		t.Fatalf("filesystem checks = %d, want %d", checks, len(specs))
+	}
+	if renameCalls != 0 {
+		t.Fatalf("cutover renames = %d, want 0", renameCalls)
+	}
+	for _, spec := range specs {
+		assertCutoverFileContent(t, spec.candidate, "new-"+spec.role)
+		assertCutoverFileContent(t, spec.target, "old-"+spec.role)
+		if _, err := os.Lstat(spec.target + ".pre-threadid-" + buildHash[:12]); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("rollback %s was created: %v", spec.role, err)
+		}
+	}
+}
+
 func TestPrepareCutoverSwapsRejectsOccupiedRollbackAndSQLiteSidecar(t *testing.T) {
 	t.Run("occupied rollback", func(t *testing.T) {
 		directory := canonicalThreadConfigTestDir(t)

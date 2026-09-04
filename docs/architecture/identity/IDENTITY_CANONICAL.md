@@ -1680,6 +1680,16 @@ Test:
 
 ---
 
+#### Step 05 Failure Knowledge: 異なるfilesystem間のrenameをcutover適用後に検出した
+
+- **Failure:** candidateとactive targetが異なるfilesystemにある状態で、target退避後にcandidateをtargetへrenameし、EXDEVで途中失敗した。
+- **Problem:** apply前の不変性検査がdevice境界を含まず、部分適用とrollbackを発生させた。
+- **Cause:** FileInfo identity、hash、modeは検証したが、candidateとtargetのfilesystem identityを検査していなかった。
+- **Lesson:** prepare中に全candidate/target pairを再検証し、exact FileInfo identityと同一filesystemをfail closedで確認してからapplyする。rollbackはtargetのsiblingなので同じpair検査で覆われる。
+- **Invariant:** apply開始前に全5 pairが再検証され、stat／handle／type不一致または異なるfilesystemが一つでもあれば`artifact_preflight`で拒否し、renameを呼ばない。
+- **Enforcement:** Unixは`syscall.Stat_t.Dev`、WindowsはFILE_READ_ATTRIBUTES handlesの`ByHandleFileInformation.VolumeSerialNumber`とexact identity比較を使う。package-local seamはproduction verifierで初期化し、各pairをprepareで検査する。
+- **Tests:** 後段pairのverifier false injectionがprepareを拒否し、rename非呼出しと全artifact byte保持を検査する。
+
 ### Step 06: TurnIDとMessageID
 
 置換:
