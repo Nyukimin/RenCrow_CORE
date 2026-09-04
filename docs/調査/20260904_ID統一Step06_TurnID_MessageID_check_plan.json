@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-04T23:53:03Z",
+  "evaluated_at": "2026-09-04T23:55:39Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -145,15 +145,15 @@
     "live_recall_trace_with_turn_count": 1075,
     "migration_namespace_uuid": "6570d821-e63e-592d-a51f-8cf4b43cdba5",
     "owner": "RenCrow_CORE",
-    "pushed_implementation_revision": "ad07c418831aeee532bc1497f31c2ffe05260229",
-    "reviewed_runtime_artifact_sha256": "3b6da9095bf4849addff1c0b8759105757bcabc99fd5b6019bb4374ef56b9089",
-    "reviewed_migration_artifact_sha256": "3a51caeeca1ac5a717673323efd1292a25044deda0a99b308552a526faf5cf8e",
+    "pushed_implementation_revision": "50ce3764303ddb6b0990b77df23d4581b0ba4f8a",
+    "reviewed_runtime_artifact_sha256": "aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8",
+    "reviewed_migration_artifact_sha256": "89780137ec3afbbddd41156c7ed567da763fb2b28e0b37a5cf8019ee36fbea63",
     "runtime_database_device": "/dev/sdd1 on USB 2.0 at 480 Mbit/s",
     "recovery_filesystem_device": "/dev/sdb1 mounted at /srv/rencrow/backup",
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "identity/03-dci remediation implemented and locally verified after exact rollback; commit, push, reviewed artifact build and production retry are pending"
+    "worktree_state": "identity/03-dci remediation committed and pushed; hash-bound runtime and migration artifacts built from 50ce3764; second production cutover is pending"
   },
   "observations": [
     {
@@ -192,9 +192,16 @@
       "subject": "receipt-owned L1 message metadata migration",
       "evidence": "the migration plan now strictly binds each receipt user and actual Agent canonical MessageID to one existing six-field L1 metadata row, fingerprints the exact old/new metadata, updates only turn_id in the same transaction, preserves the complete canonical msg_ identity set and leaves unowned opaque rows unchanged; targeted tests, go vet, go build and git diff --check passed",
       "next_action": "commit and push the reviewed remediation, build hash-bound artifacts from that revision, and repeat the production dry-run/apply and actual Agent E2E"
+    },
+    {
+      "at": "2026-09-04T23:55:39Z",
+      "outcome": "precutover-remediation-reviewed",
+      "subject": "pushed remediation and hash-bound deployment artifacts",
+      "evidence": "50ce3764303ddb6b0990b77df23d4581b0ba4f8a equals origin/identity/03-dci; the reviewed runtime artifact SHA-256 is aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8 and the reviewed migration artifact SHA-256 is 89780137ec3afbbddd41156c7ed567da763fb2b28e0b37a5cf8019ee36fbea63",
+      "next_action": "freeze this plan, create a fresh stopped-writer recovery point, run the reviewed dry-run and apply, then install the reviewed runtime and execute the actual Agent route"
     }
   ],
-  "phase": "remediation-rollback-ready",
+  "phase": "precutover-remediation-reviewed",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
