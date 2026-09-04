@@ -384,6 +384,56 @@ func TestInventorySQLiteConvergesGenericAndChatGPTAcrossEveryLegacySurface(t *te
 	}
 }
 
+func TestInventorySQLitePreservesTerminalProfilePromotionOrphans(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"orphan-terminal-generic", "orphan-profile-session", 41, "completed", 2, "", nil, nil, "", "2026-01-07", "2026-01-07")
+	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"orphan-terminal-chatgpt", fixture.chatSession, fixture.chatThread, "failed", 3, "", nil, nil, "unavailable", "2026-01-08", "2026-01-08")
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() error = %v", err)
+	}
+	count, found := result.Receipt.SurfaceCount(l1ProfilePromotionSurface)
+	if !found || count.Rows != 3 || count.References != 3 || count.PreservedTerminalOrphans != 2 {
+		t.Fatalf("profile promotion receipt count = %+v, found=%v; want rows=3 references=3 preserved=2", count, found)
+	}
+
+	canonicalSession, err := canonicalGenericSessionID("orphan-profile-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generic, found := result.Plan.LookupGeneric(canonicalSession, 41)
+	if !found {
+		t.Fatal("terminal generic orphan did not produce a mapping")
+	}
+	genericSource, found := result.Plan.LookupBySource(l1ProfilePromotionSurface, "orphan-terminal-generic")
+	if !found || genericSource.ChatGPTConversationID != "" || genericSource.SessionID != generic.SessionID || genericSource.ThreadID != generic.ThreadID || genericSource.ThreadSeq != 41 {
+		t.Fatalf("terminal generic orphan mapping = %+v, found=%v; want %+v", genericSource, found, generic)
+	}
+	chat, found := result.Plan.LookupChatGPT(fixture.chatGPTID)
+	if !found {
+		t.Fatal("ChatGPT mapping missing")
+	}
+	chatSource, found := result.Plan.LookupBySource(l1ProfilePromotionSurface, "orphan-terminal-chatgpt")
+	if !found || chatSource.ChatGPTConversationID != fixture.chatGPTID || chatSource.SessionID != chat.SessionID || chatSource.ThreadID != chat.ThreadID || chatSource.ThreadSeq != 1 {
+		t.Fatalf("terminal ChatGPT orphan mapping = %+v, found=%v; want %+v", chatSource, found, chat)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("terminal orphan inventory Validate() error = %v", err)
+	}
+}
+
+func TestInventorySQLiteRejectsNonTerminalProfilePromotionOrphan(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"orphan-pending", "orphan-pending-session", 42, "pending", 0, "", nil, nil, "", "2026-01-07", "2026-01-07")
+	if _, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive}); err == nil || !strings.Contains(err.Error(), "nonterminal state") {
+		t.Fatalf("nonterminal profile orphan error = %v, want a bounded rejection", err)
+	}
+}
+
 func TestInventorySQLiteIsDeterministicAcrossInsertionOrderAndRepeatedReads(t *testing.T) {
 	first := newSQLiteInventoryFixture(t, "l1", "archive")
 	second := newSQLiteInventoryFixture(t, "archive", "l1")
@@ -685,6 +735,27 @@ func TestSQLiteInventoryReceiptRejectsInternallyInconsistentCountsWithValidHash(
 			for index := range receipt.SurfaceCounts {
 				if receipt.SurfaceCounts[index].Surface == activeThreadSurface {
 					receipt.SurfaceCounts[index].References--
+				}
+			}
+		}},
+		{name: "preserved orphan on non-profile surface", mutate: func(receipt *SQLiteInventoryReceipt) {
+			for index := range receipt.SurfaceCounts {
+				if receipt.SurfaceCounts[index].Surface == activeThreadSurface {
+					receipt.SurfaceCounts[index].PreservedTerminalOrphans = 1
+				}
+			}
+		}},
+		{name: "preserved orphan exceeds profile rows", mutate: func(receipt *SQLiteInventoryReceipt) {
+			for index := range receipt.SurfaceCounts {
+				if receipt.SurfaceCounts[index].Surface == l1ProfilePromotionSurface {
+					receipt.SurfaceCounts[index].PreservedTerminalOrphans = receipt.SurfaceCounts[index].Rows + 1
+				}
+			}
+		}},
+		{name: "preserved orphan exceeds profile references", mutate: func(receipt *SQLiteInventoryReceipt) {
+			for index := range receipt.SurfaceCounts {
+				if receipt.SurfaceCounts[index].Surface == l1ProfilePromotionSurface {
+					receipt.SurfaceCounts[index].PreservedTerminalOrphans = receipt.SurfaceCounts[index].References + 1
 				}
 			}
 		}},

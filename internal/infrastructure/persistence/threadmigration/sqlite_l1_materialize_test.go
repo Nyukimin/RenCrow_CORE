@@ -95,6 +95,50 @@ func TestMaterializeL1SQLiteRebuildsCanonicalIdentityOnDisposableClone(t *testin
 	}
 }
 
+func TestMaterializeL1SQLitePreservesTerminalProfilePromotionOrphans(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"orphan-materialized-generic", "orphan-materialized-session", 43, "completed", 1, "", nil, nil, "", "2026-01-07", "2026-01-07")
+	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"orphan-materialized-chatgpt", fixture.chatSession, fixture.chatThread, "failed", 2, "", nil, nil, "unavailable", "2026-01-08", "2026-01-08")
+	destination := openInventoryTestDB(t, "file:threadmigration_materialize_terminal_orphans_destination?mode=memory&cache=shared")
+	createLegacyL1Schema(t, destination)
+	cloneLegacyL1Rows(t, fixture.l1, destination)
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() error = %v", err)
+	}
+	if count, found := result.Receipt.SurfaceCount(l1ProfilePromotionSurface); !found || count.PreservedTerminalOrphans != 2 {
+		t.Fatalf("preserved terminal orphan count = %+v, found=%v", count, found)
+	}
+	if _, err := MaterializeL1SQLite(context.Background(), L1SQLiteMaterializationInput{Source: fixture.l1, Destination: destination, Inventory: result}); err != nil {
+		t.Fatalf("MaterializeL1SQLite() error = %v", err)
+	}
+
+	for _, test := range []struct {
+		evidenceID string
+		state      string
+		mapping    ThreadMapping
+	}{
+		{evidenceID: "orphan-materialized-generic", state: "completed"},
+		{evidenceID: "orphan-materialized-chatgpt", state: "failed"},
+	} {
+		mapping, found := result.Plan.LookupBySource(l1ProfilePromotionSurface, test.evidenceID)
+		if !found {
+			t.Fatalf("materialized orphan %q has no plan mapping", test.evidenceID)
+		}
+		test.mapping = mapping
+		var sessionID, threadID, threadKind, state string
+		var threadSeq int64
+		if err := destination.QueryRow(`SELECT session_id, thread_id, thread_seq, thread_kind, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, test.evidenceID).Scan(&sessionID, &threadID, &threadSeq, &threadKind, &state); err != nil {
+			t.Fatalf("read materialized orphan %q: %v", test.evidenceID, err)
+		}
+		if sessionID != string(test.mapping.SessionID) || threadID != string(test.mapping.ThreadID) || threadSeq != int64(test.mapping.ThreadSeq) || threadKind != string(test.mapping.ThreadKind) || state != test.state {
+			t.Fatalf("materialized orphan %q = session=%q thread=%q seq=%d kind=%q state=%q; want mapping=%+v state=%q", test.evidenceID, sessionID, threadID, threadSeq, threadKind, state, test.mapping, test.state)
+		}
+	}
+}
+
 func TestRewriteL1LegacyNamespaceOnlyRewritesExactIdentity(t *testing.T) {
 	plan, err := BuildPlan([]LegacyThreadFact{{Surface: l1MemoryEventSurface, RecordKey: "generic", SessionID: "legacy-namespace", LegacyThreadID: 7}, {Surface: l1MemoryEventSurface, RecordKey: "chat", ChatGPTConversationID: "chat-namespace"}})
 	if err != nil {

@@ -27,7 +27,7 @@ import (
 const (
 	// SQLiteInventoryReceiptSchemaVersion identifies the canonical receipt
 	// encoding.  The receipt hash excludes ReceiptSHA256 itself.
-	SQLiteInventoryReceiptSchemaVersion = "rencrow.threadmigration.sqlite_inventory.v1"
+	SQLiteInventoryReceiptSchemaVersion = "rencrow.threadmigration.sqlite_inventory.v2"
 	SQLiteInventoryReceiptReady         = "ready"
 
 	legacySourceChatGPT = "chatgpt_export"
@@ -69,11 +69,14 @@ type SQLiteInventoryResult struct {
 
 // SQLiteInventorySurfaceCount is a stable count for one legacy table. Rows is
 // the number of source rows and References counts mapped identity references.
-// An archive event with legacy thread_id=0 contributes a row but no reference.
+// PreservedTerminalOrphans counts terminal profile jobs whose evidence event
+// was pruned; it is zero for every other surface. An archive event with legacy
+// thread_id=0 contributes a row but no reference.
 type SQLiteInventorySurfaceCount struct {
-	Surface    string `json:"surface"`
-	Rows       int64  `json:"rows"`
-	References int64  `json:"references"`
+	Surface                  string `json:"surface"`
+	Rows                     int64  `json:"rows"`
+	References               int64  `json:"references"`
+	PreservedTerminalOrphans int64  `json:"preserved_terminal_orphans"`
 }
 
 // SQLiteInventoryOptionalZeroCount records allowed zero-valued legacy thread
@@ -793,7 +796,7 @@ func (builder *sqliteInventoryBuilder) validatePendingChatGPTRawBindings() error
 
 func (builder *sqliteInventoryBuilder) inventoryL1ProfileJobs() error {
 	rows, err := builder.l1DB.QueryContext(builder.ctx, `
-SELECT j.evidence_event_id, j.session_id, j.thread_id, typeof(j.thread_id),
+SELECT j.evidence_event_id, j.session_id, j.thread_id, typeof(j.thread_id), j.state,
        e.id, e.session_id, e.thread_id, typeof(e.thread_id), e.source, e.meta_json
 FROM l1_profile_promotion_job AS j
 LEFT JOIN l1_memory_event AS e ON e.id = j.evidence_event_id
@@ -803,21 +806,38 @@ ORDER BY j.evidence_event_id ASC`)
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var evidenceID, jobSessionID, jobThreadType string
+		var evidenceID, jobSessionID, jobThreadType, jobState string
 		var jobThreadID int64
 		var eventID, eventSessionID, eventThreadType, eventSource, eventMeta sql.NullString
 		var eventThreadID sql.NullInt64
-		if err := rows.Scan(&evidenceID, &jobSessionID, &jobThreadID, &jobThreadType, &eventID, &eventSessionID, &eventThreadID, &eventThreadType, &eventSource, &eventMeta); err != nil {
+		if err := rows.Scan(&evidenceID, &jobSessionID, &jobThreadID, &jobThreadType, &jobState, &eventID, &eventSessionID, &eventThreadID, &eventThreadType, &eventSource, &eventMeta); err != nil {
 			return fmt.Errorf("scan legacy %s row: %w", l1ProfilePromotionSurface, err)
 		}
 		if strings.TrimSpace(evidenceID) == "" {
 			return fmt.Errorf("legacy %s has an empty evidence_event_id", l1ProfilePromotionSurface)
 		}
-		if !eventID.Valid || !eventSessionID.Valid || !eventThreadID.Valid || !eventThreadType.Valid || !eventSource.Valid || !eventMeta.Valid || eventID.String == "" {
-			return fmt.Errorf("legacy %s row %q is orphaned from l1_memory_event", l1ProfilePromotionSurface, evidenceID)
-		}
 		if err := builder.contextAndIdentity(l1ProfilePromotionSurface, evidenceID, jobSessionID, jobThreadID, jobThreadType, false); err != nil {
 			return err
+		}
+		if !eventID.Valid {
+			switch jobState {
+			case "completed", "failed":
+				// A terminal job may outlive its evidence event after the normal
+				// L1 lifecycle prunes the completed/failed parent. Preserve its
+				// exact job tuple as migration evidence; classifiedFacts will
+				// reclassify it as ChatGPT when Archive/Raw has that tuple.
+				builder.addRowReference(l1ProfilePromotionSurface)
+				builder.ensureSurfaceCount(l1ProfilePromotionSurface).PreservedTerminalOrphans++
+				if err := builder.addGenericFact(l1ProfilePromotionSurface, evidenceID, jobSessionID, jobThreadID); err != nil {
+					return err
+				}
+				continue
+			default:
+				return fmt.Errorf("legacy %s row %q is orphaned from l1_memory_event with nonterminal state %q", l1ProfilePromotionSurface, evidenceID, jobState)
+			}
+		}
+		if !eventSessionID.Valid || !eventThreadID.Valid || !eventThreadType.Valid || !eventSource.Valid || !eventMeta.Valid {
+			return fmt.Errorf("legacy %s row %q evidence identity is malformed", l1ProfilePromotionSurface, evidenceID)
 		}
 		if eventID.String != evidenceID || eventThreadType.String != "integer" || eventThreadID.Int64 <= 0 || eventSessionID.String == "" {
 			return fmt.Errorf("legacy %s row %q evidence identity is malformed", l1ProfilePromotionSurface, evidenceID)
@@ -1493,8 +1513,11 @@ func validateSurfaceCounts(values []SQLiteInventorySurfaceCount) error {
 	}
 	seen := make(map[string]struct{}, len(values))
 	for index, value := range values {
-		if strings.TrimSpace(value.Surface) == "" || value.Rows < 0 || value.References < 0 || value.References > value.Rows*2 {
+		if strings.TrimSpace(value.Surface) == "" || value.Rows < 0 || value.References < 0 || value.References > value.Rows*2 || value.PreservedTerminalOrphans < 0 || value.PreservedTerminalOrphans > value.Rows || value.PreservedTerminalOrphans > value.References {
 			return fmt.Errorf("invalid surface count at index %d", index)
+		}
+		if value.Surface != l1ProfilePromotionSurface && value.PreservedTerminalOrphans != 0 {
+			return fmt.Errorf("preserved terminal orphan count for %q must be zero", value.Surface)
 		}
 		if _, exists := seen[value.Surface]; exists {
 			return fmt.Errorf("duplicate surface count %q", value.Surface)

@@ -1567,6 +1567,11 @@ Test:
 - sourceは不変、出力はfresh-onlyとし、in-place更新は行わない。L1、Archive、topic、
   Redis、Qdrantの全出力が同一mapping hashを持ち、件数、NULL、duplicate、orphan、
   legacy field zeroを検証した後だけcutover対象にできる。
+- `l1_profile_promotion_job` の `l1_memory_event` evidence欠損は、予期しないorphanとして
+  常にzeroにする。ただし通常のpruneで発生する `state=completed` または `state=failed` の
+  terminal jobだけは、job自身の厳密な `(session_id, thread_id)` をgeneric factとして保持し、
+  `preserved_terminal_orphans` 件数をSQLite inventory receiptとoffline build receiptへ束縛する。Archive等が
+  同じtupleを識別した場合は後段のcanonical分類を優先し、`pending`等の非terminal orphanは拒否する。
 - cutoverはwriter停止中にL1、Archive、topic、active config、CORE runtimeを同じbuild／stage
   receiptへ束縛して置換し、旧5 artifactをhash由来の固定名で保持する。配備後検証に失敗した
   場合はowner CLIがimmutableなcutover receipt、旧／新hash、SQLite sidecar zeroを再検証して
@@ -1589,6 +1594,22 @@ Test:
   hash、fresh-only publication、owner stop-window receipt、全surface mapping hash照合で強制する。
 - **Tests:** TTLのapply遅延・期限切れ、SCAN／scrollのcursor非進行・重複・中断、Qdrantの
   mutation zero、artifact tamper、source hash不一致、writer停止未証明、異mapping hashを検査する。
+
+#### Step 05 Failure Knowledge: terminal profile jobをevidence orphanとして捨てた
+
+- **Failure:** 通常のL1 pruneで親`l1_memory_event`だけが消えたterminal profile jobを、予期しない
+  orphanとして一律に移行拒否した。
+- **Problem:** 完了／失敗のdiagnostic stateと厳密なlegacy tupleが失われ、RetryFailedProfilePromotionJobs
+  と移行後の監査追跡が分断された。
+- **Cause:** evidence存在をjob stateより強い前提とし、terminal lifecycle orphanと非terminal整合性違反を
+  同じ扱いにした。
+- **Lesson:** job identityを先に検証し、terminal stateだけを明示的に保持してreceipt件数へ束縛する。
+- **Invariant:** evidence欠損terminal jobはgeneric factとして保持し、Archive等の同一tuple識別時は
+  ChatGPT分類へ再分類する。非terminal orphanと他surfaceのpreserved countはzeroで拒否する。
+- **Enforcement:** SQLite inventory receipt v2の`preserved_terminal_orphans`、state allowlist、canonical
+  mapping hash、materializerの厳密tuple解決で強制する。
+- **Tests:** completed／failed orphanのcount・generic／ChatGPT mapping・materialization、pending orphan拒否、
+  preserved countの範囲／surface制約とreceipt改ざんを検査する。
 
 ---
 

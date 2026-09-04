@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	OfflineBuildSchemaVersion = "rencrow.threadmigration.offline_build.v1"
+	OfflineBuildSchemaVersion = "rencrow.threadmigration.offline_build.v2"
 	OfflineBuildStatusReady   = "ready_offline_not_runtime_ready"
 	OfflineBuildStatusBlocked = "blocked"
 
@@ -74,19 +74,20 @@ type OfflineBuildReceipt struct {
 	SourceTopicBytes             int64  `json:"source_topic_bytes"`
 	SourceExternalSnapshotBytes  int64  `json:"source_external_snapshot_bytes"`
 
-	L1SourceCount        int64 `json:"l1_source_count"`
-	L1OutputCount        int64 `json:"l1_output_count"`
-	ArchiveSourceCount   int64 `json:"archive_source_count"`
-	ArchiveOutputCount   int64 `json:"archive_output_count"`
-	TopicSourceCount     int   `json:"topic_source_count"`
-	TopicOutputCount     int   `json:"topic_output_count"`
-	TopicQuarantineCount int   `json:"topic_quarantine_count"`
-	RedisSourceCount     int   `json:"redis_source_count"`
-	RedisOutputCount     int   `json:"redis_output_count"`
-	QdrantSourceCount    int   `json:"qdrant_source_count"`
-	QdrantOutputCount    int   `json:"qdrant_output_count"`
-	MappingGenericCount  int   `json:"mapping_generic_count"`
-	MappingChatGPTCount  int   `json:"mapping_chatgpt_count"`
+	L1SourceCount                       int64 `json:"l1_source_count"`
+	L1OutputCount                       int64 `json:"l1_output_count"`
+	PreservedTerminalProfileOrphanCount int64 `json:"preserved_terminal_profile_orphan_count"`
+	ArchiveSourceCount                  int64 `json:"archive_source_count"`
+	ArchiveOutputCount                  int64 `json:"archive_output_count"`
+	TopicSourceCount                    int   `json:"topic_source_count"`
+	TopicOutputCount                    int   `json:"topic_output_count"`
+	TopicQuarantineCount                int   `json:"topic_quarantine_count"`
+	RedisSourceCount                    int   `json:"redis_source_count"`
+	RedisOutputCount                    int   `json:"redis_output_count"`
+	QdrantSourceCount                   int   `json:"qdrant_source_count"`
+	QdrantOutputCount                   int   `json:"qdrant_output_count"`
+	MappingGenericCount                 int   `json:"mapping_generic_count"`
+	MappingChatGPTCount                 int   `json:"mapping_chatgpt_count"`
 
 	L1OutputSHA256        string `json:"l1_output_sha256"`
 	ArchiveOutputSHA256   string `json:"archive_output_sha256"`
@@ -757,6 +758,7 @@ func offlineBuildReceiptFromCohort(base OfflineBuildReceipt, sources map[string]
 	receipt.L1SourceCount = sqliteInventoryRows(cohort.SQLiteTopic.SQLiteInventory.Receipt.SurfaceCounts, map[string]struct{}{
 		l1MemoryEventSurface: {}, l1EventLogSurface: {}, l1ProfilePromotionSurface: {}, activeThreadSurface: {}, turnReceiptSurface: {}, turnOutboxSurface: {},
 	})
+	receipt.PreservedTerminalProfileOrphanCount = sqliteInventoryPreservedTerminalProfileOrphans(cohort.SQLiteTopic.SQLiteInventory.Receipt.SurfaceCounts)
 	receipt.ArchiveSourceCount = sqliteInventoryRows(cohort.SQLiteTopic.SQLiteInventory.Receipt.SurfaceCounts, map[string]struct{}{
 		sessionThreadSurface: {}, threadSummaryReceiptSurface: {}, l1MemoryEventArchiveSurface: {},
 	})
@@ -801,6 +803,9 @@ func offlineBuildReceiptFromCohort(base OfflineBuildReceipt, sources map[string]
 }
 
 func validateOfflineBuildReceiptAgainstCohort(receipt OfflineBuildReceipt, cohort FullCohortResult) error {
+	if receipt.PreservedTerminalProfileOrphanCount != sqliteInventoryPreservedTerminalProfileOrphans(cohort.SQLiteTopic.SQLiteInventory.Receipt.SurfaceCounts) {
+		return errors.New("offline build preserved terminal profile orphan count binding mismatch")
+	}
 	if receipt.RedisPreparationReceiptSHA256 != cohort.RedisPreparation.Receipt.ReceiptSHA256 {
 		return errors.New("offline build Redis preparation receipt binding mismatch")
 	}
@@ -821,6 +826,15 @@ func sqliteInventoryRows(counts []SQLiteInventorySurfaceCount, surfaces map[stri
 		}
 	}
 	return total
+}
+
+func sqliteInventoryPreservedTerminalProfileOrphans(counts []SQLiteInventorySurfaceCount) int64 {
+	for _, count := range counts {
+		if count.Surface == l1ProfilePromotionSurface {
+			return count.PreservedTerminalOrphans
+		}
+	}
+	return 0
 }
 
 func sqliteMaterializationRows(counts []SQLiteL1MaterializationTableCount) int64 {
@@ -1034,11 +1048,14 @@ func (receipt OfflineBuildReceipt) Validate() error {
 	if receipt.SourceL1Bytes < 0 || receipt.SourceArchiveBytes < 0 || receipt.SourceTopicBytes < 0 || receipt.SourceExternalSnapshotBytes < 0 || receipt.L1OutputBytes <= 0 || receipt.ArchiveOutputBytes <= 0 || receipt.TopicOutputBytes < 0 || receipt.TopicQuarantineBytes < 0 || receipt.RedisOutputBytes < 0 || receipt.QdrantOutputBytes < 0 || receipt.MappingArtifactBytes <= 0 {
 		return errors.New("offline build byte counts are invalid")
 	}
-	counts := []int64{receipt.L1SourceCount, receipt.L1OutputCount, receipt.ArchiveSourceCount, receipt.ArchiveOutputCount}
+	counts := []int64{receipt.L1SourceCount, receipt.L1OutputCount, receipt.PreservedTerminalProfileOrphanCount, receipt.ArchiveSourceCount, receipt.ArchiveOutputCount}
 	for _, count := range counts {
 		if count < 0 {
 			return errors.New("offline build SQLite count is invalid")
 		}
+	}
+	if receipt.PreservedTerminalProfileOrphanCount > receipt.L1SourceCount {
+		return errors.New("offline build preserved terminal profile orphan count exceeds L1 source count")
 	}
 	intCounts := []int{receipt.TopicSourceCount, receipt.TopicOutputCount, receipt.TopicQuarantineCount, receipt.RedisSourceCount, receipt.RedisOutputCount, receipt.QdrantSourceCount, receipt.QdrantOutputCount, receipt.MappingGenericCount, receipt.MappingChatGPTCount}
 	for _, count := range intCounts {

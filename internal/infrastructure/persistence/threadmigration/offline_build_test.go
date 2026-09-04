@@ -25,6 +25,18 @@ type offlineBuildFixture struct {
 
 func TestBuildOfflineProducesFreshBoundOutputsAndLeavesSourcesUnchanged(t *testing.T) {
 	fixture := newOfflineBuildFixture(t)
+	db, err := sql.Open("sqlite", fixture.l1Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"offline-terminal-orphan", "offline-orphan-session", 44, "failed", 5, "", nil, nil, "evidence pruned", "2026-01-09", "2026-01-09"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
 	sourcesBefore := offlineBuildSourceBytes(t, fixture)
 
 	receipt, err := Build(context.Background(), OfflineBuildOptions{
@@ -45,6 +57,9 @@ func TestBuildOfflineProducesFreshBoundOutputsAndLeavesSourcesUnchanged(t *testi
 	}
 	if receipt.SourceInputsStable != 1 {
 		t.Fatalf("SourceInputsStable = %d, want 1", receipt.SourceInputsStable)
+	}
+	if receipt.PreservedTerminalProfileOrphanCount != 1 {
+		t.Fatalf("PreservedTerminalProfileOrphanCount = %d, want 1", receipt.PreservedTerminalProfileOrphanCount)
 	}
 	if receipt.ErrorCode != "" {
 		t.Fatalf("successful receipt error_code = %q", receipt.ErrorCode)
@@ -179,11 +194,13 @@ func TestOfflineBuildReceiptBindsPreparationReceiptsToCohort(t *testing.T) {
 	redisReceiptHash := strings.Repeat("a", 64)
 	qdrantReceiptHash := strings.Repeat("b", 64)
 	receipt := OfflineBuildReceipt{
-		RedisPreparationReceiptSHA256:  redisReceiptHash,
-		QdrantPreparationReceiptSHA256: qdrantReceiptHash,
-		QdrantVectorDimension:          3,
+		RedisPreparationReceiptSHA256:       redisReceiptHash,
+		QdrantPreparationReceiptSHA256:      qdrantReceiptHash,
+		QdrantVectorDimension:               3,
+		PreservedTerminalProfileOrphanCount: 2,
 	}
 	cohort := FullCohortResult{
+		SQLiteTopic:      SQLiteTopicCohortResult{SQLiteInventory: SQLiteInventoryResult{Receipt: SQLiteInventoryReceipt{SurfaceCounts: []SQLiteInventorySurfaceCount{{Surface: l1ProfilePromotionSurface, PreservedTerminalOrphans: 2}}}}},
 		RedisPreparation: RedisPreparationResult{Receipt: RedisPreparationReceipt{ReceiptSHA256: redisReceiptHash}},
 		QdrantPreparation: QdrantPreparationResult{Receipt: QdrantPreparationReceipt{
 			ReceiptSHA256: qdrantReceiptHash, VectorDimension: 3,
@@ -207,6 +224,11 @@ func TestOfflineBuildReceiptBindsPreparationReceiptsToCohort(t *testing.T) {
 	tampered.QdrantVectorDimension = 4
 	if err := validateOfflineBuildReceiptAgainstCohort(tampered, cohort); err == nil {
 		t.Fatal("tampered Qdrant dimension binding was accepted")
+	}
+	tampered = receipt
+	tampered.PreservedTerminalProfileOrphanCount = 3
+	if err := validateOfflineBuildReceiptAgainstCohort(tampered, cohort); err == nil {
+		t.Fatal("tampered preserved terminal profile orphan count binding was accepted")
 	}
 }
 
