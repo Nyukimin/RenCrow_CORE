@@ -1558,8 +1558,9 @@ Test:
 - Qdrant取得は既存collectionに対するread-only scrollだけを使う。collection作成、
   index作成、upsert、deleteを行うruntime store constructorは移行captureに使わない。
 - RedisのSCANとQdrantのscrollは単独でsnapshot isolationを証明しない。論理artifactは
-  自己hashと件数を持つが、ownerがwriter停止、active config、物理rollback snapshot、
-  artifact hashを同一停止窓のreceiptへ束縛するまで`runtime_ready`を名乗らない。
+  自己hashと件数を持つが、ownerがwriter停止、active source route identity、sourceの論理snapshot
+  hash群、fresh-only targetと保持済み旧configのrollback evidence、artifact hashを同一停止窓の
+  receiptへ束縛するまで`runtime_ready`を名乗らない。
 - persistent WALを使うL1／Archiveは、固定CORE serviceのPIDとlistenerがzeroになった後、
   owner CLIが`wal_checkpoint(TRUNCATE)`のbusy zero、同一file identity、`journal_mode=DELETE`、
   sidecar zeroを証明してから同じ停止窓のsnapshotへ含める。WAL／SHMを手動削除しない。
