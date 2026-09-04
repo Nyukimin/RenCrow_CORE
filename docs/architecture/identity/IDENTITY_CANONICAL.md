@@ -1729,6 +1729,10 @@ Test:
 - `conversation_turn_receipt.turn_id`をTurnとRoot Taskの正本source、同rowの`trace_id`を
   Trace正本sourceとする。outbox、receipt JSON、outbox JSON、receiptに結合するrecall traceと
   その子recordは、個別再採番せず、この正本mappingを参照して同じ外部キーへ更新する。
+- receiptの`user_message_id`／`agent_message_id`が所有する`l1_memory_event`は、canonical
+  `msg_` IDを保持したまま、`meta_json.turn_id`だけを同じreceiptのTurn mappingへ更新する。
+  既存のmetadata shapeとmessage bodyを厳格に検証し、欠落fieldを補完しない。receiptへ結合しない
+  opaque legacy eventは、対応するTurn／Messageを推測して再採番せず、Step 06の対象外として保持する。
 - receiptに結合しない`recall_trace`は、そのrowの`turn_id`／`trace_id`をそれぞれsource pathと
   してTurn／Root TaskとTraceを独立生成する。同じlegacy文字列でもtarget typeが異なるため
   結果は一致しない。同じlegacy `turn_id`を持つ複数recall traceは、一つのTurn中に複数回の
@@ -1758,6 +1762,24 @@ Test:
 - `TurnID == TaskID`
 
 を前提にするコードzero
+
+Failure Knowledge:
+
+- **Failure:** receipt、outbox、recallだけをmigrationし、receiptが所有するL1 message metadataの
+  legacy `turn_id`を残したため、配備後のactual Agent EndTurnがactive thread projection検証で
+  `conversation turn invalid`になった。
+- **Problem:** relational rowとembedded JSONが整合していても、実際のEndTurnが先に読むL1 message
+  projectionが同じTurn mappingへ移行していなければ、正規routeは利用不能になる。
+- **Cause:** migration inventoryが`l1_memory_event`をcanonical MessageIDの存在確認だけに使い、
+  receipt-owned message metadataを同じImplementation Unitの参照として扱わなかった。
+- **Lesson:** ID cutoverは保存先の列挙ではなく、正規runtimeが終端まで読む全projectionを同じowner
+  mappingへ束縛する。
+- **Invariant:** receipt-owned user／Agent messageの`meta_json.turn_id`は、receiptのcanonical
+  `turn_id`と常に一致する。receiptを持たないlegacy eventのidentityは推測しない。
+- **Enforcement:** one-shot migration planはcanonical MessageIDごとにreceipt ownershipと既存6-field
+  metadataをfail closedで検証し、同一transaction内でTurnIDだけを更新する。plan hashはこの更新を含む。
+- **Tests:** dry-run non-mutation、linked user／Agent metadataのexact rewrite、metadata mismatch／欠落rowの
+  pre-mutation rejection、unowned opaque row不変、配備後actual Agent EndTurn receiptを検査する。
 
 ---
 

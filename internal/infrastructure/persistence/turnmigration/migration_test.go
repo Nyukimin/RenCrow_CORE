@@ -28,6 +28,7 @@ type legacyFixture struct {
 	itemB          string
 	injectionA     string
 	injectionB     string
+	extraMessageID string
 }
 
 func newLegacyFixture(t *testing.T) legacyFixture {
@@ -47,6 +48,7 @@ func newLegacyFixture(t *testing.T) legacyFixture {
 		itemB:          "opaque-item-b",
 		injectionA:     "opaque-injection-a",
 		injectionB:     "opaque-injection-b",
+		extraMessageID: string(modulecore.NewMessageID()),
 	}
 	db, err := sql.Open("sqlite", fixture.path)
 	if err != nil {
@@ -106,10 +108,11 @@ VALUES(?, ?, 'context', 0, ?, 4, 'normal', '2026-01-01T00:00:00Z'),
 		t.Fatalf("insert fixture injections: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO l1_memory_event(id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json, memory_state, layer, source, created_at, updated_at)
-VALUES(?, 'conversation', ?, ?, 1, 'user_conversation', 'user', 'hello', '{}', 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-(?, 'conversation', ?, ?, 1, 'user_conversation', 'agent', 'world', '{}', 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-('opaque-event', 'conversation', ?, ?, 1, 'user_conversation', 'system', 'other', '{}', 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
-		fixture.userID, fixture.sessionID, fixture.threadID, fixture.agentID, fixture.sessionID, fixture.threadID, fixture.sessionID, fixture.threadID); err != nil {
+VALUES(?, 'conversation', ?, ?, 1, 'user_conversation', 'user', 'hello', ?, 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+(?, 'conversation', ?, ?, 1, 'user_conversation', 'mio', 'world', ?, 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+('opaque-event', 'conversation', ?, ?, 1, 'user_conversation', 'system', 'other', '{"legacy":"opaque"}', 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+(?, 'conversation', ?, ?, 1, 'user_conversation', 'system', 'extra', '{"legacy":"canonical-but-unowned"}', 'observed', 'L1', 'test', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		fixture.userID, fixture.sessionID, fixture.threadID, legacyMessageMeta(fixture.oldTurn, fixture.userID, "test-domain", "user", "user", "mio"), fixture.agentID, fixture.sessionID, fixture.threadID, legacyMessageMeta(fixture.oldTurn, fixture.agentID, "test-domain", "mio", "mio", "user"), fixture.sessionID, fixture.threadID, fixture.extraMessageID, fixture.sessionID, fixture.threadID); err != nil {
 		t.Fatalf("insert fixture messages: %v", err)
 	}
 	return fixture
@@ -158,6 +161,15 @@ func quoteJSON(value string) string {
 	return string(encoded)
 }
 
+func legacyMessageMeta(turnID, messageID, domain, speaker, from, to string) string {
+	value := map[string]string{
+		"domain": domain, "message_id": messageID, "turn_id": turnID,
+		"speaker": speaker, "from": from, "to": to,
+	}
+	encoded, _ := json.Marshal(value)
+	return string(encoded)
+}
+
 func legacyResultJSON(turnID, traceID, sessionID, userID, agentID, payloadHash string) string {
 	value := map[string]any{
 		"turn_id": turnID, "trace_id": traceID, "session_id": sessionID, "user_message_id": userID,
@@ -190,7 +202,7 @@ func TestRunMigratesExactIdentitiesAndChildren(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
-	if dry.Status != StatusReady || dry.OutputSHA256 != "" {
+	if dry.Status != StatusReady || dry.OutputSHA256 != "" || dry.Before.ExistingMessageIDs != 3 {
 		t.Fatalf("dry receipt=%+v", dry)
 	}
 	if info, err := os.Stat(dryPath); err != nil || info.Mode().Perm() != 0o600 {
@@ -203,6 +215,22 @@ func TestRunMigratesExactIdentitiesAndChildren(t *testing.T) {
 	repeat, err := Run(context.Background(), Options{DBPath: fixture.path, ManifestPath: filepath.Join(t.TempDir(), "repeat.json"), Mode: ModeDryRun})
 	if err != nil || repeat.PlanSHA256 != dry.PlanSHA256 {
 		t.Fatalf("repeated dry-run receipt=%+v err=%v", repeat, err)
+	}
+	var opaqueMetaBefore, extraMetaBefore string
+	if db, err := sql.Open("sqlite", fixture.path); err != nil {
+		t.Fatal(err)
+	} else {
+		if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = 'opaque-event'`).Scan(&opaqueMetaBefore); err != nil {
+			db.Close()
+			t.Fatalf("read opaque metadata before apply: %v", err)
+		}
+		if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = ?`, fixture.extraMessageID).Scan(&extraMetaBefore); err != nil {
+			db.Close()
+			t.Fatalf("read extra message metadata before apply: %v", err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	applyPath := filepath.Join(t.TempDir(), "apply.json")
@@ -228,6 +256,35 @@ func TestRunMigratesExactIdentitiesAndChildren(t *testing.T) {
 	}
 	if gotTurn != wantTurn || gotTrace != wantTrace || gotRoot != wantRoot || gotUser != fixture.userID || gotAgent != fixture.agentID {
 		t.Fatalf("migrated receipt identities=%q/%q/%q/%q/%q", gotTurn, gotTrace, gotRoot, gotUser, gotAgent)
+	}
+	for _, message := range []struct {
+		id   string
+		want string
+	}{
+		{id: fixture.userID, want: legacyMessageMeta(wantTurn, fixture.userID, "test-domain", "user", "user", "mio")},
+		{id: fixture.agentID, want: legacyMessageMeta(wantTurn, fixture.agentID, "test-domain", "mio", "mio", "user")},
+	} {
+		var metaJSON string
+		if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = ?`, message.id).Scan(&metaJSON); err != nil {
+			t.Fatalf("read migrated message %s: %v", message.id, err)
+		}
+		if metaJSON != message.want {
+			t.Fatalf("message %s meta_json=%s, want %s", message.id, metaJSON, message.want)
+		}
+	}
+	var opaqueMetaAfter string
+	if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = 'opaque-event'`).Scan(&opaqueMetaAfter); err != nil {
+		t.Fatalf("read opaque metadata after apply: %v", err)
+	}
+	if opaqueMetaAfter != opaqueMetaBefore {
+		t.Fatalf("opaque metadata changed from %q to %q", opaqueMetaBefore, opaqueMetaAfter)
+	}
+	var extraMetaAfter string
+	if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = ?`, fixture.extraMessageID).Scan(&extraMetaAfter); err != nil {
+		t.Fatalf("read extra message metadata after apply: %v", err)
+	}
+	if extraMetaAfter != extraMetaBefore {
+		t.Fatalf("unowned canonical message metadata changed from %q to %q", extraMetaBefore, extraMetaAfter)
 	}
 	var result map[string]any
 	if err := json.Unmarshal([]byte(gotResult), &result); err != nil {
@@ -293,7 +350,7 @@ func TestRunMigratesExactIdentitiesAndChildren(t *testing.T) {
 		t.Fatalf("child mapping item=%q injection=%q ids=%q", itemTrace, injectionTrace, itemIDs)
 	}
 	var messageCount int
-	if err := db.QueryRow(`SELECT count(*) FROM l1_memory_event WHERE id LIKE 'msg_%'`).Scan(&messageCount); err != nil || messageCount != 2 {
+	if err := db.QueryRow(`SELECT count(*) FROM l1_memory_event WHERE id LIKE 'msg\_%' ESCAPE '\'`).Scan(&messageCount); err != nil || messageCount != 3 {
 		t.Fatalf("message count=%d err=%v", messageCount, err)
 	}
 	var ownerIndexCount int
@@ -418,6 +475,115 @@ func TestRunRejectsMalformedAndOversizeResultWithoutMutation(t *testing.T) {
 				t.Fatalf("invalid result mutated database: before=%s after=%s err=%v", before, after, err)
 			}
 		})
+	}
+}
+
+func TestRunRejectsMalformedOwnedMessageMetadataWithoutMutation(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testing.T, *sql.DB, legacyFixture)
+	}{
+		{name: "malformed", setup: func(t *testing.T, db *sql.DB, fixture legacyFixture) {
+			_, err := db.Exec(`UPDATE l1_memory_event SET meta_json = '{}' WHERE id = ?`, fixture.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "missing", setup: func(t *testing.T, db *sql.DB, fixture legacyFixture) {
+			_, err := db.Exec(`DELETE FROM l1_memory_event WHERE id = ?`, fixture.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "mismatched", setup: func(t *testing.T, db *sql.DB, fixture legacyFixture) {
+			meta := legacyMessageMeta("wrong-turn", fixture.userID, "test-domain", "user", "user", "mio")
+			_, err := db.Exec(`UPDATE l1_memory_event SET meta_json = ? WHERE id = ?`, meta, fixture.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "oversize", setup: func(t *testing.T, db *sql.DB, fixture legacyFixture) {
+			meta := `{"domain":"` + strings.Repeat("x", maxMessageMetaBytes) + `"}`
+			_, err := db.Exec(`UPDATE l1_memory_event SET meta_json = ? WHERE id = ?`, meta, fixture.userID)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newLegacyFixture(t)
+			db, err := sql.Open("sqlite", fixture.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.setup(t, db, fixture)
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := hashDatabaseFile(fixture.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := Run(context.Background(), Options{DBPath: fixture.path, ManifestPath: filepath.Join(t.TempDir(), "blocked.json"), Mode: ModeDryRun})
+			if err == nil || receipt.Status != StatusBlocked || receipt.ErrorCode != "source_invalid" {
+				t.Fatalf("invalid message metadata receipt=%+v err=%v", receipt, err)
+			}
+			after, err := hashDatabaseFile(fixture.path)
+			if err != nil || before != after {
+				t.Fatalf("invalid message metadata mutated database: before=%s after=%s err=%v", before, after, err)
+			}
+		})
+	}
+}
+
+func TestMessageMetadataUpdateRollsBackAsOneTransaction(t *testing.T) {
+	fixture := newLegacyFixture(t)
+	plan, err := readPlan(context.Background(), fixture.path)
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	if len(plan.messages) != 2 {
+		t.Fatalf("planned messages=%d, want 2 receipt-owned rows", len(plan.messages))
+	}
+	plan.messages[1].oldMetaJSON = "{}"
+	db, err := sql.Open("sqlite", fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := applyMessageMetadataUpdates(context.Background(), tx, plan); err == nil {
+		_ = tx.Rollback()
+		t.Fatal("metadata update unexpectedly succeeded with stale second row")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	var userMeta string
+	if err := db.QueryRow(`SELECT meta_json FROM l1_memory_event WHERE id = ?`, fixture.userID).Scan(&userMeta); err != nil {
+		t.Fatal(err)
+	}
+	want := legacyMessageMeta(fixture.oldTurn, fixture.userID, "test-domain", "user", "user", "mio")
+	if userMeta != want {
+		t.Fatalf("rolled-back user metadata=%q, want %q", userMeta, want)
+	}
+}
+
+func TestPlanHashIncludesReceiptOwnedMessageMetadata(t *testing.T) {
+	fixture := newLegacyFixture(t)
+	plan, err := readPlan(context.Background(), fixture.path)
+	if err != nil {
+		t.Fatalf("read plan: %v", err)
+	}
+	before := planHash(plan)
+	plan.messages[0].oldMetaJSON = strings.Replace(plan.messages[0].oldMetaJSON, "test-domain", "changed-domain", 1)
+	after := planHash(plan)
+	if before == after {
+		t.Fatalf("plan hash did not change after planned message metadata change: %s", before)
 	}
 }
 

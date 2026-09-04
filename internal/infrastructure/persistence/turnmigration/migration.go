@@ -18,7 +18,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"unicode/utf8"
 
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
@@ -36,6 +38,8 @@ const (
 
 	maxResultJSONBytes    = 64 * 1024
 	maxOutboxJSONBytes    = 8192
+	maxMessageMetaBytes   = 4096
+	maxMessageMetaRunes   = 256
 	maxManifestErrorRunes = 512
 	maxMigrationRows      = 2_000_000
 )
@@ -393,12 +397,22 @@ type migrationPlan struct {
 	recalls      []recallRow
 	items        []recallItemRow
 	injections   []injectionRow
+	messages     []messageRow
 	messageIDs   map[string]struct{}
 	itemIDs      map[string]struct{}
 	injectionIDs map[string]struct{}
 	before       Counts
 	after        Counts
 	changed      bool
+}
+
+type messageRow struct {
+	id            string
+	speaker       string
+	oldMetaJSON   string
+	newMetaJSON   string
+	oldTurn       string
+	canonicalTurn modulecore.TurnID
 }
 
 type identityMapping struct {
@@ -577,6 +591,9 @@ func readPlanFromDB(ctx context.Context, db *sql.DB) (migrationPlan, error) {
 		return plan, err
 	}
 	if err := readExistingMessageIDs(ctx, db, &plan); err != nil {
+		return plan, err
+	}
+	if err := readReceiptOwnedMessageRows(ctx, db, &plan); err != nil {
 		return plan, err
 	}
 	if err := validateMigrationPlan(&plan); err != nil {
@@ -1213,6 +1230,10 @@ FROM recall_trace_item ORDER BY rowid ASC`)
 	return nil
 }
 
+type messageMetadata struct {
+	domain, messageID, turnID, speaker, from, to string
+}
+
 func readExistingMessageIDs(ctx context.Context, db *sql.DB, plan *migrationPlan) error {
 	rows, err := db.QueryContext(ctx, `SELECT id FROM l1_memory_event WHERE id LIKE 'msg\_%' ESCAPE '\' ORDER BY id ASC`)
 	if err != nil {
@@ -1233,6 +1254,192 @@ func readExistingMessageIDs(ctx context.Context, db *sql.DB, plan *migrationPlan
 		plan.messageIDs[id] = struct{}{}
 	}
 	return rows.Err()
+}
+
+func readReceiptOwnedMessageRows(ctx context.Context, db *sql.DB, plan *migrationPlan) error {
+	seenIDs := make(map[string]string, len(plan.receipts)*2)
+	plan.messages = make([]messageRow, 0, len(plan.receipts)*2)
+	for index := range plan.receipts {
+		receipt := &plan.receipts[index]
+		user, err := readReceiptOwnedMessage(ctx, db, receiptMessageOwner{messageID: receipt.userMessageID, oldTurn: receipt.oldTurn, canonicalTurn: receipt.mapping.turn})
+		if err != nil {
+			return fmt.Errorf("receipt %q user message: %w", receipt.oldTurn, err)
+		}
+		agent, err := readReceiptOwnedMessage(ctx, db, receiptMessageOwner{messageID: receipt.agentMessageID, oldTurn: receipt.oldTurn, canonicalTurn: receipt.mapping.turn})
+		if err != nil {
+			return fmt.Errorf("receipt %q agent message: %w", receipt.oldTurn, err)
+		}
+		if err := validateReceiptMessagePair(user, agent); err != nil {
+			return fmt.Errorf("receipt %q message metadata: %w", receipt.oldTurn, err)
+		}
+		for _, row := range []messageRow{user, agent} {
+			if previous, exists := seenIDs[row.id]; exists {
+				return fmt.Errorf("message ID %q is owned by receipts %q and %q", row.id, previous, receipt.oldTurn)
+			}
+			seenIDs[row.id] = receipt.oldTurn
+			plan.messages = append(plan.messages, row)
+			if _, exists := plan.messageIDs[row.id]; !exists {
+				return fmt.Errorf("receipt %q references missing canonical message ID %q", receipt.oldTurn, row.id)
+			}
+			if row.oldMetaJSON != row.newMetaJSON {
+				plan.changed = true
+			}
+		}
+	}
+	return nil
+}
+
+type receiptMessageOwner struct {
+	messageID     string
+	oldTurn       string
+	canonicalTurn modulecore.TurnID
+}
+
+func readReceiptOwnedMessage(ctx context.Context, db *sql.DB, owner receiptMessageOwner) (messageRow, error) {
+	if modulecore.MessageID(owner.messageID).Validate() != nil || owner.messageID == "" {
+		return messageRow{}, errors.New("message ID is not canonical")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id, speaker, meta_json FROM l1_memory_event WHERE id = ?`, owner.messageID)
+	if err != nil {
+		return messageRow{}, err
+	}
+	defer rows.Close()
+	var row messageRow
+	count := 0
+	for rows.Next() {
+		count++
+		if count > 1 {
+			return messageRow{}, errors.New("message ID has duplicate rows")
+		}
+		if err := rows.Scan(&row.id, &row.speaker, &row.oldMetaJSON); err != nil {
+			return messageRow{}, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return messageRow{}, err
+	}
+	if count != 1 {
+		return messageRow{}, errors.New("message row is missing")
+	}
+	if len(row.oldMetaJSON) > maxMessageMetaBytes {
+		return messageRow{}, errors.New("message metadata exceeds migration bound")
+	}
+	metadata, err := decodeMessageMetadata(row.oldMetaJSON, row.id, owner.oldTurn)
+	if err != nil {
+		return messageRow{}, err
+	}
+	if row.speaker != metadata.speaker {
+		return messageRow{}, errors.New("message speaker does not match metadata")
+	}
+	row.oldTurn = owner.oldTurn
+	row.canonicalTurn = owner.canonicalTurn
+	if metadata.turnID == string(owner.canonicalTurn) {
+		row.newMetaJSON = row.oldMetaJSON
+		return row, nil
+	}
+	metadata.turnID = string(owner.canonicalTurn)
+	value := map[string]string{
+		"domain": metadata.domain, "message_id": metadata.messageID, "turn_id": metadata.turnID,
+		"speaker": metadata.speaker, "from": metadata.from, "to": metadata.to,
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil || len(encoded) > maxMessageMetaBytes {
+		return messageRow{}, errors.New("rewritten message metadata exceeds migration bound")
+	}
+	row.newMetaJSON = string(encoded)
+	return row, nil
+}
+
+func decodeMessageMetadata(raw, rowID, oldTurn string) (messageMetadata, error) {
+	if strings.TrimSpace(raw) == "" || len(raw) > maxMessageMetaBytes {
+		return messageMetadata{}, errors.New("message metadata is missing or exceeds migration bound")
+	}
+	object, err := decodeStrictMessageObject(raw)
+	if err != nil {
+		return messageMetadata{}, err
+	}
+	keys := []string{"domain", "message_id", "turn_id", "speaker", "from", "to"}
+	if len(object) != len(keys) {
+		return messageMetadata{}, errors.New("message metadata must contain exactly six fields")
+	}
+	values := make(map[string]string, len(keys))
+	for _, key := range keys {
+		rawValue, ok := object[key]
+		if !ok {
+			return messageMetadata{}, fmt.Errorf("message metadata field %s is missing", key)
+		}
+		var value string
+		if err := json.Unmarshal(rawValue, &value); err != nil || value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || strings.ContainsAny(value, "\r\n\x00") || len([]rune(value)) > maxMessageMetaRunes {
+			return messageMetadata{}, fmt.Errorf("message metadata field %s is invalid", key)
+		}
+		values[key] = value
+	}
+	if values["message_id"] != rowID || modulecore.MessageID(rowID).Validate() != nil {
+		return messageMetadata{}, errors.New("message metadata message_id does not match row ID")
+	}
+	if values["turn_id"] != oldTurn {
+		return messageMetadata{}, errors.New("message metadata turn_id does not match receipt")
+	}
+	return messageMetadata{domain: values["domain"], messageID: values["message_id"], turnID: values["turn_id"], speaker: values["speaker"], from: values["from"], to: values["to"]}, nil
+}
+
+func decodeStrictMessageObject(raw string) (map[string]json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	start, err := decoder.Token()
+	if err != nil {
+		return nil, errors.New("message metadata is not a JSON object")
+	}
+	delim, ok := start.(json.Delim)
+	if !ok || delim != '{' {
+		return nil, errors.New("message metadata is not a JSON object")
+	}
+	object := make(map[string]json.RawMessage, 6)
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return nil, errors.New("message metadata object key is invalid")
+		}
+		if _, exists := object[key]; exists {
+			return nil, fmt.Errorf("message metadata field %s is duplicated", key)
+		}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, errors.New("message metadata field value is invalid")
+		}
+		object[key] = value
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') {
+		return nil, errors.New("message metadata object is incomplete")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("message metadata has trailing data")
+	}
+	return object, nil
+}
+
+func validateReceiptMessagePair(user, agent messageRow) error {
+	userMeta, err := decodeMessageMetadata(user.oldMetaJSON, user.id, user.oldTurn)
+	if err != nil {
+		return err
+	}
+	agentMeta, err := decodeMessageMetadata(agent.oldMetaJSON, agent.id, agent.oldTurn)
+	if err != nil {
+		return err
+	}
+	if userMeta.speaker != string(domconv.SpeakerUser) || userMeta.from != string(domconv.SpeakerUser) {
+		return errors.New("user message speaker shape is invalid")
+	}
+	canonicalAgent, ok := domconv.CanonicalChatAgentSpeaker(domconv.Speaker(agentMeta.speaker))
+	if !ok || canonicalAgent != domconv.Speaker(agentMeta.speaker) || agentMeta.from != agentMeta.speaker || agentMeta.to != string(domconv.SpeakerUser) {
+		return errors.New("agent message speaker shape is invalid")
+	}
+	if userMeta.to != agentMeta.speaker || userMeta.domain != agentMeta.domain {
+		return errors.New("message pair metadata is inconsistent")
+	}
+	return nil
 }
 
 func validateMigrationPlan(plan *migrationPlan) error {
@@ -1430,6 +1637,7 @@ type planFingerprint struct {
 	Recalls    []recallFingerprint  `json:"recalls"`
 	Items      []childFingerprint   `json:"items"`
 	Injections []childFingerprint   `json:"injections"`
+	Messages   []messageFingerprint `json:"messages"`
 }
 
 type receiptFingerprint struct {
@@ -1454,6 +1662,10 @@ type childFingerprint struct {
 	ID, OldTrace, NewTrace, JSON string
 }
 
+type messageFingerprint struct {
+	ID, OldMeta, NewMeta, OldTurn, CanonicalTurn string
+}
+
 func planHash(plan migrationPlan) string {
 	fingerprint := planFingerprint{
 		Receipts:   make([]receiptFingerprint, 0, len(plan.receipts)),
@@ -1461,6 +1673,7 @@ func planHash(plan migrationPlan) string {
 		Recalls:    make([]recallFingerprint, 0, len(plan.recalls)),
 		Items:      make([]childFingerprint, 0, len(plan.items)),
 		Injections: make([]childFingerprint, 0, len(plan.injections)),
+		Messages:   make([]messageFingerprint, 0, len(plan.messages)),
 	}
 	for _, row := range plan.receipts {
 		fingerprint.Receipts = append(fingerprint.Receipts, receiptFingerprint{
@@ -1485,6 +1698,9 @@ func planHash(plan migrationPlan) string {
 	}
 	for _, row := range plan.injections {
 		fingerprint.Injections = append(fingerprint.Injections, childFingerprint{ID: row.injectionID, OldTrace: row.oldTrace, NewTrace: row.newTrace, JSON: row.itemIDs})
+	}
+	for _, row := range plan.messages {
+		fingerprint.Messages = append(fingerprint.Messages, messageFingerprint{ID: row.id, OldMeta: row.oldMetaJSON, NewMeta: row.newMetaJSON, OldTurn: row.oldTurn, CanonicalTurn: string(row.canonicalTurn)})
 	}
 	encoded, err := json.Marshal(fingerprint)
 	if err != nil {
@@ -1518,6 +1734,9 @@ func applyPlan(ctx context.Context, path string, plan migrationPlan, expectedHas
 			return rollback(err)
 		}
 	}
+	if err := applyMessageMetadataUpdates(ctx, tx, plan); err != nil {
+		return rollback(err)
+	}
 	if err := verifyMigratedTransaction(ctx, tx, plan); err != nil {
 		return rollback(err)
 	}
@@ -1528,6 +1747,26 @@ func applyPlan(ctx context.Context, path string, plan migrationPlan, expectedHas
 		return err
 	}
 	return db.Close()
+}
+
+func applyMessageMetadataUpdates(ctx context.Context, tx *sql.Tx, plan migrationPlan) error {
+	for _, row := range plan.messages {
+		if row.oldMetaJSON == row.newMetaJSON {
+			continue
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET meta_json = ? WHERE id = ? AND meta_json = ?`, row.newMetaJSON, row.id, row.oldMetaJSON)
+		if err != nil {
+			return err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected != 1 {
+			return fmt.Errorf("message %q metadata update affected %d rows", row.id, affected)
+		}
+	}
+	return nil
 }
 
 var migrationTables = []string{
@@ -1960,6 +2199,9 @@ func verifyMigratedTransaction(ctx context.Context, tx *sql.Tx, plan migrationPl
 		return errors.New("migrated injection set is incomplete")
 	}
 
+	if err := verifyMessageMetadataRows(ctx, tx, plan); err != nil {
+		return err
+	}
 	if err := verifyStringSet(ctx, tx, `SELECT id FROM l1_memory_event WHERE id LIKE 'msg\_%' ESCAPE '\'`, plan.messageIDs); err != nil {
 		return err
 	}
@@ -1967,6 +2209,24 @@ func verifyMigratedTransaction(ctx context.Context, tx *sql.Tx, plan migrationPl
 		return err
 	}
 	return verifyIntegrity(ctx, tx)
+}
+
+func verifyMessageMetadataRows(ctx context.Context, tx *sql.Tx, plan migrationPlan) error {
+	seen := make(map[string]struct{}, len(plan.messages))
+	for _, row := range plan.messages {
+		var speaker, metaJSON string
+		if err := tx.QueryRowContext(ctx, `SELECT speaker, meta_json FROM l1_memory_event WHERE id = ?`, row.id).Scan(&speaker, &metaJSON); err != nil {
+			return fmt.Errorf("migrated message %q is missing: %w", row.id, err)
+		}
+		if speaker != row.speaker || metaJSON != row.newMetaJSON {
+			return fmt.Errorf("migrated message %q metadata does not match migration plan", row.id)
+		}
+		seen[row.id] = struct{}{}
+	}
+	if len(seen) != len(plan.messages) {
+		return errors.New("migrated receipt-owned message set is incomplete")
+	}
+	return nil
 }
 
 func verifyStringSet(ctx context.Context, tx *sql.Tx, query string, expected map[string]struct{}) error {
@@ -1987,11 +2247,11 @@ func verifyStringSet(ctx context.Context, tx *sql.Tx, query string, expected map
 		return err
 	}
 	if len(seen) != len(expected) {
-		return errors.New("preserved opaque identity set changed")
+		return errors.New("preserved canonical message identity set changed")
 	}
 	for value := range expected {
 		if _, ok := seen[value]; !ok {
-			return fmt.Errorf("preserved identity %q is missing", value)
+			return fmt.Errorf("preserved canonical message identity %q is missing", value)
 		}
 	}
 	return nil

@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-04T23:16:10Z",
+  "evaluated_at": "2026-09-04T23:53:03Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -153,7 +153,7 @@
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "identity/03-dci implementation revision pushed; production cutover blocked before DB mutation"
+    "worktree_state": "identity/03-dci remediation implemented and locally verified after exact rollback; commit, push, reviewed artifact build and production retry are pending"
   },
   "observations": [
     {
@@ -177,9 +177,24 @@
       "subject": "current-machine USB 2.0 cutover continuation",
       "evidence": "the live database is on /dev/sdd1 through a 480 Mbit/s USB path; /srv/rencrow/backup is a separate physical /dev/sdb1 filesystem with sufficient space; no kernel I/O error or USB reset was observed in the prior attempts; the user explicitly instructed work to continue unattended on this machine",
       "next_action": "freeze this plan, stop timers and the writer, create and hash-verify an exact recovery copy on /dev/sdb1, then run the reviewed migration dry-run and apply under the fixed progress and timeout limits"
+    },
+    {
+      "at": "2026-09-04T23:42:40Z",
+      "outcome": "canonical-e2e-failed-rolled-back",
+      "subject": "first Step06 production cutover and actual Agent EndTurn",
+      "evidence": "the exact recovery copy was established with matching source and destination SHA-256 4e03535b8eb43757c7f22622d4b1e944f9ec829d52297c07f42d531851be60b4; migration dry-run was ready and apply was applied; ad07c41 started ready as PID 2122866; RenCrow_CMD -> /viewer/send -> OPS -> actual Shiro reached the requested response but EndTurn failed closed with conversation turn invalid because 874 receipt-owned l1_memory_event metadata rows retained legacy turn_id values",
+      "recovery": "the failed post-cutover database was preserved as l1_memory.db.post-step06-failed-e2e-20260904T232945Z; the exact pre-migration database was restored and independently hash-verified; old binary 6388137b was restored as PID 2131688 with live and ready passing; resilience and storage-backup timers returned active",
+      "next_action": "extend the one-shot migration transaction and plan hash to rewrite receipt-owned L1 message metadata from the receipt Turn mapping, then repeat the bounded cutover and actual Agent E2E"
+    },
+    {
+      "at": "2026-09-04T23:53:03Z",
+      "outcome": "remediation-locally-verified",
+      "subject": "receipt-owned L1 message metadata migration",
+      "evidence": "the migration plan now strictly binds each receipt user and actual Agent canonical MessageID to one existing six-field L1 metadata row, fingerprints the exact old/new metadata, updates only turn_id in the same transaction, preserves the complete canonical msg_ identity set and leaves unowned opaque rows unchanged; targeted tests, go vet, go build and git diff --check passed",
+      "next_action": "commit and push the reviewed remediation, build hash-bound artifacts from that revision, and repeat the production dry-run/apply and actual Agent E2E"
     }
   ],
-  "phase": "precutover-authorized-usb2",
+  "phase": "remediation-rollback-ready",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
@@ -200,8 +215,8 @@
       "check_ids": [
         "s6_deterministic_migration"
       ],
-      "status": "predeploy-passed-cutover-pending",
-      "evidence": "migration package and CLI tests pass exact mapping, child relationships, duplicate unlinked Turn reuse, stale receipt rejection, WAL rejection, rollback, malformed and oversize fail-closed paths; production apply is pending"
+      "status": "remediation-tests-passed-cutover-pending",
+      "evidence": "TDD now covers exact receipt-owned user/Agent message metadata rewrite, plan-hash binding, all canonical msg_ inventory preservation, malformed/missing/mismatched pre-mutation rejection, transaction rollback and unowned opaque-row preservation; targeted tests, affected vet and build passed"
     },
     {
       "check_ids": [
@@ -214,15 +229,15 @@
       "check_ids": [
         "s6_bounded_recovery"
       ],
-      "status": "pending-retry-authorized",
-      "evidence": "the prior attempt created no DB copy and made no production mutation; retry is explicitly authorized on the current USB 2.0 machine with a separate physical recovery filesystem, a 30 minute command bound, and a 120 second no-progress/kernel-error stop rule"
+      "status": "passed",
+      "evidence": "stopped-writer source stream and independently read recovery copy both matched SHA-256 4e03535b8eb43757c7f22622d4b1e944f9ec829d52297c07f42d531851be60b4 at 2298929152 bytes; rollback restored the same hash and retained the failed post-cutover database separately"
     },
     {
       "check_ids": [
         "s6_runtime_identity"
       ],
-      "status": "pending",
-      "evidence": "new runtime remains uninstalled; the currently active old-generation service must be re-resolved immediately before stop because service PIDs are not stable evidence"
+      "status": "failed-rolled-back",
+      "evidence": "ad07c41 reached ready with the reviewed artifact but actual Agent EndTurn failed on unmigrated L1 message metadata; old 6388137b was restored ready as PID 2131688 with both timers active, and a new runtime receipt remains required"
     }
   ],
   "schema_version": "rencrow.check_plan.v1"
