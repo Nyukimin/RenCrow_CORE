@@ -23,6 +23,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // WorkerAgent はHeartbeatが作業処理を委譲するインターフェース。
@@ -145,6 +146,7 @@ func NewHeartbeatService(
 
 func newHeartbeatWorkerTask(jobID task.JobID, message, channel, chatID string) task.Task {
 	return task.NewTask(jobID, message, channel, chatID).
+		WithSessionID(string(modulecore.NewSessionID())).
 		WithRoute(routing.RouteOPS).
 		WithForcedRoute(routing.RouteOPS)
 }

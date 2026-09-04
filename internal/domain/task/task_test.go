@@ -5,6 +5,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestNewTask(t *testing.T) {
@@ -29,6 +30,19 @@ func TestNewTask(t *testing.T) {
 
 	if task.HasForcedRoute() {
 		t.Error("New task should not have forced route")
+	}
+}
+
+func TestTaskWithSessionIDPreservesCanonicalIdentitySeparatelyFromChatID(t *testing.T) {
+	original := NewTask(NewJobID(), "hello", "viewer", "viewer-user")
+	sessionID := string(modulecore.NewSessionID())
+	updated := original.WithSessionID(sessionID)
+
+	if original.SessionID() != "" {
+		t.Fatalf("original session ID mutated: %q", original.SessionID())
+	}
+	if updated.SessionID() != sessionID || updated.ChatID() != "viewer-user" {
+		t.Fatalf("updated identity = session=%q chat=%q", updated.SessionID(), updated.ChatID())
 	}
 }
 

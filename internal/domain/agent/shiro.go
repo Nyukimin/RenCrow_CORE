@@ -105,7 +105,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
 		if err == nil && s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.ChatID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.SessionID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
 				return resp, commitErr
 			}
 		}
@@ -124,7 +124,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 			return "", err
 		}
 		if s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.ChatID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.SessionID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
 				return result.Output, commitErr
 			}
 		}
@@ -134,7 +134,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	messages := dynamic
 	var recallPack *conversation.RecallPack
 	if s.conversation != nil {
-		pack, err := s.conversation.BeginTurn(ctx, t.ChatID(), t.UserMessage())
+		pack, err := s.conversation.BeginTurn(ctx, t.SessionID(), t.UserMessage())
 		if err != nil {
 			log.Printf("[Shiro] BeginTurn failed: %v", err)
 		} else if pack != nil {
@@ -144,7 +144,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		}
 	}
 	if s.lightMemory != nil {
-		messages = append(messages, s.lightMemory.RecentMessages(t.ChatID())...)
+		messages = append(messages, s.lightMemory.RecentMessages(t.SessionID())...)
 	}
 	messages = assemblePromptContext(characterPrompt, s.stableRuntimeContext, messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
@@ -158,11 +158,11 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		return "", err
 	}
 	if s.lightMemory != nil {
-		s.lightMemory.Record(t.ChatID(), t.UserMessage(), resp.Content)
+		s.lightMemory.Record(t.SessionID(), t.UserMessage(), resp.Content)
 	}
 
 	if s.conversation != nil {
-		if err := commitConversationTurn(ctx, s.conversation, t.JobID().String(), t.ChatID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, s.conversation, t.JobID().String(), t.SessionID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
 			return resp.Content, err
 		}
 	}

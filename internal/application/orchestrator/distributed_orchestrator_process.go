@@ -88,6 +88,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 
 	// 2. タスクを作成
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
+		WithSessionID(req.SessionID).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)).
 		WithAttachments(req.Attachments)
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID); err != nil {

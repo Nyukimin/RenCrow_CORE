@@ -18,6 +18,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type agentOpsExecutorStub struct {
@@ -121,6 +122,9 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if executor.calls != 1 || executor.task.UserMessage() != "状態を確認して" || executor.task.Channel() != "agent_ops" || executor.task.ChatID() != "agent-ops" || executor.task.Route() != routing.RouteOPS {
 		t.Fatalf("task=%#v calls=%d", executor.task, executor.calls)
 	}
+	if err := modulecore.SessionID(executor.task.SessionID()).Validate(); err != nil {
+		t.Fatalf("agent OPS task SessionID=%q: %v", executor.task.SessionID(), err)
+	}
 	if response["job_id"] != executor.task.JobID().String() {
 		t.Fatalf("job_id=%v task=%s", response["job_id"], executor.task.JobID())
 	}
@@ -165,6 +169,9 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 	if executor.tasks[0].JobID().String() == executor.tasks[1].JobID().String() {
 		t.Fatalf("repeated requests reused job ID=%q", executor.tasks[0].JobID())
 	}
+	if executor.tasks[0].SessionID() == executor.tasks[1].SessionID() {
+		t.Fatalf("independent requests reused SessionID=%q", executor.tasks[0].SessionID())
+	}
 	for i, ctx := range executor.ctxs {
 		scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
 		if !ok {
@@ -172,6 +179,9 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 		}
 		if scope.RequestID != requestID || scope.RequestID == executor.tasks[i].JobID().String() {
 			t.Fatalf("attempt %d scope=%#v task_job=%q", i, scope, executor.tasks[i].JobID())
+		}
+		if err := modulecore.SessionID(executor.tasks[i].SessionID()).Validate(); err != nil {
+			t.Fatalf("attempt %d task SessionID=%q: %v", i, executor.tasks[i].SessionID(), err)
 		}
 	}
 }

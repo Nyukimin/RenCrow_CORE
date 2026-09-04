@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Mock LLMProvider
@@ -662,6 +663,7 @@ func TestMioAgentChatDoesNotReinjectDegenerateAgentHistory(t *testing.T) {
 func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) {
 	var got conversation.ConversationTurnRequest
 	jobID := task.JobIDFromString("job-typed-commit")
+	sessionID := string(modulecore.NewSessionID())
 	inputPack := &conversation.RecallPack{
 		ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "prior"}},
 		MidSummaries: []conversation.ThreadSummary{{Summary: "chat summary", Roles: []string{"chat"}}, {Summary: "worker only", Roles: []string{"worker"}}},
@@ -679,7 +681,7 @@ func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) 
 		return llm.GenerateResponse{Content: "typed response"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed")
+	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed").WithSessionID(sessionID)
 	response, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -690,7 +692,7 @@ func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) 
 	if len(engine.commitRequests) != 1 {
 		t.Fatalf("typed commit calls=%d, want 1", len(engine.commitRequests))
 	}
-	if got.TurnID != jobID.String() || got.SessionID != "chat-typed" || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
+	if got.TurnID != jobID.String() || got.SessionID != sessionID || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
 		t.Fatalf("typed request identity=%#v", got)
 	}
 	if len(got.RecallTraceItems) == 0 {
@@ -699,6 +701,35 @@ func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) 
 	expectedPack := inputPack.FilterForRole("chat").WithoutPersonaSystemPrompt()
 	if !reflect.DeepEqual(got.RecallTraceItems, expectedPack.ToTraceItems()) {
 		t.Fatalf("typed trace does not match exact filtered pack: got=%#v want=%#v", got.RecallTraceItems, expectedPack.ToTraceItems())
+	}
+}
+
+func TestMioAgentChatUsesTaskSessionIDForBeginAndCommit(t *testing.T) {
+	const chatID = "viewer-user"
+	sessionID := string(modulecore.NewSessionID())
+	var beginSessionID string
+	var committedSessionID string
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(_ context.Context, gotSessionID, _ string) (*conversation.RecallPack, error) {
+			beginSessionID = gotSessionID
+			return nil, nil
+		},
+		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
+			committedSessionID = request.SessionID
+			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnCompleted}, nil
+		},
+	}
+	provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+		return llm.GenerateResponse{Content: "canonical response"}, nil
+	}}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	testTask := task.NewTask(task.NewJobID(), "hello", "viewer", chatID).WithSessionID(sessionID)
+
+	if _, err := mio.Chat(context.Background(), testTask); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if beginSessionID != sessionID || committedSessionID != sessionID {
+		t.Fatalf("conversation identity = begin=%q commit=%q, want %q (chat ID=%q)", beginSessionID, committedSessionID, sessionID, chatID)
 	}
 }
 

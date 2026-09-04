@@ -209,7 +209,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 	var recallPack *conversation.RecallPack
 	if m.conversationEngine != nil {
 		var err error
-		recallPack, err = m.conversationEngine.BeginTurn(ctx, t.ChatID(), userMessage)
+		recallPack, err = m.conversationEngine.BeginTurn(ctx, t.SessionID(), userMessage)
 		if err != nil {
 			fmt.Printf("WARN: BeginTurn failed: %v\n", err)
 		}
@@ -228,7 +228,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		}
 		m.rememberExpression(response)
 		if m.conversationEngine != nil {
-			if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, currentSpeaker, recallPack); err != nil {
+			if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, currentSpeaker, recallPack); err != nil {
 				return response, err
 			}
 		}
@@ -255,7 +255,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 		} else {
 			// Canonical atomic commit records the user and Agent messages together.
 			if m.conversationEngine != nil {
-				if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, result, currentSpeaker, recallPack); err != nil {
+				if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, result, currentSpeaker, recallPack); err != nil {
 					return result, err
 				}
 			}
@@ -384,7 +384,7 @@ func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
 
 	// Canonical atomic EndTurn commit.
 	if m.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, currentSpeaker, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, m.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, currentSpeaker, recallPack); err != nil {
 			return response, err
 		}
 	}

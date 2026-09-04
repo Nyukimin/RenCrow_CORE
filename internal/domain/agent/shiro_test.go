@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Mock ToolRunner
@@ -352,10 +353,11 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 		},
 	}
 	memory := NewLightMemory(3)
-	memory.Record("U123", "first worker task", "first worker response")
+	sessionID := string(modulecore.NewSessionID())
+	memory.Record(sessionID, "first worker task", "first worker response")
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).WithLightMemory(memory)
 
-	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "second worker task", "line", "U123")); err != nil {
+	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "second worker task", "line", "U123").WithSessionID(sessionID)); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -367,7 +369,7 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 		captured[len(captured)-1].Content != "second worker task" {
 		t.Fatalf("LightMemory messages not injected in order: %#v", captured)
 	}
-	recent := memory.RecentMessages("U123")
+	recent := memory.RecentMessages(sessionID)
 	if len(recent) != 4 || recent[3].Content != "second worker response" {
 		t.Fatalf("LightMemory did not record response: %#v", recent)
 	}

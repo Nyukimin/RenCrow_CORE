@@ -18,6 +18,7 @@ import (
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // mockWorkerAgent はテスト用のHeartbeat workerモック。
@@ -679,6 +680,12 @@ func TestTick_HeartbeatUsesShiroWorkerRoute(t *testing.T) {
 	}
 	if agent.lastTask.Route() != routing.RouteOPS || agent.lastTask.ForcedRoute() != routing.RouteOPS {
 		t.Fatalf("expected OPS route task, got route=%q forced=%q", agent.lastTask.Route(), agent.lastTask.ForcedRoute())
+	}
+	if err := modulecore.SessionID(agent.lastTask.SessionID()).Validate(); err != nil {
+		t.Fatalf("heartbeat task SessionID=%q: %v", agent.lastTask.SessionID(), err)
+	}
+	if agent.lastTask.SessionID() == agent.lastTask.ChatID() {
+		t.Fatalf("heartbeat task must keep canonical SessionID separate from ChatID: %#v", agent.lastTask)
 	}
 	if strings.Contains(agent.lastMsg, "Mio persona") {
 		t.Fatalf("Heartbeat OPS prompt must not include Mio chat persona: %q", agent.lastMsg)

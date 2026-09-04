@@ -45,12 +45,14 @@ type distMockMioAgent struct {
 	routeResponse       string // "CHAT", "OPS", etc.
 	lastChatInput       string
 	lastViewerRecipient string
+	lastTask            task.Task
 	decideCalls         int
 	chatFunc            func(ctx context.Context, t task.Task) (string, error)
 }
 
 func (m *distMockMioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decision, error) {
 	m.decideCalls++
+	m.lastTask = t
 	route := routing.RouteCHAT
 	if m.routeResponse != "" {
 		route = routeFromString(m.routeResponse)
@@ -969,6 +971,34 @@ func TestDistributedOrchestrator_AttributionGuardOnUserChat(t *testing.T) {
 	}
 	if !strings.Contains(mockMio.lastChatInput, "【ユーザー依頼】\n続きの質問") {
 		t.Fatalf("expected original user request section, got: %s", mockMio.lastChatInput)
+	}
+}
+
+func TestDistributedOrchestratorProcessMessageBuildsTaskWithCanonicalSessionID(t *testing.T) {
+	mockMio := &distMockMioAgent{chatResponse: "ok"}
+	mockRepo := &distMockSessionRepo{}
+	router := transport.NewMessageRouter()
+	defer router.Stop()
+	memory := session.NewCentralMemory()
+	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+
+	sessionID := string(modulecore.NewSessionID())
+	address, err := session.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatalf("NewChannelAddress: %v", err)
+	}
+	existing, err := session.NewCanonicalSession(modulecore.SessionID(sessionID), "2026-09-04", address, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NewCanonicalSession: %v", err)
+	}
+	mockRepo.sessions = map[string]*session.Session{sessionID: existing}
+	if _, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		SessionID: sessionID, Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
+	}); err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+	if mockMio.lastTask.SessionID() != sessionID || mockMio.lastTask.ChatID() != "viewer-user" {
+		t.Fatalf("distributed task identity = session=%q chat=%q", mockMio.lastTask.SessionID(), mockMio.lastTask.ChatID())
 	}
 }
 

@@ -3,12 +3,31 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
+
+func TestAgentConversationMemoryDoesNotUseTaskChatID(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	for _, name := range []string{"mio.go", "shiro.go", "wild.go", "heavy.go"} {
+		data, err := os.ReadFile(filepath.Join(filepath.Dir(testFile), name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.Contains(string(data), "t.ChatID()") {
+			t.Fatalf("%s passes Task.ChatID to a conversation-memory path", name)
+		}
+	}
+}
 
 func TestSanitizeRecallPackForGenerationRejectsDegenerateAgentExamplesOnly(t *testing.T) {
 	pack := &conversation.RecallPack{ShortContext: []conversation.Message{

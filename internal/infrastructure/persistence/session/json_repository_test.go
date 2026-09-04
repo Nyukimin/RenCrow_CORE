@@ -231,6 +231,10 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 	if loaded.HistoryCount() != 1 {
 		t.Errorf("Expected 1 task in history, got %d", loaded.HistoryCount())
 	}
+	history := loaded.GetHistory()
+	if len(history) != 1 || history[0].SessionID() != sess.ID() {
+		t.Fatalf("loaded task SessionID=%q, want canonical session %q", history[0].SessionID(), sess.ID())
+	}
 
 	value, ok := loaded.GetMemory("key1")
 	if !ok {

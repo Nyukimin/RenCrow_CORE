@@ -1670,6 +1670,14 @@ Test:
 - **Lesson / Invariant:** rollback preflightはL1／Archive／Topicだけ既存のregular-file／mode／SQLite sidecar／path／overlap検査後の観測hashを内部保持し、そのactive bytesを既存candidate pathへ退避する。config／runtimeは引き続きcutover receiptのnew hashへ完全一致し、old rollback artifactはold hashへ完全一致する。postcheckはmutable candidateを観測hash、immutable candidateをnew hash、全targetをold hashで検査する。
 - **Enforcement / Tests:** `isMutableRollbackRole`、`prepareExplicitRollbackState`、`postcheckExplicitRollback`と`TestPrepareExplicitRollbackAcceptsMutableDriftAndPreservesDisplacedActive`、config／runtime drift rejection testsで強制する。swapは既存`rollbackCutoverSwaps`だけを使い、receipt schema、route、manual file moveを変更しない。
 
+#### Step 05 Failure Knowledge: TaskのChatIDをcanonical SessionIDへ誤用した会話commit
+
+- **Failure:** Viewer requestのcanonical `SessionID`とexternal `ChatID`が別identityなのに、TaskへSessionIDを保持せず、Agentの会話BeginTurn／CommitConversationTurn／LightMemoryへChatIDを渡した。
+- **Problem:** Mio等の会話commitがcanonical session validationで拒否され、正規Viewer routeが応答後のconversation persistenceへ到達できなかった。
+- **Cause:** Taskはexternal transport addressの`ChatID`だけを保持し、CORE conversation ownerのSessionIDをtask builder、distributed attribution再構成、Agent memory pathへ伝播していなかった。
+- **Lesson / Invariant:** Taskは`WithSessionID`／`SessionID`でcanonical SessionIDを保持し、local／distributed builderとattributionが保存する。Agent conversationとLightMemoryはSessionIDだけを使い、ChatIDはexternal routing／events用に残す。SessionIDからChatIDへのfallbackは禁止する。
+- **Enforcement / Tests:** 四Agent sourceの`t.ChatID()`不使用guard、Task／builder／distributed／attribution tests、Mioのcanonical SessionID begin／commit regression、OPS／heartbeat／repair／JSON historyのconstructor testsで強制する。
+
 ---
 
 ### Step 06: TurnIDとMessageID

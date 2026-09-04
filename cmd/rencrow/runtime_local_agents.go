@@ -144,7 +144,8 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 	if err != nil {
 		jobID = task.NewJobID()
 	}
-	t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID)
+	t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID).
+		WithSessionID(msg.SessionID)
 	log.Printf("[LocalWorker] shiro execute start agent=%s job=%s", agentName, msg.JobID)
 	result, err := shiroAgent.Execute(context.Background(), t)
 	if err != nil {

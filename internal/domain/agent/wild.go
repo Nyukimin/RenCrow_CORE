@@ -84,7 +84,7 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 		}
 		response := result.FormatForUser()
 		if w.conversationEngine != nil {
-			if commitErr := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerMidori, nil); commitErr != nil {
 				return response, commitErr
 			}
 		}
@@ -93,7 +93,7 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
 	if w.conversationEngine != nil {
-		pack, err := w.conversationEngine.BeginTurn(ctx, t.ChatID(), userMessage)
+		pack, err := w.conversationEngine.BeginTurn(ctx, t.SessionID(), userMessage)
 		if err != nil {
 			log.Printf("[Wild] BeginTurn failed: %v", err)
 		} else if pack != nil {
@@ -108,7 +108,7 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 			onToken(response)
 		}
 		if w.conversationEngine != nil {
-			if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
+			if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
 				return response, err
 			}
 		}
@@ -132,7 +132,7 @@ func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
 	response := strings.TrimSpace(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if w.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, w.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
 			return response, err
 		}
 	}

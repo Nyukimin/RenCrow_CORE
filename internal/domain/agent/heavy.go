@@ -44,7 +44,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
 	if h.conversationEngine != nil {
-		pack, err := h.conversationEngine.BeginTurn(ctx, t.ChatID(), userMessage)
+		pack, err := h.conversationEngine.BeginTurn(ctx, t.SessionID(), userMessage)
 		if err != nil {
 			log.Printf("[Heavy] BeginTurn failed: %v", err)
 		} else if pack != nil {
@@ -59,7 +59,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 			onToken(response)
 		}
 		if h.conversationEngine != nil {
-			if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+			if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
 				return response, err
 			}
 		}
@@ -78,7 +78,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 	response := strings.TrimSpace(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if h.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.ChatID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
 			return response, err
 		}
 	}

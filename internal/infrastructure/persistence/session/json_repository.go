@@ -311,7 +311,8 @@ func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, erro
 	history := make([]task.Task, 0, len(dto.History))
 	for _, taskDTO := range dto.History {
 		jobID := task.JobIDFromString(taskDTO.JobID)
-		t := task.NewTask(jobID, taskDTO.UserMessage, taskDTO.Channel, taskDTO.ChatID)
+		t := task.NewTask(jobID, taskDTO.UserMessage, taskDTO.Channel, taskDTO.ChatID).
+			WithSessionID(dto.ID)
 		if taskDTO.ForcedRoute != "" {
 			t = t.WithForcedRoute(routing.Route(taskDTO.ForcedRoute))
 		}

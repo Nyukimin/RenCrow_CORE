@@ -35,6 +35,7 @@ func resolveProcessMessageJobID(raw string) task.JobID {
 
 func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.JobID) (task.Task, task.JobID, string) {
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
+		WithSessionID(req.SessionID).
 		WithAttachments(req.Attachments).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To))
 	if len(req.Attachments) > 0 {

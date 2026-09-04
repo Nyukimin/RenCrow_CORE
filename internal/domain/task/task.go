@@ -11,6 +11,7 @@ type Task struct {
 	userMessage string
 	channel     string
 	chatID      string
+	sessionID   string
 	attachments []attachment.Attachment
 	recipient   string
 	forcedRoute routing.Route // 明示的なルート指定（オプション）
@@ -49,6 +50,11 @@ func (t Task) ChatID() string {
 	return t.chatID
 }
 
+// SessionID はCORE正本の会話セッションIDを返す。
+func (t Task) SessionID() string {
+	return t.sessionID
+}
+
 // Attachments はユーザー入力に添付されたファイルを返す。
 func (t Task) Attachments() []attachment.Attachment {
 	return append([]attachment.Attachment(nil), t.attachments...)
@@ -84,6 +90,12 @@ func (t Task) WithRoute(route routing.Route) Task {
 // WithUserMessage returns a new task with the updated user message.
 func (t Task) WithUserMessage(message string) Task {
 	t.userMessage = message
+	return t
+}
+
+// WithSessionID はCORE正本の会話セッションIDを設定した新しいTaskを返す。
+func (t Task) WithSessionID(sessionID string) Task {
+	t.sessionID = sessionID
 	return t
 }
 

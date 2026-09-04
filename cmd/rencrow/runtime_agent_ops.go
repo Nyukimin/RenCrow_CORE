@@ -22,6 +22,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -267,7 +268,9 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobID := task.NewJobID()
-	opsTask := task.NewTask(jobID, request.Message, agentOpsTaskChannel, agentOpsTaskChatID).WithRoute(routing.RouteOPS)
+	opsTask := task.NewTask(jobID, request.Message, agentOpsTaskChannel, agentOpsTaskChatID).
+		WithSessionID(string(modulecore.NewSessionID())).
+		WithRoute(routing.RouteOPS)
 	output, err := h.executor.Execute(shiroContext, opsTask)
 	if err != nil || strings.TrimSpace(output) == "" {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")

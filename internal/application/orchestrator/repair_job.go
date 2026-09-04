@@ -96,7 +96,9 @@ func repairTargetRoute(target string) routing.Route {
 }
 
 func repairTask(req ProcessRepairRequest, route routing.Route) task.Task {
-	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").WithRoute(route)
+	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").
+		WithSessionID(req.SessionID).
+		WithRoute(route)
 }
 
 func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {

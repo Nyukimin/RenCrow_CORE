@@ -47,6 +47,9 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 	if tk.JobID().String() != jobID.String() {
 		t.Fatalf("expected task and returned job ID to match: task=%s returned=%s", tk.JobID(), jobID)
 	}
+	if tk.SessionID() != "sess-1" || tk.ChatID() != "U123" {
+		t.Fatalf("task identity = session=%q chat=%q", tk.SessionID(), tk.ChatID())
+	}
 	if len(tk.Attachments()) != 1 {
 		t.Fatalf("expected attachment to be copied to task, got %d", len(tk.Attachments()))
 	}

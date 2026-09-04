@@ -8,19 +8,22 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase23DistributedAttributionGuardPreservesTaskMetadata(t *testing.T) {
+	sessionID := string(modulecore.NewSessionID())
 	memory := session.NewCentralMemory()
-	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "sess-1", "job-0", "前の発言"))
+	memory.RecordMessage(domaintransport.NewMessage("mio", "user", sessionID, "job-0", "前の発言"))
 	guard := newDistributedAttributionGuard(memory)
 	jobID := task.NewJobID()
-	original := task.NewTask(jobID, "続き", "line", "U123").
+	original := task.NewTask(jobID, "続き", "viewer", "viewer-user").
+		WithSessionID(sessionID).
 		WithForcedRoute(routing.RoutePLAN).
 		WithRoute(routing.RoutePLAN)
 
-	got := guard.Apply(original, "mio", "sess-1")
-	if got.JobID() != jobID || got.Channel() != "line" || got.ChatID() != "U123" {
+	got := guard.Apply(original, "mio", sessionID)
+	if got.JobID() != jobID || got.Channel() != "viewer" || got.ChatID() != "viewer-user" || got.SessionID() != sessionID {
 		t.Fatalf("task metadata changed: %#v", got)
 	}
 	if !got.HasForcedRoute() || got.ForcedRoute() != routing.RoutePLAN || got.Route() != routing.RoutePLAN {
