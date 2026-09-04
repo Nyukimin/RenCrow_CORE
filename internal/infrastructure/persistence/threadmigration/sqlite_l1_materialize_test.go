@@ -3,6 +3,7 @@ package threadmigration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -92,6 +93,78 @@ func TestMaterializeL1SQLiteRebuildsCanonicalIdentityOnDisposableClone(t *testin
 	}
 	if stageCount != 0 {
 		t.Fatalf("stage objects remain: %d", stageCount)
+	}
+}
+
+func TestMaterializeL1SQLiteCanonicalizesLegacyTurnSessionInSQLAndJSON(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	const legacySession = "viewer-user"
+
+	var resultJSON string
+	if err := fixture.l1.QueryRow(`SELECT result_json FROM conversation_turn_receipt WHERE turn_id = ?`, fixture.turnID).Scan(&resultJSON); err != nil {
+		t.Fatal(err)
+	}
+	resultJSON = strings.Replace(resultJSON, fixture.turnSession, legacySession, 1)
+	if _, err := fixture.l1.Exec(`UPDATE conversation_turn_receipt SET session_id = ?, result_json = ? WHERE turn_id = ?`, legacySession, resultJSON, fixture.turnID); err != nil {
+		t.Fatal(err)
+	}
+
+	var payloadJSON string
+	if err := fixture.l1.QueryRow(`SELECT payload_json FROM conversation_turn_outbox WHERE turn_id = ?`, fixture.turnID).Scan(&payloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	payloadJSON = strings.Replace(payloadJSON, fixture.turnSession, legacySession, 1)
+	if _, err := fixture.l1.Exec(`UPDATE conversation_turn_outbox SET session_id = ?, payload_json = ? WHERE turn_id = ?`, legacySession, payloadJSON, fixture.turnID); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := openInventoryTestDB(t, "file:threadmigration_materialize_legacy_turn_session_destination?mode=memory&cache=shared")
+	createLegacyL1Schema(t, destination)
+	cloneLegacyL1Rows(t, fixture.l1, destination)
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() rejected legacy turn session: %v", err)
+	}
+	if _, err := MaterializeL1SQLite(context.Background(), L1SQLiteMaterializationInput{Source: fixture.l1, Destination: destination, Inventory: result}); err != nil {
+		t.Fatalf("MaterializeL1SQLite() error = %v", err)
+	}
+
+	wantSession, err := canonicalGenericSessionID(legacySession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receiptSession, receiptSessionType, canonicalResultJSON string
+	if err := destination.QueryRow(`SELECT session_id, typeof(session_id), result_json FROM conversation_turn_receipt WHERE turn_id = ?`, fixture.turnID).Scan(&receiptSession, &receiptSessionType, &canonicalResultJSON); err != nil {
+		t.Fatal(err)
+	}
+	if receiptSession != wantSession || receiptSessionType != "text" {
+		t.Fatalf("materialized receipt session = %q (%s), want %q (text)", receiptSession, receiptSessionType, wantSession)
+	}
+	var canonicalResult struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(canonicalResultJSON), &canonicalResult); err != nil {
+		t.Fatal(err)
+	}
+	if canonicalResult.SessionID != wantSession {
+		t.Fatalf("materialized receipt JSON session = %q, want %q", canonicalResult.SessionID, wantSession)
+	}
+
+	var outboxSession, outboxSessionType, canonicalPayloadJSON string
+	if err := destination.QueryRow(`SELECT session_id, typeof(session_id), payload_json FROM conversation_turn_outbox WHERE turn_id = ? AND target = ?`, fixture.turnID, "redis_projection").Scan(&outboxSession, &outboxSessionType, &canonicalPayloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	if outboxSession != wantSession || outboxSessionType != "text" {
+		t.Fatalf("materialized outbox session = %q (%s), want %q (text)", outboxSession, outboxSessionType, wantSession)
+	}
+	var canonicalPayload struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(canonicalPayloadJSON), &canonicalPayload); err != nil {
+		t.Fatal(err)
+	}
+	if canonicalPayload.SessionID != wantSession {
+		t.Fatalf("materialized outbox JSON session = %q, want %q", canonicalPayload.SessionID, wantSession)
 	}
 }
 

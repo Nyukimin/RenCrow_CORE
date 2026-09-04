@@ -20,8 +20,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -932,9 +930,6 @@ ORDER BY turn_id ASC`)
 		if err := builder.contextAndIdentity(turnReceiptSurface, row.turnID, row.sessionID, row.threadID, threadType, false); err != nil {
 			return err
 		}
-		if err := validateCanonicalSessionForTurn(row.sessionID); err != nil {
-			return fmt.Errorf("legacy %s row %q: %w", turnReceiptSurface, row.turnID, err)
-		}
 		if row.turnID == "" || row.traceID == "" || row.traceID != row.turnID || row.userMessage == "" || row.agentMessage == "" || !validTurnStatus(row.status) {
 			return fmt.Errorf("legacy %s row %q has an invalid required field", turnReceiptSurface, row.turnID)
 		}
@@ -1005,9 +1000,6 @@ ORDER BY turn_id ASC, target ASC`)
 		}
 		if err := builder.contextAndIdentity(turnOutboxSurface, outboxRecordKey(turnID, target), sessionID, threadID, threadType, false); err != nil {
 			return err
-		}
-		if err := validateCanonicalSessionForTurn(sessionID); err != nil {
-			return fmt.Errorf("legacy %s row %q/%q: %w", turnOutboxSurface, turnID, target, err)
 		}
 		if !validOutboxTarget(target) || !validOutboxStatus(status) || attempts < 0 || !validOutboxLastError(lastError) {
 			return fmt.Errorf("legacy %s row %q/%q has invalid status, target, attempts, or last_error", turnOutboxSurface, turnID, target)
@@ -1667,26 +1659,6 @@ func contextError(ctx context.Context) error {
 func closedThreadKey(base string) string { return base + "\x00" + closedThreadRecordSuffix }
 
 func outboxRecordKey(turnID, target string) string { return turnID + "\x00" + target }
-
-func validateCanonicalSessionForTurn(sessionID string) error {
-	if strings.TrimSpace(sessionID) == "" {
-		return errors.New("session_id is required")
-	}
-	// Avoid importing a persistence owner: the canonical ID validator is the
-	// module identity owner and accepts UUIDv5 migration IDs as well as UUIDv7.
-	if err := validateCanonicalSessionID(sessionID); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateCanonicalSessionID(value string) error {
-	// The core identity package is the only owner of the canonical ID grammar.
-	if err := modulecore.SessionID(value).Validate(); err != nil {
-		return fmt.Errorf("session_id %q is not canonical: %w", value, err)
-	}
-	return nil
-}
 
 func validatePayloadHash(value string) error {
 	if err := validateSHA256Hex(value, "payload SHA256"); err != nil {

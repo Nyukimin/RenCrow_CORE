@@ -384,6 +384,53 @@ func TestInventorySQLiteConvergesGenericAndChatGPTAcrossEveryLegacySurface(t *te
 	}
 }
 
+func TestInventorySQLiteAcceptsLegacyTurnSessionsAndCanonicalizesPlan(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	const legacySession = "viewer-user"
+
+	var resultJSON string
+	if err := fixture.l1.QueryRow(`SELECT result_json FROM conversation_turn_receipt WHERE turn_id = ?`, fixture.turnID).Scan(&resultJSON); err != nil {
+		t.Fatal(err)
+	}
+	resultJSON = strings.Replace(resultJSON, fixture.turnSession, legacySession, 1)
+	execInventory(t, fixture.l1, `UPDATE conversation_turn_receipt SET session_id = ?, result_json = ? WHERE turn_id = ?`, legacySession, resultJSON, fixture.turnID)
+
+	var payloadJSON string
+	if err := fixture.l1.QueryRow(`SELECT payload_json FROM conversation_turn_outbox WHERE turn_id = ?`, fixture.turnID).Scan(&payloadJSON); err != nil {
+		t.Fatal(err)
+	}
+	payloadJSON = strings.Replace(payloadJSON, fixture.turnSession, legacySession, 1)
+	execInventory(t, fixture.l1, `UPDATE conversation_turn_outbox SET session_id = ?, payload_json = ? WHERE turn_id = ?`, legacySession, payloadJSON, fixture.turnID)
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() rejected legacy turn session: %v", err)
+	}
+	canonicalSession, err := canonicalGenericSessionID(legacySession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mapping, found := result.Plan.LookupGeneric(canonicalSession, 9)
+	if !found {
+		t.Fatalf("legacy turn session did not produce generic mapping: %+v", result.Plan.Generic)
+	}
+	for _, source := range []struct {
+		surface string
+		key     string
+	}{
+		{turnReceiptSurface, fixture.turnID},
+		{turnOutboxSurface, outboxRecordKey(fixture.turnID, "redis_projection")},
+	} {
+		got, ok := result.Plan.LookupBySource(source.surface, source.key)
+		if !ok || got.SessionID != modulecore.SessionID(canonicalSession) || got.ThreadID != mapping.ThreadID || got.ThreadSeq != mapping.ThreadSeq {
+			t.Fatalf("legacy turn source %s/%s = %+v, found=%v; want canonical mapping %+v", source.surface, source.key, got, ok, mapping)
+		}
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("legacy turn inventory Validate() error = %v", err)
+	}
+}
+
 func TestInventorySQLitePreservesTerminalProfilePromotionOrphans(t *testing.T) {
 	fixture := newSQLiteInventoryFixture(t)
 	execInventory(t, fixture.l1, `INSERT INTO l1_profile_promotion_job (evidence_event_id, session_id, thread_id, state, attempt_count, lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -584,6 +631,12 @@ func TestInventorySQLiteRejectsLegacyRowContractViolations(t *testing.T) {
 		}},
 		{name: "turn outbox identity mismatch", mutate: func(f sqliteInventoryFixture) {
 			execInventory(t, f.l1, `UPDATE conversation_turn_outbox SET thread_id = 10 WHERE turn_id = ?`, f.turnID)
+		}},
+		{name: "turn receipt empty session", mutate: func(f sqliteInventoryFixture) {
+			execInventory(t, f.l1, `UPDATE conversation_turn_receipt SET session_id = '' WHERE turn_id = ?`, f.turnID)
+		}},
+		{name: "turn outbox empty session", mutate: func(f sqliteInventoryFixture) {
+			execInventory(t, f.l1, `UPDATE conversation_turn_outbox SET session_id = '' WHERE turn_id = ?`, f.turnID)
 		}},
 		{name: "turn receipt trace mismatch", mutate: func(f sqliteInventoryFixture) {
 			execInventory(t, f.l1, `UPDATE conversation_turn_receipt SET trace_id = 'different-trace' WHERE turn_id = ?`, f.turnID)

@@ -1611,6 +1611,23 @@ Test:
 - **Tests:** completed／failed orphanのcount・generic／ChatGPT mapping・materialization、pending orphan拒否、
   preserved countの範囲／surface制約とreceipt改ざんを検査する。
 
+#### Step 05 Failure Knowledge: legacy turn receipt/outbox SessionIDをcanonical inputと誤認した
+
+- **Failure:** productionの`conversation_turn_receipt`／`conversation_turn_outbox`に残る`viewer-user`や
+  `agent-ops`などのlegacy `session_id`を、inventoryの入力段階でcanonical `ses_<UUID>`でなければ拒否した。
+- **Problem:** 既存の決定的な`canonicalGenericSessionID`／UUIDv5 migration routeへ到達する前にStep 05が停止し、
+  SQLと埋込みJSONのidentityが整合しているlegacy turnをmaterializeできなかった。
+- **Cause:** legacy入力のpresence／cross-row equality検証と、migration後に要求されるcanonical出力検証を同じ
+  preconditionとして扱った。
+- **Lesson:** inventoryは非空のlegacy session文字列をbyte-exactに保持してSQL／embedded identityの一致だけを
+  検証し、plan normalizationとmaterializerの出力境界でのみcanonical `SessionID`へ変換・検証する。
+- **Invariant:** empty／whitespace session、SQL／embedded／receipt間のtuple mismatch、numericまたは不正JSONは
+  fail closedのまま、非空legacy sessionは`session_files.id`をsourceにした同一UUIDv5 migration IDへ収束する。
+- **Enforcement:** `contextAndIdentity`のpresence／SQLite integer gate、receipt／outboxの厳密なSQL／JSON equality、
+  `canonicalGenericSessionID`、canonical SQL／JSON materialization auditを分離して強制する。
+- **Tests:** `viewer-user`等のlegacy receipt／outbox受理、planのcanonical mapping、materialized SQL／embedded JSONの
+  exact SessionID、empty／mismatch／numeric／JSON violationの拒否を検査する。
+
 ---
 
 ### Step 06: TurnIDとMessageID
