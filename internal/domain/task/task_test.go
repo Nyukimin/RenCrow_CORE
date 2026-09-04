@@ -33,6 +33,73 @@ func TestNewTask(t *testing.T) {
 	}
 }
 
+func TestNewTaskGeneratesIndependentConversationIdentity(t *testing.T) {
+	task := NewTask(NewJobID(), "Hello", "line", "U123")
+	identities := []struct {
+		name     string
+		raw      string
+		validate func() error
+	}{
+		{name: "TurnID", raw: string(task.TurnID()), validate: task.TurnID().Validate},
+		{name: "TraceID", raw: string(task.TraceID()), validate: task.TraceID().Validate},
+		{name: "RootTaskID", raw: string(task.RootTaskID()), validate: task.RootTaskID().Validate},
+		{name: "UserMessageID", raw: string(task.UserMessageID()), validate: task.UserMessageID().Validate},
+		{name: "AgentMessageID", raw: string(task.AgentMessageID()), validate: task.AgentMessageID().Validate},
+	}
+	seen := make(map[string]string, len(identities))
+	for _, identity := range identities {
+		if err := identity.validate(); err != nil {
+			t.Errorf("%s=%q is not canonical: %v", identity.name, identity.raw, err)
+		}
+		if previous, duplicate := seen[identity.raw]; duplicate {
+			t.Errorf("%s aliases %s with %q", identity.name, previous, identity.raw)
+		}
+		seen[identity.raw] = identity.name
+	}
+}
+
+func TestTaskWithConversationIdentityIsImmutableAndExact(t *testing.T) {
+	original := NewTask(NewJobID(), "hello", "viewer", "viewer-user")
+	originalIdentity := []string{
+		string(original.TurnID()),
+		string(original.TraceID()),
+		string(original.RootTaskID()),
+		string(original.UserMessageID()),
+		string(original.AgentMessageID()),
+	}
+	turnID := modulecore.NewTurnID()
+	traceID := modulecore.NewTraceID()
+	rootTaskID := modulecore.NewTaskID()
+	userMessageID := modulecore.NewMessageID()
+	agentMessageID := modulecore.NewMessageID()
+	updated := original.WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
+
+	if got := []string{
+		string(original.TurnID()),
+		string(original.TraceID()),
+		string(original.RootTaskID()),
+		string(original.UserMessageID()),
+		string(original.AgentMessageID()),
+	}; !equalStrings(got, originalIdentity) {
+		t.Fatalf("original identity mutated: got=%v want=%v", got, originalIdentity)
+	}
+	if updated.TurnID() != turnID || updated.TraceID() != traceID || updated.RootTaskID() != rootTaskID || updated.UserMessageID() != userMessageID || updated.AgentMessageID() != agentMessageID {
+		t.Fatalf("updated identity did not preserve exact overrides: %#v", updated)
+	}
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestTaskWithSessionIDPreservesCanonicalIdentitySeparatelyFromChatID(t *testing.T) {
 	original := NewTask(NewJobID(), "hello", "viewer", "viewer-user")
 	sessionID := string(modulecore.NewSessionID())

@@ -12,8 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
-
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -95,10 +93,14 @@ const (
 	ConversationTurnOutboxFailed    ConversationTurnOutboxStatus = "failed"
 )
 
-// ConversationTurnRequest is the one canonical EndTurn input shape. TurnID
-// is the root job and trace identity; no caller-provided message IDs exist.
+// ConversationTurnRequest is the one canonical EndTurn input shape. Every
+// identity is assigned once by the CORE ingress boundary and remains distinct.
 type ConversationTurnRequest struct {
-	TurnID           string
+	TurnID           modulecore.TurnID
+	TraceID          modulecore.TraceID
+	RootTaskID       modulecore.TaskID
+	UserMessageID    modulecore.MessageID
+	AgentMessageID   modulecore.MessageID
 	SessionID        string
 	OwnerID          string
 	Domain           string
@@ -112,8 +114,9 @@ type ConversationTurnRequest struct {
 }
 
 type ConversationTurnResult struct {
-	TurnID           string                    `json:"turn_id"`
-	TraceID          string                    `json:"trace_id"`
+	TurnID           modulecore.TurnID         `json:"turn_id"`
+	TraceID          modulecore.TraceID        `json:"trace_id"`
+	RootTaskID       modulecore.TaskID         `json:"root_task_id"`
 	SessionID        string                    `json:"session_id"`
 	ThreadID         modulecore.ThreadID       `json:"thread_id"`
 	ThreadSeq        ThreadSeq                 `json:"thread_seq"`
@@ -121,8 +124,8 @@ type ConversationTurnResult struct {
 	ClosedThreadID   modulecore.ThreadID       `json:"closed_thread_id,omitempty"`
 	ClosedThreadSeq  ThreadSeq                 `json:"closed_thread_seq,omitempty"`
 	ClosedThreadKind ThreadKind                `json:"closed_thread_kind,omitempty"`
-	UserMessageID    string                    `json:"user_message_id"`
-	AgentMessageID   string                    `json:"agent_message_id"`
+	UserMessageID    modulecore.MessageID      `json:"user_message_id"`
+	AgentMessageID   modulecore.MessageID      `json:"agent_message_id"`
 	MessageIDs       []string                  `json:"message_ids"`
 	PayloadSHA256    string                    `json:"payload_sha256"`
 	Status           ConversationTurnStatus    `json:"status"`
@@ -134,7 +137,9 @@ type ConversationTurnResult struct {
 }
 
 type ConversationTurnOutbox struct {
-	TurnID           string                       `json:"turn_id"`
+	TurnID           modulecore.TurnID            `json:"turn_id"`
+	TraceID          modulecore.TraceID           `json:"trace_id"`
+	RootTaskID       modulecore.TaskID            `json:"root_task_id"`
 	Target           string                       `json:"target"`
 	SessionID        string                       `json:"session_id"`
 	ThreadID         modulecore.ThreadID          `json:"thread_id"`
@@ -155,9 +160,48 @@ type ConversationTurnOutbox struct {
 }
 
 func NormalizeConversationTurnRequest(request ConversationTurnRequest) (ConversationTurnRequest, error) {
-	turnID, err := boundedRequired(request.TurnID, ConversationTurnMaxIDRunes, "turn_id")
+	turnID, err := boundedRequired(string(request.TurnID), ConversationTurnMaxIDRunes, "turn_id")
 	if err != nil {
 		return ConversationTurnRequest{}, err
+	}
+	canonicalTurnID := modulecore.TurnID(turnID)
+	if canonicalTurnID.Validate() != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("turn_id is not canonical")
+	}
+	traceID, err := boundedRequired(string(request.TraceID), ConversationTurnMaxIDRunes, "trace_id")
+	if err != nil {
+		return ConversationTurnRequest{}, err
+	}
+	canonicalTraceID := modulecore.TraceID(traceID)
+	if canonicalTraceID.Validate() != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("trace_id is not canonical")
+	}
+	rootTaskID, err := boundedRequired(string(request.RootTaskID), ConversationTurnMaxIDRunes, "root_task_id")
+	if err != nil {
+		return ConversationTurnRequest{}, err
+	}
+	canonicalRootTaskID := modulecore.TaskID(rootTaskID)
+	if canonicalRootTaskID.Validate() != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("root_task_id is not canonical")
+	}
+	userMessageID, err := boundedRequired(string(request.UserMessageID), ConversationTurnMaxIDRunes, "user_message_id")
+	if err != nil {
+		return ConversationTurnRequest{}, err
+	}
+	canonicalUserMessageID := modulecore.MessageID(userMessageID)
+	if canonicalUserMessageID.Validate() != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("user_message_id is not canonical")
+	}
+	agentMessageID, err := boundedRequired(string(request.AgentMessageID), ConversationTurnMaxIDRunes, "agent_message_id")
+	if err != nil {
+		return ConversationTurnRequest{}, err
+	}
+	canonicalAgentMessageID := modulecore.MessageID(agentMessageID)
+	if canonicalAgentMessageID.Validate() != nil {
+		return ConversationTurnRequest{}, invalidConversationTurn("agent_message_id is not canonical")
+	}
+	if canonicalUserMessageID == canonicalAgentMessageID {
+		return ConversationTurnRequest{}, invalidConversationTurn("user and agent message IDs must differ")
 	}
 	sessionID, err := boundedRequired(request.SessionID, ConversationTurnMaxIDRunes, "session_id")
 	if err != nil {
@@ -218,7 +262,9 @@ func NormalizeConversationTurnRequest(request ConversationTurnRequest) (Conversa
 		return ConversationTurnRequest{}, invalidConversationTurn("boundary_reason requires boundary")
 	}
 	return ConversationTurnRequest{
-		TurnID: turnID, SessionID: sessionID, OwnerID: ownerID, Domain: domain,
+		TurnID: canonicalTurnID, TraceID: canonicalTraceID, RootTaskID: canonicalRootTaskID,
+		UserMessageID: canonicalUserMessageID, AgentMessageID: canonicalAgentMessageID,
+		SessionID: sessionID, OwnerID: ownerID, Domain: domain,
 		UserMessage: request.UserMessage, AgentMessage: request.AgentMessage, AgentSpeaker: request.AgentSpeaker,
 		RecallTraceItems: items, Boundary: request.Boundary, BoundaryReason: reason, Targets: targets,
 	}, nil
@@ -275,6 +321,10 @@ func CanonicalConversationTurnPayload(request ConversationTurnRequest) ([]byte, 
 	}
 	canonical := struct {
 		Version        string               `json:"version"`
+		TraceID        modulecore.TraceID   `json:"trace_id"`
+		RootTaskID     modulecore.TaskID    `json:"root_task_id"`
+		UserMessageID  modulecore.MessageID `json:"user_message_id"`
+		AgentMessageID modulecore.MessageID `json:"agent_message_id"`
 		SessionID      string               `json:"session_id"`
 		OwnerID        string               `json:"owner_id"`
 		Domain         string               `json:"domain"`
@@ -285,7 +335,9 @@ func CanonicalConversationTurnPayload(request ConversationTurnRequest) ([]byte, 
 		BoundaryReason string               `json:"boundary_reason"`
 		Targets        []string             `json:"requested_targets"`
 	}{
-		Version: ConversationTurnCanonicalVersion, SessionID: normalized.SessionID, OwnerID: normalized.OwnerID,
+		Version: ConversationTurnCanonicalVersion, TraceID: normalized.TraceID, RootTaskID: normalized.RootTaskID,
+		UserMessageID: normalized.UserMessageID, AgentMessageID: normalized.AgentMessageID,
+		SessionID: normalized.SessionID, OwnerID: normalized.OwnerID,
 		Domain: normalized.Domain, AgentSpeaker: string(normalized.AgentSpeaker),
 		Messages:    []canonicalMessage{{Speaker: string(SpeakerUser), Text: normalized.UserMessage}, {Speaker: string(normalized.AgentSpeaker), Text: normalized.AgentMessage}},
 		RecallItems: items, Boundary: normalized.Boundary, BoundaryReason: normalized.BoundaryReason,
@@ -309,21 +361,6 @@ func (request ConversationTurnRequest) CanonicalPayload() ([]byte, error) {
 
 func (request ConversationTurnRequest) PayloadSHA256() (string, error) {
 	return ConversationTurnPayloadSHA256(request)
-}
-
-func ConversationTurnMessageIDs(turnID string) (userID, agentID string, err error) {
-	turnID, err = boundedRequired(turnID, ConversationTurnMaxIDRunes, "turn_id")
-	if err != nil {
-		return "", "", err
-	}
-	derive := func(label string) string {
-		digest := sha256.Sum256([]byte("rencrow.conversation-turn.message.v1\x00" + turnID + "\x00" + label))
-		value := uuid.UUID(digest[:16])
-		value[6] = (value[6] & 0x0f) | 0x50
-		value[8] = (value[8] & 0x3f) | 0x80
-		return "msg_" + value.String()
-	}
-	return derive("user"), derive("agent"), nil
 }
 
 func normalizeConversationTurnTargets(values []ConversationTurnTarget) ([]ConversationTurnTarget, error) {

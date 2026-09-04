@@ -172,10 +172,9 @@ func TestL1SQLiteStoreSaveRecallTraceRejectsLegacyWithoutWrites(t *testing.T) {
 	defer store.Close()
 
 	trace := domconv.RecallTrace{
-		ResponseID: "response-legacy",
-		SessionID:  "legacy-session",
-		Role:       "mio",
-		CreatedAt:  time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC),
+		SessionID: "legacy-session",
+		Role:      "mio",
+		CreatedAt: time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC),
 		Items: []domconv.RecallTraceItem{{
 			Layer: "L3", Kind: "user_memory", Summary: "should not persist", Decision: "included", Status: domconv.TraceStatusInjected,
 		}},

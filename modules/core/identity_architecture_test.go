@@ -55,7 +55,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/application/orchestrator/message_orchestrator_persona.go:applyPersonaCanonicalResponse":      {},
 		"internal/application/orchestrator/message_orchestrator_persona.go:recordPersonaRuntimeObservation":    {},
 		"internal/application/orchestrator/superagent_runtime.go:leadAgentRunID":                               {},
-		"internal/domain/conversation/conversation_turn.go:ConversationTurnMessageIDs":                         {},
 		"internal/application/skillgovernance/bootstrap_service.go:Record":                                     {},
 		"internal/application/skillgovernance/coder_evidence_service.go:saveCoderTranscriptEntries":            {},
 		"internal/infrastructure/stt/provider.go:NextEventID":                                                  {},
@@ -130,6 +129,65 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 	sort.Strings(violations)
 	if len(violations) != 0 {
 		t.Fatalf("canonical ID generators must exist only in modules/core/identity.go: %v", violations)
+	}
+}
+
+func TestCanonicalConversationTurnArchitecture(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	forbidden := map[string]struct{}{
+		"ConversationTurnMessageIDs": {},
+		"RecallTraceID":              {},
+		"OwnerRecallTraceID":         {},
+		"EndTurn":                    {},
+		"EndTurnAs":                  {},
+	}
+	var violations []string
+	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", "vendor", "node_modules", "Tmp":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return err
+		}
+		relative := strings.TrimPrefix(path, repoRoot+string(filepath.Separator))
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			switch value := node.(type) {
+			case *ast.FuncDecl:
+				if _, banned := forbidden[value.Name.Name]; banned {
+					violations = append(violations, relative+":"+value.Name.Name)
+				}
+			case *ast.CallExpr:
+				if selector, ok := value.Fun.(*ast.SelectorExpr); ok {
+					if _, banned := forbidden[selector.Sel.Name]; banned {
+						violations = append(violations, relative+":"+selector.Sel.Name)
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan conversation identity architecture: %v", err)
+	}
+	if len(violations) != 0 {
+		sort.Strings(violations)
+		t.Fatalf("legacy conversation identity routes remain: %v", violations)
 	}
 }
 

@@ -19,6 +19,9 @@ import (
 // 分散環境ではTransport経由でAgent間通信を行う
 func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
 	startedAt := time.Now().UTC()
+	if err := ensureProcessRequestIdentity(&req); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	sess, req, err := o.sessions.ResolveForRequest(ctx, req, startedAt)
 	if err != nil {
 		return ProcessMessageResponse{}, fmt.Errorf("failed to resolve session: %w", err)
@@ -30,11 +33,14 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}()
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	ensureProcessRequestIdentity(&req)
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
 	o.events.BindTrace(jobID.String(), traceID)
-	defer o.events.ReleaseTrace(jobID.String())
+	o.events.BindResponseMessageID(jobID.String(), modulecore.MessageID(req.AgentMessageID))
+	defer func() {
+		o.events.ReleaseTrace(jobID.String())
+		o.events.ReleaseResponseMessageID(jobID.String())
+	}()
 	ctx, cancel := context.WithCancelCause(ctx)
 	publicationFailures := o.events.publicationFail
 	if publicationFailures != nil {
@@ -88,6 +94,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 
 	// 2. タスクを作成
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
+		WithConversationIdentity(modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), modulecore.TaskID(req.RootTaskID), modulecore.MessageID(req.MessageID), modulecore.MessageID(req.AgentMessageID)).
 		WithSessionID(req.SessionID).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)).
 		WithAttachments(req.Attachments)
@@ -97,7 +104,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
@@ -105,7 +112,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
 	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
 		return ProcessMessageResponse{}, err
@@ -113,7 +120,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		return ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID), nil
+		return ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
 
 	// 3. mio がルーティング決定
@@ -222,7 +229,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		Route:      decision.Route,
 		Confidence: decision.Confidence,
 		JobID:      jobID.String(),
-	}, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
+	}, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 	log.Printf("[DistributedOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",
 		jobID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
 	return resp, nil

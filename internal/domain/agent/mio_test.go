@@ -660,10 +660,15 @@ func TestMioAgentChatDoesNotReinjectDegenerateAgentHistory(t *testing.T) {
 	}
 }
 
-func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) {
+func TestMioAgent_Chat_CommitsTypedTurnWithTaskIdentityAndFilteredRecall(t *testing.T) {
 	var got conversation.ConversationTurnRequest
 	jobID := task.JobIDFromString("job-typed-commit")
 	sessionID := string(modulecore.NewSessionID())
+	turnID := modulecore.NewTurnID()
+	traceID := modulecore.NewTraceID()
+	rootTaskID := modulecore.NewTaskID()
+	userMessageID := modulecore.NewMessageID()
+	agentMessageID := modulecore.NewMessageID()
 	inputPack := &conversation.RecallPack{
 		ShortContext: []conversation.Message{{Speaker: conversation.SpeakerUser, Msg: "prior"}},
 		MidSummaries: []conversation.ThreadSummary{{Summary: "chat summary", Roles: []string{"chat"}}, {Summary: "worker only", Roles: []string{"worker"}}},
@@ -681,7 +686,7 @@ func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) 
 		return llm.GenerateResponse{Content: "typed response"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed").WithSessionID(sessionID)
+	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed").WithSessionID(sessionID).WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
 	response, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -692,8 +697,11 @@ func TestMioAgent_Chat_CommitsTypedTurnWithJobIDAndFilteredRecall(t *testing.T) 
 	if len(engine.commitRequests) != 1 {
 		t.Fatalf("typed commit calls=%d, want 1", len(engine.commitRequests))
 	}
-	if got.TurnID != jobID.String() || got.SessionID != sessionID || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
+	if got.TurnID != turnID || got.TraceID != traceID || got.RootTaskID != rootTaskID || got.UserMessageID != userMessageID || got.AgentMessageID != agentMessageID || got.SessionID != sessionID || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
 		t.Fatalf("typed request identity=%#v", got)
+	}
+	if string(got.TurnID) == jobID.String() {
+		t.Fatalf("TurnID fell back to legacy JobID: %#v", got)
 	}
 	if len(got.RecallTraceItems) == 0 {
 		t.Fatal("filtered RecallPack trace was not committed")

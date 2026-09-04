@@ -11,6 +11,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func ownerScopeForRecall(ctx context.Context, requestID, ownerID string) (domaintool.ToolExecutionScope, error) {
@@ -47,11 +48,13 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 	}
 
 	now := time.Now().UTC()
-	traceID := OwnerRecallTraceID(requestID, ownerID, query)
+	traceID := modulecore.NewTraceID()
+	traceIDText := string(traceID)
 	trace := domconv.RecallTraceRecord{
 		TraceID:             traceID,
 		OwnerID:             ownerID,
-		TurnID:              traceID,
+		TurnID:              modulecore.NewTurnID(),
+		RootTaskID:          modulecore.NewTaskID(),
 		ChatID:              ownerID,
 		Persona:             "owner",
 		Route:               "conversation_l1/user_memory/recall",
@@ -68,17 +71,17 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 	memories, err := s.OwnerListUserMemories(ctx, ownerID, "", true, domainmemory.UserMemoryRecallMaxScan)
 	if err != nil {
 		failure := domconv.RecallTraceItemRecord{
-			ItemID:        traceID + ":source-failure",
-			TraceID:       traceID,
+			ItemID:        traceIDText + ":source-failure",
+			TraceID:       traceIDText,
 			Layer:         "L1",
 			Kind:          "user_memory_source_failure",
 			Status:        domainmemory.UserMemoryRecallStatusSourceFailure,
 			Reason:        "user memory source unavailable",
 			PromptSection: domconv.PromptSectionUserMemory,
 		}
-		if addErr := s.AddRecallTraceItems(ctx, traceID, []domconv.RecallTraceItemRecord{failure}); addErr == nil {
+		if addErr := s.AddRecallTraceItems(ctx, traceIDText, []domconv.RecallTraceItemRecord{failure}); addErr == nil {
 			_, _ = s.db.ExecContext(ctx, `UPDATE recall_trace SET total_candidates = 0 WHERE trace_id = ?`, traceID)
-			_ = s.FinishRecallTrace(ctx, traceID, "partial", 0, 0)
+			_ = s.FinishRecallTrace(ctx, traceIDText, "partial", 0, 0)
 		}
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to read owner memories: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
@@ -93,8 +96,8 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 	traceItems := make([]domconv.RecallTraceItemRecord, 0, len(decisions))
 	for i, decision := range decisions {
 		traceItem := domconv.RecallTraceItemRecord{
-			ItemID:         fmt.Sprintf("%s:item:%04d", traceID, i),
-			TraceID:        traceID,
+			ItemID:         fmt.Sprintf("%s:item:%04d", traceIDText, i),
+			TraceID:        traceIDText,
 			Layer:          "L1",
 			Kind:           "user_memory",
 			MemoryID:       decision.Item.ID,
@@ -132,27 +135,27 @@ func (s *L1SQLiteStore) OwnerRecallUserMemories(ctx context.Context, requestID, 
 	if _, err := s.db.ExecContext(ctx, `UPDATE recall_trace SET total_candidates = ? WHERE trace_id = ?`, trace.TotalCandidates, traceID); err != nil {
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to update owner recall trace totals: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
-	if err := s.AddRecallTraceItems(ctx, traceID, traceItems); err != nil {
+	if err := s.AddRecallTraceItems(ctx, traceIDText, traceItems); err != nil {
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to save owner recall trace items: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
-	if err := s.AddPromptInjectionEvents(ctx, traceID, PromptInjectionEventsFromItems(traceID, traceItems, now)); err != nil {
+	if err := s.AddPromptInjectionEvents(ctx, traceIDText, PromptInjectionEventsFromItems(traceIDText, traceItems, now)); err != nil {
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to save owner recall injection events: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
-	if err := s.FinishRecallTrace(ctx, traceID, "completed", selectedCount, sumTraceTokens(traceItems)); err != nil {
+	if err := s.FinishRecallTrace(ctx, traceIDText, "completed", selectedCount, sumTraceTokens(traceItems)); err != nil {
 		return domainmemory.UserMemoryOwnerRecallResult{}, fmt.Errorf("%w: failed to finish owner recall trace: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 
 	return domainmemory.UserMemoryOwnerRecallResult{
 		Items: selected,
 		Trace: domainmemory.UserMemoryRecallTrace{
-			ID:                traceID,
+			ID:                traceIDText,
 			Status:            "completed",
 			QueryTextRedacted: trace.QueryTextRedacted,
 			TotalCandidates:   trace.TotalCandidates,
 			SelectedCount:     selectedCount,
 			CreatedAt:         now,
 		},
-		Receipt: newOwnerReadReceipt(requestID, domainmemory.UserMemoryOwnerOperationRecall, traceID, len(decisions), len(selected), now),
+		Receipt: newOwnerReadReceipt(requestID, domainmemory.UserMemoryOwnerOperationRecall, traceIDText, len(decisions), len(selected), now),
 	}, nil
 }
 

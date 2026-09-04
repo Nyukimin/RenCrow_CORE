@@ -4,12 +4,16 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const TraceStatusSourceFailure = "source_failure"
 
 type RecallTrace struct {
-	ResponseID string
+	TraceID    modulecore.TraceID
+	TurnID     modulecore.TurnID
+	RootTaskID modulecore.TaskID
 	SessionID  string
 	OwnerID    string
 	Role       string
@@ -39,9 +43,10 @@ type RecallTraceItem struct {
 }
 
 type RecallTraceRecord struct {
-	TraceID             string
+	TraceID             modulecore.TraceID
 	OwnerID             string
-	TurnID              string
+	TurnID              modulecore.TurnID
+	RootTaskID          modulecore.TaskID
 	ChatID              string
 	Persona             string
 	Route               string

@@ -19,10 +19,9 @@ func (s *recallTraceStoreStub) RecentRecallTraces(_ context.Context, sessionID s
 	s.sessionID = sessionID
 	s.limit = limit
 	return []domconv.RecallTrace{{
-		ResponseID: "job-1",
-		SessionID:  sessionID,
-		Role:       "chat",
-		Items:      []domconv.RecallTraceItem{{Layer: "L1", Kind: "search_cache", Summary: "cached"}},
+		SessionID: sessionID,
+		Role:      "chat",
+		Items:     []domconv.RecallTraceItem{{Layer: "L1", Kind: "search_cache", Summary: "cached"}},
 	}}, nil
 }
 

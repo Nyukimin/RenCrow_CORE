@@ -39,7 +39,10 @@ type AttachmentSaver interface {
 type SendRequest struct {
 	JobID          string
 	MessageID      string
+	AgentMessageID string
+	TurnID         string
 	TraceID        string
+	RootTaskID     string
 	ViewerClientID string
 	AudioOutput    AudioOutputIntent
 	Provenance     RequestProvenance
@@ -108,11 +111,17 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 		}
 		jobID := task.NewJobID().String()
 		messageID := string(modulecore.NewMessageID())
+		agentMessageID := string(modulecore.NewMessageID())
+		turnID := string(modulecore.NewTurnID())
 		traceID := string(modulecore.NewTraceID())
+		rootTaskID := string(modulecore.NewTaskID())
 		sendReq := SendRequest{
 			JobID:          jobID,
 			MessageID:      messageID,
+			AgentMessageID: agentMessageID,
+			TurnID:         turnID,
 			TraceID:        traceID,
+			RootTaskID:     rootTaskID,
 			ViewerClientID: req.ViewerClientID,
 			AudioOutput:    audioOutput,
 			Provenance:     provenance,
@@ -150,7 +159,10 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			OK             bool   `json:"ok"`
 			JobID          string `json:"job_id"`
 			MessageID      string `json:"message_id"`
+			AgentMessageID string `json:"agent_message_id"`
+			TurnID         string `json:"turn_id"`
 			TraceID        string `json:"trace_id"`
+			RootTaskID     string `json:"root_task_id"`
 			ViewerClientID string `json:"viewer_client_id,omitempty"`
 			Recipient      string `json:"recipient"`
 			Attachments    int    `json:"attachment_count"`
@@ -158,7 +170,10 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			OK:             true,
 			JobID:          jobID,
 			MessageID:      messageID,
+			AgentMessageID: agentMessageID,
+			TurnID:         turnID,
 			TraceID:        traceID,
+			RootTaskID:     rootTaskID,
 			ViewerClientID: req.ViewerClientID,
 			Recipient:      string(recipient),
 			Attachments:    len(attachments),

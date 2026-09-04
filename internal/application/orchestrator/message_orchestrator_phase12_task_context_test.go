@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase12TaskContextBuilderHonorsAudioOutputIntent(t *testing.T) {
@@ -36,7 +37,14 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 		func() bool { return false },
 	)
 
+	turnID := modulecore.NewTurnID()
+	traceID := modulecore.NewTraceID()
+	rootTaskID := modulecore.NewTaskID()
+	userMessageID := modulecore.NewMessageID()
+	agentMessageID := modulecore.NewMessageID()
 	tk, jobID, ttsSessionID := builder.Build(ProcessMessageRequest{
+		TurnID: string(turnID), TraceID: string(traceID), RootTaskID: string(rootTaskID),
+		MessageID: string(userMessageID), AgentMessageID: string(agentMessageID),
 		SessionID:   "sess-1",
 		Channel:     "line",
 		ChatID:      "U123",
@@ -49,6 +57,9 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 	}
 	if tk.SessionID() != "sess-1" || tk.ChatID() != "U123" {
 		t.Fatalf("task identity = session=%q chat=%q", tk.SessionID(), tk.ChatID())
+	}
+	if tk.TurnID() != turnID || tk.TraceID() != traceID || tk.RootTaskID() != rootTaskID || tk.UserMessageID() != userMessageID || tk.AgentMessageID() != agentMessageID {
+		t.Fatalf("task conversation identity drifted: turn=%q trace=%q task=%q user=%q agent=%q", tk.TurnID(), tk.TraceID(), tk.RootTaskID(), tk.UserMessageID(), tk.AgentMessageID())
 	}
 	if len(tk.Attachments()) != 1 {
 		t.Fatalf("expected attachment to be copied to task, got %d", len(tk.Attachments()))

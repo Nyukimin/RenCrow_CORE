@@ -12,18 +12,21 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (s *L1SQLiteStore) StartRecallTrace(ctx context.Context, trace domconv.RecallTraceRecord) error {
-	trace.TraceID = strings.TrimSpace(trace.TraceID)
-	if trace.TraceID == "" {
-		return errors.New("trace_id is required")
+	if trace.TraceID.Validate() != nil {
+		return errors.New("canonical trace_id is required")
+	}
+	if trace.TurnID.Validate() != nil {
+		return errors.New("canonical turn_id is required")
+	}
+	if trace.RootTaskID.Validate() != nil {
+		return errors.New("canonical root_task_id is required")
 	}
 	if strings.TrimSpace(trace.ChatID) == "" {
 		return errors.New("chat_id is required")
-	}
-	if strings.TrimSpace(trace.TurnID) == "" {
-		trace.TurnID = trace.TraceID
 	}
 	if strings.TrimSpace(trace.Persona) == "" {
 		trace.Persona = "mio"
@@ -35,12 +38,12 @@ func (s *L1SQLiteStore) StartRecallTrace(ctx context.Context, trace domconv.Reca
 		trace.Status = "started"
 	}
 	_, err := s.db.ExecContext(ctx, `
-INSERT OR REPLACE INTO recall_trace (
-	trace_id, owner_id, turn_id, chat_id, persona, route, user_message_hash, query_text_redacted,
+INSERT INTO recall_trace (
+	trace_id, owner_id, turn_id, root_task_id, chat_id, persona, route, user_message_hash, query_text_redacted,
 	created_at, model_id, prompt_version, recall_policy_version, total_candidates,
 	injected_count, total_injected_tokens, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, trace.TraceID, trace.OwnerID, trace.TurnID, trace.ChatID, trace.Persona, trace.Route, trace.UserMessageHash, trace.QueryTextRedacted,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, trace.TraceID, trace.OwnerID, trace.TurnID, trace.RootTaskID, trace.ChatID, trace.Persona, trace.Route, trace.UserMessageHash, trace.QueryTextRedacted,
 		trace.CreatedAt.UTC(), trace.ModelID, trace.PromptVersion, trace.RecallPolicyVersion, trace.TotalCandidates,
 		trace.InjectedCount, trace.TotalInjectedTokens, trace.Status)
 	if err != nil {
@@ -51,8 +54,8 @@ INSERT OR REPLACE INTO recall_trace (
 
 func (s *L1SQLiteStore) AddRecallTraceItems(ctx context.Context, traceID string, items []domconv.RecallTraceItemRecord) error {
 	traceID = strings.TrimSpace(traceID)
-	if traceID == "" {
-		return errors.New("trace_id is required")
+	if modulecore.TraceID(traceID).Validate() != nil {
+		return errors.New("canonical trace_id is required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -66,7 +69,7 @@ func (s *L1SQLiteStore) AddRecallTraceItems(ctx context.Context, traceID string,
 		if strings.TrimSpace(item.TraceID) == "" {
 			item.TraceID = traceID
 		}
-		if item.TraceID != traceID {
+		if modulecore.TraceID(item.TraceID).Validate() != nil || item.TraceID != traceID {
 			return fmt.Errorf("trace item %s belongs to different trace %s", item.ItemID, item.TraceID)
 		}
 		injected := 0
@@ -103,8 +106,8 @@ INSERT OR REPLACE INTO recall_trace_item (
 
 func (s *L1SQLiteStore) AddPromptInjectionEvents(ctx context.Context, traceID string, events []domconv.PromptInjectionEventRecord) error {
 	traceID = strings.TrimSpace(traceID)
-	if traceID == "" {
-		return errors.New("trace_id is required")
+	if modulecore.TraceID(traceID).Validate() != nil {
+		return errors.New("canonical trace_id is required")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -118,7 +121,7 @@ func (s *L1SQLiteStore) AddPromptInjectionEvents(ctx context.Context, traceID st
 		if strings.TrimSpace(event.TraceID) == "" {
 			event.TraceID = traceID
 		}
-		if event.TraceID != traceID {
+		if modulecore.TraceID(event.TraceID).Validate() != nil || event.TraceID != traceID {
 			return fmt.Errorf("prompt injection event %s belongs to different trace %s", event.InjectionID, event.TraceID)
 		}
 		if event.CreatedAt.IsZero() {
@@ -144,8 +147,8 @@ INSERT OR REPLACE INTO prompt_injection_event (
 
 func (s *L1SQLiteStore) FinishRecallTrace(ctx context.Context, traceID string, status string, injectedCount int, totalTokens int) error {
 	traceID = strings.TrimSpace(traceID)
-	if traceID == "" {
-		return errors.New("trace_id is required")
+	if modulecore.TraceID(traceID).Validate() != nil {
+		return errors.New("canonical trace_id is required")
 	}
 	if strings.TrimSpace(status) == "" {
 		status = "completed"
@@ -168,21 +171,6 @@ WHERE trace_id = ?
 	return nil
 }
 
-func RecallTraceID(sessionID string, createdAt time.Time, userMessage string) string {
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	}
-	sum := sha256.Sum256([]byte(sessionID + "\n" + createdAt.UTC().Format(time.RFC3339Nano) + "\n" + userMessage))
-	return "trace:" + safeRecallIDPart(sessionID) + ":" + createdAt.UTC().Format("20060102150405.000000000") + ":" + hex.EncodeToString(sum[:])[:12]
-}
-
-// OwnerRecallTraceID binds an owner recall trace to the authenticated request
-// and query without exposing the raw query in the identifier.
-func OwnerRecallTraceID(requestID, ownerID, query string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(requestID) + "\n" + strings.TrimSpace(ownerID) + "\n" + strings.TrimSpace(query)))
-	return "trace:owner:" + hex.EncodeToString(sum[:])[:32]
-}
-
 func HashRecallText(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
@@ -195,29 +183,6 @@ func RedactedRecallQuery(text string) string {
 	}
 	runes := []rune(text)
 	return string(runes[:160])
-}
-
-func safeRecallIDPart(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "unknown"
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			b.WriteRune(r)
-			continue
-		}
-		b.WriteByte('_')
-	}
-	out := strings.Trim(b.String(), "_")
-	if out == "" {
-		return "unknown"
-	}
-	if len(out) > 48 {
-		return out[:48]
-	}
-	return out
 }
 
 func TraceItemRecordsFromPack(traceID string, items []domconv.RecallTraceItem) []domconv.RecallTraceItemRecord {

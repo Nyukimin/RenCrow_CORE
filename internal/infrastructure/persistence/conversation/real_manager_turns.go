@@ -81,7 +81,7 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 	excluded := make(map[string]struct{}, len(normalized.Targets))
 	var firstFollowerErr error
 	for range normalized.Targets {
-		claim, claimErr := claimTurnOutbox(ctx, store, normalized.TurnID, time.Now().UTC(), excluded)
+		claim, claimErr := claimTurnOutbox(ctx, store, string(normalized.TurnID), time.Now().UTC(), excluded)
 		if claimErr != nil {
 			return result, claimErr
 		}
@@ -95,7 +95,7 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 		if operationErr != nil {
 			code := conversationTurnFollowerErrorCode(operationErr)
 			bookCtx, bookCancel := conversationTurnBookkeepingContext()
-			updated, finishErr := store.FailConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			updated, finishErr := store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
 			bookCancel()
 			if finishErr != nil {
 				return updated, finishErr
@@ -107,14 +107,14 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 			continue
 		}
 		bookCtx, bookCancel := conversationTurnBookkeepingContext()
-		updated, finishErr := store.CompleteConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt)
+		updated, finishErr := store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
 		bookCancel()
 		if finishErr != nil {
 			return updated, finishErr
 		}
 		result = updated
 	}
-	if receipt, receiptErr := store.GetConversationTurnReceipt(ctx, normalized.TurnID); receiptErr == nil {
+	if receipt, receiptErr := store.GetConversationTurnReceipt(ctx, string(normalized.TurnID)); receiptErr == nil {
 		result = receipt
 		result.IdempotentReplay = idempotentReplay
 	} else if firstFollowerErr == nil {
@@ -166,7 +166,7 @@ func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Contex
 		if operationErr != nil {
 			code := conversationTurnFollowerErrorCode(operationErr)
 			bookCtx, bookCancel := conversationTurnBookkeepingContext()
-			_, finishErr := store.FailConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, code, finishedAt)
+			_, finishErr := store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
 			bookCancel()
 			if finishErr != nil {
 				return finishErr
@@ -177,7 +177,7 @@ func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Contex
 			continue
 		}
 		bookCtx, bookCancel := conversationTurnBookkeepingContext()
-		_, completeErr := store.CompleteConversationTurnOutbox(bookCtx, claim.TurnID, claim.Target, claim.LeaseToken, finishedAt)
+		_, completeErr := store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
 		bookCancel()
 		if completeErr != nil {
 			err := completeErr
@@ -229,8 +229,9 @@ func (r *RealConversationManager) applyConversationTurnOutbox(ctx context.Contex
 
 type conversationTurnOutboxPayload struct {
 	Version          string                `json:"version"`
-	TurnID           string                `json:"turn_id"`
-	TraceID          string                `json:"trace_id"`
+	TurnID           modulecore.TurnID     `json:"turn_id"`
+	TraceID          modulecore.TraceID    `json:"trace_id"`
+	RootTaskID       modulecore.TaskID     `json:"root_task_id"`
 	SessionID        string                `json:"session_id"`
 	OwnerID          string                `json:"owner_id"`
 	ThreadID         modulecore.ThreadID   `json:"thread_id"`
@@ -239,8 +240,8 @@ type conversationTurnOutboxPayload struct {
 	ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id,omitempty"`
 	ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq,omitempty"`
 	ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind,omitempty"`
-	UserMessageID    string                `json:"user_message_id"`
-	AgentMessageID   string                `json:"agent_message_id"`
+	UserMessageID    modulecore.MessageID  `json:"user_message_id"`
+	AgentMessageID   modulecore.MessageID  `json:"agent_message_id"`
 	Target           string                `json:"target"`
 	PayloadSHA256    string                `json:"payload_sha256"`
 }
@@ -275,7 +276,11 @@ func decodeConversationTurnOutboxPayload(outbox *domconv.ConversationTurnOutbox)
 	if err := validateConversationThreadTuple(outbox.ClosedThreadID, outbox.ClosedThreadSeq, outbox.ClosedThreadKind, false); err != nil {
 		return payload, err
 	}
-	if payload.Version != "rencrow.conversation_turn_outbox.v1" || payload.TurnID != outbox.TurnID || payload.TraceID != payload.TurnID || payload.SessionID != outbox.SessionID || strings.TrimSpace(payload.OwnerID) == "" || payload.ThreadID != outbox.ThreadID || payload.ThreadSeq != outbox.ThreadSeq || payload.ThreadKind != outbox.ThreadKind || payload.Target != outbox.Target || payload.PayloadSHA256 != outbox.PayloadSHA256 || payload.UserMessageID == "" || payload.AgentMessageID == "" {
+	if payload.TurnID.Validate() != nil || payload.TraceID.Validate() != nil || payload.RootTaskID.Validate() != nil || payload.UserMessageID.Validate() != nil || payload.AgentMessageID.Validate() != nil || payload.UserMessageID == payload.AgentMessageID ||
+		outbox.TurnID.Validate() != nil || outbox.TraceID.Validate() != nil || outbox.RootTaskID.Validate() != nil {
+		return payload, domconv.ErrConversationTurnInvalid
+	}
+	if payload.Version != "rencrow.conversation_turn_outbox.v2" || payload.TurnID != outbox.TurnID || payload.TraceID != outbox.TraceID || payload.RootTaskID != outbox.RootTaskID || payload.SessionID != outbox.SessionID || strings.TrimSpace(payload.OwnerID) == "" || payload.ThreadID != outbox.ThreadID || payload.ThreadSeq != outbox.ThreadSeq || payload.ThreadKind != outbox.ThreadKind || payload.Target != outbox.Target || payload.PayloadSHA256 != outbox.PayloadSHA256 {
 		return payload, domconv.ErrConversationTurnInvalid
 	}
 	if payload.ClosedThreadID != outbox.ClosedThreadID || payload.ClosedThreadSeq != outbox.ClosedThreadSeq || payload.ClosedThreadKind != outbox.ClosedThreadKind {
@@ -504,8 +509,8 @@ func sameStringSlice(left, right []string) bool {
 	return true
 }
 
-func conversationTurnOutboxKey(turnID, target string) string {
-	return turnID + "\x00" + target
+func conversationTurnOutboxKey(turnID modulecore.TurnID, target string) string {
+	return string(turnID) + "\x00" + target
 }
 
 func conversationTurnFollowerErrorCode(err error) domconv.ConversationTurnErrorCode {
@@ -522,10 +527,10 @@ func conversationTurnFollowerErrorCode(err error) domconv.ConversationTurnErrorC
 }
 
 func failedConversationTurnManagerResult(request domconv.ConversationTurnRequest, code domconv.ConversationTurnErrorCode) domconv.ConversationTurnResult {
-	result := domconv.ConversationTurnResult{TurnID: strings.TrimSpace(request.TurnID), TraceID: strings.TrimSpace(request.TurnID), SessionID: strings.TrimSpace(request.SessionID), Status: domconv.ConversationTurnFailed, ErrorCode: code}
-	if userID, agentID, err := domconv.ConversationTurnMessageIDs(result.TurnID); err == nil {
-		result.UserMessageID, result.AgentMessageID = userID, agentID
-		result.MessageIDs = []string{userID, agentID}
+	return domconv.ConversationTurnResult{
+		TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID,
+		UserMessageID: request.UserMessageID, AgentMessageID: request.AgentMessageID,
+		MessageIDs: []string{string(request.UserMessageID), string(request.AgentMessageID)},
+		SessionID:  strings.TrimSpace(request.SessionID), Status: domconv.ConversationTurnFailed, ErrorCode: code,
 	}
-	return result
 }

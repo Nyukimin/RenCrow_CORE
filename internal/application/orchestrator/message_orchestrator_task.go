@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ttsEnabledFunc func() bool
@@ -35,6 +36,7 @@ func resolveProcessMessageJobID(raw string) task.JobID {
 
 func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.JobID) (task.Task, task.JobID, string) {
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
+		WithConversationIdentity(modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), modulecore.TaskID(req.RootTaskID), modulecore.MessageID(req.MessageID), modulecore.MessageID(req.AgentMessageID)).
 		WithSessionID(req.SessionID).
 		WithAttachments(req.Attachments).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To))

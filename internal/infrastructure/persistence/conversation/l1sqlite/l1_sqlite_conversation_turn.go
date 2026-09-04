@@ -71,6 +71,7 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
 			session_id TEXT NOT NULL CHECK(length(session_id) > 0),
 			trace_id TEXT NOT NULL CHECK(length(trace_id) > 0),
+			root_task_id TEXT NOT NULL CHECK(length(root_task_id) > 0),
 			thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
 			thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
 			thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
@@ -91,6 +92,8 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_conversation_turn_receipt_session_created ON conversation_turn_receipt(session_id, created_at DESC)`,
 		`CREATE TABLE IF NOT EXISTS conversation_turn_outbox (
 			turn_id TEXT NOT NULL CHECK(length(turn_id) > 0),
+			trace_id TEXT NOT NULL CHECK(length(trace_id) > 0),
+			root_task_id TEXT NOT NULL CHECK(length(root_task_id) > 0),
 			target TEXT NOT NULL CHECK(target IN ('redis_projection', 'thread_followers')),
 			session_id TEXT NOT NULL CHECK(length(session_id) > 0),
 			thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
@@ -138,14 +141,12 @@ func (s *L1SQLiteStore) CommitConversationTurn(ctx context.Context, request domc
 	if err != nil {
 		return failedConversationTurnResult(normalized, domconv.ConversationTurnErrorInvalid), err
 	}
-	userMessageID, agentMessageID, err := domconv.ConversationTurnMessageIDs(normalized.TurnID)
-	if err != nil {
-		return failedConversationTurnResult(normalized, domconv.ConversationTurnErrorInvalid), err
-	}
+	userMessageID := string(normalized.UserMessageID)
+	agentMessageID := string(normalized.AgentMessageID)
 	base := domconv.ConversationTurnResult{
-		TurnID: normalized.TurnID, TraceID: normalized.TurnID, SessionID: normalized.SessionID,
-		UserMessageID: userMessageID, AgentMessageID: agentMessageID,
-		MessageIDs: []string{userMessageID, agentMessageID}, PayloadSHA256: payloadHash,
+		TurnID: normalized.TurnID, TraceID: normalized.TraceID, RootTaskID: normalized.RootTaskID, SessionID: normalized.SessionID,
+		UserMessageID: normalized.UserMessageID, AgentMessageID: normalized.AgentMessageID,
+		MessageIDs: []string{string(normalized.UserMessageID), string(normalized.AgentMessageID)}, PayloadSHA256: payloadHash,
 		RequestedTargets: conversationTurnTargetStrings(normalized.Targets), Status: domconv.ConversationTurnFailed,
 		ErrorCode: domconv.ConversationTurnErrorInternal,
 	}
@@ -168,14 +169,17 @@ func (s *L1SQLiteStore) CommitConversationTurn(ctx context.Context, request domc
 	}
 
 	var existingHash, existingJSON string
+	var existingTraceID, existingRootTaskID, existingUserMessageID, existingAgentMessageID string
 	var existingThreadID, existingThreadKind string
 	var existingThreadSeq int64
 	var existingClosedID, existingClosedKind string
 	var existingClosedSeq int64
 	err = tx.QueryRowContext(ctx, `
-SELECT payload_sha256, thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
+SELECT payload_sha256, trace_id, root_task_id, user_message_id, agent_message_id,
+	thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
 FROM conversation_turn_receipt
-WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingThreadID, &existingThreadSeq, &existingThreadKind, &existingClosedID, &existingClosedSeq, &existingClosedKind, &existingJSON)
+WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingTraceID, &existingRootTaskID, &existingUserMessageID, &existingAgentMessageID,
+		&existingThreadID, &existingThreadSeq, &existingThreadKind, &existingClosedID, &existingClosedSeq, &existingClosedKind, &existingJSON)
 	if err == nil {
 		if existingHash != payloadHash {
 			return rollback(domconv.ConversationTurnErrorConflict)
@@ -184,7 +188,7 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingThreadID, &e
 		if err := json.Unmarshal([]byte(existingJSON), &replay); err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
-		if err := validateConversationTurnResultIdentity(replay, modulecore.ThreadID(existingThreadID), modulecore.ThreadSeq(existingThreadSeq), modulecore.ThreadKind(existingThreadKind), modulecore.ThreadID(existingClosedID), modulecore.ThreadSeq(existingClosedSeq), modulecore.ThreadKind(existingClosedKind)); err != nil {
+		if err := validateConversationTurnResultIdentity(replay, normalized.TurnID, modulecore.TraceID(existingTraceID), modulecore.TaskID(existingRootTaskID), modulecore.MessageID(existingUserMessageID), modulecore.MessageID(existingAgentMessageID), modulecore.ThreadID(existingThreadID), modulecore.ThreadSeq(existingThreadSeq), modulecore.ThreadKind(existingThreadKind), modulecore.ThreadID(existingClosedID), modulecore.ThreadSeq(existingClosedSeq), modulecore.ThreadKind(existingClosedKind)); err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
 		}
 		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
@@ -239,11 +243,11 @@ WHERE turn_id = ?`, normalized.TurnID).Scan(&existingHash, &existingThreadID, &e
 	closedKindValue := string(closedThread.Kind)
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_turn_receipt (
-	turn_id, payload_sha256, session_id, trace_id, thread_id, thread_seq, thread_kind,
+	turn_id, payload_sha256, session_id, trace_id, root_task_id, thread_id, thread_seq, thread_kind,
 	closed_thread_id, closed_thread_seq, closed_thread_kind,
 	user_message_id, agent_message_id, status, result_json, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.TurnID, payloadHash, normalized.SessionID,
-		normalized.TurnID, thread.ID, thread.Seq, thread.Kind, closedIDValue, closedSeqValue, closedKindValue,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, normalized.TurnID, payloadHash, normalized.SessionID,
+		normalized.TraceID, normalized.RootTaskID, thread.ID, thread.Seq, thread.Kind, closedIDValue, closedSeqValue, closedKindValue,
 		userMessageID, agentMessageID, base.Status, string(resultJSON), now, now); err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal, err)
 	}
@@ -254,10 +258,10 @@ INSERT INTO conversation_turn_receipt (
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_turn_outbox (
-	turn_id, target, session_id, thread_id, thread_seq, thread_kind,
+	turn_id, trace_id, root_task_id, target, session_id, thread_id, thread_seq, thread_kind,
 	closed_thread_id, closed_thread_seq, closed_thread_kind, payload_sha256,
 	payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, '', ?, ?)`, normalized.TurnID, target,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, 0, '', ?, ?)`, normalized.TurnID, normalized.TraceID, normalized.RootTaskID, target,
 			normalized.SessionID, thread.ID, thread.Seq, thread.Kind, closedIDValue, closedSeqValue, closedKindValue,
 			payloadHash, payload, domconv.ConversationTurnOutboxPending, now, now); err != nil {
 			return rollback(domconv.ConversationTurnErrorInternal, err)
@@ -360,7 +364,7 @@ func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Co
 )`
 	args = append(args, now, domconv.ConversationTurnMaxOutboxAttempts, domconv.ConversationTurnMaxOutboxAttempts)
 	query := `
-	SELECT turn_id, target, session_id, thread_id, thread_seq, thread_kind,
+	SELECT turn_id, trace_id, root_task_id, target, session_id, thread_id, thread_seq, thread_kind,
 		closed_thread_id, closed_thread_seq, closed_thread_kind, payload_sha256,
 	       payload_json, status, lease_token, lease_expires_at, attempts, last_error, created_at, updated_at
 FROM conversation_turn_outbox
@@ -475,7 +479,7 @@ func (s *L1SQLiteStore) CompleteConversationTurnOutbox(ctx context.Context, turn
 
 func (s *L1SQLiteStore) FailConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, code domconv.ConversationTurnErrorCode, now time.Time) (domconv.ConversationTurnResult, error) {
 	if !validConversationTurnErrorCode(code) {
-		return domconv.ConversationTurnResult{TurnID: strings.TrimSpace(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
+		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(strings.TrimSpace(turnID)), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
 	}
 	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, code, now)
 }
@@ -485,10 +489,10 @@ func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID
 	target = strings.TrimSpace(target)
 	leaseToken = strings.TrimSpace(leaseToken)
 	if turnID == "" || (domconv.ConversationTurnTarget(target) != domconv.ConversationTurnTargetRedisProjection && domconv.ConversationTurnTarget(target) != domconv.ConversationTurnTargetThreadFollowers) || leaseToken == "" {
-		return domconv.ConversationTurnResult{TurnID: turnID, Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
+		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
 	}
 	if s == nil || s.db == nil {
-		return domconv.ConversationTurnResult{TurnID: turnID, Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorUnavailable}, domconv.ErrConversationTurnUnavailable
+		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorUnavailable}, domconv.ErrConversationTurnUnavailable
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -496,11 +500,11 @@ func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID
 	now = now.UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domconv.ConversationTurnResult{TurnID: turnID, Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInternal}, domconv.ErrConversationTurnInternal
+		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInternal}, domconv.ErrConversationTurnInternal
 	}
 	rollback := func(code domconv.ConversationTurnErrorCode) (domconv.ConversationTurnResult, error) {
 		_ = tx.Rollback()
-		return domconv.ConversationTurnResult{TurnID: turnID, Status: domconv.ConversationTurnFailed, ErrorCode: code}, conversationTurnError(code)
+		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: code}, conversationTurnError(code)
 	}
 	var status string
 	var expires sql.NullTime
@@ -566,13 +570,16 @@ func (s *L1SQLiteStore) GetConversationTurnReceipt(ctx context.Context, turnID s
 		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnUnavailable
 	}
 	var resultJSON string
+	var traceID, rootTaskID, userMessageID, agentMessageID string
 	var threadID, threadKind string
 	var threadSeq int64
 	var closedID, closedKind string
 	var closedSeq int64
 	if err := s.db.QueryRowContext(ctx, `
-SELECT thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
-FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind, &resultJSON); err != nil {
+SELECT trace_id, root_task_id, user_message_id, agent_message_id,
+	thread_id, thread_seq, thread_kind, closed_thread_id, closed_thread_seq, closed_thread_kind, result_json
+FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&traceID, &rootTaskID, &userMessageID, &agentMessageID,
+		&threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind, &resultJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnUnavailable
 		}
@@ -582,20 +589,23 @@ FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&threadID, &thre
 	if json.Unmarshal([]byte(resultJSON), &result) != nil {
 		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnInternal
 	}
-	if err := validateConversationTurnResultIdentity(result, modulecore.ThreadID(threadID), modulecore.ThreadSeq(threadSeq), modulecore.ThreadKind(threadKind), modulecore.ThreadID(closedID), modulecore.ThreadSeq(closedSeq), modulecore.ThreadKind(closedKind)); err != nil {
+	if err := validateConversationTurnResultIdentity(result, modulecore.TurnID(turnID), modulecore.TraceID(traceID), modulecore.TaskID(rootTaskID), modulecore.MessageID(userMessageID), modulecore.MessageID(agentMessageID), modulecore.ThreadID(threadID), modulecore.ThreadSeq(threadSeq), modulecore.ThreadKind(threadKind), modulecore.ThreadID(closedID), modulecore.ThreadSeq(closedSeq), modulecore.ThreadKind(closedKind)); err != nil {
 		return domconv.ConversationTurnResult{}, err
 	}
 	return result, nil
 }
 
-func validateConversationTurnResultIdentity(result domconv.ConversationTurnResult, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, closedID modulecore.ThreadID, closedSeq modulecore.ThreadSeq, closedKind modulecore.ThreadKind) error {
+func validateConversationTurnResultIdentity(result domconv.ConversationTurnResult, turnID modulecore.TurnID, traceID modulecore.TraceID, rootTaskID modulecore.TaskID, userMessageID modulecore.MessageID, agentMessageID modulecore.MessageID, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, closedID modulecore.ThreadID, closedSeq modulecore.ThreadSeq, closedKind modulecore.ThreadKind) error {
+	if turnID.Validate() != nil || traceID.Validate() != nil || rootTaskID.Validate() != nil || userMessageID.Validate() != nil || agentMessageID.Validate() != nil || userMessageID == agentMessageID {
+		return domconv.ErrConversationTurnInvalid
+	}
 	if err := validateL1ThreadTuple(threadID, threadSeq, threadKind); err != nil || threadID == "" {
 		return domconv.ErrConversationTurnInvalid
 	}
 	if err := validateL1ThreadTuple(closedID, closedSeq, closedKind); err != nil {
 		return domconv.ErrConversationTurnInvalid
 	}
-	if result.ThreadID != threadID || result.ThreadSeq != threadSeq || result.ThreadKind != threadKind || result.ClosedThreadID != closedID || result.ClosedThreadSeq != closedSeq || result.ClosedThreadKind != closedKind {
+	if result.TurnID != turnID || result.TraceID != traceID || result.RootTaskID != rootTaskID || result.UserMessageID != userMessageID || result.AgentMessageID != agentMessageID || len(result.MessageIDs) != 2 || result.MessageIDs[0] != string(userMessageID) || result.MessageIDs[1] != string(agentMessageID) || result.ThreadID != threadID || result.ThreadSeq != threadSeq || result.ThreadKind != threadKind || result.ClosedThreadID != closedID || result.ClosedThreadSeq != closedSeq || result.ClosedThreadKind != closedKind {
 		return domconv.ErrConversationTurnInvalid
 	}
 	return nil
@@ -766,6 +776,9 @@ func validateConversationThreadProjection(sessionID string, threadID modulecore.
 			}
 			metaStrings[key] = value
 		}
+		if modulecore.TurnID(metaStrings["turn_id"]).Validate() != nil || modulecore.MessageID(metaStrings["message_id"]).Validate() != nil {
+			return domconv.ErrConversationTurnInvalid
+		}
 		if metaStrings["message_id"] != event.ID || metaStrings["speaker"] != string(event.Speaker) {
 			return domconv.ErrConversationTurnInvalid
 		}
@@ -797,8 +810,7 @@ func validateConversationThreadProjection(sessionID string, threadID modulecore.
 			if !previousOK || previousTurn != metaStrings["turn_id"] {
 				return domconv.ErrConversationTurnInvalid
 			}
-			userID, agentID, err := domconv.ConversationTurnMessageIDs(metaStrings["turn_id"])
-			if err != nil || previous.ID != userID || event.ID != agentID {
+			if modulecore.MessageID(previous.ID).Validate() != nil || modulecore.MessageID(event.ID).Validate() != nil {
 				return domconv.ErrConversationTurnInvalid
 			}
 		}
@@ -929,7 +941,7 @@ INSERT INTO l1_profile_promotion_job (
 }
 
 func insertConversationTurnRecallTrace(ctx context.Context, tx *sql.Tx, request domconv.ConversationTurnRequest, now time.Time) error {
-	traceID := request.TurnID
+	traceID := string(request.TraceID)
 	records := TraceItemRecordsFromPack(traceID, request.RecallTraceItems)
 	injectedCount := 0
 	totalTokens := 0
@@ -941,10 +953,10 @@ func insertConversationTurnRecallTrace(ctx context.Context, tx *sql.Tx, request 
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO recall_trace (
-	trace_id, owner_id, turn_id, chat_id, persona, route, user_message_hash, query_text_redacted,
+	trace_id, owner_id, turn_id, root_task_id, chat_id, persona, route, user_message_hash, query_text_redacted,
 	created_at, model_id, prompt_version, recall_policy_version, total_candidates,
 	injected_count, total_injected_tokens, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?)`, traceID, request.OwnerID, request.TurnID, request.SessionID,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?)`, traceID, request.OwnerID, request.TurnID, request.RootTaskID, request.SessionID,
 		string(request.AgentSpeaker), "conversation", HashRecallText(request.UserMessage), RedactedRecallQuery(request.UserMessage),
 		now, "conversation-turn-v1", len(records), injectedCount, totalTokens, "started"); err != nil {
 		return err
@@ -1024,8 +1036,9 @@ func conversationTurnOutboxPayload(request domconv.ConversationTurnRequest, thre
 	}
 	payload := struct {
 		Version          string                `json:"version"`
-		TurnID           string                `json:"turn_id"`
-		TraceID          string                `json:"trace_id"`
+		TurnID           modulecore.TurnID     `json:"turn_id"`
+		TraceID          modulecore.TraceID    `json:"trace_id"`
+		RootTaskID       modulecore.TaskID     `json:"root_task_id"`
 		SessionID        string                `json:"session_id"`
 		OwnerID          string                `json:"owner_id"`
 		ThreadID         modulecore.ThreadID   `json:"thread_id"`
@@ -1034,15 +1047,15 @@ func conversationTurnOutboxPayload(request domconv.ConversationTurnRequest, thre
 		ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id,omitempty"`
 		ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq,omitempty"`
 		ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind,omitempty"`
-		UserMessageID    string                `json:"user_message_id"`
-		AgentMessageID   string                `json:"agent_message_id"`
+		UserMessageID    modulecore.MessageID  `json:"user_message_id"`
+		AgentMessageID   modulecore.MessageID  `json:"agent_message_id"`
 		Target           string                `json:"target"`
 		PayloadSHA256    string                `json:"payload_sha256"`
 	}{
-		Version: "rencrow.conversation_turn_outbox.v1", TurnID: request.TurnID, TraceID: request.TurnID,
+		Version: "rencrow.conversation_turn_outbox.v2", TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID,
 		SessionID: request.SessionID, OwnerID: request.OwnerID, ThreadID: thread.ID, ThreadSeq: thread.Seq, ThreadKind: thread.Kind,
 		ClosedThreadID: closed.ID, ClosedThreadSeq: closed.Seq, ClosedThreadKind: closed.Kind,
-		UserMessageID: userMessageID, AgentMessageID: agentMessageID, Target: target, PayloadSHA256: payloadHash,
+		UserMessageID: modulecore.MessageID(userMessageID), AgentMessageID: modulecore.MessageID(agentMessageID), Target: target, PayloadSHA256: payloadHash,
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil || len(encoded) > 8192 {
@@ -1118,19 +1131,25 @@ WHERE turn_id = ? AND payload_sha256 = ?`, result.Status, string(resultJSONBytes
 
 func scanConversationTurnOutbox(row interface{ Scan(...interface{}) error }) (*domconv.ConversationTurnOutbox, error) {
 	var outbox domconv.ConversationTurnOutbox
+	var traceID, rootTaskID string
 	var threadID, threadKind string
 	var threadSeq int64
 	var closedID, closedKind string
 	var closedSeq int64
 	var lease sql.NullTime
 	var status, lastError string
-	if err := row.Scan(&outbox.TurnID, &outbox.Target, &outbox.SessionID, &threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind,
+	if err := row.Scan(&outbox.TurnID, &traceID, &rootTaskID, &outbox.Target, &outbox.SessionID, &threadID, &threadSeq, &threadKind, &closedID, &closedSeq, &closedKind,
 		&outbox.PayloadSHA256, &outbox.PayloadJSON, &status, &outbox.LeaseToken, &lease, &outbox.Attempts,
 		&lastError, &outbox.CreatedAt, &outbox.UpdatedAt); err != nil {
 		return nil, err
 	}
 	outbox.Status = domconv.ConversationTurnOutboxStatus(status)
 	outbox.LastError = domconv.ConversationTurnErrorCode(lastError)
+	outbox.TraceID = modulecore.TraceID(traceID)
+	outbox.RootTaskID = modulecore.TaskID(rootTaskID)
+	if outbox.TurnID.Validate() != nil || outbox.TraceID.Validate() != nil || outbox.RootTaskID.Validate() != nil {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
 	outbox.ThreadID = modulecore.ThreadID(threadID)
 	outbox.ThreadSeq = modulecore.ThreadSeq(threadSeq)
 	outbox.ThreadKind = modulecore.ThreadKind(threadKind)
@@ -1186,10 +1205,14 @@ func conversationTurnError(code domconv.ConversationTurnErrorCode) error {
 }
 
 func failedConversationTurnResult(request domconv.ConversationTurnRequest, code domconv.ConversationTurnErrorCode) domconv.ConversationTurnResult {
-	turnID := strings.TrimSpace(request.TurnID)
-	return domconv.ConversationTurnResult{TurnID: turnID, TraceID: turnID, SessionID: strings.TrimSpace(request.SessionID), Status: domconv.ConversationTurnFailed, ErrorCode: code}
+	return domconv.ConversationTurnResult{
+		TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID,
+		UserMessageID: request.UserMessageID, AgentMessageID: request.AgentMessageID,
+		MessageIDs: []string{string(request.UserMessageID), string(request.AgentMessageID)},
+		SessionID:  strings.TrimSpace(request.SessionID), Status: domconv.ConversationTurnFailed, ErrorCode: code,
+	}
 }
 
 func rollbackNoTxConversationTurn(turnID string, code domconv.ConversationTurnErrorCode) (domconv.ConversationTurnResult, error) {
-	return domconv.ConversationTurnResult{TurnID: turnID, TraceID: turnID, Status: domconv.ConversationTurnFailed, ErrorCode: code}, conversationTurnError(code)
+	return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: code}, conversationTurnError(code)
 }

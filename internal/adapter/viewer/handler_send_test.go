@@ -154,7 +154,10 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		t.Fatalf("viewer send trace_id = %q, want canonical identity distinct from job_id %q", traceID, jobID)
 	}
 	messageID, _ := body["message_id"].(string)
-	if !strings.HasPrefix(messageID, "msg_") {
+	agentMessageID, _ := body["agent_message_id"].(string)
+	turnID, _ := body["turn_id"].(string)
+	rootTaskID, _ := body["root_task_id"].(string)
+	if modulecore.MessageID(messageID).Validate() != nil || modulecore.MessageID(agentMessageID).Validate() != nil || messageID == agentMessageID || modulecore.TurnID(turnID).Validate() != nil || modulecore.TaskID(rootTaskID).Validate() != nil {
 		t.Fatalf("viewer send response must include generated message_id: %#v", body)
 	}
 	if body["viewer_client_id"] != "portal-tab-1" || body["recipient"] != "shiro" {
@@ -172,8 +175,8 @@ func TestHandleSendUsesViewerRecipientContract(t *testing.T) {
 		if got.JobID != jobID || got.ViewerClientID != "portal-tab-1" {
 			t.Fatalf("correlation = job:%q client:%q, want job:%q client:portal-tab-1", got.JobID, got.ViewerClientID, jobID)
 		}
-		if got.TraceID != traceID || got.MessageID != messageID {
-			t.Fatalf("identity = trace:%q message:%q, want trace:%q message:%q", got.TraceID, got.MessageID, traceID, messageID)
+		if got.TurnID != turnID || got.TraceID != traceID || got.RootTaskID != rootTaskID || got.MessageID != messageID || got.AgentMessageID != agentMessageID {
+			t.Fatalf("identity = (%q,%q,%q,%q,%q), want (%q,%q,%q,%q,%q)", got.TurnID, got.TraceID, got.RootTaskID, got.MessageID, got.AgentMessageID, turnID, traceID, rootTaskID, messageID, agentMessageID)
 		}
 		want := RequestProvenance{
 			OperationSource:    "RenCrow_PORTAL",

@@ -1468,7 +1468,9 @@ func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 	}
 	defer store.Close()
 	trace := domconv.RecallTrace{
-		ResponseID: "job-1",
+		TraceID:    modulecore.NewTraceID(),
+		TurnID:     modulecore.NewTurnID(),
+		RootTaskID: modulecore.NewTaskID(),
 		SessionID:  l1TestSessionID("sess-1"),
 		Role:       "worker",
 		Items: []domconv.RecallTraceItem{{
@@ -1484,7 +1486,7 @@ func TestL1SQLiteStore_SaveAndRecentRecallTraces(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecentRecallTraces: %v", err)
 	}
-	if len(got) != 1 || got[0].ResponseID != "job-1" || got[0].Items[0].Summary != "summary" {
+	if len(got) != 1 || got[0].TraceID != trace.TraceID || got[0].TurnID != trace.TurnID || got[0].RootTaskID != trace.RootTaskID || got[0].Items[0].Summary != "summary" {
 		t.Fatalf("unexpected traces: %+v", got)
 	}
 }

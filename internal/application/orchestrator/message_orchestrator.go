@@ -42,7 +42,10 @@ const (
 type ProcessMessageRequest struct {
 	JobID                    string
 	MessageID                string
+	AgentMessageID           string
+	TurnID                   string
 	TraceID                  string
+	RootTaskID               string
 	SessionID                string
 	Channel                  string
 	ChatID                   string
@@ -65,7 +68,9 @@ type ProcessMessageResponse struct {
 	Confidence      float64
 	JobID           string
 	MessageID       string                                 `json:"message_id,omitempty"`
+	TurnID          string                                 `json:"turn_id,omitempty"`
 	TraceID         string                                 `json:"trace_id,omitempty"`
+	RootTaskID      string                                 `json:"root_task_id,omitempty"`
 	Verification    *domainverification.VerificationReport `json:"verification,omitempty"`
 	Capability      string                                 `json:"capability,omitempty"`
 	StorageWorkflow *domaindurablestore.WorkflowResult     `json:"storage_workflow,omitempty"`
@@ -469,6 +474,9 @@ func (o *MessageOrchestrator) ttsEnabled() bool {
 func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
 	latencyStartedAt := time.Now()
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
+	if err := ensureProcessRequestIdentity(&req); err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	sess, req, err := o.sessions.ResolveForRequest(ctx, req, latencyStartedAt.UTC())
 	if err != nil {
 		return ProcessMessageResponse{}, err
@@ -480,11 +488,14 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}()
 	jobID := resolveProcessMessageJobID(req.JobID)
 	req.JobID = jobID.String()
-	ensureProcessRequestIdentity(&req)
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
 	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
-	defer o.events.ReleaseTrace(jobID.String())
+	o.events.BindResponseMessageID(jobID.String(), modulecore.MessageID(req.AgentMessageID))
+	defer func() {
+		o.events.ReleaseTrace(jobID.String())
+		o.events.ReleaseResponseMessageID(jobID.String())
+	}()
 	ctx, cancel := context.WithCancelCause(ctx)
 	publicationFailures := o.events.publicationFail
 	if publicationFailures != nil {
@@ -532,7 +543,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -559,7 +570,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -569,7 +580,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -579,7 +590,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TraceID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
@@ -681,7 +692,10 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	resp = ensureProcessResponseIdentity(
 		o.responses.BuildWithVerification(response, decision, jobID, verificationReport),
 		jobID.String(),
+		req.TurnID,
 		req.TraceID,
+		req.RootTaskID,
+		req.AgentMessageID,
 		o.events.TakeResponseMessageID,
 	)
 	log.Printf("[MessageOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",

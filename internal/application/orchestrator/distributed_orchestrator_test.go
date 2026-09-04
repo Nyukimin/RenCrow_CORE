@@ -361,7 +361,7 @@ func TestDistributedOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *t
 		t.Fatalf("expected one recall trace, got %d", len(recall.traces))
 	}
 	trace := recall.traces[0]
-	if trace.SessionID != resp.SessionID || trace.ResponseID != resp.JobID || trace.Role != "dci" {
+	if trace.SessionID != resp.SessionID || trace.Role != "dci" || string(trace.TraceID) != resp.TraceID || string(trace.TurnID) != resp.TurnID || string(trace.RootTaskID) != resp.RootTaskID {
 		t.Fatalf("unexpected recall trace identity: %+v", trace)
 	}
 	if len(trace.Items) != 1 || trace.Items[0].Layer != "DCI" || trace.Items[0].Kind != "evidence" {

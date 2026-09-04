@@ -40,13 +40,15 @@ type RoutePolicy interface {
 }
 
 type Output struct {
-	SessionID core.SessionID       `json:"session_id,omitempty"`
-	MessageID core.MessageID       `json:"message_id,omitempty"`
-	TraceID   core.TraceID         `json:"trace_id,omitempty"`
-	Text      string               `json:"text,omitempty"`
-	Route     RouteDecision        `json:"route,omitempty"`
-	JobID     string               `json:"job_id,omitempty"`
-	Response  llm.GenerateResponse `json:"response,omitempty"`
+	SessionID  core.SessionID       `json:"session_id,omitempty"`
+	MessageID  core.MessageID       `json:"message_id,omitempty"`
+	TurnID     core.TurnID          `json:"turn_id,omitempty"`
+	TraceID    core.TraceID         `json:"trace_id,omitempty"`
+	RootTaskID core.TaskID          `json:"root_task_id,omitempty"`
+	Text       string               `json:"text,omitempty"`
+	Route      RouteDecision        `json:"route,omitempty"`
+	JobID      string               `json:"job_id,omitempty"`
+	Response   llm.GenerateResponse `json:"response,omitempty"`
 }
 
 type RuntimePorts struct {

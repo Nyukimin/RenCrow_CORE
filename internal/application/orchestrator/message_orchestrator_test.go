@@ -674,9 +674,10 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 		Priority:         10,
 	}})
 
+	personaMessageID := string(modulecore.NewMessageID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "session-1",
-		MessageID:   "msg_persona_input",
+		MessageID:   personaMessageID,
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "このファイルを削除して",
@@ -690,7 +691,7 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 	if len(recorder.canonical) != 1 || recorder.canonical[0].ResponseID != "kuro_destructive_block" || !recorder.canonical[0].Used || recorder.canonical[0].Rewritten {
 		t.Fatalf("canonical logs = %#v", recorder.canonical)
 	}
-	if recorder.canonical[0].MessageID != "msg_persona_input" {
+	if recorder.canonical[0].MessageID != personaMessageID {
 		t.Fatalf("canonical message_id = %q, want input message identity", recorder.canonical[0].MessageID)
 	}
 }
@@ -1523,7 +1524,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 		t.Fatalf("expected one recall trace, got %d", len(recall.traces))
 	}
 	trace := recall.traces[0]
-	if trace.SessionID != resp.SessionID || trace.ResponseID != resp.JobID || trace.Role != "dci" {
+	if trace.SessionID != resp.SessionID || trace.Role != "dci" || string(trace.TraceID) != resp.TraceID || string(trace.TurnID) != resp.TurnID || string(trace.RootTaskID) != resp.RootTaskID {
 		t.Fatalf("unexpected recall trace identity: %+v", trace)
 	}
 	if len(trace.Items) != 1 {

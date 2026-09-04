@@ -3,36 +3,72 @@ package task
 import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Task はユーザーからの指示を表す値オブジェクト
 type Task struct {
-	jobID       JobID
-	userMessage string
-	channel     string
-	chatID      string
-	sessionID   string
-	attachments []attachment.Attachment
-	recipient   string
-	forcedRoute routing.Route // 明示的なルート指定（オプション）
-	route       routing.Route // 決定されたルート
+	jobID          JobID
+	turnID         modulecore.TurnID
+	traceID        modulecore.TraceID
+	rootTaskID     modulecore.TaskID
+	userMessageID  modulecore.MessageID
+	agentMessageID modulecore.MessageID
+	userMessage    string
+	channel        string
+	chatID         string
+	sessionID      string
+	attachments    []attachment.Attachment
+	recipient      string
+	forcedRoute    routing.Route // 明示的なルート指定（オプション）
+	route          routing.Route // 決定されたルート
 }
 
 // NewTask は新しいTaskを作成
 func NewTask(jobID JobID, userMessage, channel, chatID string) Task {
 	return Task{
-		jobID:       jobID,
-		userMessage: userMessage,
-		channel:     channel,
-		chatID:      chatID,
-		forcedRoute: "",
-		route:       "",
+		jobID:          jobID,
+		turnID:         modulecore.NewTurnID(),
+		traceID:        modulecore.NewTraceID(),
+		rootTaskID:     modulecore.NewTaskID(),
+		userMessageID:  modulecore.NewMessageID(),
+		agentMessageID: modulecore.NewMessageID(),
+		userMessage:    userMessage,
+		channel:        channel,
+		chatID:         chatID,
+		forcedRoute:    "",
+		route:          "",
 	}
 }
 
 // JobID はジョブIDを返す
 func (t Task) JobID() JobID {
 	return t.jobID
+}
+
+// TurnID は会話ターンの正規IDを返す。
+func (t Task) TurnID() modulecore.TurnID {
+	return t.turnID
+}
+
+// TraceID は会話ターンを追跡する正規IDを返す。
+func (t Task) TraceID() modulecore.TraceID {
+	return t.traceID
+}
+
+// RootTaskID は会話ターンのルートタスク正規IDを返す。
+func (t Task) RootTaskID() modulecore.TaskID {
+	return t.rootTaskID
+}
+
+// UserMessageID は利用者発話の正規IDを返す。
+func (t Task) UserMessageID() modulecore.MessageID {
+	return t.userMessageID
+}
+
+// AgentMessageID はAgent発話の正規IDを返す。
+func (t Task) AgentMessageID() modulecore.MessageID {
+	return t.agentMessageID
 }
 
 // UserMessage はユーザーメッセージを返す
@@ -96,6 +132,16 @@ func (t Task) WithUserMessage(message string) Task {
 // WithSessionID はCORE正本の会話セッションIDを設定した新しいTaskを返す。
 func (t Task) WithSessionID(sessionID string) Task {
 	t.sessionID = sessionID
+	return t
+}
+
+// WithConversationIdentity は会話ターンの正規identityを設定した新しいTaskを返す。
+func (t Task) WithConversationIdentity(turnID modulecore.TurnID, traceID modulecore.TraceID, rootTaskID modulecore.TaskID, userMessageID, agentMessageID modulecore.MessageID) Task {
+	t.turnID = turnID
+	t.traceID = traceID
+	t.rootTaskID = rootTaskID
+	t.userMessageID = userMessageID
+	t.agentMessageID = agentMessageID
 	return t
 }
 

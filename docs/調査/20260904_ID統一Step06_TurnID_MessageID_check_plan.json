@@ -1,0 +1,201 @@
+{
+  "deferred": [
+    {
+      "check_id": "s6_full_system",
+      "consumer": "final all-clear",
+      "failure_action": "reopen failed Identity ledger row",
+      "reason": "runs only after all Identity ledger rows close"
+    },
+    {
+      "check_id": "s6_workspace_restore",
+      "consumer": "RenCrow_Workspace whole-state migration",
+      "failure_action": "keep Workspace migration open",
+      "reason": "whole-state restore is not a Step06 ID separation guarantee"
+    }
+  ],
+  "evaluated_at": "2026-09-04T17:12:52Z",
+  "excluded": [
+    {
+      "check_id": "s6_rekey_canonical_message_ids",
+      "reason": "existing msg_ identifiers already satisfy the canonical MessageID type and remain stable history",
+      "replacement_receipt": null
+    }
+  ],
+  "included": [
+    {
+      "check_id": "s6_owner_source",
+      "execution_phase": "design and implementation",
+      "failure_action": "keep ID-S6-TURN-MESSAGE open",
+      "guarantee": "CORE remains the sole owner of conversation Turn and Message identity",
+      "owner": "RenCrow_CORE",
+      "result_consumer": "Step06 implementation"
+    },
+    {
+      "check_id": "s6_domain_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "ConversationTurn requires independently canonical TurnID TraceID RootTaskID and user/agent MessageID values",
+      "owner": "RenCrow_CORE conversation domain",
+      "result_consumer": "Step06 local acceptance"
+    },
+    {
+      "check_id": "s6_ingress_propagation",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "one authenticated ingress assigns UUIDv7 TurnID TraceID RootTaskID and user/agent MessageID once and preserves them through Task and actual Agent EndTurn",
+      "owner": "RenCrow_CORE Viewer and orchestrator",
+      "result_consumer": "runtime route"
+    },
+    {
+      "check_id": "s6_message_generator_owner",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "all new MessageID values use modules/core NewMessageID and no competing ConversationTurn generator remains",
+      "owner": "modules/core",
+      "result_consumer": "identity architecture test"
+    },
+    {
+      "check_id": "s6_storage_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "receipt messages outbox and recall trace persist the independent identities atomically without TurnID substitution",
+      "owner": "RenCrow_CORE L1 SQLite",
+      "result_consumer": "EndTurn receipt"
+    },
+    {
+      "check_id": "s6_idempotent_replay",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "the same TurnID and identical canonical payload replay the same receipt while conflicting identities or payload fail closed",
+      "owner": "RenCrow_CORE L1 SQLite",
+      "result_consumer": "EndTurn caller"
+    },
+    {
+      "check_id": "s6_partial_failed",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "partial and failed results retain independent canonical identities and never synthesize TraceID or TaskID from TurnID",
+      "owner": "RenCrow_CORE conversation boundary",
+      "result_consumer": "Agent completion route"
+    },
+    {
+      "check_id": "s6_architecture_zero",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "failure_action": "return to implementation",
+      "guarantee": "production source contains zero assumptions TurnID equals TraceID or TaskID and zero alternate MessageID generator",
+      "owner": "modules/core architecture tests",
+      "result_consumer": "ID-S6-TURN-MESSAGE ledger"
+    },
+    {
+      "check_id": "s6_predeploy_build",
+      "execution_phase": "pre-deploy",
+      "failure_action": "do not install or restart",
+      "guarantee": "relevant tests vet build static checks and migration dry run pass from the reviewed diff",
+      "owner": "RenCrow_CORE",
+      "result_consumer": "deploy owner"
+    },
+    {
+      "check_id": "s6_bounded_recovery",
+      "execution_phase": "pre-cutover",
+      "failure_action": "block cutover",
+      "guarantee": "the exact stopped-writer SQLite target tables and sidecars have hash-bound recoverable copies and rollback procedure before mutation",
+      "owner": "RenCrow_CORE migration CLI and service owner",
+      "result_consumer": "production cutover"
+    },
+    {
+      "check_id": "s6_deterministic_migration",
+      "execution_phase": "pre-cutover and cutover",
+      "failure_action": "rollback and keep Step06 open",
+      "guarantee": "wrong-type historical TurnID and TraceID values map independently by the canonical UUIDv5 target-type source tuple while valid msg_ identities are preserved and all foreign references agree",
+      "owner": "RenCrow_CORE migration CLI",
+      "result_consumer": "production storage"
+    },
+    {
+      "check_id": "s6_runtime_identity",
+      "execution_phase": "post-deploy and post-restart",
+      "failure_action": "rollback or leave Step06 unverified and diagnose the canonical route",
+      "guarantee": "pushed source installed artifact active service PID listener readiness actual CORE Agent user-visible response receipt outbox and recall trace agree on distinct typed identities",
+      "owner": "rencrow.service through canonical module route",
+      "result_consumer": "ID-S6-TURN-MESSAGE ledger"
+    }
+  ],
+  "input": {
+    "base_revision": "04d28ebbf0b4e9978ff64dd060d77a317e9cc921",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-06-turnid-messageid",
+    "historical_message_id_policy": "preserve canonical msg_ values",
+    "live_conversation_turn_receipt_canonical_trace_count": 0,
+    "live_conversation_turn_receipt_canonical_turn_count": 0,
+    "live_conversation_turn_receipt_count": 437,
+    "live_conversation_turn_receipt_equal_turn_trace_count": 437,
+    "live_conversation_turn_receipt_message_pair_canonical_count": 437,
+    "live_conversation_turn_outbox_count": 621,
+    "live_conversation_turn_outbox_canonical_turn_count": 0,
+    "live_conversation_turn_outbox_orphan_receipt_count": 0,
+    "live_recall_injection_count": 1468,
+    "live_recall_injection_orphan_count": 0,
+    "live_recall_item_count": 5610,
+    "live_recall_item_orphan_count": 0,
+    "live_recall_trace_exact_receipt_link_count": 437,
+    "live_recall_trace_canonical_trace_count": 0,
+    "live_recall_trace_canonical_turn_count": 0,
+    "live_recall_trace_duplicate_unlinked_turn_group_count": 6,
+    "live_recall_trace_duplicate_unlinked_turn_row_count": 12,
+    "live_recall_trace_equal_turn_trace_count": 759,
+    "live_recall_trace_unlinked_count": 638,
+    "live_recall_trace_with_turn_count": 1075,
+    "migration_namespace_uuid": "6570d821-e63e-592d-a51f-8cf4b43cdba5",
+    "owner": "RenCrow_CORE",
+    "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
+    "worktree_state": "identity/03-dci Step06 reviewed implementation diff over completed Step05 Gate7"
+  },
+  "observations": [
+    {
+      "at": "2026-09-04T17:12:52Z",
+      "outcome": "aborted-no-production-mutation",
+      "subject": "live SQLite cross-filesystem production-shape snapshot",
+      "evidence": "sqlite backup entered D-state under high I/O pressure; the process was terminated and the incomplete temporary snapshot was moved to Trash",
+      "next_action": "perform one stopped-writer same-filesystem recovery copy immediately before cutover; stop without retry if D-state recurs"
+    }
+  ],
+  "phase": "predeploy-passed-cutover-pending",
+  "purpose": "identity-step06-turn-message",
+  "replacement_receipts": [],
+  "results": [
+    {
+      "check_ids": [
+        "s6_domain_contract",
+        "s6_ingress_propagation",
+        "s6_message_generator_owner",
+        "s6_storage_contract",
+        "s6_idempotent_replay",
+        "s6_partial_failed",
+        "s6_architecture_zero"
+      ],
+      "status": "passed",
+      "evidence": "targeted domain, task, agent, orchestrator, adapter, persistence, L1 SQLite, core architecture, chat and integration Go tests passed; malformed ingress identity is rejected before session state access"
+    },
+    {
+      "check_ids": [
+        "s6_deterministic_migration"
+      ],
+      "status": "predeploy-passed-cutover-pending",
+      "evidence": "migration package and CLI tests pass exact mapping, child relationships, duplicate unlinked Turn reuse, stale receipt rejection, WAL rejection, rollback, malformed and oversize fail-closed paths; production apply is pending"
+    },
+    {
+      "check_ids": [
+        "s6_predeploy_build"
+      ],
+      "status": "passed",
+      "evidence": "git diff --check, gofmt audit, go vet and go build passed for all declared Go package roots"
+    },
+    {
+      "check_ids": [
+        "s6_bounded_recovery",
+        "s6_runtime_identity"
+      ],
+      "status": "pending",
+      "evidence": "requires stopped production writer, same-filesystem hash-bound recovery point, cutover, restart and actual CORE Agent route receipt"
+    }
+  ],
+  "schema_version": "rencrow.check_plan.v1"
+}

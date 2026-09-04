@@ -510,7 +510,7 @@ ThreadSummarizerは一threadにつき一回のLLM requestとし、64KiB以下の
 3〜5個のunique keyword（各1〜64 rune）をCOREが検証します。CORE由来のevidence SHA-256、roles、provider、
 `llm | deterministic_fallback | legacy_unverified`のgeneration modeと固定failure codeをarchive receiptへ保存し、
 raw provider error、invalid LLM output、物理pathをAPI responseやreceiptへ含めません。
-Canonical AgentのEndTurnはroot `job_id`を維持したtyped internal requestであり、L1 SQLiteの同一transactionへ
+Canonical AgentのEndTurnは独立した`turn_id`、`trace_id`、`root_task_id`、User／actual Agentの`message_id`を維持するtyped internal requestであり、L1 SQLiteの同一transactionへ
 Recall trace、User／Agent 2 message、ProfilePromotion job、event log、turn receipt、required follower outboxを保存します。
 resultは`status=completed | partial | failed`、turn／trace／2 message／receipt ID、follower status、固定error codeだけを
 返します。同一turn＋同一payload hashはidempotent replay、異なるhashは`conflict`です。Redis／archive／VectorDBは
@@ -993,7 +993,7 @@ RenCrow_Imageがunavailableの場合は明示的な503を返します。
 Chat吹き出し内のPNGとして表示します。Chat経路で新しい画像配信APIを増やさず、既存の
 `GET /viewer/image/result`を再利用します。
 
-COREは受付時に現行互換の`job_id`、root `trace_id`、利用者発話の`message_id`を別々に一度だけ発行します。`POST /viewer/send`の受付responseは`job_id`、`trace_id`、`message_id`、`viewer_client_id`、`recipient`を返します。root `trace_id`は`job_id`と異なる`trc_` prefix付きUUIDv7です。同じ処理から発行する`message.received`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、`message.received.message_id`は受付responseの`message_id`と一致します。Agent発話は利用者発話とは別の`message_id`を持ちます。
+COREは受付時に現行互換の`job_id`とは別に、`turn_id`、root `trace_id`、`root_task_id`、利用者発話の`message_id`、actual Agent発話の`agent_message_id`をUUIDv7で一度だけ発行します。`POST /viewer/send`の受付responseはこれらと`viewer_client_id`、`recipient`を返します。`turn_id`、`trace_id`、`root_task_id`はそれぞれ`turn_`、`trc_`、`tsk_` prefixを持つ独立IDであり、相互代用も`job_id`からの派生も行いません。同じ処理から発行する`message.received`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、`message.received.message_id`は受付responseの`message_id`と一致します。最初のactual Agent `agent.response`は`agent_message_id`を使用します。multi-Actor routeで別Actorが利用者向け発話を行う場合、その別発話は新しいcanonical `message_id`を持ちます。
 
 `message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と`job_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
 

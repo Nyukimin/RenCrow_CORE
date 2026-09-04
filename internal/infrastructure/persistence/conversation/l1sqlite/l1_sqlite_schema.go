@@ -509,6 +509,7 @@ CREATE TABLE IF NOT EXISTS recall_trace (
 	trace_id TEXT PRIMARY KEY,
 	owner_id TEXT NOT NULL DEFAULT '',
 	turn_id TEXT NOT NULL,
+	root_task_id TEXT NOT NULL CHECK(length(root_task_id) > 0),
 	chat_id TEXT NOT NULL,
 	persona TEXT NOT NULL,
 	route TEXT NOT NULL DEFAULT '',
@@ -650,6 +651,7 @@ func (s *L1SQLiteStore) validateCanonicalThreadSchema(ctx context.Context) error
 		{name: "l1_memory_event"},
 		{name: "l1_event_log"},
 		{name: "l1_profile_promotion_job"},
+		{name: "recall_trace"},
 		{name: "conversation_active_thread"},
 		{name: "conversation_turn_receipt", requireClosed: true},
 		{name: "conversation_turn_outbox", requireClosed: true},
@@ -675,15 +677,25 @@ func (s *L1SQLiteStore) validateCanonicalThreadSchema(ctx context.Context) error
 			return fmt.Errorf("failed to inspect canonical thread schema for %s: %w", table.name, err)
 		}
 		rows.Close()
-		required := map[string]string{
-			"thread_id":   "TEXT",
-			"thread_seq":  "INTEGER",
-			"thread_kind": "TEXT",
+		required := map[string]string{}
+		if table.name != "recall_trace" {
+			required["thread_id"] = "TEXT"
+			required["thread_seq"] = "INTEGER"
+			required["thread_kind"] = "TEXT"
 		}
 		if table.requireClosed {
 			required["closed_thread_id"] = "TEXT"
 			required["closed_thread_seq"] = "INTEGER"
 			required["closed_thread_kind"] = "TEXT"
+		}
+		switch table.name {
+		case "recall_trace":
+			required["root_task_id"] = "TEXT"
+		case "conversation_turn_receipt":
+			required["root_task_id"] = "TEXT"
+		case "conversation_turn_outbox":
+			required["trace_id"] = "TEXT"
+			required["root_task_id"] = "TEXT"
 		}
 		for column, wantType := range required {
 			gotType, ok := columns[column]

@@ -64,7 +64,16 @@ func (m *mockManager) CommitConversationTurn(ctx context.Context, request domcon
 	if err := m.Store(ctx, request.SessionID, agent); err != nil {
 		return domconv.ConversationTurnResult{}, err
 	}
-	return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+	return domconv.ConversationTurnResult{
+		TurnID:         request.TurnID,
+		TraceID:        request.TraceID,
+		RootTaskID:     request.RootTaskID,
+		UserMessageID:  request.UserMessageID,
+		AgentMessageID: request.AgentMessageID,
+		MessageIDs:     []string{string(request.UserMessageID), string(request.AgentMessageID)},
+		SessionID:      request.SessionID,
+		Status:         domconv.ConversationTurnCompleted,
+	}, nil
 }
 
 func (m *mockManager) ConversationTurnTargets() []domconv.ConversationTurnTarget {
@@ -104,6 +113,20 @@ func newEngineTestThread(sessionID, domain string) *domconv.Thread {
 		SessionID:  sessionID,
 		Domain:     domain,
 		Status:     domconv.ThreadActive,
+	}
+}
+
+func engineTestConversationTurnRequest(sessionID, userMessage, agentMessage string, speaker domconv.Speaker) domconv.ConversationTurnRequest {
+	return domconv.ConversationTurnRequest{
+		TurnID:         modulecore.NewTurnID(),
+		TraceID:        modulecore.NewTraceID(),
+		RootTaskID:     modulecore.NewTaskID(),
+		UserMessageID:  modulecore.NewMessageID(),
+		AgentMessageID: modulecore.NewMessageID(),
+		SessionID:      sessionID,
+		UserMessage:    userMessage,
+		AgentMessage:   agentMessage,
+		AgentSpeaker:   speaker,
 	}
 }
 
@@ -407,7 +430,7 @@ func TestBeginTurn_NormalizesLegacyWildAndHeavySpeakers(t *testing.T) {
 	}
 }
 
-func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
+func TestCommitConversationTurnStoresFromToAttribution(t *testing.T) {
 	var stored []domconv.Message
 	mgr := &mockManager{storeFunc: func(_ context.Context, _ string, msg domconv.Message) error {
 		stored = append(stored, msg)
@@ -415,8 +438,9 @@ func TestEndTurnAsStoresFromToAttribution(t *testing.T) {
 	}}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
-	if err := engine.EndTurnAs(context.Background(), "shared-session", "前回の続き", "Kuroの返答", domconv.SpeakerKuro); err != nil {
-		t.Fatalf("EndTurnAs failed: %v", err)
+	request := engineTestConversationTurnRequest(string(modulecore.NewSessionID()), "前回の続き", "Kuroの返答", domconv.SpeakerKuro)
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 	if len(stored) != 2 {
 		t.Fatalf("stored=%#v, want user and Agent messages", stored)
@@ -440,7 +464,11 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 		},
 		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
 			got = request
-			return domconv.ConversationTurnResult{TurnID: request.TurnID, SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted}, nil
+			return domconv.ConversationTurnResult{
+				TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID,
+				UserMessageID: request.UserMessageID, AgentMessageID: request.AgentMessageID,
+				SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted,
+			}, nil
 		},
 		storeFunc: func(context.Context, string, domconv.Message) error {
 			t.Fatal("typed engine must not use legacy Store")
@@ -450,11 +478,12 @@ func TestCommitConversationTurnUsesTrustedOwnerTargetsAndL1Boundary(t *testing.T
 	detector := &mockDetector{result: domconv.ThreadBoundaryResult{ShouldCreateNew: true, Reason: domconv.BoundaryKeyword}}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
 		WithUserMemoryStore(mgr, "trusted-owner").WithDetector(detector)
-	request := domconv.ConversationTurnRequest{
-		TurnID: "job-typed", SessionID: sessionID, OwnerID: "caller-owner", Domain: "caller-domain",
-		UserMessage: "new topic", AgentMessage: "response", AgentSpeaker: domconv.SpeakerKuro,
-		Boundary: true, BoundaryReason: "caller decision", Targets: []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection},
-	}
+	request := engineTestConversationTurnRequest(sessionID, "new topic", "response", domconv.SpeakerKuro)
+	request.OwnerID = "caller-owner"
+	request.Domain = "caller-domain"
+	request.Boundary = true
+	request.BoundaryReason = "caller decision"
+	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection}
 	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
 		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
@@ -474,13 +503,16 @@ func TestCommitConversationTurnNoActiveThreadUsesGeneralWithoutLegacyWrites(t *t
 		},
 		commitTurnFunc: func(_ context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
 			got = request
-			return domconv.ConversationTurnResult{TurnID: request.TurnID, Status: domconv.ConversationTurnCompleted}, nil
+			return domconv.ConversationTurnResult{
+				TurnID: request.TurnID, TraceID: request.TraceID, RootTaskID: request.RootTaskID,
+				UserMessageID: request.UserMessageID, AgentMessageID: request.AgentMessageID,
+				SessionID: request.SessionID, Status: domconv.ConversationTurnCompleted,
+			}, nil
 		},
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "trusted-owner")
-	if _, err := engine.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
-		TurnID: "job-no-thread", SessionID: string(modulecore.NewSessionID()), UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
-	}); err != nil {
+	request := engineTestConversationTurnRequest(string(modulecore.NewSessionID()), "hello", "hi", domconv.SpeakerMio)
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
 		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 	if got.Domain != "general" || got.Boundary || got.BoundaryReason != "" {
@@ -828,7 +860,7 @@ func TestBeginTurn_UsesWikiPageIndexForSpecRecall(t *testing.T) {
 	}
 }
 
-func TestEndTurn_BasicStore(t *testing.T) {
+func TestCommitConversationTurn_BasicStore(t *testing.T) {
 	stored := []string{}
 	mgr := &mockManager{
 		storeFunc: func(ctx context.Context, sessionID string, msg domconv.Message) error {
@@ -838,9 +870,9 @@ func TestEndTurn_BasicStore(t *testing.T) {
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren")
 
-	err := engine.EndTurn(context.Background(), "s1", "hello", "hi there")
-	if err != nil {
-		t.Fatalf("EndTurn failed: %v", err)
+	request := engineTestConversationTurnRequest(string(modulecore.NewSessionID()), "hello", "hi there", domconv.SpeakerMio)
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 	if len(stored) != 2 {
 		t.Fatalf("expected 2 stores, got %d", len(stored))
@@ -853,7 +885,7 @@ func TestEndTurn_BasicStore(t *testing.T) {
 	}
 }
 
-func TestEndTurn_WithDetector_NoBoundary(t *testing.T) {
+func TestCommitConversationTurn_WithDetector_NoBoundary(t *testing.T) {
 	flushCalled := false
 	mgr := &mockManager{
 		flushThreadFunc: func(ctx context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
@@ -866,16 +898,16 @@ func TestEndTurn_WithDetector_NoBoundary(t *testing.T) {
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 
-	err := engine.EndTurn(context.Background(), "s1", "私はGoが好きです", "覚えておきます")
-	if err != nil {
-		t.Fatalf("EndTurn failed: %v", err)
+	request := engineTestConversationTurnRequest(string(modulecore.NewSessionID()), "私はGoが好きです", "覚えておきます", domconv.SpeakerMio)
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 	if flushCalled {
 		t.Error("FlushThread should NOT be called when no boundary detected")
 	}
 }
 
-func TestEndTurn_WithDetector_Boundary(t *testing.T) {
+func TestCommitConversationTurn_WithDetector_Boundary(t *testing.T) {
 	flushCalled := false
 	createCalled := false
 	mgr := &mockManager{
@@ -893,9 +925,9 @@ func TestEndTurn_WithDetector_Boundary(t *testing.T) {
 	}
 	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithUserMemoryStore(mgr, "ren").WithDetector(detector)
 
-	err := engine.EndTurn(context.Background(), "s1", "new topic", "response")
-	if err != nil {
-		t.Fatalf("EndTurn failed: %v", err)
+	request := engineTestConversationTurnRequest(string(modulecore.NewSessionID()), "new topic", "response", domconv.SpeakerMio)
+	if _, err := engine.CommitConversationTurn(context.Background(), request); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 	if !flushCalled {
 		t.Error("FlushThread should be called when boundary detected")

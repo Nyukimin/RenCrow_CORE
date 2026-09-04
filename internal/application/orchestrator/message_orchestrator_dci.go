@@ -29,7 +29,7 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, req.SessionID, jid, result); err != nil {
+	if err := o.saveDCIRecallTrace(ctx, req.SessionID, t, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	if err := o.sessions.SaveCompletedTask(ctx, sess, t); err != nil {
@@ -41,11 +41,11 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	return o.responses.Build(response, decision, jobID), true, nil
 }
 
-func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, responseID string, result domaindci.SearchResult) error {
+func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, t task.Task, result domaindci.SearchResult) error {
 	if o.recallTrace == nil {
 		return nil
 	}
-	trace := dciResultToRecallTrace(sessionID, responseID, result)
+	trace := dciResultToRecallTrace(sessionID, t, result)
 	if len(trace.Items) == 0 {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID 
 	return nil
 }
 
-func dciResultToRecallTrace(sessionID string, responseID string, result domaindci.SearchResult) domainconversation.RecallTrace {
+func dciResultToRecallTrace(sessionID string, t task.Task, result domaindci.SearchResult) domainconversation.RecallTrace {
 	items := make([]domainconversation.RecallTraceItem, 0, len(result.Pack.Evidence)+len(result.Pack.Limitations))
 	for i, ev := range result.Pack.Evidence {
 		location := ev.FilePath
@@ -100,7 +100,9 @@ func dciResultToRecallTrace(sessionID string, responseID string, result domaindc
 		createdAt = time.Now().UTC()
 	}
 	return domainconversation.RecallTrace{
-		ResponseID: responseID,
+		TraceID:    t.TraceID(),
+		TurnID:     t.TurnID(),
+		RootTaskID: t.RootTaskID(),
 		SessionID:  sessionID,
 		Role:       "dci",
 		Items:      items,

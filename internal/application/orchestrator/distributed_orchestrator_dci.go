@@ -35,7 +35,7 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, req.SessionID, jid, result); err != nil {
+	if err := o.saveDCIRecallTrace(ctx, req.SessionID, t, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	routedTask := t.WithRoute(routing.RouteRESEARCH)
@@ -52,11 +52,11 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}, true, nil
 }
 
-func (o *DistributedOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, responseID string, result domaindci.SearchResult) error {
+func (o *DistributedOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, t task.Task, result domaindci.SearchResult) error {
 	if o.recallTrace == nil {
 		return nil
 	}
-	trace := dciResultToRecallTrace(sessionID, responseID, result)
+	trace := dciResultToRecallTrace(sessionID, t, result)
 	if len(trace.Items) == 0 {
 		return nil
 	}

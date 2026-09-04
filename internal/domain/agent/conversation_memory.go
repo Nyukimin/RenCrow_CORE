@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 var exactSharedRecallLiteralPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_-]{7,}`)
@@ -96,13 +97,17 @@ type typedConversationTurnEngine interface {
 // receipt while one or more followers stay in the durable outbox. Partial is
 // neither rounded to completed nor escalated into a turn failure here; the
 // receipt keeps the pending targets and the outbox replays them.
-func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, turnID, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
+func commitConversationTurn(ctx context.Context, engine conversation.ConversationEngine, t task.Task, sessionID, userMessage, response string, speaker conversation.Speaker, pack *conversation.RecallPack) error {
 	committer, ok := engine.(typedConversationTurnEngine)
 	if !ok {
 		return conversation.ErrConversationTurnUnavailable
 	}
 	result, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
-		TurnID:           turnID,
+		TurnID:           t.TurnID(),
+		TraceID:          t.TraceID(),
+		RootTaskID:       t.RootTaskID(),
+		UserMessageID:    t.UserMessageID(),
+		AgentMessageID:   t.AgentMessageID(),
 		SessionID:        sessionID,
 		UserMessage:      userMessage,
 		AgentMessage:     response,

@@ -17,9 +17,31 @@ import (
 
 func conversationTurnStoreTestRequest(turnID, sessionID string) domconv.ConversationTurnRequest {
 	return domconv.ConversationTurnRequest{
-		TurnID: turnID, SessionID: canonicalConversationTurnSessionIDForTest(sessionID), OwnerID: "owner-1",
+		TurnID:         modulecore.TurnID(canonicalConversationTurnIdentityForTest(modulecore.CanonicalTurnID, turnID)),
+		TraceID:        modulecore.TraceID(canonicalConversationTurnIdentityForTest(modulecore.CanonicalTraceID, "trace:"+turnID)),
+		RootTaskID:     modulecore.TaskID(canonicalConversationTurnIdentityForTest(modulecore.CanonicalTaskID, "root:"+turnID)),
+		UserMessageID:  modulecore.MessageID(canonicalConversationTurnIdentityForTest(modulecore.CanonicalMessageID, "user:"+turnID)),
+		AgentMessageID: modulecore.MessageID(canonicalConversationTurnIdentityForTest(modulecore.CanonicalMessageID, "agent:"+turnID)),
+		SessionID:      canonicalConversationTurnSessionIDForTest(sessionID), OwnerID: "owner-1",
 		UserMessage: "user-" + turnID, AgentMessage: "agent-" + turnID,
 		AgentSpeaker: domconv.SpeakerMio,
+	}
+}
+
+func canonicalConversationTurnIdentityForTest(kind modulecore.CanonicalIDType, source string) string {
+	id, err := modulecore.NewMigrationID(kind, "conversation_turn_test", "identity", source)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+func assertConversationTurnIdentity(t *testing.T, request domconv.ConversationTurnRequest, result domconv.ConversationTurnResult) {
+	t.Helper()
+	if result.TurnID != request.TurnID || result.TraceID != request.TraceID || result.RootTaskID != request.RootTaskID ||
+		result.UserMessageID != request.UserMessageID || result.AgentMessageID != request.AgentMessageID ||
+		len(result.MessageIDs) != 2 || result.MessageIDs[0] != string(request.UserMessageID) || result.MessageIDs[1] != string(request.AgentMessageID) {
+		t.Fatalf("identity result=%+v, want turn=%s trace=%s root=%s user=%s agent=%s", result, request.TurnID, request.TraceID, request.RootTaskID, request.UserMessageID, request.AgentMessageID)
 	}
 }
 
@@ -41,19 +63,34 @@ func TestConversationTurnCommitPersistsTypedResult(t *testing.T) {
 	}
 	defer store.Close()
 
-	result, err := store.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
-		TurnID:       "turn-red-1",
-		SessionID:    canonicalConversationTurnSessionIDForTest("session-red-1"),
-		OwnerID:      "owner-red-1",
-		UserMessage:  "hello",
-		AgentMessage: "hi",
-		AgentSpeaker: domconv.SpeakerMio,
-	})
+	request := conversationTurnStoreTestRequest("turn-red-1", "session-red-1")
+	request.OwnerID = "owner-red-1"
+	request.UserMessage = "hello"
+	request.AgentMessage = "hi"
+	result, err := store.CommitConversationTurn(context.Background(), request)
 	if err != nil {
 		t.Fatalf("CommitConversationTurn: %v", err)
 	}
 	if result.Status != "completed" {
 		t.Fatalf("status=%q, want completed", result.Status)
+	}
+	assertConversationTurnIdentity(t, request, result)
+	var storedTurnID, storedTraceID, storedRootTaskID, storedUserMessageID, storedAgentMessageID string
+	if err := store.db.QueryRow(`SELECT turn_id, trace_id, root_task_id, user_message_id, agent_message_id FROM conversation_turn_receipt WHERE turn_id = ?`, request.TurnID).
+		Scan(&storedTurnID, &storedTraceID, &storedRootTaskID, &storedUserMessageID, &storedAgentMessageID); err != nil {
+		t.Fatalf("receipt identity: %v", err)
+	}
+	if storedTurnID != string(request.TurnID) || storedTraceID != string(request.TraceID) || storedRootTaskID != string(request.RootTaskID) ||
+		storedUserMessageID != string(request.UserMessageID) || storedAgentMessageID != string(request.AgentMessageID) {
+		t.Fatalf("receipt identity=%q/%q/%q/%q/%q", storedTurnID, storedTraceID, storedRootTaskID, storedUserMessageID, storedAgentMessageID)
+	}
+	var recallTraceID, recallTurnID, recallRootTaskID string
+	if err := store.db.QueryRow(`SELECT trace_id, turn_id, root_task_id FROM recall_trace WHERE trace_id = ?`, request.TraceID).
+		Scan(&recallTraceID, &recallTurnID, &recallRootTaskID); err != nil {
+		t.Fatalf("recall identity: %v", err)
+	}
+	if recallTraceID != string(request.TraceID) || recallTurnID != string(request.TurnID) || recallRootTaskID != string(request.RootTaskID) {
+		t.Fatalf("recall identity=%q/%q/%q", recallTraceID, recallTurnID, recallRootTaskID)
 	}
 }
 
@@ -93,6 +130,7 @@ func TestConversationTurnReplayConflictStableIDsAndTraceProfileCommit(t *testing
 	if err != nil {
 		t.Fatalf("first commit: %v", err)
 	}
+	assertConversationTurnIdentity(t, request, first)
 	var before int
 	if err := store.db.QueryRow(`SELECT count(*) FROM l1_memory_event`).Scan(&before); err != nil {
 		t.Fatalf("memory count: %v", err)
@@ -101,6 +139,7 @@ func TestConversationTurnReplayConflictStableIDsAndTraceProfileCommit(t *testing
 	if err != nil || !replay.IdempotentReplay {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}
+	assertConversationTurnIdentity(t, request, replay)
 	var after int
 	if err := store.db.QueryRow(`SELECT count(*) FROM l1_memory_event`).Scan(&after); err != nil {
 		t.Fatalf("memory count after replay: %v", err)
@@ -121,9 +160,9 @@ func TestConversationTurnReplayConflictStableIDsAndTraceProfileCommit(t *testing
 		`SELECT count(*) FROM l1_profile_promotion_job WHERE evidence_event_id = ?`: &profileCount,
 		`SELECT count(*) FROM l1_event_log WHERE session_id = ?`:                    &logCount,
 	} {
-		argument := request.TurnID
+		argument := string(request.TraceID)
 		if strings.Contains(query, "evidence_event_id") {
-			argument = first.UserMessageID
+			argument = string(first.UserMessageID)
 		}
 		if strings.Contains(query, "session_id") {
 			argument = request.SessionID
@@ -147,6 +186,7 @@ func TestConversationTurnReplayConflictStableIDsAndTraceProfileCommit(t *testing
 	if err != nil || !reopenedResult.IdempotentReplay || reopenedResult.UserMessageID != first.UserMessageID {
 		t.Fatalf("reopened replay=%+v err=%v", reopenedResult, err)
 	}
+	assertConversationTurnIdentity(t, request, reopenedResult)
 }
 
 func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
@@ -162,6 +202,7 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if err != nil || first.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("first result=%+v err=%v", first, err)
 	}
+	assertConversationTurnIdentity(t, firstRequest, first)
 	if first.ThreadSeq != 1 || first.ClosedThreadID != "" || first.ClosedThreadSeq != 0 {
 		t.Fatalf("first thread tuple=%s/%d closed=%s/%d, want seq1 and no closed thread", first.ThreadID, first.ThreadSeq, first.ClosedThreadID, first.ClosedThreadSeq)
 	}
@@ -183,15 +224,21 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 		t.Fatalf("outbox payload contains message body: %s", payload)
 	}
 	var firstPayload struct {
+		Version    string                `json:"version"`
+		TurnID     modulecore.TurnID     `json:"turn_id"`
+		TraceID    modulecore.TraceID    `json:"trace_id"`
+		RootTaskID modulecore.TaskID     `json:"root_task_id"`
 		SessionID  string                `json:"session_id"`
 		ThreadID   modulecore.ThreadID   `json:"thread_id"`
 		ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq"`
 		ThreadKind modulecore.ThreadKind `json:"thread_kind"`
+		UserID     modulecore.MessageID  `json:"user_message_id"`
+		AgentID    modulecore.MessageID  `json:"agent_message_id"`
 	}
 	if err := json.Unmarshal([]byte(payload), &firstPayload); err != nil {
 		t.Fatalf("decode first outbox payload: %v", err)
 	}
-	if firstPayload.SessionID != firstRequest.SessionID || firstPayload.ThreadID != first.ThreadID || firstPayload.ThreadSeq != 1 || firstPayload.ThreadKind != domconv.ThreadKindUserConversation {
+	if firstPayload.Version != "rencrow.conversation_turn_outbox.v2" || firstPayload.TurnID != firstRequest.TurnID || firstPayload.TraceID != firstRequest.TraceID || firstPayload.RootTaskID != firstRequest.RootTaskID || firstPayload.UserID != firstRequest.UserMessageID || firstPayload.AgentID != firstRequest.AgentMessageID || firstPayload.SessionID != firstRequest.SessionID || firstPayload.ThreadID != first.ThreadID || firstPayload.ThreadSeq != 1 || firstPayload.ThreadKind != domconv.ThreadKindUserConversation {
 		t.Fatalf("first outbox payload tuple=%+v, want session/thread/seq1/kind", firstPayload)
 	}
 
@@ -222,6 +269,7 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("boundary commit: %v", err)
 	}
+	assertConversationTurnIdentity(t, boundary, result)
 	if result.ClosedThreadID != oldThread || result.ThreadID == oldThread || result.ThreadSeq != 2 || result.ClosedThreadSeq != 1 || result.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("boundary result=%+v old thread=%s", result, oldThread)
 	}
@@ -231,7 +279,7 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if err := result.ClosedThreadID.Validate(); err != nil {
 		t.Fatalf("closed thread ID is not canonical: %v", err)
 	}
-	receipt, err := store.GetConversationTurnReceipt(ctx, boundary.TurnID)
+	receipt, err := store.GetConversationTurnReceipt(ctx, string(boundary.TurnID))
 	if err != nil {
 		t.Fatalf("boundary receipt: %v", err)
 	}
@@ -239,11 +287,11 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 		t.Fatalf("boundary receipt tuple=%q/%d/%q closed=%q/%d/%q, result=%q/%d/%q closed=%q/%d/%q", receipt.ThreadID, receipt.ThreadSeq, receipt.ThreadKind, receipt.ClosedThreadID, receipt.ClosedThreadSeq, receipt.ClosedThreadKind, result.ThreadID, result.ThreadSeq, result.ThreadKind, result.ClosedThreadID, result.ClosedThreadSeq, result.ClosedThreadKind)
 	}
 	for i := 0; i < 2; i++ {
-		claim, claimErr := store.ClaimConversationTurnOutbox(ctx, boundary.TurnID, time.Now().UTC(), time.Minute)
+		claim, claimErr := store.ClaimConversationTurnOutbox(ctx, string(boundary.TurnID), time.Now().UTC(), time.Minute)
 		if claimErr != nil || claim == nil {
 			t.Fatalf("boundary outbox claim %d=%+v err=%v", i, claim, claimErr)
 		}
-		if claim.ThreadID != result.ThreadID || claim.ThreadSeq != result.ThreadSeq || claim.ThreadKind != result.ThreadKind || claim.ClosedThreadID != result.ClosedThreadID || claim.ClosedThreadSeq != result.ClosedThreadSeq || claim.ClosedThreadKind != result.ClosedThreadKind {
+		if claim.TurnID != boundary.TurnID || claim.TraceID != boundary.TraceID || claim.RootTaskID != boundary.RootTaskID || claim.ThreadID != result.ThreadID || claim.ThreadSeq != result.ThreadSeq || claim.ThreadKind != result.ThreadKind || claim.ClosedThreadID != result.ClosedThreadID || claim.ClosedThreadSeq != result.ClosedThreadSeq || claim.ClosedThreadKind != result.ClosedThreadKind {
 			t.Fatalf("boundary outbox claim %d tuple=%q/%d/%q closed=%q/%d/%q", i, claim.ThreadID, claim.ThreadSeq, claim.ThreadKind, claim.ClosedThreadID, claim.ClosedThreadSeq, claim.ClosedThreadKind)
 		}
 	}
@@ -271,6 +319,10 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 			t.Fatalf("scan boundary payload: %v", err)
 		}
 		var boundaryPayload struct {
+			Version          string                `json:"version"`
+			TurnID           modulecore.TurnID     `json:"turn_id"`
+			TraceID          modulecore.TraceID    `json:"trace_id"`
+			RootTaskID       modulecore.TaskID     `json:"root_task_id"`
 			SessionID        string                `json:"session_id"`
 			ThreadID         modulecore.ThreadID   `json:"thread_id"`
 			ThreadSeq        modulecore.ThreadSeq  `json:"thread_seq"`
@@ -278,11 +330,13 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 			ClosedThreadID   modulecore.ThreadID   `json:"closed_thread_id"`
 			ClosedThreadSeq  modulecore.ThreadSeq  `json:"closed_thread_seq"`
 			ClosedThreadKind modulecore.ThreadKind `json:"closed_thread_kind"`
+			UserID           modulecore.MessageID  `json:"user_message_id"`
+			AgentID          modulecore.MessageID  `json:"agent_message_id"`
 		}
 		if err := json.Unmarshal([]byte(rawPayload), &boundaryPayload); err != nil {
 			t.Fatalf("decode boundary payload: %v", err)
 		}
-		if boundaryPayload.SessionID != boundary.SessionID || boundaryPayload.ThreadID != result.ThreadID || boundaryPayload.ThreadSeq != 2 || boundaryPayload.ThreadKind != domconv.ThreadKindUserConversation || boundaryPayload.ClosedThreadID != oldThread || boundaryPayload.ClosedThreadSeq != 1 || boundaryPayload.ClosedThreadKind != domconv.ThreadKindUserConversation {
+		if boundaryPayload.Version != "rencrow.conversation_turn_outbox.v2" || boundaryPayload.TurnID != boundary.TurnID || boundaryPayload.TraceID != boundary.TraceID || boundaryPayload.RootTaskID != boundary.RootTaskID || boundaryPayload.UserID != boundary.UserMessageID || boundaryPayload.AgentID != boundary.AgentMessageID || boundaryPayload.SessionID != boundary.SessionID || boundaryPayload.ThreadID != result.ThreadID || boundaryPayload.ThreadSeq != 2 || boundaryPayload.ThreadKind != domconv.ThreadKindUserConversation || boundaryPayload.ClosedThreadID != oldThread || boundaryPayload.ClosedThreadSeq != 1 || boundaryPayload.ClosedThreadKind != domconv.ThreadKindUserConversation {
 			t.Fatalf("boundary outbox payload tuple=%+v", boundaryPayload)
 		}
 	}
@@ -310,51 +364,57 @@ func TestConversationTurnOutboxLeaseFailureAndCompletion(t *testing.T) {
 	if err != nil || initial.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("initial=%+v err=%v", initial, err)
 	}
+	assertConversationTurnIdentity(t, request, initial)
 	now := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
-	claim, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now, time.Minute)
+	claim, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 	if err != nil || claim == nil {
 		t.Fatalf("claim=%+v err=%v", claim, err)
 	}
-	secondInitial, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now.Add(30*time.Second), time.Minute)
+	if claim.TurnID != request.TurnID || claim.TraceID != request.TraceID || claim.RootTaskID != request.RootTaskID {
+		t.Fatalf("claim identity=%+v, want turn=%s trace=%s root=%s", claim, request.TurnID, request.TraceID, request.RootTaskID)
+	}
+	secondInitial, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now.Add(30*time.Second), time.Minute)
 	if err != nil || secondInitial == nil || secondInitial.Target == claim.Target {
 		t.Fatalf("pending sibling was not independently claimed: second=%+v err=%v", secondInitial, err)
 	}
-	if _, err := store.CompleteConversationTurnOutbox(ctx, request.TurnID, claim.Target, "wrong", now); !errors.Is(err, domconv.ErrConversationTurnConflict) {
+	if _, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), claim.Target, "wrong", now); !errors.Is(err, domconv.ErrConversationTurnConflict) {
 		t.Fatalf("wrong lease error=%v, want conflict", err)
 	}
-	stale, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now.Add(2*time.Minute), time.Minute)
+	stale, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now.Add(2*time.Minute), time.Minute)
 	if err != nil || stale == nil || stale.LeaseToken == claim.LeaseToken || stale.Attempts != 2 {
 		t.Fatalf("stale reclaim=%+v err=%v", stale, err)
 	}
-	if _, err := store.FailConversationTurnOutbox(ctx, request.TurnID, stale.Target, stale.LeaseToken, domconv.ConversationTurnErrorUnavailable, now.Add(2*time.Minute)); err != nil {
+	if _, err := store.FailConversationTurnOutbox(ctx, string(request.TurnID), stale.Target, stale.LeaseToken, domconv.ConversationTurnErrorUnavailable, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("fail outbox: %v", err)
 	}
-	receipt, err := store.GetConversationTurnReceipt(ctx, request.TurnID)
+	receipt, err := store.GetConversationTurnReceipt(ctx, string(request.TurnID))
 	if err != nil || receipt.Status != domconv.ConversationTurnPartial || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
 		t.Fatalf("failed receipt=%+v err=%v", receipt, err)
 	}
-	other, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now.Add(3*time.Minute), time.Minute)
+	assertConversationTurnIdentity(t, request, receipt)
+	other, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now.Add(3*time.Minute), time.Minute)
 	if err != nil || other == nil {
 		t.Fatalf("claim remaining target=%+v err=%v", other, err)
 	}
 	completeAt := now.Add(3 * time.Minute)
 	if other.Target == stale.Target {
-		if _, err := store.FailConversationTurnOutbox(ctx, request.TurnID, other.Target, other.LeaseToken, domconv.ConversationTurnErrorUnavailable, now.Add(3*time.Minute)); err != nil {
+		if _, err := store.FailConversationTurnOutbox(ctx, string(request.TurnID), other.Target, other.LeaseToken, domconv.ConversationTurnErrorUnavailable, now.Add(3*time.Minute)); err != nil {
 			t.Fatalf("retry failed outbox: %v", err)
 		}
-		other, err = store.ClaimConversationTurnOutbox(ctx, request.TurnID, now.Add(4*time.Minute), time.Minute)
+		other, err = store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now.Add(4*time.Minute), time.Minute)
 		if err != nil || other == nil || other.Target == stale.Target {
 			t.Fatalf("claim sibling after retry=%+v err=%v", other, err)
 		}
 		completeAt = now.Add(4 * time.Minute)
 	}
-	completed, err := store.CompleteConversationTurnOutbox(ctx, request.TurnID, other.Target, other.LeaseToken, completeAt)
+	completed, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), other.Target, other.LeaseToken, completeAt)
 	if err != nil {
 		t.Fatalf("complete remaining: %v", err)
 	}
 	if completed.Status != domconv.ConversationTurnFailed {
 		t.Fatalf("terminal failed target should keep receipt failed: %+v", completed)
 	}
+	assertConversationTurnIdentity(t, request, completed)
 	var rawLastError string
 	if err := store.db.QueryRow(`SELECT last_error FROM conversation_turn_outbox WHERE turn_id = ? AND status = 'failed'`, request.TurnID).Scan(&rawLastError); err != nil {
 		t.Fatalf("failed outbox error: %v", err)
@@ -383,22 +443,24 @@ func TestConversationTurnCompletesOnlyAfterAllOutboxes(t *testing.T) {
 		t.Fatalf("commit: %v", err)
 	}
 	now := time.Now().UTC()
-	first, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now, time.Minute)
+	first, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 	if err != nil || first == nil {
 		t.Fatalf("first claim=%+v err=%v", first, err)
 	}
-	partial, err := store.CompleteConversationTurnOutbox(ctx, request.TurnID, first.Target, first.LeaseToken, now)
+	partial, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), first.Target, first.LeaseToken, now)
 	if err != nil || partial.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("partial=%+v err=%v", partial, err)
 	}
-	second, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now, time.Minute)
+	assertConversationTurnIdentity(t, request, partial)
+	second, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 	if err != nil || second == nil {
 		t.Fatalf("second claim=%+v err=%v", second, err)
 	}
-	final, err := store.CompleteConversationTurnOutbox(ctx, request.TurnID, second.Target, second.LeaseToken, now)
+	final, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), second.Target, second.LeaseToken, now)
 	if err != nil || final.Status != domconv.ConversationTurnCompleted {
 		t.Fatalf("final=%+v err=%v", final, err)
 	}
+	assertConversationTurnIdentity(t, request, final)
 	var completed int
 	if err := store.db.QueryRow(`SELECT count(*) FROM conversation_turn_outbox WHERE turn_id = ? AND status = 'completed'`, request.TurnID).Scan(&completed); err != nil {
 		t.Fatalf("completed count: %v", err)
@@ -429,15 +491,20 @@ func TestConversationTurnGlobalClaimOrdersPendingAndReclaimsStale(t *testing.T) 
 	if _, err := store.db.Exec(`UPDATE conversation_turn_outbox SET created_at = ? WHERE turn_id IN (?, ?)`, equalCreated, first.TurnID, second.TurnID); err != nil {
 		t.Fatalf("normalize created_at: %v", err)
 	}
-	claim, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated, time.Minute)
-	if err != nil || claim == nil || claim.TurnID != second.TurnID {
-		t.Fatalf("global claim=%+v err=%v, want lexical turn-global-a", claim, err)
+	wantFirst := first
+	wantSecond := second
+	if string(wantFirst.TurnID) > string(wantSecond.TurnID) {
+		wantFirst, wantSecond = wantSecond, wantFirst
 	}
-	if next, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated.Add(30*time.Second), time.Minute); err != nil || next == nil || next.TurnID != first.TurnID {
+	claim, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated, time.Minute)
+	if err != nil || claim == nil || claim.TurnID != wantFirst.TurnID {
+		t.Fatalf("global claim=%+v err=%v, want lexical first turn", claim, err)
+	}
+	if next, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated.Add(30*time.Second), time.Minute); err != nil || next == nil || next.TurnID != wantSecond.TurnID {
 		t.Fatalf("global sibling claim=%+v err=%v", next, err)
 	}
 	stale, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated.Add(2*time.Minute), time.Minute)
-	if err != nil || stale == nil || stale.TurnID != second.TurnID || stale.Attempts != 2 {
+	if err != nil || stale == nil || stale.TurnID != wantFirst.TurnID || stale.Attempts != 2 {
 		t.Fatalf("global stale reclaim=%+v err=%v", stale, err)
 	}
 }
@@ -472,7 +539,7 @@ func TestConversationTurnOutboxZeroRowUpdatesReturnConflict(t *testing.T) {
 	if _, err := store.db.Exec(`CREATE TRIGGER ignore_conversation_turn_complete BEFORE UPDATE OF status ON conversation_turn_outbox WHEN NEW.status = 'completed' BEGIN SELECT RAISE(IGNORE); END`); err != nil {
 		t.Fatalf("create complete trigger: %v", err)
 	}
-	result, err := store.CompleteConversationTurnOutbox(ctx, request.TurnID, claim.Target, claim.LeaseToken, now)
+	result, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), claim.Target, claim.LeaseToken, now)
 	if !errors.Is(err, domconv.ErrConversationTurnConflict) || result.Status != domconv.ConversationTurnFailed || result.ErrorCode != domconv.ConversationTurnErrorConflict {
 		t.Fatalf("ignored completion update result=%+v err=%v, want conflict", result, err)
 	}
@@ -491,7 +558,7 @@ func TestConversationTurnSchemaUsesExpectedTables(t *testing.T) {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
 	defer store.Close()
-	for _, table := range []string{conversationTurnActiveThreadTable, conversationTurnReceiptTable, conversationTurnOutboxTable} {
+	for _, table := range []string{"recall_trace", conversationTurnActiveThreadTable, conversationTurnReceiptTable, conversationTurnOutboxTable} {
 		var count int
 		if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("table %s: %v", table, err)
@@ -541,6 +608,42 @@ func TestConversationTurnSchemaUsesExpectedTables(t *testing.T) {
 				if columns[column] != want {
 					t.Fatalf("table %s column %s type=%q, want %q", table.name, column, columns[column], want)
 				}
+			}
+		}
+	}
+	for table, required := range map[string][]string{
+		"recall_trace":               {"root_task_id"},
+		conversationTurnReceiptTable: {"root_task_id"},
+		conversationTurnOutboxTable:  {"trace_id", "root_task_id"},
+	} {
+		rows, err := store.db.Query(`PRAGMA table_info(` + table + `)`)
+		if err != nil {
+			t.Fatalf("identity table info %s: %v", table, err)
+		}
+		type columnInfo struct {
+			typeName string
+			notNull  int
+		}
+		columns := map[string]columnInfo{}
+		for rows.Next() {
+			var cid, notNull, pk int
+			var name, columnType string
+			var defaultValue interface{}
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+				rows.Close()
+				t.Fatalf("scan identity table info %s: %v", table, err)
+			}
+			columns[name] = columnInfo{typeName: strings.ToUpper(strings.TrimSpace(columnType)), notNull: notNull}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatalf("iterate identity table info %s: %v", table, err)
+		}
+		rows.Close()
+		for _, column := range required {
+			info, ok := columns[column]
+			if !ok || info.typeName != "TEXT" || info.notNull != 1 {
+				t.Fatalf("table %s identity column %s=%+v, want required TEXT", table, column, info)
 			}
 		}
 	}
@@ -647,7 +750,7 @@ func TestConversationTurnProjectionRequiresExactPairsAndMetadata(t *testing.T) {
 		if event.Source != "conversation" || event.Layer != MemoryLayerL1 || event.MemoryState != MemoryStateObserved || event.SessionID != request.SessionID || event.ThreadID != threadID || event.ThreadSeq != 1 || event.ThreadKind != domconv.ThreadKindUserConversation {
 			t.Fatalf("projection[%d] ownership=%+v", index, event)
 		}
-		if event.Meta["domain"] != request.Domain || event.Meta["turn_id"] != request.TurnID || event.Meta["speaker"] != string(event.Speaker) {
+		if event.Meta["domain"] != request.Domain || event.Meta["turn_id"] != string(request.TurnID) || event.Meta["speaker"] != string(event.Speaker) {
 			t.Fatalf("projection[%d] metadata=%+v", index, event.Meta)
 		}
 	}
@@ -693,14 +796,15 @@ func TestConversationTurnOutboxFailedAttemptsReachTerminalReceipt(t *testing.T) 
 	}
 	now := time.Date(2026, 8, 16, 3, 0, 0, 0, time.UTC)
 	for attempt := 1; attempt <= domconv.ConversationTurnMaxOutboxAttempts; attempt++ {
-		claim, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now, time.Minute)
+		claim, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 		if err != nil || claim == nil || claim.Attempts != attempt {
 			t.Fatalf("attempt %d claim=%+v err=%v", attempt, claim, err)
 		}
-		result, err := store.FailConversationTurnOutbox(ctx, request.TurnID, claim.Target, claim.LeaseToken, domconv.ConversationTurnErrorUnavailable, now)
+		result, err := store.FailConversationTurnOutbox(ctx, string(request.TurnID), claim.Target, claim.LeaseToken, domconv.ConversationTurnErrorUnavailable, now)
 		if err != nil {
 			t.Fatalf("attempt %d fail: %v", attempt, err)
 		}
+		assertConversationTurnIdentity(t, request, result)
 		if attempt < domconv.ConversationTurnMaxOutboxAttempts && result.Status != domconv.ConversationTurnPartial {
 			t.Fatalf("attempt %d result=%+v, want partial", attempt, result)
 		}
@@ -709,7 +813,7 @@ func TestConversationTurnOutboxFailedAttemptsReachTerminalReceipt(t *testing.T) 
 		}
 		now = now.Add(time.Minute)
 	}
-	claim, err := store.ClaimConversationTurnOutbox(ctx, request.TurnID, now, time.Minute)
+	claim, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 	if err != nil || claim != nil {
 		t.Fatalf("terminal claim=%+v err=%v, want no claim", claim, err)
 	}
@@ -796,10 +900,11 @@ func TestConversationTurnOutboxExhaustedStaleLeaseBecomesTerminalFailure(t *test
 	if err != nil || claim != nil {
 		t.Fatalf("exhausted stale claim=%+v err=%v, want no claim", claim, err)
 	}
-	receipt, err := store.GetConversationTurnReceipt(ctx, request.TurnID)
+	receipt, err := store.GetConversationTurnReceipt(ctx, string(request.TurnID))
 	if err != nil || receipt.Status != domconv.ConversationTurnFailed || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
 		t.Fatalf("exhausted stale receipt=%+v err=%v, want failed/unavailable", receipt, err)
 	}
+	assertConversationTurnIdentity(t, request, receipt)
 }
 
 func TestConversationTurnOutboxStaleTerminalizationIsTurnScopedAndBounded(t *testing.T) {
@@ -824,7 +929,7 @@ func TestConversationTurnOutboxStaleTerminalizationIsTurnScopedAndBounded(t *tes
 			t.Fatalf("seed stale row %d: %v", i, err)
 		}
 	}
-	if claim, err := store.ClaimConversationTurnOutbox(ctx, requests[1].TurnID, now, time.Minute); err != nil || claim != nil {
+	if claim, err := store.ClaimConversationTurnOutbox(ctx, string(requests[1].TurnID), now, time.Minute); err != nil || claim != nil {
 		t.Fatalf("turn-scoped claim=%+v err=%v, want no claim", claim, err)
 	}
 	var status string
@@ -852,10 +957,11 @@ func TestConversationTurnOutboxStaleTerminalizationIsTurnScopedAndBounded(t *tes
 		}
 	}
 	for i := range requests {
-		receipt, err := store.GetConversationTurnReceipt(ctx, requests[i].TurnID)
+		receipt, err := store.GetConversationTurnReceipt(ctx, string(requests[i].TurnID))
 		if err != nil || receipt.Status != domconv.ConversationTurnFailed || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
 			t.Fatalf("receipt %d=%+v err=%v, want terminal failed/unavailable", i, receipt, err)
 		}
+		assertConversationTurnIdentity(t, requests[i], receipt)
 	}
 }
 
@@ -869,34 +975,32 @@ func TestConversationTurnCommitPersistsMultiSectionInjectionEvents(t *testing.T)
 	}
 	defer store.Close()
 
-	result, err := store.CommitConversationTurn(context.Background(), domconv.ConversationTurnRequest{
-		TurnID:       "turn-multi-section-1",
-		SessionID:    canonicalConversationTurnSessionIDForTest("session-multi-section-1"),
-		OwnerID:      "owner-multi-section-1",
-		UserMessage:  "hello",
-		AgentMessage: "hi",
-		AgentSpeaker: domconv.SpeakerMio,
-		RecallTraceItems: []domconv.RecallTraceItem{
-			{Layer: "L1", Kind: "short_context", Summary: "recent turn", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: ShortContext]", TokenCount: 10},
-			{Layer: "L1", Kind: "rolling_summary", Summary: "summary", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: RollingSummary]", TokenCount: 20},
-			{Layer: "L1", Kind: "user_memory", Summary: "", Status: "filtered_status", Decision: "rejected", Reason: "memory state is not confirmed or pinned", PromptSection: "[RecallPack: UserMemory]"},
-		},
-	})
+	request := conversationTurnStoreTestRequest("turn-multi-section-1", "session-multi-section-1")
+	request.OwnerID = "owner-multi-section-1"
+	request.UserMessage = "hello"
+	request.AgentMessage = "hi"
+	request.RecallTraceItems = []domconv.RecallTraceItem{
+		{Layer: "L1", Kind: "short_context", Summary: "recent turn", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: ShortContext]", TokenCount: 10},
+		{Layer: "L1", Kind: "rolling_summary", Summary: "summary", Status: domconv.TraceStatusInjected, Decision: "included", PromptSection: "[RecallPack: RollingSummary]", TokenCount: 20},
+		{Layer: "L1", Kind: "user_memory", Summary: "", Status: "filtered_status", Decision: "rejected", Reason: "memory state is not confirmed or pinned", PromptSection: "[RecallPack: UserMemory]"},
+	}
+	result, err := store.CommitConversationTurn(context.Background(), request)
 	if err != nil {
 		t.Fatalf("CommitConversationTurn with multi-section trace: %v", err)
 	}
 	if result.Status != "completed" {
 		t.Fatalf("status=%q, want completed", result.Status)
 	}
+	assertConversationTurnIdentity(t, request, result)
 	var events int
-	if err := store.db.QueryRow(`SELECT count(*) FROM prompt_injection_event WHERE trace_id = 'turn-multi-section-1'`).Scan(&events); err != nil {
+	if err := store.db.QueryRow(`SELECT count(*) FROM prompt_injection_event WHERE trace_id = ?`, request.TraceID).Scan(&events); err != nil {
 		t.Fatalf("count injection events: %v", err)
 	}
 	if events != 2 {
 		t.Fatalf("injection events=%d, want one per injected section", events)
 	}
 	var distinct int
-	if err := store.db.QueryRow(`SELECT count(DISTINCT injection_id) FROM prompt_injection_event WHERE trace_id = 'turn-multi-section-1'`).Scan(&distinct); err != nil {
+	if err := store.db.QueryRow(`SELECT count(DISTINCT injection_id) FROM prompt_injection_event WHERE trace_id = ?`, request.TraceID).Scan(&distinct); err != nil {
 		t.Fatalf("count distinct injection ids: %v", err)
 	}
 	if distinct != 2 {

@@ -207,7 +207,9 @@ func TestConversationRuntimeOwnerRecallTraceUsesConfiguredOwnerAndRealL1(t *test
 		t.Fatal("runtime engine does not expose typed conversation commit")
 	}
 	if _, err := typed.CommitConversationTurn(ctx, domconv.ConversationTurnRequest{
-		TurnID: string(modulecore.NewTurnID()), SessionID: sessionID, OwnerID: "owner-42", UserMessage: "blue", AgentMessage: "了解", AgentSpeaker: domconv.SpeakerMio,
+		TurnID: modulecore.NewTurnID(), TraceID: modulecore.NewTraceID(), RootTaskID: modulecore.NewTaskID(),
+		UserMessageID: modulecore.NewMessageID(), AgentMessageID: modulecore.NewMessageID(),
+		SessionID: sessionID, OwnerID: "owner-42", UserMessage: "blue", AgentMessage: "了解", AgentSpeaker: domconv.SpeakerMio,
 		RecallTraceItems: pack.ToTraceItems(),
 	}); err != nil {
 		t.Fatalf("typed conversation commit failed: %v", err)

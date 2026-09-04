@@ -222,12 +222,14 @@ func conversationMessageID() string {
 type conversationIdentityTracker struct {
 	mu                 sync.Mutex
 	turns              map[string]int
+	boundResponseIDs   map[string]string
 	responseMessageIDs map[string]string
 }
 
 func newConversationIdentityTracker() *conversationIdentityTracker {
 	return &conversationIdentityTracker{
 		turns:              map[string]int{},
+		boundResponseIDs:   map[string]string{},
 		responseMessageIDs: map[string]string{},
 	}
 }
@@ -242,12 +244,35 @@ func (t *conversationIdentityTracker) Assign(ev *OrchestratorEvent, preferredMes
 	t.turns[sessionID]++
 	ev.TurnIndex = t.turns[sessionID]
 	ev.MessageID = strings.TrimSpace(preferredMessageID)
+	if ev.MessageID == "" && ev.Type == "agent.response" && strings.TrimSpace(ev.JobID) != "" {
+		ev.MessageID = t.boundResponseIDs[ev.JobID]
+		delete(t.boundResponseIDs, ev.JobID)
+	}
 	if ev.MessageID == "" {
 		ev.MessageID = conversationMessageID()
 	}
 	if ev.Type == "agent.response" && strings.TrimSpace(ev.JobID) != "" {
 		t.responseMessageIDs[ev.JobID] = ev.MessageID
 	}
+}
+
+func (t *conversationIdentityTracker) BindResponseMessageID(jobID string, messageID modulecore.MessageID) {
+	if t == nil || strings.TrimSpace(jobID) == "" || messageID.Validate() != nil {
+		return
+	}
+	t.mu.Lock()
+	t.boundResponseIDs[jobID] = string(messageID)
+	t.mu.Unlock()
+}
+
+func (t *conversationIdentityTracker) ReleaseResponseMessageID(jobID string) {
+	if t == nil || strings.TrimSpace(jobID) == "" {
+		return
+	}
+	t.mu.Lock()
+	delete(t.boundResponseIDs, jobID)
+	delete(t.responseMessageIDs, jobID)
+	t.mu.Unlock()
 }
 
 func (t *conversationIdentityTracker) TakeResponseMessageID(jobID string) string {

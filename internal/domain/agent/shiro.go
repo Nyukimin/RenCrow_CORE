@@ -105,7 +105,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
 		if err == nil && s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.SessionID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
 				return resp, commitErr
 			}
 		}
@@ -124,7 +124,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 			return "", err
 		}
 		if s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, jobID, t.SessionID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
 				return result.Output, commitErr
 			}
 		}
@@ -162,7 +162,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	if s.conversation != nil {
-		if err := commitConversationTurn(ctx, s.conversation, t.JobID().String(), t.SessionID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
 			return resp.Content, err
 		}
 	}

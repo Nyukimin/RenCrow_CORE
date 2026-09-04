@@ -89,8 +89,19 @@ func TestL1ConversationManagerPersistsSharedAgentContextAcrossReopen(t *testing.
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
 	engine := NewRealConversationEngine(NewL1ConversationManager(store), domconv.NewMioPersona("test")).WithUserMemoryStore(store, "ren")
-	if err := engine.EndTurnAs(ctx, sessionID, "shared token RC_L1_ONLY", "remembered", domconv.SpeakerMio); err != nil {
-		t.Fatalf("EndTurnAs: %v", err)
+	request := domconv.ConversationTurnRequest{
+		TurnID:         modulecore.NewTurnID(),
+		TraceID:        modulecore.NewTraceID(),
+		RootTaskID:     modulecore.NewTaskID(),
+		UserMessageID:  modulecore.NewMessageID(),
+		AgentMessageID: modulecore.NewMessageID(),
+		SessionID:      sessionID,
+		UserMessage:    "shared token RC_L1_ONLY",
+		AgentMessage:   "remembered",
+		AgentSpeaker:   domconv.SpeakerMio,
+	}
+	if _, err := engine.CommitConversationTurn(ctx, request); err != nil {
+		t.Fatalf("CommitConversationTurn: %v", err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
@@ -127,7 +138,9 @@ func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	defer store.Close()
 	manager := NewL1ConversationManager(store)
 	trace := domconv.RecallTrace{
-		ResponseID: "response-kuro-1",
+		TraceID:    modulecore.NewTraceID(),
+		TurnID:     modulecore.NewTurnID(),
+		RootTaskID: modulecore.NewTaskID(),
 		SessionID:  sessionID,
 		Role:       string(domconv.SpeakerKuro),
 		Items: []domconv.RecallTraceItem{{
@@ -143,7 +156,7 @@ func TestL1ConversationManagerPersistsAgentAttributedRecallTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RecentRecallTraces: %v", err)
 	}
-	if len(got) != 1 || got[0].Role != string(domconv.SpeakerKuro) || got[0].ResponseID != "response-kuro-1" {
+	if len(got) != 1 || got[0].Role != string(domconv.SpeakerKuro) || got[0].TraceID != trace.TraceID || got[0].TurnID != trace.TurnID || got[0].RootTaskID != trace.RootTaskID {
 		t.Fatalf("Agent-attributed recall trace = %#v", got)
 	}
 }
@@ -157,8 +170,16 @@ func TestL1ConversationManagerCommitConversationTurnDelegatesOnlyWithoutTargets(
 	defer store.Close()
 	manager := NewL1ConversationManager(store)
 	request := domconv.ConversationTurnRequest{
-		TurnID: "l1-turn-empty-targets", SessionID: string(modulecore.NewSessionID()), OwnerID: "owner",
-		UserMessage: "hello", AgentMessage: "hi", AgentSpeaker: domconv.SpeakerMio,
+		TurnID:         modulecore.NewTurnID(),
+		TraceID:        modulecore.NewTraceID(),
+		RootTaskID:     modulecore.NewTaskID(),
+		UserMessageID:  modulecore.NewMessageID(),
+		AgentMessageID: modulecore.NewMessageID(),
+		SessionID:      string(modulecore.NewSessionID()),
+		OwnerID:        "owner",
+		UserMessage:    "hello",
+		AgentMessage:   "hi",
+		AgentSpeaker:   domconv.SpeakerMio,
 	}
 	result, err := manager.CommitConversationTurn(ctx, request)
 	if err != nil || result.Status != domconv.ConversationTurnCompleted {
@@ -169,7 +190,7 @@ func TestL1ConversationManagerCommitConversationTurnDelegatesOnlyWithoutTargets(
 	if err == nil || rejected.Status != domconv.ConversationTurnFailed || rejected.ErrorCode != domconv.ConversationTurnErrorInvalid {
 		t.Fatalf("target result=%+v err=%v, want invalid without fallback", rejected, err)
 	}
-	replayed, err := store.GetConversationTurnReceipt(ctx, "l1-turn-empty-targets")
+	replayed, err := store.GetConversationTurnReceipt(ctx, string(request.TurnID))
 	if err != nil || replayed.Status != domconv.ConversationTurnCompleted {
 		t.Fatalf("target rejection changed L1 receipt=%+v err=%v", replayed, err)
 	}

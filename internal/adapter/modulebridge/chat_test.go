@@ -23,9 +23,8 @@ func (p *fakeChatProcessor) ProcessMessage(_ context.Context, req orchestrator.P
 		return orchestrator.ProcessMessageResponse{}, p.err
 	}
 	return orchestrator.ProcessMessageResponse{
-		Response: "返答です",
-		Route:    routing.RouteCHAT,
-		JobID:    "job-1",
+		Response: "返答です", Route: routing.RouteCHAT, JobID: "job-1",
+		TurnID: string(core.NewTurnID()), TraceID: string(core.NewTraceID()), RootTaskID: string(core.NewTaskID()), MessageID: string(core.NewMessageID()),
 	}, nil
 }
 
@@ -60,6 +59,9 @@ func TestChatServiceAdapterRespond(t *testing.T) {
 	}
 	if got.Text != "返答です" || got.Response.Content != "返答です" || got.JobID != "job-1" {
 		t.Fatalf("response was not mapped: %+v", got)
+	}
+	if got.TurnID.Validate() != nil || got.TraceID.Validate() != nil || got.RootTaskID.Validate() != nil || got.MessageID.Validate() != nil {
+		t.Fatalf("canonical response identity was not mapped: %+v", got)
 	}
 	if got.Route.Route != chat.RouteChat || got.Route.Reason != string(routing.RouteCHAT) {
 		t.Fatalf("route was not mapped: %+v", got.Route)

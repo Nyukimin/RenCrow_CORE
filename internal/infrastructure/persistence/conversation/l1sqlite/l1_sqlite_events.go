@@ -3,7 +3,6 @@ package l1sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,9 +40,6 @@ LIMIT ?
 }
 
 func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.RecallTrace) error {
-	if strings.TrimSpace(trace.ResponseID) == "" {
-		return errors.New("response_id is required")
-	}
 	if strings.TrimSpace(trace.SessionID) == "" {
 		return errors.New("session_id is required")
 	}
@@ -53,7 +49,17 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 	if trace.CreatedAt.IsZero() {
 		trace.CreatedAt = time.Now().UTC()
 	}
-	traceID := RecallTraceID(trace.SessionID, trace.CreatedAt, trace.ResponseID)
+	if trace.TraceID.Validate() != nil || trace.TurnID.Validate() != nil || trace.RootTaskID.Validate() != nil {
+		return errors.New("canonical recall trace identity is required")
+	}
+	traceID := string(trace.TraceID)
+	queryText := ""
+	for _, item := range trace.Items {
+		if candidate := strings.TrimSpace(item.Query); candidate != "" {
+			queryText = candidate
+			break
+		}
+	}
 	records := TraceItemRecordsFromPack(traceID, trace.Items)
 	injectedCount := 0
 	totalTokens := 0
@@ -64,13 +70,14 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 		}
 	}
 	if err := s.StartRecallTrace(ctx, domconv.RecallTraceRecord{
-		TraceID:             traceID,
+		TraceID:             trace.TraceID,
 		OwnerID:             strings.TrimSpace(trace.OwnerID),
-		TurnID:              trace.ResponseID,
+		TurnID:              trace.TurnID,
+		RootTaskID:          trace.RootTaskID,
 		ChatID:              trace.SessionID,
 		Persona:             firstNonEmptyString(trace.Role, "mio"),
-		UserMessageHash:     HashRecallText(trace.ResponseID),
-		QueryTextRedacted:   RedactedRecallQuery(trace.ResponseID),
+		UserMessageHash:     HashRecallText(queryText),
+		QueryTextRedacted:   RedactedRecallQuery(queryText),
 		CreatedAt:           trace.CreatedAt,
 		RecallPolicyVersion: "memory-lifecycle-v1",
 		TotalCandidates:     len(records),
@@ -90,11 +97,13 @@ func (s *L1SQLiteStore) SaveRecallTrace(ctx context.Context, trace domconv.Recal
 		return err
 	}
 	payload := map[string]interface{}{
-		"response_id": trace.ResponseID,
-		"session_id":  trace.SessionID,
-		"role":        trace.Role,
-		"items":       trace.Items,
-		"created_at":  trace.CreatedAt.UTC().Format(time.RFC3339),
+		"trace_id":     trace.TraceID,
+		"turn_id":      trace.TurnID,
+		"root_task_id": trace.RootTaskID,
+		"session_id":   trace.SessionID,
+		"role":         trace.Role,
+		"items":        trace.Items,
+		"created_at":   trace.CreatedAt.UTC().Format(time.RFC3339),
 	}
 	_, err := s.AppendEvent(ctx, "recall.trace", "conv:"+trace.SessionID, trace.SessionID, "", 0, "", payload, "recall")
 	return err
@@ -116,63 +125,7 @@ func (s *L1SQLiteStore) RecentRecallTraces(ctx context.Context, sessionID string
 	if err != nil {
 		return nil, err
 	}
-	if len(tableTraces) > 0 {
-		return tableTraces, nil
-	}
-	var rows *sql.Rows
-	if strings.TrimSpace(sessionID) == "" {
-		rows, err = s.db.QueryContext(ctx, `
-SELECT payload_json, created_at
-FROM l1_event_log
-WHERE event_type = 'recall.trace'
-ORDER BY created_at DESC, rowid DESC
-LIMIT ?`, limit)
-	} else {
-		rows, err = s.db.QueryContext(ctx, `
-SELECT payload_json, created_at
-FROM l1_event_log
-WHERE event_type = 'recall.trace' AND session_id = ?
-ORDER BY created_at DESC, rowid DESC
-LIMIT ?`, strings.TrimSpace(sessionID), limit)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var traces []domconv.RecallTrace
-	for rows.Next() {
-		var payloadJSON string
-		var createdAt time.Time
-		if err := rows.Scan(&payloadJSON, &createdAt); err != nil {
-			return nil, err
-		}
-		var payload struct {
-			ResponseID string                    `json:"response_id"`
-			SessionID  string                    `json:"session_id"`
-			Role       string                    `json:"role"`
-			Items      []domconv.RecallTraceItem `json:"items"`
-			CreatedAt  string                    `json:"created_at"`
-		}
-		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
-			return nil, err
-		}
-		traceCreatedAt := createdAt
-		if parsed, err := time.Parse(time.RFC3339, payload.CreatedAt); err == nil {
-			traceCreatedAt = parsed
-		}
-		traces = append(traces, domconv.RecallTrace{
-			ResponseID: payload.ResponseID,
-			SessionID:  payload.SessionID,
-			Role:       payload.Role,
-			Items:      payload.Items,
-			CreatedAt:  traceCreatedAt,
-		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return traces, nil
+	return tableTraces, nil
 }
 
 func (s *L1SQLiteStore) recentRecallTracesFromTables(ctx context.Context, sessionID string, limit int) ([]domconv.RecallTrace, error) {
@@ -180,13 +133,13 @@ func (s *L1SQLiteStore) recentRecallTracesFromTables(ctx context.Context, sessio
 	var err error
 	if strings.TrimSpace(sessionID) == "" {
 		rows, err = s.db.QueryContext(ctx, `
-SELECT trace_id, turn_id, chat_id, persona, created_at
+SELECT trace_id, turn_id, root_task_id, chat_id, persona, created_at
 FROM recall_trace
 ORDER BY created_at DESC, rowid DESC
 LIMIT ?`, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
-SELECT trace_id, turn_id, chat_id, persona, created_at
+SELECT trace_id, turn_id, root_task_id, chat_id, persona, created_at
 FROM recall_trace
 WHERE chat_id = ?
 ORDER BY created_at DESC, rowid DESC
@@ -196,16 +149,17 @@ LIMIT ?`, strings.TrimSpace(sessionID), limit)
 		return nil, err
 	}
 	type recallTraceRow struct {
-		traceID   string
-		turnID    string
-		chatID    string
-		persona   string
-		createdAt time.Time
+		traceID    string
+		turnID     string
+		rootTaskID string
+		chatID     string
+		persona    string
+		createdAt  time.Time
 	}
 	traceRows := make([]recallTraceRow, 0)
 	for rows.Next() {
 		var row recallTraceRow
-		if err := rows.Scan(&row.traceID, &row.turnID, &row.chatID, &row.persona, &row.createdAt); err != nil {
+		if err := rows.Scan(&row.traceID, &row.turnID, &row.rootTaskID, &row.chatID, &row.persona, &row.createdAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -220,12 +174,20 @@ LIMIT ?`, strings.TrimSpace(sessionID), limit)
 
 	var traces []domconv.RecallTrace
 	for _, row := range traceRows {
+		traceID := modulecore.TraceID(row.traceID)
+		turnID := modulecore.TurnID(row.turnID)
+		rootTaskID := modulecore.TaskID(row.rootTaskID)
+		if traceID.Validate() != nil || turnID.Validate() != nil || rootTaskID.Validate() != nil {
+			return nil, errors.New("stored recall trace identity is invalid")
+		}
 		items, err := s.recallTraceItems(ctx, row.traceID)
 		if err != nil {
 			return nil, err
 		}
 		traces = append(traces, domconv.RecallTrace{
-			ResponseID: row.turnID,
+			TraceID:    traceID,
+			TurnID:     turnID,
+			RootTaskID: rootTaskID,
 			SessionID:  row.chatID,
 			Role:       row.persona,
 			Items:      items,

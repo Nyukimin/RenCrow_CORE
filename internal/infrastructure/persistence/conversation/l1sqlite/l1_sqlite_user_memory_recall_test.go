@@ -12,6 +12,7 @@ import (
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestOwnerRecallTraceIsOwnerScopedAndHidesLegacyRows(t *testing.T) {
@@ -88,8 +89,9 @@ func TestOwnerRecallTraceIsOwnerScopedAndHidesLegacyRows(t *testing.T) {
 		t.Fatalf("owner trace decisions=%v", statuses)
 	}
 
-	redactID := "trace:owner:redaction"
-	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: redactID, OwnerID: "ren", TurnID: redactID, ChatID: "ren", Status: "completed"}); err != nil {
+	redactTraceID := modulecore.NewTraceID()
+	redactID := string(redactTraceID)
+	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: redactTraceID, OwnerID: "ren", TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(), ChatID: "ren", Status: "completed"}); err != nil {
 		t.Fatalf("redaction trace start failed: %v", err)
 	}
 	long := strings.Repeat("x", 241)
@@ -118,12 +120,14 @@ func TestOwnerRecallTraceIsOwnerScopedAndHidesLegacyRows(t *testing.T) {
 		}
 	}
 
-	legacyID := "trace:legacy:owner-empty"
-	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: legacyID, TurnID: legacyID, ChatID: "ren", Status: "completed"}); err != nil {
+	legacyTraceID := modulecore.NewTraceID()
+	legacyID := string(legacyTraceID)
+	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: legacyTraceID, TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(), ChatID: "ren", Status: "completed"}); err != nil {
 		t.Fatalf("legacy trace insert failed: %v", err)
 	}
-	otherID := "trace:owner:other"
-	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: otherID, OwnerID: "other", TurnID: otherID, ChatID: "other", Status: "completed"}); err != nil {
+	otherTraceID := modulecore.NewTraceID()
+	otherID := string(otherTraceID)
+	if err := store.StartRecallTrace(ctx, domconv.RecallTraceRecord{TraceID: otherTraceID, OwnerID: "other", TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(), ChatID: "other", Status: "completed"}); err != nil {
 		t.Fatalf("other trace insert failed: %v", err)
 	}
 	if _, err := store.OwnerFindRecallTrace(domaintool.WithToolExecutionScope(ctx, scope), "ren", legacyID); !errors.Is(err, domainmemory.ErrUserMemoryOwnerNotFound) {

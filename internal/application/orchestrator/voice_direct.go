@@ -111,7 +111,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	}
 	decision := routing.NewDecision(routing.RouteCHAT, 1.0, voiceChatSurfaceReason)
 	jobID := task.NewJobID()
+	turnID := modulecore.NewTurnID()
 	traceID := modulecore.NewTraceID()
+	rootTaskID := modulecore.NewTaskID()
 	o.events.BindTrace(jobID.String(), traceID)
 	defer o.events.ReleaseTrace(jobID.String())
 
@@ -157,7 +159,10 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	return ensureProcessResponseIdentity(
 		o.responses.Build(result.Reply, decision, publishedJobID),
 		publishedJobID.String(),
+		string(turnID),
 		string(traceID),
+		string(rootTaskID),
+		published.MessageID,
 		o.events.TakeResponseMessageID,
 	), nil
 }

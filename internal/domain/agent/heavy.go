@@ -59,7 +59,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 			onToken(response)
 		}
 		if h.conversationEngine != nil {
-			if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+			if err := commitConversationTurn(ctx, h.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
 				return response, err
 			}
 		}
@@ -78,7 +78,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) 
 	response := strings.TrimSpace(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if h.conversationEngine != nil {
-		if err := commitConversationTurn(ctx, h.conversationEngine, t.JobID().String(), t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, h.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
 			return response, err
 		}
 	}

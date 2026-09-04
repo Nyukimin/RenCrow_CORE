@@ -1701,6 +1701,42 @@ Test:
 
 ### Step 06: TurnIDとMessageID
 
+正本契約:
+
+- 一つの利用者入力について、CORE ingress ownerは`TurnID`、`TraceID`、`RootTaskID`、
+  user `MessageID`、actual Agent response `MessageID`をUUIDv7で一度だけ確定する。
+  欠落したtrusted internal入力はCORE orchestration boundaryで同じ契約を補完するが、
+  非空のwrong-type／malformed IDは別IDへ黙って修復せず拒否する。
+- `conversation.TurnInput`への改名前であるStep 06では、既存`task.Task`は上記identityの
+  一時carrierに限定する。legacy `JobID`を`TurnID`、`TraceID`、`RootTaskID`のいずれにも
+  代用しない。`Task`／`Job`語彙の廃止はStep 07／08、orchestrator全体のTask Event化は
+  Step 09が所有する。
+- `ConversationTurnRequest`はtyped `TurnID`、`TraceID`、`RootTaskID`、
+  `UserMessageID`、`AgentMessageID`を必須入力とし、canonical payload、receipt、
+  outbox、recall traceへ同じ値を保存する。MessageIDは`modules/core.NewMessageID`だけで
+  生成し、ConversationTurn固有generatorやTurnIDからの派生を作らない。
+- multi-Actor routeでは、`AgentMessageID`はEndTurnに記録するactual Agent発話とその
+  `agent.response` Eventへ割り当てる。別Actorによる転送／利用者向け発話が別発話なら、
+  同じIDを流用せず別のcanonical MessageIDを持つ。
+- idempotent replayは同じ`TurnID`と同じcanonical payloadに限り同じreceiptを返す。
+  TraceID、RootTaskID、MessageIDまたは内容が異なる再利用は`conflict`でfail closedする。
+
+既存Recordのmigration:
+
+- 既にcanonicalな`msg_`の`user_message_id`／`agent_message_id`は履歴identityとして保持し、
+  新しいUUIDへ不要に付け替えない。wrong-typeのTurnID／TraceIDだけを固定namespaceの
+  field-path付きUUIDv5規則で別々に生成する。
+- `conversation_turn_receipt.turn_id`をTurnとRoot Taskの正本source、同rowの`trace_id`を
+  Trace正本sourceとする。outbox、receipt JSON、outbox JSON、receiptに結合するrecall traceと
+  その子recordは、個別再採番せず、この正本mappingを参照して同じ外部キーへ更新する。
+- receiptに結合しない`recall_trace`は、そのrowの`turn_id`／`trace_id`をそれぞれsource pathと
+  してTurn／Root TaskとTraceを独立生成する。同じlegacy文字列でもtarget typeが異なるため
+  結果は一致しない。同じlegacy `turn_id`を持つ複数recall traceは、一つのTurn中に複数回の
+  recallが行われた履歴なのでTurn／Root Task mappingを共有し、TraceIDだけをrowごとに分ける。
+- cutoverはwriter停止、exact DB／sidecar identity確認、hash-bound recoverable copy、
+  deterministic dry-run receipt、transactional apply、integrity／relationship／embedded JSON検査、
+  rollback可能性確認の順とする。runtime alias、dual read、dual write、旧ID fallbackを残さない。
+
 置換:
 
 - TurnIDをTraceID、TaskIDから分離

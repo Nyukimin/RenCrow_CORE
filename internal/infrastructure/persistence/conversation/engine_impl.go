@@ -9,7 +9,6 @@ import (
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
-	"github.com/google/uuid"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -542,28 +541,6 @@ func (e *RealConversationEngine) CommitConversationTurn(ctx context.Context, req
 		return result, err
 	}
 	return result, nil
-}
-
-// EndTurn and EndTurnAs remain compatibility wrappers for callers that have
-// not migrated to the typed route. They never perform legacy Store writes.
-func (e *RealConversationEngine) EndTurn(ctx context.Context, sessionID string, userMessage string, response string) error {
-	return e.EndTurnAs(ctx, sessionID, userMessage, response, domconv.SpeakerMio)
-}
-
-func (e *RealConversationEngine) EndTurnAs(ctx context.Context, sessionID string, userMessage string, response string, speaker domconv.Speaker) error {
-	if strings.TrimSpace(string(speaker)) == "" {
-		speaker = domconv.SpeakerMio
-	} else if canonical, ok := domconv.CanonicalChatAgentSpeaker(speaker); ok {
-		speaker = canonical
-	}
-	_, err := e.CommitConversationTurn(ctx, domconv.ConversationTurnRequest{
-		TurnID:       uuid.NewString(),
-		SessionID:    sessionID,
-		UserMessage:  userMessage,
-		AgentMessage: response,
-		AgentSpeaker: speaker,
-	})
-	return err
 }
 
 // GetPersona は現在のペルソナ設定を返す

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
@@ -21,8 +22,9 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 
 	createdAt := time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC)
 	trace := domconv.RecallTraceRecord{
-		TraceID:             "trace:test",
-		TurnID:              "turn:test",
+		TraceID:             modulecore.NewTraceID(),
+		TurnID:              modulecore.NewTurnID(),
+		RootTaskID:          modulecore.NewTaskID(),
 		ChatID:              "chat-1",
 		Persona:             "mio",
 		Route:               "chat",
@@ -39,7 +41,7 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 	items := []domconv.RecallTraceItemRecord{
 		{
 			ItemID:        "item-1",
-			TraceID:       trace.TraceID,
+			TraceID:       string(trace.TraceID),
 			Layer:         "L3",
 			MemoryID:      "user:ren:user_memory:1",
 			SourceType:    "user_memory",
@@ -54,7 +56,7 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 		},
 		{
 			ItemID:        "item-2",
-			TraceID:       trace.TraceID,
+			TraceID:       string(trace.TraceID),
 			Layer:         "L2",
 			Status:        domconv.TraceStatusFilteredStatus,
 			Reason:        "candidate",
@@ -62,12 +64,12 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 			Kind:          "user_memory",
 		},
 	}
-	if err := store.AddRecallTraceItems(ctx, trace.TraceID, items); err != nil {
+	if err := store.AddRecallTraceItems(ctx, string(trace.TraceID), items); err != nil {
 		t.Fatalf("AddRecallTraceItems failed: %v", err)
 	}
-	if err := store.AddPromptInjectionEvents(ctx, trace.TraceID, []domconv.PromptInjectionEventRecord{{
+	if err := store.AddPromptInjectionEvents(ctx, string(trace.TraceID), []domconv.PromptInjectionEventRecord{{
 		InjectionID:   "inj-1",
-		TraceID:       trace.TraceID,
+		TraceID:       string(trace.TraceID),
 		PromptSection: domconv.PromptSectionUserMemory,
 		OrderIndex:    0,
 		ItemIDs:       []string{"item-1"},
@@ -76,15 +78,18 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("AddPromptInjectionEvents failed: %v", err)
 	}
-	if err := store.FinishRecallTrace(ctx, trace.TraceID, "completed", 1, 8); err != nil {
+	if err := store.FinishRecallTrace(ctx, string(trace.TraceID), "completed", 1, 8); err != nil {
 		t.Fatalf("FinishRecallTrace failed: %v", err)
 	}
 
-	var status string
+	var storedTraceID, storedTurnID, storedRootTaskID, status string
 	var injectedCount int
 	var totalTokens int
-	if err := store.db.QueryRowContext(ctx, `SELECT status, injected_count, total_injected_tokens FROM recall_trace WHERE trace_id = ?`, trace.TraceID).Scan(&status, &injectedCount, &totalTokens); err != nil {
+	if err := store.db.QueryRowContext(ctx, `SELECT trace_id, turn_id, root_task_id, status, injected_count, total_injected_tokens FROM recall_trace WHERE trace_id = ?`, trace.TraceID).Scan(&storedTraceID, &storedTurnID, &storedRootTaskID, &status, &injectedCount, &totalTokens); err != nil {
 		t.Fatalf("query recall_trace failed: %v", err)
+	}
+	if storedTraceID != string(trace.TraceID) || storedTurnID != string(trace.TurnID) || storedRootTaskID != string(trace.RootTaskID) {
+		t.Fatalf("stored identity=(%q,%q,%q), want exact (%q,%q,%q)", storedTraceID, storedTurnID, storedRootTaskID, trace.TraceID, trace.TurnID, trace.RootTaskID)
 	}
 	if status != "completed" || injectedCount != 1 || totalTokens != 8 {
 		t.Fatalf("unexpected trace summary: status=%s injected=%d tokens=%d", status, injectedCount, totalTokens)
@@ -95,6 +100,40 @@ func TestL1SQLiteStore_RecallTraceTables(t *testing.T) {
 	}
 	if itemCount != 2 {
 		t.Fatalf("trace item count = %d, want 2", itemCount)
+	}
+}
+
+func TestL1SQLiteStore_StartRecallTraceRejectsMissingWrongAndAliasedIdentityWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewL1SQLiteStore(filepath.Join(l1TestTempDir(t), "recall-identity.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	valid := domconv.RecallTraceRecord{
+		TraceID: modulecore.NewTraceID(), TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(),
+		ChatID: "chat-identity", Persona: "mio", Status: "started",
+	}
+	cases := []domconv.RecallTraceRecord{
+		{TurnID: valid.TurnID, RootTaskID: valid.RootTaskID, ChatID: valid.ChatID},
+		{TraceID: valid.TraceID, RootTaskID: valid.RootTaskID, ChatID: valid.ChatID},
+		{TraceID: valid.TraceID, TurnID: valid.TurnID, ChatID: valid.ChatID},
+		{TraceID: modulecore.TraceID(valid.TurnID), TurnID: valid.TurnID, RootTaskID: valid.RootTaskID, ChatID: valid.ChatID},
+		{TraceID: valid.TraceID, TurnID: modulecore.TurnID(valid.TraceID), RootTaskID: valid.RootTaskID, ChatID: valid.ChatID},
+		{TraceID: valid.TraceID, TurnID: valid.TurnID, RootTaskID: modulecore.TaskID(valid.TurnID), ChatID: valid.ChatID},
+	}
+	for i, candidate := range cases {
+		if err := store.StartRecallTrace(ctx, candidate); err == nil {
+			t.Fatalf("case %d accepted invalid recall identity: %+v", i, candidate)
+		}
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM recall_trace`).Scan(&count); err != nil {
+		t.Fatalf("count recall traces: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid recall identity wrote %d rows", count)
 	}
 }
 

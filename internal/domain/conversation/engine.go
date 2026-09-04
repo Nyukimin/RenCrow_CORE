@@ -8,9 +8,6 @@ type ConversationEngine interface {
 	// BeginTurn はターン開始時に呼び出し、RecallPack を返す
 	BeginTurn(ctx context.Context, sessionID string, userMessage string) (*RecallPack, error)
 
-	// EndTurn はターン終了時に呼び出し、メッセージ保存を実行
-	EndTurn(ctx context.Context, sessionID string, userMessage string, response string) error
-
 	// GetPersona は現在のペルソナ設定を返す
 	GetPersona() PersonaState
 

@@ -2,11 +2,58 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestProcessMessageRejectsMalformedIdentityBeforeSessionState(t *testing.T) {
+	sessionErr := errors.New("session repository must not be called")
+	request := ProcessMessageRequest{
+		SessionID:   "session-that-would-load",
+		TraceID:     "wrong-trace",
+		Channel:     "viewer",
+		ChatID:      "viewer-user",
+		UserMessage: "hello",
+	}
+	tests := []struct {
+		name string
+		run  func(SessionRepository) error
+	}{
+		{
+			name: "local",
+			run: func(repo SessionRepository) error {
+				orch := NewMessageOrchestrator(repo, &mockMioAgent{}, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+				_, err := orch.ProcessMessage(context.Background(), request)
+				return err
+			},
+		},
+		{
+			name: "distributed",
+			run: func(repo SessionRepository) error {
+				orch := NewDistributedOrchestrator(repo, &mockMioAgent{}, nil, nil, nil)
+				_, err := orch.ProcessMessage(context.Background(), request)
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockSessionRepository()
+			repo.loadErr = sessionErr
+			err := tc.run(repo)
+			if err == nil {
+				t.Fatal("malformed identity was accepted")
+			}
+			if errors.Is(err, sessionErr) {
+				t.Fatalf("session repository ran before identity rejection: %v", err)
+			}
+		})
+	}
+}
 
 type recordedCorrelatedTurn struct {
 	role      string
@@ -55,20 +102,20 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	orch.SetEventListener(events)
 	orch.SetSessionTurnLogger(turns)
 
+	ingressTurnID := string(modulecore.NewTurnID())
 	ingressTraceID := string(modulecore.NewTraceID())
+	ingressRootTaskID := string(modulecore.NewTaskID())
+	ingressMessageID := string(modulecore.NewMessageID())
+	ingressAgentMessageID := string(modulecore.NewMessageID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID:       "job-fixed",
-		MessageID:   "msg_ingress_fixed",
-		TraceID:     ingressTraceID,
-		SessionID:   "session-1",
-		Channel:     "viewer",
-		ChatID:      "viewer-user",
-		UserMessage: "hello",
+		JobID: "job-fixed", TurnID: ingressTurnID, TraceID: ingressTraceID, RootTaskID: ingressRootTaskID,
+		MessageID: ingressMessageID, AgentMessageID: ingressAgentMessageID,
+		SessionID: "session-1", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if resp.TraceID != ingressTraceID || resp.TraceID == "job-fixed" || modulecore.TraceID(resp.TraceID).Validate() != nil || resp.MessageID == "" {
+	if resp.TurnID != ingressTurnID || resp.TraceID != ingressTraceID || resp.RootTaskID != ingressRootTaskID || resp.MessageID != ingressAgentMessageID {
 		t.Fatalf("response identity = %+v", resp)
 	}
 
@@ -77,7 +124,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if receivedIndex < 0 || responseIndex < 0 {
 		t.Fatalf("missing conversation events: %#v", events.events)
 	}
-	if events.events[receivedIndex].MessageID != "msg_ingress_fixed" ||
+	if events.events[receivedIndex].MessageID != ingressMessageID ||
 		events.events[receivedIndex].TraceID != resp.TraceID {
 		t.Fatalf("ingress event identity drifted: %+v", events.events[receivedIndex])
 	}
@@ -89,7 +136,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if len(turns.turns) != 2 {
 		t.Fatalf("session turns = %#v", turns.turns)
 	}
-	if turns.turns[0].messageID != "msg_ingress_fixed" || turns.turns[0].traceID != resp.TraceID {
+	if turns.turns[0].messageID != ingressMessageID || turns.turns[0].traceID != resp.TraceID {
 		t.Fatalf("user session log identity drifted: %+v", turns.turns[0])
 	}
 	if turns.turns[1].messageID != resp.MessageID || turns.turns[1].traceID != resp.TraceID ||
@@ -98,18 +145,104 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	}
 }
 
-func TestEnsureProcessRequestIdentityReplacesMalformedIngressTrace(t *testing.T) {
-	req := ProcessMessageRequest{MessageID: "msg_ingress_fixed", TraceID: "not-a-canonical-trace"}
+func TestEnsureProcessRequestIdentityRejectsMalformedIngressWithoutRepair(t *testing.T) {
+	req := ProcessMessageRequest{MessageID: string(modulecore.NewMessageID()), TraceID: "not-a-canonical-trace"}
+	original := req
 
-	ensureProcessRequestIdentity(&req)
+	if err := ensureProcessRequestIdentity(&req); err == nil {
+		t.Fatal("malformed trace_id was accepted")
+	}
+	if !reflect.DeepEqual(req, original) {
+		t.Fatalf("rejected request was partially repaired: got=%+v want=%+v", req, original)
+	}
+}
 
-	if modulecore.TraceID(req.TraceID).Validate() != nil {
-		t.Fatalf("trace_id=%q must be replaced with a canonical identity", req.TraceID)
+func TestEnsureProcessRequestIdentityRejectsEveryWrongCanonicalTypeWithoutRepair(t *testing.T) {
+	valid := ProcessMessageRequest{
+		TurnID:         string(modulecore.NewTurnID()),
+		TraceID:        string(modulecore.NewTraceID()),
+		RootTaskID:     string(modulecore.NewTaskID()),
+		MessageID:      string(modulecore.NewMessageID()),
+		AgentMessageID: string(modulecore.NewMessageID()),
 	}
-	if req.TraceID == "job-fixed" || req.TraceID == "not-a-canonical-trace" {
-		t.Fatalf("trace_id must be independent from job and malformed ingress values: %q", req.TraceID)
+	tests := []struct {
+		name   string
+		mutate func(*ProcessMessageRequest)
+	}{
+		{name: "turn_id", mutate: func(req *ProcessMessageRequest) { req.TurnID = string(modulecore.NewTraceID()) }},
+		{name: "trace_id", mutate: func(req *ProcessMessageRequest) { req.TraceID = string(modulecore.NewTurnID()) }},
+		{name: "root_task_id", mutate: func(req *ProcessMessageRequest) { req.RootTaskID = string(modulecore.NewMessageID()) }},
+		{name: "user_message_id", mutate: func(req *ProcessMessageRequest) { req.MessageID = string(modulecore.NewTaskID()) }},
+		{name: "agent_message_id", mutate: func(req *ProcessMessageRequest) { req.AgentMessageID = string(modulecore.NewTraceID()) }},
 	}
-	if req.MessageID != "msg_ingress_fixed" {
-		t.Fatalf("valid message_id drifted: %q", req.MessageID)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := valid
+			tc.mutate(&req)
+			original := req
+			if err := ensureProcessRequestIdentity(&req); err == nil {
+				t.Fatalf("wrong canonical type for %s was accepted", tc.name)
+			}
+			if !reflect.DeepEqual(req, original) {
+				t.Fatalf("rejected request was partially repaired: got=%+v want=%+v", req, original)
+			}
+		})
+	}
+}
+
+func TestEnsureProcessRequestIdentityGeneratesFiveIndependentCanonicalIDs(t *testing.T) {
+	var req ProcessMessageRequest
+	if err := ensureProcessRequestIdentity(&req); err != nil {
+		t.Fatalf("ensure identity: %v", err)
+	}
+	if modulecore.TurnID(req.TurnID).Validate() != nil || modulecore.TraceID(req.TraceID).Validate() != nil || modulecore.TaskID(req.RootTaskID).Validate() != nil || modulecore.MessageID(req.MessageID).Validate() != nil || modulecore.MessageID(req.AgentMessageID).Validate() != nil {
+		t.Fatalf("generated identity is not canonical: %+v", req)
+	}
+	seen := map[string]struct{}{}
+	for _, value := range []string{req.TurnID, req.TraceID, req.RootTaskID, req.MessageID, req.AgentMessageID} {
+		if _, duplicate := seen[value]; duplicate {
+			t.Fatalf("generated identity was reused: %+v", req)
+		}
+		seen[value] = struct{}{}
+	}
+}
+
+func TestEnsureProcessRequestIdentityRejectsAliasedMessageIDsWithoutRepair(t *testing.T) {
+	messageID := string(modulecore.NewMessageID())
+	req := ProcessMessageRequest{
+		TurnID:         string(modulecore.NewTurnID()),
+		TraceID:        string(modulecore.NewTraceID()),
+		RootTaskID:     string(modulecore.NewTaskID()),
+		MessageID:      messageID,
+		AgentMessageID: messageID,
+	}
+	original := req
+	if err := ensureProcessRequestIdentity(&req); err == nil {
+		t.Fatal("aliased user and agent message IDs were accepted")
+	}
+	if !reflect.DeepEqual(req, original) {
+		t.Fatalf("rejected request was partially repaired: got=%+v want=%+v", req, original)
+	}
+}
+
+func TestConversationIdentityTrackerBindsOnlyFirstActualAgentResponse(t *testing.T) {
+	tracker := newConversationIdentityTracker()
+	jobID := "job-multi-actor"
+	actualAgentMessageID := modulecore.NewMessageID()
+	tracker.BindResponseMessageID(jobID, actualAgentMessageID)
+
+	actual := OrchestratorEvent{Type: "agent.response", From: "heavy", To: "mio", JobID: jobID, SessionID: "session"}
+	tracker.Assign(&actual, "")
+	forwarded := OrchestratorEvent{Type: "agent.response", From: "mio", To: "user", JobID: jobID, SessionID: "session"}
+	tracker.Assign(&forwarded, "")
+
+	if actual.MessageID != string(actualAgentMessageID) {
+		t.Fatalf("actual Agent message_id=%q, want prebound %q", actual.MessageID, actualAgentMessageID)
+	}
+	if modulecore.MessageID(forwarded.MessageID).Validate() != nil || forwarded.MessageID == actual.MessageID {
+		t.Fatalf("forwarded message_id=%q must be a distinct canonical ID", forwarded.MessageID)
+	}
+	if got := tracker.TakeResponseMessageID(jobID); got != forwarded.MessageID {
+		t.Fatalf("user-visible response message_id=%q, want %q", got, forwarded.MessageID)
 	}
 }

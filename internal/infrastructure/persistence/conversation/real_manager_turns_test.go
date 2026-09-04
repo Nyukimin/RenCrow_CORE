@@ -34,9 +34,22 @@ func (failingTurnEmbedder) Embed(context.Context, string) ([]float32, error) {
 
 func managerTurnTestRequest(turnID, sessionID string) domconv.ConversationTurnRequest {
 	return domconv.ConversationTurnRequest{
-		TurnID: turnID, SessionID: canonicalManagerTurnSessionIDForTest(sessionID), OwnerID: "owner-manager",
+		TurnID:         modulecore.TurnID(canonicalManagerTurnIdentityForTest(modulecore.CanonicalTurnID, turnID)),
+		TraceID:        modulecore.TraceID(canonicalManagerTurnIdentityForTest(modulecore.CanonicalTraceID, "trace:"+turnID)),
+		RootTaskID:     modulecore.TaskID(canonicalManagerTurnIdentityForTest(modulecore.CanonicalTaskID, "root:"+turnID)),
+		UserMessageID:  modulecore.MessageID(canonicalManagerTurnIdentityForTest(modulecore.CanonicalMessageID, "user:"+turnID)),
+		AgentMessageID: modulecore.MessageID(canonicalManagerTurnIdentityForTest(modulecore.CanonicalMessageID, "agent:"+turnID)),
+		SessionID:      canonicalManagerTurnSessionIDForTest(sessionID), OwnerID: "owner-manager",
 		UserMessage: "user-" + turnID, AgentMessage: "agent-" + turnID, AgentSpeaker: domconv.SpeakerMio,
 	}
+}
+
+func canonicalManagerTurnIdentityForTest(kind modulecore.CanonicalIDType, source string) string {
+	id, err := modulecore.NewMigrationID(kind, "real_manager_turn_test", "identity", source)
+	if err != nil {
+		panic(err)
+	}
+	return id
 }
 
 func canonicalManagerTurnSessionIDForTest(source string) string {
@@ -233,7 +246,7 @@ func TestRealConversationManagerDrainGlobalFailureRetriesAcrossRestartAndTermina
 		if err := manager.DrainConversationTurnOutbox(ctx, 1); !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
 			t.Fatalf("drain attempt %d error=%v, want unavailable", attempt, err)
 		}
-		receipt, err := l1.GetConversationTurnReceipt(ctx, request.TurnID)
+		receipt, err := l1.GetConversationTurnReceipt(ctx, string(request.TurnID))
 		if err != nil {
 			t.Fatalf("receipt attempt %d: %v", attempt, err)
 		}
@@ -241,7 +254,7 @@ func TestRealConversationManagerDrainGlobalFailureRetriesAcrossRestartAndTermina
 			t.Fatalf("receipt attempt %d=%+v, want partial", attempt, receipt)
 		}
 	}
-	receipt, err := l1.GetConversationTurnReceipt(ctx, request.TurnID)
+	receipt, err := l1.GetConversationTurnReceipt(ctx, string(request.TurnID))
 	if err != nil {
 		t.Fatalf("terminal receipt: %v", err)
 	}
@@ -275,7 +288,7 @@ func TestRealConversationManagerDrainFailureAdvancesToNextKey(t *testing.T) {
 		t.Fatalf("drain error=%v, want unavailable", err)
 	}
 	for i := range requests {
-		claim, err := l1.ClaimConversationTurnOutbox(ctx, requests[i].TurnID, time.Now().UTC(), time.Minute)
+		claim, err := l1.ClaimConversationTurnOutbox(ctx, string(requests[i].TurnID), time.Now().UTC(), time.Minute)
 		if err != nil || claim == nil || claim.Attempts != 2 {
 			t.Fatalf("claim %d=%+v err=%v, want second attempt after one drain failure", i, claim, err)
 		}
@@ -305,7 +318,7 @@ func TestRealConversationManagerDrainFailureAdvancesWithinSameTurn(t *testing.T)
 		t.Fatalf("drain error=%v, want unavailable", err)
 	}
 	for _, target := range request.Targets {
-		claim, err := l1.ClaimConversationTurnOutbox(ctx, request.TurnID, time.Now().UTC(), time.Minute)
+		claim, err := l1.ClaimConversationTurnOutbox(ctx, string(request.TurnID), time.Now().UTC(), time.Minute)
 		if err != nil || claim == nil || claim.Target != string(target) || claim.Attempts != 2 {
 			t.Fatalf("target %s claim=%+v err=%v, want one failure then second attempt", target, claim, err)
 		}
@@ -331,7 +344,7 @@ func TestRealConversationManagerDrainCapsLimitAt100(t *testing.T) {
 	if err := manager.DrainConversationTurnOutbox(ctx, 101); !errors.Is(err, domconv.ErrConversationTurnUnavailable) {
 		t.Fatalf("drain error=%v, want unavailable", err)
 	}
-	claim, err := l1.ClaimConversationTurnOutbox(ctx, requests[100].TurnID, time.Now().UTC(), time.Minute)
+	claim, err := l1.ClaimConversationTurnOutbox(ctx, string(requests[100].TurnID), time.Now().UTC(), time.Minute)
 	if err != nil || claim == nil || claim.Attempts != 1 {
 		t.Fatalf("capped row claim=%+v err=%v, want untouched first attempt", claim, err)
 	}
@@ -418,7 +431,7 @@ func TestDecodeConversationTurnOutboxPayloadIsCanonicalAndBound(t *testing.T) {
 	if _, err := l1.CommitConversationTurn(ctx, request); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
-	outbox, err := l1.ClaimConversationTurnOutbox(ctx, request.TurnID, time.Now().UTC(), time.Minute)
+	outbox, err := l1.ClaimConversationTurnOutbox(ctx, string(request.TurnID), time.Now().UTC(), time.Minute)
 	if err != nil || outbox == nil {
 		t.Fatalf("claim: %+v err=%v", outbox, err)
 	}
@@ -463,14 +476,14 @@ func TestDecodeConversationTurnOutboxPayloadIsCanonicalAndBound(t *testing.T) {
 	if err := json.Unmarshal([]byte(valid.PayloadJSON), &changed); err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}
-	changed.TraceID = "other-trace"
+	changed.TraceID = modulecore.NewTraceID()
 	traceChanged := valid
 	traceJSON, _ := json.Marshal(changed)
 	traceChanged.PayloadJSON = string(traceJSON)
 	if _, err := decodeConversationTurnOutboxPayload(&traceChanged); !errors.Is(err, domconv.ErrConversationTurnInvalid) {
 		t.Fatalf("trace binding error=%v, want invalid", err)
 	}
-	changed.TraceID = changed.TurnID
+	changed.TraceID = valid.TraceID
 	changed.OwnerID = ""
 	ownerChanged := valid
 	ownerJSON, _ := json.Marshal(changed)

@@ -46,6 +46,14 @@ func (p *distributedEventPort) ReleaseTrace(jobID string) {
 	p.traces.Release(jobID)
 }
 
+func (p *distributedEventPort) BindResponseMessageID(jobID string, messageID modulecore.MessageID) {
+	p.identities.BindResponseMessageID(jobID, messageID)
+}
+
+func (p *distributedEventPort) ReleaseResponseMessageID(jobID string) {
+	p.identities.ReleaseResponseMessageID(jobID)
+}
+
 func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) error {
 	traceID := modulecore.TraceID(ev.TraceID)
 	if p.publicationFail != nil {

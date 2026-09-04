@@ -42,7 +42,10 @@ func buildViewerBridgeHandlers(
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 				JobID:           req.JobID,
 				MessageID:       req.MessageID,
+				AgentMessageID:  req.AgentMessageID,
+				TurnID:          req.TurnID,
 				TraceID:         req.TraceID,
+				RootTaskID:      req.RootTaskID,
 				Channel:         "viewer",
 				ChatID:          "viewer-user",
 				UserMessage:     req.Message,

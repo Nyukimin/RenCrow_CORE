@@ -13,6 +13,7 @@ import (
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
 	advisorpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func main() {
@@ -85,7 +86,8 @@ func main() {
 		Score: 4, Evidence: "same synthetic topic",
 	}))
 	must(l1.SaveRecallTrace(ctx, domainconversation.RecallTrace{
-		ResponseID: "response-e2e-" + longSuffix, SessionID: "session-browser-e2e", Role: "mio", CreatedAt: now,
+		TraceID: modulecore.NewTraceID(), TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(),
+		SessionID: "session-browser-e2e", Role: "mio", CreatedAt: now,
 		Items: []domainconversation.RecallTraceItem{
 			{Layer: "L3", Kind: "knowledge_relation", SourceID: itemIDs[1], Status: "injected", Summary: "safe injected fixture"},
 			{Layer: "L3", Kind: "knowledge_relation", SourceID: itemIDs[2], Status: "rejected", Summary: "safe rejected fixture"},

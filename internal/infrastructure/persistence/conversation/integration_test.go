@@ -4,6 +4,9 @@ package conversation
 
 import (
 	"context"
+	"path/filepath"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	redisstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/redis"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/vectordb"
 	"net/http"
@@ -247,15 +250,22 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	}
 	defer vdbStore.Close()
 
+	l1Store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "conversation.db"))
+	if err != nil {
+		t.Fatalf("L1SQLiteStore failed: %v", err)
+	}
+	defer l1Store.Close()
+
 	mgr := &RealConversationManager{
 		redisStore:    redisStore,
+		l1Store:       l1Store,
 		archiveStore:  &mockArchiveSQLiteStore{},
 		vectordbStore: vdbStore,
 	}
 
 	// 2. ConversationEngine を構築
 	persona := domconv.NewMioPersona("")
-	engine := NewRealConversationEngine(mgr, persona)
+	engine := NewRealConversationEngine(mgr, persona).WithUserMemoryStore(l1Store, "ren")
 
 	// 3. BeginTurn（初回 — 記憶なし）
 	pack, err := engine.BeginTurn(ctx, sessionID, "こんにちは")
@@ -274,10 +284,20 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	}
 	t.Logf("Persona: %s", pack.Persona.Name)
 
-	// 4. EndTurn（メッセージ保存）
-	err = engine.EndTurn(ctx, sessionID, "こんにちは", "こんにちは！何かお手伝いしますか？")
-	if err != nil {
-		t.Fatalf("EndTurn failed: %v", err)
+	// 4. CommitConversationTurn（メッセージ保存）
+	firstTurn := domconv.ConversationTurnRequest{
+		TurnID:         modulecore.NewTurnID(),
+		TraceID:        modulecore.NewTraceID(),
+		RootTaskID:     modulecore.NewTaskID(),
+		UserMessageID:  modulecore.NewMessageID(),
+		AgentMessageID: modulecore.NewMessageID(),
+		SessionID:      sessionID,
+		UserMessage:    "こんにちは",
+		AgentMessage:   "こんにちは！何かお手伝いしますか？",
+		AgentSpeaker:   domconv.SpeakerMio,
+	}
+	if _, err = engine.CommitConversationTurn(ctx, firstTurn); err != nil {
+		t.Fatalf("CommitConversationTurn failed: %v", err)
 	}
 
 	// 5. 2回目の BeginTurn（短期記憶にメッセージあり）
@@ -290,10 +310,20 @@ func TestConversationEngine_Integration_E2E(t *testing.T) {
 	}
 	t.Logf("BeginTurn(2nd): ShortContext=%d messages", len(pack2.ShortContext))
 
-	// 6. EndTurn（2回目）
-	err = engine.EndTurn(ctx, sessionID, "Go言語について教えて", "Go言語は高速なプログラミング言語です。")
-	if err != nil {
-		t.Fatalf("EndTurn(2nd) failed: %v", err)
+	// 6. CommitConversationTurn（2回目）
+	secondTurn := domconv.ConversationTurnRequest{
+		TurnID:         modulecore.NewTurnID(),
+		TraceID:        modulecore.NewTraceID(),
+		RootTaskID:     modulecore.NewTaskID(),
+		UserMessageID:  modulecore.NewMessageID(),
+		AgentMessageID: modulecore.NewMessageID(),
+		SessionID:      sessionID,
+		UserMessage:    "Go言語について教えて",
+		AgentMessage:   "Go言語は高速なプログラミング言語です。",
+		AgentSpeaker:   domconv.SpeakerMio,
+	}
+	if _, err = engine.CommitConversationTurn(ctx, secondTurn); err != nil {
+		t.Fatalf("CommitConversationTurn(2nd) failed: %v", err)
 	}
 
 	// 7. GetStatus
