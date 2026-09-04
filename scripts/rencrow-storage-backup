@@ -171,10 +171,17 @@ import re
 import sys
 
 raw = sys.stdin.read()
-if not raw.endswith("\n") or raw.count("\n") != 1:
+if len(raw) > 65536 or not raw.endswith("\n") or raw.count("\n") != 1:
     raise SystemExit(1)
 try:
-    value = json.loads(raw[:-1])
+    def reject_duplicate_keys(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError
+            value[key] = item
+        return value
+    value = json.loads(raw[:-1], object_pairs_hook=reject_duplicate_keys)
 except (TypeError, ValueError):
     raise SystemExit(1)
 required = {
@@ -198,6 +205,45 @@ for key in ("redis_sha256", "qdrant_sha256", "snapshot_sha256"):
 if value.get("error_code") != "":
     raise SystemExit(1)
 print(value["snapshot_sha256"])
+'
+}
+
+validate_thread_identity_quiesce_receipt() {
+  python3 -c '
+import hashlib
+import json
+import re
+import sys
+
+raw = sys.stdin.read()
+if not raw.endswith("\n") or raw.count("\n") != 1:
+    raise SystemExit(1)
+try:
+    value = json.loads(raw[:-1])
+except (TypeError, ValueError):
+    raise SystemExit(1)
+required = [
+    "schema_version", "status", "sqlite_sources", "busy_zero",
+    "journal_mode_delete", "same_file", "sidecar_zero", "l1_sha256",
+    "archive_sha256", "receipt_sha256", "error_code",
+]
+if list(value) != required:
+    raise SystemExit(1)
+if value.get("schema_version") != "rencrow.threadmigration.sqlite_quiesce.v1" or value.get("status") != "quiesced_not_snapshot_bound":
+    raise SystemExit(1)
+if value.get("sqlite_sources") != 2 or any(value.get(key) is not True for key in ("busy_zero", "journal_mode_delete", "same_file", "sidecar_zero")):
+    raise SystemExit(1)
+sha256_pattern = re.compile(r"^[0-9a-f]{64}$")
+for key in ("l1_sha256", "archive_sha256", "receipt_sha256"):
+    if not isinstance(value.get(key), str) or not sha256_pattern.fullmatch(value[key]):
+        raise SystemExit(1)
+if value.get("error_code") != "":
+    raise SystemExit(1)
+actual = value["receipt_sha256"]
+value["receipt_sha256"] = ""
+canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
+if hashlib.sha256(canonical).hexdigest() != actual:
+    raise SystemExit(1)
 '
 }
 
@@ -426,6 +472,7 @@ qdrant_snapshot_name=
 qdrant_snapshot_checksum=
 core_snapshot_partial_parent=
 thread_identity_snapshot_sha256=
+thread_identity_quiesce_sha256=
 snapshot_format_version=4
 declare -A module_writer_was_active=()
 declare -A module_writer_masked=()
@@ -551,7 +598,18 @@ if systemctl --user is-active --quiet rencrow.service; then
 fi
 if [[ ${core_export} == true ]]; then
   thread_identity_snapshot_path=${staging}/external-memory/thread-identity/external-snapshot.json
+  thread_identity_quiesce_path=${staging}/external-memory/thread-identity/sqlite-quiesce.json
   mkdir -p "${staging}/external-memory/thread-identity"
+  if ! "${thread_migration_binary}" quiesce-sqlite --config "${config_file}" --initial-service-stopped >"${thread_identity_quiesce_path}" 2>/dev/null; then
+    echo "[NG] ThreadID SQLite quiesce failed" >&2
+    exit 1
+  fi
+  if [[ ! -f ${thread_identity_quiesce_path} || -L ${thread_identity_quiesce_path} || ! -s ${thread_identity_quiesce_path} ]] || \
+     ! validate_thread_identity_quiesce_receipt <"${thread_identity_quiesce_path}"; then
+    echo "[NG] ThreadID SQLite quiesce receipt is invalid" >&2
+    exit 1
+  fi
+  thread_identity_quiesce_sha256=$(sha256sum "${thread_identity_quiesce_path}" | cut -d' ' -f1)
   if ! thread_identity_capture_receipt=$(
     "${thread_migration_binary}" capture-external --config "${config_file}" --output "${thread_identity_snapshot_path}" 2>/dev/null
   ); then
@@ -662,6 +720,8 @@ if [[ ${snapshot_format_version} == 5 ]]; then
   printf '%s\n' \
     'thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
     "thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}" \
+    'thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
+    "thread_identity_quiesce_sha256=${thread_identity_quiesce_sha256}" \
     >> "${candidate_dir}/manifest.txt"
 fi
 

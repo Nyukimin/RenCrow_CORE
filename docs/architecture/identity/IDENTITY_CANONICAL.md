@@ -1560,6 +1560,9 @@ Test:
 - RedisのSCANとQdrantのscrollは単独でsnapshot isolationを証明しない。論理artifactは
   自己hashと件数を持つが、ownerがwriter停止、active config、物理rollback snapshot、
   artifact hashを同一停止窓のreceiptへ束縛するまで`runtime_ready`を名乗らない。
+- persistent WALを使うL1／Archiveは、固定CORE serviceのPIDとlistenerがzeroになった後、
+  owner CLIが`wal_checkpoint(TRUNCATE)`のbusy zero、同一file identity、`journal_mode=DELETE`、
+  sidecar zeroを証明してから同じ停止窓のsnapshotへ含める。WAL／SHMを手動削除しない。
 - sourceは不変、出力はfresh-onlyとし、in-place更新は行わない。L1、Archive、topic、
   Redis、Qdrantの全出力が同一mapping hashを持ち、件数、NULL、duplicate、orphan、
   legacy field zeroを検証した後だけcutover対象にできる。

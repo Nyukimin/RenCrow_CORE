@@ -89,6 +89,12 @@ assert_contains "${backup_runner}" \
   'thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}' \
   "CORE migration export manifest must bind the logical ThreadID snapshot hash"
 assert_contains "${backup_runner}" \
+  'quiesce-sqlite --config "${config_file}" --initial-service-stopped' \
+  "CORE migration export must quiesce persistent SQLite WAL through the owner CLI"
+assert_contains "${backup_runner}" \
+  'thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
+  "CORE migration export manifest must bind the SQLite quiesce receipt"
+assert_contains "${backup_runner}" \
   'mount "${backup_mount}"' \
   "the backup runner must mount the dedicated backup medium for its window"
 assert_contains "${backup_runner}" \
@@ -247,12 +253,44 @@ cp -a "${test_root}/source/external-memory" "${v5_root}/source/external-memory"
 mkdir -p "${v5_root}/source/external-memory/thread-identity"
 printf 'dummy logical ThreadID snapshot fixture\n' > "${v5_root}/source/external-memory/thread-identity/external-snapshot.json"
 thread_identity_snapshot_sha256=$(printf 'c%.0s' {1..64})
+python3 - "${v5_root}/source/state/l1.db" "${v5_root}/source/state/l2.db" <<'PY' > "${v5_root}/source/external-memory/thread-identity/sqlite-quiesce.json"
+import hashlib
+import json
+import sys
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+value = {
+    "schema_version": "rencrow.threadmigration.sqlite_quiesce.v1",
+    "status": "quiesced_not_snapshot_bound",
+    "sqlite_sources": 2,
+    "busy_zero": True,
+    "journal_mode_delete": True,
+    "same_file": True,
+    "sidecar_zero": True,
+    "l1_sha256": sha256(sys.argv[1]),
+    "archive_sha256": sha256(sys.argv[2]),
+    "receipt_sha256": "",
+    "error_code": "",
+}
+canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+value["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+PY
+thread_identity_quiesce_sha256=$(sha256sum "${v5_root}/source/external-memory/thread-identity/sqlite-quiesce.json" | cut -d' ' -f1)
 tar -C "${v5_root}/source" -czf "${v5_root}/rencrow-state.tar.gz" state external-memory
 (cd "${v5_root}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
 sed \
   -e 's/^format_version=4$/format_version=5/' \
   -e '$a thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
   -e "\$a thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}" \
+  -e '$a thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
+  -e "\$a thread_identity_quiesce_sha256=${thread_identity_quiesce_sha256}" \
   "${test_root}/snapshot/manifest.txt" > "${v5_root}/manifest.txt"
 
 mock_thread_migration=${test_root}/mock-rencrow-thread-migrate
@@ -290,6 +328,29 @@ chmod 0700 "${mock_thread_migration}"
 RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
   "${checker}" "${v5_root}"
+
+v5_sqlite_mismatch=${test_root}/format5-sqlite-mismatch
+mkdir -p "${v5_sqlite_mismatch}/source"
+cp -a "${v5_root}/source/state" "${v5_sqlite_mismatch}/source/state"
+cp -a "${v5_root}/source/external-memory" "${v5_sqlite_mismatch}/source/external-memory"
+"${RENCROW_TEST_PYTHON:-python3}" - "${v5_sqlite_mismatch}/source/state/l2.db" <<'PY'
+import sqlite3
+import sys
+
+connection = sqlite3.connect(sys.argv[1])
+connection.execute("INSERT INTO memory(value) VALUES ('not-in-quiesce-receipt')")
+connection.commit()
+connection.close()
+PY
+tar -C "${v5_sqlite_mismatch}/source" -czf "${v5_sqlite_mismatch}/rencrow-state.tar.gz" state external-memory
+(cd "${v5_sqlite_mismatch}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
+cp "${v5_root}/manifest.txt" "${v5_sqlite_mismatch}/manifest.txt"
+if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
+   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
+   "${checker}" "${v5_sqlite_mismatch}"; then
+  echo "[NG] format5 SQLite content outside the quiesce receipt was accepted" >&2
+  exit 1
+fi
 
 v5_hash_mismatch=${test_root}/format5-hash-mismatch
 mkdir -p "${v5_hash_mismatch}"

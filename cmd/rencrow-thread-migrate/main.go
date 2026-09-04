@@ -26,6 +26,7 @@ const (
 	stageExternalCommand   = "stage-external"
 	cutoverCommand         = "cutover"
 	rollbackCutoverCommand = "rollback-cutover"
+	quiesceSQLiteCommand   = "quiesce-sqlite"
 
 	captureExternalStatusCapturedNotQuiescenceBound = "captured_not_quiescence_bound"
 	captureExternalStatusBlocked                    = "blocked"
@@ -48,6 +49,7 @@ type offlineBuildOperation func(context.Context, threadmigration.BuildOptions) (
 type stageExternalOperation func(context.Context, stageExternalOptions) (stageExternalReceipt, error)
 type cutoverOperation func(context.Context, cutoverOptions) (cutoverReceipt, error)
 type rollbackCutoverOperation func(context.Context, rollbackCutoverOptions) (rollbackCutoverReceipt, error)
+type quiesceSQLiteOperation func(context.Context, string) (quiesceSQLiteReceipt, error)
 
 type externalOperations struct {
 	capture  externalSnapshotOperation
@@ -56,6 +58,7 @@ type externalOperations struct {
 	stage    stageExternalOperation
 	cutover  cutoverOperation
 	rollback rollbackCutoverOperation
+	quiesce  quiesceSQLiteOperation
 }
 
 type externalSnapshotReceipt struct {
@@ -77,6 +80,7 @@ func main() {
 		stage:    stageExternal,
 		cutover:  cutover,
 		rollback: rollbackCutover,
+		quiesce:  quiesceSQLite,
 	}))
 }
 
@@ -101,6 +105,8 @@ func runWithOperations(args []string, stdout io.Writer, ops externalOperations) 
 		return runCutover(args[1:], stdout, ops.cutover)
 	case rollbackCutoverCommand:
 		return runRollbackCutover(args[1:], stdout, ops.rollback)
+	case quiesceSQLiteCommand:
+		return runQuiesceSQLite(args[1:], stdout, ops.quiesce)
 	default:
 		return writeExternalReceipt(stdout, blockedExternalReceipt(captureExternalSchema, captureExternalErrorInvalidArguments), 1)
 	}
