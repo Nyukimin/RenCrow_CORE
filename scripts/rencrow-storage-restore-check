@@ -42,18 +42,8 @@ conversation_archive_relative=$(manifest_value conversation_archive_relative)
 redis_export=$(manifest_value redis_export)
 qdrant_export=$(manifest_value qdrant_export)
 qdrant_sha256=$(manifest_value qdrant_sha256)
-thread_identity_export=$(manifest_value thread_identity_export)
-thread_identity_snapshot_sha256=$(manifest_value thread_identity_snapshot_sha256)
-thread_identity_quiesce_receipt=$(manifest_value thread_identity_quiesce_receipt)
-thread_identity_quiesce_sha256=$(manifest_value thread_identity_quiesce_sha256)
 
-if [[ ( ${format_version} != 2 && ${format_version} != 3 && ${format_version} != 4 && ${format_version} != 5 ) || -z ${core_name} || ${core_name} == */* ]]; then
-  echo "[NG] unsupported or unsafe snapshot manifest" >&2
-  exit 1
-fi
-if [[ ${format_version} == 5 ]] && \
-   [[ ${thread_identity_export} != external-memory/thread-identity/external-snapshot.json || ! ${thread_identity_snapshot_sha256} =~ ^[0-9a-f]{64}$ || \
-      ${thread_identity_quiesce_receipt} != external-memory/thread-identity/sqlite-quiesce.json || ! ${thread_identity_quiesce_sha256} =~ ^[0-9a-f]{64}$ ]]; then
+if [[ ( ${format_version} != 2 && ${format_version} != 3 && ${format_version} != 4 ) || -z ${core_name} || ${core_name} == */* ]]; then
   echo "[NG] unsupported or unsafe snapshot manifest" >&2
   exit 1
 fi
@@ -110,7 +100,7 @@ tar -xzf "${archive}" -C "${restore_root}"
 core_restore=${restore_root}/${core_name}
 
 required_relatives=("${session_relative}" "${operation_memory_relative}" "${cold_export_relative}")
-if [[ ${format_version} == 4 || ${format_version} == 5 ]]; then
+if [[ ${format_version} == 4 ]]; then
   required_relatives+=("${raw_source_relative}")
 fi
 for relative in "${required_relatives[@]}"; do
@@ -160,7 +150,7 @@ if (( sqlite_integrity_status != 0 )); then
   exit "${sqlite_integrity_status}"
 fi
 
-if [[ ${format_version} == 4 || ${format_version} == 5 ]]; then
+if [[ ${format_version} == 4 ]]; then
   "${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${raw_source_relative}" <<'PY'
 import hashlib
 import json
@@ -261,167 +251,6 @@ try:
 except (sqlite3.Error, OSError, TypeError, ValueError):
     fail()
 PY
-fi
-
-if [[ ${format_version} == 5 ]]; then
-  thread_identity_binary=${RENCROW_THREAD_MIGRATION_BINARY:-${HOME}/.local/bin/rencrow-thread-migrate}
-  thread_identity_path=${restore_root}/${thread_identity_export}
-  thread_identity_quiesce_path=${restore_root}/${thread_identity_quiesce_receipt}
-  thread_identity_external_root=${restore_root}/external-memory
-  thread_identity_directory=${thread_identity_external_root}/thread-identity
-  if [[ ! -d ${thread_identity_external_root} || -L ${thread_identity_external_root} ||
-        ! -d ${thread_identity_directory} || -L ${thread_identity_directory} ||
-        ! -f ${thread_identity_path} || -L ${thread_identity_path} || ! -s ${thread_identity_path} || \
-        ! -f ${thread_identity_quiesce_path} || -L ${thread_identity_quiesce_path} || ! -s ${thread_identity_quiesce_path} || \
-        $(sha256sum "${thread_identity_quiesce_path}" | cut -d' ' -f1) != "${thread_identity_quiesce_sha256}" ]]; then
-    echo "[NG] Thread identity external snapshot verification failed" >&2
-    exit 1
-  fi
-  if ! "${python_bin}" - "${thread_identity_quiesce_path}" "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
-import hashlib
-import json
-import os
-import re
-import sys
-
-path, l1_path, archive_path = sys.argv[1:]
-try:
-    raw = open(path, "rb").read()
-    if len(raw) > 65536 or not raw.endswith(b"\n") or raw.count(b"\n") != 1:
-        raise ValueError
-    def reject_duplicate_keys(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError
-            value[key] = item
-        return value
-    value = json.loads(raw[:-1], object_pairs_hook=reject_duplicate_keys)
-except (OSError, TypeError, ValueError):
-    raise SystemExit(1)
-required = [
-    "schema_version", "status", "sqlite_sources", "busy_zero",
-    "journal_mode_delete", "same_file", "sidecar_zero", "l1_sha256",
-    "archive_sha256", "receipt_sha256", "error_code",
-]
-if list(value) != required or value.get("schema_version") != "rencrow.threadmigration.sqlite_quiesce.v1" or value.get("status") != "quiesced_not_snapshot_bound":
-    raise SystemExit(1)
-if value.get("sqlite_sources") != 2 or any(value.get(key) is not True for key in ("busy_zero", "journal_mode_delete", "same_file", "sidecar_zero")) or value.get("error_code") != "":
-    raise SystemExit(1)
-pattern = re.compile(r"^[0-9a-f]{64}$")
-if any(not isinstance(value.get(key), str) or not pattern.fullmatch(value[key]) for key in ("l1_sha256", "archive_sha256", "receipt_sha256")):
-    raise SystemExit(1)
-actual = value["receipt_sha256"]
-value["receipt_sha256"] = ""
-canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
-if hashlib.sha256(canonical).hexdigest() != actual:
-    raise SystemExit(1)
-def regular_sha256(database_path):
-    metadata = os.lstat(database_path)
-    if os.path.islink(database_path) or not os.path.isfile(database_path) or metadata.st_nlink != 1:
-        raise ValueError
-    digest = hashlib.sha256()
-    with open(database_path, "rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-try:
-    if regular_sha256(l1_path) != value["l1_sha256"] or regular_sha256(archive_path) != value["archive_sha256"]:
-        raise ValueError
-except (OSError, ValueError):
-    raise SystemExit(1)
-PY
-  then
-    echo "[NG] Thread identity SQLite quiesce receipt verification failed" >&2
-    exit 1
-  fi
-  if [[ ! -f ${thread_identity_binary} || -L ${thread_identity_binary} || ! -x ${thread_identity_binary} ]]; then
-    echo "[NG] Thread identity external snapshot verification failed" >&2
-    exit 1
-  fi
-
-  thread_identity_receipt=$(mktemp "${restore_root}/.thread-identity-verify.XXXXXX")
-  set +e
-  (
-    ulimit -f 128
-    timeout --signal=TERM 300s "${thread_identity_binary}" verify-external --input "${thread_identity_path}"
-  ) >"${thread_identity_receipt}" 2>/dev/null
-  thread_identity_verify_status=$?
-  set -e
-  if (( thread_identity_verify_status != 0 )); then
-    if (( thread_identity_verify_status == 124 || thread_identity_verify_status == 137 )); then
-      echo "[NG] Thread identity external snapshot verification timed out" >&2
-    else
-      echo "[NG] Thread identity external snapshot verification failed" >&2
-    fi
-    exit 1
-  fi
-
-  if ! "${python_bin}" - "${thread_identity_receipt}" "${thread_identity_snapshot_sha256}" <<'PY'
-import json
-import re
-import sys
-
-receipt_path, expected_snapshot_sha256 = sys.argv[1:]
-sha256_pattern = re.compile(r"^[0-9a-f]{64}$")
-required_keys = {
-    "schema",
-    "status",
-    "redis_count",
-    "qdrant_count",
-    "redis_sha256",
-    "qdrant_sha256",
-    "snapshot_sha256",
-    "error_code",
-}
-
-def reject_duplicate_keys(pairs):
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("duplicate key")
-        value[key] = item
-    return value
-
-def reject_constant(value):
-    raise ValueError("non-standard JSON number")
-
-try:
-    with open(receipt_path, "rb") as handle:
-        raw = handle.read()
-    if len(raw) > 65536 or not raw.endswith(b"\n") or b"\n" in raw[:-1]:
-        raise ValueError("receipt must be one bounded JSON line")
-    payload = raw[:-1].decode("utf-8")
-    decoder = json.JSONDecoder(
-        object_pairs_hook=reject_duplicate_keys,
-        parse_constant=reject_constant,
-    )
-    value, end = decoder.raw_decode(payload)
-    if end != len(payload) or not isinstance(value, dict):
-        raise ValueError("receipt must contain one JSON object")
-    if set(value) != required_keys:
-        raise ValueError("receipt schema keys differ")
-    if value["schema"] != "rencrow.threadmigration.verify_external.v1":
-        raise ValueError("receipt schema differs")
-    if value["status"] != "verified" or value["error_code"] != "":
-        raise ValueError("receipt status is not verified")
-    for key in ("redis_count", "qdrant_count"):
-        count = value[key]
-        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-            raise ValueError("receipt count is invalid")
-    for key in ("redis_sha256", "qdrant_sha256", "snapshot_sha256"):
-        digest = value[key]
-        if not isinstance(digest, str) or not sha256_pattern.fullmatch(digest):
-            raise ValueError("receipt hash is invalid")
-    if value["snapshot_sha256"] != expected_snapshot_sha256:
-        raise ValueError("receipt snapshot hash differs")
-except (OSError, UnicodeDecodeError, TypeError, ValueError, json.JSONDecodeError):
-    raise SystemExit(1)
-PY
-  then
-    echo "[NG] Thread identity external snapshot verification failed" >&2
-    exit 1
-  fi
 fi
 
 if [[ ${redis_export} != disabled ]]; then

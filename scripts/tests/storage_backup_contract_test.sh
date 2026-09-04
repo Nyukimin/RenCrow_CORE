@@ -25,6 +25,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local file=$1
+  local unexpected=$2
+  local description=$3
+  if grep -Fq -- "${unexpected}" "${file}"; then
+    contract_failures+=("${description}")
+  fi
+}
+
 assert_contains "${unit_file}" \
   'Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml' \
   "backup service must pin the current CORE config"
@@ -77,23 +86,26 @@ assert_contains "${backup_runner}" \
   'snapshot_format_version=4' \
   "ordinary backups must retain the Common Raw cohort format"
 assert_contains "${backup_runner}" \
-  'snapshot_format_version=5' \
-  "CORE migration export must select the ThreadID cohort format"
-assert_contains "${backup_runner}" \
   '"format_version=${snapshot_format_version}"' \
   "backup manifest must publish the selected cohort format"
-assert_contains "${backup_runner}" \
-  'thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
-  "CORE migration export manifest must bind the logical ThreadID snapshot path"
-assert_contains "${backup_runner}" \
-  'thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}' \
-  "CORE migration export manifest must bind the logical ThreadID snapshot hash"
-assert_contains "${backup_runner}" \
-  'quiesce-sqlite --config "${config_file}" --initial-service-stopped' \
-  "CORE migration export must quiesce persistent SQLite WAL through the owner CLI"
-assert_contains "${backup_runner}" \
-  'thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
-  "CORE migration export manifest must bind the SQLite quiesce receipt"
+assert_not_contains "${backup_runner}" \
+  'rencrow-thread-migrate' \
+  "CORE export must not depend on the retired ThreadID migration CLI"
+assert_not_contains "${backup_runner}" \
+  'threadmigration' \
+  "CORE export must not retain threadmigration receipt/config helpers"
+assert_not_contains "${checker}" \
+  'rencrow-thread-migrate' \
+  "restore check must not depend on the retired ThreadID migration CLI"
+assert_not_contains "${checker}" \
+  'threadmigration' \
+  "restore check must not retain threadmigration receipt validation"
+assert_not_contains "${makefile}" \
+  'THREAD_MIGRATION_' \
+  "storage backup build/install must not define ThreadID migration variables"
+assert_not_contains "${makefile}" \
+  'rencrow-thread-migrate' \
+  "storage backup build/install must not build or install the retired CLI"
 assert_contains "${backup_runner}" \
   '--exclude="${core_name}/staging"' \
   "CORE snapshot must exclude externally written, re-fetchable staging artifacts"
@@ -118,15 +130,6 @@ assert_contains "${backup_runner}" \
 assert_contains "${backup_runner}" \
   'if [[ ${core_export} != true ]]; then' \
   "CORE-only export must keep non-CORE durable module handling outside its execution path"
-assert_contains "${checker}" \
-  'verify-external --input' \
-  "restore check must reverify the logical ThreadID snapshot through its owner CLI"
-assert_contains "${checker}" \
-  'timeout --signal=TERM 300s' \
-  "logical ThreadID restore verification must have a bounded deadline"
-assert_contains "${checker}" \
-  'rencrow.threadmigration.verify_external.v1' \
-  "restore check must enforce the logical ThreadID verify receipt schema"
 assert_contains "${backup_runner}" \
   '"${migration_packager}" --snapshot-dir "${candidate_dir}" --output-dir "${migration_output_dir}"' \
   "CORE migration export must package only the restore-checked candidate"
@@ -249,156 +252,14 @@ EOF
 
 "${checker}" "${test_root}/snapshot"
 
-v5_root=${test_root}/format5
-mkdir -p "${v5_root}/source"
-cp -a "${test_root}/source/state" "${v5_root}/source/state"
-cp -a "${test_root}/source/external-memory" "${v5_root}/source/external-memory"
-mkdir -p "${v5_root}/source/external-memory/thread-identity"
-printf 'dummy logical ThreadID snapshot fixture\n' > "${v5_root}/source/external-memory/thread-identity/external-snapshot.json"
-thread_identity_snapshot_sha256=$(printf 'c%.0s' {1..64})
-python3 - "${v5_root}/source/state/l1.db" "${v5_root}/source/state/l2.db" <<'PY' > "${v5_root}/source/external-memory/thread-identity/sqlite-quiesce.json"
-import hashlib
-import json
-import sys
-
-def sha256(path):
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        while chunk := handle.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-value = {
-    "schema_version": "rencrow.threadmigration.sqlite_quiesce.v1",
-    "status": "quiesced_not_snapshot_bound",
-    "sqlite_sources": 2,
-    "busy_zero": True,
-    "journal_mode_delete": True,
-    "same_file": True,
-    "sidecar_zero": True,
-    "l1_sha256": sha256(sys.argv[1]),
-    "archive_sha256": sha256(sys.argv[2]),
-    "receipt_sha256": "",
-    "error_code": "",
-}
-canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-value["receipt_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
-print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
-PY
-thread_identity_quiesce_sha256=$(sha256sum "${v5_root}/source/external-memory/thread-identity/sqlite-quiesce.json" | cut -d' ' -f1)
-tar -C "${v5_root}/source" -czf "${v5_root}/rencrow-state.tar.gz" state external-memory
-(cd "${v5_root}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
-sed \
-  -e 's/^format_version=4$/format_version=5/' \
-  -e '$a thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
-  -e "\$a thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}" \
-  -e '$a thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
-  -e "\$a thread_identity_quiesce_sha256=${thread_identity_quiesce_sha256}" \
-  "${test_root}/snapshot/manifest.txt" > "${v5_root}/manifest.txt"
-
-mock_thread_migration=${test_root}/mock-rencrow-thread-migrate
-cat > "${mock_thread_migration}" <<'SH'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-if [[ ${1:-} != verify-external || ${2:-} != --input || $# != 3 ]]; then
-  exit 41
-fi
-input=${3}
-if [[ ${input} != */external-memory/thread-identity/external-snapshot.json ]]; then
-  exit 42
-fi
-if [[ ! -f ${input} || -L ${input} ]]; then
-  exit 43
-fi
-if [[ ${MOCK_THREAD_IDENTITY_VERIFY_FAILURE:-false} == true ]]; then
-  exit 44
-fi
-if [[ ${MOCK_THREAD_IDENTITY_MALFORMED:-false} == true ]]; then
-  printf '{"schema":"rencrow.threadmigration.verify_external.v1"}\n'
-  exit 0
-fi
-expected_hash=${MOCK_THREAD_IDENTITY_EXPECTED_HASH:-}
-if [[ -z ${expected_hash} ]]; then
-  exit 45
-fi
-receipt_hash=${MOCK_THREAD_IDENTITY_RECEIPT_HASH:-${expected_hash}}
-printf '{"schema":"rencrow.threadmigration.verify_external.v1","status":"verified","redis_count":0,"qdrant_count":0,"redis_sha256":"%s","qdrant_sha256":"%s","snapshot_sha256":"%s","error_code":""}\n' \
-  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' \
-  'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' \
-  "${receipt_hash}"
-SH
-chmod 0700 "${mock_thread_migration}"
-RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-  MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-  "${checker}" "${v5_root}"
-
-v5_sqlite_mismatch=${test_root}/format5-sqlite-mismatch
-mkdir -p "${v5_sqlite_mismatch}/source"
-cp -a "${v5_root}/source/state" "${v5_sqlite_mismatch}/source/state"
-cp -a "${v5_root}/source/external-memory" "${v5_sqlite_mismatch}/source/external-memory"
-"${RENCROW_TEST_PYTHON:-python3}" - "${v5_sqlite_mismatch}/source/state/l2.db" <<'PY'
-import sqlite3
-import sys
-
-connection = sqlite3.connect(sys.argv[1])
-connection.execute("INSERT INTO memory(value) VALUES ('not-in-quiesce-receipt')")
-connection.commit()
-connection.close()
-PY
-tar -C "${v5_sqlite_mismatch}/source" -czf "${v5_sqlite_mismatch}/rencrow-state.tar.gz" state external-memory
-(cd "${v5_sqlite_mismatch}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
-cp "${v5_root}/manifest.txt" "${v5_sqlite_mismatch}/manifest.txt"
-if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-   "${checker}" "${v5_sqlite_mismatch}"; then
-  echo "[NG] format5 SQLite content outside the quiesce receipt was accepted" >&2
-  exit 1
-fi
-
-v5_hash_mismatch=${test_root}/format5-hash-mismatch
-mkdir -p "${v5_hash_mismatch}"
-cp "${v5_root}/rencrow-state.tar.gz" "${v5_hash_mismatch}/rencrow-state.tar.gz"
-cp "${v5_root}/SHA256SUMS" "${v5_hash_mismatch}/SHA256SUMS"
-sed "s/^thread_identity_snapshot_sha256=.*/thread_identity_snapshot_sha256=$(printf '0%.0s' {1..64})/" \
-  "${v5_root}/manifest.txt" > "${v5_hash_mismatch}/manifest.txt"
-if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-   "${checker}" "${v5_hash_mismatch}"; then
-  echo "[NG] format5 manifest logical hash mismatch was accepted" >&2
-  exit 1
-fi
-
-v5_receipt_mismatch=${test_root}/format5-receipt-mismatch
-mkdir -p "${v5_receipt_mismatch}"
-cp "${v5_root}/rencrow-state.tar.gz" "${v5_receipt_mismatch}/rencrow-state.tar.gz"
-cp "${v5_root}/SHA256SUMS" "${v5_receipt_mismatch}/SHA256SUMS"
-cp "${v5_root}/manifest.txt" "${v5_receipt_mismatch}/manifest.txt"
-if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-   MOCK_THREAD_IDENTITY_RECEIPT_HASH="$(printf '1%.0s' {1..64})" \
-   "${checker}" "${v5_receipt_mismatch}"; then
-  echo "[NG] format5 verify receipt hash mismatch was accepted" >&2
-  exit 1
-fi
-
-if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-   MOCK_THREAD_IDENTITY_VERIFY_FAILURE=true \
-   "${checker}" "${v5_root}"; then
-  echo "[NG] format5 verify failure was accepted" >&2
-  exit 1
-fi
-
-v5_malformed_receipt=${test_root}/format5-malformed-receipt
-mkdir -p "${v5_malformed_receipt}"
-cp "${v5_root}/rencrow-state.tar.gz" "${v5_malformed_receipt}/rencrow-state.tar.gz"
-cp "${v5_root}/SHA256SUMS" "${v5_malformed_receipt}/SHA256SUMS"
-cp "${v5_root}/manifest.txt" "${v5_malformed_receipt}/manifest.txt"
-if RENCROW_THREAD_MIGRATION_BINARY="${mock_thread_migration}" \
-   MOCK_THREAD_IDENTITY_EXPECTED_HASH="${thread_identity_snapshot_sha256}" \
-   MOCK_THREAD_IDENTITY_MALFORMED=true \
-   "${checker}" "${v5_malformed_receipt}"; then
-  echo "[NG] format5 malformed verify receipt was accepted" >&2
+v5_snapshot=${test_root}/format5-unsupported
+mkdir -p "${v5_snapshot}"
+cp "${test_root}/snapshot/rencrow-state.tar.gz" "${v5_snapshot}/rencrow-state.tar.gz"
+cp "${test_root}/snapshot/SHA256SUMS" "${v5_snapshot}/SHA256SUMS"
+sed 's/^format_version=4$/format_version=5/' \
+  "${test_root}/snapshot/manifest.txt" > "${v5_snapshot}/manifest.txt"
+if "${checker}" "${v5_snapshot}"; then
+  echo "[NG] unsupported format_version=5 manifest was accepted" >&2
   exit 1
 fi
 

@@ -1697,7 +1697,7 @@ Test:
 - **Problem:** canonical cutover後のcapture path自体はlegacy-onlyで、将来のcanonical snapshot pathとして無効である。一方、sourceを今すぐ全削除すると、明示的にdeferされたformat-5 restore consumerを破壊する。
 - **Cause:** one-shot migration sourceと継続的backup／restore contractのowner境界を、同一command/packageへ束ねていた。
 - **Lesson / Invariant:** future one-shot migration sourceはongoing backup／restore contractを所有しない。Gate 7で削除する前に、frozen migration recovery consumerをcompleted／packagedするか、実際に継続利用するcanonical snapshot contractを既存storage ownerへ移して独立検証する。legacy readerを恒久compatibility layerとして残さない。
-- **Enforcement / Tests:** architecture guardはthreadmigration dependencyの除去後にだけskipを解除し、storage contractは`rencrow-thread-migrate` dependency zeroを証明して後続設計でobsoleteと確定したformat-5 creationを拒否する。exact resolutionはpendingであり、このdocumentation-only editはcode behaviorを変更しない。
+- **Enforcement / Tests:** Gate 7 architecture guardは旧threadmigration scopeを走査し、one-shot sourceが存在しないことを検査する。storage contractはMakefileとstorage scriptsの`rencrow-thread-migrate`／`threadmigration` dependency zeroを証明し、syntheticな`format_version=5` manifestを拒否する。one-shot sourceと継続的backup／restoreのformat-5 couplingは削除済みで、現行`core-export`はformat-4 cohortを使う。保持されたrecovery binaryはfrozen cohort artifactであり、installed ongoing ownerではない。
 
 ### Step 06: TurnIDとMessageID
 

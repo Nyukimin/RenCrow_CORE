@@ -34,7 +34,6 @@ rencrow_binary=${RENCROW_BINARY:-/home/nyukimi/.local/bin/rencrow}
 restore_checker=${RENCROW_RESTORE_CHECKER:-/home/nyukimi/.local/bin/rencrow-storage-restore-check}
 durable_snapshot_binary=${RENCROW_DURABLE_SNAPSHOT_BINARY:-/home/nyukimi/.local/bin/rencrow-durable-snapshot}
 migration_packager=${RENCROW_MIGRATION_PACKAGER:-/home/nyukimi/.local/bin/rencrow-core-migration-package}
-thread_migration_binary=${RENCROW_THREAD_MIGRATION_BINARY:-/home/nyukimi/.local/bin/rencrow-thread-migrate}
 durable_manifest_dir=${RENCROW_DURABLE_MANIFEST_DIR:-${HOME}/.local/share/rencrow/config/durable-stores.d}
 if [[ ! -f ${config_file} ]]; then
   echo "[NG] config file not found: ${config_file}" >&2
@@ -164,89 +163,6 @@ require_command() {
   fi
 }
 
-parse_thread_identity_capture_receipt() {
-  python3 -c '
-import json
-import re
-import sys
-
-raw = sys.stdin.read()
-if len(raw) > 65536 or not raw.endswith("\n") or raw.count("\n") != 1:
-    raise SystemExit(1)
-try:
-    def reject_duplicate_keys(pairs):
-        value = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError
-            value[key] = item
-        return value
-    value = json.loads(raw[:-1], object_pairs_hook=reject_duplicate_keys)
-except (TypeError, ValueError):
-    raise SystemExit(1)
-required = {
-    "schema", "status", "redis_count", "qdrant_count",
-    "redis_sha256", "qdrant_sha256", "snapshot_sha256", "error_code",
-}
-if set(value) != required:
-    raise SystemExit(1)
-if value.get("schema") != "rencrow.threadmigration.capture_external.v1":
-    raise SystemExit(1)
-if value.get("status") != "captured_not_quiescence_bound":
-    raise SystemExit(1)
-for key in ("redis_count", "qdrant_count"):
-    count = value.get(key)
-    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-        raise SystemExit(1)
-sha256_pattern = re.compile(r"^[0-9a-f]{64}$")
-for key in ("redis_sha256", "qdrant_sha256", "snapshot_sha256"):
-    if not isinstance(value.get(key), str) or not sha256_pattern.fullmatch(value[key]):
-        raise SystemExit(1)
-if value.get("error_code") != "":
-    raise SystemExit(1)
-print(value["snapshot_sha256"])
-'
-}
-
-validate_thread_identity_quiesce_receipt() {
-  python3 -c '
-import hashlib
-import json
-import re
-import sys
-
-raw = sys.stdin.read()
-if not raw.endswith("\n") or raw.count("\n") != 1:
-    raise SystemExit(1)
-try:
-    value = json.loads(raw[:-1])
-except (TypeError, ValueError):
-    raise SystemExit(1)
-required = [
-    "schema_version", "status", "sqlite_sources", "busy_zero",
-    "journal_mode_delete", "same_file", "sidecar_zero", "l1_sha256",
-    "archive_sha256", "receipt_sha256", "error_code",
-]
-if list(value) != required:
-    raise SystemExit(1)
-if value.get("schema_version") != "rencrow.threadmigration.sqlite_quiesce.v1" or value.get("status") != "quiesced_not_snapshot_bound":
-    raise SystemExit(1)
-if value.get("sqlite_sources") != 2 or any(value.get(key) is not True for key in ("busy_zero", "journal_mode_delete", "same_file", "sidecar_zero")):
-    raise SystemExit(1)
-sha256_pattern = re.compile(r"^[0-9a-f]{64}$")
-for key in ("l1_sha256", "archive_sha256", "receipt_sha256"):
-    if not isinstance(value.get(key), str) or not sha256_pattern.fullmatch(value[key]):
-        raise SystemExit(1)
-if value.get("error_code") != "":
-    raise SystemExit(1)
-actual = value["receipt_sha256"]
-value["receipt_sha256"] = ""
-canonical = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()
-if hashlib.sha256(canonical).hexdigest() != actual:
-    raise SystemExit(1)
-'
-}
-
 module_manifests=()
 module_ids=()
 module_roots=()
@@ -371,10 +287,6 @@ if [[ ${core_export} != true ]]; then
   fi
   load_durable_module_plans
 else
-  if [[ ! -x ${thread_migration_binary} ]]; then
-    echo "[NG] ThreadID migration binary not found" >&2
-    exit 1
-  fi
   if [[ ! -x ${migration_packager} ]]; then
     echo "[NG] CORE migration packager not found" >&2
     exit 1
@@ -471,8 +383,6 @@ core_masked_by_backup=false
 qdrant_snapshot_name=
 qdrant_snapshot_checksum=
 core_snapshot_partial_parent=
-thread_identity_snapshot_sha256=
-thread_identity_quiesce_sha256=
 snapshot_format_version=4
 declare -A module_writer_was_active=()
 declare -A module_writer_masked=()
@@ -596,36 +506,6 @@ if systemctl --user is-active --quiet rencrow.service; then
   echo "[NG] CORE remained active after runtime mask" >&2
   exit 1
 fi
-if [[ ${core_export} == true ]]; then
-  thread_identity_snapshot_path=${staging}/external-memory/thread-identity/external-snapshot.json
-  thread_identity_quiesce_path=${staging}/external-memory/thread-identity/sqlite-quiesce.json
-  mkdir -p "${staging}/external-memory/thread-identity"
-  if ! "${thread_migration_binary}" quiesce-sqlite --config "${config_file}" --initial-service-stopped >"${thread_identity_quiesce_path}" 2>/dev/null; then
-    echo "[NG] ThreadID SQLite quiesce failed" >&2
-    exit 1
-  fi
-  if [[ ! -f ${thread_identity_quiesce_path} || -L ${thread_identity_quiesce_path} || ! -s ${thread_identity_quiesce_path} ]] || \
-     ! validate_thread_identity_quiesce_receipt <"${thread_identity_quiesce_path}"; then
-    echo "[NG] ThreadID SQLite quiesce receipt is invalid" >&2
-    exit 1
-  fi
-  thread_identity_quiesce_sha256=$(sha256sum "${thread_identity_quiesce_path}" | cut -d' ' -f1)
-  if ! thread_identity_capture_receipt=$(
-    "${thread_migration_binary}" capture-external --config "${config_file}" --output "${thread_identity_snapshot_path}" 2>/dev/null
-  ); then
-    echo "[NG] ThreadID logical snapshot capture failed" >&2
-    exit 1
-  fi
-  if ! thread_identity_snapshot_sha256=$(printf '%s\n' "${thread_identity_capture_receipt}" | parse_thread_identity_capture_receipt); then
-    echo "[NG] ThreadID logical snapshot capture receipt is invalid" >&2
-    exit 1
-  fi
-  if [[ ! -f ${thread_identity_snapshot_path} || -L ${thread_identity_snapshot_path} || ! -s ${thread_identity_snapshot_path} ]]; then
-    echo "[NG] ThreadID logical snapshot artifact is missing or empty" >&2
-    exit 1
-  fi
-  snapshot_format_version=5
-fi
 if [[ ${core_export} != true ]]; then
   echo "[INFO] masking authoritative module writers for consistent snapshots"
   stop_durable_module_writers
@@ -717,14 +597,6 @@ printf '%s\n' \
   "qdrant_sha256=$([[ ${qdrant_enabled} == true ]] && printf '%s' "${qdrant_snapshot_checksum}" || printf 'disabled')" \
   'restore_format=tar.gz' \
   > "${candidate_dir}/manifest.txt"
-if [[ ${snapshot_format_version} == 5 ]]; then
-  printf '%s\n' \
-    'thread_identity_export=external-memory/thread-identity/external-snapshot.json' \
-    "thread_identity_snapshot_sha256=${thread_identity_snapshot_sha256}" \
-    'thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
-    "thread_identity_quiesce_sha256=${thread_identity_quiesce_sha256}" \
-    >> "${candidate_dir}/manifest.txt"
-fi
 
 "${restore_checker}" "${candidate_dir}"
 if [[ ${core_export} == true ]]; then

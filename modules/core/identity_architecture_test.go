@@ -378,6 +378,22 @@ func TestCanonicalThreadIdentityHasNoIntegerLegacy(t *testing.T) {
 	t.Fatalf("canonical ThreadID must be UUID-backed and DiscussionID-free: violations=%d showing=%d\n%s", len(violations), len(shown), strings.Join(shown, "\n"))
 }
 
+func TestCanonicalThreadMigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-thread-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "threadmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 05 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalThreadIdentityAssetsDoNotPublishDiscussionID(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -490,13 +506,6 @@ func canonicalThreadIdentitySkipDir(repoRoot, path string) bool {
 	base := filepath.Base(path)
 	switch base {
 	case ".git", "vendor", "node_modules", "Tmp":
-		return true
-	}
-	// The bounded Step 05 migration package is the only place where the retired
-	// integer value may be named explicitly while writer-stopped data is
-	// transformed. Gate 7 removes this package after production cutover, just as
-	// Step 04 removed its one-shot Session migration source.
-	if filepath.Clean(path) == filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "threadmigration") {
 		return true
 	}
 	return false

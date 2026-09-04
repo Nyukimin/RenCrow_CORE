@@ -54,8 +54,6 @@ STORAGE_RESTORE_CHECK_SCRIPT_SRC=$(CURDIR)/scripts/rencrow-storage-restore-check
 STORAGE_RESTORE_CHECK_SCRIPT_DST=$(INSTALL_BIN_DIR)/rencrow-storage-restore-check
 CORE_MIGRATION_PACKAGER=$(BUILD_DIR)/rencrow-core-migration-package
 CORE_MIGRATION_PACKAGER_DST=$(INSTALL_BIN_DIR)/rencrow-core-migration-package
-THREAD_MIGRATION_BINARY=$(BUILD_DIR)/rencrow-thread-migrate
-THREAD_MIGRATION_BINARY_DST=$(INSTALL_BIN_DIR)/rencrow-thread-migrate
 STORAGE_BACKUP_SERVICE_SRC=$(CURDIR)/systemd/user/rencrow-storage-backup.service
 STORAGE_BACKUP_TIMER_SRC=$(CURDIR)/systemd/user/rencrow-storage-backup.timer
 
@@ -240,8 +238,6 @@ install-storage-backup: install
 	@mkdir -p $(INSTALL_BIN_DIR) $(SYSTEMD_USER_DIR)
 	@$(GO) build -o $(CORE_MIGRATION_PACKAGER) ./cmd/rencrow-core-migration-package
 	@install -m 0755 $(CORE_MIGRATION_PACKAGER) $(CORE_MIGRATION_PACKAGER_DST)
-	@$(GO) build -o $(THREAD_MIGRATION_BINARY) ./cmd/rencrow-thread-migrate
-	@install -m 0755 $(THREAD_MIGRATION_BINARY) $(THREAD_MIGRATION_BINARY_DST)
 	@install -m 0755 $(STORAGE_BACKUP_SCRIPT_SRC) $(STORAGE_BACKUP_SCRIPT_DST)
 	@install -m 0755 $(STORAGE_CONFIGURE_SCRIPT_SRC) $(STORAGE_CONFIGURE_SCRIPT_DST)
 	@install -m 0755 $(STORAGE_RESTORE_CHECK_SCRIPT_SRC) $(STORAGE_RESTORE_CHECK_SCRIPT_DST)
