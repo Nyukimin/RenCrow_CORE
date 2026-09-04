@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-04T17:26:50Z",
+  "evaluated_at": "2026-09-04T23:16:10Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -98,7 +98,7 @@
       "check_id": "s6_bounded_recovery",
       "execution_phase": "pre-cutover",
       "failure_action": "block cutover",
-      "guarantee": "the exact stopped-writer SQLite target tables and sidecars have hash-bound recoverable copies and rollback procedure before mutation",
+      "guarantee": "the exact stopped-writer SQLite database and sidecars have a hash-bound recoverable copy on the separate physical recovery filesystem before mutation; transient D-state is tolerated only while byte progress continues, with cutover stopped after 120 seconds without progress or immediately on a kernel I/O error or USB reset",
       "owner": "RenCrow_CORE migration CLI and service owner",
       "result_consumer": "production cutover"
     },
@@ -148,6 +148,10 @@
     "pushed_implementation_revision": "ad07c418831aeee532bc1497f31c2ffe05260229",
     "reviewed_runtime_artifact_sha256": "3b6da9095bf4849addff1c0b8759105757bcabc99fd5b6019bb4374ef56b9089",
     "reviewed_migration_artifact_sha256": "3a51caeeca1ac5a717673323efd1292a25044deda0a99b308552a526faf5cf8e",
+    "runtime_database_device": "/dev/sdd1 on USB 2.0 at 480 Mbit/s",
+    "recovery_filesystem_device": "/dev/sdb1 mounted at /srv/rencrow/backup",
+    "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
+    "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
     "worktree_state": "identity/03-dci implementation revision pushed; production cutover blocked before DB mutation"
   },
@@ -157,7 +161,7 @@
       "outcome": "aborted-no-production-mutation",
       "subject": "live SQLite cross-filesystem production-shape snapshot",
       "evidence": "sqlite backup entered D-state under high I/O pressure; the process was terminated and the incomplete temporary snapshot was moved to Trash",
-      "next_action": "perform one stopped-writer same-filesystem recovery copy immediately before cutover; stop without retry if D-state recurs"
+      "next_action": "superseded by the 2026-09-04T23:16:10Z user-authorized separate-filesystem retry policy"
     },
     {
       "at": "2026-09-04T17:26:50Z",
@@ -165,10 +169,17 @@
       "subject": "stopped-writer production cutover recovery point",
       "evidence": "rencrow.service and resilience timer were stopped; SQLite checkpoint returned 0|0|0 and sidecars were absent; the first full DB SHA-256 read then entered D-state at blk_mq_get_tag before any recovery copy or migration dry-run/apply",
       "recovery": "the hash process exited on TERM; no DB copy existed and no migration command ran; the unchanged installed old binary was restarted as PID 1704256 and /health/live plus /health/ready passed; resilience timer returned active",
-      "next_action": "diagnose or recover the /dev/sdd USB storage path and establish an exact hash-bound DB recovery copy before a new cutover attempt"
+      "next_action": "superseded by the 2026-09-04T23:16:10Z user-authorized retry; establish the exact copy on /dev/sdb1 before any mutation"
+    },
+    {
+      "at": "2026-09-04T23:16:10Z",
+      "outcome": "retry-authorized-no-production-mutation",
+      "subject": "current-machine USB 2.0 cutover continuation",
+      "evidence": "the live database is on /dev/sdd1 through a 480 Mbit/s USB path; /srv/rencrow/backup is a separate physical /dev/sdb1 filesystem with sufficient space; no kernel I/O error or USB reset was observed in the prior attempts; the user explicitly instructed work to continue unattended on this machine",
+      "next_action": "freeze this plan, stop timers and the writer, create and hash-verify an exact recovery copy on /dev/sdb1, then run the reviewed migration dry-run and apply under the fixed progress and timeout limits"
     }
   ],
-  "phase": "precutover-blocked-host-io",
+  "phase": "precutover-authorized-usb2",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
@@ -203,15 +214,15 @@
       "check_ids": [
         "s6_bounded_recovery"
       ],
-      "status": "blocked",
-      "evidence": "exact stopped-writer DB recovery copy was not created because source SHA-256 entered D-state; production migration was not started"
+      "status": "pending-retry-authorized",
+      "evidence": "the prior attempt created no DB copy and made no production mutation; retry is explicitly authorized on the current USB 2.0 machine with a separate physical recovery filesystem, a 30 minute command bound, and a 120 second no-progress/kernel-error stop rule"
     },
     {
       "check_ids": [
         "s6_runtime_identity"
       ],
       "status": "pending",
-      "evidence": "new runtime was not installed; old revision 6388137b was restored ready as PID 1704256 after the blocked cutover attempt"
+      "evidence": "new runtime remains uninstalled; the currently active old-generation service must be re-resolved immediately before stop because service PIDs are not stable evidence"
     }
   ],
   "schema_version": "rencrow.check_plan.v1"
