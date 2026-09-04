@@ -106,6 +106,38 @@ func TestRunBuildFailureDoesNotExposeDetails(t *testing.T) {
 	}
 }
 
+func TestRunBuildUsesOfflineOperationDeadline(t *testing.T) {
+	var stdout bytes.Buffer
+	var gotContext context.Context
+	code := runWithOperations([]string{
+		"build", "--l1-source", "l1.sqlite", "--archive-source", "archive.sqlite", "--topic-source", "topics.jsonl",
+		"--external-snapshot", "snapshot.json", "--output-dir", "out",
+	}, &stdout, externalOperations{
+		build: func(ctx context.Context, _ threadmigration.BuildOptions) (threadmigration.BuildReceipt, error) {
+			gotContext = ctx
+			return threadmigration.BuildReceipt{}, errors.New("build unavailable")
+		},
+	})
+	if code == 0 {
+		t.Fatalf("runWithOperations() code = 0, want failure; output = %q", stdout.String())
+	}
+	if gotContext == nil {
+		t.Fatal("runWithOperations() did not pass a context")
+	}
+	deadline, ok := gotContext.Deadline()
+	if !ok {
+		t.Fatal("runWithOperations() context has no deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining < 29*time.Minute || remaining > 30*time.Minute {
+		t.Fatalf("runWithOperations() build context deadline remaining = %s, want approximately 30m", remaining)
+	}
+	if gotContext.Err() != context.Canceled {
+		t.Fatalf("runWithOperations() build context error after return = %v, want context.Canceled", gotContext.Err())
+	}
+	assertBlockedBuildReceipt(t, decodeSingleBuildReceipt(t, stdout.String()), buildErrorBuildFailed)
+}
+
 func TestRunBuildRejectsUnverifiedReadyReceipt(t *testing.T) {
 	var stdout bytes.Buffer
 	code := runWithOperations([]string{

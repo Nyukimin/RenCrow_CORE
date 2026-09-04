@@ -39,7 +39,8 @@ const (
 	buildErrorInvalidArguments           = "invalid_arguments"
 	buildErrorBuildFailed                = "build_failed"
 
-	externalOperationTimeout = 5 * time.Minute
+	externalOperationTimeout     = 5 * time.Minute
+	offlineBuildOperationTimeout = 30 * time.Minute
 )
 
 // externalSnapshotOperation is the seam for the CORE-owned capture adapter.
@@ -126,7 +127,7 @@ func runBuild(args []string, stdout io.Writer, op offlineBuildOperation) int {
 	if flags.NArg() != 0 || strings.TrimSpace(*l1Source) == "" || strings.TrimSpace(*archiveSource) == "" || strings.TrimSpace(*topicSource) == "" || strings.TrimSpace(*externalSnapshot) == "" || strings.TrimSpace(*outputDir) == "" {
 		return writeBuildReceipt(stdout, blockedBuildReceipt(buildErrorInvalidArguments), 1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), externalOperationTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), offlineBuildOperationTimeout)
 	defer cancel()
 	if op == nil {
 		return writeBuildReceipt(stdout, blockedBuildReceipt(buildErrorBuildFailed), 1)

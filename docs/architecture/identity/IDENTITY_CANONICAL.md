@@ -1644,6 +1644,15 @@ Test:
 - **Lesson / Invariant:** pending bindingを`source_record_id -> exact conversation_id`へ決定的に縮約し、同一conversationの重複参照は一つの期待値として扱う。conflict、missing、duplicate、wrong source／thread／SQLite typeはfail closedとし、decoy Raw rowは無視する。pendingがあるinventoryではtable確認、column確認、ordered Raw scanを各一回だけ行う。
 - **Enforcement / Tests:** sorted pending／expected order、one-pass ordered query、sourceごとのmatch count、`TestInventorySQLiteAcceptsRepeatedChatGPTRawBindingAndIgnoresDecoys`、およびconflict／missing／duplicate／wrong provenance rejection testsで強制する。
 
+#### Step 05 Failure Knowledge: shared short timeoutによるoffline build中断
+
+- **Failure:** capture／verify／stage／cutover／rollback／quiesce向けの`externalOperationTimeout=5m`を、複数passのdeterministicなlocal offline buildにも共有したため、cohort prepareがcontext deadlineで終了した。
+- **Problem:** source fingerprint、SQLite clone、topic／Qdrant prepare、L1／Archive materialize／finalize／hashを含む外部通信不要のbuildが、boundedな出力receiptをreadyまで完了できず`cohort_prepare`でblockedになった。
+- **Cause:** 異なるcost profileとfailure boundaryを持つ操作へ一つの短いdurationを適用し、network／external操作のdeadlineをlocal buildの安全境界として流用した。
+- **Lesson:** timeoutの安全性は一つの共通durationではなく、owner operationごとのfixed／bounded contextで保つ。external operationは5分を維持し、offline buildだけ30分を使い、unbounded contextやtimeout flagへ逃がさない。
+- **Invariant:** `build`だけが`offlineBuildOperationTimeout=30m`を使い、capture／verify／stage／cutover／rollback／quiesceは`externalOperationTimeout=5m`を使う。各operationのcontextはreturn時にcancelし、invalid argumentsはoperationを呼ばずに拒否する。
+- **Enforcement / Tests:** command-local constantsと`context.WithTimeout`で強制し、`TestRunBuildUsesOfflineOperationDeadline`と既存のcapture deadline／cancellation／invalid-argument testsで、deadline、return後cancel、bounded path-free receipt、operation非呼出しを検査する。
+
 ---
 
 ### Step 06: TurnIDとMessageID
