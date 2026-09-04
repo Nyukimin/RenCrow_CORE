@@ -36,13 +36,62 @@ func TestPrepareExplicitRollbackAndRestore(t *testing.T) {
 	}
 }
 
+func TestPrepareExplicitRollbackAcceptsMutableDriftAndPreservesDisplacedActive(t *testing.T) {
+	directory := canonicalThreadConfigTestDir(t)
+	specs := cutoverTestSpecs(t, directory)
+	buildHash := strings.Repeat("e", 64)
+	if err := prepareCutoverSwaps(context.Background(), specs, buildHash); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyCutoverSwaps(specs); err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range specs[:3] {
+		if err := os.WriteFile(spec.target, []byte("drift-"+spec.role), spec.mode.Perm()); err != nil {
+			t.Fatalf("drift %s: %v", spec.role, err)
+		}
+	}
+	preparation, err := prepareExplicitRollbackState(context.Background(), specs, buildHash)
+	if err != nil {
+		t.Fatalf("prepareExplicitRollbackState() error = %v", err)
+	}
+	for _, spec := range specs[:3] {
+		wantHash := cutoverSHA256([]byte("drift-" + spec.role))
+		if preparation.observedMutableTargetHashes[spec.target] != wantHash {
+			t.Fatalf("observed %s hash = %q, want %q", spec.role, preparation.observedMutableTargetHashes[spec.target], wantHash)
+		}
+	}
+	if err := rollbackCutoverSwaps(specs); err != nil {
+		t.Fatal(err)
+	}
+	if err := postcheckExplicitRollback(context.Background(), specs, preparation); err != nil {
+		t.Fatalf("postcheckExplicitRollback() error = %v", err)
+	}
+	for _, spec := range specs {
+		assertCutoverFileContent(t, spec.target, "old-"+spec.role)
+		wantCandidate := "new-" + spec.role
+		if isMutableRollbackRole(spec.role) {
+			wantCandidate = "drift-" + spec.role
+		}
+		assertCutoverFileContent(t, spec.candidate, wantCandidate)
+		if _, err := os.Lstat(spec.rollback); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("rollback artifact %s remains: %v", spec.role, err)
+		}
+	}
+}
+
 func TestPrepareExplicitRollbackRejectsChangedGenerationAndOccupiedCandidate(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(t *testing.T, specs []cutoverSwapSpec)
 	}{
-		{name: "changed target", mutate: func(t *testing.T, specs []cutoverSwapSpec) {
-			if err := os.WriteFile(specs[0].target, []byte("changed"), 0o600); err != nil {
+		{name: "changed config target", mutate: func(t *testing.T, specs []cutoverSwapSpec) {
+			if err := os.WriteFile(specs[3].target, []byte("changed-config"), specs[3].mode.Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "changed runtime target", mutate: func(t *testing.T, specs []cutoverSwapSpec) {
+			if err := os.WriteFile(specs[4].target, []byte("changed-runtime"), specs[4].mode.Perm()); err != nil {
 				t.Fatal(err)
 			}
 		}},

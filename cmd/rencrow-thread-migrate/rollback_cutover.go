@@ -150,7 +150,8 @@ func rollbackCutover(ctx context.Context, options rollbackCutoverOptions) (rollb
 		{role: "config", candidate: filepath.Join(stageRoot, stageExternalConfigFilename), target: options.ConfigTarget, oldHash: cutoverReceipt.ConfigOldSHA256, newHash: cutoverReceipt.ConfigNewSHA256, mode: 0o600},
 		{role: "runtime", candidate: options.RuntimeCandidate, target: options.RuntimeTarget, oldHash: cutoverReceipt.RuntimeOldSHA256, newHash: cutoverReceipt.RuntimeNewSHA256, mode: 0o755, executable: true},
 	}
-	if err := prepareExplicitRollback(ctx, specs, cutoverReceipt.BuildReceiptSHA256); err != nil {
+	preparation, err := prepareExplicitRollbackState(ctx, specs, cutoverReceipt.BuildReceiptSHA256)
+	if err != nil {
 		return sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusBlocked, "artifact_preflight"), cutoverFailure("artifact_preflight")
 	}
 	if _, err := os.Lstat(filepath.Join(stageRoot, rollbackCutoverReceiptFilename)); err == nil || !errors.Is(err, os.ErrNotExist) {
@@ -159,13 +160,8 @@ func rollbackCutover(ctx context.Context, options rollbackCutoverOptions) (rollb
 	if err := rollbackCutoverSwaps(specs); err != nil {
 		return sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusBlocked, "swap_failed"), cutoverFailure("swap_failed")
 	}
-	for _, spec := range specs {
-		if _, _, hash, err := inspectCutoverFile(ctx, spec.target, spec.mode, spec.executable); err != nil || hash != spec.oldHash {
-			return sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusBlocked, "postcheck_failed"), cutoverFailure("postcheck_failed")
-		}
-		if _, _, hash, err := inspectCutoverFile(ctx, spec.candidate, spec.mode, spec.executable); err != nil || hash != spec.newHash {
-			return sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusBlocked, "postcheck_failed"), cutoverFailure("postcheck_failed")
-		}
+	if err := postcheckExplicitRollback(ctx, specs, preparation); err != nil {
+		return sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusBlocked, "postcheck_failed"), cutoverFailure("postcheck_failed")
 	}
 	receipt.OldGenerationRestored = true
 	receipt = sealRollbackCutoverReceipt(receipt, rollbackCutoverStatusApplied, "")
@@ -249,9 +245,19 @@ func inspectRollbackDirectory(raw string) (string, error) {
 	return root, nil
 }
 
+type explicitRollbackPreparation struct {
+	observedMutableTargetHashes map[string]string
+}
+
 func prepareExplicitRollback(ctx context.Context, specs []cutoverSwapSpec, buildHash string) error {
+	_, err := prepareExplicitRollbackState(ctx, specs, buildHash)
+	return err
+}
+
+func prepareExplicitRollbackState(ctx context.Context, specs []cutoverSwapSpec, buildHash string) (explicitRollbackPreparation, error) {
+	preparation := explicitRollbackPreparation{observedMutableTargetHashes: make(map[string]string)}
 	if !validCutoverSHA256(buildHash) || len(specs) != 5 {
-		return errors.New("invalid rollback spec")
+		return preparation, errors.New("invalid rollback spec")
 	}
 	seen := make(map[string]struct{}, len(specs)*3)
 	seenFiles := make([]os.FileInfo, 0, len(specs)*2)
@@ -259,24 +265,30 @@ func prepareExplicitRollback(ctx context.Context, specs []cutoverSwapSpec, build
 		spec := &specs[index]
 		candidate, err := filepath.Abs(spec.candidate)
 		if err != nil {
-			return err
+			return preparation, err
 		}
 		candidate = filepath.Clean(candidate)
 		if _, err := os.Lstat(candidate); err == nil || !errors.Is(err, os.ErrNotExist) {
-			return errors.New("rollback candidate is occupied")
+			return preparation, errors.New("rollback candidate is occupied")
 		}
 		target, targetInfo, targetHash, err := inspectCutoverFile(ctx, spec.target, spec.mode, spec.executable)
-		if err != nil || targetHash != spec.newHash {
-			return errors.New("rollback target is invalid")
+		if err != nil {
+			return preparation, errors.New("rollback target is invalid")
+		}
+		if !isMutableRollbackRole(spec.role) && targetHash != spec.newHash {
+			return preparation, errors.New("rollback target is invalid")
+		}
+		if isMutableRollbackRole(spec.role) {
+			preparation.observedMutableTargetHashes[target] = targetHash
 		}
 		rollbackPath := target + ".pre-threadid-" + buildHash[:12]
 		rollback, rollbackInfo, rollbackHash, err := inspectCutoverFile(ctx, rollbackPath, spec.mode, spec.executable)
 		if err != nil || rollbackHash != spec.oldHash || os.SameFile(targetInfo, rollbackInfo) {
-			return errors.New("rollback artifact is invalid")
+			return preparation, errors.New("rollback artifact is invalid")
 		}
 		for _, info := range seenFiles {
 			if os.SameFile(info, targetInfo) || os.SameFile(info, rollbackInfo) {
-				return errors.New("rollback files overlap")
+				return preparation, errors.New("rollback files overlap")
 			}
 		}
 		seenFiles = append(seenFiles, targetInfo, rollbackInfo)
@@ -288,7 +300,7 @@ func prepareExplicitRollback(ctx context.Context, specs []cutoverSwapSpec, build
 				key = strings.ToLower(key)
 			}
 			if _, exists := seen[key]; exists {
-				return errors.New("rollback paths overlap")
+				return preparation, errors.New("rollback paths overlap")
 			}
 			seen[key] = struct{}{}
 		}
@@ -296,10 +308,35 @@ func prepareExplicitRollback(ctx context.Context, specs []cutoverSwapSpec, build
 			for _, base := range []string{target, rollback} {
 				for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 					if _, err := os.Lstat(base + suffix); err == nil || !errors.Is(err, os.ErrNotExist) {
-						return errors.New("SQLite sidecar is present")
+						return preparation, errors.New("SQLite sidecar is present")
 					}
 				}
 			}
+		}
+	}
+	return preparation, nil
+}
+
+func isMutableRollbackRole(role string) bool {
+	switch role {
+	case "l1", "archive", "topic":
+		return true
+	default:
+		return false
+	}
+}
+
+func postcheckExplicitRollback(ctx context.Context, specs []cutoverSwapSpec, preparation explicitRollbackPreparation) error {
+	for _, spec := range specs {
+		if _, _, hash, err := inspectCutoverFile(ctx, spec.target, spec.mode, spec.executable); err != nil || hash != spec.oldHash {
+			return errors.New("rollback target postcheck failed")
+		}
+		expectedCandidateHash := spec.newHash
+		if observedHash, ok := preparation.observedMutableTargetHashes[spec.target]; ok {
+			expectedCandidateHash = observedHash
+		}
+		if _, _, hash, err := inspectCutoverFile(ctx, spec.candidate, spec.mode, spec.executable); err != nil || hash != expectedCandidateHash {
+			return errors.New("rollback candidate postcheck failed")
 		}
 	}
 	return nil

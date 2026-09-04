@@ -1662,6 +1662,14 @@ Test:
 - **Invariant:** sourceは変更せず、destinationの六表swapと依存trigger退避／再作成は同一transactionでatomicに扱う。snapshot／drop／recreateの失敗はbounded typed errorでrollbackし、commit後にcanonical nameの参照gapを残さない。receiptは従来どおり`materialized_l1_not_runtime_ready`かつowner schema reconciliation requiredのままとする。
 - **Enforcement / Tests:** `snapshotDependentL1Triggers`の決定的なname順列挙、外部triggerだけのquoted drop、exact SQL再作成、および`TestMaterializeL1SQLitePreservesExternalDependentTrigger`でtriggerのname／table／SQL保持とcanonical swapped tableを読む発火結果を検査する。後続のowner open／reconciliationは従来どおりowner moduleが行う。
 
+#### Step 05 Failure Knowledge: runtime write後のmutable rollback hash拒否
+
+- **Failure:** cutover後の正規runtimeがL1／Archive／Topicへ正当なwriteを行った後、rollback-cutoverがactive artifactのhashをcutover receiptのnew hashと比較して拒否した。
+- **Problem:** post-cutover runtime failureでold generationへ戻す際、mutable active artifactを安全に退避できず、rollbackの終端へ到達できなかった。
+- **Cause:** runtime／configと、稼働中に変化し得るL1／Archive／Topicを同じimmutable new-hash前提で扱い、displaced active bytesを検証する観測hashを保持していなかった。
+- **Lesson / Invariant:** rollback preflightはL1／Archive／Topicだけ既存のregular-file／mode／SQLite sidecar／path／overlap検査後の観測hashを内部保持し、そのactive bytesを既存candidate pathへ退避する。config／runtimeは引き続きcutover receiptのnew hashへ完全一致し、old rollback artifactはold hashへ完全一致する。postcheckはmutable candidateを観測hash、immutable candidateをnew hash、全targetをold hashで検査する。
+- **Enforcement / Tests:** `isMutableRollbackRole`、`prepareExplicitRollbackState`、`postcheckExplicitRollback`と`TestPrepareExplicitRollbackAcceptsMutableDriftAndPreservesDisplacedActive`、config／runtime drift rejection testsで強制する。swapは既存`rollbackCutoverSwaps`だけを使い、receipt schema、route、manual file moveを変更しない。
+
 ---
 
 ### Step 06: TurnIDとMessageID
