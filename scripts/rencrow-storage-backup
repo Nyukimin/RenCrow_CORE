@@ -674,6 +674,7 @@ tar \
   --exclude="${core_name}/bin" \
   --exclude="${core_name}/logs" \
   --exclude="${core_name}/locks" \
+  --exclude="${core_name}/staging" \
   --exclude="${core_name}/tmp" \
   -C "${core_parent}" \
   -czf "${archive}" \

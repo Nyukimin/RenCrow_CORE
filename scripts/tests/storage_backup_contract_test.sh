@@ -95,6 +95,9 @@ assert_contains "${backup_runner}" \
   'thread_identity_quiesce_receipt=external-memory/thread-identity/sqlite-quiesce.json' \
   "CORE migration export manifest must bind the SQLite quiesce receipt"
 assert_contains "${backup_runner}" \
+  '--exclude="${core_name}/staging"' \
+  "CORE snapshot must exclude externally written, re-fetchable staging artifacts"
+assert_contains "${backup_runner}" \
   'mount "${backup_mount}"' \
   "the backup runner must mount the dedicated backup medium for its window"
 assert_contains "${backup_runner}" \
