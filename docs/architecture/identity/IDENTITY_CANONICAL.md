@@ -19,6 +19,7 @@
 **Step 00 evidence:** [`docs/調査/20260829_221132_ID統一Step00_baseline.md`](../../調査/20260829_221132_ID統一Step00_baseline.md)
 
 **Step 04 evidence:** [`docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md`](../../調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md)
+**Step 05 evidence:** [`docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md`](../../調査/20260904_ID統一Step05_ThreadID_production_cutover.md)
 
 ---
 
@@ -1689,6 +1690,14 @@ Test:
 - **Invariant:** apply開始前に全5 pairが再検証され、stat／handle／type不一致または異なるfilesystemが一つでもあれば`artifact_preflight`で拒否し、renameを呼ばない。
 - **Enforcement:** Unixは`syscall.Stat_t.Dev`、WindowsはFILE_READ_ATTRIBUTES handlesの`ByHandleFileInformation.VolumeSerialNumber`とexact identity比較を使う。package-local seamはproduction verifierで初期化し、各pairをprepareで検査する。
 - **Tests:** 後段pairのverifier false injectionがprepareを拒否し、rename非呼出しと全artifact byte保持を検査する。
+
+#### Step 05 Failure Knowledge: one-shot migration sourceとformat-5 restore consumerのowner衝突
+
+- **Failure:** `rencrow-thread-migrate` command/packageが、legacy ThreadIDのbuild／stage／cutover／rollbackと、backup／restoreが使うformat-5の`capture-external`／`verify-external`／`quiesce-sqlite`を共有していた。
+- **Problem:** canonical cutover後のcapture path自体はlegacy-onlyで、将来のcanonical snapshot pathとして無効である。一方、sourceを今すぐ全削除すると、明示的にdeferされたformat-5 restore consumerを破壊する。
+- **Cause:** one-shot migration sourceと継続的backup／restore contractのowner境界を、同一command/packageへ束ねていた。
+- **Lesson / Invariant:** future one-shot migration sourceはongoing backup／restore contractを所有しない。Gate 7で削除する前に、frozen migration recovery consumerをcompleted／packagedするか、実際に継続利用するcanonical snapshot contractを既存storage ownerへ移して独立検証する。legacy readerを恒久compatibility layerとして残さない。
+- **Enforcement / Tests:** architecture guardはthreadmigration dependencyの除去後にだけskipを解除し、storage contractは`rencrow-thread-migrate` dependency zeroを証明して後続設計でobsoleteと確定したformat-5 creationを拒否する。exact resolutionはpendingであり、このdocumentation-only editはcode behaviorを変更しない。
 
 ### Step 06: TurnIDとMessageID
 
