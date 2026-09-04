@@ -403,6 +403,15 @@ func MaterializeL1SQLite(ctx context.Context, input L1SQLiteMaterializationInput
 	if err := ctx.Err(); err != nil {
 		return rollback("canceled", "copy", err)
 	}
+	dependentTriggers, err := snapshotDependentL1Triggers(ctx, tx)
+	if err != nil {
+		return rollback("snapshot_dependent_triggers", "swap", err)
+	}
+	for _, trigger := range dependentTriggers {
+		if _, err := tx.ExecContext(ctx, `DROP TRIGGER `+quoteSQLiteIdentifier(trigger.Name)); err != nil {
+			return rollback("drop_dependent_trigger", "swap", err)
+		}
+	}
 	for _, surface := range l1MaterializationDropOrder {
 		if _, err := tx.ExecContext(ctx, `DROP TABLE `+quoteSQLiteIdentifier(surface)); err != nil {
 			return rollback("drop_legacy", "swap", err)
@@ -411,6 +420,11 @@ func MaterializeL1SQLite(ctx context.Context, input L1SQLiteMaterializationInput
 	for _, surface := range l1MaterializationCopyOrder {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+quoteSQLiteIdentifier(stageTableName(surface))+` RENAME TO `+quoteSQLiteIdentifier(surface)); err != nil {
 			return rollback("rename_stage", "swap", err)
+		}
+	}
+	for _, trigger := range dependentTriggers {
+		if _, err := tx.ExecContext(ctx, trigger.SQL); err != nil {
+			return rollback("recreate_dependent_trigger", "swap", err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -509,6 +523,58 @@ func countSQLiteTable(ctx context.Context, db *sql.DB, table string) (int64, err
 }
 
 func stageTableName(surface string) string { return surface + "_s5_new" }
+
+type l1DependentTrigger struct {
+	Name  string
+	Table string
+	SQL   string
+}
+
+func snapshotDependentL1Triggers(ctx context.Context, tx *sql.Tx) ([]l1DependentTrigger, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND sql IS NOT NULL ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	triggers := make([]l1DependentTrigger, 0)
+	for rows.Next() {
+		var trigger l1DependentTrigger
+		if err := rows.Scan(&trigger.Name, &trigger.Table, &trigger.SQL); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if isCanonicalL1MaterializationTable(trigger.Table) || !triggerReferencesCanonicalL1Table(trigger.SQL) {
+			continue
+		}
+		triggers = append(triggers, trigger)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	return triggers, nil
+}
+
+func isCanonicalL1MaterializationTable(table string) bool {
+	for _, surface := range canonicalL1MaterializationTables {
+		if strings.EqualFold(table, surface) {
+			return true
+		}
+	}
+	return false
+}
+
+func triggerReferencesCanonicalL1Table(triggerSQL string) bool {
+	lowerSQL := strings.ToLower(triggerSQL)
+	for _, surface := range canonicalL1MaterializationTables {
+		if strings.Contains(lowerSQL, strings.ToLower(surface)) {
+			return true
+		}
+	}
+	return false
+}
 
 func rejectStageCollisions(ctx context.Context, queryer interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row

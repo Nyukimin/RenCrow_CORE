@@ -96,6 +96,57 @@ func TestMaterializeL1SQLiteRebuildsCanonicalIdentityOnDisposableClone(t *testin
 	}
 }
 
+func TestMaterializeL1SQLitePreservesExternalDependentTrigger(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	destination := openInventoryTestDB(t, "file:threadmigration_materialize_external_trigger_destination?mode=memory&cache=shared")
+	createLegacyL1Schema(t, destination)
+	cloneLegacyL1Rows(t, fixture.l1, destination)
+	const triggerSQL = `CREATE TRIGGER trg_external_profile_binding_insert
+AFTER INSERT ON external_profile_binding
+BEGIN
+	INSERT INTO external_profile_binding_audit(binding_id, profile_rows)
+	VALUES (NEW.binding_id, (SELECT COUNT(*) FROM l1_profile_promotion_job));
+END`
+	if _, err := destination.Exec(`CREATE TABLE external_profile_binding (binding_id TEXT PRIMARY KEY);
+CREATE TABLE external_profile_binding_audit (binding_id TEXT PRIMARY KEY, profile_rows INTEGER NOT NULL);`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.Exec(triggerSQL); err != nil {
+		t.Fatalf("create external trigger: %v", err)
+	}
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() error = %v", err)
+	}
+	if _, err := MaterializeL1SQLite(context.Background(), L1SQLiteMaterializationInput{Source: fixture.l1, Destination: destination, Inventory: result}); err != nil {
+		t.Fatalf("MaterializeL1SQLite() error = %v (cause=%v)", err, errors.Unwrap(err))
+	}
+
+	var triggerName, triggerTable, actualTriggerSQL string
+	if err := destination.QueryRow(`SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_external_profile_binding_insert'`).Scan(&triggerName, &triggerTable, &actualTriggerSQL); err != nil {
+		t.Fatalf("read external trigger: %v", err)
+	}
+	if triggerName != "trg_external_profile_binding_insert" || triggerTable != "external_profile_binding" || actualTriggerSQL != triggerSQL {
+		t.Fatalf("external trigger = name=%q table=%q sql=%q; want name=%q table=%q sql=%q", triggerName, triggerTable, actualTriggerSQL, "trg_external_profile_binding_insert", "external_profile_binding", triggerSQL)
+	}
+
+	var wantProfileRows int64
+	if err := destination.QueryRow(`SELECT COUNT(*) FROM l1_profile_promotion_job`).Scan(&wantProfileRows); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.Exec(`INSERT INTO external_profile_binding(binding_id) VALUES ('binding-1')`); err != nil {
+		t.Fatalf("fire external trigger: %v", err)
+	}
+	var profileRows int64
+	if err := destination.QueryRow(`SELECT profile_rows FROM external_profile_binding_audit WHERE binding_id = 'binding-1'`).Scan(&profileRows); err != nil {
+		t.Fatalf("read external trigger audit: %v", err)
+	}
+	if profileRows != wantProfileRows {
+		t.Fatalf("external trigger read %d profile rows, want %d", profileRows, wantProfileRows)
+	}
+}
+
 func TestMaterializeL1SQLiteCanonicalizesLegacyTurnSessionInSQLAndJSON(t *testing.T) {
 	fixture := newSQLiteInventoryFixture(t)
 	const legacySession = "viewer-user"

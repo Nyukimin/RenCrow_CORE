@@ -1653,6 +1653,15 @@ Test:
 - **Invariant:** `build`だけが`offlineBuildOperationTimeout=30m`を使い、capture／verify／stage／cutover／rollback／quiesceは`externalOperationTimeout=5m`を使う。各operationのcontextはreturn時にcancelし、invalid argumentsはoperationを呼ばずに拒否する。
 - **Enforcement / Tests:** command-local constantsと`context.WithTimeout`で強制し、`TestRunBuildUsesOfflineOperationDeadline`と既存のcapture deadline／cancellation／invalid-argument testsで、deadline、return後cancel、bounded path-free receipt、operation非呼出しを検査する。
 
+#### Step 05 Failure Knowledge: owner外triggerのL1 swap参照切断
+
+- **Failure:** disposable cloneでcanonical六表をdropしてstage tableをrenameする間、非対象tableに付いたowner triggerが`l1_profile_promotion_job`を参照し、`rename_stage`で`no such table`になった。
+- **Problem:** triggerが付いた非対象tableは六表のdropで自動削除されず、canonical nameが一時的に存在しないswap windowをSQLiteのschema再検証が観測したため、L1 materializationはatomic commitへ到達できなかった。
+- **Cause:** generic Step05 materializerがowner triggerの名前やSQLを所有せず、依存triggerを一時退避する境界も持たないまま、target tableだけをdrop／renameしていた。
+- **Lesson:** swap transaction内で`sqlite_master`から、canonical六表以外に付いたtriggerのうちSQLがcanonical table nameを参照するものをnameとexact SQLで決定的にsnapshotし、target drop前にそのtriggerだけをdropし、六表のrename後にexact SQLで再作成する。owner schemaの定義やtrigger名をthreadmigrationへ複製しない。
+- **Invariant:** sourceは変更せず、destinationの六表swapと依存trigger退避／再作成は同一transactionでatomicに扱う。snapshot／drop／recreateの失敗はbounded typed errorでrollbackし、commit後にcanonical nameの参照gapを残さない。receiptは従来どおり`materialized_l1_not_runtime_ready`かつowner schema reconciliation requiredのままとする。
+- **Enforcement / Tests:** `snapshotDependentL1Triggers`の決定的なname順列挙、外部triggerだけのquoted drop、exact SQL再作成、および`TestMaterializeL1SQLitePreservesExternalDependentTrigger`でtriggerのname／table／SQL保持とcanonical swapped tableを読む発火結果を検査する。後続のowner open／reconciliationは従来どおりowner moduleが行う。
+
 ---
 
 ### Step 06: TurnIDとMessageID
