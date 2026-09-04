@@ -86,6 +86,35 @@ func TestMaterializeArchiveSQLiteRebuildsCanonicalIdentityOnDisposableClone(t *t
 	}
 }
 
+func TestMaterializeArchiveSQLitePreservesEmptySessionOptionalZeroTuple(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.archive, `UPDATE l1_memory_event_archive SET session_id = '' WHERE id = 'archive-unbound'`)
+	destination := openInventoryTestDB(t, "file:threadmigration_archive_empty_optional_zero_destination?mode=memory&cache=shared")
+	createLegacyArchiveSchema(t, destination)
+	cloneLegacyArchiveRows(t, fixture.archive, destination)
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() archive empty-session optional zero error = %v", err)
+	}
+	receipt, err := MaterializeArchiveSQLite(context.Background(), ArchiveSQLiteMaterializationInput{Source: fixture.archive, Destination: destination, Inventory: result})
+	if err != nil {
+		t.Fatalf("MaterializeArchiveSQLite() archive empty-session optional zero error = %v", err)
+	}
+	if receipt.IdentityAudit.OptionalZeroRows != 1 || receipt.IdentityAudit.CanonicalThreadRows != 4 {
+		t.Fatalf("archive identity audit = %+v; want canonical=4 optional-zero=1", receipt.IdentityAudit)
+	}
+
+	var sessionID, threadID, threadKind string
+	var threadSeq int64
+	if err := destination.QueryRow(`SELECT session_id, thread_id, thread_seq, thread_kind FROM l1_memory_event_archive WHERE id = 'archive-unbound'`).Scan(&sessionID, &threadID, &threadSeq, &threadKind); err != nil {
+		t.Fatal(err)
+	}
+	if sessionID != "" || threadID != "" || threadSeq != 0 || threadKind != "" {
+		t.Fatalf("empty-session optional-zero archive tuple = session=%q thread=%q seq=%d kind=%q", sessionID, threadID, threadSeq, threadKind)
+	}
+}
+
 func TestMaterializeArchiveSQLiteRewritesExactNamespacesAndPreservesCustomNamespaces(t *testing.T) {
 	fixture := newSQLiteInventoryFixture(t)
 	for _, update := range []struct {

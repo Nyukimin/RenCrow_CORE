@@ -1307,7 +1307,7 @@ func (builder *sqliteInventoryBuilder) contextAndIdentity(surface, recordKey, se
 	if err := contextError(builder.ctx); err != nil {
 		return err
 	}
-	allowEmptySession := allowZero && threadID == 0 && (surface == l1MemoryEventSurface || surface == l1EventLogSurface)
+	allowEmptySession := allowZero && threadID == 0 && (surface == l1MemoryEventSurface || surface == l1EventLogSurface || surface == l1MemoryEventArchiveSurface)
 	if strings.TrimSpace(recordKey) == "" || (strings.TrimSpace(sessionID) == "" && !allowEmptySession) {
 		return fmt.Errorf("legacy %s row has an incomplete identity tuple", surface)
 	}

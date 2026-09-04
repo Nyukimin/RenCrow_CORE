@@ -384,6 +384,30 @@ func TestInventorySQLiteConvergesGenericAndChatGPTAcrossEveryLegacySurface(t *te
 	}
 }
 
+func TestInventorySQLiteAcceptsArchiveEmptySessionOptionalZero(t *testing.T) {
+	fixture := newSQLiteInventoryFixture(t)
+	execInventory(t, fixture.archive, `UPDATE l1_memory_event_archive SET session_id = '' WHERE id = 'archive-unbound'`)
+
+	result, err := InventorySQLite(context.Background(), SQLiteInventoryInput{L1DB: fixture.l1, ArchiveDB: fixture.archive})
+	if err != nil {
+		t.Fatalf("InventorySQLite() archive empty-session optional zero error = %v", err)
+	}
+	if err := result.Validate(); err != nil {
+		t.Fatalf("archive empty-session optional zero result Validate() error = %v", err)
+	}
+	if _, found := result.Plan.LookupBySource(l1MemoryEventArchiveSurface, "archive-unbound"); found {
+		t.Fatal("archive empty-session optional zero unexpectedly received a Thread mapping")
+	}
+	zero, found := result.Receipt.OptionalZeroCount(l1MemoryEventArchiveSurface)
+	if !found || zero.Count != 1 {
+		t.Fatalf("archive optional-zero receipt = %+v, found=%v; want count=1", zero, found)
+	}
+	count, found := result.Receipt.SurfaceCount(l1MemoryEventArchiveSurface)
+	if !found || count.Rows != 3 || count.References != 2 {
+		t.Fatalf("archive event receipt count = %+v, found=%v; want rows=3 references=2", count, found)
+	}
+}
+
 func TestInventorySQLiteAcceptsLegacyTurnSessionsAndCanonicalizesPlan(t *testing.T) {
 	fixture := newSQLiteInventoryFixture(t)
 	const legacySession = "viewer-user"
@@ -664,8 +688,14 @@ func TestInventorySQLiteRejectsLegacyRowContractViolations(t *testing.T) {
 		{name: "positive legacy thread with empty session", mutate: func(f sqliteInventoryFixture) {
 			execInventory(t, f.l1, `UPDATE l1_memory_event SET session_id = '' WHERE id = 'event-generic'`)
 		}},
+		{name: "archive positive legacy thread with empty session", mutate: func(f sqliteInventoryFixture) {
+			execInventory(t, f.archive, `UPDATE l1_memory_event_archive SET session_id = '' WHERE id = 'archive-generic'`)
+		}},
 		{name: "ChatGPT source with zero thread", mutate: func(f sqliteInventoryFixture) {
 			execInventory(t, f.l1, `UPDATE l1_memory_event SET thread_id = 0 WHERE id = 'event-chatgpt'`)
+		}},
+		{name: "archive ChatGPT source with zero thread", mutate: func(f sqliteInventoryFixture) {
+			execInventory(t, f.archive, `UPDATE l1_memory_event_archive SET thread_id = 0 WHERE id = 'archive-chatgpt'`)
 		}},
 		{name: "ChatGPT event log tuple is unregistered", mutate: func(f sqliteInventoryFixture) {
 			execInventory(t, f.l1, `INSERT INTO l1_event_log (id, event_type, namespace, session_id, thread_id, payload_json, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

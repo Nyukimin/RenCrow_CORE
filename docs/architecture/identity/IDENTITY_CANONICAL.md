@@ -1628,6 +1628,14 @@ Test:
 - **Tests:** `viewer-user`等のlegacy receipt／outbox受理、planのcanonical mapping、materialized SQL／embedded JSONの
   exact SessionID、empty／mismatch／numeric／JSON violationの拒否を検査する。
 
+#### Step 05 Failure Knowledge: Archiveのoptional-zero空Sessionを不完全tupleと誤認した
+
+- **Failure:** `l1_memory_event_archive` の正当な `(session_id='', thread_id=0)` を inventory が拒否した。
+- **Problem:** `legacyOptionalZeroSurfaces` が許可する unthreaded archive row が cohort prepare で停止し、mapping／receipt／materialization へ到達できなかった。
+- **Cause:** `contextAndIdentity` の空Session許可面に Archive が含まれていなかった。
+- **Lesson / Invariant:** `allowZero` が選択され `thread_id==0` の L1 event／event log／archive だけは空Sessionを許可し、mappingを出さず optional-zero receiptへ数える。Archive materialization は空Session＋0を `(session_id='', thread_id='', thread_seq=0, thread_kind='')` として保持する。positive thread＋空Sessionと ChatGPT source＋0 は引き続き fail closed とする。
+- **Enforcement / Tests:** `legacyOptionalZeroSurfaces`、`contextAndIdentity`、receipt count relationship、`resolveSQLiteOptionalThreadTuple`、canonical archive tuple CHECK、および空／非空 optional-zero・positive／ChatGPT rejection testsで強制する。
+
 ---
 
 ### Step 06: TurnIDとMessageID
