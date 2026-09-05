@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestNewCoderAgent(t *testing.T) {
@@ -75,7 +74,7 @@ func TestCoderAgentStableRuntimeContextIsAddedWithoutChangingSystemPrompt(t *tes
 	}
 	stable := "## Runtime Capability Snapshot\n- 利用可能: shell"
 	coder := NewCoderAgent(llmProvider, nil, nil, "base prompt").WithStableRuntimeContext(stable)
-	testTask := task.NewTask(task.NewJobID(), "main.goを作成して", "line", "U123")
+	testTask := newAgentTurnInput(t, "main.goを作成して", "line", "U123")
 
 	if _, err := coder.GenerateWithPrompt(context.Background(), testTask, "coder system"); err != nil {
 		t.Fatalf("GenerateWithPrompt failed: %v", err)
@@ -142,8 +141,7 @@ Low risk - simple implementation
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt").
 		WithStableRuntimeContext("## Runtime Capability Snapshot\n- 利用可能: shell")
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "main.goファイルを作成して", "line", "U123")
+	testTask := newAgentTurnInput(t, "main.goファイルを作成して", "line", "U123")
 
 	proposal, err := coder.GenerateProposal(context.Background(), testTask)
 	if err != nil {
@@ -183,8 +181,7 @@ func TestCoderAgentGenerateProposal_LLMError(t *testing.T) {
 
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テスト", "line", "U123")
+	testTask := newAgentTurnInput(t, "テスト", "line", "U123")
 
 	_, err := coder.GenerateProposal(context.Background(), testTask)
 	if err == nil {
@@ -210,8 +207,7 @@ func TestCoderAgentGenerateProposal_InvalidFormat(t *testing.T) {
 
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テスト", "line", "U123")
+	testTask := newAgentTurnInput(t, "テスト", "line", "U123")
 
 	proposal, err := coder.GenerateProposal(context.Background(), testTask)
 	if err == nil {
@@ -260,8 +256,7 @@ Low`,
 	}
 
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テスト", "line", "U123")
+	testTask := newAgentTurnInput(t, "テスト", "line", "U123")
 
 	_, err := coder.GenerateProposal(context.Background(), testTask)
 	if err == nil {
@@ -490,8 +485,7 @@ func TestCoderAgentGenerateWithPrompt(t *testing.T) {
 
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "main.goを作成して", "line", "U123")
+	testTask := newAgentTurnInput(t, "main.goを作成して", "line", "U123")
 
 	result, err := coder.GenerateWithPrompt(context.Background(), testTask, "You are a specification design assistant.")
 	if err != nil {
@@ -519,7 +513,7 @@ func TestCoderAgentGenerateWithPromptUsesLightMemory(t *testing.T) {
 	memory.Record("U123", "first user", "first assistant")
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt").WithLightMemory(memory)
 
-	_, err := coder.GenerateWithPrompt(context.Background(), task.NewTask(task.NewJobID(), "second user", "line", "U123"), "coder prompt")
+	_, err := coder.GenerateWithPrompt(context.Background(), newAgentTurnInput(t, "second user", "line", "U123"), "coder prompt")
 	if err != nil {
 		t.Fatalf("GenerateWithPrompt failed: %v", err)
 	}
@@ -547,8 +541,7 @@ func TestCoderAgentGenerateWithPrompt_Error(t *testing.T) {
 
 	coder := NewCoderAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt")
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テスト", "line", "U123")
+	testTask := newAgentTurnInput(t, "テスト", "line", "U123")
 
 	_, err := coder.GenerateWithPrompt(context.Background(), testTask, "test prompt")
 	if err == nil {

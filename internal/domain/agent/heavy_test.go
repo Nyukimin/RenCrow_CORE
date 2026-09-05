@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestHeavyAgentGenerateUsesHeavyPromptAndStripsCommand(t *testing.T) {
@@ -20,7 +19,7 @@ func TestHeavyAgentGenerateUsesHeavyPromptAndStripsCommand(t *testing.T) {
 	}
 
 	heavy := NewHeavyAgent(provider, "kuro system")
-	resp, err := heavy.Generate(context.Background(), task.NewTask(task.NewJobID(), "/analyze 原因を調べて", "line", "U123"))
+	resp, err := heavy.Generate(context.Background(), newAgentTurnInput(t, "/analyze 原因を調べて", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -45,7 +44,7 @@ func TestHeavyAgentDefaultPrompt(t *testing.T) {
 	}
 
 	heavy := NewHeavyAgent(provider, "")
-	_, err := heavy.Generate(context.Background(), task.NewTask(task.NewJobID(), "診断して", "line", "U123"))
+	_, err := heavy.Generate(context.Background(), newAgentTurnInput(t, "診断して", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -88,7 +87,7 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 	}
 
 	heavy := NewHeavyAgent(provider, "heavy system").WithConversationEngine(engine)
-	resp, err := heavy.Generate(context.Background(), task.NewTask(task.NewJobID(), "/heavy 調べて", "viewer", "chat-1"))
+	resp, err := heavy.Generate(context.Background(), newAgentTurnInput(t, "/heavy 調べて", "viewer", "chat-1"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

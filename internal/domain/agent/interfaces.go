@@ -5,19 +5,19 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
 // Classifier はタスク分類器のインターフェース
 type Classifier interface {
-	Classify(ctx context.Context, t task.Task) (routing.Decision, error)
+	Classify(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
 }
 
 // RuleDictionary はルール辞書のインターフェース
 type RuleDictionary interface {
-	Match(t task.Task) (routing.Route, float64, bool) // ルート, 確信度, マッチしたか
+	Match(t conversation.TurnInput) (routing.Route, float64, bool) // ルート, 確信度, マッチしたか
 }
 
 // ToolRunner はツール実行のインターフェース

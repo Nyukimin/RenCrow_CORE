@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
@@ -65,7 +64,7 @@ func TestMioMovieCatalogLookupInjectsResultAndSuppressesWebSearch(t *testing.T) 
 		return llm.GenerateResponse{Content: "役所広司が出演してるよ。"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "映画「PERFECT DAYS」の出演者を検索して", "viewer", "user"))
+	_, err := mio.Chat(context.Background(), newAgentTurnInput(t, "映画「PERFECT DAYS」の出演者を検索して", "viewer", "user"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +104,7 @@ func TestMioMovieCatalogUnavailableSuppressesWebFallback(t *testing.T) {
 		return llm.GenerateResponse{Content: "今は照会できないよ。"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司の出演映画を検索して", "viewer", "user"))
+	_, err := mio.Chat(context.Background(), newAgentTurnInput(t, "役所広司の出演映画を検索して", "viewer", "user"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +153,7 @@ func TestMioMovieCatalogAllSemanticIntentsUseCatalogWithoutWeb(t *testing.T) {
 				},
 			}
 			mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), request, "viewer", "user")); err != nil {
+			if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, request, "viewer", "user")); err != nil {
 				t.Fatal(err)
 			}
 			if catalogCalls != 1 || webCalls != 0 {

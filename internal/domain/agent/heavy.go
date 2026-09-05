@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const defaultHeavySystemPrompt = `You are Heavy, a deep analysis LLM for RenCrow.
@@ -39,8 +38,8 @@ func (h *HeavyAgent) WithStableRuntimeContext(content string) *HeavyAgent {
 	return h
 }
 
-func (h *HeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) {
-	userMessage := stripHeavyCommand(t.UserMessage())
+func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
+	userMessage := stripHeavyCommand(t.MessageText())
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
 	if h.conversationEngine != nil {

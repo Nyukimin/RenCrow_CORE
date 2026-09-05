@@ -13,7 +13,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -36,10 +35,10 @@ func (m *mockLLMProvider) Name() string {
 
 // Mock Classifier
 type mockClassifier struct {
-	classifyFunc func(ctx context.Context, t task.Task) (routing.Decision, error)
+	classifyFunc func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
 }
 
-func (m *mockClassifier) Classify(ctx context.Context, t task.Task) (routing.Decision, error) {
+func (m *mockClassifier) Classify(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 	if m.classifyFunc != nil {
 		return m.classifyFunc(ctx, t)
 	}
@@ -48,10 +47,10 @@ func (m *mockClassifier) Classify(ctx context.Context, t task.Task) (routing.Dec
 
 // Mock RuleDictionary
 type mockRuleDictionary struct {
-	matchFunc func(t task.Task) (routing.Route, float64, bool)
+	matchFunc func(t conversation.TurnInput) (routing.Route, float64, bool)
 }
 
-func (m *mockRuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
+func (m *mockRuleDictionary) Match(t conversation.TurnInput) (routing.Route, float64, bool) {
 	if m.matchFunc != nil {
 		return m.matchFunc(t)
 	}
@@ -89,8 +88,7 @@ func TestMioAgentDecideAction_ExplicitCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.message, func(t *testing.T) {
-			jobID := task.NewJobID()
-			testTask := task.NewTask(jobID, tt.message, "line", "U123")
+			testTask := newAgentTurnInput(t, tt.message, "line", "U123")
 
 			decision, err := mio.DecideAction(context.Background(), testTask)
 			if err != nil {
@@ -116,8 +114,8 @@ func TestMioAgentDecideAction_ExplicitCommand(t *testing.T) {
 
 func TestMioAgentDecideAction_RuleDictionary(t *testing.T) {
 	ruleDictionary := &mockRuleDictionary{
-		matchFunc: func(t task.Task) (routing.Route, float64, bool) {
-			if t.UserMessage() == "ファイルを作成" {
+		matchFunc: func(t conversation.TurnInput) (routing.Route, float64, bool) {
+			if t.MessageText() == "ファイルを作成" {
 				return routing.RouteCODE, 0.95, true
 			}
 			return "", 0.0, false
@@ -133,8 +131,7 @@ func TestMioAgentDecideAction_RuleDictionary(t *testing.T) {
 		nil, // conversationEngine=nil（テスト環境）
 	)
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "ファイルを作成", "line", "U123")
+	testTask := newAgentTurnInput(t, "ファイルを作成", "line", "U123")
 
 	decision, err := mio.DecideAction(context.Background(), testTask)
 	if err != nil {
@@ -163,7 +160,7 @@ func TestMioAgentDecideAction_ClassifierWhenNoRuleMatch(t *testing.T) {
 	// ルール辞書にマッチしない場合、LLM分類器で次の経路を判定する。
 	classifierCalled := false
 	classifier := &mockClassifier{
-		classifyFunc: func(ctx context.Context, tk task.Task) (routing.Decision, error) {
+		classifyFunc: func(ctx context.Context, tk conversation.TurnInput) (routing.Decision, error) {
 			classifierCalled = true
 			return routing.NewDecisionWithEvidence(routing.RouteCODE2, 0.8, "classifier selected code",
 				routing.DecisionEvidence{
@@ -186,8 +183,7 @@ func TestMioAgentDecideAction_ClassifierWhenNoRuleMatch(t *testing.T) {
 		nil, // conversationEngine=nil（テスト環境）
 	)
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "Worker/Coder経路に届くか確認してください", "line", "U123")
+	testTask := newAgentTurnInput(t, "Worker/Coder経路に届くか確認してください", "line", "U123")
 
 	decision, err := mio.DecideAction(context.Background(), testTask)
 	if err != nil {
@@ -225,7 +221,7 @@ func TestMioAgentDecideAction_ClassifierWhenNoRuleMatch(t *testing.T) {
 
 func TestMioAgentDecideAction_DefaultChatWhenClassifierFails(t *testing.T) {
 	classifier := &mockClassifier{
-		classifyFunc: func(ctx context.Context, tk task.Task) (routing.Decision, error) {
+		classifyFunc: func(ctx context.Context, tk conversation.TurnInput) (routing.Decision, error) {
 			return routing.Decision{}, fmt.Errorf("classifier unavailable")
 		},
 	}
@@ -239,8 +235,7 @@ func TestMioAgentDecideAction_DefaultChatWhenClassifierFails(t *testing.T) {
 		nil,
 	)
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "こんにちは", "line", "U123")
+	testTask := newAgentTurnInput(t, "こんにちは", "line", "U123")
 
 	decision, err := mio.DecideAction(context.Background(), testTask)
 	if err != nil {
@@ -289,8 +284,7 @@ func TestMioAgentChat(t *testing.T) {
 		nil, // conversationEngine=nil（テスト環境）
 	)
 
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "こんにちは", "line", "U123")
+	testTask := newAgentTurnInput(t, "こんにちは", "line", "U123")
 
 	response, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -320,7 +314,7 @@ func TestMioAgentChat_UsesSystemPrompt(t *testing.T) {
 		nil,
 	).WithSystemPrompt("Mio system prompt")
 
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "こんにちは", "line", "U123"))
+	_, err := mio.Chat(context.Background(), newAgentTurnInput(t, "こんにちは", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
@@ -350,8 +344,8 @@ func TestMioAgentChat_UsesViewerRecipientSystemPromptWithoutChangingUserMessage(
 		nil,
 	)
 
-	task := task.NewTask(task.NewJobID(), "合言葉 RC_kuro_current で返答して", "viewer", "viewer-user").WithViewerRecipient("kuro")
-	if _, err := mio.Chat(context.Background(), task); err != nil {
+	input := newAgentTurnInput(t, "合言葉 RC_kuro_current で返答して", "viewer", "viewer-user").WithViewerRecipient("kuro")
+	if _, err := mio.Chat(context.Background(), input); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 
@@ -406,8 +400,8 @@ func TestMioAgentChat_UsesFullShiroPromptForShiroChat(t *testing.T) {
 		"shiro": "Shiro full prompt",
 	})
 
-	task := task.NewTask(task.NewJobID(), "名前を答えて", "viewer", "viewer-user").WithViewerRecipient("shiro")
-	if _, err := mio.Chat(context.Background(), task); err != nil {
+	input := newAgentTurnInput(t, "名前を答えて", "viewer", "viewer-user").WithViewerRecipient("shiro")
+	if _, err := mio.Chat(context.Background(), input); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 	if len(gotReq.Messages) == 0 ||
@@ -590,7 +584,7 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	testTask := newAgentTurnInput(t, "hello", "line", "U123")
 
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -635,7 +629,7 @@ func TestMioAgentChatDoesNotReinjectDegenerateAgentHistory(t *testing.T) {
 		return llm.GenerateResponse{Content: "正常な返答です"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-safe-recall"), "続けて", "viewer", "chat-safe-recall")); err != nil {
+	if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "続けて", "viewer", "chat-safe-recall")); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 	joined := joinPromptMessages(captured.Messages)
@@ -662,7 +656,6 @@ func TestMioAgentChatDoesNotReinjectDegenerateAgentHistory(t *testing.T) {
 
 func TestMioAgent_Chat_CommitsTypedTurnWithTaskIdentityAndFilteredRecall(t *testing.T) {
 	var got conversation.ConversationTurnRequest
-	jobID := task.JobIDFromString("job-typed-commit")
 	sessionID := string(modulecore.NewSessionID())
 	turnID := modulecore.NewTurnID()
 	traceID := modulecore.NewTraceID()
@@ -686,7 +679,7 @@ func TestMioAgent_Chat_CommitsTypedTurnWithTaskIdentityAndFilteredRecall(t *test
 		return llm.GenerateResponse{Content: "typed response"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(jobID, "hello", "viewer", "chat-typed").WithSessionID(sessionID).WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
+	testTask := newAgentTurnInputWithRoot(t, rootTaskID, "hello", "viewer", "chat-typed").WithSessionID(sessionID).WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
 	response, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -699,9 +692,6 @@ func TestMioAgent_Chat_CommitsTypedTurnWithTaskIdentityAndFilteredRecall(t *test
 	}
 	if got.TurnID != turnID || got.TraceID != traceID || got.RootTaskID != rootTaskID || got.UserMessageID != userMessageID || got.AgentMessageID != agentMessageID || got.SessionID != sessionID || got.UserMessage != "hello" || got.AgentMessage != response || got.AgentSpeaker != conversation.SpeakerMio {
 		t.Fatalf("typed request identity=%#v", got)
-	}
-	if string(got.TurnID) == jobID.String() {
-		t.Fatalf("TurnID fell back to legacy JobID: %#v", got)
 	}
 	if len(got.RecallTraceItems) == 0 {
 		t.Fatal("filtered RecallPack trace was not committed")
@@ -731,7 +721,7 @@ func TestMioAgentChatUsesTaskSessionIDForBeginAndCommit(t *testing.T) {
 		return llm.GenerateResponse{Content: "canonical response"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(task.NewJobID(), "hello", "viewer", chatID).WithSessionID(sessionID)
+	testTask := newAgentTurnInput(t, "hello", "viewer", chatID).WithSessionID(sessionID)
 
 	if _, err := mio.Chat(context.Background(), testTask); err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -767,7 +757,7 @@ func TestMioAgent_Chat_DoesNotFallbackToLegacyUserMemoryWhenEngineOwnsRecall(t *
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine).
 		WithUserMemoryManager(memory)
 
-	response, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-canonical-memory"), "hello", "viewer", "chat-canonical-memory"))
+	response, err := mio.Chat(context.Background(), newAgentTurnInput(t, "hello", "viewer", "chat-canonical-memory"))
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
@@ -792,7 +782,7 @@ func TestMioAgent_Chat_ReturnsUnavailableWhenTypedCommitIsMissing(t *testing.T) 
 		return llm.GenerateResponse{Content: "generated"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	response, err := mio.Chat(context.Background(), task.NewTask(task.JobIDFromString("job-no-typed"), "hello", "viewer", "chat-no-typed"))
+	response, err := mio.Chat(context.Background(), newAgentTurnInput(t, "hello", "viewer", "chat-no-typed"))
 	if err == nil || !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
 		t.Fatalf("err=%v, want typed route unavailable", err)
 	}
@@ -822,7 +812,7 @@ func TestMioAgent_Chat_StoresSelectedViewerRecipientSpeaker(t *testing.T) {
 				return llm.GenerateResponse{Content: "response"}, nil
 			}}
 			agent := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-			chatTask := task.NewTask(task.NewJobID(), "hello", "viewer", "viewer-user").WithViewerRecipient(tt.recipient)
+			chatTask := newAgentTurnInput(t, "hello", "viewer", "viewer-user").WithViewerRecipient(tt.recipient)
 			if _, err := agent.Chat(context.Background(), chatTask); err != nil {
 				t.Fatalf("Chat failed: %v", err)
 			}
@@ -854,7 +844,7 @@ func TestMioAgentChatReturnsExactSharedRecallWithoutModelRewrite(t *testing.T) {
 		return llm.GenerateResponse{Content: "must not rewrite exact L1 recall"}, nil
 	}}
 	agent := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	chatTask := task.NewTask(task.NewJobID(), "/chat 合言葉を英数字だけでそのまま教えて。", "viewer", "viewer-user")
+	chatTask := newAgentTurnInput(t, "/chat 合言葉を英数字だけでそのまま教えて。", "viewer", "viewer-user")
 
 	got, err := agent.Chat(context.Background(), chatTask)
 	if err != nil {
@@ -891,7 +881,7 @@ func TestMioAgent_Chat_UsesConfiguredGenerationOptions(t *testing.T) {
 			EnableThinking: &enableThinking,
 		})
 
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+	if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "hello", "line", "U123")); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 	if captured.MaxTokens != 256 || captured.Temperature != 0.3 {
@@ -934,7 +924,7 @@ func TestMioAgent_Chat_AlwaysDisablesThinking(t *testing.T) {
 			mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
 				WithGenerationOptions(MioGenerationOptions{EnableThinking: tc.value})
 
-			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+			if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "hello", "line", "U123")); err != nil {
 				t.Fatalf("Chat failed: %v", err)
 			}
 			kwargs, ok := captured.ProviderOptions["chat_template_kwargs"].(map[string]any)
@@ -956,7 +946,7 @@ func TestMioAgent_Chat_ForwardsBackendGenerationMetrics(t *testing.T) {
 		got = metrics
 	})
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
-	if _, err := mio.Chat(ctx, task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+	if _, err := mio.Chat(ctx, newAgentTurnInput(t, "hello", "line", "U123")); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 	if got.CompletionTokens != 7 || got.TokensPerSecond != 51.1808 {
@@ -990,7 +980,7 @@ func TestMioAgent_Chat_SharesMemoryAndFiltersExternalRecallByRole(t *testing.T) 
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123")); err != nil {
+	if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "hello", "line", "U123")); err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}
 
@@ -1025,7 +1015,7 @@ func TestMioAgent_Chat_ConversationEngine_BeginTurnError(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	testTask := newAgentTurnInput(t, "hello", "line", "U123")
 
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1050,7 +1040,7 @@ func TestMioAgent_Chat_ConversationEngine_EndTurnError(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	testTask := newAgentTurnInput(t, "hello", "line", "U123")
 
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err == nil || !strings.Contains(err.Error(), "storage failure") {
@@ -1084,7 +1074,7 @@ func TestMioAgent_Chat_WebSearchTriggered(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "Go言語を検索して", "line", "U123")
+	testTask := newAgentTurnInput(t, "Go言語を検索して", "line", "U123")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1119,7 +1109,7 @@ func TestMioAgent_Chat_WebSearchNotTriggered(t *testing.T) {
 
 	provider := &mockLLMProvider{}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "こんにちは", "line", "U123")
+	testTask := newAgentTurnInput(t, "こんにちは", "line", "U123")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1143,7 +1133,7 @@ func TestMioAgent_Chat_WebSearchNotTriggeredForTimelyKeywordOnly(t *testing.T) {
 
 	provider := &mockLLMProvider{}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "今日のニュースについて教えて", "line", "U123")
+	testTask := newAgentTurnInput(t, "今日のニュースについて教えて", "line", "U123")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1167,7 +1157,7 @@ func TestMioAgent_Chat_WebSearchNotTriggeredForMemoryRecallQuestion(t *testing.T
 
 	provider := &mockLLMProvider{}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "俺が映画が好きってこと知ってる？", "viewer", "viewer-user")
+	testTask := newAgentTurnInput(t, "俺が映画が好きってこと知ってる？", "viewer", "viewer-user")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1192,7 +1182,7 @@ func TestMioAgent_Chat_WebSearchError(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "最新のニュースを検索して", "line", "U123")
+	testTask := newAgentTurnInput(t, "最新のニュースを検索して", "line", "U123")
 
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1230,7 +1220,7 @@ func TestMioAgent_Chat_WebSearchUsesFreshCache(t *testing.T) {
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil).
 		WithSearchCacheManager(cache)
-	testTask := task.NewTask(task.NewJobID(), "RenCrow 最新仕様を検索して", "line", "U123")
+	testTask := newAgentTurnInput(t, "RenCrow 最新仕様を検索して", "line", "U123")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
@@ -1274,7 +1264,7 @@ func TestMioAgent_Chat_WebSearchSavesCacheOnMiss(t *testing.T) {
 	provider := &mockLLMProvider{}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil).
 		WithSearchCacheManager(cache)
-	testTask := task.NewTask(task.NewJobID(), "RenCrow 最新仕様を検索して", "line", "U123")
+	testTask := newAgentTurnInput(t, "RenCrow 最新仕様を検索して", "line", "U123")
 
 	if _, err := mio.Chat(context.Background(), testTask); err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -1303,7 +1293,7 @@ func TestMioAgent_Chat_LLMError(t *testing.T) {
 	}
 
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
-	testTask := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	testTask := newAgentTurnInput(t, "hello", "line", "U123")
 
 	_, err := mio.Chat(context.Background(), testTask)
 	if err == nil {
@@ -1681,7 +1671,7 @@ func TestMioAgent_Chat_PersonaEdit(t *testing.T) {
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
 	mio = mio.WithPersonaEditor(editor)
 
-	testTask := task.NewTask(task.NewJobID(), "口調をカジュアルにして", "line", "U123")
+	testTask := newAgentTurnInput(t, "口調をカジュアルにして", "line", "U123")
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
@@ -1709,7 +1699,7 @@ func TestMioAgent_Chat_PersonaEditFallback(t *testing.T) {
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
 	// PersonaEditor is nil (not set)
 
-	testTask := task.NewTask(task.NewJobID(), "口調をカジュアルにして", "line", "U123")
+	testTask := newAgentTurnInput(t, "口調をカジュアルにして", "line", "U123")
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat should succeed without PersonaEditor: %v", err)
@@ -1733,7 +1723,7 @@ func TestMioAgent_Chat_PersonaEditReadError(t *testing.T) {
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
 	mio = mio.WithPersonaEditor(editor)
 
-	testTask := task.NewTask(task.NewJobID(), "口調をカジュアルにして", "line", "U123")
+	testTask := newAgentTurnInput(t, "口調をカジュアルにして", "line", "U123")
 	resp, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat should succeed with persona read error (fallback): %v", err)
@@ -1855,7 +1845,7 @@ func TestMioAgentChatInjectsConfirmedUserMemory(t *testing.T) {
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil).
 		WithUserMemoryManager(mem)
 
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "こんにちは", "viewer", "chat-1"))
+	_, err := mio.Chat(context.Background(), newAgentTurnInput(t, "こんにちは", "viewer", "chat-1"))
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)
 	}

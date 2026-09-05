@@ -12,7 +12,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // KBManager はKB保存用のインターフェース（Phase 4.2）
@@ -94,9 +93,9 @@ func NewMioAgent(
 }
 
 // DecideAction はMioによる委譲判断（4段階優先順位）
-func (m *MioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decision, error) {
+func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 	// 優先度1: 明示コマンド
-	if explicitRoute := m.parseExplicitCommand(t.UserMessage()); explicitRoute != "" {
+	if explicitRoute := m.parseExplicitCommand(t.MessageText()); explicitRoute != "" {
 		return routing.NewDecisionWithEvidence(explicitRoute, 1.0, "Explicit command",
 			routing.DecisionEvidence{
 				Source:     routing.EvidenceSourceExplicitCommand,
@@ -110,7 +109,7 @@ func (m *MioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decis
 	// Indexed person-related catalog intents must stay on Mio's CHAT path so
 	// generic creative/knowledge routing cannot bypass the bounded local Tool
 	// contract and invent titles. Explicit slash commands still take priority.
-	if _, matched := parseMioPersonRelatedCatalogLookup(t.UserMessage()); matched {
+	if _, matched := parseMioPersonRelatedCatalogLookup(t.MessageText()); matched {
 		return routing.NewDecisionWithEvidence(routing.RouteCHAT, 1.0, "Indexed person-related catalog intent",
 			routing.DecisionEvidence{
 				Source:     routing.EvidenceSourceRuleDictionary,
@@ -200,8 +199,8 @@ func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
 }
 
 // Chat は会話を実行（v5.1: ConversationEngine + 明示指示時のみWeb検索）
-func (m *MioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
-	userMessage := t.UserMessage()
+func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
+	userMessage := t.MessageText()
 	currentSpeaker := conversationSpeakerForViewerRecipient(t.ViewerRecipient(), conversation.SpeakerMio)
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===

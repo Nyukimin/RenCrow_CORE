@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
 
@@ -78,7 +77,7 @@ func TestMioDataToolIntentsExecuteOnceAndSuppressWeb(t *testing.T) {
 				return llm.GenerateResponse{Content: "結果だよ。"}, nil
 			}}
 			mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), tt.message, "viewer", "user")); err != nil {
+			if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, tt.message, "viewer", "user")); err != nil {
 				t.Fatal(err)
 			}
 			if calls != 1 || webCalls != 0 || !reflect.DeepEqual(gotArgs, tt.args) {
@@ -118,7 +117,7 @@ func TestMioDataToolUnavailableOrErrorSuppressesWeb(t *testing.T) {
 				return llm.GenerateResponse{Content: "今は使えないよ。"}, nil
 			}}
 			mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "RenCrowの用語集で「CUDA」を検索して", "viewer", "user")); err != nil {
+			if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "RenCrowの用語集で「CUDA」を検索して", "viewer", "user")); err != nil {
 				t.Fatal(err)
 			}
 			if webCalls != 0 || !hasMioDataContext(captured.Messages, "RenCrow indexed data unavailable") {
@@ -135,7 +134,7 @@ func TestMioGenericTermQuestionDoesNotUseGlossary(t *testing.T) {
 		return tool.NewSuccess(nil), nil
 	}}
 	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "CUDAって何？", "viewer", "user")); err != nil {
+	if _, err := mio.Chat(context.Background(), newAgentTurnInput(t, "CUDAって何？", "viewer", "user")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {

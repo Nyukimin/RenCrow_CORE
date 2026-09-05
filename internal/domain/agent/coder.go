@@ -8,10 +8,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const (
@@ -99,8 +99,10 @@ func (c *CoderAgent) WithStableRuntimeContext(content string) *CoderAgent {
 }
 
 // GenerateProposal はplan/patchを生成
-func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error) {
-	log.Printf("[CoderAgent] proposal generate start provider=%s job=%s prompt_len=%d", c.llmProvider.Name(), t.JobID().String(), len(t.UserMessage()))
+func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnInput) (*proposal.Proposal, error) {
+	rootTaskID := string(t.RootTaskID())
+	externalConversationID := t.ChannelAddress().ExternalConversationID()
+	log.Printf("[CoderAgent] proposal generate start provider=%s root_task_id=%s prompt_len=%d", c.llmProvider.Name(), rootTaskID, len(t.MessageText()))
 
 	// システムプロンプトの構築（v4.1: Agent Persona 対応）
 	systemPrompt := c.proposalPrompt
@@ -110,9 +112,9 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 
 	messages := c.coderSystemMessages(systemPrompt)
 	if c.lightMemory != nil {
-		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
+		messages = append(messages, c.lightMemory.RecentMessages(externalConversationID)...)
 	}
-	messages = append(messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
+	messages = append(messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   8192,
@@ -121,25 +123,25 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
-		log.Printf("[CoderAgent] proposal generate error provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal generate error provider=%s root_task_id=%s err=%v", c.llmProvider.Name(), rootTaskID, err)
 		return nil, err
 	}
-	log.Printf("[CoderAgent] proposal generate response provider=%s job=%s content_len=%d finish=%s", c.llmProvider.Name(), t.JobID().String(), len(resp.Content), resp.FinishReason)
+	log.Printf("[CoderAgent] proposal generate response provider=%s root_task_id=%s content_len=%d finish=%s", c.llmProvider.Name(), rootTaskID, len(resp.Content), resp.FinishReason)
 
 	// レスポンスからProposalを抽出
 	p, err := c.extractProposal(resp.Content)
 	if err != nil {
-		log.Printf("[CoderAgent] proposal extract failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal extract failed provider=%s root_task_id=%s err=%v", c.llmProvider.Name(), rootTaskID, err)
 		return nil, err
 	}
 	if err := c.selfCheckProposal(p); err != nil {
-		log.Printf("[CoderAgent] proposal self-check failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal self-check failed provider=%s root_task_id=%s err=%v", c.llmProvider.Name(), rootTaskID, err)
 		return nil, err
 	}
 	if c.lightMemory != nil {
-		c.lightMemory.Record(t.ChatID(), t.UserMessage(), resp.Content)
+		c.lightMemory.Record(externalConversationID, t.MessageText(), resp.Content)
 	}
-	log.Printf("[CoderAgent] proposal extract complete provider=%s job=%s plan_len=%d patch_len=%d", c.llmProvider.Name(), t.JobID().String(), len(p.Plan()), len(p.Patch()))
+	log.Printf("[CoderAgent] proposal extract complete provider=%s root_task_id=%s plan_len=%d patch_len=%d", c.llmProvider.Name(), rootTaskID, len(p.Plan()), len(p.Patch()))
 	return p, nil
 }
 
@@ -158,7 +160,7 @@ func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Mes
 }
 
 // GenerateWithPrompt は指定されたシステムプロンプトでLLM応答を生成
-func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
+func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t conversation.TurnInput, systemPrompt string) (string, error) {
 	// システムプロンプトの構築（v4.1: Agent Persona 対応）
 	finalSystemPrompt := systemPrompt
 	if c.persona != nil {
@@ -167,9 +169,9 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, system
 
 	messages := c.coderSystemMessages(finalSystemPrompt)
 	if c.lightMemory != nil {
-		messages = append(messages, c.lightMemory.RecentMessages(t.ChatID())...)
+		messages = append(messages, c.lightMemory.RecentMessages(t.ChannelAddress().ExternalConversationID())...)
 	}
-	messages = append(messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
+	messages = append(messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   8192,
@@ -181,7 +183,7 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t task.Task, system
 		return "", err
 	}
 	if c.lightMemory != nil {
-		c.lightMemory.Record(t.ChatID(), t.UserMessage(), resp.Content)
+		c.lightMemory.Record(t.ChannelAddress().ExternalConversationID(), t.MessageText(), resp.Content)
 	}
 
 	return resp.Content, nil

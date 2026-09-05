@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 var ErrImageGeneratorUnavailable = errors.New("RenCrow_Image interface is unavailable")
@@ -72,8 +71,8 @@ func (w *WildAgent) WithImageGenerator(generator ImageGenerator) *WildAgent {
 	return w
 }
 
-func (w *WildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
-	userMessage := stripWildCommand(t.UserMessage())
+func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
+	userMessage := stripWildCommand(t.MessageText())
 	if isImageGenerationRequest(userMessage) {
 		if w.imageGenerator == nil {
 			return "", ErrImageGeneratorUnavailable

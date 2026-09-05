@@ -6,7 +6,6 @@ import (
 	"unicode"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // MioExpressionHistory is the small, non-semantic style memory used to avoid
@@ -85,7 +84,7 @@ func truncateMioExpression(value string, maxRunes int) string {
 	return string(runes[:maxRunes]) + "…"
 }
 
-func (m *MioAgent) runtimeMioPromptContext(t task.Task) string {
+func (m *MioAgent) runtimeMioPromptContext(t conversation.TurnInput) string {
 	recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient()))
 	if recipient != "" && recipient != "mio" {
 		return ""
@@ -121,7 +120,7 @@ func (m *MioAgent) runtimeMioPromptContext(t task.Task) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (m *MioAgent) stablePromptContext(t task.Task) string {
+func (m *MioAgent) stablePromptContext(t conversation.TurnInput) string {
 	recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient()))
 	if recipient == "" {
 		recipient = "mio"
@@ -177,8 +176,9 @@ func mioSentences(value string) []string {
 	return out
 }
 
-func mioModeForTask(t task.Task) string {
-	if strings.EqualFold(strings.TrimSpace(t.Channel()), "idlechat") || strings.HasPrefix(strings.ToLower(strings.TrimSpace(t.ChatID())), "idle") {
+func mioModeForTask(t conversation.TurnInput) string {
+	address := t.ChannelAddress()
+	if strings.EqualFold(strings.TrimSpace(address.ChannelType()), "idlechat") || strings.HasPrefix(strings.ToLower(strings.TrimSpace(address.ExternalConversationID())), "idle") {
 		return "IdleChat"
 	}
 	switch strings.ToUpper(strings.TrimSpace(string(t.Route()))) {
@@ -197,12 +197,12 @@ func mioModeForTask(t task.Task) string {
 	}
 }
 
-func mioToneForTask(t task.Task) string {
+func mioToneForTask(t conversation.TurnInput) string {
 	mode := mioModeForTask(t)
 	if mode == "IdleChat" {
 		return "HIGH"
 	}
-	message := strings.ToLower(t.UserMessage())
+	message := strings.ToLower(t.MessageText())
 	for _, keyword := range []string{
 		"security", "セキュリティ", "認証", "秘密鍵", "token", "本番", "production",
 		"法律", "契約", "医療", "削除", "破壊", "危険", "個人情報", "credential",

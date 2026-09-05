@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
@@ -21,7 +20,7 @@ func TestWildAgentGenerateUsesWildPromptAndStripsCommand(t *testing.T) {
 	}
 	wild := NewWildAgent(provider, "creative system")
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild 森の魔女の画像プロンプト", "line", "U123"))
+	resp, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild 森の魔女の画像プロンプト", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -55,7 +54,7 @@ func TestWildAgentGenerateForwardsStreamCallback(t *testing.T) {
 		streamed = append(streamed, token)
 	})
 
-	if _, err := wild.Generate(ctx, task.NewTask(task.NewJobID(), "/wild color", "viewer", "viewer-user")); err != nil {
+	if _, err := wild.Generate(ctx, newAgentTurnInput(t, "/wild color", "viewer", "viewer-user")); err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
 	if len(streamed) != 1 || streamed[0] != "green" {
@@ -141,7 +140,7 @@ func TestWildAgentGenerateSharesMemoryAndFiltersExternalRecallByRole(t *testing.
 	}
 	wild := NewWildAgent(provider, "creative system").WithConversationEngine(engine)
 
-	if _, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild 森の魔女", "line", "U123")); err != nil {
+	if _, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild 森の魔女", "line", "U123")); err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
 	var prompt strings.Builder
@@ -182,7 +181,7 @@ func TestWildAgentGenerateUsesImageGeneratorForImageGeneration(t *testing.T) {
 	}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_ImageでMioの画像生成をして", "viewer", "viewer-user"))
+	resp, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild RenCrow_ImageでMioの画像生成をして", "viewer", "viewer-user"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -242,7 +241,7 @@ func TestWildAgentImageGenerationRequiresRenCrowImage(t *testing.T) {
 	}
 	wild := NewWildAgent(provider, "creative system")
 
-	_, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild Mioの画像を生成して", "viewer", "viewer-user"))
+	_, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild Mioの画像を生成して", "viewer", "viewer-user"))
 	if !errors.Is(err, ErrImageGeneratorUnavailable) {
 		t.Fatalf("error = %v, want RenCrow_Image unavailable error", err)
 	}
@@ -258,7 +257,7 @@ func TestWildAgentGenerateReturnsImageGeneratorError(t *testing.T) {
 	imageTool := &mockWildImageGenerator{err: errors.New("rencrow image unavailable")}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	_, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_Imageで画像生成して", "viewer", "viewer-user"))
+	_, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild RenCrow_Imageで画像生成して", "viewer", "viewer-user"))
 	if err == nil {
 		t.Fatal("expected image generator error")
 	}
@@ -278,7 +277,7 @@ func TestWildAgentGenerateFallsBackToLLMForImagePromptOnly(t *testing.T) {
 	imageTool := &mockWildImageGenerator{}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild 森の魔女の画像プロンプトを作って", "viewer", "viewer-user"))
+	resp, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild 森の魔女の画像プロンプトを作って", "viewer", "viewer-user"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
@@ -304,7 +303,7 @@ func TestWildAgentGenerateFallsBackToLLMForImageInterfaceDocumentQuestion(t *tes
 	imageTool := &mockWildImageGenerator{}
 	wild := NewWildAgent(provider, "creative system").WithImageGenerator(imageTool)
 
-	resp, err := wild.Generate(context.Background(), task.NewTask(task.NewJobID(), "/wild RenCrow_Imageの仕様を説明して", "viewer", "viewer-user"))
+	resp, err := wild.Generate(context.Background(), newAgentTurnInput(t, "/wild RenCrow_Imageの仕様を説明して", "viewer", "viewer-user"))
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

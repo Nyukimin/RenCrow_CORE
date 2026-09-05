@@ -11,7 +11,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const shiroMaxTokens = 4096
@@ -82,10 +81,10 @@ func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAg
 
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
-func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
-	jobID := t.JobID().String()
+func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {
+	rootTaskID := string(t.RootTaskID())
 	ctx = llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
-		RequestID: jobID, TraceID: jobID, JobID: jobID,
+		RequestID: rootTaskID, TraceID: string(t.TraceID()), JobID: rootTaskID,
 		Initiator: "shiro", Caller: "agent.shiro", Purpose: "execute_ops_task",
 	})
 	characterPrompt := s.systemPrompt
@@ -105,7 +104,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {
 		if err == nil && s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.MessageText(), resp, conversation.SpeakerShiro, nil); commitErr != nil {
 				return resp, commitErr
 			}
 		}
@@ -113,18 +112,18 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
-		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, s.stableRuntimeContext, dynamic, llm.Message{Role: "user", Content: t.UserMessage()})})
+		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, s.stableRuntimeContext, dynamic, llm.Message{Role: "user", Content: t.MessageText()})})
 		systemPrompt := renderSystemMessages(assembled.Messages)
 		result, err := s.runSubagentSafely(ctx, SubagentTask{
 			AgentName:    "shiro",
-			Instruction:  t.UserMessage(),
+			Instruction:  t.MessageText(),
 			SystemPrompt: systemPrompt,
 		})
 		if err != nil {
 			return "", err
 		}
 		if s.conversation != nil {
-			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
+			if commitErr := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.MessageText(), result.Output, conversation.SpeakerShiro, nil); commitErr != nil {
 				return result.Output, commitErr
 			}
 		}
@@ -134,7 +133,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	messages := dynamic
 	var recallPack *conversation.RecallPack
 	if s.conversation != nil {
-		pack, err := s.conversation.BeginTurn(ctx, t.SessionID(), t.UserMessage())
+		pack, err := s.conversation.BeginTurn(ctx, t.SessionID(), t.MessageText())
 		if err != nil {
 			log.Printf("[Shiro] BeginTurn failed: %v", err)
 		} else if pack != nil {
@@ -146,7 +145,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	if s.lightMemory != nil {
 		messages = append(messages, s.lightMemory.RecentMessages(t.SessionID())...)
 	}
-	messages = assemblePromptContext(characterPrompt, s.stableRuntimeContext, messages, userMessageWithAttachments(t.UserMessage(), t.Attachments()))
+	messages = assemblePromptContext(characterPrompt, s.stableRuntimeContext, messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   shiroMaxTokens,
@@ -158,19 +157,19 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 		return "", err
 	}
 	if s.lightMemory != nil {
-		s.lightMemory.Record(t.SessionID(), t.UserMessage(), resp.Content)
+		s.lightMemory.Record(t.SessionID(), t.MessageText(), resp.Content)
 	}
 
 	if s.conversation != nil {
-		if err := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.MessageText(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
 			return resp.Content, err
 		}
 	}
 	return resp.Content, nil
 }
 
-func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (string, bool, error) {
-	path := routing.DetectCodexWorkPath(t.UserMessage())
+func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t conversation.TurnInput) (string, bool, error) {
+	path := routing.DetectCodexWorkPath(t.MessageText())
 	if !path.Found() {
 		return "", false, nil
 	}
@@ -197,7 +196,7 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 	}
 
 	resp, err := s.toolRunner.ExecuteV2(ctx, "codex.run", map[string]any{
-		"prompt":  buildCodexWorkPrompt(path, t.UserMessage()),
+		"prompt":  buildCodexWorkPrompt(path, t.MessageText()),
 		"sandbox": "read-only",
 	})
 	if err != nil {
@@ -212,14 +211,14 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 	return resp.String(), true, nil
 }
 
-func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexWorkPath, t task.Task) (string, bool, error) {
+func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexWorkPath, t conversation.TurnInput) (string, bool, error) {
 	result, err := s.advisorService.RequestAdvice(ctx, advisor.AdviceRequest{
-		ID:               t.JobID().String(),
-		TaskID:           t.JobID().String(),
+		ID:               string(t.RootTaskID()),
+		TaskID:           string(t.RootTaskID()),
 		RequestedByAgent: "shiro",
 		AdvisorID:        advisor.AdvisorCodex,
 		Purpose:          "codex_work_path:" + string(path.Domain),
-		Prompt:           buildCodexWorkPrompt(path, t.UserMessage()),
+		Prompt:           buildCodexWorkPrompt(path, t.MessageText()),
 		RiskClass:        "low",
 	})
 	if err != nil {
@@ -236,7 +235,7 @@ func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexW
 		record := advisor.AdvisorAdoptionRecord{
 			AdoptionID:     "advisor-adoption:" + result.RunID + ":shiro",
 			RunID:          result.RunID,
-			TaskID:         t.JobID().String(),
+			TaskID:         string(t.RootTaskID()),
 			AdvisorID:      result.AdvisorID,
 			AdoptedByAgent: "shiro",
 			Adopted:        true,

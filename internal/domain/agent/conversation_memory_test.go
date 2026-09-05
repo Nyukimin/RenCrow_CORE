@@ -11,10 +11,9 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-func TestAgentConversationMemoryDoesNotUseTaskChatID(t *testing.T) {
+func TestAgentConversationMemoryDoesNotUseExternalChannelAddress(t *testing.T) {
 	_, testFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("runtime.Caller failed")
@@ -24,8 +23,8 @@ func TestAgentConversationMemoryDoesNotUseTaskChatID(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		if strings.Contains(string(data), "t.ChatID()") {
-			t.Fatalf("%s passes Task.ChatID to a conversation-memory path", name)
+		if strings.Contains(string(data), "t.ChatID()") || strings.Contains(string(data), "t.ChannelAddress().ExternalConversationID()") {
+			t.Fatalf("%s passes an external conversation address to a conversation-memory path", name)
 		}
 	}
 }
@@ -81,7 +80,7 @@ func TestSharedConversationContinuityIsTypedRecallL0(t *testing.T) {
 
 func TestCommitConversationTurnUsesExactTaskIdentityAndFilteredPack(t *testing.T) {
 	var got conversation.ConversationTurnRequest
-	testTask := task.NewTask(task.JobIDFromString("job-1"), "hello", "viewer", "chat-1")
+	testTask := newAgentTurnInput(t, "hello", "viewer", "chat-1")
 	engine := &mockConversationEngine{
 		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
 			got = request
@@ -94,9 +93,6 @@ func TestCommitConversationTurnUsesExactTaskIdentityAndFilteredPack(t *testing.T
 	}
 	if got.TurnID != testTask.TurnID() || got.TraceID != testTask.TraceID() || got.RootTaskID != testTask.RootTaskID() || got.UserMessageID != testTask.UserMessageID() || got.AgentMessageID != testTask.AgentMessageID() || got.SessionID != "chat-1" || got.AgentSpeaker != conversation.SpeakerShiro || len(got.RecallTraceItems) != 1 || got.RecallTraceItems[0].Summary != "kept" {
 		t.Fatalf("unexpected typed request=%#v", got)
-	}
-	if string(got.TurnID) == testTask.JobID().String() {
-		t.Fatalf("TurnID fell back to legacy JobID: %#v", got)
 	}
 }
 
@@ -111,7 +107,7 @@ func TestCommitConversationTurnPartialOutcomeDoesNotFailTurn(t *testing.T) {
 			}, conversation.ErrConversationTurnUnavailable
 		},
 	}
-	if err := commitConversationTurn(context.Background(), engine, task.NewTask(task.JobIDFromString("job-1"), "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
+	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
 		t.Fatalf("partial outcome must not fail the committed turn: %v", err)
 	}
 }
@@ -126,7 +122,7 @@ func TestCommitConversationTurnFailedReturnsTypedError(t *testing.T) {
 			}, conversation.ErrConversationTurnUnavailable
 		},
 	}
-	if err := commitConversationTurn(context.Background(), engine, task.NewTask(task.JobIDFromString("job-1"), "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
 		t.Fatalf("error=%v, want typed unavailable", err)
 	}
 }
@@ -137,7 +133,7 @@ func TestCommitConversationTurnUnexpectedStatusFailsClosed(t *testing.T) {
 			return conversation.ConversationTurnResult{TurnID: request.TurnID, Status: conversation.ConversationTurnFailed}, nil
 		},
 	}
-	if err := commitConversationTurn(context.Background(), engine, task.NewTask(task.JobIDFromString("job-1"), "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnInternal) {
+	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnInternal) {
 		t.Fatalf("error=%v, want typed internal fail-closed", err)
 	}
 }
@@ -147,7 +143,7 @@ func TestCommitConversationTurnRejectsLegacyOnlyEngine(t *testing.T) {
 		conversation.ConversationEngine
 	}
 	legacy := &legacyOnlyEngine{}
-	if err := commitConversationTurn(context.Background(), legacy, task.NewTask(task.JobIDFromString("job-1"), "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+	if err := commitConversationTurn(context.Background(), legacy, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
 		t.Fatalf("error=%v, want typed route unavailable", err)
 	}
 }
