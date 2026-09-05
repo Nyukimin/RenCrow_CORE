@@ -68,14 +68,12 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 
 // executeTask はShiroAgentでタスクを実行
 func (h *workerHandler) executeTask(ctx context.Context, msg domaintransport.Message) (domaintransport.Message, error) {
-	jobID, err := task.ParseJobID(msg.JobID)
+	input, err := turnInputFromAgentMessage(msg)
 	if err != nil {
-		jobID = task.NewJobID()
+		return domaintransport.Message{}, err
 	}
 
-	t := task.NewTask(jobID, msg.Content, "standalone", "agent")
-
-	result, err := h.shiroAgent.Execute(ctx, t)
+	result, err := h.shiroAgent.Execute(ctx, input)
 	if err != nil {
 		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID,
 			fmt.Sprintf("worker execution failed: %v", err))

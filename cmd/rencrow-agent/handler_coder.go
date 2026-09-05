@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
@@ -22,12 +21,10 @@ type coderHandler struct {
 }
 
 func (h *coderHandler) HandleMessage(ctx context.Context, msg domaintransport.Message) (domaintransport.Message, error) {
-	jobID, err := task.ParseJobID(msg.JobID)
+	input, err := turnInputFromAgentMessage(msg)
 	if err != nil {
-		jobID = task.NewJobID()
+		return domaintransport.Message{}, err
 	}
-
-	t := task.NewTask(jobID, msg.Content, "standalone", "agent")
 
 	// Message.Context の物理 provider/model 指定は互換入力としてのみ受け取り、
 	// 起動時に構成した RenCrow_LLM Gateway agent を必ず使用する。
@@ -59,7 +56,7 @@ func (h *coderHandler) HandleMessage(ctx context.Context, msg domaintransport.Me
 	}
 
 	// CoderAgentでProposal生成
-	p, err := activeAgent.GenerateProposal(ctx, t)
+	p, err := activeAgent.GenerateProposal(ctx, input)
 	if err != nil {
 		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID,
 			fmt.Sprintf("proposal generation failed: %v", err))
