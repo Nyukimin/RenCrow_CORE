@@ -1,0 +1,174 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step10-run",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-05T12:49:51Z",
+  "input": {
+    "base_revision": "6c8720a657a4d8581a898370a4d8e708dd7505c1",
+    "active_runtime_revision": "6c8720a657a4d8581a898370a4d8e708dd7505c1",
+    "active_runtime_artifact_sha256": "65f10b96aec33e9c79ab8c85977205513f5173b85792a6702343c5b8989d6ccf",
+    "active_runtime_main_pid": 3275336,
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-10-runid",
+    "task_store": "/home/nyukimi/.rencrow/workspace/tasks",
+    "task_state_rows_observed": 72,
+    "event_store": "/srv/rencrow/db/core/databases/events/event_store.db",
+    "event_rows_observed": 47609,
+    "event_rows_with_canonical_run_id_observed": 1379,
+    "superagent_store": "/srv/rencrow/db/core/databases/ops/superagent_harness.db",
+    "superagent_agent_run_rows_observed": 316,
+    "superagent_subagent_task_rows_observed": 74,
+    "superagent_context_pack_rows_observed": 315,
+    "superagent_run_queue_rows_observed": 7,
+    "browser_trace_store": "/srv/rencrow/db/core/databases/ops/browser_trace_to_api.db",
+    "browser_trace_run_rows_observed": 1,
+    "knowledge_memory_store": "/srv/rencrow/db/core/databases/ops/knowledge_memory.db",
+    "dream_consolidation_run_rows_observed": 0,
+    "idlechat_dialogue_episode_rows_observed": 8012,
+    "idlechat_story_episode_rows_observed": 956,
+    "idlechat_generation_checkpoint_count_observed": 0,
+    "run_owner_rule": "the existing CORE Task owner owns every canonical Run as one execution of exactly one Task; domain stores retain only owner-specific projections",
+    "run_creation_rule": "first execution process-restart resume lease reacquire Agent reassignment checkpoint resume and explicit rerun preserve TaskID and issue a fresh UUIDv7 RunID",
+    "child_execution_rule": "child execution is a child Task with ParentTaskID and its own non-hierarchical RunID; ParentRunID and SubagentID are not written",
+    "historical_mapping_rule": "preserve an existing canonical RunID only when its meaning and Task ownership are unambiguous; otherwise deterministically map the exact source owner field and value to UUIDv5 and create one deterministic migration Task when no canonical Task exists"
+  },
+  "included": [
+    {
+      "check_id": "s10_canonical_run_owner",
+      "guarantee": "internal/domain/task taskmanager and the existing workspace/tasks store own typed Run history linked to exactly one canonical TaskID without a second route registry alias or dual owner",
+      "owner": "RenCrow_CORE Task owner",
+      "execution_phase": "pre-commit and post-restart",
+      "result_consumer": "all execution producers and Viewer Task detail",
+      "failure_action": "return to design or rollback"
+    },
+    {
+      "check_id": "s10_run_lifecycle",
+      "guarantee": "first run process-restart resume lease reacquire Agent reassignment checkpoint resume and explicit rerun each preserve TaskID issue a distinct canonical RunID and terminate the preceding Run exactly once",
+      "owner": "RenCrow_CORE taskmanager",
+      "execution_phase": "pre-commit and post-restart",
+      "result_consumer": "Task execution and recovery",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_superagent_projection",
+      "guarantee": "SuperAgent consumes the Task owner RunID records TaskID and actual CORE Agent preserves checkpoint details and creates child Tasks instead of SubagentID or ParentRunID",
+      "owner": "RenCrow_CORE Orchestrator SuperAgent and subagent runtime",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Agent execution recovery and audit",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_event_identity",
+      "guarantee": "execution Events carry canonical top-level TaskID and RunID and use CausationEventID instead of payload references or Run hierarchy",
+      "owner": "RenCrow_CORE canonical Event Store and execution producers",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Viewer trace and receipts",
+      "failure_action": "do not deploy or rollback"
+    },
+    {
+      "check_id": "s10_browser_trace",
+      "guarantee": "Browser trace records and API projections use the Task owner TaskID plus typed RunID and contain no TraceRunID or trace_run_id",
+      "owner": "RenCrow_CORE Browser Trace owner",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "browser trace review and artifacts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_dream_consolidation",
+      "guarantee": "Dream consolidation receives a Task owner TaskID and typed RunID and does not generate a domain-specific run identifier",
+      "owner": "RenCrow_CORE Knowledge Memory owner",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "memory proposal and review",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_idlechat_generation",
+      "guarantee": "IdleChat dialogue story word and forecast generation plus checkpoint resume use canonical TaskID and RunID without GenerationID or generation_id and preserve dedupe and playback behavior",
+      "owner": "RenCrow_CORE IdleChat owner",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "IdleChat generation playback and recovery",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_workflow_toolloop_background",
+      "guarantee": "AIWorkflow ToolLoop and background execution consume the enclosing TaskID and RunID while LLM model provider controller and worker mechanisms never become Run owners or Actors",
+      "owner": "RenCrow_CORE execution owners",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "workflow tool and background receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_historical_migration",
+      "guarantee": "one owner CLI consumes writer-stopped snapshots and atomically builds fresh Task Run Event SuperAgent Browser Knowledge and IdleChat state with exact counts checksums no duplicates nulls foreign-key violations or orphans matching dry-run and apply receipts and second-run no-op",
+      "owner": "RenCrow_CORE Step10 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state and rollback",
+      "failure_action": "leave the old binary and state active or rollback all targets"
+    },
+    {
+      "check_id": "s10_viewer_receipt",
+      "guarantee": "authenticated Viewer Task detail exposes the Task Run history status assignee and receipt without arbitrary paths SQL or owner-external data",
+      "owner": "RenCrow_CORE Viewer",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "authenticated user",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s10_architecture_zero",
+      "guarantee": "confirmed Step10 owner and consumers contain zero ParentRunID TraceRunID GenerationID SubagentID parent_run_id trace_run_id generation_id subagent_id derived Task-based RunID and one-shot migration source after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step10 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s10_predeploy_verification",
+      "guarantee": "targeted owner consumer migration and Viewer tests plus full Go tests vet build and diff checks pass against the reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s10_runtime_route",
+      "guarantee": "pushed source installed artifact active config user service PID listeners readiness canonical Gateway route actual Agent result Task Run Event and Viewer receipt agree before and after restart",
+      "owner": "RenCrow_CORE runtime and rencrow user service",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step10 ledger",
+      "failure_action": "rollback or keep Step10 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s10_action_attempt_identity",
+      "reason": "Action and Attempt unification is Step11",
+      "consumer": "Step11 cutover",
+      "failure_action": "keep Step11 open"
+    },
+    {
+      "check_id": "s10_scheduler_run",
+      "reason": "Scheduler definition and fire identity are explicitly Step15",
+      "consumer": "Step15 ScheduleID cutover",
+      "failure_action": "keep Step15 open"
+    },
+    {
+      "check_id": "s10_queue_item_identity",
+      "reason": "generic QueueID replacement is Step16 while Step10 only validates lease-driven Run renewal",
+      "consumer": "Step16 QueueItemID cutover",
+      "failure_action": "keep Step16 open"
+    },
+    {
+      "check_id": "s10_domain_local_run_names",
+      "reason": "Advisor TRADE and person-related catalog RunID fields have distinct owner lifecycles and are not reclassified without a canonical contract",
+      "consumer": "their owning canonical steps and Step20 global cleanup",
+      "failure_action": "keep the owning ledger rows open"
+    },
+    {
+      "check_id": "s10_full_system_restorecheck",
+      "reason": "the user requested route checks for this ID-only phase and the full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

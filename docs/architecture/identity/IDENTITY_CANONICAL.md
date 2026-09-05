@@ -2121,6 +2121,47 @@ Test:
 - `ParentRunID / TraceRunID / GenerationID` zero
 - 子実行は子Taskとして表現
 
+#### Step 10配備契約
+
+- Canonical Runは新しい独立moduleやglobal registryを作らず、Step 08で確立したCOREのTask ownerを
+  拡張して所有する。`internal/domain/task`が`TaskID`に属する一回の実行を表すtyped `RunID`、
+  開始理由、actual CORE Agent assignee、状態、開始／終了時刻を定義し、`taskmanager`と同じ
+  `workspace/tasks` storeがRun履歴を専用streamへ保存する。Task stateへRun履歴を埋め込んで
+  latest-by-TaskIDで潰さず、別のruntime route、alias lookup、dual ownerを作らない。
+- 新しいRunIDはTask ownerだけが`modules/core.NewRunID`で発行する。初回実行、process再起動後の再開、
+  lease再取得、実行Agent変更、checkpointからの再開、明示的再実行は、同じTaskIDを維持して
+  必ず別RunIDを持つ。Runを再利用、TaskIDから派生、階層化しない。停止したRunは一つの終端状態へ
+  確定し、子作業は新しい`TaskID + ParentTaskID`とそのTask自身のRunで表す。
+- SuperAgent、AIWorkflow／ToolLoop、background process、Browser trace、Dream consolidation、
+  IdleChat generationは、入口でTask ownerが返した同じ`TaskID + RunID`を受け取り、各owner固有の
+  checkpoint、artifact、trace、生成内容等だけをprojectionとして保存する。`AgentRun`詳細は
+  canonical Runを上書きせず、`leadAgentRunID`のような派生ID生成を廃止する。Canonical Eventは
+  top-level `TaskID`と`RunID`を保持し、payload referenceをIdentityとして再解釈しない。
+- SuperAgentの子実行は`SubagentID + ParentRunID`を廃止し、Task ownerが作る子Taskへ置換する。
+  actual CORE Agentだけをassigneeにでき、Coder、LLM、model、provider、controller、worker mechanismを
+  ActorまたはRun ownerにしない。Run間の因果は`CausationEventID`とTask親子関係で表す。
+- production cutoverは全対象writer停止後のsnapshotをsourceとし、one-shot owner CLIがfresh Task／Run
+  store、fresh Event Store、fresh SuperAgent／Browser trace／Knowledge Memory projection、fresh IdleChat
+  episode／stock／checkpoint artifactを一体生成する。既にCanonicalなRunIDは意味と所属Taskが一意な
+  場合だけ維持し、legacy `run_id`、`trace_run_id`、`generation_id`、`subagent_id`はsource owner、field、
+  exact valueからUUIDv5へ決定的に写像する。所属Taskが存在しないlegacy executionには同じsource identity
+  からmigration Taskを一件だけ生成し、曖昧join、duplicate、orphan、未知field、symlink、source driftを
+  fail closedにする。dry-run／applyの入力、変換件数、出力hashを一致させ、second-runはno-opにする。
+
+Gate 10:
+
+- First run、resume、lease reacquire、Agent reassignment、checkpoint resume、明示rerun、全終端状態で、
+  同一Taskと別RunID、actual assignee、Run Event、owner reloadを確認する。Browser trace、Dream、IdleChat、
+  background executionの正規routeが同じTask／Run契約を使い、Viewer Task detailからRun履歴とreceiptを
+  確認できることを配備後に検証する。
+- source、artifact、active config、user service PID、listener、readiness、正規Gateway route、実Actorの
+  user-visible resultを一つの証拠鎖で照合する。全Identity移行のfull restorecheckは最終Stepへdeferし、
+  Step 10では対象routeとmigration／rollbackを検証する。
+- production cutover成功後、Step 10 one-shot migration sourceをproduction source treeから削除し、
+  rollbackに必要な旧／新runtime、writer-stopped snapshot、固定Check Plan、dry-run／apply／deployment
+  receiptを別filesystemのrecovery artifactとして保持する。architecture testはone-shot sourceの再混入、
+  `ParentRunID`、`TraceRunID`、`GenerationID`、`SubagentID`、legacy JSON key、Task由来RunIDを拒否する。
+
 ---
 
 ### Step 11: ActionIDとAttemptID

@@ -293,3 +293,249 @@ func TestManagerRejectsInvalidReferencesAndBlankAssignmentBeforeSaving(t *testin
 		t.Fatalf("invalid records changed task: before=%#v after=%#v", before, after)
 	}
 }
+
+func TestManagerRunLifecycleCreatesDistinctRunsAndClosesCurrentRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	now := time.Date(2026, 9, 5, 4, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "run lifecycle", Route: domaintask.RouteGeneral, Assignee: "Mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(ctx, task.TaskID); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].StartReason != domaintask.RunStartReasonFirst || runs[0].Status != domaintask.RunStatusRunning {
+		t.Fatalf("first runs = %#v err=%v", runs, err)
+	}
+	firstRunID := runs[0].RunID
+	if _, err := manager.Wait(ctx, task.TaskID, "checkpoint"); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if _, err := manager.Resume(ctx, task.TaskID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if _, err := manager.StartWithReason(ctx, task.TaskID, domaintask.RunStartReasonCheckpointResume); err != nil {
+		t.Fatalf("checkpoint StartWithReason: %v", err)
+	}
+	runs, err = manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("runs after resume = %#v err=%v", runs, err)
+	}
+	var first, resumed *domaintask.Run
+	for index := range runs {
+		item := runs[index]
+		switch item.StartReason {
+		case domaintask.RunStartReasonFirst:
+			first = &item
+		case domaintask.RunStartReasonCheckpointResume:
+			resumed = &item
+		}
+	}
+	if first == nil || resumed == nil || first.RunID == resumed.RunID || first.RunID != firstRunID || first.Status != domaintask.RunStatusWaiting || resumed.Status != domaintask.RunStatusRunning {
+		t.Fatalf("run history = %#v", runs)
+	}
+	if _, err := manager.Succeed(ctx, task.TaskID, "done"); err != nil {
+		t.Fatalf("Succeed: %v", err)
+	}
+	before, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	var terminal *domaintask.Run
+	for index := range before {
+		if before[index].Status == domaintask.RunStatusSucceeded {
+			item := before[index]
+			terminal = &item
+		}
+	}
+	if err != nil || len(before) != 2 || terminal == nil || terminal.CompletedAt == nil {
+		t.Fatalf("terminal runs = %#v err=%v", before, err)
+	}
+	completedAt := *terminal.CompletedAt
+	if _, err := manager.Succeed(ctx, task.TaskID, "same terminal state"); err != nil {
+		t.Fatalf("second Succeed: %v", err)
+	}
+	after, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	var terminalAfter *domaintask.Run
+	for index := range after {
+		if after[index].Status == domaintask.RunStatusSucceeded {
+			item := after[index]
+			terminalAfter = &item
+		}
+	}
+	if err != nil || len(after) != len(before) || terminalAfter == nil || terminalAfter.CompletedAt == nil || !terminalAfter.CompletedAt.Equal(completedAt) {
+		t.Fatalf("terminal run was rewritten: before=%#v after=%#v err=%v", before, after, err)
+	}
+}
+
+func TestManagerAssignmentReassignmentClosesAndReopensRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 5, 0, 0, 0, time.UTC) }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "reassign", Route: domaintask.RouteGeneral, Assignee: "Mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecordAssignment(ctx, task.TaskID, "Shiro", modulecore.NewEventID()); err != nil {
+		t.Fatalf("RecordAssignment: %v", err)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("runs = %#v err=%v", runs, err)
+	}
+	var reassigned, reopened *domaintask.Run
+	for index := range runs {
+		item := runs[index]
+		if item.Status == domaintask.RunStatusReassigned {
+			reassigned = &item
+		}
+		if item.Status == domaintask.RunStatusRunning {
+			reopened = &item
+		}
+	}
+	if reassigned == nil || reassigned.CompletedAt == nil || reopened == nil || reopened.StartReason != domaintask.RunStartReasonAgentReassignment || reopened.Assignee != "Shiro" {
+		t.Fatalf("reassignment runs = %#v", runs)
+	}
+}
+
+func TestManagerStartWithReasonSupportsAllCanonicalReasons(t *testing.T) {
+	reasons := []domaintask.RunStartReason{
+		domaintask.RunStartReasonFirst,
+		domaintask.RunStartReasonProcessRestartResume,
+		domaintask.RunStartReasonLeaseReacquire,
+		domaintask.RunStartReasonAgentReassignment,
+		domaintask.RunStartReasonCheckpointResume,
+		domaintask.RunStartReasonExplicitRerun,
+	}
+	for _, reason := range reasons {
+		t.Logf("reason=%s", reason)
+		store, err := taskpersistence.NewJSONLStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager := New(store, DefaultParallelLimits())
+		manager.now = func() time.Time { return time.Date(2026, 9, 5, 8, 0, 0, 0, time.UTC) }
+		task, err := manager.Create(context.Background(), domaintask.Task{Title: "reason", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reason == domaintask.RunStartReasonFirst {
+			if _, err := manager.StartWithReason(context.Background(), task.TaskID, reason); err != nil {
+				t.Fatalf("StartWithReason(first): %v", err)
+			}
+		} else {
+			if _, err := manager.Start(context.Background(), task.TaskID); err != nil {
+				t.Fatalf("initial Start: %v", err)
+			}
+			if _, err := manager.Wait(context.Background(), task.TaskID, "prepare explicit reason"); err != nil {
+				t.Fatalf("Wait: %v", err)
+			}
+			if _, err := manager.Resume(context.Background(), task.TaskID); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			if _, err := manager.StartWithReason(context.Background(), task.TaskID, reason); err != nil {
+				t.Fatalf("StartWithReason(%s): %v", reason, err)
+			}
+		}
+		runs, err := manager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID, Status: domaintask.RunStatusRunning})
+		if err != nil || len(runs) != 1 || runs[0].StartReason != reason {
+			t.Fatalf("running runs for %s = %#v err=%v", reason, runs, err)
+		}
+	}
+}
+
+func TestManagerExplicitRerunReopensTerminalTaskWithFreshRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC) }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "rerun terminal", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(ctx, task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Succeed(ctx, task.TaskID, "first attempt"); err != nil {
+		t.Fatal(err)
+	}
+	terminal, err := manager.Get(ctx, task.TaskID)
+	if err != nil || terminal.Status != domaintask.StatusSucceeded || terminal.FinishedAt == nil {
+		t.Fatalf("terminal task = %#v err=%v", terminal, err)
+	}
+	firstRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(firstRuns) != 1 {
+		t.Fatalf("first runs = %#v err=%v", firstRuns, err)
+	}
+	firstRunID := firstRuns[0].RunID
+
+	reopened, err := manager.StartWithReason(ctx, task.TaskID, domaintask.RunStartReasonExplicitRerun)
+	if err != nil {
+		t.Fatalf("explicit rerun: %v", err)
+	}
+	if reopened.Status != domaintask.StatusRunning || reopened.FinishedAt != nil || reopened.WaitingReason != "" {
+		t.Fatalf("reopened task = %#v", reopened)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil || len(runs) != 2 {
+		t.Fatalf("rerun history = %#v err=%v", runs, err)
+	}
+	var fresh *domaintask.Run
+	for index := range runs {
+		if runs[index].RunID != firstRunID {
+			item := runs[index]
+			fresh = &item
+		}
+	}
+	if fresh == nil || fresh.Status != domaintask.RunStatusRunning || fresh.StartReason != domaintask.RunStartReasonExplicitRerun {
+		t.Fatalf("fresh rerun = %#v", fresh)
+	}
+}
+
+func TestManagerNonExplicitReasonsCannotReopenTerminalTask(t *testing.T) {
+	reasons := []domaintask.RunStartReason{
+		domaintask.RunStartReasonProcessRestartResume,
+		domaintask.RunStartReasonLeaseReacquire,
+		domaintask.RunStartReasonAgentReassignment,
+		domaintask.RunStartReasonCheckpointResume,
+	}
+	for _, reason := range reasons {
+		store, err := taskpersistence.NewJSONLStore(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager := New(store, DefaultParallelLimits())
+		manager.now = func() time.Time { return time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC) }
+		task, err := manager.Create(context.Background(), domaintask.Task{Title: "terminal reason", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.Start(context.Background(), task.TaskID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.Succeed(context.Background(), task.TaskID, "closed"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := manager.StartWithReason(context.Background(), task.TaskID, reason); err == nil {
+			t.Fatalf("terminal task reopened for reason %s", reason)
+		}
+		persisted, err := manager.Get(context.Background(), task.TaskID)
+		if err != nil || persisted.Status != domaintask.StatusSucceeded || persisted.FinishedAt == nil {
+			t.Fatalf("terminal task changed for reason %s: %#v err=%v", reason, persisted, err)
+		}
+	}
+}

@@ -20,6 +20,9 @@ type Store interface {
 	SaveTask(context.Context, domaintask.Task) error
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListTasks(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+	SaveRun(context.Context, domaintask.Run) error
+	GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
+	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	SaveContext(context.Context, domaintask.SharedRoleContext) error
 	GetContext(context.Context, modulecore.TaskID) (domaintask.SharedRoleContext, error)
 	SaveNotification(context.Context, domaintask.Notification) error
@@ -128,6 +131,7 @@ func (m *Manager) RecordAssignment(ctx context.Context, taskID modulecore.TaskID
 	if err != nil {
 		return domaintask.Task{}, err
 	}
+	assigneeChanged := task.Assignee != assignee
 	task.Assignee = assignee
 	task.AssignmentEventID = eventID
 	task.UpdatedAt = m.now()
@@ -137,6 +141,11 @@ func (m *Manager) RecordAssignment(ctx context.Context, taskID modulecore.TaskID
 	if err := m.store.SaveTask(ctx, task); err != nil {
 		return domaintask.Task{}, err
 	}
+	if assigneeChanged && task.Status == domaintask.StatusRunning {
+		if err := m.reassignCurrentRun(ctx, taskID, assignee); err != nil {
+			return domaintask.Task{}, err
+		}
+	}
 	return task, nil
 }
 
@@ -145,18 +154,112 @@ func (m *Manager) Queue(ctx context.Context, taskID modulecore.TaskID) (domainta
 }
 
 func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	reason := domaintask.RunStartReasonFirst
+	if len(runs) > 0 {
+		reason = domaintask.RunStartReasonExplicitRerun
+	}
+	return m.startWithReason(ctx, taskID, reason)
+}
+
+// StartWithReason starts a fresh Run for an existing Task using an explicit
+// canonical Step10 reason. The first reason is valid only before any Run exists.
+func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
+	return m.startWithReason(ctx, taskID, reason)
+}
+
+func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if !domaintask.ValidRunStartReason(reason) {
+		return domaintask.Task{}, fmt.Errorf("invalid run start reason: %s", reason)
+	}
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, err
 	}
-	allowed, reason, err := m.CanStart(ctx, task)
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
 	if err != nil {
 		return domaintask.Task{}, err
 	}
-	if !allowed {
-		return domaintask.Task{}, fmt.Errorf("%w: %s", ErrParallelLimit, reason)
+	if reason == domaintask.RunStartReasonFirst && len(runs) > 0 {
+		return domaintask.Task{}, fmt.Errorf("first run reason requires no prior runs")
 	}
-	return m.updateStatus(ctx, taskID, domaintask.StatusRunning, "", "", nil)
+	if reason != domaintask.RunStartReasonFirst && len(runs) == 0 {
+		return domaintask.Task{}, fmt.Errorf("run start reason %s requires a prior run", reason)
+	}
+	if domaintask.IsTerminal(task.Status) && reason != domaintask.RunStartReasonExplicitRerun {
+		return domaintask.Task{}, fmt.Errorf("terminal task requires explicit_rerun")
+	}
+	activeRun, err := activeRun(runs)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if activeRun != nil {
+		closeStatus := domaintask.RunStatusInterrupted
+		if reason == domaintask.RunStartReasonAgentReassignment {
+			closeStatus = domaintask.RunStatusReassigned
+		}
+		closed, closeErr := activeRun.Close(closeStatus, m.now(), "run superseded by "+string(reason))
+		if closeErr != nil {
+			return domaintask.Task{}, closeErr
+		}
+		if err := m.store.SaveRun(ctx, closed); err != nil {
+			return domaintask.Task{}, err
+		}
+	}
+	if task.Status != domaintask.StatusRunning {
+		allowed, limitReason, canStartErr := m.CanStart(ctx, task)
+		if canStartErr != nil {
+			return domaintask.Task{}, canStartErr
+		}
+		if !allowed {
+			return domaintask.Task{}, fmt.Errorf("%w: %s", ErrParallelLimit, limitReason)
+		}
+	}
+	var started domaintask.Task
+	if domaintask.IsTerminal(task.Status) {
+		started, err = m.reopenTerminalTask(ctx, task)
+	} else {
+		started, err = m.updateStatus(ctx, taskID, domaintask.StatusRunning, "", "", nil)
+	}
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	run := domaintask.Run{
+		RunID:       modulecore.NewRunID(),
+		TaskID:      taskID,
+		StartReason: reason,
+		Assignee:    started.Assignee,
+		Status:      domaintask.RunStatusRunning,
+		StartedAt:   m.now(),
+	}
+	if err := m.store.SaveRun(ctx, run); err != nil {
+		return domaintask.Task{}, err
+	}
+	return started, nil
+}
+
+func (m *Manager) reopenTerminalTask(ctx context.Context, task domaintask.Task) (domaintask.Task, error) {
+	now := m.now()
+	task.Status = domaintask.StatusRunning
+	task.FinishedAt = nil
+	task.WaitingReason = ""
+	task.UpdatedAt = now
+	if err := task.Validate(); err != nil {
+		return domaintask.Task{}, err
+	}
+	if err := m.store.SaveTask(ctx, task); err != nil {
+		return domaintask.Task{}, err
+	}
+	return task, nil
 }
 
 func (m *Manager) Wait(ctx context.Context, taskID modulecore.TaskID, reason string) (domaintask.Task, error) {
@@ -213,6 +316,9 @@ func (m *Manager) Supersede(ctx context.Context, taskID modulecore.TaskID, repla
 }
 
 func (m *Manager) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, status domaintask.Status, summary, waitingReason string, nextActions []string) (domaintask.Task, error) {
+	if status == domaintask.StatusRunning {
+		return m.Start(ctx, taskID)
+	}
 	return m.updateStatus(ctx, taskID, status, summary, waitingReason, nextActions)
 }
 
@@ -254,6 +360,11 @@ func (m *Manager) updateStatus(ctx context.Context, taskID modulecore.TaskID, st
 	if err := m.store.SaveTask(ctx, task); err != nil {
 		return domaintask.Task{}, err
 	}
+	if closeStatus, shouldClose := runStatusForTaskStatus(status); shouldClose {
+		if err := m.closeCurrentRun(ctx, taskID, closeStatus, strings.TrimSpace(summary)); err != nil {
+			return domaintask.Task{}, err
+		}
+	}
 	if domaintask.ShouldNotify(task) {
 		if err := m.store.SaveNotification(ctx, domaintask.NewNotification(task, now)); err != nil {
 			return domaintask.Task{}, err
@@ -287,6 +398,14 @@ func (m *Manager) Context(ctx context.Context, taskID modulecore.TaskID) (domain
 
 func (m *Manager) Notifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {
 	return m.store.ListNotifications(ctx, limit, interruptOnly)
+}
+
+func (m *Manager) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	return m.store.ListRuns(ctx, filter)
+}
+
+func (m *Manager) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
+	return m.store.GetRun(ctx, runID)
 }
 
 func (m *Manager) CanStart(ctx context.Context, candidate domaintask.Task) (bool, string, error) {
@@ -366,4 +485,87 @@ func (m *Manager) validateRelationships(ctx context.Context, value domaintask.Ta
 		}
 	}
 	return nil
+}
+
+func runStatusForTaskStatus(status domaintask.Status) (domaintask.RunStatus, bool) {
+	switch status {
+	case domaintask.StatusQueued:
+		return domaintask.RunStatusInterrupted, true
+	case domaintask.StatusWaiting:
+		return domaintask.RunStatusWaiting, true
+	case domaintask.StatusBlocked:
+		return domaintask.RunStatusBlocked, true
+	case domaintask.StatusFailed:
+		return domaintask.RunStatusFailed, true
+	case domaintask.StatusSucceeded:
+		return domaintask.RunStatusSucceeded, true
+	case domaintask.StatusCancelled:
+		return domaintask.RunStatusCancelled, true
+	case domaintask.StatusSuperseded:
+		return domaintask.RunStatusSuperseded, true
+	default:
+		return "", false
+	}
+}
+
+func activeRun(runs []domaintask.Run) (*domaintask.Run, error) {
+	var active *domaintask.Run
+	for index := range runs {
+		if !runs[index].IsActive() {
+			continue
+		}
+		if active != nil {
+			return nil, fmt.Errorf("task has multiple active runs")
+		}
+		candidate := runs[index]
+		active = &candidate
+	}
+	return active, nil
+}
+
+func (m *Manager) closeCurrentRun(ctx context.Context, taskID modulecore.TaskID, status domaintask.RunStatus, summary string) error {
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID, Status: domaintask.RunStatusRunning})
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+	if len(runs) > 1 {
+		return fmt.Errorf("task has multiple active runs")
+	}
+	closed, err := runs[0].Close(status, m.now(), summary)
+	if err != nil {
+		return err
+	}
+	return m.store.SaveRun(ctx, closed)
+}
+
+func (m *Manager) reassignCurrentRun(ctx context.Context, taskID modulecore.TaskID, assignee string) error {
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID, Status: domaintask.RunStatusRunning})
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+	if len(runs) > 1 {
+		return fmt.Errorf("task has multiple active runs")
+	}
+	now := m.now()
+	closed, err := runs[0].Close(domaintask.RunStatusReassigned, now, "agent reassigned to "+assignee)
+	if err != nil {
+		return err
+	}
+	if err := m.store.SaveRun(ctx, closed); err != nil {
+		return err
+	}
+	return m.store.SaveRun(ctx, domaintask.Run{
+		RunID:       modulecore.NewRunID(),
+		TaskID:      taskID,
+		StartReason: domaintask.RunStartReasonAgentReassignment,
+		Assignee:    assignee,
+		Status:      domaintask.RunStatusRunning,
+		StartedAt:   now,
+	})
 }
