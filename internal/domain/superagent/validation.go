@@ -3,6 +3,8 @@ package superagent
 import (
 	"fmt"
 	"strings"
+
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func ValidateAgentRun(item AgentRun) error {
@@ -113,30 +115,72 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 	if strings.TrimSpace(item.QueueID) == "" {
 		return fmt.Errorf("queue_id is required")
 	}
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if !domaintask.ValidRunStartReason(item.RunStartReason) {
+		return fmt.Errorf("run_start_reason is invalid: %q", item.RunStartReason)
+	}
 	if strings.TrimSpace(item.Goal) == "" {
 		return fmt.Errorf("goal is required")
 	}
 	if strings.TrimSpace(item.Action) == "" {
 		return fmt.Errorf("action is required")
 	}
-	if strings.TrimSpace(item.Status) == "" {
+	status := strings.TrimSpace(item.Status)
+	if status == "" {
 		return fmt.Errorf("status is required")
+	}
+	if !isRunQueueStatus(status) {
+		return fmt.Errorf("status %q is invalid", item.Status)
+	}
+	if item.RunID != "" {
+		if err := item.RunID.Validate(); err != nil {
+			return fmt.Errorf("run_id is invalid: %w", err)
+		}
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
 	}
-	if isRunQueueTerminalStatus(item.Status) && item.CompletedAt.IsZero() {
-		return fmt.Errorf("completed_at is required for terminal run queue item")
+	if (status == "queued" || status == "reserved") && item.RunID != "" {
+		return fmt.Errorf("%s run queue item must not retain run_id", status)
+	}
+	if status == "reserved" || status == "claimed" {
+		if strings.TrimSpace(item.LeaseToken) == "" || item.LeaseUntil.IsZero() || item.ClaimedAt.IsZero() {
+			return fmt.Errorf("%s run queue item requires lease token, lease_until, and claimed_at", status)
+		}
+	}
+	if status == "claimed" && item.RunID == "" {
+		return fmt.Errorf("run_id is required for claimed run queue item")
+	}
+	if isRunQueueTerminalStatus(status) {
+		if status == "blocked" {
+			if item.RunID != "" {
+				return fmt.Errorf("blocked run queue item must not retain run_id")
+			}
+			if strings.TrimSpace(item.Reason) == "" {
+				return fmt.Errorf("reason is required for blocked run queue item")
+			}
+		} else if item.RunID == "" {
+			return fmt.Errorf("run_id is required for terminal run queue item")
+		}
+		if item.CompletedAt.IsZero() {
+			return fmt.Errorf("completed_at is required for terminal run queue item")
+		}
 	}
 	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
 		return fmt.Errorf("attempt_count and checkpoint_revision must be >= 0")
 	}
-	if strings.TrimSpace(item.Status) == "claimed" {
-		if strings.TrimSpace(item.LeaseToken) == "" || item.LeaseUntil.IsZero() || item.ClaimedAt.IsZero() {
-			return fmt.Errorf("claimed run queue item requires lease token, lease_until, and claimed_at")
-		}
-	}
 	return nil
+}
+
+func isRunQueueStatus(status string) bool {
+	switch status {
+	case "queued", "reserved", "claimed", "completed", "failed", "cancelled", "blocked":
+		return true
+	default:
+		return false
+	}
 }
 
 func isAgentRunTerminalStatus(status string) bool {
@@ -159,7 +203,7 @@ func isSubagentTaskTerminalStatus(status string) bool {
 
 func isRunQueueTerminalStatus(status string) bool {
 	switch strings.TrimSpace(status) {
-	case "completed", "failed", "cancelled":
+	case "completed", "failed", "cancelled", "blocked":
 		return true
 	default:
 		return false

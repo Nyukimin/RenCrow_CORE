@@ -9,16 +9,10 @@ import (
 func TestRegisterRoutesRegistersSuperAgentPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Status:           statusHandler(http.StatusOK),
-		Run:              statusHandler(http.StatusCreated),
-		RunPause:         statusHandler(http.StatusAccepted),
-		RunResume:        statusHandler(http.StatusNoContent),
-		RunQueue:         statusHandler(http.StatusPartialContent),
-		RunQueueClaim:    statusHandler(http.StatusResetContent),
-		RunQueueComplete: statusHandler(http.StatusAlreadyReported),
-		SubagentTask:     statusHandler(http.StatusIMUsed),
-		ContextPack:      statusHandler(http.StatusMultiStatus),
-		MessageChannel:   statusHandler(http.StatusBadRequest),
+		Status:         statusHandler(http.StatusOK),
+		RunPause:       statusHandler(http.StatusAccepted),
+		RunResume:      statusHandler(http.StatusNoContent),
+		MessageChannel: statusHandler(http.StatusBadRequest),
 	}})
 
 	tests := []struct {
@@ -26,14 +20,8 @@ func TestRegisterRoutesRegistersSuperAgentPaths(t *testing.T) {
 		want int
 	}{
 		{path: "/viewer/superagent", want: http.StatusOK},
-		{path: "/viewer/superagent/runs", want: http.StatusCreated},
 		{path: "/viewer/superagent/runs/pause", want: http.StatusAccepted},
 		{path: "/viewer/superagent/runs/resume", want: http.StatusNoContent},
-		{path: "/viewer/superagent/run-queue", want: http.StatusPartialContent},
-		{path: "/viewer/superagent/run-queue/claim", want: http.StatusResetContent},
-		{path: "/viewer/superagent/run-queue/complete", want: http.StatusAlreadyReported},
-		{path: "/viewer/superagent/subagent-tasks", want: http.StatusIMUsed},
-		{path: "/viewer/superagent/context-packs", want: http.StatusMultiStatus},
 		{path: "/viewer/superagent/message-channels", want: http.StatusBadRequest},
 	}
 
@@ -43,6 +31,33 @@ func TestRegisterRoutesRegistersSuperAgentPaths(t *testing.T) {
 			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
 			if rec.Code != tt.want {
 				t.Fatalf("status=%d want=%d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+func TestRegisterRoutesOmitsProjectionMutationRoutes(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterRoutes(mux, Dependencies{Routes: Routes{
+		Status:         statusHandler(http.StatusOK),
+		RunPause:       statusHandler(http.StatusAccepted),
+		RunResume:      statusHandler(http.StatusNoContent),
+		MessageChannel: statusHandler(http.StatusBadRequest),
+	}})
+
+	for _, path := range []string{
+		"/viewer/superagent/runs",
+		"/viewer/superagent/run-queue",
+		"/viewer/superagent/run-queue/claim",
+		"/viewer/superagent/run-queue/complete",
+		"/viewer/superagent/subagent-tasks",
+		"/viewer/superagent/context-packs",
+	} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("status=%d want=%d", rec.Code, http.StatusNotFound)
 			}
 		})
 	}

@@ -14,6 +14,7 @@ import (
 var (
 	ErrNotFound      = domaintask.ErrNotFound
 	ErrParallelLimit = errors.New("parallel limit exceeded")
+	ErrRunConflict   = errors.New("run state conflict")
 )
 
 type Store interface {
@@ -165,42 +166,52 @@ func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domainta
 	if len(runs) > 0 {
 		reason = domaintask.RunStartReasonExplicitRerun
 	}
-	return m.startWithReason(ctx, taskID, reason)
+	started, _, err := m.startWithReason(ctx, taskID, reason)
+	return started, err
 }
 
 // StartWithReason starts a fresh Run for an existing Task using an explicit
 // canonical Step10 reason. The first reason is valid only before any Run exists.
 func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
-	return m.startWithReason(ctx, taskID, reason)
+	started, _, err := m.startWithReason(ctx, taskID, reason)
+	return started, err
 }
 
-func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
+// StartRunWithReason starts a fresh canonical Run and returns the exact Run
+// persisted for the Task. Callers that need to hand the newly issued Run to a
+// queue or orchestrator must use this method rather than listing runs again.
+func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
+	_, run, err := m.startWithReason(ctx, taskID, reason)
+	return run, err
+}
+
+func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, domaintask.Run, error) {
 	if err := taskID.Validate(); err != nil {
-		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
 	if !domaintask.ValidRunStartReason(reason) {
-		return domaintask.Task{}, fmt.Errorf("invalid run start reason: %s", reason)
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("invalid run start reason: %s", reason)
 	}
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
-		return domaintask.Task{}, err
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
 	if err != nil {
-		return domaintask.Task{}, err
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	if reason == domaintask.RunStartReasonFirst && len(runs) > 0 {
-		return domaintask.Task{}, fmt.Errorf("first run reason requires no prior runs")
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("first run reason requires no prior runs")
 	}
 	if reason != domaintask.RunStartReasonFirst && len(runs) == 0 {
-		return domaintask.Task{}, fmt.Errorf("run start reason %s requires a prior run", reason)
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("run start reason %s requires a prior run", reason)
 	}
 	if domaintask.IsTerminal(task.Status) && reason != domaintask.RunStartReasonExplicitRerun {
-		return domaintask.Task{}, fmt.Errorf("terminal task requires explicit_rerun")
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("terminal task requires explicit_rerun")
 	}
 	activeRun, err := activeRun(runs)
 	if err != nil {
-		return domaintask.Task{}, err
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	if activeRun != nil {
 		closeStatus := domaintask.RunStatusInterrupted
@@ -209,19 +220,19 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 		}
 		closed, closeErr := activeRun.Close(closeStatus, m.now(), "run superseded by "+string(reason))
 		if closeErr != nil {
-			return domaintask.Task{}, closeErr
+			return domaintask.Task{}, domaintask.Run{}, closeErr
 		}
 		if err := m.store.SaveRun(ctx, closed); err != nil {
-			return domaintask.Task{}, err
+			return domaintask.Task{}, domaintask.Run{}, err
 		}
 	}
 	if task.Status != domaintask.StatusRunning {
 		allowed, limitReason, canStartErr := m.CanStart(ctx, task)
 		if canStartErr != nil {
-			return domaintask.Task{}, canStartErr
+			return domaintask.Task{}, domaintask.Run{}, canStartErr
 		}
 		if !allowed {
-			return domaintask.Task{}, fmt.Errorf("%w: %s", ErrParallelLimit, limitReason)
+			return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("%w: %s", ErrParallelLimit, limitReason)
 		}
 	}
 	var started domaintask.Task
@@ -231,7 +242,7 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 		started, err = m.updateStatus(ctx, taskID, domaintask.StatusRunning, "", "", nil)
 	}
 	if err != nil {
-		return domaintask.Task{}, err
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	run := domaintask.Run{
 		RunID:       modulecore.NewRunID(),
@@ -242,9 +253,9 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 		StartedAt:   m.now(),
 	}
 	if err := m.store.SaveRun(ctx, run); err != nil {
-		return domaintask.Task{}, err
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
-	return started, nil
+	return started, run, nil
 }
 
 func (m *Manager) reopenTerminalTask(ctx context.Context, task domaintask.Task) (domaintask.Task, error) {
@@ -406,6 +417,39 @@ func (m *Manager) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]
 
 func (m *Manager) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
 	return m.store.GetRun(ctx, runID)
+}
+
+// InterruptRun closes exactly one issued Run without changing its Task. It is
+// used when a downstream lease/queue CAS loses the reservation after the Task
+// owner has already persisted a new canonical Run.
+func (m *Manager) InterruptRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, summary string) (domaintask.Run, error) {
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := runID.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("run_id is invalid: %w", err)
+	}
+	run, err := m.store.GetRun(ctx, runID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if run.TaskID != taskID {
+		return domaintask.Run{}, fmt.Errorf("%w: run %s belongs to task %s, want %s", ErrRunConflict, runID, run.TaskID, taskID)
+	}
+	if run.Status == domaintask.RunStatusInterrupted {
+		return run, nil
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		return domaintask.Run{}, fmt.Errorf("%w: run %s is already terminal with status %s", ErrRunConflict, runID, run.Status)
+	}
+	closed, err := run.Close(domaintask.RunStatusInterrupted, m.now(), strings.TrimSpace(summary))
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if err := m.store.SaveRun(ctx, closed); err != nil {
+		return domaintask.Run{}, err
+	}
+	return closed, nil
 }
 
 func (m *Manager) CanStart(ctx context.Context, candidate domaintask.Task) (bool, string, error) {

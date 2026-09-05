@@ -55,6 +55,37 @@ func canonicalClientTestRunID(t *testing.T, value string) string {
 	return raw
 }
 
+func canonicalClientTestRunQueueItem(t *testing.T, queueID, status string, now time.Time) RunQueueItem {
+	t.Helper()
+	item := RunQueueItem{
+		QueueID:        queueID,
+		TaskID:         canonicalClientTestTaskID(t, queueID+"-task"),
+		RunStartReason: "checkpoint_resume",
+		Goal:           "manual ledger test",
+		Action:         "resume",
+		Status:         status,
+		CreatedAt:      now,
+	}
+	switch status {
+	case "reserved", "claimed":
+		item.ClaimedAt = now
+		item.LeaseToken = "lease-token"
+		item.LeaseUntil = now.Add(time.Minute)
+	}
+	switch status {
+	case "claimed", "completed", "failed", "cancelled":
+		item.RunID = canonicalClientTestRunID(t, queueID+"-run")
+	}
+	switch status {
+	case "completed", "failed", "cancelled", "blocked":
+		item.CompletedAt = now.Add(time.Minute)
+	}
+	if status == "failed" || status == "blocked" {
+		item.Reason = "ledger result"
+	}
+	return item
+}
+
 func newNoRequestClient(t *testing.T) (*Client, *bool, func()) {
 	t.Helper()
 	called := false
@@ -132,8 +163,8 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 			name: "duplicate run queue",
 			resp: SuperAgentStatus{
 				RunQueue: []RunQueueItem{
-					{QueueID: "rq_1", Status: "queued", CreatedAt: now},
-					{QueueID: "rq_1", Status: "completed", CreatedAt: now, CompletedAt: now.Add(time.Minute)},
+					canonicalClientTestRunQueueItem(t, "rq_1", "queued", now),
+					canonicalClientTestRunQueueItem(t, "rq_1", "completed", now),
 				},
 			},
 			want: "duplicate run_queue",
@@ -302,12 +333,20 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "terminal queue missing completed_at",
-			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueID: "rq_1", Status: "completed", CreatedAt: now}}},
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "completed", now)
+				item.CompletedAt = time.Time{}
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
 			want: "terminal run_queue",
 		},
 		{
 			name: "queue missing created at",
-			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueID: "rq_1", Status: "queued"}}},
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "queued", now)
+				item.CreatedAt = time.Time{}
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
 			want: "missing created_at",
 		},
 		{
@@ -316,8 +355,39 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 			want: "invalid run_queue status",
 		},
 		{
+			name: "queued queue retains run id",
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "queued", now)
+				item.RunID = canonicalClientTestRunID(t, "rq-queued-run")
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
+			want: "must not retain run_id",
+		},
+		{
+			name: "reserved queue retains run id",
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "reserved", now)
+				item.RunID = canonicalClientTestRunID(t, "rq-reserved-run")
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
+			want: "must not retain run_id",
+		},
+		{
+			name: "blocked queue retains run id",
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "blocked", now)
+				item.RunID = canonicalClientTestRunID(t, "rq-blocked-run")
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
+			want: "must not retain run_id",
+		},
+		{
 			name: "failed queue missing reason",
-			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueID: "rq_1", Status: "failed", CreatedAt: now, CompletedAt: now.Add(time.Minute)}}},
+			resp: func() SuperAgentStatus {
+				item := canonicalClientTestRunQueueItem(t, "rq_1", "failed", now)
+				item.Reason = ""
+				return SuperAgentStatus{RunQueue: []RunQueueItem{item}}
+			}(),
 			want: "failed run_queue",
 		},
 		{
@@ -362,6 +432,8 @@ func TestSuperAgentStatusRejectsLegacySubagentFields(t *testing.T) {
 		{name: "parent run id", body: `{"subagent_tasks":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
 		{name: "agent type", body: `{"subagent_tasks":[{"agent_type":"Worker"}]}`, want: `unknown field "agent_type"`},
 		{name: "agent run parent id", body: `{"agent_runs":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
+		{name: "run queue legacy parent run id", body: `{"run_queue":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
+		{name: "run queue unknown field", body: `{"run_queue":[{"future_run_field":"value"}]}`, want: `unknown field "future_run_field"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -382,6 +454,32 @@ func TestSuperAgentStatusRejectsLegacySubagentFields(t *testing.T) {
 				t.Fatalf("SuperAgentStatus() error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestSuperAgentStatusAcceptsCanonicalRunQueueLifecycle(t *testing.T) {
+	now := time.Date(2026, 5, 20, 4, 0, 0, 0, time.UTC)
+	items := make([]RunQueueItem, 0, 7)
+	for _, status := range []string{"queued", "reserved", "claimed", "completed", "failed", "cancelled", "blocked"} {
+		items = append(items, canonicalClientTestRunQueueItem(t, "rq-"+status, status, now))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/viewer/superagent" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(SuperAgentStatus{RunQueue: items})
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.SuperAgentStatus(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("SuperAgentStatus() error = %v", err)
+	}
+	if len(status.RunQueue) != len(items) {
+		t.Fatalf("run queue length=%d, want %d", len(status.RunQueue), len(items))
 	}
 }
 
@@ -723,422 +821,6 @@ func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 			_, err = client.RuntimeConfig(context.Background())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("RuntimeConfig() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestCreateAgentRun(t *testing.T) {
-	taskID := canonicalClientTestTaskID(t, "create-task")
-	runID := canonicalClientTestRunID(t, "create-run")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		var item AgentRun
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			t.Fatal(err)
-		}
-		if item.RunID != runID || item.TaskID != taskID || item.AgentType != "LeadAgent" {
-			t.Fatalf("payload=%#v", item)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.CreateAgentRun(context.Background(), AgentRun{
-		RunID:     runID,
-		TaskID:    taskID,
-		AgentType: "LeadAgent",
-		Status:    "running",
-		StartedAt: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("CreateAgentRun() error = %v", err)
-	}
-}
-
-func TestCreateAgentRunRejectsInvalidRequest(t *testing.T) {
-	tests := []struct {
-		name string
-		item AgentRun
-		want string
-	}{
-		{
-			name: "missing run id",
-			item: AgentRun{AgentType: "LeadAgent", Status: "running"},
-			want: "missing run_id",
-		},
-		{
-			name: "missing agent type",
-			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-agent-type"), TaskID: canonicalClientTestTaskID(t, "missing-agent-type"), Status: "running"},
-			want: "missing agent_type",
-		},
-		{
-			name: "missing status",
-			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-status"), TaskID: canonicalClientTestTaskID(t, "missing-status"), AgentType: "LeadAgent"},
-			want: "missing status",
-		},
-		{
-			name: "missing task id",
-			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-task-id"), AgentType: "LeadAgent", Status: "running"},
-			want: "missing task_id",
-		},
-		{
-			name: "legacy run id",
-			item: AgentRun{RunID: "run_1", TaskID: canonicalClientTestTaskID(t, "legacy-run-id"), AgentType: "LeadAgent", Status: "running"},
-			want: "invalid run_id",
-		},
-		{
-			name: "legacy task id",
-			item: AgentRun{RunID: canonicalClientTestRunID(t, "legacy-task-id"), TaskID: "task_1", AgentType: "LeadAgent", Status: "running"},
-			want: "invalid task_id",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				called = true
-				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = client.CreateAgentRun(context.Background(), tt.item)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("CreateAgentRun() error = %v, want %q", err, tt.want)
-			}
-			if called {
-				t.Fatal("server was called for invalid request")
-			}
-		})
-	}
-}
-
-func TestRunQueueClientFlow(t *testing.T) {
-	var paths []string
-	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		paths = append(paths, r.URL.Path)
-		switch r.URL.Path {
-		case "/viewer/superagent/run-queue":
-			if r.Method != http.MethodPost {
-				t.Fatalf("unexpected method: %s", r.Method)
-			}
-			var item RunQueueItem
-			if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-				t.Fatal(err)
-			}
-			if item.QueueID != "rq_1" || item.Action != "resume" {
-				t.Fatalf("payload=%#v", item)
-			}
-			w.WriteHeader(http.StatusOK)
-		case "/viewer/superagent/run-queue/claim":
-			if r.Method != http.MethodPost {
-				t.Fatalf("unexpected method: %s", r.Method)
-			}
-			_ = json.NewEncoder(w).Encode(RunQueueClaimResponse{
-				Claimed: true,
-				Item:    RunQueueItem{QueueID: "rq_1", Status: "claimed", CreatedAt: now},
-			})
-		case "/viewer/superagent/run-queue/complete":
-			if r.Method != http.MethodPost {
-				t.Fatalf("unexpected method: %s", r.Method)
-			}
-			var req RunQueueCompleteRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatal(err)
-			}
-			if req.QueueID != "rq_1" || req.Status != "completed" {
-				t.Fatalf("payload=%#v", req)
-			}
-			_ = json.NewEncoder(w).Encode(RunQueueCompleteResponse{
-				Completed: true,
-				Item:      RunQueueItem{QueueID: "rq_1", Status: "completed", CreatedAt: now, CompletedAt: now.Add(time.Minute)},
-			})
-		default:
-			t.Fatalf("unexpected path: %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.CreateRunQueueItem(context.Background(), RunQueueItem{
-		QueueID:   "rq_1",
-		RunID:     "run_1",
-		Goal:      "manual ledger test",
-		Action:    "resume",
-		Status:    "queued",
-		CreatedAt: time.Now().UTC(),
-	}); err != nil {
-		t.Fatalf("CreateRunQueueItem() error = %v", err)
-	}
-	claim, err := client.ClaimRunQueueItem(context.Background())
-	if err != nil {
-		t.Fatalf("ClaimRunQueueItem() error = %v", err)
-	}
-	if !claim.Claimed || claim.Item.Status != "claimed" {
-		t.Fatalf("claim=%#v", claim)
-	}
-	complete, err := client.CompleteRunQueueItem(context.Background(), RunQueueCompleteRequest{
-		QueueID: "rq_1",
-		Status:  "completed",
-		Reason:  "done",
-	})
-	if err != nil {
-		t.Fatalf("CompleteRunQueueItem() error = %v", err)
-	}
-	if !complete.Completed || complete.Item.Status != "completed" {
-		t.Fatalf("complete=%#v", complete)
-	}
-	if len(paths) != 3 {
-		t.Fatalf("paths=%#v", paths)
-	}
-}
-
-func TestCreateRunQueueItemDefaultsQueuedStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/run-queue" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		var item RunQueueItem
-		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-			t.Fatal(err)
-		}
-		if item.QueueID != "rq_1" || item.Status != "queued" {
-			t.Fatalf("payload=%#v", item)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := client.CreateRunQueueItem(context.Background(), RunQueueItem{
-		QueueID: "rq_1",
-		RunID:   "run_1",
-		Goal:    "manual ledger test",
-		Action:  "resume",
-	}); err != nil {
-		t.Fatalf("CreateRunQueueItem() error = %v", err)
-	}
-}
-
-func TestCreateRunQueueItemRejectsInvalidRequest(t *testing.T) {
-	tests := []struct {
-		name string
-		item RunQueueItem
-		want string
-	}{
-		{
-			name: "missing queue id",
-			item: RunQueueItem{Goal: "manual ledger test", Action: "resume", Status: "queued"},
-			want: "missing queue_id",
-		},
-		{
-			name: "missing goal",
-			item: RunQueueItem{QueueID: "rq_1", Action: "resume", Status: "queued"},
-			want: "missing goal",
-		},
-		{
-			name: "missing action",
-			item: RunQueueItem{QueueID: "rq_1", Goal: "manual ledger test", Status: "queued"},
-			want: "missing action",
-		},
-		{
-			name: "non queued status",
-			item: RunQueueItem{QueueID: "rq_1", Goal: "manual ledger test", Action: "resume", Status: "claimed"},
-			want: "status must be queued",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			called := false
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				called = true
-				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = client.CreateRunQueueItem(context.Background(), tt.item)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("CreateRunQueueItem() error = %v, want %q", err, tt.want)
-			}
-			if called {
-				t.Fatal("server was called for invalid request")
-			}
-		})
-	}
-}
-
-func TestCompleteRunQueueItemDefaultsCompletedStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/run-queue/complete" {
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-		var req RunQueueCompleteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Fatal(err)
-		}
-		if req.QueueID != "rq_1" || req.Status != "completed" {
-			t.Fatalf("payload=%#v", req)
-		}
-		_ = json.NewEncoder(w).Encode(RunQueueCompleteResponse{
-			Completed: true,
-			Item:      RunQueueItem{QueueID: "rq_1", Status: "completed", CreatedAt: time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC), CompletedAt: time.Date(2026, 5, 20, 5, 41, 0, 0, time.UTC)},
-		})
-	}))
-	defer server.Close()
-	client, err := New(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp, err := client.CompleteRunQueueItem(context.Background(), RunQueueCompleteRequest{
-		QueueID: "rq_1",
-	})
-	if err != nil {
-		t.Fatalf("CompleteRunQueueItem() error = %v", err)
-	}
-	if !resp.Completed || resp.Item.Status != "completed" {
-		t.Fatalf("response=%#v", resp)
-	}
-}
-
-func TestCompleteRunQueueItemRejectsInvalidRequest(t *testing.T) {
-	tests := []struct {
-		name string
-		req  RunQueueCompleteRequest
-		want string
-	}{
-		{
-			name: "missing queue id",
-			req:  RunQueueCompleteRequest{Status: "completed"},
-			want: "missing queue_id",
-		},
-		{
-			name: "invalid terminal status",
-			req:  RunQueueCompleteRequest{QueueID: "rq_1", Status: "claimed"},
-			want: "status must be completed, failed, or cancelled",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			client, called, cleanup := newNoRequestClient(t)
-			defer cleanup()
-			_, err := client.CompleteRunQueueItem(context.Background(), tt.req)
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("CompleteRunQueueItem() error = %v, want %q", err, tt.want)
-			}
-			if *called {
-				t.Fatalf("CompleteRunQueueItem() sent request for invalid payload")
-			}
-		})
-	}
-}
-
-func TestCompleteRunQueueItemRejectsMalformedResponse(t *testing.T) {
-	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
-	tests := []struct {
-		name string
-		resp RunQueueCompleteResponse
-		want string
-	}{
-		{
-			name: "wrong status",
-			resp: RunQueueCompleteResponse{Completed: true, Item: RunQueueItem{QueueID: "rq_1", Status: "claimed", CreatedAt: now}},
-			want: "status mismatch",
-		},
-		{
-			name: "missing created at",
-			resp: RunQueueCompleteResponse{Completed: true, Item: RunQueueItem{QueueID: "rq_1", Status: "completed", CompletedAt: now.Add(time.Minute)}},
-			want: "missing created_at",
-		},
-		{
-			name: "missing completed at",
-			resp: RunQueueCompleteResponse{Completed: true, Item: RunQueueItem{QueueID: "rq_1", Status: "completed", CreatedAt: now}},
-			want: "missing completed_at",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/run-queue/complete" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(tt.resp)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.CompleteRunQueueItem(context.Background(), RunQueueCompleteRequest{
-				QueueID: "rq_1",
-				Status:  "completed",
-				Reason:  "done",
-			})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("CompleteRunQueueItem() error = %v, want %q", err, tt.want)
-			}
-		})
-	}
-}
-
-func TestClaimRunQueueItemRejectsMalformedResponse(t *testing.T) {
-	tests := []struct {
-		name string
-		resp RunQueueClaimResponse
-		want string
-	}{
-		{
-			name: "claimed without queue id",
-			resp: RunQueueClaimResponse{Claimed: true, Item: RunQueueItem{Status: "claimed"}},
-			want: "without queue_id",
-		},
-		{
-			name: "claimed with wrong status",
-			resp: RunQueueClaimResponse{Claimed: true, Item: RunQueueItem{QueueID: "rq_1", Status: "queued"}},
-			want: "status mismatch",
-		},
-		{
-			name: "claimed missing created at",
-			resp: RunQueueClaimResponse{Claimed: true, Item: RunQueueItem{QueueID: "rq_1", Status: "claimed"}},
-			want: "missing created_at",
-		},
-		{
-			name: "not claimed with claimed item state",
-			resp: RunQueueClaimResponse{Claimed: false, Item: RunQueueItem{QueueID: "rq_1", Status: "claimed"}},
-			want: "not claimed",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/run-queue/claim" {
-					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-				_ = json.NewEncoder(w).Encode(tt.resp)
-			}))
-			defer server.Close()
-			client, err := New(server.URL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = client.ClaimRunQueueItem(context.Background())
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("ClaimRunQueueItem() error = %v, want %q", err, tt.want)
 			}
 		})
 	}
@@ -3966,6 +3648,14 @@ func TestCheckContextBudgetRejectsMalformedResponse(t *testing.T) {
 }
 
 func TestPauseAndResumeRun(t *testing.T) {
+	runID := canonicalClientTestRunID(t, "state-run")
+	taskID := canonicalClientTestTaskID(t, "state-task")
+	queueID := "resume:" + taskID + ":" + runID + ":3"
+	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
+	queueItem := RunQueueItem{
+		QueueID: queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+		Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: queueID, CreatedAt: now,
+	}
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
@@ -3973,33 +3663,38 @@ func TestPauseAndResumeRun(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.RunID != "run_1" {
+		if req.RunID != runID {
 			t.Fatalf("payload=%#v", req)
 		}
-		status := "paused"
-		action := "none"
-		applied := false
-		if r.URL.Path == "/viewer/superagent/runs/resume" {
-			status = "running"
-			action = "resume_marker_cleared"
-			applied = true
+		if r.URL.Path == "/viewer/superagent/runs/pause" {
+			_ = json.NewEncoder(w).Encode(PauseRunResponse{
+				TaskID: modulecore.TaskID(taskID), RunID: modulecore.RunID(runID), Status: "paused", EventID: "evt_pause",
+				RuntimeControlAction: "none",
+			})
+			return
 		}
-		_ = json.NewEncoder(w).Encode(RunStateResponse{RunID: req.RunID, Status: status, EventID: "evt_" + status, RuntimeControlApplied: applied, RuntimeControlAction: action})
+		_ = json.NewEncoder(w).Encode(ResumeRunResponse{
+			TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued", QueueID: queueID, QueueStatus: "queued", QueueItem: queueItem,
+			EventID: "evt_resume", RuntimeControlApplied: true, RuntimeControlAction: "resume_marker_cleared",
+		})
 	}))
 	defer server.Close()
 	client, err := New(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	paused, err := client.PauseRun(context.Background(), "run_1", "pause")
+	paused, err := client.PauseRun(context.Background(), runID, "pause")
 	if err != nil {
 		t.Fatalf("PauseRun() error = %v", err)
 	}
-	resumed, err := client.ResumeRun(context.Background(), "run_1", "resume")
+	resumed, err := client.ResumeRun(context.Background(), runID, "resume")
 	if err != nil {
 		t.Fatalf("ResumeRun() error = %v", err)
 	}
-	if paused.Status != "paused" || resumed.Status != "running" || !resumed.RuntimeControlApplied || resumed.RuntimeControlAction != "resume_marker_cleared" {
+	if paused.TaskID != modulecore.TaskID(taskID) || paused.RunID != modulecore.RunID(runID) || paused.Status != "paused" {
+		t.Fatalf("pause response=%#v", paused)
+	}
+	if resumed.TaskID != modulecore.TaskID(taskID) || resumed.SourceRunID != modulecore.RunID(runID) || resumed.RunID != "" || resumed.Status != "queued" || resumed.QueueID != queueID || resumed.QueueStatus != "queued" || !resumed.RuntimeControlApplied || resumed.RuntimeControlAction != "resume_marker_cleared" {
 		t.Fatalf("statuses paused=%#v resumed=%#v", paused, resumed)
 	}
 	if len(paths) != 2 || paths[0] != "/viewer/superagent/runs/pause" || paths[1] != "/viewer/superagent/runs/resume" {
@@ -4016,36 +3711,52 @@ func TestPauseAndResumeRunRejectInvalidRequest(t *testing.T) {
 	if _, err := client.ResumeRun(context.Background(), " ", "resume"); err == nil || !strings.Contains(err.Error(), "missing run_id") {
 		t.Fatalf("ResumeRun() error = %v, want missing run_id", err)
 	}
+	if _, err := client.ResumeRun(context.Background(), "run_1", "resume"); err == nil || !strings.Contains(err.Error(), "invalid run_id") {
+		t.Fatalf("ResumeRun() error = %v, want invalid run_id", err)
+	}
 	if *called {
 		t.Fatal("server was called for invalid request")
 	}
 }
 
 func TestPauseRunRejectsMalformedResponse(t *testing.T) {
+	runID := canonicalClientTestRunID(t, "pause-response-run")
+	taskID := canonicalClientTestTaskID(t, "pause-response-task")
+	otherRunID := canonicalClientTestRunID(t, "pause-response-other-run")
 	tests := []struct {
 		name string
-		resp RunStateResponse
+		resp PauseRunResponse
 		want string
 	}{
 		{
 			name: "wrong run id",
-			resp: RunStateResponse{RunID: "other", Status: "paused", EventID: "evt_1", RuntimeControlAction: "none"},
+			resp: PauseRunResponse{TaskID: modulecore.TaskID(taskID), RunID: modulecore.RunID(otherRunID), Status: "paused", EventID: "evt_1", RuntimeControlAction: "none"},
 			want: "run_id mismatch",
 		},
 		{
 			name: "wrong status",
-			resp: RunStateResponse{RunID: "run_1", Status: "running", EventID: "evt_1", RuntimeControlAction: "none"},
+			resp: PauseRunResponse{TaskID: modulecore.TaskID(taskID), RunID: modulecore.RunID(runID), Status: "running", EventID: "evt_1", RuntimeControlAction: "none"},
 			want: "status mismatch",
 		},
 		{
 			name: "missing event",
-			resp: RunStateResponse{RunID: "run_1", Status: "paused", RuntimeControlAction: "none"},
+			resp: PauseRunResponse{TaskID: modulecore.TaskID(taskID), RunID: modulecore.RunID(runID), Status: "paused", RuntimeControlAction: "none"},
 			want: "missing event_id",
 		},
 		{
 			name: "applied none",
-			resp: RunStateResponse{RunID: "run_1", Status: "paused", EventID: "evt_1", RuntimeControlApplied: true, RuntimeControlAction: "none"},
+			resp: PauseRunResponse{TaskID: modulecore.TaskID(taskID), RunID: modulecore.RunID(runID), Status: "paused", EventID: "evt_1", RuntimeControlApplied: true, RuntimeControlAction: "none"},
 			want: "action none",
+		},
+		{
+			name: "missing task id",
+			resp: PauseRunResponse{RunID: modulecore.RunID(runID), Status: "paused", EventID: "evt_1", RuntimeControlAction: "none"},
+			want: "task_id",
+		},
+		{
+			name: "invalid task id",
+			resp: PauseRunResponse{TaskID: "task_1", RunID: modulecore.RunID(runID), Status: "paused", EventID: "evt_1", RuntimeControlAction: "none"},
+			want: "task_id",
 		},
 	}
 	for _, tt := range tests {
@@ -4061,7 +3772,7 @@ func TestPauseRunRejectsMalformedResponse(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = client.PauseRun(context.Background(), "run_1", "pause")
+			_, err = client.PauseRun(context.Background(), runID, "pause")
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("PauseRun() error = %v, want %q", err, tt.want)
 			}
@@ -4070,13 +3781,24 @@ func TestPauseRunRejectsMalformedResponse(t *testing.T) {
 }
 
 func TestResumeRunRejectsMalformedResponse(t *testing.T) {
+	runID := canonicalClientTestRunID(t, "resume-response-run")
+	taskID := canonicalClientTestTaskID(t, "resume-response-task")
+	queueID := "resume:" + taskID + ":" + runID + ":3"
+	queueItem := RunQueueItem{
+		QueueID: queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+		Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: queueID, CreatedAt: time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC),
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs/resume" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(RunStateResponse{
-			RunID:                "run_1",
-			Status:               "running",
+		_ = json.NewEncoder(w).Encode(ResumeRunResponse{
+			TaskID:               modulecore.TaskID(taskID),
+			SourceRunID:          modulecore.RunID(runID),
+			Status:               "queued",
+			QueueID:              queueID,
+			QueueStatus:          "queued",
+			QueueItem:            queueItem,
 			EventID:              "evt_1",
 			RuntimeControlAction: "cancel_requested",
 		})
@@ -4086,9 +3808,86 @@ func TestResumeRunRejectsMalformedResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.ResumeRun(context.Background(), "run_1", "resume")
+	_, err = client.ResumeRun(context.Background(), runID, "resume")
 	if err == nil || !strings.Contains(err.Error(), "runtime_control_action mismatch") {
 		t.Fatalf("ResumeRun() error = %v, want runtime_control_action mismatch", err)
+	}
+}
+
+func TestResumeRunRejectsUnboundQueueReceipt(t *testing.T) {
+	runID := canonicalClientTestRunID(t, "queue-binding-run")
+	taskID := canonicalClientTestTaskID(t, "queue-binding-task")
+	otherRunID := canonicalClientTestRunID(t, "queue-binding-other-run")
+	validQueueID := "resume:" + taskID + ":" + runID + ":3"
+	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		queueID        string
+		idempotencyKey string
+		want           string
+	}{
+		{
+			name:           "source binding",
+			queueID:        "resume:" + taskID + ":" + otherRunID + ":3",
+			idempotencyKey: "resume:" + taskID + ":" + otherRunID + ":3",
+			want:           "queue_id is not bound",
+		},
+		{
+			name:           "idempotency binding",
+			queueID:        validQueueID,
+			idempotencyKey: "resume:other",
+			want:           "idempotency_key mismatch",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs/resume" {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				queueItem := RunQueueItem{
+					QueueID: tt.queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+					Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: tt.idempotencyKey, CreatedAt: now,
+				}
+				_ = json.NewEncoder(w).Encode(ResumeRunResponse{
+					TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued",
+					QueueID: tt.queueID, QueueStatus: "queued", QueueItem: queueItem, EventID: "evt_1", RuntimeControlAction: "none",
+				})
+			}))
+			defer server.Close()
+			client, err := New(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.ResumeRun(context.Background(), runID, "resume")
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ResumeRun() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestResumeRunRejectsMissingQueueItem(t *testing.T) {
+	runID := canonicalClientTestRunID(t, "missing-queue-item-run")
+	taskID := canonicalClientTestTaskID(t, "missing-queue-item-task")
+	queueID := "resume:" + taskID + ":" + runID + ":3"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs/resume" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(ResumeRunResponse{
+			TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued",
+			QueueID: queueID, QueueStatus: "queued", EventID: "evt_1", RuntimeControlAction: "none",
+		})
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ResumeRun(context.Background(), runID, "resume")
+	if err == nil || !strings.Contains(err.Error(), "missing queue_item") {
+		t.Fatalf("ResumeRun() error = %v, want missing queue_item", err)
 	}
 }
 

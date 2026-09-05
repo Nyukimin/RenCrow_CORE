@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type JSONLStore struct {
@@ -206,7 +209,11 @@ func (s *JSONLStore) ClaimNextRunQueueItem(_ context.Context, now, leaseUntil ti
 	if selected == nil {
 		return nil, nil
 	}
-	selected.Status, selected.ClaimedAt, selected.LeaseToken, selected.LeaseUntil = "claimed", now, leaseToken, leaseUntil
+	// JSONL storage owns only the lease reservation. The canonical Task owner
+	// issues the execution Run afterwards, so a claim must never carry forward
+	// or invent a RunID.
+	selected.Status, selected.ClaimedAt, selected.LeaseToken, selected.LeaseUntil = "reserved", now, leaseToken, leaseUntil
+	selected.RunID = ""
 	selected.AttemptCount++
 	selected.CompletedAt = time.Time{}
 	if err := appendJSONL(s.runQueuePath, *selected); err != nil {
@@ -215,18 +222,16 @@ func (s *JSONLStore) ClaimNextRunQueueItem(_ context.Context, now, leaseUntil ti
 	return selected, nil
 }
 
-func (s *JSONLStore) RenewRunQueueLease(_ context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
-	return s.updateRunQueueLease(queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) { item.LeaseUntil = leaseUntil })
-}
-
-func (s *JSONLStore) CompleteRunQueueItem(_ context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
-	return s.updateRunQueueLease(queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
-		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
-		item.LeaseToken, item.LeaseUntil = "", time.Time{}
-	})
-}
-
-func (s *JSONLStore) updateRunQueueLease(queueID, leaseToken string, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+// AttachRunQueueRun atomically binds a canonical Task-owned Run to the current
+// reserved lease. A stale or already-attached token returns false without a
+// write.
+func (s *JSONLStore) AttachRunQueueRun(_ context.Context, queueID, leaseToken string, canonicalRunID modulecore.RunID) (bool, error) {
+	if err := canonicalRunID.Validate(); err != nil {
+		return false, fmt.Errorf("canonical run_id is invalid: %w", err)
+	}
+	if strings.TrimSpace(leaseToken) == "" {
+		return false, nil
+	}
 	s.runQueueMu.Lock()
 	defer s.runQueueMu.Unlock()
 	items, err := s.listRunQueueItemsUnlocked(500)
@@ -238,7 +243,43 @@ func (s *JSONLStore) updateRunQueueLease(queueID, leaseToken string, mutate func
 			continue
 		}
 		item := items[index]
-		if item.Status != "claimed" || item.LeaseToken != leaseToken {
+		if item.Status != "reserved" || item.RunID != "" || item.LeaseToken != leaseToken {
+			return false, nil
+		}
+		item.Status = "claimed"
+		item.RunID = canonicalRunID
+		if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+			return false, err
+		}
+		return true, appendJSONL(s.runQueuePath, item)
+	}
+	return false, nil
+}
+
+func (s *JSONLStore) RenewRunQueueLease(_ context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
+	return s.updateRunQueueLease(queueID, leaseToken, false, false, func(item *domainsuperagent.RunQueueItem) { item.LeaseUntil = leaseUntil })
+}
+
+func (s *JSONLStore) CompleteRunQueueItem(_ context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
+	return s.updateRunQueueLease(queueID, leaseToken, true, status == "blocked", func(item *domainsuperagent.RunQueueItem) {
+		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
+		item.LeaseToken, item.LeaseUntil = "", time.Time{}
+	})
+}
+
+func (s *JSONLStore) updateRunQueueLease(queueID, leaseToken string, claimedOnly, allowReservedBlock bool, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+	s.runQueueMu.Lock()
+	defer s.runQueueMu.Unlock()
+	items, err := s.listRunQueueItemsUnlocked(500)
+	if err != nil {
+		return false, err
+	}
+	for index := range items {
+		if items[index].QueueID != queueID {
+			continue
+		}
+		item := items[index]
+		if (claimedOnly && item.Status != "claimed" && !(allowReservedBlock && item.Status == "reserved")) || (!claimedOnly && item.Status != "reserved" && item.Status != "claimed") || item.LeaseToken != leaseToken {
 			return false, nil
 		}
 		mutate(&item)

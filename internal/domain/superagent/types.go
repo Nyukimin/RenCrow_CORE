@@ -3,6 +3,7 @@ package superagent
 import (
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -59,23 +60,25 @@ type MessageChannel struct {
 }
 
 type RunQueueItem struct {
-	QueueID            string    `json:"queue_id"`
-	RunID              string    `json:"run_id,omitempty"`
-	WorkstreamID       string    `json:"workstream_id,omitempty"`
-	Goal               string    `json:"goal"`
-	Action             string    `json:"action"`
-	Status             string    `json:"status"`
-	Priority           int       `json:"priority,omitempty"`
-	Reason             string    `json:"reason,omitempty"`
-	NotBefore          time.Time `json:"not_before,omitempty"`
-	ClaimedAt          time.Time `json:"claimed_at,omitempty"`
-	LeaseToken         string    `json:"lease_token,omitempty"`
-	LeaseUntil         time.Time `json:"lease_until,omitempty"`
-	AttemptCount       int       `json:"attempt_count,omitempty"`
-	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
-	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
-	NextAction         string    `json:"next_action,omitempty"`
-	IdempotencyKey     string    `json:"idempotency_key,omitempty"`
-	CompletedAt        time.Time `json:"completed_at,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	QueueID            string                    `json:"queue_id"`
+	TaskID             modulecore.TaskID         `json:"task_id"`
+	RunID              modulecore.RunID          `json:"run_id,omitempty"`
+	RunStartReason     domaintask.RunStartReason `json:"run_start_reason"`
+	WorkstreamID       string                    `json:"workstream_id,omitempty"`
+	Goal               string                    `json:"goal"`
+	Action             string                    `json:"action"`
+	Status             string                    `json:"status"`
+	Priority           int                       `json:"priority,omitempty"`
+	Reason             string                    `json:"reason,omitempty"`
+	NotBefore          time.Time                 `json:"not_before,omitempty"`
+	ClaimedAt          time.Time                 `json:"claimed_at,omitempty"`
+	LeaseToken         string                    `json:"lease_token,omitempty"`
+	LeaseUntil         time.Time                 `json:"lease_until,omitempty"`
+	AttemptCount       int                       `json:"attempt_count,omitempty"`
+	CheckpointRevision int                       `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string                    `json:"checkpoint_summary,omitempty"`
+	NextAction         string                    `json:"next_action,omitempty"`
+	IdempotencyKey     string                    `json:"idempotency_key,omitempty"`
+	CompletedAt        time.Time                 `json:"completed_at,omitempty"`
+	CreatedAt          time.Time                 `json:"created_at"`
 }

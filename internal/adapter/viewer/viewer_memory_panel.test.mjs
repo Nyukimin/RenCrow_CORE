@@ -3502,18 +3502,26 @@ function sandboxField(obj, snake, pascal) {
   if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
   return undefined;
 }
+function canonicalEventField(item, field) {
+  const direct = sandboxField(item, field, field);
+  if (direct !== undefined) return direct;
+  const payload = sandboxField(item, 'payload', 'Payload');
+  if (payload && Object.prototype.hasOwnProperty.call(payload, field)) return payload[field];
+  return undefined;
+}
 const state = {ops: {
   superAgentRunQueue: [{
     queue_id: 'rq_resume_1',
-    run_id: 'run_resume_1',
+    task_id: 'task_resume_1',
+    run_id: '',
     action: 'resume',
     status: 'completed',
     completed_at: '2026-05-19T21:16:26Z',
     reason: 'pause/resume queue reentry ledger E2E completed without scheduler execution',
   }],
-  superAgentTraceEvents: [
-    {run_id: 'run_resume_1', event_type: 'lead_agent_paused', payload_summary: 'lead_agent_paused runtime_control=none'},
-    {run_id: 'run_resume_1', event_type: 'lead_agent_resumed', payload_summary: 'lead_agent_resumed runtime_control=none'},
+  superAgentEvents: [
+    {task_id: 'task_resume_1', run_id: 'run_resume_1', event_type: 'run.lead_agent_paused', payload: {summary: 'lead_agent_paused runtime_control=none'}},
+    {task_id: 'task_resume_1', run_id: '', event_type: 'run.resume_queued', payload: {summary: 'checkpoint resume runtime_control=none'}},
   ],
 }};
 ` + sourceBetween(opsJs, 'function renderSuperAgentResumeAudits', 'function renderAIWorkflowRunEvidence') + `
@@ -3526,11 +3534,11 @@ globalThis.__superAgentResumeResult = document.getElementById('superAgentResumeA
 
   assert.match(context.__superAgentResume, /rq_resume_1/);
   assert.match(context.__superAgentResume, /run_resume_1/);
-  assert.match(context.__superAgentResume, /paused:1 resumed:1/);
+  assert.match(context.__superAgentResume, /paused:1 queued:1/);
   assert.match(context.__superAgentResume, /runtime-control:none/);
   assert.match(context.__superAgentResume, /manual-ledger only/);
   assert.match(context.__superAgentResume, /runtime control not applied/);
-  assert.match(context.__superAgentResumeResult, /1 resume queue \/ 1 completed \/ 1 manual-ledger \/ 1 pause-resume trace \/ 0 runtime-control applied/);
+  assert.match(context.__superAgentResumeResult, /1 resume queue \/ 1 completed \/ 1 manual-ledger \/ 1 pause-queue trace \/ 0 runtime-control applied/);
   assert.match(context.__superAgentResumeResult, /blocked: manual-ledger evidence does not prove scheduler resume/);
 });
 
@@ -3556,10 +3564,17 @@ function sandboxField(obj, snake, pascal) {
   if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
   return undefined;
 }
+function canonicalEventField(item, field) {
+  const direct = sandboxField(item, field, field);
+  if (direct !== undefined) return direct;
+  const payload = sandboxField(item, 'payload', 'Payload');
+  if (payload && Object.prototype.hasOwnProperty.call(payload, field)) return payload[field];
+  return undefined;
+}
 const state = {ops: {
-  aiWorkflowEvents: [{event_id: 'evt_cmd_1', run_id: 'run_1', workstream_id: 'ws_1', event_type: 'command_invoked'}],
+  aiWorkflowEvents: [{event_id: 'evt_cmd_1', run_id: 'run_1', workstream_id: 'ws_1', event_type: 'command.invoked'}],
   aiWorkflowContextUsages: [{event_id: 'ctx_1', run_id: 'run_1', workstream_id: 'ws_1', context_tokens: 100}],
-  superAgentTraceEvents: [{event_id: 'trace_1', run_id: 'run_1', event_type: 'lead_agent_started'}],
+  superAgentEvents: [{event_id: 'trace_1', run_id: 'run_1', event_type: 'run.lead_agent_started'}],
 }};
 ` + sourceBetween(opsJs, 'function renderAIWorkflowRunEvidence', 'function workstreamOpsCard') + `
 renderAIWorkflowRunEvidence();

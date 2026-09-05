@@ -54,8 +54,9 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/tasks`, `GET /viewer/task/detail?task_id=...`, `GET /viewer/task-notifications` | durable Task の一覧、詳細／共有context、割り込み通知。Task identity は canonical `task_id` のみ |
 | `/viewer/logs?task_id=...`, `/viewer/logs?event_id=...` | Canonical Task／EventIDで逆参照できるOrchestrator log。旧`/viewer/jobs`系は存在しない |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
-| `POST /viewer/superagent/runs/resume` | checkpoint付きRunを同一`run_id + checkpoint_revision`の冪等queueへ登録。checkpointなし、terminal run、非resumable runは409 |
-| `GET/POST /viewer/superagent/run-queue` | durable resume queueの照会・登録。claim lease/tokenは内部schedulerだけが所有する |
+| `GET /viewer/superagent` | SuperAgentの現在projectionを返す読み取り専用status |
+| `POST /viewer/superagent/runs/pause` | Task ownerがcanonical Taskとそのcanonical Runを`waiting`へ遷移し、AgentRun projectionだけを`paused`として現在の`task_id`／`run_id`を返す |
+| `POST /viewer/superagent/runs/resume` | `paused` projectionの旧`run_id`をsource selectorとしてcheckpointを検証し、`run_id`なしのqueue intentを登録。`task_id`、`source_run_id`、`status=queued`、`queue_id`、`queue_status=queued`を返し、claim時にTask ownerが新しいRunIDを作成 |
 | `/viewer/workstreams/*` | goal、artifact、annotation、heartbeat、review |
 | `/viewer/advisors/*`, `/viewer/agents/profiles` | Advisor run/score と AgentProfile |
 | `/viewer/revenue/*` | Opportunity、EconomicTask、RevenueEvent、Reflection、policy decision |

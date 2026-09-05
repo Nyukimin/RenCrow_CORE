@@ -235,14 +235,8 @@ type Dependencies struct {
 	complexityHotspotConcreteDiff  http.HandlerFunc                            // viewer complexity concrete diff proposal API
 	complexityHotspotCoderDiff     http.HandlerFunc                            // viewer complexity Coder-generated concrete diff API
 	superAgentStatus               http.HandlerFunc                            // viewer superagent harness status API
-	superAgentRun                  http.HandlerFunc                            // viewer superagent run API
 	superAgentRunPause             http.HandlerFunc                            // viewer superagent run pause API
 	superAgentRunResume            http.HandlerFunc                            // viewer superagent run resume API
-	superAgentRunQueue             http.HandlerFunc                            // viewer superagent run queue API
-	superAgentRunQueueClaim        http.HandlerFunc                            // viewer superagent run queue claim API
-	superAgentRunQueueComplete     http.HandlerFunc                            // viewer superagent run queue complete API
-	superAgentSubagentTask         http.HandlerFunc                            // viewer subagent task API
-	superAgentContextPack          http.HandlerFunc                            // viewer context pack API
 	superAgentMessageChannel       http.HandlerFunc                            // viewer message channel API
 	superAgentStore                viewer.SuperAgentStore                      // SuperAgent runtime telemetry store
 	superAgentRunController        *superagentapp.RunController                // SuperAgent runtime pause/resume controller
@@ -1239,14 +1233,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			RunQueueSchedulerIntervalSec: cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec,
 			RunQueueSchedulerClaimLimit:  cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit,
 		})
-		deps.superAgentRun = viewer.HandleSuperAgentAgentRunCreate(superAgentStore)
-		deps.superAgentRunPause = viewer.HandleSuperAgentRunPauseWithController(superAgentStore, deps.superAgentRunController)
-		deps.superAgentRunResume = viewer.HandleSuperAgentRunResumeWithController(superAgentStore, deps.superAgentRunController)
-		deps.superAgentRunQueue = viewer.HandleSuperAgentRunQueueCreate(superAgentStore)
-		deps.superAgentRunQueueClaim = viewer.HandleSuperAgentRunQueueClaim(superAgentStore)
-		deps.superAgentRunQueueComplete = viewer.HandleSuperAgentRunQueueComplete(superAgentStore)
-		deps.superAgentSubagentTask = viewer.HandleSuperAgentSubagentTaskCreate(superAgentStore)
-		deps.superAgentContextPack = viewer.HandleSuperAgentContextPackCreate(superAgentStore)
+		deps.superAgentRunPause = viewer.HandleSuperAgentRunPauseWithTaskOwnerAndController(superAgentStore, deps.taskManager, deps.superAgentRunController)
+		deps.superAgentRunResume = viewer.HandleSuperAgentRunResumeWithTaskOwnerAndController(superAgentStore, deps.taskManager, deps.superAgentRunController)
 		deps.superAgentMessageChannel = viewer.HandleSuperAgentMessageChannelCreate(superAgentStore)
 	}
 	if aiWorkflowStore != nil {

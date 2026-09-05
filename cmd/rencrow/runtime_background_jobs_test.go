@@ -41,15 +41,17 @@ func TestMovieCatalogCrawlerURLComesFromConfigNotLegacyEnvironment(t *testing.T)
 }
 
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route:  domainrouting.RouteCODE,
-			TaskID: modulecore.NewTaskID().String(),
+			TaskID: taskID.String(),
 		},
 	}
 	item := domainsuperagent.RunQueueItem{
 		QueueID:            " q-1 ",
-		RunID:              "run-1",
+		TaskID:             taskID,
+		RunID:              runID,
 		WorkstreamID:       "ws-1",
 		Goal:               " continue the queued run ",
 		Action:             " resume ",
@@ -67,7 +69,7 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 		t.Fatalf("summary = %q, want task correlation", summary)
 	}
 	req := processor.request
-	if req.RootTaskID != "" || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
+	if req.RootTaskID != taskID.String() || req.CanonicalRunID != runID || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
 		t.Fatalf("request = %#v", req)
 	}
 }
@@ -87,12 +89,37 @@ func TestNewSuperAgentRunQueueProcessorRejectsMissingCanonicalTrace(t *testing.T
 	}
 }
 
+func TestNewSuperAgentRunQueueProcessorRejectsMissingCanonicalTask(t *testing.T) {
+	processor := &captureSuperAgentRunQueueProcessor{}
+	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
+		QueueID: "q-1", RunID: modulecore.NewRunID(), Goal: "run", Action: "resume",
+	}, modulecore.NewTraceID())
+	if err == nil || !strings.Contains(err.Error(), "task_id") {
+		t.Fatalf("ProcessRunQueueItem() error = %v, want task_id error", err)
+	}
+	if processor.called {
+		t.Fatal("processor was called without a canonical task")
+	}
+}
+
+func TestNewSuperAgentRunQueueProcessorRejectsMissingCanonicalRun(t *testing.T) {
+	processor := &captureSuperAgentRunQueueProcessor{}
+	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
+		QueueID: "q-1", TaskID: modulecore.NewTaskID(), Goal: "run", Action: "resume",
+	}, modulecore.NewTraceID())
+	if err == nil || !strings.Contains(err.Error(), "run_id") {
+		t.Fatalf("ProcessRunQueueItem() error = %v, want run_id error", err)
+	}
+	if processor.called {
+		t.Fatal("processor was called without a canonical run")
+	}
+}
+
 func TestNewSuperAgentRunQueueProcessorRejectsUnsupportedAction(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{}
 	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID: "q-1",
-		Goal:    "run",
-		Action:  "external_pr",
+		QueueID: "q-1", TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(),
+		Goal: "run", Action: "external_pr",
 	}, modulecore.NewTraceID())
 	if err == nil || !strings.Contains(err.Error(), "unsupported run queue action") {
 		t.Fatalf("ProcessRunQueueItem() error = %v, want unsupported action error", err)
@@ -103,16 +130,16 @@ func TestNewSuperAgentRunQueueProcessorRejectsUnsupportedAction(t *testing.T) {
 }
 
 func TestNewSuperAgentRunQueueProcessorAllowsExplicitChatAction(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route:  domainrouting.RouteCHAT,
-			TaskID: modulecore.NewTaskID().String(),
+			TaskID: taskID.String(),
 		},
 	}
 	summary, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID: "q-1",
-		Goal:    "run",
-		Action:  "chat",
+		QueueID: "q-1", TaskID: taskID, RunID: runID,
+		Goal: "run", Action: "chat",
 	}, modulecore.NewTraceID())
 	if err != nil {
 		t.Fatalf("ProcessRunQueueItem() error = %v", err)
@@ -123,16 +150,16 @@ func TestNewSuperAgentRunQueueProcessorAllowsExplicitChatAction(t *testing.T) {
 }
 
 func TestNewSuperAgentRunQueueProcessorRejectsChatFallbackForResume(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route:  domainrouting.RouteCHAT,
-			TaskID: modulecore.NewTaskID().String(),
+			TaskID: taskID.String(),
 		},
 	}
 	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID: "q-1",
-		Goal:    "run",
-		Action:  "resume",
+		QueueID: "q-1", TaskID: taskID, RunID: runID,
+		Goal: "run", Action: "resume",
 	}, modulecore.NewTraceID())
 	if err == nil || !strings.Contains(err.Error(), "CHAT route") {
 		t.Fatalf("ProcessRunQueueItem() error = %v, want CHAT route error", err)
@@ -140,18 +167,34 @@ func TestNewSuperAgentRunQueueProcessorRejectsChatFallbackForResume(t *testing.T
 }
 
 func TestNewSuperAgentRunQueueProcessorRejectsMissingTaskID(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route: domainrouting.RouteCODE,
 		},
 	}
 	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID: "q-1",
-		Goal:    "run",
-		Action:  "resume",
+		QueueID: "q-1", TaskID: taskID, RunID: runID,
+		Goal: "run", Action: "resume",
 	}, modulecore.NewTraceID())
 	if err == nil || !strings.Contains(err.Error(), "task_id") {
 		t.Fatalf("ProcessRunQueueItem() error = %v, want task_id error", err)
+	}
+}
+
+func TestNewSuperAgentRunQueueProcessorRejectsResponseTaskMismatch(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	processor := &captureSuperAgentRunQueueProcessor{
+		response: orchestrator.ProcessMessageResponse{
+			Route:  domainrouting.RouteCODE,
+			TaskID: modulecore.NewTaskID().String(),
+		},
+	}
+	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
+		QueueID: "q-1", TaskID: taskID, RunID: runID, Goal: "run", Action: "resume",
+	}, modulecore.NewTraceID())
+	if err == nil || !strings.Contains(err.Error(), "does not match item task_id") {
+		t.Fatalf("ProcessRunQueueItem() error = %v, want response task mismatch", err)
 	}
 }
 
@@ -160,10 +203,8 @@ func TestNewSuperAgentRunQueueProcessorReportsFailure(t *testing.T) {
 	listener := &captureBackgroundJobEventListener{}
 	traceID := modulecore.NewTraceID()
 	_, err := newSuperAgentRunQueueProcessor(processor, newBackgroundJobFailureReporter(listener)).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID: "q-1",
-		RunID:   "run-1",
-		Goal:    "run",
-		Action:  "external_pr",
+		QueueID: "q-1", TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(),
+		Goal: "run", Action: "external_pr",
 	}, traceID)
 	if err == nil {
 		t.Fatal("ProcessRunQueueItem() error = nil, want error")

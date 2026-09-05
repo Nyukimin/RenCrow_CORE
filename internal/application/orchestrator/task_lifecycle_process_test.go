@@ -15,6 +15,7 @@ import (
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -60,6 +61,46 @@ func TestConfiguredMessageOrchestratorLifecycleUsesRootForMio(t *testing.T) {
 	}
 	if routingEvent.TraceID != traceID || assignmentEvent.TraceID != traceID {
 		t.Fatalf("event traces = %q / %q, want %q", routingEvent.TraceID, assignmentEvent.TraceID, traceID)
+	}
+}
+
+func TestConfiguredMessageOrchestratorResumesExactExistingRun(t *testing.T) {
+	rootID := modulecore.NewTaskID()
+	manager := newRecordingTaskLifecycleManager()
+	run := seedRunningTask(manager, rootID, domaintask.RouteCHAT, taskLifecycleMio)
+	mio := &lifecycleMioAgent{
+		decision: routing.NewDecision(routing.RouteCHAT, 1, "resume"),
+		response: "resumed response",
+	}
+	orch := NewMessageOrchestrator(newLifecycleSessionRepository(), mio, &lifecycleShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(manager)
+
+	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		RootTaskID:     rootID.String(),
+		CanonicalRunID: run.RunID,
+		SessionID:      "lifecycle-local-resume",
+		Channel:        "viewer",
+		ChatID:         "viewer-user",
+		To:             "MIO",
+		UserMessage:    "resume exact task",
+	})
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	if resp.TaskID != rootID.String() {
+		t.Fatalf("response task = %s, want %s", resp.TaskID, rootID)
+	}
+	if got, want := manager.calls, []string{"RecordRouting", "RecordAssignment", "Succeed"}; !equalStrings(got, want) {
+		t.Fatalf("lifecycle calls = %#v, want %#v", got, want)
+	}
+	for _, call := range manager.calls {
+		if call == "Create" || call == "Start" {
+			t.Fatalf("resume created or started lifecycle state: %#v", manager.calls)
+		}
+	}
+	resumedRun := manager.runs[run.RunID]
+	if resumedRun.TaskID != rootID || resumedRun.Status != domaintask.RunStatusSucceeded || resumedRun.CompletedAt == nil {
+		t.Fatalf("resumed run = %#v", resumedRun)
 	}
 }
 
@@ -356,6 +397,45 @@ func TestConfiguredDistributedOrchestratorLifecycleUsesRootForMio(t *testing.T) 
 	assignmentEvent := lifecycleProcessEvent(listener.events, "agent.assignment")
 	if routingEvent.TaskID != rootID || assignmentEvent.TaskID != rootID || assignmentEvent.CausationEventID != routingEvent.EventID || assignmentEvent.TraceID != traceID {
 		t.Fatalf("route/assignment events = %#v / %#v", routingEvent, assignmentEvent)
+	}
+}
+
+func TestConfiguredDistributedOrchestratorResumesExactExistingRun(t *testing.T) {
+	rootID := modulecore.NewTaskID()
+	manager := newRecordingTaskLifecycleManager()
+	run := seedRunningTask(manager, rootID, domaintask.RouteCHAT, taskLifecycleMio)
+	router := transport.NewMessageRouter()
+	defer router.Stop()
+	mio := &lifecycleMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "resume"), response: "distributed resumed"}
+	orch := NewDistributedOrchestrator(newLifecycleSessionRepository(), mio, router, session.NewCentralMemory(), nil)
+	orch.SetTaskLifecycleManager(manager)
+
+	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
+		RootTaskID:     rootID.String(),
+		CanonicalRunID: run.RunID,
+		SessionID:      "lifecycle-distributed-resume",
+		Channel:        "viewer",
+		ChatID:         "viewer-user",
+		To:             "MIO",
+		UserMessage:    "resume exact distributed task",
+	})
+	if err != nil {
+		t.Fatalf("ProcessMessage: %v", err)
+	}
+	if resp.TaskID != rootID.String() {
+		t.Fatalf("response task = %s, want %s", resp.TaskID, rootID)
+	}
+	if got, want := manager.calls, []string{"RecordRouting", "RecordAssignment", "Succeed"}; !equalStrings(got, want) {
+		t.Fatalf("lifecycle calls = %#v, want %#v", got, want)
+	}
+	for _, call := range manager.calls {
+		if call == "Create" || call == "Start" {
+			t.Fatalf("resume created or started lifecycle state: %#v", manager.calls)
+		}
+	}
+	resumedRun := manager.runs[run.RunID]
+	if resumedRun.TaskID != rootID || resumedRun.Status != domaintask.RunStatusSucceeded || resumedRun.CompletedAt == nil {
+		t.Fatalf("resumed run = %#v", resumedRun)
 	}
 }
 

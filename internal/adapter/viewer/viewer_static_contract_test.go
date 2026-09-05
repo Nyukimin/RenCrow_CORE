@@ -947,12 +947,12 @@ func TestOpsCanonicalEventProjectionUsesEnvelopeAndPayloadFields(t *testing.T) {
 		t.Fatalf("read ops.js: %v", err)
 	}
 	js := string(data)
-	for _, required := range []string{"function canonicalEventField", "run_reference", "run.lead_agent_paused", "run.lead_agent_resumed", "command.invoked"} {
+	for _, required := range []string{"function canonicalEventField", "run_reference", "run.lead_agent_paused", "run.resume_queued", "command.invoked"} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("ops.js missing canonical Event projection contract %q", required)
 		}
 	}
-	for _, retired := range []string{"'lead_agent_paused'", "'lead_agent_resumed'", "'command_invoked'", "payload_summary"} {
+	for _, retired := range []string{"'lead_agent_paused'", "'lead_agent_resumed'", "run.lead_agent_resumed", "'command_invoked'", "payload_summary"} {
 		if strings.Contains(js, retired) {
 			t.Fatalf("ops.js retains legacy Event field/type %q", retired)
 		}

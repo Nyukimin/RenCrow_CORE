@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -69,12 +70,15 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("message channel should validate: %v", err)
 	}
 	if err := ValidateRunQueueItem(RunQueueItem{
-		QueueID:     "queue_1",
-		Goal:        "resume run",
-		Action:      "resume",
-		Status:      "completed",
-		CreatedAt:   now,
-		CompletedAt: now.Add(time.Minute),
+		QueueID:        "queue_1",
+		TaskID:         taskID,
+		RunID:          runID,
+		RunStartReason: domaintask.RunStartReasonCheckpointResume,
+		Goal:           "resume run",
+		Action:         "resume",
+		Status:         "completed",
+		CreatedAt:      now,
+		CompletedAt:    now.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("run queue item should validate: %v", err)
 	}
@@ -282,7 +286,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "run queue created_at",
 			err:  "created_at",
 			run: func() error {
-				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Goal: "resume run", Action: "resume", Status: "queued"})
+				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued"})
 			},
 		},
 	}
@@ -301,6 +305,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 
 func TestValidateSuperAgentRejectsTerminalWithoutCompletedAt(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	taskID, runID := validTaskID(), validRunID()
 	cases := []struct {
 		name string
 		run  func() error
@@ -314,7 +319,7 @@ func TestValidateSuperAgentRejectsTerminalWithoutCompletedAt(t *testing.T) {
 		{
 			name: "run queue",
 			run: func() error {
-				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Goal: "resume run", Action: "resume", Status: "completed", CreatedAt: now})
+				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: taskID, RunID: runID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "completed", CreatedAt: now})
 			},
 		},
 	}
@@ -355,9 +360,10 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		{name: "channel type", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", Status: "active", CreatedAt: now}), want: "channel_type"},
 		{name: "channel status", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", ChannelType: "superagent", CreatedAt: now}), want: "status"},
 		{name: "queue id", err: ValidateRunQueueItem(RunQueueItem{Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "queue_id"},
-		{name: "queue goal", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Action: "resume", Status: "queued", CreatedAt: now}), want: "goal"},
-		{name: "queue action", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Goal: "resume run", Status: "queued", CreatedAt: now}), want: "action"},
-		{name: "queue status", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Goal: "resume run", Action: "resume", CreatedAt: now}), want: "status"},
+		{name: "queue task id", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "task_id"},
+		{name: "queue goal", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Action: "resume", Status: "queued", CreatedAt: now}), want: "goal"},
+		{name: "queue action", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Status: "queued", CreatedAt: now}), want: "action"},
+		{name: "queue status", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", CreatedAt: now}), want: "status"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -380,10 +386,176 @@ func TestValidateSuperAgentTerminalStatusVariants(t *testing.T) {
 	}
 	for _, status := range []string{"completed", "failed", "cancelled"} {
 		t.Run("queue "+status, func(t *testing.T) {
-			err := ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", Goal: "resume run", Action: "resume", Status: status, CreatedAt: now})
+			err := ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunID: validRunID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: status, CreatedAt: now})
 			if err == nil || !strings.Contains(err.Error(), "completed_at") {
 				t.Fatalf("err=%v, want completed_at", err)
 			}
 		})
 	}
+}
+
+func TestValidateRunQueueCanonicalTaskAndRunLifecycle(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	lease := func(status string, runID modulecore.RunID) RunQueueItem {
+		return RunQueueItem{
+			QueueID:        "queue_1",
+			TaskID:         validTaskID(),
+			RunID:          runID,
+			RunStartReason: domaintask.RunStartReasonCheckpointResume,
+			Goal:           "resume run",
+			Action:         "resume",
+			Status:         status,
+			ClaimedAt:      now,
+			LeaseToken:     "lease-1",
+			LeaseUntil:     now.Add(time.Minute),
+			CreatedAt:      now,
+		}
+	}
+
+	t.Run("queued task with no run is valid", func(t *testing.T) {
+		item := lease("queued", "")
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		if err := ValidateRunQueueItem(item); err != nil {
+			t.Fatalf("queued item should validate before Task owner issues a Run: %v", err)
+		}
+	})
+	t.Run("missing task is rejected", func(t *testing.T) {
+		item := lease("queued", "")
+		item.TaskID = ""
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "task_id") {
+			t.Fatalf("expected task_id error, got %v", err)
+		}
+	})
+	t.Run("legacy task is rejected", func(t *testing.T) {
+		item := lease("queued", "")
+		item.TaskID = "task_legacy"
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "task_id") {
+			t.Fatalf("expected canonical task_id error, got %v", err)
+		}
+	})
+	t.Run("queued item cannot retain a prior run", func(t *testing.T) {
+		item := lease("queued", validRunID())
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected queued run_id rejection, got %v", err)
+		}
+	})
+	t.Run("reserved permits the run to be issued after lease reservation", func(t *testing.T) {
+		if err := ValidateRunQueueItem(lease("reserved", "")); err != nil {
+			t.Fatalf("reserved item should validate without a RunID: %v", err)
+		}
+	})
+	t.Run("reserved cannot retain a prior run", func(t *testing.T) {
+		if err := ValidateRunQueueItem(lease("reserved", validRunID())); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected reserved run_id rejection, got %v", err)
+		}
+	})
+	t.Run("claimed requires a canonical run", func(t *testing.T) {
+		if err := ValidateRunQueueItem(lease("claimed", "")); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected claimed run_id error, got %v", err)
+		}
+		item := lease("claimed", "run_legacy")
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected legacy claimed run_id error, got %v", err)
+		}
+		if err := ValidateRunQueueItem(lease("claimed", validRunID())); err != nil {
+			t.Fatalf("claimed item with canonical RunID should validate: %v", err)
+		}
+	})
+	t.Run("terminal requires a canonical run and completion time", func(t *testing.T) {
+		item := lease("completed", "")
+		item.CompletedAt = now.Add(time.Minute)
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected terminal run_id error, got %v", err)
+		}
+		item.RunID = validRunID()
+		item.CompletedAt = time.Time{}
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "completed_at") {
+			t.Fatalf("expected terminal completed_at error, got %v", err)
+		}
+		item.CompletedAt = now.Add(time.Minute)
+		if err := ValidateRunQueueItem(item); err != nil {
+			t.Fatalf("terminal item should validate: %v", err)
+		}
+	})
+	t.Run("unknown status is rejected", func(t *testing.T) {
+		item := lease("done", validRunID())
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "status") {
+			t.Fatalf("expected status error, got %v", err)
+		}
+	})
+	t.Run("missing start reason is rejected", func(t *testing.T) {
+		item := lease("queued", "")
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		item.RunStartReason = ""
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_start_reason") {
+			t.Fatalf("expected run_start_reason error, got %v", err)
+		}
+	})
+	t.Run("invalid start reason is rejected", func(t *testing.T) {
+		item := lease("queued", "")
+		item.ClaimedAt = time.Time{}
+		item.LeaseToken = ""
+		item.LeaseUntil = time.Time{}
+		item.RunStartReason = domaintask.RunStartReason("legacy_resume")
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_start_reason") {
+			t.Fatalf("expected run_start_reason error, got %v", err)
+		}
+	})
+}
+
+func TestValidateRunQueueBlockedBeforeRun(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	blocked := func() RunQueueItem {
+		return RunQueueItem{
+			QueueID:        "queue_1",
+			TaskID:         validTaskID(),
+			RunStartReason: domaintask.RunStartReasonCheckpointResume,
+			Goal:           "resume run",
+			Action:         "resume",
+			Status:         "blocked",
+			Reason:         "Task owner unavailable",
+			CompletedAt:    now.Add(time.Minute),
+			CreatedAt:      now,
+		}
+	}
+
+	t.Run("blocked without a Run is valid", func(t *testing.T) {
+		if err := ValidateRunQueueItem(blocked()); err != nil {
+			t.Fatalf("blocked reservation failure should validate without a RunID: %v", err)
+		}
+	})
+	t.Run("blocked requires a reason", func(t *testing.T) {
+		item := blocked()
+		item.Reason = ""
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "reason") {
+			t.Fatalf("expected blocked reason error, got %v", err)
+		}
+	})
+	t.Run("blocked requires completed_at", func(t *testing.T) {
+		item := blocked()
+		item.CompletedAt = time.Time{}
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "completed_at") {
+			t.Fatalf("expected blocked completed_at error, got %v", err)
+		}
+	})
+	t.Run("blocked rejects a RunID", func(t *testing.T) {
+		item := blocked()
+		item.RunID = validRunID()
+		if err := ValidateRunQueueItem(item); err == nil || !strings.Contains(err.Error(), "run_id") {
+			t.Fatalf("expected blocked run_id error, got %v", err)
+		}
+	})
 }

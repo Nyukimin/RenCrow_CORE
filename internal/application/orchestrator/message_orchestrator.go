@@ -25,6 +25,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -55,6 +56,7 @@ type ProcessMessageRequest struct {
 	ResumeCheckpointRevision int
 	ResumeCheckpointSummary  string
 	ResumeNextAction         string
+	CanonicalRunID           modulecore.RunID `json:"-"`
 	originalUserMessage      string
 }
 
@@ -499,6 +501,14 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	taskID := rootTaskID
 	executionTaskID := rootTaskID
 	lifecycleCreated := false
+	var attachedTask *domaintask.Task
+	rejectAttachedMismatch := func(activationErr error) {
+		if attachedTask != nil && errors.Is(activationErr, errAttachedTaskMismatch) {
+			// Input identity/route drift is rejected before execution. Do not let
+			// the normal error finalizer fail the already-owned canonical Run.
+			lifecycleCreated = false
+		}
+	}
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.message")
@@ -552,19 +562,31 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			resp = ProcessMessageResponse{}
 		}
 	}()
+	if req.CanonicalRunID != "" && o.taskLifecycle == nil {
+		return ProcessMessageResponse{}, fmt.Errorf("canonical run resume requires configured task lifecycle")
+	}
 	if o.taskLifecycle != nil {
-		if _, err := o.taskLifecycle.createRoot(ctx, req); err != nil {
-			return ProcessMessageResponse{}, err
+		if req.CanonicalRunID != "" {
+			attached, attachErr := o.taskLifecycle.attachExisting(ctx, req)
+			if attachErr != nil {
+				return ProcessMessageResponse{}, attachErr
+			}
+			attachedTask = &attached
+		} else {
+			if _, err := o.taskLifecycle.createRoot(ctx, req); err != nil {
+				return ProcessMessageResponse{}, err
+			}
 		}
 		lifecycleCreated = true
 	}
-	taskActivation, cleanupTaskActivation := newTaskLifecycleActivation(o.taskLifecycle, o.events, req)
+	taskActivation, cleanupTaskActivation := newTaskLifecycleActivation(o.taskLifecycle, o.events, req, attachedTask)
 	defer cleanupTaskActivation()
 	activateConfiguredTask := func(route routing.Route, actor, content string) (modulecore.TaskID, error) {
 		if o.taskLifecycle == nil {
 			return rootTaskID, nil
 		}
 		activatedTaskID, activateErr := taskActivation.Activate(ctx, route, actor, content)
+		rejectAttachedMismatch(activateErr)
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
@@ -640,6 +662,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			return rootTaskID, nil
 		}
 		activatedTaskID, activateErr := taskActivation.Activate(activateCtx, routing.RouteCHAT, taskLifecycleShiro, "confidence 100% evidence=daily news brief intent")
+		rejectAttachedMismatch(activateErr)
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
@@ -705,6 +728,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 	preparedTaskID, err := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
+	rejectAttachedMismatch(err)
 	if preparedTaskID != "" {
 		executionTaskID = preparedTaskID
 		taskID = preparedTaskID

@@ -3,6 +3,7 @@ package taskmanager
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -369,6 +370,211 @@ func TestManagerRunLifecycleCreatesDistinctRunsAndClosesCurrentRun(t *testing.T)
 	}
 	if err != nil || len(after) != len(before) || terminalAfter == nil || terminalAfter.CompletedAt == nil || !terminalAfter.CompletedAt.Equal(completedAt) {
 		t.Fatalf("terminal run was rewritten: before=%#v after=%#v err=%v", before, after, err)
+	}
+}
+
+func TestManagerStartRunWithReasonReturnsPersistedRunForCheckpointAndLeaseResume(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 4, 30, 0, 0, time.UTC) }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "run handoff", Route: domaintask.RouteGeneral, Assignee: "Mio"}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatalf("first StartRunWithReason: %v", err)
+	}
+	if err := first.RunID.Validate(); err != nil {
+		t.Fatalf("first run id is not canonical: %v", err)
+	}
+	if first.TaskID != task.TaskID || first.StartReason != domaintask.RunStartReasonFirst || first.Assignee != "Mio" || first.Status != domaintask.RunStatusRunning {
+		t.Fatalf("first run = %#v", first)
+	}
+	persisted, err := manager.GetRun(ctx, first.RunID)
+	if err != nil {
+		t.Fatalf("get returned first run: %v", err)
+	}
+	if persisted.RunID != first.RunID || persisted.TaskID != first.TaskID || persisted.StartReason != first.StartReason || persisted.Status != first.Status || persisted.Assignee != first.Assignee || !persisted.StartedAt.Equal(first.StartedAt) {
+		t.Fatalf("returned run does not match persisted run: returned=%#v persisted=%#v", first, persisted)
+	}
+
+	if _, err := manager.Wait(ctx, task.TaskID, "checkpoint"); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if _, err := manager.Resume(ctx, task.TaskID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	checkpoint, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonCheckpointResume)
+	if err != nil {
+		t.Fatalf("checkpoint StartRunWithReason: %v", err)
+	}
+	if checkpoint.RunID == first.RunID || checkpoint.TaskID != task.TaskID || checkpoint.StartReason != domaintask.RunStartReasonCheckpointResume || checkpoint.Status != domaintask.RunStatusRunning {
+		t.Fatalf("checkpoint run = %#v", checkpoint)
+	}
+
+	lease, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonLeaseReacquire)
+	if err != nil {
+		t.Fatalf("lease StartRunWithReason: %v", err)
+	}
+	if lease.RunID == first.RunID || lease.RunID == checkpoint.RunID || lease.TaskID != task.TaskID || lease.StartReason != domaintask.RunStartReasonLeaseReacquire || lease.Status != domaintask.RunStatusRunning {
+		t.Fatalf("lease run = %#v", lease)
+	}
+
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatalf("list run history: %v", err)
+	}
+	if len(runs) != 3 {
+		t.Fatalf("run history length = %d, want 3: %#v", len(runs), runs)
+	}
+	for _, run := range runs {
+		switch run.RunID {
+		case first.RunID:
+			if run.Status != domaintask.RunStatusWaiting || run.CompletedAt == nil {
+				t.Fatalf("first run was not closed once as waiting: %#v", run)
+			}
+		case checkpoint.RunID:
+			if run.Status != domaintask.RunStatusInterrupted || run.CompletedAt == nil {
+				t.Fatalf("checkpoint run was not closed once as interrupted: %#v", run)
+			}
+		case lease.RunID:
+			if run.Status != domaintask.RunStatusRunning || run.CompletedAt != nil {
+				t.Fatalf("lease run is not the sole active run: %#v", run)
+			}
+		default:
+			t.Fatalf("unexpected run in history: %#v", run)
+		}
+	}
+}
+
+func TestManagerInterruptRunClosesExactRunWithoutChangingTask(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	now := time.Date(2026, 9, 5, 4, 45, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "interrupt exact run", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskBefore, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	interrupted, err := manager.InterruptRun(ctx, task.TaskID, run.RunID, " queue lease lost ")
+	if err != nil {
+		t.Fatalf("InterruptRun: %v", err)
+	}
+	if interrupted.RunID != run.RunID || interrupted.TaskID != task.TaskID || interrupted.Status != domaintask.RunStatusInterrupted || interrupted.Summary != "queue lease lost" || interrupted.CompletedAt == nil || !interrupted.CompletedAt.Equal(now) {
+		t.Fatalf("interrupted run = %#v", interrupted)
+	}
+	taskAfter, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(taskAfter, taskBefore) {
+		t.Fatalf("InterruptRun changed Task: before=%#v after=%#v", taskBefore, taskAfter)
+	}
+}
+
+func TestManagerInterruptRunRejectsCrossTaskAndPreservesHistory(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 5, 0, 0, 0, time.UTC) }
+	first, err := manager.Create(ctx, domaintask.Task{Title: "first task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Create(ctx, domaintask.Task{Title: "second task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.StartRunWithReason(ctx, first.TaskID, domaintask.RunStartReasonFirst); err != nil {
+		t.Fatal(err)
+	}
+	secondRun, err := manager.StartRunWithReason(ctx, second.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.InterruptRun(ctx, first.TaskID, secondRun.RunID, "must not cross task boundary"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("cross-task InterruptRun error = %v, want ErrRunConflict", err)
+	}
+	persisted, err := manager.GetRun(ctx, secondRun.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != domaintask.RunStatusRunning || persisted.Summary != "" {
+		t.Fatalf("cross-task rejection changed Run: %#v", persisted)
+	}
+}
+
+func TestManagerInterruptRunIsIdempotentOnlyForInterruptedRuns(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	now := time.Date(2026, 9, 5, 5, 15, 0, 0, time.UTC)
+	manager.now = func() time.Time { return now }
+	task, err := manager.Create(ctx, domaintask.Task{Title: "idempotent interrupt", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.InterruptRun(ctx, task.TaskID, run.RunID, "first cleanup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.InterruptRun(ctx, task.TaskID, run.RunID, "different cleanup")
+	if err != nil {
+		t.Fatalf("idempotent InterruptRun: %v", err)
+	}
+	if !reflect.DeepEqual(second, first) || second.Summary != "first cleanup" {
+		t.Fatalf("idempotent InterruptRun rewrote history: first=%#v second=%#v", first, second)
+	}
+
+	terminalTask, err := manager.Create(ctx, domaintask.Task{Title: "terminal conflict", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalRun, err := manager.StartRunWithReason(ctx, terminalTask.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Succeed(ctx, terminalTask.TaskID, "already succeeded"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.InterruptRun(ctx, terminalTask.TaskID, terminalRun.RunID, "must not rewrite success"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("terminal InterruptRun error = %v, want ErrRunConflict", err)
+	}
+	persisted, err := manager.GetRun(ctx, terminalRun.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != domaintask.RunStatusSucceeded || persisted.Summary != "already succeeded" {
+		t.Fatalf("terminal Run history changed: %#v", persisted)
 	}
 }
 

@@ -220,6 +220,74 @@ func TestTaskLifecycleActiveRunFailsClosedForMissingMultipleAndWrongRuns(t *test
 	}
 }
 
+func TestTaskLifecycleAttachesExactExistingRunWithoutCreatingOrStarting(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	run := seedRunningTask(manager, taskID, domaintask.RouteCHAT, taskLifecycleMio)
+	attached, err := lifecycle.attachExisting(ctx, ProcessMessageRequest{
+		RootTaskID:     taskID.String(),
+		CanonicalRunID: run.RunID,
+	})
+	if err != nil {
+		t.Fatalf("attachExisting: %v", err)
+	}
+	if attached.TaskID != taskID || attached.Status != domaintask.StatusRunning {
+		t.Fatalf("attached task = %#v", attached)
+	}
+	if len(manager.calls) != 0 {
+		t.Fatalf("attachExisting changed lifecycle = %#v", manager.calls)
+	}
+}
+
+func TestTaskLifecycleAttachExistingRejectsWrongRun(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	seedRunningTask(manager, taskID, domaintask.RouteCHAT, taskLifecycleMio)
+	if _, err := lifecycle.attachExisting(ctx, ProcessMessageRequest{
+		RootTaskID:     taskID.String(),
+		CanonicalRunID: modulecore.NewRunID(),
+	}); err == nil {
+		t.Fatal("wrong active run was accepted")
+	}
+}
+
+func TestTaskLifecycleAttachedActivationRejectsSavedRouteAndActorMismatch(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	run := seedRunningTask(manager, taskID, domaintask.RouteOperations, taskLifecycleShiro)
+	attached, err := lifecycle.attachExisting(ctx, ProcessMessageRequest{RootTaskID: taskID.String(), CanonicalRunID: run.RunID})
+	if err != nil {
+		t.Fatalf("attachExisting: %v", err)
+	}
+	req := ProcessMessageRequest{RootTaskID: taskID.String(), TraceID: string(modulecore.NewTraceID())}
+	for _, test := range []struct {
+		name  string
+		route routing.Route
+		actor string
+	}{
+		{name: "route", route: routing.RouteCODE, actor: taskLifecycleShiro},
+		{name: "actor", route: routing.RouteOPS, actor: taskLifecycleMio},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			events := newRecordingTaskLifecycleEventPort()
+			activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, &attached)
+			defer cleanup()
+			if _, err := activation.Activate(ctx, test.route, test.actor, "resume"); err == nil {
+				t.Fatal("mismatched attached execution was accepted")
+			}
+			if len(manager.calls) != 0 {
+				t.Fatalf("mismatched activation changed lifecycle = %#v", manager.calls)
+			}
+		})
+	}
+}
+
 func lifecycleTestRun(taskID modulecore.TaskID, assignee string, startedAt time.Time) domaintask.Run {
 	return domaintask.Run{
 		RunID:       modulecore.NewRunID(),
@@ -229,6 +297,25 @@ func lifecycleTestRun(taskID modulecore.TaskID, assignee string, startedAt time.
 		Status:      domaintask.RunStatusRunning,
 		StartedAt:   startedAt,
 	}
+}
+
+func seedRunningTask(manager *recordingTaskLifecycleManager, taskID modulecore.TaskID, route domaintask.Route, assignee string) domaintask.Run {
+	now := time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC)
+	manager.tasks[taskID] = domaintask.Task{
+		TaskID:          taskID,
+		Title:           "attached task",
+		Route:           route,
+		OwnerID:         taskLifecycleMio,
+		Assignee:        assignee,
+		Status:          domaintask.StatusRunning,
+		Priority:        domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	run := lifecycleTestRun(taskID, assignee, now)
+	manager.runs[run.RunID] = run
+	return run
 }
 
 func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testing.T) {
@@ -251,7 +338,7 @@ func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testin
 	}
 	events := newRecordingTaskLifecycleEventPort()
 	events.BindTrace(rootID.String(), traceID)
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
 
 	mioTaskID, err := activation.Activate(context.Background(), routing.RouteCHAT, "mio", "daily news brief")
 	if err != nil {
@@ -300,7 +387,7 @@ func TestTaskLifecycleActivationReturnsCreatedChildWhenAssignmentPublicationFail
 	events.failType = "agent.assignment"
 	wantErr := errors.New("event store unavailable")
 	events.failErr = wantErr
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
 	defer cleanup()
 
 	childID, err := activation.Activate(context.Background(), routing.RouteOPS, "shiro", "ops")
@@ -342,6 +429,49 @@ func TestTaskLifecycleFailsQueuedRootAndChildOnExecutionError(t *testing.T) {
 	}
 	if _, ok := lifecycle.rootContexts[root.TaskID]; ok {
 		t.Fatalf("root context was not released after failure")
+	}
+}
+
+func TestTaskLifecyclePreservesWaitingPauseForExecutionAndRoot(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	rootID := modulecore.NewTaskID()
+	root, err := lifecycle.createRoot(ctx, ProcessMessageRequest{RootTaskID: rootID.String(), UserMessage: "pause"})
+	if err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	childID, err := lifecycle.prepareExecution(ctx, root.TaskID, routing.RouteOPS, modulecore.NewEventID(), taskLifecycleShiro)
+	if err != nil {
+		t.Fatalf("prepareExecution: %v", err)
+	}
+	if err := lifecycle.recordAssignmentAndStart(ctx, root.TaskID, childID, taskLifecycleShiro, modulecore.NewEventID()); err != nil {
+		t.Fatalf("recordAssignmentAndStart: %v", err)
+	}
+	if _, err := manager.Wait(ctx, childID, "manual pause"); err != nil {
+		t.Fatalf("pause child: %v", err)
+	}
+	if err := lifecycle.finish(ctx, rootID, childID, "", errors.New("execution canceled")); err != nil {
+		t.Fatalf("finish paused execution: %v", err)
+	}
+	if manager.tasks[childID].Status != domaintask.StatusWaiting || manager.tasks[rootID].Status != domaintask.StatusWaiting {
+		t.Fatalf("paused tasks = child=%s root=%s", manager.tasks[childID].Status, manager.tasks[rootID].Status)
+	}
+	for _, taskID := range []modulecore.TaskID{childID, rootID} {
+		run, err := lifecycle.activeRunForTask(ctx, taskID)
+		if err == nil {
+			t.Fatalf("waiting task %s still has active run: %#v", taskID, run)
+		}
+		var runs []domaintask.Run
+		runs, err = manager.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+		if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusWaiting {
+			t.Fatalf("waiting task %s runs = %#v err=%v", taskID, runs, err)
+		}
+	}
+	for _, call := range manager.calls {
+		if call == "Fail" {
+			t.Fatalf("pause path failed a task: %#v", manager.calls)
+		}
 	}
 }
 
@@ -447,6 +577,14 @@ func (m *recordingTaskLifecycleManager) Create(_ context.Context, draft domainta
 	return draft, nil
 }
 
+func (m *recordingTaskLifecycleManager) Get(_ context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrNotFound
+	}
+	return task, nil
+}
+
 func (m *recordingTaskLifecycleManager) Start(_ context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
 	m.calls = append(m.calls, "Start")
 	m.callIDs = append(m.callIDs, "Start:"+taskID.String())
@@ -492,6 +630,35 @@ func (m *recordingTaskLifecycleManager) Succeed(_ context.Context, taskID module
 	m.calls = append(m.calls, "Succeed")
 	m.callIDs = append(m.callIDs, "Succeed:"+taskID.String())
 	return m.finish(taskID, domaintask.StatusSucceeded, summary)
+}
+
+func (m *recordingTaskLifecycleManager) Wait(_ context.Context, taskID modulecore.TaskID, reason string) (domaintask.Task, error) {
+	m.calls = append(m.calls, "Wait")
+	m.callIDs = append(m.callIDs, "Wait:"+taskID.String())
+	if strings.TrimSpace(reason) == "" {
+		return domaintask.Task{}, errors.New("waiting reason is required")
+	}
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return domaintask.Task{}, domaintask.ErrNotFound
+	}
+	if !domaintask.CanTransition(task.Status, domaintask.StatusWaiting) {
+		return domaintask.Task{}, fmt.Errorf("cannot wait %s from %s", taskID, task.Status)
+	}
+	task.Status = domaintask.StatusWaiting
+	task.WaitingReason = strings.TrimSpace(reason)
+	m.tasks[taskID] = task
+	for runID, run := range m.runs {
+		if run.TaskID != taskID || run.Status != domaintask.RunStatusRunning {
+			continue
+		}
+		closed, err := run.Close(domaintask.RunStatusWaiting, task.UpdatedAt, task.WaitingReason)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+		m.runs[runID] = closed
+	}
+	return task, nil
 }
 
 func (m *recordingTaskLifecycleManager) Fail(_ context.Context, taskID modulecore.TaskID, summary string, _ []string) (domaintask.Task, error) {

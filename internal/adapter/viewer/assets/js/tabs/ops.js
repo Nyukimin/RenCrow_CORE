@@ -1033,15 +1033,15 @@ function renderSuperAgentResumeAudits() {
   }
   rows.slice(0, 20).forEach((item) => {
     const tr = document.createElement('tr');
-    const traceText = 'paused:' + String(item.paused) + ' resumed:' + String(item.resumed);
+    const traceText = 'paused:' + String(item.paused) + ' queued:' + String(item.queued);
     const controlText = 'runtime-control:' + item.runtimeControlActions.join(',');
-    const evidenceClass = item.manualLedger ? 'warning' : (item.resumed > 0 && item.paused > 0 && item.runtimeControlApplied ? 'running' : 'error');
+    const evidenceClass = item.manualLedger ? 'warning' : (item.queued > 0 && item.paused > 0 && item.runtimeControlApplied ? 'running' : 'error');
     tr.innerHTML =
       '<td>' + esc(ftime(item.time)) + '</td>' +
       '<td class="code">' + esc(short(item.queueID || '-', 48)) + '</td>' +
       '<td class="code">' + esc(short(item.runID || '-', 48)) + '</td>' +
       '<td><span class="badge ' + stateClass(item.status) + '">' + esc(item.status || '-') + '</span></td>' +
-      '<td><span class="badge ' + stateClass(item.paused > 0 && item.resumed > 0 ? 'running' : 'error') + '">' + esc(traceText) + '</span></td>' +
+      '<td><span class="badge ' + stateClass(item.paused > 0 && item.queued > 0 ? 'running' : 'error') + '">' + esc(traceText) + '</span></td>' +
       '<td><span class="badge ' + stateClass(item.runtimeControlApplied ? 'running' : 'warning') + '">' + esc(short(controlText, 140)) + '</span></td>' +
       '<td><span class="badge ' + stateClass(evidenceClass) + '">' + esc(short(item.evidence || '-', 140)) + '</span></td>';
     body.appendChild(tr);
@@ -1053,10 +1053,12 @@ function superAgentResumeAuditRows() {
   const queue = Array.isArray(state.ops.superAgentRunQueue) ? state.ops.superAgentRunQueue : [];
   const traces = Array.isArray(state.ops.superAgentEvents) ? state.ops.superAgentEvents : [];
   return queue.filter((item) => String(sandboxField(item, 'action', 'Action') || '') === 'resume').map((item) => {
-    const runID = sandboxField(item, 'run_id', 'RunID') || '';
-    const related = traces.filter((ev) => String(canonicalEventField(ev, 'run_id') || canonicalEventField(ev, 'run_reference') || '') === String(runID));
+    const taskID = sandboxField(item, 'task_id', 'TaskID') || '';
+    const related = traces.filter((ev) => String(canonicalEventField(ev, 'task_id') || '') === String(taskID));
     const paused = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.lead_agent_paused').length;
-    const resumed = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.lead_agent_resumed').length;
+    const queued = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.resume_queued').length;
+    const pausedEvents = related.filter((ev) => String(canonicalEventField(ev, 'event_type') || '') === 'run.lead_agent_paused');
+    const sourceRunID = sandboxField(item, 'source_run_id', 'SourceRunID') || (pausedEvents.length ? canonicalEventField(pausedEvents[pausedEvents.length - 1], 'run_id') : '');
     const reason = String(sandboxField(item, 'reason', 'Reason') || '');
     const manualLedger = /manual ledger|without scheduler execution|scheduler execution not used/i.test(reason);
     const runtimeControlActions = superAgentResumeRuntimeControlActions(related);
@@ -1064,10 +1066,11 @@ function superAgentResumeAuditRows() {
     return {
       time: sandboxField(item, 'completed_at', 'CompletedAt') || sandboxField(item, 'claimed_at', 'ClaimedAt') || sandboxField(item, 'created_at', 'CreatedAt'),
       queueID: sandboxField(item, 'queue_id', 'QueueID') || '',
-      runID,
+      taskID: String(taskID || ''),
+      runID: String(sourceRunID || ''),
       status: String(sandboxField(item, 'status', 'Status') || ''),
       paused,
-      resumed,
+      queued,
       manualLedger,
       runtimeControlActions,
       runtimeControlApplied,
@@ -1098,13 +1101,13 @@ function renderSuperAgentResumeAuditResult() {
   const rows = superAgentResumeAuditRows();
   const manual = rows.filter((item) => item.manualLedger).length;
   const completed = rows.filter((item) => item.status === 'completed').length;
-  const withPauseResume = rows.filter((item) => item.paused > 0 && item.resumed > 0).length;
+  const withPauseQueue = rows.filter((item) => item.paused > 0 && item.queued > 0).length;
   const runtimeControlApplied = rows.filter((item) => item.runtimeControlApplied).length;
   const schedulerExecuted = rows.length - manual;
   const result = manual > 0 && schedulerExecuted === 0
     ? 'blocked: manual-ledger evidence does not prove scheduler resume'
     : 'durable resume evidence: ' + String(schedulerExecuted) + ' scheduler-executed queue item(s); each run remains evidence-gated';
-  el.textContent = 'superagent resume audits: ' + String(rows.length) + ' resume queue / ' + String(completed) + ' completed / ' + String(manual) + ' manual-ledger / ' + String(withPauseResume) + ' pause-resume trace / ' + String(runtimeControlApplied) + ' runtime-control applied\n' + result;
+  el.textContent = 'superagent resume audits: ' + String(rows.length) + ' resume queue / ' + String(completed) + ' completed / ' + String(manual) + ' manual-ledger / ' + String(withPauseQueue) + ' pause-queue trace / ' + String(runtimeControlApplied) + ' runtime-control applied\n' + result;
 }
 
 function renderAIWorkflowRunEvidence() {

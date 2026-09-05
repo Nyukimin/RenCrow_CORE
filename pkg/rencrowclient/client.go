@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -141,34 +142,27 @@ type MessageChannel struct {
 }
 
 type RunQueueItem struct {
-	QueueID      string    `json:"queue_id"`
-	RunID        string    `json:"run_id,omitempty"`
-	WorkstreamID string    `json:"workstream_id,omitempty"`
-	Goal         string    `json:"goal"`
-	Action       string    `json:"action"`
-	Status       string    `json:"status"`
-	Priority     int       `json:"priority,omitempty"`
-	Reason       string    `json:"reason,omitempty"`
-	NotBefore    time.Time `json:"not_before,omitempty"`
-	ClaimedAt    time.Time `json:"claimed_at,omitempty"`
-	CompletedAt  time.Time `json:"completed_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-}
-
-type RunQueueClaimResponse struct {
-	Claimed bool         `json:"claimed"`
-	Item    RunQueueItem `json:"item,omitempty"`
-}
-
-type RunQueueCompleteRequest struct {
-	QueueID string `json:"queue_id"`
-	Status  string `json:"status,omitempty"`
-	Reason  string `json:"reason,omitempty"`
-}
-
-type RunQueueCompleteResponse struct {
-	Completed bool         `json:"completed"`
-	Item      RunQueueItem `json:"item,omitempty"`
+	QueueID            string    `json:"queue_id"`
+	TaskID             string    `json:"task_id"`
+	RunID              string    `json:"run_id,omitempty"`
+	RunStartReason     string    `json:"run_start_reason"`
+	WorkstreamID       string    `json:"workstream_id,omitempty"`
+	Goal               string    `json:"goal"`
+	Action             string    `json:"action"`
+	Status             string    `json:"status"`
+	Priority           int       `json:"priority,omitempty"`
+	Reason             string    `json:"reason,omitempty"`
+	NotBefore          time.Time `json:"not_before,omitempty"`
+	ClaimedAt          time.Time `json:"claimed_at,omitempty"`
+	LeaseToken         string    `json:"lease_token,omitempty"`
+	LeaseUntil         time.Time `json:"lease_until,omitempty"`
+	AttemptCount       int       `json:"attempt_count,omitempty"`
+	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
+	NextAction         string    `json:"next_action,omitempty"`
+	IdempotencyKey     string    `json:"idempotency_key,omitempty"`
+	CompletedAt        time.Time `json:"completed_at,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type RuntimeConfig struct {
@@ -1090,12 +1084,31 @@ type RunStateRequest struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-type RunStateResponse struct {
-	RunID                 string `json:"run_id"`
-	Status                string `json:"status"`
-	EventID               string `json:"event_id"`
-	RuntimeControlApplied bool   `json:"runtime_control_applied,omitempty"`
-	RuntimeControlAction  string `json:"runtime_control_action,omitempty"`
+// PauseRunResponse describes the projection of the exact Run that was paused.
+// A pause receipt always carries the current canonical RunID.
+type PauseRunResponse struct {
+	TaskID                modulecore.TaskID `json:"task_id"`
+	RunID                 modulecore.RunID  `json:"run_id"`
+	Status                string            `json:"status"`
+	EventID               string            `json:"event_id"`
+	RuntimeControlApplied bool              `json:"runtime_control_applied,omitempty"`
+	RuntimeControlAction  string            `json:"runtime_control_action,omitempty"`
+}
+
+// ResumeRunResponse describes a queued resume intent. SourceRunID selects the
+// paused projection that supplied the checkpoint; RunID stays empty until the
+// Task owner creates a new Run while claiming the queue item.
+type ResumeRunResponse struct {
+	TaskID                modulecore.TaskID `json:"task_id"`
+	SourceRunID           modulecore.RunID  `json:"source_run_id"`
+	RunID                 modulecore.RunID  `json:"run_id,omitempty"`
+	Status                string            `json:"status"`
+	QueueID               string            `json:"queue_id"`
+	QueueStatus           string            `json:"queue_status"`
+	QueueItem             RunQueueItem      `json:"queue_item"`
+	EventID               string            `json:"event_id"`
+	RuntimeControlApplied bool              `json:"runtime_control_applied,omitempty"`
+	RuntimeControlAction  string            `json:"runtime_control_action,omitempty"`
 }
 
 type ExternalControlRequest struct {
@@ -1960,71 +1973,32 @@ func (c *Client) knowledgeRelations(ctx context.Context, path string) (Knowledge
 	return out, nil
 }
 
-func (c *Client) CreateAgentRun(ctx context.Context, item AgentRun) error {
-	if err := validateAgentRunRequest(item); err != nil {
-		return err
+func (c *Client) PauseRun(ctx context.Context, runID string, reason string) (PauseRunResponse, error) {
+	identity, err := parseRunStateRunID(runID)
+	if err != nil {
+		return PauseRunResponse{}, err
 	}
-	return c.do(ctx, http.MethodPost, "/viewer/superagent/runs", item, nil)
-}
-
-func (c *Client) CreateRunQueueItem(ctx context.Context, item RunQueueItem) error {
-	item = normalizeRunQueueCreateRequest(item)
-	if err := validateRunQueueCreateRequest(item); err != nil {
-		return err
+	var out PauseRunResponse
+	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/runs/pause", RunStateRequest{RunID: string(identity), Reason: reason}, &out); err != nil {
+		return PauseRunResponse{}, err
 	}
-	return c.do(ctx, http.MethodPost, "/viewer/superagent/run-queue", item, nil)
-}
-
-func (c *Client) ClaimRunQueueItem(ctx context.Context) (RunQueueClaimResponse, error) {
-	var out RunQueueClaimResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/run-queue/claim", nil, &out); err != nil {
-		return RunQueueClaimResponse{}, err
-	}
-	if err := validateRunQueueClaimResponse(out); err != nil {
-		return RunQueueClaimResponse{}, err
+	if err := validatePauseRunResponse(out, identity, map[string]bool{"none": true, "cancel_requested": true}); err != nil {
+		return PauseRunResponse{}, err
 	}
 	return out, nil
 }
 
-func (c *Client) CompleteRunQueueItem(ctx context.Context, req RunQueueCompleteRequest) (RunQueueCompleteResponse, error) {
-	req = normalizeRunQueueCompleteRequest(req)
-	if err := validateRunQueueCompleteRequest(req); err != nil {
-		return RunQueueCompleteResponse{}, err
+func (c *Client) ResumeRun(ctx context.Context, runID string, reason string) (ResumeRunResponse, error) {
+	identity, err := parseRunStateRunID(runID)
+	if err != nil {
+		return ResumeRunResponse{}, err
 	}
-	var out RunQueueCompleteResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/run-queue/complete", req, &out); err != nil {
-		return RunQueueCompleteResponse{}, err
+	var out ResumeRunResponse
+	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/runs/resume", RunStateRequest{RunID: string(identity), Reason: reason}, &out); err != nil {
+		return ResumeRunResponse{}, err
 	}
-	if err := validateRunQueueCompleteResponse(out, req); err != nil {
-		return RunQueueCompleteResponse{}, err
-	}
-	return out, nil
-}
-
-func (c *Client) PauseRun(ctx context.Context, runID string, reason string) (RunStateResponse, error) {
-	if strings.TrimSpace(runID) == "" {
-		return RunStateResponse{}, fmt.Errorf("run state request missing run_id")
-	}
-	var out RunStateResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/runs/pause", RunStateRequest{RunID: runID, Reason: reason}, &out); err != nil {
-		return RunStateResponse{}, err
-	}
-	if err := validateRunStateResponse(out, runID, "paused", map[string]bool{"none": true, "cancel_requested": true}); err != nil {
-		return RunStateResponse{}, err
-	}
-	return out, nil
-}
-
-func (c *Client) ResumeRun(ctx context.Context, runID string, reason string) (RunStateResponse, error) {
-	if strings.TrimSpace(runID) == "" {
-		return RunStateResponse{}, fmt.Errorf("run state request missing run_id")
-	}
-	var out RunStateResponse
-	if err := c.do(ctx, http.MethodPost, "/viewer/superagent/runs/resume", RunStateRequest{RunID: runID, Reason: reason}, &out); err != nil {
-		return RunStateResponse{}, err
-	}
-	if err := validateRunStateResponse(out, runID, "running", map[string]bool{"none": true, "resume_marker_cleared": true}); err != nil {
-		return RunStateResponse{}, err
+	if err := validateResumeRunResponse(out, identity, map[string]bool{"none": true, "resume_marker_cleared": true}); err != nil {
+		return ResumeRunResponse{}, err
 	}
 	return out, nil
 }
@@ -3584,26 +3558,6 @@ func validateSkillGovernanceContributionGateRequest(item SkillGovernanceContribu
 	return nil
 }
 
-func validateRunQueueCompleteResponse(resp RunQueueCompleteResponse, req RunQueueCompleteRequest) error {
-	if !resp.Completed {
-		return fmt.Errorf("run queue complete response did not confirm completion")
-	}
-	if resp.Item.QueueID != strings.TrimSpace(req.QueueID) {
-		return fmt.Errorf("run queue complete response queue_id mismatch")
-	}
-	expectedStatus := strings.TrimSpace(req.Status)
-	if resp.Item.Status != expectedStatus {
-		return fmt.Errorf("run queue complete response status mismatch: got %q want %q", resp.Item.Status, expectedStatus)
-	}
-	if resp.Item.CreatedAt.IsZero() {
-		return fmt.Errorf("run queue complete response item missing created_at")
-	}
-	if isRunQueueTerminalStatus(expectedStatus) && resp.Item.CompletedAt.IsZero() {
-		return fmt.Errorf("run queue complete response item missing completed_at")
-	}
-	return nil
-}
-
 func validateSuperAgentStatus(resp SuperAgentStatus) error {
 	if err := validateSuperAgentRuntimeConfig(resp.RuntimeConfig); err != nil {
 		return err
@@ -3763,24 +3717,8 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 	seenQueues := map[string]struct{}{}
 	for _, item := range resp.RunQueue {
 		queueID := strings.TrimSpace(item.QueueID)
-		if queueID == "" {
-			return fmt.Errorf("superagent status run_queue item missing queue_id")
-		}
-		status := strings.TrimSpace(item.Status)
-		if status == "" {
-			return fmt.Errorf("superagent status run_queue item missing status")
-		}
-		if !isRunQueueStatus(status) {
-			return fmt.Errorf("superagent status invalid run_queue status=%q", item.Status)
-		}
-		if item.CreatedAt.IsZero() {
-			return fmt.Errorf("superagent status run_queue item %q missing created_at", queueID)
-		}
-		if isRunQueueTerminalStatus(status) && item.CompletedAt.IsZero() {
-			return fmt.Errorf("superagent status terminal run_queue item %q missing completed_at", queueID)
-		}
-		if status == "failed" && strings.TrimSpace(item.Reason) == "" {
-			return fmt.Errorf("superagent status failed run_queue item %q missing reason", queueID)
+		if err := validateRunQueueItem(item, "superagent status run_queue item", true); err != nil {
+			return err
 		}
 		if _, ok := seenQueues[queueID]; ok {
 			return fmt.Errorf("superagent status contains duplicate run_queue item for queue_id %q", queueID)
@@ -3832,7 +3770,7 @@ func isSuperAgentSubagentTaskTerminalStatus(status string) bool {
 
 func isRunQueueTerminalStatus(status string) bool {
 	switch status {
-	case "completed", "failed", "cancelled":
+	case "completed", "failed", "cancelled", "blocked":
 		return true
 	default:
 		return false
@@ -3841,7 +3779,7 @@ func isRunQueueTerminalStatus(status string) bool {
 
 func isRunQueueStatus(status string) bool {
 	switch status {
-	case "queued", "claimed", "completed", "failed", "cancelled":
+	case "queued", "reserved", "claimed", "completed", "failed", "cancelled", "blocked":
 		return true
 	default:
 		return false
@@ -5712,109 +5650,187 @@ func validateLineRange(lineStart, lineEnd int, label string) error {
 	return nil
 }
 
-func validateAgentRunRequest(item AgentRun) error {
-	runID := strings.TrimSpace(item.RunID)
-	if runID == "" {
-		return fmt.Errorf("agent run request missing run_id")
+// validateRunQueueItem mirrors the CORE RunQueueItem contract at the client
+// boundary. Queue state may carry an empty RunID only before execution starts
+// (queued/reserved) or when the reservation was blocked; every execution state
+// must carry the canonical Task-owned RunID.
+func validateRunQueueItem(item RunQueueItem, label string, requireCreatedAt bool) error {
+	label = strings.TrimSpace(label)
+	if label == "" {
+		label = "run queue item"
 	}
-	if err := modulecore.RunID(runID).Validate(); err != nil {
-		return fmt.Errorf("agent run request invalid run_id: %w", err)
+	queueID := strings.TrimSpace(item.QueueID)
+	if queueID == "" {
+		return fmt.Errorf("%s missing queue_id", label)
+	}
+	status := strings.TrimSpace(item.Status)
+	if status == "" {
+		return fmt.Errorf("%s missing status", label)
+	}
+	if !isRunQueueStatus(status) {
+		return fmt.Errorf("%s invalid run_queue status=%q", label, item.Status)
+	}
+	if requireCreatedAt && item.CreatedAt.IsZero() {
+		return fmt.Errorf("%s %q missing created_at", label, queueID)
 	}
 	taskID := strings.TrimSpace(item.TaskID)
 	if taskID == "" {
-		return fmt.Errorf("agent run request missing task_id")
+		return fmt.Errorf("%s %q missing task_id", label, queueID)
 	}
 	if err := modulecore.TaskID(taskID).Validate(); err != nil {
-		return fmt.Errorf("agent run request invalid task_id: %w", err)
+		return fmt.Errorf("%s %q invalid task_id: %w", label, queueID, err)
 	}
-	if strings.TrimSpace(item.AgentType) == "" {
-		return fmt.Errorf("agent run request missing agent_type")
+	reason := strings.TrimSpace(item.RunStartReason)
+	if reason == "" {
+		return fmt.Errorf("%s %q missing run_start_reason", label, queueID)
 	}
-	if strings.TrimSpace(item.Status) == "" {
-		return fmt.Errorf("agent run request missing status")
-	}
-	return nil
-}
-
-func normalizeRunQueueCreateRequest(item RunQueueItem) RunQueueItem {
-	if strings.TrimSpace(item.Status) == "" {
-		item.Status = "queued"
-	}
-	return item
-}
-
-func validateRunQueueCreateRequest(item RunQueueItem) error {
-	if strings.TrimSpace(item.QueueID) == "" {
-		return fmt.Errorf("run queue create request missing queue_id")
+	if !domaintask.ValidRunStartReason(domaintask.RunStartReason(reason)) {
+		return fmt.Errorf("%s %q invalid run_start_reason=%q", label, queueID, item.RunStartReason)
 	}
 	if strings.TrimSpace(item.Goal) == "" {
-		return fmt.Errorf("run queue create request missing goal")
+		return fmt.Errorf("%s %q missing goal", label, queueID)
 	}
 	if strings.TrimSpace(item.Action) == "" {
-		return fmt.Errorf("run queue create request missing action")
+		return fmt.Errorf("%s %q missing action", label, queueID)
 	}
-	if strings.TrimSpace(item.Status) != "queued" {
-		return fmt.Errorf("run queue create request status must be queued")
-	}
-	return nil
-}
-
-func normalizeRunQueueCompleteRequest(req RunQueueCompleteRequest) RunQueueCompleteRequest {
-	if strings.TrimSpace(req.Status) == "" {
-		req.Status = "completed"
-	}
-	return req
-}
-
-func validateRunQueueCompleteRequest(req RunQueueCompleteRequest) error {
-	if strings.TrimSpace(req.QueueID) == "" {
-		return fmt.Errorf("run queue complete request missing queue_id")
-	}
-	switch strings.TrimSpace(req.Status) {
-	case "completed", "failed", "cancelled":
-		return nil
-	default:
-		return fmt.Errorf("run queue complete request status must be completed, failed, or cancelled")
-	}
-}
-
-func validateRunQueueClaimResponse(resp RunQueueClaimResponse) error {
-	if !resp.Claimed {
-		if strings.TrimSpace(resp.Item.QueueID) != "" || strings.TrimSpace(resp.Item.Status) == "claimed" {
-			return fmt.Errorf("run queue claim response is not claimed but includes claimed item state")
+	runID := strings.TrimSpace(item.RunID)
+	if runID != "" {
+		if err := modulecore.RunID(runID).Validate(); err != nil {
+			return fmt.Errorf("%s %q invalid run_id: %w", label, queueID, err)
 		}
-		return nil
 	}
-	if strings.TrimSpace(resp.Item.QueueID) == "" {
-		return fmt.Errorf("run queue claim response claimed without queue_id")
+	if status == "queued" || status == "reserved" || status == "blocked" {
+		if runID != "" {
+			return fmt.Errorf("%s %q %s run queue item must not retain run_id", label, queueID, status)
+		}
 	}
-	if strings.TrimSpace(resp.Item.Status) != "claimed" {
-		return fmt.Errorf("run queue claim response status mismatch: got %q want %q", resp.Item.Status, "claimed")
+	if status == "reserved" || status == "claimed" {
+		if strings.TrimSpace(item.LeaseToken) == "" || item.LeaseUntil.IsZero() || item.ClaimedAt.IsZero() {
+			return fmt.Errorf("%s %q %s run queue item requires lease token, lease_until, and claimed_at", label, queueID, status)
+		}
 	}
-	if resp.Item.CreatedAt.IsZero() {
-		return fmt.Errorf("run queue claim response item missing created_at")
+	if status == "claimed" && runID == "" {
+		return fmt.Errorf("%s %q run_id is required for claimed run queue item", label, queueID)
+	}
+	if isRunQueueTerminalStatus(status) {
+		if status == "blocked" {
+			if strings.TrimSpace(item.Reason) == "" {
+				return fmt.Errorf("%s %q reason is required for blocked run queue item", label, queueID)
+			}
+		} else if runID == "" {
+			return fmt.Errorf("%s %q run_id is required for terminal run queue item", label, queueID)
+		}
+		if item.CompletedAt.IsZero() {
+			return fmt.Errorf("%s %q terminal run_queue missing completed_at", label, queueID)
+		}
+	}
+	if status == "failed" && strings.TrimSpace(item.Reason) == "" {
+		return fmt.Errorf("%s %q failed run_queue item missing reason", label, queueID)
+	}
+	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
+		return fmt.Errorf("%s %q attempt_count and checkpoint_revision must be >= 0", label, queueID)
 	}
 	return nil
 }
 
-func validateRunStateResponse(resp RunStateResponse, runID string, expectedStatus string, allowedActions map[string]bool) error {
-	if resp.RunID != strings.TrimSpace(runID) {
-		return fmt.Errorf("run state response run_id mismatch")
+func parseRunStateRunID(runID string) (modulecore.RunID, error) {
+	trimmed := strings.TrimSpace(runID)
+	if trimmed == "" {
+		return "", fmt.Errorf("run state request missing run_id")
 	}
-	if strings.TrimSpace(resp.Status) != expectedStatus {
-		return fmt.Errorf("run state response status mismatch: got %q want %q", resp.Status, expectedStatus)
+	identity := modulecore.RunID(trimmed)
+	if err := identity.Validate(); err != nil {
+		return "", fmt.Errorf("run state request invalid run_id: %w", err)
+	}
+	return identity, nil
+}
+
+func validateRunControlAction(applied bool, action string, allowedActions map[string]bool, label string) error {
+	action = strings.TrimSpace(action)
+	if !allowedActions[action] {
+		return fmt.Errorf("%s runtime_control_action mismatch: got %q", label, action)
+	}
+	if applied && action == "none" {
+		return fmt.Errorf("%s claims runtime control applied with action none", label)
+	}
+	return nil
+}
+
+func validatePauseRunResponse(resp PauseRunResponse, expectedRunID modulecore.RunID, allowedActions map[string]bool) error {
+	if err := resp.TaskID.Validate(); err != nil {
+		return fmt.Errorf("pause response invalid task_id: %w", err)
+	}
+	if err := resp.RunID.Validate(); err != nil {
+		return fmt.Errorf("pause response invalid run_id: %w", err)
+	}
+	if resp.RunID != expectedRunID {
+		return fmt.Errorf("pause response run_id mismatch")
+	}
+	if strings.TrimSpace(resp.Status) != "paused" {
+		return fmt.Errorf("pause response status mismatch: got %q want %q", resp.Status, "paused")
 	}
 	if strings.TrimSpace(resp.EventID) == "" {
-		return fmt.Errorf("run state response missing event_id")
+		return fmt.Errorf("pause response missing event_id")
 	}
-	action := strings.TrimSpace(resp.RuntimeControlAction)
-	if !allowedActions[action] {
-		return fmt.Errorf("run state response runtime_control_action mismatch: got %q", resp.RuntimeControlAction)
+	return validateRunControlAction(resp.RuntimeControlApplied, resp.RuntimeControlAction, allowedActions, "pause response")
+}
+
+func validateResumeRunResponse(resp ResumeRunResponse, expectedSourceRunID modulecore.RunID, allowedActions map[string]bool) error {
+	if err := resp.TaskID.Validate(); err != nil {
+		return fmt.Errorf("resume response invalid task_id: %w", err)
 	}
-	if resp.RuntimeControlApplied && action == "none" {
-		return fmt.Errorf("run state response claims runtime control applied with action none")
+	if err := resp.SourceRunID.Validate(); err != nil {
+		return fmt.Errorf("resume response invalid source_run_id: %w", err)
 	}
-	return nil
+	if resp.SourceRunID != expectedSourceRunID {
+		return fmt.Errorf("resume response source_run_id mismatch")
+	}
+	if resp.RunID != "" {
+		if err := resp.RunID.Validate(); err != nil {
+			return fmt.Errorf("resume response invalid run_id: %w", err)
+		}
+		return fmt.Errorf("resume response must not assign run_id before queue claim")
+	}
+	if strings.TrimSpace(resp.Status) != "queued" {
+		return fmt.Errorf("resume response status mismatch: got %q want %q", resp.Status, "queued")
+	}
+	queueID := strings.TrimSpace(resp.QueueID)
+	if queueID == "" {
+		return fmt.Errorf("resume response missing queue_id")
+	}
+	queueStatus := strings.TrimSpace(resp.QueueStatus)
+	if queueStatus != "queued" {
+		return fmt.Errorf("resume response queue_status mismatch: got %q want %q", resp.QueueStatus, "queued")
+	}
+	if strings.TrimSpace(resp.EventID) == "" {
+		return fmt.Errorf("resume response missing event_id")
+	}
+	if strings.TrimSpace(resp.QueueItem.QueueID) == "" {
+		return fmt.Errorf("resume response missing queue_item")
+	}
+	if err := validateRunQueueItem(resp.QueueItem, "resume response queue_item", true); err != nil {
+		return err
+	}
+	if resp.QueueItem.QueueID != queueID {
+		return fmt.Errorf("resume response queue_item queue_id mismatch")
+	}
+	if resp.QueueItem.TaskID != string(resp.TaskID) {
+		return fmt.Errorf("resume response queue_item task_id mismatch")
+	}
+	if resp.QueueItem.Status != queueStatus {
+		return fmt.Errorf("resume response queue_item status mismatch")
+	}
+	if resp.QueueItem.RunID != "" {
+		return fmt.Errorf("resume response queue_item must not assign run_id before queue claim")
+	}
+	expectedQueueID := fmt.Sprintf("resume:%s:%s:%d", resp.TaskID, resp.SourceRunID, resp.QueueItem.CheckpointRevision)
+	if queueID != expectedQueueID {
+		return fmt.Errorf("resume response queue_id is not bound to task/source/checkpoint")
+	}
+	if strings.TrimSpace(resp.QueueItem.IdempotencyKey) != queueID {
+		return fmt.Errorf("resume response queue_item idempotency_key mismatch")
+	}
+	return validateRunControlAction(resp.RuntimeControlApplied, resp.RuntimeControlAction, allowedActions, "resume response")
 }
 
 func validateExternalControlRequest(req ExternalControlRequest) error {

@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -20,13 +21,21 @@ const (
 	maxTaskTitleRunes   = 160
 )
 
+var errAttachedTaskMismatch = errors.New("attached task execution mismatch")
+
+func attachedTaskMismatchf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", errAttachedTaskMismatch, fmt.Sprintf(format, args...))
+}
+
 // TaskLifecycleManager is the minimal task-manager contract required by the
-// orchestrator lifecycle.  It intentionally excludes query and store methods;
-// the orchestrator only creates, routes, assigns, starts, and finishes work.
+// orchestrator lifecycle. Get/Wait are included so an internal resume can
+// validate and preserve the canonical Task/Run boundary before execution.
 type TaskLifecycleManager interface {
 	Create(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, error)
+	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	Start(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
+	Wait(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
 	RecordRouting(context.Context, modulecore.TaskID, domaintask.Route, modulecore.EventID) (domaintask.Task, error)
@@ -57,6 +66,7 @@ type taskLifecycleActivation struct {
 	lifecycle      *taskLifecycle
 	events         taskLifecycleEventPort
 	req            ProcessMessageRequest
+	attachedTask   *domaintask.Task
 	rootTaskID     modulecore.TaskID
 	traceID        modulecore.TraceID
 	routingEventID modulecore.EventID
@@ -65,14 +75,15 @@ type taskLifecycleActivation struct {
 	cleanups       []func()
 }
 
-func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEventPort, req ProcessMessageRequest) (*taskLifecycleActivation, func()) {
+func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEventPort, req ProcessMessageRequest, attachedTask *domaintask.Task) (*taskLifecycleActivation, func()) {
 	activation := &taskLifecycleActivation{
-		lifecycle:  lifecycle,
-		events:     events,
-		req:        req,
-		rootTaskID: modulecore.TaskID(req.RootTaskID),
-		traceID:    modulecore.TraceID(req.TraceID),
-		actorTasks: make(map[string]modulecore.TaskID),
+		lifecycle:    lifecycle,
+		events:       events,
+		req:          req,
+		attachedTask: attachedTask,
+		rootTaskID:   modulecore.TaskID(req.RootTaskID),
+		traceID:      modulecore.TraceID(req.TraceID),
+		actorTasks:   make(map[string]modulecore.TaskID),
 	}
 	return activation, func() {
 		for index := len(activation.cleanups) - 1; index >= 0; index-- {
@@ -88,6 +99,28 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	actor, err := canonicalCoreActor(assignee)
 	if err != nil {
 		return "", err
+	}
+	if a.attachedTask != nil {
+		domainRoute, err := taskRouteForOrchestratorRoute(route)
+		if err != nil {
+			return "", attachedTaskMismatchf("decided route is invalid: %v", err)
+		}
+		if a.attachedTask.TaskID != a.rootTaskID {
+			return "", attachedTaskMismatchf("attached task %s does not match root task %s", a.attachedTask.TaskID, a.rootTaskID)
+		}
+		if a.attachedTask.Route != domainRoute {
+			return "", attachedTaskMismatchf("attached task route mismatch: saved=%s decided=%s", a.attachedTask.Route, domainRoute)
+		}
+		savedActor, err := canonicalCoreActor(a.attachedTask.Assignee)
+		if err != nil {
+			return "", attachedTaskMismatchf("attached task assignee is invalid: %v", err)
+		}
+		if a.attachedTask.Assignee != savedActor {
+			return "", attachedTaskMismatchf("attached task assignee is not canonical: saved=%q", a.attachedTask.Assignee)
+		}
+		if savedActor != actor {
+			return "", attachedTaskMismatchf("attached task assignee mismatch: saved=%s decided=%s", savedActor, actor)
+		}
 	}
 	if existing := a.actorTasks[actor]; existing != "" {
 		return existing, nil
@@ -109,6 +142,26 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	// A nil lifecycle is the intentionally unconfigured path. It still uses the
 	// same routing publisher as configured requests, but has no durable Task.
 	if a.lifecycle == nil {
+		if a.attachedTask != nil {
+			return "", fmt.Errorf("attached task requires configured lifecycle")
+		}
+		a.actorTasks[actor] = a.rootTaskID
+		return a.rootTaskID, nil
+	}
+	if a.attachedTask != nil {
+		if _, err := a.lifecycle.manager.RecordRouting(ctx, a.rootTaskID, a.attachedTask.Route, a.routingEventID); err != nil {
+			return "", fmt.Errorf("record attached task routing: %w", err)
+		}
+		assignmentEvent, err := a.events.Publish(
+			"agent.assignment", taskLifecycleMio, actor, fmt.Sprintf("assigned route=%s", route),
+			string(route), a.rootTaskID.String(), a.req.SessionID, a.req.Channel, a.req.ChatID, a.routingEventID, nil,
+		)
+		if err != nil {
+			return a.rootTaskID, err
+		}
+		if _, err := a.lifecycle.manager.RecordAssignment(ctx, a.rootTaskID, actor, assignmentEvent.EventID); err != nil {
+			return a.rootTaskID, fmt.Errorf("record attached task assignment: %w", err)
+		}
 		a.actorTasks[actor] = a.rootTaskID
 		return a.rootTaskID, nil
 	}
@@ -226,6 +279,43 @@ func (l *taskLifecycle) createRoot(ctx context.Context, req ProcessMessageReques
 	l.rootContexts[rootTaskID] = cloneSharedRoleContext(shared, rootTaskID)
 	l.mu.Unlock()
 	return created, nil
+}
+
+// attachExisting validates the exact Task/Run pair supplied by an internal
+// queue-resume handoff.  It deliberately does not create a Task or start a
+// Run: the caller is continuing the already-running canonical execution.
+func (l *taskLifecycle) attachExisting(ctx context.Context, req ProcessMessageRequest) (domaintask.Task, error) {
+	if l == nil || l.manager == nil {
+		return domaintask.Task{}, fmt.Errorf("task lifecycle manager is unavailable")
+	}
+	rootTaskID, err := modulecore.ParseTaskID(req.RootTaskID)
+	if err != nil {
+		return domaintask.Task{}, fmt.Errorf("attached root task ID is invalid: %w", err)
+	}
+	if err := req.CanonicalRunID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("attached run ID is invalid: %w", err)
+	}
+	task, err := l.manager.Get(ctx, rootTaskID)
+	if err != nil {
+		return domaintask.Task{}, fmt.Errorf("get attached task: %w", err)
+	}
+	if task.TaskID != rootTaskID {
+		return domaintask.Task{}, fmt.Errorf("attached task identity mismatch: got %s want %s", task.TaskID, rootTaskID)
+	}
+	if err := task.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("attached task is invalid: %w", err)
+	}
+	if task.Status != domaintask.StatusRunning {
+		return domaintask.Task{}, fmt.Errorf("attached task %s is not running: %s", rootTaskID, task.Status)
+	}
+	run, err := l.activeRunForTask(ctx, rootTaskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if run.RunID != req.CanonicalRunID {
+		return domaintask.Task{}, fmt.Errorf("attached run mismatch: active=%s requested=%s", run.RunID, req.CanonicalRunID)
+	}
+	return task, nil
 }
 
 func (l *taskLifecycle) prepareExecution(ctx context.Context, rootTaskID modulecore.TaskID, route routing.Route, routingEventID modulecore.EventID, assignee string) (modulecore.TaskID, error) {
@@ -354,6 +444,28 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 	}
 
 	summary := strings.TrimSpace(executionErr.Error())
+	executionTask, err := l.manager.Get(ctx, executionTaskID)
+	if err != nil {
+		return fmt.Errorf("get execution task before failure: %w", err)
+	}
+	if executionTask.Status == domaintask.StatusWaiting {
+		waitingReason := strings.TrimSpace(executionTask.WaitingReason)
+		if waitingReason == "" {
+			return fmt.Errorf("waiting execution task %s has no waiting reason", executionTaskID)
+		}
+		if executionTaskID != rootTaskID {
+			rootTask, getErr := l.manager.Get(ctx, rootTaskID)
+			if getErr != nil {
+				return fmt.Errorf("get root task while preserving wait: %w", getErr)
+			}
+			if rootTask.Status == domaintask.StatusRunning {
+				if _, waitErr := l.manager.Wait(ctx, rootTaskID, waitingReason); waitErr != nil {
+					return fmt.Errorf("wait root task after execution pause: %w", waitErr)
+				}
+			}
+		}
+		return nil
+	}
 	if executionTaskID != rootTaskID {
 		if _, err := l.manager.Fail(ctx, executionTaskID, summary, nil); err != nil {
 			firstErr = fmt.Errorf("fail execution task: %w", err)

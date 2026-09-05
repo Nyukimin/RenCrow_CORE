@@ -14,30 +14,18 @@ type Dependencies struct {
 // Routes groups SuperAgent route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by their owning adapter and command packages.
 type Routes struct {
-	Status           http.HandlerFunc
-	Run              http.HandlerFunc
-	RunPause         http.HandlerFunc
-	RunResume        http.HandlerFunc
-	RunQueue         http.HandlerFunc
-	RunQueueClaim    http.HandlerFunc
-	RunQueueComplete http.HandlerFunc
-	SubagentTask     http.HandlerFunc
-	ContextPack      http.HandlerFunc
-	MessageChannel   http.HandlerFunc
+	Status         http.HandlerFunc
+	RunPause       http.HandlerFunc
+	RunResume      http.HandlerFunc
+	MessageChannel http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
 func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/superagent", routes.Status)
-	registerRoute(mux, "/viewer/superagent/runs", routes.Run)
 	registerRoute(mux, "/viewer/superagent/runs/pause", routes.RunPause)
 	registerRoute(mux, "/viewer/superagent/runs/resume", routes.RunResume)
-	registerRoute(mux, "/viewer/superagent/run-queue", routes.RunQueue)
-	registerRoute(mux, "/viewer/superagent/run-queue/claim", routes.RunQueueClaim)
-	registerRoute(mux, "/viewer/superagent/run-queue/complete", routes.RunQueueComplete)
-	registerRoute(mux, "/viewer/superagent/subagent-tasks", routes.SubagentTask)
-	registerRoute(mux, "/viewer/superagent/context-packs", routes.ContextPack)
 	registerRoute(mux, "/viewer/superagent/message-channels", routes.MessageChannel)
 }
 

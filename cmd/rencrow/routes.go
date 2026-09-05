@@ -299,16 +299,10 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 		WorktreeClose:     dependencies.sandboxWorktreeClose,
 	}})
 	superagentfeature.RegisterRoutes(mux, superagentfeature.Dependencies{Routes: superagentfeature.Routes{
-		Status:           dependencies.superAgentStatus,
-		Run:              dependencies.superAgentRun,
-		RunPause:         dependencies.superAgentRunPause,
-		RunResume:        dependencies.superAgentRunResume,
-		RunQueue:         dependencies.superAgentRunQueue,
-		RunQueueClaim:    dependencies.superAgentRunQueueClaim,
-		RunQueueComplete: dependencies.superAgentRunQueueComplete,
-		SubagentTask:     dependencies.superAgentSubagentTask,
-		ContextPack:      dependencies.superAgentContextPack,
-		MessageChannel:   dependencies.superAgentMessageChannel,
+		Status:         dependencies.superAgentStatus,
+		RunPause:       dependencies.superAgentRunPause,
+		RunResume:      dependencies.superAgentRunResume,
+		MessageChannel: dependencies.superAgentMessageChannel,
 	}})
 	aiworkflowfeature.RegisterRoutes(mux, aiworkflowfeature.Dependencies{Routes: aiworkflowfeature.Routes{
 		Status:                  dependencies.aiWorkflowStatus,

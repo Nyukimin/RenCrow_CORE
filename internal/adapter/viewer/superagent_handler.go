@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	appsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -44,6 +44,14 @@ type SuperAgentStore interface {
 type SuperAgentRunController interface {
 	PauseRun(runID string, reason string) appsuperagent.RuntimeControlResult
 	ResumeRun(runID string, reason string) appsuperagent.RuntimeControlResult
+}
+
+// SuperAgentTaskOwner is the only owner allowed to transition the canonical
+// Task behind a SuperAgent run. AgentRun is a projection and must not be used
+// as a second lifecycle owner by the Viewer adapter.
+type SuperAgentTaskOwner interface {
+	Wait(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
+	Resume(context.Context, modulecore.TaskID) (domaintask.Task, error)
 }
 
 type SuperAgentRuntimeConfig struct {
@@ -113,36 +121,6 @@ func HandleSuperAgentStatusWithRuntimeConfig(store SuperAgentLister, runtimeConf
 	}
 }
 
-func HandleSuperAgentAgentRunCreate(store SuperAgentStore) http.HandlerFunc {
-	return saveSuperAgentItem(store, "agent run", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
-		var item domainsuperagent.AgentRun
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		return store.SaveAgentRun(ctx, item)
-	})
-}
-
-func HandleSuperAgentSubagentTaskCreate(store SuperAgentStore) http.HandlerFunc {
-	return saveSuperAgentItem(store, "subagent task", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
-		var item domainsuperagent.SubagentTask
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		return store.SaveSubagentTask(ctx, item)
-	})
-}
-
-func HandleSuperAgentContextPackCreate(store SuperAgentStore) http.HandlerFunc {
-	return saveSuperAgentItem(store, "context pack", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
-		var item domainsuperagent.ContextPack
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		return store.SaveContextPack(ctx, item)
-	})
-}
-
 func HandleSuperAgentMessageChannelCreate(store SuperAgentStore) http.HandlerFunc {
 	return saveSuperAgentItem(store, "message channel", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
 		var item domainsuperagent.MessageChannel
@@ -153,138 +131,46 @@ func HandleSuperAgentMessageChannelCreate(store SuperAgentStore) http.HandlerFun
 	})
 }
 
-func HandleSuperAgentRunQueueCreate(store SuperAgentStore) http.HandlerFunc {
-	return saveSuperAgentItem(store, "run queue item", func(ctx context.Context, store SuperAgentStore, dec *json.Decoder) error {
-		var item domainsuperagent.RunQueueItem
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		if item.Status == "" {
-			item.Status = "queued"
-		}
-		if item.Action == "" {
-			item.Action = "resume"
-		}
-		if item.CreatedAt.IsZero() {
-			item.CreatedAt = time.Now().UTC()
-		}
-		return store.SaveRunQueueItem(ctx, item)
-	})
-}
-
-func HandleSuperAgentRunQueueClaim(store SuperAgentStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if store == nil {
-			http.Error(w, "superagent store unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		items, err := store.ListRunQueueItems(r.Context(), 500)
-		if err != nil {
-			http.Error(w, "failed to load run queue", http.StatusInternalServerError)
-			return
-		}
-		now := time.Now().UTC()
-		item, ok := nextQueuedRunQueueItem(items, now)
-		if !ok {
-			writeJSON(w, http.StatusOK, map[string]any{"claimed": false})
-			return
-		}
-		item.Status = "claimed"
-		item.ClaimedAt = now
-		item.LeaseToken = fmt.Sprintf("viewer-%d", now.UnixNano())
-		item.LeaseUntil = now.Add(2 * time.Minute)
-		item.AttemptCount++
-		if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
-			http.Error(w, "failed to claim run queue item: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"claimed": true, "item": item})
-	}
-}
-
-type superAgentRunQueueCompleteRequest struct {
-	QueueID string `json:"queue_id"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason,omitempty"`
-}
-
-func HandleSuperAgentRunQueueComplete(store SuperAgentStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if store == nil {
-			http.Error(w, "superagent store unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		var req superAgentRunQueueCompleteRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid run queue complete payload: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		queueID := strings.TrimSpace(req.QueueID)
-		if queueID == "" {
-			http.Error(w, "queue_id is required", http.StatusBadRequest)
-			return
-		}
-		items, err := store.ListRunQueueItems(r.Context(), 500)
-		if err != nil {
-			http.Error(w, "failed to load run queue", http.StatusInternalServerError)
-			return
-		}
-		item, ok := findRunQueueItemByID(items, queueID)
-		if !ok {
-			http.Error(w, "run queue item not found", http.StatusNotFound)
-			return
-		}
-		status := strings.TrimSpace(req.Status)
-		if status == "" {
-			status = "completed"
-		}
-		if status != "completed" && status != "failed" && status != "cancelled" {
-			http.Error(w, "status must be completed, failed, or cancelled", http.StatusBadRequest)
-			return
-		}
-		item.Status = status
-		item.Reason = strings.TrimSpace(req.Reason)
-		item.CompletedAt = time.Now().UTC()
-		item.LeaseToken = ""
-		item.LeaseUntil = time.Time{}
-		if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
-			http.Error(w, "failed to complete run queue item: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"completed": true, "item": item})
-	}
-}
-
 type superAgentRunStateRequest struct {
 	RunID  string `json:"run_id"`
 	Reason string `json:"reason,omitempty"`
 }
 
 func HandleSuperAgentRunPause(store SuperAgentStore) http.HandlerFunc {
-	return HandleSuperAgentRunPauseWithController(store, nil)
+	return HandleSuperAgentRunPauseWithTaskOwnerAndController(store, nil, nil)
 }
 
 func HandleSuperAgentRunResume(store SuperAgentStore) http.HandlerFunc {
-	return HandleSuperAgentRunResumeWithController(store, nil)
+	return HandleSuperAgentRunResumeWithTaskOwnerAndController(store, nil, nil)
 }
 
 func HandleSuperAgentRunPauseWithController(store SuperAgentStore, controller SuperAgentRunController) http.HandlerFunc {
-	return handleSuperAgentRunState(store, controller, "paused", "lead_agent_paused")
+	return HandleSuperAgentRunPauseWithTaskOwnerAndController(store, nil, controller)
 }
 
 func HandleSuperAgentRunResumeWithController(store SuperAgentStore, controller SuperAgentRunController) http.HandlerFunc {
-	return handleSuperAgentRunState(store, controller, "queued", "lead_agent_resumed")
+	return HandleSuperAgentRunResumeWithTaskOwnerAndController(store, nil, controller)
 }
 
-func handleSuperAgentRunState(store SuperAgentStore, controller SuperAgentRunController, status string, eventType string) http.HandlerFunc {
+func HandleSuperAgentRunPauseWithTaskOwner(store SuperAgentStore, taskOwner SuperAgentTaskOwner) http.HandlerFunc {
+	return HandleSuperAgentRunPauseWithTaskOwnerAndController(store, taskOwner, nil)
+}
+
+func HandleSuperAgentRunResumeWithTaskOwner(store SuperAgentStore, taskOwner SuperAgentTaskOwner) http.HandlerFunc {
+	return HandleSuperAgentRunResumeWithTaskOwnerAndController(store, taskOwner, nil)
+}
+
+func HandleSuperAgentRunPauseWithTaskOwnerAndController(store SuperAgentStore, taskOwner SuperAgentTaskOwner, controller SuperAgentRunController) http.HandlerFunc {
+	return handleSuperAgentRunPause(store, taskOwner, controller)
+}
+
+func HandleSuperAgentRunResumeWithTaskOwnerAndController(store SuperAgentStore, taskOwner SuperAgentTaskOwner, controller SuperAgentRunController) http.HandlerFunc {
+	return handleSuperAgentRunResume(store, taskOwner, controller)
+}
+
+const defaultSuperAgentPauseReason = "viewer_pause_requested"
+
+func handleSuperAgentRunPause(store SuperAgentStore, taskOwner SuperAgentTaskOwner, controller SuperAgentRunController) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -314,75 +200,216 @@ func handleSuperAgentRunState(store SuperAgentStore, controller SuperAgentRunCon
 			http.Error(w, "agent run not found", http.StatusNotFound)
 			return
 		}
-		if status == "queued" {
-			if run.ResumePolicy != "checkpoint" || run.CheckpointRevision <= 0 || strings.TrimSpace(run.CheckpointSummary) == "" || strings.TrimSpace(run.NextAction) == "" || run.LastCheckpointAt.IsZero() {
-				http.Error(w, "agent run has no durable resumable checkpoint", http.StatusConflict)
-				return
-			}
-			if run.Status == "completed" || run.Status == "cancelled" {
-				http.Error(w, "terminal agent run cannot be resumed", http.StatusConflict)
-				return
-			}
-			queueID := fmt.Sprintf("resume:%s:%d", runID, run.CheckpointRevision)
-			queue, err := store.ListRunQueueItems(r.Context(), 500)
-			if err != nil {
-				http.Error(w, "failed to load resume queue", http.StatusInternalServerError)
-				return
-			}
-			if !runQueueContains(queue, queueID) {
-				item := domainsuperagent.RunQueueItem{
-					QueueID: queueID, RunID: runID, WorkstreamID: run.WorkstreamID,
-					Goal: run.Goal, Action: "resume", Status: "queued",
-					CheckpointRevision: run.CheckpointRevision, CheckpointSummary: run.CheckpointSummary,
-					NextAction: run.NextAction, IdempotencyKey: queueID, CreatedAt: time.Now().UTC(),
-				}
-				if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
-					http.Error(w, "failed to enqueue agent run resume: "+err.Error(), http.StatusBadRequest)
-					return
-				}
-			}
+		if taskOwner == nil {
+			http.Error(w, "canonical task owner unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := domainsuperagent.ValidateAgentRun(run); err != nil {
+			http.Error(w, "agent run identity is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		reason := strings.TrimSpace(req.Reason)
+		if reason == "" {
+			reason = defaultSuperAgentPauseReason
+		}
+		task, err := taskOwner.Wait(r.Context(), run.TaskID, reason)
+		if err != nil {
+			http.Error(w, "failed to wait canonical task: "+err.Error(), http.StatusConflict)
+			return
+		}
+		if err := validateOwnedTask(task, run.TaskID, domaintask.StatusWaiting); err != nil {
+			http.Error(w, "canonical task owner returned invalid waiting task: "+err.Error(), http.StatusConflict)
+			return
 		}
 		var control appsuperagent.RuntimeControlResult
 		if controller != nil {
-			if status == "paused" {
-				control = controller.PauseRun(runID, req.Reason)
-			} else {
-				control = controller.ResumeRun(runID, req.Reason)
-			}
+			control = controller.PauseRun(runID, reason)
 		} else {
 			control = appsuperagent.RuntimeControlResult{RunID: runID, Action: "none", RequestedAt: time.Now().UTC()}
 		}
 		now := time.Now().UTC()
-		run.Status = status
-		run.Summary = strings.TrimSpace(req.Reason)
+		run.Status = "paused"
+		run.Summary = reason
 		if run.Summary == "" {
-			run.Summary = eventType
+			run.Summary = "lead_agent_paused"
 		}
-		if status == "paused" {
-			run.CompletedAt = now
-		} else {
-			run.CompletedAt = time.Time{}
-		}
+		run.CompletedAt = now
 		if err := store.SaveAgentRun(r.Context(), run); err != nil {
 			http.Error(w, "failed to save agent run state: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		trace := modulecore.NewRootEventEnvelope("superagent", "run."+eventType, now, map[string]any{
-			"actor_label": "ExternalControl", "status": status,
-			"summary": strings.TrimSpace(run.Summary + " runtime_control=" + control.Action), "run_reference": runID,
+		trace := modulecore.NewRootEventEnvelope("superagent", "run.lead_agent_paused", now, map[string]any{
+			"status": "paused", "summary": strings.TrimSpace(run.Summary + " runtime_control=" + control.Action),
 		})
+		trace.TaskID = run.TaskID
+		trace.RunID = run.RunID
 		if err := store.Append(r.Context(), trace); err != nil {
 			http.Error(w, "failed to save agent run state trace: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
+			"task_id":                 string(run.TaskID),
 			"run_id":                  runID,
-			"status":                  status,
+			"status":                  "paused",
 			"event_id":                trace.EventID,
 			"runtime_control_applied": control.Applied,
 			"runtime_control_action":  control.Action,
 		})
 	}
+}
+
+func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOwner, controller SuperAgentRunController) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if store == nil {
+			http.Error(w, "superagent store unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var req superAgentRunStateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid run state payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		runID := strings.TrimSpace(req.RunID)
+		if runID == "" {
+			http.Error(w, "run_id is required", http.StatusBadRequest)
+			return
+		}
+		runIdentity := modulecore.RunID(runID)
+		if err := runIdentity.Validate(); err != nil {
+			http.Error(w, "run_id is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		runs, err := store.ListAgentRuns(r.Context(), 500)
+		if err != nil {
+			http.Error(w, "failed to load agent runs", http.StatusInternalServerError)
+			return
+		}
+		run, ok := findAgentRunByID(runs, runID)
+		if !ok {
+			http.Error(w, "agent run not found", http.StatusNotFound)
+			return
+		}
+		if taskOwner == nil {
+			http.Error(w, "canonical task owner unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := domainsuperagent.ValidateAgentRun(run); err != nil {
+			http.Error(w, "agent run identity is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if run.Status != "paused" {
+			http.Error(w, "only a paused agent run can be resumed", http.StatusConflict)
+			return
+		}
+		if run.ResumePolicy != "checkpoint" || run.CheckpointRevision <= 0 || strings.TrimSpace(run.CheckpointSummary) == "" || strings.TrimSpace(run.NextAction) == "" || run.LastCheckpointAt.IsZero() {
+			http.Error(w, "agent run has no durable resumable checkpoint", http.StatusConflict)
+			return
+		}
+		queueID := fmt.Sprintf("resume:%s:%s:%d", run.TaskID, run.RunID, run.CheckpointRevision)
+		queue, err := store.ListRunQueueItems(r.Context(), 500)
+		if err != nil {
+			http.Error(w, "failed to load resume queue", http.StatusInternalServerError)
+			return
+		}
+		var item domainsuperagent.RunQueueItem
+		expectedItem := domainsuperagent.RunQueueItem{
+			QueueID:            queueID,
+			TaskID:             run.TaskID,
+			WorkstreamID:       run.WorkstreamID,
+			RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+			Goal:               run.Goal,
+			Action:             "resume",
+			Status:             "queued",
+			CheckpointRevision: run.CheckpointRevision,
+			CheckpointSummary:  run.CheckpointSummary,
+			NextAction:         run.NextAction,
+			IdempotencyKey:     queueID,
+		}
+		existing, exists := findRunQueueItemByID(queue, queueID)
+		if exists {
+			if !sameResumeQueueIntent(existing, expectedItem) {
+				http.Error(w, "resume queue item is not an unclaimed queue intent", http.StatusConflict)
+				return
+			}
+			item = existing
+		}
+		task, err := taskOwner.Resume(r.Context(), run.TaskID)
+		if err != nil {
+			http.Error(w, "failed to resume canonical task: "+err.Error(), http.StatusConflict)
+			return
+		}
+		if err := validateOwnedTask(task, run.TaskID, domaintask.StatusQueued); err != nil {
+			http.Error(w, "canonical task owner returned invalid queued task: "+err.Error(), http.StatusConflict)
+			return
+		}
+		if !exists {
+			item = expectedItem
+			item.CreatedAt = time.Now().UTC()
+			if err := store.SaveRunQueueItem(r.Context(), item); err != nil {
+				http.Error(w, "failed to enqueue agent run resume: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+		}
+		var control appsuperagent.RuntimeControlResult
+		if controller != nil {
+			control = controller.ResumeRun(runID, strings.TrimSpace(req.Reason))
+		} else {
+			control = appsuperagent.RuntimeControlResult{RunID: runID, Action: "none", RequestedAt: time.Now().UTC()}
+		}
+		now := time.Now().UTC()
+		trace := modulecore.NewRootEventEnvelope("superagent", "run.resume_queued", now, map[string]any{
+			"status": "queued", "summary": strings.TrimSpace("checkpoint resume runtime_control=" + control.Action),
+		})
+		trace.TaskID = run.TaskID
+		if err := store.Append(r.Context(), trace); err != nil {
+			http.Error(w, "failed to save agent run state trace: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"task_id":                 string(run.TaskID),
+			"source_run_id":           string(run.RunID),
+			"run_id":                  "",
+			"status":                  "queued",
+			"queue_id":                item.QueueID,
+			"queue_status":            item.Status,
+			"queue_item":              item,
+			"event_id":                trace.EventID,
+			"runtime_control_applied": control.Applied,
+			"runtime_control_action":  control.Action,
+		})
+	}
+}
+
+func sameResumeQueueIntent(existing, expected domainsuperagent.RunQueueItem) bool {
+	return existing.QueueID == expected.QueueID &&
+		existing.TaskID == expected.TaskID &&
+		existing.RunID == "" &&
+		existing.RunStartReason == expected.RunStartReason &&
+		existing.WorkstreamID == expected.WorkstreamID &&
+		existing.Goal == expected.Goal &&
+		existing.Action == expected.Action &&
+		existing.Status == expected.Status &&
+		existing.CheckpointRevision == expected.CheckpointRevision &&
+		existing.CheckpointSummary == expected.CheckpointSummary &&
+		existing.NextAction == expected.NextAction &&
+		existing.IdempotencyKey == expected.IdempotencyKey
+}
+
+func validateOwnedTask(task domaintask.Task, expectedID modulecore.TaskID, expectedStatus domaintask.Status) error {
+	if task.TaskID != expectedID {
+		return fmt.Errorf("task_id %s does not match expected %s", task.TaskID, expectedID)
+	}
+	if err := task.Validate(); err != nil {
+		return err
+	}
+	if task.Status != expectedStatus {
+		return fmt.Errorf("status %s does not match expected %s", task.Status, expectedStatus)
+	}
+	return nil
 }
 
 func saveSuperAgentItem(store SuperAgentStore, name string, save func(context.Context, SuperAgentStore, *json.Decoder) error) http.HandlerFunc {
@@ -404,39 +431,13 @@ func saveSuperAgentItem(store SuperAgentStore, name string, save func(context.Co
 }
 
 func findAgentRunByID(items []domainsuperagent.AgentRun, runID string) (domainsuperagent.AgentRun, bool) {
-	for _, item := range items {
+	for index := len(items) - 1; index >= 0; index-- {
+		item := items[index]
 		if string(item.RunID) == runID {
 			return item, true
 		}
 	}
 	return domainsuperagent.AgentRun{}, false
-}
-
-func runQueueContains(items []domainsuperagent.RunQueueItem, queueID string) bool {
-	for _, item := range items {
-		if item.QueueID == queueID {
-			return true
-		}
-	}
-	return false
-}
-
-func nextQueuedRunQueueItem(items []domainsuperagent.RunQueueItem, now time.Time) (domainsuperagent.RunQueueItem, bool) {
-	var selected domainsuperagent.RunQueueItem
-	found := false
-	for _, item := range items {
-		if item.Status != "queued" {
-			continue
-		}
-		if !item.NotBefore.IsZero() && item.NotBefore.After(now) {
-			continue
-		}
-		if !found || item.Priority > selected.Priority || (item.Priority == selected.Priority && item.CreatedAt.Before(selected.CreatedAt)) {
-			selected = item
-			found = true
-		}
-	}
-	return selected, found
 }
 
 func findRunQueueItemByID(items []domainsuperagent.RunQueueItem, queueID string) (domainsuperagent.RunQueueItem, bool) {
@@ -446,10 +447,6 @@ func findRunQueueItemByID(items []domainsuperagent.RunQueueItem, queueID string)
 		}
 	}
 	return domainsuperagent.RunQueueItem{}, false
-}
-
-func formatUnixNano(t time.Time) string {
-	return strconv.FormatInt(t.UnixNano(), 10)
 }
 
 func nonNilAgentRuns(items []domainsuperagent.AgentRun) []domainsuperagent.AgentRun {

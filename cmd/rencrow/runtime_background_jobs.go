@@ -483,17 +483,22 @@ type superAgentRunQueueStore interface {
 	superagentapp.InterruptedRunRecoveryStore
 }
 
-func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) {
+type superAgentRunQueueTaskOwner interface {
+	superagentapp.RunQueueTaskOwner
+	superagentapp.InterruptedRunRecoveryTaskOwner
+}
+
+func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQueueStore, processor superAgentRunQueueMessageProcessor, taskOwner superAgentRunQueueTaskOwner, reporter backgroundJobFailureReporter) {
 	if cfg == nil || !cfg.SuperAgentHarness.RunQueueSchedulerEnabled {
 		return
 	}
-	if store == nil || processor == nil {
-		err := fmt.Errorf("superagent run queue scheduler requested but store or processor is unavailable")
+	if store == nil || processor == nil || taskOwner == nil {
+		err := fmt.Errorf("superagent run queue scheduler requested but store, processor, or task owner is unavailable")
 		log.Printf("WARN: %v", err)
 		reporter.Failed("superagent_run_queue", err, "")
 		return
 	}
-	queued, blocked, err := superagentapp.RecoverInterruptedAgentRuns(context.Background(), store, time.Now().UTC())
+	queued, blocked, err := superagentapp.RecoverInterruptedAgentRuns(context.Background(), store, taskOwner, time.Now().UTC())
 	if err != nil {
 		log.Printf("WARN: superagent interrupted run recovery failed: %v", err)
 		reporter.Failed("superagent_run_recovery", err, "")
@@ -502,7 +507,7 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 	log.Printf("SuperAgent interrupted run recovery: queued=%d blocked=%d", queued, blocked)
 	interval := time.Duration(cfg.SuperAgentHarness.RunQueueSchedulerIntervalSec) * time.Second
 	claimLimit := cfg.SuperAgentHarness.RunQueueSchedulerClaimLimit
-	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter), superagentapp.RunQueueSchedulerOptions{
+	scheduler := superagentapp.NewRunQueueScheduler(store, newSuperAgentRunQueueProcessor(processor, reporter), taskOwner, superagentapp.RunQueueSchedulerOptions{
 		Interval:   interval,
 		ClaimLimit: claimLimit,
 	})
@@ -513,12 +518,18 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) superagentapp.RunQueueProcessorFunc {
 	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		fail := func(err error) (string, error) {
-			detail := fmt.Sprintf("queue_id=%s run_id=%s workstream_id=%s action=%s", strings.TrimSpace(item.QueueID), strings.TrimSpace(item.RunID), strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
+			detail := fmt.Sprintf("queue_id=%s task_id=%s run_id=%s workstream_id=%s action=%s", strings.TrimSpace(item.QueueID), item.TaskID, item.RunID, strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
 			reporter.FailedWithTrace(traceID, "superagent_run_queue", err, detail)
 			return "", err
 		}
 		if err := traceID.Validate(); err != nil {
 			return fail(fmt.Errorf("trace_id must be canonical: %w", err))
+		}
+		if err := item.TaskID.Validate(); err != nil {
+			return fail(fmt.Errorf("task_id must be canonical: %w", err))
+		}
+		if err := item.RunID.Validate(); err != nil {
+			return fail(fmt.Errorf("run_id must be canonical: %w", err))
 		}
 		action := strings.TrimSpace(item.Action)
 		if action != "resume" && action != "process_message" && action != "chat" {
@@ -526,13 +537,12 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		}
 		sessionID := strings.TrimSpace(item.WorkstreamID)
 		if sessionID == "" {
-			sessionID = strings.TrimSpace(item.RunID)
-		}
-		if sessionID == "" {
 			sessionID = "superagent:" + strings.TrimSpace(item.QueueID)
 		}
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 			TraceID:                  string(traceID),
+			RootTaskID:               item.TaskID.String(),
+			CanonicalRunID:           item.RunID,
 			SessionID:                sessionID,
 			Channel:                  "superagent",
 			ChatID:                   strings.TrimSpace(item.QueueID),
@@ -552,6 +562,13 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		}
 		if strings.TrimSpace(resp.TaskID) == "" {
 			return fail(fmt.Errorf("run queue item did not produce a task_id"))
+		}
+		responseTaskID, err := modulecore.ParseTaskID(resp.TaskID)
+		if err != nil {
+			return fail(fmt.Errorf("run queue response task_id is not canonical: %w", err))
+		}
+		if responseTaskID != item.TaskID || resp.TaskID != item.TaskID.String() {
+			return fail(fmt.Errorf("run queue response task_id %s does not match item task_id %s", responseTaskID, item.TaskID))
 		}
 		return fmt.Sprintf("route=%s task_id=%s", resp.Route, resp.TaskID), nil
 	})

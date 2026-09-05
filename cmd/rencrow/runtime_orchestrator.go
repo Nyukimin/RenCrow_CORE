@@ -71,7 +71,7 @@ func buildOrchestratorRuntime(
 		deps.repairRunner = newAsyncRepairTaskRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
-		startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, newBackgroundJobFailureReporter(deps.eventRelay))
+		startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
 		return
 	}
 
@@ -185,7 +185,7 @@ func buildOrchestratorRuntime(
 	deps.entryHandler = bridges.EntryFromOrch(orch)
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch
-	startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, newBackgroundJobFailureReporter(deps.eventRelay))
+	startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, orch, deps.taskManager, newBackgroundJobFailureReporter(deps.eventRelay))
 }
 
 func configuredNewsSearchProvider(cfg *config.Config) string {

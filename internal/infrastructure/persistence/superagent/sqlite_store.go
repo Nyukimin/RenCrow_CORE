@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -218,14 +220,18 @@ func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil
 		return nil, tx.Commit()
 	}
 	item := selected.item
-	item.Status, item.ClaimedAt, item.LeaseToken, item.LeaseUntil = "claimed", now, leaseToken, leaseUntil
+	// Storage owns only the lease reservation. The canonical Task owner issues
+	// the execution Run afterwards, so a claim must never carry forward or
+	// invent a RunID.
+	item.Status, item.ClaimedAt, item.LeaseToken, item.LeaseUntil = "reserved", now, leaseToken, leaseUntil
+	item.RunID = ""
 	item.AttemptCount++
 	item.CompletedAt = time.Time{}
 	encoded, err := json.Marshal(item)
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='claimed', payload=? WHERE queue_id=? AND payload=?`, string(encoded), item.QueueID, selected.payload)
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='reserved', payload=? WHERE queue_id=? AND payload=?`, string(encoded), item.QueueID, selected.payload)
 	if err != nil {
 		return nil, err
 	}
@@ -242,20 +248,16 @@ func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil
 	return &item, nil
 }
 
-func (s *SQLiteStore) RenewRunQueueLease(ctx context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
-	return s.updateRunQueueLease(ctx, queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
-		item.LeaseUntil = leaseUntil
-	})
-}
-
-func (s *SQLiteStore) CompleteRunQueueItem(ctx context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
-	return s.updateRunQueueLease(ctx, queueID, leaseToken, func(item *domainsuperagent.RunQueueItem) {
-		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
-		item.LeaseToken, item.LeaseUntil = "", time.Time{}
-	})
-}
-
-func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseToken string, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+// AttachRunQueueRun atomically binds a canonical Task-owned Run to the current
+// reserved lease. A stale or already-attached token returns false without a
+// write.
+func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueID, leaseToken string, canonicalRunID modulecore.RunID) (bool, error) {
+	if err := canonicalRunID.Validate(); err != nil {
+		return false, fmt.Errorf("canonical run_id is invalid: %w", err)
+	}
+	if strings.TrimSpace(leaseToken) == "" {
+		return false, nil
+	}
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("superagent sqlite store is closed")
 	}
@@ -274,7 +276,65 @@ func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseTok
 	if err := json.Unmarshal([]byte(payload), &item); err != nil {
 		return false, err
 	}
-	if item.Status != "claimed" || item.LeaseToken != leaseToken {
+	if item.Status != "reserved" || item.RunID != "" || item.LeaseToken != leaseToken {
+		return false, tx.Commit()
+	}
+	item.Status = "claimed"
+	item.RunID = canonicalRunID
+	if err := domainsuperagent.ValidateRunQueueItem(item); err != nil {
+		return false, err
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='claimed', payload=? WHERE queue_id=? AND payload=?`, string(encoded), queueID, payload)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return changed == 1, nil
+}
+
+func (s *SQLiteStore) RenewRunQueueLease(ctx context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueID, leaseToken, false, false, func(item *domainsuperagent.RunQueueItem) {
+		item.LeaseUntil = leaseUntil
+	})
+}
+
+func (s *SQLiteStore) CompleteRunQueueItem(ctx context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueID, leaseToken, true, status == "blocked", func(item *domainsuperagent.RunQueueItem) {
+		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
+		item.LeaseToken, item.LeaseUntil = "", time.Time{}
+	})
+}
+
+func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseToken string, claimedOnly, allowReservedBlock bool, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, fmt.Errorf("superagent sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var payload string
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_id=?`, queueID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+		return false, tx.Commit()
+	} else if err != nil {
+		return false, err
+	}
+	var item domainsuperagent.RunQueueItem
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return false, err
+	}
+	if (claimedOnly && item.Status != "claimed" && !(allowReservedBlock && item.Status == "reserved")) || (!claimedOnly && item.Status != "reserved" && item.Status != "claimed") || item.LeaseToken != leaseToken {
 		return false, tx.Commit()
 	}
 	mutate(&item)
@@ -303,7 +363,7 @@ func runQueueItemClaimable(item domainsuperagent.RunQueueItem, now time.Time) bo
 	if !item.NotBefore.IsZero() && item.NotBefore.After(now) {
 		return false
 	}
-	return item.Status == "queued" || (item.Status == "claimed" && !item.LeaseUntil.After(now))
+	return item.Status == "queued" || (item.Status == "reserved" && !item.LeaseUntil.After(now)) || (item.Status == "claimed" && !item.LeaseUntil.After(now))
 }
 
 func runQueueItemBefore(left, right domainsuperagent.RunQueueItem) bool {
