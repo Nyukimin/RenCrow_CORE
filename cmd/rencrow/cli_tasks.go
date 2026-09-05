@@ -48,11 +48,12 @@ type taskCommandStore interface {
 }
 
 func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, errOut io.Writer) int {
+	compact := hasFlag(args, "--compact")
+	args = removeTaskFlag(args, "--compact")
 	subcommand := "list"
 	if len(args) > 0 {
 		subcommand = strings.ToLower(strings.TrimSpace(args[0]))
 	}
-	compact := hasFlag(args, "--compact")
 	pretty := !compact
 	switch subcommand {
 	case "list":
@@ -156,6 +157,17 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications]")
 		return 1
 	}
+}
+
+func removeTaskFlag(args []string, name string) []string {
+	filtered := make([]string, 0, len(args))
+	for _, argument := range args {
+		if strings.EqualFold(strings.TrimSpace(argument), name) {
+			continue
+		}
+		filtered = append(filtered, argument)
+	}
+	return filtered
 }
 
 func runTaskTransition(subcommand string, args []string, manager taskCommandStore, out, errOut io.Writer, pretty bool) int {

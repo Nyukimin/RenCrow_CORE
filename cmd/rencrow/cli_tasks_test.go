@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -48,5 +52,21 @@ func TestParseTasksCreateArgsRejectsMalformedCanonicalOption(t *testing.T) {
 	}
 	if _, _, _, err := parseTasksCreateArgs([]string{"--title", "bad", "--dependency-task-id"}); err == nil {
 		t.Fatal("missing dependency value was accepted")
+	}
+}
+
+func TestRunTasksCommandAcceptsCompactForCreate(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	var stdout, stderr bytes.Buffer
+	code := runTasksCommand([]string{"create", "--title", "compact Task", "--json", "--compact"}, manager, &stdout, &stderr)
+	if code != 0 || stderr.Len() != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	if strings.Count(stdout.String(), "\n") != 1 || !strings.Contains(stdout.String(), `"task_id":"tsk_`) {
+		t.Fatalf("compact output=%q", stdout.String())
 	}
 }
