@@ -1858,6 +1858,23 @@ Test:
 - **Tests:** non-Session JSON／JSONL／backupのexact copy、permission、symlink／nested entry拒否、
   source drift、history順序、canonical reloadを検査する。
 
+#### Step 07 Failure Knowledge: payload TraceIDをCanonical Event traceと同格に扱った
+
+- **Failure:** Event Storeのtop-level `trace_id`とpayload内`trace_id`の不一致を、
+  canonical identityの矛盾としてmigrationを拒否した。
+- **Problem:** canonical Eventへ意図的に昇格されなかった旧orchestrator trace投影のために、
+  正規receiptと結び付く履歴まで移行できない。
+- **Cause:** `EventEnvelope.TraceID`と、業務payload内に残るlegacy `trace_id`のownerと
+  lifecycleを分けず、aliasとして解釈した。
+- **Lesson:** Canonical Event identityはEvent Store列と`EventEnvelope`直下に属する。payload内の
+  同名fieldは業務dataであり、identityを上書きまたは否定できない。
+- **Invariant:** migrationが使うTraceIDは`event_envelope.trace_id`columnとtop-level
+  `EventEnvelope.trace_id`のexact matchだけであり、payload `trace_id`はmappingとevidence hashから除外する。
+- **Enforcement:** relevant event typeだけをread-only queryし、EventID、TraceID、event typeの
+  canonical column／envelope一致を確認してから旧`job_id`を投影する。
+- **Tests:** top-level canonical TraceIDとpayload legacy traceが異なるfixtureの成功、
+  canonical column／envelope不一致の拒否、relevant／unrelated evidence driftを検査する。
+
 Gate 7:
 
 - production cutoverとactual Agent Text receiptが成功した後、`rencrow-turn-input-migrate`と

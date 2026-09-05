@@ -212,7 +212,7 @@ func TestMigrationRejectsSourceAndEvidenceDriftBeforeOutputMutation(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = db.Exec(`UPDATE event_envelope SET envelope_json = ? WHERE event_id = ?`, `{"event_type":"message.received","trace_id":"trc_drift","payload":{"job_id":"job-linked","message_id":"msg_drift","message_text":"changed","channel":"line","chat_id":"U123"}}`, "event-user")
+		_, err = db.Exec(`UPDATE event_envelope SET trace_id = ?, envelope_json = ? WHERE event_id = ?`, "trc_drift", `{"event_id":"event-user","event_type":"message.received","trace_id":"trc_drift","message_id":"msg_drift","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","message_id":"msg_drift","message_text":"changed","channel":"line","chat_id":"U123"}}`, "event-user")
 		_ = db.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -220,6 +220,43 @@ func TestMigrationRejectsSourceAndEvidenceDriftBeforeOutputMutation(t *testing.T
 		_, err = Run(context.Background(), Options{Mode: ModeApply, SourceDir: fixture.source, EventDBPath: fixture.eventDB, ConversationDBPath: fixture.conversation, OutputDir: fixture.output, ReceiptPath: filepath.Join(fixture.root, "apply.json"), DryRunReceipt: dryPath})
 		if err == nil {
 			t.Fatal("relevant event drift was accepted")
+		}
+	})
+
+	t.Run("relevant conversation receipt drift", func(t *testing.T) {
+		fixture := newMigrationFixture(t)
+		dryPath := filepath.Join(fixture.root, "dry.json")
+		if _, err := Run(context.Background(), Options{Mode: ModeDryRun, SourceDir: fixture.source, EventDBPath: fixture.eventDB, ConversationDBPath: fixture.conversation, ReceiptPath: dryPath}); err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", fixture.conversation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw string
+		if err := db.QueryRow(`SELECT result_json FROM conversation_turn_receipt LIMIT 1`).Scan(&raw); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		var result map[string]any
+		if err := json.Unmarshal([]byte(raw), &result); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		result["status"] = "partial"
+		updated, err := json.Marshal(result)
+		if err == nil {
+			_, err = db.Exec(`UPDATE conversation_turn_receipt SET result_json = ?`, string(updated))
+		}
+		if closeErr := db.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = Run(context.Background(), Options{Mode: ModeApply, SourceDir: fixture.source, EventDBPath: fixture.eventDB, ConversationDBPath: fixture.conversation, OutputDir: fixture.output, ReceiptPath: filepath.Join(fixture.root, "apply.json"), DryRunReceipt: dryPath})
+		if err == nil {
+			t.Fatal("relevant conversation receipt drift was accepted")
 		}
 	})
 
@@ -234,7 +271,7 @@ func TestMigrationRejectsSourceAndEvidenceDriftBeforeOutputMutation(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = db.Exec(`INSERT INTO event_envelope(event_id, trace_id, envelope_json) VALUES (?, ?, ?)`, "unrelated-new", "trc_unrelated", `{"event_type":"message.received","trace_id":"trc_unrelated","payload":{"job_id":"not-a-legacy-job","message_id":"msg_unrelated"}}`)
+		_, err = db.Exec(`INSERT INTO event_envelope(event_id, trace_id, event_type, envelope_json) VALUES (?, ?, ?, ?)`, "unrelated-new", "trc_unrelated", "message.received", `{"event_id":"unrelated-new","event_type":"message.received","trace_id":"trc_changed_unrelated","payload":{"job_id":"not-a-legacy-job","message_id":"msg_unrelated"}}`)
 		_ = db.Close()
 		if err != nil {
 			t.Fatal(err)
@@ -250,15 +287,21 @@ func TestMigrationRejectsSourceAndEvidenceDriftBeforeOutputMutation(t *testing.T
 }
 
 func TestMigrationRejectsAmbiguityMismatchCollisionAndSchema(t *testing.T) {
+	t.Run("canonical event column mismatch", func(t *testing.T) {
+		fixture := newMigrationFixture(t)
+		linked := fixture.receiptLinkedIdentity()
+		insertEvent(t, fixture.eventDB, "event-column-mismatch", string(linked.traceID), `{"event_id":"event-column-mismatch","event_type":"message.received","trace_id":"trc_mismatch","payload":{"job_id":"job-linked"}}`)
+		assertBlocked(t, fixture, "event-column-mismatch")
+	})
 	t.Run("multiple traces", func(t *testing.T) {
 		fixture := newMigrationFixture(t)
-		insertEvent(t, fixture.eventDB, "event-extra-trace", "trc_extra", `{"event_type":"message.received","trace_id":"trc_extra","payload":{"job_id":"job-linked","message_id":"msg_extra","message_text":"hello","channel":"line","chat_id":"U123"}}`)
+		insertEvent(t, fixture.eventDB, "event-extra-trace", "trc_extra", `{"event_id":"event-extra-trace","event_type":"message.received","trace_id":"trc_extra","message_id":"msg_extra","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","message_id":"msg_extra","message_text":"hello","channel":"line","chat_id":"U123"}}`)
 		assertBlocked(t, fixture, "ambiguous")
 	})
 	t.Run("receipt metadata mismatch", func(t *testing.T) {
 		fixture := newMigrationFixture(t)
 		linked := fixture.receiptLinkedIdentity()
-		envelope := `{"event_type":"message.received","trace_id":"` + string(linked.traceID) + `","payload":{"job_id":"job-linked","message_id":"` + string(linked.userMessageID) + `","message_text":"wrong","channel":"line","chat_id":"U123"}}`
+		envelope := `{"event_id":"event-mismatch","event_type":"message.received","trace_id":"` + string(linked.traceID) + `","message_id":"` + string(linked.userMessageID) + `","session_id":"` + fixture.sessionID + `","payload":{"job_id":"job-linked","message_id":"` + string(linked.userMessageID) + `","message_text":"wrong","channel":"line","chat_id":"U123"}}`
 		insertEvent(t, fixture.eventDB, "event-mismatch", string(linked.traceID), envelope)
 		assertBlocked(t, fixture, "mismatch")
 	})
@@ -451,20 +494,20 @@ func setupDatabases(t *testing.T, fixture *migrationFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = eventDB.Exec(`CREATE TABLE event_envelope(event_id TEXT, trace_id TEXT, envelope_json TEXT)`)
+	_, err = eventDB.Exec(`CREATE TABLE event_envelope(event_id TEXT, trace_id TEXT, event_type TEXT, envelope_json TEXT)`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	linked := fixture.receiptLinkedIdentity()
-	insert := func(id, trace, envelope string) {
-		if _, err := eventDB.Exec(`INSERT INTO event_envelope(event_id, trace_id, envelope_json) VALUES (?, ?, ?)`, id, trace, envelope); err != nil {
+	insert := func(id, trace, eventType, envelope string) {
+		if _, err := eventDB.Exec(`INSERT INTO event_envelope(event_id, trace_id, event_type, envelope_json) VALUES (?, ?, ?, ?)`, id, trace, eventType, envelope); err != nil {
 			t.Fatal(err)
 		}
 	}
-	insert("event-user", string(linked.traceID), `{"event_type":"message.received","trace_id":"`+string(linked.traceID)+`","payload":{"job_id":"job-linked","message_id":"`+string(linked.userMessageID)+`","session_id":"`+fixture.sessionID+`","message_text":"hello","channel":"line","chat_id":"U123"}}`)
-	insert("event-agent", string(linked.traceID), `{"event_type":"agent.response","trace_id":"`+string(linked.traceID)+`","payload":{"job_id":"job-linked","message_id":"`+string(linked.agentMessageID)+`","session_id":"`+fixture.sessionID+`","channel":"line","chat_id":"U123","route":"chat"}}`)
-	insert("event-extra", string(linked.traceID), `{"event_type":"agent.response","trace_id":"`+string(linked.traceID)+`","payload":{"job_id":"job-linked","message_id":"msg_extra","channel":"line","chat_id":"U123","route":"chat"}}`)
-	insert("event-deterministic", "trc_no_receipt", `{"event_type":"message.received","trace_id":"trc_no_receipt","payload":{"job_id":"job-no-receipt","message_id":"msg_no_receipt","message_text":"second","channel":"line","chat_id":"U123"}}`)
+	insert("event-user", string(linked.traceID), "message.received", `{"event_id":"event-user","event_type":"message.received","trace_id":"`+string(linked.traceID)+`","message_id":"`+string(linked.userMessageID)+`","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","trace_id":"2026-09-05T00:00:00.000Z","message_id":"`+string(linked.userMessageID)+`","session_id":"`+fixture.sessionID+`","message_text":"hello","channel":"line","chat_id":"U123"}}`)
+	insert("event-agent", string(linked.traceID), "agent.response", `{"event_id":"event-agent","event_type":"agent.response","trace_id":"`+string(linked.traceID)+`","message_id":"`+string(linked.agentMessageID)+`","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","trace_id":"2026-09-05T00:00:00.000Z","message_id":"`+string(linked.agentMessageID)+`","session_id":"`+fixture.sessionID+`","channel":"line","chat_id":"U123","route":"chat"}}`)
+	insert("event-extra", string(linked.traceID), "agent.response", `{"event_id":"event-extra","event_type":"agent.response","trace_id":"`+string(linked.traceID)+`","message_id":"msg_extra","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","message_id":"msg_extra","channel":"line","chat_id":"U123","route":"chat"}}`)
+	insert("event-deterministic", "trc_no_receipt", "message.received", `{"event_id":"event-deterministic","event_type":"message.received","trace_id":"trc_no_receipt","message_id":"msg_no_receipt","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-no-receipt","message_id":"msg_no_receipt","message_text":"second","channel":"line","chat_id":"U123"}}`)
 	if err := eventDB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -476,7 +519,7 @@ func setupDatabases(t *testing.T, fixture *migrationFixture) {
 	if _, err := conversationDB.Exec(`CREATE TABLE conversation_turn_receipt(turn_id TEXT, trace_id TEXT, root_task_id TEXT, session_id TEXT, user_message_id TEXT, agent_message_id TEXT, result_json TEXT)`); err != nil {
 		t.Fatal(err)
 	}
-	result := map[string]string{"root_task_id": string(linked.rootTaskID), "turn_id": string(linked.turnID), "trace_id": string(linked.traceID), "user_message_id": string(linked.userMessageID), "agent_message_id": string(linked.agentMessageID), "session_id": fixture.sessionID}
+	result := receiptResult(linked, fixture.sessionID)
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -511,13 +554,10 @@ func replaceLinkedIdentity(t *testing.T, fixture *migrationFixture, identity can
 	if err := eventDB.Close(); err != nil {
 		t.Fatal(err)
 	}
-	insertEvent(t, fixture.eventDB, "event-user", string(identity.traceID), `{"event_type":"message.received","trace_id":"`+string(identity.traceID)+`","payload":{"job_id":"job-linked","message_id":"`+string(identity.userMessageID)+`","session_id":"`+fixture.sessionID+`","message_text":"hello","channel":"line","chat_id":"U123"}}`)
-	insertEvent(t, fixture.eventDB, "event-agent", string(identity.traceID), `{"event_type":"agent.response","trace_id":"`+string(identity.traceID)+`","payload":{"job_id":"job-linked","message_id":"`+string(identity.agentMessageID)+`","session_id":"`+fixture.sessionID+`","channel":"line","chat_id":"U123","route":"chat"}}`)
+	insertEvent(t, fixture.eventDB, "event-user", string(identity.traceID), `{"event_id":"event-user","event_type":"message.received","trace_id":"`+string(identity.traceID)+`","message_id":"`+string(identity.userMessageID)+`","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","message_id":"`+string(identity.userMessageID)+`","session_id":"`+fixture.sessionID+`","message_text":"hello","channel":"line","chat_id":"U123"}}`)
+	insertEvent(t, fixture.eventDB, "event-agent", string(identity.traceID), `{"event_id":"event-agent","event_type":"agent.response","trace_id":"`+string(identity.traceID)+`","message_id":"`+string(identity.agentMessageID)+`","session_id":"`+fixture.sessionID+`","payload":{"job_id":"job-linked","message_id":"`+string(identity.agentMessageID)+`","session_id":"`+fixture.sessionID+`","channel":"line","chat_id":"U123","route":"chat"}}`)
 
-	result := map[string]string{
-		"root_task_id": string(identity.rootTaskID), "turn_id": string(identity.turnID), "trace_id": string(identity.traceID),
-		"user_message_id": string(identity.userMessageID), "agent_message_id": string(identity.agentMessageID), "session_id": fixture.sessionID,
-	}
+	result := receiptResult(identity, fixture.sessionID)
 	resultJSON, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -538,13 +578,31 @@ func replaceLinkedIdentity(t *testing.T, fixture *migrationFixture, identity can
 	}
 }
 
+func receiptResult(identity canonicalIdentity, sessionID string) map[string]any {
+	return map[string]any{
+		"root_task_id": string(identity.rootTaskID), "turn_id": string(identity.turnID), "trace_id": string(identity.traceID),
+		"user_message_id": string(identity.userMessageID), "agent_message_id": string(identity.agentMessageID), "session_id": sessionID,
+		"thread_id": string(modulecore.NewThreadID()), "thread_seq": 1, "thread_kind": string(modulecore.ThreadKindUserConversation),
+		"message_ids":    []string{string(identity.userMessageID), string(identity.agentMessageID)},
+		"payload_sha256": strings.Repeat("a", 64), "status": "completed",
+	}
+}
+
 func insertEvent(t *testing.T, path, eventID, traceID, envelope string) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO event_envelope(event_id, trace_id, envelope_json) VALUES (?, ?, ?)`, eventID, traceID, envelope); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(envelope), &fields); err != nil {
+		t.Fatal(err)
+	}
+	var eventType string
+	if err := json.Unmarshal(fields["event_type"], &eventType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO event_envelope(event_id, trace_id, event_type, envelope_json) VALUES (?, ?, ?, ?)`, eventID, traceID, eventType, envelope); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

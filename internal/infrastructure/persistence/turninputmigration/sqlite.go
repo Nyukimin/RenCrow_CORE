@@ -2,6 +2,7 @@ package turninputmigration
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
@@ -51,6 +53,7 @@ type conversationReceipt struct {
 	userMessageID  string
 	agentMessageID string
 	result         canonicalIdentity
+	resultSHA256   string
 	canonical      []byte
 }
 
@@ -120,10 +123,10 @@ func queryEventEvidence(ctx context.Context, path string, legacyJobs map[string]
 		return nil, "", err
 	}
 	defer db.Close()
-	if err := requireColumns(ctx, db, eventEnvelopeTable, []string{"event_id", "trace_id", "envelope_json"}); err != nil {
+	if err := requireColumns(ctx, db, eventEnvelopeTable, []string{"event_id", "trace_id", "event_type", "envelope_json"}); err != nil {
 		return nil, "", blocked("event_schema_invalid", err)
 	}
-	rows, err := db.QueryContext(ctx, "SELECT event_id, trace_id, envelope_json FROM event_envelope ORDER BY rowid ASC")
+	rows, err := db.QueryContext(ctx, "SELECT event_id, trace_id, event_type, envelope_json FROM event_envelope WHERE event_type IN (?, ?) ORDER BY rowid ASC", messageReceivedEventType, agentResponseEventType)
 	if err != nil {
 		return nil, "", blocked("event_query_failed", err)
 	}
@@ -131,8 +134,8 @@ func queryEventEvidence(ctx context.Context, path string, legacyJobs map[string]
 	events := make(map[string][]eventRecord)
 	records := make([]string, 0)
 	for rows.Next() {
-		var eventIDValue, traceValue, envelopeValue any
-		if err := rows.Scan(&eventIDValue, &traceValue, &envelopeValue); err != nil {
+		var eventIDValue, traceValue, eventTypeValue, envelopeValue any
+		if err := rows.Scan(&eventIDValue, &traceValue, &eventTypeValue, &envelopeValue); err != nil {
 			return nil, "", blocked("event_query_failed", err)
 		}
 		eventID, err := sqlString(eventIDValue)
@@ -143,11 +146,15 @@ func queryEventEvidence(ctx context.Context, path string, legacyJobs map[string]
 		if err != nil {
 			return nil, "", blocked("event_schema_invalid", err)
 		}
+		rowEventType, err := sqlString(eventTypeValue)
+		if err != nil {
+			return nil, "", blocked("event_schema_invalid", err)
+		}
 		envelope, err := sqlBytes(envelopeValue)
 		if err != nil {
 			return nil, "", blocked("event_schema_invalid", err)
 		}
-		event, relevant, parseErr := parseEventEnvelope(eventID, rowTrace, envelope, legacyJobs)
+		event, relevant, parseErr := parseEventEnvelope(eventID, rowTrace, rowEventType, envelope, legacyJobs)
 		if parseErr != nil {
 			return nil, "", blocked("event_evidence_invalid", parseErr)
 		}
@@ -163,7 +170,7 @@ func queryEventEvidence(ctx context.Context, path string, legacyJobs map[string]
 	return events, writeHashStrings(records), nil
 }
 
-func parseEventEnvelope(eventID, rowTrace string, raw []byte, legacyJobs map[string]legacyReference) (eventRecord, bool, error) {
+func parseEventEnvelope(eventID, rowTrace, rowEventType string, raw []byte, legacyJobs map[string]legacyReference) (eventRecord, bool, error) {
 	object, err := strictObject(raw)
 	if err != nil {
 		return eventRecord{}, false, err
@@ -175,13 +182,6 @@ func parseEventEnvelope(eventID, rowTrace string, raw []byte, legacyJobs map[str
 			return eventRecord{}, false, errors.New("payload must be an object")
 		}
 	}
-	eventType, err := eventField(object, payload, "event_type", "type")
-	if err != nil {
-		return eventRecord{}, false, err
-	}
-	if eventType != messageReceivedEventType && eventType != agentResponseEventType {
-		return eventRecord{}, false, nil
-	}
 	jobID, err := payloadField(payload, "job_id")
 	if err != nil {
 		return eventRecord{}, false, err
@@ -192,44 +192,42 @@ func parseEventEnvelope(eventID, rowTrace string, raw []byte, legacyJobs map[str
 	if _, relevant := legacyJobs[jobID]; !relevant {
 		return eventRecord{}, false, nil
 	}
+	envelopeEventID, err := requiredObjectString(object, "event_id")
+	if err != nil || envelopeEventID != eventID {
+		return eventRecord{}, false, errors.New("event envelope event_id does not match its canonical column")
+	}
+	traceID, err := requiredObjectString(object, "trace_id")
+	if err != nil || traceID != rowTrace {
+		return eventRecord{}, false, errors.New("event envelope trace_id does not match its canonical column")
+	}
+	eventType, err := requiredObjectString(object, "event_type")
+	if err != nil || eventType != rowEventType {
+		return eventRecord{}, false, errors.New("event envelope event_type does not match its canonical column")
+	}
 	if eventID == "" {
 		return eventRecord{}, false, errors.New("relevant event ID is missing")
 	}
-	traceFromEnvelope, err := eventField(object, payload, "trace_id")
+	messageID, err := optionalObjectString(object, "message_id")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
-	if rowTrace != "" && traceFromEnvelope != "" && rowTrace != traceFromEnvelope {
-		return eventRecord{}, false, errors.New("event trace IDs disagree")
-	}
-	traceID := rowTrace
-	if traceID == "" {
-		traceID = traceFromEnvelope
-	}
-	if traceID == "" {
-		return eventRecord{}, false, errors.New("relevant event trace ID is missing")
-	}
-	messageID, err := eventField(object, payload, "message_id", "user_message_id", "agent_message_id")
+	sessionID, err := optionalObjectString(object, "session_id")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
-	sessionID, err := eventField(object, payload, "session_id")
+	textValue, err := payloadAlias(payload, "content", "message_text", "user_message", "text", "message")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
-	textValue, err := eventField(object, payload, "message_text", "user_message", "text", "message")
+	channel, err := payloadAlias(payload, "channel", "channel_type")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
-	channel, err := eventField(object, payload, "channel", "channel_type")
+	chatID, err := payloadAlias(payload, "chat_id", "external_conversation_id")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
-	chatID, err := eventField(object, payload, "chat_id", "external_conversation_id")
-	if err != nil {
-		return eventRecord{}, false, err
-	}
-	route, err := eventField(object, payload, "route")
+	route, err := payloadAlias(payload, "route")
 	if err != nil {
 		return eventRecord{}, false, err
 	}
@@ -262,28 +260,36 @@ func parseEventEnvelope(eventID, rowTrace string, raw []byte, legacyJobs map[str
 	return event, true, nil
 }
 
-func eventField(object, payload map[string]json.RawMessage, keys ...string) (string, error) {
+func requiredObjectString(object map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := object[key]
+	if !ok {
+		return "", errors.New("required event envelope field is missing")
+	}
+	value, err := decodeString(raw)
+	if err != nil || value == "" {
+		return "", errors.New("required event envelope field is invalid")
+	}
+	return value, nil
+}
+
+func optionalObjectString(object map[string]json.RawMessage, key string) (string, error) {
+	raw, ok := object[key]
+	return rawOptionalString(raw, ok)
+}
+
+func payloadAlias(payload map[string]json.RawMessage, keys ...string) (string, error) {
 	var chosen string
 	for _, key := range keys {
 		payloadValue, payloadOK := payload[key]
-		objectValue, objectOK := object[key]
 		payloadString, payloadErr := rawOptionalString(payloadValue, payloadOK)
-		objectString, objectErr := rawOptionalString(objectValue, objectOK)
-		if payloadErr != nil || objectErr != nil {
-			return "", errors.New("event field must be a string")
+		if payloadErr != nil {
+			return "", fmt.Errorf("event field %s must be a string", key)
 		}
-		if payloadString != "" && objectString != "" && payloadString != objectString {
-			return "", errors.New("event top-level and payload fields disagree")
-		}
-		value := payloadString
-		if value == "" {
-			value = objectString
-		}
-		if value != "" {
-			if chosen != "" && chosen != value {
+		if payloadString != "" {
+			if chosen != "" && chosen != payloadString {
 				return "", errors.New("event aliases disagree")
 			}
-			chosen = value
+			chosen = payloadString
 		}
 	}
 	return chosen, nil
@@ -368,6 +374,7 @@ func queryConversationEvidence(ctx context.Context, path string, traceToJob map[
 		receipt := conversationReceipt{
 			turnID: turnID, traceID: traceID, rootTaskID: rootTaskID, sessionID: sessionID,
 			userMessageID: userMessageID, agentMessageID: agentMessageID, result: result,
+			resultSHA256: fmt.Sprintf("%x", sha256.Sum256(resultJSON)),
 		}
 		canonical, err := json.Marshal(struct {
 			TurnID         string                      `json:"turn_id"`
@@ -377,10 +384,11 @@ func queryConversationEvidence(ctx context.Context, path string, traceToJob map[
 			UserMessageID  string                      `json:"user_message_id"`
 			AgentMessageID string                      `json:"agent_message_id"`
 			Result         canonicalReceiptIdentityDTO `json:"result"`
+			ResultSHA256   string                      `json:"result_sha256"`
 		}{turnID, traceID, rootTaskID, sessionID, userMessageID, agentMessageID, canonicalReceiptIdentityDTO{
 			RootTaskID: string(result.rootTaskID), TurnID: string(result.turnID), TraceID: string(result.traceID),
 			UserMessageID: string(result.userMessageID), AgentMessageID: string(result.agentMessageID),
-		}})
+		}, receipt.resultSHA256})
 		if err != nil {
 			return nil, "", blocked("conversation_evidence_invalid", err)
 		}
@@ -399,25 +407,30 @@ func parseConversationResult(raw []byte, turnID, traceID, rootTaskID, sessionID,
 	if err != nil {
 		return canonicalIdentity{}, err
 	}
-	allowed := []string{"root_task_id", "turn_id", "trace_id", "user_message_id", "agent_message_id", "session_id"}
-	if !exactKeys(fields, allowed, nil) {
+	required := []string{
+		"root_task_id", "turn_id", "trace_id", "user_message_id", "agent_message_id", "session_id",
+		"thread_id", "thread_seq", "thread_kind", "message_ids", "payload_sha256", "status",
+	}
+	optional := []string{
+		"closed_thread_id", "closed_thread_seq", "closed_thread_kind", "error_code",
+		"requested_targets", "pending_targets", "completed_targets", "idempotent_replay",
+	}
+	if !keysWithRequired(fields, required, optional) {
 		return canonicalIdentity{}, errors.New("conversation receipt result schema is not exact")
 	}
-	values := make(map[string]string, len(allowed))
-	for _, key := range allowed {
-		value, err := decodeString(fields[key])
-		if err != nil {
-			return canonicalIdentity{}, errors.New("conversation receipt result contains non-string IDs")
-		}
-		values[key] = value
+	var result domconv.ConversationTurnResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return canonicalIdentity{}, errors.New("conversation receipt result is invalid")
 	}
-	if values["turn_id"] != turnID || values["trace_id"] != traceID || values["root_task_id"] != rootTaskID || values["session_id"] != sessionID || values["user_message_id"] != userMessageID || values["agent_message_id"] != agentMessageID {
+	if string(result.TurnID) != turnID || string(result.TraceID) != traceID || string(result.RootTaskID) != rootTaskID || result.SessionID != sessionID || string(result.UserMessageID) != userMessageID || string(result.AgentMessageID) != agentMessageID {
 		return canonicalIdentity{}, errors.New("conversation receipt columns and result disagree")
 	}
+	if len(result.MessageIDs) != 2 || result.MessageIDs[0] != userMessageID || result.MessageIDs[1] != agentMessageID {
+		return canonicalIdentity{}, errors.New("conversation receipt message_ids disagree")
+	}
 	identity := canonicalIdentity{
-		rootTaskID: modulecore.TaskID(values["root_task_id"]), turnID: modulecore.TurnID(values["turn_id"]),
-		traceID: modulecore.TraceID(values["trace_id"]), userMessageID: modulecore.MessageID(values["user_message_id"]),
-		agentMessageID: modulecore.MessageID(values["agent_message_id"]),
+		rootTaskID: result.RootTaskID, turnID: result.TurnID, traceID: result.TraceID,
+		userMessageID: result.UserMessageID, agentMessageID: result.AgentMessageID,
 	}
 	if err := identity.validate(); err != nil {
 		return canonicalIdentity{}, errors.New("conversation receipt IDs are invalid")
@@ -467,7 +480,7 @@ func mapLegacyRow(reference legacyReference, evidence evidencePlan) (rowMapping,
 				continue
 			}
 			userMatches++
-			if event.text != reference.row.userMessage || event.channel != reference.row.channel || event.chatID != reference.row.chatID || (event.sessionID != "" && event.sessionID != reference.session.id) {
+			if event.text != reference.row.userMessage || event.channel != reference.row.channel || event.chatID != reference.row.chatID || event.sessionID != reference.session.id {
 				return rowMapping{}, blocked("contradictory_evidence", errors.New("message.received metadata does not match legacy row"))
 			}
 		case agentResponseEventType:
@@ -475,7 +488,7 @@ func mapLegacyRow(reference legacyReference, evidence evidencePlan) (rowMapping,
 				continue
 			}
 			agentMatches++
-			if event.channel != reference.row.channel || event.chatID != reference.row.chatID || event.route != reference.row.route || (event.sessionID != "" && event.sessionID != reference.session.id) {
+			if event.channel != reference.row.channel || event.chatID != reference.row.chatID || event.route != reference.row.route || event.sessionID != reference.session.id {
 				return rowMapping{}, blocked("contradictory_evidence", errors.New("agent.response metadata does not match legacy row"))
 			}
 		}
