@@ -242,6 +242,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	leadRunID, err := resolveLeadAgentRun(ctx, o.taskLifecycle, taskID, o.superAgentRuns, o.superAgentRunController)
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
 	o.emitNote("mio", "user",
 		fmt.Sprintf("%s", routeNoticeText(decision.Route, req.UserMessage)),
 		string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID)
@@ -254,17 +258,18 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, err
 	}
 	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision)
-	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, taskID, decision.Route)
+	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	leadRunID := leadAgentRunID(taskID)
 	if o.superAgentRunController != nil {
 		var unregister func()
-		ctx, unregister = o.superAgentRunController.RegisterRun(ctx, leadRunID)
+		ctx, unregister = o.superAgentRunController.RegisterRun(ctx, string(leadRunID))
 		defer unregister()
 	}
-	ctx = appsubagent.WithSuperAgentRuntime(ctx, leadRunID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+	if leadRunID != "" {
+		ctx = appsubagent.WithSuperAgentRuntime(ctx, string(leadRunID), []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+	}
 
 	workerMarkedBusy := false
 	if o.idleNotifier != nil && decision.Route != routing.RouteCHAT {
@@ -284,10 +289,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, publicationErr
 	}
 	if err != nil {
-		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(leadRunID) {
-			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "paused", "pause requested; distributed execution canceled")
+		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(string(leadRunID)) {
+			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; distributed execution canceled")
 		} else {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
+			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		}
 		if decision.Route == routing.RouteCHAT {
 			o.saveExecutionReport(ctx, taskID, req.UserMessage, string(decision.Route), startedAt, time.Now().UTC(), err)
@@ -298,10 +303,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 
 	// 5. タスクを履歴に追加し、セッションを保存
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
+		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, fmt.Errorf("failed to save session: %w", err)
 	}
-	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
+	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 

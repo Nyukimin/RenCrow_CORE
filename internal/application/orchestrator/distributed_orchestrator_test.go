@@ -17,6 +17,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -576,9 +577,13 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	super := &mockSuperAgentRuntimeRecorder{}
+	manager := newRecordingTaskLifecycleManager()
+	controller := &recordingRunController{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	orch.SetTaskLifecycleManager(manager)
 	orch.SetSuperAgentRuntimeRecorder(super)
+	orch.SetSuperAgentRunController(controller)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "dist-lead-session",
@@ -605,6 +610,19 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 		if string(event.TraceID) != resp.TraceID {
 			t.Fatalf("lead agent trace_id=%q, want root %q", event.TraceID, resp.TraceID)
 		}
+		if event.TaskID != modulecore.TaskID(resp.TaskID) || event.RunID != modulecore.RunID(super.runs[0].RunID) || event.ActorKind != "agent" || event.ActorID != "mio" {
+			t.Fatalf("lead event attribution = %#v", event)
+		}
+	}
+	if runID := modulecore.RunID(super.runs[0].RunID); runID.Validate() != nil {
+		t.Fatalf("lead agent RunID is not canonical: %q", runID)
+	}
+	runs, err := manager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: modulecore.TaskID(resp.TaskID)})
+	if err != nil || len(runs) != 1 || runs[0].RunID != modulecore.RunID(super.runs[0].RunID) {
+		t.Fatalf("task owner run = %#v err=%v, projection=%q", runs, err, super.runs[0].RunID)
+	}
+	if len(controller.registered) != 1 || controller.registered[0] != super.runs[0].RunID {
+		t.Fatalf("controller RunID = %#v, projection=%q", controller.registered, super.runs[0].RunID)
 	}
 }
 

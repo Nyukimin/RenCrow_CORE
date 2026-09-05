@@ -21,6 +21,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -416,6 +417,27 @@ func (pauseRequestedRunController) RegisterRun(ctx context.Context, _ string) (c
 
 func (pauseRequestedRunController) IsPauseRequested(_ string) bool {
 	return true
+}
+
+type recordingRunController struct {
+	registered []string
+}
+
+func (c *recordingRunController) RegisterRun(ctx context.Context, runID string) (context.Context, func()) {
+	c.registered = append(c.registered, runID)
+	return ctx, func() {}
+}
+
+func (c *recordingRunController) IsPauseRequested(_ string) bool {
+	return false
+}
+
+type missingActiveRunTaskLifecycleManager struct {
+	*recordingTaskLifecycleManager
+}
+
+func (m *missingActiveRunTaskLifecycleManager) ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error) {
+	return nil, nil
 }
 
 type mockHeavyAgent struct {
@@ -1807,8 +1829,12 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 		response: "hello",
 	}
 	super := &mockSuperAgentRuntimeRecorder{}
+	manager := newRecordingTaskLifecycleManager()
+	controller := &recordingRunController{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(manager)
 	orch.SetSuperAgentRuntimeRecorder(super)
+	orch.SetSuperAgentRunController(controller)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err != nil {
@@ -1829,12 +1855,25 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID {
 		t.Fatalf("unexpected context pack: %+v", super.contextPacks)
 	}
+	if runID := modulecore.RunID(super.runs[0].RunID); runID.Validate() != nil {
+		t.Fatalf("lead agent RunID is not canonical: %q", runID)
+	}
+	runs, err := manager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: modulecore.TaskID(resp.TaskID)})
+	if err != nil || len(runs) != 1 || runs[0].RunID != modulecore.RunID(super.runs[0].RunID) {
+		t.Fatalf("task owner run = %#v err=%v, projection=%q", runs, err, super.runs[0].RunID)
+	}
+	if len(controller.registered) != 1 || controller.registered[0] != super.runs[0].RunID {
+		t.Fatalf("controller RunID = %#v, projection=%q", controller.registered, super.runs[0].RunID)
+	}
 	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.completed" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
 	}
 	for _, event := range super.traces {
 		if string(event.TraceID) != resp.TraceID {
 			t.Fatalf("lead agent trace_id=%q, want root %q", event.TraceID, resp.TraceID)
+		}
+		if event.TaskID != modulecore.TaskID(resp.TaskID) || event.RunID != modulecore.RunID(super.runs[0].RunID) || event.ActorKind != "agent" || event.ActorID != "mio" {
+			t.Fatalf("lead event attribution = %#v", event)
 		}
 	}
 }
@@ -1849,7 +1888,9 @@ func TestProcessMessage_RecordsPausedLeadAgentRunWhenRuntimePauseCancelsContext(
 		},
 	}
 	super := &mockSuperAgentRuntimeRecorder{}
+	manager := newRecordingTaskLifecycleManager()
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(manager)
 	orch.SetSuperAgentRuntimeRecorder(super)
 	orch.SetSuperAgentRunController(pauseRequestedRunController{})
 
@@ -1868,6 +1909,31 @@ func TestProcessMessage_RecordsPausedLeadAgentRunWhenRuntimePauseCancelsContext(
 	}
 	if len(super.traces) != 2 || super.traces[0].EventType != "lead_agent.started" || super.traces[1].EventType != "lead_agent.paused" {
 		t.Fatalf("unexpected trace events: %+v", super.traces)
+	}
+}
+
+func TestProcessMessage_MissingActiveRunFailsBeforeExecution(t *testing.T) {
+	called := false
+	mio := &mockMioAgent{
+		decision: routing.NewDecision(routing.RouteCHAT, 1, "chat"),
+		chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
+			called = true
+			return "unexpected", nil
+		},
+	}
+	super := &mockSuperAgentRuntimeRecorder{}
+	base := newRecordingTaskLifecycleManager()
+	manager := &missingActiveRunTaskLifecycleManager{recordingTaskLifecycleManager: base}
+	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	orch.SetTaskLifecycleManager(manager)
+	orch.SetSuperAgentRuntimeRecorder(super)
+
+	_, err := orch.ProcessMessage(context.Background(), defaultReq())
+	if err == nil || !strings.Contains(err.Error(), "active run") {
+		t.Fatalf("missing active run error = %v", err)
+	}
+	if called || len(super.runs) != 0 {
+		t.Fatalf("execution continued after missing active run: called=%v runs=%#v", called, super.runs)
 	}
 }
 

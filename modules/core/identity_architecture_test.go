@@ -55,7 +55,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/application/idlechat/orchestrator.go:recordPersonaTimelineEvent":                             {},
 		"internal/application/orchestrator/message_orchestrator_persona.go:applyPersonaCanonicalResponse":      {},
 		"internal/application/orchestrator/message_orchestrator_persona.go:recordPersonaRuntimeObservation":    {},
-		"internal/application/orchestrator/superagent_runtime.go:leadAgentRunID":                               {},
 		"internal/application/skillgovernance/bootstrap_service.go:Record":                                     {},
 		"internal/application/skillgovernance/coder_evidence_service.go:saveCoderTranscriptEntries":            {},
 		"internal/infrastructure/stt/provider.go:NextEventID":                                                  {},
