@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -1026,4 +1027,365 @@ func canonicalSourceIdentifierRune(value byte) bool {
 
 func canonicalThreadViolation(fileSet *token.FileSet, position token.Pos, relative, kind, detail string) string {
 	return fmt.Sprintf("%s:%d:%s:%s", relative, fileSet.PositionFor(position, false).Line, kind, detail)
+}
+
+const (
+	canonicalTaskImportPath         = "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	canonicalConversationImportPath = "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+)
+
+func TestCanonicalTaskValueObjectArchitecture(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	var violations []string
+
+	legacyTaskFile := filepath.Join(repoRoot, "internal", "domain", "task", "task.go")
+	if _, err := os.Stat(legacyTaskFile); err == nil {
+		violations = append(violations, "internal/domain/task/task.go:retired user-input Task source remains")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat retired task source: %v", err)
+	}
+
+	jobIDFile := filepath.Join(repoRoot, "internal", "domain", "task", "jobid.go")
+	if _, err := os.Stat(jobIDFile); os.IsNotExist(err) {
+		violations = append(violations, "internal/domain/task/jobid.go:JobID value object is missing")
+	} else if err != nil {
+		t.Fatalf("stat JobID source: %v", err)
+	}
+
+	err := canonicalWalkProductionGoFiles(repoRoot, func(relative string, fileSet *token.FileSet, parsed *ast.File) error {
+		aliases, dotImport := canonicalImportAliases(parsed, canonicalTaskImportPath)
+		if dotImport {
+			violations = append(violations, relative+":dot import of canonical task package is forbidden")
+		}
+		if canonicalArchitectureInPackageDir(relative, "internal/domain/task") {
+			for _, declaration := range parsed.Decls {
+				switch declaration := declaration.(type) {
+				case *ast.GenDecl:
+					if declaration.Tok != token.TYPE {
+						continue
+					}
+					for _, specification := range declaration.Specs {
+						typeSpec, ok := specification.(*ast.TypeSpec)
+						if ok && typeSpec.Name.Name == "Task" {
+							violations = append(violations, canonicalArchitectureViolation(fileSet, typeSpec.Name.Pos(), relative, "retired type declaration Task"))
+						}
+					}
+				case *ast.FuncDecl:
+					if declaration.Name.Name == "NewTask" {
+						violations = append(violations, canonicalArchitectureViolation(fileSet, declaration.Name.Pos(), relative, "retired function NewTask"))
+					}
+				}
+			}
+		}
+		if len(aliases) == 0 {
+			return nil
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			selector, ok := node.(*ast.SelectorExpr)
+			if !ok || (selector.Sel.Name != "Task" && selector.Sel.Name != "NewTask") {
+				return true
+			}
+			packageName, ok := selector.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if _, exactImport := aliases[packageName.Name]; exactImport {
+				violations = append(violations, canonicalArchitectureViolation(fileSet, selector.Pos(), relative, packageName.Name+"."+selector.Sel.Name))
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan production Go source for retired task selectors: %v", err)
+	}
+
+	canonicalArchitectureFail(t, "retired user-input Task must not return and JobID must remain", violations)
+}
+
+func TestCanonicalTurnInputArchitecture(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	relative := filepath.ToSlash(filepath.Join("internal", "domain", "conversation", "turn_input.go"))
+	path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse %s: %v", relative, err)
+	}
+
+	var violations []string
+	turnInput, found := canonicalArchitectureNamedStruct(parsed, "TurnInput")
+	if !found {
+		violations = append(violations, relative+":missing TurnInput struct")
+	} else {
+		for _, field := range turnInput.Fields.List {
+			for _, name := range field.Names {
+				normalized := canonicalArchitectureFieldName(name.Name)
+				if normalized == "jobid" || normalized == "chatid" {
+					violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "retired field "+name.Name))
+				}
+			}
+		}
+	}
+
+	methodErr := canonicalWalkProductionGoFiles(repoRoot, func(methodRelative string, methodFileSet *token.FileSet, methodParsed *ast.File) error {
+		if !canonicalArchitectureInPackageDir(methodRelative, "internal/domain/conversation") {
+			return nil
+		}
+		_, dotImport := canonicalImportAliases(methodParsed, canonicalConversationImportPath)
+		if dotImport {
+			violations = append(violations, methodRelative+":dot import of canonical conversation package is forbidden")
+		}
+		for _, declaration := range methodParsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv == nil || !canonicalArchitectureReceiverType(function.Recv, "TurnInput") {
+				continue
+			}
+			switch function.Name.Name {
+			case "JobID", "ChatID", "WithConversationIdentity":
+				violations = append(violations, canonicalArchitectureViolation(methodFileSet, function.Name.Pos(), methodRelative, "retired method "+function.Name.Name))
+			}
+		}
+		return nil
+	})
+	if methodErr != nil {
+		t.Fatalf("scan conversation production source for retired TurnInput methods: %v", methodErr)
+	}
+
+	canonicalArchitectureFail(t, "TurnInput canonical identities must be immutable and free of retired scalars", violations)
+}
+
+func TestCanonicalTurnInputTaskFieldArchitecture(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	var violations []string
+	err := canonicalWalkProductionGoFiles(repoRoot, func(relative string, fileSet *token.FileSet, parsed *ast.File) error {
+		aliases, dotImport := canonicalImportAliases(parsed, canonicalConversationImportPath)
+		if dotImport {
+			violations = append(violations, relative+":dot import of canonical conversation package is forbidden")
+		}
+		if len(aliases) == 0 {
+			return nil
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			structType, ok := node.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			for _, field := range structType.Fields.List {
+				if !canonicalArchitectureConversationType(field.Type, aliases, "TurnInput", true) {
+					continue
+				}
+				for _, name := range field.Names {
+					if strings.EqualFold(name.Name, "task") {
+						violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "Task field stores conversation.TurnInput"))
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan production Go source for TurnInput Task fields: %v", err)
+	}
+
+	canonicalArchitectureFail(t, "conversation.TurnInput must not be stored under a Task field", violations)
+}
+
+func TestCanonicalSessionInputArchitecture(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	relative := filepath.ToSlash(filepath.Join("internal", "domain", "session", "session.go"))
+	path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse %s: %v", relative, err)
+	}
+
+	var violations []string
+	session, found := canonicalArchitectureNamedStruct(parsed, "Session")
+	if !found {
+		violations = append(violations, relative+":missing Session struct")
+		canonicalArchitectureFail(t, "Session input shape must retain canonical ChannelAddress", violations)
+		return
+	}
+	conversationAliases, dotImport := canonicalImportAliases(parsed, canonicalConversationImportPath)
+	if dotImport {
+		violations = append(violations, relative+":dot import of canonical conversation package is forbidden")
+	}
+	foundHistory := false
+	foundChannelAddress := false
+	for _, field := range session.Fields.List {
+		for _, name := range field.Names {
+			normalized := canonicalArchitectureFieldName(name.Name)
+			switch normalized {
+			case "channel", "chatid":
+				violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "legacy Session field "+name.Name))
+			}
+			switch name.Name {
+			case "history":
+				foundHistory = true
+				if !canonicalArchitectureSliceOf(field.Type, conversationAliases, "TurnInput") {
+					violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "history must be []conversation.TurnInput"))
+				}
+			case "channelAddress":
+				foundChannelAddress = true
+				if !canonicalArchitectureConversationType(field.Type, conversationAliases, "ChannelAddress", false) {
+					violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "channelAddress must be conversation.ChannelAddress"))
+				}
+			}
+		}
+	}
+	if !foundHistory {
+		violations = append(violations, relative+":missing history []conversation.TurnInput")
+	}
+	if !foundChannelAddress {
+		violations = append(violations, relative+":missing channelAddress conversation.ChannelAddress")
+	}
+
+	canonicalArchitectureFail(t, "Session must retain canonical TurnInput history and ChannelAddress", violations)
+}
+
+func canonicalArchitectureRepoRoot(t *testing.T) string {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(1)
+	if !ok {
+		t.Fatal("resolve architecture test file")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+}
+
+func canonicalWalkProductionGoFiles(repoRoot string, visit func(relative string, fileSet *token.FileSet, parsed *ast.File) error) error {
+	return filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if canonicalThreadIdentitySkipDir(repoRoot, path) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		fileSet := token.NewFileSet()
+		parsed, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return err
+		}
+		return visit(filepath.ToSlash(relative), fileSet, parsed)
+	})
+}
+
+func canonicalImportAliases(parsed *ast.File, importPath string) (map[string]struct{}, bool) {
+	aliases := make(map[string]struct{})
+	defaultAlias := pathpkg.Base(importPath)
+	dotImport := false
+	for _, declaration := range parsed.Imports {
+		path, err := strconv.Unquote(declaration.Path.Value)
+		if err != nil || path != importPath {
+			continue
+		}
+		alias := defaultAlias
+		if declaration.Name != nil {
+			alias = declaration.Name.Name
+		}
+		if alias == "." {
+			dotImport = true
+			continue
+		}
+		if alias == "_" {
+			continue
+		}
+		aliases[alias] = struct{}{}
+	}
+	return aliases, dotImport
+}
+
+func canonicalArchitectureInPackageDir(relative, directory string) bool {
+	return pathpkg.Dir(relative) == directory
+}
+
+func canonicalArchitectureNamedStruct(parsed *ast.File, name string) (*ast.StructType, bool) {
+	for _, declaration := range parsed.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range general.Specs {
+			typeSpec, ok := specification.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != name {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			return structType, ok
+		}
+	}
+	return nil, false
+}
+
+func canonicalArchitectureFieldName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, "_", ""))
+}
+
+func canonicalArchitectureReceiverType(receiver *ast.FieldList, name string) bool {
+	for _, field := range receiver.List {
+		typeExpr := field.Type
+		if parenthesized, ok := typeExpr.(*ast.ParenExpr); ok {
+			typeExpr = parenthesized.X
+		}
+		if pointer, ok := typeExpr.(*ast.StarExpr); ok {
+			typeExpr = pointer.X
+		}
+		identifier, ok := typeExpr.(*ast.Ident)
+		if ok && identifier.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalArchitectureConversationType(expression ast.Expr, aliases map[string]struct{}, name string, pointerAllowed bool) bool {
+	if parenthesized, ok := expression.(*ast.ParenExpr); ok {
+		return canonicalArchitectureConversationType(parenthesized.X, aliases, name, pointerAllowed)
+	}
+	if pointer, ok := expression.(*ast.StarExpr); ok {
+		return pointerAllowed && canonicalArchitectureConversationType(pointer.X, aliases, name, false)
+	}
+	selector, ok := expression.(*ast.SelectorExpr)
+	if !ok || selector.Sel.Name != name {
+		return false
+	}
+	packageName, ok := selector.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	_, exactImport := aliases[packageName.Name]
+	return exactImport
+}
+
+func canonicalArchitectureSliceOf(expression ast.Expr, aliases map[string]struct{}, name string) bool {
+	array, ok := expression.(*ast.ArrayType)
+	return ok && array.Len == nil && canonicalArchitectureConversationType(array.Elt, aliases, name, false)
+}
+
+func canonicalArchitectureViolation(fileSet *token.FileSet, position token.Pos, relative, detail string) string {
+	return fmt.Sprintf("%s:%d:%s", relative, fileSet.PositionFor(position, false).Line, detail)
+}
+
+func canonicalArchitectureFail(t *testing.T, message string, violations []string) {
+	if len(violations) == 0 {
+		return
+	}
+	sort.Strings(violations)
+	shown := violations
+	if len(shown) > canonicalThreadIdentityViolationLimit {
+		shown = shown[:canonicalThreadIdentityViolationLimit]
+	}
+	t.Fatalf("%s: violations=%d showing=%d\n%s", message, len(violations), len(shown), strings.Join(shown, "\n"))
 }
