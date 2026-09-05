@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -14,7 +15,7 @@ type opsScopeCaptureShiro struct {
 	ctx   context.Context
 }
 
-func (s *opsScopeCaptureShiro) Execute(ctx context.Context, _ task.Task) (string, error) {
+func (s *opsScopeCaptureShiro) Execute(ctx context.Context, _ conversation.TurnInput) (string, error) {
 	s.calls++
 	s.ctx = ctx
 	return "ops complete", nil
@@ -42,9 +43,10 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	tk := task.NewTask(task.NewJobID(), "運用データを確認して", "line", "user-a")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "line", "user-a").WithSessionID("session-1")
 
-	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, "session-1", "line", "user-a", "")
+	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, jobID, "")
 	if err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)
 	}
@@ -55,7 +57,7 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 	if !ok {
 		t.Fatal("Shiro did not receive a trusted execution scope")
 	}
-	if got.RequestID != tk.JobID().String() || got.ActorKind != domaintool.ActorKindAgent || got.ActorID != "shiro" {
+	if got.RequestID != jobID.String() || got.ActorKind != domaintool.ActorKindAgent || got.ActorID != "shiro" {
 		t.Fatalf("Shiro scope identity = %#v", got)
 	}
 	if got.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || got.AgentRole != "worker" || got.Purpose != "ops" {
@@ -83,9 +85,10 @@ func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) 
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	tk := task.NewTask(task.NewJobID(), "運用データを確認して", "viewer", "viewer-user")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "viewer", "viewer-user").WithSessionID("session-1")
 
-	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, "session-1", "viewer", "viewer-user", ""); err == nil {
+	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, jobID, ""); err == nil {
 		t.Fatal("invalid parent scope must stop OPS before Shiro")
 	}
 	if shiro.calls != 0 {

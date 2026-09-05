@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -96,34 +97,34 @@ func (o *MessageOrchestrator) handleDailyNewsBrief(
 	ctx context.Context,
 	req ProcessMessageRequest,
 	sess *session.Session,
-	t task.Task,
+	input domainconversation.TurnInput,
 	jobID task.JobID,
 	ttsSessionID string,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
 		return ProcessMessageResponse{}, false, nil
 	}
-	return o.respondWithDailyNewsBrief(ctx, req, sess, t, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat, ttsSessionID)
+	return o.respondWithDailyNewsBrief(ctx, req, sess, input, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) handleDailyNewsBrief(
 	ctx context.Context,
 	req ProcessMessageRequest,
 	sess *session.Session,
-	t task.Task,
+	input domainconversation.TurnInput,
 	jobID task.JobID,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
 		return ProcessMessageResponse{}, false, nil
 	}
-	return o.respondWithDailyNewsBrief(ctx, req, sess, t, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat)
+	return o.respondWithDailyNewsBrief(ctx, req, sess, input, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat)
 }
 
 func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 	ctx context.Context,
 	req ProcessMessageRequest,
 	sess *session.Session,
-	t task.Task,
+	input domainconversation.TurnInput,
 	jobID task.JobID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
@@ -146,7 +147,7 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 		ctx,
 		req,
 		sess,
-		t,
+		input,
 		jobID,
 		now,
 		brief,
@@ -155,7 +156,7 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 		o.mio,
 		shiroChat,
 		o.events.Emit,
-		o.sessions.SaveCompletedTask,
+		o.sessions.SaveCompletedTurnInput,
 		o.responses.Build,
 	)
 	if err == nil && handled {
@@ -169,7 +170,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 	ctx context.Context,
 	req ProcessMessageRequest,
 	sess *session.Session,
-	t task.Task,
+	input domainconversation.TurnInput,
 	jobID task.JobID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
@@ -191,7 +192,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 		ctx,
 		req,
 		sess,
-		t,
+		input,
 		jobID,
 		now,
 		brief,
@@ -200,7 +201,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 		o.mio,
 		shiroChat,
 		o.events.Emit,
-		o.sessions.SaveCompletedTask,
+		o.sessions.SaveCompletedTurnInput,
 		func(response string, decision routing.Decision, jid task.JobID) ProcessMessageResponse {
 			return ProcessMessageResponse{
 				Response:   response,
@@ -218,7 +219,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 }
 
 type dailyNewsBriefEventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
-type dailyNewsBriefTaskSaver func(context.Context, *session.Session, task.Task) error
+type dailyNewsBriefTurnInputSaver func(context.Context, *session.Session, domainconversation.TurnInput) error
 type dailyNewsBriefResponseBuilder func(string, routing.Decision, task.JobID) ProcessMessageResponse
 
 func readDailyNewsBrief(ctx context.Context, reader domainnews.DailyNewsBriefReader, now time.Time) (domainnews.DailyNewsBrief, error) {
@@ -232,7 +233,7 @@ func respondWithDailyNewsBrief(
 	ctx context.Context,
 	req ProcessMessageRequest,
 	sess *session.Session,
-	t task.Task,
+	input domainconversation.TurnInput,
 	jobID task.JobID,
 	now time.Time,
 	brief domainnews.DailyNewsBrief,
@@ -241,7 +242,7 @@ func respondWithDailyNewsBrief(
 	mioChat MioAgent,
 	shiroChat MioAgent,
 	emit dailyNewsBriefEventEmitter,
-	save dailyNewsBriefTaskSaver,
+	save dailyNewsBriefTurnInputSaver,
 	build dailyNewsBriefResponseBuilder,
 ) (ProcessMessageResponse, bool, error) {
 	usable := readerErr == nil && brief.IsUsable(now)
@@ -273,7 +274,7 @@ func respondWithDailyNewsBrief(
 		emitDailyNewsFallbackProgress(emit, req, jobID, "調べてきました。収集結果はデータとしてMioへ渡します。")
 	}
 
-	responders := dailyNewsBriefResponders(t.ViewerRecipient(), mioChat, shiroChat)
+	responders := dailyNewsBriefResponders(input.ViewerRecipient(), mioChat, shiroChat)
 	if len(responders) == 0 {
 		return ProcessMessageResponse{}, true, fmt.Errorf("daily news brief has no Chat responder")
 	}
@@ -284,7 +285,7 @@ func respondWithDailyNewsBrief(
 		if responder.agent == nil {
 			continue
 		}
-		response, lastErr = responder.agent.Chat(requestCtx, t.WithRoute(routing.RouteCHAT))
+		response, lastErr = responder.agent.Chat(requestCtx, input.WithRoute(routing.RouteCHAT))
 		if lastErr == nil && strings.TrimSpace(response) != "" {
 			responseAgent = responder.name
 			break
@@ -307,7 +308,7 @@ func respondWithDailyNewsBrief(
 
 	emit("news.brief.responded", responseAgentOrSystem(responseAgent), "user", dailyNewsBriefResponseObservation(responseBrief, usable, now), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	emit("agent.response", responseAgentOrSystem(responseAgent), "user", response, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
-	if err := save(ctx, sess, t.WithRoute(routing.RouteCHAT)); err != nil {
+	if err := save(ctx, sess, input.WithRoute(routing.RouteCHAT)); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	return build(response, dailyNewsBriefRouteDecision(), jobID), true, nil

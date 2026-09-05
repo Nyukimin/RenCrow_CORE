@@ -12,6 +12,7 @@ import (
 	appverification "github.com/Nyukimin/RenCrow_CORE/internal/application/verification"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -156,8 +157,8 @@ func (m *mockSessionRepository) Delete(ctx context.Context, id string) error {
 type mockMioAgent struct {
 	decision   routing.Decision
 	response   string
-	decideFunc func(ctx context.Context, t task.Task) (routing.Decision, error)
-	chatFunc   func(ctx context.Context, t task.Task) (string, error)
+	decideFunc func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
+	chatFunc   func(ctx context.Context, t conversation.TurnInput) (string, error)
 	cmdFunc    func(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
 }
 
@@ -175,14 +176,14 @@ func (l *failOnEventListener) OnEvent(ev OrchestratorEvent) error {
 	return nil
 }
 
-func (m *mockMioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decision, error) {
+func (m *mockMioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 	if m.decideFunc != nil {
 		return m.decideFunc(ctx, t)
 	}
 	return m.decision, nil
 }
 
-func (m *mockMioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
+func (m *mockMioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
 	if m.chatFunc != nil {
 		return m.chatFunc(ctx, t)
 	}
@@ -199,10 +200,10 @@ func (m *mockMioAgent) HandleChatCommand(ctx context.Context, sessionID string, 
 // mockShiroAgent はテスト用のShiroAgent
 type mockShiroAgent struct {
 	response    string
-	executeFunc func(ctx context.Context, t task.Task) (string, error)
+	executeFunc func(ctx context.Context, t conversation.TurnInput) (string, error)
 }
 
-func (m *mockShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
+func (m *mockShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {
 	if m.executeFunc != nil {
 		return m.executeFunc(ctx, t)
 	}
@@ -214,7 +215,7 @@ type mockCoderAgent struct {
 	response string
 }
 
-func (m *mockCoderAgent) Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
+func (m *mockCoderAgent) Generate(ctx context.Context, t conversation.TurnInput, systemPrompt string) (string, error) {
 	return m.response, nil
 }
 
@@ -223,7 +224,7 @@ type mockWildAgent struct {
 	called   bool
 }
 
-func (m *mockWildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
+func (m *mockWildAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
 	m.called = true
 	return m.response, nil
 }
@@ -423,7 +424,7 @@ type mockHeavyAgent struct {
 	called   bool
 }
 
-func (m *mockHeavyAgent) Generate(ctx context.Context, t task.Task) (string, error) {
+func (m *mockHeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
 	m.called = true
 	return m.response, nil
 }
@@ -527,7 +528,7 @@ func TestMessageOrchestrator_ProcessMessage_NewSession(t *testing.T) {
 func TestMessageOrchestrator_CanonicalEventFailureStopsBeforeLLM(t *testing.T) {
 	wantErr := fmt.Errorf("canonical append unavailable")
 	decideCalls := 0
-	mio := &mockMioAgent{decideFunc: func(context.Context, task.Task) (routing.Decision, error) {
+	mio := &mockMioAgent{decideFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
 		decideCalls++
 		return routing.NewDecision(routing.RouteCHAT, 1, "unexpected"), nil
 	}}
@@ -550,7 +551,7 @@ func TestMessageOrchestrator_LaterCanonicalEventFailureSuppressesResponse(t *tes
 	chatCalls := 0
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat route"),
-		chatFunc: func(context.Context, task.Task) (string, error) {
+		chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 			chatCalls++
 			return "response must not escape", nil
 		},
@@ -902,7 +903,7 @@ func TestMessageOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat route"),
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
 			if cb := llm.StreamCallbackFromContext(ctx); cb != nil {
 				cb("tok1")
 				cb("tok2")
@@ -943,7 +944,7 @@ func TestMessageOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat route"),
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
 			if cb := llm.StreamCallbackFromContext(ctx); cb != nil {
 				cb("最初の説明文です。")
 				cb("次の説明文です。")
@@ -1228,8 +1229,8 @@ func TestMessageOrchestrator_ProcessMessage_TaskAddedToHistory(t *testing.T) {
 	}
 
 	history := sess.GetHistory()
-	if history[0].UserMessage() != "テスト" {
-		t.Errorf("Expected user message 'テスト', got '%s'", history[0].UserMessage())
+	if history[0].MessageText() != "テスト" {
+		t.Errorf("Expected user message 'テスト', got '%s'", history[0].MessageText())
 	}
 
 	if history[0].Route() != routing.RouteCHAT {
@@ -1269,7 +1270,7 @@ func TestMessageOrchestrator_ProcessMessage_SessionLoadError(t *testing.T) {
 
 func TestMessageOrchestrator_ProcessMessage_RoutingError(t *testing.T) {
 	mio := &mockMioAgent{
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 			return routing.Decision{}, fmt.Errorf("LLM classifier timeout")
 		},
 	}
@@ -1287,7 +1288,7 @@ func TestMessageOrchestrator_ProcessMessage_RoutingError(t *testing.T) {
 func TestMessageOrchestrator_ProcessMessage_ChatError(t *testing.T) {
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1.0, "Chat"),
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
 			return "", fmt.Errorf("RenCrow_LLM Gateway unavailable")
 		},
 	}
@@ -1307,7 +1308,7 @@ func TestMessageOrchestrator_ProcessMessage_ShiroError(t *testing.T) {
 		decision: routing.NewDecision(routing.RouteOPS, 0.9, "OPS"),
 	}
 	shiro := &mockShiroAgent{
-		executeFunc: func(ctx context.Context, t task.Task) (string, error) {
+		executeFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
 			return "", fmt.Errorf("command execution failed")
 		},
 	}
@@ -1378,7 +1379,7 @@ func TestMessageOrchestrator_ProcessMessage_FallbackToChat(t *testing.T) {
 func TestMessageOrchestrator_ProcessMessage_AnalyzeWithoutHeavyFailsInsteadOfFallback(t *testing.T) {
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteANALYZE, 1.0, "explicit analyze"),
-		chatFunc: func(ctx context.Context, tk task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, tk conversation.TurnInput) (string, error) {
 			t.Fatal("ANALYZE must not fall back to Mio chat when heavy agent is unavailable")
 			return "", nil
 		},
@@ -1449,7 +1450,7 @@ func TestMessageOrchestrator_ProcessMessage_ChatCommand_Error(t *testing.T) {
 func TestMessageOrchestrator_ProcessMessage_ExplicitDCIBypassesRouting(t *testing.T) {
 	decideCalled := false
 	mio := &mockMioAgent{
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 			decideCalled = true
 			return routing.NewDecision(routing.RouteCHAT, 1.0, "should not run"), nil
 		},
@@ -1546,7 +1547,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 func TestMessageOrchestrator_ProcessMessage_ExplicitDCIErrorDoesNotFallback(t *testing.T) {
 	decideCalled := false
 	mio := &mockMioAgent{
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 			decideCalled = true
 			return routing.NewDecision(routing.RouteCHAT, 1.0, "fallback"), nil
 		},
@@ -1725,12 +1726,12 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 	var chatMessage string
 	mio := &mockMioAgent{
 		response: "review result",
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
-			routedMessage = t.UserMessage()
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
+			routedMessage = t.MessageText()
 			return routing.NewDecision(routing.RouteCHAT, 0.9, "command expanded"), nil
 		},
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
-			chatMessage = t.UserMessage()
+		chatFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
+			chatMessage = t.MessageText()
 			return "review result", nil
 		},
 	}
@@ -1843,7 +1844,7 @@ func TestProcessMessage_RecordsPausedLeadAgentRunWhenRuntimePauseCancelsContext(
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1, "chat"),
-		chatFunc: func(ctx context.Context, _ task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, _ conversation.TurnInput) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		},
@@ -1875,11 +1876,11 @@ func TestMessageOrchestrator_ProcessMessage_SlashCommandSkipsDCI(t *testing.T) {
 	// スラッシュコマンド（/code3, /analyze 等）は DCI をスキップして通常ルーティングに進む
 	decideCalled := false
 	mio := &mockMioAgent{
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 			decideCalled = true
 			return routing.NewDecision(routing.RouteCHAT, 1.0, "explicit /code3 command (fallback to CHAT in test)"), nil
 		},
-		chatFunc: func(ctx context.Context, m task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, m conversation.TurnInput) (string, error) {
 			return "code3 response", nil
 		},
 	}

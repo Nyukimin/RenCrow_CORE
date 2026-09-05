@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
@@ -20,21 +21,22 @@ func TestPhase18DistributedAutonomousCoordinatorUsesUpdatedReportStore(t *testin
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
 			emitted = append(emitted, eventType+":"+content)
 		},
-		func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 			executed = true
 			if route != routing.RoutePLAN {
 				t.Fatalf("expected route PLAN, got %s", route)
 			}
-			if sessionID != "sess-1" || ttsSessionID != "tts-1" {
-				t.Fatalf("unexpected route context: session=%s tts=%s", sessionID, ttsSessionID)
+			if gotTask.SessionID() != "sess-1" || ttsSessionID != "tts-1" {
+				t.Fatalf("unexpected route context: session=%s tts=%s", gotTask.SessionID(), ttsSessionID)
 			}
 			return "計画しました", nil
 		},
 	)
 	coordinator.SetReportStore(reporter)
 
-	tk := task.NewTask(task.NewJobID(), "買い物の計画を作ってください", "line", "U123")
-	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, "sess-1", "tts-1")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "買い物の計画を作ってください", "line", "U123").WithSessionID("sess-1")
+	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, jobID, "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -61,8 +63,8 @@ func TestPhase18DistributedAutonomousCoordinatorAddsRetryMessageOnlyAfterFirstAt
 		nil,
 		func() int { return 1 },
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
-		func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-			userMessages = append(userMessages, gotTask.UserMessage())
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+			userMessages = append(userMessages, gotTask.MessageText())
 			if len(userMessages) == 1 {
 				return "provider error", errors.New("provider error")
 			}
@@ -70,8 +72,9 @@ func TestPhase18DistributedAutonomousCoordinatorAddsRetryMessageOnlyAfterFirstAt
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "実行してください", "line", "U123")
-	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "実行してください", "line", "U123").WithSessionID("sess-1")
+	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, jobID, "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed after retry: %v", err)
 	}
@@ -94,13 +97,14 @@ func TestPhase18DistributedAutonomousCoordinatorReturnsResultResponseOnError(t *
 		nil,
 		func() int { return 0 },
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
-		func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 			return "途中結果", errors.New("command error")
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "実行してください", "line", "U123")
-	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "実行してください", "line", "U123").WithSessionID("sess-1")
+	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, jobID, "tts-1")
 	if err == nil {
 		t.Fatal("expected executor error")
 	}

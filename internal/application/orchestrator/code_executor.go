@@ -6,9 +6,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // CodeExecutor はコード生成タスクの実行を担当
@@ -18,13 +17,9 @@ type CodeExecutor interface {
 
 // CodeExecutionRequest はコード実行リクエスト
 type CodeExecutionRequest struct {
-	Task      task.Task
-	Route     routing.Route
-	SessionID string
-	Channel   string
-	ChatID    string
-	JobID     string
-	Module    domainmodule.Resolution
+	Input  domainconversation.TurnInput
+	JobID  string
+	Module domainmodule.Resolution
 }
 
 // DefaultCodeExecutor は標準的なCodeExecutor実装
@@ -98,7 +93,8 @@ func (e *DefaultCodeExecutor) WithModuleResolver(resolver ModuleResolver) *Defau
 // ExecuteCode はコード生成タスクを実行
 func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecutionRequest) (CodeExecutionResponse, error) {
 	req = e.resolveModuleForRequest(req)
-	target, err := e.selectCoderForRoute(req.Route)
+	route := req.Input.Route()
+	target, err := e.selectCoderForRoute(route)
 	if err != nil {
 		return CodeExecutionResponse{}, err
 	}
@@ -107,7 +103,7 @@ func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecution
 		defer target.release()
 	}
 
-	log.Printf("[CodeExecutor] code handoff route=%s target=%s job=%s", req.Route, target.name, req.JobID)
+	log.Printf("[CodeExecutor] code handoff route=%s target=%s job=%s", route, target.name, req.JobID)
 
 	e.emitCodeHandoffStart(req, target)
 
@@ -120,7 +116,7 @@ func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecution
 	}
 
 	// CODE 系の明示ルートは、Proposal生成が可能ならWorkerで即時実行する。
-	if shouldUseProposalPath(req.Route, target) && e.workerExecution != nil {
+	if shouldUseProposalPath(route, target) && e.workerExecution != nil {
 		if resp, handled, err := e.tryExecuteProposalPath(ctx, req, target); handled {
 			return resp, err
 		}
@@ -133,15 +129,16 @@ func (e *DefaultCodeExecutor) resolveModuleForRequest(req CodeExecutionRequest) 
 	if req.Module.Found() || e.moduleResolver == nil {
 		return req
 	}
-	resolved := e.moduleResolver.Resolve(req.Task.UserMessage())
+	resolved := e.moduleResolver.Resolve(req.Input.MessageText())
+	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	if !resolved.Found() {
 		if resolved.Ambiguous {
-			e.emit("module.unresolved", "mio", "shiro", resolved.Summary(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+			e.emit("module.unresolved", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
 		}
 		return req
 	}
 	req.Module = resolved
-	e.emit("module.selected", "mio", "shiro", resolved.Summary(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	req.Task = req.Task.WithUserMessage(appendModuleContextToCodeRequest(req.Task.UserMessage(), resolved))
+	e.emit("module.selected", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+	req.Input = req.Input.WithMessageText(appendModuleContextToCodeRequest(req.Input.MessageText(), resolved))
 	return req
 }

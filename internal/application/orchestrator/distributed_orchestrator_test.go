@@ -11,12 +11,12 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -46,12 +46,12 @@ type distMockMioAgent struct {
 	routeResponse       string // "CHAT", "OPS", etc.
 	lastChatInput       string
 	lastViewerRecipient string
-	lastTask            task.Task
+	lastTask            conversation.TurnInput
 	decideCalls         int
-	chatFunc            func(ctx context.Context, t task.Task) (string, error)
+	chatFunc            func(ctx context.Context, t conversation.TurnInput) (string, error)
 }
 
-func (m *distMockMioAgent) DecideAction(ctx context.Context, t task.Task) (routing.Decision, error) {
+func (m *distMockMioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 	m.decideCalls++
 	m.lastTask = t
 	route := routing.RouteCHAT
@@ -64,11 +64,11 @@ func (m *distMockMioAgent) DecideAction(ctx context.Context, t task.Task) (routi
 	}, nil
 }
 
-func (m *distMockMioAgent) Chat(ctx context.Context, t task.Task) (string, error) {
+func (m *distMockMioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
 	if m.chatFunc != nil {
 		return m.chatFunc(ctx, t)
 	}
-	m.lastChatInput = t.UserMessage()
+	m.lastChatInput = t.MessageText()
 	m.lastViewerRecipient = t.ViewerRecipient()
 	return m.chatResponse, nil
 }
@@ -150,7 +150,7 @@ type distMockWildAgent struct {
 	called   bool
 }
 
-func (m *distMockWildAgent) Generate(ctx context.Context, t task.Task) (string, error) {
+func (m *distMockWildAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
 	m.called = true
 	return m.response, nil
 }
@@ -876,7 +876,7 @@ func TestDistributedOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 
 func TestDistributedOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	mockMio := &distMockMioAgent{
-		chatFunc: func(ctx context.Context, t task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, t conversation.TurnInput) (string, error) {
 			if cb := llm.StreamCallbackFromContext(ctx); cb != nil {
 				cb("最初の文です。")
 				cb("二つ目の文です。")
@@ -998,8 +998,8 @@ func TestDistributedOrchestratorProcessMessageBuildsTaskWithCanonicalSessionID(t
 	}); err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if mockMio.lastTask.SessionID() != sessionID || mockMio.lastTask.ChatID() != "viewer-user" {
-		t.Fatalf("distributed task identity = session=%q chat=%q", mockMio.lastTask.SessionID(), mockMio.lastTask.ChatID())
+	if mockMio.lastTask.SessionID() != sessionID || mockMio.lastTask.ChannelAddress().ExternalConversationID() != "viewer-user" {
+		t.Fatalf("distributed task identity = session=%q chat=%q", mockMio.lastTask.SessionID(), mockMio.lastTask.ChannelAddress().ExternalConversationID())
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -115,21 +116,23 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
 			emitted = append(emitted, eventType+":"+content)
 		},
-		func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 			executed = true
 			if route != routing.RoutePLAN {
 				t.Fatalf("expected route PLAN, got %s", route)
 			}
-			if sessionID != "sess-1" || channel != "line" || chatID != "U123" || ttsSessionID != "tts-1" {
-				t.Fatalf("unexpected route context: session=%s channel=%s chat=%s tts=%s", sessionID, channel, chatID, ttsSessionID)
+			address := gotTask.ChannelAddress()
+			if gotTask.SessionID() != "sess-1" || address.ChannelType() != "line" || address.ExternalConversationID() != "U123" || ttsSessionID != "tts-1" {
+				t.Fatalf("unexpected route context: session=%s channel=%s chat=%s tts=%s", gotTask.SessionID(), address.ChannelType(), address.ExternalConversationID(), ttsSessionID)
 			}
 			return "計画しました", nil
 		},
 	)
 	coordinator.SetReportStore(reporter)
 
-	tk := task.NewTask(task.NewJobID(), "買い物の計画を作ってください", "line", "U123")
-	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, "sess-1", "line", "U123", "tts-1")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "買い物の計画を作ってください", "line", "U123").WithSessionID("sess-1")
+	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, jobID, "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}

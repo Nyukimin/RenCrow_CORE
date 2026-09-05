@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -20,6 +19,15 @@ func newCanonicalSessionForTest(t *testing.T) *Session {
 		t.Fatal(err)
 	}
 	return value
+}
+
+func newSessionTurnInputForTest(t *testing.T, sess *Session, message string) conversation.TurnInput {
+	t.Helper()
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), message, sess.ChannelAddress())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input.WithSessionID(sess.ID())
 }
 
 func TestNewCanonicalSession(t *testing.T) {
@@ -48,12 +56,11 @@ func TestNewCanonicalSession(t *testing.T) {
 	}
 }
 
-func TestSessionAddTask(t *testing.T) {
+func TestSessionAddTurnInput(t *testing.T) {
 	session := newCanonicalSessionForTest(t)
-	jobID := task.NewJobID()
-	newTask := task.NewTask(jobID, "Hello", "line", "U123")
+	input := newSessionTurnInputForTest(t, session, "Hello")
 
-	session.AddTask(newTask)
+	session.AddTurnInput(input)
 
 	if session.HistoryCount() != 1 {
 		t.Errorf("Expected 1 task in history, got %d", session.HistoryCount())
@@ -64,19 +71,17 @@ func TestSessionAddTask(t *testing.T) {
 		t.Fatalf("Expected 1 task in history slice, got %d", len(history))
 	}
 
-	if history[0].UserMessage() != "Hello" {
-		t.Errorf("Expected task message 'Hello', got '%s'", history[0].UserMessage())
+	if history[0].MessageText() != "Hello" {
+		t.Errorf("Expected input message 'Hello', got '%s'", history[0].MessageText())
 	}
 }
 
 func TestSessionGetRecentHistory(t *testing.T) {
 	session := newCanonicalSessionForTest(t)
 
-	// 5つのタスクを追加
+	// 5つの入力を追加
 	for i := 1; i <= 5; i++ {
-		jobID := task.NewJobID()
-		newTask := task.NewTask(jobID, string(rune('A'+i-1)), "line", "U123")
-		session.AddTask(newTask)
+		session.AddTurnInput(newSessionTurnInputForTest(t, session, string(rune('A'+i-1))))
 	}
 
 	// 最近3件取得
@@ -86,18 +91,18 @@ func TestSessionGetRecentHistory(t *testing.T) {
 	}
 
 	// 最新の3件（C, D, E）が取得される
-	if recent[0].UserMessage() != "C" {
-		t.Errorf("Expected first recent task 'C', got '%s'", recent[0].UserMessage())
+	if recent[0].MessageText() != "C" {
+		t.Errorf("Expected first recent input 'C', got '%s'", recent[0].MessageText())
 	}
 
-	if recent[2].UserMessage() != "E" {
-		t.Errorf("Expected last recent task 'E', got '%s'", recent[2].UserMessage())
+	if recent[2].MessageText() != "E" {
+		t.Errorf("Expected last recent input 'E', got '%s'", recent[2].MessageText())
 	}
 
 	// 全件より多い数を指定した場合は全件返る
 	allRecent := session.GetRecentHistory(10)
 	if len(allRecent) != 5 {
-		t.Errorf("Expected 5 tasks when requesting 10, got %d", len(allRecent))
+		t.Errorf("Expected 5 inputs when requesting 10, got %d", len(allRecent))
 	}
 }
 
@@ -209,13 +214,11 @@ func TestSessionUpdatedAt(t *testing.T) {
 	// わずかに待機
 	time.Sleep(10 * time.Millisecond)
 
-	// タスク追加で更新時刻が変わる
-	jobID := task.NewJobID()
-	newTask := task.NewTask(jobID, "Test", "line", "U123")
-	session.AddTask(newTask)
+	// 入力追加で更新時刻が変わる
+	session.AddTurnInput(newSessionTurnInputForTest(t, session, "Test"))
 
 	if !session.UpdatedAt().After(initialUpdatedAt) {
-		t.Error("UpdatedAt should be updated after AddTask")
+		t.Error("UpdatedAt should be updated after AddTurnInput")
 	}
 
 	// メモリ設定で更新時刻が変わる

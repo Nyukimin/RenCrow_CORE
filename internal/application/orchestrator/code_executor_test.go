@@ -11,6 +11,7 @@ import (
 	moduleapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moduleregistry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
@@ -25,14 +26,7 @@ func TestCodeExecutor_CODE1Route(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, nil, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE1,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -66,14 +60,7 @@ func TestCodeExecutor_CODE3_WithProposal(t *testing.T) {
 	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, workerService, nil, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE3,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE3, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -116,14 +103,7 @@ func TestCodeExecutor_CODE2_WithProposal_ExecutesPatch(t *testing.T) {
 	executor := NewDefaultCodeExecutor(nil, coder2, nil, nil, workerService, nil, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "README.md を更新して", "test", "chat-1"),
-		Route:     routing.RouteCODE2,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "README.md を更新して", routing.RouteCODE2, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -158,14 +138,7 @@ func TestCodeExecutor_ModuleRegistryInjectsContextAndWorkspace(t *testing.T) {
 	}).WithModuleResolver(moduleapp.DefaultRegistry())
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "RenCrow_STT の音声入力を修正して", "test", "chat-1"),
-		Route:     routing.RouteCODE2,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "RenCrow_STT の音声入力を修正して", routing.RouteCODE2, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -239,14 +212,7 @@ func TestCodeExecutor_CODE3_WithProposalRecordsSkillChangeEvidence(t *testing.T)
 		WithCoderProposalEvidenceRecorder(evidence)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "Skillの挙動を変更して", "test", "chat-1"),
-		Route:     routing.RouteCODE3,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "Skillの挙動を変更して", routing.RouteCODE3, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -286,14 +252,7 @@ func TestCodeExecutor_CODEDoesNotDynamicSelectCODE3(t *testing.T) {
 	})
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if err == nil {
@@ -313,14 +272,7 @@ func TestCodeExecutor_CODE_ReleasesCoderStatusAfterGenerateSuccess(t *testing.T)
 	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -341,14 +293,7 @@ func TestCodeExecutor_CODE_ReleasesCoderStatusAfterGenerateError(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, status, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if !errors.Is(err, coderErr) {
@@ -367,14 +312,7 @@ func TestCodeExecutor_ExplicitRouteDoesNotUseLowerCoder(t *testing.T) {
 	})
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE3,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE3, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if err == nil {
@@ -394,14 +332,7 @@ func TestCodeExecutor_ProposalUnsupportedCoderFallsBackToGeneratePath(t *testing
 	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, workerService, nil, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE3,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE3, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -432,14 +363,7 @@ func TestCodeExecutor_WorkerExecutionErrorIsReturnedAsError(t *testing.T) {
 	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, workerService, nil, recordingCodeEventEmitter(&events))
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE3,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE3, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err == nil {
@@ -476,14 +400,7 @@ func TestCodeExecutor_ProposalPathEmitsLanguageTrace(t *testing.T) {
 	executor := NewDefaultCodeExecutor(nil, nil, coder3, nil, workerService, nil, recordingCodeEventEmitter(&events))
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "TTSを直して", "viewer", "viewer-user"),
-		Route:     routing.RouteCODE3,
-		SessionID: "viewer",
-		Channel:   "viewer",
-		ChatID:    "viewer-user",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "TTSを直して", routing.RouteCODE3, "viewer", "viewer", "viewer-user")
 
 	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {
 		t.Fatalf("ExecuteCode failed: %v", err)
@@ -539,14 +456,7 @@ func TestCodeExecutor_GenerateErrorDoesNotEmitShiroSuccess(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder1, nil, nil, nil, nil, nil, recordingCodeEventEmitter(&events))
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE1,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if !errors.Is(err, generateErr) {
@@ -569,14 +479,7 @@ func TestCodeExecutor_CODE_GenericRouteUsesOnlyCoder1(t *testing.T) {
 	executor := NewDefaultCodeExecutor(nil, coder2, nil, nil, nil, nil, noopEventEmitter)
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if err == nil {
@@ -593,14 +496,7 @@ func TestCodeExecutor_CODE_GenericRouteBlocksExternalCoder1(t *testing.T) {
 		WithExternalCoderPolicy(map[string]bool{"coder1": true})
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE, "sess-1", "test", "chat-1")
 
 	_, err := executor.ExecuteCode(context.Background(), req)
 	if err == nil {
@@ -617,14 +513,7 @@ func TestCodeExecutor_CODE1_ExplicitRouteAllowsExternalCoder1(t *testing.T) {
 		WithExternalCoderPolicy(map[string]bool{"coder1": true})
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "user message", "test", "chat-1"),
-		Route:     routing.RouteCODE1,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "user message", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	resp, err := executor.ExecuteCode(context.Background(), req)
 	if err != nil {
@@ -644,7 +533,7 @@ type failingCoderAgent struct {
 	err error
 }
 
-func (m *failingCoderAgent) Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
+func (m *failingCoderAgent) Generate(ctx context.Context, t conversation.TurnInput, systemPrompt string) (string, error) {
 	return "", m.err
 }
 

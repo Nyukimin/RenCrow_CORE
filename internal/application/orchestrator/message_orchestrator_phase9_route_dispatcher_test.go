@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
@@ -24,13 +25,14 @@ func newPhase9RouteDispatcher(mio MioAgent, shiro ShiroAgent) *messageRouteDispa
 func TestPhase9RouteDispatcher_CHATBypassesAutonomousExecutor(t *testing.T) {
 	mio := &mockMioAgent{response: "chat response"}
 	dispatcher := newPhase9RouteDispatcher(mio, &mockShiroAgent{})
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 		t.Fatalf("CHAT route must not call autonomous executor")
 		return "", nil
 	})
 
-	tk := task.NewTask(task.NewJobID(), "こんにちは", "line", "U123")
-	resp, err := dispatcher.ExecuteTask(context.Background(), tk, routing.RouteCHAT, "sess-1", "line", "U123", "")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "こんにちは", "line", "U123").WithSessionID("sess-1")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteCHAT, jobID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -42,13 +44,14 @@ func TestPhase9RouteDispatcher_CHATBypassesAutonomousExecutor(t *testing.T) {
 func TestPhase9RouteDispatcher_NonCHATUsesAutonomousExecutor(t *testing.T) {
 	dispatcher := newPhase9RouteDispatcher(&mockMioAgent{}, &mockShiroAgent{})
 	var gotRoute routing.Route
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 		gotRoute = route
 		return "autonomous response", nil
 	})
 
-	tk := task.NewTask(task.NewJobID(), "計画して", "line", "U123")
-	resp, err := dispatcher.ExecuteTask(context.Background(), tk, routing.RoutePLAN, "sess-1", "line", "U123", "")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "計画して", "line", "U123").WithSessionID("sess-1")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RoutePLAN, jobID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -72,12 +75,13 @@ func TestPhase9RouteDispatcher_OPSVerbalizesNamedHandoffAndReadback(t *testing.T
 		nil,
 		nil,
 	)
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 		return "ops response", nil
 	})
 
-	tk := task.NewTask(task.NewJobID(), "TTSの接続を確認して", "viewer", "viewer-user")
-	if _, err := dispatcher.ExecuteTask(context.Background(), tk, routing.RouteOPS, "sess-1", "viewer", "viewer-user", ""); err != nil {
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "TTSの接続を確認して", "viewer", "viewer-user").WithSessionID("sess-1")
+	if _, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteOPS, jobID, ""); err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
 	if len(events) < 2 {
@@ -94,8 +98,9 @@ func TestPhase9RouteDispatcher_SetHeavyAgentUpdatesAnalyzeRoute(t *testing.T) {
 	dispatcher := newPhase9RouteDispatcher(mio, &mockShiroAgent{})
 	dispatcher.SetHeavyAgent(heavy)
 
-	tk := task.NewTask(task.NewJobID(), "分析して", "line", "U123")
-	resp, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteANALYZE, "sess-1", "line", "U123", "")
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "分析して", "line", "U123").WithSessionID("sess-1")
+	resp, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteANALYZE, jobID, "")
 	if err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
 	}

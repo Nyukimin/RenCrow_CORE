@@ -7,11 +7,12 @@ import (
 	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
 	contractapp "github.com/Nyukimin/RenCrow_CORE/internal/application/contract"
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-type distributedDirectExecutor func(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error)
+type distributedDirectExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
 
 type distributedAutonomousCoordinator struct {
 	reporter      ReportStore
@@ -38,31 +39,32 @@ func (c *distributedAutonomousCoordinator) SetReportStore(reporter ReportStore) 
 	c.reporter = reporter
 }
 
-func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	contract, err := contractapp.NormalizeRequestWithRoute(t.UserMessage(), route.String())
+func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	contract, err := contractapp.NormalizeRequestWithRoute(input.MessageText(), route.String())
 	if err != nil {
 		return "", err
 	}
+	sessionID, channel, chatID := turnInputMetadata(input)
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
-		JobID:      t.JobID().String(),
+		JobID:      jobID.String(),
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
 		MaxRepair:  c.maxRepair(),
 		Observe: func(stage autonomousapp.Stage) {
-			log.Printf("[AutonomousExecutor] entry.stage=%s route=%s job=%s", stage, route.String(), t.JobID().String())
-			c.emit("entry.stage", t.Channel(), "system", string(stage), route.String(), t.JobID().String(), sessionID, t.Channel(), t.ChatID())
+			log.Printf("[AutonomousExecutor] entry.stage=%s route=%s job=%s", stage, route.String(), jobID.String())
+			c.emit("entry.stage", channel, "system", string(stage), route.String(), jobID.String(), sessionID, channel, chatID)
 		},
 		ReportStore: c.reporter,
 		Execute: func(execCtx context.Context, attempt int, failureKind, failureReason string) (autonomousapp.AttemptResult, error) {
-			log.Printf("[AutonomousExecutor] execute start route=%s job=%s attempt=%d failure_kind=%q", route.String(), t.JobID().String(), attempt, failureKind)
-			execTask := t
+			log.Printf("[AutonomousExecutor] execute start route=%s job=%s attempt=%d failure_kind=%q", route.String(), jobID.String(), attempt, failureKind)
+			execInput := input
 			if attempt > 0 {
-				execTask = execTask.WithUserMessage(buildExecutorRetryMessage(t.UserMessage(), route, failureKind, failureReason, attempt))
+				execInput = execInput.WithMessageText(buildExecutorRetryMessage(input.MessageText(), route, failureKind, failureReason, attempt))
 			}
-			resp, runErr := c.executeDirect(execCtx, execTask, route, sessionID, ttsSessionID)
+			resp, runErr := c.executeDirect(execCtx, execInput, route, jobID, ttsSessionID)
 			resultKind := classifyExecutorFailure(runErr)
-			log.Printf("[AutonomousExecutor] execute complete route=%s job=%s attempt=%d success=%t failure_kind=%q", route.String(), t.JobID().String(), attempt, runErr == nil, resultKind)
+			log.Printf("[AutonomousExecutor] execute complete route=%s job=%s attempt=%d success=%t failure_kind=%q", route.String(), jobID.String(), attempt, runErr == nil, resultKind)
 			return autonomousapp.AttemptResult{
 				Response:      resp,
 				Steps:         routeExecutionSteps(route, runErr == nil),
@@ -72,7 +74,7 @@ func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, t task.T
 		},
 		Verify: func(_ context.Context, c domaincontract.Contract, last autonomousapp.AttemptResult) (bool, string, string, error) {
 			ok, kind, reason := verifyByContract(route, c, last)
-			log.Printf("[AutonomousExecutor] verify route=%s job=%s passed=%t failure_kind=%q reason=%q", route.String(), t.JobID().String(), ok, kind, reason)
+			log.Printf("[AutonomousExecutor] verify route=%s job=%s passed=%t failure_kind=%q reason=%q", route.String(), jobID.String(), ok, kind, reason)
 			return ok, kind, reason, nil
 		},
 	})

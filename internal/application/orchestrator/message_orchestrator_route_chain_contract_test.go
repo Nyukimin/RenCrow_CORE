@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -61,7 +62,7 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 			Confidence: 0.91,
 			Reason:     "test rule",
 		}),
-		chatFunc: func(context.Context, task.Task) (string, error) {
+		chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 			return "", errors.New("Kuro CHAT must not use Mio's chat provider")
 		},
 	}
@@ -109,7 +110,7 @@ func TestMessageOrchestrator_RouteChainContract_KuroUnavailableDoesNotFallbackTo
 			Confidence: 0.91,
 			Reason:     "test rule",
 		}),
-		chatFunc: func(context.Context, task.Task) (string, error) {
+		chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 			return "mio fallback", nil
 		},
 	}
@@ -127,7 +128,7 @@ func TestMessageOrchestrator_RouteChainContract_KuroUnavailableDoesNotFallbackTo
 }
 
 func TestMessageOrchestrator_RouteChainContract_ShiroUsesDedicatedChatWorker(t *testing.T) {
-	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, task.Task) (string, error) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 		return "", errors.New("Shiro CHAT must not use Mio")
 	}}
 	shiroChat := &mockMioAgent{response: "shiro chatworker response"}
@@ -146,7 +147,7 @@ func TestMessageOrchestrator_RouteChainContract_ShiroUsesDedicatedChatWorker(t *
 }
 
 func TestMessageOrchestrator_RouteChainContract_MidoriUsesWildAgent(t *testing.T) {
-	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, task.Task) (string, error) {
+	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteCHAT, 1, "test"), chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 		return "", errors.New("Midori CHAT must not use Mio")
 	}}
 	wild := &mockWildAgent{response: "midori wild response"}
@@ -199,7 +200,7 @@ func TestMessageOrchestrator_RouteChainContract_EmitsLatencyMetrics(t *testing.T
 func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision(t *testing.T) {
 	decideCalled := false
 	mio := &mockMioAgent{
-		decideFunc: func(ctx context.Context, t task.Task) (routing.Decision, error) {
+		decideFunc: func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
 			decideCalled = true
 			return routing.NewDecision(routing.RouteOPS, 0.9, "should not run"), nil
 		},

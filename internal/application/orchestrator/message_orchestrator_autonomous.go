@@ -7,12 +7,13 @@ import (
 	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
 	contractapp "github.com/Nyukimin/RenCrow_CORE/internal/application/contract"
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
-type autonomousRouteExecutor func(ctx context.Context, t task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error)
+type autonomousRouteExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
 
 type autonomousExecutionCoordinator struct {
 	reporter      ReportStore
@@ -39,30 +40,31 @@ func (c *autonomousExecutionCoordinator) SetReportStore(reporter ReportStore) {
 	c.reporter = reporter
 }
 
-func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, t task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
+func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 	if !isAutonomousRoute(route) {
 		return "", fmt.Errorf("unknown route: %s", route)
 	}
-	contract, err := contractapp.NormalizeRequestWithRoute(t.UserMessage(), route.String())
+	contract, err := contractapp.NormalizeRequestWithRoute(input.MessageText(), route.String())
 	if err != nil {
 		return "", err
 	}
+	sessionID, channel, chatID := turnInputMetadata(input)
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
-		JobID:      t.JobID().String(),
+		JobID:      jobID.String(),
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
 		MaxRepair:  c.maxRepair(),
 		Observe: func(stage autonomousapp.Stage) {
-			c.emit("entry.stage", channel, "system", string(stage), route.String(), t.JobID().String(), sessionID, channel, chatID)
+			c.emit("entry.stage", channel, "system", string(stage), route.String(), jobID.String(), sessionID, channel, chatID)
 		},
 		ReportStore: c.reporter,
 		Execute: func(execCtx context.Context, attempt int, failureKind, failureReason string) (autonomousapp.AttemptResult, error) {
-			execTask := t
+			execInput := input
 			if attempt > 0 {
-				execTask = execTask.WithUserMessage(buildExecutorRetryMessage(t.UserMessage(), route, failureKind, failureReason, attempt))
+				execInput = execInput.WithMessageText(buildExecutorRetryMessage(input.MessageText(), route, failureKind, failureReason, attempt))
 			}
-			resp, runErr := c.executeDirect(execCtx, execTask, route, sessionID, channel, chatID, ttsSessionID)
+			resp, runErr := c.executeDirect(execCtx, execInput, route, jobID, ttsSessionID)
 			return autonomousapp.AttemptResult{
 				Response:      resp,
 				Steps:         routeExecutionSteps(route, runErr == nil),

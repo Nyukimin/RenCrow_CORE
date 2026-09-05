@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func shouldTraceShiroDelegation(route routing.Route) bool {
@@ -19,21 +19,21 @@ func shouldTraceShiroDelegation(route routing.Route) bool {
 	}
 }
 
-func formatMioToShiroInstruction(t task.Task, route routing.Route) string {
+func formatMioToShiroInstruction(input domainconversation.TurnInput, route routing.Route, jobID string) string {
 	return formatAgentHandoffSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
-		t.UserMessage(),
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), jobID),
+		input.MessageText(),
 	)
 }
 
-func formatShiroReadbackToMio(t task.Task, route routing.Route) string {
+func formatShiroReadbackToMio(input domainconversation.TurnInput, route routing.Route, jobID string) string {
 	return formatAgentHandoffReadbackSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
-		t.UserMessage(),
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), jobID),
+		input.MessageText(),
 	)
 }
 
@@ -43,7 +43,7 @@ func formatShiroToWorkerInstruction(req CodeExecutionRequest, p *proposal.Propos
 		patchBytes = len(p.Patch())
 	}
 	return fmt.Sprintf("Shiro内部実行器への指示: job=%s route=%s。Coderが出したProposalを実行器側で検証し、実行可能な場合のみ適用して。patch_bytes=%d plan=%s",
-		req.JobID, req.Route.String(), patchBytes, traceShortText(proposalPlanText(p), 700))
+		req.JobID, req.Input.Route().String(), patchBytes, traceShortText(proposalPlanText(p), 700))
 }
 
 func formatWorkerToShiroResult(result *patch.PatchExecutionResult, err error) string {

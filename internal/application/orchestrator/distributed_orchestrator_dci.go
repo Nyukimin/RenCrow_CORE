@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -19,7 +20,7 @@ func (o *DistributedOrchestrator) SetRecallTraceStore(store RecallTraceStore) {
 	o.recallTrace = store
 }
 
-func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID task.JobID) (ProcessMessageResponse, bool, error) {
 	// スラッシュコマンド（/code3, /analyze 等）はルーティングを最優先。DCI をスキップ。
 	if strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
@@ -35,11 +36,11 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, req.SessionID, t, result); err != nil {
+	if err := o.saveDCIRecallTrace(ctx, input, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
-	routedTask := t.WithRoute(routing.RouteRESEARCH)
-	if err := o.sessions.SaveCompletedTask(ctx, sess, routedTask); err != nil {
+	routedInput := input.WithRoute(routing.RouteRESEARCH)
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, routedInput); err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("failed to save session: %w", err)
 	}
 	o.emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
@@ -52,11 +53,11 @@ func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req Pro
 	}, true, nil
 }
 
-func (o *DistributedOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, t task.Task, result domaindci.SearchResult) error {
+func (o *DistributedOrchestrator) saveDCIRecallTrace(ctx context.Context, input domainconversation.TurnInput, result domaindci.SearchResult) error {
 	if o.recallTrace == nil {
 		return nil
 	}
-	trace := dciResultToRecallTrace(sessionID, t, result)
+	trace := dciResultToRecallTrace(input, result)
 	if len(trace.Items) == 0 {
 		return nil
 	}

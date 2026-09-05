@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
@@ -14,16 +15,16 @@ func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, jobID
 }
 
 // executeDistributed はルートに応じてTransport経由でAgent間通信
-func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteTask(ctx, t, route, sessionID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteTurnInput(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	return o.autonomous.Execute(ctx, t, route, sessionID, ttsSessionID)
+func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	return o.autonomous.Execute(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteDirect(ctx, t, route, sessionID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteDirect(ctx, input, route, jobID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) withStreamHooks(
@@ -40,11 +41,11 @@ func (o *DistributedOrchestrator) pushTTS(ctx context.Context, sessionID string,
 
 func (o *DistributedOrchestrator) executeCodeViaShiro(
 	ctx context.Context,
-	t task.Task,
+	input domainconversation.TurnInput,
 	route routing.Route,
-	sessionID, jid string,
+	jobID task.JobID,
 ) (string, error) {
-	return o.codeExecution.Execute(ctx, t, route, sessionID, jid)
+	return o.codeExecution.Execute(ctx, input.WithRoute(route), route, jobID)
 }
 
 // executeViaSSH はSSH Transport経由でリモートAgentと通信
@@ -108,8 +109,8 @@ func isCodeRoute(route routing.Route) bool {
 	}
 }
 
-func (o *DistributedOrchestrator) withAttributionGuard(t task.Task, targetAgent, sessionID string) task.Task {
-	return o.attribution.Apply(t, targetAgent, sessionID)
+func (o *DistributedOrchestrator) withAttributionGuard(input domainconversation.TurnInput, targetAgent string) domainconversation.TurnInput {
+	return o.attribution.Apply(input, targetAgent)
 }
 
 func (o *DistributedOrchestrator) buildAttributionGuardedMessage(userMessage, targetAgent, sessionID string) string {

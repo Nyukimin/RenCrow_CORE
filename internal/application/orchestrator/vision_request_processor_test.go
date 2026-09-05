@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 )
 
@@ -196,11 +196,11 @@ func TestMessageOrchestratorRunsVisionBeforeAgentRouting(t *testing.T) {
 		Summary: "要約",
 		Text:    "白い猫が座っています。",
 	}}
-	var routedTask task.Task
+	var routedTask conversation.TurnInput
 	mio := &mockMioAgent{
 		decision: routing.NewDecision(routing.RouteCHAT, 1, "chat"),
 		response: "確認しました。",
-		decideFunc: func(_ context.Context, input task.Task) (routing.Decision, error) {
+		decideFunc: func(_ context.Context, input conversation.TurnInput) (routing.Decision, error) {
 			routedTask = input
 			return routing.NewDecision(routing.RouteCHAT, 1, "chat"), nil
 		},
@@ -235,8 +235,8 @@ func TestMessageOrchestratorRunsVisionBeforeAgentRouting(t *testing.T) {
 	if response.Response != "確認しました。" {
 		t.Fatalf("response = %q", response.Response)
 	}
-	if !strings.Contains(routedTask.UserMessage(), "白い猫が座っています。") {
-		t.Fatalf("Vision result not routed as text context: %q", routedTask.UserMessage())
+	if !strings.Contains(routedTask.MessageText(), "白い猫が座っています。") {
+		t.Fatalf("Vision result not routed as text context: %q", routedTask.MessageText())
 	}
 	if attachments := routedTask.Attachments(); len(attachments) != 0 {
 		t.Fatalf("raw visual attachment reached routed task: %+v", attachments)

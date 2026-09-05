@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
@@ -17,23 +17,15 @@ func newDistributedAttributionGuard(memory *session.CentralMemory) *distributedA
 	return &distributedAttributionGuard{memory: memory}
 }
 
-func (g *distributedAttributionGuard) Apply(t task.Task, targetAgent, sessionID string) task.Task {
-	if targetAgent == "" || isCodeRoute(t.Route()) || strings.Contains(t.UserMessage(), "【発言帰属ガード】") {
-		return t
+func (g *distributedAttributionGuard) Apply(input domainconversation.TurnInput, targetAgent string) domainconversation.TurnInput {
+	if targetAgent == "" || isCodeRoute(input.Route()) || strings.Contains(input.MessageText(), "【発言帰属ガード】") {
+		return input
 	}
-	guarded := g.BuildMessage(t.UserMessage(), targetAgent, sessionID)
-	if guarded == t.UserMessage() {
-		return t
+	guarded := g.BuildMessage(input.MessageText(), targetAgent, input.SessionID())
+	if guarded == input.MessageText() {
+		return input
 	}
-	out := task.NewTask(t.JobID(), guarded, t.Channel(), t.ChatID()).
-		WithSessionID(t.SessionID())
-	if t.HasForcedRoute() {
-		out = out.WithForcedRoute(t.ForcedRoute())
-	}
-	if t.Route() != "" {
-		out = out.WithRoute(t.Route())
-	}
-	return out
+	return input.WithMessageText(guarded)
 }
 
 func (g *distributedAttributionGuard) BuildMessage(userMessage, targetAgent, sessionID string) string {

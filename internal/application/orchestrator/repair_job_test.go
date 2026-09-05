@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -23,13 +24,36 @@ func TestRepairTargetRouteUsesExplicitCoderSlot(t *testing.T) {
 	}
 }
 
-func TestRepairTaskCarriesCanonicalSessionIDSeparatelyFromChatID(t *testing.T) {
+func TestRepairTurnInputCarriesCanonicalIdentitySeparatelyFromCompanionJobID(t *testing.T) {
 	sessionID := string(modulecore.NewSessionID())
-	got := repairTask(ProcessRepairRequest{
-		JobID:     task.NewJobID().String(),
+	jobID := task.JobIDFromString("repair-companion-job")
+	got, err := repairTurnInput(ProcessRepairRequest{
+		JobID:     jobID.String(),
 		SessionID: sessionID,
 	}, routing.RouteCODE2)
-	if got.SessionID() != sessionID || got.ChatID() != "repair" {
-		t.Fatalf("repair task identity session=%q chat=%q", got.SessionID(), got.ChatID())
+	if err != nil {
+		t.Fatalf("repairTurnInput() error = %v", err)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("repair turn input validation failed: %v", err)
+	}
+	if got.RootTaskID().Validate() != nil || got.TurnID().Validate() != nil || got.TraceID().Validate() != nil || got.UserMessageID().Validate() != nil || got.AgentMessageID().Validate() != nil {
+		t.Fatalf("repair turn input has invalid canonical identity: %#v", got)
+	}
+	if string(got.RootTaskID()) == jobID.String() {
+		t.Fatalf("companion JobID was mixed into root task ID: job=%q root=%q", jobID, got.RootTaskID())
+	}
+	if got.MessageText() == "" || !strings.Contains(got.MessageText(), "Repair Job") {
+		t.Fatalf("repair message = %q", got.MessageText())
+	}
+	if got.SessionID() != sessionID {
+		t.Fatalf("repair turn input session=%q, want %q", got.SessionID(), sessionID)
+	}
+	address := got.ChannelAddress()
+	if address.ChannelType() != "viewer" || address.ExternalConversationID() != "repair" {
+		t.Fatalf("repair turn input address = %#v", address)
+	}
+	if got.Route() != routing.RouteCODE2 || got.HasForcedRoute() {
+		t.Fatalf("repair turn input route=%q forced=%t", got.Route(), got.HasForcedRoute())
 	}
 }

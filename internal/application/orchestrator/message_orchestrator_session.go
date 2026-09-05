@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type canonicalSessionRepository interface {
@@ -58,8 +57,8 @@ func (l *messageSessionLifecycle) ResolveForRequest(ctx context.Context, req Pro
 	return sess, req, nil
 }
 
-func (l *messageSessionLifecycle) SaveCompletedTask(ctx context.Context, sess *session.Session, t task.Task) error {
-	sess.AddTask(t)
+func (l *messageSessionLifecycle) SaveCompletedTurnInput(ctx context.Context, sess *session.Session, input conversation.TurnInput) error {
+	sess.AddTurnInput(input)
 	if err := l.sessionRepo.Save(ctx, sess); err != nil {
 		log.Printf("[MessageOrch] ProcessMessage ERROR: failed to save session: %v", err)
 		return fmt.Errorf("failed to save session: %w", err)

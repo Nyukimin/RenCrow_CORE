@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type phase17SessionRepo struct {
@@ -73,15 +72,15 @@ func TestPhase17DistributedSessionLifecycleSaveCompletedTaskAddsTaskBeforeSave(t
 	repo := &phase17SessionRepo{}
 	lifecycle := newDistributedSessionLifecycle(repo)
 	sess := newCanonicalOrchestratorTestSession("line", "U123")
-	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	tk := newOrchestratorTestTurnInput(t, "hello", "line", "U123")
 
-	if err := lifecycle.SaveCompletedTask(context.Background(), sess, tk); err != nil {
+	if err := lifecycle.SaveCompletedTurnInput(context.Background(), sess, tk); err != nil {
 		t.Fatalf("SaveCompletedTask failed: %v", err)
 	}
 	if len(repo.saved) != 1 || repo.saved[0] != sess {
 		t.Fatalf("expected one saved session, got %#v", repo.saved)
 	}
-	if got := sess.GetHistory(); len(got) != 1 || got[0].UserMessage() != "hello" {
+	if got := sess.GetHistory(); len(got) != 1 || got[0].MessageText() != "hello" {
 		t.Fatalf("expected saved task in session history, got %#v", got)
 	}
 }
@@ -90,9 +89,9 @@ func TestPhase17DistributedSessionLifecycleSaveErrorReturnsErrorAfterTaskAdded(t
 	repo := &phase17SessionRepo{saveErr: errors.New("save failed")}
 	lifecycle := newDistributedSessionLifecycle(repo)
 	sess := newCanonicalOrchestratorTestSession("line", "U123")
-	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	tk := newOrchestratorTestTurnInput(t, "hello", "line", "U123")
 
-	err := lifecycle.SaveCompletedTask(context.Background(), sess, tk)
+	err := lifecycle.SaveCompletedTurnInput(context.Background(), sess, tk)
 	if err == nil {
 		t.Fatal("expected save error")
 	}

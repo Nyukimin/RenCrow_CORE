@@ -4,16 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
-type distributedAutonomousExecutor func(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error)
-type distributedCodeExecutor func(ctx context.Context, t task.Task, route routing.Route, sessionID, jid string) (string, error)
+type distributedAutonomousExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
+type distributedCodeExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID) (string, error)
 type distributedRouteToAgent func(route routing.Route) string
-type distributedAttributionGuardFunc func(t task.Task, targetAgent, sessionID string) task.Task
+type distributedAttributionGuardFunc func(input domainconversation.TurnInput, targetAgent string) domainconversation.TurnInput
 type distributedAgentTransportExecutor func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error)
 type distributedNoteEmitter func(from, to, content, route, jobID, sessionID, channel, chatID string)
 
@@ -81,20 +82,23 @@ func (d *distributedRouteDispatcher) SetCanonicalEventRecorder(recorder Canonica
 	d.canonicalEvents = recorder
 }
 
-func (d *distributedRouteDispatcher) ExecuteTask(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	input = input.WithRoute(route)
 	if route != routing.RouteCHAT {
-		return d.executeAutonomous(ctx, t, route, sessionID, ttsSessionID)
+		return d.executeAutonomous(ctx, input, route, jobID, ttsSessionID)
 	}
-	return d.ExecuteDirect(ctx, t, route, sessionID, ttsSessionID)
+	return d.ExecuteDirect(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	input = input.WithRoute(route)
+	sessionID, channel, chatID := turnInputMetadata(input)
+	jid := jobID.String()
 	if isCodeRoute(route) {
-		resp, err := d.executeCodeViaShiro(ctx, t, route, sessionID, jid)
+		resp, err := d.executeCodeViaShiro(ctx, input, route, jobID)
 		if err == nil {
-			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
-			d.emitNote("mio", "user", "コード作業の報告をまとめて返したよ。", string(route), jid, sessionID, t.Channel(), t.ChatID())
+			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, channel, chatID)
+			d.emitNote("mio", "user", "コード作業の報告をまとめて返したよ。", string(route), jid, sessionID, channel, chatID)
 			d.pushTTS(ctx, ttsSessionID, route, "agent.response", resp)
 		}
 		return resp, err
@@ -104,18 +108,18 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, t task.T
 			return "", fmt.Errorf("no wild agent available")
 		}
 		work := fmt.Sprintf("route=%s job=%s の創作", route, jid)
-		d.emit("agent.delegate", "mio", "wild", formatAgentHandoffSpeech("mio", "wild", work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.acknowledge", "wild", "mio", formatAgentHandoffReadbackSpeech("mio", "wild", work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.start", "mio", "wild", "創作中...", string(route), jid, sessionID, t.Channel(), t.ChatID())
-		streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, t.Channel(), t.ChatID(), ttsSessionID)
-		resp, err := d.wild.Generate(streamCtx, t)
+		d.emit("agent.delegate", "mio", "wild", formatAgentHandoffSpeech("mio", "wild", work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.acknowledge", "wild", "mio", formatAgentHandoffReadbackSpeech("mio", "wild", work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.start", "mio", "wild", "創作中...", string(route), jid, sessionID, channel, chatID)
+		streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, channel, chatID, ttsSessionID)
+		resp, err := d.wild.Generate(streamCtx, input)
 		if err == nil {
-			d.emit("agent.response", "wild", "mio", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
-			d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", resp), string(route), jid, sessionID, t.Channel(), t.ChatID())
-			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
+			d.emit("agent.response", "wild", "mio", resp, string(route), jid, sessionID, channel, chatID)
+			d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", resp), string(route), jid, sessionID, channel, chatID)
+			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, channel, chatID)
 			ttsStream.Finalize(ctx, resp)
 		} else {
-			d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
+			d.emit("agent.report", "wild", "mio", formatAgentHandoffCompletionSpeech("mio", "wild", "実行失敗: "+err.Error()), string(route), jid, sessionID, channel, chatID)
 		}
 		return resp, err
 	}
@@ -124,105 +128,107 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, t task.T
 			return "", fmt.Errorf("no heavy agent available")
 		}
 		work := fmt.Sprintf("route=%s job=%s の分析", route, jid)
-		d.emit("agent.delegate", "mio", "heavy", formatAgentHandoffSpeech("mio", "heavy", work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.acknowledge", "heavy", "mio", formatAgentHandoffReadbackSpeech("mio", "heavy", work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.start", "mio", "heavy", "分析中...", string(route), jid, sessionID, t.Channel(), t.ChatID())
+		d.emit("agent.delegate", "mio", "heavy", formatAgentHandoffSpeech("mio", "heavy", work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.acknowledge", "heavy", "mio", formatAgentHandoffReadbackSpeech("mio", "heavy", work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.start", "mio", "heavy", "分析中...", string(route), jid, sessionID, channel, chatID)
 		recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "started", "Heavy Worker started", jid)
-		streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, t.Channel(), t.ChatID(), ttsSessionID)
-		resp, err := d.heavy.Generate(streamCtx, t)
+		streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, channel, chatID, ttsSessionID)
+		resp, err := d.heavy.Generate(streamCtx, input)
 		if err == nil {
-			d.emit("agent.response", "heavy", "mio", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
-			d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", resp), string(route), jid, sessionID, t.Channel(), t.ChatID())
-			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
+			d.emit("agent.response", "heavy", "mio", resp, string(route), jid, sessionID, channel, chatID)
+			d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", resp), string(route), jid, sessionID, channel, chatID)
+			d.emit("agent.response", "mio", "user", resp, string(route), jid, sessionID, channel, chatID)
 			ttsStream.Finalize(ctx, resp)
 			recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "completed", "Heavy Worker completed", jid)
 		} else {
-			d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
+			d.emit("agent.report", "heavy", "mio", formatAgentHandoffCompletionSpeech("mio", "heavy", "実行失敗: "+err.Error()), string(route), jid, sessionID, channel, chatID)
 			recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "failed", err.Error(), jid)
 		}
 		return resp, err
 	}
 	targetAgent := d.routeToAgent(route)
 	if targetAgent == "" {
-		return d.executeLocalRoute(ctx, t, route, sessionID, ttsSessionID, jid)
+		return d.executeLocalRoute(ctx, input, route, jobID, ttsSessionID)
 	}
-	return d.executeRemoteRoute(ctx, t, route, sessionID, ttsSessionID, jid, targetAgent)
+	return d.executeRemoteRoute(ctx, input, route, jobID, ttsSessionID, targetAgent)
 }
 
-func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID, jid string) (string, error) {
-	speaker := chatSpeakerForTask(t)
-	guardedTask := d.withAttribution(t, speaker, sessionID)
-	userMsg := domaintransport.NewMessage("user", speaker, sessionID, jid, t.UserMessage())
+func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	sessionID, channel, chatID := turnInputMetadata(input)
+	jid := jobID.String()
+	speaker := chatSpeakerForTurnInput(input)
+	guardedInput := d.withAttribution(input, speaker)
+	userMsg := domaintransport.NewMessage("user", speaker, sessionID, jid, input.MessageText())
 	userMsg.Type = domaintransport.MessageTypeTask
 	d.memory.RecordMessage(userMsg)
 
-	d.emit("agent.start", speaker, "user", "考え中...", string(route), jid, sessionID, t.Channel(), t.ChatID())
-	streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, t.Channel(), t.ChatID(), ttsSessionID)
-	resp, err := d.generateLocalChatResponse(streamCtx, guardedTask, speaker)
+	d.emit("agent.start", speaker, "user", "考え中...", string(route), jid, sessionID, channel, chatID)
+	streamCtx, ttsStream := d.withStreamHooks(ctx, route, jid, sessionID, channel, chatID, ttsSessionID)
+	resp, err := d.generateLocalChatResponse(streamCtx, guardedInput, speaker)
 	if err == nil {
 		respMsg := domaintransport.NewMessage(speaker, "user", sessionID, jid, resp)
 		respMsg.Type = domaintransport.MessageTypeResult
 		d.memory.RecordMessage(respMsg)
-		d.emit("agent.response", speaker, "user", resp, string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emitNote(speaker, "user", "会話処理が終わったよ。", string(route), jid, sessionID, t.Channel(), t.ChatID())
+		d.emit("agent.response", speaker, "user", resp, string(route), jid, sessionID, channel, chatID)
+		d.emitNote(speaker, "user", "会話処理が終わったよ。", string(route), jid, sessionID, channel, chatID)
 		ttsStream.Finalize(ctx, resp)
 	}
 	return resp, err
 }
 
-func (d *distributedRouteDispatcher) generateLocalChatResponse(ctx context.Context, t task.Task, speaker string) (string, error) {
+func (d *distributedRouteDispatcher) generateLocalChatResponse(ctx context.Context, input domainconversation.TurnInput, speaker string) (string, error) {
 	switch speaker {
 	case "mio":
-		return d.mio.Chat(ctx, t)
+		return d.mio.Chat(ctx, input)
 	case "shiro":
 		if d.shiroChat == nil {
 			return "", fmt.Errorf("no ChatWorker agent available for Shiro CHAT")
 		}
-		return d.shiroChat.Chat(ctx, t)
+		return d.shiroChat.Chat(ctx, input)
 	case "midori":
 		if d.wild == nil {
 			return "", fmt.Errorf("no Wild agent available for Midori CHAT")
 		}
-		return d.wild.Generate(ctx, t)
+		return d.wild.Generate(ctx, input)
 	case "kuro":
 		if d.heavy == nil {
 			return "", fmt.Errorf("no heavy agent available for Kuro CHAT")
 		}
-		return d.heavy.Generate(ctx, t)
+		return d.heavy.Generate(ctx, input)
 	default:
 		return "", fmt.Errorf("unsupported CHAT recipient %q", speaker)
 	}
 }
 
-func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID, jid, targetAgent string) (string, error) {
-	guardedTask := d.withAttribution(t, targetAgent, sessionID)
-	msg := domaintransport.NewMessage("mio", targetAgent, sessionID, jid, guardedTask.UserMessage())
+func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID, targetAgent string) (string, error) {
+	sessionID, channel, chatID := turnInputMetadata(input)
+	jid := jobID.String()
+	guardedInput := d.withAttribution(input, targetAgent)
+	msg := domaintransport.NewMessage("mio", targetAgent, sessionID, jid, guardedInput.MessageText())
 	msg.Type = domaintransport.MessageTypeTask
 	msg.Context = map[string]interface{}{
 		"route":   string(route),
-		"channel": t.Channel(),
-		"chat_id": t.ChatID(),
+		"channel": channel,
+		"chat_id": chatID,
 	}
 
 	work := fmt.Sprintf("route=%s job=%s の作業", route, jid)
-	d.emit("agent.delegate", "mio", targetAgent, formatAgentHandoffSpeech("mio", targetAgent, work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-	d.emit("agent.acknowledge", targetAgent, "mio", formatAgentHandoffReadbackSpeech("mio", targetAgent, work, t.UserMessage()), string(route), jid, sessionID, t.Channel(), t.ChatID())
-	d.emit("agent.start", "mio", targetAgent, t.UserMessage(), string(route), jid, sessionID, t.Channel(), t.ChatID())
-	d.emit("agent.dispatch", "mio", targetAgent, "ルーティング先へ依頼を転送", string(route), jid, sessionID, t.Channel(), t.ChatID())
+	d.emit("agent.delegate", "mio", targetAgent, formatAgentHandoffSpeech("mio", targetAgent, work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+	d.emit("agent.acknowledge", targetAgent, "mio", formatAgentHandoffReadbackSpeech("mio", targetAgent, work, input.MessageText()), string(route), jid, sessionID, channel, chatID)
+	d.emit("agent.start", "mio", targetAgent, input.MessageText(), string(route), jid, sessionID, channel, chatID)
+	d.emit("agent.dispatch", "mio", targetAgent, "ルーティング先へ依頼を転送", string(route), jid, sessionID, channel, chatID)
 	d.memory.RecordMessage(msg)
 
 	result, err := d.executeToAgent(ctx, targetAgent, msg)
 	if err == nil {
-		d.emit("agent.response", targetAgent, "mio", result.Content, string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.report", targetAgent, "mio", formatAgentHandoffCompletionSpeech("mio", targetAgent, result.Content), string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emitNote(targetAgent, "mio",
-			fmt.Sprintf("%s の作業が終わりました。", displayAgentName(targetAgent)),
-			string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emit("agent.response", "mio", "user", result.Content, string(route), jid, sessionID, t.Channel(), t.ChatID())
-		d.emitNote("mio", "user", fmt.Sprintf("%sの報告をまとめて返したよ。", displayAgentName(targetAgent)), string(route), jid, sessionID, t.Channel(), t.ChatID())
+		d.emit("agent.response", targetAgent, "mio", result.Content, string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.report", targetAgent, "mio", formatAgentHandoffCompletionSpeech("mio", targetAgent, result.Content), string(route), jid, sessionID, channel, chatID)
+		d.emitNote(targetAgent, "mio", fmt.Sprintf("%s の作業が終わりました。", displayAgentName(targetAgent)), string(route), jid, sessionID, channel, chatID)
+		d.emit("agent.response", "mio", "user", result.Content, string(route), jid, sessionID, channel, chatID)
+		d.emitNote("mio", "user", fmt.Sprintf("%sの報告をまとめて返したよ。", displayAgentName(targetAgent)), string(route), jid, sessionID, channel, chatID)
 		d.pushTTS(ctx, ttsSessionID, route, "agent.response", result.Content)
 	} else {
-		d.emit("agent.report", targetAgent, "mio", formatAgentHandoffCompletionSpeech("mio", targetAgent, "実行失敗: "+err.Error()), string(route), jid, sessionID, t.Channel(), t.ChatID())
+		d.emit("agent.report", targetAgent, "mio", formatAgentHandoffCompletionSpeech("mio", targetAgent, "実行失敗: "+err.Error()), string(route), jid, sessionID, channel, chatID)
 	}
 	return result.Content, err
 }

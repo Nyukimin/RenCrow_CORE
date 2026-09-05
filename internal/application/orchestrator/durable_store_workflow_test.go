@@ -6,9 +6,9 @@ import (
 	"time"
 
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type stubDurableStoreWorkflow struct {
@@ -22,7 +22,7 @@ func (s stubDurableStoreWorkflow) Handle(context.Context, appstore.Input) (domai
 
 func TestDurableStoreWorkflowPreemptsGeneralRouting(t *testing.T) {
 	decisions := 0
-	mio := &mockMioAgent{decideFunc: func(context.Context, task.Task) (routing.Decision, error) {
+	mio := &mockMioAgent{decideFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
 		decisions++
 		return routing.NewDecision(routing.RouteCODE, 1, "should not run"), nil
 	}}

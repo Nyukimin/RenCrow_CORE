@@ -11,9 +11,9 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // mockCoderAgentWithProposal はProposal生成をサポートするCoderAgent
@@ -27,12 +27,12 @@ type mockCoderAgentWithProposal struct {
 	proposalCalls     int
 }
 
-func (m *mockCoderAgentWithProposal) Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
+func (m *mockCoderAgentWithProposal) Generate(ctx context.Context, t conversation.TurnInput, systemPrompt string) (string, error) {
 	return m.response, nil
 }
 
-func (m *mockCoderAgentWithProposal) GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error) {
-	m.lastProposalInput = t.UserMessage()
+func (m *mockCoderAgentWithProposal) GenerateProposal(ctx context.Context, t conversation.TurnInput) (*proposal.Proposal, error) {
+	m.lastProposalInput = t.MessageText()
 	call := m.proposalCalls
 	m.proposalCalls++
 	if call < len(m.proposalErrs) && m.proposalErrs[call] != nil {

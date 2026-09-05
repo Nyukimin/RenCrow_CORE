@@ -4,11 +4,25 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestPhase12TaskContextBuilderHonorsAudioOutputIntent(t *testing.T) {
-	builder := newMessageTaskContextBuilder(func(string, string, string, string, string, string, string, string, string) {}, func() bool { return true })
+func buildPhase12TurnInput(t *testing.T, builder *messageTurnInputBuilder, req ProcessMessageRequest) (conversation.TurnInput, task.JobID, string) {
+	t.Helper()
+	if err := ensureProcessRequestIdentity(&req); err != nil {
+		t.Fatalf("ensureProcessRequestIdentity() error = %v", err)
+	}
+	input, jobID, ttsSessionID, err := builder.Build(req)
+	if err != nil {
+		t.Fatalf("messageTurnInputBuilder.Build() error = %v", err)
+	}
+	return input, jobID, ttsSessionID
+}
+
+func TestPhase12TurnInputBuilderHonorsAudioOutputIntent(t *testing.T) {
+	builder := newMessageTurnInputBuilder(func(string, string, string, string, string, string, string, string, string) {}, func() bool { return true })
 	for _, tt := range []struct {
 		name      string
 		intent    string
@@ -20,17 +34,17 @@ func TestPhase12TaskContextBuilderHonorsAudioOutputIntent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			req := ProcessMessageRequest{SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello", AudioOutput: AudioOutputIntent(tt.intent)}
-			_, _, sessionID := builder.Build(req)
-			if (sessionID == "") != tt.wantEmpty {
-				t.Fatalf("sessionID=%q wantEmpty=%t", sessionID, tt.wantEmpty)
+			_, _, ttsSessionID := buildPhase12TurnInput(t, builder, req)
+			if (ttsSessionID == "") != tt.wantEmpty {
+				t.Fatalf("ttsSessionID=%q wantEmpty=%t", ttsSessionID, tt.wantEmpty)
 			}
 		})
 	}
 }
 
-func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
+func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	var events []OrchestratorEvent
-	builder := newMessageTaskContextBuilder(
+	builder := newMessageTurnInputBuilder(
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
 			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
 		},
@@ -42,27 +56,35 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 	rootTaskID := modulecore.NewTaskID()
 	userMessageID := modulecore.NewMessageID()
 	agentMessageID := modulecore.NewMessageID()
-	tk, jobID, ttsSessionID := builder.Build(ProcessMessageRequest{
+	tk, jobID, ttsSessionID := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
+		JobID:  "companion-job-1",
 		TurnID: string(turnID), TraceID: string(traceID), RootTaskID: string(rootTaskID),
 		MessageID: string(userMessageID), AgentMessageID: string(agentMessageID),
 		SessionID:   "sess-1",
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "この画像を見て",
+		To:          "mio",
 		Attachments: []attachment.Attachment{{ID: "att-1"}},
 	})
 
-	if tk.JobID().String() != jobID.String() {
-		t.Fatalf("expected task and returned job ID to match: task=%s returned=%s", tk.JobID(), jobID)
+	if jobID.String() != "companion-job-1" || jobID.String() == string(rootTaskID) {
+		t.Fatalf("companion job ID = %q, root task ID = %q", jobID, rootTaskID)
 	}
-	if tk.SessionID() != "sess-1" || tk.ChatID() != "U123" {
-		t.Fatalf("task identity = session=%q chat=%q", tk.SessionID(), tk.ChatID())
+	if tk.MessageText() != "この画像を見て" || tk.SessionID() != "sess-1" {
+		t.Fatalf("turn input text/session = text=%q session=%q", tk.MessageText(), tk.SessionID())
+	}
+	if address := tk.ChannelAddress(); address.ChannelType() != "line" || address.ExternalConversationID() != "U123" {
+		t.Fatalf("turn input address = %#v", address)
+	}
+	if tk.ViewerRecipient() != "mio" {
+		t.Fatalf("turn input recipient = %q", tk.ViewerRecipient())
 	}
 	if tk.TurnID() != turnID || tk.TraceID() != traceID || tk.RootTaskID() != rootTaskID || tk.UserMessageID() != userMessageID || tk.AgentMessageID() != agentMessageID {
-		t.Fatalf("task conversation identity drifted: turn=%q trace=%q task=%q user=%q agent=%q", tk.TurnID(), tk.TraceID(), tk.RootTaskID(), tk.UserMessageID(), tk.AgentMessageID())
+		t.Fatalf("turn input conversation identity drifted: turn=%q trace=%q root=%q user=%q agent=%q", tk.TurnID(), tk.TraceID(), tk.RootTaskID(), tk.UserMessageID(), tk.AgentMessageID())
 	}
 	if len(tk.Attachments()) != 1 {
-		t.Fatalf("expected attachment to be copied to task, got %d", len(tk.Attachments()))
+		t.Fatalf("expected attachment to be copied to turn input, got %d", len(tk.Attachments()))
 	}
 	if ttsSessionID != "" {
 		t.Fatalf("expected empty TTS session without TTS, got %q", ttsSessionID)
@@ -79,9 +101,9 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 	}
 }
 
-func TestPhase12TaskContextBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
+func TestPhase12TurnInputBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
 	enabled := false
-	builder := newMessageTaskContextBuilder(
+	builder := newMessageTurnInputBuilder(
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
 		func() bool { return enabled },
 	)
@@ -92,21 +114,21 @@ func TestPhase12TaskContextBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) 
 		UserMessage: "話して",
 	}
 
-	_, _, noTTS := builder.Build(req)
+	_, _, noTTS := buildPhase12TurnInput(t, builder, req)
 	if noTTS != "" {
 		t.Fatalf("expected empty TTS session when disabled, got %q", noTTS)
 	}
 
 	enabled = true
-	_, jobID, ttsSessionID := builder.Build(req)
+	_, jobID, ttsSessionID := buildPhase12TurnInput(t, builder, req)
 	expected := "sess-2-" + jobID.String()
 	if ttsSessionID != expected {
 		t.Fatalf("expected TTS session %q, got %q", expected, ttsSessionID)
 	}
 }
 
-func TestPhase12TaskContextBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
-	builder := newMessageTaskContextBuilder(
+func TestPhase12TurnInputBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
+	builder := newMessageTurnInputBuilder(
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
 		func() bool { return true },
 	)
@@ -121,7 +143,7 @@ func TestPhase12TaskContextBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
 		{name: "explicit disabled", intent: AudioOutputDisabled, wantEmpty: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, ttsSessionID := builder.Build(ProcessMessageRequest{
+			_, _, ttsSessionID := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
 				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
 				OperationSource: "RenCrow_CMD", AudioOutput: tt.intent,
 			})
@@ -132,13 +154,13 @@ func TestPhase12TaskContextBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
 	}
 }
 
-func TestPhase12TaskContextBuilderPreservesProvidedJobID(t *testing.T) {
-	builder := newMessageTaskContextBuilder(
+func TestPhase12TurnInputBuilderPreservesProvidedJobID(t *testing.T) {
+	builder := newMessageTurnInputBuilder(
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
 		func() bool { return false },
 	)
 
-	_, jobID, _ := builder.Build(ProcessMessageRequest{
+	input, jobID, _ := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
 		JobID:       "viewer-job-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
@@ -148,5 +170,8 @@ func TestPhase12TaskContextBuilderPreservesProvidedJobID(t *testing.T) {
 
 	if jobID.String() != "viewer-job-1" {
 		t.Fatalf("job ID = %q, want viewer-job-1", jobID.String())
+	}
+	if jobID.String() == string(input.RootTaskID()) {
+		t.Fatalf("companion JobID was mixed into TurnInput root task ID: job=%q root=%q", jobID, input.RootTaskID())
 	}
 }

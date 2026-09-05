@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestIsDailyNewsBriefRequest(t *testing.T) {
@@ -34,11 +34,11 @@ func TestMessageOrchestratorDailyNewsBriefBypassesGenericRouting(t *testing.T) {
 	repo := newMockSessionRepository()
 	decideCalled := false
 	mio := &mockMioAgent{
-		decideFunc: func(context.Context, task.Task) (routing.Decision, error) {
+		decideFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
 			decideCalled = true
 			return routing.NewDecision(routing.RouteRESEARCH, 0.5, "must not run"), nil
 		},
-		chatFunc: func(ctx context.Context, task task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, task conversation.TurnInput) (string, error) {
 			return "Mioの朝刊回答", nil
 		},
 	}
@@ -73,7 +73,7 @@ func TestMessageOrchestratorDailyNewsBriefBypassesGenericRouting(t *testing.T) {
 func TestMessageOrchestratorDailyNewsBriefFallbackEmitsRoleplayAndUsesCollector(t *testing.T) {
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
-		chatFunc: func(ctx context.Context, tk task.Task) (string, error) {
+		chatFunc: func(ctx context.Context, tk conversation.TurnInput) (string, error) {
 			return "Mioが収集結果を朗読", nil
 		},
 	}

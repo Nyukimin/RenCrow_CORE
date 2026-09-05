@@ -5,8 +5,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type distributedSessionLifecycle struct {
@@ -32,8 +32,8 @@ func (l *distributedSessionLifecycle) ResolveForRequest(ctx context.Context, req
 	return delegate.ResolveForRequest(ctx, req, now)
 }
 
-func (l *distributedSessionLifecycle) SaveCompletedTask(ctx context.Context, sess *session.Session, t task.Task) error {
-	sess.AddTask(t)
+func (l *distributedSessionLifecycle) SaveCompletedTurnInput(ctx context.Context, sess *session.Session, input conversation.TurnInput) error {
+	sess.AddTurnInput(input)
 	if err := l.sessionRepo.Save(ctx, sess); err != nil {
 		log.Printf("[DistributedOrch] ProcessMessage ERROR: failed to save session: %v", err)
 		return err

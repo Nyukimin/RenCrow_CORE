@@ -13,7 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID task.JobID) (ProcessMessageResponse, bool, error) {
 	// スラッシュコマンド（/code3, /analyze 等）はルーティングを最優先。DCI をスキップ。
 	if strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
@@ -29,10 +29,10 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	}
 
 	response := formatDCIResponse(result)
-	if err := o.saveDCIRecallTrace(ctx, req.SessionID, t, result); err != nil {
+	if err := o.saveDCIRecallTrace(ctx, input, result); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
-	if err := o.sessions.SaveCompletedTask(ctx, sess, t); err != nil {
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	o.events.Emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
@@ -41,11 +41,11 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	return o.responses.Build(response, decision, jobID), true, nil
 }
 
-func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID string, t task.Task, result domaindci.SearchResult) error {
+func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, input domainconversation.TurnInput, result domaindci.SearchResult) error {
 	if o.recallTrace == nil {
 		return nil
 	}
-	trace := dciResultToRecallTrace(sessionID, t, result)
+	trace := dciResultToRecallTrace(input, result)
 	if len(trace.Items) == 0 {
 		return nil
 	}
@@ -55,7 +55,7 @@ func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, sessionID 
 	return nil
 }
 
-func dciResultToRecallTrace(sessionID string, t task.Task, result domaindci.SearchResult) domainconversation.RecallTrace {
+func dciResultToRecallTrace(input domainconversation.TurnInput, result domaindci.SearchResult) domainconversation.RecallTrace {
 	items := make([]domainconversation.RecallTraceItem, 0, len(result.Pack.Evidence)+len(result.Pack.Limitations))
 	for i, ev := range result.Pack.Evidence {
 		location := ev.FilePath
@@ -100,10 +100,10 @@ func dciResultToRecallTrace(sessionID string, t task.Task, result domaindci.Sear
 		createdAt = time.Now().UTC()
 	}
 	return domainconversation.RecallTrace{
-		TraceID:    t.TraceID(),
-		TurnID:     t.TurnID(),
-		RootTaskID: t.RootTaskID(),
-		SessionID:  sessionID,
+		TraceID:    input.TraceID(),
+		TurnID:     input.TurnID(),
+		RootTaskID: input.RootTaskID(),
+		SessionID:  input.SessionID(),
 		Role:       "dci",
 		Items:      items,
 		CreatedAt:  createdAt,

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -13,11 +14,11 @@ import (
 
 func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	mio := &mockMioAgent{
-		decideFunc: func(context.Context, task.Task) (routing.Decision, error) {
+		decideFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
 			t.Fatal("DecideAction must not be called for voice direct")
 			return routing.Decision{}, nil
 		},
-		chatFunc: func(context.Context, task.Task) (string, error) {
+		chatFunc: func(context.Context, conversation.TurnInput) (string, error) {
 			t.Fatal("Chat must not be called for voice direct")
 			return "", nil
 		},

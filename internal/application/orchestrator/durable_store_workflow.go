@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -26,7 +27,7 @@ func (o *DistributedOrchestrator) SetDurableStoreWorkflow(workflow DurableStoreW
 	o.durableStoreWorkflow = workflow
 }
 
-func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID task.JobID) (ProcessMessageResponse, bool, error) {
 	if o.durableStoreWorkflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
 	}
@@ -37,8 +38,8 @@ func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req Proces
 	if !handled {
 		return ProcessMessageResponse{}, false, nil
 	}
-	routed := t.WithRoute(routing.RouteCHAT)
-	if err := o.sessions.SaveCompletedTask(ctx, sess, routed); err != nil {
+	routed := input.WithRoute(routing.RouteCHAT)
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, routed); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	response := formatDurableStoreResult(result)
@@ -51,7 +52,7 @@ func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req Proces
 	return durableStoreResponse(response, result, jobID), true, nil
 }
 
-func (o *DistributedOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *DistributedOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID task.JobID) (ProcessMessageResponse, bool, error) {
 	if o.durableStoreWorkflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
 	}
@@ -62,8 +63,8 @@ func (o *DistributedOrchestrator) handleDurableStore(ctx context.Context, req Pr
 	if !handled {
 		return ProcessMessageResponse{}, false, nil
 	}
-	routed := t.WithRoute(routing.RouteCHAT)
-	if err := o.sessions.SaveCompletedTask(ctx, sess, routed); err != nil {
+	routed := input.WithRoute(routing.RouteCHAT)
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, routed); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
 	response := formatDurableStoreResult(result)

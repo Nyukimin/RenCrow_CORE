@@ -25,7 +25,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -92,29 +91,29 @@ type SessionRepository interface {
 
 // MioAgent はルーティング・会話を担当
 type MioAgent interface {
-	DecideAction(ctx context.Context, t task.Task) (routing.Decision, error)
-	Chat(ctx context.Context, t task.Task) (string, error)
+	DecideAction(ctx context.Context, t domainconversation.TurnInput) (routing.Decision, error)
+	Chat(ctx context.Context, t domainconversation.TurnInput) (string, error)
 	HandleChatCommand(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
 }
 
 // ShiroAgent は実行を担当
 type ShiroAgent interface {
-	Execute(ctx context.Context, t task.Task) (string, error)
+	Execute(ctx context.Context, t domainconversation.TurnInput) (string, error)
 }
 
 // CoderAgent はコード生成を担当
 type CoderAgent interface {
-	Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error)
+	Generate(ctx context.Context, t domainconversation.TurnInput, systemPrompt string) (string, error)
 }
 
 // WildAgent は創作Wildを担当
 type WildAgent interface {
-	Generate(ctx context.Context, t task.Task) (string, error)
+	Generate(ctx context.Context, t domainconversation.TurnInput) (string, error)
 }
 
 // HeavyAgent は深い分析・診断を担当
 type HeavyAgent interface {
-	Generate(ctx context.Context, t task.Task) (string, error)
+	Generate(ctx context.Context, t domainconversation.TurnInput) (string, error)
 }
 
 type ResponseVerifier interface {
@@ -170,7 +169,7 @@ type PersonaRuntimeRecorder interface {
 // CoderAgentWithProposal はProposal生成機能を持つCoderAgent
 type CoderAgentWithProposal interface {
 	CoderAgent
-	GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error)
+	GenerateProposal(ctx context.Context, t domainconversation.TurnInput) (*proposal.Proposal, error)
 }
 
 // SessionTurnLogger はセッション単位の会話ターンを記録するインターフェース
@@ -225,7 +224,7 @@ type MessageOrchestrator struct {
 	routeDispatcher         *messageRouteDispatcher
 	ttsLifecycle            *messageTTSLifecycle
 	events                  *messageEventPort
-	taskContexts            *messageTaskContextBuilder
+	turnInputs              *messageTurnInputBuilder
 	visionRequests          *visionRequestProcessor
 	durableStoreWorkflow    DurableStoreWorkflow
 }
@@ -284,7 +283,7 @@ func NewMessageOrchestrator(
 	orch.events = newMessageEventPort(nil)
 	orch.responses = messageResponseAssembler{}
 	orch.sessions = newMessageSessionLifecycle(sessionRepo)
-	orch.taskContexts = newMessageTaskContextBuilder(orch.events.Emit, orch.ttsEnabled)
+	orch.turnInputs = newMessageTurnInputBuilder(orch.events.Emit, orch.ttsEnabled)
 	orch.preRoutingCommands = newPreRoutingCommandHandler(mio, orch.events.Emit, orch.responses)
 	orch.routeDecisions = newRouteDecisionCoordinator(mio, orch.events.Emit)
 	orch.idleBusyGuards = newIdleBusyGuardFactory(nil)
@@ -563,8 +562,11 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 	}
 
-	t, jobID, ttsSessionID := o.taskContexts.BuildWithJobID(req, jobID)
-	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID, ttsSessionID); err != nil {
+	input, jobID, ttsSessionID, err := o.turnInputs.BuildWithJobID(req, jobID)
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, jobID, ttsSessionID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -574,7 +576,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
-	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
+	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -584,7 +586,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
-	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
+	if resp, handled, err := o.handleDurableStore(ctx, req, sess, input, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -595,7 +597,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return resp, nil
 	}
 
-	decision, err := o.routeDecisions.Decide(ctx, t, req, jobID)
+	decision, err := o.routeDecisions.Decide(ctx, input, req, jobID)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -604,7 +606,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 
-	t = t.WithRoute(decision.Route)
+	input = input.WithRoute(decision.Route)
 	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -630,7 +632,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	response, err := o.routeDispatcher.ExecuteTask(ctx, t, decision.Route, req.SessionID, req.Channel, req.ChatID, ttsSessionID)
+	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, jobID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
@@ -681,7 +683,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		response = applied
 	}
 
-	if err := o.sessions.SaveCompletedTask(ctx, sess, t); err != nil {
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
 		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	}

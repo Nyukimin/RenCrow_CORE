@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ProcessRepairRequest struct {
@@ -95,21 +97,31 @@ func repairTargetRoute(target string) routing.Route {
 	}
 }
 
-func repairTask(req ProcessRepairRequest, route routing.Route) task.Task {
-	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").
-		WithSessionID(req.SessionID).
-		WithRoute(route)
+func repairTurnInput(req ProcessRepairRequest, route routing.Route) (conversation.TurnInput, error) {
+	address, err := conversation.NewChannelAddress("viewer", "repair")
+	if err != nil {
+		return conversation.TurnInput{}, err
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), repairTaskMessage(req), address)
+	if err != nil {
+		return conversation.TurnInput{}, err
+	}
+	return input.WithSessionID(req.SessionID).WithRoute(route), nil
 }
 
 func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
 	req = normalizeRepairProcessRequest(req)
 	route := repairTargetRoute(req.TargetRoute)
-	t := repairTask(req, route)
+	input, err := repairTurnInput(req, route)
+	if err != nil {
+		return ProcessRepairResponse{}, err
+	}
+	jobID := task.JobIDFromString(req.JobID)
 	startedAt := time.Now()
 	if o.events != nil {
 		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 	}
-	response, err := o.routeDispatcher.ExecuteTask(ctx, t, route, req.SessionID, "viewer", "repair", "")
+	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, route, jobID, "")
 	if err != nil {
 		if o.events != nil {
 			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
@@ -125,10 +137,14 @@ func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepa
 func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
 	req = normalizeRepairProcessRequest(req)
 	route := repairTargetRoute(req.TargetRoute)
-	t := repairTask(req, route)
+	input, err := repairTurnInput(req, route)
+	if err != nil {
+		return ProcessRepairResponse{}, err
+	}
+	jobID := task.JobIDFromString(req.JobID)
 	startedAt := time.Now()
 	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
-	response, err := o.routes.ExecuteTask(ctx, t, route, req.SessionID, "")
+	response, err := o.routes.ExecuteTurnInput(ctx, input, route, jobID, "")
 	if err != nil {
 		o.emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 		return ProcessRepairResponse{}, err

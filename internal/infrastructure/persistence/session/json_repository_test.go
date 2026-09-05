@@ -5,13 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -26,6 +28,15 @@ func newCanonicalRepositoryTestSession(t *testing.T) *session.Session {
 		t.Fatal(err)
 	}
 	return value
+}
+
+func newRepositoryTurnInputForTest(t *testing.T, sess *session.Session, message string) conversation.TurnInput {
+	t.Helper()
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), message, sess.ChannelAddress())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return input.WithSessionID(sess.ID())
 }
 
 func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(t *testing.T) {
@@ -118,7 +129,24 @@ func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sess.AddTask(task.NewTask(task.NewJobID(), "hello", "line", "U123"))
+	input := newRepositoryTurnInputForTest(t, sess, "hello").
+		WithAttachments([]attachment.Attachment{{
+			ID:                  "att-1",
+			Kind:                attachment.KindDocument,
+			Filename:            "notes.txt",
+			ContentType:         "text/plain",
+			SizeBytes:           5,
+			Path:                "attachments/att-1",
+			SHA256:              "sha256-notes",
+			ExtractedText:       "hello",
+			ExtractionTruncated: true,
+			SecurityWarnings:    []string{"warning"},
+			Data:                []byte("bytes must not persist"),
+		}}).
+		WithViewerRecipient("shiro").
+		WithForcedRoute(routing.RouteCODE3).
+		WithRoute(routing.RouteCHAT)
+	sess.AddTurnInput(input)
 	sess.SetMemory("key", "value")
 	if err := repo.Save(context.Background(), sess); err != nil {
 		t.Fatalf("Save: %v", err)
@@ -161,6 +189,33 @@ func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 			t.Fatalf("legacy channel_address.%s must not be written", key)
 		}
 	}
+	var history []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["history"], &history); err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history length=%d, want 1", len(history))
+	}
+	for _, key := range []string{"root_task_id", "turn_id", "trace_id", "user_message_id", "agent_message_id", "message_text", "channel_address", "attachments"} {
+		if _, ok := history[0][key]; !ok {
+			t.Fatalf("history.%s is absent", key)
+		}
+	}
+	for _, key := range []string{"job_id", "user_message", "channel", "chat_id", "session_id"} {
+		if _, ok := history[0][key]; ok {
+			t.Fatalf("legacy history.%s must not be written", key)
+		}
+	}
+	var storedAttachments []map[string]json.RawMessage
+	if err := json.Unmarshal(history[0]["attachments"], &storedAttachments); err != nil {
+		t.Fatalf("attachments: %v", err)
+	}
+	if len(storedAttachments) != 1 {
+		t.Fatalf("stored attachments=%d, want 1", len(storedAttachments))
+	}
+	if _, ok := storedAttachments[0]["data"]; ok {
+		t.Fatal("attachment data must remain non-persisted")
+	}
 
 	loaded, err := repo.Load(context.Background(), string(id))
 	if err != nil {
@@ -171,6 +226,18 @@ func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	}
 	if !loaded.CreatedAt().Equal(sess.CreatedAt()) || !loaded.UpdatedAt().Equal(sess.UpdatedAt()) {
 		t.Fatalf("loaded timestamps = %s/%s, want %s/%s", loaded.CreatedAt(), loaded.UpdatedAt(), sess.CreatedAt(), sess.UpdatedAt())
+	}
+	loadedInput := loaded.GetHistory()[0]
+	if loadedInput.RootTaskID() != input.RootTaskID() || loadedInput.TurnID() != input.TurnID() || loadedInput.TraceID() != input.TraceID() || loadedInput.UserMessageID() != input.UserMessageID() || loadedInput.AgentMessageID() != input.AgentMessageID() {
+		t.Fatalf("loaded canonical identities changed: got=%#v want=%#v", loadedInput, input)
+	}
+	if loadedInput.MessageText() != input.MessageText() || loadedInput.SessionID() != sess.ID() || loadedInput.ChannelAddress() != address || loadedInput.ViewerRecipient() != "shiro" || loadedInput.ForcedRoute() != routing.RouteCODE3 || loadedInput.Route() != routing.RouteCHAT {
+		t.Fatalf("loaded input metadata changed: got=%#v", loadedInput)
+	}
+	wantAttachment := input.Attachments()[0]
+	wantAttachment.Data = nil
+	if !reflect.DeepEqual(loadedInput.Attachments(), []attachment.Attachment{wantAttachment}) {
+		t.Fatalf("loaded attachment metadata changed: got=%#v want=%#v", loadedInput.Attachments(), []attachment.Attachment{wantAttachment})
 	}
 }
 
@@ -213,6 +280,64 @@ func TestJSONSessionRepositoryRejectsCanonicalRecordWithLegacyIdentityFields(t *
 	}
 }
 
+func TestJSONSessionRepositoryRejectsLegacyHistoryFields(t *testing.T) {
+	dir := t.TempDir()
+	id := modulecore.NewSessionID()
+	legacy := []byte(`{"id":"` + string(id) + `","logical_date":"2026-03-01","channel_address":{"channel_type":"line","external_conversation_id":"U123"},"history":[{"job_id":"job-1","user_message":"hello","channel":"line","chat_id":"U123"}],"memory":{},"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, string(id)+".json"), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewJSONSessionRepository(dir)
+	if _, err := repo.Load(context.Background(), string(id)); err == nil {
+		t.Fatal("legacy history DTO was accepted by canonical repository Load")
+	}
+}
+
+func TestJSONSessionRepositoryRejectsHistorySessionOrAddressMismatchBeforeWrite(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	tests := []struct {
+		name  string
+		build func(*testing.T, *session.Session) conversation.TurnInput
+	}{
+		{
+			name: "session mismatch",
+			build: func(t *testing.T, sess *session.Session) conversation.TurnInput {
+				return newRepositoryTurnInputForTest(t, sess, "wrong session").WithSessionID(string(modulecore.NewSessionID()))
+			},
+		},
+		{
+			name: "address mismatch",
+			build: func(t *testing.T, sess *session.Session) conversation.TurnInput {
+				otherAddress, err := conversation.NewChannelAddress("viewer", "other-user")
+				if err != nil {
+					t.Fatal(err)
+				}
+				input, err := conversation.NewTurnInput(modulecore.NewTaskID(), "wrong address", otherAddress)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return input.WithSessionID(sess.ID())
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess := newCanonicalRepositoryTestSession(t)
+			sess.AddTurnInput(tt.build(t, sess))
+			if err := repo.Save(context.Background(), sess); err == nil {
+				t.Fatal("Save accepted history boundary mismatch")
+			}
+			exists, err := repo.Exists(context.Background(), sess.ID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exists {
+				t.Fatal("mismatched session was written")
+			}
+		})
+	}
+}
+
 func TestNewJSONSessionRepository(t *testing.T) {
 	tmpDir := t.TempDir()
 	repo := NewJSONSessionRepository(tmpDir)
@@ -228,9 +353,8 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 
 	// セッション作成
 	sess := newCanonicalRepositoryTestSession(t)
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テストメッセージ", "line", "U123")
-	sess.AddTask(testTask)
+	testTask := newRepositoryTurnInputForTest(t, sess, "テストメッセージ")
+	sess.AddTurnInput(testTask)
 	sess.SetMemory("key1", "value1")
 
 	// 保存
@@ -370,9 +494,7 @@ func TestJSONSessionRepository_MultipleHistoryItems(t *testing.T) {
 
 	// 複数のタスクを追加
 	for i := 0; i < 5; i++ {
-		jobID := task.NewJobID()
-		testTask := task.NewTask(jobID, "Message "+string(rune('A'+i)), "line", "U123")
-		sess.AddTask(testTask)
+		sess.AddTurnInput(newRepositoryTurnInputForTest(t, sess, "Message "+string(rune('A'+i))))
 	}
 
 	// 保存してロード
@@ -389,8 +511,8 @@ func TestJSONSessionRepository_MultipleHistoryItems(t *testing.T) {
 	}
 
 	history := loaded.GetHistory()
-	if history[0].UserMessage() != "Message A" {
-		t.Errorf("Expected first message 'Message A', got '%s'", history[0].UserMessage())
+	if history[0].MessageText() != "Message A" {
+		t.Errorf("Expected first message 'Message A', got '%s'", history[0].MessageText())
 	}
 }
 

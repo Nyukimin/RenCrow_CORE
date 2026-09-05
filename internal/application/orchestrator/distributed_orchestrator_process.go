@@ -11,7 +11,6 @@ import (
 	appsubagent "github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -92,13 +91,12 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 	}
 
-	// 2. タスクを作成
-	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
-		WithConversationIdentity(modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), modulecore.TaskID(req.RootTaskID), modulecore.MessageID(req.MessageID), modulecore.MessageID(req.AgentMessageID)).
-		WithSessionID(req.SessionID).
-		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)).
-		WithAttachments(req.Attachments)
-	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, t, jobID); err != nil {
+	// 2. Reconstruct the canonical conversation input once at ingress.
+	input, err := buildTurnInputFromProcessRequest(req)
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -106,7 +104,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		return ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
-	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, t, jobID); err != nil {
+	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -114,7 +112,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		return ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID), nil
 	}
-	if resp, handled, err := o.handleDurableStore(ctx, req, sess, t, jobID); err != nil {
+	if resp, handled, err := o.handleDurableStore(ctx, req, sess, input, jobID); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
@@ -124,7 +122,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 
 	// 3. mio がルーティング決定
-	decision, err := o.mio.DecideAction(ctx, t)
+	decision, err := o.mio.DecideAction(ctx, input)
 	if err != nil {
 		o.saveExecutionReport(ctx, jobID.String(), req.UserMessage, "", startedAt, time.Now().UTC(), err)
 		return ProcessMessageResponse{}, fmt.Errorf("routing decision failed: %w", err)
@@ -164,7 +162,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, err
 	}
 
-	t = t.WithRoute(decision.Route)
+	input = input.WithRoute(decision.Route)
 	if err := recordRouteSkillBootstrap(ctx, o.skillBootstrap, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -191,7 +189,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 
 	// 4. ルートに応じてTransport経由で実行
-	response, err := o.executeDistributed(ctx, t, decision.Route, sess.ID(), ttsSessionID)
+	response, err := o.executeDistributed(ctx, input, decision.Route, jobID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
@@ -212,7 +210,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
 
 	// 5. タスクを履歴に追加し、セッションを保存
-	if err := o.sessions.SaveCompletedTask(ctx, sess, t); err != nil {
+	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
 		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, fmt.Errorf("failed to save session: %w", err)
 	}

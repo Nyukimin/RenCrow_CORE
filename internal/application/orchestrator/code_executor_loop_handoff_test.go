@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -14,7 +15,7 @@ type loopHandoffCoderStub struct {
 	response string
 }
 
-func (s *loopHandoffCoderStub) Generate(context.Context, task.Task, string) (string, error) {
+func (s *loopHandoffCoderStub) Generate(context.Context, conversation.TurnInput, string) (string, error) {
 	return s.response, nil
 }
 
@@ -30,14 +31,7 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 		WithCoderLoopPrompts(map[string]string{"coder1": "CoderLoop prompt"})
 
 	jobID := task.NewJobID()
-	req := CodeExecutionRequest{
-		Task:      task.NewTask(jobID, "会話内容を保ったまま修正して", "test", "chat-1"),
-		Route:     routing.RouteCODE1,
-		SessionID: "sess-1",
-		Channel:   "test",
-		ChatID:    "chat-1",
-		JobID:     jobID.String(),
-	}
+	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "会話内容を保ったまま修正して", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {
 		t.Fatalf("ExecuteCode failed: %v", err)

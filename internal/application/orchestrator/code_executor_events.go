@@ -1,13 +1,15 @@
 package orchestrator
 
 func (e *DefaultCodeExecutor) emitCodeHandoffStart(req CodeExecutionRequest, target codeTarget) {
-	e.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(req.Task, req.Route), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	e.emit("agent.acknowledge", "shiro", "mio", formatShiroReadbackToMio(req.Task, req.Route), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	e.emit("agent.start", "mio", "shiro", "コードタスクをShiro経由で実行", req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	work := "route=" + req.Route.String() + " job=" + req.JobID + " の設計・コード生成"
-	e.emit("agent.delegate", "shiro", target.name, formatAgentHandoffSpeech("shiro", target.name, work, req.Task.UserMessage()), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	e.emit("agent.acknowledge", target.name, "shiro", formatAgentHandoffReadbackSpeech("shiro", target.name, work, req.Task.UserMessage()), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-	e.emit("agent.start", "shiro", target.name, req.Task.UserMessage(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
+	sessionID, channel, chatID := turnInputMetadata(req.Input)
+	route := req.Input.Route()
+	e.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(req.Input, route, req.JobID), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.acknowledge", "shiro", "mio", formatShiroReadbackToMio(req.Input, route, req.JobID), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.start", "mio", "shiro", "コードタスクをShiro経由で実行", route.String(), req.JobID, sessionID, channel, chatID)
+	work := "route=" + route.String() + " job=" + req.JobID + " の設計・コード生成"
+	e.emit("agent.delegate", "shiro", target.name, formatAgentHandoffSpeech("shiro", target.name, work, req.Input.MessageText()), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.acknowledge", target.name, "shiro", formatAgentHandoffReadbackSpeech("shiro", target.name, work, req.Input.MessageText()), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.start", "shiro", target.name, req.Input.MessageText(), route.String(), req.JobID, sessionID, channel, chatID)
 }
 
 func (e *DefaultCodeExecutor) emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {

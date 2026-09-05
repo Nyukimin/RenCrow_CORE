@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // ErrSessionNotFound はセッションが見つからない場合のエラー
@@ -17,10 +16,10 @@ type Session struct {
 	id             string // 不透明なCanonical SessionID。日付やrouting情報を埋め込まない。
 	logicalDate    string
 	channelAddress conversation.ChannelAddress
-	history        []task.Task            // 会話履歴
-	memory         map[string]interface{} // セッションメモリ
-	createdAt      time.Time              // セッション作成時刻
-	updatedAt      time.Time              // 最終更新時刻
+	history        []conversation.TurnInput // 会話履歴
+	memory         map[string]interface{}   // セッションメモリ
+	createdAt      time.Time                // セッション作成時刻
+	updatedAt      time.Time                // 最終更新時刻
 }
 
 // ID はセッションIDを返す
@@ -48,23 +47,23 @@ func (s *Session) UpdatedAt() time.Time {
 	return s.updatedAt
 }
 
-// AddTask はタスクを履歴に追加
-func (s *Session) AddTask(t task.Task) {
-	s.history = append(s.history, t)
+// AddTurnInput は会話入力を履歴に追加
+func (s *Session) AddTurnInput(input conversation.TurnInput) {
+	s.history = append(s.history, input)
 	s.updatedAt = time.Now()
 }
 
 // GetHistory は会話履歴を返す
-func (s *Session) GetHistory() []task.Task {
-	return s.history
+func (s *Session) GetHistory() []conversation.TurnInput {
+	return append([]conversation.TurnInput(nil), s.history...)
 }
 
 // GetRecentHistory は最近N件の履歴を返す
-func (s *Session) GetRecentHistory(n int) []task.Task {
+func (s *Session) GetRecentHistory(n int) []conversation.TurnInput {
 	if len(s.history) <= n {
-		return s.history
+		return s.GetHistory()
 	}
-	return s.history[len(s.history)-n:]
+	return append([]conversation.TurnInput(nil), s.history[len(s.history)-n:]...)
 }
 
 // SetMemory はメモリに値を設定

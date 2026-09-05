@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -27,7 +26,7 @@ func NewCanonicalSession(id modulecore.SessionID, logicalDate string, address co
 
 // ReconstructCanonicalSession restores a persisted canonical session without
 // changing its timestamps while history and memory are hydrated.
-func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, address conversation.ChannelAddress, history []task.Task, memory map[string]interface{}, createdAt, updatedAt time.Time) (*Session, error) {
+func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, address conversation.ChannelAddress, history []conversation.TurnInput, memory map[string]interface{}, createdAt, updatedAt time.Time) (*Session, error) {
 	if err := id.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid session_id: %w", err)
 	}
@@ -45,7 +44,7 @@ func ReconstructCanonicalSession(id modulecore.SessionID, logicalDate string, ad
 	}
 	createdAt = createdAt.UTC()
 	updatedAt = updatedAt.UTC()
-	storedHistory := append([]task.Task(nil), history...)
+	storedHistory := append([]conversation.TurnInput(nil), history...)
 	storedMemory := make(map[string]interface{}, len(memory))
 	for key, value := range memory {
 		storedMemory[key] = value

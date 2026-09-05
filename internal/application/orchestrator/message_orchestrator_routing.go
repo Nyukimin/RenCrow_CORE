@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
@@ -32,8 +33,8 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 	c.canonicalEvents = recorder
 }
 
-func (c *routeDecisionCoordinator) Decide(ctx context.Context, t task.Task, req ProcessMessageRequest, jobID task.JobID) (routing.Decision, error) {
-	decision, err := c.mio.DecideAction(ctx, t)
+func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, jobID task.JobID) (routing.Decision, error) {
+	decision, err := c.mio.DecideAction(ctx, input)
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
 	}

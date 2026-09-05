@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -23,23 +24,25 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 			return ctx, &streamBundle{}
 		},
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
-		func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, jid string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID) (string, error) {
 			t.Fatal("code executor should not be called for CHAT")
 			return "", nil
 		},
 		func(route routing.Route) string { return "" },
-		func(t task.Task, targetAgent, sessionID string) task.Task { return t },
+		func(t conversation.TurnInput, targetAgent string) conversation.TurnInput { return t },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
 			t.Fatal("transport executor should not be called for local CHAT")
 			return domaintransport.Message{}, nil
 		},
 	)
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, t conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 		autonomousCalled = true
 		return "", nil
 	})
 
-	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123"), routing.RouteCHAT, "sess-1", "")
+	jobID := task.NewJobID()
+	input := newOrchestratorTestTurnInput(t, "hello", "line", "U123").WithSessionID("sess-1")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteCHAT, jobID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -65,18 +68,20 @@ func TestPhase19DistributedRouteDispatcherNonCHATUsesAutonomousExecutor(t *testi
 		nil,
 		nil,
 	)
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
 		autonomousCalled = true
 		if route != routing.RouteOPS {
 			t.Fatalf("expected OPS route, got %s", route)
 		}
-		if sessionID != "sess-1" || ttsSessionID != "tts-1" {
-			t.Fatalf("unexpected context: session=%s tts=%s", sessionID, ttsSessionID)
+		if gotTask.SessionID() != "sess-1" || ttsSessionID != "tts-1" {
+			t.Fatalf("unexpected context: session=%s tts=%s", gotTask.SessionID(), ttsSessionID)
 		}
 		return "ops ok", nil
 	})
 
-	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewJobID(), "run", "line", "U123"), routing.RouteOPS, "sess-1", "tts-1")
+	jobID := task.NewJobID()
+	input := newOrchestratorTestTurnInput(t, "run", "line", "U123").WithSessionID("sess-1")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteOPS, jobID, "tts-1")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -98,14 +103,15 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
 		nil,
 		func(route routing.Route) string { return "shiro" },
-		func(t task.Task, targetAgent, sessionID string) task.Task { return t },
+		func(t conversation.TurnInput, targetAgent string) conversation.TurnInput { return t },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
 			return domaintransport.Message{From: targetAgent, To: "mio", Content: "確認完了", Type: domaintransport.MessageTypeResult}, nil
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "TTSの接続を確認して", "viewer", "viewer-user")
-	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1"); err != nil {
+	jobID := task.NewJobID()
+	tk := newOrchestratorTestTurnInput(t, "TTSの接続を確認して", "viewer", "viewer-user").WithSessionID("sess-1")
+	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, jobID, "tts-1"); err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
 	}
 	delegate := orchestratorEventIndex(events, "agent.delegate", "mio", "shiro")
