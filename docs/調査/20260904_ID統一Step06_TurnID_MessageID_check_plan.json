@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-05T00:07:19Z",
+  "evaluated_at": "2026-09-05T00:10:15Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -159,7 +159,7 @@
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "second production migration and actual Mio CHAT route passed on runtime 50ce3764; Gate 7 one-shot source deletion, rebuild and post-cleanup restart verification are pending"
+    "worktree_state": "second production migration and actual Mio CHAT route passed on runtime 50ce3764; Gate 7 one-shot source deletion and architecture guard are locally verified; commit, push, rebuild and post-cleanup restart verification are pending"
   },
   "observations": [
     {
@@ -212,9 +212,16 @@
       "subject": "second Step06 cutover and actual Mio CHAT EndTurn",
       "evidence": "the fresh stopped-writer source stream and independently reread recovery copy matched SHA-256 e8b0c790eba4b99f2427a24bc117bcb831dc03661f577bb5117b7d4e19d9b60d at 2298929152 bytes; dry-run was ready and apply was applied with plan c89206531a8e49cf1e9f9be2c35bea19f65a4bba6f430170e84a29c2ea45fa1d and output ac588cc4ee069cd050bcf655c0ac6327e56c811a901420f1897c88db62421a9f; runtime 50ce3764 artifact aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8 reached ready as PID 2168621 with zero restarts; RenCrow_CMD job 20260905-000627-82442598 used CHAT and actual Mio, returned a user-visible response, and completed receipt trc_01a06ee3-546e-7ab2-8eb1-a1a234e79764 with distinct canonical Turn, Trace, RootTask and user/Agent Message identities; L1 metadata, outbox and recall trace matched",
       "next_action": "preserve the frozen migration binary in recovery, delete the one-shot source under Gate 7, add the architecture guard, rebuild and perform the post-cleanup restart and route verification"
+    },
+    {
+      "at": "2026-09-05T00:10:15Z",
+      "outcome": "gate7-locally-verified",
+      "subject": "Step06 one-shot migration source deletion",
+      "evidence": "the rencrow-turn-message-migrate command and turnmigration package were deleted after the successful production cutover while the exact binary and receipts remain in the hash-bound recovery root; the new architecture test rejects either source path; modules/core tests, source-root-bounded go vet, main runtime build and git diff --check passed",
+      "next_action": "commit and push Gate 7, build the runtime from the cleanup revision, restart the canonical service and execute the post-cleanup actual Agent route"
     }
   ],
-  "phase": "postcutover-route-passed-cleanup-pending",
+  "phase": "gate7-locally-verified-deploy-pending",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
@@ -229,7 +236,7 @@
         "s6_architecture_zero"
       ],
       "status": "passed",
-      "evidence": "targeted domain, task, agent, orchestrator, adapter, persistence, L1 SQLite, core architecture, chat and integration Go tests passed; malformed ingress identity is rejected before session state access"
+      "evidence": "targeted domain, task, agent, orchestrator, adapter, persistence, L1 SQLite, core architecture, chat and integration Go tests passed; malformed ingress identity is rejected before session state access; after cutover the one-shot command and package were deleted and a passing architecture test now enforces both source paths absent"
     },
     {
       "check_ids": [
@@ -243,7 +250,7 @@
         "s6_predeploy_build"
       ],
       "status": "passed",
-      "evidence": "git diff --check, gofmt audit, go vet and go build passed for all declared Go package roots"
+      "evidence": "git diff --check, gofmt audit, go vet and go build passed for all declared Go source roots; after Gate 7, modules/core tests, source-root-bounded go vet and main runtime build passed again"
     },
     {
       "check_ids": [

@@ -1781,6 +1781,14 @@ Failure Knowledge:
 - **Tests:** dry-run non-mutation、linked user／Agent metadataのexact rewrite、metadata mismatch／欠落rowの
   pre-mutation rejection、unowned opaque row不変、配備後actual Agent EndTurn receiptを検査する。
 
+Gate 7:
+
+- production cutoverとactual Agent EndTurn receiptが成功した後、`rencrow-turn-message-migrate`と
+  `turnmigration`のone-shot sourceはproduction source treeから削除する。
+- rollbackに必要な実行済みbinaryとdry-run／apply receiptは、cutover時にhash-boundされた
+  recovery artifactとして保持する。runtime alias、ongoing migration owner、backup／restore ownerにしない。
+- architecture testは両source pathの不存在を検査し、one-shot migrationの再混入を拒否する。
+
 ---
 
 ### Step 07: 入力Value Objectの改名
