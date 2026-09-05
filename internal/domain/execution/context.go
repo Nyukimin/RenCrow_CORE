@@ -10,22 +10,33 @@ import (
 type identityContextKey struct{}
 
 // Identity is the owner-selected correlation bound to one policy-mediated
-// execution. TaskID is required; TraceID is independent and optional only for
-// non-conversation owner routes.
+// execution. TaskID and RunID are required and independently issued by the
+// Task owner; TraceID is independent and optional only for non-conversation
+// owner routes.
 type Identity struct {
 	TaskID  modulecore.TaskID
+	RunID   modulecore.RunID
 	TraceID modulecore.TraceID
 }
 
 // WithIdentity binds an already selected Task identity to the execution
 // context. It never generates or derives one identity from another.
-func WithIdentity(ctx context.Context, taskID modulecore.TaskID, traceID modulecore.TraceID) (context.Context, error) {
+func WithIdentity(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, traceID modulecore.TraceID) (context.Context, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is required")
 	}
-	identity := Identity{TaskID: taskID, TraceID: traceID}
+	identity := Identity{TaskID: taskID, RunID: runID, TraceID: traceID}
 	if err := identity.Validate(); err != nil {
 		return nil, err
+	}
+	if bound, ok := ctx.Value(identityContextKey{}).(Identity); ok {
+		if err := bound.Validate(); err != nil {
+			return nil, fmt.Errorf("existing execution identity: %w", err)
+		}
+		if bound != identity {
+			return nil, fmt.Errorf("execution identity is already bound: task_id=%s run_id=%s trace_id=%s", bound.TaskID, bound.RunID, bound.TraceID)
+		}
+		return ctx, nil
 	}
 	return context.WithValue(ctx, identityContextKey{}, identity), nil
 }
@@ -48,6 +59,9 @@ func IdentityFromContext(ctx context.Context) (Identity, error) {
 func (i Identity) Validate() error {
 	if err := i.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id: %w", err)
+	}
+	if err := i.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id: %w", err)
 	}
 	if i.TraceID != "" {
 		if err := i.TraceID.Validate(); err != nil {

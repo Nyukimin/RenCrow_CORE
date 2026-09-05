@@ -180,6 +180,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	memory := session.NewCentralMemory()
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	taskID := modulecore.NewTaskID()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -251,6 +252,7 @@ func TestDistributedOrchestrator_ProcessMessage_ViewerRecipientBecomesChatSpeake
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetWildAgent(&distMockWildAgent{response: "RC_midori_contract、発想を広げたよ。"})
 	rec := &distRecordingEventListener{}
 	orch.SetEventListener(rec)
@@ -420,6 +422,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteUsesWildAgentWithoutFal
 	rec := &distRecordingEventListener{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetWildAgent(wild)
 	orch.SetEventListener(rec)
 
@@ -461,6 +464,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteRecordsSkillBootstrap(t
 	recorder := &mockSkillBootstrapRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetWildAgent(wild)
 	orch.SetSkillBootstrapRecorder(recorder)
 
@@ -534,6 +538,7 @@ func TestDistributedOrchestrator_RegisteredSlashCommandExpandsRuntimePrompt(t *t
 	skills := &mockSkillBootstrapRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetCanonicalEventRecorder(events)
 	orch.SetSkillBootstrapRecorder(skills)
 	orch.SetCommandRegistry(&mockCommandRegistryStore{commands: []domainai.CommandRegistry{{
@@ -646,6 +651,7 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteWithoutAgentFailsInstea
 	memory := session.NewCentralMemory()
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "wild-session",
@@ -675,6 +681,7 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteUsesHeavyAgentWithou
 	canonicalEvents := &mockCanonicalEventRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	orch.SetEventListener(rec)
 	orch.SetCanonicalEventRecorder(canonicalEvents)
@@ -718,6 +725,7 @@ func TestDistributedOrchestrator_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *t
 	canonicalEvents := &mockCanonicalEventRecorder{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	orch.SetCanonicalEventRecorder(canonicalEvents)
 	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{
@@ -761,6 +769,7 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteWithoutHeavyFailsIns
 	memory := session.NewCentralMemory()
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "analyze-session",
@@ -788,6 +797,7 @@ func TestDistributedOrchestrator_ProcessMessage_SavesEvidenceOnSuccess(t *testin
 	reporter := &distMockReportStore{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetReportStore(reporter)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -887,6 +897,7 @@ func TestDistributedOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 	bridge := &mockTTSBridge{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetTTSBridge(bridge)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -923,6 +934,7 @@ func TestDistributedOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	bridge := &mockTTSBridge{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetTTSBridge(bridge)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -976,6 +988,7 @@ func TestDistributedOrchestrator_AttributionGuardOnUserChat(t *testing.T) {
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	// first turn
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -1014,6 +1027,7 @@ func TestDistributedOrchestratorProcessMessageBuildsTaskWithCanonicalSessionID(t
 	defer router.Stop()
 	memory := session.NewCentralMemory()
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	sessionID := string(modulecore.NewSessionID())
 	address, err := domainconversation.NewChannelAddress("viewer", "viewer-user")
@@ -1238,6 +1252,7 @@ func TestDistributedOrchestrator_SSHExecution(t *testing.T) {
 	}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, sshTransports)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	// Shiroが最終応答を返す
 	// CODE3 ルート: verifyByContract を通過するためコードブロックを含める
@@ -1297,6 +1312,7 @@ func TestDistributedOrchestrator_DistributedExecution(t *testing.T) {
 	router.RegisterAgent("mio", mioTransport)
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	// ShiroがメッセージをReceiveして応答を返すゴルーチン
 	go func() {
@@ -1360,6 +1376,7 @@ func TestDistributedOrchestrator_CodeRoute_FinalResponseComesFromMio(t *testing.
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, map[string]domaintransport.Transport{
 		"coder3": mockSSH,
 	})
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetEventListener(rec)
 
 	// CODE3 ルート: verifyByContract を通過するためコードブロックを含める
@@ -1446,6 +1463,7 @@ func TestDistributedOrchestrator_CodeRoute_RetriesOnWorkerRetryableFailure(t *te
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, map[string]domaintransport.Transport{
 		"coder3": mockSSH,
 	})
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetEventListener(rec)
 
 	go func() {
@@ -1517,6 +1535,7 @@ func TestDistributedOrchestrator_ProcessMessage_CodeRoute_UnconnectedExplicitCod
 	reporter := &distMockReportStore{}
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetReportStore(reporter)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{

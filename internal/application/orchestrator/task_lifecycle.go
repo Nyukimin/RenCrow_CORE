@@ -242,6 +242,87 @@ func (l *taskLifecycle) activeRunForTask(ctx context.Context, taskID modulecore.
 	return run, nil
 }
 
+// startRepairExecution creates and starts the supplied repair Task through the
+// same durable owner used by normal message execution. Repair is an out-of-band
+// entry point, but it must still publish the routing and actual-Agent
+// assignment before the Task owner issues its first Run.
+func (l *taskLifecycle) startRepairExecution(ctx context.Context, events taskLifecycleEventPort, req ProcessRepairRequest, route routing.Route) (domaintask.Run, error) {
+	if l == nil || l.manager == nil {
+		return domaintask.Run{}, fmt.Errorf("task lifecycle manager is unavailable")
+	}
+	if events == nil {
+		return domaintask.Run{}, fmt.Errorf("task lifecycle event port is unavailable")
+	}
+	if err := req.TaskID.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("repair task ID is invalid: %w", err)
+	}
+	domainRoute, err := taskRouteForOrchestratorRoute(route)
+	if err != nil {
+		return domaintask.Run{}, fmt.Errorf("repair route is invalid: %w", err)
+	}
+	if _, err := l.manager.Get(ctx, req.TaskID); err == nil {
+		return domaintask.Run{}, fmt.Errorf("repair task %s already exists", req.TaskID)
+	} else if !errors.Is(err, domaintask.ErrNotFound) {
+		return domaintask.Run{}, fmt.Errorf("check repair task %s: %w", req.TaskID, err)
+	}
+
+	draft := domaintask.Task{
+		TaskID:          req.TaskID,
+		Title:           boundedTaskTitle("Repair: " + req.Reason),
+		Route:           domainRoute,
+		OwnerID:         taskLifecycleMio,
+		Status:          domaintask.StatusQueued,
+		Priority:        domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked,
+	}
+	shared := domaintask.SharedRoleContext{
+		TaskID:     req.TaskID,
+		UserIntent: repairTaskMessage(req),
+	}
+	if _, err := l.manager.Create(ctx, draft, shared); err != nil {
+		return domaintask.Run{}, fmt.Errorf("create repair task: %w", err)
+	}
+
+	failCreated := func(cause error) (domaintask.Run, error) {
+		if _, failErr := l.manager.Fail(context.WithoutCancel(ctx), req.TaskID, cause.Error(), nil); failErr != nil {
+			return domaintask.Run{}, errors.Join(cause, fmt.Errorf("fail repair task after startup error: %w", failErr))
+		}
+		return domaintask.Run{}, cause
+	}
+
+	routingEvent, err := events.Publish(
+		"routing.decision", taskLifecycleMio, "",
+		fmt.Sprintf("repair route=%s", route), string(route), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil,
+	)
+	if err != nil {
+		return failCreated(fmt.Errorf("publish repair routing decision: %w", err))
+	}
+	if _, err := l.manager.RecordRouting(ctx, req.TaskID, domainRoute, routingEvent.EventID); err != nil {
+		return failCreated(fmt.Errorf("record repair routing decision: %w", err))
+	}
+	assignmentEvent, err := events.Publish(
+		"agent.assignment", taskLifecycleMio, taskLifecycleShiro,
+		fmt.Sprintf("assigned route=%s", route), string(route), req.TaskID.String(), req.SessionID, "viewer", "repair", routingEvent.EventID, nil,
+	)
+	if err != nil {
+		return failCreated(fmt.Errorf("publish repair Agent assignment: %w", err))
+	}
+	if _, err := l.manager.RecordAssignment(ctx, req.TaskID, taskLifecycleShiro, assignmentEvent.EventID); err != nil {
+		return failCreated(fmt.Errorf("record repair Agent assignment: %w", err))
+	}
+	if _, err := l.manager.Start(ctx, req.TaskID); err != nil {
+		return failCreated(fmt.Errorf("start repair Task: %w", err))
+	}
+	run, err := l.activeRunForTask(ctx, req.TaskID)
+	if err != nil {
+		return failCreated(fmt.Errorf("resolve repair Task Run: %w", err))
+	}
+	if run.TaskID != req.TaskID || run.Assignee != taskLifecycleShiro {
+		return failCreated(fmt.Errorf("repair Run owner mismatch: task=%s run_task=%s assignee=%s", req.TaskID, run.TaskID, run.Assignee))
+	}
+	return run, nil
+}
+
 func (l *taskLifecycle) createRoot(ctx context.Context, req ProcessMessageRequest) (domaintask.Task, error) {
 	if l == nil || l.manager == nil {
 		return domaintask.Task{}, fmt.Errorf("task lifecycle manager is unavailable")

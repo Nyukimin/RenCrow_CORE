@@ -92,6 +92,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *test
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -144,6 +145,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucc
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, coder2, nil, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "20260620-viewer-readonly",
@@ -195,6 +197,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailur
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "20260620-viewer-retry",
@@ -253,6 +256,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_MarkdownPatch(t *
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -299,6 +303,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_InvalidProposal(t *testing.T) 
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test-session",
@@ -326,6 +331,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_NoCoder3Available(t *testing.T
 
 	// coder3 = nil
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test-session",
@@ -368,6 +374,7 @@ func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
 	coder3 := &mockCoderAgentWithProposal{proposal: testProposal}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test",
@@ -417,6 +424,7 @@ func TestFormatExecutionResult_PartialFailure(t *testing.T) {
 	coder3 := &mockCoderAgentWithProposal{proposal: testProposal}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test",

@@ -32,8 +32,9 @@ func TestPhase9RouteDispatcher_CHATBypassesAutonomousExecutor(t *testing.T) {
 	})
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "こんにちは", "line", "U123").WithSessionID("sess-1")
-	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteCHAT, taskID, "")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteCHAT, taskID, runID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -55,8 +56,9 @@ func TestPhase9RouteDispatcher_NonCHATUsesAutonomousExecutor(t *testing.T) {
 	})
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "計画して", "line", "U123").WithSessionID("sess-1")
-	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RoutePLAN, taskID, "")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RoutePLAN, taskID, runID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -85,8 +87,9 @@ func TestPhase9RouteDispatcher_OPSVerbalizesNamedHandoffAndReadback(t *testing.T
 	})
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "TTSの接続を確認して", "viewer", "viewer-user").WithSessionID("sess-1")
-	if _, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteOPS, taskID, ""); err != nil {
+	if _, err := dispatcher.ExecuteTurnInput(context.Background(), tk, routing.RouteOPS, taskID, runID, ""); err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
 	if len(events) < 2 {
@@ -104,8 +107,9 @@ func TestPhase9RouteDispatcher_SetHeavyAgentUpdatesAnalyzeRoute(t *testing.T) {
 	dispatcher.SetHeavyAgent(heavy)
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "分析して", "line", "U123").WithSessionID("sess-1")
-	resp, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteANALYZE, taskID, "")
+	resp, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteANALYZE, taskID, runID, "")
 	if err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
 	}

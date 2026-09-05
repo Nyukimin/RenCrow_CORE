@@ -518,6 +518,7 @@ func TestMessageOrchestrator_ProcessMessage_NewSession(t *testing.T) {
 	shiro := &mockShiroAgent{response: "executed"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -579,6 +580,7 @@ func TestMessageOrchestrator_LaterCanonicalEventFailureSuppressesResponse(t *tes
 	}
 	listener := &failOnEventListener{failType: "agent.response", err: wantErr}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetEventListener(listener)
 	turns := &recordingCorrelatedTurnLogger{}
 	orch.SetSessionTurnLogger(turns)
@@ -608,6 +610,7 @@ func TestMessageOrchestrator_RecordsPersonaRuntimeObservation(t *testing.T) {
 	}
 	recorder := &mockPersonaRuntimeRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetPersonaRuntimeRecorder(recorder, []domainpersona.TriggerDefinition{{
 		TriggerID:   "mio_tired",
 		CharacterID: "mio",
@@ -644,6 +647,7 @@ func TestMessageOrchestrator_CreatesPendingMetaUpdateCandidateFromUserStatement(
 	}
 	recorder := &mockPersonaRuntimeRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetPersonaRuntimeRecorder(recorder, nil)
 
 	_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -678,6 +682,7 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 	}
 	recorder := &mockPersonaRuntimeRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetPersonaRuntimeRecorder(recorder, []domainpersona.TriggerDefinition{{
 		TriggerID:   "kuro_destructive",
 		CharacterID: "kuro",
@@ -734,6 +739,7 @@ func TestMessageOrchestrator_CanonicalResponseHonorsCooldown(t *testing.T) {
 		}},
 	}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetPersonaRuntimeRecorder(recorder, []domainpersona.TriggerDefinition{{
 		TriggerID:   "kuro_destructive",
 		CharacterID: "kuro",
@@ -790,6 +796,7 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	}}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 	orchestrator.SetVerificationPipeline(verifier)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -832,6 +839,7 @@ func TestMessageOrchestrator_ProcessMessage_ExistingSession(t *testing.T) {
 	shiro := &mockShiroAgent{response: "executed"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   existingSession.ID(),
@@ -865,6 +873,7 @@ func TestMessageOrchestrator_ProcessMessage_OPSRoute(t *testing.T) {
 	shiro := &mockShiroAgent{response: "Command executed successfully"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -896,6 +905,7 @@ func TestMessageOrchestrator_ProcessMessage_OPSRoute_StartsMaleTTSVoice(t *testi
 	ttsBridge := &mockTTSBridge{}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 	orchestrator.SetTTSBridge(ttsBridge)
 
 	req := ProcessMessageRequest{
@@ -936,6 +946,7 @@ func TestMessageOrchestrator_TTSBridge_StreamAndEnd(t *testing.T) {
 	bridge := &mockTTSBridge{}
 
 	o := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, o)
 	o.SetTTSBridge(bridge)
 
 	_, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -977,6 +988,7 @@ func TestMessageOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 	bridge := &mockTTSBridge{}
 
 	o := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, o)
 	o.SetTTSBridge(bridge)
 
 	_, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -1012,6 +1024,7 @@ func TestMessageOrchestrator_TTSBridge_DegradedOnStartError(t *testing.T) {
 	bridge := &mockTTSBridge{startErr: fmt.Errorf("down")}
 
 	o := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, o)
 	o.SetTTSBridge(bridge)
 
 	resp, err := o.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -1038,6 +1051,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERoute(t *testing.T) {
 	coder := &mockCoderAgent{response: "```go\n// Generated code\nfunc main() {}\n```"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, coder, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -1067,6 +1081,7 @@ func TestMessageOrchestrator_ProcessMessage_CodeRouteRecordsSkillBootstrap(t *te
 	coder := &mockCoderAgent{response: "```go\nfunc main() {}\n```"}
 	recorder := &mockSkillBootstrapRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, shiro, coder, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetSkillBootstrapRecorder(recorder)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
@@ -1124,6 +1139,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		coder2 := &mockCoderAgent{response: "coder2 response"}
 
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, coder1, coder2, nil, nil, nil)
+		attachCanonicalTestTaskOwner(t, orch)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
@@ -1143,6 +1159,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		coder2 := &mockCoderAgent{response: "coder2 response\n```\ncode\n```"}
 
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, coder2, nil, nil, nil)
+		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
@@ -1162,6 +1179,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		coder3 := &mockCoderAgent{response: "coder3 response\n```\ncode\n```"}
 
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, coder3, nil, nil)
+		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
@@ -1180,6 +1198,7 @@ func TestMessageOrchestrator_ProcessMessage_CODERouteUsesOnlyCoder1(t *testing.T
 		}
 
 		orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+		attachCanonicalTestTaskOwner(t, orch)
 		_, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
 			SessionID: "test-session", Channel: "line", ChatID: "U1", UserMessage: "実装して",
 		})
@@ -1199,6 +1218,7 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitCommand(t *testing.T) {
 	coder3 := &mockCoderAgent{response: "High quality code review\n```\nsuggestions\n```"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -1230,6 +1250,7 @@ func TestMessageOrchestrator_ProcessMessage_TaskAddedToHistory(t *testing.T) {
 	shiro := &mockShiroAgent{response: "executed"}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orchestrator)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -1315,6 +1336,7 @@ func TestMessageOrchestrator_ProcessMessage_ChatError(t *testing.T) {
 	}
 
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	_, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err == nil {
 		t.Fatal("expected error for chat failure")
@@ -1335,6 +1357,7 @@ func TestMessageOrchestrator_ProcessMessage_ShiroError(t *testing.T) {
 	}
 
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, shiro, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	_, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err == nil {
 		t.Fatal("expected error for shiro failure")
@@ -1360,6 +1383,7 @@ func TestMessageOrchestrator_ProcessMessage_NoCoder(t *testing.T) {
 				decision: routing.NewDecision(tc.route, 1.0, tc.name),
 			}
 			orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+			attachCanonicalTestTaskOwner(t, orch)
 			_, err := orch.ProcessMessage(context.Background(), defaultReq())
 			if err == nil {
 				t.Fatalf("expected error for %s with no coder", tc.name)
@@ -1386,6 +1410,7 @@ func TestMessageOrchestrator_ProcessMessage_FallbackToChat(t *testing.T) {
 				response: "fallback response",
 			}
 			orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+			attachCanonicalTestTaskOwner(t, orch)
 			resp, err := orch.ProcessMessage(context.Background(), defaultReq())
 			if err != nil {
 				t.Fatalf("ProcessMessage failed: %v", err)
@@ -1406,6 +1431,7 @@ func TestMessageOrchestrator_ProcessMessage_AnalyzeWithoutHeavyFailsInsteadOfFal
 		},
 	}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err == nil {
@@ -1629,6 +1655,7 @@ func TestMessageOrchestrator_ProcessMessage_SessionSaveError(t *testing.T) {
 	}
 
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	_, err := orch.ProcessMessage(context.Background(), defaultReq())
 	if err == nil {
 		t.Fatal("expected error for save failure")
@@ -1643,6 +1670,7 @@ func TestProcessMessage_RouteWildUsesWildAgent(t *testing.T) {
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 1.0, "explicit wild")}
 	wild := &mockWildAgent{response: "wild response"}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetWildAgent(wild)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultReq())
@@ -1666,6 +1694,7 @@ func TestProcessMessage_RouteAnalyzeUsesHeavyAgent(t *testing.T) {
 	heavy := &mockHeavyAgent{response: "heavy response"}
 	canonicalEvents := &mockCanonicalEventRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	orch.SetCanonicalEventRecorder(canonicalEvents)
 
@@ -1701,6 +1730,7 @@ func TestProcessMessage_HeavyWorkerPolicyElevatesDeepDiveToAnalyze(t *testing.T)
 	heavy := &mockHeavyAgent{response: "heavy deep dive"}
 	canonicalEvents := &mockCanonicalEventRecorder{}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	orch.SetHeavyWorkerPolicy(domainai.HeavyWorkerPolicy{
 		Enabled:       true,
@@ -1767,6 +1797,7 @@ func TestProcessMessage_RegisteredSlashCommandExpandsRuntimePrompt(t *testing.T)
 		UpdatedAt:     time.Now().UTC(),
 	}}}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetCanonicalEventRecorder(events)
 	orch.SetSkillBootstrapRecorder(skills)
 	orch.SetCommandRegistry(commands)
@@ -1966,6 +1997,7 @@ func TestMessageOrchestrator_ProcessMessage_SlashCommandSkipsDCI(t *testing.T) {
 	req := defaultReq()
 	req.UserMessage = "/code3 ルーティング関連ファイルを調査して"
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetDCISearcher(searcher)
 
 	_, err := orch.ProcessMessage(context.Background(), req)

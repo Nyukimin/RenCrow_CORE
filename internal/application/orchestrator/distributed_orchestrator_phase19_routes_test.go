@@ -43,8 +43,9 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 	})
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	input := newOrchestratorTestTurnInput(t, "hello", "line", "U123").WithSessionID("sess-1")
-	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteCHAT, taskID, "")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteCHAT, taskID, runID, "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -86,8 +87,9 @@ func TestPhase19DistributedRouteDispatcherNonCHATUsesAutonomousExecutor(t *testi
 	})
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	input := newOrchestratorTestTurnInput(t, "run", "line", "U123").WithSessionID("sess-1")
-	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteOPS, taskID, "tts-1")
+	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteOPS, taskID, runID, "tts-1")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -116,8 +118,9 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 	)
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "TTSの接続を確認して", "viewer", "viewer-user").WithSessionID("sess-1")
-	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, taskID, "tts-1"); err != nil {
+	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, taskID, runID, "tts-1"); err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
 	}
 	delegate := orchestratorEventIndex(events, "agent.delegate", "mio", "shiro")
@@ -150,12 +153,13 @@ func TestPhase19DistributedRemoteRouteCarriesExactTurnInputProjection(t *testing
 	)
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	input := newOrchestratorTestTurnInput(t, "remote request", "line", "U123").
 		WithSessionID("sess-1").
 		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
 		WithViewerRecipient("mio").
 		WithForcedRoute(routing.RouteOPS)
-	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteOPS, taskID, ""); err != nil {
+	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteOPS, taskID, runID, ""); err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)
 	}
 	if sent.TaskID != taskID {
@@ -197,8 +201,9 @@ func TestPhase19DistributedLocalRouteStoresExactTurnInputProjection(t *testing.T
 	)
 
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	input := newOrchestratorTestTurnInput(t, "local request", "line", "U123").WithSessionID("sess-1")
-	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteCHAT, taskID, ""); err != nil {
+	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteCHAT, taskID, runID, ""); err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)
 	}
 	var userMessage domaintransport.Message

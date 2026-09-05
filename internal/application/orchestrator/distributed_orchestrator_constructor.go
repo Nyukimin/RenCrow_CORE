@@ -56,7 +56,7 @@ func NewDistributedOrchestrator(
 		orch.withAttributionGuard,
 		orch.executeToAgent,
 	)
-	orch.autonomous = newDistributedAutonomousCoordinator(nil, orch.maxRepairOrDefault, orch.emit, orch.routes.ExecuteDirect)
+	orch.autonomous = newDistributedAutonomousCoordinator(nil, orch.maxRepairOrDefault, orch.emit, orch.routes.executeDirectForContext)
 	orch.routes.SetAutonomousExecutor(orch.autonomous.Execute)
 	return orch
 }

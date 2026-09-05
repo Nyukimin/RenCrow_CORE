@@ -211,6 +211,7 @@ func TestMessageOrchestratorRunsVisionBeforeAgentRouting(t *testing.T) {
 		&mockShiroAgent{},
 		nil, nil, nil, nil, nil,
 	)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetVisionAnalyzer(analyzer, VisionOptions{
 		MaxImageBytes: 20 << 20,
 		MaxVideoBytes: 100 << 20,

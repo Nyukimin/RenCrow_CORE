@@ -298,7 +298,7 @@ func NewMessageOrchestrator(
 		orch.ttsLifecycle.WithStreamHooks,
 		orch.ttsLifecycle.Push,
 	)
-	orch.autonomousExecutions = newAutonomousExecutionCoordinator(nil, orch.maxRepairOrDefault, orch.events.Emit, orch.routeDispatcher.ExecuteDirect)
+	orch.autonomousExecutions = newAutonomousExecutionCoordinator(nil, orch.maxRepairOrDefault, orch.events.Emit, orch.routeDispatcher.executeDirectForContext)
 	orch.routeDispatcher.SetAutonomousExecutor(orch.autonomousExecutions.Execute)
 	return orch
 }
@@ -773,7 +773,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, taskID, ttsSessionID)
+	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)

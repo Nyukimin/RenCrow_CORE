@@ -29,6 +29,7 @@ func TestMessageOrchestrator_RouteChainContract_RoutingDecisionBeforeDispatch(t 
 		response: "chat response",
 	}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -68,6 +69,7 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 	}
 	heavy := &mockHeavyAgent{response: "RC_kuro_contract、分析完了です。"}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
@@ -115,6 +117,7 @@ func TestMessageOrchestrator_RouteChainContract_KuroUnavailableDoesNotFallbackTo
 		},
 	}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	req := defaultReq()
 	req.To = "kuro"
 
@@ -133,6 +136,7 @@ func TestMessageOrchestrator_RouteChainContract_ShiroUsesDedicatedChatWorker(t *
 	}}
 	shiroChat := &mockMioAgent{response: "shiro chatworker response"}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetShiroChatAgent(shiroChat)
 	req := defaultReq()
 	req.To = "shiro"
@@ -152,6 +156,7 @@ func TestMessageOrchestrator_RouteChainContract_MidoriUsesWildAgent(t *testing.T
 	}}
 	wild := &mockWildAgent{response: "midori wild response"}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetWildAgent(wild)
 	req := defaultReq()
 	req.To = "midori"
@@ -178,6 +183,7 @@ func TestMessageOrchestrator_RouteChainContract_EmitsLatencyMetrics(t *testing.T
 		response: "chat response",
 	}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -303,6 +309,7 @@ func TestMessageOrchestrator_RouteChainContract_AnalyzeEmitsPublicTerminalRespon
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteANALYZE, 1, "analyze")}
 	heavy := &mockHeavyAgent{response: "PORTAL_BROWSER_OK"}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetHeavyAgent(heavy)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
@@ -324,6 +331,7 @@ func TestMessageOrchestrator_RouteChainContract_AnalyzeEmitsPublicTerminalRespon
 func TestMessageOrchestrator_RouteChainContract_OPSEmitsPublicTerminalResponse(t *testing.T) {
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteOPS, 1, "ops")}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{response: "PORTAL_OPS_OK"}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -356,6 +364,7 @@ func TestMessageOrchestrator_RouteChainContract_WorkerErrorDoesNotBecomeSuccess(
 		),
 	}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, nil, nil, coder3, nil, worker)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetMaxRepair(0)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
@@ -382,6 +391,7 @@ func TestMessageOrchestrator_RouteChainContract_GenerateErrorDoesNotBecomeFallba
 	}
 	coder1 := &failingCoderAgent{err: generateErr}
 	orch := NewMessageOrchestrator(newMockSessionRepository(), mio, &mockShiroAgent{}, coder1, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	orch.SetMaxRepair(0)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)

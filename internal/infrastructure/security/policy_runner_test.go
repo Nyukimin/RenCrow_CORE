@@ -39,7 +39,7 @@ func TestPolicyRunner_DenyBlockedCommand(t *testing.T) {
 	}
 
 	taskID := modulecore.NewTaskID()
-	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, "")
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, modulecore.NewRunID(), "")
 	if err != nil {
 		t.Fatalf("WithIdentity failed: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestPolicyRunner_DeniesMediatedFileWriteOutsideWorkspace(t *testing.T) {
 	}
 	runner := tools.NewToolHarnessRunner(policyRunner, nil)
 
-	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), "")
+	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
 	if err != nil {
 		t.Fatalf("WithIdentity failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPolicyRunner_RefreshesToolMetadataAfterDynamicRegistration(t *testing.T
 	}
 
 	inner.metas = append(inner.metas, tool.ToolMetadata{ToolID: "subagent"})
-	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), "")
+	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
 	if err != nil {
 		t.Fatalf("WithIdentity failed: %v", err)
 	}
@@ -130,12 +130,12 @@ func TestPolicyRunnerRequiresOwnerProvidedTaskIdentity(t *testing.T) {
 	if _, err := runner.ExecuteV2(context.Background(), "shell", map[string]any{}); err == nil {
 		t.Fatal("expected missing owner task identity error")
 	}
-	if _, err := domainexecution.WithIdentity(context.Background(), "legacy", ""); err == nil {
+	if _, err := domainexecution.WithIdentity(context.Background(), "legacy", modulecore.NewRunID(), ""); err == nil {
 		t.Fatal("expected invalid task identity rejection")
 	}
 
 	taskID := modulecore.NewTaskID()
-	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, "")
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, modulecore.NewRunID(), "")
 	if err != nil {
 		t.Fatalf("WithIdentity failed: %v", err)
 	}

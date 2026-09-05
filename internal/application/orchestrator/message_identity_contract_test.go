@@ -97,6 +97,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 		&mockShiroAgent{},
 		nil, nil, nil, nil, nil,
 	)
+	attachCanonicalTestTaskOwner(t, orch)
 	events := &recordingEventListener{}
 	turns := &recordingCorrelatedTurnLogger{}
 	orch.SetEventListener(events)

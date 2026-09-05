@@ -83,9 +83,9 @@ func (d *distributedRouteDispatcher) SetCanonicalEventRecorder(recorder Canonica
 	d.canonicalEvents = recorder
 }
 
-func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, input.TraceID())
+	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
 	if err != nil {
 		return "", err
 	}
@@ -93,12 +93,12 @@ func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input
 	if route != routing.RouteCHAT {
 		return d.executeAutonomous(ctx, input, route, taskID, ttsSessionID)
 	}
-	return d.ExecuteDirect(ctx, input, route, taskID, ttsSessionID)
+	return d.ExecuteDirect(ctx, input, route, taskID, runID, ttsSessionID)
 }
 
-func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, input.TraceID())
+	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
 	if err != nil {
 		return "", err
 	}
@@ -162,6 +162,20 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input do
 		return d.executeLocalRoute(ctx, input, route, taskID, ttsSessionID)
 	}
 	return d.executeRemoteRoute(ctx, input, route, taskID, ttsSessionID, targetAgent)
+}
+
+// executeDirectForContext is the adapter used by the bounded autonomous
+// coordinator. Retries retain the owner-selected execution context; no RunID
+// is generated or derived at this boundary.
+func (d *distributedRouteDispatcher) executeDirectForContext(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if identity.TaskID != taskID {
+		return "", fmt.Errorf("execution task identity mismatch: context=%s argument=%s", identity.TaskID, taskID)
+	}
+	return d.ExecuteDirect(ctx, input, route, taskID, identity.RunID, ttsSessionID)
 }
 
 func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {

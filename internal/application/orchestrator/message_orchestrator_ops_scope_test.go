@@ -44,9 +44,10 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 		func(context.Context, string, routing.Route, string, string) {},
 	)
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "line", "user-a").WithSessionID("session-1")
 
-	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, taskID, "")
+	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, taskID, runID, "")
 	if err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)
 	}
@@ -86,9 +87,10 @@ func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) 
 		func(context.Context, string, routing.Route, string, string) {},
 	)
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "viewer", "viewer-user").WithSessionID("session-1")
 
-	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, taskID, ""); err == nil {
+	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, taskID, runID, ""); err == nil {
 		t.Fatal("invalid parent scope must stop OPS before Shiro")
 	}
 	if shiro.calls != 0 {

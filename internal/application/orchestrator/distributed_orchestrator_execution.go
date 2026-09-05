@@ -23,16 +23,16 @@ func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, taskI
 }
 
 // executeDistributed はルートに応じてTransport経由でAgent間通信
-func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteTurnInput(ctx, input, route, taskID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteTurnInput(ctx, input, route, taskID, runID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
 	return o.autonomous.Execute(ctx, input, route, taskID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteDirect(ctx, input, route, taskID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteDirect(ctx, input, route, taskID, runID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) withStreamHooks(

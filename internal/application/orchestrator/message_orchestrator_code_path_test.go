@@ -35,6 +35,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE1(t *testing.T) {
 	shiro := &mockShiroAgent{response: "unused"}
 	coder1 := &mockCoderAgent{response: "spec ready\n```\npatch applied\n```"}
 	orch := NewMessageOrchestrator(repo, mio, shiro, coder1, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -69,6 +70,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE2(t *testing.T) {
 	shiro := &mockShiroAgent{response: "unused"}
 	coder2 := &mockCoderAgent{response: "impl ready\n```\npatch applied\n```"}
 	orch := NewMessageOrchestrator(repo, mio, shiro, nil, coder2, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -103,6 +105,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_CODE4(t *testing.T) {
 	shiro := &mockShiroAgent{response: "unused"}
 	coder4 := &mockCoderAgent{response: "prototype ready\n```\npatch applied\n```"}
 	orch := NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, coder4, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -137,6 +140,7 @@ func TestMessageOrchestrator_CodeRoute_AlwaysViaShiro_GenericCODE(t *testing.T) 
 	shiro := &mockShiroAgent{response: "unused"}
 	coder1 := &mockCoderAgent{response: "generic code response\n```go\nfunc generated() {}\n```"}
 	orch := NewMessageOrchestrator(repo, mio, shiro, coder1, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -180,6 +184,7 @@ func TestMessageOrchestrator_CodeRoute_CODE3ProposalKeepsShiroEventOrder(t *test
 		result: patch.NewPatchExecutionResult().WithSummary("実行: 1 件, 成功: 1 件, 失敗: 0 件"),
 	}
 	orch := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, worker)
+	attachCanonicalTestTaskOwner(t, orch)
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 

@@ -73,9 +73,9 @@ func turnInputMetadata(input domainconversation.TurnInput) (sessionID, channel, 
 	return input.SessionID(), address.ChannelType(), address.ExternalConversationID()
 }
 
-func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, input.TraceID())
+	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
 	if err != nil {
 		return "", err
 	}
@@ -92,9 +92,9 @@ func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input dom
 	return d.executeChatRoute(ctx, input, taskID, ttsSessionID)
 }
 
-func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, input.TraceID())
+	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
 	if err != nil {
 		return "", err
 	}
@@ -115,6 +115,20 @@ func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domain
 	default:
 		return "", fmt.Errorf("unsupported autonomous route: %s", route)
 	}
+}
+
+// executeDirectForContext is the adapter used by the bounded autonomous
+// coordinator. The coordinator retries with the same context, so it must
+// recover the exact owner-selected RunID rather than issue or derive one.
+func (d *messageRouteDispatcher) executeDirectForContext(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return "", err
+	}
+	if identity.TaskID != taskID {
+		return "", fmt.Errorf("execution task identity mismatch: context=%s argument=%s", identity.TaskID, taskID)
+	}
+	return d.ExecuteDirect(ctx, input, route, taskID, identity.RunID, ttsSessionID)
 }
 
 func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, ttsSessionID string) (string, error) {

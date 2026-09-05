@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -26,12 +27,10 @@ type ProcessRepairResponse struct {
 	Response string
 	Route    routing.Route
 	TaskID   modulecore.TaskID
+	RunID    modulecore.RunID
 }
 
 func normalizeRepairProcessRequest(req ProcessRepairRequest) ProcessRepairRequest {
-	if req.TaskID.IsZero() {
-		req.TaskID = modulecore.NewTaskID()
-	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
 		req.SessionID = "repair-" + req.TaskID.String()
@@ -110,50 +109,127 @@ func repairTurnInput(req ProcessRepairRequest, route routing.Route) (conversatio
 	return input.WithSessionID(req.SessionID).WithRoute(route), nil
 }
 
-func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
-	req = normalizeRepairProcessRequest(req)
-	route := repairTargetRoute(req.TargetRoute)
+type repairDispatchFunc func(context.Context, conversation.TurnInput, routing.Route, modulecore.TaskID, modulecore.RunID) (string, error)
+
+func processRepair(
+	ctx context.Context,
+	req ProcessRepairRequest,
+	route routing.Route,
+	lifecycle *taskLifecycle,
+	events taskLifecycleEventPort,
+	publicationFailures *eventPublicationFailureTracker,
+	dispatch repairDispatchFunc,
+) (resp ProcessRepairResponse, err error) {
 	input, err := repairTurnInput(req, route)
 	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	if err := req.TaskID.Validate(); err != nil {
-		return ProcessRepairResponse{}, fmt.Errorf("task_id is invalid: %w", err)
+	if lifecycle == nil || events == nil || publicationFailures == nil {
+		return ProcessRepairResponse{}, fmt.Errorf("repair requires configured task lifecycle and event port")
 	}
-	startedAt := time.Now()
-	if o.events != nil {
-		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
+	if dispatch == nil {
+		return ProcessRepairResponse{}, fmt.Errorf("repair dispatch is unavailable")
 	}
-	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, route, req.TaskID, "")
-	if err != nil {
-		if o.events != nil {
-			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
+
+	traceID := input.TraceID()
+	events.BindTrace(req.TaskID.String(), traceID)
+	defer events.ReleaseTrace(req.TaskID.String())
+	ctx, cancel := context.WithCancelCause(ctx)
+	if publicationFailures != nil {
+		publicationFailures.Begin(traceID, cancel)
+	}
+	defer func() {
+		var publicationErr error
+		if publicationFailures != nil {
+			publicationErr = publicationFailures.End(traceID)
 		}
+		if publicationErr == nil {
+			cancel(nil)
+			return
+		}
+		cancel(publicationErr)
+		resp = ProcessRepairResponse{}
+		wrapped := fmt.Errorf("canonical event publication failed: %w", publicationErr)
+		if err == nil {
+			err = wrapped
+		} else if !errors.Is(err, publicationErr) {
+			err = errors.Join(err, wrapped)
+		}
+	}()
+
+	runStarted := false
+	defer func() {
+		if !runStarted {
+			return
+		}
+		lifecycleErr := err
+		if publicationFailures != nil {
+			if publicationErr := publicationFailures.Current(traceID); publicationErr != nil {
+				if lifecycleErr == nil {
+					lifecycleErr = publicationErr
+				} else {
+					lifecycleErr = errors.Join(lifecycleErr, publicationErr)
+				}
+			}
+		}
+		if finishErr := lifecycle.finish(context.WithoutCancel(ctx), req.TaskID, req.TaskID, resp.Response, lifecycleErr); finishErr != nil {
+			if err == nil {
+				err = finishErr
+			} else {
+				err = errors.Join(err, finishErr)
+			}
+			resp = ProcessRepairResponse{}
+		}
+	}()
+
+	run, err := lifecycle.startRepairExecution(ctx, events, req, route)
+	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	if o.events != nil {
-		o.events.Emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair Task completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
+	runStarted = true
+	startedAt := time.Now()
+	if _, err := events.Publish(
+		"repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil,
+	); err != nil {
+		return ProcessRepairResponse{}, err
 	}
-	return ProcessRepairResponse{Response: response, Route: route, TaskID: req.TaskID}, nil
+	response, executionErr := dispatch(ctx, input, route, req.TaskID, run.RunID)
+	if executionErr != nil {
+		if _, eventErr := events.Publish(
+			"repair.failed", "shiro", "repair", executionErr.Error(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil,
+		); eventErr != nil {
+			executionErr = errors.Join(executionErr, eventErr)
+		}
+		return ProcessRepairResponse{}, executionErr
+	}
+	if _, err := events.Publish(
+		"repair.completed", "shiro", "repair", fmt.Sprintf("repair Task completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil,
+	); err != nil {
+		return ProcessRepairResponse{}, err
+	}
+	return ProcessRepairResponse{Response: response, Route: route, TaskID: req.TaskID, RunID: run.RunID}, nil
+}
+
+func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
+	req = normalizeRepairProcessRequest(req)
+	route := repairTargetRoute(req.TargetRoute)
+	if o == nil || o.taskLifecycle == nil || o.events == nil {
+		return ProcessRepairResponse{}, fmt.Errorf("repair requires configured task lifecycle and event port")
+	}
+	return processRepair(ctx, req, route, o.taskLifecycle, o.events, o.events.publicationFail,
+		func(ctx context.Context, input conversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID) (string, error) {
+			return o.routeDispatcher.ExecuteTurnInput(ctx, input, route, taskID, runID, "")
+		})
 }
 
 func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
 	req = normalizeRepairProcessRequest(req)
 	route := repairTargetRoute(req.TargetRoute)
-	input, err := repairTurnInput(req, route)
-	if err != nil {
-		return ProcessRepairResponse{}, err
+	if o == nil || o.taskLifecycle == nil || o.events == nil {
+		return ProcessRepairResponse{}, fmt.Errorf("repair requires configured task lifecycle and event port")
 	}
-	if err := req.TaskID.Validate(); err != nil {
-		return ProcessRepairResponse{}, fmt.Errorf("task_id is invalid: %w", err)
-	}
-	startedAt := time.Now()
-	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
-	response, err := o.routes.ExecuteTurnInput(ctx, input, route, req.TaskID, "")
-	if err != nil {
-		o.emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
-		return ProcessRepairResponse{}, err
-	}
-	o.emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair Task completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
-	return ProcessRepairResponse{Response: response, Route: route, TaskID: req.TaskID}, nil
+	return processRepair(ctx, req, route, o.taskLifecycle, o.events, o.events.publicationFail,
+		func(ctx context.Context, input conversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID) (string, error) {
+			return o.routes.ExecuteTurnInput(ctx, input, route, taskID, runID, "")
+		})
 }

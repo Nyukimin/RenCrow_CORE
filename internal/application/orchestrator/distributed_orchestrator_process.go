@@ -304,7 +304,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 
 	// 4. ルートに応じてTransport経由で実行
-	response, err := o.executeDistributed(ctx, input, decision.Route, taskID, ttsSessionID)
+	response, err := o.executeDistributed(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
