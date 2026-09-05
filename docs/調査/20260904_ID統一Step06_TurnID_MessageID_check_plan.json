@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-05T00:11:12Z",
+  "evaluated_at": "2026-09-05T00:17:44Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -125,6 +125,13 @@
     "historical_message_id_policy": "preserve canonical msg_ values",
     "gate7_runtime_artifact_sha256": "2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf",
     "gate7_runtime_revision": "a4669c24475241acfd45fa6def58d87dd66001bf",
+    "gate7_e2e_agent_message_id": "msg_01a06eeb-3659-75a2-877d-48b521f70f52",
+    "gate7_e2e_job_id": "20260905-001503-5af1c1e0",
+    "gate7_e2e_root_task_id": "tsk_01a06eeb-3659-75c5-8d65-2f04a0a8f24d",
+    "gate7_e2e_trace_id": "trc_01a06eeb-3659-75b2-bcb8-c01875015772",
+    "gate7_e2e_turn_id": "turn_01a06eeb-3659-75a9-bb39-43e4b2d711c3",
+    "gate7_e2e_user_message_id": "msg_01a06eeb-3659-7597-b668-348fa42b6a3a",
+    "gate7_service_main_pid": 2177424,
     "live_conversation_turn_receipt_canonical_trace_count": 0,
     "live_conversation_turn_receipt_canonical_turn_count": 0,
     "live_conversation_turn_receipt_count": 437,
@@ -161,7 +168,7 @@
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "Gate 7 cleanup revision a4669c24 is pushed and its runtime artifact is hash-bound; post-cleanup install, restart and actual Agent route are pending"
+    "worktree_state": "Gate 7 runtime a4669c24 is installed and ready; post-restart actual Mio CHAT, receipt, L1 metadata, outbox, recall, global relationship checks and timer restoration passed; this final evidence update is the only pending repository change"
   },
   "observations": [
     {
@@ -228,9 +235,16 @@
       "subject": "post-cleanup runtime artifact",
       "evidence": "Gate 7 revision a4669c24475241acfd45fa6def58d87dd66001bf equals origin/identity/03-dci and built runtime artifact SHA-256 2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf after modules/core tests, bounded source-root vet and main build passed",
       "next_action": "preserve the reviewed artifact in the existing recovery root, install it atomically, restart the canonical owner and execute the post-cleanup actual Mio route"
+    },
+    {
+      "at": "2026-09-05T00:17:44Z",
+      "outcome": "step06-complete-route-verified",
+      "subject": "Gate 7 deployment, restart and final actual Agent receipt",
+      "evidence": "a4669c24 artifact 2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf is both installed and active as PID 2177424 with listener, live, ready and zero restarts; RenCrow_CMD job 20260905-001503-5af1c1e0 used CHAT and actual Mio and completed trace trc_01a06eeb-3659-75b2-bcb8-c01875015772; receipt, result JSON, both completed outbox targets, completed recall trace and both L1 message metadata rows agreed on distinct canonical identities; across 440 receipts and 880 receipt-owned messages, missing rows, metadata mismatches, identity collisions, outbox mismatches, linked recall mismatches and foreign-key violations were zero; resilience and storage-backup timers returned active",
+      "next_action": "keep whole-system and RenCrow_Workspace restore checks deferred to their declared phases; proceed to the next canonical Identity ledger row"
     }
   ],
-  "phase": "gate7-artifact-reviewed-restart-pending",
+  "phase": "complete-route-verified",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
@@ -272,8 +286,8 @@
       "check_ids": [
         "s6_runtime_identity"
       ],
-      "status": "pre-cleanup-passed",
-      "evidence": "runtime 50ce3764 reached ready as PID 2168621 with reviewed artifact hash and zero restarts; RenCrow_CMD -> CORE -> CHAT -> actual Mio returned a visible response for job 20260905-000627-82442598 and completed receipt trace trc_01a06ee3-546e-7ab2-8eb1-a1a234e79764; receipt/result JSON, L1 user/Agent rows, completed Redis outbox and completed Mio recall trace agreed on independent canonical identities; Gate 7 cleanup rebuild and post-restart route remain required"
+      "status": "passed",
+      "evidence": "Gate 7 runtime a4669c24 artifact hash matched installed and active PID 2177424 after restart with live, ready and zero restarts; RenCrow_CMD -> CORE -> CHAT -> actual Mio returned a visible response for job 20260905-001503-5af1c1e0 and completed trace trc_01a06eeb-3659-75b2-bcb8-c01875015772; distinct canonical receipt/result identities, both L1 rows, both completed outbox targets and completed Mio recall trace agreed; global post-route relationship and foreign-key violations were zero; both operational timers were restored active"
     }
   ],
   "schema_version": "rencrow.check_plan.v1"
