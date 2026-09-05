@@ -1829,8 +1829,12 @@ Test:
 - 旧`job_id`から既存会話identityを再利用するのは、read-only Event Storeから一意な
   `TraceID`へ結び、そのTraceの一意なconversation receiptとUser／Agent eventが
   `SessionID`、`ChannelAddress`、本文、route、両`MessageID`についてexact matchする場合だけとする。
-  receiptがないrowは`NewMigrationID(target type, "session_history", "job_id", legacy job_id)`で
-  5 IDを決定的に生成し、矛盾するreceipt、複数Trace、ID衝突は拒否する。
+  receiptがないrowは、`RootTaskID`、`TurnID`、`TraceID`を
+  `NewMigrationID(target type, "session_history", "job_id", legacy job_id)`で決定的に生成する。
+  Userの`MessageID`は`CanonicalMessageID / session_history / user_message / legacy job_id`、
+  Agentの`MessageID`は`CanonicalMessageID / session_history / agent_message / legacy job_id`を
+  `NewMigrationID`へ渡す。同じtarget typeの両MessageIDを役割別source field名前空間で
+  分離し、矛盾するreceipt、複数Trace、ID衝突、両MessageIDの一致は拒否する。
 - dry-runはsource、関連Event／receipt evidence、mapping、outputをhash-boundし、applyは
   そのreceiptとexact matchするfresh directoryだけへmaterializeする。Event Storeとconversation DBは
   `mode=ro` / `query_only`で開き、receiptへ本文、path、個別IDを公開しない。
