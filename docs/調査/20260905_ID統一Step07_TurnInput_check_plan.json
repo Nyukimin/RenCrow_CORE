@@ -1,0 +1,137 @@
+{
+  "deferred": [
+    {
+      "check_id": "s7_full_system",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row",
+      "reason": "runs only after all Identity ledger rows close"
+    },
+    {
+      "check_id": "s7_workspace_restore",
+      "consumer": "RenCrow_Workspace whole-state migration",
+      "failure_action": "keep Workspace migration open",
+      "reason": "whole-state restore is not a Step07 input Value Object guarantee"
+    },
+    {
+      "check_id": "s7_voice_full_route",
+      "consumer": "Step17 Voice and IdleChat identity consolidation",
+      "failure_action": "keep the Step17 Voice route row open",
+      "reason": "Step07 verifies that Voice input is represented by canonical TurnInput; full Voice ConversationTurn persistence belongs to Step17"
+    }
+  ],
+  "excluded": [],
+  "included": [
+    {
+      "check_id": "s7_owner_source",
+      "execution_phase": "design and implementation",
+      "failure_action": "keep Step07 open",
+      "guarantee": "RenCrow_CORE conversation domain is the sole owner of User input Value Object and ChannelAddress",
+      "owner": "RenCrow_CORE internal/domain/conversation",
+      "result_consumer": "Step07 implementation"
+    },
+    {
+      "check_id": "s7_turn_input_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "TurnInput carries RootTaskID TurnID TraceID user and Agent MessageID message text ChannelAddress SessionID attachments Viewer recipient and routes without a legacy JobID or ChatID member",
+      "owner": "RenCrow_CORE conversation domain",
+      "result_consumer": "text and Voice ingress"
+    },
+    {
+      "check_id": "s7_identity_preservation",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "immutable modifiers including attribution message rewrite preserve all canonical input identities and ChannelAddress",
+      "owner": "RenCrow_CORE conversation domain and orchestrator",
+      "result_consumer": "actual Agent route"
+    },
+    {
+      "check_id": "s7_job_boundary",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to implementation",
+      "guarantee": "legacy execution JobID remains explicit only at job-owned boundaries and is never stored in or derived from TurnInput",
+      "owner": "RenCrow_CORE application job boundary",
+      "result_consumer": "Step08 Job to Task migration"
+    },
+    {
+      "check_id": "s7_input_behavior",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "attachments forced route Viewer recipient text input and bounded Voice input preserve the canonical TurnInput contract",
+      "owner": "RenCrow_CORE ingress orchestrator agents and routing",
+      "result_consumer": "Step07 local acceptance"
+    },
+    {
+      "check_id": "s7_session_storage",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "session JSON persists canonical TurnInput fields and all five canonical identities exactly and rejects legacy history fields in normal runtime",
+      "owner": "RenCrow_CORE session persistence",
+      "result_consumer": "session reload and runtime route"
+    },
+    {
+      "check_id": "s7_deterministic_migration",
+      "execution_phase": "pre-cutover and cutover",
+      "failure_action": "rollback the session directory and keep Step07 open",
+      "guarantee": "one-shot migration reads source session JSON and event and conversation databases without mutation, reuses identities only for an exact unique receipt linkage, deterministically maps all other legacy history rows, and emits a hash-bound fresh directory and receipt",
+      "owner": "RenCrow_CORE migration CLI",
+      "result_consumer": "production session storage"
+    },
+    {
+      "check_id": "s7_architecture_zero",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "failure_action": "return to implementation",
+      "guarantee": "production code contains zero User input Value Object named Task, zero TurnInput ChatID accessor or field, zero session-owned ChannelAddress, and after Gate 7 zero one-shot migration source",
+      "owner": "modules/core architecture tests",
+      "result_consumer": "Step07 ledger"
+    },
+    {
+      "check_id": "s7_predeploy_build",
+      "execution_phase": "pre-deploy",
+      "failure_action": "do not install or restart",
+      "guarantee": "targeted Go tests source-root vet build static architecture checks and migration dry-run pass from the reviewed diff",
+      "owner": "RenCrow_CORE",
+      "result_consumer": "deploy owner"
+    },
+    {
+      "check_id": "s7_bounded_recovery",
+      "execution_phase": "pre-cutover",
+      "failure_action": "block cutover",
+      "guarantee": "the exact writer-stopped session directory old and new runtimes migration binary dry-run apply receipts and fixed Check Plan have a hash-bound recoverable copy on the separate recovery filesystem before the same-filesystem session directory swap",
+      "owner": "RenCrow_CORE migration CLI and service owner",
+      "result_consumer": "production cutover"
+    },
+    {
+      "check_id": "s7_runtime_identity",
+      "execution_phase": "post-deploy and post-restart",
+      "failure_action": "rollback or leave Step07 unverified and diagnose the canonical route",
+      "guarantee": "pushed source installed artifact active service PID listener readiness actual CORE Agent visible Text response receipt and reloaded session TurnInput agree after restart",
+      "owner": "rencrow.service through the canonical module route",
+      "result_consumer": "Step07 ledger"
+    }
+  ],
+  "input": {
+    "active_runtime_artifact_sha256": "2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf",
+    "active_runtime_main_pid": 2177424,
+    "active_runtime_revision": "a4669c24475241acfd45fa6def58d87dd66001bf",
+    "base_revision": "362a487dda2ba5767583e8c38a4f99feb7cda7be",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-07-input-value-object",
+    "channel_address_owner": "internal/domain/conversation",
+    "historical_mapping_policy": "reuse only one exact receipt linkage; otherwise modules/core NewMigrationID keyed by target type session_history job_id and legacy job_id; fail closed on ambiguity or mismatch",
+    "legacy_history_rows_observed": 494,
+    "legacy_history_rows_with_unique_receipt_mapping_observed": 3,
+    "legacy_history_rows_with_unique_trace_without_receipt_observed": 94,
+    "legacy_history_rows_without_trace_observed": 397,
+    "session_file_bytes_at_plan": 394281,
+    "session_file_count_at_plan": 21,
+    "session_root": "/srv/rencrow/db/core/memory/sessions",
+    "session_root_filesystem": "/dev/sdd1",
+    "separate_recovery_filesystem": "/dev/sdb1",
+    "step08_boundary": "internal/domain/task JobID and internal/domain/job remain until Step08; TurnInput does not carry JobID"
+  },
+  "phase": "design-frozen",
+  "purpose": "identity-step07-turn-input",
+  "replacement_receipts": [],
+  "results": [],
+  "schema_version": "rencrow.check_plan.v1"
+}
