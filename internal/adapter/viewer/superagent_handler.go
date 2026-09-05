@@ -405,7 +405,7 @@ func saveSuperAgentItem(store SuperAgentStore, name string, save func(context.Co
 
 func findAgentRunByID(items []domainsuperagent.AgentRun, runID string) (domainsuperagent.AgentRun, bool) {
 	for _, item := range items {
-		if item.RunID == runID {
+		if string(item.RunID) == runID {
 			return item, true
 		}
 	}

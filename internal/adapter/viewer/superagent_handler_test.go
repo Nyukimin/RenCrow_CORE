@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,7 +101,7 @@ func (s *stubSuperAgentStore) SaveRunQueueItem(_ context.Context, item domainsup
 }
 
 func TestHandleSuperAgentStatus(t *testing.T) {
-	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "running"}}}
+	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: modulecore.NewRunID(), TaskID: modulecore.NewTaskID(), AgentType: "LeadAgent", Status: "running"}}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/superagent", nil)
 	rec := httptest.NewRecorder()
 	HandleSuperAgentStatus(store).ServeHTTP(rec, req)
@@ -155,8 +156,10 @@ func TestHandleSuperAgentSubagentTaskRequiresScope(t *testing.T) {
 
 func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
-		RunID:              "run_1",
+		RunID:              runID,
+		TaskID:             taskID,
 		AgentType:          "LeadAgent",
 		Goal:               "continue durable work",
 		Status:             "running",
@@ -168,7 +171,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 		LastCheckpointAt:   startedAt,
 	}}}
 
-	pauseReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/pause", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"user requested pause"}`)))
+	pauseReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/pause", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q,"reason":"user requested pause"}`, runID))))
 	pauseRec := httptest.NewRecorder()
 	HandleSuperAgentRunPause(store).ServeHTTP(pauseRec, pauseReq)
 	if pauseRec.Code != http.StatusOK {
@@ -181,7 +184,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 		t.Fatalf("expected pause trace, got %#v", store.events)
 	}
 
-	resumeReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"resume"}`)))
+	resumeReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q,"reason":"resume"}`, runID))))
 	resumeRec := httptest.NewRecorder()
 	HandleSuperAgentRunResume(store).ServeHTTP(resumeRec, resumeReq)
 	if resumeRec.Code != http.StatusOK {
@@ -193,10 +196,10 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	if len(store.events) != 2 || store.events[1].EventType != "run.lead_agent_resumed" {
 		t.Fatalf("expected resume trace, got %#v", store.events)
 	}
-	if len(store.queue) != 1 || store.queue[0].QueueID != "resume:run_1:3" || store.queue[0].RunID != "run_1" || store.queue[0].CheckpointRevision != 3 {
+	if len(store.queue) != 1 || store.queue[0].QueueID != "resume:"+string(runID)+":3" || store.queue[0].RunID != string(runID) || store.queue[0].CheckpointRevision != 3 {
 		t.Fatalf("resume queue=%#v", store.queue)
 	}
-	secondReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"duplicate transport retry"}`)))
+	secondReq := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q,"reason":"duplicate transport retry"}`, runID))))
 	secondRec := httptest.NewRecorder()
 	HandleSuperAgentRunResume(store).ServeHTTP(secondRec, secondReq)
 	if secondRec.Code != http.StatusOK || len(store.queue) != 1 {
@@ -206,8 +209,9 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 
 func TestHandleSuperAgentRunResumeRejectsMissingCheckpoint(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: "run-no-checkpoint", AgentType: "LeadAgent", Goal: "work", Status: "paused", StartedAt: startedAt, CompletedAt: startedAt}}}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(`{"run_id":"run-no-checkpoint"}`)))
+	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
+	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "work", Status: "paused", StartedAt: startedAt, CompletedAt: startedAt}}}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q}`, runID))))
 	rec := httptest.NewRecorder()
 	HandleSuperAgentRunResume(store).ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict || len(store.queue) != 0 {
@@ -227,15 +231,17 @@ func TestHandleSuperAgentRunPauseMissingRunFails(t *testing.T) {
 
 func TestHandleSuperAgentRunPauseAppliesRuntimeControl(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
-		RunID:     "run_1",
+		RunID:     runID,
+		TaskID:    taskID,
 		AgentType: "LeadAgent",
 		Status:    "running",
 		StartedAt: startedAt,
 	}}}
 	controller := &stubSuperAgentRunController{}
 
-	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/pause", bytes.NewReader([]byte(`{"run_id":"run_1","reason":"user requested pause"}`)))
+	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/pause", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q,"reason":"user requested pause"}`, runID))))
 	rec := httptest.NewRecorder()
 	HandleSuperAgentRunPauseWithController(store, controller).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -251,7 +257,7 @@ func TestHandleSuperAgentRunPauseAppliesRuntimeControl(t *testing.T) {
 	if got["runtime_control_action"] != "cancel_requested" {
 		t.Fatalf("expected cancel action, got %#v", got)
 	}
-	if controller.pausedRunID != "run_1" {
+	if controller.pausedRunID != string(runID) {
 		t.Fatalf("controller was not called: %#v", controller)
 	}
 }

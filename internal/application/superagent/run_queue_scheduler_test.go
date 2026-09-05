@@ -12,9 +12,10 @@ import (
 
 func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	store := &recordingRunQueueStore{
 		runs: []domainsuperagent.AgentRun{{
-			RunID: "run-high", AgentType: "LeadAgent", Goal: "run this", Status: "queued", StartedAt: now.Add(-time.Minute),
+			RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "run this", Status: "queued", StartedAt: now.Add(-time.Minute),
 			ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "request committed", NextAction: "run this", LastCheckpointAt: now.Add(-time.Minute),
 		}},
 		items: []domainsuperagent.RunQueueItem{
@@ -28,7 +29,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 			},
 			{
 				QueueID:   "q-high",
-				RunID:     "run-high",
+				RunID:     string(runID),
 				Goal:      "run this",
 				Action:    "resume",
 				Status:    "queued",
@@ -191,20 +192,25 @@ func (s *recordingRunQueueStore) item(queueID string) domainsuperagent.RunQueueI
 
 func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 	now := time.Date(2026, 8, 23, 16, 0, 0, 0, time.UTC)
+	resumableRunID, legacyRunID, finishedRunID, queueFinishedRunID := modulecore.NewRunID(), modulecore.NewRunID(), modulecore.NewRunID(), modulecore.NewRunID()
+	resumableTaskID, legacyTaskID, finishedTaskID, queueFinishedTaskID := modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewTaskID()
+	finishedQueueID := "resume:" + string(finishedRunID) + ":1"
+	queueFinishedQueueID := "resume:" + string(queueFinishedRunID) + ":2"
 	store := &recordingRunQueueStore{runs: []domainsuperagent.AgentRun{
-		{RunID: "run-resumable", WorkstreamID: "thread-1", AgentType: "LeadAgent", Goal: "continue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 5, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-time.Minute)},
-		{RunID: "run-legacy", AgentType: "LeadAgent", Goal: "unknown position", Status: "running", StartedAt: now.Add(-time.Hour)},
-		{RunID: "run-finished", AgentType: "LeadAgent", Goal: "done", Status: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Minute), Summary: "receipt committed", ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
-		{RunID: "run-queue-finished", AgentType: "LeadAgent", Goal: "done by queue", Status: "queued", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 2, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
+		{RunID: resumableRunID, TaskID: resumableTaskID, WorkstreamID: "thread-1", AgentType: "LeadAgent", Goal: "continue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 5, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-time.Minute)},
+		{RunID: legacyRunID, TaskID: legacyTaskID, AgentType: "LeadAgent", Goal: "unknown position", Status: "running", StartedAt: now.Add(-time.Hour)},
+		{RunID: finishedRunID, TaskID: finishedTaskID, AgentType: "LeadAgent", Goal: "done", Status: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Minute), Summary: "receipt committed", ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
+		{RunID: queueFinishedRunID, TaskID: queueFinishedTaskID, AgentType: "LeadAgent", Goal: "done by queue", Status: "queued", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 2, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
 	}, items: []domainsuperagent.RunQueueItem{
-		{QueueID: "resume:run-finished:1", RunID: "run-finished", Goal: "done", Action: "resume", Status: "claimed", ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)},
-		{QueueID: "resume:run-queue-finished:2", RunID: "run-queue-finished", Goal: "done by queue", Action: "resume", Status: "completed", Reason: "queue receipt", CompletedAt: now.Add(-time.Minute), CheckpointRevision: 2, CreatedAt: now.Add(-2 * time.Minute)},
+		{QueueID: finishedQueueID, RunID: string(finishedRunID), Goal: "done", Action: "resume", Status: "claimed", ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)},
+		{QueueID: queueFinishedQueueID, RunID: string(queueFinishedRunID), Goal: "done by queue", Action: "resume", Status: "completed", Reason: "queue receipt", CompletedAt: now.Add(-time.Minute), CheckpointRevision: 2, CreatedAt: now.Add(-2 * time.Minute)},
 	}}
 	queued, blocked, err := RecoverInterruptedAgentRuns(context.Background(), store, now)
 	if err != nil || queued != 1 || blocked != 1 {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
-	if len(store.items) != 3 || store.item("resume:run-resumable:5").CheckpointSummary != "step four committed" || store.item("resume:run-resumable:5").NextAction != "step five" || store.item("resume:run-finished:1").Status != "completed" {
+	resumableQueueID := "resume:" + string(resumableRunID) + ":5"
+	if len(store.items) != 3 || store.item(resumableQueueID).CheckpointSummary != "step four committed" || store.item(resumableQueueID).NextAction != "step five" || store.item(finishedQueueID).Status != "completed" {
 		t.Fatalf("recovery queue=%#v", store.items)
 	}
 	if run := store.runs[3]; run.Status != "completed" || run.Summary != "queue receipt" {

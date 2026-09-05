@@ -6,8 +6,11 @@ import (
 )
 
 func ValidateAgentRun(item AgentRun) error {
-	if strings.TrimSpace(item.RunID) == "" {
-		return fmt.Errorf("run_id is required")
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
+	}
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
 	}
 	if strings.TrimSpace(item.AgentType) == "" {
 		return fmt.Errorf("agent_type is required")
@@ -64,8 +67,11 @@ func ValidateContextPack(item ContextPack, maxTokens int) error {
 	if strings.TrimSpace(item.ContextPackID) == "" {
 		return fmt.Errorf("context_pack_id is required")
 	}
-	if strings.TrimSpace(item.RunID) == "" {
-		return fmt.Errorf("run_id is required")
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
 	}
 	if strings.TrimSpace(item.Summary) == "" {
 		return fmt.Errorf("summary is required")

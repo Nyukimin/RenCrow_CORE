@@ -138,7 +138,7 @@ func (s *RunQueueScheduler) completeAgentRun(ctx context.Context, item domainsup
 		return err
 	}
 	for _, run := range runs {
-		if run.RunID != item.RunID {
+		if string(run.RunID) != item.RunID {
 			continue
 		}
 		run.Status, run.Summary, run.CompletedAt = status, summary, at

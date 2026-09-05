@@ -60,7 +60,8 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	}
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:              string(runID),
+		RunID:              runID,
+		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
 		AgentType:          "LeadAgent",
 		Goal:               req.UserMessage,
@@ -88,7 +89,8 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	}
 	pack := domainsuperagent.ContextPack{
 		ContextPackID:   leadAgentContextPackID(taskID),
-		RunID:           run.RunID,
+		TaskID:          taskID,
+		RunID:           runID,
 		WorkstreamID:    req.SessionID,
 		Summary:         fmt.Sprintf("route=%s channel=%s chat_id=%s user_message=%s", route, req.Channel, req.ChatID, req.UserMessage),
 		IncludedSources: []string{"session:" + req.SessionID, "channel:" + req.Channel, "route:" + string(route)},
@@ -115,7 +117,8 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 	completedAt := time.Now().UTC()
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, record.StartedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:              string(runID),
+		RunID:              runID,
+		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
 		AgentType:          "LeadAgent",
 		Goal:               req.UserMessage,

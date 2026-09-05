@@ -26,8 +26,9 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 		t.Fatal(err)
 	}
 	runID := modulecore.NewRunID()
+	taskID := modulecore.NewTaskID()
 	run := domainsuperagent.AgentRun{
-		RunID: string(runID), WorkstreamID: "thread-e2e", AgentType: "LeadAgent", Goal: "finish step two",
+		RunID: runID, TaskID: taskID, WorkstreamID: "thread-e2e", AgentType: "LeadAgent", Goal: "finish step two",
 		Status: "paused", StartedAt: checkpointAt.Add(-time.Hour), CompletedAt: checkpointAt,
 		ResumePolicy: "checkpoint", CheckpointRevision: 2, CheckpointSummary: "step one receipt committed",
 		NextAction: "execute step two", LastCheckpointAt: checkpointAt,
@@ -92,7 +93,7 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	if err != nil || count != 1 {
 		t.Fatalf("restart resume count=%d err=%v", count, err)
 	}
-	if resumed.RunID != run.RunID || resumed.WorkstreamID != run.WorkstreamID || resumed.CheckpointRevision != run.CheckpointRevision || resumed.AttemptCount != 2 {
+	if resumed.RunID != string(run.RunID) || resumed.WorkstreamID != run.WorkstreamID || resumed.CheckpointRevision != run.CheckpointRevision || resumed.AttemptCount != 2 {
 		t.Fatalf("resumed identity/checkpoint=%#v", resumed)
 	}
 	if resumedTrace.Validate() != nil {

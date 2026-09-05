@@ -90,7 +90,7 @@ func (s *SQLiteStore) SaveAgentRun(ctx context.Context, item domainsuperagent.Ag
 	if err := domainsuperagent.ValidateAgentRun(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "agent_run", "run_id", item.RunID, "started_at", item.StartedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "agent_run", "run_id", string(item.RunID), "started_at", item.StartedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAgentRuns(ctx context.Context, limit int) ([]domainsuperagent.AgentRun, error) {
@@ -117,7 +117,7 @@ func (s *SQLiteStore) FindAgentRunByID(ctx context.Context, runID string) (domai
 	if err := domainsuperagent.ValidateAgentRun(item); err != nil {
 		return domainsuperagent.AgentRun{}, false, err
 	}
-	if item.RunID != runID {
+	if string(item.RunID) != runID {
 		return domainsuperagent.AgentRun{}, false, fmt.Errorf("stored agent run ID %q does not match primary key %q", item.RunID, runID)
 	}
 	return item, true, nil

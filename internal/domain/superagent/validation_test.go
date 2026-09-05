@@ -4,7 +4,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func validTaskID() modulecore.TaskID { return modulecore.NewTaskID() }
+
+func validRunID() modulecore.RunID { return modulecore.NewRunID() }
 
 func TestValidateSubagentTaskRequiresScopeAndTermination(t *testing.T) {
 	err := ValidateSubagentTask(SubagentTask{
@@ -21,8 +27,10 @@ func TestValidateSubagentTaskRequiresScopeAndTermination(t *testing.T) {
 
 func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	taskID, runID := validTaskID(), validRunID()
 	if err := ValidateAgentRun(AgentRun{
-		RunID:       "run_1",
+		RunID:       runID,
+		TaskID:      taskID,
 		AgentType:   "LeadAgent",
 		Status:      "completed",
 		StartedAt:   now,
@@ -44,7 +52,8 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 	}
 	if err := ValidateContextPack(ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        taskID,
+		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 3000,
 		CreatedAt:     now,
@@ -71,10 +80,67 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 	}
 }
 
+func TestValidateAgentRunRejectsLegacyProjectionRunID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	err := ValidateAgentRun(AgentRun{
+		RunID:     "run_legacy",
+		TaskID:    validTaskID(),
+		AgentType: "LeadAgent",
+		Status:    "running",
+		StartedAt: now,
+	})
+	if err == nil || !strings.Contains(err.Error(), "run_id") {
+		t.Fatalf("expected malformed canonical run_id rejection, got %v", err)
+	}
+}
+
+func TestValidateContextPackRejectsLegacyProjectionRunID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	err := ValidateContextPack(ContextPack{
+		ContextPackID: "ctx_legacy",
+		TaskID:        validTaskID(),
+		RunID:         "run_legacy",
+		Summary:       "summary",
+		CreatedAt:     now,
+	}, 0)
+	if err == nil || !strings.Contains(err.Error(), "run_id") {
+		t.Fatalf("expected malformed canonical run_id rejection, got %v", err)
+	}
+}
+
+func TestValidateProjectionsRejectInvalidTaskID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "agent run",
+			err: ValidateAgentRun(AgentRun{
+				RunID: validRunID(), TaskID: "task_legacy", AgentType: "LeadAgent", Status: "running", StartedAt: now,
+			}),
+		},
+		{
+			name: "context pack",
+			err: ValidateContextPack(ContextPack{
+				ContextPackID: "ctx_legacy", TaskID: "task_legacy", RunID: validRunID(), Summary: "summary", CreatedAt: now,
+			}, 0),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.err == nil || !strings.Contains(tc.err.Error(), "task_id") {
+				t.Fatalf("expected malformed canonical task_id rejection, got %v", tc.err)
+			}
+		})
+	}
+}
+
 func TestValidateContextPackRespectsMaxTokens(t *testing.T) {
 	err := ValidateContextPack(ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        validTaskID(),
+		RunID:         validRunID(),
 		Summary:       "summary",
 		TokenEstimate: 4000,
 	}, 3000)
@@ -93,7 +159,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "agent run started_at",
 			err:  "started_at",
 			run: func() error {
-				return ValidateAgentRun(AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: "running"})
+				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: "running"})
 			},
 		},
 		{
@@ -115,7 +181,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "context pack created_at",
 			err:  "created_at",
 			run: func() error {
-				return ValidateContextPack(ContextPack{ContextPackID: "ctx_1", RunID: "run_1", Summary: "summary", TokenEstimate: 1200}, 3000)
+				return ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: 1200}, 3000)
 			},
 		},
 		{
@@ -155,7 +221,7 @@ func TestValidateSuperAgentRejectsTerminalWithoutCompletedAt(t *testing.T) {
 		{
 			name: "agent run",
 			run: func() error {
-				return ValidateAgentRun(AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: "failed", StartedAt: now, Summary: "failed"})
+				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: "failed", StartedAt: now, Summary: "failed"})
 			},
 		},
 		{
@@ -186,18 +252,18 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		want string
 	}{
 		{name: "agent run id", err: ValidateAgentRun(AgentRun{AgentType: "LeadAgent", Status: "running", StartedAt: now}), want: "run_id"},
-		{name: "agent type", err: ValidateAgentRun(AgentRun{RunID: "run_1", Status: "running", StartedAt: now}), want: "agent_type"},
-		{name: "agent status", err: ValidateAgentRun(AgentRun{RunID: "run_1", AgentType: "LeadAgent", StartedAt: now}), want: "status"},
+		{name: "agent type", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), Status: "running", StartedAt: now}), want: "agent_type"},
+		{name: "agent status", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", StartedAt: now}), want: "status"},
 		{name: "subagent id", err: ValidateSubagentTask(SubagentTask{ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "subagent_id"},
 		{name: "subagent parent", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "parent_run_id"},
 		{name: "subagent agent type", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "agent_type"},
 		{name: "subagent task", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task"},
 		{name: "subagent termination", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, Status: "pending", CreatedAt: now}), want: "termination_condition"},
 		{name: "subagent status", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", CreatedAt: now}), want: "status"},
-		{name: "context id", err: ValidateContextPack(ContextPack{RunID: "run_1", Summary: "summary", CreatedAt: now}, 0), want: "context_pack_id"},
-		{name: "context run", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", Summary: "summary", CreatedAt: now}, 0), want: "run_id"},
-		{name: "context summary", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", RunID: "run_1", CreatedAt: now}, 0), want: "summary"},
-		{name: "context negative tokens", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", RunID: "run_1", Summary: "summary", TokenEstimate: -1, CreatedAt: now}, 0), want: "token_estimate"},
+		{name: "context id", err: ValidateContextPack(ContextPack{TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", CreatedAt: now}, 0), want: "context_pack_id"},
+		{name: "context run", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), Summary: "summary", CreatedAt: now}, 0), want: "run_id"},
+		{name: "context summary", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), CreatedAt: now}, 0), want: "summary"},
+		{name: "context negative tokens", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: -1, CreatedAt: now}, 0), want: "token_estimate"},
 		{name: "channel id", err: ValidateMessageChannel(MessageChannel{ChannelType: "superagent", Status: "active", CreatedAt: now}), want: "channel_id"},
 		{name: "channel type", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", Status: "active", CreatedAt: now}), want: "channel_type"},
 		{name: "channel status", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", ChannelType: "superagent", CreatedAt: now}), want: "status"},
@@ -219,7 +285,7 @@ func TestValidateSuperAgentTerminalStatusVariants(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	for _, status := range []string{"completed", "failed", "cancelled", "paused"} {
 		t.Run("agent "+status, func(t *testing.T) {
-			err := ValidateAgentRun(AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: status, StartedAt: now})
+			err := ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: status, StartedAt: now})
 			if err == nil || !strings.Contains(err.Error(), "completed_at") {
 				t.Fatalf("err=%v, want completed_at", err)
 			}

@@ -7,13 +7,16 @@ import (
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	store := NewJSONLStore(t.TempDir(), 3000)
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	if err := store.SaveAgentRun(context.Background(), domainsuperagent.AgentRun{
-		RunID:     "run_1",
+		RunID:     runID,
+		TaskID:    taskID,
 		AgentType: "LeadAgent",
 		Status:    "running",
 		StartedAt: now,
@@ -34,7 +37,8 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        taskID,
+		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 1200,
 		CreatedAt:     now,
@@ -71,9 +75,11 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 
 func TestJSONLStoreRejectsOversizedContextPack(t *testing.T) {
 	store := NewJSONLStore(t.TempDir(), 100)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        taskID,
+		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 101,
 		CreatedAt:     time.Now(),
@@ -122,8 +128,10 @@ func TestJSONLStoreListAgentRunsReturnsLatestStatePerRun(t *testing.T) {
 	store := NewJSONLStore(t.TempDir(), 3000)
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 9, 28, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	running := domainsuperagent.AgentRun{
-		RunID:     "run_1",
+		RunID:     runID,
+		TaskID:    taskID,
 		AgentType: "LeadAgent",
 		Goal:      "scheduler E2E",
 		Status:    "running",
@@ -145,7 +153,7 @@ func TestJSONLStoreListAgentRunsReturnsLatestStatePerRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListAgentRuns() error = %v", err)
 	}
-	if len(runs) != 1 || runs[0].RunID != "run_1" || runs[0].Status != "failed" || runs[0].CompletedAt.IsZero() {
+	if len(runs) != 1 || runs[0].RunID != runID || runs[0].Status != "failed" || runs[0].CompletedAt.IsZero() {
 		t.Fatalf("runs=%#v", runs)
 	}
 }
@@ -154,7 +162,8 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 	store := NewJSONLStore(t.TempDir(), 3000)
 	ctx := context.Background()
 	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
-	running := domainsuperagent.AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: "running", StartedAt: now}
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	running := domainsuperagent.AgentRun{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}
 	completed := running
 	completed.Status = "completed"
 	completed.CompletedAt = now.Add(time.Minute)
@@ -164,7 +173,7 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 	if err := store.SaveAgentRun(ctx, completed); err != nil {
 		t.Fatal(err)
 	}
-	item, found, err := store.FindAgentRunByID(ctx, "run_1")
+	item, found, err := store.FindAgentRunByID(ctx, string(runID))
 	if err != nil || !found || item.Status != "completed" {
 		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
 	}
@@ -175,10 +184,11 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 	}
 
 	prefixStore := NewJSONLStore(t.TempDir(), 3000)
-	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: "run_10", AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
+	prefixTaskID, prefixRunID := modulecore.NewTaskID(), modulecore.NewRunID()
+	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: prefixRunID, TaskID: prefixTaskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	item, found, err = prefixStore.FindAgentRunByID(ctx, "run_1")
+	item, found, err = prefixStore.FindAgentRunByID(ctx, string(runID))
 	if err != nil || found || item.RunID != "" {
 		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
 	}
@@ -187,7 +197,7 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 	if err := os.WriteFile(corruptStore.agentRunPath, []byte("{\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := corruptStore.FindAgentRunByID(ctx, "run_1"); err == nil {
+	if _, _, err := corruptStore.FindAgentRunByID(ctx, string(runID)); err == nil {
 		t.Fatal("expected malformed JSON error")
 	}
 }

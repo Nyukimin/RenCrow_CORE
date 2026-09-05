@@ -69,7 +69,7 @@ func (s *JSONLStore) FindAgentRunByID(_ context.Context, runID string) (domainsu
 		if err := domainsuperagent.ValidateAgentRun(item); err != nil {
 			return err
 		}
-		if item.RunID == runID {
+		if string(item.RunID) == runID {
 			found = item
 			foundRecord = true
 		}
@@ -89,10 +89,10 @@ func latestAgentRuns(items []domainsuperagent.AgentRun, limit int) []domainsuper
 	out := make([]domainsuperagent.AgentRun, 0, minRunQueueLimit(limit, len(items)))
 	for i := len(items) - 1; i >= 0 && len(out) < limit; i-- {
 		item := items[i]
-		if _, ok := seen[item.RunID]; ok {
+		if _, ok := seen[string(item.RunID)]; ok {
 			continue
 		}
-		seen[item.RunID] = struct{}{}
+		seen[string(item.RunID)] = struct{}{}
 		out = append(out, item)
 	}
 	return out

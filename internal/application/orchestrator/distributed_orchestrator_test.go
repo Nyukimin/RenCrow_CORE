@@ -621,7 +621,7 @@ func TestDistributedOrchestrator_RecordsLeadAgentRun(t *testing.T) {
 	if err != nil || len(runs) != 1 || runs[0].RunID != modulecore.RunID(super.runs[0].RunID) {
 		t.Fatalf("task owner run = %#v err=%v, projection=%q", runs, err, super.runs[0].RunID)
 	}
-	if len(controller.registered) != 1 || controller.registered[0] != super.runs[0].RunID {
+	if len(controller.registered) != 1 || controller.registered[0] != string(super.runs[0].RunID) {
 		t.Fatalf("controller RunID = %#v, projection=%q", controller.registered, super.runs[0].RunID)
 	}
 }

@@ -1,22 +1,26 @@
 package superagent
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type AgentRun struct {
-	RunID              string    `json:"run_id"`
-	WorkstreamID       string    `json:"workstream_id,omitempty"`
-	ParentRunID        string    `json:"parent_run_id,omitempty"`
-	AgentType          string    `json:"agent_type"`
-	Goal               string    `json:"goal,omitempty"`
-	Status             string    `json:"status"`
-	StartedAt          time.Time `json:"started_at"`
-	CompletedAt        time.Time `json:"completed_at,omitempty"`
-	Summary            string    `json:"summary,omitempty"`
-	ResumePolicy       string    `json:"resume_policy,omitempty"`
-	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
-	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
-	NextAction         string    `json:"next_action,omitempty"`
-	LastCheckpointAt   time.Time `json:"last_checkpoint_at,omitempty"`
+	RunID              modulecore.RunID  `json:"run_id"`
+	TaskID             modulecore.TaskID `json:"task_id"`
+	WorkstreamID       string            `json:"workstream_id,omitempty"`
+	AgentType          string            `json:"agent_type"`
+	Goal               string            `json:"goal,omitempty"`
+	Status             string            `json:"status"`
+	StartedAt          time.Time         `json:"started_at"`
+	CompletedAt        time.Time         `json:"completed_at,omitempty"`
+	Summary            string            `json:"summary,omitempty"`
+	ResumePolicy       string            `json:"resume_policy,omitempty"`
+	CheckpointRevision int               `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string            `json:"checkpoint_summary,omitempty"`
+	NextAction         string            `json:"next_action,omitempty"`
+	LastCheckpointAt   time.Time         `json:"last_checkpoint_at,omitempty"`
 }
 
 type SubagentTask struct {
@@ -34,13 +38,14 @@ type SubagentTask struct {
 }
 
 type ContextPack struct {
-	ContextPackID   string    `json:"context_pack_id"`
-	RunID           string    `json:"run_id"`
-	WorkstreamID    string    `json:"workstream_id,omitempty"`
-	Summary         string    `json:"summary"`
-	IncludedSources []string  `json:"included_sources,omitempty"`
-	TokenEstimate   int       `json:"token_estimate,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ContextPackID   string            `json:"context_pack_id"`
+	TaskID          modulecore.TaskID `json:"task_id"`
+	RunID           modulecore.RunID  `json:"run_id"`
+	WorkstreamID    string            `json:"workstream_id,omitempty"`
+	Summary         string            `json:"summary"`
+	IncludedSources []string          `json:"included_sources,omitempty"`
+	TokenEstimate   int               `json:"token_estimate,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
 }
 
 type MessageChannel struct {

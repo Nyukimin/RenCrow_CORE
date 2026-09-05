@@ -36,10 +36,10 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 	}
 	seenRuns := make(map[string]struct{}, len(runs))
 	for _, run := range runs {
-		if _, seen := seenRuns[run.RunID]; seen {
+		if _, seen := seenRuns[string(run.RunID)]; seen {
 			continue
 		}
-		seenRuns[run.RunID] = struct{}{}
+		seenRuns[string(run.RunID)] = struct{}{}
 		if run.ResumePolicy == "checkpoint" && run.CheckpointRevision > 0 {
 			queueID := fmt.Sprintf("resume:%s:%d", run.RunID, run.CheckpointRevision)
 			if existing, ok := queueByID[queueID]; ok {
@@ -83,7 +83,7 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 			continue
 		}
 		item := domainsuperagent.RunQueueItem{
-			QueueID: queueID, RunID: run.RunID, WorkstreamID: run.WorkstreamID,
+			QueueID: queueID, RunID: string(run.RunID), WorkstreamID: run.WorkstreamID,
 			Goal: run.Goal, Action: "resume", Status: "queued",
 			CheckpointRevision: run.CheckpointRevision, CheckpointSummary: run.CheckpointSummary,
 			NextAction: run.NextAction, IdempotencyKey: queueID, CreatedAt: now.UTC(),

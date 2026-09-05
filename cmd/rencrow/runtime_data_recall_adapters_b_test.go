@@ -119,8 +119,9 @@ func TestRegisterDataRecallComplexityHotspot(t *testing.T) {
 }
 
 func TestRegisterDataRecallSuperAgentHarness(t *testing.T) {
+	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	store := &dataRecallSuperAgentListerStub{runs: []domainsuperagent.AgentRun{
-		{RunID: "run-1", AgentType: "Luna", Goal: "secret context", Status: "completed", StartedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC), CompletedAt: time.Date(2026, 8, 13, 0, 1, 0, 0, time.UTC), Summary: "private context pack"},
+		{RunID: runID, TaskID: taskID, AgentType: "Luna", Goal: "secret context", Status: "completed", StartedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC), CompletedAt: time.Date(2026, 8, 13, 0, 1, 0, 0, time.UTC), Summary: "private context pack"},
 	}}
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallSuperAgentHarness(registry, store); err != nil {

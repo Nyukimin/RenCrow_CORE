@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
@@ -16,8 +17,10 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	if err := store.SaveAgentRun(context.Background(), domainsuperagent.AgentRun{
-		RunID:     "run_1",
+		RunID:     runID,
+		TaskID:    taskID,
 		AgentType: "LeadAgent",
 		Status:    "running",
 		StartedAt: now,
@@ -38,7 +41,8 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        taskID,
+		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 1200,
 		CreatedAt:     now,
@@ -55,7 +59,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}
 	if err := store.SaveRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
 		QueueID:   "queue_1",
-		RunID:     "run_1",
+		RunID:     string(runID),
 		Goal:      "resume run",
 		Action:    "resume",
 		Status:    "queued",
@@ -64,7 +68,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveRunQueueItem() error = %v", err)
 	}
 	runs, err := store.ListAgentRuns(context.Background(), 10)
-	if err != nil || len(runs) != 1 || runs[0].RunID != "run_1" {
+	if err != nil || len(runs) != 1 || runs[0].RunID != runID {
 		t.Fatalf("ListAgentRuns() = %#v, %v", runs, err)
 	}
 	tasks, err := store.ListSubagentTasks(context.Background(), 10)
@@ -142,9 +146,11 @@ func TestSQLiteStoreRejectsOversizedContextPack(t *testing.T) {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
 	defer store.Close()
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	err = store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
-		RunID:         "run_1",
+		TaskID:        taskID,
+		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 101,
 		CreatedAt:     time.Now(),
@@ -162,7 +168,8 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 		t.Fatal(err)
 	}
 	defer store.Close()
-	running := domainsuperagent.AgentRun{RunID: "run_1", AgentType: "LeadAgent", Status: "running", StartedAt: now}
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	running := domainsuperagent.AgentRun{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}
 	completed := running
 	completed.Status = "completed"
 	completed.CompletedAt = now.Add(time.Minute)
@@ -172,7 +179,7 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 	if err := store.SaveAgentRun(ctx, completed); err != nil {
 		t.Fatal(err)
 	}
-	item, found, err := store.FindAgentRunByID(ctx, "run_1")
+	item, found, err := store.FindAgentRunByID(ctx, string(runID))
 	if err != nil || !found || item.Status != "completed" {
 		t.Fatalf("item=%#v found=%v err=%v", item, found, err)
 	}
@@ -186,18 +193,19 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 		t.Fatal(err)
 	}
 	defer prefixStore.Close()
-	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: "run_10", AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
+	prefixTaskID, prefixRunID := modulecore.NewTaskID(), modulecore.NewRunID()
+	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: prefixRunID, TaskID: prefixTaskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	item, found, err = prefixStore.FindAgentRunByID(ctx, "run_1")
+	item, found, err = prefixStore.FindAgentRunByID(ctx, string(runID))
 	if err != nil || found || item.RunID != "" {
 		t.Fatalf("prefix match item=%#v found=%v err=%v", item, found, err)
 	}
 
-	if _, err := store.db.ExecContext(ctx, "UPDATE agent_run SET payload = ? WHERE run_id = ?", "{", "run_1"); err != nil {
+	if _, err := store.db.ExecContext(ctx, "UPDATE agent_run SET payload = ? WHERE run_id = ?", "{", string(runID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.FindAgentRunByID(ctx, "run_1"); err == nil {
+	if _, _, err := store.FindAgentRunByID(ctx, string(runID)); err == nil {
 		t.Fatal("expected malformed payload error")
 	}
 }
