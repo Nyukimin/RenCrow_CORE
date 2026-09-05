@@ -1,0 +1,223 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step09-orchestrator-task",
+  "phase": "design-frozen-v4",
+  "evaluated_at": "2026-09-05T07:36:14Z",
+  "predecessor_plan": {
+    "path": "docs/調査/20260905_ID統一Step09_OrchestratorTask_check_plan_v3.json",
+    "sha256": "e3755e68c58541b966bfb44b2eb80981d4d1adec6626a0b01d0428b11a87032f",
+    "revision_reason": "The v3 exact-scope audit proved additional live Step09 consumers: CORE session logs, LLM execution observations and prompt receipts, worker execution labels, the CORE actor verifier, and the CORE-to-RenCrow_LLM Gateway request-correlation contract. v4 adds those owners and gives active historical observation logs an explicit migrate-or-rotate treatment. It does not remove or weaken any v3 safety, security, authentication, policy, migration, or runtime check."
+  },
+  "input": {
+    "base_revision": "61557985be4b758044a3bddc45adb072abc4a365",
+    "active_runtime_revision": "1a089455bada967850a697bcd7c8976e19c6a2ad",
+    "active_runtime_artifact_sha256": "d61b04d64a25841709894a4b4f3d24216e00283d1d4938defe5573927b2552eb",
+    "active_runtime_main_pid": 2579361,
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-09-orchestrator-task",
+    "event_store": "/srv/rencrow/db/core/databases/events/event_store.db",
+    "event_rows_observed": 44891,
+    "orchestrator_payload_job_id_rows_observed": 5214,
+    "orchestrator_payload_distinct_job_ids_observed": 179,
+    "execution_report": "/home/nyukimi/.rencrow/workspace/execution_report.jsonl",
+    "execution_report_sha256_observed": "76890642716ff95ac79331fb4d37a74aab5cc206455c165dd82cd1d3959c72da",
+    "execution_report_bytes_observed": 194245,
+    "execution_report_rows_observed": 204,
+    "execution_report_distinct_job_ids_observed": 204,
+    "execution_report_repair_rows_observed": 9,
+    "resilience_root": "/home/nyukimi/.rencrow/resilience",
+    "resilience_incident_rows_observed": 4,
+    "resilience_incident_repair_job_id_rows_observed": 4,
+    "resilience_root_bytes_observed_approximate": 110592,
+    "task_store": "/home/nyukimi/.rencrow/workspace/tasks",
+    "root_task_rule": "one accepted Turn creates one durable root Task whose TaskID is the already assigned RootTaskID; no second top-level TaskID or legacy JobID is generated",
+    "child_task_rule": "delegation of executable work from Mio to another actual CORE Agent creates one durable child Task with ParentTaskID equal to RootTaskID; Coder model provider controller and worker mechanism never become the assignee actor",
+    "event_rule": "routing.decision is attached to the root Task; agent.assignment is attached to the selected execution Task and causally references the effective routing Event; Task records retain both EventIDs",
+    "event_sequence_owner": "canonical Event Store assigns a positive monotonic EventSeq before monitor and SSE projection and preserves it across restart",
+    "historical_event_mapping_rule": "for each legacy payload pair of canonical envelope TraceID and non-empty job_id, reuse the conversation receipt root_task_id when that trace has one unambiguous root; otherwise derive a deterministic TaskID from the exact trace_id plus legacy job_id; never infer across traces",
+    "historical_execution_report_mapping_rule": "reuse the unique Event migration TaskID for the exact legacy job_id; block if one legacy job_id maps to multiple TaskIDs; when no Event mapping exists derive a deterministic TaskID from the exact namespace execution_report plus legacy job_id; reject duplicate report job IDs and preserve source row order and every non-identity field",
+    "historical_resilience_mapping_rule": "for every incident with a non-empty repair_job_id, require one exact matching legacy execution report row and reuse that row's migrated TaskID as repair_task_id; block missing or ambiguous correlation, preserve all non-identity incident fields and every other regular file byte-for-byte, and reject symlinks or unsupported filesystem entries",
+    "rencrow_llm_base_revision": "079c79c705a4d1405b045e0ce4609ee466ff3261",
+    "session_log_root": "/home/nyukimi/.rencrow/logs/sessions",
+    "session_log_files_observed": 85,
+    "session_log_bytes_observed": 605179,
+    "session_log_job_id_rows_observed": 769,
+    "prompt_receipt_log": "/home/nyukimi/.rencrow/logs/prompt_receipt.jsonl",
+    "prompt_receipt_bytes_observed": 19499109,
+    "prompt_receipt_rows_observed": 29927,
+    "prompt_receipt_job_id_rows_observed": 507,
+    "llm_prompt_debug_log": "/home/nyukimi/.rencrow/logs/llm_prompt_debug.jsonl",
+    "llm_prompt_debug_bytes_observed": 1337635824,
+    "llm_prompt_debug_rows_observed": 49378,
+    "llm_prompt_debug_job_id_rows_observed": 1021,
+    "historical_session_log_mapping_rule": "rebuild the complete session-log root into a fresh directory; for each assistant row with job_id, reuse the unique Event migration TaskID for the exact canonical envelope trace_id plus legacy job_id when available, otherwise derive a deterministic TaskID from the exact namespace session_log plus relative path plus legacy job_id; preserve row order, every non-identity field, unrelated regular files, and permissions; reject duplicate JSON fields, symlinks, nested unsupported entries, malformed canonical identities, and source drift",
+    "historical_prompt_receipt_mapping_rule": "rebuild the complete prompt receipt JSONL into a fresh file; for each row with job_id, reuse the unique Event migration TaskID for the exact canonical envelope trace_id plus legacy job_id when available, otherwise derive a deterministic TaskID from the exact namespace prompt_receipt plus legacy job_id; preserve row order and every non-identity field including RequestID without deriving or rewriting it from TaskID; reject duplicate JSON fields, malformed identity, and source drift",
+    "llm_prompt_debug_rotation_rule": "the 1.337GB prompt-debug stream is write-only diagnostic payload history, not canonical state and not rewritten over USB2; after both CORE and Gateway writers stop, atomically rename the exact active file to a timestamped owner-only legacy archive, record its size and SHA256 in the cutover receipt, start a fresh canonical task_id stream, and never expose the archived job_id file as the active path"
+  },
+  "included": [
+    {
+      "check_id": "s9_root_task_owner",
+      "guarantee": "Viewer and every ProcessMessage ingress generate or accept exactly one RootTaskID, create that durable root Task through the Step08 owner, and never create a companion JobID",
+      "owner": "RenCrow_CORE Viewer ingress, Orchestrator, taskmanager",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "conversation and Task lifecycle",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s9_child_task_and_actor",
+      "guarantee": "executable handoff to Shiro Kuro Midori or another actual CORE Agent uses a distinct child Task with ParentTaskID and the same TraceID; Coder model provider worker runtime and controller are not Task assignees",
+      "owner": "RenCrow_CORE Orchestrator",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "handoff and parallel execution",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s9_event_contract",
+      "guarantee": "Orchestrator Event exposes typed EventID TraceID CausationEventID DependencyEventIDs EventSeq TaskID SessionID ThreadID TurnID and MessageID, contains no JobID job_id Seq or seq contract, rejects malformed or cross-type identity, and does not synthesize the Step10 RunID",
+      "owner": "RenCrow_CORE Orchestrator and modules/core Event",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Event persistence, monitor, and clients",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s9_routing_assignment_events",
+      "guarantee": "CHAT WORKER CODE RESEARCH route changes handoffs retries interruptions and failures emit persisted routing.decision and agent.assignment facts with distinct EventIDs; assignment causation points at the effective routing Event and both are retrievable by EventID",
+      "owner": "RenCrow_CORE Orchestrator and canonical Event Store",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Task and Event audit",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s9_event_sequence",
+      "guarantee": "EventSeq is positive unique monotonically assigned by the canonical Event Store before live projection, round-trips through SQLite, and continues above the previous maximum after restart",
+      "owner": "RenCrow_CORE canonical Event Store",
+      "execution_phase": "pre-commit, cutover, and post-restart",
+      "result_consumer": "monitor and SSE ordering",
+      "failure_action": "do not deploy or rollback"
+    },
+    {
+      "check_id": "s9_transport_and_worker",
+      "guarantee": "Orchestrator transport, modules/chat, modules/worker, local and SSH agent entrypoints carry task_id and RootTaskID as applicable, reject legacy job_id, correlate every response to the request TaskID before accepting side effects, preserve the root TraceID, and use TaskID terminology in worker summaries and newly created commit evidence",
+      "owner": "RenCrow_CORE transport and module contracts",
+      "execution_phase": "pre-commit",
+      "result_consumer": "local and distributed Orchestrator",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s9_core_llm_gateway_task_correlation",
+      "guarantee": "CORE sends one canonical task_id in the allowlisted rencrow observation metadata, RenCrow_LLM Gateway validates retains queues logs status-projects and prompt-debug-records that same value, strips only the private rencrow envelope before the Backend, silently ignored job_id is eliminated, and Backend Node lifecycle task_id remains a separate unchanged owner concept",
+      "owner": "RenCrow_CORE LLM provider boundary and RenCrow_LLM Gateway",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "LLM request correlation and operator status",
+      "failure_action": "do not deploy either owner or rollback both"
+    },
+    {
+      "check_id": "s9_monitor_and_api",
+      "guarantee": "Orchestrator monitor and persisted log filters use task_id and event_id, expose EventID lookup, do not collide with the canonical durable Task API, and the retired viewer jobs routes are absent",
+      "owner": "RenCrow_CORE Viewer monitor and ops feature",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "operator and user-visible audit surfaces",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s9_execution_evidence",
+      "guarantee": "execution verification, CORE actor verification, skill-governance clients, LLM execution observations and prompt receipts, and Resilience repair evidence directly indexed by the Orchestrator processing identity use canonical TaskID and task_id without deriving TraceID RequestID or another identity from TaskID",
+      "owner": "RenCrow_CORE execution verification and Resilience owners",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Task detail repair reconciliation and audit",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s9_historical_correlated_artifact_migration",
+      "guarantee": "one owner CLI consumes writer-stopped snapshots, rebuilds a fresh Event Store fresh execution report JSONL fresh complete Resilience root fresh complete session-log root and fresh prompt-receipt JSONL, preserves every EventID TraceID relationship payload row order non-identity field unrelated regular file and permission, applies the explicit deterministic mapping rules, assigns EventSeq values, rejects ambiguous joins duplicate fields or reports malformed identity symlinks unsupported entries or source drift, writes no live source in place, and produces matching hash-bound dry-run and apply receipts for all five targets",
+      "owner": "RenCrow_CORE Event persistence execution evidence and Resilience migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production canonical Event Store execution report and Resilience incident store",
+      "failure_action": "leave the old runtime Event Store execution report and Resilience root active"
+    },
+    {
+      "check_id": "s9_historical_observation_logs",
+      "guarantee": "writer-stopped session logs and prompt receipts are rebuilt into fresh task_id artifacts with hash-bound receipts, while the very large write-only Gateway prompt-debug stream is atomically rotated and hash-receipted rather than rewritten; after restart every active writer emits task_id and no active observation path appends job_id",
+      "owner": "RenCrow_CORE logging and LLM observation owners plus RenCrow_LLM prompt-debug owner",
+      "execution_phase": "pre-cutover, cutover, and post-restart",
+      "result_consumer": "operator correlation and audit evidence",
+      "failure_action": "leave old artifacts active with old binaries or rollback both owners"
+    },
+    {
+      "check_id": "s9_architecture_zero",
+      "guarantee": "internal/application/orchestrator and every confirmed Step09 transport event monitor ingress session-log execution observation prompt-receipt worker execution client verifier and Resilience repair-correlation contract contain zero Job JobID job_id and legacy Event Seq names; the RenCrow_LLM Gateway request-correlation scope contains zero job_id; Scheduler Node lifecycle and explicitly deferred domains remain scope-separated",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step09 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s9_predeploy_verification",
+      "guarantee": "targeted lifecycle event transport monitor logging LLM observation worker client verifier Resilience migration and CORE-to-Gateway contract tests, full Go tests vet and build in both reviewed owner repositories, and targeted Viewer tests pass from the reviewed diffs",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s9_recovery_and_runtime",
+      "guarantee": "a separate-filesystem hash-bound recovery set exists for canonical mutable state; the 1.337GB write-only prompt-debug file is hash-receipted and atomically rotated without rewrite; pushed CORE and LLM source installed artifacts active configs service PIDs listeners readiness real Actor route Task graph Event graph EventID lookup EventSeq persistence execution evidence Resilience correlation session/prompt receipt task_id output Gateway task_id correlation and old-route rejection agree after restart",
+      "owner": "RenCrow_CORE migration CLI and rencrow.service",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step09 ledger",
+      "failure_action": "rollback or keep Step09 open"
+    }
+  ],
+  "excluded": [
+    {
+      "check_id": "s9_coder_as_actor",
+      "reason": "Coder and model are implementation mechanisms under an actual CORE Agent and cannot own an assignment or Task",
+      "consumer": "World Actor invariant",
+      "failure_action": "reject the implementation"
+    }
+  ],
+  "deferred": [
+    {
+      "check_id": "s9_run_identity",
+      "reason": "Run unification is Step10; Step09 Event does not synthesize or claim a RunID",
+      "consumer": "Step10 RunID cutover",
+      "failure_action": "keep Step10 open"
+    },
+    {
+      "check_id": "s9_action_attempt_identity",
+      "reason": "Action and retry Attempt unification is Step11",
+      "consumer": "Step11 ActionID and AttemptID cutover",
+      "failure_action": "keep Step11 open"
+    },
+    {
+      "check_id": "s9_scheduler_job",
+      "reason": "Scheduler Job is a schedule definition rather than an executable Task",
+      "consumer": "Step15 ScheduleID cutover",
+      "failure_action": "keep Step15 open"
+    },
+    {
+      "check_id": "s9_non_orchestrator_job_vocabulary",
+      "reason": "Profile promotion collection crawl preparation and other domain-local job names are not silently reclassified as Orchestrator Tasks",
+      "consumer": "their canonical owner steps and Step20 global cleanup",
+      "failure_action": "keep the owning ledger rows open"
+    },
+    {
+      "check_id": "s9_viewer_graph_backfill",
+      "reason": "whole Viewer OTel and graph reconstruction is Step19; Step09 only supplies canonical Task and Event inputs plus bounded lookup",
+      "consumer": "Step19 Viewer OTel Graph",
+      "failure_action": "keep Step19 open"
+    },
+    {
+      "check_id": "s9_full_system",
+      "reason": "full-system and full restorecheck run only after every Identity ledger row closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    },
+    {
+      "check_id": "s9_llm_node_lifecycle_task_identity",
+      "reason": "RenCrow_LLM Node task_id identifies host-supervised Backend lifecycle ownership and reservation locks, not a CORE Orchestrator executable Task; changing it would conflate owners",
+      "consumer": "RenCrow_LLM Node lifecycle contract",
+      "failure_action": "leave the Node lifecycle contract unchanged"
+    }
+  ],
+  "replacement_receipts": []
+}
