@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-04T23:55:39Z",
+  "evaluated_at": "2026-09-05T00:07:19Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -148,12 +148,18 @@
     "pushed_implementation_revision": "50ce3764303ddb6b0990b77df23d4581b0ba4f8a",
     "reviewed_runtime_artifact_sha256": "aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8",
     "reviewed_migration_artifact_sha256": "89780137ec3afbbddd41156c7ed567da763fb2b28e0b37a5cf8019ee36fbea63",
+    "second_cutover_apply_manifest_sha256": "124b48fad9ee56960db24a3ce3878e9d63f86588510d890ae207de9c332017d6",
+    "second_cutover_dry_run_manifest_sha256": "1e5da99f41573b43c80891fa7689087a2e9172a0915bf078c7f24fe2403332a1",
+    "second_cutover_input_sha256": "e8b0c790eba4b99f2427a24bc117bcb831dc03661f577bb5117b7d4e19d9b60d",
+    "second_cutover_output_sha256": "ac588cc4ee069cd050bcf655c0ac6327e56c811a901420f1897c88db62421a9f",
+    "second_cutover_plan_sha256": "c89206531a8e49cf1e9f9be2c35bea19f65a4bba6f430170e84a29c2ea45fa1d",
+    "second_cutover_recovery_root": "/srv/rencrow/backup/recovery/turn-message-20260904T235539Z-612715b-retry2",
     "runtime_database_device": "/dev/sdd1 on USB 2.0 at 480 Mbit/s",
     "recovery_filesystem_device": "/dev/sdb1 mounted at /srv/rencrow/backup",
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "identity/03-dci remediation committed and pushed; hash-bound runtime and migration artifacts built from 50ce3764; second production cutover is pending"
+    "worktree_state": "second production migration and actual Mio CHAT route passed on runtime 50ce3764; Gate 7 one-shot source deletion, rebuild and post-cleanup restart verification are pending"
   },
   "observations": [
     {
@@ -199,9 +205,16 @@
       "subject": "pushed remediation and hash-bound deployment artifacts",
       "evidence": "50ce3764303ddb6b0990b77df23d4581b0ba4f8a equals origin/identity/03-dci; the reviewed runtime artifact SHA-256 is aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8 and the reviewed migration artifact SHA-256 is 89780137ec3afbbddd41156c7ed567da763fb2b28e0b37a5cf8019ee36fbea63",
       "next_action": "freeze this plan, create a fresh stopped-writer recovery point, run the reviewed dry-run and apply, then install the reviewed runtime and execute the actual Agent route"
+    },
+    {
+      "at": "2026-09-05T00:07:19Z",
+      "outcome": "production-cutover-and-route-passed",
+      "subject": "second Step06 cutover and actual Mio CHAT EndTurn",
+      "evidence": "the fresh stopped-writer source stream and independently reread recovery copy matched SHA-256 e8b0c790eba4b99f2427a24bc117bcb831dc03661f577bb5117b7d4e19d9b60d at 2298929152 bytes; dry-run was ready and apply was applied with plan c89206531a8e49cf1e9f9be2c35bea19f65a4bba6f430170e84a29c2ea45fa1d and output ac588cc4ee069cd050bcf655c0ac6327e56c811a901420f1897c88db62421a9f; runtime 50ce3764 artifact aceb08af31ef8ea4d4ff777a23ebfee63215437915ba23386793de34d632ccb8 reached ready as PID 2168621 with zero restarts; RenCrow_CMD job 20260905-000627-82442598 used CHAT and actual Mio, returned a user-visible response, and completed receipt trc_01a06ee3-546e-7ab2-8eb1-a1a234e79764 with distinct canonical Turn, Trace, RootTask and user/Agent Message identities; L1 metadata, outbox and recall trace matched",
+      "next_action": "preserve the frozen migration binary in recovery, delete the one-shot source under Gate 7, add the architecture guard, rebuild and perform the post-cleanup restart and route verification"
     }
   ],
-  "phase": "precutover-remediation-reviewed",
+  "phase": "postcutover-route-passed-cleanup-pending",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
@@ -222,8 +235,8 @@
       "check_ids": [
         "s6_deterministic_migration"
       ],
-      "status": "remediation-tests-passed-cutover-pending",
-      "evidence": "TDD now covers exact receipt-owned user/Agent message metadata rewrite, plan-hash binding, all canonical msg_ inventory preservation, malformed/missing/mismatched pre-mutation rejection, transaction rollback and unowned opaque-row preservation; targeted tests, affected vet and build passed"
+      "status": "passed",
+      "evidence": "the second production dry-run and apply used matching input and plan hashes; all 437 receipts, 621 outbox rows, 1075 recall traces, 5610 recall items, 1468 prompt injections and 874 receipt-owned canonical message rows remained count-stable; receipt-owned L1 turn/message metadata mismatch, outbox mismatch, linked recall mismatch and foreign-key violations were zero"
     },
     {
       "check_ids": [
@@ -237,14 +250,14 @@
         "s6_bounded_recovery"
       ],
       "status": "passed",
-      "evidence": "stopped-writer source stream and independently read recovery copy both matched SHA-256 4e03535b8eb43757c7f22622d4b1e944f9ec829d52297c07f42d531851be60b4 at 2298929152 bytes; rollback restored the same hash and retained the failed post-cutover database separately"
+      "evidence": "the retry2 stopped-writer source stream and independently read recovery copy both matched SHA-256 e8b0c790eba4b99f2427a24bc117bcb831dc03661f577bb5117b7d4e19d9b60d at 2298929152 bytes on separate /dev/sdb1; old/new binaries, migration CLI and frozen Check Plan are retained in the same recovery root; the first rollback evidence and failed database remain retained separately"
     },
     {
       "check_ids": [
         "s6_runtime_identity"
       ],
-      "status": "failed-rolled-back",
-      "evidence": "ad07c41 reached ready with the reviewed artifact but actual Agent EndTurn failed on unmigrated L1 message metadata; old 6388137b was restored ready as PID 2131688 with both timers active, and a new runtime receipt remains required"
+      "status": "pre-cleanup-passed",
+      "evidence": "runtime 50ce3764 reached ready as PID 2168621 with reviewed artifact hash and zero restarts; RenCrow_CMD -> CORE -> CHAT -> actual Mio returned a visible response for job 20260905-000627-82442598 and completed receipt trace trc_01a06ee3-546e-7ab2-8eb1-a1a234e79764; receipt/result JSON, L1 user/Agent rows, completed Redis outbox and completed Mio recall trace agreed on independent canonical identities; Gate 7 cleanup rebuild and post-restart route remain required"
     }
   ],
   "schema_version": "rencrow.check_plan.v1"
