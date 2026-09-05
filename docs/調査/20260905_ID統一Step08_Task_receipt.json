@@ -1,0 +1,87 @@
+{
+  "schema_version": "rencrow.check_result.v1",
+  "purpose": "identity-step08-durable-task",
+  "status": "passed",
+  "completed_at": "2026-09-05T05:10:42Z",
+  "plan": {
+    "path": "docs/調査/20260905_ID統一Step08_Task_check_plan_v2.json",
+    "file_sha256": "472ae50c7fec1efad8fc7d3767f0d5c84454e9662751ed96b4bb295c8aab5e85",
+    "canonical_json_sha256": "194048b754cf26d67ef6767989c7ea41b39753768a6286893701302eff658698"
+  },
+  "source_revision_before_gate8": "1a089455bada967850a697bcd7c8976e19c6a2ad",
+  "included_results": [
+    {
+      "check_id": "s8_owner_and_contract",
+      "status": "passed",
+      "evidence": "canonical Task domain, manager, persistence, typed TaskID, and architecture test"
+    },
+    {
+      "check_id": "s8_no_human_gate",
+      "status": "passed",
+      "evidence": "waiting requires a non-empty machine reason; waiting_user is rejected"
+    },
+    {
+      "check_id": "s8_lifecycle",
+      "status": "passed",
+      "evidence": "Task lifecycle, relationship, and parallel-limit tests passed"
+    },
+    {
+      "check_id": "s8_persistence_and_migration",
+      "status": "passed",
+      "evidence": "production dry-run and apply preserved the zero-row legacy store into a fresh Task store with stable receipts; the legacy source remained unchanged"
+    },
+    {
+      "check_id": "s8_direct_consumers",
+      "status": "passed",
+      "evidence": "Task tsk_01a06ff6-f03a-75e7-804f-d26dc0d4dfeb completed through CLI and appeared through Task list, detail, and notification routes with no job_id; three retired routes returned 404"
+    },
+    {
+      "check_id": "s8_contract_documentation",
+      "status": "passed",
+      "evidence": "Step08 direct-consumer boundary, Step09 Orchestrator boundary, Failure Knowledge, and Gate8 are canonical"
+    },
+    {
+      "check_id": "s8_architecture_zero",
+      "status": "passed",
+      "evidence": "Task subsystem legacy-token check and post-cutover migration-source absence check passed"
+    },
+    {
+      "check_id": "s8_predeploy_verification",
+      "status": "passed",
+      "evidence": "targeted and source-root Go tests, vet, build, migration rehearsal, and targeted Viewer projection passed before deployment; Gate8 targeted packages passed after cleanup"
+    },
+    {
+      "check_id": "s8_recovery_and_runtime",
+      "status": "passed",
+      "evidence": "separate-filesystem recovery receipt f66409bcc538b845f0c3fa2434a14f7e70fd83fe5cfe1345087aae4e0264b331 binds runtime d61b04d64a25841709894a4b4f3d24216e00283d1d4938defe5573927b2552eb; user service PID 2579361 owns :18790 and reloaded the same completed Task after restart"
+    }
+  ],
+  "deferred": [
+    {
+      "check_id": "s8_orchestrator_job_contracts",
+      "consumer": "Step09 Orchestrator Task cutover"
+    },
+    {
+      "check_id": "s8_scheduler_jobs",
+      "consumer": "Step15 Scheduler ScheduleID cutover"
+    },
+    {
+      "check_id": "s8_full_system",
+      "consumer": "final Identity all-clear"
+    },
+    {
+      "check_id": "s8_workspace_restore",
+      "consumer": "RenCrow_Workspace whole-state migration"
+    }
+  ],
+  "excluded": [
+    {
+      "check_id": "viewer_ai_workflow_same_run",
+      "reason": "pre-existing failure reproduced on predecessor revision and is outside the Task API"
+    },
+    {
+      "check_id": "viewer_superagent_resume_manual_ledger",
+      "reason": "pre-existing failure reproduced on predecessor revision and is outside the Task API"
+    }
+  ]
+}

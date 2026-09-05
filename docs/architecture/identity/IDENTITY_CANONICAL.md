@@ -1946,6 +1946,16 @@ Failure Knowledge:
 - **Tests:** Task owner／CLI／Viewerで旧語彙zero、旧Task route拒否、Orchestrator monitor routeの
   非接続、Gate 8後のone-shot source不存在を確認する。
 
+Gate 8:
+
+- production cutover、canonical TaskのCreate／Start／Succeed、CLI／Viewer／通知の
+  同一`TaskID`投影、再起動後のowner repository再loadが成功した後、
+  `rencrow-task-store-migrate`と`taskmigration`のone-shot sourceをproduction source treeから削除する。
+- rollbackに必要な旧／新runtime、実行済み移行binary、writer停止snapshot、固定Check Plan、
+  dry-run／apply／deployment receiptは、cutover時にhash-boundされた別filesystemの
+  recovery artifactとして保持する。installed owner、ongoing migration route、runtime dual read／dual writeにしない。
+- architecture testは両source pathの不存在を検査し、one-shot migrationの再混入を拒否する。
+
 ---
 
 ### Step 09: OrchestratorをTask基準へ置換
