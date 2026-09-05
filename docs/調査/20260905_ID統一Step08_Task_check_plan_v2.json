@@ -1,0 +1,137 @@
+{
+  "deferred": [
+    {
+      "check_id": "s8_orchestrator_job_contracts",
+      "consumer": "Step09 Orchestrator Task cutover",
+      "failure_action": "keep Step09 open",
+      "reason": "Orchestrator monitor routes, event job_id fields, modules/worker JobID, and internal root or child job vocabulary are one Step09 contract and are not direct consumers of the durable Task store"
+    },
+    {
+      "check_id": "s8_scheduler_jobs",
+      "consumer": "Step15 Scheduler ScheduleID cutover",
+      "failure_action": "keep Step15 open",
+      "reason": "Scheduler Job is a schedule definition and must become Schedule rather than Task"
+    },
+    {
+      "check_id": "s8_full_system",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row",
+      "reason": "runs only after every Identity ledger row closes"
+    },
+    {
+      "check_id": "s8_workspace_restore",
+      "consumer": "RenCrow_Workspace whole-state migration",
+      "failure_action": "keep Workspace migration open",
+      "reason": "whole-state restore is not a Step08 Task aggregate guarantee"
+    }
+  ],
+  "excluded": [
+    {
+      "check_id": "viewer_ai_workflow_same_run",
+      "consumer": "none for Step08",
+      "failure_action": "track outside the Step08 ledger",
+      "reason": "the same canonicalEventField test failure reproduces from clean predecessor HEAD da0580a and does not consume the Task API"
+    },
+    {
+      "check_id": "viewer_superagent_resume_manual_ledger",
+      "consumer": "none for Step08",
+      "failure_action": "track outside the Step08 ledger",
+      "reason": "the same paused and resumed assertion failure reproduces from clean predecessor HEAD da0580a and does not consume the Task API"
+    }
+  ],
+  "included": [
+    {
+      "check_id": "s8_owner_and_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to implementation",
+      "guarantee": "internal/domain/task is the sole durable executable Task owner and uses canonical TaskID with status priority owner assignee parent dependency origin workstream goal supersession and execution metadata without Job aliases",
+      "owner": "RenCrow_CORE Task domain",
+      "result_consumer": "taskmanager persistence CLI and Viewer"
+    },
+    {
+      "check_id": "s8_no_human_gate",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to implementation",
+      "guarantee": "waiting has an explicit machine reason and waiting_user or a human approval artifact is rejected",
+      "owner": "RenCrow_CORE Task domain and taskmanager",
+      "result_consumer": "runtime policy"
+    },
+    {
+      "check_id": "s8_lifecycle",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to implementation",
+      "guarantee": "Create Queue Start Wait Block Resume Succeed Fail Cancel Supersede parent dependency and parallel limits are deterministic",
+      "owner": "RenCrow_CORE taskmanager",
+      "result_consumer": "Step08 local acceptance"
+    },
+    {
+      "check_id": "s8_persistence_and_migration",
+      "execution_phase": "pre-cutover and cutover",
+      "failure_action": "leave the legacy store active and keep Step08 open",
+      "guarantee": "Task JSONL uses only task_id and the one-shot owner CLI deterministically preserves every row and relationship into a fresh store with hash-bound receipts while rejecting ambiguous malformed dangling or legacy-only state",
+      "owner": "RenCrow_CORE Task persistence and migration CLI",
+      "result_consumer": "production Task storage"
+    },
+    {
+      "check_id": "s8_direct_consumers",
+      "execution_phase": "pre-commit and post-deploy",
+      "failure_action": "return to implementation or rollback",
+      "guarantee": "rencrow tasks, Viewer Task list detail notification routes, notification polling, and Task timeline projection use only Task and task_id; retired parallel Task routes are absent",
+      "owner": "RenCrow_CORE CLI Viewer and ops feature",
+      "result_consumer": "operator and user-visible Task surfaces"
+    },
+    {
+      "check_id": "s8_contract_documentation",
+      "execution_phase": "pre-commit",
+      "failure_action": "keep Step08 open",
+      "guarantee": "module documentation distinguishes the durable Task store and its direct consumers completed in Step08 from Orchestrator job event and monitor contracts owned by Step09",
+      "owner": "RenCrow_CORE documentation",
+      "result_consumer": "Step08 and Step09 implementation ledgers"
+    },
+    {
+      "check_id": "s8_architecture_zero",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "failure_action": "return to implementation",
+      "guarantee": "the Task subsystem and exact direct consumers contain zero Job JobID job_id jobmanager and no legacy one-shot source remains after Gate8",
+      "owner": "modules/core architecture tests",
+      "result_consumer": "Step08 ledger"
+    },
+    {
+      "check_id": "s8_predeploy_verification",
+      "execution_phase": "pre-deploy",
+      "failure_action": "do not install or restart",
+      "guarantee": "targeted Task tests source-root Go tests vet build architecture checks migration rehearsal and targeted Viewer projection test pass from the reviewed diff",
+      "owner": "RenCrow_CORE",
+      "result_consumer": "deploy owner"
+    },
+    {
+      "check_id": "s8_recovery_and_runtime",
+      "execution_phase": "cutover and post-restart",
+      "failure_action": "rollback or keep Step08 unverified and diagnose the canonical route",
+      "guarantee": "a separate-filesystem hash-bound recovery set exists and pushed source installed artifact user-systemd owner PID listener readiness CLI Viewer persisted Task state notifications and old-route rejection agree after restart",
+      "owner": "RenCrow_CORE migration CLI and rencrow.service",
+      "result_consumer": "Step08 ledger"
+    }
+  ],
+  "input": {
+    "active_runtime_artifact_sha256": "e5dc25d17ffbbd3c5a28b1387ac9927e946aaa45b7cb49ed59334922b15995c3",
+    "active_runtime_main_pid": 2446130,
+    "active_runtime_revision": "856bca7fa0e9a21b24e88260d204921df327525c",
+    "base_revision": "da0580a",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-08-job-task",
+    "direct_consumer_contract": "rencrow tasks; GET /viewer/tasks; GET /viewer/task/detail?task_id=...; GET /viewer/task-notifications; Viewer task.notification uses task_id",
+    "legacy_store_root": "/home/nyukimi/.rencrow/workspace/jobs",
+    "new_store_root": "/home/nyukimi/.rencrow/workspace/tasks",
+    "predecessor_disposition": "blocked because s8_direct_consumers incorrectly classified the log-ops Orchestrator monitor route as a direct consumer of the durable Task store",
+    "predecessor_plan": "docs/調査/20260905_ID統一Step08_Task_check_plan.json",
+    "predecessor_plan_sha256": "01b544e86b7f8a92bf9649d480bb5f39bef558633fe13eeb1ddffeb567935dfe",
+    "production_legacy_rows_observed": 0,
+    "separate_recovery_filesystem": "/dev/sdb1",
+    "step09_boundary": "Orchestrator root and child job vocabulary, event job_id, monitor job routes, modules/worker JobID, routing and assignment events, EventSeq, and TraceID separation",
+    "step15_boundary": "Scheduler Job and JobID become Schedule and ScheduleID"
+  },
+  "phase": "design-frozen-v2",
+  "purpose": "identity-step08-durable-task",
+  "replacement_receipts": [],
+  "schema_version": "rencrow.check_plan.v1"
+}
