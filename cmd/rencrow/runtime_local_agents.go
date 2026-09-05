@@ -118,21 +118,20 @@ func (d *Dependencies) startLocalWorkerAgent(agentName string, lt *transport.Loc
 }
 
 func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shiroAgent *agent.ShiroAgent, workerExecution service.WorkerExecutionService) domaintransport.Message {
-	log.Printf("[LocalWorker] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d has_proposal=%t", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content), msg.Proposal != nil)
+	log.Printf("[LocalWorker] recv agent=%s from=%s to=%s type=%s task=%s content_len=%d has_proposal=%t", agentName, msg.From, msg.To, msg.Type, msg.TaskID, len(msg.Content), msg.Proposal != nil)
 	if msg.Proposal != nil && workerExecution != nil {
 		p := proposal.Reconstruct(msg.Proposal.Plan, msg.Proposal.Patch, msg.Proposal.Risk, msg.Proposal.CostHint)
-		jobID, err := modulecore.ParseTaskID(msg.JobID)
-		if err != nil {
-			log.Printf("[LocalWorker] invalid job id agent=%s job=%s err=%v", agentName, msg.JobID, err)
-			return newLocalAgentError(agentName, msg, fmt.Sprintf("invalid job ID: %v", err))
+		if err := msg.TaskID.Validate(); err != nil {
+			log.Printf("[LocalWorker] invalid task id agent=%s task=%s err=%v", agentName, msg.TaskID, err)
+			return newLocalAgentError(agentName, msg, fmt.Sprintf("invalid task ID: %v", err))
 		}
-		log.Printf("[LocalWorker] proposal execute start agent=%s job=%s", agentName, msg.JobID)
-		result, err := executeLocalWorkerProposal(context.Background(), workerExecution, jobID, p, msg)
+		log.Printf("[LocalWorker] proposal execute start agent=%s task=%s", agentName, msg.TaskID)
+		result, err := executeLocalWorkerProposal(context.Background(), workerExecution, msg.TaskID, p, msg)
 		if err != nil {
-			log.Printf("[LocalWorker] proposal execute error agent=%s job=%s err=%v", agentName, msg.JobID, err)
+			log.Printf("[LocalWorker] proposal execute error agent=%s task=%s err=%v", agentName, msg.TaskID, err)
 			return newLocalAgentError(agentName, msg, fmt.Sprintf("patch execution failed: %v", err))
 		}
-		resp := domaintransport.NewMessage(agentName, msg.From, msg.SessionID, msg.JobID, result.Summary)
+		resp := domaintransport.NewMessage(agentName, msg.From, msg.SessionID, msg.TaskID, result.Summary)
 		resp.Type = domaintransport.MessageTypeResult
 		resp.Result = &domaintransport.ResultPayload{
 			Success:       result.FailedCmds == 0,
@@ -145,40 +144,40 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 			Retryable:     result.Retryable,
 			FailedIndex:   result.FailedIndex,
 		}
-		log.Printf("[LocalWorker] proposal execute complete agent=%s job=%s success=%t summary_len=%d", agentName, msg.JobID, result.FailedCmds == 0, len(result.Summary))
+		log.Printf("[LocalWorker] proposal execute complete agent=%s task=%s success=%t summary_len=%d", agentName, msg.TaskID, result.FailedCmds == 0, len(result.Summary))
 		return resp
 	}
 
 	input, err := reconstructLocalAgentInput(msg)
 	if err != nil {
-		log.Printf("[LocalWorker] invalid turn input agent=%s job=%s err=%v", agentName, msg.JobID, err)
+		log.Printf("[LocalWorker] invalid turn input agent=%s task=%s err=%v", agentName, msg.TaskID, err)
 		return newLocalAgentError(agentName, msg, fmt.Sprintf("worker input is invalid: %v", err))
 	}
-	log.Printf("[LocalWorker] shiro execute start agent=%s job=%s", agentName, msg.JobID)
+	log.Printf("[LocalWorker] shiro execute start agent=%s task=%s", agentName, msg.TaskID)
 	result, err := shiroAgent.Execute(context.Background(), input)
 	if err != nil {
-		log.Printf("[LocalWorker] shiro execute error agent=%s job=%s err=%v", agentName, msg.JobID, err)
+		log.Printf("[LocalWorker] shiro execute error agent=%s task=%s err=%v", agentName, msg.TaskID, err)
 		return newLocalAgentError(agentName, msg, fmt.Sprintf("worker execution failed: %v", err))
 	}
-	resp := domaintransport.NewMessage(agentName, msg.From, msg.SessionID, msg.JobID, result)
+	resp := domaintransport.NewMessage(agentName, msg.From, msg.SessionID, msg.TaskID, result)
 	resp.Type = domaintransport.MessageTypeResult
 	resp.Result = &domaintransport.ResultPayload{
 		Success: true,
 		Summary: result,
 	}
-	log.Printf("[LocalWorker] shiro execute complete agent=%s job=%s result_len=%d", agentName, msg.JobID, len(result))
+	log.Printf("[LocalWorker] shiro execute complete agent=%s task=%s result_len=%d", agentName, msg.TaskID, len(result))
 	return resp
 }
 
-func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, jobID modulecore.TaskID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
+func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, taskID modulecore.TaskID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
 	if root := localMessageContextString(msg, "module_root"); root != "" {
 		if worker, ok := workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
-			log.Printf("[LocalWorker] proposal workspace override job=%s module_root=%s", msg.JobID, root)
-			return worker.ExecuteProposalInWorkspace(ctx, jobID, p, root)
+			log.Printf("[LocalWorker] proposal workspace override task=%s module_root=%s", msg.TaskID, root)
+			return worker.ExecuteProposalInWorkspace(ctx, taskID, p, root)
 		}
-		log.Printf("[LocalWorker] workspace override unavailable job=%s module_root=%s", msg.JobID, root)
+		log.Printf("[LocalWorker] workspace override unavailable task=%s module_root=%s", msg.TaskID, root)
 	}
-	return workerExecution.ExecuteProposal(ctx, jobID, p)
+	return workerExecution.ExecuteProposal(ctx, taskID, p)
 }
 
 func localMessageContextString(msg domaintransport.Message, key string) string {
@@ -206,33 +205,33 @@ func (d *Dependencies) startLocalCoderAgent(agentName string, lt *transport.Loca
 				log.Printf("Local coder '%s' loop stopped: %v", agentName, err)
 				return
 			}
-			log.Printf("[LocalCoder] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content))
+			log.Printf("[LocalCoder] recv agent=%s from=%s to=%s type=%s task=%s content_len=%d", agentName, msg.From, msg.To, msg.Type, msg.TaskID, len(msg.Content))
 			input, inputErr := reconstructLocalAgentInput(msg)
 			if inputErr != nil {
-				log.Printf("[LocalCoder] invalid turn input agent=%s job=%s err=%v", agentName, msg.JobID, inputErr)
+				log.Printf("[LocalCoder] invalid turn input agent=%s task=%s err=%v", agentName, msg.TaskID, inputErr)
 				d.emitLocalAgentNote(agentName, msg.From, "入力の正規ID検証で失敗しました。", msg)
 				d.deliverLocalAgentResponse(newLocalAgentError(agentName, msg, fmt.Sprintf("coder input is invalid: %v", inputErr)))
 				continue
 			}
 			d.emitLocalAgentNote(agentName, msg.From, "依頼を受領しました。", msg)
-			log.Printf("[LocalCoder] proposal start agent=%s job=%s", agentName, msg.JobID)
+			log.Printf("[LocalCoder] proposal start agent=%s task=%s", agentName, msg.TaskID)
 			d.emitLocalAgentNote(agentName, msg.From, "proposal 生成を開始しました。", msg)
 			p, err := coder.GenerateProposal(context.Background(), input)
 			if err != nil {
-				log.Printf("[LocalCoder] proposal error agent=%s job=%s err=%v", agentName, msg.JobID, err)
+				log.Printf("[LocalCoder] proposal error agent=%s task=%s err=%v", agentName, msg.TaskID, err)
 				d.emitLocalAgentNote(agentName, msg.From, "proposal 生成で失敗しました。", msg)
 				d.deliverLocalAgentResponse(newLocalAgentError(agentName, msg, fmt.Sprintf("proposal generation failed: %v", err)))
 				continue
 			}
 			if p == nil {
-				log.Printf("[LocalCoder] proposal empty agent=%s job=%s", agentName, msg.JobID)
+				log.Printf("[LocalCoder] proposal empty agent=%s task=%s", agentName, msg.TaskID)
 				d.emitLocalAgentNote(agentName, msg.From, "proposal が空でした。", msg)
 				d.deliverLocalAgentResponse(newLocalAgentError(agentName, msg, "proposal generation returned empty result"))
 				continue
 			}
-			log.Printf("[LocalCoder] proposal complete agent=%s job=%s plan_len=%d patch_len=%d", agentName, msg.JobID, len(p.Plan()), len(p.Patch()))
+			log.Printf("[LocalCoder] proposal complete agent=%s task=%s plan_len=%d patch_len=%d", agentName, msg.TaskID, len(p.Plan()), len(p.Patch()))
 			d.emitLocalAgentNote(agentName, msg.From, "proposal 生成が完了しました。", msg)
-			resp := domaintransport.NewMessage(agentName, localCoderReplyTarget(msg), msg.SessionID, msg.JobID, fmt.Sprintf("Proposal generated by %s", agentName))
+			resp := domaintransport.NewMessage(agentName, localCoderReplyTarget(msg), msg.SessionID, msg.TaskID, fmt.Sprintf("Proposal generated by %s", agentName))
 			resp.Type = domaintransport.MessageTypeResult
 			resp.Proposal = &domaintransport.ProposalPayload{
 				Plan:     p.Plan(),
@@ -247,7 +246,7 @@ func (d *Dependencies) startLocalCoderAgent(agentName string, lt *transport.Loca
 
 func (d *Dependencies) deliverLocalAgentResponse(msg domaintransport.Message) {
 	if d.router == nil {
-		log.Printf("[LocalDeliver] drop reason=no_router to=%s from=%s job=%s", msg.To, msg.From, msg.JobID)
+		log.Printf("[LocalDeliver] drop reason=no_router to=%s from=%s task=%s", msg.To, msg.From, msg.TaskID)
 		return
 	}
 	target, ok := d.router.GetAgent(msg.To)
@@ -255,16 +254,16 @@ func (d *Dependencies) deliverLocalAgentResponse(msg domaintransport.Message) {
 		log.Printf("Local agent response dropped: target '%s' not registered", msg.To)
 		return
 	}
-	log.Printf("[LocalDeliver] send to=%s from=%s type=%s job=%s content_len=%d has_proposal=%t", msg.To, msg.From, msg.Type, msg.JobID, len(msg.Content), msg.Proposal != nil)
+	log.Printf("[LocalDeliver] send to=%s from=%s type=%s task=%s content_len=%d has_proposal=%t", msg.To, msg.From, msg.Type, msg.TaskID, len(msg.Content), msg.Proposal != nil)
 	if err := target.PutInboundMessage(msg); err != nil {
 		log.Printf("Local agent response delivery failed to '%s': %v", msg.To, err)
 		return
 	}
-	log.Printf("[LocalDeliver] sent to=%s from=%s job=%s", msg.To, msg.From, msg.JobID)
+	log.Printf("[LocalDeliver] sent to=%s from=%s task=%s", msg.To, msg.From, msg.TaskID)
 }
 
 func newLocalAgentError(agentName string, msg domaintransport.Message, errMsg string) domaintransport.Message {
-	resp := domaintransport.NewMessage(agentName, localCoderReplyTarget(msg), msg.SessionID, msg.JobID, errMsg)
+	resp := domaintransport.NewMessage(agentName, localCoderReplyTarget(msg), msg.SessionID, msg.TaskID, errMsg)
 	resp.Type = domaintransport.MessageTypeError
 	return resp
 }
@@ -289,11 +288,11 @@ func (d *Dependencies) emitLocalAgentNote(from, to, content string, msg domaintr
 		to,
 		content,
 		route,
-		msg.JobID,
+		msg.TaskID.String(),
 		msg.SessionID,
 		"distributed",
 		msg.SessionID,
 	)); err != nil {
-		log.Printf("[LocalCoder] agent note event publication failed agent=%s job=%s: %v", from, msg.JobID, err)
+		log.Printf("[LocalCoder] agent note event publication failed agent=%s task=%s: %v", from, msg.TaskID, err)
 	}
 }

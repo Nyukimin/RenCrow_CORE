@@ -85,6 +85,61 @@ func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared doma
 	return draft, nil
 }
 
+// RecordRouting persists the orchestrator route and the event that produced it.
+func (m *Manager) RecordRouting(ctx context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if !domaintask.ValidRoute(route) {
+		return domaintask.Task{}, fmt.Errorf("invalid route: %s", route)
+	}
+	if err := eventID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("routing_event_id is invalid: %w", err)
+	}
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	task.Route = route
+	task.RoutingEventID = eventID
+	task.UpdatedAt = m.now()
+	if err := task.Validate(); err != nil {
+		return domaintask.Task{}, err
+	}
+	if err := m.store.SaveTask(ctx, task); err != nil {
+		return domaintask.Task{}, err
+	}
+	return task, nil
+}
+
+// RecordAssignment persists the actual CORE Agent assignee and its event reference.
+func (m *Manager) RecordAssignment(ctx context.Context, taskID modulecore.TaskID, assignee string, eventID modulecore.EventID) (domaintask.Task, error) {
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	assignee = strings.TrimSpace(assignee)
+	if assignee == "" {
+		return domaintask.Task{}, fmt.Errorf("assignee is required")
+	}
+	if err := eventID.Validate(); err != nil {
+		return domaintask.Task{}, fmt.Errorf("assignment_event_id is invalid: %w", err)
+	}
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	task.Assignee = assignee
+	task.AssignmentEventID = eventID
+	task.UpdatedAt = m.now()
+	if err := task.Validate(); err != nil {
+		return domaintask.Task{}, err
+	}
+	if err := m.store.SaveTask(ctx, task); err != nil {
+		return domaintask.Task{}, err
+	}
+	return task, nil
+}
+
 func (m *Manager) Queue(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
 	return m.updateStatus(ctx, taskID, domaintask.StatusQueued, "", "", nil)
 }

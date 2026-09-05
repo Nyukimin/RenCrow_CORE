@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // loadStartupRequestEvidence reads a prior canonical request receipt without
@@ -33,9 +35,9 @@ func loadStartupRequestEvidence(path string, observedAt time.Time) (map[string]a
 	if !ok {
 		return nil, verifierOutcome{Status: "blocked", FailureBoundary: "startup request evidence has no request id"}
 	}
-	traceID, traceOK := firstEvidenceString(fields, "trace_id", "message_id", "job_id", "receipt_id")
-	if !traceOK {
-		return nil, verifierOutcome{Status: "blocked", FailureBoundary: "startup request evidence has no receipt or trace id"}
+	traceID, traceOK := evidenceString(fields, "trace_id")
+	if !traceOK || modulecore.TraceID(traceID).Validate() != nil {
+		return nil, verifierOutcome{Status: "blocked", FailureBoundary: "startup request evidence has no canonical trace id"}
 	}
 	result := map[string]any{
 		"request_id_sha256": sha256Text(requestID),

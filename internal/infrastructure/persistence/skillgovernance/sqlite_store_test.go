@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
@@ -128,7 +129,7 @@ func TestSQLiteStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 	}
 	if err := store.SaveCoderTranscriptEntry(ctx, domainskill.CoderTranscriptEntry{
 		EventID:   "evt_coder_transcript_1",
-		JobID:     "job-1",
+		TaskID:    modulecore.NewTaskID(),
 		Route:     "CODE3",
 		Agent:     "Coder",
 		Role:      "coder",
@@ -161,6 +162,37 @@ func TestSQLiteStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 	transcripts, err := store.ListCoderTranscriptEntries(ctx, 10)
 	if err != nil || len(transcripts) != 1 || transcripts[0].EventID != "evt_coder_transcript_1" {
 		t.Fatalf("transcripts=%#v err=%v", transcripts, err)
+	}
+}
+
+func TestSQLiteStoreGetByTaskIDReturnsExactTranscriptEntries(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "skill_governance.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID := modulecore.NewTaskID()
+	otherTaskID := modulecore.NewTaskID()
+	for _, entry := range []domainskill.CoderTranscriptEntry{
+		{EventID: "evt_task_plan", TaskID: taskID, Role: "coder", Segment: "plan", CreatedAt: now},
+		{EventID: "evt_other", TaskID: otherTaskID, Role: "coder", Segment: "plan", CreatedAt: now.Add(time.Minute)},
+		{EventID: "evt_task_patch", TaskID: taskID, Role: "coder", Segment: "patch_evidence", CreatedAt: now.Add(2 * time.Minute)},
+	} {
+		if err := store.SaveCoderTranscriptEntry(ctx, entry); err != nil {
+			t.Fatalf("SaveCoderTranscriptEntry failed: %v", err)
+		}
+	}
+	entries, err := store.GetByTaskID(ctx, taskID)
+	if err != nil {
+		t.Fatalf("GetByTaskID failed: %v", err)
+	}
+	if len(entries) != 2 || entries[0].EventID != "evt_task_patch" || entries[1].EventID != "evt_task_plan" {
+		t.Fatalf("GetByTaskID entries=%#v", entries)
+	}
+	if _, err := store.GetByTaskID(ctx, modulecore.TaskID("invalid-task-id")); err == nil {
+		t.Fatal("GetByTaskID accepted invalid task identity")
 	}
 }
 

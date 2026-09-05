@@ -32,14 +32,14 @@ func (l *messageTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
 }
 
-func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, jobID modulecore.TaskID, decision routing.Decision, ttsSessionID string) {
+func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision, ttsSessionID string) {
 	if l.ttsBridge == nil || ttsSessionID == "" {
 		return
 	}
 	plan, ok := moduletts.BuildRouteTTSPlan(moduletts.RouteTTSPlanInput{
 		Route:           string(decision.Route),
 		SessionID:       ttsSessionID,
-		ResponseID:      jobID.String(),
+		ResponseID:      taskID.String(),
 		ChatCharacterID: chatTTSCharacterForRequest(req, decision.Route),
 		Urgency:         "normal",
 	})
@@ -84,7 +84,7 @@ func (l *messageTTSLifecycle) EndSession(ctx context.Context, ttsSessionID strin
 func (l *messageTTSLifecycle) WithStreamHooks(
 	ctx context.Context,
 	route routing.Route,
-	jid, sessionID, channel, chatID, ttsSessionID string,
+	taskID, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
 	previousMetrics := llm.GenerationMetricsCallbackFromContext(ctx)
@@ -96,9 +96,9 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 			prev(token)
 		}
 		if latency != nil && latency.markFirstToken() {
-			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), jid, sessionID, channel, chatID, "")
+			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), taskID, sessionID, channel, chatID, "")
 		}
-		l.emit("agent.thinking", "mio", "user", token, string(route), jid, sessionID, channel, chatID)
+		l.emit("agent.thinking", "mio", "user", token, string(route), taskID, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
 	})
@@ -106,7 +106,7 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 		if previousMetrics != nil {
 			previousMetrics(metrics)
 		}
-		emitLLMThroughputMetric(l.emit, metrics, string(route), jid, sessionID, channel, chatID)
+		emitLLMThroughputMetric(l.emit, metrics, string(route), taskID, sessionID, channel, chatID)
 	})
 	return streamCtx, &streamBundle{tts: ttsStream, vtuber: vtuberStream}
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/resilience"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestIncidentSignatureMaterialRemovesVolatileValues(t *testing.T) {
@@ -18,7 +19,8 @@ func TestIncidentSignatureMaterialRemovesVolatileValues(t *testing.T) {
 	}
 }
 
-func TestRequestRepairUsesCodeRouteAndReturnsJobID(t *testing.T) {
+func TestRequestRepairUsesCodeRouteAndReturnsTaskID(t *testing.T) {
+	wantTaskID := modulecore.NewTaskID()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/viewer/repair/run" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -30,16 +32,16 @@ func TestRequestRepairUsesCodeRouteAndReturnsJobID(t *testing.T) {
 		if body["target_route"] != "CODE2" || body["target_agent"] != "shiro" {
 			t.Fatalf("repair was routed through chat: %+v", body)
 		}
-		_, _ = w.Write([]byte(`{"ok":true,"job_id":"repair-test"}`))
+		_, _ = w.Write([]byte(`{"ok":true,"task_id":"` + wantTaskID.String() + `"}`))
 	}))
 	defer server.Close()
 	t.Setenv("RENCROW_RESILIENCE_BASE_URL", server.URL)
 	t.Setenv("RENCROW_RESILIENCE_DIR", t.TempDir())
 	t.Setenv("RENCROW_RESILIENCE_REPAIR_ROUTE", "CODE2")
 
-	jobID, err := requestRepair(&resilience.Incident{Signature: "incident-test", Kind: "panic"})
-	if err != nil || jobID != "repair-test" {
-		t.Fatalf("jobID=%q err=%v", jobID, err)
+	taskID, err := requestRepair(&resilience.Incident{Signature: "incident-test", Kind: "panic"})
+	if err != nil || taskID != wantTaskID {
+		t.Fatalf("taskID=%q err=%v", taskID, err)
 	}
 }
 

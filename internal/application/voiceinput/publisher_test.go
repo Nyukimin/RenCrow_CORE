@@ -20,22 +20,22 @@ type recordedEvent struct {
 	To        string
 	Content   string
 	Route     string
-	JobID     string
+	TaskID    string
 	SessionID string
 	Channel   string
 	ChatID    string
 	MessageID string
 }
 
-func (e *recordingEmitter) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+func (e *recordingEmitter) Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
 	e.events = append(e.events, recordedEvent{
 		Type: eventType, From: from, To: to, Content: content, Route: route,
-		JobID: jobID, SessionID: sessionID, Channel: channel, ChatID: chatID,
+		TaskID: taskID, SessionID: sessionID, Channel: channel, ChatID: chatID,
 	})
 }
 
-func (e *recordingEmitter) EmitWithMessageID(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID string) {
-	e.Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+func (e *recordingEmitter) EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID string) {
+	e.Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 	e.events[len(e.events)-1].MessageID = messageID
 }
 
@@ -77,14 +77,14 @@ type recordingPublisherCorrelatedTurnLogger struct {
 	userChannel        string
 	assistantChannel   string
 	assistantRoute     string
-	assistantJobID     string
+	assistantTaskID    string
 }
 
 func (l *recordingTurnLogger) WriteUser(sessionID, channel, content string) {
 	l.user = content
 }
 
-func (l *recordingTurnLogger) WriteAssistant(sessionID, channel, route, jobID, content string) {
+func (l *recordingTurnLogger) WriteAssistant(sessionID, channel, route, taskID, content string) {
 	l.assistant = content
 }
 
@@ -92,7 +92,7 @@ func (l *recordingPublisherCorrelatedTurnLogger) WriteUser(sessionID, channel, c
 	l.userCalls++
 }
 
-func (l *recordingPublisherCorrelatedTurnLogger) WriteAssistant(sessionID, channel, route, jobID, content string) {
+func (l *recordingPublisherCorrelatedTurnLogger) WriteAssistant(sessionID, channel, route, taskID, content string) {
 	l.assistantCalls++
 }
 
@@ -104,28 +104,23 @@ func (l *recordingPublisherCorrelatedTurnLogger) WriteUserWithIdentity(sessionID
 	l.userChannel = channel
 }
 
-func (l *recordingPublisherCorrelatedTurnLogger) WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string) {
+func (l *recordingPublisherCorrelatedTurnLogger) WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string) {
 	l.assistantCalls++
 	l.assistantMessageID = messageID
 	l.assistantTraceID = traceID
 	l.assistantSessionID = sessionID
 	l.assistantChannel = channel
 	l.assistantRoute = route
-	l.assistantJobID = jobID
+	l.assistantTaskID = taskID
 }
 
 func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 	emitter := &recordingEmitter{}
 	logger := &recordingPublisherCorrelatedTurnLogger{}
-	jobCalls := 0
 	publisher := Publisher{
 		Events:     emitter,
 		TurnLogger: logger,
 		Input:      conversation.TurnInput{},
-		NewJobID: func() string {
-			jobCalls++
-			return modulecore.NewTaskID().String()
-		},
 	}
 
 	_, err := publisher.Publish(Result{
@@ -148,13 +143,9 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 	if logger.userCalls != 0 || logger.assistantCalls != 0 {
 		t.Fatalf("missing trace_id must not write session logs: %+v", logger)
 	}
-	if jobCalls != 0 {
-		t.Fatalf("missing trace_id must fail before allocating a job: calls=%d", jobCalls)
-	}
 }
 
-func TestPublisherDoesNotReuseJobIDAsTraceID(t *testing.T) {
-	jobID := modulecore.NewTaskID().String()
+func TestPublisherUsesRootTaskIDAndIndependentTraceID(t *testing.T) {
 	result := Result{
 		Mode:        ModeLLM,
 		UtteranceID: "utt-trace-reuse",
@@ -168,14 +159,13 @@ func TestPublisherDoesNotReuseJobIDAsTraceID(t *testing.T) {
 	}
 	input := inputForResult(t, result)
 	published, err := (Publisher{
-		Input:    input,
-		NewJobID: func() string { return jobID },
+		Input: input,
 	}).Publish(result)
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
 	}
-	if published.TraceID != string(input.TraceID()) || modulecore.TraceID(published.TraceID).Validate() != nil || published.TraceID == published.JobID {
-		t.Fatalf("publisher must return an independent canonical trace_id: %+v", published)
+	if published.TaskID != input.RootTaskID() || published.TraceID != string(input.TraceID()) || modulecore.TraceID(published.TraceID).Validate() != nil || published.TraceID == published.TaskID.String() {
+		t.Fatalf("publisher must preserve the root task and independent canonical trace_id: %+v", published)
 	}
 }
 
@@ -196,7 +186,6 @@ func TestPublisherPassesExplicitTraceIDToCorrelatedSessionLogs(t *testing.T) {
 	published, err := (Publisher{
 		TurnLogger: logger,
 		Input:      input,
-		NewJobID:   func() string { return modulecore.NewTaskID().String() },
 	}).Publish(result)
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
@@ -224,12 +213,10 @@ func TestPublisherUsesTurnInputIdentitiesAndBoundary(t *testing.T) {
 	input := newPublisherInput(t, result.SessionID, result.Channel, result.ChatID, result.UserText)
 	emitter := &recordingEmitter{}
 	logger := &recordingPublisherCorrelatedTurnLogger{}
-	jobID := "job-independent"
 	published, err := (Publisher{
 		Events:     emitter,
 		TurnLogger: logger,
 		Input:      input,
-		NewJobID:   func() string { return jobID },
 	}).Publish(result)
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
@@ -237,24 +224,24 @@ func TestPublisherUsesTurnInputIdentitiesAndBoundary(t *testing.T) {
 	if published.Input.RootTaskID() != input.RootTaskID() || published.Input.TurnID() != input.TurnID() || published.Input.TraceID() != input.TraceID() || published.Input.UserMessageID() != input.UserMessageID() || published.Input.AgentMessageID() != input.AgentMessageID() || published.Input.MessageText() != input.MessageText() || published.Input.ChannelAddress() != input.ChannelAddress() || published.Input.SessionID() != input.SessionID() || published.Input.ViewerRecipient() != input.ViewerRecipient() || published.Input.Route() != input.Route() {
 		t.Fatalf("published input changed: got=%#v want=%#v", published.Input, input)
 	}
-	if published.JobID != jobID || published.MessageID != string(input.AgentMessageID()) || published.TraceID != string(input.TraceID()) {
+	if published.TaskID != input.RootTaskID() || published.MessageID != string(input.AgentMessageID()) || published.TraceID != string(input.TraceID()) {
 		t.Fatalf("published identity = %+v, input=%#v", published, input)
 	}
 	if len(emitter.events) != 3 {
 		t.Fatalf("expected three events, got %#v", emitter.events)
 	}
 	userEvent := emitter.events[0]
-	if userEvent.Type != "message.received" || userEvent.MessageID != string(input.UserMessageID()) || userEvent.JobID != jobID || userEvent.SessionID != input.SessionID() || userEvent.Channel != input.ChannelAddress().ChannelType() || userEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
+	if userEvent.Type != "message.received" || userEvent.MessageID != string(input.UserMessageID()) || userEvent.TaskID != input.RootTaskID().String() || userEvent.SessionID != input.SessionID() || userEvent.Channel != input.ChannelAddress().ChannelType() || userEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
 		t.Fatalf("user event identity/boundary = %#v, input=%#v", userEvent, input)
 	}
 	responseEvent := emitter.events[2]
-	if responseEvent.Type != "agent.response" || responseEvent.MessageID != string(input.AgentMessageID()) || responseEvent.Route != string(input.Route()) || responseEvent.JobID != jobID || responseEvent.SessionID != input.SessionID() || responseEvent.Channel != input.ChannelAddress().ChannelType() || responseEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
+	if responseEvent.Type != "agent.response" || responseEvent.MessageID != string(input.AgentMessageID()) || responseEvent.Route != string(input.Route()) || responseEvent.TaskID != input.RootTaskID().String() || responseEvent.SessionID != input.SessionID() || responseEvent.Channel != input.ChannelAddress().ChannelType() || responseEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
 		t.Fatalf("response event identity/boundary = %#v, input=%#v", responseEvent, input)
 	}
 	if logger.userMessageID != string(input.UserMessageID()) || logger.userTraceID != string(input.TraceID()) || logger.userSessionID != input.SessionID() || logger.userChannel != input.ChannelAddress().ChannelType() {
 		t.Fatalf("user log identity/boundary = %+v, input=%#v", logger, input)
 	}
-	if logger.assistantMessageID != string(input.AgentMessageID()) || logger.assistantTraceID != string(input.TraceID()) || logger.assistantSessionID != input.SessionID() || logger.assistantChannel != input.ChannelAddress().ChannelType() || logger.assistantRoute != string(input.Route()) || logger.assistantJobID != jobID {
+	if logger.assistantMessageID != string(input.AgentMessageID()) || logger.assistantTraceID != string(input.TraceID()) || logger.assistantSessionID != input.SessionID() || logger.assistantChannel != input.ChannelAddress().ChannelType() || logger.assistantRoute != string(input.Route()) || logger.assistantTaskID != input.RootTaskID().String() {
 		t.Fatalf("assistant log identity/boundary = %+v, input=%#v", logger, input)
 	}
 	if input.UserMessageID() == input.AgentMessageID() {
@@ -291,15 +278,10 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 		t.Run(tc.name, func(t *testing.T) {
 			emitter := &recordingEmitter{}
 			logger := &recordingPublisherCorrelatedTurnLogger{}
-			jobCalls := 0
 			_, err := (Publisher{
 				Events:     emitter,
 				TurnLogger: logger,
 				Input:      tc.input,
-				NewJobID: func() string {
-					jobCalls++
-					return "job-should-not-be-allocated"
-				},
 			}).Publish(tc.result)
 			if err == nil {
 				t.Fatal("invalid input boundary was accepted")
@@ -310,17 +292,14 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 			if logger.userCalls != 0 || logger.assistantCalls != 0 {
 				t.Fatalf("rejected input wrote session logs: %+v", logger)
 			}
-			if jobCalls != 0 {
-				t.Fatalf("rejected input allocated a job: calls=%d", jobCalls)
-			}
 		})
 	}
 }
 
-func TestPublisherRejectsJobIDCollisionWithAnyTurnInputIdentity(t *testing.T) {
+func TestPublisherUsesRootTaskIDWithoutRootTaskCollisionRejection(t *testing.T) {
 	result := Result{
 		Mode:        ModeLLM,
-		UtteranceID: "utt-job-collision",
+		UtteranceID: "utt-task-correlation",
 		SessionID:   "session-1",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
@@ -330,48 +309,28 @@ func TestPublisherRejectsJobIDCollisionWithAnyTurnInputIdentity(t *testing.T) {
 		Source:      "RenCrow_LLM llm.final",
 	}
 	input := newPublisherInput(t, result.SessionID, result.Channel, result.ChatID, result.UserText)
-	identities := []struct {
-		name  string
-		value string
-	}{
-		{name: "turn", value: string(input.TurnID())},
-		{name: "trace", value: string(input.TraceID())},
-		{name: "root task", value: string(input.RootTaskID())},
-		{name: "user message", value: string(input.UserMessageID())},
-		{name: "agent message", value: string(input.AgentMessageID())},
+	emitter := &recordingEmitter{}
+	logger := &recordingPublisherCorrelatedTurnLogger{}
+	published, err := (Publisher{
+		Events:     emitter,
+		TurnLogger: logger,
+		Input:      input,
+	}).Publish(result)
+	if err != nil {
+		t.Fatalf("root task correlation was rejected: %v", err)
 	}
-	for _, identity := range identities {
-		t.Run(identity.name, func(t *testing.T) {
-			emitter := &recordingEmitter{}
-			logger := &recordingPublisherCorrelatedTurnLogger{}
-			_, err := (Publisher{
-				Events:     emitter,
-				TurnLogger: logger,
-				Input:      input,
-				NewJobID:   func() string { return identity.value },
-			}).Publish(result)
-			if err == nil {
-				t.Fatal("job/input identity collision was accepted")
-			}
-			if len(emitter.events) != 0 || logger.userCalls != 0 || logger.assistantCalls != 0 {
-				t.Fatalf("job collision caused side effects: events=%#v logger=%+v", emitter.events, logger)
-			}
-		})
+	if published.TaskID != input.RootTaskID() {
+		t.Fatalf("published task identity = %q, want root %q", published.TaskID, input.RootTaskID())
 	}
 }
 
 func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
 	emitter := &recordingEmitter{}
 	logger := &recordingPublisherCorrelatedTurnLogger{}
-	jobCalls := 0
 	publisher := Publisher{
 		Events:     emitter,
 		TurnLogger: logger,
 		Input:      newPublisherInput(t, "viewer", "viewer", "default", "入力"),
-		NewJobID: func() string {
-			jobCalls++
-			return modulecore.NewTaskID().String()
-		},
 	}
 
 	_, err := publisher.Publish(Result{
@@ -393,9 +352,6 @@ func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
 	if logger.userCalls != 0 || logger.assistantCalls != 0 {
 		t.Fatalf("missing user_text must not write session logs: %+v", logger)
 	}
-	if jobCalls != 0 {
-		t.Fatalf("missing user_text must fail before allocating a job: calls=%d", jobCalls)
-	}
 }
 
 func TestPublisherPublishesUserTextAndReplyOnly(t *testing.T) {
@@ -405,7 +361,6 @@ func TestPublisherPublishesUserTextAndReplyOnly(t *testing.T) {
 		Events:     emitter,
 		TurnLogger: logger,
 		Input:      newPublisherInput(t, "viewer", "viewer", "default", "Mioさんいますか"),
-		NewJobID:   func() string { return "job-1" },
 	}
 	_, err := publisher.Publish(Result{
 		Mode:        ModeLLM,
@@ -439,9 +394,8 @@ func TestPublisherPublishesUserTextAndReplyOnly(t *testing.T) {
 func TestPublisherMarksVoiceInputAsVoiceChatSurface(t *testing.T) {
 	emitter := &recordingEmitter{}
 	publisher := Publisher{
-		Events:   emitter,
-		Input:    newPublisherInput(t, "viewer", "viewer", "default", "入力"),
-		NewJobID: func() string { return "job-1" },
+		Events: emitter,
+		Input:  newPublisherInput(t, "viewer", "viewer", "default", "入力"),
 	}
 	_, err := publisher.Publish(Result{
 		Mode:        ModeLLM,
@@ -476,9 +430,8 @@ func TestPublisherMarksVoiceInputAsVoiceChatSurface(t *testing.T) {
 func TestPublisherDoesNotPublishRawJSONAsChatContent(t *testing.T) {
 	emitter := &recordingEmitter{}
 	publisher := Publisher{
-		Events:   emitter,
-		Input:    newPublisherInput(t, "viewer", "viewer", "default", "れん"),
-		NewJobID: func() string { return "job-1" },
+		Events: emitter,
+		Input:  newPublisherInput(t, "viewer", "viewer", "default", "れん"),
 	}
 	_, err := publisher.Publish(Result{
 		Mode:        ModeLLM,

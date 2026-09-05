@@ -12,7 +12,7 @@ import (
 
 func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 	bridge := &mockTTSBridge{}
-	lifecycle := newDistributedTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	lifecycle := newDistributedTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 	lifecycle.SetTTSBridge(bridge)
 
 	req := ProcessMessageRequest{
@@ -21,11 +21,11 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
-	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision)
-	wantSessionID := "sess-1-" + jobID.String()
+	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), req, taskID, decision)
+	wantSessionID := "sess-1-" + taskID.String()
 	if ttsSessionID != wantSessionID {
 		t.Fatalf("expected session %s, got %s", wantSessionID, ttsSessionID)
 	}
@@ -49,7 +49,7 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 
 func TestPhase16DistributedTTSLifecyclePassesRequestTraceToTTSSession(t *testing.T) {
 	bridge := &mockTTSBridge{}
-	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 	traceID := modulecore.NewTraceID()
 
 	lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
@@ -66,7 +66,7 @@ func TestPhase16DistributedTTSLifecyclePassesRequestTraceToTTSSession(t *testing
 
 func TestPhase16DistributedTTSLifecycleStartFailureClearsSession(t *testing.T) {
 	bridge := &mockTTSBridge{startErr: errors.New("tts down")}
-	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 
 	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 		SessionID:   "sess-1",
@@ -96,7 +96,7 @@ func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			bridge := &mockTTSBridge{}
-			lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+			lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 
 			ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
@@ -116,14 +116,14 @@ func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
 func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
 	var previous []string
 	var emitted []string
-	lifecycle := newDistributedTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+	lifecycle := newDistributedTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
 		emitted = append(emitted, eventType+":"+content)
 	})
 
 	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
 		previous = append(previous, token)
 	})
-	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "job-1", "sess-1", "line", "U123", "")
+	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000024", "sess-1", "line", "U123", "")
 	if bundle == nil {
 		t.Fatal("expected stream bundle")
 	}

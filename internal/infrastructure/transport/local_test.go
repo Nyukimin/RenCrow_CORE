@@ -7,14 +7,43 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func TestLocalTransportRejectsMissingOrMalformedTaskID(t *testing.T) {
+	for _, taskID := range []modulecore.TaskID{"", "not-a-task-id"} {
+		t.Run(string(taskID), func(t *testing.T) {
+			lt := NewLocalTransport()
+			defer lt.Close()
+
+			msg := domaintransport.NewMessage("mio", "shiro", "s1", taskID, "hello")
+			if err := lt.Send(context.Background(), msg); err == nil {
+				t.Fatalf("Send() accepted invalid TaskID %q", taskID)
+			}
+			select {
+			case got := <-lt.GetOutboundChannel():
+				t.Fatalf("invalid outbound message was delivered: task_id=%q", got.TaskID)
+			default:
+			}
+
+			if err := lt.PutInboundMessage(msg); err == nil {
+				t.Fatalf("PutInboundMessage() accepted invalid TaskID %q", taskID)
+			}
+			select {
+			case got := <-lt.inbound:
+				t.Fatalf("invalid inbound message was delivered: task_id=%q", got.TaskID)
+			default:
+			}
+		})
+	}
+}
 
 func TestLocalTransport_SendReceive(t *testing.T) {
 	lt := NewLocalTransport()
 	defer lt.Close()
 
 	ctx := context.Background()
-	msg := domaintransport.NewMessage("mio", "shiro", "s1", "j1", "hello")
+	msg := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "hello")
 
 	// Send → outbound channel
 	if err := lt.Send(ctx, msg); err != nil {
@@ -37,7 +66,7 @@ func TestLocalTransport_PutInboundReceive(t *testing.T) {
 	defer lt.Close()
 
 	ctx := context.Background()
-	msg := domaintransport.NewMessage("Router", "mio", "s1", "j1", "routed msg")
+	msg := domaintransport.NewMessage("Router", "mio", "s1", modulecore.NewTaskID(), "routed msg")
 
 	if err := lt.PutInboundMessage(msg); err != nil {
 		t.Fatalf("PutInboundMessage failed: %v", err)
@@ -75,14 +104,14 @@ func TestLocalTransport_SendContextCancellation(t *testing.T) {
 
 	// Fill the outbound channel
 	for i := 0; i < defaultChannelCapacity; i++ {
-		msg := domaintransport.NewMessage("A", "B", "s1", "j1", "fill")
+		msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "fill")
 		lt.Send(context.Background(), msg)
 	}
 
 	cancel()
 
 	// Send on full channel with cancelled context
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "overflow")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "overflow")
 	err := lt.Send(ctx, msg)
 	if err == nil {
 		t.Error("Expected error on cancelled context")
@@ -146,14 +175,14 @@ func TestLocalTransport_ChannelFull(t *testing.T) {
 
 	// Fill inbound channel
 	for i := 0; i < defaultChannelCapacity; i++ {
-		msg := domaintransport.NewMessage("R", "A", "s1", "j1", "fill")
+		msg := domaintransport.NewMessage("R", "A", "s1", modulecore.NewTaskID(), "fill")
 		if err := lt.PutInboundMessage(msg); err != nil {
 			t.Fatalf("PutInboundMessage failed at %d: %v", i, err)
 		}
 	}
 
 	// Next put should fail (non-blocking)
-	msg := domaintransport.NewMessage("R", "A", "s1", "j1", "overflow")
+	msg := domaintransport.NewMessage("R", "A", "s1", modulecore.NewTaskID(), "overflow")
 	err := lt.PutInboundMessage(msg)
 	if err == nil {
 		t.Error("Expected error when inbound channel is full")
@@ -178,12 +207,12 @@ func TestLocalTransport_Send_DoneClosed(t *testing.T) {
 
 	// outboundを満杯にしてからclose → done経由のエラー
 	for i := 0; i < defaultChannelCapacity; i++ {
-		lt.Send(context.Background(), domaintransport.NewMessage("A", "B", "s1", "j1", "fill"))
+		lt.Send(context.Background(), domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "fill"))
 	}
 
 	lt.Close()
 
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "after-close")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "after-close")
 	err := lt.Send(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected error on send after close")
@@ -204,7 +233,7 @@ func TestLocalTransport_Concurrent(t *testing.T) {
 		go func(sender int) {
 			defer wg.Done()
 			for j := 0; j < numMessages; j++ {
-				msg := domaintransport.NewMessage("sender", "receiver", "s1", "j1", "msg")
+				msg := domaintransport.NewMessage("sender", "receiver", "s1", modulecore.NewTaskID(), "msg")
 				lt.Send(context.Background(), msg)
 			}
 		}(i)

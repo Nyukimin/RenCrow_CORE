@@ -678,7 +678,8 @@ func writeEmptyCLITestSnapshot(t *testing.T) string {
 		`CREATE TABLE dci_query_terms (id INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL, term TEXT NOT NULL, term_type TEXT, parent_term TEXT, created_at TEXT NOT NULL)`,
 	})
 	writeCLITestDB(t, filepath.Join(root, "source-event-store"), []string{
-		`CREATE TABLE event_envelope (event_id TEXT PRIMARY KEY NOT NULL, trace_id TEXT NOT NULL, schema_version TEXT NOT NULL, event_type TEXT NOT NULL, component_id TEXT NOT NULL, occurred_at TEXT NOT NULL, envelope_json TEXT NOT NULL)`,
+		`CREATE TABLE event_envelope (event_id TEXT PRIMARY KEY NOT NULL, event_seq INTEGER NOT NULL UNIQUE, trace_id TEXT NOT NULL, schema_version TEXT NOT NULL, event_type TEXT NOT NULL, component_id TEXT NOT NULL, occurred_at TEXT NOT NULL, envelope_json TEXT NOT NULL)`,
+		`CREATE UNIQUE INDEX event_envelope_seq_idx ON event_envelope(event_seq)`,
 		`CREATE TABLE event_dependency (event_id TEXT NOT NULL, dependency_event_id TEXT NOT NULL, relation_type TEXT NOT NULL CHECK (relation_type IN ('causation','dependency')), PRIMARY KEY(event_id,dependency_event_id), FOREIGN KEY(event_id) REFERENCES event_envelope(event_id) ON UPDATE RESTRICT ON DELETE RESTRICT, FOREIGN KEY(dependency_event_id) REFERENCES event_envelope(event_id) ON UPDATE RESTRICT ON DELETE RESTRICT)`,
 	})
 	writeCLITestDB(t, filepath.Join(root, "source-l1"), []string{

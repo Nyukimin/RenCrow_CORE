@@ -57,6 +57,14 @@ const (
 	RouteResearch   Route = "RESEARCH"
 	RouteOperations Route = "OPS"
 	RouteGeneral    Route = "GENERAL"
+	RouteCHAT       Route = "CHAT"
+	RoutePLAN       Route = "PLAN"
+	RouteANALYZE    Route = "ANALYZE"
+	RouteWILD       Route = "WILD"
+	RouteCODE1      Route = "CODE1"
+	RouteCODE2      Route = "CODE2"
+	RouteCODE3      Route = "CODE3"
+	RouteCODE4      Route = "CODE4"
 )
 
 // Task is the durable executable work aggregate. The canonical TaskID and
@@ -68,8 +76,10 @@ type Task struct {
 	ModuleID          string                  `json:"module_id,omitempty"`
 	ModuleRoot        string                  `json:"module_root,omitempty"`
 	Route             Route                   `json:"route"`
+	RoutingEventID    modulecore.EventID      `json:"routing_event_id,omitempty"`
 	OwnerID           string                  `json:"owner_id,omitempty"`
 	Assignee          string                  `json:"assignee,omitempty"`
+	AssignmentEventID modulecore.EventID      `json:"assignment_event_id,omitempty"`
 	CoderRoles        []string                `json:"coder_roles,omitempty"`
 	Status            Status                  `json:"status"`
 	Priority          Priority                `json:"priority"`
@@ -220,6 +230,12 @@ func (t Task) Validate() error {
 	if err := validateOptionalID(t.GoalID); err != nil {
 		return fmt.Errorf("goal_id is invalid: %w", err)
 	}
+	if err := validateOptionalID(t.RoutingEventID); err != nil {
+		return fmt.Errorf("routing_event_id is invalid: %w", err)
+	}
+	if err := validateOptionalID(t.AssignmentEventID); err != nil {
+		return fmt.Errorf("assignment_event_id is invalid: %w", err)
+	}
 	if err := validateOptionalID(t.SupersedesTaskID); err != nil {
 		return fmt.Errorf("supersedes_task_id is invalid: %w", err)
 	}
@@ -260,7 +276,8 @@ func ValidPriority(priority Priority) bool {
 
 func ValidRoute(route Route) bool {
 	switch route {
-	case RouteCode, RouteResearch, RouteOperations, RouteGeneral:
+	case RouteCode, RouteResearch, RouteOperations, RouteGeneral,
+		RouteCHAT, RoutePLAN, RouteANALYZE, RouteWILD, RouteCODE1, RouteCODE2, RouteCODE3, RouteCODE4:
 		return true
 	default:
 		return false
@@ -294,7 +311,7 @@ func CanTransition(from, to Status) bool {
 	}
 	switch from {
 	case StatusQueued:
-		return to == StatusRunning || to == StatusCancelled || to == StatusSuperseded
+		return to == StatusRunning || to == StatusFailed || to == StatusCancelled || to == StatusSuperseded
 	case StatusRunning:
 		return to == StatusWaiting || to == StatusBlocked || to == StatusFailed || to == StatusSucceeded || to == StatusCancelled || to == StatusSuperseded
 	case StatusWaiting:

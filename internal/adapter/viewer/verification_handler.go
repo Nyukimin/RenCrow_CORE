@@ -7,11 +7,12 @@ import (
 	"strconv"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type VerificationReportReader interface {
 	ListRecent(ctx context.Context, limit int) ([]domainverification.VerificationReport, error)
-	GetByJobID(ctx context.Context, jobID string) (domainverification.VerificationReport, error)
+	GetByTaskID(ctx context.Context, taskID modulecore.TaskID) (domainverification.VerificationReport, error)
 	Summary(ctx context.Context) (map[string]map[string]int, error)
 }
 
@@ -68,12 +69,12 @@ func HandleVerificationDetail(store VerificationReportReader) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		jobID := r.URL.Query().Get("job_id")
-		if jobID == "" {
-			http.Error(w, "job_id is required", http.StatusBadRequest)
+		taskID := modulecore.TaskID(r.URL.Query().Get("task_id"))
+		if err := taskID.Validate(); err != nil {
+			http.Error(w, "valid task_id is required", http.StatusBadRequest)
 			return
 		}
-		item, err := store.GetByJobID(r.Context(), jobID)
+		item, err := store.GetByTaskID(r.Context(), taskID)
 		if err != nil {
 			http.Error(w, "verification report not found", http.StatusNotFound)
 			return

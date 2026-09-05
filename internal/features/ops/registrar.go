@@ -17,14 +17,12 @@ type Routes struct {
 	Status            http.HandlerFunc
 	Agents            http.HandlerFunc
 	AgentDetail       http.HandlerFunc
-	Jobs              http.HandlerFunc
 	Tasks             http.HandlerFunc
 	TaskDetail        http.HandlerFunc
 	TaskNotifications http.HandlerFunc
 	Logs              http.HandlerFunc
 	PromptDebug       http.HandlerFunc
 	AuditSummary      http.HandlerFunc
-	JobDetail         http.HandlerFunc
 	RepairRun         http.HandlerFunc
 	Backlog           http.HandlerFunc
 	Scheduler         http.HandlerFunc
@@ -43,14 +41,12 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/status", routes.Status)
 	registerRoute(mux, "/viewer/agents", routes.Agents)
 	registerRoute(mux, "/viewer/agent/detail", routes.AgentDetail)
-	registerRoute(mux, "/viewer/jobs", routes.Jobs)
 	registerRoute(mux, "/viewer/tasks", routes.Tasks)
 	registerRoute(mux, "/viewer/task/detail", routes.TaskDetail)
 	registerRoute(mux, "/viewer/task-notifications", routes.TaskNotifications)
 	registerRoute(mux, "/viewer/logs", routes.Logs)
 	registerRoute(mux, "/viewer/prompt-debug", routes.PromptDebug)
 	registerRoute(mux, "/viewer/audit/summary", routes.AuditSummary)
-	registerRoute(mux, "/viewer/job/detail", routes.JobDetail)
 	registerRoute(mux, "/viewer/repair/run", routes.RepairRun)
 	registerRoute(mux, "/viewer/backlog", routes.Backlog)
 	registerRoute(mux, "/viewer/scheduler", routes.Scheduler)

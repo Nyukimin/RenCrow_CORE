@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -10,29 +11,36 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, jobID, goal, route string, startedAt, finishedAt time.Time, runErr error) {
-	o.evidence.Save(ctx, jobID, goal, route, startedAt, finishedAt, runErr)
+func validateDistributedTaskID(taskID modulecore.TaskID) error {
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	return nil
+}
+
+func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, taskID modulecore.TaskID, goal, route string, startedAt, finishedAt time.Time, runErr error) {
+	o.evidence.Save(ctx, taskID, goal, route, startedAt, finishedAt, runErr)
 }
 
 // executeDistributed はルートに応じてTransport経由でAgent間通信
-func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteTurnInput(ctx, input, route, jobID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteTurnInput(ctx, input, route, taskID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
-	return o.autonomous.Execute(ctx, input, route, jobID, ttsSessionID)
+func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	return o.autonomous.Execute(ctx, input, route, taskID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
-	return o.routes.ExecuteDirect(ctx, input, route, jobID, ttsSessionID)
+func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	return o.routes.ExecuteDirect(ctx, input, route, taskID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) withStreamHooks(
 	ctx context.Context,
 	route routing.Route,
-	jid, sessionID, channel, chatID, ttsSessionID string,
+	taskIDText, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
-	return o.ttsLifecycle.WithStreamHooks(ctx, route, jid, sessionID, channel, chatID, ttsSessionID)
+	return o.ttsLifecycle.WithStreamHooks(ctx, route, taskIDText, sessionID, channel, chatID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) pushTTS(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {
@@ -43,9 +51,9 @@ func (o *DistributedOrchestrator) executeCodeViaShiro(
 	ctx context.Context,
 	input domainconversation.TurnInput,
 	route routing.Route,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 ) (string, error) {
-	return o.codeExecution.Execute(ctx, input.WithRoute(route), route, jobID)
+	return o.codeExecution.Execute(ctx, input.WithRoute(route), route, taskID)
 }
 
 // executeViaSSH はSSH Transport経由でリモートAgentと通信

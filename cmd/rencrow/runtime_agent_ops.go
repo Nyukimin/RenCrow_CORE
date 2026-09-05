@@ -80,7 +80,7 @@ type agentOpsRequest struct {
 
 type agentOpsResponse struct {
 	RequestID string `json:"request_id"`
-	JobID     string `json:"job_id"`
+	TaskID    string `json:"task_id"`
 	AgentID   string `json:"agent_id"`
 	Role      string `json:"role"`
 	Route     string `json:"route"`
@@ -267,13 +267,13 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	address, err := conversation.NewChannelAddress(agentOpsTaskChannel, agentOpsTaskChatID)
 	if err != nil {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
 		return
 	}
-	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), request.Message, address)
+	input, err := conversation.NewTurnInput(taskID, request.Message, address)
 	if err != nil {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
 		return
@@ -289,7 +289,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	writeJSONStatus(w, http.StatusOK, agentOpsResponse{
 		RequestID: requestID,
-		JobID:     jobID.String(),
+		TaskID:    taskID.String(),
 		AgentID:   "shiro",
 		Role:      "worker",
 		Route:     routing.RouteOPS.String(),

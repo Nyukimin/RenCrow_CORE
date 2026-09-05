@@ -7,6 +7,7 @@ import (
 
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Planner builds an executable plan from contract.
@@ -54,7 +55,7 @@ const (
 
 // Report stores execution outcome evidence.
 type Report struct {
-	JobID           string
+	TaskID          modulecore.TaskID
 	Status          Status
 	RepairCount     int
 	AttemptCount    int
@@ -92,7 +93,10 @@ func (s *Service) WithReportStore(store ReportStore) *Service {
 	return s
 }
 
-func (s *Service) Run(ctx context.Context, c domaincontract.Contract) (Report, error) {
+func (s *Service) Run(ctx context.Context, c domaincontract.Contract, taskID modulecore.TaskID) (Report, error) {
+	if err := taskID.Validate(); err != nil {
+		return Report{Status: StatusFailed}, fmt.Errorf("task_id: %w", err)
+	}
 	if err := c.Validate(); err != nil {
 		return Report{Status: StatusFailed}, err
 	}
@@ -103,7 +107,7 @@ func (s *Service) Run(ctx context.Context, c domaincontract.Contract) (Report, e
 	}
 
 	report := Report{
-		JobID:  fmt.Sprintf("job-%d", time.Now().UTC().UnixNano()),
+		TaskID: taskID,
 		Status: StatusFailed,
 	}
 
@@ -167,7 +171,7 @@ func (s *Service) saveReport(ctx context.Context, c domaincontract.Contract, rep
 	verification = append(verification, c.Verification...)
 	verification = append(verification, report.VerificationLog...)
 	ev := domainexecution.ExecutionReport{
-		JobID:         report.JobID,
+		TaskID:        report.TaskID,
 		Goal:          c.Goal,
 		Capability:    string(CapabilityGenericExecution),
 		Status:        status,

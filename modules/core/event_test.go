@@ -78,3 +78,17 @@ func TestValidateEventEnvelopeRejectsMissingRequiredFieldAndWrongTypedID(t *test
 		})
 	}
 }
+
+func TestValidateEventEnvelopeAllowsUnassignedEventSeqButRejectsNegative(t *testing.T) {
+	valid := eventFixture(NewEventID(), NewTraceID(), "run.started")
+	if valid.EventSeq != 0 {
+		t.Fatalf("event fixture sequence = %d, want unassigned zero", valid.EventSeq)
+	}
+	if err := ValidateEventEnvelope(valid); err != nil {
+		t.Fatalf("unassigned event sequence rejected: %v", err)
+	}
+	valid.EventSeq = -1
+	if err := ValidateEventEnvelope(valid); err == nil {
+		t.Fatal("negative event sequence accepted")
+	}
+}

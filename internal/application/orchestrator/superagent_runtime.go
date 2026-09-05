@@ -17,7 +17,7 @@ type leadAgentRunRecord struct {
 	StartedEventID modulecore.EventID
 }
 
-func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID modulecore.TaskID, route routing.Route) (leadAgentRunRecord, error) {
+func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, taskID modulecore.TaskID, route routing.Route) (leadAgentRunRecord, error) {
 	startedAt := time.Now().UTC()
 	if recorder == nil {
 		return leadAgentRunRecord{StartedAt: startedAt}, nil
@@ -28,7 +28,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	}
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:              leadAgentRunID(jobID),
+		RunID:              leadAgentRunID(taskID),
 		WorkstreamID:       req.SessionID,
 		AgentType:          "LeadAgent",
 		Goal:               req.UserMessage,
@@ -51,7 +51,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
 	}
 	pack := domainsuperagent.ContextPack{
-		ContextPackID:   leadAgentContextPackID(jobID),
+		ContextPackID:   leadAgentContextPackID(taskID),
 		RunID:           run.RunID,
 		WorkstreamID:    req.SessionID,
 		Summary:         fmt.Sprintf("route=%s channel=%s chat_id=%s user_message=%s", route, req.Channel, req.ChatID, req.UserMessage),
@@ -65,7 +65,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	return leadAgentRunRecord{StartedAt: startedAt, TraceID: traceID, StartedEventID: event.EventID}, nil
 }
 
-func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID modulecore.TaskID, route routing.Route, record leadAgentRunRecord, status string, summary string) error {
+func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, taskID modulecore.TaskID, route routing.Route, record leadAgentRunRecord, status string, summary string) error {
 	if recorder == nil {
 		return nil
 	}
@@ -75,7 +75,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 	completedAt := time.Now().UTC()
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, record.StartedAt)
 	run := domainsuperagent.AgentRun{
-		RunID:              leadAgentRunID(jobID),
+		RunID:              leadAgentRunID(taskID),
 		WorkstreamID:       req.SessionID,
 		AgentType:          "LeadAgent",
 		Goal:               req.UserMessage,
@@ -109,15 +109,15 @@ func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt
 	if req.ResumeCheckpointRevision > 0 && strings.TrimSpace(req.ResumeCheckpointSummary) != "" && strings.TrimSpace(req.ResumeNextAction) != "" {
 		return req.ResumeCheckpointRevision, strings.TrimSpace(req.ResumeCheckpointSummary), strings.TrimSpace(req.ResumeNextAction), fallbackAt
 	}
-	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch task with the same job_id", fallbackAt
+	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch with the same task_id", fallbackAt
 }
 
-func leadAgentRunID(jobID modulecore.TaskID) string {
-	return "run_lead_" + jobID.String()
+func leadAgentRunID(taskID modulecore.TaskID) string {
+	return "run_lead_" + taskID.String()
 }
 
-func leadAgentContextPackID(jobID modulecore.TaskID) string {
-	return "ctx_lead_" + jobID.String()
+func leadAgentContextPackID(taskID modulecore.TaskID) string {
+	return "ctx_lead_" + taskID.String()
 }
 
 func estimateRuntimeContextTokens(text string) int {

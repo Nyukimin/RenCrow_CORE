@@ -1,9 +1,12 @@
 package verification
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestVerificationStatusValid(t *testing.T) {
@@ -139,9 +142,10 @@ func TestVerificationPolicyNormalized(t *testing.T) {
 }
 
 func TestVerificationReportValidate(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	report := VerificationReport{
-		ID:           "verify-job-1",
-		JobID:        "job-1",
+		ID:           "verify-1",
+		TaskID:       taskID,
 		SessionID:    "session-1",
 		Route:        "CHAT",
 		Status:       StatusNotChecked,
@@ -157,6 +161,21 @@ func TestVerificationReportValidate(t *testing.T) {
 	}
 }
 
+func TestVerificationReportJSONUsesOnlyCanonicalTaskID(t *testing.T) {
+	report := VerificationReport{
+		ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1",
+		Status: StatusNotChecked, CreatedAt: time.Now().UTC(),
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyKey := "job" + "_" + "id"
+	if strings.Contains(string(encoded), legacyKey) || !strings.Contains(string(encoded), `"task_id":"tsk_`) {
+		t.Fatalf("unexpected report JSON: %s", encoded)
+	}
+}
+
 func TestVerificationReportValidateRejectsMissingFields(t *testing.T) {
 	now := time.Now().UTC()
 	cases := []struct {
@@ -164,11 +183,12 @@ func TestVerificationReportValidateRejectsMissingFields(t *testing.T) {
 		item VerificationReport
 		want string
 	}{
-		{name: "missing id", item: VerificationReport{JobID: "job-1", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "report id"},
-		{name: "missing job", item: VerificationReport{ID: "verify-job-1", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "job_id"},
-		{name: "missing session", item: VerificationReport{ID: "verify-job-1", JobID: "job-1", Status: StatusNotChecked, CreatedAt: now}, want: "session_id"},
-		{name: "missing status", item: VerificationReport{ID: "verify-job-1", JobID: "job-1", SessionID: "session-1", CreatedAt: now}, want: "status"},
-		{name: "missing created", item: VerificationReport{ID: "verify-job-1", JobID: "job-1", SessionID: "session-1", Status: StatusNotChecked}, want: "created_at"},
+		{name: "missing id", item: VerificationReport{TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "report id"},
+		{name: "missing task", item: VerificationReport{ID: "verify-1", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
+		{name: "invalid task", item: VerificationReport{ID: "verify-1", TaskID: "not-canonical", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
+		{name: "missing session", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), Status: StatusNotChecked, CreatedAt: now}, want: "session_id"},
+		{name: "missing status", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1", CreatedAt: now}, want: "status"},
+		{name: "missing created", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked}, want: "created_at"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -182,8 +202,8 @@ func TestVerificationReportValidateRejectsMissingFields(t *testing.T) {
 
 func TestVerificationReportValidateNestedObjects(t *testing.T) {
 	report := VerificationReport{
-		ID:           "verify-job-1",
-		JobID:        "job-1",
+		ID:           "verify-1",
+		TaskID:       modulecore.NewTaskID(),
 		SessionID:    "session-1",
 		Route:        "CHAT",
 		Status:       StatusVerified,

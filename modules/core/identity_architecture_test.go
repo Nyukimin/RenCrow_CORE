@@ -401,6 +401,212 @@ func TestCanonicalTaskMigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	directories := []string{
+		"cmd/rencrow-agent",
+		"cmd/test-worker",
+		"internal/adapter/chrome",
+		"internal/adapter/entry",
+		"internal/adapter/modulebridge",
+		"internal/application/execution",
+		"internal/application/orchestrator",
+		"internal/application/resilience",
+		"internal/application/skillgovernance",
+		"internal/application/verification",
+		"internal/application/voiceinput",
+		"internal/domain/execution",
+		"internal/domain/skillgovernance",
+		"internal/domain/transport",
+		"internal/domain/verification",
+		"internal/infrastructure/persistence/execution",
+		"internal/infrastructure/persistence/skillgovernance",
+		"internal/infrastructure/persistence/verification",
+		"internal/infrastructure/transport",
+		"modules/chat",
+		"modules/worker",
+	}
+	files := []string{
+		"cmd/rencrow/atlas_evidence_verifier.go",
+		"cmd/rencrow/autonomous_entry.go",
+		"cmd/rencrow/cli_evidence.go",
+		"cmd/rencrow/resilience_commands.go",
+		"cmd/rencrow/runtime_agent_ops.go",
+		"cmd/rencrow/runtime_development_events.go",
+		"cmd/rencrow/runtime_distributed_mode.go",
+		"cmd/rencrow/runtime_event_relay.go",
+		"cmd/rencrow/runtime_local_agents.go",
+		"cmd/rencrow/runtime_orchestrator.go",
+		"cmd/rencrow/runtime_repair.go",
+		"cmd/rencrow/runtime_viewer_bridges.go",
+		"cmd/rencrow/runtime_viewer_handlers.go",
+		"cmd/rencrow/tts_client_bridge.go",
+		"cmd/rencrow/voice_chat_runtime_bridge.go",
+		"cmd/rencrow/voice_chat_runtime_input_audio.go",
+		"cmd/rencrow-core-verify/actor_checks.go",
+		"cmd/rencrow-core-verify/startup_evidence.go",
+		"internal/adapter/viewer/canonical_event_log.go",
+		"internal/adapter/viewer/evidence_handler.go",
+		"internal/adapter/viewer/handler_send.go",
+		"internal/adapter/viewer/handler_sse.go",
+		"internal/adapter/viewer/monitor.go",
+		"internal/adapter/viewer/monitor_events.go",
+		"internal/adapter/viewer/monitor_handler.go",
+		"internal/adapter/viewer/monitor_helpers.go",
+		"internal/adapter/viewer/monitor_queries.go",
+		"internal/adapter/viewer/monitor_reducers.go",
+		"internal/adapter/viewer/monitor_types.go",
+		"internal/adapter/viewer/repair_handler.go",
+		"internal/adapter/viewer/verification_handler.go",
+		"internal/application/heartbeat/service.go",
+		"internal/application/service/worker_execution_dispatch.go",
+		"internal/application/service/worker_execution_git.go",
+		"internal/application/service/worker_execution_lifecycle.go",
+		"internal/application/service/worker_execution_modes.go",
+		"internal/application/service/worker_execution_service.go",
+		"internal/application/service/worker_execution_summary.go",
+		"internal/domain/agent/shiro.go",
+		"internal/domain/llm/execution_observation.go",
+		"internal/infrastructure/llm/middleware/promptreceipt.go",
+		"internal/infrastructure/llm/providers/rencrowllm/provider.go",
+		"internal/infrastructure/logging/session_log_writer.go",
+	}
+	legacyTokens := []string{
+		"Job", "JobID", "job", "jobID", "job_id", "ParentJobID", "parent_job_id",
+		"RepairJob", "RepairJobID", "repair_job_id",
+	}
+	var violations []string
+	checkFile := func(path string) error {
+		relative, err := filepath.Rel(repoRoot, path)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if strings.HasSuffix(relative, "_test.go") || !strings.HasSuffix(relative, ".go") {
+			return nil
+		}
+		for _, token := range legacyTokens {
+			if canonicalSourceContainsToken(relative, token) {
+				violations = append(violations, relative+":path:"+token)
+			}
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for lineIndex, line := range strings.Split(string(content), "\n") {
+			for _, token := range legacyTokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:%s", relative, lineIndex+1, token))
+				}
+			}
+		}
+		return nil
+	}
+	for _, relative := range directories {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "Tmp" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return checkFile(path)
+		}); err != nil {
+			t.Fatalf("scan Step09 directory %s: %v", relative, err)
+		}
+	}
+	for _, relative := range files {
+		if err := checkFile(filepath.Join(repoRoot, filepath.FromSlash(relative))); err != nil {
+			t.Fatalf("scan Step09 file %s: %v", relative, err)
+		}
+	}
+	clientRelative := "pkg/rencrowclient/client.go"
+	clientViolations, err := canonicalNamedDeclarationLegacyViolations(
+		filepath.Join(repoRoot, filepath.FromSlash(clientRelative)),
+		clientRelative,
+		map[string]struct{}{
+			"SkillGovernanceCoderTranscript": {},
+			"validateSkillGovernanceStatus":  {},
+		},
+		legacyTokens,
+	)
+	if err != nil {
+		t.Fatalf("scan Step09 client declarations: %v", err)
+	}
+	violations = append(violations, clientViolations...)
+
+	for _, relative := range []string{
+		"internal/application/orchestrator/event.go",
+		"internal/adapter/viewer/canonical_event_log.go",
+		"modules/core/event.go",
+	} {
+		content, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatalf("read Step09 Event contract %s: %v", relative, err)
+		}
+		for lineIndex, line := range strings.Split(string(content), "\n") {
+			for _, token := range []string{"Seq", "seq"} {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy Event %s", relative, lineIndex+1, token))
+				}
+			}
+		}
+	}
+	canonicalArchitectureFail(t, "Step09 Orchestrator Task scope must not retain legacy Job or Event Seq vocabulary", violations)
+}
+
+func canonicalNamedDeclarationLegacyViolations(path, relative string, names map[string]struct{}, tokens []string) ([]string, error) {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, content, 0)
+	if err != nil {
+		return nil, err
+	}
+	var violations []string
+	scan := func(name string, node ast.Node) {
+		if _, selected := names[name]; !selected {
+			return
+		}
+		start := fileSet.Position(node.Pos()).Offset
+		end := fileSet.Position(node.End()).Offset
+		if start < 0 || end < start || end > len(content) {
+			violations = append(violations, relative+":"+name+":invalid source range")
+			return
+		}
+		declaration := string(content[start:end])
+		for _, legacy := range tokens {
+			if canonicalSourceContainsToken(declaration, legacy) {
+				violations = append(violations, relative+":"+name+":"+legacy)
+			}
+		}
+		delete(names, name)
+	}
+	for _, declaration := range parsed.Decls {
+		switch value := declaration.(type) {
+		case *ast.FuncDecl:
+			scan(value.Name.Name, value)
+		case *ast.GenDecl:
+			for _, specification := range value.Specs {
+				if typeSpec, ok := specification.(*ast.TypeSpec); ok {
+					scan(typeSpec.Name.Name, typeSpec)
+				}
+			}
+		}
+	}
+	for name := range names {
+		violations = append(violations, relative+":"+name+":missing declaration")
+	}
+	return violations, nil
+}
+
 func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

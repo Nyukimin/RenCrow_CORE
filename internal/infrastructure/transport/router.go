@@ -133,7 +133,7 @@ func (r *MessageRouter) sendDeliveryError(senderName string, originalMsg domaint
 		"Router",
 		senderName,
 		originalMsg.SessionID,
-		originalMsg.JobID,
+		originalMsg.TaskID,
 		fmt.Sprintf("delivery failed: agent '%s' not found or unavailable", originalMsg.To),
 	)
 

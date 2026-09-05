@@ -13,11 +13,11 @@ func buildPhase12TurnInput(t *testing.T, builder *messageTurnInputBuilder, req P
 	if err := ensureProcessRequestIdentity(&req); err != nil {
 		t.Fatalf("ensureProcessRequestIdentity() error = %v", err)
 	}
-	input, jobID, ttsSessionID, err := builder.Build(req)
+	input, taskID, ttsSessionID, err := builder.Build(req)
 	if err != nil {
 		t.Fatalf("messageTurnInputBuilder.Build() error = %v", err)
 	}
-	return input, jobID, ttsSessionID
+	return input, taskID, ttsSessionID
 }
 
 func TestPhase12TurnInputBuilderHonorsAudioOutputIntent(t *testing.T) {
@@ -44,8 +44,8 @@ func TestPhase12TurnInputBuilderHonorsAudioOutputIntent(t *testing.T) {
 func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	var events []OrchestratorEvent
 	builder := newMessageTurnInputBuilder(
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+			events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 		},
 		func() bool { return false },
 	)
@@ -55,9 +55,7 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	rootTaskID := modulecore.NewTaskID()
 	userMessageID := modulecore.NewMessageID()
 	agentMessageID := modulecore.NewMessageID()
-	companionTaskID := modulecore.NewTaskID()
-	tk, jobID, ttsSessionID := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
-		JobID:  companionTaskID.String(),
+	tk, taskID, ttsSessionID := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
 		TurnID: string(turnID), TraceID: string(traceID), RootTaskID: string(rootTaskID),
 		MessageID: string(userMessageID), AgentMessageID: string(agentMessageID),
 		SessionID:   "sess-1",
@@ -68,8 +66,8 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 		Attachments: []attachment.Attachment{{ID: "att-1"}},
 	})
 
-	if jobID != companionTaskID || jobID.String() == string(rootTaskID) {
-		t.Fatalf("companion job ID = %q, root task ID = %q", jobID, rootTaskID)
+	if taskID.String() != string(rootTaskID) {
+		t.Fatalf("task ID = %q, root task ID = %q", taskID, rootTaskID)
 	}
 	if tk.MessageText() != "この画像を見て" || tk.SessionID() != "sess-1" {
 		t.Fatalf("turn input text/session = text=%q session=%q", tk.MessageText(), tk.SessionID())
@@ -96,7 +94,7 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	if ev.Type != "viewer.attachment.received" || ev.From != "viewer" || ev.To != "mio" {
 		t.Fatalf("unexpected attachment event routing: %#v", ev)
 	}
-	if ev.Content != "1 attachment(s)" || ev.JobID != jobID.String() || ev.SessionID != "sess-1" || ev.Channel != "line" || ev.ChatID != "U123" {
+	if ev.Content != "1 attachment(s)" || ev.TaskID.String() != taskID.String() || ev.SessionID != "sess-1" || ev.Channel != "line" || ev.ChatID != "U123" {
 		t.Fatalf("unexpected attachment event payload: %#v", ev)
 	}
 }
@@ -104,7 +102,7 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 func TestPhase12TurnInputBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
 	enabled := false
 	builder := newMessageTurnInputBuilder(
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func() bool { return enabled },
 	)
 	req := ProcessMessageRequest{
@@ -120,8 +118,8 @@ func TestPhase12TurnInputBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
 	}
 
 	enabled = true
-	_, jobID, ttsSessionID := buildPhase12TurnInput(t, builder, req)
-	expected := "sess-2-" + jobID.String()
+	_, taskID, ttsSessionID := buildPhase12TurnInput(t, builder, req)
+	expected := "sess-2-" + taskID.String()
 	if ttsSessionID != expected {
 		t.Fatalf("expected TTS session %q, got %q", expected, ttsSessionID)
 	}
@@ -129,7 +127,7 @@ func TestPhase12TurnInputBuilderBuildsTTSSessionOnlyWhenEnabled(t *testing.T) {
 
 func TestPhase12TurnInputBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
 	builder := newMessageTurnInputBuilder(
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func() bool { return true },
 	)
 
@@ -154,25 +152,25 @@ func TestPhase12TurnInputBuilderSkipsTTSSessionForRenCrowCMD(t *testing.T) {
 	}
 }
 
-func TestPhase12TurnInputBuilderPreservesProvidedJobID(t *testing.T) {
+func TestPhase12TurnInputBuilderPreservesProvidedRootTaskID(t *testing.T) {
 	builder := newMessageTurnInputBuilder(
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func() bool { return false },
 	)
 
-	companionTaskID := modulecore.NewTaskID()
-	input, jobID, _ := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
-		JobID:       companionTaskID.String(),
+	rootTaskID := modulecore.NewTaskID()
+	input, taskID, _ := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
+		RootTaskID:  rootTaskID.String(),
 		SessionID:   "viewer",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "こんにちは",
 	})
 
-	if jobID != companionTaskID {
-		t.Fatalf("job ID = %q, want %q", jobID.String(), companionTaskID)
+	if taskID != rootTaskID {
+		t.Fatalf("task ID = %q, want %q", taskID.String(), rootTaskID)
 	}
-	if jobID.String() == string(input.RootTaskID()) {
-		t.Fatalf("companion JobID was mixed into TurnInput root task ID: job=%q root=%q", jobID, input.RootTaskID())
+	if taskID.String() != string(input.RootTaskID()) {
+		t.Fatalf("root task ID drifted in TurnInput: task=%q root=%q", taskID, input.RootTaskID())
 	}
 }

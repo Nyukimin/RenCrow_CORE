@@ -145,7 +145,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 					"seq":          1,
 					"text":         publishedText,
 					"trace_id":     response.TraceID,
-					"job_id":       response.JobID,
+					"task_id":      response.TaskID,
 					"message_id":   response.MessageID,
 				}); err != nil {
 					return err
@@ -156,15 +156,15 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 					"session_id":   sess.sessionID,
 					"text":         publishedText,
 					"trace_id":     response.TraceID,
-					"job_id":       response.JobID,
+					"task_id":      response.TaskID,
 					"message_id":   response.MessageID,
 				}); err != nil {
 					return err
 				}
-				log.Printf("[voice-chat] input_audio finalized utterance_id=%s trace_id=%s job_id=%s message_id=%s bytes=%d text_len=%d",
+				log.Printf("[voice-chat] input_audio finalized utterance_id=%s trace_id=%s task_id=%s message_id=%s bytes=%d text_len=%d",
 					voiceChatShortLogText(sess.utteranceID, 128),
 					voiceChatShortLogText(response.TraceID, 128),
-					voiceChatShortLogText(response.JobID, 128),
+					voiceChatShortLogText(response.TaskID, 128),
 					voiceChatShortLogText(response.MessageID, 128),
 					sess.pcm.Len(),
 					len([]rune(publishedText)),
@@ -322,10 +322,10 @@ func processVoiceChatInputAudioFinal(handler voiceDirectFinalHandler, sess *voic
 		logVoiceChatInputAudioPublishFailure(sess, response, publishErr)
 		return orchestrator.ProcessMessageResponse{}, publishErr
 	}
-	log.Printf("[voice-chat] ProcessVoiceDirect completed utterance_id=%s trace_id=%s job_id=%s message_id=%s text_len=%d elapsed_ms=%d",
+	log.Printf("[voice-chat] ProcessVoiceDirect completed utterance_id=%s trace_id=%s task_id=%s message_id=%s text_len=%d elapsed_ms=%d",
 		voiceChatShortLogText(req.UtteranceID, 128),
 		voiceChatShortLogText(response.TraceID, 128),
-		voiceChatShortLogText(response.JobID, 128),
+		voiceChatShortLogText(response.TaskID, 128),
 		voiceChatShortLogText(response.MessageID, 128),
 		len([]rune(publishedText)),
 		time.Since(started).Milliseconds(),
@@ -341,18 +341,31 @@ func validateVoiceChatProcessResponseIdentity(response orchestrator.ProcessMessa
 	if err := traceID.Validate(); err != nil {
 		return fmt.Errorf("trace_id is invalid: %w", err)
 	}
-	if strings.TrimSpace(response.JobID) != response.JobID {
-		return fmt.Errorf("job_id contains surrounding whitespace")
+	if strings.TrimSpace(response.TaskID) != response.TaskID {
+		return fmt.Errorf("task_id contains surrounding whitespace")
 	}
-	jobID, err := modulecore.ParseTaskID(response.JobID)
-	if err != nil || jobID.IsZero() {
+	taskID, err := modulecore.ParseTaskID(response.TaskID)
+	if err != nil || taskID.IsZero() {
 		if err == nil {
-			err = fmt.Errorf("job_id is empty")
+			err = fmt.Errorf("task_id is empty")
 		}
-		return fmt.Errorf("job_id is invalid: %w", err)
+		return fmt.Errorf("task_id is invalid: %w", err)
 	}
-	if jobID.String() == string(traceID) {
-		return fmt.Errorf("trace_id must differ from job_id")
+	if taskID.String() == string(traceID) {
+		return fmt.Errorf("trace_id must differ from task_id")
+	}
+	if strings.TrimSpace(response.RootTaskID) != response.RootTaskID {
+		return fmt.Errorf("root_task_id contains surrounding whitespace")
+	}
+	rootTaskID, err := modulecore.ParseTaskID(response.RootTaskID)
+	if err != nil || rootTaskID.IsZero() {
+		if err == nil {
+			err = fmt.Errorf("root_task_id is empty")
+		}
+		return fmt.Errorf("root_task_id is invalid: %w", err)
+	}
+	if rootTaskID != taskID {
+		return fmt.Errorf("root_task_id must match task_id")
 	}
 	if strings.TrimSpace(response.MessageID) != response.MessageID {
 		return fmt.Errorf("message_id contains surrounding whitespace")
@@ -380,10 +393,10 @@ func logVoiceChatInputAudioPublishFailure(sess *voiceChatInputAudioSession, resp
 	if err != nil {
 		errText = voiceChatShortLogText(err.Error(), 160)
 	}
-	log.Printf("[voice-chat] input_audio voice result publish failed utterance_id=%s trace_id=%s job_id=%s message_id=%s error=%s",
+	log.Printf("[voice-chat] input_audio voice result publish failed utterance_id=%s trace_id=%s task_id=%s message_id=%s error=%s",
 		voiceChatShortLogText(utteranceID, 128),
 		voiceChatShortLogText(response.TraceID, 128),
-		voiceChatShortLogText(response.JobID, 128),
+		voiceChatShortLogText(response.TaskID, 128),
 		voiceChatShortLogText(response.MessageID, 128),
 		errText,
 	)

@@ -13,7 +13,7 @@ import (
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
-type autonomousRouteExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error)
+type autonomousRouteExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error)
 
 type autonomousExecutionCoordinator struct {
 	reporter      ReportStore
@@ -40,7 +40,7 @@ func (c *autonomousExecutionCoordinator) SetReportStore(reporter ReportStore) {
 	c.reporter = reporter
 }
 
-func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
 	if !isAutonomousRoute(route) {
 		return "", fmt.Errorf("unknown route: %s", route)
 	}
@@ -50,13 +50,13 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input doma
 	}
 	sessionID, channel, chatID := turnInputMetadata(input)
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
-		JobID:      jobID.String(),
+		TaskID:     taskID,
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
 		MaxRepair:  c.maxRepair(),
 		Observe: func(stage autonomousapp.Stage) {
-			c.emit("entry.stage", channel, "system", string(stage), route.String(), jobID.String(), sessionID, channel, chatID)
+			c.emit("entry.stage", channel, "system", string(stage), route.String(), taskID.String(), sessionID, channel, chatID)
 		},
 		ReportStore: c.reporter,
 		Execute: func(execCtx context.Context, attempt int, failureKind, failureReason string) (autonomousapp.AttemptResult, error) {
@@ -64,7 +64,7 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input doma
 			if attempt > 0 {
 				execInput = execInput.WithMessageText(buildExecutorRetryMessage(input.MessageText(), route, failureKind, failureReason, attempt))
 			}
-			resp, runErr := c.executeDirect(execCtx, execInput, route, jobID, ttsSessionID)
+			resp, runErr := c.executeDirect(execCtx, execInput, route, taskID, ttsSessionID)
 			return autonomousapp.AttemptResult{
 				Response:      resp,
 				Steps:         routeExecutionSteps(route, runErr == nil),

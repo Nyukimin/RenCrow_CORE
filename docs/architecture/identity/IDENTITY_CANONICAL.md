@@ -1985,6 +1985,48 @@ Test:
 - Orchestrator内`job`語彙zero
 - Routing EventとAssignment EventをEventIDで逆参照可能
 
+#### Step 09配備契約
+
+- 受付済みTurnは、ingressで既に発行した`RootTaskID`をそのまま使うdurable root Taskを1件だけ
+  作る。実行可能な仕事をMioから別のactual CORE Agentへ委譲する場合だけ、同じ`TraceID`と
+  `ParentTaskID=RootTaskID`を持つchild Taskを作る。Coder、model、provider、controller、worker
+  mechanismをassignee Actorにしない。
+- `routing.decision`はroot Task、`agent.assignment`は実行対象TaskへCanonical Eventとして保存する。
+  assignmentの`CausationEventID`は有効なrouting Eventを指し、Taskは両EventIDを保持する。
+- Event Storeはappend前に正の単調増加`EventSeq`を割り当て、SQLite、Monitor、SSE、再起動後の
+  次Eventまで同じ順序を維持する。`EventID`、`TraceID`、`TaskID`、`SessionID`、`ThreadID`、
+  `TurnID`、`MessageID`はtyped validationを通し、相互変換しない。
+- COREからRenCrow LLM Gatewayへ送るprompt-free observation metadataは`task_id`だけを使う。
+  Gatewayは同じ値をqueue、active status、structured log、prompt-debug receiptへ保持し、Backendへ
+  private `rencrow` envelopeを渡さない。Gateway／Nodeがhost-supervised Backend lifecycleに使う
+  別ownerの`task_id`はOrchestrator Taskへ統合しない。
+- production cutoverは全writer停止後のsnapshotをsourceとし、one-shot owner CLIでfresh Event Store、
+  fresh execution report JSONL、complete fresh Resilience rootを一体生成する。Eventの旧`job_id`は
+  exact `TraceID`のconversation receiptが一意ならその`RootTaskID`、無ければ
+  `NewMigrationID(CanonicalTaskID, "event_envelope", "trace_id+job_id", exact pair)`を使う。
+  execution reportは同じlegacy IDの一意なEvent mappingを再利用し、無ければ`execution_report`
+  namespaceから決定的に生成する。Resilienceの`repair_job_id`は一意なexecution report mappingを
+  必須とし、`repair_task_id`へ置換する。曖昧join、duplicate、未知field、symlink、unsupported entry、
+  source driftをfail closedにし、dry-runとapplyの全input／output hashを一致させる。
+- 旧session log、Prompt receipt、Gateway prompt-debug logはTaskだけを書き換えない。旧rowには
+  `trace_id == job_id`があり、一部置換すると壊れたIdentityをactive logへ残すため、COREとGatewayの
+  writer停止後に各artifactをowner-only legacy archiveへ原子的にrenameし、path、size、mode、SHA-256を
+  receiptへ固定してfresh `task_id` writerを開始する。archiveをactive pathまたはcompatibility readerへ
+  戻さない。大容量prompt-debug logをmigrationのために再書込みしない。
+
+Gate 9:
+
+- COREとRenCrow_LLMのsource、artifact、active config、service PID、listener、正規Gateway routeを照合し、
+  actual AgentのCHAT／WORKER／CODE／RESEARCH、route change、handoff、failure／retry／interruptionで
+  Task graph、Event graph、EventID lookup、EventSeq restart継続、`task_id` log／Gateway相関、旧route拒否を
+  確認した後だけStep 09を閉じる。
+- rollbackに必要な旧／新runtime、writer-stopped snapshot、固定Check Plan、dry-run／apply／log rotation／
+  deployment receiptを別filesystemのrecovery artifactとして保持する。旧runtimeへ戻す場合は3つの
+  canonical state artifactと3つのactive observation artifactを同じgenerationへ戻す。
+- production cutover成功後、`rencrow-event-task-migrate`と`eventtaskmigration`のone-shot sourceを削除する。
+  architecture testはone-shot sourceの再混入と、列挙済みStep 09 owner／consumerでの`JobID`／`job_id`／
+  旧`Seq`を拒否する。Scheduler `JobID`はStep 15、その他の未分類domain-local jobは各owner Stepへ残す。
+
 ---
 
 ### Step 10: RunID

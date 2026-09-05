@@ -27,7 +27,7 @@ func HandleAudioRouterSSE(h *EventHub) http.HandlerFunc {
 		lastSeen := parseLastEventIDHeader(r.Header.Get("Last-Event-ID"))
 
 		for _, ev := range h.History() {
-			if ev.Seq > 0 && ev.Seq <= lastSeen {
+			if ev.EventSeq > 0 && int64(ev.EventSeq) <= lastSeen {
 				continue
 			}
 			if isTransientReplayEvent(ev) {
@@ -74,8 +74,8 @@ func writeAudioRouterEvent(w http.ResponseWriter, ev orchestrator.OrchestratorEv
 	if strings.TrimSpace(audioURL) == "" && strings.TrimSpace(audioPath) == "" {
 		return false
 	}
-	if ev.Seq > 0 {
-		fmt.Fprintf(w, "id: %d\n", ev.Seq)
+	if ev.EventSeq > 0 {
+		fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
 	}
 	fmt.Fprint(w, "event: tts.audio_chunk\n")
 	fmt.Fprintf(w, "data: %s\n\n", ev.Content)

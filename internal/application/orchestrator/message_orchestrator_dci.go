@@ -13,16 +13,20 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID modulecore.TaskID) (ProcessMessageResponse, bool, error) {
+func shouldHandleExplicitDCI(searcher DCISearcher, message string) bool {
 	// スラッシュコマンド（/code3, /analyze 等）はルーティングを最優先。DCI をスキップ。
-	if strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
-		return ProcessMessageResponse{}, false, nil
+	if strings.HasPrefix(strings.TrimSpace(message), "/") {
+		return false
 	}
-	if o.dciSearcher == nil || !o.dciSearcher.ShouldTrigger(req.UserMessage) {
+	return searcher != nil && searcher.ShouldTrigger(message)
+}
+
+func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, taskID modulecore.TaskID, triggered bool) (ProcessMessageResponse, bool, error) {
+	if !triggered {
 		return ProcessMessageResponse{}, false, nil
 	}
 
-	jid := jobID.String()
+	taskIDText := taskID.String()
 	result, err := o.dciSearcher.Search(ctx, req.UserMessage)
 	if err != nil {
 		return ProcessMessageResponse{}, true, fmt.Errorf("dci search failed: %w", err)
@@ -35,10 +39,10 @@ func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req Process
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
-	o.events.Emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), jid, req.SessionID, req.Channel, req.ChatID)
+	o.events.Emit("agent.response", "shiro", "mio", response, string(routing.RouteRESEARCH), taskIDText, req.SessionID, req.Channel, req.ChatID)
 
 	decision := routing.NewDecision(routing.RouteRESEARCH, 1.0, "explicit DCI trigger")
-	return o.responses.Build(response, decision, jobID), true, nil
+	return o.responses.Build(response, decision, taskID), true, nil
 }
 
 func (o *MessageOrchestrator) saveDCIRecallTrace(ctx context.Context, input domainconversation.TurnInput, result domaindci.SearchResult) error {

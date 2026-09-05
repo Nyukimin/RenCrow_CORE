@@ -16,7 +16,7 @@ func TestOrchestratorEventThreadTupleJSONRoundTrip(t *testing.T) {
 		From:       "mio",
 		Content:    "canonical tuple",
 		MessageID:  "idle-message",
-		TraceID:    string(modulecore.NewTraceID()),
+		TraceID:    modulecore.NewTraceID(),
 		SessionID:  "idle-session",
 		ThreadID:   threadID,
 		ThreadSeq:  modulecore.ThreadSeq(4),

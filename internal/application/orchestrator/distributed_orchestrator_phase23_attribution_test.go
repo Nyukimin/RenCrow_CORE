@@ -14,7 +14,7 @@ import (
 func TestPhase23DistributedAttributionGuardPreservesTaskMetadata(t *testing.T) {
 	sessionID := string(modulecore.NewSessionID())
 	memory := session.NewCentralMemory()
-	memory.RecordMessage(domaintransport.NewMessage("mio", "user", sessionID, "job-0", "前の発言"))
+	memory.RecordMessage(domaintransport.NewMessage("mio", "user", sessionID, modulecore.NewTaskID(), "前の発言"))
 	guard := newDistributedAttributionGuard(memory)
 	original := newOrchestratorTestTurnInput(t, "続き", "viewer", "viewer-user").
 		WithSessionID(sessionID).
@@ -40,7 +40,7 @@ func TestPhase23DistributedAttributionGuardPreservesTaskMetadata(t *testing.T) {
 
 func TestPhase23DistributedAttributionGuardSkipsCodeRouteAndExistingGuard(t *testing.T) {
 	memory := session.NewCentralMemory()
-	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "sess-1", "job-0", "前の発言"))
+	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "sess-1", modulecore.NewTaskID(), "前の発言"))
 	guard := newDistributedAttributionGuard(memory)
 
 	codeTask := newOrchestratorTestTurnInput(t, "実装して", "line", "U123").WithRoute(routing.RouteCODE).WithSessionID("sess-1")
@@ -56,10 +56,10 @@ func TestPhase23DistributedAttributionGuardSkipsCodeRouteAndExistingGuard(t *tes
 
 func TestPhase23DistributedAttributionGuardExcludesIdleChatMessages(t *testing.T) {
 	memory := session.NewCentralMemory()
-	idle := domaintransport.NewMessage("mio", "user", "sess-1", "job-idle", "idle content")
+	idle := domaintransport.NewMessage("mio", "user", "sess-1", modulecore.NewTaskID(), "idle content")
 	idle.Type = domaintransport.MessageTypeIdleChat
 	memory.RecordMessage(idle)
-	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "idle-session", "job-idle-prefix", "idle prefix content"))
+	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "idle-session", modulecore.NewTaskID(), "idle prefix content"))
 	guard := newDistributedAttributionGuard(memory)
 
 	got := guard.BuildMessage("続き", "mio", "sess-1")

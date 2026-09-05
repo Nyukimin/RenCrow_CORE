@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type JSONLStore struct {
@@ -208,12 +210,42 @@ func (s *JSONLStore) ListCoderTranscriptEntries(_ context.Context, limit int) ([
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return err
 		}
+		if err := domainskill.ValidateCoderTranscriptEntry(entry); err != nil {
+			return err
+		}
 		entries = append(entries, entry)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
 	return reverseLimit(entries, limit), nil
+}
+
+// GetByTaskID returns coder transcript entries for the exact canonical task.
+func (s *JSONLStore) GetByTaskID(_ context.Context, taskID modulecore.TaskID) ([]domainskill.CoderTranscriptEntry, error) {
+	if s == nil {
+		return nil, errors.New("skill governance jsonl store is required")
+	}
+	if err := taskID.Validate(); err != nil {
+		return nil, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	var entries []domainskill.CoderTranscriptEntry
+	if err := readJSONL(s.coderTranscriptPath, func(line []byte) error {
+		var entry domainskill.CoderTranscriptEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			return err
+		}
+		if err := domainskill.ValidateCoderTranscriptEntry(entry); err != nil {
+			return err
+		}
+		if entry.TaskID == taskID {
+			entries = append(entries, entry)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return reverseLimit(entries, len(entries)), nil
 }
 
 func appendJSONL(path string, value any) error {

@@ -10,7 +10,7 @@ import (
 
 func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 0.99, "image generation keyword")}
-	coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
+	coordinator := newRouteDecisionCoordinator(mio)
 	req := ProcessMessageRequest{
 		SessionID:   "viewer",
 		Channel:     "viewer",
@@ -18,10 +18,10 @@ func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
+	decision, err := coordinator.Decide(context.Background(), input, req, taskID)
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -35,7 +35,7 @@ func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
 
 func TestRouteDecisionKeepsExplicitWildCommandAboveMidoriSelection(t *testing.T) {
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 1, "explicit command")}
-	coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
+	coordinator := newRouteDecisionCoordinator(mio)
 	req := ProcessMessageRequest{
 		SessionID:   "viewer",
 		Channel:     "viewer",
@@ -43,10 +43,10 @@ func TestRouteDecisionKeepsExplicitWildCommandAboveMidoriSelection(t *testing.T)
 		UserMessage: "/wild 青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
+	decision, err := coordinator.Decide(context.Background(), input, req, taskID)
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -57,7 +57,7 @@ func TestRouteDecisionKeepsExplicitWildCommandAboveMidoriSelection(t *testing.T)
 
 func TestRouteDecisionKeepsAutomaticRoutingForDefaultMio(t *testing.T) {
 	mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 0.99, "image generation keyword")}
-	coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
+	coordinator := newRouteDecisionCoordinator(mio)
 	req := ProcessMessageRequest{
 		SessionID:   "viewer",
 		Channel:     "viewer",
@@ -65,10 +65,10 @@ func TestRouteDecisionKeepsAutomaticRoutingForDefaultMio(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "mio",
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
+	decision, err := coordinator.Decide(context.Background(), input, req, taskID)
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -107,11 +107,11 @@ func TestRouteDecisionDoesNotPinOutsideDirectViewerMidoriChat(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 0.99, "automatic route")}
-			coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
-			jobID := modulecore.NewTaskID()
+			coordinator := newRouteDecisionCoordinator(mio)
+			taskID := modulecore.NewTaskID()
 			input := newOrchestratorTestTurnInput(t, test.req.UserMessage, test.req.Channel, "viewer-user").WithViewerRecipient(test.req.To)
 
-			decision, err := coordinator.Decide(context.Background(), input, test.req, jobID)
+			decision, err := coordinator.Decide(context.Background(), input, test.req, taskID)
 			if err != nil {
 				t.Fatalf("Decide() error = %v", err)
 			}

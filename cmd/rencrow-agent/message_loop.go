@@ -29,9 +29,10 @@ func runMessageLoop(ctx context.Context, handler AgentHandler, jsonOut io.Writer
 		var msg domaintransport.Message
 		if err := json.Unmarshal(line, &msg); err != nil {
 			log.Printf("[rencrow-agent] Failed to decode message: %v", err)
-			// エラーをJSON応答として返す
-			errResp := domaintransport.NewErrorMessage("agent", "unknown", "", "", fmt.Sprintf("decode error: %v", err))
-			encoder.Encode(errResp)
+			continue
+		}
+		if err := msg.Validate(); err != nil {
+			log.Printf("[rencrow-agent] dropped invalid message reason=validation_failed")
 			continue
 		}
 
@@ -42,13 +43,19 @@ func runMessageLoop(ctx context.Context, handler AgentHandler, jsonOut io.Writer
 
 		if err != nil {
 			log.Printf("[rencrow-agent] Handler error: %v", err)
-			errResp := domaintransport.NewErrorMessage(msg.To, msg.From, msg.SessionID, msg.JobID, fmt.Sprintf("handler error: %v", err))
+			errResp := domaintransport.NewErrorMessage(msg.To, msg.From, msg.SessionID, msg.TaskID, fmt.Sprintf("handler error: %v", err))
+			if validateErr := errResp.Validate(); validateErr != nil {
+				return fmt.Errorf("validate error response: %w", validateErr)
+			}
 			if encErr := encoder.Encode(errResp); encErr != nil {
 				return fmt.Errorf("encode error response: %w", encErr)
 			}
 			continue
 		}
 
+		if err := response.Validate(); err != nil {
+			return fmt.Errorf("validate response: %w", err)
+		}
 		if err := encoder.Encode(response); err != nil {
 			return fmt.Errorf("encode response: %w", err)
 		}

@@ -12,6 +12,7 @@ import (
 
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestHandleBridge_Success(t *testing.T) {
@@ -22,9 +23,9 @@ func TestHandleBridge_Success(t *testing.T) {
 		return entryadapter.Result{
 			SessionID:   "sess-1",
 			Route:       "CODE3",
-			JobID:       "job-1",
+			TaskID:      modulecore.NewTaskID().String(),
 			Response:    "done",
-			EvidenceRef: "execution_report:job-1",
+			EvidenceRef: "execution_report:task",
 		}, nil
 	})
 
@@ -49,7 +50,7 @@ func TestHandleBridge_Success(t *testing.T) {
 
 func TestHandleBridge_EchoesRequestID(t *testing.T) {
 	h := HandleBridge(func(ctx context.Context, req entryadapter.Request) (entryadapter.Result, error) {
-		return entryadapter.Result{SessionID: req.SessionID, Route: "CHAT", JobID: "j1", Response: "ok"}, nil
+		return entryadapter.Result{SessionID: req.SessionID, Route: "CHAT", TaskID: modulecore.NewTaskID().String(), Response: "ok"}, nil
 	})
 	req := httptest.NewRequest(http.MethodPost, "/chrome/bridge", bytes.NewReader([]byte(`{"user_id":"u1","request_id":"req-123","message":"hello"}`)))
 	rec := httptest.NewRecorder()
@@ -67,10 +68,11 @@ func TestHandleBridge_EchoesRequestID(t *testing.T) {
 }
 
 func TestHandleBridgeStatus_LatestStageBySession(t *testing.T) {
+	taskID := modulecore.NewTaskID().String()
 	history := []orchestrator.OrchestratorEvent{
-		orchestrator.NewEvent("entry.stage", "chrome", "system", "received", "CODE3", "job-1", "sess-1", "local", "u1"),
-		orchestrator.NewEvent("entry.stage", "chrome", "system", "planning", "CODE3", "job-1", "sess-1", "local", "u1"),
-		orchestrator.NewEvent("entry.stage", "chrome", "system", "completed", "CODE3", "job-1", "sess-1", "local", "u1"),
+		orchestrator.NewEvent("entry.stage", "chrome", "system", "received", "CODE3", taskID, "sess-1", "local", "u1"),
+		orchestrator.NewEvent("entry.stage", "chrome", "system", "planning", "CODE3", taskID, "sess-1", "local", "u1"),
+		orchestrator.NewEvent("entry.stage", "chrome", "system", "completed", "CODE3", taskID, "sess-1", "local", "u1"),
 	}
 	h := HandleBridgeStatus(func() []orchestrator.OrchestratorEvent { return history }, func() time.Time {
 		return time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
@@ -107,8 +109,8 @@ func (f *fakeEventStream) Unsubscribe(_ chan []byte)                 {}
 func TestHandleBridgeEvents_FiltersBySession(t *testing.T) {
 	src := &fakeEventStream{
 		history: []orchestrator.OrchestratorEvent{
-			{Type: "entry.stage", SessionID: "sess-1", Content: "received", Seq: 1},
-			{Type: "entry.stage", SessionID: "sess-2", Content: "received", Seq: 2},
+			{Type: "entry.stage", SessionID: "sess-1", Content: "received", EventSeq: 1},
+			{Type: "entry.stage", SessionID: "sess-2", Content: "received", EventSeq: 2},
 		},
 		ch: make(chan []byte, 1),
 	}
@@ -136,8 +138,8 @@ func TestHandleBridgeEvents_FiltersBySession(t *testing.T) {
 func TestHandleBridgeEvents_RespectsLastEventID(t *testing.T) {
 	src := &fakeEventStream{
 		history: []orchestrator.OrchestratorEvent{
-			{Type: "entry.stage", SessionID: "sess-1", Content: "received", Seq: 1},
-			{Type: "entry.stage", SessionID: "sess-1", Content: "planning", Seq: 2},
+			{Type: "entry.stage", SessionID: "sess-1", Content: "received", EventSeq: 1},
+			{Type: "entry.stage", SessionID: "sess-1", Content: "planning", EventSeq: 2},
 		},
 		ch: make(chan []byte, 1),
 	}
@@ -152,10 +154,10 @@ func TestHandleBridgeEvents_RespectsLastEventID(t *testing.T) {
 	h(rec, req)
 
 	body := rec.Body.String()
-	if strings.Contains(body, `"seq":1`) {
-		t.Fatalf("expected seq=1 to be skipped by Last-Event-ID, got: %s", body)
+	if strings.Contains(body, `"event_seq":1`) {
+		t.Fatalf("expected event_seq=1 to be skipped by Last-Event-ID, got: %s", body)
 	}
-	if !strings.Contains(body, `"seq":2`) {
-		t.Fatalf("expected seq=2 to be replayed, got: %s", body)
+	if !strings.Contains(body, `"event_seq":2`) {
+		t.Fatalf("expected event_seq=2 to be replayed, got: %s", body)
 	}
 }

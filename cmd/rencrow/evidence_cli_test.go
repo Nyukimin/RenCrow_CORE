@@ -10,13 +10,14 @@ import (
 	"time"
 
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type fakeEvidenceStore struct {
-	items   []domainexecution.ExecutionReport
-	byID    map[string]domainexecution.ExecutionReport
-	summary map[string]map[string]int
-	err     error
+	items    []domainexecution.ExecutionReport
+	byTaskID map[modulecore.TaskID]domainexecution.ExecutionReport
+	summary  map[string]map[string]int
+	err      error
 }
 
 func (f *fakeEvidenceStore) ListRecent(_ context.Context, _ int) ([]domainexecution.ExecutionReport, error) {
@@ -26,14 +27,14 @@ func (f *fakeEvidenceStore) ListRecent(_ context.Context, _ int) ([]domainexecut
 	return f.items, nil
 }
 
-func (f *fakeEvidenceStore) GetByJobID(_ context.Context, jobID string) (domainexecution.ExecutionReport, error) {
+func (f *fakeEvidenceStore) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error) {
 	if f.err != nil {
 		return domainexecution.ExecutionReport{}, f.err
 	}
-	if f.byID == nil {
+	if f.byTaskID == nil {
 		return domainexecution.ExecutionReport{}, errors.New("not found")
 	}
-	r, ok := f.byID[jobID]
+	r, ok := f.byTaskID[taskID]
 	if !ok {
 		return domainexecution.ExecutionReport{}, errors.New("not found")
 	}
@@ -51,8 +52,9 @@ func (f *fakeEvidenceStore) Summary(_ context.Context) (map[string]map[string]in
 }
 
 func TestRunEvidenceCommand_List(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{{
-		JobID:      "job-1",
+		TaskID:     taskID,
 		Goal:       "TTS実装して",
 		Status:     "passed",
 		CreatedAt:  time.Now().UTC(),
@@ -64,8 +66,8 @@ func TestRunEvidenceCommand_List(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected code 0, got %d (err=%s)", code, errOut.String())
 	}
-	if !strings.Contains(out.String(), "job-1") {
-		t.Fatalf("expected output to include job-1, got: %s", out.String())
+	if !strings.Contains(out.String(), taskID.String()) {
+		t.Fatalf("expected output to include %s, got: %s", taskID, out.String())
 	}
 }
 
@@ -77,7 +79,20 @@ func TestRunEvidenceCommand_ShowMissingArg(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected code 1, got %d", code)
 	}
-	if !strings.Contains(errOut.String(), "usage: rencrow evidence show <job_id>") {
+	if !strings.Contains(errOut.String(), "usage: rencrow evidence show <task_id>") {
+		t.Fatalf("unexpected err output: %s", errOut.String())
+	}
+}
+
+func TestRunEvidenceCommand_ShowRejectsNonCanonicalTaskID(t *testing.T) {
+	store := &fakeEvidenceStore{}
+	var out, errOut bytes.Buffer
+
+	code := runEvidenceCommand([]string{"show", "task-not-canonical"}, store, &out, &errOut)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d", code)
+	}
+	if !strings.Contains(errOut.String(), "invalid task_id") {
 		t.Fatalf("unexpected err output: %s", errOut.String())
 	}
 }
@@ -109,8 +124,9 @@ func TestRunEvidenceCommand_Unknown(t *testing.T) {
 }
 
 func TestRunEvidenceCommand_ListJSON(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{{
-		JobID:      "job-j",
+		TaskID:     taskID,
 		Goal:       "TTS実装して",
 		Status:     "passed",
 		CreatedAt:  time.Now().UTC(),
@@ -129,15 +145,17 @@ func TestRunEvidenceCommand_ListJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json output: %v (out=%s)", err, out.String())
 	}
-	if len(payload.Items) != 1 || payload.Items[0].JobID != "job-j" {
+	if len(payload.Items) != 1 || payload.Items[0].TaskID != taskID {
 		t.Fatalf("unexpected payload: %+v", payload.Items)
 	}
 }
 
 func TestRunEvidenceCommand_ListJSONWithStatusFilter(t *testing.T) {
+	passedTaskID := modulecore.NewTaskID()
+	failedTaskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{
-		{JobID: "job-p", Status: "passed", Goal: "ok", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
-		{JobID: "job-f", Status: "failed", ErrorKind: "verify", Goal: "ng", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: passedTaskID, Status: "passed", Goal: "ok", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: failedTaskID, Status: "failed", ErrorKind: "verify", Goal: "ng", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
 	}}
 	var out, errOut bytes.Buffer
 
@@ -151,14 +169,15 @@ func TestRunEvidenceCommand_ListJSONWithStatusFilter(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json output: %v", err)
 	}
-	if len(payload.Items) != 1 || payload.Items[0].JobID != "job-f" {
+	if len(payload.Items) != 1 || payload.Items[0].TaskID != failedTaskID {
 		t.Fatalf("unexpected filtered payload: %+v", payload.Items)
 	}
 }
 
 func TestRunEvidenceCommand_ListTextWithErrorKindFilterNoMatch(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{
-		{JobID: "job-p", Status: "passed", Goal: "ok", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: taskID, Status: "passed", Goal: "ok", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
 	}}
 	var out, errOut bytes.Buffer
 
@@ -172,10 +191,11 @@ func TestRunEvidenceCommand_ListTextWithErrorKindFilterNoMatch(t *testing.T) {
 }
 
 func TestRunEvidenceCommand_ShowCompactJSON(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{
-		byID: map[string]domainexecution.ExecutionReport{
-			"job-c": {
-				JobID:      "job-c",
+		byTaskID: map[modulecore.TaskID]domainexecution.ExecutionReport{
+			taskID: {
+				TaskID:     taskID,
 				Goal:       "TTS実装して",
 				Status:     "passed",
 				CreatedAt:  time.Now().UTC(),
@@ -185,7 +205,7 @@ func TestRunEvidenceCommand_ShowCompactJSON(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 
-	code := runEvidenceCommand([]string{"show", "job-c", "--compact"}, store, &out, &errOut)
+	code := runEvidenceCommand([]string{"show", taskID.String(), "--compact"}, store, &out, &errOut)
 	if code != 0 {
 		t.Fatalf("expected code 0, got %d (err=%s)", code, errOut.String())
 	}
@@ -193,7 +213,7 @@ func TestRunEvidenceCommand_ShowCompactJSON(t *testing.T) {
 	if strings.Contains(got, "\n  \"") {
 		t.Fatalf("expected compact json, got pretty output: %s", got)
 	}
-	if !strings.Contains(got, "\"job_id\":\"job-c\"") {
+	if !strings.Contains(got, "\"task_id\":\""+taskID.String()+"\"") {
 		t.Fatalf("unexpected output: %s", got)
 	}
 }
@@ -216,10 +236,13 @@ func TestRunEvidenceCommand_SummaryCompactJSON(t *testing.T) {
 }
 
 func TestRunEvidenceCommand_SummaryWithFilters(t *testing.T) {
+	passedTaskID := modulecore.NewTaskID()
+	verifyTaskID := modulecore.NewTaskID()
+	applyTaskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{
-		{JobID: "j1", Status: "passed", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
-		{JobID: "j2", Status: "failed", ErrorKind: "verify", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
-		{JobID: "j3", Status: "failed", ErrorKind: "apply", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: passedTaskID, Status: "passed", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: verifyTaskID, Status: "failed", ErrorKind: "verify", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
+		{TaskID: applyTaskID, Status: "failed", ErrorKind: "apply", CreatedAt: time.Now().UTC(), FinishedAt: time.Now().UTC()},
 	}}
 	var out, errOut bytes.Buffer
 
@@ -238,9 +261,11 @@ func TestRunEvidenceCommand_SummaryWithFilters(t *testing.T) {
 
 func TestRunEvidenceCommand_ListJSONWithSinceHours(t *testing.T) {
 	now := time.Now().UTC()
+	recentTaskID := modulecore.NewTaskID()
+	oldTaskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{
-		{JobID: "recent", Status: "passed", CreatedAt: now.Add(-30 * time.Minute), FinishedAt: now.Add(-25 * time.Minute)},
-		{JobID: "old", Status: "failed", CreatedAt: now.Add(-5 * time.Hour), FinishedAt: now.Add(-5 * time.Hour)},
+		{TaskID: recentTaskID, Status: "passed", CreatedAt: now.Add(-30 * time.Minute), FinishedAt: now.Add(-25 * time.Minute)},
+		{TaskID: oldTaskID, Status: "failed", CreatedAt: now.Add(-5 * time.Hour), FinishedAt: now.Add(-5 * time.Hour)},
 	}}
 	var out, errOut bytes.Buffer
 
@@ -254,16 +279,18 @@ func TestRunEvidenceCommand_ListJSONWithSinceHours(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("invalid json output: %v", err)
 	}
-	if len(payload.Items) != 1 || payload.Items[0].JobID != "recent" {
+	if len(payload.Items) != 1 || payload.Items[0].TaskID != recentTaskID {
 		t.Fatalf("unexpected since-hours filtered payload: %+v", payload.Items)
 	}
 }
 
 func TestRunEvidenceCommand_SummaryWithSinceHours(t *testing.T) {
 	now := time.Now().UTC()
+	recentTaskID := modulecore.NewTaskID()
+	oldTaskID := modulecore.NewTaskID()
 	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{
-		{JobID: "recent", Status: "passed", CreatedAt: now.Add(-30 * time.Minute), FinishedAt: now.Add(-25 * time.Minute)},
-		{JobID: "old", Status: "failed", ErrorKind: "verify", CreatedAt: now.Add(-5 * time.Hour), FinishedAt: now.Add(-5 * time.Hour)},
+		{TaskID: recentTaskID, Status: "passed", CreatedAt: now.Add(-30 * time.Minute), FinishedAt: now.Add(-25 * time.Minute)},
+		{TaskID: oldTaskID, Status: "failed", ErrorKind: "verify", CreatedAt: now.Add(-5 * time.Hour), FinishedAt: now.Add(-5 * time.Hour)},
 	}}
 	var out, errOut bytes.Buffer
 

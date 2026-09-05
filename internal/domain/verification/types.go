@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type VerificationStatus string
@@ -183,7 +185,7 @@ func (p VerificationPolicy) Normalized() VerificationPolicy {
 
 type VerificationReport struct {
 	ID               string                 `json:"id"`
-	JobID            string                 `json:"job_id"`
+	TaskID           modulecore.TaskID      `json:"task_id"`
 	SessionID        string                 `json:"session_id"`
 	Route            string                 `json:"route"`
 	Status           VerificationStatus     `json:"status"`
@@ -207,8 +209,8 @@ func (r VerificationReport) Validate() error {
 	if strings.TrimSpace(r.ID) == "" {
 		return errors.New("verification report id is required")
 	}
-	if strings.TrimSpace(r.JobID) == "" {
-		return errors.New("verification report job_id is required")
+	if err := r.TaskID.Validate(); err != nil {
+		return fmt.Errorf("verification report task_id: %w", err)
 	}
 	if strings.TrimSpace(r.SessionID) == "" {
 		return errors.New("verification report session_id is required")

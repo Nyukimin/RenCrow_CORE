@@ -46,13 +46,13 @@ func main() {
 
 	// Worker実行
 	ctx := context.Background()
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	fmt.Printf("📋 Patch: %s\n", patchFile)
-	fmt.Printf("🆔 JobID: %s\n", jobID)
+	fmt.Printf("🆔 TaskID: %s\n", taskID)
 	fmt.Println("⏳ Executing...")
 
-	result, err := workerService.ExecuteProposal(ctx, jobID, prop)
+	result, err := workerService.ExecuteProposal(ctx, taskID, prop)
 	if err != nil {
 		log.Fatalf("Execution failed: %v", err)
 	}

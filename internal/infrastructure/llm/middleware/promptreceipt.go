@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -30,26 +31,26 @@ type PromptReceiptProvider struct {
 }
 
 type promptReceipt struct {
-	SchemaVersion            int            `json:"schema_version"`
-	CreatedAt                string         `json:"created_at"`
-	Kind                     string         `json:"kind"`
-	Provider                 string         `json:"provider"`
-	RequestID                string         `json:"request_id,omitempty"`
-	TraceID                  string         `json:"trace_id,omitempty"`
-	JobID                    string         `json:"job_id,omitempty"`
-	SessionID                string         `json:"session_id,omitempty"`
-	Initiator                string         `json:"initiator,omitempty"`
-	Caller                   string         `json:"caller,omitempty"`
-	Purpose                  string         `json:"purpose,omitempty"`
-	PromptHash               string         `json:"prompt_sha256"`
-	SystemPromptHash         string         `json:"system_prompt_sha256"`
-	PromptCharacters         int            `json:"prompt_characters"`
-	SystemPromptCharacters   int            `json:"system_prompt_characters"`
-	MessageCount             int            `json:"message_count"`
-	SectionCounts            map[string]int `json:"section_counts"`
-	LatestPromptSentence     string         `json:"latest_prompt_sentence,omitempty"`
-	LatestPromptSentenceRole string         `json:"latest_prompt_sentence_role,omitempty"`
-	RedactionApplied         bool           `json:"redaction_applied"`
+	SchemaVersion            int               `json:"schema_version"`
+	CreatedAt                string            `json:"created_at"`
+	Kind                     string            `json:"kind"`
+	Provider                 string            `json:"provider"`
+	RequestID                string            `json:"request_id,omitempty"`
+	TraceID                  string            `json:"trace_id,omitempty"`
+	TaskID                   modulecore.TaskID `json:"task_id,omitempty"`
+	SessionID                string            `json:"session_id,omitempty"`
+	Initiator                string            `json:"initiator,omitempty"`
+	Caller                   string            `json:"caller,omitempty"`
+	Purpose                  string            `json:"purpose,omitempty"`
+	PromptHash               string            `json:"prompt_sha256"`
+	SystemPromptHash         string            `json:"system_prompt_sha256"`
+	PromptCharacters         int               `json:"prompt_characters"`
+	SystemPromptCharacters   int               `json:"system_prompt_characters"`
+	MessageCount             int               `json:"message_count"`
+	SectionCounts            map[string]int    `json:"section_counts"`
+	LatestPromptSentence     string            `json:"latest_prompt_sentence,omitempty"`
+	LatestPromptSentenceRole string            `json:"latest_prompt_sentence_role,omitempty"`
+	RedactionApplied         bool              `json:"redaction_applied"`
 }
 
 type promptReceiptMessage struct {
@@ -252,7 +253,7 @@ func buildPromptReceipt(ctx context.Context, provider, kind string, messages []p
 	if observation, ok := domainllm.ExecutionObservationFromContext(ctx); ok {
 		receipt.RequestID = observation.RequestID
 		receipt.TraceID = observation.TraceID
-		receipt.JobID = observation.JobID
+		receipt.TaskID = observation.TaskID
 		receipt.SessionID = observation.SessionID
 		receipt.Initiator = observation.Initiator
 		receipt.Caller = observation.Caller

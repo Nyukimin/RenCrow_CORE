@@ -3,10 +3,12 @@ package autonomous
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type plannerStub struct {
@@ -92,6 +94,7 @@ func testContract() domaincontract.Contract {
 }
 
 func TestServiceRun_VerifyPass(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply"}}}},
 		&applierStub{},
@@ -100,7 +103,7 @@ func TestServiceRun_VerifyPass(t *testing.T) {
 		1,
 	)
 
-	report, err := svc.Run(context.Background(), testContract())
+	report, err := svc.Run(context.Background(), testContract(), taskID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -110,9 +113,13 @@ func TestServiceRun_VerifyPass(t *testing.T) {
 	if report.RepairCount != 0 {
 		t.Fatalf("expected no repair, got %d", report.RepairCount)
 	}
+	if report.TaskID != taskID {
+		t.Fatalf("expected task ID %q, got %q", taskID, report.TaskID)
+	}
 }
 
 func TestServiceRun_RepairThenPass(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	repair := &repairerStub{plan: Plan{Steps: []Step{{Name: "repair-step"}}}}
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
@@ -122,7 +129,7 @@ func TestServiceRun_RepairThenPass(t *testing.T) {
 		2,
 	)
 
-	report, err := svc.Run(context.Background(), testContract())
+	report, err := svc.Run(context.Background(), testContract(), taskID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -138,6 +145,7 @@ func TestServiceRun_RepairThenPass(t *testing.T) {
 }
 
 func TestServiceRun_FailWhenRepairExhausted(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	repair := &repairerStub{plan: Plan{Steps: []Step{{Name: "repair-step"}}}}
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
@@ -147,7 +155,7 @@ func TestServiceRun_FailWhenRepairExhausted(t *testing.T) {
 		1,
 	)
 
-	report, err := svc.Run(context.Background(), testContract())
+	report, err := svc.Run(context.Background(), testContract(), taskID)
 	if err == nil {
 		t.Fatal("expected error when repair exhausted")
 	}
@@ -160,6 +168,7 @@ func TestServiceRun_FailWhenRepairExhausted(t *testing.T) {
 }
 
 func TestServiceRun_FailOnApplyError(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
 		&applierStub{errAt: map[string]error{"apply-step": errors.New("apply failed")}},
@@ -168,7 +177,7 @@ func TestServiceRun_FailOnApplyError(t *testing.T) {
 		1,
 	)
 
-	report, err := svc.Run(context.Background(), testContract())
+	report, err := svc.Run(context.Background(), testContract(), taskID)
 	if err == nil {
 		t.Fatal("expected apply error")
 	}
@@ -178,6 +187,7 @@ func TestServiceRun_FailOnApplyError(t *testing.T) {
 }
 
 func TestServiceRun_SavesExecutionReport(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &reportStoreStub{}
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
@@ -187,7 +197,7 @@ func TestServiceRun_SavesExecutionReport(t *testing.T) {
 		1,
 	).WithReportStore(store)
 
-	_, err := svc.Run(context.Background(), testContract())
+	_, err := svc.Run(context.Background(), testContract(), taskID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -197,7 +207,7 @@ func TestServiceRun_SavesExecutionReport(t *testing.T) {
 	if store.last.Status != "passed" {
 		t.Fatalf("expected report status passed, got %s", store.last.Status)
 	}
-	if store.last.Goal == "" || store.last.JobID == "" {
+	if store.last.Goal == "" || store.last.TaskID != taskID {
 		t.Fatalf("report fields are incomplete: %+v", store.last)
 	}
 	if len(store.last.Steps) == 0 || store.last.Steps[0] != "apply-step" {
@@ -209,6 +219,7 @@ func TestServiceRun_SavesExecutionReport(t *testing.T) {
 }
 
 func TestServiceRun_SavesFailureDetails(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &reportStoreStub{}
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
@@ -218,7 +229,7 @@ func TestServiceRun_SavesFailureDetails(t *testing.T) {
 		1,
 	).WithReportStore(store)
 
-	_, err := svc.Run(context.Background(), testContract())
+	_, err := svc.Run(context.Background(), testContract(), taskID)
 	if err == nil {
 		t.Fatal("expected failure")
 	}
@@ -240,6 +251,7 @@ func TestServiceRun_SavesFailureDetails(t *testing.T) {
 }
 
 func TestServiceRun_SavesApplyErrorKind(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &reportStoreStub{}
 	svc := NewService(
 		plannerStub{plan: Plan{Steps: []Step{{Name: "apply-step"}}}},
@@ -249,11 +261,44 @@ func TestServiceRun_SavesApplyErrorKind(t *testing.T) {
 		1,
 	).WithReportStore(store)
 
-	_, err := svc.Run(context.Background(), testContract())
+	_, err := svc.Run(context.Background(), testContract(), taskID)
 	if err == nil {
 		t.Fatal("expected apply failure")
 	}
 	if store.last.ErrorKind != "apply" {
 		t.Fatalf("expected error kind apply, got %s", store.last.ErrorKind)
 	}
+}
+
+func TestServiceRunRejectsMissingOrMalformedTaskIDBeforePlanning(t *testing.T) {
+	for _, taskID := range []modulecore.TaskID{"", "not-a-task-id"} {
+		t.Run(string(taskID), func(t *testing.T) {
+			planned := false
+			store := &reportStoreStub{}
+			svc := NewService(
+				plannerFunc(func(context.Context, domaincontract.Contract) (Plan, error) {
+					planned = true
+					return Plan{}, nil
+				}),
+				&applierStub{},
+				&verifierStub{seq: []verifyResult{{ok: true}}},
+				&repairerStub{},
+				1,
+			).WithReportStore(store)
+
+			report, err := svc.Run(context.Background(), testContract(), taskID)
+			if err == nil || report.Status != StatusFailed || !strings.Contains(err.Error(), "task_id") {
+				t.Fatalf("expected task_id validation failure, report=%+v err=%v", report, err)
+			}
+			if planned || store.calls != 0 {
+				t.Fatalf("invalid task ID crossed planning/persistence boundary: planned=%t saves=%d", planned, store.calls)
+			}
+		})
+	}
+}
+
+type plannerFunc func(context.Context, domaincontract.Contract) (Plan, error)
+
+func (f plannerFunc) Plan(ctx context.Context, c domaincontract.Contract) (Plan, error) {
+	return f(ctx, c)
 }

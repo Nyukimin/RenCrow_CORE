@@ -28,6 +28,7 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 		eventFixture(modulecore.NewTraceID(), "orchestrator", "agent.response", map[string]any{"job_id": jobID}),
 	}
 	writeStore(t, source, events)
+	storedSource := readAll(t, source)
 
 	dryManifest := filepath.Join(snapshot, "dry-run.json")
 	dry, err := Run(ctx, Options{
@@ -67,7 +68,7 @@ func TestDryRunAndBuildRepairFragmentedJobWithoutChangingEventIdentity(t *testin
 			t.Fatalf("event %s trace=%s want root %s", event.EventID, event.TraceID, rootTrace)
 		}
 	}
-	for _, before := range events {
+	for _, before := range storedSource {
 		after := byID[before.EventID]
 		before.TraceID = rootTrace
 		beforeJSON, _ := json.Marshal(before)

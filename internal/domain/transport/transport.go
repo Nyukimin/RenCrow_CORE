@@ -34,7 +34,7 @@ type Message struct {
 	From      string                 `json:"from"`
 	To        string                 `json:"to"`
 	SessionID string                 `json:"session_id"`
-	JobID     string                 `json:"job_id"`
+	TaskID    modulecore.TaskID      `json:"task_id"`
 	Type      MessageType            `json:"type,omitempty"`
 	Content   string                 `json:"message"`
 	Context   map[string]interface{} `json:"context,omitempty"`
@@ -93,12 +93,12 @@ type CommandResultPayload struct {
 }
 
 // NewMessage は新しいメッセージを作成
-func NewMessage(from, to, sessionID, jobID, content string) Message {
+func NewMessage(from, to, sessionID string, taskID modulecore.TaskID, content string) Message {
 	return Message{
 		From:      from,
 		To:        to,
 		SessionID: sessionID,
-		JobID:     jobID,
+		TaskID:    taskID,
 		Type:      MessageTypeTask,
 		Content:   content,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -106,14 +106,17 @@ func NewMessage(from, to, sessionID, jobID, content string) Message {
 }
 
 // NewTurnInputMessage creates a task message carrying the exact conversation
-// identity assigned to the user input. JobID remains an independent legacy
-// execution identifier on Message.
-func NewTurnInputMessage(from, to, jobID string, input conversation.TurnInput) (Message, error) {
+// identity assigned to the user input. TaskID identifies the execution and
+// remains separate from the root task carried by TurnInput.
+func NewTurnInputMessage(from, to string, taskID modulecore.TaskID, input conversation.TurnInput) (Message, error) {
+	if err := taskID.Validate(); err != nil {
+		return Message{}, fmt.Errorf("message.task_id is invalid: %w", err)
+	}
 	if err := input.Validate(); err != nil {
 		return Message{}, fmt.Errorf("turn input is invalid: %w", err)
 	}
 	address := input.ChannelAddress()
-	message := NewMessage(from, to, input.SessionID(), jobID, input.MessageText())
+	message := NewMessage(from, to, input.SessionID(), taskID, input.MessageText())
 	message.TurnInput = &TurnInputContext{
 		RootTaskID:             input.RootTaskID(),
 		TurnID:                 input.TurnID(),
@@ -131,8 +134,8 @@ func NewTurnInputMessage(from, to, jobID string, input conversation.TurnInput) (
 }
 
 // ReconstructTurnInput restores the exact conversation input carried by this
-// message. A projection is mandatory; legacy messages never synthesize a new
-// input or derive one from JobID.
+// message. A projection is mandatory; messages never synthesize a new input or
+// derive one from TaskID.
 func (m Message) ReconstructTurnInput() (conversation.TurnInput, error) {
 	if m.TurnInput == nil {
 		return conversation.TurnInput{}, fmt.Errorf("message.turn_input is required")
@@ -166,12 +169,12 @@ func (m Message) ReconstructTurnInput() (conversation.TurnInput, error) {
 }
 
 // NewErrorMessage はエラーメッセージを作成
-func NewErrorMessage(from, to, sessionID, jobID, errMsg string) Message {
+func NewErrorMessage(from, to, sessionID string, taskID modulecore.TaskID, errMsg string) Message {
 	return Message{
 		From:      from,
 		To:        to,
 		SessionID: sessionID,
-		JobID:     jobID,
+		TaskID:    taskID,
 		Type:      MessageTypeError,
 		Content:   errMsg,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
@@ -185,6 +188,9 @@ func (m Message) Validate() error {
 	}
 	if m.To == "" {
 		return fmt.Errorf("message.to is required")
+	}
+	if err := m.TaskID.Validate(); err != nil {
+		return fmt.Errorf("message.task_id is invalid: %w", err)
 	}
 	if m.Timestamp == "" {
 		return fmt.Errorf("message.timestamp is required")

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func HandleMonitorStatus(store *MonitorStore) http.HandlerFunc {
@@ -51,28 +53,6 @@ func HandleMonitorAgentDetail(store *MonitorStore) http.HandlerFunc {
 	}
 }
 
-func HandleMonitorJobs(store *MonitorStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		limit, ok := parseOptionalLimit(w, r, 100)
-		if !ok {
-			return
-		}
-		items := store.Jobs(JobFilter{
-			Route:     strings.TrimSpace(r.URL.Query().Get("route")),
-			Status:    strings.TrimSpace(r.URL.Query().Get("status")),
-			Owner:     strings.TrimSpace(r.URL.Query().Get("owner")),
-			SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
-			ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
-			Limit:     limit,
-		})
-		writeMonitorJSON(w, map[string]any{"items": items})
-	}
-}
-
 func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -83,11 +63,32 @@ func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !validateMonitorLogQuery(w, r) {
+			return
+		}
+		var taskID modulecore.TaskID
+		var eventID modulecore.EventID
+		if raw := strings.TrimSpace(r.URL.Query().Get("event_id")); raw != "" {
+			eventID = modulecore.EventID(raw)
+			if err := eventID.Validate(); err != nil {
+				http.Error(w, "invalid event_id", http.StatusBadRequest)
+				return
+			}
+		}
+		if raw := strings.TrimSpace(r.URL.Query().Get("task_id")); raw != "" {
+			parsed, err := modulecore.ParseTaskID(raw)
+			if err != nil {
+				http.Error(w, "invalid task_id", http.StatusBadRequest)
+				return
+			}
+			taskID = parsed
+		}
 		filter := LogFilter{
+			EventID:   eventID,
 			Type:      strings.TrimSpace(r.URL.Query().Get("type")),
 			Agent:     strings.TrimSpace(r.URL.Query().Get("agent")),
 			Route:     strings.TrimSpace(r.URL.Query().Get("route")),
-			JobID:     strings.TrimSpace(r.URL.Query().Get("job_id")),
+			TaskID:    taskID,
 			SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
 			ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
 			Limit:     limit,
@@ -105,6 +106,20 @@ func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 	}
 }
 
+func validateMonitorLogQuery(w http.ResponseWriter, r *http.Request) bool {
+	allowed := map[string]struct{}{
+		"event_id": {}, "type": {}, "agent": {}, "route": {}, "task_id": {}, "session_id": {},
+		"chat_id": {}, "limit": {}, "scope": {},
+	}
+	for key := range r.URL.Query() {
+		if _, ok := allowed[key]; !ok {
+			http.Error(w, "unsupported monitor filter", http.StatusBadRequest)
+			return false
+		}
+	}
+	return true
+}
+
 func HandleMonitorAuditSummary(store *MonitorStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -112,26 +127,6 @@ func HandleMonitorAuditSummary(store *MonitorStore) http.HandlerFunc {
 			return
 		}
 		writeMonitorJSON(w, map[string]any{"summary": store.Summary()})
-	}
-}
-
-func HandleMonitorJobDetail(store *MonitorStore) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		jobID := strings.TrimSpace(r.URL.Query().Get("job_id"))
-		if jobID == "" {
-			http.Error(w, "job_id is required", http.StatusBadRequest)
-			return
-		}
-		item, ok := store.JobDetail(r.Context(), jobID)
-		if !ok {
-			http.Error(w, "job not found", http.StatusNotFound)
-			return
-		}
-		writeMonitorJSON(w, item)
 	}
 }
 

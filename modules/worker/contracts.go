@@ -9,12 +9,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
-type JobID string
-
 const ToolProposalPatch = "proposal_patch"
 
 type Action struct {
-	JobID       JobID          `json:"job_id"`
+	TaskID      core.TaskID    `json:"task_id"`
 	ActionID    string         `json:"action_id,omitempty"`
 	Tool        string         `json:"tool"`
 	Arguments   map[string]any `json:"arguments,omitempty"`
@@ -34,7 +32,7 @@ const (
 )
 
 type Result struct {
-	JobID      JobID          `json:"job_id"`
+	TaskID     core.TaskID    `json:"task_id"`
 	Status     Status         `json:"status"`
 	Output     string         `json:"output,omitempty"`
 	Error      string         `json:"error,omitempty"`

@@ -98,13 +98,14 @@ func (o *MessageOrchestrator) handleDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	input domainconversation.TurnInput,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	ttsSessionID string,
+	activateShiro dailyNewsBriefShiroActivation,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
 		return ProcessMessageResponse{}, false, nil
 	}
-	return o.respondWithDailyNewsBrief(ctx, req, sess, input, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat, ttsSessionID)
+	return o.respondWithDailyNewsBrief(ctx, req, sess, input, taskID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat, ttsSessionID, activateShiro)
 }
 
 func (o *DistributedOrchestrator) handleDailyNewsBrief(
@@ -112,12 +113,13 @@ func (o *DistributedOrchestrator) handleDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	input domainconversation.TurnInput,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
+	activateShiro dailyNewsBriefShiroActivation,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
 		return ProcessMessageResponse{}, false, nil
 	}
-	return o.respondWithDailyNewsBrief(ctx, req, sess, input, jobID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat)
+	return o.respondWithDailyNewsBrief(ctx, req, sess, input, taskID, o.dailyNewsBriefReader, o.dailyNewsBriefCollector, o.shiroChat, activateShiro)
 }
 
 func (o *MessageOrchestrator) respondWithDailyNewsBrief(
@@ -125,30 +127,31 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	input domainconversation.TurnInput,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
 	shiroChat MioAgent,
 	ttsSessionID string,
+	activateShiro dailyNewsBriefShiroActivation,
 ) (ProcessMessageResponse, bool, error) {
 	now := time.Now()
 	decision := dailyNewsBriefRouteDecision()
-	o.ttsLifecycle.StartSessionForRoute(ctx, req, jobID, decision, ttsSessionID)
-	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	brief, readerErr := readDailyNewsBrief(ctx, reader, now)
 	if readerErr != nil {
-		o.events.Emit("news.brief.cache_miss", "system", "mio", readerErr.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_miss", "system", "mio", readerErr.Error(), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	} else if brief.IsUsable(now) {
-		o.events.Emit("news.brief.cache_hit", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_hit", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	} else {
-		o.events.Emit("news.brief.cache_miss", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_miss", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	}
 	resp, handled, err := respondWithDailyNewsBrief(
 		ctx,
 		req,
 		sess,
 		input,
-		jobID,
+		taskID,
 		now,
 		brief,
 		readerErr,
@@ -158,6 +161,7 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 		o.events.Emit,
 		o.sessions.SaveCompletedTurnInput,
 		o.responses.Build,
+		activateShiro,
 	)
 	if err == nil && handled {
 		o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, "agent.response", resp.Response)
@@ -171,29 +175,30 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	input domainconversation.TurnInput,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
 	shiroChat MioAgent,
+	activateShiro dailyNewsBriefShiroActivation,
 ) (ProcessMessageResponse, bool, error) {
 	now := time.Now()
 	decision := dailyNewsBriefRouteDecision()
-	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, jobID, decision)
-	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision)
+	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	brief, readerErr := readDailyNewsBrief(ctx, reader, now)
 	if readerErr != nil {
-		o.events.Emit("news.brief.cache_miss", "system", "mio", readerErr.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_miss", "system", "mio", readerErr.Error(), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	} else if brief.IsUsable(now) {
-		o.events.Emit("news.brief.cache_hit", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_hit", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	} else {
-		o.events.Emit("news.brief.cache_miss", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("news.brief.cache_miss", "system", "mio", dailyNewsBriefObservation(brief), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	}
 	resp, handled, err := respondWithDailyNewsBrief(
 		ctx,
 		req,
 		sess,
 		input,
-		jobID,
+		taskID,
 		now,
 		brief,
 		readerErr,
@@ -207,9 +212,10 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 				Response:   response,
 				Route:      decision.Route,
 				Confidence: decision.Confidence,
-				JobID:      jid.String(),
+				TaskID:     jid.String(),
 			}
 		},
+		activateShiro,
 	)
 	if err == nil && handled {
 		o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, "agent.response", resp.Response)
@@ -218,9 +224,10 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 	return resp, handled, err
 }
 
-type dailyNewsBriefEventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
+type dailyNewsBriefEventEmitter func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
 type dailyNewsBriefTurnInputSaver func(context.Context, *session.Session, domainconversation.TurnInput) error
 type dailyNewsBriefResponseBuilder func(string, routing.Decision, modulecore.TaskID) ProcessMessageResponse
+type dailyNewsBriefShiroActivation func(context.Context) (modulecore.TaskID, error)
 
 func readDailyNewsBrief(ctx context.Context, reader domainnews.DailyNewsBriefReader, now time.Time) (domainnews.DailyNewsBrief, error) {
 	if reader == nil {
@@ -234,7 +241,7 @@ func respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	input domainconversation.TurnInput,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	now time.Time,
 	brief domainnews.DailyNewsBrief,
 	readerErr error,
@@ -244,34 +251,43 @@ func respondWithDailyNewsBrief(
 	emit dailyNewsBriefEventEmitter,
 	save dailyNewsBriefTurnInputSaver,
 	build dailyNewsBriefResponseBuilder,
+	activateShiro dailyNewsBriefShiroActivation,
 ) (ProcessMessageResponse, bool, error) {
 	usable := readerErr == nil && brief.IsUsable(now)
 	requestCtx := ctx
 	responseBrief := brief
 	hasResponseBrief := usable
+	shiroTaskID := taskID
 	if usable {
 		requestCtx = domainagent.WithDailyNewsBrief(requestCtx, brief)
 	} else {
-		emit("news.brief.fallback_started", "system", "mio", "source=live_news_search reason="+dailyNewsBriefFallbackReason(brief, readerErr), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
-		emitDailyNewsFallbackHandoff(emit, req, jobID)
+		if activateShiro != nil {
+			activatedTaskID, err := activateShiro(ctx)
+			if err != nil {
+				return ProcessMessageResponse{}, true, err
+			}
+			shiroTaskID = activatedTaskID
+		}
+		emit("news.brief.fallback_started", "system", "mio", "source=live_news_search reason="+dailyNewsBriefFallbackReason(brief, readerErr), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
+		emitDailyNewsFallbackHandoff(emit, req, shiroTaskID)
 		if collector == nil {
 			err := fmt.Errorf("daily news brief collector is unavailable")
-			emitDailyNewsFallbackProgress(emit, req, jobID, "収集Toolが未接続のため、朝刊を取得できませんでした。")
-			emit("news.brief.failed", "system", "user", err.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+			emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "収集Toolが未接続のため、朝刊を取得できませんでした。")
+			emit("news.brief.failed", "system", "user", err.Error(), "CHAT", shiroTaskID.String(), req.SessionID, req.Channel, req.ChatID)
 			return ProcessMessageResponse{}, true, err
 		}
-		emitDailyNewsFallbackProgress(emit, req, jobID, "まずニュース検索源を確認し、候補記事を集めます。")
+		emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "まずニュース検索源を確認し、候補記事を集めます。")
 		liveBrief, err := collector.Collect(ctx, req.UserMessage, now)
 		if err != nil {
-			emitDailyNewsFallbackProgress(emit, req, jobID, "検索・本文取得に失敗しました。事実データは確定できません。")
-			emit("news.brief.failed", "system", "user", err.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+			emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "検索・本文取得に失敗しました。事実データは確定できません。")
+			emit("news.brief.failed", "system", "user", err.Error(), "CHAT", shiroTaskID.String(), req.SessionID, req.Channel, req.ChatID)
 			return ProcessMessageResponse{}, true, err
 		}
 		responseBrief = liveBrief
 		hasResponseBrief = len(liveBrief.Items) > 0
 		requestCtx = domainagent.WithDailyNewsBrief(requestCtx, liveBrief)
-		emitDailyNewsFallbackProgress(emit, req, jobID, "候補記事の本文を取得し、重複を確認して整理しました。")
-		emitDailyNewsFallbackProgress(emit, req, jobID, "調べてきました。収集結果はデータとしてMioへ渡します。")
+		emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "候補記事の本文を取得し、重複を確認して整理しました。")
+		emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "調べてきました。収集結果はデータとしてMioへ渡します。")
 	}
 
 	responders := dailyNewsBriefResponders(input.ViewerRecipient(), mioChat, shiroChat)
@@ -280,14 +296,24 @@ func respondWithDailyNewsBrief(
 	}
 	var response string
 	var responseAgent string
+	responseTaskID := taskID
 	var lastErr error
 	for _, responder := range responders {
 		if responder.agent == nil {
 			continue
 		}
+		candidateTaskID := taskID
+		if responder.name == taskLifecycleShiro && activateShiro != nil {
+			candidateTaskID, lastErr = activateShiro(ctx)
+			if lastErr != nil {
+				return ProcessMessageResponse{}, true, lastErr
+			}
+		}
+		responseTaskID = candidateTaskID
 		response, lastErr = responder.agent.Chat(requestCtx, input.WithRoute(routing.RouteCHAT))
 		if lastErr == nil && strings.TrimSpace(response) != "" {
 			responseAgent = responder.name
+			responseTaskID = candidateTaskID
 			break
 		}
 	}
@@ -295,23 +321,24 @@ func respondWithDailyNewsBrief(
 		if hasResponseBrief {
 			response = formatDailyNewsBriefFallback(responseBrief)
 			responseAgent = "mio"
+			responseTaskID = taskID
 			lastErr = nil
 		} else if lastErr != nil {
-			emit("news.brief.failed", responseAgentOrSystem(responseAgent), "user", lastErr.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+			emit("news.brief.failed", responseAgentOrSystem(responseAgent), "user", lastErr.Error(), "CHAT", responseTaskID.String(), req.SessionID, req.Channel, req.ChatID)
 			return ProcessMessageResponse{}, true, lastErr
 		} else {
 			lastErr = fmt.Errorf("daily news brief responder returned an empty response")
-			emit("news.brief.failed", "system", "user", lastErr.Error(), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+			emit("news.brief.failed", "system", "user", lastErr.Error(), "CHAT", responseTaskID.String(), req.SessionID, req.Channel, req.ChatID)
 			return ProcessMessageResponse{}, true, lastErr
 		}
 	}
 
-	emit("news.brief.responded", responseAgentOrSystem(responseAgent), "user", dailyNewsBriefResponseObservation(responseBrief, usable, now), "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
-	emit("agent.response", responseAgentOrSystem(responseAgent), "user", response, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	emit("news.brief.responded", responseAgentOrSystem(responseAgent), "user", dailyNewsBriefResponseObservation(responseBrief, usable, now), "CHAT", responseTaskID.String(), req.SessionID, req.Channel, req.ChatID)
+	emit("agent.response", responseAgentOrSystem(responseAgent), "user", response, "CHAT", responseTaskID.String(), req.SessionID, req.Channel, req.ChatID)
 	if err := save(ctx, sess, input.WithRoute(routing.RouteCHAT)); err != nil {
 		return ProcessMessageResponse{}, true, err
 	}
-	return build(response, dailyNewsBriefRouteDecision(), jobID), true, nil
+	return build(response, dailyNewsBriefRouteDecision(), responseTaskID), true, nil
 }
 
 func responseAgentOrSystem(agent string) string {
@@ -321,14 +348,14 @@ func responseAgentOrSystem(agent string) string {
 	return agent
 }
 
-func emitDailyNewsFallbackHandoff(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID modulecore.TaskID) {
+func emitDailyNewsFallbackHandoff(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, taskID modulecore.TaskID) {
 	route := string(routing.RouteCHAT)
-	emit("agent.progress", "mio", "shiro", "Shiro、今日の朝刊データがまだ届いていないみたい。ニュース収集Workerで調べてきて。", route, jobID.String(), req.SessionID, req.Channel, req.ChatID)
-	emit("agent.progress", "shiro", "mio", "Mio、了解。検索源を確認して、候補記事の本文取得と重複確認まで進めます。", route, jobID.String(), req.SessionID, req.Channel, req.ChatID)
+	emit("agent.progress", "mio", "shiro", "Shiro、今日の朝刊データがまだ届いていないみたい。ニュース収集Workerで調べてきて。", route, taskID.String(), req.SessionID, req.Channel, req.ChatID)
+	emit("agent.progress", "shiro", "mio", "Mio、了解。検索源を確認して、候補記事の本文取得と重複確認まで進めます。", route, taskID.String(), req.SessionID, req.Channel, req.ChatID)
 }
 
-func emitDailyNewsFallbackProgress(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID modulecore.TaskID, content string) {
-	emit("agent.progress", "shiro", "mio", content, string(routing.RouteCHAT), jobID.String(), req.SessionID, req.Channel, req.ChatID)
+func emitDailyNewsFallbackProgress(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, taskID modulecore.TaskID, content string) {
+	emit("agent.progress", "shiro", "mio", content, string(routing.RouteCHAT), taskID.String(), req.SessionID, req.Channel, req.ChatID)
 }
 
 func dailyNewsBriefObservation(brief domainnews.DailyNewsBrief) string {

@@ -39,7 +39,6 @@ const (
 
 // ProcessMessageRequest はメッセージ処理リクエスト
 type ProcessMessageRequest struct {
-	JobID                    string
 	MessageID                string
 	AgentMessageID           string
 	TurnID                   string
@@ -65,7 +64,7 @@ type ProcessMessageResponse struct {
 	SessionID       string `json:"session_id,omitempty"`
 	Route           routing.Route
 	Confidence      float64
-	JobID           string
+	TaskID          string                                 `json:"task_id,omitempty"`
 	MessageID       string                                 `json:"message_id,omitempty"`
 	TurnID          string                                 `json:"turn_id,omitempty"`
 	TraceID         string                                 `json:"trace_id,omitempty"`
@@ -175,7 +174,7 @@ type CoderAgentWithProposal interface {
 // SessionTurnLogger はセッション単位の会話ターンを記録するインターフェース
 type SessionTurnLogger interface {
 	WriteUser(sessionID, channel, content string)
-	WriteAssistant(sessionID, channel, route, jobID, content string)
+	WriteAssistant(sessionID, channel, route, taskID, content string)
 }
 
 // MessageOrchestrator はメッセージ処理を統括
@@ -211,6 +210,7 @@ type MessageOrchestrator struct {
 	personaCanonicalResponses []domainpersona.CanonicalResponseDefinition
 	maxRepair                 int // 0以下は1とみなす
 	sessionTurnLogger         SessionTurnLogger
+	taskLifecycle             *taskLifecycle
 
 	sessions                *messageSessionLifecycle
 	responses               messageResponseAssembler
@@ -285,7 +285,7 @@ func NewMessageOrchestrator(
 	orch.sessions = newMessageSessionLifecycle(sessionRepo)
 	orch.turnInputs = newMessageTurnInputBuilder(orch.events.Emit, orch.ttsEnabled)
 	orch.preRoutingCommands = newPreRoutingCommandHandler(mio, orch.events.Emit, orch.responses)
-	orch.routeDecisions = newRouteDecisionCoordinator(mio, orch.events.Emit)
+	orch.routeDecisions = newRouteDecisionCoordinator(mio)
 	orch.idleBusyGuards = newIdleBusyGuardFactory(nil)
 	orch.ttsLifecycle = newMessageTTSLifecycle(nil, nil, orch.events.Emit)
 	orch.routeDispatcher = newMessageRouteDispatcher(
@@ -332,6 +332,16 @@ func (o *MessageOrchestrator) SetCoderLoopPrompt(prompt string) {
 // SetSessionTurnLogger はセッション会話ターンロガーを設定する
 func (o *MessageOrchestrator) SetSessionTurnLogger(l SessionTurnLogger) {
 	o.sessionTurnLogger = l
+}
+
+// SetTaskLifecycleManager installs the durable task lifecycle used by every
+// accepted ProcessMessage branch. Nil leaves durable task persistence disabled.
+func (o *MessageOrchestrator) SetTaskLifecycleManager(manager TaskLifecycleManager) {
+	if manager == nil {
+		o.taskLifecycle = nil
+		return
+	}
+	o.taskLifecycle = newTaskLifecycle(manager)
 }
 
 // SetCoderCapabilities は診断用の能力情報を注入する。Coder 選択は明示 route と Coder1 既定に限定する。
@@ -485,14 +495,17 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			resp.SessionID = req.SessionID
 		}
 	}()
-	jobID := modulecore.TaskID(req.JobID)
+	rootTaskID := modulecore.TaskID(req.RootTaskID)
+	taskID := rootTaskID
+	executionTaskID := rootTaskID
+	lifecycleCreated := false
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
-	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))
-	o.events.BindResponseMessageID(jobID.String(), modulecore.MessageID(req.AgentMessageID))
+	o.events.BindTrace(rootTaskID.String(), modulecore.TraceID(req.TraceID))
+	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
-		o.events.ReleaseTrace(jobID.String())
-		o.events.ReleaseResponseMessageID(jobID.String())
+		o.events.ReleaseTrace(rootTaskID.String())
+		o.events.ReleaseResponseMessageID(rootTaskID.String())
 	}()
 	ctx, cancel := context.WithCancelCause(ctx)
 	publicationFailures := o.events.publicationFail
@@ -517,17 +530,57 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			err = errors.Join(err, wrapped)
 		}
 	}()
+	defer func() {
+		if !lifecycleCreated || o.taskLifecycle == nil {
+			return
+		}
+		lifecycleErr := err
+		if publicationErr := publicationFailures.Current(traceID); publicationErr != nil {
+			if lifecycleErr == nil {
+				lifecycleErr = publicationErr
+			} else {
+				lifecycleErr = errors.Join(lifecycleErr, publicationErr)
+			}
+		}
+		if finalizeErr := o.taskLifecycle.finish(context.WithoutCancel(ctx), rootTaskID, executionTaskID, resp.Response, lifecycleErr); finalizeErr != nil {
+			if err == nil {
+				err = finalizeErr
+			} else {
+				err = errors.Join(err, finalizeErr)
+			}
+			resp = ProcessMessageResponse{}
+		}
+	}()
+	if o.taskLifecycle != nil {
+		if _, err := o.taskLifecycle.createRoot(ctx, req); err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		lifecycleCreated = true
+	}
+	taskActivation, cleanupTaskActivation := newTaskLifecycleActivation(o.taskLifecycle, o.events, req)
+	defer cleanupTaskActivation()
+	activateConfiguredTask := func(route routing.Route, actor, content string) (modulecore.TaskID, error) {
+		if o.taskLifecycle == nil {
+			return rootTaskID, nil
+		}
+		activatedTaskID, activateErr := taskActivation.Activate(ctx, route, actor, content)
+		if activatedTaskID != "" {
+			executionTaskID = activatedTaskID
+			taskID = activatedTaskID
+		}
+		return activatedTaskID, activateErr
+	}
 	preserveOriginalUserMessage(&req)
-	log.Printf("[MessageOrch] ProcessMessage START: jobID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
-		jobID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
-	if err := o.events.EmitMessageReceived(req, jobID.String()); err != nil {
+	log.Printf("[MessageOrch] ProcessMessage START: taskID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
+		taskID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	if err := o.events.EmitMessageReceived(req, taskID.String()); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
 
-	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
+	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", taskID.String(), req.SessionID, req.Channel, req.ChatID, "")
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -535,15 +588,24 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.recordPersonaRuntimeObservation(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	if resp, handled, err := o.preRoutingCommands.Handle(ctx, req); err != nil {
-		return ProcessMessageResponse{}, err
-	} else if handled {
+	commandResp, commandHandled, commandErr := o.preRoutingCommands.Handle(ctx, req)
+	if commandHandled {
+		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=pre-routing command"); err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		if commandErr != nil {
+			return ProcessMessageResponse{}, commandErr
+		}
+		o.preRoutingCommands.EmitResponse(req, commandResp.Response, taskID)
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(commandResp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
+	}
+	if commandErr != nil {
+		return ProcessMessageResponse{}, commandErr
 	}
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
 		return ProcessMessageResponse{}, err
@@ -561,46 +623,93 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 	}
 
-	input, jobID, ttsSessionID, err := o.turnInputs.BuildWithJobID(req, jobID)
+	input, taskID, ttsSessionID, err := o.turnInputs.BuildWithTaskID(req, taskID)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, jobID, ttsSessionID); err != nil {
+	dailyBriefRequested := isDailyNewsBriefRequest(req.UserMessage)
+	if dailyBriefRequested {
+		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=daily news brief intent"); err != nil {
+			return ProcessMessageResponse{}, err
+		}
+	}
+	activateDailyShiro := func(activateCtx context.Context) (modulecore.TaskID, error) {
+		if o.taskLifecycle == nil {
+			return rootTaskID, nil
+		}
+		activatedTaskID, activateErr := taskActivation.Activate(activateCtx, routing.RouteCHAT, taskLifecycleShiro, "confidence 100% evidence=daily news brief intent")
+		if activatedTaskID != "" {
+			executionTaskID = activatedTaskID
+			taskID = activatedTaskID
+		}
+		return activatedTaskID, activateErr
+	}
+	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, rootTaskID, ttsSessionID, activateDailyShiro); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
-	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input.WithRoute(routing.RouteRESEARCH), jobID); err != nil {
+	explicitDCI := shouldHandleExplicitDCI(o.dciSearcher, req.UserMessage)
+	if explicitDCI {
+		if _, err := activateConfiguredTask(routing.RouteRESEARCH, taskLifecycleShiro, "confidence 100% evidence=explicit DCI trigger"); err != nil {
+			return ProcessMessageResponse{}, err
+		}
+	}
+	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input.WithRoute(routing.RouteRESEARCH), taskID, explicitDCI); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
 	}
-	if resp, handled, err := o.handleDurableStore(ctx, req, sess, input, jobID); err != nil {
-		return ProcessMessageResponse{}, err
-	} else if handled {
+	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
+	if durableHandled {
+		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=durable store workflow"); err != nil {
+			return ProcessMessageResponse{}, err
+		}
+		if durableErr != nil {
+			return ProcessMessageResponse{}, durableErr
+		}
+		resp, err := o.completeDurableStore(ctx, req, sess, input, taskID, durableResult)
+		if err != nil {
+			return ProcessMessageResponse{}, err
+		}
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
-		resp = ensureProcessResponseIdentity(resp, jobID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
+		resp = ensureProcessResponseIdentity(resp, taskID.String(), req.TurnID, req.TraceID, req.RootTaskID, req.AgentMessageID, o.events.TakeResponseMessageID)
 		writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 		return resp, nil
+	}
+	if durableErr != nil {
+		return ProcessMessageResponse{}, durableErr
 	}
 
-	decision, err := o.routeDecisions.Decide(ctx, input, req, jobID)
+	decision, err := o.routeDecisions.Decide(ctx, input, req, taskID)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	emitLatencyMetric(o.events.Emit, "llm", "route_decision", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, decision.Reason)
+	actor, err := actualCoreActorForRequest(decision.Route, req)
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	preparedTaskID, err := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
+	if preparedTaskID != "" {
+		executionTaskID = preparedTaskID
+		taskID = preparedTaskID
+	}
+	if err != nil {
+		return ProcessMessageResponse{}, err
+	}
+	emitLatencyMetric(o.events.Emit, "llm", "route_decision", latencyStartedAt, string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID, decision.Reason)
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -609,16 +718,16 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	o.ttsLifecycle.StartSessionForRoute(ctx, req, jobID, decision, ttsSessionID)
+	o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
 
 	endWorkerBusy := o.idleBusyGuards.BeginWorker(decision.Route)
 	defer endWorkerBusy()
 
-	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, jobID, decision.Route)
+	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, taskID, decision.Route)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	leadRunID := leadAgentRunID(jobID)
+	leadRunID := leadAgentRunID(taskID)
 	if o.superAgentRunController != nil {
 		var unregister func()
 		ctx, unregister = o.superAgentRunController.RegisterRun(ctx, leadRunID)
@@ -627,11 +736,11 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	ctx = appsubagent.WithSuperAgentRuntime(ctx, leadRunID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
 
 	// 4. ルートに応じて実行
-	emitLatencyMetric(o.events.Emit, "llm", "dispatch_start", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, "")
+	emitLatencyMetric(o.events.Emit, "llm", "dispatch_start", latencyStartedAt, string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID, "")
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, jobID, ttsSessionID)
+	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, taskID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
@@ -640,13 +749,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(leadRunID) {
-			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
+			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
 		} else {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
+			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
 		}
 		return ProcessMessageResponse{}, fmt.Errorf("task execution failed: %w", err)
 	}
-	emitLatencyMetric(o.events.Emit, "llm", "response_complete", latencyStartedAt, string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID, fmt.Sprintf("response_len=%d", len(response)))
+	emitLatencyMetric(o.events.Emit, "llm", "response_complete", latencyStartedAt, string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID, fmt.Sprintf("response_len=%d", len(response)))
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -661,46 +770,46 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			SessionID:     req.SessionID,
 			Channel:       req.Channel,
 			ChatID:        req.ChatID,
-			JobID:         jobID.String(),
+			TaskID:        taskID,
 		})
 		if err != nil {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
+			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
 			return ProcessMessageResponse{}, fmt.Errorf("response verification failed: %w", err)
 		}
 		response = verification.Response
 		verificationReport = &verification.Report
-		o.events.Emit("verification.report", "verification", "viewer", string(verification.Report.Status), string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
+		o.events.Emit("verification.report", "verification", "viewer", string(verification.Report.Status), string(decision.Route), taskID.String(), req.SessionID, req.Channel, req.ChatID)
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
 	}
 
 	if applied, err := o.applyPersonaCanonicalResponse(ctx, req, response); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
+		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	} else if applied != "" {
 		response = applied
 	}
 
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "failed", err.Error())
+		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	}
-	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, jobID, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
+	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 
 	resp = ensureProcessResponseIdentity(
-		o.responses.BuildWithVerification(response, decision, jobID, verificationReport),
-		jobID.String(),
+		o.responses.BuildWithVerification(response, decision, taskID, verificationReport),
+		taskID.String(),
 		req.TurnID,
 		req.TraceID,
 		req.RootTaskID,
 		req.AgentMessageID,
 		o.events.TakeResponseMessageID,
 	)
-	log.Printf("[MessageOrch] ProcessMessage COMPLETE: jobID=%s traceID=%s messageID=%s route=%s response_len=%d",
-		jobID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
+	log.Printf("[MessageOrch] ProcessMessage COMPLETE: taskID=%s traceID=%s messageID=%s route=%s response_len=%d",
+		taskID.String(), resp.TraceID, resp.MessageID, decision.Route, len(response))
 	writeAssistantSessionTurn(o.sessionTurnLogger, req, resp)
 	return resp, nil
 }

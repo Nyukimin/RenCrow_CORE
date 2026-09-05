@@ -10,8 +10,6 @@ func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		Status:            statusHandler(http.StatusOK),
-		Jobs:              statusHandler(http.StatusAccepted),
-		JobDetail:         statusHandler(http.StatusNoContent),
 		Logs:              statusHandler(http.StatusPartialContent),
 		PromptDebug:       statusHandler(http.StatusEarlyHints),
 		RepairRun:         statusHandler(http.StatusCreated),
@@ -26,8 +24,8 @@ func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 		want int
 	}{
 		{path: "/viewer/status", want: http.StatusOK},
-		{path: "/viewer/jobs", want: http.StatusAccepted},
-		{path: "/viewer/job/detail", want: http.StatusNoContent},
+		{path: "/viewer/jobs", want: http.StatusNotFound},
+		{path: "/viewer/job/detail", want: http.StatusNotFound},
 		{path: "/viewer/logs", want: http.StatusPartialContent},
 		{path: "/viewer/prompt-debug", want: http.StatusEarlyHints},
 		{path: "/viewer/repair/run", want: http.StatusCreated},

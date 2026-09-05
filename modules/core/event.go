@@ -13,6 +13,12 @@ type EventAppender interface {
 	Append(context.Context, EventEnvelope) error
 }
 
+// SequencedEventAppender assigns the storage-owned event sequence and returns
+// the envelope exactly as persisted.
+type SequencedEventAppender interface {
+	AppendSequenced(context.Context, EventEnvelope) (EventEnvelope, error)
+}
+
 type EventReader interface {
 	GetByID(context.Context, EventID) (EventEnvelope, bool, error)
 	ListByComponent(context.Context, string, int) ([]EventEnvelope, error)
@@ -30,6 +36,7 @@ type EventEnvelope struct {
 	SchemaVersion string `json:"schema_version"`
 
 	EventID            EventID   `json:"event_id"`
+	EventSeq           EventSeq  `json:"event_seq"`
 	TraceID            TraceID   `json:"trace_id"`
 	CausationEventID   EventID   `json:"causation_event_id,omitempty"`
 	DependencyEventIDs []EventID `json:"dependency_event_ids,omitempty"`
@@ -96,6 +103,9 @@ func ValidateEventEnvelope(event EventEnvelope) error {
 	}
 	if err := event.TraceID.Validate(); err != nil {
 		return fmt.Errorf("trace_id: %w", err)
+	}
+	if event.EventSeq < 0 {
+		return fmt.Errorf("event_seq must not be negative")
 	}
 	if strings.TrimSpace(event.EventType) == "" {
 		return fmt.Errorf("event_type is required")

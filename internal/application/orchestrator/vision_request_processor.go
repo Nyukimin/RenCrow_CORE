@@ -141,7 +141,7 @@ func emitVisionEvent(emit messageEventEmitter, eventType, content string, reques
 	if emit == nil {
 		return
 	}
-	emit(eventType, "rencrow-core", "rencrow-vision", content, "", request.JobID, request.SessionID, request.Channel, request.ChatID)
+	emit(eventType, "rencrow-core", "rencrow-vision", content, "", request.RootTaskID, request.SessionID, request.Channel, request.ChatID)
 }
 
 func visionEventContent(item domainattachment.Attachment, provider, model string) string {

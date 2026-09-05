@@ -19,20 +19,20 @@ func shouldTraceShiroDelegation(route routing.Route) bool {
 	}
 }
 
-func formatMioToShiroInstruction(input domainconversation.TurnInput, route routing.Route, jobID string) string {
+func formatMioToShiroInstruction(input domainconversation.TurnInput, route routing.Route, taskID string) string {
 	return formatAgentHandoffSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), jobID),
+		fmt.Sprintf("route=%s task=%s の実行", route.String(), taskID),
 		input.MessageText(),
 	)
 }
 
-func formatShiroReadbackToMio(input domainconversation.TurnInput, route routing.Route, jobID string) string {
+func formatShiroReadbackToMio(input domainconversation.TurnInput, route routing.Route, taskID string) string {
 	return formatAgentHandoffReadbackSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), jobID),
+		fmt.Sprintf("route=%s task=%s の実行", route.String(), taskID),
 		input.MessageText(),
 	)
 }
@@ -42,8 +42,8 @@ func formatShiroToWorkerInstruction(req CodeExecutionRequest, p *proposal.Propos
 	if p != nil {
 		patchBytes = len(p.Patch())
 	}
-	return fmt.Sprintf("Shiro内部実行器への指示: job=%s route=%s。Coderが出したProposalを実行器側で検証し、実行可能な場合のみ適用して。patch_bytes=%d plan=%s",
-		req.JobID, req.Input.Route().String(), patchBytes, traceShortText(proposalPlanText(p), 700))
+	return fmt.Sprintf("Shiro内部実行器への指示: task=%s route=%s。Coderが出したProposalを実行器側で検証し、実行可能な場合のみ適用して。patch_bytes=%d plan=%s",
+		req.TaskID, req.Input.Route().String(), patchBytes, traceShortText(proposalPlanText(p), 700))
 }
 
 func formatWorkerToShiroResult(result *patch.PatchExecutionResult, err error) string {
@@ -57,11 +57,11 @@ func formatWorkerToShiroResult(result *patch.PatchExecutionResult, err error) st
 		result.Success, result.ExecutedCmds, result.FailedCmds, traceShortText(result.Summary, 700))
 }
 
-func formatShiroToMioReport(route routing.Route, jobID, body string) string {
+func formatShiroToMioReport(route routing.Route, taskID, body string) string {
 	return formatAgentHandoffCompletionSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s。%s", route.String(), strings.TrimSpace(jobID), handoffSpeechText(body, "結果なし")),
+		fmt.Sprintf("route=%s task=%s。%s", route.String(), strings.TrimSpace(taskID), handoffSpeechText(body, "結果なし")),
 	)
 }
 

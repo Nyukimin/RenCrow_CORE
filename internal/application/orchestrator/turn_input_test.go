@@ -21,10 +21,10 @@ func newOrchestratorTestTurnInput(t *testing.T, message, channel, externalConver
 	return input
 }
 
-func newOrchestratorTestCodeExecutionRequest(t *testing.T, jobID modulecore.TaskID, message string, route routing.Route, sessionID, channel, externalConversationID string) CodeExecutionRequest {
+func newOrchestratorTestCodeExecutionRequest(t *testing.T, taskID modulecore.TaskID, message string, route routing.Route, sessionID, channel, externalConversationID string) CodeExecutionRequest {
 	t.Helper()
 	input := newOrchestratorTestTurnInput(t, message, channel, externalConversationID).
 		WithSessionID(sessionID).
 		WithRoute(route)
-	return CodeExecutionRequest{Input: input, JobID: jobID.String()}
+	return CodeExecutionRequest{Input: input, TaskID: taskID}
 }

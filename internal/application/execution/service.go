@@ -7,6 +7,7 @@ import (
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // PolicyEvaluator は実行ポリシー判定I/F
@@ -46,11 +47,14 @@ func NewService(policy PolicyEvaluator, executor ToolExecutor, repo domain.Repos
 }
 
 func (s *Service) RequestToolExecution(ctx context.Context, action domain.Action) (*Result, error) {
+	if err := action.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid execution action: %w", err)
+	}
 	started := s.now().UTC()
 	decision := s.policy.Evaluate(action)
 
 	rec := domain.Record{
-		JobID:       action.JobID,
+		TaskID:      action.TaskID,
 		ActionID:    action.ActionID,
 		Tool:        action.Tool,
 		RequestedBy: action.RequestedBy,
@@ -58,7 +62,7 @@ func (s *Service) RequestToolExecution(ctx context.Context, action domain.Action
 		EventType:   eventTypeFromDecision(decision.Decision),
 		Decision:    decision.Decision,
 		Reason:      decision.Reason,
-		TraceID:     action.JobID + ":" + action.ActionID,
+		TraceID:     action.TraceID,
 		StartedAt:   started,
 	}
 
@@ -78,20 +82,20 @@ func (s *Service) RequestToolExecution(ctx context.Context, action domain.Action
 		}
 		resp, err := s.executor.ExecuteV2(ctx, action.Tool, action.Arguments)
 		if err != nil {
-			failed, uerr := s.repo.UpdateStatus(ctx, action.JobID, action.ActionID, domain.StatusFailed, err.Error())
+			failed, uerr := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusFailed, err.Error())
 			if uerr != nil {
 				return nil, uerr
 			}
 			return &Result{Record: failed}, nil
 		}
 		if resp != nil && resp.Error != nil {
-			failed, uerr := s.repo.UpdateStatus(ctx, action.JobID, action.ActionID, domain.StatusFailed, resp.Error.Message)
+			failed, uerr := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusFailed, resp.Error.Message)
 			if uerr != nil {
 				return nil, uerr
 			}
 			return &Result{Record: failed, Response: resp}, nil
 		}
-		success, err := s.repo.UpdateStatus(ctx, action.JobID, action.ActionID, domain.StatusSucceeded, "")
+		success, err := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusSucceeded, "")
 		if err != nil {
 			return nil, err
 		}
@@ -112,16 +116,16 @@ func (n *noopRepository) Create(context.Context, domain.Record) error {
 	return nil
 }
 
-func (n *noopRepository) UpdateStatus(_ context.Context, jobID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
+func (n *noopRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
 	now := time.Now().UTC()
-	rec := domain.Record{JobID: jobID, ActionID: actionID, Status: status, Error: errMsg, StartedAt: now}
+	rec := domain.Record{TaskID: taskID, ActionID: actionID, Status: status, Error: errMsg, StartedAt: now}
 	if status.IsTerminal() {
 		rec.FinishedAt = &now
 	}
 	return rec, nil
 }
 
-func (n *noopRepository) Get(context.Context, string, string) (domain.Record, error) {
+func (n *noopRepository) Get(context.Context, modulecore.TaskID, string) (domain.Record, error) {
 	return domain.Record{}, fmt.Errorf("record not found")
 }
 

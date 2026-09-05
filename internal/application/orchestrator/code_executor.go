@@ -8,6 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmodule "github.com/Nyukimin/RenCrow_CORE/internal/domain/moduleregistry"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // CodeExecutor はコード生成タスクの実行を担当
@@ -18,7 +19,7 @@ type CodeExecutor interface {
 // CodeExecutionRequest はコード実行リクエスト
 type CodeExecutionRequest struct {
 	Input  domainconversation.TurnInput
-	JobID  string
+	TaskID modulecore.TaskID
 	Module domainmodule.Resolution
 }
 
@@ -30,7 +31,7 @@ type DefaultCodeExecutor struct {
 	coder4           CoderAgent // v4.1: 4th coder slot
 	workerExecution  service.WorkerExecutionService
 	coderStatus      *CoderStatus // optional: coder busy state management
-	eventEmitter     func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
+	eventEmitter     func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
 	coderCaps        []capability.CoderCapability // 診断用。Coder 自動切替には使わない。
 	externalCoders   map[string]bool              // true の coder は明示 route でのみ使う。
 	proposalEvidence CoderProposalEvidenceRecorder
@@ -47,7 +48,7 @@ func NewDefaultCodeExecutor(
 	coder1, coder2, coder3, coder4 CoderAgent,
 	workerExecution service.WorkerExecutionService,
 	coderStatus *CoderStatus,
-	eventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string),
+	eventEmitter func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string),
 ) *DefaultCodeExecutor {
 	return &DefaultCodeExecutor{
 		coder1:          coder1,
@@ -103,7 +104,7 @@ func (e *DefaultCodeExecutor) ExecuteCode(ctx context.Context, req CodeExecution
 		defer target.release()
 	}
 
-	log.Printf("[CodeExecutor] code handoff route=%s target=%s job=%s", route, target.name, req.JobID)
+	log.Printf("[CodeExecutor] code handoff route=%s target=%s task=%s", route, target.name, req.TaskID)
 
 	e.emitCodeHandoffStart(req, target)
 
@@ -133,12 +134,12 @@ func (e *DefaultCodeExecutor) resolveModuleForRequest(req CodeExecutionRequest) 
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	if !resolved.Found() {
 		if resolved.Ambiguous {
-			e.emit("module.unresolved", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+			e.emit("module.unresolved", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 		}
 		return req
 	}
 	req.Module = resolved
-	e.emit("module.selected", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+	e.emit("module.selected", "mio", "shiro", resolved.Summary(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 	req.Input = req.Input.WithMessageText(appendModuleContextToCodeRequest(req.Input.MessageText(), resolved))
 	return req
 }

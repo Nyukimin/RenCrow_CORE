@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"gopkg.in/yaml.v3"
 )
 
@@ -106,7 +107,7 @@ func runCanonicalActorE2E(ctx context.Context, options verifierOptions, _ manife
 		return verifierOutcome{Status: "failed", FailureBoundary: truncateVerifierMessage(err.Error()), Evidence: evidence}
 	}
 	evidence["response_request_id_hash"] = sha256Text(responseFields.RequestID)
-	evidence["job_id_hash"] = sha256Text(responseFields.JobID)
+	evidence["task_id_hash"] = sha256Text(responseFields.TaskID)
 	evidence["agent_id"] = responseFields.AgentID
 	evidence["role"] = responseFields.Role
 	evidence["route_name"] = responseFields.Route
@@ -196,7 +197,7 @@ func writeJSONValue(buffer *bytes.Buffer, value any) error {
 
 type canonicalActorResponse struct {
 	RequestID string
-	JobID     string
+	TaskID    string
 	AgentID   string
 	Role      string
 	Route     string
@@ -218,8 +219,13 @@ func validateCanonicalActorResponse(fields map[string]any, requestID string) (ca
 	if result.RequestID, err = read("request_id"); err != nil {
 		return result, err
 	}
-	if result.JobID, err = read("job_id"); err != nil {
+	if result.TaskID, err = read("task_id"); err != nil {
 		return result, err
+	}
+	if taskID, parseErr := modulecore.ParseTaskID(result.TaskID); parseErr != nil {
+		return result, fmt.Errorf("canonical Agent response task_id is invalid: %w", parseErr)
+	} else {
+		result.TaskID = taskID.String()
 	}
 	if result.AgentID, err = read("agent_id"); err != nil {
 		return result, err

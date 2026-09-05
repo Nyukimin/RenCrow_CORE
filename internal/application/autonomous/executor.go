@@ -54,7 +54,7 @@ type VerifyFunc func(ctx context.Context, c domaincontract.Contract, last Attemp
 type StageObserver func(stage Stage)
 
 type ExecuteRequest struct {
-	JobID       string
+	TaskID      modulecore.TaskID
 	Route       string
 	Capability  CapabilityPack
 	Contract    domaincontract.Contract
@@ -71,6 +71,9 @@ type ExecuteResult struct {
 }
 
 func RunExecutor(ctx context.Context, req ExecuteRequest) (ExecuteResult, error) {
+	if err := req.TaskID.Validate(); err != nil {
+		return ExecuteResult{}, fmt.Errorf("task_id: %w", err)
+	}
 	if err := req.Contract.Validate(); err != nil {
 		return ExecuteResult{}, err
 	}
@@ -93,7 +96,7 @@ func RunExecutor(ctx context.Context, req ExecuteRequest) (ExecuteResult, error)
 
 	now := time.Now().UTC()
 	report := domainexecution.ExecutionReport{
-		JobID:        fallbackID(req.JobID, fmt.Sprintf("job-%d", now.UnixNano())),
+		TaskID:       req.TaskID,
 		Goal:         req.Contract.Goal,
 		Route:        req.Route,
 		Capability:   string(req.Capability),
@@ -203,13 +206,6 @@ func saveExecutionEvidence(ctx context.Context, store ReportStore, report domain
 		return
 	}
 	_ = store.Save(ctx, report)
-}
-
-func fallbackID(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
 }
 
 func fallbackString(value, fallback string) string {

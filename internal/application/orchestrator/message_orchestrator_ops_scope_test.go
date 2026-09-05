@@ -43,10 +43,10 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "line", "user-a").WithSessionID("session-1")
 
-	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, jobID, "")
+	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, taskID, "")
 	if err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)
 	}
@@ -57,7 +57,7 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 	if !ok {
 		t.Fatal("Shiro did not receive a trusted execution scope")
 	}
-	if got.RequestID != jobID.String() || got.ActorKind != domaintool.ActorKindAgent || got.ActorID != "shiro" {
+	if got.RequestID != taskID.String() || got.ActorKind != domaintool.ActorKindAgent || got.ActorID != "shiro" {
 		t.Fatalf("Shiro scope identity = %#v", got)
 	}
 	if got.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || got.AgentRole != "worker" || got.Purpose != "ops" {
@@ -85,10 +85,10 @@ func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) 
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "viewer", "viewer-user").WithSessionID("session-1")
 
-	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, jobID, ""); err == nil {
+	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, taskID, ""); err == nil {
 		t.Fatal("invalid parent scope must stop OPS before Shiro")
 	}
 	if shiro.calls != 0 {

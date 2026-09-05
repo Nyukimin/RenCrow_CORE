@@ -1671,7 +1671,7 @@ type SkillGovernanceChangeLog struct {
 
 type SkillGovernanceCoderTranscript struct {
 	EventID      string    `json:"event_id"`
-	JobID        string    `json:"job_id,omitempty"`
+	TaskID       string    `json:"task_id,omitempty"`
 	SessionID    string    `json:"session_id,omitempty"`
 	Route        string    `json:"route,omitempty"`
 	Agent        string    `json:"agent,omitempty"`
@@ -3244,12 +3244,12 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 			if evidencePath == "" {
 				return fmt.Errorf("skill governance status coder_transcript %s missing evidence_path", item.Segment)
 			}
-			key := strings.TrimSpace(item.JobID)
+			key := strings.TrimSpace(item.TaskID)
 			if key == "" {
 				key = strings.TrimSpace(item.SessionID)
 			}
 			if key == "" {
-				return fmt.Errorf("skill governance status coder_transcript evidence missing job_id or session_id")
+				return fmt.Errorf("skill governance status coder_transcript evidence missing task_id or session_id")
 			}
 			if transcriptEvidence[key] == nil {
 				transcriptEvidence[key] = map[string]bool{}
@@ -3259,7 +3259,7 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 	}
 	for key, seen := range transcriptEvidence {
 		if !seen["patch_evidence"] || !seen["transcript_evidence"] {
-			return fmt.Errorf("skill governance status coder_transcript incomplete evidence pair for job_id=%s", key)
+			return fmt.Errorf("skill governance status coder_transcript incomplete evidence pair for task_id=%s", key)
 		}
 	}
 	return nil

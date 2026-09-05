@@ -34,10 +34,10 @@ func TestHandleCharacterRuntimeEmitsCorrelatedTurns(t *testing.T) {
 	if rec.Code != http.StatusCreated || len(events.events) != 2 {
 		t.Fatalf("status=%d events=%#v body=%s", rec.Code, events.events, rec.Body.String())
 	}
-	if !strings.HasPrefix(events.events[0].TraceID, "trc_") || events.events[0].TraceID != events.events[1].TraceID {
+	if !strings.HasPrefix(string(events.events[0].TraceID), "trc_") || events.events[0].TraceID != events.events[1].TraceID || events.events[0].TraceID.Validate() != nil {
 		t.Fatalf("trace mismatch: %#v", events.events)
 	}
-	if !strings.HasPrefix(events.events[0].MessageID, "msg_") || events.events[0].MessageID == events.events[1].MessageID {
+	if !strings.HasPrefix(string(events.events[0].MessageID), "msg_") || events.events[0].MessageID == events.events[1].MessageID || events.events[0].MessageID.Validate() != nil {
 		t.Fatalf("message identity mismatch: %#v", events.events)
 	}
 }

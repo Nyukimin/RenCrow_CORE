@@ -3,6 +3,8 @@ package skillgovernance
 import (
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -134,14 +136,14 @@ type ExternalPRSubmitRecord struct {
 }
 
 type CoderTranscriptEntry struct {
-	EventID      string    `json:"event_id"`
-	JobID        string    `json:"job_id,omitempty"`
-	SessionID    string    `json:"session_id,omitempty"`
-	Route        string    `json:"route,omitempty"`
-	Agent        string    `json:"agent,omitempty"`
-	Role         string    `json:"role"`
-	Segment      string    `json:"segment"`
-	Text         string    `json:"text,omitempty"`
-	EvidencePath string    `json:"evidence_path,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	EventID      string            `json:"event_id"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	SessionID    string            `json:"session_id,omitempty"`
+	Route        string            `json:"route,omitempty"`
+	Agent        string            `json:"agent,omitempty"`
+	Role         string            `json:"role"`
+	Segment      string            `json:"segment"`
+	Text         string            `json:"text,omitempty"`
+	EvidencePath string            `json:"evidence_path,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
 }

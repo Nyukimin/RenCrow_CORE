@@ -9,50 +9,51 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type repairProcessor interface {
 	ProcessRepair(context.Context, orchestrator.ProcessRepairRequest) (orchestrator.ProcessRepairResponse, error)
 }
 
-type asyncRepairJobRunner struct {
+type asyncRepairTaskRunner struct {
 	processor repairProcessor
 	listener  orchestrator.EventListener
 }
 
-func newAsyncRepairJobRunner(processor repairProcessor, listener orchestrator.EventListener) *asyncRepairJobRunner {
+func newAsyncRepairTaskRunner(processor repairProcessor, listener orchestrator.EventListener) *asyncRepairTaskRunner {
 	if processor == nil {
 		return nil
 	}
-	return &asyncRepairJobRunner{processor: processor, listener: listener}
+	return &asyncRepairTaskRunner{processor: processor, listener: listener}
 }
 
-func (r *asyncRepairJobRunner) StartRepairJob(_ context.Context, req viewer.RepairJobRequest) error {
+func (r *asyncRepairTaskRunner) StartRepairTask(_ context.Context, req viewer.RepairTaskRequest) error {
 	if r == nil || r.processor == nil {
 		return fmt.Errorf("repair processor unavailable")
 	}
-	if req.JobID == "" {
-		return fmt.Errorf("repair job id is required")
+	if err := req.TaskID.Validate(); err != nil {
+		return fmt.Errorf("repair task_id is invalid: %w", err)
 	}
 	go r.run(req)
 	return nil
 }
 
-func (r *asyncRepairJobRunner) run(req viewer.RepairJobRequest) {
+func (r *asyncRepairTaskRunner) run(req viewer.RepairTaskRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	started := time.Now()
 	if err := r.emit(req.TargetRoute, "repair.started", "repair", "shiro", map[string]any{
-		"job_id":       req.JobID,
+		"task_id":      req.TaskID,
 		"status":       "running",
 		"target_route": req.TargetRoute,
 		"target_agent": req.TargetAgent,
 	}); err != nil {
-		log.Printf("repair started event publication failed job=%s: %v", req.JobID, err)
+		log.Printf("repair started event publication failed task=%s: %v", req.TaskID, err)
 		return
 	}
 	resp, err := r.processor.ProcessRepair(ctx, orchestrator.ProcessRepairRequest{
-		JobID:       req.JobID,
+		TaskID:      req.TaskID,
 		Reason:      req.Reason,
 		Instruction: req.Instruction,
 		Recent:      req.Recent,
@@ -61,33 +62,36 @@ func (r *asyncRepairJobRunner) run(req viewer.RepairJobRequest) {
 		Source:      req.Source,
 	})
 	if err != nil {
-		log.Printf("repair job failed job=%s err=%v", req.JobID, err)
+		log.Printf("repair Task failed task=%s err=%v", req.TaskID, err)
 		if emitErr := r.emit(req.TargetRoute, "repair.failed", "shiro", "repair", map[string]any{
-			"job_id":     req.JobID,
+			"task_id":    req.TaskID,
 			"status":     "failed",
 			"error":      err.Error(),
 			"elapsed_ms": time.Since(started).Milliseconds(),
 		}); emitErr != nil {
-			log.Printf("repair failed event publication failed job=%s: %v", req.JobID, emitErr)
+			log.Printf("repair failed event publication failed task=%s: %v", req.TaskID, emitErr)
 		}
 		return
 	}
 	if err := r.emit(resp.Route.String(), "repair.completed", "shiro", "repair", map[string]any{
-		"job_id":       req.JobID,
+		"task_id":      req.TaskID,
 		"status":       "completed",
 		"route":        resp.Route.String(),
 		"response_len": len(resp.Response),
 		"elapsed_ms":   time.Since(started).Milliseconds(),
 	}); err != nil {
-		log.Printf("repair completed event publication failed job=%s: %v", req.JobID, err)
+		log.Printf("repair completed event publication failed task=%s: %v", req.TaskID, err)
 	}
 }
 
-func (r *asyncRepairJobRunner) emit(route, eventType, from, to string, payload map[string]any) error {
+func (r *asyncRepairTaskRunner) emit(route, eventType, from, to string, payload map[string]any) error {
 	if r.listener == nil {
 		return nil
 	}
-	jobID, _ := payload["job_id"].(string)
+	taskID, _ := payload["task_id"].(modulecore.TaskID)
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("repair event task_id is invalid: %w", err)
+	}
 	content, _ := json.Marshal(payload)
-	return r.listener.OnEvent(orchestrator.NewEvent(eventType, from, to, string(content), route, jobID, "repair-"+jobID, "viewer", "repair"))
+	return r.listener.OnEvent(orchestrator.NewEvent(eventType, from, to, string(content), route, taskID.String(), "", "viewer", "repair"))
 }

@@ -486,9 +486,13 @@ func newBuildEventStoreFixtureWithSourceMutation(t *testing.T, mutate func(*test
 	if err != nil {
 		t.Fatalf("read source Event Store: %v", err)
 	}
-	planned, err := validateBuildEventStorePlan(prepared.snapshot, prepared.plan)
+	_, err = validateBuildEventStorePlan(prepared.snapshot, prepared.plan)
 	if err != nil {
 		t.Fatalf("validate plan: %v", err)
+	}
+	planned, err := assignBuildEventStoreSequences(sourceRows, prepared.plan.Events)
+	if err != nil {
+		t.Fatalf("assign planned event sequences: %v", err)
 	}
 	return buildEventStoreFixture{source: prepared.paths.sources.eventStore, target: options.BuildDir, snapshot: prepared.snapshot, plan: prepared.plan, sourceRows: sourceRows, planned: planned}
 }

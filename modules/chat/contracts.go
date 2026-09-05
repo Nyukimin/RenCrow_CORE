@@ -45,9 +45,9 @@ type Output struct {
 	TurnID     core.TurnID          `json:"turn_id,omitempty"`
 	TraceID    core.TraceID         `json:"trace_id,omitempty"`
 	RootTaskID core.TaskID          `json:"root_task_id,omitempty"`
+	TaskID     core.TaskID          `json:"task_id,omitempty"`
 	Text       string               `json:"text,omitempty"`
 	Route      RouteDecision        `json:"route,omitempty"`
-	JobID      string               `json:"job_id,omitempty"`
 	Response   llm.GenerateResponse `json:"response,omitempty"`
 }
 

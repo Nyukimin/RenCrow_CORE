@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func cmdEvidence() {
@@ -29,7 +30,7 @@ func cmdEvidence() {
 
 type evidenceStore interface {
 	ListRecent(ctx context.Context, limit int) ([]domainexecution.ExecutionReport, error)
-	GetByJobID(ctx context.Context, jobID string) (domainexecution.ExecutionReport, error)
+	GetByTaskID(ctx context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error)
 	Summary(ctx context.Context) (map[string]map[string]int, error)
 }
 
@@ -63,16 +64,20 @@ func runEvidenceCommand(args []string, store evidenceStore, out io.Writer, errOu
 			return 0
 		}
 		for _, it := range items {
-			fmt.Fprintf(out, "%s | %s | %s | %s\n", it.JobID, it.Status, it.ErrorKind, it.Goal)
+			fmt.Fprintf(out, "%s | %s | %s | %s\n", it.TaskID, it.Status, it.ErrorKind, it.Goal)
 		}
 		return 0
 	case "show":
 		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
-			fmt.Fprintln(errOut, "usage: rencrow evidence show <job_id>")
+			fmt.Fprintln(errOut, "usage: rencrow evidence show <task_id>")
 			return 1
 		}
-		jobID := strings.TrimSpace(args[1])
-		item, err := store.GetByJobID(context.Background(), jobID)
+		taskID, err := modulecore.ParseTaskID(args[1])
+		if err != nil {
+			fmt.Fprintf(errOut, "invalid task_id: %v\n", err)
+			return 1
+		}
+		item, err := store.GetByTaskID(context.Background(), taskID)
 		if err != nil {
 			fmt.Fprintf(errOut, "failed to get evidence: %v\n", err)
 			return 1

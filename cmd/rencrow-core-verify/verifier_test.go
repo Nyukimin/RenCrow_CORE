@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const verifierTestObservedAt = "2026-08-27T00:00:00Z"
@@ -387,6 +389,7 @@ func TestVerifierActorUsesAuthenticatedCanonicalRouteAndDoesNotLeakToken(t *test
 	var gotAuth string
 	var gotRequestID string
 	var gotBody map[string]any
+	taskID := modulecore.NewTaskID().String()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/agent/ops" {
 			t.Fatalf("request=%s %s", r.Method, r.URL.Path)
@@ -400,11 +403,12 @@ func TestVerifierActorUsesAuthenticatedCanonicalRouteAndDoesNotLeakToken(t *test
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"request_id":"req-e2e","job_id":"job-e2e","agent_id":"shiro","role":"worker","route":"OPS","output":"diagnostic result"}`))
+		_, _ = fmt.Fprintf(w, `{"request_id":"req-e2e","task_id":%q,"agent_id":"shiro","role":"worker","route":"OPS","output":"diagnostic result"}`, taskID)
 	}))
 	defer srv.Close()
 	manifest := testManifest(t, "core-canonical-actor-e2e")
-	args := verifierArgs(manifest, "core_canonical_actor_e2e", t.TempDir())
+	evidenceDir := t.TempDir()
+	args := verifierArgs(manifest, "core_canonical_actor_e2e", evidenceDir)
 	args = append(args,
 		"--core-url", srv.URL,
 		"--actor-token-file", tokenPath,
@@ -422,6 +426,25 @@ func TestVerifierActorUsesAuthenticatedCanonicalRouteAndDoesNotLeakToken(t *test
 	if strings.Contains(output.String(), token) {
 		t.Fatalf("receipt leaked token: %s", output.String())
 	}
+	receipt := decodeVerifierReceipt(t, output.Bytes())
+	if len(receipt.EvidenceRefs) != 1 {
+		t.Fatalf("evidence refs=%v", receipt.EvidenceRefs)
+	}
+	evidencePath := filepath.Join(evidenceDir, strings.TrimPrefix(receipt.EvidenceRefs[0], "relative:"))
+	evidenceRaw, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatalf("read actor evidence: %v", err)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal(evidenceRaw, &evidence); err != nil {
+		t.Fatalf("decode actor evidence: %v", err)
+	}
+	if evidence["task_id_hash"] != sha256Text(taskID) {
+		t.Fatalf("task_id_hash=%v", evidence["task_id_hash"])
+	}
+	if _, ok := evidence["job_id_hash"]; ok {
+		t.Fatalf("legacy job_id_hash present: %v", evidence)
+	}
 }
 
 func TestVerifierActorDiscoversCanonicalInputsFromActiveService(t *testing.T) {
@@ -437,10 +460,11 @@ func TestVerifierActorDiscoversCanonicalInputsFromActiveService(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	var gotRequestID string
+	taskID := modulecore.NewTaskID().String()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotRequestID = r.Header.Get("X-Request-ID")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"request_id":%q,"job_id":"job-e2e","agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, gotRequestID)
+		_, _ = fmt.Fprintf(w, `{"request_id":%q,"task_id":%q,"agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, gotRequestID, taskID)
 	}))
 	defer srv.Close()
 	manifest := testManifest(t, "core-canonical-actor-e2e")
@@ -468,6 +492,34 @@ func TestVerifierActorDiscoversCanonicalInputsFromActiveService(t *testing.T) {
 	if !strings.HasPrefix(gotRequestID, "core-verify-") {
 		t.Fatalf("request id=%q", gotRequestID)
 	}
+}
+
+func TestValidateCanonicalActorResponseRejectsLegacyJobIDAndInvalidTaskID(t *testing.T) {
+	base := map[string]any{
+		"request_id": "req-e2e",
+		"agent_id":   "shiro",
+		"role":       "worker",
+		"route":      "OPS",
+		"output":     "OK",
+	}
+	legacy := cloneStringMap(base)
+	legacy["job_id"] = "job-e2e"
+	if _, err := validateCanonicalActorResponse(legacy, "req-e2e"); err == nil || !strings.Contains(err.Error(), "task_id") {
+		t.Fatalf("legacy response error=%v, want task_id", err)
+	}
+	invalid := cloneStringMap(base)
+	invalid["task_id"] = "job-e2e"
+	if _, err := validateCanonicalActorResponse(invalid, "req-e2e"); err == nil || !strings.Contains(err.Error(), "task_id") {
+		t.Fatalf("invalid task response error=%v, want task_id", err)
+	}
+}
+
+func cloneStringMap(source map[string]any) map[string]any {
+	clone := make(map[string]any, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func TestCanonicalActorRequestUsesInferenceSizedTimeout(t *testing.T) {
@@ -551,6 +603,7 @@ func TestVerifierStartupCollectsJournalAndCanonicalRequestEvidence(t *testing.T)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("config: %v", err)
 	}
+	taskID := modulecore.NewTaskID().String()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/health/ready" {
 			w.Header().Set("Content-Type", "application/json")
@@ -560,7 +613,7 @@ func TestVerifierStartupCollectsJournalAndCanonicalRequestEvidence(t *testing.T)
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/agent/ops" {
 			requestID := r.Header.Get("X-Request-ID")
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(w, `{"request_id":%q,"job_id":"startup-job","agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, requestID)
+			_, _ = fmt.Fprintf(w, `{"request_id":%q,"task_id":%q,"agent_id":"shiro","role":"worker","route":"OPS","output":"OK"}`, requestID, taskID)
 			return
 		}
 		http.NotFound(w, r)
@@ -611,7 +664,7 @@ func TestVerifierStartupCollectsJournalAndCanonicalRequestEvidence(t *testing.T)
 		"observed_at": verifierTestObservedAt,
 		"status":      "passed",
 		"request_id":  "startup-request-1",
-		"trace_id":    "startup-trace-1",
+		"trace_id":    string(modulecore.NewTraceID()),
 		"route":       "CORE -> readiness",
 	})
 	args = append(args, "--request-evidence", requestEvidence)
@@ -794,6 +847,7 @@ func TestStartupRequestEvidenceFreshnessIsInclusiveAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	lowerBound := observedAt.Add(-verifierEvidenceFreshnessWindow)
+	traceID := string(modulecore.NewTraceID())
 	cases := []struct {
 		name       string
 		evidenceAt time.Time
@@ -811,7 +865,7 @@ func TestStartupRequestEvidenceFreshnessIsInclusiveAndFailClosed(t *testing.T) {
 				"observed_at": tc.evidenceAt.Format(time.RFC3339Nano),
 				"status":      "passed",
 				"request_id":  "request-1",
-				"trace_id":    "trace-1",
+				"trace_id":    traceID,
 			})
 			_, outcome := loadStartupRequestEvidence(path, observedAt)
 			if tc.wantStatus == "ok" {
@@ -822,6 +876,35 @@ func TestStartupRequestEvidenceFreshnessIsInclusiveAndFailClosed(t *testing.T) {
 			}
 			if outcome.Status != tc.wantStatus || !strings.Contains(strings.ToLower(outcome.FailureBoundary), tc.wantWord) {
 				t.Fatalf("outcome=%+v, want %s/%s", outcome, tc.wantStatus, tc.wantWord)
+			}
+		})
+	}
+}
+
+func TestStartupRequestEvidenceRequiresCanonicalTraceID(t *testing.T) {
+	observedAt, err := parseVerifierObservedAt(verifierTestObservedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, identity := range map[string]map[string]any{
+		"legacy job": {"job_id": "legacy-job"},
+		"message":    {"message_id": string(modulecore.NewMessageID())},
+		"malformed":  {"trace_id": "not-a-trace"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fields := map[string]any{
+				"observed_at": observedAt.Format(time.RFC3339Nano),
+				"status":      "passed",
+				"request_id":  "request-1",
+			}
+			for key, value := range identity {
+				fields[key] = value
+			}
+			path := filepath.Join(t.TempDir(), "request.json")
+			writeVerifierTestJSON(t, path, fields)
+			_, outcome := loadStartupRequestEvidence(path, observedAt)
+			if outcome.Status != "blocked" || !strings.Contains(outcome.FailureBoundary, "canonical trace id") {
+				t.Fatalf("outcome=%+v", outcome)
 			}
 		})
 	}

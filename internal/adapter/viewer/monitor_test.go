@@ -10,12 +10,15 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubEvidenceStore struct {
 	item domainexecution.ExecutionReport
 	ok   bool
 }
+
+var monitorTestSessionID = modulecore.NewSessionID()
 
 func (s stubEvidenceStore) ListRecent(ctx context.Context, limit int) ([]domainexecution.ExecutionReport, error) {
 	if !s.ok {
@@ -24,8 +27,8 @@ func (s stubEvidenceStore) ListRecent(ctx context.Context, limit int) ([]domaine
 	return []domainexecution.ExecutionReport{s.item}, nil
 }
 
-func (s stubEvidenceStore) GetByJobID(ctx context.Context, jobID string) (domainexecution.ExecutionReport, error) {
-	if s.ok && s.item.JobID == jobID {
+func (s stubEvidenceStore) GetByTaskID(ctx context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error) {
+	if s.ok && s.item.TaskID == taskID {
 		return s.item, nil
 	}
 	return domainexecution.ExecutionReport{}, context.Canceled
@@ -43,9 +46,9 @@ func (s stubEvidenceStore) SummaryUnique(ctx context.Context) (map[string]map[st
 	return s.Summary(ctx)
 }
 
-func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
+func TestMonitorStoreReducesAgentAndTaskActivityState(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-1"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -53,8 +56,8 @@ func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
 		From:      "user",
 		To:        "mio",
 		Content:   "hello",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -62,8 +65,8 @@ func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
 		From:      "mio",
 		Route:     "CODE",
 		Content:   "confidence 90%",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -72,8 +75,8 @@ func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
 		To:        "shiro",
 		Content:   "task",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -82,8 +85,8 @@ func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
 		To:        "user",
 		Content:   "完了したよ",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
@@ -91,17 +94,17 @@ func TestMonitorStoreReducesAgentAndJobState(t *testing.T) {
 	if status.Chat.Status != "idle" {
 		t.Fatalf("chat status = %q, want idle", status.Chat.Status)
 	}
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Status != "done" {
-		t.Fatalf("job status = %q, want done", jobs[0].Status)
+	if activities[0].Status != "done" {
+		t.Fatalf("task activity status = %q, want done", activities[0].Status)
 	}
-	if jobs[0].Route != "CODE" {
-		t.Fatalf("job route = %q, want CODE", jobs[0].Route)
+	if activities[0].Route != "CODE" {
+		t.Fatalf("task activity route = %q, want CODE", activities[0].Route)
 	}
-	if !jobs[0].MioReported {
+	if !activities[0].MioReported {
 		t.Fatalf("expected MioReported true")
 	}
 }
@@ -137,9 +140,9 @@ func TestMonitorStoreIncludesCoder4InStatusAndAgents(t *testing.T) {
 	}
 }
 
-func TestMonitorStoreTracksViewerRecipientAsJobOwnerAndFinalSpeaker(t *testing.T) {
+func TestMonitorStoreTracksViewerRecipientAsTaskOwnerAndFinalSpeaker(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-kuro"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -147,8 +150,8 @@ func TestMonitorStoreTracksViewerRecipientAsJobOwnerAndFinalSpeaker(t *testing.T
 		From:      "user",
 		To:        "kuro",
 		Content:   "合言葉 RC_kuro_current",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -156,8 +159,8 @@ func TestMonitorStoreTracksViewerRecipientAsJobOwnerAndFinalSpeaker(t *testing.T
 		From:      "mio",
 		Route:     "CHAT",
 		Content:   "confidence 90%",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -166,8 +169,8 @@ func TestMonitorStoreTracksViewerRecipientAsJobOwnerAndFinalSpeaker(t *testing.T
 		To:        "user",
 		Content:   "RC_kuro_current、分析完了です。",
 		Route:     "CHAT",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
@@ -182,21 +185,21 @@ func TestMonitorStoreTracksViewerRecipientAsJobOwnerAndFinalSpeaker(t *testing.T
 	if kuro.State != "idle" || kuro.LastEvent != "agent.response" {
 		t.Fatalf("kuro snapshot = %+v, want idle agent.response", kuro)
 	}
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Owner != "kuro" || jobs[0].Status != "done" || jobs[0].TerminalOutcome != "ok" {
-		t.Fatalf("job snapshot = %+v, want owner=kuro done/ok", jobs[0])
+	if activities[0].Owner != "kuro" || activities[0].Status != "done" || activities[0].TerminalOutcome != "ok" {
+		t.Fatalf("task activity snapshot = %+v, want owner=kuro done/ok", activities[0])
 	}
-	if jobs[0].MioReported {
-		t.Fatalf("kuro final response must not be marked as MioReported: %+v", jobs[0])
+	if activities[0].MioReported {
+		t.Fatalf("kuro final response must not be marked as MioReported: %+v", activities[0])
 	}
 }
 
-func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing.T) {
+func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientTask(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-midori"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -204,8 +207,8 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing
 		From:      "user",
 		To:        "midori",
 		Content:   "合言葉 RC_midori_current",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -213,8 +216,8 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing
 		From:      "mio",
 		Route:     "CHAT",
 		Content:   "confidence 90%",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -223,8 +226,8 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing
 		To:        "user",
 		Content:   "midoriで取り組むね！",
 		Route:     "CHAT",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -233,8 +236,8 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing
 		To:        "user",
 		Content:   "RC_midori_current、発想を広げました。",
 		Route:     "CHAT",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
@@ -256,12 +259,12 @@ func TestMonitorStoreClearsActiveAgentsForCompletedViewerRecipientJob(t *testing
 		t.Fatalf("midori snapshot = %+v, want idle agent.response", midori)
 	}
 
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Owner != "midori" || jobs[0].Status != "done" || jobs[0].TerminalOutcome != "ok" {
-		t.Fatalf("job snapshot = %+v, want owner=midori done/ok", jobs[0])
+	if activities[0].Owner != "midori" || activities[0].Status != "done" || activities[0].TerminalOutcome != "ok" {
+		t.Fatalf("task activity snapshot = %+v, want owner=midori done/ok", activities[0])
 	}
 }
 
@@ -290,7 +293,7 @@ func TestHandleMonitorStatusIncludesCoder4(t *testing.T) {
 
 func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-retry"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -299,8 +302,8 @@ func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 		To:        "coder1",
 		Content:   "proposal_empty: missing Plan and Patch sections",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -309,8 +312,8 @@ func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 		To:        "mio",
 		Content:   "via=local type=result",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -319,8 +322,8 @@ func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 		To:        "mio",
 		Content:   "実行: 1 件, 成功: 1 件, 失敗: 0 件",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -329,29 +332,29 @@ func TestMonitorStoreClearsRecoveredFailureOnFinalSuccess(t *testing.T) {
 		To:        "user",
 		Content:   "実行: 1 件, 成功: 1 件, 失敗: 0 件",
 		Route:     "CODE",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Status != "done" {
-		t.Fatalf("job status = %q, want done", jobs[0].Status)
+	if activities[0].Status != "done" {
+		t.Fatalf("task activity status = %q, want done", activities[0].Status)
 	}
-	if jobs[0].FailureKind != "" || jobs[0].FailureReason != "" {
-		t.Fatalf("expected cleared failure, got kind=%q reason=%q", jobs[0].FailureKind, jobs[0].FailureReason)
+	if activities[0].FailureKind != "" || activities[0].FailureReason != "" {
+		t.Fatalf("expected cleared failure, got kind=%q reason=%q", activities[0].FailureKind, activities[0].FailureReason)
 	}
-	if !jobs[0].MioReported {
+	if !activities[0].MioReported {
 		t.Fatalf("expected MioReported true")
 	}
 }
 
 func TestMonitorStoreEntryStageCompletedMarksTerminalOutcome(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-stage-complete"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -360,8 +363,8 @@ func TestMonitorStoreEntryStageCompletedMarksTerminalOutcome(t *testing.T) {
 		To:        "system",
 		Content:   "received",
 		Route:     "CODE2",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -370,23 +373,23 @@ func TestMonitorStoreEntryStageCompletedMarksTerminalOutcome(t *testing.T) {
 		To:        "system",
 		Content:   "completed",
 		Route:     "CODE2",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Status != "done" || jobs[0].Phase != "done" || jobs[0].TerminalOutcome != "ok" {
-		t.Fatalf("unexpected terminal job: %+v", jobs[0])
+	if activities[0].Status != "done" || activities[0].Phase != "done" || activities[0].TerminalOutcome != "ok" {
+		t.Fatalf("unexpected terminal task activity: %+v", activities[0])
 	}
 }
 
 func TestMonitorStoreEntryStageFailedMarksTerminalOutcome(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
-	jobID := "job-stage-failed"
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -395,8 +398,8 @@ func TestMonitorStoreEntryStageFailedMarksTerminalOutcome(t *testing.T) {
 		To:        "system",
 		Content:   "planning",
 		Route:     "CODE2",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -405,45 +408,47 @@ func TestMonitorStoreEntryStageFailedMarksTerminalOutcome(t *testing.T) {
 		To:        "system",
 		Content:   "failed",
 		Route:     "CODE2",
-		JobID:     jobID,
-		SessionID: "viewer",
+		TaskID:    modulecore.TaskID(taskID),
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 
-	jobs := store.Jobs(JobFilter{})
-	if len(jobs) != 1 {
-		t.Fatalf("jobs len = %d, want 1", len(jobs))
+	activities := store.TaskActivities(TaskActivityFilter{})
+	if len(activities) != 1 {
+		t.Fatalf("task activities len = %d, want 1", len(activities))
 	}
-	if jobs[0].Status != "error" || jobs[0].Phase != "error" || jobs[0].TerminalOutcome != "failed" {
-		t.Fatalf("unexpected terminal job: %+v", jobs[0])
+	if activities[0].Status != "error" || activities[0].Phase != "error" || activities[0].TerminalOutcome != "failed" {
+		t.Fatalf("unexpected terminal task activity: %+v", activities[0])
 	}
-	if jobs[0].FailureReason == "" {
-		t.Fatalf("expected visible failure reason: %+v", jobs[0])
+	if activities[0].FailureReason == "" {
+		t.Fatalf("expected visible failure reason: %+v", activities[0])
 	}
 }
 
-func TestHandleMonitorLogsFiltersByJobID(t *testing.T) {
+func TestHandleMonitorLogsFiltersByTaskID(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
+	taskOne := modulecore.NewTaskID()
+	taskTwo := modulecore.NewTaskID()
 	store.OnEvent(orchestrator.OrchestratorEvent{
 		Type:      "agent.note",
 		From:      "mio",
 		To:        "user",
-		Content:   "job1",
+		Content:   "task one",
 		Route:     "CHAT",
-		JobID:     "job-1",
+		TaskID:    taskOne,
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
 		Type:      "agent.note",
 		From:      "mio",
 		To:        "user",
-		Content:   "job2",
+		Content:   "task two",
 		Route:     "CHAT",
-		JobID:     "job-2",
+		TaskID:    taskTwo,
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/viewer/logs?job_id=job-1&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/viewer/logs?task_id="+taskOne.String()+"&limit=10", nil)
 	rr := httptest.NewRecorder()
 	HandleMonitorLogs(store).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -458,14 +463,15 @@ func TestHandleMonitorLogsFiltersByJobID(t *testing.T) {
 	if len(resp.Items) != 1 {
 		t.Fatalf("items len = %d, want 1", len(resp.Items))
 	}
-	if resp.Items[0].JobID != "job-1" {
-		t.Fatalf("job_id = %q, want job-1", resp.Items[0].JobID)
+	if resp.Items[0].TaskID != taskOne {
+		t.Fatalf("task_id = %q, want %q", resp.Items[0].TaskID, taskOne)
 	}
 }
 
-func TestHandleMonitorJobDetailIncludesEvidence(t *testing.T) {
+func TestMonitorTaskActivityDetailIncludesEvidence(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	ev := domainexecution.ExecutionReport{
-		JobID:      "job-1",
+		TaskID:     taskID,
 		Goal:       "goal",
 		Status:     "passed",
 		CreatedAt:  time.Now(),
@@ -478,28 +484,44 @@ func TestHandleMonitorJobDetailIncludesEvidence(t *testing.T) {
 		To:        "user",
 		Content:   "done",
 		Route:     "CHAT",
-		JobID:     "job-1",
+		TaskID:    taskID,
+		EventSeq:  1,
 		Timestamp: time.Now().Format(time.RFC3339),
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/viewer/job/detail?job_id=job-1", nil)
+	item, ok := store.TaskActivityDetail(context.Background(), taskID)
+	if !ok {
+		t.Fatal("task activity detail not found")
+	}
+	if item.Item.TaskID != taskID.String() {
+		t.Fatalf("task_id = %q, want %q", item.Item.TaskID, taskID)
+	}
+	if item.Evidence == nil || item.Evidence.TaskID != taskID {
+		t.Fatal("expected evidence for task-1")
+	}
+}
+
+func TestHandleMonitorLogsRejectsUnsupportedFilter(t *testing.T) {
+	store := NewMonitorStore(nil, nil)
 	rr := httptest.NewRecorder()
-	HandleMonitorJobDetail(store).ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rr.Code)
+	HandleMonitorLogs(store).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/viewer/logs?unsupported_filter=value", nil))
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rr.Code)
 	}
-	var resp struct {
-		Item     JobSnapshot                      `json:"item"`
-		Evidence *domainexecution.ExecutionReport `json:"evidence"`
+}
+
+func TestHandleMonitorLogsUsesEventSeqOrdering(t *testing.T) {
+	store := NewMonitorStore(nil, nil)
+	for _, ev := range []orchestrator.OrchestratorEvent{
+		{Type: "agent.note", TaskID: modulecore.NewTaskID(), EventSeq: 1, Timestamp: "2026-01-01T00:00:01Z"},
+		{Type: "agent.note", TaskID: modulecore.NewTaskID(), EventSeq: 3, Timestamp: "2026-01-01T00:00:03Z"},
+		{Type: "agent.note", TaskID: modulecore.NewTaskID(), EventSeq: 2, Timestamp: "2026-01-01T00:00:02Z"},
+	} {
+		store.OnEvent(ev)
 	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if resp.Item.JobID != "job-1" {
-		t.Fatalf("job_id = %q, want job-1", resp.Item.JobID)
-	}
-	if resp.Evidence == nil || resp.Evidence.JobID != "job-1" {
-		t.Fatalf("expected evidence for job-1")
+	items := store.Logs(LogFilter{Limit: 2})
+	if len(items) != 2 || items[0].EventSeq != 3 || items[1].EventSeq != 2 {
+		t.Fatalf("event sequence order = %#v, want 3,2", items)
 	}
 }
 
@@ -533,6 +555,7 @@ func TestMonitorStoreSetAgentUnavailableShowsReasonInStatus(t *testing.T) {
 
 func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
 	store := NewMonitorStore(nil, nil)
+	taskID := modulecore.NewTaskID()
 	now := time.Now().Format(time.RFC3339)
 	store.OnEvent(orchestrator.OrchestratorEvent{
 		Type:      "agent.start",
@@ -540,8 +563,8 @@ func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
 		To:        "shiro",
 		Content:   "task",
 		Route:     "CODE",
-		JobID:     "job-1",
-		SessionID: "viewer",
+		TaskID:    taskID,
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 	store.OnEvent(orchestrator.OrchestratorEvent{
@@ -550,8 +573,8 @@ func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
 		To:        "mio",
 		Content:   "processing",
 		Route:     "CODE",
-		JobID:     "job-1",
-		SessionID: "viewer",
+		TaskID:    taskID,
+		SessionID: monitorTestSessionID,
 		Timestamp: now,
 	})
 

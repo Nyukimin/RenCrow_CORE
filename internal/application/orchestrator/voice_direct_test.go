@@ -40,10 +40,10 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessVoiceDirect failed: %v", err)
 	}
-	if resp.Route != routing.RouteCHAT || resp.Response != "おはよう" || resp.JobID == "" {
+	if resp.Route != routing.RouteCHAT || resp.Response != "おはよう" || resp.TaskID == "" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if modulecore.TurnID(resp.TurnID).Validate() != nil || modulecore.TraceID(resp.TraceID).Validate() != nil || modulecore.TaskID(resp.RootTaskID).Validate() != nil || modulecore.MessageID(resp.MessageID).Validate() != nil || resp.TraceID == resp.JobID {
+	if modulecore.TurnID(resp.TurnID).Validate() != nil || modulecore.TraceID(resp.TraceID).Validate() != nil || modulecore.TaskID(resp.RootTaskID).Validate() != nil || modulecore.TaskID(resp.TaskID).Validate() != nil || modulecore.MessageID(resp.MessageID).Validate() != nil || resp.TaskID != resp.RootTaskID || resp.TraceID == resp.TaskID {
 		t.Fatalf("voice response identity is incomplete: %+v", resp)
 	}
 
@@ -68,11 +68,11 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if !strings.Contains(rec.events[decisionIdx].Content, "evidence=voice_direct") {
 		t.Fatalf("routing.decision should preserve voice_direct evidence: %#v", rec.events[decisionIdx])
 	}
-	if rec.events[responseIdx].MessageID != resp.MessageID || rec.events[responseIdx].TraceID != resp.TraceID {
+	if string(rec.events[responseIdx].MessageID) != resp.MessageID || string(rec.events[responseIdx].TraceID) != resp.TraceID {
 		t.Fatalf("voice response identity drifted: response=%+v event=%+v", resp, rec.events[responseIdx])
 	}
 	for _, ev := range rec.events {
-		if ev.TraceID != resp.TraceID {
+		if string(ev.TraceID) != resp.TraceID {
 			t.Fatalf("voice event lost root trace: %+v", ev)
 		}
 	}
@@ -88,8 +88,8 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if modulecore.TraceID(turns.turns[1].traceID).Validate() != nil || turns.turns[1].traceID != resp.TraceID {
 		t.Fatalf("assistant session log lost canonical root trace: %+v response=%+v", turns.turns[1], resp)
 	}
-	if turns.turns[1].jobID != resp.JobID {
-		t.Fatalf("assistant session log job identity drifted: %+v response=%+v", turns.turns[1], resp)
+	if turns.turns[1].taskID != resp.TaskID {
+		t.Fatalf("assistant session log task identity drifted: %+v response=%+v", turns.turns[1], resp)
 	}
 }
 
@@ -200,9 +200,10 @@ func TestNotifyVoiceDirectFirstToken_EmitsMetricOnce(t *testing.T) {
 		ChatID:      "viewer-user",
 		StartedAt:   time.Now().Add(-100 * time.Millisecond),
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
+	req.RootTaskID = taskID
 	firstAt := req.StartedAt.Add(50 * time.Millisecond)
-	orch.NotifyVoiceDirectFirstToken(context.Background(), req, jobID, firstAt)
+	orch.NotifyVoiceDirectFirstToken(context.Background(), req, taskID, firstAt)
 
 	if !hasLatencyMetric(rec.events, "llm", "first_token") {
 		t.Fatalf("missing first_token metric: %#v", rec.events)

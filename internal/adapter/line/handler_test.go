@@ -306,7 +306,7 @@ func TestHandler_WebhookEndpoint_ValidMessage(t *testing.T) {
 			Response:   "こんにちは！",
 			Route:      routing.RouteCHAT,
 			Confidence: 1.0,
-			JobID:      "20260302-120000-abcd1234",
+			TaskID:     "tsk_018f1c2d-3e4f-7a5b-8c6d-7e8f9a0b1c2d",
 		},
 	}
 
@@ -778,7 +778,7 @@ func TestHandler_WebhookEndpoint_GroupChatWithBotMention(t *testing.T) {
 			Response:   "グループチャット返信",
 			Route:      routing.RouteCHAT,
 			Confidence: 1.0,
-			JobID:      "test-job-id",
+			TaskID:     "tsk_018f1c2d-3e4f-7a5b-8c6d-7e8f9a0b1c2d",
 		},
 	}
 
@@ -874,7 +874,7 @@ func TestHandler_WebhookEndpoint_WithQuoteToken(t *testing.T) {
 			Response:   "引用返信",
 			Route:      routing.RouteCHAT,
 			Confidence: 1.0,
-			JobID:      "test-job-id",
+			TaskID:     "tsk_018f1c2d-3e4f-7a5b-8c6d-7e8f9a0b1c2d",
 		},
 	}
 

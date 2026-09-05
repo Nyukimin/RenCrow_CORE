@@ -95,8 +95,8 @@ func TestMessageOrchestrator_RouteChainContract_ViewerRecipientBecomesChatSpeake
 	if indexOfEvent(rec.events, "agent.response", "mio", "user", "CHAT") >= 0 {
 		t.Fatalf("recipient response must not be emitted as mio->user: %#v", rec.events)
 	}
-	if rec.events[messageIdx].JobID == "" {
-		t.Fatalf("message.received must carry job_id for sequence tracking: %#v", rec.events[messageIdx])
+	if rec.events[messageIdx].TaskID.IsZero() {
+		t.Fatalf("message.received must carry task_id for sequence tracking: %#v", rec.events[messageIdx])
 	}
 }
 
@@ -213,7 +213,7 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	orch.SetEventListener(rec)
 
 	req := defaultReq()
-	req.JobID = modulecore.NewTaskID().String()
+	req.RootTaskID = modulecore.NewTaskID().String()
 	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
@@ -224,8 +224,8 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	if resp.Route != routing.RouteCHAT {
 		t.Fatalf("chat command route = %s, want CHAT", resp.Route)
 	}
-	if resp.JobID != req.JobID {
-		t.Fatalf("chat command job ID = %q, want %q", resp.JobID, req.JobID)
+	if resp.TaskID != req.RootTaskID {
+		t.Fatalf("chat command task ID = %q, want %q", resp.TaskID, req.RootTaskID)
 	}
 	if indexOfEvent(rec.events, "routing.decision", "mio", "", "OPS") >= 0 {
 		t.Fatalf("routing.decision should not be emitted for handled chat command: %#v", rec.events)
@@ -234,8 +234,8 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	if responseIndex < 0 {
 		t.Fatalf("chat command response event missing: %#v", rec.events)
 	}
-	if rec.events[responseIndex].JobID != req.JobID {
-		t.Fatalf("chat command response event job ID = %q, want %q", rec.events[responseIndex].JobID, req.JobID)
+	if rec.events[responseIndex].TaskID.String() != req.RootTaskID {
+		t.Fatalf("chat command response event task ID = %q, want %q", rec.events[responseIndex].TaskID, req.RootTaskID)
 	}
 }
 
@@ -289,7 +289,7 @@ func TestMessageOrchestrator_RouteChainContract_UnknownRouteDoesNotEmitSuccessRe
 	if err == nil {
 		t.Fatal("unknown route should return error")
 	}
-	if !strings.Contains(err.Error(), "unknown route") {
+	if !strings.Contains(err.Error(), "unsupported orchestrator route") {
 		t.Fatalf("unknown route error missing route detail: %v", err)
 	}
 	for _, ev := range rec.events {
@@ -314,7 +314,7 @@ func TestMessageOrchestrator_RouteChainContract_AnalyzeEmitsPublicTerminalRespon
 	if resp.Response != "PORTAL_BROWSER_OK" {
 		t.Fatalf("response=%q", resp.Response)
 	}
-	internal := indexOfEvent(rec.events, "agent.response", "heavy", "mio", "ANALYZE")
+	internal := indexOfEvent(rec.events, "agent.response", "kuro", "mio", "ANALYZE")
 	public := indexOfEvent(rec.events, "agent.response", "mio", "user", "ANALYZE")
 	if internal < 0 || public <= internal {
 		t.Fatalf("ANALYZE must emit internal then public terminal response: %#v", rec.events)
@@ -407,7 +407,7 @@ type recordingWorkerExecutionService struct {
 	result *patch.PatchExecutionResult
 }
 
-func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
 	w.calls++
 	if w.err != nil {
 		return nil, w.err

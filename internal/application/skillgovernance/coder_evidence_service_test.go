@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestCoderEvidenceServiceSaveCoderProposalEvidenceWritesDiffAndTranscript(t *testing.T) {
@@ -17,9 +18,10 @@ func TestCoderEvidenceServiceSaveCoderProposalEvidenceWritesDiffAndTranscript(t 
 	service := NewCoderEvidenceService(root).WithNow(func() time.Time {
 		return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	}).WithTranscriptStore(transcripts)
+	taskID := modulecore.NewTaskID()
 
 	paths, err := service.SaveCoderProposalEvidence(context.Background(), domainskill.CoderProposalEvidence{
-		JobID:            "job/unsafe id",
+		TaskID:           taskID,
 		SessionID:        "sess-1",
 		Route:            "CODE3",
 		Agent:            "coder3",
@@ -35,8 +37,8 @@ func TestCoderEvidenceServiceSaveCoderProposalEvidenceWritesDiffAndTranscript(t 
 	if err != nil {
 		t.Fatalf("SaveCoderProposalEvidence failed: %v", err)
 	}
-	if strings.Contains(paths.RootPath, "/unsafe id") {
-		t.Fatalf("RootPath was not sanitized: %s", paths.RootPath)
+	if !strings.Contains(paths.RootPath, taskID.String()) {
+		t.Fatalf("RootPath did not use task identity: %s", paths.RootPath)
 	}
 
 	diff, err := os.ReadFile(paths.SkillDiffPath)
@@ -52,7 +54,7 @@ func TestCoderEvidenceServiceSaveCoderProposalEvidenceWritesDiffAndTranscript(t 
 		t.Fatalf("read transcript evidence: %v", err)
 	}
 	body := string(transcript)
-	for _, want := range []string{"Coder Proposal Transcript Evidence", "Skillを更新して", "1. SKILL.mdを更新する", "実行: 1 件"} {
+	for _, want := range []string{"Coder Proposal Transcript Evidence", "Task ID: " + taskID.String(), "Skillを更新して", "1. SKILL.mdを更新する", "実行: 1 件"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("transcript missing %q: %s", want, body)
 		}
@@ -72,6 +74,21 @@ func TestCoderEvidenceServiceSaveCoderProposalEvidenceWritesDiffAndTranscript(t 
 	}
 	if segments["transcript_evidence"].EvidencePath != paths.AgentTranscriptPath {
 		t.Fatalf("transcript evidence entry=%#v paths=%#v", segments["transcript_evidence"], paths)
+	}
+	for segment, entry := range segments {
+		if entry.TaskID != taskID {
+			t.Fatalf("%s transcript entry task=%s, want %s", segment, entry.TaskID, taskID)
+		}
+	}
+}
+
+func TestCoderEvidenceServiceRejectsInvalidTaskID(t *testing.T) {
+	service := NewCoderEvidenceService(t.TempDir())
+	_, err := service.SaveCoderProposalEvidence(context.Background(), domainskill.CoderProposalEvidence{
+		TaskID: modulecore.TaskID("invalid-task-id"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "task_id") {
+		t.Fatalf("expected invalid task_id error, got %v", err)
 	}
 }
 

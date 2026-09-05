@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func HandleCharacterRuntime(service *characterruntime.Service, listener orchestrator.EventListener) http.HandlerFunc {
@@ -41,8 +42,8 @@ func HandleCharacterRuntime(service *characterruntime.Service, listener orchestr
 		for _, turn := range result.Turns {
 			ev := orchestrator.NewEvent("character_runtime.turn", turn.CharacterID, "viewer", turn.Content, "CHARACTER_RUNTIME", "", result.SessionID, "viewer", req.RequestedBy)
 			ev.TurnIndex = turn.TurnIndex
-			ev.MessageID = turn.MessageID
-			ev.TraceID = result.TraceID
+			ev.MessageID = modulecore.MessageID(turn.MessageID)
+			ev.TraceID = modulecore.TraceID(result.TraceID)
 			if err := listener.OnEvent(ev); err != nil {
 				http.Error(w, "character runtime event publication failed", http.StatusServiceUnavailable)
 				return

@@ -17,6 +17,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var idleChatTTSPrefetch *idleChatTTSPrefetchManager
@@ -162,7 +163,7 @@ func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEve
 		chatID,
 	)
 	viewerEvent.RawContent = ev.RawContent
-	viewerEvent.MessageID = ev.MessageID
+	viewerEvent.MessageID = modulecore.MessageID(ev.MessageID)
 	viewerEvent.TurnIndex = ev.TurnIndex
 	viewerEvent.Category = string(ev.Category)
 	viewerEvent.Strategy = string(ev.Strategy)

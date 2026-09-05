@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/google/uuid"
 )
 
@@ -14,7 +15,7 @@ type executionObservationContextKey struct{}
 type ExecutionObservation struct {
 	RequestID string
 	TraceID   string
-	JobID     string
+	TaskID    modulecore.TaskID
 	SessionID string
 	Initiator string
 	Caller    string
@@ -45,8 +46,8 @@ func WithExecutionObservationDefaults(ctx context.Context, defaults ExecutionObs
 	if current.TraceID == "" {
 		current.TraceID = defaults.TraceID
 	}
-	if current.JobID == "" {
-		current.JobID = defaults.JobID
+	if current.TaskID == "" {
+		current.TaskID = defaults.TaskID
 	}
 	if current.SessionID == "" {
 		current.SessionID = defaults.SessionID
@@ -75,27 +76,22 @@ func ExecutionObservationFromContext(ctx context.Context) (ExecutionObservation,
 func normalizeExecutionObservation(observation ExecutionObservation) ExecutionObservation {
 	observation.RequestID = strings.TrimSpace(observation.RequestID)
 	observation.TraceID = strings.TrimSpace(observation.TraceID)
-	observation.JobID = strings.TrimSpace(observation.JobID)
+	observation.TaskID = normalizeObservationTaskID(observation.TaskID)
 	observation.SessionID = strings.TrimSpace(observation.SessionID)
 	observation.Initiator = strings.TrimSpace(observation.Initiator)
 	observation.Caller = strings.TrimSpace(observation.Caller)
 	observation.Purpose = strings.TrimSpace(observation.Purpose)
-	if observation.RequestID == "" {
-		observation.RequestID = firstNonEmptyObservationID(observation.TraceID, observation.JobID, observation.SessionID)
-	}
 	if observation.RequestID == "" {
 		observation.RequestID = newLLMRequestID()
 	}
 	return observation
 }
 
-func firstNonEmptyObservationID(values ...string) string {
-	for _, value := range values {
-		if value = strings.TrimSpace(value); value != "" {
-			return value
-		}
+func normalizeObservationTaskID(value modulecore.TaskID) modulecore.TaskID {
+	if value == "" || string(value) != strings.TrimSpace(string(value)) || value.Validate() != nil {
+		return ""
 	}
-	return ""
+	return value
 }
 
 func newLLMRequestID() string {

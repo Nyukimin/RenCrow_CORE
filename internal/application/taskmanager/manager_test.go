@@ -188,3 +188,72 @@ func TestManagerRejectsMismatchedContextIdentityBeforeSaving(t *testing.T) {
 		t.Fatal("Task was saved before context identity rejection")
 	}
 }
+
+func TestManagerRecordsRoutingAndAssignmentWithoutStatusTransition(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC) }
+	value, err := manager.Create(context.Background(), domaintask.Task{Title: "route task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routingEventID := modulecore.NewEventID()
+	routed, err := manager.RecordRouting(context.Background(), value.TaskID, domaintask.RouteANALYZE, routingEventID)
+	if err != nil {
+		t.Fatalf("RecordRouting: %v", err)
+	}
+	if routed.Route != domaintask.RouteANALYZE || routed.RoutingEventID != routingEventID || routed.Status != domaintask.StatusQueued {
+		t.Fatalf("routed task = %#v", routed)
+	}
+	assignmentEventID := modulecore.NewEventID()
+	assigned, err := manager.RecordAssignment(context.Background(), value.TaskID, " Mio ", assignmentEventID)
+	if err != nil {
+		t.Fatalf("RecordAssignment: %v", err)
+	}
+	if assigned.Assignee != "Mio" || assigned.AssignmentEventID != assignmentEventID || assigned.Status != domaintask.StatusQueued {
+		t.Fatalf("assigned task = %#v", assigned)
+	}
+	persisted, err := manager.Get(context.Background(), value.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Route != domaintask.RouteANALYZE || persisted.RoutingEventID != routingEventID || persisted.Assignee != "Mio" || persisted.AssignmentEventID != assignmentEventID || persisted.Status != domaintask.StatusQueued {
+		t.Fatalf("persisted task = %#v", persisted)
+	}
+}
+
+func TestManagerRejectsInvalidReferencesAndBlankAssignmentBeforeSaving(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, DefaultParallelLimits())
+	manager.now = func() time.Time { return time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC) }
+	value, err := manager.Create(context.Background(), domaintask.Task{Title: "validation task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := manager.Get(context.Background(), value.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecordRouting(context.Background(), value.TaskID, domaintask.RouteCHAT, modulecore.EventID("invalid-event-id")); err == nil {
+		t.Fatal("invalid routing event ID was accepted")
+	}
+	if _, err := manager.RecordAssignment(context.Background(), value.TaskID, "   ", modulecore.NewEventID()); err == nil {
+		t.Fatal("blank assignee was accepted")
+	}
+	if _, err := manager.RecordAssignment(context.Background(), value.TaskID, "Mio", modulecore.EventID("invalid-event-id")); err == nil {
+		t.Fatal("invalid assignment event ID was accepted")
+	}
+	after, err := manager.Get(context.Background(), value.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Route != before.Route || after.RoutingEventID != before.RoutingEventID || after.Assignee != before.Assignee || after.AssignmentEventID != before.AssignmentEventID || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("invalid records changed task: before=%#v after=%#v", before, after)
+	}
+}

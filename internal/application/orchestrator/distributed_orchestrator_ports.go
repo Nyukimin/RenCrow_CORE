@@ -27,6 +27,16 @@ func (o *DistributedOrchestrator) SetSkillBootstrapRecorder(recorder SkillBootst
 	o.skillBootstrap = recorder
 }
 
+// SetTaskLifecycleManager installs the optional durable task lifecycle used by
+// the normal route-dispatch path. Nil preserves the legacy in-memory path.
+func (o *DistributedOrchestrator) SetTaskLifecycleManager(manager TaskLifecycleManager) {
+	if manager == nil {
+		o.taskLifecycle = nil
+		return
+	}
+	o.taskLifecycle = newTaskLifecycle(manager)
+}
+
 func (o *DistributedOrchestrator) SetCoderProposalEvidenceRecorder(recorder CoderProposalEvidenceRecorder) {
 	if o.codeExecution != nil {
 		o.codeExecution.SetCoderProposalEvidenceRecorder(recorder)
@@ -98,12 +108,12 @@ func (o *DistributedOrchestrator) SetVTuberBridge(b VTuberBridge) {
 	}
 }
 
-func (o *DistributedOrchestrator) emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-	o.events.Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+func (o *DistributedOrchestrator) emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+	o.events.Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 }
 
-func (o *DistributedOrchestrator) emitNote(from, to, content, route, jobID, sessionID, channel, chatID string) {
-	o.events.EmitNote(from, to, content, route, jobID, sessionID, channel, chatID)
+func (o *DistributedOrchestrator) emitNote(from, to, content, route, taskID, sessionID, channel, chatID string) {
+	o.events.EmitNote(from, to, content, route, taskID, sessionID, channel, chatID)
 }
 
 func (o *DistributedOrchestrator) emitProgress(eventType, from, to, content string, msg domaintransport.Message) {

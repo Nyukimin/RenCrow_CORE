@@ -17,17 +17,17 @@ func (w *workerExecutionService) parseProposalCommands(p *proposal.Proposal) ([]
 	return commands, nil
 }
 
-func (w *workerExecutionService) showExecutionSummaryIfEnabled(jobID modulecore.TaskID, commands []patch.PatchCommand) {
+func (w *workerExecutionService) showExecutionSummaryIfEnabled(taskID modulecore.TaskID, commands []patch.PatchCommand) {
 	if w.config.ShowExecutionSummary {
-		w.showExecutionSummary(jobID, commands)
+		w.showExecutionSummary(taskID, commands)
 	}
 }
 
-func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, jobID modulecore.TaskID) error {
+func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, taskID modulecore.TaskID) error {
 	if !w.config.AutoCommit {
 		return nil
 	}
-	preCommitHash, err := w.autoCommitChanges(ctx, jobID, "Before patch execution")
+	preCommitHash, err := w.autoCommitChanges(ctx, taskID, "Before patch execution")
 	if err != nil {
 		return fmt.Errorf("pre-execution auto-commit failed: %w", err)
 	}
@@ -35,11 +35,11 @@ func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, 
 	return nil
 }
 
-func (w *workerExecutionService) autoCommitAfterExecution(ctx context.Context, jobID modulecore.TaskID, result *patch.PatchExecutionResult) {
+func (w *workerExecutionService) autoCommitAfterExecution(ctx context.Context, taskID modulecore.TaskID, result *patch.PatchExecutionResult) {
 	if !w.config.AutoCommit || result.ExecutedCmds == 0 {
 		return
 	}
-	postCommitHash, err := w.autoCommitChanges(ctx, jobID,
+	postCommitHash, err := w.autoCommitChanges(ctx, taskID,
 		fmt.Sprintf("Patch execution: %d commands", result.ExecutedCmds))
 	if err == nil {
 		result.WithGitCommit(postCommitHash)

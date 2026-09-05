@@ -7,13 +7,15 @@ import (
 	"testing"
 
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRunExecutorPassesAndSavesEvidence(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &reportStoreStub{}
 	var stages []Stage
 	result, err := RunExecutor(context.Background(), ExecuteRequest{
-		JobID:      "job-1",
+		TaskID:     taskID,
 		Route:      "chat",
 		Capability: CapabilityTTSDelivery,
 		Contract:   testContract(),
@@ -53,6 +55,9 @@ func TestRunExecutorPassesAndSavesEvidence(t *testing.T) {
 	if store.calls != 1 || store.last.Status != string(StatusPassed) {
 		t.Fatalf("expected saved passed report, got calls=%d report=%#v", store.calls, store.last)
 	}
+	if store.last.TaskID != taskID || result.Report.TaskID != taskID {
+		t.Fatalf("task ID was not preserved in execution evidence: result=%q saved=%q want=%q", result.Report.TaskID, store.last.TaskID, taskID)
+	}
 	if store.last.TTSProvider != "rencrow-tts-gateway" || store.last.TTSDuration != 1200 || store.last.PlaybackCode != 7 {
 		t.Fatalf("TTS evidence was not propagated: %#v", store.last)
 	}
@@ -66,7 +71,7 @@ func TestRunExecutorRetriesVerifyFailureThenPasses(t *testing.T) {
 	var attempts []int
 	var observedFailures []string
 	result, err := RunExecutor(context.Background(), ExecuteRequest{
-		JobID:     "job-retry",
+		TaskID:    modulecore.NewTaskID(),
 		Contract:  testContract(),
 		MaxRepair: 1,
 		Execute: func(ctx context.Context, attempt int, failureKind, failureReason string) (AttemptResult, error) {
@@ -95,6 +100,7 @@ func TestRunExecutorRetriesVerifyFailureThenPasses(t *testing.T) {
 func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 	t.Run("non retryable apply failure", func(t *testing.T) {
 		result, err := RunExecutor(context.Background(), ExecuteRequest{
+			TaskID:    modulecore.NewTaskID(),
 			Contract:  testContract(),
 			MaxRepair: 1,
 			Execute: func(ctx context.Context, attempt int, failureKind, failureReason string) (AttemptResult, error) {
@@ -115,6 +121,7 @@ func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 
 	t.Run("verify error retry exhausted", func(t *testing.T) {
 		result, err := RunExecutor(context.Background(), ExecuteRequest{
+			TaskID:    modulecore.NewTaskID(),
 			Contract:  testContract(),
 			MaxRepair: 1,
 			Execute: func(ctx context.Context, attempt int, failureKind, failureReason string) (AttemptResult, error) {
@@ -134,17 +141,18 @@ func TestRunExecutorApplyFailureAndVerifyErrorPaths(t *testing.T) {
 }
 
 func TestRunExecutorValidationErrors(t *testing.T) {
-	_, err := RunExecutor(context.Background(), ExecuteRequest{Contract: domaincontract.Contract{}})
+	_, err := RunExecutor(context.Background(), ExecuteRequest{TaskID: modulecore.NewTaskID(), Contract: domaincontract.Contract{}})
 	if err == nil {
 		t.Fatal("expected contract validation error")
 	}
 
-	_, err = RunExecutor(context.Background(), ExecuteRequest{Contract: testContract()})
+	_, err = RunExecutor(context.Background(), ExecuteRequest{TaskID: modulecore.NewTaskID(), Contract: testContract()})
 	if err == nil || !strings.Contains(err.Error(), "execute function is required") {
 		t.Fatalf("expected missing execute error, got %v", err)
 	}
 
 	_, err = RunExecutor(context.Background(), ExecuteRequest{
+		TaskID:   modulecore.NewTaskID(),
 		Contract: testContract(),
 		Execute: func(ctx context.Context, attempt int, failureKind, failureReason string) (AttemptResult, error) {
 			return AttemptResult{}, nil
@@ -155,13 +163,35 @@ func TestRunExecutorValidationErrors(t *testing.T) {
 	}
 }
 
+func TestRunExecutorRejectsMissingOrMalformedTaskIDBeforeExecution(t *testing.T) {
+	for _, taskID := range []modulecore.TaskID{"", "not-a-task-id"} {
+		t.Run(string(taskID), func(t *testing.T) {
+			executed := false
+			store := &reportStoreStub{}
+			_, err := RunExecutor(context.Background(), ExecuteRequest{
+				TaskID:   taskID,
+				Contract: testContract(),
+				Execute: func(context.Context, int, string, string) (AttemptResult, error) {
+					executed = true
+					return AttemptResult{}, nil
+				},
+				Verify: func(context.Context, domaincontract.Contract, AttemptResult) (bool, string, string, error) {
+					t.Fatal("verify must not run for an invalid task ID")
+					return false, "", "", nil
+				},
+				ReportStore: store,
+			})
+			if err == nil || !strings.Contains(err.Error(), "task_id") {
+				t.Fatalf("expected task_id validation error, got %v", err)
+			}
+			if executed || store.calls != 0 {
+				t.Fatalf("invalid task ID crossed execution/persistence boundary: executed=%t saves=%d", executed, store.calls)
+			}
+		})
+	}
+}
+
 func TestExecutorHelpers(t *testing.T) {
-	if got := fallbackID("  ", "fallback"); got != "fallback" {
-		t.Fatalf("fallbackID blank = %q", got)
-	}
-	if got := fallbackID("job", "fallback"); got != "job" {
-		t.Fatalf("fallbackID value = %q", got)
-	}
 	if got := fallbackString("  ", "fallback"); got != "fallback" {
 		t.Fatalf("fallbackString blank = %q", got)
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type evidenceStoreStub struct {
@@ -25,9 +26,9 @@ func (s *evidenceStoreStub) ListRecent(_ context.Context, limit int) ([]domainex
 	return s.items, nil
 }
 
-func (s *evidenceStoreStub) GetByJobID(_ context.Context, jobID string) (domainexecution.ExecutionReport, error) {
+func (s *evidenceStoreStub) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error) {
 	for _, item := range s.items {
-		if item.JobID == jobID {
+		if item.TaskID == taskID {
 			return item, nil
 		}
 	}
@@ -69,8 +70,9 @@ func (s *evidenceStoreStub) SummaryUnique(ctx context.Context) (map[string]map[s
 }
 
 func TestHandleEvidenceRecent_Success(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &evidenceStoreStub{items: []domainexecution.ExecutionReport{{
-		JobID:      "job-1",
+		TaskID:     taskID,
 		Goal:       "TTS実装して",
 		Status:     "passed",
 		CreatedAt:  time.Now().UTC(),
@@ -94,7 +96,7 @@ func TestHandleEvidenceRecent_Success(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if len(out.Items) != 1 || out.Items[0].JobID != "job-1" {
+	if len(out.Items) != 1 || out.Items[0].TaskID != taskID {
 		t.Fatalf("unexpected items: %+v", out.Items)
 	}
 }
@@ -113,8 +115,9 @@ func TestHandleEvidenceRecent_InvalidLimit(t *testing.T) {
 }
 
 func TestHandleEvidenceDetail_Success(t *testing.T) {
+	taskID := modulecore.NewTaskID()
 	store := &evidenceStoreStub{items: []domainexecution.ExecutionReport{{
-		JobID:      "job-9",
+		TaskID:     taskID,
 		Goal:       "TTS実装して",
 		Status:     "passed",
 		CreatedAt:  time.Now().UTC(),
@@ -122,7 +125,7 @@ func TestHandleEvidenceDetail_Success(t *testing.T) {
 	}}}
 	h := HandleEvidenceDetail(store)
 
-	req := httptest.NewRequest(http.MethodGet, "/viewer/evidence/detail?job_id=job-9", nil)
+	req := httptest.NewRequest(http.MethodGet, "/viewer/evidence/detail?task_id="+string(taskID), nil)
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	if rec.Code != http.StatusOK {
@@ -130,10 +133,26 @@ func TestHandleEvidenceDetail_Success(t *testing.T) {
 	}
 }
 
+func TestHandleEvidenceDetailRejectsMissingInvalidAndLegacyIdentity(t *testing.T) {
+	h := HandleEvidenceDetail(&evidenceStoreStub{})
+	legacyKey := "job" + "_" + "id"
+	for _, target := range []string{
+		"/viewer/evidence/detail",
+		"/viewer/evidence/detail?task_id=bad",
+		"/viewer/evidence/detail?" + legacyKey + "=legacy",
+	} {
+		recorder := httptest.NewRecorder()
+		h(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("invalid identity accepted: target=%s status=%d", target, recorder.Code)
+		}
+	}
+}
+
 func TestHandleEvidenceSummary_Success(t *testing.T) {
 	store := &evidenceStoreStub{items: []domainexecution.ExecutionReport{
-		{JobID: "j1", Status: "passed"},
-		{JobID: "j2", Status: "failed", ErrorKind: "verify"},
+		{TaskID: modulecore.NewTaskID(), Status: "passed"},
+		{TaskID: modulecore.NewTaskID(), Status: "failed", ErrorKind: "verify"},
 	}}
 	h := HandleEvidenceSummary(store)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type developmentEventLogSink struct{ store *viewer.CanonicalEventLog }
@@ -24,5 +25,5 @@ func (s developmentEventLogSink) AppendDevelopmentEvent(_ context.Context, event
 	}
 	digest := sha256.Sum256(content)
 	messageID := event.ArtifactID + ":" + strings.TrimSpace(event.Type) + ":" + fmt.Sprintf("%x", digest[:8])
-	return s.store.Append(orchestrator.OrchestratorEvent{Type: strings.TrimSpace(event.Type), From: "rencrow_core", Content: string(content), MessageID: messageID, JobID: event.UnitID, TraceID: event.TraceID, Timestamp: event.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
+	return s.store.Append(orchestrator.OrchestratorEvent{EventID: modulecore.NewEventID(), Type: strings.TrimSpace(event.Type), From: "rencrow_core", Content: string(content), MessageID: modulecore.MessageID(messageID), TraceID: modulecore.TraceID(event.TraceID), Timestamp: event.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")})
 }

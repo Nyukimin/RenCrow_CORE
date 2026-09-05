@@ -16,7 +16,7 @@ func (s *MonitorStore) OnEvent(ev orchestrator.OrchestratorEvent) {
 	}
 
 	s.reduceAgents(ev)
-	s.reduceJobs(ev)
+	s.reduceTaskActivity(ev)
 }
 
 func (s *MonitorStore) SetAgentUnavailable(id, reason string) {

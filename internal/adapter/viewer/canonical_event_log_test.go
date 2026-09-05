@@ -16,8 +16,14 @@ type canonicalEventLogStoreStub struct {
 }
 
 func (s *canonicalEventLogStoreStub) Append(_ context.Context, event modulecore.EventEnvelope) error {
+	_, err := s.AppendSequenced(context.Background(), event)
+	return err
+}
+
+func (s *canonicalEventLogStoreStub) AppendSequenced(_ context.Context, event modulecore.EventEnvelope) (modulecore.EventEnvelope, error) {
+	event.EventSeq = modulecore.EventSeq(len(s.events) + 1)
 	s.events = append(s.events, event)
-	return nil
+	return event, nil
 }
 
 func (s *canonicalEventLogStoreStub) GetByID(_ context.Context, eventID modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
@@ -54,28 +60,38 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 	}
 	messageID := modulecore.NewMessageID()
 	sessionID := modulecore.NewSessionID()
+	threadID := modulecore.NewThreadID()
+	turnID := modulecore.NewTurnID()
+	traceID := modulecore.NewTraceID()
+	taskID := modulecore.NewTaskID()
 	event := orchestrator.OrchestratorEvent{
-		Seq:        7,
+		EventID:    modulecore.NewEventID(),
 		Type:       "agent.response",
 		From:       "mio",
 		To:         "user",
 		Content:    "hello",
 		RawContent: "raw hello",
-		MessageID:  string(messageID),
+		MessageID:  messageID,
 		TurnIndex:  3,
+		TurnID:     turnID,
 		Category:   "topic",
 		Strategy:   "direct",
 		Route:      "CHAT",
-		JobID:      "job-1",
-		TraceID:    "legacy-trace-id",
-		SessionID:  string(sessionID),
+		TaskID:     taskID,
+		TraceID:    traceID,
+		SessionID:  sessionID,
+		ThreadID:   threadID,
 		Channel:    "web",
 		ChatID:     "chat-1",
 		Timestamp:  "2026-08-29T12:34:56.789+09:00",
 	}
 
-	if err := log.Append(event); err != nil {
-		t.Fatalf("Append() error = %v", err)
+	persisted, err := log.AppendSequenced(event)
+	if err != nil {
+		t.Fatalf("AppendSequenced() error = %v", err)
+	}
+	if persisted.EventID != event.EventID || persisted.EventSeq != 1 {
+		t.Fatalf("persisted identity = event_id=%q event_seq=%d, want event_id=%q event_seq=1", persisted.EventID, persisted.EventSeq, event.EventID)
 	}
 	if len(store.events) != 1 {
 		t.Fatalf("stored event count = %d, want 1", len(store.events))
@@ -87,20 +103,23 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 	if canonical.EventType != event.Type {
 		t.Fatalf("event_type = %q, want %q", canonical.EventType, event.Type)
 	}
-	if err := canonical.EventID.Validate(); err != nil {
-		t.Fatalf("generated event_id is invalid: %v", err)
+	if canonical.EventID != event.EventID {
+		t.Fatalf("event_id = %q, want %q", canonical.EventID, event.EventID)
 	}
 	if err := canonical.TraceID.Validate(); err != nil {
-		t.Fatalf("generated trace_id is invalid: %v", err)
+		t.Fatalf("canonical trace_id is invalid: %v", err)
 	}
-	if canonical.TraceID == modulecore.TraceID(event.TraceID) {
-		t.Fatal("payload trace_id was promoted to canonical trace_id")
+	if canonical.TraceID != traceID {
+		t.Fatalf("trace_id = %q, want %q", canonical.TraceID, traceID)
 	}
 	if canonical.MessageID != messageID {
 		t.Fatalf("message_id = %q, want %q", canonical.MessageID, messageID)
 	}
 	if canonical.SessionID != sessionID {
 		t.Fatalf("session_id = %q, want %q", canonical.SessionID, sessionID)
+	}
+	if canonical.TurnID != turnID || canonical.ThreadID != threadID || canonical.TaskID != taskID {
+		t.Fatalf("authoritative identities = turn=%q thread=%q task=%q, want turn=%q thread=%q task=%q", canonical.TurnID, canonical.ThreadID, canonical.TaskID, turnID, threadID, taskID)
 	}
 	wantOccurredAt, _ := time.Parse(time.RFC3339Nano, event.Timestamp)
 	if !canonical.OccurredAt.Equal(wantOccurredAt.UTC()) {
@@ -111,11 +130,24 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 	if err != nil {
 		t.Fatalf("Query() error = %v", err)
 	}
-	if len(projected) != 1 || !reflect.DeepEqual(projected[0], event) {
-		t.Fatalf("projected event = %#v, want %#v", projected, []orchestrator.OrchestratorEvent{event})
+	wantProjected := event
+	wantProjected.EventSeq = 1
+	if len(projected) != 1 || !reflect.DeepEqual(projected[0], wantProjected) {
+		t.Fatalf("projected event = %#v, want %#v", projected, []orchestrator.OrchestratorEvent{wantProjected})
 	}
 	if store.gotLimit != canonicalEventLogReadLimit {
 		t.Fatalf("ListByComponent limit = %d, want %d", store.gotLimit, canonicalEventLogReadLimit)
+	}
+	lookedUp, found, err := log.GetByEventID(context.Background(), event.EventID)
+	if err != nil || !found {
+		t.Fatalf("GetByEventID() found=%v error=%v, want found", found, err)
+	}
+	if !reflect.DeepEqual(lookedUp, wantProjected) {
+		t.Fatalf("GetByEventID() = %#v, want %#v", lookedUp, wantProjected)
+	}
+	byID, err := log.Query(context.Background(), LogFilter{EventID: event.EventID})
+	if err != nil || len(byID) != 1 || byID[0].EventID != event.EventID {
+		t.Fatalf("EventID filter = %#v error=%v, want the incoming event", byID, err)
 	}
 }
 
@@ -126,16 +158,18 @@ func TestCanonicalEventLogQueryFiltersNewestFirstAndHonorsLimit(t *testing.T) {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
 	older := orchestrator.OrchestratorEvent{
+		EventID:   modulecore.NewEventID(),
 		Type:      "agent.start",
 		From:      "coder1",
 		Content:   "older",
-		JobID:     "job-1",
+		TaskID:    modulecore.NewTaskID(),
 		Route:     "CODE",
 		Timestamp: "2026-08-29T10:00:00Z",
 	}
 	newer := older
+	newer.EventID = modulecore.NewEventID()
 	newer.Content = "newer"
-	newer.JobID = "job-2"
+	newer.TaskID = modulecore.NewTaskID()
 	newer.Timestamp = "2026-08-29T11:00:00Z"
 	if err := log.Append(older); err != nil {
 		t.Fatalf("Append(older) error = %v", err)
@@ -161,37 +195,52 @@ func TestCanonicalEventLogQueryFiltersNewestFirstAndHonorsLimit(t *testing.T) {
 	}
 }
 
-func TestCanonicalEventLogDoesNotPromoteInvalidPayloadIDs(t *testing.T) {
+func TestCanonicalEventLogRejectsMalformedTypedIDs(t *testing.T) {
 	store := &canonicalEventLogStoreStub{}
 	log, err := NewCanonicalEventLog(store)
 	if err != nil {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
-	event := orchestrator.OrchestratorEvent{
+	base := orchestrator.OrchestratorEvent{
+		EventID:   modulecore.NewEventID(),
 		Type:      "message.received",
 		From:      "user",
-		Content:   "untrusted ids stay in payload",
-		MessageID: "legacy-message-id",
-		SessionID: "legacy-session-id",
-		TraceID:   "legacy-trace-id",
+		Content:   "malformed typed identity is rejected",
 		Timestamp: "2026-08-29T12:00:00Z",
 	}
-	if err := log.Append(event); err != nil {
-		t.Fatalf("Append() error = %v", err)
+	cases := []struct {
+		name   string
+		mutate func(*orchestrator.OrchestratorEvent)
+	}{
+		{
+			name: "malformed message identity",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.MessageID = modulecore.MessageID("msg-not-a-uuid")
+			},
+		},
+		{
+			name: "cross typed session identity",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.SessionID = modulecore.SessionID(modulecore.NewTaskID())
+			},
+		},
 	}
-	canonical := store.events[0]
-	if canonical.MessageID != "" || canonical.SessionID != "" {
-		t.Fatalf("invalid typed IDs were promoted: message=%q session=%q", canonical.MessageID, canonical.SessionID)
-	}
-	if canonical.Payload["message_id"] != event.MessageID || canonical.Payload["session_id"] != event.SessionID || canonical.Payload["trace_id"] != event.TraceID {
-		t.Fatalf("raw IDs were not retained in payload: %#v", canonical.Payload)
-	}
-	if canonical.TraceID == modulecore.TraceID(event.TraceID) {
-		t.Fatal("invalid payload trace_id was promoted to canonical trace_id")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			event := base
+			event.EventID = modulecore.NewEventID()
+			tc.mutate(&event)
+			if err := log.Append(event); err == nil {
+				t.Fatal("Append() error = nil, want typed identity rejection")
+			}
+			if len(store.events) != 0 {
+				t.Fatalf("malformed event was persisted: %#v", store.events)
+			}
+		})
 	}
 }
 
-func TestCanonicalEventLogPromotesValidTraceIDOnly(t *testing.T) {
+func TestCanonicalEventLogUsesValidTraceID(t *testing.T) {
 	store := &canonicalEventLogStoreStub{}
 	log, err := NewCanonicalEventLog(store)
 	if err != nil {
@@ -199,10 +248,11 @@ func TestCanonicalEventLogPromotesValidTraceIDOnly(t *testing.T) {
 	}
 	traceID := modulecore.NewTraceID()
 	event := orchestrator.OrchestratorEvent{
+		EventID:   modulecore.NewEventID(),
 		Type:      "routing.decision",
 		From:      "mio",
 		Content:   "valid trace correlation",
-		TraceID:   string(traceID),
+		TraceID:   traceID,
 		Timestamp: "2026-08-29T12:00:00Z",
 	}
 	if err := log.Append(event); err != nil {

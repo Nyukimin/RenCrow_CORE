@@ -13,21 +13,28 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type fakeEntryProcessor struct {
 	calls int
 	resp  orchestrator.ProcessMessageResponse
 	err   error
+	last  orchestrator.ProcessMessageRequest
 }
 
-func (f *fakeEntryProcessor) ProcessMessage(_ context.Context, _ orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+func (f *fakeEntryProcessor) ProcessMessage(_ context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
 	f.calls++
+	f.last = req
 	if f.resp.Route == "" {
 		f.resp.Route = routing.RouteCHAT
 	}
-	if f.resp.JobID == "" {
-		f.resp.JobID = "job-1"
+	if f.resp.TaskID == "" {
+		if req.RootTaskID != "" {
+			f.resp.TaskID = req.RootTaskID
+		} else {
+			f.resp.TaskID = modulecore.NewTaskID().String()
+		}
 	}
 	if f.resp.Response == "" {
 		f.resp.Response = "ok"
@@ -52,7 +59,7 @@ func TestProcessEntryRequest_Normal(t *testing.T) {
 }
 
 func TestProcessEntryRequest_TTSUsesAutonomousAndWritesReport(t *testing.T) {
-	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Route: routing.RouteCODE3, JobID: "job-tts", Response: "TTS implemented"}}
+	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Route: routing.RouteCODE3, Response: "TTS implemented"}}
 	reportPath := filepath.Join(t.TempDir(), "execution_report.jsonl")
 	req := entryadapter.Request{SessionID: "s1", Channel: "viewer", UserID: "u1", Message: "TTS実装して"}
 	runtime := ttsEntryRuntime{
@@ -79,8 +86,8 @@ func TestProcessEntryRequest_TTSUsesAutonomousAndWritesReport(t *testing.T) {
 	if proc.calls != 1 {
 		t.Fatalf("expected 1 call in autonomous apply, got %d", proc.calls)
 	}
-	if res.JobID != "job-tts" {
-		t.Fatalf("unexpected job id: %s", res.JobID)
+	if modulecore.TaskID(res.TaskID).Validate() != nil || res.TaskID != proc.last.RootTaskID {
+		t.Fatalf("task correlation mismatch: result=%s root=%s", res.TaskID, proc.last.RootTaskID)
 	}
 	if !strings.Contains(res.EvidenceRef, "execution_report:") {
 		t.Fatalf("expected evidence ref, got %q", res.EvidenceRef)
@@ -113,7 +120,7 @@ func TestProcessEntryRequest_TTSRequiresRuntime(t *testing.T) {
 }
 
 func TestProcessEntryRequest_TTSPlaybackFailure(t *testing.T) {
-	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Route: routing.RouteCODE3, JobID: "job-tts", Response: "TTS implemented"}}
+	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Route: routing.RouteCODE3, Response: "TTS implemented"}}
 	reportPath := filepath.Join(t.TempDir(), "execution_report.jsonl")
 	req := entryadapter.Request{SessionID: "s1", Channel: "viewer", UserID: "u1", Message: "TTS実装して"}
 	runtime := ttsEntryRuntime{

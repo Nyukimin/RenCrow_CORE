@@ -14,7 +14,7 @@ import (
 
 func TestHandle_Success(t *testing.T) {
 	h := Handle(func(ctx context.Context, req Request) (Result, error) {
-		return Result{SessionID: req.SessionID, Route: "CHAT", JobID: "j1", Response: "ok"}, nil
+		return Result{SessionID: req.SessionID, Route: "CHAT", TaskID: "tsk_01a06ff6-f03a-75e7-804f-d26dc0d4dfeb", Response: "ok"}, nil
 	})
 
 	body := []byte(`{"platform":"viewer","channel":"viewer","user_id":"u1","message":"hello"}`)
@@ -49,7 +49,7 @@ func TestHandleWithObserver_SuccessStages(t *testing.T) {
 	var got []Stage
 	h := HandleWithObserver(
 		func(ctx context.Context, req Request) (Result, error) {
-			return Result{SessionID: req.SessionID, Route: "CHAT", JobID: "j1", Response: "ok"}, nil
+			return Result{SessionID: req.SessionID, Route: "CHAT", TaskID: "tsk_01a06ff6-f03a-75e7-804f-d26dc0d4dfeb", Response: "ok"}, nil
 		},
 		func(ctx context.Context, stage Stage, req Request, result *Result, err error) {
 			got = append(got, stage)
@@ -97,7 +97,7 @@ func TestHandle_NormalizesCLIPlatformToLocalChannel(t *testing.T) {
 	var captured Request
 	h := Handle(func(ctx context.Context, req Request) (Result, error) {
 		captured = req
-		return Result{SessionID: req.SessionID, Route: "CHAT", JobID: "j1", Response: "ok"}, nil
+		return Result{SessionID: req.SessionID, Route: "CHAT", TaskID: "tsk_01a06ff6-f03a-75e7-804f-d26dc0d4dfeb", Response: "ok"}, nil
 	})
 
 	body := []byte(`{"platform":"cli","user_id":"u1","message":"hello"}`)
@@ -117,7 +117,7 @@ func TestHandle_NormalizesCLIPlatformToLocalChannel(t *testing.T) {
 
 func TestHandle_PreservesProvidedSessionID(t *testing.T) {
 	h := Handle(func(ctx context.Context, req Request) (Result, error) {
-		return Result{SessionID: req.SessionID, Route: "CHAT", JobID: "j1", Response: "ok"}, nil
+		return Result{SessionID: req.SessionID, Route: "CHAT", TaskID: "tsk_01a06ff6-f03a-75e7-804f-d26dc0d4dfeb", Response: "ok"}, nil
 	})
 	req := httptest.NewRequest(http.MethodPost, "/entry", bytes.NewReader([]byte(`{"platform":"viewer","channel":"viewer","user_id":"u1","session_id":"sess-123","message":"hello"}`)))
 	rec := httptest.NewRecorder()

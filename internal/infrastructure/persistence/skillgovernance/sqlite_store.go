@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -80,7 +81,7 @@ func (s *SQLiteStore) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS coder_transcript_log (
 			event_id TEXT PRIMARY KEY,
-			job_id TEXT,
+			task_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -172,11 +173,57 @@ func (s *SQLiteStore) SaveCoderTranscriptEntry(ctx context.Context, item domains
 	if err := domainskill.ValidateCoderTranscriptEntry(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "coder_transcript_log", "event_id", item.EventID, "job_id", item.JobID, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "coder_transcript_log", "event_id", item.EventID, "task_id", item.TaskID.String(), "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListCoderTranscriptEntries(ctx context.Context, limit int) ([]domainskill.CoderTranscriptEntry, error) {
-	return listSQLiteItems[domainskill.CoderTranscriptEntry](ctx, s, "coder_transcript_log", limit)
+	entries, err := listSQLiteItems[domainskill.CoderTranscriptEntry](ctx, s, "coder_transcript_log", limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if err := domainskill.ValidateCoderTranscriptEntry(entry); err != nil {
+			return nil, err
+		}
+	}
+	return entries, nil
+}
+
+// GetByTaskID returns coder transcript entries for the exact canonical task.
+func (s *SQLiteStore) GetByTaskID(ctx context.Context, taskID modulecore.TaskID) ([]domainskill.CoderTranscriptEntry, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("skill governance sqlite store is closed")
+	}
+	if err := taskID.Validate(); err != nil {
+		return nil, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT payload FROM coder_transcript_log WHERE task_id = ? ORDER BY rowid DESC", taskID.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	entries := []domainskill.CoderTranscriptEntry{}
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var entry domainskill.CoderTranscriptEntry
+		if err := json.Unmarshal([]byte(payload), &entry); err != nil {
+			return nil, err
+		}
+		if err := domainskill.ValidateCoderTranscriptEntry(entry); err != nil {
+			return nil, err
+		}
+		if entry.TaskID != taskID {
+			return nil, fmt.Errorf("coder transcript task_id does not match indexed task")
+		}
+		entries = append(entries, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, secondaryColumn string, secondaryValue string, timeColumn string, timestamp string, item any) error {

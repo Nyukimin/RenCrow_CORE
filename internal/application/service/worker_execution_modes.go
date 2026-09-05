@@ -9,18 +9,18 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func (w *workerExecutionService) executeCommands(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeCommands(ctx context.Context, taskID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	if w.config.ParallelExecution {
-		return w.executeParallel(ctx, jobID, commands)
+		return w.executeParallel(ctx, taskID, commands)
 	}
-	return w.executeSequential(ctx, jobID, commands)
+	return w.executeSequential(ctx, taskID, commands)
 }
 
 // executeSequential はコマンドを順次実行
-func (w *workerExecutionService) executeSequential(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeSequential(ctx context.Context, taskID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	result := patch.NewPatchExecutionResult()
 	for i, cmd := range commands {
-		cmdResult := w.executeCommand(ctx, jobID, cmd, i)
+		cmdResult := w.executeCommand(ctx, taskID, cmd, i)
 		result.AddResult(cmdResult)
 
 		if !cmdResult.Success && w.config.StopOnError {
@@ -34,7 +34,7 @@ func (w *workerExecutionService) executeSequential(ctx context.Context, jobID mo
 // executeParallel はType-Based Phased Executionで並列実行
 // file_edit → shell_command → git_operation のフェーズ順
 // 同フェーズ内は goroutine + semaphore で並列化
-func (w *workerExecutionService) executeParallel(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeParallel(ctx context.Context, taskID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	// フェーズ分類
 	phases := []patch.Type{patch.TypeFileEdit, patch.TypeShellCommand, patch.TypeGitOperation}
 	grouped := make(map[patch.Type][]indexedCommand)
@@ -73,7 +73,7 @@ func (w *workerExecutionService) executeParallel(ctx context.Context, jobID modu
 				sem <- struct{}{}        // acquire
 				defer func() { <-sem }() // release
 
-				cmdResult := w.executeCommand(ctx, jobID, ic.cmd, ic.index)
+				cmdResult := w.executeCommand(ctx, taskID, ic.cmd, ic.index)
 				mu.Lock()
 				phaseResults[idx] = cmdResult
 				mu.Unlock()

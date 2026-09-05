@@ -11,12 +11,12 @@ import (
 
 // WorkerExecutionService はPatch実行サービスのインターフェース
 type WorkerExecutionService interface {
-	ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
+	ExecuteProposal(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
 	ExecuteObservation(ctx context.Context, actions []ObservationAction) ([]ObservationActionResult, error)
 }
 
 type WorkspaceOverrideWorkerExecutionService interface {
-	ExecuteProposalInWorkspace(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
+	ExecuteProposalInWorkspace(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
 }
 
 // MCPToolCaller は MCP プロトコル経由でツールを呼び出すインターフェース
@@ -45,7 +45,7 @@ func (w *workerExecutionService) SetMCPToolCaller(caller MCPToolCaller) {
 // ExecuteProposal はProposalのPatchを解析・実行する
 func (w *workerExecutionService) ExecuteProposal(
 	ctx context.Context,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
 	commands, err := w.parseProposalCommands(p)
@@ -54,30 +54,30 @@ func (w *workerExecutionService) ExecuteProposal(
 	}
 	commands = w.normalizeParsedCommands(commands)
 
-	w.showExecutionSummaryIfEnabled(jobID, commands)
+	w.showExecutionSummaryIfEnabled(taskID, commands)
 	if err := w.validateCommandsBeforeExecution(commands); err != nil {
 		return nil, err
 	}
-	if err := w.autoCommitBeforeExecution(ctx, jobID); err != nil {
+	if err := w.autoCommitBeforeExecution(ctx, taskID); err != nil {
 		return nil, err
 	}
 
-	result := w.executeCommands(ctx, jobID, commands)
-	w.autoCommitAfterExecution(ctx, jobID, result)
+	result := w.executeCommands(ctx, taskID, commands)
+	w.autoCommitAfterExecution(ctx, taskID, result)
 	return w.finalizeExecutionResult(commands, result), nil
 }
 
 func (w *workerExecutionService) ExecuteProposalInWorkspace(
 	ctx context.Context,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	p *proposal.Proposal,
 	workspace string,
 ) (*patch.PatchExecutionResult, error) {
 	if workspace == "" || workspace == w.config.Workspace {
-		return w.ExecuteProposal(ctx, jobID, p)
+		return w.ExecuteProposal(ctx, taskID, p)
 	}
 	clone := *w
 	clone.config = w.config
 	clone.config.Workspace = workspace
-	return clone.ExecuteProposal(ctx, jobID, p)
+	return clone.ExecuteProposal(ctx, taskID, p)
 }

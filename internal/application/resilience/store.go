@@ -2,16 +2,20 @@
 package resilience
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Status string
@@ -40,7 +44,7 @@ type Incident struct {
 	LastSeen          time.Time         `json:"last_seen"`
 	OccurrenceCount   int               `json:"occurrence_count"`
 	Details           map[string]string `json:"details,omitempty"`
-	RepairJobID       string            `json:"repair_job_id,omitempty"`
+	RepairTaskID      modulecore.TaskID `json:"repair_task_id,omitempty"`
 	RepairAttempts    int               `json:"repair_attempts"`
 	LastRepairProbeAt *time.Time        `json:"last_repair_probe_at,omitempty"`
 	RepairRequestedAt *time.Time        `json:"repair_requested_at,omitempty"`
@@ -111,11 +115,54 @@ func (s Store) Load(signature string) (*Incident, error) {
 	if err != nil {
 		return nil, err
 	}
-	var incident Incident
-	if err := json.Unmarshal(b, &incident); err != nil {
+	incident, err := DecodeIncident(b)
+	if err != nil {
 		return nil, fmt.Errorf("decode incident %s: %w", signature, err)
 	}
+	if incident.Signature != signature {
+		return nil, fmt.Errorf("decode incident %s: signature does not match path", signature)
+	}
+	return incident, nil
+}
+
+// DecodeIncident applies the active resilience persistence contract without
+// legacy aliases or unknown-field fallback.
+func DecodeIncident(data []byte) (*Incident, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var incident Incident
+	if err := decoder.Decode(&incident); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("incident has trailing JSON")
+	}
+	if err := incident.Validate(); err != nil {
+		return nil, err
+	}
 	return &incident, nil
+}
+
+// Validate rejects invalid canonical repair correlation at owner boundaries.
+func (incident Incident) Validate() error {
+	if strings.TrimSpace(incident.Signature) == "" {
+		return errors.New("incident signature is required")
+	}
+	switch incident.Status {
+	case StatusUnresolved, StatusRestartRecovered, StatusRepairRequested, StatusRepairPending, StatusRepairFailed, StatusResolved:
+	default:
+		return fmt.Errorf("invalid incident status %q", incident.Status)
+	}
+	if !incident.RepairTaskID.IsZero() {
+		if err := incident.RepairTaskID.Validate(); err != nil {
+			return fmt.Errorf("repair_task_id: %w", err)
+		}
+	}
+	if (incident.Status == StatusRepairRequested || incident.Status == StatusRepairPending) && incident.RepairTaskID.IsZero() {
+		return errors.New("repair_task_id is required for active repair")
+	}
+	return nil
 }
 
 func (s Store) Save(incident *Incident) error {
@@ -128,8 +175,11 @@ func (s Store) Save(incident *Incident) error {
 }
 
 func (s Store) saveUnlocked(incident *Incident) error {
-	if incident == nil || incident.Signature == "" {
+	if incident == nil {
 		return errors.New("incident signature is required")
+	}
+	if err := incident.Validate(); err != nil {
+		return err
 	}
 	dir := s.IncidentDir(incident.Signature)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -164,9 +214,10 @@ func (s Store) List() ([]*Incident, error) {
 			continue
 		}
 		incident, loadErr := s.Load(entry.Name())
-		if loadErr == nil {
-			out = append(out, incident)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load resilience incident %s: %w", entry.Name(), loadErr)
 		}
+		out = append(out, incident)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastSeen.After(out[j].LastSeen) })
 	return out, nil
@@ -181,7 +232,10 @@ func (s Store) MarkRestartRecovered(incident *Incident, at time.Time) error {
 	})
 }
 
-func (s Store) MarkRepairRequested(incident *Incident, jobID string, at time.Time, maxAttempts int) error {
+func (s Store) MarkRepairRequested(incident *Incident, taskID modulecore.TaskID, at time.Time, maxAttempts int) error {
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("repair_task_id: %w", err)
+	}
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxRepairAttempts
 	}
@@ -191,7 +245,7 @@ func (s Store) MarkRepairRequested(incident *Incident, jobID string, at time.Tim
 		}
 		current.Status = StatusRepairRequested
 		current.RepairAttempts++
-		current.RepairJobID = jobID
+		current.RepairTaskID = taskID
 		current.RepairRequestedAt = timePtr(at)
 		current.LastError = ""
 		return nil

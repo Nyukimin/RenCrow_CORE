@@ -49,9 +49,12 @@ func (s *CoderEvidenceService) SaveCoderProposalEvidence(ctx context.Context, it
 	if s == nil {
 		return domainskill.CoderProposalEvidencePaths{}, nil
 	}
-	id := sanitizeEvidenceID(firstNonEmpty(item.JobID, item.SessionID, "coder"))
+	if err := domainskill.ValidateCoderProposalEvidence(item); err != nil {
+		return domainskill.CoderProposalEvidencePaths{}, err
+	}
+	id := sanitizeEvidenceID(item.TaskID.String())
 	if id == "" {
-		id = fmt.Sprintf("coder_%d", s.now().UTC().UnixNano())
+		return domainskill.CoderProposalEvidencePaths{}, fmt.Errorf("task_id is required")
 	}
 	root := filepath.Join(s.root, id)
 	if err := os.MkdirAll(root, 0755); err != nil {
@@ -98,7 +101,7 @@ func (s *CoderEvidenceService) saveCoderTranscriptEntries(ctx context.Context, i
 		{role: "worker", segment: "execution_error", text: item.ExecutionError},
 		{role: "system", segment: "transcript_evidence", path: paths.AgentTranscriptPath},
 	}
-	baseID := sanitizeEvidenceID(firstNonEmpty(item.JobID, item.SessionID, "coder"))
+	baseID := sanitizeEvidenceID(item.TaskID.String())
 	for _, segment := range segments {
 		text := strings.TrimSpace(segment.text)
 		path := strings.TrimSpace(segment.path)
@@ -107,7 +110,7 @@ func (s *CoderEvidenceService) saveCoderTranscriptEntries(ctx context.Context, i
 		}
 		entry := domainskill.CoderTranscriptEntry{
 			EventID:      fmt.Sprintf("evt_coder_transcript_%d_%s_%s", now.UnixNano(), baseID, sanitizeEvidenceID(segment.segment)),
-			JobID:        item.JobID,
+			TaskID:       item.TaskID,
 			SessionID:    item.SessionID,
 			Route:        item.Route,
 			Agent:        item.Agent,
@@ -127,7 +130,7 @@ func (s *CoderEvidenceService) saveCoderTranscriptEntries(ctx context.Context, i
 func buildCoderSkillDiffEvidence(item domainskill.CoderProposalEvidence) string {
 	var b strings.Builder
 	b.WriteString("# Coder Proposal Patch Evidence\n\n")
-	writeEvidenceField(&b, "Job ID", item.JobID)
+	writeEvidenceField(&b, "Task ID", item.TaskID.String())
 	writeEvidenceField(&b, "Route", item.Route)
 	writeEvidenceField(&b, "Agent", item.Agent)
 	b.WriteString("\n## Patch\n\n")
@@ -145,7 +148,7 @@ func buildCoderSkillDiffEvidence(item domainskill.CoderProposalEvidence) string 
 func buildCoderTranscriptEvidence(item domainskill.CoderProposalEvidence) string {
 	var b strings.Builder
 	b.WriteString("# Coder Proposal Transcript Evidence\n\n")
-	writeEvidenceField(&b, "Job ID", item.JobID)
+	writeEvidenceField(&b, "Task ID", item.TaskID.String())
 	writeEvidenceField(&b, "Session ID", item.SessionID)
 	writeEvidenceField(&b, "Route", item.Route)
 	writeEvidenceField(&b, "Agent", item.Agent)

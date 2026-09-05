@@ -39,10 +39,10 @@ func (s *phase8RecordingReportStore) Save(_ context.Context, report domainexecut
 
 func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	assembler := messageResponseAssembler{}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RoutePLAN, 0.82, "plan")
 
-	resp := assembler.Build("計画しました", decision, jobID)
+	resp := assembler.Build("計画しました", decision, taskID)
 	if resp.Response != "計画しました" {
 		t.Fatalf("expected response text to be preserved, got %q", resp.Response)
 	}
@@ -52,11 +52,11 @@ func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	if resp.Confidence != 0.82 {
 		t.Fatalf("expected confidence 0.82, got %f", resp.Confidence)
 	}
-	if resp.JobID != jobID.String() {
-		t.Fatalf("expected job ID %s, got %s", jobID.String(), resp.JobID)
+	if resp.TaskID != taskID.String() {
+		t.Fatalf("expected task ID %s, got %s", taskID.String(), resp.TaskID)
 	}
 
-	commandResp := assembler.BuildChatCommand("停止しました", jobID)
+	commandResp := assembler.BuildChatCommand("停止しました", taskID)
 	if commandResp.Response != "停止しました" {
 		t.Fatalf("expected chat command response text to be preserved, got %q", commandResp.Response)
 	}
@@ -66,8 +66,8 @@ func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	if commandResp.Confidence != 1.0 {
 		t.Fatalf("expected chat command confidence 1.0, got %f", commandResp.Confidence)
 	}
-	if commandResp.JobID != jobID.String() {
-		t.Fatalf("expected chat command response to preserve job ID %s, got %s", jobID.String(), commandResp.JobID)
+	if commandResp.TaskID != taskID.String() {
+		t.Fatalf("expected chat command response to preserve task ID %s, got %s", taskID.String(), commandResp.TaskID)
 	}
 }
 
@@ -113,10 +113,10 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 	coordinator := newAutonomousExecutionCoordinator(
 		nil,
 		func() int { return 0 },
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
 			emitted = append(emitted, eventType+":"+content)
 		},
-		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
 			executed = true
 			if route != routing.RoutePLAN {
 				t.Fatalf("expected route PLAN, got %s", route)
@@ -130,9 +130,9 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 	)
 	coordinator.SetReportStore(reporter)
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "買い物の計画を作ってください", "line", "U123").WithSessionID("sess-1")
-	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, jobID, "tts-1")
+	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, taskID, "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}

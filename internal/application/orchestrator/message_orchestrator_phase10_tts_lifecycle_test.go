@@ -13,7 +13,7 @@ import (
 
 func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 	bridge := &mockTTSBridge{}
-	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 	lifecycle.SetTTSBridge(bridge)
 
 	req := ProcessMessageRequest{
@@ -22,10 +22,10 @@ func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
-	lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision, "tts-1")
+	lifecycle.StartSessionForRoute(context.Background(), req, taskID, decision, "tts-1")
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected one TTS start request, got %d", len(bridge.startReqs))
 	}
@@ -46,7 +46,7 @@ func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 
 func TestPhase10TTSLifecyclePassesRequestTraceToTTSSession(t *testing.T) {
 	bridge := &mockTTSBridge{}
-	lifecycle := newMessageTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+	lifecycle := newMessageTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 	traceID := modulecore.NewTraceID()
 
 	lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
@@ -63,12 +63,12 @@ func TestPhase10TTSLifecyclePassesRequestTraceToTTSSession(t *testing.T) {
 
 func TestPhase10TTSLifecycleStreamHooksEmitFirstTokenLatencyMetric(t *testing.T) {
 	var metrics []OrchestratorEvent
-	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-		metrics = append(metrics, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+		metrics = append(metrics, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 	})
 
 	ctx := contextWithLatencyTrace(context.Background(), time.Now())
-	streamCtx, _ := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "job-1", "sess-1", "line", "U123", "")
+	streamCtx, _ := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000021", "sess-1", "line", "U123", "")
 	callback := llm.StreamCallbackFromContext(streamCtx)
 	if callback == nil {
 		t.Fatal("expected stream callback")
@@ -99,11 +99,11 @@ func TestPhase10TTSLifecycleStreamHooksEmitFirstTokenLatencyMetric(t *testing.T)
 
 func TestPhase10TTSLifecycleStreamHooksEmitBackendThroughputMetric(t *testing.T) {
 	var events []OrchestratorEvent
-	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-		events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+		events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 	})
 
-	streamCtx, _ := lifecycle.WithStreamHooks(context.Background(), routing.RouteCHAT, "job-rate", "sess-1", "line", "U123", "")
+	streamCtx, _ := lifecycle.WithStreamHooks(context.Background(), routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000022", "sess-1", "line", "U123", "")
 	callback := llm.GenerationMetricsCallbackFromContext(streamCtx)
 	if callback == nil {
 		t.Fatal("expected generation metrics callback")
@@ -128,14 +128,14 @@ func TestPhase10TTSLifecycleStreamHooksEmitBackendThroughputMetric(t *testing.T)
 func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
 	var previous []string
 	var emitted []string
-	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
+	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
 		emitted = append(emitted, eventType+":"+content)
 	})
 
 	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
 		previous = append(previous, token)
 	})
-	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "job-1", "sess-1", "line", "U123", "")
+	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000023", "sess-1", "line", "U123", "")
 	if bundle == nil {
 		t.Fatal("expected stream bundle")
 	}

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // JSONLReportStore persists verification reports separately from execution evidence.
@@ -71,9 +72,9 @@ func (s *JSONLReportStore) ListRecent(_ context.Context, limit int) ([]domainver
 	return items, nil
 }
 
-func (s *JSONLReportStore) GetByJobID(_ context.Context, jobID string) (domainverification.VerificationReport, error) {
-	if jobID == "" {
-		return domainverification.VerificationReport{}, errors.New("job_id is required")
+func (s *JSONLReportStore) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domainverification.VerificationReport, error) {
+	if err := taskID.Validate(); err != nil {
+		return domainverification.VerificationReport{}, fmt.Errorf("task_id: %w", err)
 	}
 	items, err := s.readAll()
 	if err != nil {
@@ -82,7 +83,7 @@ func (s *JSONLReportStore) GetByJobID(_ context.Context, jobID string) (domainve
 	var best domainverification.VerificationReport
 	found := false
 	for _, item := range items {
-		if item.JobID != jobID {
+		if item.TaskID != taskID {
 			continue
 		}
 		if !found || item.CreatedAt.After(best.CreatedAt) {
@@ -138,7 +139,10 @@ func (s *JSONLReportStore) readAll() ([]domainverification.VerificationReport, e
 	for sc.Scan() {
 		var report domainverification.VerificationReport
 		if err := json.Unmarshal(sc.Bytes(), &report); err != nil {
-			continue
+			return nil, fmt.Errorf("decode verification report: %w", err)
+		}
+		if err := report.Validate(); err != nil {
+			return nil, fmt.Errorf("validate verification report: %w", err)
 		}
 		items = append(items, report)
 	}

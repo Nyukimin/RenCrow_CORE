@@ -98,9 +98,9 @@ func (a *ChatServiceAdapter) Respond(ctx context.Context, input chat.Input, _ ch
 		TurnID:     core.TurnID(resp.TurnID),
 		TraceID:    core.TraceID(resp.TraceID),
 		RootTaskID: core.TaskID(resp.RootTaskID),
+		TaskID:     core.TaskID(resp.TaskID),
 		Text:       resp.Response,
 		Route:      chat.NormalizeRouteDecision(string(resp.Route), string(resp.Route)),
-		JobID:      resp.JobID,
 		Response: modulellm.BuildGenerateResponse(modulellm.GenerateOutput{
 			Content: resp.Response,
 		}),

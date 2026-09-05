@@ -182,7 +182,7 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 	if payload["session_id"] != "idle-canon" || payload["message_id"] != "idle-canon:msg:0003" {
 		t.Fatalf("unexpected identity payload: %#v", payload)
 	}
-	if audioChunks[0].MessageID != "idle-canon:msg:0003" || modulecore.TraceID(audioChunks[0].TraceID).Validate() != nil || audioChunks[0].TraceID == audioChunks[0].JobID {
+	if audioChunks[0].MessageID != "idle-canon:msg:0003" || audioChunks[0].TraceID.Validate() != nil || !audioChunks[0].TaskID.IsZero() {
 		t.Fatalf("top-level TTS identity drifted: %#v", audioChunks[0])
 	}
 	if payload["speech_text"] != "😊同じチャンクです。" || payload["text"] != "😊同じチャンクです。" || payload["display_text"] != "同じチャンクです。" {
@@ -205,6 +205,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 
 	var events []orchestrator.OrchestratorEvent
 	traceID := modulecore.NewTraceID()
+	taskID := modulecore.NewTaskID()
 	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
 		Enabled: true, GatewayBaseURL: srv.URL, VoiceID: "mio", TimeoutMS: 15000,
 	}}, func(event orchestrator.OrchestratorEvent) {
@@ -212,7 +213,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	}, nil, nil)
 
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID: "viewer-chat-1", ResponseID: "response-chat-1", TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
+		SessionID: "viewer-chat-1", ResponseID: taskID.String(), TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	for _, event := range events {
 		if event.Type == "metrics.latency" || event.Type == "tts.audio_chunk" || event.Type == "tts.session_completed" {
 			seen[event.Type] = true
-			if event.TraceID != string(traceID) {
+			if event.TraceID != traceID {
 				t.Fatalf("%s trace_id = %q, want parent %q", event.Type, event.TraceID, traceID)
 			}
 		}
@@ -238,11 +239,11 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload["response_id"] != "response-chat-1" {
-			t.Fatalf("completion response_id = %#v, want response-chat-1; payload=%#v", payload["response_id"], payload)
+		if payload["response_id"] != taskID.String() {
+			t.Fatalf("completion response_id = %#v, want %s; payload=%#v", payload["response_id"], taskID, payload)
 		}
-		if modulecore.TraceID(event.TraceID).Validate() != nil || event.TraceID == event.JobID || event.JobID != "response-chat-1" {
-			t.Fatalf("completion correlation = job:%q trace:%q, want canonical trace and response-chat-1 job", event.JobID, event.TraceID)
+		if event.TraceID.Validate() != nil || string(event.TraceID) == event.TaskID.String() || event.TaskID != taskID {
+			t.Fatalf("completion correlation = task:%q trace:%q, want canonical distinct identities", event.TaskID, event.TraceID)
 		}
 		if !seen["metrics.latency"] || !seen["tts.audio_chunk"] || !seen["tts.session_completed"] {
 			t.Fatalf("missing TTS callback events: %#v", seen)

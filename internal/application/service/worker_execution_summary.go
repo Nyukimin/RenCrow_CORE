@@ -8,7 +8,7 @@ import (
 )
 
 // showExecutionSummary は実行前サマリを表示
-func (w *workerExecutionService) showExecutionSummary(jobID modulecore.TaskID, commands []patch.PatchCommand) {
+func (w *workerExecutionService) showExecutionSummary(taskID modulecore.TaskID, commands []patch.PatchCommand) {
 	fileEdits := 0
 	shellCmds := 0
 	gitOps := 0
@@ -23,7 +23,7 @@ func (w *workerExecutionService) showExecutionSummary(jobID modulecore.TaskID, c
 		}
 	}
 
-	fmt.Printf("[Worker] Execution Summary (JobID: %s)\n", jobID.String())
+	fmt.Printf("[Worker] Execution Summary (TaskID: %s)\n", taskID.String())
 	fmt.Printf("  Total Commands: %d\n", len(commands))
 	fmt.Printf("  File Edits: %d\n", fileEdits)
 	fmt.Printf("  Shell Commands: %d\n", shellCmds)

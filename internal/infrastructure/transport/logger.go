@@ -32,8 +32,8 @@ func (t *LoggingTransport) Send(ctx context.Context, msg domaintransport.Message
 		log.Printf("[Transport:%s] SEND FAILED %s→%s type=%s elapsed=%v err=%v",
 			t.agentName, msg.From, msg.To, msg.Type, elapsed, err)
 	} else {
-		log.Printf("[Transport:%s] SEND %s→%s type=%s job=%s elapsed=%v",
-			t.agentName, msg.From, msg.To, msg.Type, msg.JobID, elapsed)
+		log.Printf("[Transport:%s] SEND %s→%s type=%s task=%s elapsed=%v",
+			t.agentName, msg.From, msg.To, msg.Type, msg.TaskID, elapsed)
 	}
 
 	return err
@@ -49,8 +49,8 @@ func (t *LoggingTransport) Receive(ctx context.Context) (domaintransport.Message
 		log.Printf("[Transport:%s] RECV FAILED elapsed=%v err=%v",
 			t.agentName, elapsed, err)
 	} else {
-		log.Printf("[Transport:%s] RECV %s→%s type=%s job=%s elapsed=%v",
-			t.agentName, msg.From, msg.To, msg.Type, msg.JobID, elapsed)
+		log.Printf("[Transport:%s] RECV %s→%s type=%s task=%s elapsed=%v",
+			t.agentName, msg.From, msg.To, msg.Type, msg.TaskID, elapsed)
 	}
 
 	return msg, err

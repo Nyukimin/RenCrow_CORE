@@ -7,13 +7,14 @@ import (
 	"strconv"
 
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // EvidenceLister provides recent execution reports.
 type EvidenceLister interface {
 	ListRecent(ctx context.Context, limit int) ([]domainexecution.ExecutionReport, error)
 	ListRecentUnique(ctx context.Context, limit int) ([]domainexecution.ExecutionReport, error)
-	GetByJobID(ctx context.Context, jobID string) (domainexecution.ExecutionReport, error)
+	GetByTaskID(ctx context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error)
 	Summary(ctx context.Context) (map[string]map[string]int, error)
 	SummaryUnique(ctx context.Context) (map[string]map[string]int, error)
 }
@@ -39,7 +40,7 @@ func HandleEvidenceRecent(store EvidenceLister) http.HandlerFunc {
 			limit = n
 		}
 
-		// Use ListRecentUnique by default to avoid showing duplicate jobs (retry/repair)
+		// Use ListRecentUnique by default to avoid showing duplicate tasks (retry/repair).
 		items, err := store.ListRecentUnique(r.Context(), limit)
 		if err != nil {
 			http.Error(w, "failed to load evidence", http.StatusInternalServerError)
@@ -53,20 +54,20 @@ func HandleEvidenceRecent(store EvidenceLister) http.HandlerFunc {
 	}
 }
 
-// HandleEvidenceDetail returns one execution report by job_id.
+// HandleEvidenceDetail returns one execution report by task_id.
 func HandleEvidenceDetail(store EvidenceLister) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		jobID := r.URL.Query().Get("job_id")
-		if jobID == "" {
-			http.Error(w, "job_id is required", http.StatusBadRequest)
+		taskID := modulecore.TaskID(r.URL.Query().Get("task_id"))
+		if err := taskID.Validate(); err != nil {
+			http.Error(w, "valid task_id is required", http.StatusBadRequest)
 			return
 		}
 
-		item, err := store.GetByJobID(r.Context(), jobID)
+		item, err := store.GetByTaskID(r.Context(), taskID)
 		if err != nil {
 			http.Error(w, "report not found", http.StatusNotFound)
 			return
@@ -87,7 +88,7 @@ func HandleEvidenceSummary(store EvidenceLister) http.HandlerFunc {
 			return
 		}
 
-		// Use SummaryUnique to count unique jobs, not all reports
+		// Use SummaryUnique to count unique tasks, not all reports.
 		summary, err := store.SummaryUnique(r.Context())
 		if err != nil {
 			http.Error(w, "failed to summarize evidence", http.StatusInternalServerError)

@@ -22,9 +22,10 @@ func (p *fakeChatProcessor) ProcessMessage(_ context.Context, req orchestrator.P
 	if p.err != nil {
 		return orchestrator.ProcessMessageResponse{}, p.err
 	}
+	rootTaskID := core.NewTaskID()
 	return orchestrator.ProcessMessageResponse{
-		Response: "返答です", Route: routing.RouteCHAT, JobID: "job-1",
-		TurnID: string(core.NewTurnID()), TraceID: string(core.NewTraceID()), RootTaskID: string(core.NewTaskID()), MessageID: string(core.NewMessageID()),
+		Response: "返答です", Route: routing.RouteCHAT, TaskID: rootTaskID.String(),
+		TurnID: string(core.NewTurnID()), TraceID: string(core.NewTraceID()), RootTaskID: rootTaskID.String(), MessageID: string(core.NewMessageID()),
 	}, nil
 }
 
@@ -61,7 +62,7 @@ func TestChatServiceAdapterRespond(t *testing.T) {
 	if processor.req.SessionID != "session-1" || processor.req.Channel != "viewer" || processor.req.ChatID != "user-1" || processor.req.UserMessage != "こんにちは" {
 		t.Fatalf("request was not mapped: %+v", processor.req)
 	}
-	if got.Text != "返答です" || got.Response.Content != "返答です" || got.JobID != "job-1" {
+	if got.Text != "返答です" || got.Response.Content != "返答です" || got.TaskID.Validate() != nil || got.TaskID != got.RootTaskID {
 		t.Fatalf("response was not mapped: %+v", got)
 	}
 	if got.TurnID.Validate() != nil || got.TraceID.Validate() != nil || got.RootTaskID.Validate() != nil || got.MessageID.Validate() != nil {

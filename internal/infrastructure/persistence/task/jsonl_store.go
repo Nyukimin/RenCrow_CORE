@@ -24,7 +24,7 @@ const (
 )
 
 type JSONLStore struct {
-	mu                sync.Mutex
+	mu                sync.RWMutex
 	root              string
 	statePath         string
 	contextPath       string
@@ -73,6 +73,8 @@ func (s *JSONLStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (dom
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items, err := s.loadTasks(ctx)
 	if err != nil {
 		return domaintask.Task{}, err
@@ -86,6 +88,8 @@ func (s *JSONLStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (dom
 }
 
 func (s *JSONLStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items, err := s.loadTasks(ctx)
 	if err != nil {
 		return nil, err
@@ -126,6 +130,8 @@ func (s *JSONLStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (
 	if err := taskID.Validate(); err != nil {
 		return domaintask.SharedRoleContext{}, err
 	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items, err := readJSONLLines[domaintask.SharedRoleContext](ctx, s.contextPath)
 	if err != nil {
 		return domaintask.SharedRoleContext{}, err
@@ -149,6 +155,8 @@ func (s *JSONLStore) SaveNotification(ctx context.Context, value domaintask.Noti
 }
 
 func (s *JSONLStore) ListNotifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	items, err := readJSONLLines[domaintask.Notification](ctx, s.notificationsPath)
 	if err != nil {
 		return nil, err

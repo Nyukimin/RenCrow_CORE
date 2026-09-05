@@ -57,11 +57,9 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 	job = normalizeBackgroundJobName(job)
 	errorText := compactBackgroundJobText(err.Error(), 600)
 	detail = compactBackgroundJobText(detail, 600)
-	jobKey := sanitizeBackgroundJobKey(job)
-	jobID := fmt.Sprintf("background-%s-%d", jobKey, time.Now().UnixNano())
-	sessionID := "background:" + jobKey
+	taskID := modulecore.NewTaskID()
 	payload := map[string]string{
-		"job_id":         jobID,
+		"task_id":        taskID.String(),
 		"job":            job,
 		"status":         "failed",
 		"error":          errorText,
@@ -74,12 +72,12 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 		payload["detail"] = detail
 	}
 	payloadJSON, _ := json.Marshal(payload)
-	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", jobID, sessionID, "background", job)); publishErr != nil {
-		log.Printf("[BackgroundJob] failure event publication failed job=%s: %v", jobID, publishErr)
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", taskID.String(), "", "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] failure event publication failed task=%s job=%s: %v", taskID, job, publishErr)
 		return
 	}
-	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "job.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", jobID, sessionID, "background", job)); publishErr != nil {
-		log.Printf("[BackgroundJob] notification event publication failed job=%s: %v", jobID, publishErr)
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "task.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", taskID.String(), "", "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] notification event publication failed task=%s job=%s: %v", taskID, job, publishErr)
 	}
 }
 
@@ -89,28 +87,6 @@ func normalizeBackgroundJobName(job string) string {
 		return "background_job"
 	}
 	return job
-}
-
-func sanitizeBackgroundJobKey(job string) string {
-	job = strings.ToLower(normalizeBackgroundJobName(job))
-	var b strings.Builder
-	lastDash := false
-	for _, r := range job {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	key := strings.Trim(b.String(), "-")
-	if key == "" {
-		return "background-job"
-	}
-	return key
 }
 
 func compactBackgroundJobText(text string, limit int) string {
@@ -556,7 +532,6 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 			sessionID = "superagent:" + strings.TrimSpace(item.QueueID)
 		}
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-			JobID:                    strings.TrimPrefix(strings.TrimSpace(item.RunID), "run_lead_"),
 			TraceID:                  string(traceID),
 			SessionID:                sessionID,
 			Channel:                  "superagent",
@@ -575,9 +550,9 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		if action != "chat" && resp.Route == "CHAT" {
 			return fail(fmt.Errorf("run queue item fell back to CHAT route"))
 		}
-		if strings.TrimSpace(resp.JobID) == "" {
-			return fail(fmt.Errorf("run queue item did not produce a job_id"))
+		if strings.TrimSpace(resp.TaskID) == "" {
+			return fail(fmt.Errorf("run queue item did not produce a task_id"))
 		}
-		return fmt.Sprintf("route=%s job_id=%s", resp.Route, resp.JobID), nil
+		return fmt.Sprintf("route=%s task_id=%s", resp.Route, resp.TaskID), nil
 	})
 }

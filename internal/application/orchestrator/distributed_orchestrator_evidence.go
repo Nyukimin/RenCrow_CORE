@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type distributedEvidenceReporter struct {
@@ -21,12 +22,12 @@ func (r *distributedEvidenceReporter) SetReportStore(store ReportStore) {
 	r.reporter = store
 }
 
-func (r *distributedEvidenceReporter) Save(ctx context.Context, jobID, goal, route string, startedAt, finishedAt time.Time, runErr error) {
-	if r.reporter == nil || strings.TrimSpace(jobID) == "" || strings.TrimSpace(goal) == "" {
+func (r *distributedEvidenceReporter) Save(ctx context.Context, taskID modulecore.TaskID, goal, route string, startedAt, finishedAt time.Time, runErr error) {
+	if r.reporter == nil || taskID.IsZero() || taskID.Validate() != nil || strings.TrimSpace(goal) == "" {
 		return
 	}
 	report := domainexecution.ExecutionReport{
-		JobID:        jobID,
+		TaskID:       taskID,
 		Goal:         goal,
 		Route:        strings.ToUpper(strings.TrimSpace(route)),
 		Status:       "passed",
@@ -46,7 +47,7 @@ func (r *distributedEvidenceReporter) Save(ctx context.Context, jobID, goal, rou
 		report.Error = runErr.Error()
 	}
 	if err := r.reporter.Save(ctx, report); err != nil {
-		log.Printf("[DistributedOrch] evidence save failed: job=%s err=%v", jobID, err)
+		log.Printf("[DistributedOrch] evidence save failed: task=%s err=%v", taskID, err)
 	}
 }
 
@@ -66,7 +67,7 @@ func distributedAcceptance(route string) []string {
 }
 
 func distributedVerification(route string, runErr error) []string {
-	items := []string{"viewer jobs に記録されること"}
+	items := []string{"viewer tasks に記録されること"}
 	if strings.TrimSpace(route) != "" {
 		items = append(items, "route="+strings.ToUpper(strings.TrimSpace(route)))
 	}

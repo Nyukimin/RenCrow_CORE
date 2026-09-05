@@ -82,9 +82,8 @@ func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAg
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
 func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {
-	rootTaskID := string(t.RootTaskID())
 	ctx = llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
-		RequestID: rootTaskID, TraceID: string(t.TraceID()), JobID: rootTaskID,
+		TaskID: t.RootTaskID(), TraceID: string(t.TraceID()),
 		Initiator: "shiro", Caller: "agent.shiro", Purpose: "execute_ops_task",
 	})
 	characterPrompt := s.systemPrompt

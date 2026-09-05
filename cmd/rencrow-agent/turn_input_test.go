@@ -55,7 +55,8 @@ func newAgentTurnInputForTest(t *testing.T) conversation.TurnInput {
 
 func TestTurnInputFromAgentMessagePreservesCanonicalProjectionAfterJSONRoundTrip(t *testing.T) {
 	want := newAgentTurnInputForTest(t)
-	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", "legacy-job-is-independent", want)
+	executionTaskID := modulecore.NewTaskID()
+	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", executionTaskID, want)
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}
@@ -68,7 +69,8 @@ func TestTurnInputFromAgentMessagePreservesCanonicalProjectionAfterJSONRoundTrip
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	decoded.JobID = "a-different-legacy-job"
+	secondExecutionTaskID := modulecore.NewTaskID()
+	decoded.TaskID = secondExecutionTaskID
 
 	got, err := turnInputFromAgentMessage(decoded)
 	if err != nil {
@@ -76,6 +78,9 @@ func TestTurnInputFromAgentMessagePreservesCanonicalProjectionAfterJSONRoundTrip
 	}
 	if got.RootTaskID() != want.RootTaskID() || got.TurnID() != want.TurnID() || got.TraceID() != want.TraceID() || got.UserMessageID() != want.UserMessageID() || got.AgentMessageID() != want.AgentMessageID() {
 		t.Fatalf("canonical identities changed: got root=%q turn=%q trace=%q user=%q agent=%q, want root=%q turn=%q trace=%q user=%q agent=%q", got.RootTaskID(), got.TurnID(), got.TraceID(), got.UserMessageID(), got.AgentMessageID(), want.RootTaskID(), want.TurnID(), want.TraceID(), want.UserMessageID(), want.AgentMessageID())
+	}
+	if decoded.TaskID != secondExecutionTaskID || decoded.TaskID == executionTaskID {
+		t.Fatalf("execution TaskID was not independently replaced: got=%q initial=%q", decoded.TaskID, executionTaskID)
 	}
 	if got.SessionID() != want.SessionID() || got.MessageText() != want.MessageText() {
 		t.Fatalf("session/message changed: got session=%q message=%q, want session=%q message=%q", got.SessionID(), got.MessageText(), want.SessionID(), want.MessageText())
@@ -92,12 +97,12 @@ func TestTurnInputFromAgentMessagePreservesCanonicalProjectionAfterJSONRoundTrip
 }
 
 func TestTurnInputFromAgentMessageRejectsMissingOrMalformedProjection(t *testing.T) {
-	legacy := domaintransport.NewMessage("mio", "shiro", "legacy-session", "legacy-job", "message without projection")
-	if _, err := turnInputFromAgentMessage(legacy); err == nil || !strings.Contains(err.Error(), "invalid agent turn input projection") {
+	messageWithoutProjection := domaintransport.NewMessage("mio", "shiro", "session", modulecore.NewTaskID(), "message without projection")
+	if _, err := turnInputFromAgentMessage(messageWithoutProjection); err == nil || !strings.Contains(err.Error(), "invalid agent turn input projection") {
 		t.Fatalf("missing projection error = %v, want bounded projection error", err)
 	}
 
-	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", "legacy-job", newAgentTurnInputForTest(t))
+	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", modulecore.NewTaskID(), newAgentTurnInputForTest(t))
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}

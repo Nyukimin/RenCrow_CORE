@@ -8,19 +8,21 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // SessionLogEntry は1ターン分の会話ログエントリ
 type SessionLogEntry struct {
-	Timestamp string `json:"ts"`
-	SessionID string `json:"session_id"`
-	Channel   string `json:"channel"`
-	Role      string `json:"role"`  // "user" | "assistant"
-	Route     string `json:"route"` // "CHAT" | "CODE" etc. (assistantのみ)
-	JobID     string `json:"job_id,omitempty"`
-	MessageID string `json:"message_id,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-	Content   string `json:"content"`
+	Timestamp string            `json:"ts"`
+	SessionID string            `json:"session_id"`
+	Channel   string            `json:"channel"`
+	Role      string            `json:"role"`  // "user" | "assistant"
+	Route     string            `json:"route"` // "CHAT" | "CODE" etc. (assistantのみ)
+	TaskID    modulecore.TaskID `json:"task_id,omitempty"`
+	MessageID string            `json:"message_id,omitempty"`
+	TraceID   string            `json:"trace_id,omitempty"`
+	Content   string            `json:"content"`
 }
 
 // SessionLogWriter はセッション別の会話ログをJSONLファイルに書き出す
@@ -53,18 +55,23 @@ func (w *SessionLogWriter) WriteUserWithIdentity(sessionID, channel, messageID, 
 }
 
 // WriteAssistant はアシスタント応答を記録する
-func (w *SessionLogWriter) WriteAssistant(sessionID, channel, route, jobID, content string) {
-	w.WriteAssistantWithIdentity(sessionID, channel, route, jobID, "", jobID, content)
+func (w *SessionLogWriter) WriteAssistant(sessionID, channel, route, taskID, content string) {
+	w.WriteAssistantWithIdentity(sessionID, channel, route, taskID, "", "", content)
 }
 
-func (w *SessionLogWriter) WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string) {
+func (w *SessionLogWriter) WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string) {
+	canonicalTaskID, err := modulecore.ParseTaskID(taskID)
+	if err != nil {
+		log.Printf("ERROR: session log assistant task_id invalid task_id=%q err=%v", taskID, err)
+		return
+	}
 	w.write(SessionLogEntry{
 		Timestamp: now(),
 		SessionID: sessionID,
 		Channel:   channel,
 		Role:      "assistant",
 		Route:     route,
-		JobID:     jobID,
+		TaskID:    canonicalTaskID,
 		MessageID: messageID,
 		TraceID:   traceID,
 		Content:   content,

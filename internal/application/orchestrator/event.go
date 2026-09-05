@@ -110,45 +110,50 @@ func (t *eventPublicationFailureTracker) End(traceID modulecore.TraceID) error {
 
 // OrchestratorEvent represents a significant event in message processing
 type OrchestratorEvent struct {
-	Seq        int64                 `json:"seq,omitempty"`         // monotonic event sequence (set by EventHub)
-	Type       string                `json:"type"`                  // message.received, routing.decision, agent.start, agent.response
-	From       string                `json:"from"`                  // source agent
-	To         string                `json:"to,omitempty"`          // target agent
-	Content    string                `json:"content"`               // message content
-	RawContent string                `json:"raw_content,omitempty"` // unedited model output for diagnostics
-	MessageID  string                `json:"message_id,omitempty"`  // globally unique identity of one logical message
-	TurnIndex  int                   `json:"turn_index,omitempty"`  // stable turn order within a session
-	Category   string                `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
-	Strategy   string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
-	Route      string                `json:"route,omitempty"`       // routing category
-	JobID      string                `json:"job_id,omitempty"`      // task identifier
-	TraceID    string                `json:"trace_id,omitempty"`    // root interaction correlation identifier
-	SessionID  string                `json:"session_id,omitempty"`  // session identifier
-	ThreadID   modulecore.ThreadID   `json:"thread_id,omitempty"`   // canonical conversation/work thread identifier
-	ThreadSeq  modulecore.ThreadSeq  `json:"thread_seq,omitempty"`  // canonical thread sequence within the session
-	ThreadKind modulecore.ThreadKind `json:"thread_kind,omitempty"` // canonical thread kind
-	Channel    string                `json:"channel,omitempty"`     // channel identifier
-	ChatID     string                `json:"chat_id,omitempty"`     // chat identifier
-	Timestamp  string                `json:"timestamp"`
+	EventID            modulecore.EventID    `json:"event_id"`              // globally unique immutable event identity
+	EventSeq           modulecore.EventSeq   `json:"event_seq,omitempty"`   // canonical store-owned append sequence
+	Type               string                `json:"type"`                  // message.received, routing.decision, agent.start, agent.response
+	From               string                `json:"from"`                  // source agent
+	To                 string                `json:"to,omitempty"`          // target agent
+	Content            string                `json:"content"`               // message content
+	RawContent         string                `json:"raw_content,omitempty"` // unedited model output for diagnostics
+	MessageID          modulecore.MessageID  `json:"message_id,omitempty"`  // globally unique identity of one logical message
+	TurnIndex          int                   `json:"turn_index,omitempty"`  // stable turn order within a session
+	TurnID             modulecore.TurnID     `json:"turn_id,omitempty"`     // canonical conversation turn identity
+	Category           string                `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
+	Strategy           string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
+	Route              string                `json:"route,omitempty"`       // routing category
+	TaskID             modulecore.TaskID     `json:"task_id,omitempty"`     // durable root or child execution task
+	TraceID            modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
+	CausationEventID   modulecore.EventID    `json:"causation_event_id,omitempty"`
+	DependencyEventIDs []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
+	SessionID          modulecore.SessionID  `json:"session_id,omitempty"`  // session identifier
+	ThreadID           modulecore.ThreadID   `json:"thread_id,omitempty"`   // canonical conversation/work thread identifier
+	ThreadSeq          modulecore.ThreadSeq  `json:"thread_seq,omitempty"`  // canonical thread sequence within the session
+	ThreadKind         modulecore.ThreadKind `json:"thread_kind,omitempty"` // canonical thread kind
+	Channel            string                `json:"channel,omitempty"`     // channel identifier
+	ChatID             string                `json:"chat_id,omitempty"`     // chat identifier
+	Timestamp          string                `json:"timestamp"`
 }
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp
-func NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) OrchestratorEvent {
-	return NewEventWithTraceID(modulecore.NewTraceID(), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+func NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) OrchestratorEvent {
+	return NewEventWithTraceID(modulecore.NewTraceID(), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 }
 
 // NewEventWithTraceID creates an event inside an owner-assigned canonical
 // trace. Callers must create the TraceID once at the root interaction boundary.
-func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, content, route, jobID, sessionID, channel, chatID string) OrchestratorEvent {
+func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, content, route, taskID, sessionID, channel, chatID string) OrchestratorEvent {
 	return OrchestratorEvent{
+		EventID:   modulecore.NewEventID(),
 		Type:      eventType,
 		From:      from,
 		To:        to,
 		Content:   content,
 		Route:     route,
-		JobID:     jobID,
-		TraceID:   string(traceID),
-		SessionID: sessionID,
+		TaskID:    modulecore.TaskID(taskID),
+		TraceID:   traceID,
+		SessionID: modulecore.SessionID(sessionID),
 		Channel:   channel,
 		ChatID:    chatID,
 		Timestamp: time.Now().In(jst).Format(time.RFC3339),
@@ -156,36 +161,36 @@ func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, conten
 }
 
 type eventTraceBindings struct {
-	mu    sync.RWMutex
-	byJob map[string]modulecore.TraceID
+	mu     sync.RWMutex
+	byTask map[string]modulecore.TraceID
 }
 
 func newEventTraceBindings() *eventTraceBindings {
-	return &eventTraceBindings{byJob: make(map[string]modulecore.TraceID)}
+	return &eventTraceBindings{byTask: make(map[string]modulecore.TraceID)}
 }
 
-func (b *eventTraceBindings) Bind(jobID string, traceID modulecore.TraceID) {
-	if b == nil || strings.TrimSpace(jobID) == "" || traceID.Validate() != nil {
+func (b *eventTraceBindings) Bind(taskID string, traceID modulecore.TraceID) {
+	if b == nil || strings.TrimSpace(taskID) == "" || traceID.Validate() != nil {
 		return
 	}
 	b.mu.Lock()
-	b.byJob[jobID] = traceID
+	b.byTask[taskID] = traceID
 	b.mu.Unlock()
 }
 
-func (b *eventTraceBindings) Release(jobID string) {
-	if b == nil || strings.TrimSpace(jobID) == "" {
+func (b *eventTraceBindings) Release(taskID string) {
+	if b == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
 	b.mu.Lock()
-	delete(b.byJob, jobID)
+	delete(b.byTask, taskID)
 	b.mu.Unlock()
 }
 
-func (b *eventTraceBindings) Resolve(jobID string) modulecore.TraceID {
-	if b != nil && strings.TrimSpace(jobID) != "" {
+func (b *eventTraceBindings) Resolve(taskID string) modulecore.TraceID {
+	if b != nil && strings.TrimSpace(taskID) != "" {
 		b.mu.RLock()
-		traceID := b.byJob[jobID]
+		traceID := b.byTask[taskID]
 		b.mu.RUnlock()
 		if traceID.Validate() == nil {
 			return traceID
@@ -215,8 +220,8 @@ func conversationIdentitySession(sessionID, chatID string) string {
 	return "chat"
 }
 
-func conversationMessageID() string {
-	return string(modulecore.NewMessageID())
+func conversationMessageID() modulecore.MessageID {
+	return modulecore.NewMessageID()
 }
 
 type conversationIdentityTracker struct {
@@ -238,50 +243,50 @@ func (t *conversationIdentityTracker) Assign(ev *OrchestratorEvent, preferredMes
 	if t == nil || ev == nil || !isConversationMessageEvent(ev.Type) {
 		return
 	}
-	sessionID := conversationIdentitySession(ev.SessionID, ev.ChatID)
+	sessionID := conversationIdentitySession(string(ev.SessionID), ev.ChatID)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.turns[sessionID]++
 	ev.TurnIndex = t.turns[sessionID]
-	ev.MessageID = strings.TrimSpace(preferredMessageID)
-	if ev.MessageID == "" && ev.Type == "agent.response" && strings.TrimSpace(ev.JobID) != "" {
-		ev.MessageID = t.boundResponseIDs[ev.JobID]
-		delete(t.boundResponseIDs, ev.JobID)
+	ev.MessageID = modulecore.MessageID(strings.TrimSpace(preferredMessageID))
+	if ev.MessageID == "" && ev.Type == "agent.response" && !ev.TaskID.IsZero() {
+		ev.MessageID = modulecore.MessageID(t.boundResponseIDs[ev.TaskID.String()])
+		delete(t.boundResponseIDs, ev.TaskID.String())
 	}
 	if ev.MessageID == "" {
 		ev.MessageID = conversationMessageID()
 	}
-	if ev.Type == "agent.response" && strings.TrimSpace(ev.JobID) != "" {
-		t.responseMessageIDs[ev.JobID] = ev.MessageID
+	if ev.Type == "agent.response" && !ev.TaskID.IsZero() {
+		t.responseMessageIDs[ev.TaskID.String()] = string(ev.MessageID)
 	}
 }
 
-func (t *conversationIdentityTracker) BindResponseMessageID(jobID string, messageID modulecore.MessageID) {
-	if t == nil || strings.TrimSpace(jobID) == "" || messageID.Validate() != nil {
+func (t *conversationIdentityTracker) BindResponseMessageID(taskID string, messageID modulecore.MessageID) {
+	if t == nil || strings.TrimSpace(taskID) == "" || messageID.Validate() != nil {
 		return
 	}
 	t.mu.Lock()
-	t.boundResponseIDs[jobID] = string(messageID)
+	t.boundResponseIDs[taskID] = string(messageID)
 	t.mu.Unlock()
 }
 
-func (t *conversationIdentityTracker) ReleaseResponseMessageID(jobID string) {
-	if t == nil || strings.TrimSpace(jobID) == "" {
+func (t *conversationIdentityTracker) ReleaseResponseMessageID(taskID string) {
+	if t == nil || strings.TrimSpace(taskID) == "" {
 		return
 	}
 	t.mu.Lock()
-	delete(t.boundResponseIDs, jobID)
-	delete(t.responseMessageIDs, jobID)
+	delete(t.boundResponseIDs, taskID)
+	delete(t.responseMessageIDs, taskID)
 	t.mu.Unlock()
 }
 
-func (t *conversationIdentityTracker) TakeResponseMessageID(jobID string) string {
-	if t == nil || strings.TrimSpace(jobID) == "" {
+func (t *conversationIdentityTracker) TakeResponseMessageID(taskID string) string {
+	if t == nil || strings.TrimSpace(taskID) == "" {
 		return ""
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	messageID := t.responseMessageIDs[jobID]
-	delete(t.responseMessageIDs, jobID)
+	messageID := t.responseMessageIDs[taskID]
+	delete(t.responseMessageIDs, taskID)
 	return messageID
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubVerificationReader struct {
@@ -19,9 +20,9 @@ func (s stubVerificationReader) ListRecent(context.Context, int) ([]domainverifi
 	return s.items, nil
 }
 
-func (s stubVerificationReader) GetByJobID(_ context.Context, jobID string) (domainverification.VerificationReport, error) {
+func (s stubVerificationReader) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domainverification.VerificationReport, error) {
 	for _, item := range s.items {
-		if item.JobID == jobID {
+		if item.TaskID == taskID {
 			return item, nil
 		}
 	}
@@ -39,7 +40,8 @@ type errNotFoundForTest struct{}
 func (errNotFoundForTest) Error() string { return "not found" }
 
 func TestHandleVerificationRecent(t *testing.T) {
-	handler := HandleVerificationRecent(stubVerificationReader{items: []domainverification.VerificationReport{testVerificationReport()}})
+	report := testVerificationReport()
+	handler := HandleVerificationRecent(stubVerificationReader{items: []domainverification.VerificationReport{report}})
 	req := httptest.NewRequest(http.MethodGet, "/viewer/verification/recent", nil)
 	rec := httptest.NewRecorder()
 
@@ -48,12 +50,12 @@ func TestHandleVerificationRecent(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected status 200, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "job-1") {
+	if !strings.Contains(rec.Body.String(), string(report.TaskID)) {
 		t.Fatalf("expected report body, got %s", rec.Body.String())
 	}
 }
 
-func TestHandleVerificationDetailRequiresJobID(t *testing.T) {
+func TestHandleVerificationDetailRequiresTaskID(t *testing.T) {
 	handler := HandleVerificationDetail(stubVerificationReader{})
 	req := httptest.NewRequest(http.MethodGet, "/viewer/verification/detail", nil)
 	rec := httptest.NewRecorder()
@@ -62,6 +64,26 @@ func TestHandleVerificationDetailRequiresJobID(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
+func TestHandleVerificationDetailUsesCanonicalTaskIDOnly(t *testing.T) {
+	report := testVerificationReport()
+	handler := HandleVerificationDetail(stubVerificationReader{items: []domainverification.VerificationReport{report}})
+
+	valid := httptest.NewRecorder()
+	handler(valid, httptest.NewRequest(http.MethodGet, "/viewer/verification/detail?task_id="+string(report.TaskID), nil))
+	if valid.Code != http.StatusOK {
+		t.Fatalf("valid TaskID status=%d body=%s", valid.Code, valid.Body.String())
+	}
+
+	legacyKey := "job" + "_" + "id"
+	for _, target := range []string{"/viewer/verification/detail?task_id=bad", "/viewer/verification/detail?" + legacyKey + "=legacy"} {
+		recorder := httptest.NewRecorder()
+		handler(recorder, httptest.NewRequest(http.MethodGet, target, nil))
+		if recorder.Code != http.StatusBadRequest {
+			t.Fatalf("legacy/invalid query accepted: target=%s status=%d", target, recorder.Code)
+		}
 	}
 }
 
@@ -112,8 +134,8 @@ func TestHandleVerificationUnavailableOptional(t *testing.T) {
 
 func testVerificationReport() domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_job-1",
-		JobID:        "job-1",
+		ID:           "verify_1",
+		TaskID:       modulecore.NewTaskID(),
 		SessionID:    "session-1",
 		Route:        "CHAT",
 		Status:       domainverification.StatusWeaklySupported,

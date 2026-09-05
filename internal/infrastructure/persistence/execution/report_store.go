@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // JSONLReportStore persists execution reports in JSONL format.
@@ -72,6 +73,9 @@ func (s *JSONLReportStore) ListRecent(_ context.Context, limit int) ([]domain.Ex
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			continue
 		}
+		if err := r.Validate(); err != nil {
+			continue
+		}
 		items = append(items, r)
 	}
 	if err := sc.Err(); err != nil {
@@ -87,9 +91,9 @@ func (s *JSONLReportStore) ListRecent(_ context.Context, limit int) ([]domain.Ex
 	return items, nil
 }
 
-func (s *JSONLReportStore) GetByJobID(_ context.Context, jobID string) (domain.ExecutionReport, error) {
-	if jobID == "" {
-		return domain.ExecutionReport{}, errors.New("job_id is required")
+func (s *JSONLReportStore) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domain.ExecutionReport, error) {
+	if err := taskID.Validate(); err != nil {
+		return domain.ExecutionReport{}, fmt.Errorf("task_id: %w", err)
 	}
 
 	f, err := os.Open(s.path)
@@ -106,7 +110,10 @@ func (s *JSONLReportStore) GetByJobID(_ context.Context, jobID string) (domain.E
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			continue
 		}
-		if r.JobID != jobID {
+		if err := r.Validate(); err != nil {
+			continue
+		}
+		if r.TaskID != taskID {
 			continue
 		}
 		if !found || r.CreatedAt.After(best.CreatedAt) {
@@ -123,9 +130,9 @@ func (s *JSONLReportStore) GetByJobID(_ context.Context, jobID string) (domain.E
 	return best, nil
 }
 
-// ListRecentUnique returns recent execution reports, deduplicated by JobID.
-// For each JobID, only the latest report (by CreatedAt) is returned.
-// This prevents showing intermediate failures when a job eventually succeeded after retry.
+// ListRecentUnique returns recent execution reports, deduplicated by TaskID.
+// For each TaskID, only the latest report (by CreatedAt) is returned.
+// This prevents showing intermediate failures when a task eventually succeeded after retry.
 func (s *JSONLReportStore) ListRecentUnique(_ context.Context, limit int) ([]domain.ExecutionReport, error) {
 	if limit <= 0 {
 		limit = 20
@@ -137,17 +144,20 @@ func (s *JSONLReportStore) ListRecentUnique(_ context.Context, limit int) ([]dom
 	}
 	defer f.Close()
 
-	// Map: JobID -> latest report
-	latest := make(map[string]domain.ExecutionReport)
+	// Map: TaskID -> latest report
+	latest := make(map[modulecore.TaskID]domain.ExecutionReport)
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		var r domain.ExecutionReport
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			continue
 		}
-		existing, found := latest[r.JobID]
+		if err := r.Validate(); err != nil {
+			continue
+		}
+		existing, found := latest[r.TaskID]
 		if !found || r.CreatedAt.After(existing.CreatedAt) {
-			latest[r.JobID] = r
+			latest[r.TaskID] = r
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -199,6 +209,9 @@ func (s *JSONLReportStore) Summary(_ context.Context) (map[string]map[string]int
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			continue
 		}
+		if err := r.Validate(); err != nil {
+			continue
+		}
 		switch r.Status {
 		case "passed":
 			out["status"]["passed"]++
@@ -228,9 +241,9 @@ func (s *JSONLReportStore) Summary(_ context.Context) (map[string]map[string]int
 	return out, nil
 }
 
-// SummaryUnique returns summary counts with deduplication by JobID.
-// For jobs with multiple reports (e.g., retry/repair), only the latest report is counted.
-// This provides accurate job-level statistics rather than report-level statistics.
+// SummaryUnique returns summary counts with deduplication by TaskID.
+// For tasks with multiple reports (e.g., retry/repair), only the latest report is counted.
+// This provides accurate task-level statistics rather than report-level statistics.
 func (s *JSONLReportStore) SummaryUnique(_ context.Context) (map[string]map[string]int, error) {
 	f, err := os.Open(s.path)
 	if err != nil {
@@ -238,17 +251,20 @@ func (s *JSONLReportStore) SummaryUnique(_ context.Context) (map[string]map[stri
 	}
 	defer f.Close()
 
-	// Map: JobID -> latest report
-	latest := make(map[string]domain.ExecutionReport)
+	// Map: TaskID -> latest report
+	latest := make(map[modulecore.TaskID]domain.ExecutionReport)
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		var r domain.ExecutionReport
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			continue
 		}
-		existing, found := latest[r.JobID]
+		if err := r.Validate(); err != nil {
+			continue
+		}
+		existing, found := latest[r.TaskID]
 		if !found || r.CreatedAt.After(existing.CreatedAt) {
-			latest[r.JobID] = r
+			latest[r.TaskID] = r
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -270,7 +286,7 @@ func (s *JSONLReportStore) SummaryUnique(_ context.Context) (map[string]map[stri
 		},
 	}
 
-	// Count only the latest report for each job
+	// Count only the latest report for each task
 	for _, r := range latest {
 		switch r.Status {
 		case "passed":

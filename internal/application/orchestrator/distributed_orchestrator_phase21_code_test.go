@@ -17,10 +17,10 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	var events []OrchestratorEvent
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-			events = append(events, NewEvent(eventType, from, to, content, route, jobID, sessionID, channel, chatID))
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+			events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 		},
-		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(route routing.Route, userMessage string) string { return "coder3" },
 		func() map[string]interface{} { return map[string]interface{}{"coder3": "cfg"} },
 		func() int { return 0 },
@@ -36,13 +36,13 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 		},
 	)
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").
 		WithSessionID("sess-1").
 		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
 		WithViewerRecipient("mio").
 		WithForcedRoute(routing.RouteCODE3)
-	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
+	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, taskID)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -55,8 +55,8 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	if coderMsg.Context["coder_config"] != "cfg" {
 		t.Fatalf("expected coder_config, got %#v", coderMsg.Context)
 	}
-	if coderMsg.JobID != jobID.String() {
-		t.Fatalf("coder message JobID=%q, want %q", coderMsg.JobID, jobID)
+	if coderMsg.TaskID != taskID {
+		t.Fatalf("coder message task ID=%q, want %q", coderMsg.TaskID, taskID)
 	}
 	gotInput, err := coderMsg.ReconstructTurnInput()
 	if err != nil {
@@ -91,8 +91,8 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 func TestPhase21DistributedCodeExecutionCoordinatorReturnsNoCoderMapped(t *testing.T) {
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
-		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(route routing.Route, userMessage string) string { return "" },
 		func() map[string]interface{} { return nil },
 		func() int { return 0 },
@@ -100,9 +100,9 @@ func TestPhase21DistributedCodeExecutionCoordinatorReturnsNoCoderMapped(t *testi
 		nil,
 	)
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").WithSessionID("sess-1")
-	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE, jobID)
+	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE, taskID)
 	if err == nil || err.Error() != "no coder mapped for route CODE" {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,8 +112,8 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 	var attempts []string
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
-		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(route routing.Route, userMessage string) string { return "coder3" },
 		func() map[string]interface{} { return nil },
 		func() int { return 1 },
@@ -129,9 +129,9 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 		},
 	)
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").WithSessionID("sess-1")
-	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
+	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, taskID)
 	if err != nil {
 		t.Fatalf("Execute failed after retry: %v", err)
 	}
@@ -150,8 +150,8 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 	evidence := &recordingCoderProposalEvidenceRecorder{}
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
-		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
-		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(route routing.Route, userMessage string) string { return "coder3" },
 		func() map[string]interface{} { return nil },
 		func() int { return 0 },
@@ -185,9 +185,9 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 	)
 	coordinator.SetCoderProposalEvidenceRecorder(evidence)
 
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "Skillを更新して", "line", "U123").WithSessionID("sess-1")
-	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
+	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, taskID)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 		t.Fatalf("recorded evidence count=%d, want 1", len(evidence.items))
 	}
 	got := evidence.items[0]
-	if got.JobID != jobID.String() || got.SessionID != "sess-1" || got.Route != "CODE3" || got.Agent != "coder3" {
+	if got.TaskID != taskID || got.SessionID != "sess-1" || got.Route != "CODE3" || got.Agent != "coder3" {
 		t.Fatalf("unexpected evidence metadata: %#v", got)
 	}
 	if got.Patch == "" || got.Plan == "" || got.FormattedResult != "final result" {

@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -24,6 +26,31 @@ type failingWriter struct{}
 
 func (w *failingWriter) Write(p []byte) (int, error) { return 0, fmt.Errorf("write error") }
 func (w *failingWriter) Close() error                { return nil }
+
+type recordingWriteCloser struct {
+	bytes.Buffer
+}
+
+func (w *recordingWriteCloser) Close() error { return nil }
+
+func TestSSHTransportSendRejectsMissingOrMalformedTaskID(t *testing.T) {
+	for _, taskID := range []modulecore.TaskID{"", "not-a-task-id"} {
+		t.Run(string(taskID), func(t *testing.T) {
+			st := NewSSHTransport("192.168.1.100:22", "user", "/path/to/key", "worker")
+			defer st.Close()
+			writer := &recordingWriteCloser{}
+			st.stdin = writer
+
+			msg := domaintransport.NewMessage("mio", "shiro", "s1", taskID, "hello")
+			if err := st.Send(context.Background(), msg); err == nil {
+				t.Fatalf("Send() accepted invalid TaskID %q", taskID)
+			}
+			if writer.Len() != 0 {
+				t.Fatalf("Send() wrote %d bytes for invalid TaskID %q", writer.Len(), taskID)
+			}
+		})
+	}
+}
 
 func setTestHome(t *testing.T, home string) {
 	t.Helper()
@@ -169,7 +196,7 @@ func TestSSHTransport_SendAfterClose(t *testing.T) {
 	st := NewSSHTransport("192.168.1.100:22", "rencrow", "/path/to/key", "worker")
 	st.Close()
 
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "test")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "test")
 	err := st.Send(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected error on send after close")
@@ -203,7 +230,7 @@ func TestSSHTransport_SendWithoutConnection(t *testing.T) {
 	st := NewSSHTransport("192.168.1.100:22", "rencrow", "/path/to/key", "worker")
 	defer st.Close()
 
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "test")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "test")
 	err := st.Send(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected error on send without connection")
@@ -263,7 +290,7 @@ func TestSSHTransport_ReceiveLoop(t *testing.T) {
 	go st.receiveLoop()
 
 	// JSONメッセージを送信
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "hello-receive-loop")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "hello-receive-loop")
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
 	pw.Write(data)
@@ -299,7 +326,7 @@ func TestSSHTransport_ReceiveLoop_InvalidJSON(t *testing.T) {
 	pw.Write([]byte("this is not json\n"))
 
 	// 有効なメッセージ → 受信される
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "valid-after-invalid")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "valid-after-invalid")
 	data, _ := json.Marshal(msg)
 	data = append(data, '\n')
 	pw.Write(data)
@@ -313,6 +340,42 @@ func TestSSHTransport_ReceiveLoop_InvalidJSON(t *testing.T) {
 	}
 	if received.Content != "valid-after-invalid" {
 		t.Errorf("Expected 'valid-after-invalid', got '%s'", received.Content)
+	}
+
+	pw.Close()
+	close(st.done)
+	<-st.receiveLoopDone
+}
+
+func TestSSHTransportReceiveLoopDropsMalformedTaskID(t *testing.T) {
+	pr, pw := io.Pipe()
+
+	st := NewSSHTransport("192.168.1.100:22", "user", "/path/to/key", "worker")
+	st.stdout = pr
+	st.receiveLoopDone = make(chan struct{})
+	go st.receiveLoop()
+
+	invalid := domaintransport.NewMessage("A", "B", "s1", modulecore.TaskID("not-a-task-id"), "invalid")
+	validTaskID := modulecore.NewTaskID()
+	valid := domaintransport.NewMessage("A", "B", "s1", validTaskID, "valid")
+	for _, msg := range []domaintransport.Message{invalid, valid} {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		if _, err := pw.Write(append(data, '\n')); err != nil {
+			t.Fatalf("pipe write error = %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	received, err := st.Receive(ctx)
+	if err != nil {
+		t.Fatalf("Receive() error = %v", err)
+	}
+	if received.TaskID != validTaskID || received.Content != "valid" {
+		t.Fatalf("invalid inbound message was not dropped: %+v", received)
 	}
 
 	pw.Close()
@@ -456,7 +519,7 @@ func TestSSHTransport_ReceiveLoop_ChannelFull(t *testing.T) {
 
 	// 2メッセージ送信 → 1つ目は受信、2つ目はチャネルフル（ドロップ）
 	for i := 0; i < 2; i++ {
-		msg := domaintransport.NewMessage("A", "B", "s1", "j1", "msg")
+		msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "msg")
 		data, _ := json.Marshal(msg)
 		data = append(data, '\n')
 		pw.Write(data)
@@ -488,7 +551,7 @@ func TestSSHTransport_Send_WriteError(t *testing.T) {
 	// stdinをfailingWriterに差し替え
 	st.stdin = &failingWriter{}
 
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "test")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "test")
 	err := st.Send(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected error on write failure")
@@ -508,7 +571,7 @@ func TestSSHTransport_Send_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 即座にキャンセル
 
-	msg := domaintransport.NewMessage("A", "B", "s1", "j1", "test")
+	msg := domaintransport.NewMessage("A", "B", "s1", modulecore.NewTaskID(), "test")
 	err := st.Send(ctx, msg)
 	if err == nil {
 		t.Error("Expected error on cancelled context")

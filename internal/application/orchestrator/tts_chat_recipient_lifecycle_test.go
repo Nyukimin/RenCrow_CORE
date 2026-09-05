@@ -12,7 +12,7 @@ func TestMessageTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 	for _, characterID := range []string{"mio", "shiro", "midori", "kuro"} {
 		t.Run(characterID, func(t *testing.T) {
 			bridge := &mockTTSBridge{}
-			lifecycle := newMessageTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+			lifecycle := newMessageTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 
 			lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 				SessionID: "viewer-chat",
@@ -36,7 +36,7 @@ func TestDistributedTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 	for _, characterID := range []string{"mio", "shiro", "midori", "kuro"} {
 		t.Run(characterID, func(t *testing.T) {
 			bridge := &mockTTSBridge{}
-			lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {})
+			lifecycle := newDistributedTTSLifecycle(bridge, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {})
 
 			ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 				SessionID: "viewer-chat",

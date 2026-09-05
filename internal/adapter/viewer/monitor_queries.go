@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (s *MonitorStore) Status() StatusSnapshot {
@@ -31,6 +32,7 @@ func (s *MonitorStore) Status() StatusSnapshot {
 			UpdatedAt: latestUpdatedAt(agentUpdatedAtValues(coders)...),
 			Items:     coders,
 		},
+		TaskActivities: s.taskActivitySnapshotsLocked(TaskActivityFilter{}),
 	}
 }
 
@@ -65,54 +67,53 @@ func (s *MonitorStore) AgentDetail(ctx context.Context, id string, limit int) (A
 		return AgentDetail{}, false
 	}
 	agent := s.agentSnapshotLocked(id, now)
-	jobs := make([]JobSnapshot, 0, 4)
-	for _, job := range s.jobs {
-		if strings.EqualFold(job.Owner, id) || (agent.JobID != "" && strings.EqualFold(job.JobID, agent.JobID)) {
-			jobs = append(jobs, *job)
+	activities := make([]TaskActivitySnapshot, 0, 4)
+	for _, activity := range s.taskActivities {
+		if strings.EqualFold(activity.Owner, id) || (agent.TaskID != "" && strings.EqualFold(activity.TaskID, agent.TaskID)) {
+			activities = append(activities, *activity)
 		}
 	}
 	s.mu.RUnlock()
 
-	sort.Slice(jobs, func(i, j int) bool {
-		return jobs[i].UpdatedAt > jobs[j].UpdatedAt
-	})
-	if limit > 0 && len(jobs) > limit {
-		jobs = jobs[:limit]
+	sortTaskActivities(activities)
+	if limit > 0 && len(activities) > limit {
+		activities = activities[:limit]
 	}
 
 	events, err := s.ArchivedLogs(ctx, LogFilter{Agent: id, Limit: limit})
 	if err != nil || len(events) == 0 {
 		events = s.Logs(LogFilter{Agent: id, Limit: limit})
 	}
-	return AgentDetail{Agent: agent, ActiveJobs: jobs, Events: events}, true
+	return AgentDetail{Agent: agent, ActiveTaskActivities: activities, Events: events}, true
 }
 
-func (s *MonitorStore) Jobs(filter JobFilter) []JobSnapshot {
+func (s *MonitorStore) TaskActivities(filter TaskActivityFilter) []TaskActivitySnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.taskActivitySnapshotsLocked(filter)
+}
 
-	items := make([]JobSnapshot, 0, len(s.jobs))
-	for _, job := range s.jobs {
-		if filter.Route != "" && !strings.EqualFold(job.Route, filter.Route) {
+func (s *MonitorStore) taskActivitySnapshotsLocked(filter TaskActivityFilter) []TaskActivitySnapshot {
+	items := make([]TaskActivitySnapshot, 0, len(s.taskActivities))
+	for _, activity := range s.taskActivities {
+		if filter.Route != "" && !strings.EqualFold(activity.Route, filter.Route) {
 			continue
 		}
-		if filter.Status != "" && !strings.EqualFold(job.Status, filter.Status) {
+		if filter.Status != "" && !strings.EqualFold(activity.Status, filter.Status) {
 			continue
 		}
-		if filter.Owner != "" && !strings.EqualFold(job.Owner, filter.Owner) {
+		if filter.Owner != "" && !strings.EqualFold(activity.Owner, filter.Owner) {
 			continue
 		}
-		if filter.SessionID != "" && !strings.EqualFold(job.SessionID, filter.SessionID) {
+		if filter.SessionID != "" && !strings.EqualFold(activity.SessionID, filter.SessionID) {
 			continue
 		}
-		if filter.ChatID != "" && !strings.EqualFold(job.ChatID, filter.ChatID) {
+		if filter.ChatID != "" && !strings.EqualFold(activity.ChatID, filter.ChatID) {
 			continue
 		}
-		items = append(items, *job)
+		items = append(items, *activity)
 	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].UpdatedAt > items[j].UpdatedAt
-	})
+	sortTaskActivities(items)
 	if filter.Limit > 0 && len(items) > filter.Limit {
 		items = items[:filter.Limit]
 	}
@@ -130,9 +131,10 @@ func (s *MonitorStore) Logs(filter LogFilter) []orchestrator.OrchestratorEvent {
 			continue
 		}
 		items = append(items, ev)
-		if filter.Limit > 0 && len(items) >= filter.Limit {
-			break
-		}
+	}
+	sortEventsNewestFirst(items)
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
 	}
 	return items
 }
@@ -144,27 +146,64 @@ func (s *MonitorStore) ArchivedLogs(ctx context.Context, filter LogFilter) ([]or
 	return s.archive.Query(ctx, filter)
 }
 
-func (s *MonitorStore) JobDetail(ctx context.Context, jobID string) (JobDetail, bool) {
+func (s *MonitorStore) TaskActivityDetail(ctx context.Context, taskID modulecore.TaskID) (TaskActivityDetail, bool) {
+	if err := taskID.Validate(); err != nil {
+		return TaskActivityDetail{}, false
+	}
+	taskKey := taskID.String()
 	s.mu.RLock()
-	job, ok := s.jobs[jobID]
+	activity, ok := s.taskActivities[taskKey]
 	if !ok {
 		s.mu.RUnlock()
-		return JobDetail{}, false
+		return TaskActivityDetail{}, false
 	}
-	item := *job
+	item := *activity
 	s.mu.RUnlock()
 
-	if events, err := s.ArchivedLogs(ctx, LogFilter{JobID: jobID, Limit: monitorMaxJobEvents}); err == nil && len(events) > 0 {
+	if events, err := s.ArchivedLogs(ctx, LogFilter{TaskID: taskID, Limit: monitorMaxTaskActivityEvents}); err == nil && len(events) > 0 {
 		item.Events = events
 	}
 
 	var evidence *domainexecution.ExecutionReport
 	if s.evidence != nil {
-		if ev, err := s.evidence.GetByJobID(ctx, jobID); err == nil {
+		if ev, err := s.evidence.GetByTaskID(ctx, taskID); err == nil {
 			evidence = &ev
 		}
 	}
-	return JobDetail{Item: item, Evidence: evidence}, true
+	return TaskActivityDetail{Item: item, Evidence: evidence}, true
+}
+
+func sortTaskActivities(items []TaskActivitySnapshot) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].EventSeq != items[j].EventSeq {
+			if items[i].EventSeq == 0 {
+				return false
+			}
+			if items[j].EventSeq == 0 {
+				return true
+			}
+			return items[i].EventSeq > items[j].EventSeq
+		}
+		if items[i].UpdatedAt != items[j].UpdatedAt {
+			return items[i].UpdatedAt > items[j].UpdatedAt
+		}
+		return items[i].TaskID > items[j].TaskID
+	})
+}
+
+func sortEventsNewestFirst(items []orchestrator.OrchestratorEvent) {
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].EventSeq != items[j].EventSeq {
+			if items[i].EventSeq == 0 {
+				return false
+			}
+			if items[j].EventSeq == 0 {
+				return true
+			}
+			return items[i].EventSeq > items[j].EventSeq
+		}
+		return false
+	})
 }
 
 func (s *MonitorStore) Summary() AuditSummary {

@@ -43,8 +43,8 @@ func TestMovieCatalogCrawlerURLComesFromConfigNotLegacyEnvironment(t *testing.T)
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
-			Route: domainrouting.RouteCODE,
-			JobID: "job-1",
+			Route:  domainrouting.RouteCODE,
+			TaskID: modulecore.NewTaskID().String(),
 		},
 	}
 	item := domainsuperagent.RunQueueItem{
@@ -63,11 +63,11 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 	if err != nil {
 		t.Fatalf("ProcessRunQueueItem() error = %v", err)
 	}
-	if summary != "route=CODE job_id=job-1" {
-		t.Fatalf("summary = %q, want route=CODE job_id=job-1", summary)
+	if summary != "route=CODE task_id="+processor.response.TaskID {
+		t.Fatalf("summary = %q, want task correlation", summary)
 	}
 	req := processor.request
-	if req.JobID != "run-1" || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
+	if req.RootTaskID != "" || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
 		t.Fatalf("request = %#v", req)
 	}
 }
@@ -105,8 +105,8 @@ func TestNewSuperAgentRunQueueProcessorRejectsUnsupportedAction(t *testing.T) {
 func TestNewSuperAgentRunQueueProcessorAllowsExplicitChatAction(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
-			Route: domainrouting.RouteCHAT,
-			JobID: "job-chat",
+			Route:  domainrouting.RouteCHAT,
+			TaskID: modulecore.NewTaskID().String(),
 		},
 	}
 	summary, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
@@ -117,16 +117,16 @@ func TestNewSuperAgentRunQueueProcessorAllowsExplicitChatAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessRunQueueItem() error = %v", err)
 	}
-	if summary != "route=CHAT job_id=job-chat" {
-		t.Fatalf("summary = %q, want route=CHAT job_id=job-chat", summary)
+	if summary != "route=CHAT task_id="+processor.response.TaskID {
+		t.Fatalf("summary = %q, want task correlation", summary)
 	}
 }
 
 func TestNewSuperAgentRunQueueProcessorRejectsChatFallbackForResume(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
-			Route: domainrouting.RouteCHAT,
-			JobID: "job-chat",
+			Route:  domainrouting.RouteCHAT,
+			TaskID: modulecore.NewTaskID().String(),
 		},
 	}
 	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
@@ -139,7 +139,7 @@ func TestNewSuperAgentRunQueueProcessorRejectsChatFallbackForResume(t *testing.T
 	}
 }
 
-func TestNewSuperAgentRunQueueProcessorRejectsMissingJobID(t *testing.T) {
+func TestNewSuperAgentRunQueueProcessorRejectsMissingTaskID(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route: domainrouting.RouteCODE,
@@ -150,8 +150,8 @@ func TestNewSuperAgentRunQueueProcessorRejectsMissingJobID(t *testing.T) {
 		Goal:    "run",
 		Action:  "resume",
 	}, modulecore.NewTraceID())
-	if err == nil || !strings.Contains(err.Error(), "job_id") {
-		t.Fatalf("ProcessRunQueueItem() error = %v, want job_id error", err)
+	if err == nil || !strings.Contains(err.Error(), "task_id") {
+		t.Fatalf("ProcessRunQueueItem() error = %v, want task_id error", err)
 	}
 }
 
@@ -178,10 +178,10 @@ func TestNewSuperAgentRunQueueProcessorReportsFailure(t *testing.T) {
 	if !strings.Contains(events[0].Content, "unsupported run queue action") {
 		t.Fatalf("failed content = %q", events[0].Content)
 	}
-	if events[1].Type != "job.notification" || events[1].To != "mio" {
+	if events[1].Type != "task.notification" || events[1].To != "mio" {
 		t.Fatalf("notification event = %#v", events[1])
 	}
-	if events[0].TraceID != string(traceID) || events[1].TraceID != string(traceID) {
+	if events[0].TraceID != traceID || events[1].TraceID != traceID {
 		t.Fatalf("failure traces=%q/%q want %q", events[0].TraceID, events[1].TraceID, traceID)
 	}
 	if processor.called {
@@ -210,7 +210,7 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 		t.Fatalf("payload = %#v", payload)
 	}
 	notification := events[1]
-	if notification.Type != "job.notification" || notification.From != "shiro" || notification.To != "mio" || notification.JobID != failed.JobID || notification.SessionID != failed.SessionID {
+	if notification.Type != "task.notification" || notification.From != "shiro" || notification.To != "mio" || notification.TaskID != failed.TaskID || notification.SessionID != failed.SessionID {
 		t.Fatalf("notification event = %#v", notification)
 	}
 	if !strings.Contains(notification.Content, "Shiro investigation requested") || !strings.Contains(notification.Content, "Mio should report") {

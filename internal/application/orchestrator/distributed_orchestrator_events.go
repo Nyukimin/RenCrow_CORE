@@ -27,31 +27,39 @@ func (p *distributedEventPort) SetListener(listener EventListener) {
 	p.listener = listener
 }
 
-func (p *distributedEventPort) Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
-	ev := NewEventWithTraceID(p.traces.Resolve(jobID), eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+func (p *distributedEventPort) Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+	ev := NewEventWithTraceID(p.traces.Resolve(taskID), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 	_ = p.emitWithMessageID(ev, "")
 }
 
-func (p *distributedEventPort) EmitMessageReceived(req ProcessMessageRequest, jobID string) error {
+func (p *distributedEventPort) EmitMessageReceived(req ProcessMessageRequest, taskID string) error {
 	recipient := normalizeProcessViewerRecipient(req.To)
-	ev := NewEventWithTraceID(p.traces.Resolve(jobID), "message.received", "user", recipient, req.UserMessage, "", jobID, req.SessionID, req.Channel, req.ChatID)
+	ev := NewEventWithTraceID(p.traces.Resolve(taskID), "message.received", "user", recipient, req.UserMessage, "", taskID, req.SessionID, req.Channel, req.ChatID)
 	return p.emitWithMessageID(ev, req.MessageID)
 }
 
-func (p *distributedEventPort) BindTrace(jobID string, traceID modulecore.TraceID) {
-	p.traces.Bind(jobID, traceID)
+func (p *distributedEventPort) Publish(eventType, from, to, content, route, taskID, sessionID, channel, chatID string, causationEventID modulecore.EventID, dependencyEventIDs []modulecore.EventID) (OrchestratorEvent, error) {
+	ev := NewEventWithTraceID(p.traces.Resolve(taskID), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
+	ev.CausationEventID = causationEventID
+	ev.DependencyEventIDs = append([]modulecore.EventID(nil), dependencyEventIDs...)
+	err := p.emitWithMessageID(ev, "")
+	return ev, err
 }
 
-func (p *distributedEventPort) ReleaseTrace(jobID string) {
-	p.traces.Release(jobID)
+func (p *distributedEventPort) BindTrace(taskID string, traceID modulecore.TraceID) {
+	p.traces.Bind(taskID, traceID)
 }
 
-func (p *distributedEventPort) BindResponseMessageID(jobID string, messageID modulecore.MessageID) {
-	p.identities.BindResponseMessageID(jobID, messageID)
+func (p *distributedEventPort) ReleaseTrace(taskID string) {
+	p.traces.Release(taskID)
 }
 
-func (p *distributedEventPort) ReleaseResponseMessageID(jobID string) {
-	p.identities.ReleaseResponseMessageID(jobID)
+func (p *distributedEventPort) BindResponseMessageID(taskID string, messageID modulecore.MessageID) {
+	p.identities.BindResponseMessageID(taskID, messageID)
+}
+
+func (p *distributedEventPort) ReleaseResponseMessageID(taskID string) {
+	p.identities.ReleaseResponseMessageID(taskID)
 }
 
 func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) error {
@@ -69,7 +77,7 @@ func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID
 		if p.publicationFail != nil {
 			p.publicationFail.Record(traceID, err)
 		}
-		log.Printf("[DistributedOrch] ERROR: canonical event publication failed: eventType=%s traceID=%s jobID=%s err=%v", ev.Type, ev.TraceID, ev.JobID, err)
+		log.Printf("[DistributedOrch] ERROR: canonical event publication failed: eventType=%s traceID=%s taskID=%s err=%v", ev.Type, ev.TraceID, ev.TaskID, err)
 		return err
 	}
 	return nil
@@ -82,15 +90,15 @@ func (p *distributedEventPort) PublicationError(traceID modulecore.TraceID) erro
 	return p.publicationFail.Current(traceID)
 }
 
-func (p *distributedEventPort) EmitNote(from, to, content, route, jobID, sessionID, channel, chatID string) {
-	p.Emit("agent.note", from, to, content, route, jobID, sessionID, channel, chatID)
+func (p *distributedEventPort) EmitNote(from, to, content, route, taskID, sessionID, channel, chatID string) {
+	p.Emit("agent.note", from, to, content, route, taskID, sessionID, channel, chatID)
 }
 
 func (p *distributedEventPort) EmitProgress(eventType, from, to, content string, msg domaintransport.Message) {
 	route, channel, chatID := routeAndChannelFromMessage(msg)
-	p.Emit(eventType, from, to, content, route, msg.JobID, msg.SessionID, channel, chatID)
+	p.Emit(eventType, from, to, content, route, msg.TaskID.String(), msg.SessionID, channel, chatID)
 }
 
-func (p *distributedEventPort) TakeResponseMessageID(jobID string) string {
-	return p.identities.TakeResponseMessageID(jobID)
+func (p *distributedEventPort) TakeResponseMessageID(taskID string) string {
+	return p.identities.TakeResponseMessageID(taskID)
 }

@@ -22,20 +22,26 @@ type shutdownOrderEventStore struct {
 
 var errRecordTest = errors.New("record failed")
 
-func (s *shutdownOrderEventStore) Append(_ context.Context, _ modulecore.EventEnvelope) error {
+func (s *shutdownOrderEventStore) Append(ctx context.Context, event modulecore.EventEnvelope) error {
+	_, err := s.AppendSequenced(ctx, event)
+	return err
+}
+
+func (s *shutdownOrderEventStore) AppendSequenced(_ context.Context, event modulecore.EventEnvelope) (modulecore.EventEnvelope, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.hub != nil && len(s.hub.History()) != 0 {
 		s.projectedBeforeAppend = true
 	}
 	if s.appendErr != nil {
-		return s.appendErr
+		return modulecore.EventEnvelope{}, s.appendErr
 	}
 	if s.closed {
-		return errRecordTest
+		return modulecore.EventEnvelope{}, errRecordTest
 	}
 	s.appends++
-	return nil
+	event.EventSeq = modulecore.EventSeq(s.appends)
+	return event, nil
 }
 
 func TestEventRelayPersistsBeforeProjection(t *testing.T) {
@@ -47,7 +53,9 @@ func TestEventRelayPersistsBeforeProjection(t *testing.T) {
 	}
 	relay := &idleAwareEventListener{hub: hub, archive: archive}
 
-	if err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", "job-1", "session-1", "viewer", "chat-1")); err != nil {
+	taskID := modulecore.NewTaskID().String()
+	sessionID := string(modulecore.NewSessionID())
+	if err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", taskID, sessionID, "viewer", "chat-1")); err != nil {
 		t.Fatalf("OnEvent() error = %v", err)
 	}
 
@@ -61,6 +69,9 @@ func TestEventRelayPersistsBeforeProjection(t *testing.T) {
 	if got := len(hub.History()); got != 1 {
 		t.Fatalf("projected events=%d, want 1", got)
 	}
+	if got := hub.History()[0].EventSeq; got != 1 {
+		t.Fatalf("projected event_seq=%d, want persisted 1", got)
+	}
 }
 
 func TestEventRelayAppendFailureReturnsErrorAndDoesNotProject(t *testing.T) {
@@ -72,7 +83,7 @@ func TestEventRelayAppendFailureReturnsErrorAndDoesNotProject(t *testing.T) {
 	}
 	relay := &idleAwareEventListener{hub: hub, archive: archive}
 
-	err = relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", "job-1", "session-1", "viewer", "chat-1"))
+	err = relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
 	if !errors.Is(err, errRecordTest) {
 		t.Fatalf("OnEvent() error = %v, want %v", err, errRecordTest)
 	}
@@ -85,7 +96,7 @@ func TestEventRelayRequiresCanonicalArchive(t *testing.T) {
 	hub := viewer.NewEventHub(4)
 	relay := &idleAwareEventListener{hub: hub}
 
-	err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", "job-1", "session-1", "viewer", "chat-1"))
+	err := relay.OnEvent(orchestrator.NewEvent("message.received", "user", "mio", "hello", "CHAT", modulecore.NewTaskID().String(), string(modulecore.NewSessionID()), "viewer", "chat-1"))
 	if !errors.Is(err, errCanonicalEventArchiveRequired) {
 		t.Fatalf("OnEvent() error = %v, want %v", err, errCanonicalEventArchiveRequired)
 	}

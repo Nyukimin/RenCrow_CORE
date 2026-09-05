@@ -23,8 +23,8 @@ func TestReconstructLocalAgentInputPreservesCanonicalProjection(t *testing.T) {
 		WithViewerRecipient("shiro").
 		WithForcedRoute(routing.RouteOPS).
 		WithRoute(routing.RouteOPS)
-	const jobID = "job-local-independent"
-	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", jobID, input)
+	taskID := modulecore.NewTaskID()
+	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", taskID, input)
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}
@@ -48,8 +48,8 @@ func TestReconstructLocalAgentInputPreservesCanonicalProjection(t *testing.T) {
 	for _, identity := range []string{
 		string(got.RootTaskID()), string(got.TurnID()), string(got.TraceID()), string(got.UserMessageID()), string(got.AgentMessageID()),
 	} {
-		if identity == jobID {
-			t.Fatalf("canonical identity reused transport JobID=%q", jobID)
+		if identity == taskID.String() {
+			t.Fatalf("conversation identity reused transport TaskID=%q", taskID)
 		}
 	}
 }
@@ -64,7 +64,7 @@ func TestReconstructLocalAgentInputRejectsMissingOrMalformedProjection(t *testin
 		t.Fatalf("NewTurnInput() error = %v", err)
 	}
 	input = input.WithSessionID(string(modulecore.NewSessionID())).WithRoute(routing.RouteOPS)
-	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", "job-local", input)
+	message, err := domaintransport.NewTurnInputMessage("mio", "shiro", modulecore.NewTaskID(), input)
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}

@@ -31,6 +31,10 @@ func NewLocalTransport() *LocalTransport {
 
 // Send はメッセージを送信（outboundチャネルに書き込み）
 func (t *LocalTransport) Send(ctx context.Context, msg domaintransport.Message) error {
+	if err := msg.Validate(); err != nil {
+		return fmt.Errorf("validate outbound message: %w", err)
+	}
+
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -55,7 +59,7 @@ func (t *LocalTransport) Receive(ctx context.Context) (domaintransport.Message, 
 		if !ok {
 			return domaintransport.Message{}, fmt.Errorf("transport is closed")
 		}
-		log.Printf("[LocalTransport] recv from=%s to=%s type=%s job=%s", msg.From, msg.To, msg.Type, msg.JobID)
+		log.Printf("[LocalTransport] recv from=%s to=%s type=%s task=%s", msg.From, msg.To, msg.Type, msg.TaskID)
 		return msg, nil
 	case <-ctx.Done():
 		log.Printf("[LocalTransport] recv canceled err=%v", ctx.Err())
@@ -93,6 +97,10 @@ func (t *LocalTransport) GetOutboundChannel() <-chan domaintransport.Message {
 
 // PutInboundMessage はinboundチャネルにメッセージを投入（ノンブロッキング）
 func (t *LocalTransport) PutInboundMessage(msg domaintransport.Message) error {
+	if err := msg.Validate(); err != nil {
+		return fmt.Errorf("validate inbound message: %w", err)
+	}
+
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -102,10 +110,10 @@ func (t *LocalTransport) PutInboundMessage(msg domaintransport.Message) error {
 
 	select {
 	case t.inbound <- msg:
-		log.Printf("[LocalTransport] enqueue from=%s to=%s type=%s job=%s", msg.From, msg.To, msg.Type, msg.JobID)
+		log.Printf("[LocalTransport] enqueue from=%s to=%s type=%s task=%s", msg.From, msg.To, msg.Type, msg.TaskID)
 		return nil
 	default:
-		log.Printf("[LocalTransport] enqueue drop from=%s to=%s type=%s job=%s reason=inbound_full", msg.From, msg.To, msg.Type, msg.JobID)
+		log.Printf("[LocalTransport] enqueue drop from=%s to=%s type=%s task=%s reason=inbound_full", msg.From, msg.To, msg.Type, msg.TaskID)
 		return fmt.Errorf("inbound channel full for agent, message dropped")
 	}
 }

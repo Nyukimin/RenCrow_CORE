@@ -8,25 +8,25 @@ import (
 
 type messageResponseAssembler struct{}
 
-func (messageResponseAssembler) Build(response string, decision routing.Decision, jobID modulecore.TaskID) ProcessMessageResponse {
-	return messageResponseAssembler{}.BuildWithVerification(response, decision, jobID, nil)
+func (messageResponseAssembler) Build(response string, decision routing.Decision, taskID modulecore.TaskID) ProcessMessageResponse {
+	return messageResponseAssembler{}.BuildWithVerification(response, decision, taskID, nil)
 }
 
-func (messageResponseAssembler) BuildWithVerification(response string, decision routing.Decision, jobID modulecore.TaskID, report *domainverification.VerificationReport) ProcessMessageResponse {
+func (messageResponseAssembler) BuildWithVerification(response string, decision routing.Decision, taskID modulecore.TaskID, report *domainverification.VerificationReport) ProcessMessageResponse {
 	return ProcessMessageResponse{
 		Response:     response,
 		Route:        decision.Route,
 		Confidence:   decision.Confidence,
-		JobID:        jobID.String(),
+		TaskID:       taskID.String(),
 		Verification: report,
 	}
 }
 
-func (messageResponseAssembler) BuildChatCommand(response string, jobID modulecore.TaskID) ProcessMessageResponse {
+func (messageResponseAssembler) BuildChatCommand(response string, taskID modulecore.TaskID) ProcessMessageResponse {
 	return ProcessMessageResponse{
 		Response:   response,
 		Route:      routing.RouteCHAT,
 		Confidence: 1.0,
-		JobID:      jobID.String(),
+		TaskID:     taskID.String(),
 	}
 }

@@ -9,7 +9,7 @@ import (
 
 // turnInputFromAgentMessage restores the canonical conversation input carried
 // by an Agent transport message. Standalone consumers must never synthesize
-// identities or derive them from the legacy JobID field.
+// identities or derive one canonical identity from another.
 func turnInputFromAgentMessage(msg domaintransport.Message) (conversation.TurnInput, error) {
 	input, err := msg.ReconstructTurnInput()
 	if err != nil {

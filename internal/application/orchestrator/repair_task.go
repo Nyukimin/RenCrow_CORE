@@ -12,7 +12,7 @@ import (
 )
 
 type ProcessRepairRequest struct {
-	JobID       string
+	TaskID      modulecore.TaskID
 	SessionID   string
 	Reason      string
 	Instruction string
@@ -25,17 +25,16 @@ type ProcessRepairRequest struct {
 type ProcessRepairResponse struct {
 	Response string
 	Route    routing.Route
-	JobID    string
+	TaskID   modulecore.TaskID
 }
 
 func normalizeRepairProcessRequest(req ProcessRepairRequest) ProcessRepairRequest {
-	req.JobID = strings.TrimSpace(req.JobID)
-	if req.JobID == "" {
-		req.JobID = modulecore.NewTaskID().String()
+	if req.TaskID.IsZero() {
+		req.TaskID = modulecore.NewTaskID()
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
-		req.SessionID = "repair-" + req.JobID
+		req.SessionID = "repair-" + req.TaskID.String()
 	}
 	req.Reason = strings.TrimSpace(req.Reason)
 	if req.Reason == "" {
@@ -61,7 +60,7 @@ func normalizeRepairProcessRequest(req ProcessRepairRequest) ProcessRepairReques
 }
 
 func repairTaskMessage(req ProcessRepairRequest) string {
-	return fmt.Sprintf(`Repair Job
+	return fmt.Sprintf(`Repair Task
 
 reason: %s
 target_route: %s
@@ -79,7 +78,7 @@ Requirements:
 - Do not turn illustrative Markdown code blocks into patches; patch blocks must target real files.
 - If no safe concrete code change is identified, return a diagnostic report instead of a patch.
 - Produce a concrete plan and patch when code changes are needed.
-- Keep Chat/Mio out of the repair intake path; report through job events.
+- Keep Chat/Mio out of the repair intake path; report through Task events.
 - Do not perform destructive operations in the Coder proposal; Worker applies executable changes.`, req.Reason, req.TargetRoute, req.TargetAgent, req.Recent, req.Source, req.Instruction)
 }
 
@@ -101,7 +100,10 @@ func repairTurnInput(req ProcessRepairRequest, route routing.Route) (conversatio
 	if err != nil {
 		return conversation.TurnInput{}, err
 	}
-	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), repairTaskMessage(req), address)
+	if err := req.TaskID.Validate(); err != nil {
+		return conversation.TurnInput{}, fmt.Errorf("task_id is invalid: %w", err)
+	}
+	input, err := conversation.NewTurnInput(req.TaskID, repairTaskMessage(req), address)
 	if err != nil {
 		return conversation.TurnInput{}, err
 	}
@@ -115,25 +117,24 @@ func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepa
 	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	jobID, err := modulecore.ParseTaskID(req.JobID)
-	if err != nil {
-		return ProcessRepairResponse{}, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	if err := req.TaskID.Validate(); err != nil {
+		return ProcessRepairResponse{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
 	startedAt := time.Now()
 	if o.events != nil {
-		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
 	}
-	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, route, jobID, "")
+	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, route, req.TaskID, "")
 	if err != nil {
 		if o.events != nil {
-			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+			o.events.Emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
 		}
 		return ProcessRepairResponse{}, err
 	}
 	if o.events != nil {
-		o.events.Emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+		o.events.Emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair Task completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
 	}
-	return ProcessRepairResponse{Response: response, Route: route, JobID: req.JobID}, nil
+	return ProcessRepairResponse{Response: response, Route: route, TaskID: req.TaskID}, nil
 }
 
 func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {
@@ -143,17 +144,16 @@ func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req Process
 	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	jobID, err := modulecore.ParseTaskID(req.JobID)
-	if err != nil {
-		return ProcessRepairResponse{}, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	if err := req.TaskID.Validate(); err != nil {
+		return ProcessRepairResponse{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
 	startedAt := time.Now()
-	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
-	response, err := o.routes.ExecuteTurnInput(ctx, input, route, jobID, "")
+	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
+	response, err := o.routes.ExecuteTurnInput(ctx, input, route, req.TaskID, "")
 	if err != nil {
-		o.emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
+		o.emit("repair.failed", "shiro", "repair", err.Error(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
 		return ProcessRepairResponse{}, err
 	}
-	o.emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair job completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.JobID, req.SessionID, "viewer", "repair")
-	return ProcessRepairResponse{Response: response, Route: route, JobID: req.JobID}, nil
+	o.emit("repair.completed", "shiro", "repair", fmt.Sprintf("repair Task completed in %s", time.Since(startedAt).Round(time.Millisecond)), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair")
+	return ProcessRepairResponse{Response: response, Route: route, TaskID: req.TaskID}, nil
 }

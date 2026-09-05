@@ -84,7 +84,7 @@ func buildTTSClientBridge(
 		})
 		if metricErr == nil {
 			route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID))
+			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID))
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
@@ -92,8 +92,8 @@ func buildTTSClientBridge(
 			return
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
-		event.MessageID = payload.MessageID
+		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID)
+		event.MessageID = modulecore.MessageID(payload.MessageID)
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
 	}
@@ -126,8 +126,8 @@ func buildTTSClientBridge(
 				log.Printf("WARN: tts session completed payload marshal failed: %v", err)
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", payload.ResponseID, payload.SessionID, route.Channel, route.ChatID)
-				event.MessageID = payload.MessageID
+				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID)
+				event.MessageID = modulecore.MessageID(payload.MessageID)
 				event.TurnIndex = payload.TurnIndex
 				onChunk(event)
 			}
@@ -152,6 +152,25 @@ func buildTTSClientBridge(
 	})
 	log.Printf("TTS RenCrow_TTS Gateway bridge enabled (/api/tts base=%s)", gatewayBaseURL)
 	return bridge
+}
+
+// canonicalTaskIDText projects a response correlation into the canonical
+// Event TaskID only when the response itself is task-owned. IdleChat response
+// IDs are a separate public correlation and must remain in the event payload.
+func canonicalTaskIDText(responseID string) string {
+	taskID, err := modulecore.ParseTaskID(strings.TrimSpace(responseID))
+	if err != nil {
+		return ""
+	}
+	return taskID.String()
+}
+
+func canonicalSessionIDText(sessionID string) string {
+	value := modulecore.SessionID(strings.TrimSpace(sessionID))
+	if value.Validate() != nil {
+		return ""
+	}
+	return string(value)
 }
 
 func readTTSOwnerToken(path string) (string, error) {

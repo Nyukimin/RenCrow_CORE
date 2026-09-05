@@ -182,7 +182,7 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID:       taskID.String(),
+		RootTaskID:  taskID.String(),
 		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
@@ -196,10 +196,10 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	if resp.Response != "Hello from Mio!" {
 		t.Errorf("Expected 'Hello from Mio!', got '%s'", resp.Response)
 	}
-	if resp.JobID != taskID.String() {
-		t.Errorf("JobID = %q, want %q", resp.JobID, taskID)
+	if resp.TaskID != taskID.String() {
+		t.Errorf("TaskID = %q, want %q", resp.TaskID, taskID)
 	}
-	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.TaskID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)
 	}
 }
@@ -229,14 +229,15 @@ func TestDistributedEventPortStopsAfterFirstPublicationFailure(t *testing.T) {
 	listener := &failingEventListener{err: wantErr}
 	port := newDistributedEventPort(listener)
 	traceID := modulecore.NewTraceID()
-	port.BindTrace("job-1", traceID)
+	taskID := modulecore.NewTaskID().String()
+	port.BindTrace(taskID, traceID)
 	port.publicationFail.Begin(traceID, nil)
 	defer port.publicationFail.End(traceID)
 
-	if err := port.EmitMessageReceived(ProcessMessageRequest{SessionID: "session-1", UserMessage: "hello"}, "job-1"); !errors.Is(err, wantErr) {
+	if err := port.EmitMessageReceived(ProcessMessageRequest{SessionID: "session-1", UserMessage: "hello"}, taskID); !errors.Is(err, wantErr) {
 		t.Fatalf("first publication error=%v, want %v", err, wantErr)
 	}
-	port.Emit("agent.response", "mio", "user", "must not project", "CHAT", "job-1", "session-1", "viewer", "viewer-user")
+	port.Emit("agent.response", "mio", "user", "must not project", "CHAT", taskID, "session-1", "viewer", "viewer-user")
 	if listener.calls != 1 {
 		t.Fatalf("listener calls=%d, want one call before trace failure closed publication", listener.calls)
 	}
@@ -439,12 +440,12 @@ func TestDistributedOrchestrator_ProcessMessage_WildRouteUsesWildAgentWithoutFal
 	if resp.Route != routing.RouteWILD || resp.Response != "wild response" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	eventIndex := distIndexOfEvent(rec.events, "agent.response", "wild", "mio", "WILD")
+	eventIndex := distIndexOfEvent(rec.events, "agent.response", "midori", "mio", "WILD")
 	if eventIndex < 0 {
 		t.Fatalf("expected wild response evidence, got %+v", rec.events)
 	}
 	responseEvent := rec.events[eventIndex]
-	if responseEvent.SessionID != resp.SessionID || responseEvent.JobID != resp.JobID {
+	if string(responseEvent.SessionID) != resp.SessionID || responseEvent.TaskID.String() != resp.TaskID {
 		t.Fatalf("wild response evidence is not tied to the same flow: event=%+v response=%+v", responseEvent, resp)
 	}
 }
@@ -666,7 +667,7 @@ func TestDistributedOrchestrator_ProcessMessage_AnalyzeRouteUsesHeavyAgentWithou
 	if resp.Route != routing.RouteANALYZE || resp.Response != "heavy response" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if distIndexOfEvent(rec.events, "agent.response", "heavy", "mio", "ANALYZE") < 0 {
+	if distIndexOfEvent(rec.events, "agent.response", "kuro", "mio", "ANALYZE") < 0 {
 		t.Fatalf("expected heavy response evidence, got %+v", rec.events)
 	}
 	if len(canonicalEvents.events) != 2 {
@@ -768,15 +769,15 @@ func TestDistributedOrchestrator_ProcessMessage_SavesEvidenceOnSuccess(t *testin
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if resp.JobID == "" {
-		t.Fatal("expected job id")
+	if resp.TaskID == "" {
+		t.Fatal("expected task id")
 	}
 	if len(reporter.reports) != 1 {
 		t.Fatalf("expected 1 report, got %d", len(reporter.reports))
 	}
 	report := reporter.reports[0]
-	if report.JobID != resp.JobID {
-		t.Fatalf("expected report job id %s, got %s", resp.JobID, report.JobID)
+	if report.TaskID.String() != resp.TaskID {
+		t.Fatalf("expected report task id %s, got %s", resp.TaskID, report.TaskID)
 	}
 	if report.Status != "passed" {
 		t.Fatalf("expected passed report, got %s", report.Status)
@@ -916,21 +917,21 @@ func TestDistributedOrchestrator_TTSBridge_StreamsSentenceChunks(t *testing.T) {
 
 func TestDistributedWaitTimeout(t *testing.T) {
 	t.Run("default chat path stays short", func(t *testing.T) {
-		msg := domaintransport.NewMessage("mio", "shiro", "sess", "job", "hello")
+		msg := domaintransport.NewMessage("mio", "shiro", "sess", modulecore.NewTaskID(), "hello")
 		if got := distributedWaitTimeout("shiro", msg); got != distributedDefaultTimeout {
 			t.Fatalf("expected default timeout %s, got %s", distributedDefaultTimeout, got)
 		}
 	})
 
 	t.Run("coder path gets extended timeout", func(t *testing.T) {
-		msg := domaintransport.NewMessage("shiro", "coder1", "sess", "job", "code please")
+		msg := domaintransport.NewMessage("shiro", "coder1", "sess", modulecore.NewTaskID(), "code please")
 		if got := distributedWaitTimeout("coder1", msg); got != distributedCoderTimeout {
 			t.Fatalf("expected coder timeout %s, got %s", distributedCoderTimeout, got)
 		}
 	})
 
 	t.Run("worker proposal execution gets extended timeout", func(t *testing.T) {
-		msg := domaintransport.NewMessage("mio", "shiro", "sess", "job", "Execute coder proposal")
+		msg := domaintransport.NewMessage("mio", "shiro", "sess", modulecore.NewTaskID(), "Execute coder proposal")
 		msg.Proposal = proposalForTest("plan", "patch")
 		if got := distributedWaitTimeout("shiro", msg); got != distributedWorkerTimeout {
 			t.Fatalf("expected worker timeout %s, got %s", distributedWorkerTimeout, got)
@@ -1147,9 +1148,25 @@ func (m *distMockTransport) Receive(ctx context.Context) (domaintransport.Messag
 	if len(m.responses) > 0 {
 		resp := m.responses[0]
 		m.responses = m.responses[1:]
-		return resp, nil
+		return m.correlateResponse(resp), nil
 	}
-	return m.response, nil
+	return m.correlateResponse(m.response), nil
+}
+
+func (m *distMockTransport) correlateResponse(resp domaintransport.Message) domaintransport.Message {
+	if len(m.sentMessages) > 0 {
+		request := m.sentMessages[len(m.sentMessages)-1]
+		if resp.TaskID.IsZero() {
+			resp.TaskID = request.TaskID
+		}
+		if resp.SessionID == "" {
+			resp.SessionID = request.SessionID
+		}
+	}
+	if resp.Timestamp == "" {
+		resp.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	return resp
 }
 
 func (m *distMockTransport) Close() error {
@@ -1202,7 +1219,7 @@ func TestDistributedOrchestrator_SSHExecution(t *testing.T) {
 		if err != nil {
 			return
 		}
-		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.JobID, shiroResponse)
+		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.TaskID, shiroResponse)
 		response.Type = domaintransport.MessageTypeResult
 		_ = mioTransport.PutInboundMessage(response)
 	}()
@@ -1261,7 +1278,7 @@ func TestDistributedOrchestrator_DistributedExecution(t *testing.T) {
 			return
 		}
 
-		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.JobID, "task executed by Shiro")
+		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.TaskID, "task executed by Shiro")
 		response.Type = domaintransport.MessageTypeResult
 		mioTransport.PutInboundMessage(response)
 	}()
@@ -1325,7 +1342,7 @@ func TestDistributedOrchestrator_CodeRoute_FinalResponseComesFromMio(t *testing.
 			return
 		}
 
-		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.JobID, shiroResponse2)
+		response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.TaskID, shiroResponse2)
 		response.Type = domaintransport.MessageTypeResult
 		_ = mioTransport.PutInboundMessage(response)
 	}()
@@ -1410,7 +1427,7 @@ func TestDistributedOrchestrator_CodeRoute_RetriesOnWorkerRetryableFailure(t *te
 				return
 			}
 
-			response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.JobID, "worker attempt failed")
+			response := domaintransport.NewMessage("shiro", msg.From, msg.SessionID, msg.TaskID, "worker attempt failed")
 			response.Type = domaintransport.MessageTypeResult
 			if attempt == 0 {
 				response.Content = "worker retry requested"

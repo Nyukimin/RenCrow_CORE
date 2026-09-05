@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func writeToolChatSSE(w http.ResponseWriter, chunks ...string) {
@@ -46,10 +47,11 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second).
 		WithRenCrowExecution("shiro", "worker", "worker")
+	taskID := modulecore.NewTaskID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
 		RequestID: "request-1",
 		TraceID:   "trace-1",
-		JobID:     "job-1",
+		TaskID:    taskID,
 		SessionID: "session-1",
 		Initiator: "shiro",
 		Caller:    "orchestrator.ops",
@@ -68,7 +70,7 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		"execution_alias": "worker",
 		"request_id":      "request-1",
 		"trace_id":        "trace-1",
-		"job_id":          "job-1",
+		"task_id":         string(taskID),
 		"session_id":      "session-1",
 		"initiator":       "shiro",
 		"caller":          "orchestrator.ops",
@@ -77,6 +79,9 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
+	}
+	if _, ok := metadata["job_id"]; ok {
+		t.Fatalf("rencrow metadata contains retired job_id: %#v", metadata)
 	}
 }
 

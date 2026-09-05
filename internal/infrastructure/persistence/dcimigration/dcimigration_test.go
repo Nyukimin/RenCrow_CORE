@@ -1359,16 +1359,29 @@ func writeEventStoreTestDB(t *testing.T, path string, eventIDs []string) {
 	t.Helper()
 	db := openTestDB(t, path)
 	defer db.Close()
-	mustExec(t, db, `CREATE TABLE event_envelope (event_id TEXT PRIMARY KEY NOT NULL, trace_id TEXT NOT NULL, schema_version TEXT NOT NULL, event_type TEXT NOT NULL, component_id TEXT NOT NULL, occurred_at TEXT NOT NULL, envelope_json TEXT NOT NULL)`)
+	mustExec(t, db, `CREATE TABLE event_envelope (event_id TEXT PRIMARY KEY NOT NULL, event_seq INTEGER NOT NULL UNIQUE, trace_id TEXT NOT NULL, schema_version TEXT NOT NULL, event_type TEXT NOT NULL, component_id TEXT NOT NULL, occurred_at TEXT NOT NULL, envelope_json TEXT NOT NULL)`)
+	mustExec(t, db, `CREATE UNIQUE INDEX event_envelope_seq_idx ON event_envelope(event_seq)`)
 	mustExec(t, db, `CREATE TABLE event_dependency (event_id TEXT NOT NULL, dependency_event_id TEXT NOT NULL, relation_type TEXT NOT NULL CHECK (relation_type IN ('causation','dependency')), PRIMARY KEY(event_id,dependency_event_id), FOREIGN KEY(event_id) REFERENCES event_envelope(event_id) ON UPDATE RESTRICT ON DELETE RESTRICT, FOREIGN KEY(dependency_event_id) REFERENCES event_envelope(event_id) ON UPDATE RESTRICT ON DELETE RESTRICT)`)
 	for _, eventID := range eventIDs {
 		event := canonicalTestEvent(t, modulecore.EventID(eventID), "conversation.message.received", modulecore.NewTraceID())
-		encoded, err := json.Marshal(event)
-		if err != nil {
+		insertEventStoreTestEvent(t, db, event, event.TraceID)
+	}
+}
+
+func insertEventStoreTestEvent(t *testing.T, db *sql.DB, event modulecore.EventEnvelope, storedTrace modulecore.TraceID) {
+	t.Helper()
+	if event.EventSeq == 0 {
+		var maximum int64
+		if err := db.QueryRow(`SELECT COALESCE(MAX(event_seq), 0) FROM event_envelope`).Scan(&maximum); err != nil {
 			t.Fatal(err)
 		}
-		mustExec(t, db, `INSERT INTO event_envelope(event_id,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?)`, eventID, event.TraceID, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
+		event.EventSeq = modulecore.EventSeq(maximum + 1)
 	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, `INSERT INTO event_envelope(event_id,event_seq,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?,?)`, event.EventID, event.EventSeq, storedTrace, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
 }
 
 func writeL1TestDB(t *testing.T, path, searchID, evidenceID string, includeEvidence, promoted bool) {
@@ -1515,11 +1528,7 @@ func addCollisionEvent(t *testing.T, path, searchID string) {
 		t.Fatal(err)
 	}
 	event := canonicalTestEvent(t, modulecore.EventID(eventID), "conversation.message.received", modulecore.TraceID(traceID))
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustExec(t, db, `INSERT INTO event_envelope(event_id,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?)`, event.EventID, event.TraceID, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
+	insertEventStoreTestEvent(t, db, event, event.TraceID)
 }
 
 func canonicalTestEvent(t *testing.T, eventID modulecore.EventID, eventType string, traceID modulecore.TraceID) modulecore.EventEnvelope {
@@ -1537,11 +1546,7 @@ func addExistingDCIEvent(t *testing.T, path string) {
 	db := openTestDB(t, path)
 	defer db.Close()
 	event := canonicalTestEvent(t, modulecore.NewEventID(), "dci.search.completed", modulecore.NewTraceID())
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustExec(t, db, `INSERT INTO event_envelope(event_id,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?)`, event.EventID, event.TraceID, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
+	insertEventStoreTestEvent(t, db, event, event.TraceID)
 }
 
 func mutateEventEnvelopeColumnMismatch(t *testing.T, path string) {
@@ -1549,12 +1554,8 @@ func mutateEventEnvelopeColumnMismatch(t *testing.T, path string) {
 	db := openTestDB(t, path)
 	defer db.Close()
 	event := canonicalTestEvent(t, modulecore.NewEventID(), "conversation.message.received", modulecore.NewTraceID())
-	encoded, err := json.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
 	otherTrace := modulecore.NewTraceID()
-	mustExec(t, db, `INSERT INTO event_envelope(event_id,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?)`, event.EventID, otherTrace, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
+	insertEventStoreTestEvent(t, db, event, otherTrace)
 }
 
 func mutateEventDependencyMismatch(t *testing.T, path string) {
@@ -1566,11 +1567,7 @@ func mutateEventDependencyMismatch(t *testing.T, path string) {
 	child := canonicalTestEvent(t, modulecore.NewEventID(), "routing.selected", traceID)
 	child.CausationEventID = parent.EventID
 	for _, event := range []modulecore.EventEnvelope{parent, child} {
-		encoded, err := json.Marshal(event)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mustExec(t, db, `INSERT INTO event_envelope(event_id,trace_id,schema_version,event_type,component_id,occurred_at,envelope_json) VALUES(?,?,?,?,?,?,?)`, event.EventID, event.TraceID, event.SchemaVersion, event.EventType, event.ComponentID, event.OccurredAt.Format(time.RFC3339Nano), encoded)
+		insertEventStoreTestEvent(t, db, event, event.TraceID)
 	}
 	// Deliberately persist the same edge with the wrong relation type.  The
 	// envelope says causation; a loose row-level validator used to accept this.

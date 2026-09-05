@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ProposalPatchArgs struct {
@@ -21,7 +23,26 @@ func IsSupportedTool(tool string) bool {
 	return NormalizeToolName(tool) == ToolProposalPatch
 }
 
+// Validate enforces the canonical correlation identity at the Worker boundary.
+func (action Action) Validate() error {
+	if err := action.TaskID.Validate(); err != nil {
+		return fmt.Errorf("worker action task_id is invalid: %w", err)
+	}
+	return nil
+}
+
+// Validate enforces the canonical correlation identity on a Worker result.
+func (result Result) Validate() error {
+	if err := result.TaskID.Validate(); err != nil {
+		return fmt.Errorf("worker result task_id is invalid: %w", err)
+	}
+	return nil
+}
+
 func ExtractProposalPatchArgs(action Action) (ProposalPatchArgs, error) {
+	if err := action.Validate(); err != nil {
+		return ProposalPatchArgs{}, err
+	}
 	if !IsSupportedTool(action.Tool) {
 		return ProposalPatchArgs{}, fmt.Errorf("unsupported worker tool: %s", action.Tool)
 	}
@@ -78,7 +99,7 @@ func MetadataFromPatchExecution(summary *PatchExecutionSummary) map[string]any {
 	}
 }
 
-func BuildFailedResult(jobID JobID, status Status, message string, startedAt time.Time, finishedAt time.Time) Result {
+func BuildFailedResult(taskID modulecore.TaskID, status Status, message string, startedAt time.Time, finishedAt time.Time) Result {
 	if status == "" {
 		status = StatusFailed
 	}
@@ -86,7 +107,7 @@ func BuildFailedResult(jobID JobID, status Status, message string, startedAt tim
 		finishedAt = time.Now().UTC()
 	}
 	return Result{
-		JobID:      jobID,
+		TaskID:     taskID,
 		Status:     status,
 		Error:      message,
 		StartedAt:  startedAt,
@@ -94,12 +115,12 @@ func BuildFailedResult(jobID JobID, status Status, message string, startedAt tim
 	}
 }
 
-func BuildPatchExecutionResult(jobID JobID, summary *PatchExecutionSummary, startedAt time.Time, finishedAt time.Time) Result {
+func BuildPatchExecutionResult(taskID modulecore.TaskID, summary *PatchExecutionSummary, startedAt time.Time, finishedAt time.Time) Result {
 	if finishedAt.IsZero() {
 		finishedAt = time.Now().UTC()
 	}
 	return Result{
-		JobID:      jobID,
+		TaskID:     taskID,
 		Status:     ResultStatusFromPatchExecution(summary),
 		Output:     OutputFromPatchExecution(summary),
 		StartedAt:  startedAt,
@@ -117,5 +138,10 @@ func BuildActionErrorResult(action Action, err error, startedAt time.Time, finis
 	if err != nil {
 		message = err.Error()
 	}
-	return BuildFailedResult(action.JobID, status, message, startedAt, finishedAt)
+	taskID := action.TaskID
+	if taskID.Validate() != nil {
+		// An invalid inbound identifier cannot become result correlation state.
+		taskID = ""
+	}
+	return BuildFailedResult(taskID, status, message, startedAt, finishedAt)
 }

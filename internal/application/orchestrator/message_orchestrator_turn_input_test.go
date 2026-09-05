@@ -7,16 +7,14 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestMessageTurnInputBuilderPreservesCanonicalInputAndCompanionJobID(t *testing.T) {
+func TestMessageTurnInputBuilderPreservesCanonicalInputAndRootTaskID(t *testing.T) {
 	turnID := modulecore.NewTurnID()
 	traceID := modulecore.NewTraceID()
 	rootTaskID := modulecore.NewTaskID()
 	userMessageID := modulecore.NewMessageID()
 	agentMessageID := modulecore.NewMessageID()
-	jobID := modulecore.NewTaskID()
 	attachments := []attachment.Attachment{{ID: "att-1"}}
 	req := ProcessMessageRequest{
-		JobID:          jobID.String(),
 		TurnID:         string(turnID),
 		TraceID:        string(traceID),
 		RootTaskID:     string(rootTaskID),
@@ -34,18 +32,15 @@ func TestMessageTurnInputBuilderPreservesCanonicalInputAndCompanionJobID(t *test
 		t.Fatalf("ensureProcessRequestIdentity() error = %v", err)
 	}
 	builder := newMessageTurnInputBuilder(func(string, string, string, string, string, string, string, string, string) {}, func() bool { return false })
-	input, jobID, ttsSessionID, err := builder.Build(req)
+	input, taskID, ttsSessionID, err := builder.Build(req)
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
 	if ttsSessionID != "" {
 		t.Fatalf("tts session = %q, want empty", ttsSessionID)
 	}
-	if jobID.String() != req.JobID {
-		t.Fatalf("companion job ID = %q, want %q", jobID, req.JobID)
-	}
-	if jobID.String() == req.RootTaskID {
-		t.Fatal("companion JobID must remain independent from RootTaskID")
+	if taskID.String() != req.RootTaskID {
+		t.Fatalf("task ID = %q, want root task ID %q", taskID, req.RootTaskID)
 	}
 	if input.TurnID() != turnID || input.TraceID() != traceID || input.RootTaskID() != rootTaskID || input.UserMessageID() != userMessageID || input.AgentMessageID() != agentMessageID {
 		t.Fatalf("conversation identity changed: turn=%q trace=%q root=%q user=%q agent=%q", input.TurnID(), input.TraceID(), input.RootTaskID(), input.UserMessageID(), input.AgentMessageID())

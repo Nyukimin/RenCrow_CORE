@@ -565,7 +565,7 @@ func TestRunBacklogRunnerStartsActiveItemOnce(t *testing.T) {
 		t.Fatalf("runner did not send code2 backlog prompt: %q", agent.lastMsg)
 	}
 	observation, ok := llm.ExecutionObservationFromContext(agent.lastCtx)
-	if !ok || observation.Caller != "heartbeat.backlog" || observation.Purpose != "process_backlog_item" || observation.JobID == "" || observation.RequestID != observation.JobID {
+	if !ok || observation.Caller != "heartbeat.backlog" || observation.Purpose != "process_backlog_item" || observation.TaskID != agent.lastInput.RootTaskID() || !strings.HasPrefix(observation.RequestID, "llmreq_") {
 		t.Fatalf("unexpected backlog LLM observation: %+v ok=%v", observation, ok)
 	}
 	if len(backlogStore.saved) != 1 || !strings.Contains(backlogStore.saved[0].Implementation, backlogRunnerStartedMarker) {
@@ -691,11 +691,11 @@ func TestTick_HeartbeatUsesShiroWorkerRoute(t *testing.T) {
 		t.Fatalf("heartbeat input invalid: %v", err)
 	}
 	observation, ok := llm.ExecutionObservationFromContext(agent.lastCtx)
-	if !ok || observation.JobID == "" || observation.TraceID == "" || observation.RequestID != observation.JobID || observation.TraceID != string(agent.lastInput.TraceID()) {
+	if !ok || observation.TaskID != agent.lastInput.RootTaskID() || observation.TraceID == "" || !strings.HasPrefix(observation.RequestID, "llmreq_") || observation.TraceID != string(agent.lastInput.TraceID()) {
 		t.Fatalf("unexpected heartbeat execution observation: %+v ok=%v", observation, ok)
 	}
-	if observation.TraceID == observation.JobID {
-		t.Fatalf("heartbeat TraceID must remain distinct from companion JobID: %+v", observation)
+	if observation.TraceID == string(observation.TaskID) {
+		t.Fatalf("heartbeat TraceID must remain distinct from TaskID: %+v", observation)
 	}
 	identities := []string{
 		string(agent.lastInput.RootTaskID()), string(agent.lastInput.TurnID()), string(agent.lastInput.TraceID()),

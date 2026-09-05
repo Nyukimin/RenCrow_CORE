@@ -7269,23 +7269,23 @@ func TestSkillGovernanceStatus(t *testing.T) {
 			ExternalPRAdapterConfigured: boolPtr(false),
 			CoderTranscripts: []SkillGovernanceCoderTranscript{{
 				EventID:   "evt_transcript_1",
-				JobID:     "job_1",
+				TaskID:    "tsk_00000000-0000-7000-8000-000000000001",
 				Role:      "assistant",
 				Segment:   "final",
 				CreatedAt: now,
 			}, {
 				EventID:      "evt_transcript_2",
-				JobID:        "job_1",
+				TaskID:       "tsk_00000000-0000-7000-8000-000000000001",
 				Role:         "coder",
 				Segment:      "patch_evidence",
-				EvidencePath: "workspace/logs/skill_governance/coder_evidence/job_1/skill_diff.md",
+				EvidencePath: "workspace/logs/skill_governance/coder_evidence/tsk_00000000-0000-7000-8000-000000000001/skill_diff.md",
 				CreatedAt:    now,
 			}, {
 				EventID:      "evt_transcript_3",
-				JobID:        "job_1",
+				TaskID:       "tsk_00000000-0000-7000-8000-000000000001",
 				Role:         "system",
 				Segment:      "transcript_evidence",
-				EvidencePath: "workspace/logs/skill_governance/coder_evidence/job_1/agent_transcript.md",
+				EvidencePath: "workspace/logs/skill_governance/coder_evidence/tsk_00000000-0000-7000-8000-000000000001/agent_transcript.md",
 				CreatedAt:    now,
 			}},
 		})
@@ -7307,6 +7307,35 @@ func TestSkillGovernanceStatus(t *testing.T) {
 	}
 	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured {
 		t.Fatalf("external PR readiness=%#v", status)
+	}
+	if status.CoderTranscripts[1].TaskID != "tsk_00000000-0000-7000-8000-000000000001" {
+		t.Fatalf("coder transcript task_id=%q", status.CoderTranscripts[1].TaskID)
+	}
+}
+
+func TestSkillGovernanceStatusRejectsLegacyJobIDTranscript(t *testing.T) {
+	now := time.Date(2026, 5, 20, 4, 15, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/viewer/skill-governance/recent" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"external_pr_adapter":            "unconfigured",
+			"external_pr_adapter_configured": false,
+			"coder_transcripts": []map[string]any{
+				{"event_id": "evt_transcript_1", "job_id": "job_1", "role": "coder", "segment": "patch_evidence", "evidence_path": "workspace/logs/skill_diff.md", "created_at": now},
+				{"event_id": "evt_transcript_2", "job_id": "job_1", "role": "system", "segment": "transcript_evidence", "evidence_path": "workspace/logs/transcript.md", "created_at": now},
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.SkillGovernanceStatus(context.Background(), 0)
+	if err == nil || !strings.Contains(err.Error(), "missing task_id or session_id") {
+		t.Fatalf("SkillGovernanceStatus() error=%v, want legacy job_id rejection", err)
 	}
 }
 
@@ -7352,23 +7381,23 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 			}},
 			CoderTranscripts: []SkillGovernanceCoderTranscript{{
 				EventID:   "evt_transcript_1",
-				JobID:     "job_1",
+				TaskID:    "tsk_00000000-0000-7000-8000-000000000001",
 				Role:      "assistant",
 				Segment:   "final",
 				CreatedAt: now,
 			}, {
 				EventID:      "evt_transcript_2",
-				JobID:        "job_1",
+				TaskID:       "tsk_00000000-0000-7000-8000-000000000001",
 				Role:         "coder",
 				Segment:      "patch_evidence",
-				EvidencePath: "workspace/logs/skill_governance/coder_evidence/job_1/skill_diff.md",
+				EvidencePath: "workspace/logs/skill_governance/coder_evidence/tsk_00000000-0000-7000-8000-000000000001/skill_diff.md",
 				CreatedAt:    now,
 			}, {
 				EventID:      "evt_transcript_3",
-				JobID:        "job_1",
+				TaskID:       "tsk_00000000-0000-7000-8000-000000000001",
 				Role:         "system",
 				Segment:      "transcript_evidence",
-				EvidencePath: "workspace/logs/skill_governance/coder_evidence/job_1/agent_transcript.md",
+				EvidencePath: "workspace/logs/skill_governance/coder_evidence/tsk_00000000-0000-7000-8000-000000000001/agent_transcript.md",
 				CreatedAt:    now,
 			}},
 		}
@@ -7451,6 +7480,10 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "incomplete evidence pair", mutate: func(s *SkillGovernanceStatus) {
 			s.CoderTranscripts = s.CoderTranscripts[:2]
 		}, want: "incomplete evidence pair"},
+		{name: "missing task id or session id", mutate: func(s *SkillGovernanceStatus) {
+			s.CoderTranscripts[1].TaskID = ""
+			s.CoderTranscripts[1].SessionID = ""
+		}, want: "missing task_id or session_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

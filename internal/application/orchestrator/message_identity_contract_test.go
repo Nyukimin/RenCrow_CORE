@@ -59,7 +59,7 @@ type recordedCorrelatedTurn struct {
 	role      string
 	messageID string
 	traceID   string
-	jobID     string
+	taskID    string
 	content   string
 }
 
@@ -71,8 +71,8 @@ func (l *recordingCorrelatedTurnLogger) WriteUser(sessionID, channel, content st
 	l.turns = append(l.turns, recordedCorrelatedTurn{role: "user", content: content})
 }
 
-func (l *recordingCorrelatedTurnLogger) WriteAssistant(sessionID, channel, route, jobID, content string) {
-	l.turns = append(l.turns, recordedCorrelatedTurn{role: "assistant", jobID: jobID, content: content})
+func (l *recordingCorrelatedTurnLogger) WriteAssistant(sessionID, channel, route, taskID, content string) {
+	l.turns = append(l.turns, recordedCorrelatedTurn{role: "assistant", taskID: taskID, content: content})
 }
 
 func (l *recordingCorrelatedTurnLogger) WriteUserWithIdentity(sessionID, channel, messageID, traceID, content string) {
@@ -81,9 +81,9 @@ func (l *recordingCorrelatedTurnLogger) WriteUserWithIdentity(sessionID, channel
 	})
 }
 
-func (l *recordingCorrelatedTurnLogger) WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string) {
+func (l *recordingCorrelatedTurnLogger) WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string) {
 	l.turns = append(l.turns, recordedCorrelatedTurn{
-		role: "assistant", messageID: messageID, traceID: traceID, jobID: jobID, content: content,
+		role: "assistant", messageID: messageID, traceID: traceID, taskID: taskID, content: content,
 	})
 }
 
@@ -107,9 +107,8 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	ingressRootTaskID := string(modulecore.NewTaskID())
 	ingressMessageID := string(modulecore.NewMessageID())
 	ingressAgentMessageID := string(modulecore.NewMessageID())
-	ingressJobID := string(modulecore.NewTaskID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID: ingressJobID, TurnID: ingressTurnID, TraceID: ingressTraceID, RootTaskID: ingressRootTaskID,
+		RootTaskID: ingressRootTaskID, TurnID: ingressTurnID, TraceID: ingressTraceID,
 		MessageID: ingressMessageID, AgentMessageID: ingressAgentMessageID,
 		SessionID: "session-1", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
 	})
@@ -125,12 +124,12 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if receivedIndex < 0 || responseIndex < 0 {
 		t.Fatalf("missing conversation events: %#v", events.events)
 	}
-	if events.events[receivedIndex].MessageID != ingressMessageID ||
-		events.events[receivedIndex].TraceID != resp.TraceID {
+	if string(events.events[receivedIndex].MessageID) != ingressMessageID ||
+		string(events.events[receivedIndex].TraceID) != resp.TraceID {
 		t.Fatalf("ingress event identity drifted: %+v", events.events[receivedIndex])
 	}
-	if events.events[responseIndex].MessageID != resp.MessageID ||
-		events.events[responseIndex].TraceID != resp.TraceID {
+	if string(events.events[responseIndex].MessageID) != resp.MessageID ||
+		string(events.events[responseIndex].TraceID) != resp.TraceID {
 		t.Fatalf("response event identity drifted: response=%+v event=%+v", resp, events.events[responseIndex])
 	}
 
@@ -141,7 +140,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 		t.Fatalf("user session log identity drifted: %+v", turns.turns[0])
 	}
 	if turns.turns[1].messageID != resp.MessageID || turns.turns[1].traceID != resp.TraceID ||
-		turns.turns[1].jobID != resp.JobID {
+		turns.turns[1].taskID != resp.TaskID {
 		t.Fatalf("assistant session log identity drifted: %+v", turns.turns[1])
 	}
 }
@@ -160,10 +159,9 @@ func TestEnsureProcessRequestIdentityRejectsMalformedIngressWithoutRepair(t *tes
 
 func TestEnsureProcessRequestIdentityRejectsEveryWrongCanonicalTypeWithoutRepair(t *testing.T) {
 	valid := ProcessMessageRequest{
-		JobID:          string(modulecore.NewTaskID()),
+		RootTaskID:     string(modulecore.NewTaskID()),
 		TurnID:         string(modulecore.NewTurnID()),
 		TraceID:        string(modulecore.NewTraceID()),
-		RootTaskID:     string(modulecore.NewTaskID()),
 		MessageID:      string(modulecore.NewMessageID()),
 		AgentMessageID: string(modulecore.NewMessageID()),
 	}
@@ -171,10 +169,9 @@ func TestEnsureProcessRequestIdentityRejectsEveryWrongCanonicalTypeWithoutRepair
 		name   string
 		mutate func(*ProcessMessageRequest)
 	}{
-		{name: "job_id", mutate: func(req *ProcessMessageRequest) { req.JobID = string(modulecore.NewMessageID()) }},
+		{name: "root_task_id", mutate: func(req *ProcessMessageRequest) { req.RootTaskID = string(modulecore.NewMessageID()) }},
 		{name: "turn_id", mutate: func(req *ProcessMessageRequest) { req.TurnID = string(modulecore.NewTraceID()) }},
 		{name: "trace_id", mutate: func(req *ProcessMessageRequest) { req.TraceID = string(modulecore.NewTurnID()) }},
-		{name: "root_task_id", mutate: func(req *ProcessMessageRequest) { req.RootTaskID = string(modulecore.NewMessageID()) }},
 		{name: "user_message_id", mutate: func(req *ProcessMessageRequest) { req.MessageID = string(modulecore.NewTaskID()) }},
 		{name: "agent_message_id", mutate: func(req *ProcessMessageRequest) { req.AgentMessageID = string(modulecore.NewTraceID()) }},
 	}
@@ -230,22 +227,22 @@ func TestEnsureProcessRequestIdentityRejectsAliasedMessageIDsWithoutRepair(t *te
 
 func TestConversationIdentityTrackerBindsOnlyFirstActualAgentResponse(t *testing.T) {
 	tracker := newConversationIdentityTracker()
-	jobID := "job-multi-actor"
+	taskID := string(modulecore.NewTaskID())
 	actualAgentMessageID := modulecore.NewMessageID()
-	tracker.BindResponseMessageID(jobID, actualAgentMessageID)
+	tracker.BindResponseMessageID(taskID, actualAgentMessageID)
 
-	actual := OrchestratorEvent{Type: "agent.response", From: "heavy", To: "mio", JobID: jobID, SessionID: "session"}
+	actual := OrchestratorEvent{Type: "agent.response", From: "heavy", To: "mio", TaskID: modulecore.TaskID(taskID), SessionID: "session"}
 	tracker.Assign(&actual, "")
-	forwarded := OrchestratorEvent{Type: "agent.response", From: "mio", To: "user", JobID: jobID, SessionID: "session"}
+	forwarded := OrchestratorEvent{Type: "agent.response", From: "mio", To: "user", TaskID: modulecore.TaskID(taskID), SessionID: "session"}
 	tracker.Assign(&forwarded, "")
 
-	if actual.MessageID != string(actualAgentMessageID) {
+	if actual.MessageID != actualAgentMessageID {
 		t.Fatalf("actual Agent message_id=%q, want prebound %q", actual.MessageID, actualAgentMessageID)
 	}
 	if modulecore.MessageID(forwarded.MessageID).Validate() != nil || forwarded.MessageID == actual.MessageID {
 		t.Fatalf("forwarded message_id=%q must be a distinct canonical ID", forwarded.MessageID)
 	}
-	if got := tracker.TakeResponseMessageID(jobID); got != forwarded.MessageID {
+	if got := tracker.TakeResponseMessageID(taskID); got != string(forwarded.MessageID) {
 		t.Fatalf("user-visible response message_id=%q, want %q", got, forwarded.MessageID)
 	}
 }

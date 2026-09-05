@@ -68,7 +68,7 @@ func buildOrchestratorRuntime(
 		}
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
 		deps.viewerSend = bridges.ViewerSendFromOrch(deps.distOrch)
-		deps.repairRunner = newAsyncRepairJobRunner(deps.distOrch, deps.eventRelay)
+		deps.repairRunner = newAsyncRepairTaskRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
 		startSuperAgentRunQueueScheduler(cfg, deps.superAgentStore, deps.distOrch, newBackgroundJobFailureReporter(deps.eventRelay))
@@ -111,6 +111,10 @@ func buildOrchestratorRuntime(
 		log.Printf("Session turn logger initialized: %s", sessionLogDir)
 	}
 	orch.SetEventListener(deps.eventRelay)
+	if deps.taskManager != nil {
+		orch.SetTaskLifecycleManager(deps.taskManager)
+		log.Println("Canonical Task lifecycle integrated with MessageOrchestrator")
+	}
 	if deps.reportStore != nil {
 		orch.SetReportStore(deps.reportStore)
 	}
@@ -177,7 +181,7 @@ func buildOrchestratorRuntime(
 	buildChannelRuntimeHandlers(cfg, deps, orch)
 	deps.moduleChatService = modulebridge.NewRuntimeChatService(orch, agents.Mio)
 	deps.viewerSend = bridges.ViewerSendFromOrch(orch)
-	deps.repairRunner = newAsyncRepairJobRunner(orch, deps.eventRelay)
+	deps.repairRunner = newAsyncRepairTaskRunner(orch, deps.eventRelay)
 	deps.entryHandler = bridges.EntryFromOrch(orch)
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)
 	deps.voiceDirectHandler = orch

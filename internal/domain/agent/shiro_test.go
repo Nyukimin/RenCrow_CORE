@@ -146,8 +146,10 @@ func TestShiroAgentWithLightMemory(t *testing.T) {
 }
 
 func TestShiroAgentExecute(t *testing.T) {
+	var observed llm.ExecutionObservation
 	llmProvider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+			observed, _ = llm.ExecutionObservationFromContext(ctx)
 			if len(req.Messages) == 0 || req.Messages[0].Content != "test prompt" || req.Messages[0].Type != llm.PromptContextCharacter {
 				t.Errorf("unexpected Character SystemPrompt: %#v", req.Messages)
 			}
@@ -169,14 +171,18 @@ func TestShiroAgentExecute(t *testing.T) {
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil)
 
 	testTask := newAgentTurnInput(t, "ファイルを作成して", "line", "U123")
+	upstreamTraceID := modulecore.NewTraceID()
 
-	result, err := shiro.Execute(context.Background(), testTask)
+	result, err := shiro.Execute(llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{TraceID: string(upstreamTraceID)}), testTask)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
 	if result != "Task executed successfully" {
 		t.Errorf("Expected 'Task executed successfully', got '%s'", result)
+	}
+	if observed.TaskID != testTask.RootTaskID() || observed.TraceID != string(upstreamTraceID) || observed.RequestID == string(testTask.RootTaskID()) || !strings.HasPrefix(observed.RequestID, "llmreq_") {
+		t.Fatalf("Shiro execution observation identity = %+v, want task root, explicit trace, independent request", observed)
 	}
 }
 

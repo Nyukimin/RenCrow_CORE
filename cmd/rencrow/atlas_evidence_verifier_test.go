@@ -20,6 +20,7 @@ import (
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestAtlasEvidenceVerifierEmbeddedSpecificationRejectsWrongMetadata(t *testing.T) {
@@ -80,8 +81,9 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 	finished := time.Date(2026, 8, 22, 10, 11, 12, 0, time.UTC)
 	stage := domainbacklog.DeliveryTDDGreen
 	sourceRevision := strings.Repeat("a", 40)
+	taskID := modulecore.NewTaskID()
 	if err := store.Save(context.Background(), domainexecution.ExecutionReport{
-		JobID: "job-pass", Goal: "focused test", Status: "passed", CreatedAt: finished.Add(-time.Minute), FinishedAt: finished,
+		TaskID: taskID, Goal: "focused test", Status: "passed", CreatedAt: finished.Add(-time.Minute), FinishedAt: finished,
 		Verification: []string{
 			"atlas.item=item-execution", "atlas.unit=unit-pass", "atlas.implementation_revision=2",
 			"atlas.stage=" + stage, "atlas.source_revision=" + sourceRevision,
@@ -100,7 +102,7 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 		t.Fatal(err)
 	}
 	valid := domainbacklog.EvidenceRef{
-		Stage: stage, Kind: "execution_report", Ref: "execution_report:job-pass", Repository: domainbacklog.LifecycleOwnerModule,
+		Stage: stage, Kind: "execution_report", Ref: "execution_report:" + taskID.String(), Repository: domainbacklog.LifecycleOwnerModule,
 		Revision: sourceRevision, ObservedAt: finished.Format(time.RFC3339Nano), Passed: true, Verified: true,
 	}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
@@ -114,7 +116,8 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 		"stale observation": func(ref *domainbacklog.EvidenceRef) {
 			ref.ObservedAt = finished.Add(-time.Hour).Format(time.RFC3339Nano)
 		},
-		"unknown job":        func(ref *domainbacklog.EvidenceRef) { ref.Ref = "execution_report:job-missing" },
+		"invalid task id":    func(ref *domainbacklog.EvidenceRef) { ref.Ref = "execution_report:not-canonical" },
+		"unknown task":       func(ref *domainbacklog.EvidenceRef) { ref.Ref = "execution_report:" + modulecore.NewTaskID().String() },
 		"missing repository": func(ref *domainbacklog.EvidenceRef) { ref.Repository = "" },
 		"wrong repository":   func(ref *domainbacklog.EvidenceRef) { ref.Repository = "other-repository" },
 		"missing source":     func(ref *domainbacklog.EvidenceRef) { ref.Revision = "" },
@@ -149,8 +152,9 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 func TestAtlasEvidenceVerifierExecutionReportRequiresExactMachineMarkers(t *testing.T) {
 	sourceRevision := strings.Repeat("d", 40)
 	stage := domainbacklog.DeliveryTDDGreen
-	validRequest := atlasExecutionFixtureRequest(stage, sourceRevision, "")
-	validReport := atlasExecutionFixtureReport(stage, sourceRevision)
+	taskID := modulecore.NewTaskID()
+	validRequest := atlasExecutionFixtureRequest(taskID, stage, sourceRevision, "")
+	validReport := atlasExecutionFixtureReport(taskID, stage, sourceRevision)
 	verifier := newAtlasExecutionFixtureVerifier(t, validReport)
 	if ok, err := verifier.Verify(context.Background(), validRequest); err != nil || !ok {
 		t.Fatalf("valid machine markers = %v, %v", ok, err)
@@ -194,8 +198,9 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactMachineMarkers(t *test
 func TestAtlasEvidenceVerifierExecutionReportRedRequiresObservedMarker(t *testing.T) {
 	sourceRevision := strings.Repeat("e", 40)
 	stage := domainbacklog.DeliveryTDDRed
-	report := atlasExecutionFixtureReport(stage, sourceRevision)
-	request := atlasExecutionFixtureRequest(stage, sourceRevision, "")
+	taskID := modulecore.NewTaskID()
+	report := atlasExecutionFixtureReport(taskID, stage, sourceRevision)
+	request := atlasExecutionFixtureRequest(taskID, stage, sourceRevision, "")
 	verifier := newAtlasExecutionFixtureVerifier(t, report)
 	if ok, err := verifier.Verify(context.Background(), request); err == nil || ok {
 		t.Fatalf("RED report without observed marker unexpectedly verified: %v, %v", ok, err)
@@ -218,8 +223,9 @@ func TestAtlasEvidenceVerifierExecutionReportBuildRequiresArtifactHashMarker(t *
 	sourceRevision := strings.Repeat("f", 40)
 	artifactHash := strings.Repeat("1", 64)
 	stage := domainbacklog.DeliveryBuild
-	request := atlasExecutionFixtureRequest(stage, sourceRevision, artifactHash)
-	report := atlasExecutionFixtureReport(stage, sourceRevision)
+	taskID := modulecore.NewTaskID()
+	request := atlasExecutionFixtureRequest(taskID, stage, sourceRevision, artifactHash)
+	report := atlasExecutionFixtureReport(taskID, stage, sourceRevision)
 	verifier := newAtlasExecutionFixtureVerifier(t, report)
 	if ok, err := verifier.Verify(context.Background(), request); err == nil || ok {
 		t.Fatalf("BUILD report without artifact marker unexpectedly verified: %v, %v", ok, err)
@@ -249,8 +255,8 @@ type atlasExecutionFixtureStore struct {
 	report domainexecution.ExecutionReport
 }
 
-func (s atlasExecutionFixtureStore) GetByJobID(_ context.Context, jobID string) (domainexecution.ExecutionReport, error) {
-	if s.report.JobID != jobID {
+func (s atlasExecutionFixtureStore) GetByTaskID(_ context.Context, taskID modulecore.TaskID) (domainexecution.ExecutionReport, error) {
+	if s.report.TaskID != taskID {
 		return domainexecution.ExecutionReport{}, os.ErrNotExist
 	}
 	return s.report, nil
@@ -272,10 +278,10 @@ func newAtlasExecutionFixtureVerifier(t *testing.T, report domainexecution.Execu
 	return verifier
 }
 
-func atlasExecutionFixtureReport(stage, sourceRevision string) domainexecution.ExecutionReport {
+func atlasExecutionFixtureReport(taskID modulecore.TaskID, stage, sourceRevision string) domainexecution.ExecutionReport {
 	finished := time.Date(2026, 8, 22, 14, 15, 16, 0, time.UTC)
 	return domainexecution.ExecutionReport{
-		JobID: "job-fixture", Goal: "Atlas execution fixture", Status: "passed",
+		TaskID: taskID, Goal: "Atlas execution fixture", Status: "passed",
 		CreatedAt: finished.Add(-time.Minute), FinishedAt: finished,
 		Verification: []string{
 			"atlas.item=item-execution", "atlas.unit=unit-execution", "atlas.implementation_revision=7",
@@ -284,10 +290,10 @@ func atlasExecutionFixtureReport(stage, sourceRevision string) domainexecution.E
 	}
 }
 
-func atlasExecutionFixtureRequest(stage, sourceRevision, artifactHash string) backlogapp.EvidenceVerificationRequest {
+func atlasExecutionFixtureRequest(taskID modulecore.TaskID, stage, sourceRevision, artifactHash string) backlogapp.EvidenceVerificationRequest {
 	return backlogapp.EvidenceVerificationRequest{
 		Ref: domainbacklog.EvidenceRef{
-			Stage: stage, Kind: "execution_report", Ref: "execution_report:job-fixture",
+			Stage: stage, Kind: "execution_report", Ref: "execution_report:" + taskID.String(),
 			Repository: domainbacklog.LifecycleOwnerModule, Revision: sourceRevision, SHA256: artifactHash,
 		},
 		ItemID: "item-execution", ImplementationUnitID: "unit-execution", ImplementationRevision: 7,

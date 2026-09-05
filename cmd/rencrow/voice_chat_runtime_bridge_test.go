@@ -15,6 +15,7 @@ type recordingVoiceDirectHandler struct {
 	mu         sync.Mutex
 	finalCalls []orchestrator.ProcessVoiceDirectRequest
 	tokenCalls int
+	tokenTasks []modulecore.TaskID
 }
 
 func (h *recordingVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req orchestrator.ProcessVoiceDirectRequest) (orchestrator.ProcessMessageResponse, error) {
@@ -22,23 +23,26 @@ func (h *recordingVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req 
 	defer h.mu.Unlock()
 	h.finalCalls = append(h.finalCalls, req)
 	return orchestrator.ProcessMessageResponse{
-		Response: req.FinalText,
-		Route:    routing.RouteCHAT,
-		JobID:    modulecore.NewTaskID().String(),
+		Response:   req.FinalText,
+		Route:      routing.RouteCHAT,
+		TaskID:     req.RootTaskID.String(),
+		RootTaskID: req.RootTaskID.String(),
 	}, nil
 }
 
-func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, modulecore.TaskID, time.Time) {
+func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(_ context.Context, _ orchestrator.ProcessVoiceDirectRequest, taskID modulecore.TaskID, _ time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.tokenCalls++
+	h.tokenTasks = append(h.tokenTasks, taskID)
 }
 
-func (h *recordingVoiceDirectHandler) snapshot() ([]orchestrator.ProcessVoiceDirectRequest, int) {
+func (h *recordingVoiceDirectHandler) snapshot() ([]orchestrator.ProcessVoiceDirectRequest, int, []modulecore.TaskID) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	finals := append([]orchestrator.ProcessVoiceDirectRequest(nil), h.finalCalls...)
-	return finals, h.tokenCalls
+	tasks := append([]modulecore.TaskID(nil), h.tokenTasks...)
+	return finals, h.tokenCalls, tasks
 }
 
 func TestVoiceChatBridgeTracker_FinalizesVoiceDirectOnLLMFinal(t *testing.T) {
@@ -50,7 +54,7 @@ func TestVoiceChatBridgeTracker_FinalizesVoiceDirectOnLLMFinal(t *testing.T) {
 	tracker.observeGatewayText([]byte(`{"type":"llm.delta","utterance_id":"utt-1","seq":1,"text":"お"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"おはよう"}`))
 
-	finals, tokenCalls := handler.snapshot()
+	finals, tokenCalls, tokenTasks := handler.snapshot()
 	if len(finals) != 1 {
 		t.Fatalf("expected one ProcessVoiceDirect call, got %d", len(finals))
 	}
@@ -60,8 +64,14 @@ func TestVoiceChatBridgeTracker_FinalizesVoiceDirectOnLLMFinal(t *testing.T) {
 	if finals[0].Channel != "viewer" {
 		t.Fatalf("expected viewer channel, got %q", finals[0].Channel)
 	}
+	if finals[0].RootTaskID.IsZero() || finals[0].RootTaskID.Validate() != nil {
+		t.Fatalf("expected canonical root task identity in final request, got %q", finals[0].RootTaskID)
+	}
 	if tokenCalls != 1 {
 		t.Fatalf("expected one first-token notification, got %d", tokenCalls)
+	}
+	if len(tokenTasks) != 1 || tokenTasks[0] != finals[0].RootTaskID {
+		t.Fatalf("first-token task identity drifted: tasks=%q final=%q", tokenTasks, finals[0].RootTaskID)
 	}
 }
 
@@ -72,12 +82,15 @@ func TestVoiceChatBridgeTracker_UsesStructuredFinalUserTextHint(t *testing.T) {
 	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","viewer_session_id":"viewer","channel":"viewer","chat_id":"default"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"はい、います。","user_text":"Mioさんいますか"}`))
 
-	finals, _ := handler.snapshot()
+	finals, _, _ := handler.snapshot()
 	if len(finals) != 1 {
 		t.Fatalf("expected one ProcessVoiceDirect call, got %d", len(finals))
 	}
 	if finals[0].UserText != "Mioさんいますか" || finals[0].FinalText != "はい、います。" {
 		t.Fatalf("unexpected final call: %+v", finals[0])
+	}
+	if finals[0].RootTaskID.IsZero() || finals[0].RootTaskID.Validate() != nil {
+		t.Fatalf("expected canonical root task identity in final request, got %q", finals[0].RootTaskID)
 	}
 }
 
@@ -93,7 +106,7 @@ func TestVoiceChatBridgeTracker_DeltaIdleDoesNotFinalizeVoiceDirect(t *testing.T
 
 	time.Sleep(30 * time.Millisecond)
 
-	finals, tokenCalls := handler.snapshot()
+	finals, tokenCalls, _ := handler.snapshot()
 	if len(finals) != 0 {
 		t.Fatalf("delta idle must not finalize before llm.final: %+v", finals)
 	}
@@ -112,7 +125,7 @@ func TestVoiceChatBridgeTracker_DeltaIdleDoesNotDoubleFinalizeWhenFinalArrives(t
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"おはよう"}`))
 	time.Sleep(30 * time.Millisecond)
 
-	finals, _ := handler.snapshot()
+	finals, _, _ := handler.snapshot()
 	if len(finals) != 1 {
 		t.Fatalf("expected one ProcessVoiceDirect call, got %d", len(finals))
 	}
@@ -129,7 +142,7 @@ func TestVoiceChatBridgeTracker_CancelClearsState(t *testing.T) {
 	tracker.observeClientText([]byte(`{"type":"session.cancel","utterance_id":"utt-1"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"ignored"}`))
 
-	finals, _ := handler.snapshot()
+	finals, _, _ := handler.snapshot()
 	if len(finals) != 0 {
 		t.Fatalf("cancelled utterance must not finalize: %+v", finals)
 	}
@@ -174,7 +187,7 @@ func TestVoiceChatBridgeTracker_DropsMetaNoAudioFinal(t *testing.T) {
 	tracker.observeClientText([]byte(`{"type":"session.commit","utterance_id":"utt-1"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"申し訳ございませんが、音声が提供されていないため、内容を確認することができません。音声ファイルをアップロードしてください。"}`))
 
-	finals, _ := handler.snapshot()
+	finals, _, _ := handler.snapshot()
 	if len(finals) != 0 {
 		t.Fatalf("meta no-audio final must not be emitted as chat response: %+v", finals)
 	}

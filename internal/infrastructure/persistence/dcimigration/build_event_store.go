@@ -100,6 +100,10 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 	if err := validateBuildEventStoreSourceBinding(snapshot, sourceIDs, sourceCounts, sourceHashes, sourceRows); err != nil {
 		return buildEventStoreEvidence{}, buildEventStoreCauseError(err, "source_binding")
 	}
+	storedPlanned, err := assignBuildEventStoreSequences(sourceRows, plan.Events)
+	if err != nil {
+		return buildEventStoreEvidence{}, buildEventStoreCauseError(err, "plan_invalid")
+	}
 	for eventID := range planned {
 		if _, exists := sourceIDs[string(eventID)]; exists {
 			return buildEventStoreEvidence{}, buildEventStoreError("event_collision")
@@ -200,7 +204,7 @@ func createBuiltEventStore(ctx context.Context, source, target string, snapshot 
 	if closeVerificationErr != nil {
 		return buildEventStoreEvidence{}, buildEventStoreError("target_verify")
 	}
-	if err := verifyBuildEventStoreOutput(sourceRows, outputRows, planned); err != nil {
+	if err := verifyBuildEventStoreOutput(sourceRows, outputRows, storedPlanned); err != nil {
 		return buildEventStoreCauseErrorResult(err, "target_verify")
 	}
 	if logical.Schema != canonicalBaseline.Schema || logical.NonDCI != canonicalBaseline.Full || logical.Full == "" {
@@ -284,6 +288,9 @@ func validateBuildEventStorePlan(snapshot sourceSnapshot, plan migrationPlan) (m
 		return nil, errors.New("migration plan event coverage mismatch")
 	}
 	for _, event := range plan.Events {
+		if event.EventSeq != 0 {
+			return nil, errors.New("migration plan event_seq must be unassigned")
+		}
 		if !strings.HasPrefix(event.EventType, "dci.") {
 			return nil, errors.New("migration plan contains a non-DCI event")
 		}
@@ -408,7 +415,7 @@ func readBuildEventStore(ctx context.Context, db *sql.DB, rejectDCI bool) (build
 		dependencies: make(map[modulecore.EventID]map[modulecore.EventID]string),
 	}
 	events := make([]modulecore.EventEnvelope, 0)
-	rows, err := db.QueryContext(ctx, `SELECT event_id, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json FROM event_envelope ORDER BY rowid`)
+	rows, err := db.QueryContext(ctx, `SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json FROM event_envelope ORDER BY event_seq`)
 	if err != nil {
 		return buildEventStoreRows{}, err
 	}
@@ -422,11 +429,12 @@ func readBuildEventStore(ctx context.Context, db *sql.DB, rejectDCI bool) (build
 			return buildEventStoreRows{}, errors.New("Event Store envelope count exceeds bound")
 		}
 		var eventID, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON string
-		if err := rows.Scan(&eventID, &traceID, &schemaVersion, &eventType, &componentID, &occurredAt, &envelopeJSON); err != nil {
+		var eventSeq int64
+		if err := rows.Scan(&eventID, &eventSeq, &traceID, &schemaVersion, &eventType, &componentID, &occurredAt, &envelopeJSON); err != nil {
 			_ = rows.Close()
 			return buildEventStoreRows{}, err
 		}
-		event, err := validateExistingEventIdentity(eventID, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON)
+		event, err := validateExistingEventIdentity(eventID, eventSeq, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON)
 		if err != nil {
 			_ = rows.Close()
 			return buildEventStoreRows{}, err
@@ -512,6 +520,32 @@ func readBuildEventStore(ctx context.Context, db *sql.DB, rejectDCI bool) (build
 		return buildEventStoreRows{}, errors.New("Event Store dependency graph does not match envelopes")
 	}
 	return result, nil
+}
+
+func assignBuildEventStoreSequences(sourceRows buildEventStoreRows, events []modulecore.EventEnvelope) (map[modulecore.EventID]modulecore.EventEnvelope, error) {
+	var maximum int64
+	for _, item := range sourceRows.envelopes {
+		sequence := int64(item.event.EventSeq)
+		if sequence > maximum {
+			maximum = sequence
+		}
+	}
+	assigned := make(map[modulecore.EventID]modulecore.EventEnvelope, len(events))
+	for _, event := range events {
+		if event.EventSeq != 0 {
+			return nil, errors.New("migration plan event_seq must be unassigned")
+		}
+		if maximum == int64(^uint64(0)>>1) {
+			return nil, errors.New("event_seq exhausted")
+		}
+		maximum++
+		event.EventSeq = modulecore.EventSeq(maximum)
+		if _, exists := assigned[event.EventID]; exists {
+			return nil, errors.New("migration plan has duplicate event ID")
+		}
+		assigned[event.EventID] = event
+	}
+	return assigned, nil
 }
 
 func eventDependenciesFromRows(envelopes map[modulecore.EventID]buildEventStoreEnvelope) map[modulecore.EventID]map[modulecore.EventID]string {

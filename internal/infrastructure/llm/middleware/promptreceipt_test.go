@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type promptReceiptStubProvider struct{}
@@ -35,8 +36,9 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 	t.Setenv("RENCROW_PROMPT_RECEIPT_LOG", receiptPath)
 
 	provider := NewPromptReceiptProvider(promptReceiptStubProvider{}, "chat")
+	taskID := modulecore.NewTaskID()
 	ctx := domainllm.WithExecutionObservation(context.Background(), domainllm.ExecutionObservation{
-		RequestID: "request-1", TraceID: "trace-1", JobID: "job-1", SessionID: "session-1",
+		RequestID: "request-1", TraceID: "trace-1", TaskID: taskID, SessionID: "session-1",
 		Initiator: "mio", Caller: "agent.mio", Purpose: "chat",
 	})
 	_, err := provider.Generate(ctx, domainllm.GenerateRequest{
@@ -61,8 +63,11 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 	if receipt.SchemaVersion != 1 || receipt.Kind != "generate" || receipt.Provider != "chat" {
 		t.Fatalf("receipt identity = %+v", receipt)
 	}
-	if receipt.RequestID != "request-1" || receipt.TraceID != "trace-1" || receipt.JobID != "job-1" {
+	if receipt.RequestID != "request-1" || receipt.TraceID != "trace-1" || receipt.TaskID != taskID {
 		t.Fatalf("receipt correlation = %+v", receipt)
+	}
+	if strings.Contains(string(data), "job_id") {
+		t.Fatalf("receipt contains retired job_id field: %s", data)
 	}
 	if receipt.PromptHash == "" || receipt.SystemPromptHash == "" {
 		t.Fatalf("prompt hashes must be present: %+v", receipt)

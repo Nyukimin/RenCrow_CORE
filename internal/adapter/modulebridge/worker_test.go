@@ -13,14 +13,14 @@ import (
 )
 
 type fakeWorkerExecutionService struct {
-	jobID core.TaskID
-	plan  string
-	patch string
-	err   error
+	taskID core.TaskID
+	plan   string
+	patch  string
+	err    error
 }
 
-func (s *fakeWorkerExecutionService) ExecuteProposal(_ context.Context, jobID core.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
-	s.jobID = jobID
+func (s *fakeWorkerExecutionService) ExecuteProposal(_ context.Context, taskID core.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+	s.taskID = taskID
 	s.plan = p.Plan()
 	s.patch = p.Patch()
 	if s.err != nil {
@@ -44,8 +44,8 @@ func TestWorkerExecutorAdapterExecuteProposalPatch(t *testing.T) {
 	}
 
 	got, err := adapter.Execute(context.Background(), moduleworker.Action{
-		JobID: moduleworker.JobID(taskID),
-		Tool:  moduleworker.ToolProposalPatch,
+		TaskID: taskID,
+		Tool:   moduleworker.ToolProposalPatch,
 		Arguments: map[string]any{
 			"plan":  "plan text",
 			"patch": `[{"type":"shell_command","action":"run","target":"true"}]`,
@@ -54,8 +54,8 @@ func TestWorkerExecutorAdapterExecuteProposalPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if service.jobID != taskID {
-		t.Fatalf("job id was not mapped: %s", service.jobID.String())
+	if service.taskID != taskID {
+		t.Fatalf("task ID was not mapped: %s", service.taskID.String())
 	}
 	if service.plan != "plan text" || service.patch == "" {
 		t.Fatalf("proposal was not mapped: plan=%q patch=%q", service.plan, service.patch)
@@ -82,8 +82,8 @@ func TestNewRuntimeWorkerExecutor(t *testing.T) {
 func TestWorkerExecutorAdapterRejectsUnsupportedTool(t *testing.T) {
 	adapter := NewWorkerExecutorAdapter(&fakeWorkerExecutionService{})
 	got, err := adapter.Execute(context.Background(), moduleworker.Action{
-		JobID: "20260301-120000-abcd1234",
-		Tool:  "tts",
+		TaskID: core.NewTaskID(),
+		Tool:   "tts",
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -96,8 +96,8 @@ func TestWorkerExecutorAdapterRejectsUnsupportedTool(t *testing.T) {
 func TestWorkerExecutorAdapterPropagatesWorkerError(t *testing.T) {
 	adapter := NewWorkerExecutorAdapter(&fakeWorkerExecutionService{err: fmt.Errorf("boom")})
 	got, err := adapter.Execute(context.Background(), moduleworker.Action{
-		JobID: moduleworker.JobID(core.NewTaskID()),
-		Tool:  moduleworker.ToolProposalPatch,
+		TaskID: core.NewTaskID(),
+		Tool:   moduleworker.ToolProposalPatch,
 		Arguments: map[string]any{
 			"plan":  "plan text",
 			"patch": "patch text",
@@ -108,5 +108,25 @@ func TestWorkerExecutorAdapterPropagatesWorkerError(t *testing.T) {
 	}
 	if got.Status != moduleworker.StatusFailed || got.Error != "boom" {
 		t.Fatalf("worker error was not mapped: %+v", got)
+	}
+}
+
+func TestWorkerExecutorAdapterRejectsMissingOrMalformedTaskID(t *testing.T) {
+	adapter := NewWorkerExecutorAdapter(&fakeWorkerExecutionService{})
+	for _, taskID := range []core.TaskID{"", "not-a-task-id"} {
+		got, err := adapter.Execute(context.Background(), moduleworker.Action{
+			TaskID: taskID,
+			Tool:   moduleworker.ToolProposalPatch,
+			Arguments: map[string]any{
+				"plan":  "plan text",
+				"patch": "patch text",
+			},
+		})
+		if err == nil {
+			t.Fatalf("Execute() accepted invalid TaskID %q", taskID)
+		}
+		if !got.TaskID.IsZero() {
+			t.Fatalf("invalid action produced a correlated result: %+v", got)
+		}
 	}
 }

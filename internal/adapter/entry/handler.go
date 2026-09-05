@@ -23,7 +23,7 @@ type Request struct {
 type Result struct {
 	SessionID   string `json:"session_id"`
 	Route       string `json:"route"`
-	JobID       string `json:"job_id"`
+	TaskID      string `json:"task_id"`
 	MessageID   string `json:"message_id"`
 	TraceID     string `json:"trace_id"`
 	Response    string `json:"response"`
@@ -105,7 +105,7 @@ func HandleWithObserver(process Processor, observer Observer) http.HandlerFunc {
 			"ok":           true,
 			"session_id":   result.SessionID,
 			"route":        result.Route,
-			"job_id":       result.JobID,
+			"task_id":      result.TaskID,
 			"message_id":   result.MessageID,
 			"trace_id":     result.TraceID,
 			"response":     result.Response,

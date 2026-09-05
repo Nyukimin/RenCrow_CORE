@@ -33,15 +33,15 @@ func (l *distributedTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
 }
 
-func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, jobID modulecore.TaskID, decision routing.Decision) string {
-	if l.ttsBridge == nil || !ttsAllowedForRequest(req) {
+func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision) string {
+	if l.ttsBridge == nil || !ttsAllowedForRequest(req) || validateDistributedTaskID(taskID) != nil {
 		return ""
 	}
-	ttsSessionID := fmt.Sprintf("%s-%s", req.SessionID, jobID.String())
+	ttsSessionID := fmt.Sprintf("%s-%s", req.SessionID, taskID.String())
 	plan, ok := moduletts.BuildRouteTTSPlan(moduletts.RouteTTSPlanInput{
 		Route:           string(decision.Route),
 		SessionID:       ttsSessionID,
-		ResponseID:      jobID.String(),
+		ResponseID:      taskID.String(),
 		ChatCharacterID: chatTTSCharacterForRequest(req, decision.Route),
 		Urgency:         "normal",
 	})
@@ -81,7 +81,7 @@ func (l *distributedTTSLifecycle) EndSession(ctx context.Context, ttsSessionID s
 func (l *distributedTTSLifecycle) WithStreamHooks(
 	ctx context.Context,
 	route routing.Route,
-	jid, sessionID, channel, chatID, ttsSessionID string,
+	taskIDText, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
@@ -92,9 +92,9 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 			prev(token)
 		}
 		if latency != nil && latency.markFirstToken() {
-			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), jid, sessionID, channel, chatID, "")
+			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), taskIDText, sessionID, channel, chatID, "")
 		}
-		l.emit("agent.thinking", "mio", "user", token, string(route), jid, sessionID, channel, chatID)
+		l.emit("agent.thinking", "mio", "user", token, string(route), taskIDText, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
 	}), &streamBundle{tts: ttsStream, vtuber: vtuberStream}

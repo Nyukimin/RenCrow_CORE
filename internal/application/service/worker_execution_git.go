@@ -37,7 +37,7 @@ func (w *workerExecutionService) executeGitOperation(
 // autoCommitChanges はGit auto-commitを実行
 func (w *workerExecutionService) autoCommitChanges(
 	ctx context.Context,
-	jobID modulecore.TaskID,
+	taskID modulecore.TaskID,
 	message string,
 ) (string, error) {
 	timeout := time.Duration(w.config.GitTimeout) * time.Second
@@ -52,8 +52,8 @@ func (w *workerExecutionService) autoCommitChanges(
 	}
 
 	// git commit
-	commitMsg := fmt.Sprintf("%s %s\n\nJobID: %s",
-		w.config.CommitMessagePrefix, message, jobID.String())
+	commitMsg := fmt.Sprintf("%s %s\n\nTaskID: %s",
+		w.config.CommitMessagePrefix, message, taskID.String())
 	commitCmd := exec.CommandContext(ctx, "git", "commit", "-m", commitMsg)
 	commitCmd.Dir = w.config.Workspace
 	if output, err := commitCmd.CombinedOutput(); err != nil {

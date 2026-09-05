@@ -13,7 +13,8 @@ import (
 )
 
 func TestNewMessage(t *testing.T) {
-	msg := NewMessage("mio", "shiro", "session-1", "job-1", "hello")
+	taskID := modulecore.NewTaskID()
+	msg := NewMessage("mio", "shiro", "session-1", taskID, "hello")
 
 	if msg.From != "mio" {
 		t.Errorf("Expected From 'Mio', got '%s'", msg.From)
@@ -24,8 +25,8 @@ func TestNewMessage(t *testing.T) {
 	if msg.SessionID != "session-1" {
 		t.Errorf("Expected SessionID 'session-1', got '%s'", msg.SessionID)
 	}
-	if msg.JobID != "job-1" {
-		t.Errorf("Expected JobID 'job-1', got '%s'", msg.JobID)
+	if msg.TaskID != taskID {
+		t.Errorf("Expected TaskID %q, got %q", taskID, msg.TaskID)
 	}
 	if msg.Content != "hello" {
 		t.Errorf("Expected Content 'hello', got '%s'", msg.Content)
@@ -44,7 +45,7 @@ func TestNewMessage(t *testing.T) {
 }
 
 func TestNewErrorMessage(t *testing.T) {
-	msg := NewErrorMessage("Router", "mio", "s1", "j1", "agent not found")
+	msg := NewErrorMessage("Router", "mio", "s1", modulecore.NewTaskID(), "agent not found")
 
 	if msg.Type != MessageTypeError {
 		t.Errorf("Expected Type 'error', got '%s'", msg.Type)
@@ -55,6 +56,7 @@ func TestNewErrorMessage(t *testing.T) {
 }
 
 func TestMessage_Validate(t *testing.T) {
+	validTaskID := modulecore.NewTaskID()
 	tests := []struct {
 		name    string
 		msg     Message
@@ -62,13 +64,33 @@ func TestMessage_Validate(t *testing.T) {
 	}{
 		{
 			name:    "Valid message",
-			msg:     NewMessage("mio", "shiro", "s1", "j1", "hello"),
+			msg:     NewMessage("mio", "shiro", "s1", validTaskID, "hello"),
 			wantErr: false,
+		},
+		{
+			name: "Missing TaskID",
+			msg: Message{
+				From:      "mio",
+				To:        "shiro",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			},
+			wantErr: true,
+		},
+		{
+			name: "Malformed TaskID",
+			msg: Message{
+				From:      "mio",
+				To:        "shiro",
+				TaskID:    modulecore.TaskID("not-a-task-id"),
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			},
+			wantErr: true,
 		},
 		{
 			name: "Missing From",
 			msg: Message{
 				To:        "shiro",
+				TaskID:    validTaskID,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			},
 			wantErr: true,
@@ -77,6 +99,7 @@ func TestMessage_Validate(t *testing.T) {
 			name: "Missing To",
 			msg: Message{
 				From:      "mio",
+				TaskID:    validTaskID,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 			},
 			wantErr: true,
@@ -84,8 +107,9 @@ func TestMessage_Validate(t *testing.T) {
 		{
 			name: "Missing Timestamp",
 			msg: Message{
-				From: "mio",
-				To:   "shiro",
+				From:   "mio",
+				To:     "shiro",
+				TaskID: validTaskID,
 			},
 			wantErr: true,
 		},
@@ -94,6 +118,7 @@ func TestMessage_Validate(t *testing.T) {
 			msg: Message{
 				From:      "mio",
 				To:        "shiro",
+				TaskID:    validTaskID,
 				Timestamp: "2026-03-03 12:00:00",
 			},
 			wantErr: true,
@@ -103,6 +128,7 @@ func TestMessage_Validate(t *testing.T) {
 			msg: Message{
 				From:      "coder3",
 				To:        "Worker",
+				TaskID:    validTaskID,
 				Timestamp: time.Now().UTC().Format(time.RFC3339),
 				Proposal: &ProposalPayload{
 					Plan:  "create file",
@@ -124,7 +150,7 @@ func TestMessage_Validate(t *testing.T) {
 }
 
 func TestMessage_WithPayloads(t *testing.T) {
-	msg := NewMessage("Worker", "mio", "s1", "j1", "done")
+	msg := NewMessage("Worker", "mio", "s1", modulecore.NewTaskID(), "done")
 	msg.Type = MessageTypeResult
 	msg.Result = &ResultPayload{
 		Success:      true,
@@ -184,7 +210,8 @@ func TestTurnInputMessageJSONRoundTripPreservesCanonicalProjection(t *testing.T)
 		WithForcedRoute(routing.RoutePLAN).
 		WithRoute(routing.RoutePLAN)
 
-	message, err := NewTurnInputMessage("mio", "shiro", "job-1", input)
+	executionTaskID := modulecore.NewTaskID()
+	message, err := NewTurnInputMessage("mio", "shiro", executionTaskID, input)
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}
@@ -198,6 +225,9 @@ func TestTurnInputMessageJSONRoundTripPreservesCanonicalProjection(t *testing.T)
 	if len(encoded) == 0 || bytes.Contains(encoded, []byte(`"data"`)) {
 		t.Fatalf("attachment data leaked into transport JSON: %s", encoded)
 	}
+	if !bytes.Contains(encoded, []byte(`"task_id"`)) {
+		t.Fatalf("transport JSON does not use the canonical task field: %s", encoded)
+	}
 
 	var decoded Message
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
@@ -209,6 +239,9 @@ func TestTurnInputMessageJSONRoundTripPreservesCanonicalProjection(t *testing.T)
 	}
 	if got.RootTaskID() != rootTaskID || got.TurnID() != turnID || got.TraceID() != traceID || got.UserMessageID() != userMessageID || got.AgentMessageID() != agentMessageID {
 		t.Fatalf("canonical identities changed: root=%q turn=%q trace=%q user=%q agent=%q", got.RootTaskID(), got.TurnID(), got.TraceID(), got.UserMessageID(), got.AgentMessageID())
+	}
+	if decoded.TaskID != executionTaskID {
+		t.Fatalf("execution TaskID changed: got %q want %q", decoded.TaskID, executionTaskID)
 	}
 	if decoded.SessionID != "session-1" || decoded.Content != "hello" || got.SessionID() != input.SessionID() || got.MessageText() != input.MessageText() {
 		t.Fatalf("outer message/input fields changed: message=%#v input=%#v", decoded, got)
@@ -227,7 +260,7 @@ func TestTurnInputMessageJSONRoundTripPreservesCanonicalProjection(t *testing.T)
 }
 
 func TestTurnInputMessageRejectsMissingOrMalformedProjection(t *testing.T) {
-	legacy := NewMessage("mio", "shiro", "session-1", "job-1", "hello")
+	legacy := NewMessage("mio", "shiro", "session-1", modulecore.NewTaskID(), "hello")
 	if _, err := legacy.ReconstructTurnInput(); err == nil {
 		t.Fatal("expected missing turn_input projection to fail")
 	}
@@ -240,7 +273,7 @@ func TestTurnInputMessageRejectsMissingOrMalformedProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTurnInput() error = %v", err)
 	}
-	message, err := NewTurnInputMessage("mio", "shiro", "job-1", input)
+	message, err := NewTurnInputMessage("mio", "shiro", modulecore.NewTaskID(), input)
 	if err != nil {
 		t.Fatalf("NewTurnInputMessage() error = %v", err)
 	}
@@ -271,5 +304,22 @@ func TestTurnInputMessageRejectsMissingOrMalformedProjection(t *testing.T) {
 	badAddress.TurnInput.ChannelType = "LINE"
 	if _, err := badAddress.ReconstructTurnInput(); err == nil {
 		t.Fatal("expected non-normalized channel address to fail closed")
+	}
+}
+
+func TestNewTurnInputMessageRejectsMalformedExecutionTaskID(t *testing.T) {
+	address, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatalf("NewChannelAddress() error = %v", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), "hello", address)
+	if err != nil {
+		t.Fatalf("NewTurnInput() error = %v", err)
+	}
+
+	for _, taskID := range []modulecore.TaskID{"", "not-a-task-id"} {
+		if _, err := NewTurnInputMessage("mio", "shiro", taskID, input); err == nil {
+			t.Fatalf("NewTurnInputMessage() accepted invalid execution TaskID %q", taskID)
+		}
 	}
 }

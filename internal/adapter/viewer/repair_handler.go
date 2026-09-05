@@ -8,21 +8,21 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type repairEventListener interface {
 	OnEvent(orchestrator.OrchestratorEvent) error
 }
 
-type RepairJobRunner interface {
-	StartRepairJob(ctx context.Context, req RepairJobRequest) error
+type RepairTaskRunner interface {
+	StartRepairTask(ctx context.Context, req RepairTaskRequest) error
 }
 
-type RepairJobRequest struct {
-	JobID       string
+type RepairTaskRequest struct {
+	TaskID      modulecore.TaskID
 	Reason      string
 	Instruction string
 	Recent      int
@@ -41,7 +41,7 @@ type repairRunRequest struct {
 
 type repairRunResponse struct {
 	OK      bool   `json:"ok"`
-	JobID   string `json:"job_id"`
+	TaskID  string `json:"task_id"`
 	Reason  string `json:"reason"`
 	Summary string `json:"summary"`
 }
@@ -50,7 +50,7 @@ func HandleRepairRun(listener repairEventListener) http.HandlerFunc {
 	return HandleRepairRunWithRunner(listener, nil)
 }
 
-func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRunner) http.HandlerFunc {
+func HandleRepairRunWithRunner(listener repairEventListener, runner RepairTaskRunner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -62,10 +62,10 @@ func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRun
 			return
 		}
 		req = normalizeRepairRunRequest(req)
-		jobID := fmt.Sprintf("repair-%d", time.Now().UnixNano())
+		taskID := modulecore.NewTaskID()
 		summary := fmt.Sprintf("repair requested: %s / recent=%d / target=%s:%s", req.Reason, req.Recent, req.TargetRoute, req.TargetAgent)
 		payload, _ := json.Marshal(map[string]any{
-			"job_id":       jobID,
+			"task_id":      taskID,
 			"reason":       req.Reason,
 			"instruction":  req.Instruction,
 			"recent":       req.Recent,
@@ -77,19 +77,19 @@ func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRun
 			http.Error(w, "repair event publication unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if err := listener.OnEvent(orchestrator.NewEvent("repair.requested", "user", "repair", string(payload), "OPS", jobID, "", "viewer", "repair")); err != nil {
-			log.Printf("repair requested event publication failed job=%s: %v", jobID, err)
+		if err := listener.OnEvent(orchestrator.NewEvent("repair.requested", "user", "repair", string(payload), "OPS", taskID.String(), "", "viewer", "repair")); err != nil {
+			log.Printf("repair requested event publication failed task=%s: %v", taskID, err)
 			http.Error(w, "repair event publication failed", http.StatusServiceUnavailable)
 			return
 		}
-		if err := listener.OnEvent(orchestrator.NewEvent("job.notification", "shiro", "mio", repairNotificationContent(req, jobID), "OPS", jobID, "", "viewer", "repair")); err != nil {
-			log.Printf("repair notification event publication failed job=%s: %v", jobID, err)
+		if err := listener.OnEvent(orchestrator.NewEvent("task.notification", "shiro", "mio", repairNotificationContent(req, taskID), "OPS", taskID.String(), "", "viewer", "repair")); err != nil {
+			log.Printf("repair notification event publication failed task=%s: %v", taskID, err)
 			http.Error(w, "repair event publication failed", http.StatusServiceUnavailable)
 			return
 		}
 		if runner != nil {
-			runReq := RepairJobRequest{
-				JobID:       jobID,
+			runReq := RepairTaskRequest{
+				TaskID:      taskID,
 				Reason:      req.Reason,
 				Instruction: req.Instruction,
 				Recent:      req.Recent,
@@ -97,21 +97,21 @@ func HandleRepairRunWithRunner(listener repairEventListener, runner RepairJobRun
 				TargetAgent: req.TargetAgent,
 				Source:      "viewer",
 			}
-			if err := runner.StartRepairJob(r.Context(), runReq); err != nil {
-				log.Printf("repair job start failed job=%s: %v", jobID, err)
+			if err := runner.StartRepairTask(r.Context(), runReq); err != nil {
+				log.Printf("repair Task start failed task=%s: %v", taskID, err)
 				errPayload, _ := json.Marshal(map[string]any{
-					"job_id": jobID,
-					"status": "start_failed",
-					"error":  err.Error(),
+					"task_id": taskID,
+					"status":  "start_failed",
+					"error":   err.Error(),
 				})
-				if publishErr := listener.OnEvent(orchestrator.NewEvent("repair.start_failed", "repair", "shiro", string(errPayload), "OPS", jobID, "", "viewer", "repair")); publishErr != nil {
-					log.Printf("repair start_failed event publication failed job=%s: %v", jobID, publishErr)
+				if publishErr := listener.OnEvent(orchestrator.NewEvent("repair.start_failed", "repair", "shiro", string(errPayload), "OPS", taskID.String(), "", "viewer", "repair")); publishErr != nil {
+					log.Printf("repair start_failed event publication failed task=%s: %v", taskID, publishErr)
 				}
 			}
 		}
 		writeMonitorJSON(w, repairRunResponse{
 			OK:      true,
-			JobID:   jobID,
+			TaskID:  taskID.String(),
 			Reason:  req.Reason,
 			Summary: summary,
 		})
@@ -144,11 +144,11 @@ func normalizeRepairRunRequest(req repairRunRequest) repairRunRequest {
 	return req
 }
 
-func repairNotificationContent(req repairRunRequest, jobID string) string {
+func repairNotificationContent(req repairRunRequest, taskID modulecore.TaskID) string {
 	return strings.Join([]string{
-		"修復ジョブを受け付けました",
+		"修復Taskを受け付けました",
 		"status: requested",
-		"job_id: " + jobID,
+		"task_id: " + taskID.String(),
 		"reason: " + req.Reason,
 		"instruction: " + req.Instruction,
 	}, "\n")

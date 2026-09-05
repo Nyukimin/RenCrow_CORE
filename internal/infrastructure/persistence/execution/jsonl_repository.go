@@ -12,6 +12,7 @@ import (
 	"time"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // JSONLRepository は execution record を JSONL で保持する
@@ -37,13 +38,19 @@ func NewJSONLRepository(path string) (*JSONLRepository, error) {
 }
 
 func (r *JSONLRepository) Create(_ context.Context, record domain.Record) error {
+	if err := record.Validate(); err != nil {
+		return fmt.Errorf("invalid execution record: %w", err)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.append(record)
 }
 
-func (r *JSONLRepository) UpdateStatus(ctx context.Context, jobID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
-	rec, err := r.Get(ctx, jobID, actionID)
+func (r *JSONLRepository) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
+	if err := taskID.Validate(); err != nil {
+		return domain.Record{}, fmt.Errorf("task_id: %w", err)
+	}
+	rec, err := r.Get(ctx, taskID, actionID)
 	if err != nil {
 		return domain.Record{}, err
 	}
@@ -66,12 +73,15 @@ func (r *JSONLRepository) UpdateStatus(ctx context.Context, jobID, actionID stri
 	return rec, nil
 }
 
-func (r *JSONLRepository) Get(_ context.Context, jobID, actionID string) (domain.Record, error) {
+func (r *JSONLRepository) Get(_ context.Context, taskID modulecore.TaskID, actionID string) (domain.Record, error) {
+	if err := taskID.Validate(); err != nil {
+		return domain.Record{}, fmt.Errorf("task_id: %w", err)
+	}
 	records, err := r.loadLatestByAction()
 	if err != nil {
 		return domain.Record{}, err
 	}
-	key := actionKey(jobID, actionID)
+	key := actionKey(taskID, actionID)
 	rec, ok := records[key]
 	if !ok {
 		return domain.Record{}, errors.New("record not found")
@@ -118,7 +128,10 @@ func (r *JSONLRepository) loadLatestByAction() (map[string]domain.Record, error)
 		if err := json.Unmarshal(s.Bytes(), &rec); err != nil {
 			continue
 		}
-		latest[actionKey(rec.JobID, rec.ActionID)] = rec
+		if err := rec.Validate(); err != nil {
+			continue
+		}
+		latest[actionKey(rec.TaskID, rec.ActionID)] = rec
 	}
 	if err := s.Err(); err != nil {
 		return nil, fmt.Errorf("scan file: %w", err)
@@ -126,6 +139,6 @@ func (r *JSONLRepository) loadLatestByAction() (map[string]domain.Record, error)
 	return latest, nil
 }
 
-func actionKey(jobID, actionID string) string {
-	return jobID + "::" + actionID
+func actionKey(taskID modulecore.TaskID, actionID string) string {
+	return taskID.String() + "::" + actionID
 }

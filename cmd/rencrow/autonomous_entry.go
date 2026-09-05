@@ -17,6 +17,7 @@ import (
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // messageProcessor is used by viewer/entry adapters.
@@ -48,6 +49,7 @@ type ttsEntryPlanner struct {
 type ttsEntryApplier struct {
 	proc    messageProcessor
 	req     entryadapter.Request
+	taskID  modulecore.TaskID
 	latest  orchestrator.ProcessMessageResponse
 	runtime ttsEntryRuntime
 	synth   ttsinfra.SynthesisOutput
@@ -91,7 +93,8 @@ func processEntryRequestWithRuntime(ctx context.Context, proc messageProcessor, 
 		return entryadapter.Result{}, fmt.Errorf("create report store: %w", err)
 	}
 
-	applier := &ttsEntryApplier{proc: proc, req: req, runtime: runtime}
+	taskID := modulecore.NewTaskID()
+	applier := &ttsEntryApplier{proc: proc, req: req, taskID: taskID, runtime: runtime}
 	svc := autonomousapp.NewService(
 		ttsEntryPlanner{requireTTS: true},
 		applier,
@@ -100,7 +103,7 @@ func processEntryRequestWithRuntime(ctx context.Context, proc messageProcessor, 
 		1,
 	).WithReportStore(store)
 
-	runReport, err := svc.Run(ctx, contract)
+	runReport, err := svc.Run(ctx, contract, taskID)
 	writeErr := saveTTSEvidence(ctx, store, contract, runReport, applier, err)
 	if writeErr != nil {
 		log.Printf("WARN: save tts evidence failed: %v", writeErr)
@@ -108,16 +111,21 @@ func processEntryRequestWithRuntime(ctx context.Context, proc messageProcessor, 
 	if err != nil {
 		return entryadapter.Result{}, err
 	}
-	evidenceJobID := runReport.JobID
-	if evidenceJobID == "" {
-		evidenceJobID = applier.latest.JobID
+	evidenceTaskID := runReport.TaskID.String()
+	if evidenceTaskID == "" {
+		evidenceTaskID = applier.latest.TaskID
 	}
-	evidenceRef := "execution_report:" + evidenceJobID
+	evidenceRef := "execution_report:" + evidenceTaskID
 	return toEntryResult(req.SessionID, applier.latest, evidenceRef), nil
 }
 
-func runProcessMessage(ctx context.Context, proc messageProcessor, req entryadapter.Request) (orchestrator.ProcessMessageResponse, error) {
+func runProcessMessage(ctx context.Context, proc messageProcessor, req entryadapter.Request, rootTaskIDs ...modulecore.TaskID) (orchestrator.ProcessMessageResponse, error) {
+	rootTaskID := ""
+	if len(rootTaskIDs) > 0 {
+		rootTaskID = rootTaskIDs[0].String()
+	}
 	return proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
+		RootTaskID:  rootTaskID,
 		SessionID:   req.SessionID,
 		Channel:     req.Channel,
 		ChatID:      req.UserID,
@@ -132,7 +140,7 @@ func toEntryResult(sessionID string, resp orchestrator.ProcessMessageResponse, e
 	return entryadapter.Result{
 		SessionID:   sessionID,
 		Route:       string(resp.Route),
-		JobID:       resp.JobID,
+		TaskID:      resp.TaskID,
 		MessageID:   resp.MessageID,
 		TraceID:     resp.TraceID,
 		Response:    resp.Response,
@@ -192,7 +200,7 @@ func (a *ttsEntryApplier) Apply(ctx context.Context, step autonomousapp.Step) er
 	}
 	switch step.Name {
 	case "process-message", "retry-process-message":
-		resp, err := runProcessMessage(ctx, a.proc, a.req)
+		resp, err := runProcessMessage(ctx, a.proc, a.req, a.taskID)
 		if err != nil {
 			return err
 		}
@@ -280,7 +288,7 @@ func saveTTSEvidence(
 		reason = runErr.Error()
 	}
 	report := domainexecution.ExecutionReport{
-		JobID:         runReport.JobID,
+		TaskID:        runReport.TaskID,
 		Goal:          contract.Goal,
 		Route:         string(applier.latest.Route),
 		Capability:    string(autonomousapp.CapabilityTTSDelivery),

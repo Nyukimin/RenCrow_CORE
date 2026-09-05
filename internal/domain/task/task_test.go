@@ -55,6 +55,10 @@ func TestTaskIdentityAndRelationshipValidation(t *testing.T) {
 func TestTaskRejectsUnknownEnumsAndRegressingTimestamp(t *testing.T) {
 	for name, mutate := range map[string]func(*Task){
 		"route":            func(value *Task) { value.Route = Route("DIRECT") },
+		"routing event id": func(value *Task) { value.RoutingEventID = modulecore.EventID("invalid-event-id") },
+		"assignment event id": func(value *Task) {
+			value.AssignmentEventID = modulecore.EventID("invalid-event-id")
+		},
 		"interrupt policy": func(value *Task) { value.InterruptPolicy = InterruptPolicy("ask_user") },
 		"updated at":       func(value *Task) { value.UpdatedAt = value.CreatedAt.Add(-time.Second) },
 	} {
@@ -68,8 +72,36 @@ func TestTaskRejectsUnknownEnumsAndRegressingTimestamp(t *testing.T) {
 	}
 }
 
+func TestTaskSupportsEveryOrchestratorRouteAndEventReferences(t *testing.T) {
+	routes := []Route{
+		RouteCHAT,
+		RoutePLAN,
+		RouteANALYZE,
+		RouteOperations,
+		RouteResearch,
+		RouteWILD,
+		RouteCode,
+		RouteCODE1,
+		RouteCODE2,
+		RouteCODE3,
+		RouteCODE4,
+		RouteGeneral,
+	}
+	for _, route := range routes {
+		t.Run(string(route), func(t *testing.T) {
+			value := validTask()
+			value.Route = route
+			value.RoutingEventID = modulecore.NewEventID()
+			value.AssignmentEventID = modulecore.NewEventID()
+			if err := value.Validate(); err != nil {
+				t.Fatalf("route %q: Validate: %v", route, err)
+			}
+		})
+	}
+}
+
 func TestTaskTransitionsAndNotification(t *testing.T) {
-	if !CanTransition(StatusQueued, StatusRunning) || !CanTransition(StatusRunning, StatusWaiting) || !CanTransition(StatusWaiting, StatusQueued) {
+	if !CanTransition(StatusQueued, StatusRunning) || !CanTransition(StatusQueued, StatusFailed) || !CanTransition(StatusRunning, StatusWaiting) || !CanTransition(StatusWaiting, StatusQueued) {
 		t.Fatal("expected lifecycle transitions are unavailable")
 	}
 	if CanTransition(StatusSucceeded, StatusRunning) || CanTransition(StatusQueued, StatusSucceeded) {
@@ -84,6 +116,15 @@ func TestTaskTransitionsAndNotification(t *testing.T) {
 	value.InterruptPolicy = InterruptSilent
 	if ShouldNotify(value) {
 		t.Fatal("silent Task should not notify")
+	}
+}
+
+func TestQueuedTaskCanFailBeforeStart(t *testing.T) {
+	if !CanTransition(StatusQueued, StatusFailed) {
+		t.Fatal("routing or pre-start failure must be able to fail a queued task")
+	}
+	if CanTransition(StatusQueued, StatusSucceeded) {
+		t.Fatal("queued task must not succeed before it starts")
 	}
 }
 

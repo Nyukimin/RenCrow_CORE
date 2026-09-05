@@ -46,9 +46,6 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
-		viewerJobs: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusAccepted)
-		}),
 		viewerLogs: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusPartialContent)
 		}),
@@ -127,7 +124,8 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "viewer backlog", method: http.MethodGet, path: "/viewer/backlog", want: http.StatusOK},
 		{name: "viewer scheduler", method: http.MethodGet, path: "/viewer/scheduler", want: http.StatusResetContent},
 		{name: "viewer ops status", method: http.MethodGet, path: "/viewer/status", want: http.StatusOK},
-		{name: "viewer jobs", method: http.MethodGet, path: "/viewer/jobs", want: http.StatusAccepted},
+		{name: "viewer jobs retired", method: http.MethodGet, path: "/viewer/jobs", want: http.StatusNotFound},
+		{name: "viewer job detail retired", method: http.MethodGet, path: "/viewer/job/detail", want: http.StatusNotFound},
 		{name: "viewer logs", method: http.MethodGet, path: "/viewer/logs", want: http.StatusPartialContent},
 		{name: "viewer workstreams", method: http.MethodGet, path: "/viewer/workstreams", want: http.StatusCreated},
 		{name: "viewer revenue", method: http.MethodGet, path: "/viewer/revenue", want: http.StatusNoContent},

@@ -11,8 +11,8 @@ import (
 type ttsEnabledFunc func() bool
 
 // messageTurnInputBuilder owns the single construction boundary for text
-// ingress. The conversation input carries only conversation identities; the
-// legacy execution JobID remains an explicit companion value.
+// ingress. RootTaskID is the sole execution identity until routing optionally
+// creates a child Task for another CORE Agent.
 type messageTurnInputBuilder struct {
 	emit       messageEventEmitter
 	ttsEnabled ttsEnabledFunc
@@ -26,16 +26,16 @@ func newMessageTurnInputBuilder(emit messageEventEmitter, ttsEnabled ttsEnabledF
 }
 
 func (b *messageTurnInputBuilder) Build(req ProcessMessageRequest) (conversation.TurnInput, modulecore.TaskID, string, error) {
-	jobID, err := modulecore.ParseTaskID(req.JobID)
+	taskID, err := modulecore.ParseTaskID(req.RootTaskID)
 	if err != nil {
-		return conversation.TurnInput{}, "", "", fmt.Errorf("invalid task identity in job_id field: %w", err)
+		return conversation.TurnInput{}, "", "", fmt.Errorf("invalid root_task_id: %w", err)
 	}
-	return b.BuildWithJobID(req, jobID)
+	return b.BuildWithTaskID(req, taskID)
 }
 
 // buildTurnInputFromProcessRequest reconstructs the exact identities assigned
 // by the request boundary. It deliberately does not derive any identity from
-// the legacy JobID or generate replacement conversation IDs.
+// another execution identity or generate replacement conversation IDs.
 func buildTurnInputFromProcessRequest(req ProcessMessageRequest) (conversation.TurnInput, error) {
 	address, err := conversation.NewChannelAddress(req.Channel, req.ChatID)
 	if err != nil {
@@ -59,21 +59,21 @@ func buildTurnInputFromProcessRequest(req ProcessMessageRequest) (conversation.T
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)), nil
 }
 
-func (b *messageTurnInputBuilder) BuildWithJobID(req ProcessMessageRequest, jobID modulecore.TaskID) (conversation.TurnInput, modulecore.TaskID, string, error) {
+func (b *messageTurnInputBuilder) BuildWithTaskID(req ProcessMessageRequest, taskID modulecore.TaskID) (conversation.TurnInput, modulecore.TaskID, string, error) {
 	input, err := buildTurnInputFromProcessRequest(req)
 	if err != nil {
-		return conversation.TurnInput{}, jobID, "", err
+		return conversation.TurnInput{}, taskID, "", err
 	}
 	if len(req.Attachments) > 0 {
 		b.emit("viewer.attachment.received", "viewer", "mio",
 			fmt.Sprintf("%d attachment(s)", len(req.Attachments)),
-			"", jobID.String(), req.SessionID, req.Channel, req.ChatID)
+			"", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	}
 	ttsSessionID := ""
 	if b.ttsEnabled() && ttsAllowedForRequest(req) {
-		ttsSessionID = fmt.Sprintf("%s-%s", req.SessionID, jobID.String())
+		ttsSessionID = fmt.Sprintf("%s-%s", req.SessionID, taskID.String())
 	}
-	return input, jobID, ttsSessionID, nil
+	return input, taskID, ttsSessionID, nil
 }
 
 func ttsAllowedForRequest(req ProcessMessageRequest) bool {

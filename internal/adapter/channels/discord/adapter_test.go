@@ -22,7 +22,7 @@ import (
 type mockOrchestrator struct{}
 
 func (m *mockOrchestrator) ProcessMessage(ctx context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
-	return orchestrator.ProcessMessageResponse{Response: "ok", Route: routing.RouteCHAT, JobID: "job1"}, nil
+	return orchestrator.ProcessMessageResponse{Response: "ok", Route: routing.RouteCHAT, TaskID: "tsk_018f1c2d-3e4f-7a5b-8c6d-7e8f9a0b1c2d"}, nil
 }
 
 type captureOrchestrator struct {
@@ -33,7 +33,7 @@ type captureOrchestrator struct {
 func (m *captureOrchestrator) ProcessMessage(ctx context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
 	m.calls++
 	m.req = req
-	return orchestrator.ProcessMessageResponse{Response: "ok", Route: routing.RouteCHAT, JobID: "job1"}, nil
+	return orchestrator.ProcessMessageResponse{Response: "ok", Route: routing.RouteCHAT, TaskID: "tsk_018f1c2d-3e4f-7a5b-8c6d-7e8f9a0b1c2d"}, nil
 }
 
 type fakeAttachmentSaver struct{}

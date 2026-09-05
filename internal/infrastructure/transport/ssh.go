@@ -280,7 +280,11 @@ func (t *SSHTransport) receiveLoop() {
 			log.Printf("[SSHTransport] Failed to decode message: %v", err)
 			continue
 		}
-		log.Printf("[SSHTransport] inbound from=%s to=%s type=%s job=%s", msg.From, msg.To, msg.Type, msg.JobID)
+		if err := msg.Validate(); err != nil {
+			log.Printf("[SSHTransport] dropped invalid inbound message reason=validation_failed")
+			continue
+		}
+		log.Printf("[SSHTransport] inbound from=%s to=%s type=%s task=%s", msg.From, msg.To, msg.Type, msg.TaskID)
 
 		select {
 		case t.inbound <- msg:
@@ -348,6 +352,10 @@ func (t *SSHTransport) closeConnection() {
 
 // Send はメッセージをSSH経由で送信（JSON 1行）
 func (t *SSHTransport) Send(ctx context.Context, msg domaintransport.Message) error {
+	if err := msg.Validate(); err != nil {
+		return fmt.Errorf("validate outbound message: %w", err)
+	}
+
 	t.mu.Lock()
 	if t.closed {
 		t.mu.Unlock()
@@ -377,7 +385,7 @@ func (t *SSHTransport) Send(ctx context.Context, msg domaintransport.Message) er
 	if _, err := t.stdin.Write(data); err != nil {
 		return fmt.Errorf("write to SSH stdin: %w", err)
 	}
-	log.Printf("[SSHTransport] sent to_agent=%s from=%s to=%s type=%s job=%s", t.agentType, msg.From, msg.To, msg.Type, msg.JobID)
+	log.Printf("[SSHTransport] sent to_agent=%s from=%s to=%s type=%s task=%s", t.agentType, msg.From, msg.To, msg.Type, msg.TaskID)
 	return nil
 }
 
@@ -388,7 +396,7 @@ func (t *SSHTransport) Receive(ctx context.Context) (domaintransport.Message, er
 		if !ok {
 			return domaintransport.Message{}, fmt.Errorf("transport is closed")
 		}
-		log.Printf("[SSHTransport] recv from=%s to=%s type=%s job=%s", msg.From, msg.To, msg.Type, msg.JobID)
+		log.Printf("[SSHTransport] recv from=%s to=%s type=%s task=%s", msg.From, msg.To, msg.Type, msg.TaskID)
 		return msg, nil
 	case <-ctx.Done():
 		log.Printf("[SSHTransport] recv canceled agent=%s err=%v", t.agentType, ctx.Err())

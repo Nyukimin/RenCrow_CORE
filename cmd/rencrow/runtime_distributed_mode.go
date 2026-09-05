@@ -72,7 +72,7 @@ func (d *Dependencies) buildDistributedMode(
 						reason,
 						"",
 						"",
-						"system",
+						"",
 						"system",
 						"system",
 					)); publishErr != nil {
@@ -113,6 +113,10 @@ func (d *Dependencies) buildDistributedMode(
 		sshTransports,
 	)
 	d.distOrch = distOrch
+	if d.taskManager != nil {
+		distOrch.SetTaskLifecycleManager(d.taskManager)
+		log.Println("Canonical Task lifecycle integrated with DistributedOrchestrator")
+	}
 	if coderCaps := buildCoderCapabilities(nodeCaps, cfg); coderCaps != nil {
 		distOrch.SetCoderCapabilities(coderCaps)
 		log.Printf("Distributed coder capability routing enabled (%d coders)", len(coderCaps))

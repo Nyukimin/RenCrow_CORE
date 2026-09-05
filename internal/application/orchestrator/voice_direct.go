@@ -19,6 +19,7 @@ const voiceChatSurfaceReason = voiceinput.SurfaceVoiceChat
 // ProcessVoiceDirectRequest は voice_chat surface の input_audio/VDS 確定後の orchestrator 連携入力。
 // Phase 1 では RenCrow_LLM WS が推論し、rencrow は FinalText を受け取って Chat SSE を出す。
 type ProcessVoiceDirectRequest struct {
+	RootTaskID    modulecore.TaskID
 	UtteranceID   string
 	SessionID     string
 	Channel       string
@@ -113,7 +114,14 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, fmt.Errorf("build voice direct channel address: %w", err)
 	}
-	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), result.UserText, address)
+	rootTaskID := req.RootTaskID
+	if rootTaskID.IsZero() {
+		rootTaskID = modulecore.NewTaskID()
+	}
+	if err := rootTaskID.Validate(); err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("voice direct root task identity is invalid: %w", err)
+	}
+	input, err := conversation.NewTurnInput(rootTaskID, result.UserText, address)
 	if err != nil {
 		return ProcessMessageResponse{}, fmt.Errorf("build voice direct turn input: %w", err)
 	}
@@ -122,27 +130,23 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		WithViewerRecipient("mio").
 		WithRoute(routing.RouteCHAT)
 	decision := routing.NewDecision(routing.RouteCHAT, 1.0, voiceChatSurfaceReason)
-	jobID := modulecore.NewTaskID()
-	o.events.BindTrace(jobID.String(), input.TraceID())
-	defer o.events.ReleaseTrace(jobID.String())
+	taskID := input.RootTaskID()
+	o.events.BindTrace(taskID.String(), input.TraceID())
+	defer o.events.ReleaseTrace(taskID.String())
 
 	published, err := voiceinput.Publisher{
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
 		Input:      input,
-		NewJobID: func() string {
-			return jobID.String()
-		},
-		EmitMetric: func(kind, point string, startedAt time.Time, route, jobID, sessionID, channel, chatID, detail string) {
-			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, jobID, sessionID, channel, chatID, detail)
+		EmitMetric: func(kind, point string, startedAt time.Time, route, taskID, sessionID, channel, chatID, detail string) {
+			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, taskID, sessionID, channel, chatID, detail)
 		},
 	}.Publish(result)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	publishedJobID, err := modulecore.ParseTaskID(published.JobID)
-	if err != nil {
-		return ProcessMessageResponse{}, fmt.Errorf("published task identity is invalid: %w", err)
+	if published.TaskID != input.RootTaskID() {
+		return ProcessMessageResponse{}, fmt.Errorf("published task identity does not match root task identity")
 	}
 
 	if !req.FirstTokenAt.IsZero() {
@@ -153,7 +157,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 			startedAt,
 			req.FirstTokenAt,
 			string(routing.RouteCHAT),
-			published.JobID,
+			published.TaskID.String(),
 			sessionID,
 			channel,
 			chatID,
@@ -162,17 +166,18 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	}
 
 	_ = ctx
-	response := o.responses.Build(result.Reply, decision, publishedJobID)
+	response := o.responses.Build(result.Reply, decision, published.TaskID)
 	response.TurnID = string(input.TurnID())
 	response.TraceID = string(input.TraceID())
-	response.RootTaskID = string(input.RootTaskID())
+	response.TaskID = published.TaskID.String()
+	response.RootTaskID = published.TaskID.String()
 	response.MessageID = string(input.AgentMessageID())
-	_ = o.events.TakeResponseMessageID(published.JobID)
+	_ = o.events.TakeResponseMessageID(published.TaskID.String())
 	return response, nil
 }
 
 // NotifyVoiceDirectFirstToken は bridge が初回 llm.delta を転送したタイミングで呼ぶ。
-func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, jobID modulecore.TaskID, firstTokenAt time.Time) {
+func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, taskID modulecore.TaskID, firstTokenAt time.Time) {
 	if o == nil || firstTokenAt.IsZero() {
 		return
 	}
@@ -183,8 +188,11 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 	sessionID := req.normalizedSessionID()
 	channel := req.normalizedChannel()
 	chatID := req.normalizedChatID()
-	if jobID.IsZero() {
-		jobID = modulecore.NewTaskID()
+	if taskID.IsZero() || req.RootTaskID.IsZero() || taskID != req.RootTaskID {
+		return
+	}
+	if err := taskID.Validate(); err != nil {
+		return
 	}
 	emitVoiceDirectPointLatency(
 		o.events.Emit,
@@ -193,7 +201,7 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 		startedAt,
 		firstTokenAt,
 		string(routing.RouteCHAT),
-		jobID.String(),
+		taskID.String(),
 		sessionID,
 		channel,
 		chatID,
@@ -206,7 +214,7 @@ func emitVoiceDirectPointLatency(
 	emit messageEventEmitter,
 	kind, point string,
 	startedAt, at time.Time,
-	route, jobID, sessionID, channel, chatID, detail string,
+	route, taskID, sessionID, channel, chatID, detail string,
 ) {
 	if emit == nil || startedAt.IsZero() || at.IsZero() {
 		return
@@ -223,5 +231,5 @@ func emitVoiceDirectPointLatency(
 	if err != nil {
 		content = []byte(fmt.Sprintf(`{"kind":%q,"point":%q,"at_unix_ms":%d}`, kind, point, at.UnixMilli()))
 	}
-	emit("metrics.latency", "metrics", "viewer", string(content), route, jobID, sessionID, channel, chatID)
+	emit("metrics.latency", "metrics", "viewer", string(content), route, taskID, sessionID, channel, chatID)
 }

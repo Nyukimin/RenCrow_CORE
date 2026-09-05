@@ -9,6 +9,7 @@ import (
 
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestLoadEvidenceStoreAndList(t *testing.T) {
@@ -19,8 +20,9 @@ func TestLoadEvidenceStoreAndList(t *testing.T) {
 		t.Fatalf("loadEvidenceStore failed: %v", err)
 	}
 
+	taskID := modulecore.NewTaskID()
 	item := domainexecution.ExecutionReport{
-		JobID:      "job-test-1",
+		TaskID:     taskID,
 		Goal:       "TTS実装して",
 		Status:     "passed",
 		CreatedAt:  time.Now().UTC(),

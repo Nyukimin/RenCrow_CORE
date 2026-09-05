@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,9 +54,9 @@ func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 	]`
 
 	p := proposal.NewProposal("Test plan", jsonPatch, "Low risk", "Low cost")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -106,9 +107,9 @@ func TestExecuteProposal_Success_MarkdownPatch(t *testing.T) {
 	markdownPatch := "```go:" + testFilePath + "\npackage main\n\nfunc main() {\n\tprintln(\"Hello\")\n}\n```"
 
 	p := proposal.NewProposal("Test plan", markdownPatch, "Low risk", "Low cost")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -148,9 +149,9 @@ func TestExecuteProposal_MarkdownPatchCreatesMissingFile(t *testing.T) {
 	markdownPatch := "```go:" + testFilePath + "\npackage main\n\nfunc main() {}\n```"
 
 	p := proposal.NewProposal("Create missing file from Markdown patch", markdownPatch, "Low risk", "Low cost")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -176,9 +177,9 @@ func TestExecuteProposal_ParseError(t *testing.T) {
 	// 不正なPatch
 	invalidPatch := "this is not valid JSON or Markdown"
 	p := proposal.NewProposal("Test", invalidPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	_, err := service.ExecuteProposal(context.Background(), jobID, p)
+	_, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err == nil {
 		t.Error("Expected parse error, but got nil")
 	}
@@ -241,10 +242,10 @@ func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
 		CommandTimeout: 10,
 	}
 	service := NewWorkerExecutionService(cfg)
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	p := proposal.NewProposal("retry test", `[{"type":"shell_command","action":"run","target":"`+missingCommand+`"}]`, "", "")
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -274,9 +275,9 @@ func TestExecuteFileEdit_Create(t *testing.T) {
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "Created"}]`
 
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -308,9 +309,9 @@ func TestExecuteFileEdit_Update(t *testing.T) {
 
 	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + filepath.ToSlash(testFile) + `", "content": "Updated"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -417,9 +418,9 @@ func TestExecuteFileEdit_Delete(t *testing.T) {
 
 	jsonPatch := `[{"type": "file_edit", "action": "delete", "target": "` + filepath.ToSlash(testFile) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -446,9 +447,9 @@ func TestExecuteFileEdit_Append(t *testing.T) {
 
 	jsonPatch := `[{"type": "file_edit", "action": "append", "target": "` + filepath.ToSlash(testFile) + `", "content": "Line2\n"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -473,9 +474,9 @@ func TestExecuteFileEdit_Mkdir(t *testing.T) {
 
 	jsonPatch := `[{"type": "file_edit", "action": "mkdir", "target": "` + filepath.ToSlash(newDir) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -499,9 +500,9 @@ func TestExecuteShellCommand_Success(t *testing.T) {
 
 	jsonPatch := `[{"type": "shell_command", "action": "run", "target": "echo 'test'"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -531,9 +532,9 @@ func TestProtectedFile_Error(t *testing.T) {
 	envFile := filepath.Join(tmpDir, ".env")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	// 失敗すべき
 	if result.Success {
@@ -558,9 +559,9 @@ func TestWorkspaceRestriction_Error(t *testing.T) {
 	outsideFile := "/tmp/outside.txt"
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + outsideFile + `", "content": "Bad"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err == nil {
 		t.Fatal("expected outside workspace target to be rejected before execution")
 	}
@@ -593,9 +594,9 @@ func TestExecuteFileEdit_Rename(t *testing.T) {
 		"metadata": {"new_name": "` + filepath.ToSlash(newFile) + `"}
 	}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -631,9 +632,9 @@ func TestExecuteFileEdit_Copy(t *testing.T) {
 		"metadata": {"destination": "` + filepath.ToSlash(destFile) + `"}
 	}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -668,9 +669,9 @@ func TestExecuteShellCommand_WithEnv(t *testing.T) {
 		"metadata": {"env": "TEST_VAR=HelloFromEnv"}
 	}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -702,10 +703,10 @@ func TestShowExecutionSummary(t *testing.T) {
 		{"type": "shell_command", "action": "run", "target": "echo test"}
 	]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	// サマリが表示される（標準出力）
-	result, err := service.ExecuteProposal(context.Background(), jobID, p)
+	result, err := service.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -717,6 +718,33 @@ func TestShowExecutionSummary(t *testing.T) {
 	// サマリが含まれているか（resultのSummaryフィールド）
 	if result.Summary == "" {
 		t.Error("Summary should not be empty when ShowExecutionSummary is true")
+	}
+}
+
+func TestShowExecutionSummaryUsesTaskIDLabel(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	service := &workerExecutionService{}
+
+	previous := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdout pipe: %v", err)
+	}
+	os.Stdout = writer
+	service.showExecutionSummary(taskID, nil)
+	_ = writer.Close()
+	os.Stdout = previous
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read summary output: %v", err)
+	}
+	_ = reader.Close()
+
+	if !strings.Contains(string(output), "TaskID: "+taskID.String()) {
+		t.Fatalf("summary=%q, want TaskID label", output)
+	}
+	if strings.Contains(string(output), "JobID:") {
+		t.Fatalf("summary=%q must not use JobID label", output)
 	}
 }
 
@@ -734,9 +762,9 @@ func TestProtectedFile_Skip(t *testing.T) {
 	envFile := filepath.Join(tmpDir, ".env")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	// skipモードなので成功する（ただしファイルは作成されない）
 	if !result.Success {
@@ -763,9 +791,9 @@ func TestProtectedFile_Log(t *testing.T) {
 	envFile := filepath.Join(tmpDir, ".env")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 	// logモードなので成功する（警告ログが出る）
 	if !result.Success {
@@ -802,9 +830,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		]`
 
 		p := proposal.NewProposal("", jsonPatch, "", "")
-		jobID := modulecore.NewTaskID()
+		taskID := modulecore.NewTaskID()
 
-		result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+		result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 		if result.ExecutedCmds != 2 {
 			t.Errorf("Expected 2 executed commands (stopped on error), got %d", result.ExecutedCmds)
@@ -840,9 +868,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		]`
 
 		p := proposal.NewProposal("", jsonPatch, "", "")
-		jobID := modulecore.NewTaskID()
+		taskID := modulecore.NewTaskID()
 
-		result, _ := service.ExecuteProposal(context.Background(), jobID, p)
+		result, _ := service.ExecuteProposal(context.Background(), taskID, p)
 
 		if result.ExecutedCmds != 3 {
 			t.Errorf("Expected 3 executed commands (continue on error), got %d", result.ExecutedCmds)
@@ -891,7 +919,7 @@ func TestExecuteParallel_PhasedExecution(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	// file_edit, shell_command, file_edit の順で混在
 	// 実際のフェーズ順: file_edit → shell_command → git_operation
@@ -904,7 +932,7 @@ func TestExecuteParallel_PhasedExecution(t *testing.T) {
 		{Type: patch.TypeFileEdit, Action: patch.ActionCreate, Target: file2, Content: "file2"},
 	}
 
-	result := svc.executeParallel(context.Background(), jobID, commands)
+	result := svc.executeParallel(context.Background(), taskID, commands)
 
 	// 全3コマンド実行
 	if result.ExecutedCmds != 3 {
@@ -935,7 +963,7 @@ func TestExecuteParallel_SemaphoreLimiting(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	// 5つのfile_editを並列度1で実行（全て同フェーズ）
 	commands := make([]patch.PatchCommand, 5)
@@ -947,7 +975,7 @@ func TestExecuteParallel_SemaphoreLimiting(t *testing.T) {
 		}
 	}
 
-	result := svc.executeParallel(context.Background(), jobID, commands)
+	result := svc.executeParallel(context.Background(), taskID, commands)
 
 	if result.ExecutedCmds != 5 {
 		t.Errorf("Expected 5 executed, got %d", result.ExecutedCmds)
@@ -969,7 +997,7 @@ func TestExecuteParallel_StopOnError(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	// file_editフェーズで失敗 → shell_commandフェーズは実行されないはず
 	commands := []patch.PatchCommand{
@@ -977,7 +1005,7 @@ func TestExecuteParallel_StopOnError(t *testing.T) {
 		{Type: patch.TypeShellCommand, Action: patch.ActionRun, Target: "echo should-not-run"},
 	}
 
-	result := svc.executeParallel(context.Background(), jobID, commands)
+	result := svc.executeParallel(context.Background(), taskID, commands)
 
 	// file_editフェーズだけ実行される（1コマンド失敗）
 	if result.ExecutedCmds != 1 {
@@ -1000,14 +1028,14 @@ func TestExecuteParallel_DefaultMaxParallelism(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
 	f := filepath.Join(tmpDir, "default_par.txt")
 	commands := []patch.PatchCommand{
 		{Type: patch.TypeFileEdit, Action: patch.ActionCreate, Target: f, Content: "ok"},
 	}
 
-	result := svc.executeParallel(context.Background(), jobID, commands)
+	result := svc.executeParallel(context.Background(), taskID, commands)
 
 	if result.ExecutedCmds != 1 {
 		t.Errorf("Expected 1 executed, got %d", result.ExecutedCmds)
@@ -1099,9 +1127,9 @@ func TestAutoCommitChanges(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	hash, err := svc.autoCommitChanges(context.Background(), jobID, "test auto-commit")
+	hash, err := svc.autoCommitChanges(context.Background(), taskID, "test auto-commit")
 	if err != nil {
 		t.Fatalf("autoCommitChanges failed: %v", err)
 	}
@@ -1114,7 +1142,7 @@ func TestAutoCommitChanges(t *testing.T) {
 		t.Errorf("Expected valid git hash, got: %s", hash)
 	}
 
-	// コミットメッセージにJobIDとprefixが含まれるか確認
+	// コミットメッセージにTaskIDとprefixが含まれるか確認
 	logCmd := exec.Command("git", "log", "-1", "--pretty=%B")
 	logCmd.Dir = tmpDir
 	logOutput, err := logCmd.Output()
@@ -1126,8 +1154,11 @@ func TestAutoCommitChanges(t *testing.T) {
 	if !strings.Contains(logMsg, "[Test]") {
 		t.Errorf("Commit message should contain prefix '[Test]', got: %s", logMsg)
 	}
-	if !strings.Contains(logMsg, jobID.String()) {
-		t.Errorf("Commit message should contain jobID, got: %s", logMsg)
+	if !strings.Contains(logMsg, "TaskID: "+taskID.String()) {
+		t.Errorf("Commit message should contain TaskID, got: %s", logMsg)
+	}
+	if strings.Contains(logMsg, "JobID:") {
+		t.Errorf("Commit message should not contain JobID, got: %s", logMsg)
 	}
 }
 
@@ -1150,9 +1181,9 @@ func TestAutoCommitChanges_NothingToCommit(t *testing.T) {
 	}
 
 	svc := &workerExecutionService{config: cfg}
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	hash, err := svc.autoCommitChanges(context.Background(), jobID, "no changes")
+	hash, err := svc.autoCommitChanges(context.Background(), taskID, "no changes")
 	if err != nil {
 		t.Fatalf("autoCommitChanges should not error on nothing to commit: %v", err)
 	}
@@ -1186,9 +1217,9 @@ func TestExecuteProposal_WithAutoCommit(t *testing.T) {
 	testFile := filepath.Join(tmpDir, "autocommit_test.txt")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "auto-committed"}]`
 	p := proposal.NewProposal("Test plan", jsonPatch, "Low", "Low")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := svc.ExecuteProposal(context.Background(), jobID, p)
+	result, err := svc.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -1225,9 +1256,9 @@ func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 		{"type": "git_operation", "action": "add", "target": "add -A"}
 	]`
 	p := proposal.NewProposal("Parallel mixed", jsonPatch, "", "")
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 
-	result, err := svc.ExecuteProposal(context.Background(), jobID, p)
+	result, err := svc.ExecuteProposal(context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}

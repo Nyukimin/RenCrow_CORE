@@ -30,7 +30,7 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 		ThreadSeq:  threadSeq,
 		ThreadKind: threadKind,
 	})
-	if event.TraceID != string(traceID) {
+	if event.TraceID != traceID {
 		t.Fatalf("viewer trace_id = %q, want %q", event.TraceID, traceID)
 	}
 	if event.SessionID != "idle-trace-topic-00" || event.MessageID != "msg-1" {
@@ -51,7 +51,7 @@ func TestIdleChatViewerEventKeepsOwnerSessionTrace(t *testing.T) {
 	if err := json.Unmarshal(encoded, &roundtrip); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if roundtrip.TraceID != string(traceID) ||
+	if roundtrip.TraceID != traceID ||
 		roundtrip.SessionID != event.SessionID ||
 		roundtrip.MessageID != event.MessageID ||
 		roundtrip.ThreadID != threadID ||

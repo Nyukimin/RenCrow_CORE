@@ -33,17 +33,16 @@ func (a *WorkerExecutorAdapter) Health(context.Context) core.HealthReport {
 
 func (a *WorkerExecutorAdapter) Execute(ctx context.Context, action moduleworker.Action) (moduleworker.Result, error) {
 	startedAt := time.Now().UTC()
+	if err := action.Validate(); err != nil {
+		return moduleworker.BuildActionErrorResult(action, err, startedAt, time.Now().UTC()), err
+	}
 	if a == nil || a.service == nil {
 		err := fmt.Errorf("worker execution service is nil")
-		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, time.Now().UTC()), err
+		return moduleworker.BuildFailedResult(action.TaskID, "", err.Error(), startedAt, time.Now().UTC()), err
 	}
 	patchArgs, err := moduleworker.ExtractProposalPatchArgs(action)
 	if err != nil {
 		return moduleworker.BuildActionErrorResult(action, err, startedAt, time.Now().UTC()), err
-	}
-	jobID, err := core.ParseTaskID(string(action.JobID))
-	if err != nil {
-		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, time.Now().UTC()), err
 	}
 	p := proposal.NewProposal(
 		patchArgs.Plan,
@@ -53,17 +52,17 @@ func (a *WorkerExecutorAdapter) Execute(ctx context.Context, action moduleworker
 	)
 	if !p.IsValid() {
 		err := fmt.Errorf("proposal action requires plan and patch")
-		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, time.Now().UTC()), err
+		return moduleworker.BuildFailedResult(action.TaskID, "", err.Error(), startedAt, time.Now().UTC()), err
 	}
 
-	execResult, err := a.service.ExecuteProposal(ctx, jobID, p)
+	execResult, err := a.service.ExecuteProposal(ctx, action.TaskID, p)
 	finishedAt := time.Now().UTC()
 	if err != nil {
-		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, finishedAt), err
+		return moduleworker.BuildFailedResult(action.TaskID, "", err.Error(), startedAt, finishedAt), err
 	}
 
 	summary := toWorkerPatchExecutionSummary(execResult)
-	return moduleworker.BuildPatchExecutionResult(action.JobID, summary, startedAt, finishedAt), nil
+	return moduleworker.BuildPatchExecutionResult(action.TaskID, summary, startedAt, finishedAt), nil
 }
 
 func toWorkerPatchExecutionSummary(result *patch.PatchExecutionResult) *moduleworker.PatchExecutionSummary {

@@ -40,6 +40,12 @@ func reconcileTarget(ctx context.Context, store *eventstore.SQLiteStore, events 
 			continue
 		}
 		present++
+		// EventSeq is assigned by the canonical store. Legacy migration plans
+		// intentionally carry zero, so compare every planned field after binding
+		// that one storage-owned value to the persisted envelope.
+		if expected.EventSeq == 0 {
+			expected.EventSeq = actual.EventSeq
+		}
 		expectedJSON, err := json.Marshal(expected)
 		if err != nil {
 			return "", newCodedError("target_mismatch", "encode expected canonical event")

@@ -59,7 +59,7 @@ func emitLatencyMetric(
 	emit messageEventEmitter,
 	kind, point string,
 	startedAt time.Time,
-	route, jobID, sessionID, channel, chatID, detail string,
+	route, taskID, sessionID, channel, chatID, detail string,
 ) {
 	if emit == nil {
 		return
@@ -78,13 +78,13 @@ func emitLatencyMetric(
 	if err != nil {
 		content = []byte(fmt.Sprintf(`{"kind":%q,"point":%q,"at_unix_ms":%d,"detail":"marshal_failed"}`, kind, point, now.UnixMilli()))
 	}
-	emit("metrics.latency", "metrics", "viewer", string(content), route, jobID, sessionID, channel, chatID)
+	emit("metrics.latency", "metrics", "viewer", string(content), route, taskID, sessionID, channel, chatID)
 }
 
 func emitLLMThroughputMetric(
 	emit messageEventEmitter,
 	metrics llm.GenerationMetrics,
-	route, jobID, sessionID, channel, chatID string,
+	route, taskID, sessionID, channel, chatID string,
 ) {
 	if emit == nil || (metrics.CompletionTokens <= 0 && metrics.TokensPerSecond <= 0) {
 		return
@@ -100,5 +100,5 @@ func emitLLMThroughputMetric(
 	if err != nil {
 		return
 	}
-	emit("metrics.latency", "metrics", "viewer", string(content), route, jobID, sessionID, channel, chatID)
+	emit("metrics.latency", "metrics", "viewer", string(content), route, taskID, sessionID, channel, chatID)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
@@ -132,10 +133,8 @@ func buildViewerRuntimeHandlers(
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
 		deps.viewerAgentDetail = viewer.HandleMonitorAgentDetail(deps.monitorStore)
-		deps.viewerJobs = viewer.HandleMonitorJobs(deps.monitorStore)
 		deps.viewerLogs = viewer.HandleMonitorLogs(deps.monitorStore)
 		deps.viewerAuditSummary = viewer.HandleMonitorAuditSummary(deps.monitorStore)
-		deps.viewerJobDetail = viewer.HandleMonitorJobDetail(deps.monitorStore)
 		log.Printf("WARN: evidence API disabled: %v", err)
 	} else {
 		deps.reportStore = reportStore
@@ -144,10 +143,8 @@ func buildViewerRuntimeHandlers(
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
 		deps.viewerAgentDetail = viewer.HandleMonitorAgentDetail(deps.monitorStore)
-		deps.viewerJobs = viewer.HandleMonitorJobs(deps.monitorStore)
 		deps.viewerLogs = viewer.HandleMonitorLogs(deps.monitorStore)
 		deps.viewerAuditSummary = viewer.HandleMonitorAuditSummary(deps.monitorStore)
-		deps.viewerJobDetail = viewer.HandleMonitorJobDetail(deps.monitorStore)
 		deps.evidenceHandler = viewer.HandleEvidenceRecent(reportStore)
 		deps.evidenceDetail = viewer.HandleEvidenceDetail(reportStore)
 		deps.evidenceSummary = viewer.HandleEvidenceSummary(reportStore)
@@ -160,10 +157,11 @@ func buildViewerRuntimeHandlers(
 	} else if taskStore, err := taskpersistence.NewJSONLStore(taskStorePath); err != nil {
 		log.Printf("WARN: task API disabled: %v", err)
 	} else {
+		deps.taskManager = taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
 		deps.tasks = viewer.HandleTasks(taskStore)
 		deps.taskDetail = viewer.HandleTaskDetail(taskStore)
 		deps.taskNotifications = viewer.HandleTaskNotifications(taskStore)
-		log.Printf("Viewer task API enabled: %s", taskStorePath)
+		log.Printf("Viewer task API and Orchestrator task lifecycle enabled: %s", taskStorePath)
 	}
 }
 

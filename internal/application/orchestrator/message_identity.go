@@ -9,16 +9,12 @@ import (
 
 type correlatedSessionTurnLogger interface {
 	WriteUserWithIdentity(sessionID, channel, messageID, traceID, content string)
-	WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string)
+	WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string)
 }
 
 func ensureProcessRequestIdentity(req *ProcessMessageRequest) error {
 	if req == nil {
 		return errors.New("process message request is nil")
-	}
-	jobID, err := canonicalProcessID(req.JobID, func() string { return string(modulecore.NewTaskID()) }, func(value string) error { return modulecore.TaskID(value).Validate() })
-	if err != nil {
-		return err
 	}
 	turnID, err := canonicalProcessID(req.TurnID, func() string { return string(modulecore.NewTurnID()) }, func(value string) error { return modulecore.TurnID(value).Validate() })
 	if err != nil {
@@ -43,7 +39,6 @@ func ensureProcessRequestIdentity(req *ProcessMessageRequest) error {
 	if messageID == agentMessageID {
 		return errors.New("user and agent message IDs must differ")
 	}
-	req.JobID = jobID
 	req.TurnID = turnID
 	req.TraceID = traceID
 	req.RootTaskID = rootTaskID
@@ -65,7 +60,7 @@ func canonicalProcessID(raw string, generate func() string, validate func(string
 
 func ensureProcessResponseIdentity(
 	resp ProcessMessageResponse,
-	rootJobID string,
+	executionTaskID string,
 	rootTurnID string,
 	rootTraceID string,
 	rootTaskID string,
@@ -76,7 +71,7 @@ func ensureProcessResponseIdentity(
 	resp.TraceID = rootTraceID
 	resp.RootTaskID = rootTaskID
 	if strings.TrimSpace(resp.MessageID) == "" && takeResponseMessageID != nil {
-		resp.MessageID = strings.TrimSpace(takeResponseMessageID(rootJobID))
+		resp.MessageID = strings.TrimSpace(takeResponseMessageID(executionTaskID))
 	}
 	if strings.TrimSpace(resp.MessageID) == "" {
 		resp.MessageID = fallbackMessageID
@@ -104,12 +99,12 @@ func writeAssistantSessionTurn(logger SessionTurnLogger, req ProcessMessageReque
 			req.SessionID,
 			req.Channel,
 			string(resp.Route),
-			resp.JobID,
+			resp.TaskID,
 			resp.MessageID,
 			resp.TraceID,
 			resp.Response,
 		)
 		return
 	}
-	logger.WriteAssistant(req.SessionID, req.Channel, string(resp.Route), resp.JobID, resp.Response)
+	logger.WriteAssistant(req.SessionID, req.Channel, string(resp.Route), resp.TaskID, resp.Response)
 }

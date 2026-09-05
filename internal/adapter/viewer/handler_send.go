@@ -36,7 +36,7 @@ type AttachmentSaver interface {
 // SendRequest is the adapter-neutral payload passed from Viewer to orchestration.
 
 type SendRequest struct {
-	JobID          string
+	SessionID      string
 	MessageID      string
 	AgentMessageID string
 	TurnID         string
@@ -108,14 +108,14 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		jobID := modulecore.NewTaskID().String()
+		rootTaskID := string(modulecore.NewTaskID())
+		sessionID := string(modulecore.NewSessionID())
 		messageID := string(modulecore.NewMessageID())
 		agentMessageID := string(modulecore.NewMessageID())
 		turnID := string(modulecore.NewTurnID())
 		traceID := string(modulecore.NewTraceID())
-		rootTaskID := string(modulecore.NewTaskID())
 		sendReq := SendRequest{
-			JobID:          jobID,
+			SessionID:      sessionID,
 			MessageID:      messageID,
 			AgentMessageID: agentMessageID,
 			TurnID:         turnID,
@@ -133,30 +133,30 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			effectiveMessage = defaultAttachmentMessage(attachments)
 		}
 		sendReq.Message = effectiveMessage
-		log.Printf("[Viewer] HandleSend: accepted job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
-			jobID, traceID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
+		log.Printf("[Viewer] HandleSend: accepted root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
+			rootTaskID, traceID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
-			log.Printf("[Viewer] HandleSend: async start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", jobID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
+			log.Printf("[Viewer] HandleSend: async start root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
 			response, err := handler(ctx, sendReq)
 			if err != nil {
-				log.Printf("[Viewer] HandleSend: async error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", jobID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
+				log.Printf("[Viewer] HandleSend: async error root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
 				if onError != nil {
 					onError(sendReq, err)
 				}
 			} else {
-				log.Printf("[Viewer] HandleSend: async complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", jobID, traceID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
+				log.Printf("[Viewer] HandleSend: async complete root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
 			}
 		}()
 
 		w.Header().Set("Content-Type", "application/json")
 		resp := struct {
 			OK             bool   `json:"ok"`
-			JobID          string `json:"job_id"`
+			SessionID      string `json:"session_id"`
 			MessageID      string `json:"message_id"`
 			AgentMessageID string `json:"agent_message_id"`
 			TurnID         string `json:"turn_id"`
@@ -167,7 +167,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			Attachments    int    `json:"attachment_count"`
 		}{
 			OK:             true,
-			JobID:          jobID,
+			SessionID:      sessionID,
 			MessageID:      messageID,
 			AgentMessageID: agentMessageID,
 			TurnID:         turnID,

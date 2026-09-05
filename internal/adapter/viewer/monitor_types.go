@@ -3,24 +3,27 @@ package viewer
 import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type StatusSnapshot struct {
-	UpdatedAt string            `json:"updated_at"`
-	Chat      ComponentSnapshot `json:"chat"`
-	Worker    ComponentSnapshot `json:"worker"`
-	Coders    CodersSnapshot    `json:"coders"`
+	UpdatedAt      string                 `json:"updated_at"`
+	Chat           ComponentSnapshot      `json:"chat"`
+	Worker         ComponentSnapshot      `json:"worker"`
+	Coders         CodersSnapshot         `json:"coders"`
+	TaskActivities []TaskActivitySnapshot `json:"task_activities"`
 }
 
 type ComponentSnapshot struct {
-	Status    string `json:"status"`
-	AgentID   string `json:"agent_id,omitempty"`
-	JobID     string `json:"job_id,omitempty"`
-	Route     string `json:"route,omitempty"`
-	LastEvent string `json:"last_event,omitempty"`
-	UpdatedAt string `json:"updated_at,omitempty"`
-	Preview   string `json:"preview,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Status    string              `json:"status"`
+	AgentID   string              `json:"agent_id,omitempty"`
+	TaskID    string              `json:"task_id,omitempty"`
+	EventSeq  modulecore.EventSeq `json:"event_seq,omitempty"`
+	Route     string              `json:"route,omitempty"`
+	LastEvent string              `json:"last_event,omitempty"`
+	UpdatedAt string              `json:"updated_at,omitempty"`
+	Preview   string              `json:"preview,omitempty"`
+	Reason    string              `json:"reason,omitempty"`
 }
 
 type CodersSnapshot struct {
@@ -30,21 +33,23 @@ type CodersSnapshot struct {
 }
 
 type AgentSnapshot struct {
-	ID         string `json:"id"`
-	Role       string `json:"role"`
-	State      string `json:"state"`
-	Route      string `json:"route,omitempty"`
-	JobID      string `json:"job_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	LastEvent  string `json:"last_event,omitempty"`
-	Preview    string `json:"preview,omitempty"`
-	Reason     string `json:"reason,omitempty"`
-	UpdatedAt  string `json:"updated_at,omitempty"`
-	EventCount int    `json:"event_count,omitempty"`
+	ID         string              `json:"id"`
+	Role       string              `json:"role"`
+	State      string              `json:"state"`
+	Route      string              `json:"route,omitempty"`
+	TaskID     string              `json:"task_id,omitempty"`
+	EventSeq   modulecore.EventSeq `json:"event_seq,omitempty"`
+	SessionID  string              `json:"session_id,omitempty"`
+	LastEvent  string              `json:"last_event,omitempty"`
+	Preview    string              `json:"preview,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	UpdatedAt  string              `json:"updated_at,omitempty"`
+	EventCount int                 `json:"event_count,omitempty"`
 }
 
-type JobSnapshot struct {
-	JobID           string                           `json:"job_id"`
+type TaskActivitySnapshot struct {
+	TaskID          string                           `json:"task_id"`
+	EventSeq        modulecore.EventSeq              `json:"event_seq,omitempty"`
 	Route           string                           `json:"route,omitempty"`
 	Phase           string                           `json:"phase"`
 	Owner           string                           `json:"owner,omitempty"`
@@ -63,7 +68,7 @@ type JobSnapshot struct {
 	Events          []orchestrator.OrchestratorEvent `json:"events,omitempty"`
 }
 
-type JobFilter struct {
+type TaskActivityFilter struct {
 	Route     string
 	Status    string
 	Owner     string
@@ -73,19 +78,20 @@ type JobFilter struct {
 }
 
 type LogFilter struct {
+	EventID   modulecore.EventID
 	Type      string
 	Agent     string
 	Route     string
-	JobID     string
+	TaskID    modulecore.TaskID
 	SessionID string
 	ChatID    string
 	Limit     int
 }
 
 type AgentDetail struct {
-	Agent      AgentSnapshot                    `json:"agent"`
-	ActiveJobs []JobSnapshot                    `json:"active_jobs"`
-	Events     []orchestrator.OrchestratorEvent `json:"events"`
+	Agent                AgentSnapshot                    `json:"agent"`
+	ActiveTaskActivities []TaskActivitySnapshot           `json:"active_task_activities"`
+	Events               []orchestrator.OrchestratorEvent `json:"events"`
 }
 
 type AuditSummary struct {
@@ -95,7 +101,7 @@ type AuditSummary struct {
 	ByRoute    map[string]int `json:"by_route"`
 }
 
-type JobDetail struct {
-	Item     JobSnapshot                      `json:"item"`
+type TaskActivityDetail struct {
+	Item     TaskActivitySnapshot             `json:"item"`
 	Evidence *domainexecution.ExecutionReport `json:"evidence,omitempty"`
 }

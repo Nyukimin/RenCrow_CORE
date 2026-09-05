@@ -2,11 +2,14 @@ package verification
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLReportStoreSaveListGetSummary(t *testing.T) {
@@ -15,8 +18,10 @@ func TestJSONLReportStoreSaveListGetSummary(t *testing.T) {
 		t.Fatalf("NewJSONLReportStore failed: %v", err)
 	}
 
-	old := testReport("job-1", domainverification.StatusWeaklySupported, time.Now().UTC().Add(-time.Minute))
-	latest := testReport("job-2", domainverification.StatusConflict, time.Now().UTC())
+	oldTaskID := modulecore.NewTaskID()
+	latestTaskID := modulecore.NewTaskID()
+	old := testReport(oldTaskID, domainverification.StatusWeaklySupported, time.Now().UTC().Add(-time.Minute))
+	latest := testReport(latestTaskID, domainverification.StatusConflict, time.Now().UTC())
 	if err := store.Save(context.Background(), old); err != nil {
 		t.Fatalf("Save old failed: %v", err)
 	}
@@ -28,13 +33,13 @@ func TestJSONLReportStoreSaveListGetSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRecent failed: %v", err)
 	}
-	if len(items) != 1 || items[0].JobID != "job-2" {
-		t.Fatalf("expected latest job-2, got %+v", items)
+	if len(items) != 1 || items[0].TaskID != latestTaskID {
+		t.Fatalf("expected latest task, got %+v", items)
 	}
 
-	got, err := store.GetByJobID(context.Background(), "job-1")
+	got, err := store.GetByTaskID(context.Background(), oldTaskID)
 	if err != nil {
-		t.Fatalf("GetByJobID failed: %v", err)
+		t.Fatalf("GetByTaskID failed: %v", err)
 	}
 	if got.Status != domainverification.StatusWeaklySupported {
 		t.Fatalf("unexpected status: %s", got.Status)
@@ -59,10 +64,33 @@ func TestJSONLReportStoreRejectsInvalidReport(t *testing.T) {
 	}
 }
 
-func testReport(jobID string, status domainverification.VerificationStatus, createdAt time.Time) domainverification.VerificationReport {
+func TestJSONLReportStoreRejectsInvalidLookupAndLegacyRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetByTaskID(context.Background(), modulecore.TaskID(modulecore.NewMessageID())); err == nil {
+		t.Fatal("wrong canonical ID type was accepted")
+	}
+	legacyKey := "job" + "_" + "id"
+	legacy, err := json.Marshal(map[string]any{"id": "verify-old", legacyKey: "legacy-1", "session_id": "session-1", "status": "not_checked", "created_at": "2026-09-05T00:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy = append(legacy, '\n')
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListRecent(context.Background(), 10); err == nil {
+		t.Fatal("legacy identity row was silently accepted")
+	}
+}
+
+func testReport(taskID modulecore.TaskID, status domainverification.VerificationStatus, createdAt time.Time) domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_" + jobID,
-		JobID:        jobID,
+		ID:           "verify_" + string(taskID),
+		TaskID:       taskID,
 		SessionID:    "session-1",
 		Route:        "CHAT",
 		Status:       status,

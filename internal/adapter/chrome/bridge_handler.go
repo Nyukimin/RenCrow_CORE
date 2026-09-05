@@ -64,7 +64,7 @@ func HandleBridge(process entryadapter.Processor) http.HandlerFunc {
 			"accepted_at":  acceptedAt,
 			"session_id":   result.SessionID,
 			"route":        result.Route,
-			"job_id":       result.JobID,
+			"task_id":      result.TaskID,
 			"response":     result.Response,
 			"evidence_ref": result.EvidenceRef,
 		})
@@ -85,15 +85,15 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 		events := history()
 		stage := "unknown"
 		route := ""
-		jobID := ""
+		taskID := ""
 		for i := len(events) - 1; i >= 0; i-- {
 			ev := events[i]
-			if ev.SessionID != sessionID || ev.Type != "entry.stage" {
+			if string(ev.SessionID) != sessionID || ev.Type != "entry.stage" {
 				continue
 			}
 			stage = strings.TrimSpace(ev.Content)
 			route = ev.Route
-			jobID = ev.JobID
+			taskID = ev.TaskID.String()
 			break
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -104,7 +104,7 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 			"session_id": sessionID,
 			"stage":      stage,
 			"route":      route,
-			"job_id":     jobID,
+			"task_id":    taskID,
 		})
 	}
 }
@@ -138,18 +138,18 @@ func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
 		lastSeen := parseLastEventID(r.Header.Get("Last-Event-ID"))
 
 		for _, ev := range stream.History() {
-			if ev.SessionID != sessionID {
+			if string(ev.SessionID) != sessionID {
 				continue
 			}
-			if ev.Seq > 0 && ev.Seq <= lastSeen {
+			if ev.EventSeq > 0 && int64(ev.EventSeq) <= lastSeen {
 				continue
 			}
 			data, err := json.Marshal(ev)
 			if err != nil {
 				continue
 			}
-			if ev.Seq > 0 {
-				fmt.Fprintf(w, "id: %d\n", ev.Seq)
+			if ev.EventSeq > 0 {
+				fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
 		}
@@ -166,11 +166,11 @@ func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
 				if err := json.Unmarshal(bytes.TrimSpace(data), &ev); err != nil {
 					continue
 				}
-				if ev.SessionID != sessionID {
+				if string(ev.SessionID) != sessionID {
 					continue
 				}
-				if ev.Seq > 0 {
-					fmt.Fprintf(w, "id: %d\n", ev.Seq)
+				if ev.EventSeq > 0 {
+					fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
 				}
 				fmt.Fprintf(w, "data: %s\n\n", data)
 				flusher.Flush()

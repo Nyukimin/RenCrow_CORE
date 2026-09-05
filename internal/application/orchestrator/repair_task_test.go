@@ -23,11 +23,11 @@ func TestRepairTargetRouteUsesExplicitCoderSlot(t *testing.T) {
 	}
 }
 
-func TestRepairTurnInputCarriesCanonicalIdentitySeparatelyFromCompanionJobID(t *testing.T) {
+func TestRepairTurnInputUsesOwnerTaskIDAsRoot(t *testing.T) {
 	sessionID := string(modulecore.NewSessionID())
-	jobID := modulecore.NewTaskID()
+	taskID := modulecore.NewTaskID()
 	got, err := repairTurnInput(ProcessRepairRequest{
-		JobID:     jobID.String(),
+		TaskID:    taskID,
 		SessionID: sessionID,
 	}, routing.RouteCODE2)
 	if err != nil {
@@ -39,10 +39,10 @@ func TestRepairTurnInputCarriesCanonicalIdentitySeparatelyFromCompanionJobID(t *
 	if got.RootTaskID().Validate() != nil || got.TurnID().Validate() != nil || got.TraceID().Validate() != nil || got.UserMessageID().Validate() != nil || got.AgentMessageID().Validate() != nil {
 		t.Fatalf("repair turn input has invalid canonical identity: %#v", got)
 	}
-	if string(got.RootTaskID()) == jobID.String() {
-		t.Fatalf("companion JobID was mixed into root task ID: job=%q root=%q", jobID, got.RootTaskID())
+	if got.RootTaskID() != taskID {
+		t.Fatalf("root TaskID = %q, want owner TaskID %q", got.RootTaskID(), taskID)
 	}
-	if got.MessageText() == "" || !strings.Contains(got.MessageText(), "Repair Job") {
+	if got.MessageText() == "" || !strings.Contains(got.MessageText(), "Repair Task") {
 		t.Fatalf("repair message = %q", got.MessageText())
 	}
 	if got.SessionID() != sessionID {

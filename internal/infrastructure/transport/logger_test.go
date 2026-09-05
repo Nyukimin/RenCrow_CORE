@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // mockTransport はテスト用のモックTransport
@@ -40,7 +41,7 @@ func TestLoggingTransport_Send(t *testing.T) {
 	inner := &mockTransport{healthy: true}
 	lt := NewLoggingTransport(inner, "mio")
 
-	msg := domaintransport.NewMessage("mio", "shiro", "s1", "j1", "hello")
+	msg := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "hello")
 	err := lt.Send(context.Background(), msg)
 	if err != nil {
 		t.Fatalf("Send failed: %v", err)
@@ -51,7 +52,7 @@ func TestLoggingTransport_SendError(t *testing.T) {
 	inner := &mockTransport{sendErr: fmt.Errorf("send failed"), healthy: true}
 	lt := NewLoggingTransport(inner, "mio")
 
-	msg := domaintransport.NewMessage("mio", "shiro", "s1", "j1", "hello")
+	msg := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "hello")
 	err := lt.Send(context.Background(), msg)
 	if err == nil {
 		t.Error("Expected send error")
@@ -59,7 +60,7 @@ func TestLoggingTransport_SendError(t *testing.T) {
 }
 
 func TestLoggingTransport_Receive(t *testing.T) {
-	expectedMsg := domaintransport.NewMessage("shiro", "mio", "s1", "j1", "response")
+	expectedMsg := domaintransport.NewMessage("shiro", "mio", "s1", modulecore.NewTaskID(), "response")
 	inner := &mockTransport{receiveMsg: expectedMsg, healthy: true}
 	lt := NewLoggingTransport(inner, "mio")
 

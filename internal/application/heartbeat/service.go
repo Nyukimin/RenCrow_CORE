@@ -406,10 +406,10 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 		s.emitEvent("heartbeat.error", fmt.Sprintf("worker input failed: %v", err))
 		return fmt.Errorf("worker input construction failed: %w", err)
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := input.RootTaskID()
 
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
+		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.tasks", Purpose: "process_heartbeat_file",
 	})
 	response, err := s.workerAgent.Execute(workerCtx, input)
@@ -884,33 +884,34 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.ItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
-	jobID := modulecore.NewTaskID()
-	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target)); err != nil {
+	taskID := input.RootTaskID()
+	requestID := modulecore.NewRequestID()
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s target=%s", item.ItemID, taskID.String(), target)); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
+		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
 	if _, err := s.workerAgent.Execute(workerCtx, input); err != nil {
-		reason := fmt.Sprintf("Backlog Runner failed job_id=%s target=%s: %v", jobID.String(), target, err)
+		reason := fmt.Sprintf("Backlog Runner failed task_id=%s target=%s: %v", taskID.String(), target, err)
 		failureRef := domainbacklog.EvidenceRef{
-			Stage: target, Kind: "worker_failure", Ref: "heartbeat-runner:" + jobID.String(),
+			Stage: target, Kind: "worker_failure", Ref: "heartbeat-runner:" + taskID.String(),
 			ObservedAt: now.UTC().Format(time.RFC3339Nano), Passed: false,
 		}
 		request := backlogapp.ReviseRequest{
-			RequestID: jobID.String(), ExpectedRevision: revision2ItemRevision(item),
+			RequestID: string(requestID), ExpectedRevision: revision2ItemRevision(item),
 			TargetDeliveryState: domainbacklog.DeliveryBlocked,
 			EvidenceRefs:        []domainbacklog.EvidenceRef{failureRef}, Reason: reason,
 		}
 		if _, reviseErr := s.atlasService.Revise(ctx, item.ItemID, request); reviseErr != nil {
 			report.Failed++
-			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s job_id=%s owner BLOCKED revise failed: %v", item.ItemID, jobID.String(), reviseErr))
+			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s owner BLOCKED revise failed: %v", item.ItemID, taskID.String(), reviseErr))
 			return report, fmt.Errorf("%s; owner BLOCKED revise failed: %w", reason, reviseErr)
 		}
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s job_id=%s err=%v", item.ItemID, jobID.String(), err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.ItemID, taskID.String(), err))
 		return report, err
 	}
 	report.Started = 1
@@ -987,22 +988,22 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		return report, err
 	}
 
-	jobID := modulecore.NewTaskID()
-	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String())); err != nil {
+	taskID := input.RootTaskID()
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s", item.ItemID, taskID.String())); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
+		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
 	if _, err := s.workerAgent.Execute(workerCtx, input); err != nil {
 		item.Status = "blocked"
-		item.TestResult = fmt.Sprintf("Backlog Runner failed to start job_id=%s: %v", jobID.String(), err)
+		item.TestResult = fmt.Sprintf("Backlog Runner failed to start task_id=%s: %v", taskID.String(), err)
 		item.Implementation = appendBacklogImplementation(item.Implementation, item.TestResult)
 		_ = s.backlogStore.Save(ctx, item)
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s job_id=%s err=%v", item.ItemID, jobID.String(), err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.ItemID, taskID.String(), err))
 		return report, err
 	}
 	report.Started = 1
@@ -1077,9 +1078,9 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 	if err != nil {
 		return fmt.Errorf("workstream heartbeat %s input construction failed: %w", schedule.HeartbeatID, err)
 	}
-	jobID := modulecore.NewTaskID()
+	taskID := input.RootTaskID()
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
+		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.workstream", Purpose: "draft_workstream_report",
 	})
 	response, err := s.workerAgent.Execute(workerCtx, input)
@@ -1299,7 +1300,7 @@ func (s *HeartbeatService) emitEvent(eventType, content string) error {
 		content,
 		"HEARTBEAT",
 		"",
-		"heartbeat",
+		"",
 		"heartbeat",
 		"viewer",
 	)); err != nil {

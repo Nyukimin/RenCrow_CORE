@@ -65,6 +65,7 @@ type DistributedOrchestrator struct {
 	attribution             *distributedAttributionGuard
 	visionRequests          *visionRequestProcessor
 	durableStoreWorkflow    DurableStoreWorkflow
+	taskLifecycle           *taskLifecycle
 }
 
 type ReportStore interface {

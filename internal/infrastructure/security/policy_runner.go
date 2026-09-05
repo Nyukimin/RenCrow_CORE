@@ -47,9 +47,14 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
 
-	jobID, actionID := nextExecutionIdentifiers()
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	actionID := nextActionID()
 	action := domainexecution.Action{
-		JobID:       jobID,
+		TaskID:      identity.TaskID,
+		TraceID:     identity.TraceID,
 		ActionID:    actionID,
 		Tool:        toolName,
 		Arguments:   args,

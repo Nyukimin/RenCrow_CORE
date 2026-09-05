@@ -36,6 +36,9 @@ func TestBuildViewerRuntimeHandlersUsesConfiguredGameObserverURL(t *testing.T) {
 	cfg := &config.Config{WorkspaceDir: t.TempDir()}
 	cfg.Games.ObserverURL = upstream.URL
 	buildViewerRuntimeHandlers(cfg, deps, nil, nil, filepath.Join(t.TempDir(), "reports.jsonl"), nil, nil)
+	if deps.taskManager == nil || deps.tasks == nil || deps.taskDetail == nil || deps.taskNotifications == nil {
+		t.Fatal("canonical Task store was not shared with the Orchestrator lifecycle and Viewer handlers")
+	}
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/viewer/games/observer-api/games/status", nil)

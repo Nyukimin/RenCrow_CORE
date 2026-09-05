@@ -33,9 +33,11 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 
 	// Canonical persistence is the single publication gate. No projection or
 	// user-facing side effect may happen before this append succeeds.
-	if err := l.archive.Append(ev); err != nil {
+	persisted, err := l.archive.AppendSequenced(ev)
+	if err != nil {
 		return err
 	}
+	ev = persisted
 
 	if shouldStopIdleChatByEvent(ev) {
 		l.mu.RLock()

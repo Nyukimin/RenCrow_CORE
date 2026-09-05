@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubSkillGovernanceLister struct {
@@ -99,7 +100,7 @@ func TestHandleSkillGovernanceRecent(t *testing.T) {
 		}},
 		transcripts: []domainskill.CoderTranscriptEntry{{
 			EventID:   "evt_coder_transcript_1",
-			JobID:     "job-1",
+			TaskID:    modulecore.NewTaskID(),
 			Route:     "CODE3",
 			Agent:     "Coder",
 			Role:      "coder",

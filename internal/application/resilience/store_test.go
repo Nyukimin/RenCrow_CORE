@@ -1,10 +1,13 @@
 package resilience
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestCaptureCoalescesSameSignature(t *testing.T) {
@@ -95,13 +98,13 @@ func TestRepairAttemptLimitAndStableResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkRepairRequested(incident, "repair-1", now, 2); err != nil {
+	if err := store.MarkRepairRequested(incident, modulecore.NewTaskID(), now, 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkRepairFailed(incident, "failed"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.MarkRepairRequested(incident, "repair-2", now.Add(time.Hour), 2); err != nil {
+	if err := store.MarkRepairRequested(incident, modulecore.NewTaskID(), now.Add(time.Hour), 2); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.MarkRepairCompleted(incident, now.Add(2*time.Hour)); err != nil {
@@ -113,7 +116,34 @@ func TestRepairAttemptLimitAndStableResolution(t *testing.T) {
 	if resolved, err := store.ResolveStable(incident, now.Add(27*time.Hour), 24*time.Hour); err != nil || !resolved {
 		t.Fatalf("did not resolve after stable window: resolved=%v err=%v", resolved, err)
 	}
-	if err := store.MarkRepairRequested(incident, "repair-3", now, 2); err == nil {
+	if err := store.MarkRepairRequested(incident, modulecore.NewTaskID(), now, 2); err == nil {
 		t.Fatal("expected automatic repair limit error")
+	}
+}
+
+func TestIncidentPersistenceRequiresCanonicalRepairTaskID(t *testing.T) {
+	store := Store{Root: t.TempDir()}
+	now := time.Now().UTC()
+	incident, err := store.Capture(Observation{SignatureSource: "repair identity", Kind: "panic", At: now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incident.Status = StatusRepairRequested
+	if err := store.Save(incident); err == nil {
+		t.Fatal("active repair without repair_task_id was accepted")
+	}
+	incident.RepairTaskID = modulecore.TaskID("legacy-job")
+	if err := store.Save(incident); err == nil {
+		t.Fatal("invalid repair_task_id was accepted")
+	}
+	legacy, _ := json.Marshal(map[string]any{
+		"signature": incident.Signature, "kind": incident.Kind, "status": StatusRepairRequested,
+		"first_seen": now, "last_seen": now, "occurrence_count": 1, "repair_job_id": "legacy-job", "repair_attempts": 1,
+	})
+	if err := os.WriteFile(store.metadataPath(incident.Signature), legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(incident.Signature); err == nil {
+		t.Fatal("legacy repair_job_id compatibility read was accepted")
 	}
 }

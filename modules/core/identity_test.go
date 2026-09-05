@@ -137,6 +137,19 @@ func TestThreadSeqValidation(t *testing.T) {
 	}
 }
 
+func TestEventSeqValidation(t *testing.T) {
+	for _, valid := range []EventSeq{1, 2, 100} {
+		if err := valid.Validate(); err != nil {
+			t.Fatalf("valid event sequence %d rejected: %v", valid, err)
+		}
+	}
+	for _, invalid := range []EventSeq{0, -1} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("invalid event sequence %d accepted", invalid)
+		}
+	}
+}
+
 func TestThreadKindValuesAndValidation(t *testing.T) {
 	tests := []struct {
 		kind ThreadKind

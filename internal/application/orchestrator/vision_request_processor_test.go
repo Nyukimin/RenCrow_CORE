@@ -54,7 +54,7 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 		events = append(events, visionEvent{eventType: eventType, content: content})
 	}
 	request := ProcessMessageRequest{
-		JobID:       "job-1",
+		RootTaskID:  "tsk_00000000-0000-5000-8000-000000000002",
 		TraceID:     "trace-1",
 		SessionID:   "session-1",
 		Channel:     "viewer",

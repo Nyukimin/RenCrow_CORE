@@ -85,11 +85,13 @@ func (h *inputAudioVoiceDirectHandler) unblock() {
 }
 
 func validInputAudioVoiceDirectResponse(text string) orchestrator.ProcessMessageResponse {
+	taskID := modulecore.NewTaskID().String()
 	return orchestrator.ProcessMessageResponse{
-		Response:  text,
-		JobID:     modulecore.NewTaskID().String(),
-		TraceID:   string(modulecore.NewTraceID()),
-		MessageID: string(modulecore.NewMessageID()),
+		Response:   text,
+		TaskID:     taskID,
+		RootTaskID: taskID,
+		TraceID:    string(modulecore.NewTraceID()),
+		MessageID:  string(modulecore.NewMessageID()),
 	}
 }
 
@@ -505,7 +507,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		t.Fatalf("expected one ProcessVoiceDirect request, got %d", len(requests))
 	}
 	if notifyCalls != 0 {
-		t.Fatalf("input_audio must not notify a separate first-token job, got %d calls", notifyCalls)
+		t.Fatalf("input_audio must not notify a separate first-token task, got %d calls", notifyCalls)
 	}
 	if requests[0].FirstTokenAt.IsZero() {
 		t.Fatal("input_audio ProcessVoiceDirect request must carry FirstTokenAt")
@@ -514,7 +516,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		t.Fatalf("ProcessVoiceDirect must receive raw LLM text, got %q", requests[0].FinalText)
 	}
 	for _, event := range []map[string]any{deltaEvent, finalEvent} {
-		if event["trace_id"] != voiceDirect.response.TraceID || event["job_id"] != voiceDirect.response.JobID || event["message_id"] != voiceDirect.response.MessageID {
+		if event["trace_id"] != voiceDirect.response.TraceID || event["task_id"] != voiceDirect.response.TaskID || event["message_id"] != voiceDirect.response.MessageID {
 			t.Fatalf("event identity does not match ProcessVoiceDirect response: event=%#v response=%+v", event, voiceDirect.response)
 		}
 	}
@@ -607,7 +609,7 @@ func TestVoiceChatInputAudioBridge_FinalizesBeforePublishingLLMEvents(t *testing
 		t.Fatalf("final event = %#v, want llm.final", finalEvent)
 	}
 	for _, event := range []map[string]any{deltaEvent, finalEvent} {
-		if event["trace_id"] != voiceDirect.response.TraceID || event["job_id"] != voiceDirect.response.JobID || event["message_id"] != voiceDirect.response.MessageID {
+		if event["trace_id"] != voiceDirect.response.TraceID || event["task_id"] != voiceDirect.response.TaskID || event["message_id"] != voiceDirect.response.MessageID {
 			t.Fatalf("event identity does not match finalized response: event=%#v response=%+v", event, voiceDirect.response)
 		}
 	}
@@ -625,29 +627,46 @@ func TestVoiceChatInputAudioBridge_FailsClosedWhenVoiceResultCannotBePublished(t
 		},
 		{
 			name: "invalid trace identity",
-			response: orchestrator.ProcessMessageResponse{
-				JobID:     modulecore.NewTaskID().String(),
-				TraceID:   "not-a-trace",
-				MessageID: string(modulecore.NewMessageID()),
-			},
-		},
-		{
-			name: "trace and job identity collide",
 			response: func() orchestrator.ProcessMessageResponse {
-				traceID := string(modulecore.NewTraceID())
+				taskID := modulecore.NewTaskID().String()
 				return orchestrator.ProcessMessageResponse{
-					JobID:     traceID,
-					TraceID:   traceID,
-					MessageID: string(modulecore.NewMessageID()),
+					TaskID:     taskID,
+					RootTaskID: taskID,
+					TraceID:    "not-a-trace",
+					MessageID:  string(modulecore.NewMessageID()),
 				}
 			}(),
 		},
 		{
+			name: "trace and task identity collide",
+			response: func() orchestrator.ProcessMessageResponse {
+				traceID := string(modulecore.NewTraceID())
+				return orchestrator.ProcessMessageResponse{
+					TaskID:     traceID,
+					RootTaskID: traceID,
+					TraceID:    traceID,
+					MessageID:  string(modulecore.NewMessageID()),
+				}
+			}(),
+		},
+		{
+			name: "root task identity mismatch",
+			response: func() orchestrator.ProcessMessageResponse {
+				response := validInputAudioVoiceDirectResponse("音声を確認しました")
+				response.RootTaskID = modulecore.NewTaskID().String()
+				return response
+			}(),
+		},
+		{
 			name: "missing message identity",
-			response: orchestrator.ProcessMessageResponse{
-				JobID:   modulecore.NewTaskID().String(),
-				TraceID: string(modulecore.NewTraceID()),
-			},
+			response: func() orchestrator.ProcessMessageResponse {
+				taskID := modulecore.NewTaskID().String()
+				return orchestrator.ProcessMessageResponse{
+					TaskID:     taskID,
+					RootTaskID: taskID,
+					TraceID:    string(modulecore.NewTraceID()),
+				}
+			}(),
 		},
 		{
 			name: "missing owner response",

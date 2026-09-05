@@ -25,7 +25,7 @@ func (s *MonitorStore) agentSnapshotLocked(id string, now time.Time) AgentSnapsh
 func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 	ts := ev.Timestamp
 	route := ev.Route
-	jid := ev.JobID
+	taskID := ev.TaskID.String()
 
 	if ev.Type == "agent.unavailable" {
 		s.patchAgent(strings.ToLower(strings.TrimSpace(ev.From)), AgentSnapshot{
@@ -42,14 +42,15 @@ func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 		target := "mio"
 		if ev.Type == "message.received" {
 			target = monitorAgentOrDefault(ev.To, "mio")
-		} else if job := s.jobs[jid]; job != nil {
-			target = monitorAgentOrDefault(job.Owner, "mio")
+		} else if activity := s.taskActivities[taskID]; activity != nil {
+			target = monitorAgentOrDefault(activity.Owner, "mio")
 		}
 		s.patchAgent(target, AgentSnapshot{
 			State:     "running",
 			Route:     route,
-			JobID:     jid,
-			SessionID: ev.SessionID,
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
+			SessionID: string(ev.SessionID),
 			LastEvent: ev.Type,
 			Preview:   shortText(ev.Content, 80),
 			UpdatedAt: ts,
@@ -77,8 +78,9 @@ func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 		s.patchAgent(from, AgentSnapshot{
 			State:     state,
 			Route:     route,
-			JobID:     jid,
-			SessionID: ev.SessionID,
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
+			SessionID: string(ev.SessionID),
 			LastEvent: ev.Type,
 			Preview:   shortText(ev.Content, 80),
 			Reason:    "",
@@ -89,8 +91,9 @@ func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 		s.patchAgent(to, AgentSnapshot{
 			State:     "running",
 			Route:     route,
-			JobID:     jid,
-			SessionID: ev.SessionID,
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
+			SessionID: string(ev.SessionID),
 			LastEvent: ev.Type,
 			Preview:   shortText(ev.Content, 80),
 			Reason:    "",
@@ -101,8 +104,9 @@ func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 		s.patchAgent("mio", AgentSnapshot{
 			State:     "idle",
 			Route:     route,
-			JobID:     jid,
-			SessionID: ev.SessionID,
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
+			SessionID: string(ev.SessionID),
 			LastEvent: ev.Type,
 			Preview:   shortText(ev.Content, 80),
 			Reason:    "",
@@ -110,112 +114,116 @@ func (s *MonitorStore) reduceAgents(ev orchestrator.OrchestratorEvent) {
 		})
 	}
 	if isUserFacingFinalResponse(ev) {
-		s.clearActiveAgentsForJob(ev)
+		s.clearActiveAgentsForTask(ev)
 	}
 }
 
-func (s *MonitorStore) reduceJobs(ev orchestrator.OrchestratorEvent) {
-	jid := strings.TrimSpace(ev.JobID)
-	if jid == "" {
+// reduceTaskActivity projects one canonical Task event into the bounded
+// monitor activity view.
+func (s *MonitorStore) reduceTaskActivity(ev orchestrator.OrchestratorEvent) {
+	taskID := strings.TrimSpace(ev.TaskID.String())
+	if taskID == "" {
 		return
 	}
-	job := s.jobs[jid]
-	if job == nil {
-		job = &JobSnapshot{
-			JobID:     jid,
+	activity := s.taskActivities[taskID]
+	if activity == nil {
+		activity = &TaskActivitySnapshot{
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
 			Route:     valueOr(ev.Route, "-"),
 			Phase:     "received",
 			Owner:     "mio",
 			Status:    "running",
-			SessionID: ev.SessionID,
+			SessionID: string(ev.SessionID),
 			Channel:   ev.Channel,
 			ChatID:    ev.ChatID,
 			StartedAt: ev.Timestamp,
 			UpdatedAt: ev.Timestamp,
 		}
-		s.jobs[jid] = job
+		s.taskActivities[taskID] = activity
 	}
-	job.UpdatedAt = ev.Timestamp
+	activity.EventSeq = ev.EventSeq
+	activity.UpdatedAt = ev.Timestamp
 	if ev.Route != "" {
-		job.Route = ev.Route
+		activity.Route = ev.Route
 	}
 	if ev.SessionID != "" {
-		job.SessionID = ev.SessionID
+		activity.SessionID = string(ev.SessionID)
 	}
 	if ev.Channel != "" {
-		job.Channel = ev.Channel
+		activity.Channel = ev.Channel
 	}
 	if ev.ChatID != "" {
-		job.ChatID = ev.ChatID
+		activity.ChatID = ev.ChatID
 	}
 	if ev.Content != "" {
-		job.Summary = shortText(ev.Content, 160)
+		activity.Summary = shortText(ev.Content, 160)
 	}
-	job.Phase, job.Owner = classifyJobPhase(ev, job)
+	activity.Phase, activity.Owner = classifyTaskActivityPhase(ev, activity)
 	if ev.Type == "worker.classified_failure" || ev.Type == "agent.error" || ev.Type == "mailbox.error" {
 		raw := strings.TrimSpace(ev.Content)
 		if idx := strings.Index(raw, ":"); idx >= 0 {
-			job.FailureKind = strings.TrimSpace(raw[:idx])
-			job.FailureReason = strings.TrimSpace(raw[idx+1:])
+			activity.FailureKind = strings.TrimSpace(raw[:idx])
+			activity.FailureReason = strings.TrimSpace(raw[idx+1:])
 		} else {
-			job.FailureReason = raw
+			activity.FailureReason = raw
 		}
-		job.Status = "error"
+		activity.Status = "error"
 	}
 	if ev.Type == "entry.stage" {
 		switch terminalOutcomeFromEntryStage(ev.Content) {
 		case "ok":
-			job.Status = "done"
-			job.TerminalOutcome = "ok"
-			job.FailureKind = ""
-			job.FailureReason = ""
+			activity.Status = "done"
+			activity.TerminalOutcome = "ok"
+			activity.FailureKind = ""
+			activity.FailureReason = ""
 		case "failed":
-			job.Status = "error"
-			job.TerminalOutcome = "failed"
-			if strings.TrimSpace(job.FailureReason) == "" {
-				job.FailureReason = "entry stage failed"
+			activity.Status = "error"
+			activity.TerminalOutcome = "failed"
+			if strings.TrimSpace(activity.FailureReason) == "" {
+				activity.FailureReason = "entry stage failed"
 			}
 		case "blocked":
-			job.Status = "error"
-			job.TerminalOutcome = "blocked"
-			if strings.TrimSpace(job.FailureReason) == "" {
-				job.FailureReason = "entry stage blocked"
+			activity.Status = "error"
+			activity.TerminalOutcome = "blocked"
+			if strings.TrimSpace(activity.FailureReason) == "" {
+				activity.FailureReason = "entry stage blocked"
 			}
 		case "cancelled":
-			job.Status = "error"
-			job.TerminalOutcome = "cancelled"
-			if strings.TrimSpace(job.FailureReason) == "" {
-				job.FailureReason = "entry stage cancelled"
+			activity.Status = "error"
+			activity.TerminalOutcome = "cancelled"
+			if strings.TrimSpace(activity.FailureReason) == "" {
+				activity.FailureReason = "entry stage cancelled"
 			}
 		}
 	}
-	if clearsJobFailure(ev) {
-		job.FailureKind = ""
-		job.FailureReason = ""
-		if job.Status == "error" {
-			job.Status = "running"
+	if clearsTaskActivityFailure(ev) {
+		activity.FailureKind = ""
+		activity.FailureReason = ""
+		if activity.Status == "error" {
+			activity.Status = "running"
 		}
 	}
 	if ev.Type == "agent.response" {
 		if isUserFacingFinalResponse(ev) {
-			job.FinalUserReport = ev.Content
-			job.MioReported = strings.EqualFold(ev.From, "mio")
+			activity.FinalUserReport = ev.Content
+			activity.MioReported = strings.EqualFold(ev.From, "mio")
 			if responseLooksLikeFailure(ev.Content) {
-				job.Status = "error"
-				job.TerminalOutcome = "failed"
+				activity.Status = "error"
+				activity.TerminalOutcome = "failed"
 			} else {
-				job.FailureKind = ""
-				job.FailureReason = ""
-				job.Status = "done"
-				job.TerminalOutcome = "ok"
+				activity.FailureKind = ""
+				activity.FailureReason = ""
+				activity.Status = "done"
+				activity.TerminalOutcome = "ok"
 			}
-		} else if job.Status != "error" && job.TerminalOutcome == "" {
-			job.Status = "running"
+		} else if activity.Status != "error" && activity.TerminalOutcome == "" {
+			activity.Status = "running"
 		}
 	}
-	job.Events = append(job.Events, ev)
-	if len(job.Events) > monitorMaxJobEvents {
-		job.Events = job.Events[len(job.Events)-monitorMaxJobEvents:]
+	activity.Events = append(activity.Events, ev)
+	if len(activity.Events) > monitorMaxTaskActivityEvents {
+		activity.Events = activity.Events[len(activity.Events)-monitorMaxTaskActivityEvents:]
 	}
 }
 
@@ -225,15 +233,15 @@ func isUserFacingFinalResponse(ev orchestrator.OrchestratorEvent) bool {
 		isMonitorAgent(strings.ToLower(strings.TrimSpace(ev.From)))
 }
 
-func (s *MonitorStore) clearActiveAgentsForJob(ev orchestrator.OrchestratorEvent) {
-	jid := strings.TrimSpace(ev.JobID)
-	if jid == "" {
+func (s *MonitorStore) clearActiveAgentsForTask(ev orchestrator.OrchestratorEvent) {
+	taskID := strings.TrimSpace(ev.TaskID.String())
+	if taskID == "" {
 		return
 	}
 	speaker := monitorAgentOrDefault(ev.From, "agent")
 	preview := shortText("cleared by final response from "+speaker, 80)
 	for id, agent := range s.agents {
-		if strings.TrimSpace(agent.JobID) != jid {
+		if strings.TrimSpace(agent.TaskID) != taskID {
 			continue
 		}
 		if agent.State != "running" && agent.State != "thinking" {
@@ -242,8 +250,9 @@ func (s *MonitorStore) clearActiveAgentsForJob(ev orchestrator.OrchestratorEvent
 		s.patchAgent(id, AgentSnapshot{
 			State:     "idle",
 			Route:     ev.Route,
-			JobID:     jid,
-			SessionID: ev.SessionID,
+			TaskID:    taskID,
+			EventSeq:  ev.EventSeq,
+			SessionID: string(ev.SessionID),
 			LastEvent: ev.Type,
 			Preview:   preview,
 			Reason:    "",
@@ -252,7 +261,7 @@ func (s *MonitorStore) clearActiveAgentsForJob(ev orchestrator.OrchestratorEvent
 	}
 }
 
-func clearsJobFailure(ev orchestrator.OrchestratorEvent) bool {
+func clearsTaskActivityFailure(ev orchestrator.OrchestratorEvent) bool {
 	from := strings.ToLower(strings.TrimSpace(ev.From))
 	to := strings.ToLower(strings.TrimSpace(ev.To))
 	switch ev.Type {
@@ -290,8 +299,11 @@ func (s *MonitorStore) patchAgent(id string, patch AgentSnapshot) {
 	if patch.Route != "" {
 		cur.Route = patch.Route
 	}
-	if patch.JobID != "" {
-		cur.JobID = patch.JobID
+	if patch.TaskID != "" {
+		cur.TaskID = patch.TaskID
+	}
+	if patch.EventSeq != 0 {
+		cur.EventSeq = patch.EventSeq
 	}
 	if patch.SessionID != "" {
 		cur.SessionID = patch.SessionID

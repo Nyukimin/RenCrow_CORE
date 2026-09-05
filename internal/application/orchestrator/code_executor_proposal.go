@@ -12,7 +12,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func shouldUseProposalPath(route routing.Route, target codeTarget) bool {
@@ -72,7 +71,7 @@ func (e *DefaultCodeExecutor) generateProposalForTarget(
 	if err != nil {
 		if p, ok := synthesizeNoChangeProposalForRequest(req, err); ok {
 			sessionID, channel, chatID := turnInputMetadata(req.Input)
-			e.emit("agent.response", target.name, "shiro", "変更なしの診断結果として処理します: "+err.Error(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+			e.emit("agent.response", target.name, "shiro", "変更なしの診断結果として処理します: "+err.Error(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 			return p, nil
 		}
 		if retryableProposalFailure(err) {
@@ -80,13 +79,13 @@ func (e *DefaultCodeExecutor) generateProposalForTarget(
 			p, retryErr := coderWithProposal.GenerateProposal(ctx, retryInput)
 			if retryErr == nil {
 				sessionID, channel, chatID := turnInputMetadata(req.Input)
-				e.emit("agent.response", target.name, "shiro", "Proposal 形式不正を検出し、1回だけ再生成しました", req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+				e.emit("agent.response", target.name, "shiro", "Proposal 形式不正を検出し、1回だけ再生成しました", req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 				return p, nil
 			}
 			err = fmt.Errorf("%w; retry failed: %v", err, retryErr)
 		}
 		sessionID, channel, chatID := turnInputMetadata(req.Input)
-		e.emit("agent.response", target.name, "shiro", "エラー: "+err.Error(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+		e.emit("agent.response", target.name, "shiro", "エラー: "+err.Error(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 		e.emitProposalFailure(req, target, "Proposal生成失敗: "+err.Error())
 		return nil, fmt.Errorf("%s proposal generation failed: %w", target.name, err)
 	}
@@ -220,7 +219,7 @@ func (e *DefaultCodeExecutor) validateGeneratedProposal(
 	}
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()
-	e.emit("agent.response", target.name, "shiro", "無効な Proposal が返されました", route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.response", target.name, "shiro", "無効な Proposal が返されました", route.String(), req.TaskID, sessionID, channel, chatID)
 	e.emitProposalFailure(req, target, "Proposal形式不正")
 	return fmt.Errorf("%s proposal generation failed: invalid proposal", target.name)
 }
@@ -228,15 +227,15 @@ func (e *DefaultCodeExecutor) validateGeneratedProposal(
 func (e *DefaultCodeExecutor) emitProposalFailure(req CodeExecutionRequest, target codeTarget, report string) {
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()
-	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, report), route.String(), req.JobID, sessionID, channel, chatID)
-	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.JobID, report), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, report), route.String(), req.TaskID, sessionID, channel, chatID)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.TaskID.String(), report), route.String(), req.TaskID, sessionID, channel, chatID)
 }
 
 func (e *DefaultCodeExecutor) emitProposalPlan(req CodeExecutionRequest, target codeTarget, p *proposal.Proposal) {
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()
-	e.emit("agent.response", target.name, "shiro", "## Plan\n"+p.Plan(), route.String(), req.JobID, sessionID, channel, chatID)
-	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, "Planを生成しました。"+p.Plan()), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.response", target.name, "shiro", "## Plan\n"+p.Plan(), route.String(), req.TaskID, sessionID, channel, chatID)
+	e.emit("agent.report", target.name, "shiro", formatAgentHandoffCompletionSpeech("shiro", target.name, "Planを生成しました。"+p.Plan()), route.String(), req.TaskID, sessionID, channel, chatID)
 }
 
 func (e *DefaultCodeExecutor) executeProposalWithWorker(
@@ -246,17 +245,17 @@ func (e *DefaultCodeExecutor) executeProposalWithWorker(
 ) (*patch.PatchExecutionResult, error) {
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()
-	e.emit("agent.start", "shiro", "mio", "Patch を実行中...", route.String(), req.JobID, sessionID, channel, chatID)
-	e.emit("worker.request", "shiro", "worker", formatShiroToWorkerInstruction(req, p), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.start", "shiro", "mio", "Patch を実行中...", route.String(), req.TaskID, sessionID, channel, chatID)
+	e.emit("worker.request", "shiro", "worker", formatShiroToWorkerInstruction(req, p), route.String(), req.TaskID, sessionID, channel, chatID)
 
 	result, err := e.executeProposalWithResolvedWorkspace(ctx, req, p)
 	if err != nil {
-		e.emit("worker.result", "worker", "shiro", formatWorkerToShiroResult(nil, err), route.String(), req.JobID, sessionID, channel, chatID)
-		e.emit("agent.response", "shiro", "mio", "実行失敗: "+err.Error(), route.String(), req.JobID, sessionID, channel, chatID)
-		e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.JobID, "実行失敗: "+err.Error()), route.String(), req.JobID, sessionID, channel, chatID)
+		e.emit("worker.result", "worker", "shiro", formatWorkerToShiroResult(nil, err), route.String(), req.TaskID, sessionID, channel, chatID)
+		e.emit("agent.response", "shiro", "mio", "実行失敗: "+err.Error(), route.String(), req.TaskID, sessionID, channel, chatID)
+		e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.TaskID.String(), "実行失敗: "+err.Error()), route.String(), req.TaskID, sessionID, channel, chatID)
 		return nil, fmt.Errorf("worker execution failed: %w", err)
 	}
-	e.emit("worker.result", "worker", "shiro", formatWorkerToShiroResult(result, nil), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("worker.result", "worker", "shiro", formatWorkerToShiroResult(result, nil), route.String(), req.TaskID, sessionID, channel, chatID)
 	return result, nil
 }
 
@@ -265,27 +264,26 @@ func (e *DefaultCodeExecutor) executeProposalWithResolvedWorkspace(
 	req CodeExecutionRequest,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
-	taskID, err := modulecore.ParseTaskID(req.JobID)
-	if err != nil {
-		return nil, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	if err := req.TaskID.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid task identity: %w", err)
 	}
 	if req.Module.Found() && req.Module.Module.Root != "" {
 		if worker, ok := e.workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
 			sessionID, channel, chatID := turnInputMetadata(req.Input)
-			e.emit("worker.workspace", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
-			return worker.ExecuteProposalInWorkspace(ctx, taskID, p, req.Module.Module.Root)
+			e.emit("worker.workspace", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
+			return worker.ExecuteProposalInWorkspace(ctx, req.TaskID, p, req.Module.Module.Root)
 		}
 		sessionID, channel, chatID := turnInputMetadata(req.Input)
-		e.emit("worker.workspace_unavailable", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+		e.emit("worker.workspace_unavailable", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.TaskID, sessionID, channel, chatID)
 	}
-	return e.workerExecution.ExecuteProposal(ctx, taskID, p)
+	return e.workerExecution.ExecuteProposal(ctx, req.TaskID, p)
 }
 
 func (e *DefaultCodeExecutor) emitProposalExecutionResult(req CodeExecutionRequest, formatted string) {
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
 	route := req.Input.Route()
-	e.emit("agent.response", "shiro", "mio", formatted, route.String(), req.JobID, sessionID, channel, chatID)
-	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.JobID, formatted), route.String(), req.JobID, sessionID, channel, chatID)
+	e.emit("agent.response", "shiro", "mio", formatted, route.String(), req.TaskID, sessionID, channel, chatID)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.TaskID.String(), formatted), route.String(), req.TaskID, sessionID, channel, chatID)
 }
 
 func (e *DefaultCodeExecutor) recordCoderProposalEvidence(
@@ -301,7 +299,7 @@ func (e *DefaultCodeExecutor) recordCoderProposalEvidence(
 		return
 	}
 	evidence := domainskill.CoderProposalEvidence{
-		JobID:           req.JobID,
+		TaskID:          req.TaskID,
 		SessionID:       req.Input.SessionID(),
 		Route:           req.Input.Route().String(),
 		Agent:           target.name,
@@ -322,10 +320,10 @@ func (e *DefaultCodeExecutor) recordCoderProposalEvidence(
 	}
 	paths, err := e.proposalEvidence.SaveCoderProposalEvidence(ctx, evidence)
 	if err != nil {
-		log.Printf("WARN: failed to save coder proposal evidence job=%s route=%s: %v", req.JobID, req.Input.Route(), err)
+		log.Printf("WARN: failed to save coder proposal evidence task=%s route=%s: %v", req.TaskID, req.Input.Route(), err)
 		return
 	}
 	if paths.SkillDiffPath != "" || paths.AgentTranscriptPath != "" {
-		log.Printf("Coder proposal evidence saved job=%s skill_diff=%s agent_transcript=%s", req.JobID, paths.SkillDiffPath, paths.AgentTranscriptPath)
+		log.Printf("Coder proposal evidence saved task=%s skill_diff=%s agent_transcript=%s", req.TaskID, paths.SkillDiffPath, paths.AgentTranscriptPath)
 	}
 }

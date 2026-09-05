@@ -30,7 +30,7 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 
 	// Send history first
 	for _, ev := range h.History() {
-		if ev.Seq > 0 && ev.Seq <= lastSeen {
+		if ev.EventSeq > 0 && int64(ev.EventSeq) <= lastSeen {
 			continue
 		}
 		if isTransientReplayEvent(ev) {
@@ -40,8 +40,8 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			continue
 		}
-		if ev.Seq > 0 {
-			fmt.Fprintf(w, "id: %d\n", ev.Seq)
+		if ev.EventSeq > 0 {
+			fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
 		}
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
@@ -65,8 +65,8 @@ func (h *EventHub) HandleSSE(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		case data := <-ch:
 			var ev orchestrator.OrchestratorEvent
-			if err := json.Unmarshal(data, &ev); err == nil && ev.Seq > 0 {
-				fmt.Fprintf(w, "id: %d\n", ev.Seq)
+			if err := json.Unmarshal(data, &ev); err == nil && ev.EventSeq > 0 {
+				fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
 			}
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()

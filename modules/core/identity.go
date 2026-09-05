@@ -46,6 +46,17 @@ func (seq ThreadSeq) Validate() error {
 	return nil
 }
 
+// EventSeq is the storage-owned, positive monotonic sequence of a persisted event.
+// Zero is reserved for an unassigned envelope before it reaches an event store.
+type EventSeq int64
+
+func (seq EventSeq) Validate() error {
+	if seq <= 0 {
+		return fmt.Errorf("event sequence must be positive")
+	}
+	return nil
+}
+
 // ThreadKind identifies the domain meaning of a thread.
 type ThreadKind string
 

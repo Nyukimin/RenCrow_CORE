@@ -13,15 +13,13 @@ import (
 
 type routeDecisionCoordinator struct {
 	mio             MioAgent
-	emit            messageEventEmitter
 	heavyPolicy     domainai.HeavyWorkerPolicy
 	canonicalEvents CanonicalEventRecorder
 }
 
-func newRouteDecisionCoordinator(mio MioAgent, emit messageEventEmitter) *routeDecisionCoordinator {
+func newRouteDecisionCoordinator(mio MioAgent) *routeDecisionCoordinator {
 	return &routeDecisionCoordinator{
-		mio:  mio,
-		emit: emit,
+		mio: mio,
 	}
 }
 
@@ -33,19 +31,16 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 	c.canonicalEvents = recorder
 }
 
-func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, jobID modulecore.TaskID) (routing.Decision, error) {
+func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, error) {
 	decision, err := c.mio.DecideAction(ctx, input)
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
 	}
 	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
-	c.emit("routing.decision", "mio", "",
-		fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)),
-		string(decision.Route), jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	if pinnedViewerRecipient {
 		return decision, nil
 	}
-	decision = c.applyHeavyWorkerPolicy(ctx, decision, req, jobID)
+	decision = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
 	return decision, nil
 }
 
@@ -83,11 +78,11 @@ func preserveOriginalUserMessage(req *ProcessMessageRequest) {
 	}
 }
 
-func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID modulecore.TaskID) routing.Decision {
+func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, taskID modulecore.TaskID) routing.Decision {
 	if !canHeavyPolicyElevate(decision.Route) {
 		return decision
 	}
-	heavyReq := heavyWorkerRequestFromMessage(jobID.String(), req.UserMessage)
+	heavyReq := heavyWorkerRequestFromMessage(taskID.String(), req.UserMessage)
 	if !heavyReq.UserRequestedDeepDive {
 		return decision
 	}
@@ -95,7 +90,7 @@ func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, d
 	if evaluated.Status != domainai.HeavyWorkerStatusRequested {
 		return decision
 	}
-	recordHeavyCanonicalEvent(ctx, c.canonicalEvents, "requested", strings.Join(evaluated.Reasons, "; "), jobID.String())
+	recordHeavyCanonicalEvent(ctx, c.canonicalEvents, "requested", strings.Join(evaluated.Reasons, "; "), taskID.String())
 	elevated := decision
 	elevated.Route = routing.RouteANALYZE
 	if elevated.Confidence < 0.95 {
@@ -113,9 +108,6 @@ func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, d
 		Confidence: elevated.Confidence,
 		Reason:     strings.Join(evaluated.Reasons, "; "),
 	})
-	c.emit("routing.decision", "ai_workflow", "",
-		fmt.Sprintf("heavy worker policy elevated route to ANALYZE: %s", strings.Join(evaluated.Reasons, "; ")),
-		string(routing.RouteANALYZE), jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	return elevated
 }
 

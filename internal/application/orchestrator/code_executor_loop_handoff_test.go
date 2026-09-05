@@ -30,8 +30,8 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder, nil, nil, nil, worker, nil, recordingCodeEventEmitter(&events)).
 		WithCoderLoopPrompts(map[string]string{"coder1": "CoderLoop prompt"})
 
-	jobID := modulecore.NewTaskID()
-	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "会話内容を保ったまま修正して", routing.RouteCODE1, "sess-1", "test", "chat-1")
+	taskID := modulecore.NewTaskID()
+	req := newOrchestratorTestCodeExecutionRequest(t, taskID, "会話内容を保ったまま修正して", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {
 		t.Fatalf("ExecuteCode failed: %v", err)
@@ -60,5 +60,10 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 			t.Fatalf("%s %s->%s must start by naming the recipient: %q", expected.eventType, expected.from, expected.to, events[idx].content)
 		}
 		last = idx
+	}
+	for _, event := range events {
+		if event.taskID != taskID.String() {
+			t.Fatalf("loop event task ID=%q, want supplied task %q: %+v", event.taskID, taskID, events)
+		}
 	}
 }

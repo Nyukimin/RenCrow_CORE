@@ -31,13 +31,13 @@ type CoderLoopExecutor struct {
 	agentName       string
 	systemPrompt    string
 	maxTurns        int
-	eventEmitter    func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
+	eventEmitter    func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
 }
 
 // workerObservationExecutor は観測実行とパッチ実行の両方を持つ
 type workerObservationExecutor interface {
 	ExecuteObservation(ctx context.Context, actions []coderloop.ObservationAction) ([]coderloop.ObservationActionResult, error)
-	ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
+	ExecuteProposal(ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
 }
 
 // NewCoderLoopExecutor は CoderLoopExecutor を生成する
@@ -46,7 +46,7 @@ func NewCoderLoopExecutor(
 	worker workerObservationExecutor,
 	agentName string,
 	systemPrompt string,
-	eventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string),
+	eventEmitter func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string),
 ) *CoderLoopExecutor {
 	return &CoderLoopExecutor{
 		coder:           coder,
@@ -77,20 +77,20 @@ type LoopResult struct {
 // Execute はエージェントループを実行する
 func (e *CoderLoopExecutor) Execute(ctx context.Context, req CodeExecutionRequest) (CodeExecutionResponse, error) {
 	route := req.Input.Route()
-	log.Printf("[CoderLoop] start job=%s route=%s", req.JobID, route)
+	log.Printf("[CoderLoop] start task=%s route=%s", req.TaskID, route)
 	e.emit("agent.start", e.agentName, "shiro", "CoderLoop 開始", req)
 
 	result, err := e.runLoop(ctx, req)
 	if err != nil {
 		report := "CoderLoop エラー: " + err.Error()
 		e.emit("agent.report", e.agentName, "shiro", formatAgentHandoffCompletionSpeech("shiro", e.agentName, report), req)
-		e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.JobID, report), req)
+		e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.TaskID.String(), report), req)
 		return CodeExecutionResponse{}, err
 	}
 
 	summary := e.formatLoopResult(result)
 	e.emit("agent.report", e.agentName, "shiro", formatAgentHandoffCompletionSpeech("shiro", e.agentName, summary), req)
-	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.JobID, summary), req)
+	e.emit("agent.report", "shiro", "mio", formatShiroToMioReport(route, req.TaskID.String(), summary), req)
 	return buildProposalHandledResponse(summary), nil
 }
 
@@ -105,7 +105,7 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 	var lastReport *coderloop.FinalReportMessage
 
 	for turn := 1; turn <= e.maxTurns; turn++ {
-		log.Printf("[CoderLoop] turn=%d job=%s", turn, req.JobID)
+		log.Printf("[CoderLoop] turn=%d task=%s", turn, req.TaskID)
 
 		// Coder 推論
 		content, err := e.coder.GenerateWithContext(ctx, messages)
@@ -143,7 +143,7 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 
 		case coderloop.TypeFinalReport:
 			lastReport = msg.FinalReport
-			log.Printf("[CoderLoop] final_report received job=%s turn=%d", req.JobID, turn)
+			log.Printf("[CoderLoop] final_report received task=%s turn=%d", req.TaskID, turn)
 			return &LoopResult{
 				FinalReport:  lastReport,
 				Summary:      lastReport.Summary,
@@ -247,11 +247,10 @@ func (e *CoderLoopExecutor) executePatchProposal(
 	e.emit("worker.request", "coder_loop", "worker",
 		fmt.Sprintf("[turn %d] patch_proposal 適用中: %s", turn, pp.Intent), req)
 
-	taskID, err := modulecore.ParseTaskID(req.JobID)
-	if err != nil {
-		return "", fmt.Errorf("invalid task identity in job_id field: %w", err)
+	if err := req.TaskID.Validate(); err != nil {
+		return "", fmt.Errorf("invalid task identity: %w", err)
 	}
-	result, err := e.workerExecution.ExecuteProposal(ctx, taskID, p)
+	result, err := e.workerExecution.ExecuteProposal(ctx, req.TaskID, p)
 	if err != nil {
 		obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
 			coderloop.NewObservationActionResult("apply_patch", pp.Intent, "", err),
@@ -314,5 +313,5 @@ func (e *CoderLoopExecutor) emit(eventType, from, to, content string, req CodeEx
 		return
 	}
 	sessionID, channel, chatID := turnInputMetadata(req.Input)
-	e.eventEmitter(eventType, from, to, content, req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
+	e.eventEmitter(eventType, from, to, content, req.Input.Route().String(), req.TaskID.String(), sessionID, channel, chatID)
 }

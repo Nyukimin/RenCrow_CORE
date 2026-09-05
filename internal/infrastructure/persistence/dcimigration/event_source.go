@@ -14,6 +14,7 @@ import (
 var eventStoreSpecs = map[string]tableSpec{
 	"event_envelope": {Columns: []tableColumnSpec{
 		{Name: "event_id", Type: "TEXT", NotNull: true, Primary: true},
+		{Name: "event_seq", Type: "INTEGER", NotNull: true},
 		{Name: "trace_id", Type: "TEXT", NotNull: true},
 		{Name: "schema_version", Type: "TEXT", NotNull: true},
 		{Name: "event_type", Type: "TEXT", NotNull: true},
@@ -88,14 +89,14 @@ func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, Sour
 	traces := make(map[string]string)
 	events := make([]modulecore.EventEnvelope, 0)
 	expectedDependencies := make(map[string]map[string]string)
-	rows, err := db.QueryContext(ctx, `SELECT event_id, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json FROM event_envelope ORDER BY rowid`)
+	rows, err := db.QueryContext(ctx, `SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json FROM event_envelope ORDER BY event_seq`)
 	if err != nil {
 		return nil, SourceCounts{}, nil, newCodedError("source_read", "read canonical Event Store envelopes: %v", err)
 	}
 	var lines []string
 	count := SourceCounts{}
 	for rows.Next() {
-		values := make([]any, 7)
+		values := make([]any, 8)
 		destinations := make([]any, len(values))
 		for index := range values {
 			destinations[index] = &values[index]
@@ -105,8 +106,13 @@ func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, Sour
 			return nil, SourceCounts{}, nil, newCodedError("source_read", "scan canonical Event Store envelope: %v", err)
 		}
 		eventID := readText(values[0])
-		traceID := readText(values[1])
-		envelope, err := validateExistingEventIdentity(eventID, traceID, readText(values[2]), readText(values[3]), readText(values[4]), readText(values[5]), readText(values[6]))
+		eventSeq, err := readInt(values[1])
+		if err != nil {
+			_ = rows.Close()
+			return nil, SourceCounts{}, nil, newCodedError("malformed_source", "canonical Event Store event_seq: %v", err)
+		}
+		traceID := readText(values[2])
+		envelope, err := validateExistingEventIdentity(eventID, eventSeq, traceID, readText(values[3]), readText(values[4]), readText(values[5]), readText(values[6]), readText(values[7]))
 		if err != nil {
 			_ = rows.Close()
 			return nil, SourceCounts{}, nil, newCodedError(errorCode(err, "malformed_source"), "canonical Event Store envelope: %v", err)
@@ -132,7 +138,7 @@ func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, Sour
 		expectedDependencies[eventID] = dependencies
 		count.EventStore++
 		canonicalJSON, _ := json.Marshal(envelope)
-		line, _ := json.Marshal([]any{"envelope", eventID, traceID, readText(values[2]), readText(values[3]), readText(values[4]), readText(values[5]), string(canonicalJSON)})
+		line, _ := json.Marshal([]any{"envelope", eventID, eventSeq, traceID, readText(values[3]), readText(values[4]), readText(values[5]), readText(values[6]), string(canonicalJSON)})
 		lines = append(lines, string(line))
 	}
 	if err := rows.Err(); err != nil {
@@ -206,12 +212,15 @@ func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, Sour
 	return ids, count, lines, nil
 }
 
-func validateExistingEventIdentity(eventID, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON string) (modulecore.EventEnvelope, error) {
+func validateExistingEventIdentity(eventID string, eventSeq int64, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON string) (modulecore.EventEnvelope, error) {
 	if err := modulecore.EventID(eventID).Validate(); err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("event_id: %v", err)
 	}
 	if err := modulecore.TraceID(traceID).Validate(); err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("trace_id: %v", err)
+	}
+	if err := modulecore.EventSeq(eventSeq).Validate(); err != nil {
+		return modulecore.EventEnvelope{}, fmt.Errorf("event_seq: %v", err)
 	}
 	if schemaVersion != modulecore.EventEnvelopeSchemaVersion || eventType == "" || componentID == "" || occurredAt == "" || envelopeJSON == "" {
 		return modulecore.EventEnvelope{}, fmt.Errorf("required envelope field is empty")
@@ -226,7 +235,7 @@ func validateExistingEventIdentity(eventID, traceID, schemaVersion, eventType, c
 	if err := modulecore.ValidateEventEnvelope(envelope); err != nil {
 		return modulecore.EventEnvelope{}, fmt.Errorf("envelope_json validation: %w", err)
 	}
-	if string(envelope.EventID) != eventID || string(envelope.TraceID) != traceID || envelope.SchemaVersion != schemaVersion || envelope.EventType != eventType || envelope.ComponentID != componentID || envelope.OccurredAt.UTC().Format(time.RFC3339Nano) != occurredAt {
+	if string(envelope.EventID) != eventID || int64(envelope.EventSeq) != eventSeq || string(envelope.TraceID) != traceID || envelope.SchemaVersion != schemaVersion || envelope.EventType != eventType || envelope.ComponentID != componentID || envelope.OccurredAt.UTC().Format(time.RFC3339Nano) != occurredAt {
 		return modulecore.EventEnvelope{}, newCodedError("event_envelope_mismatch", "envelope_json does not match canonical columns")
 	}
 	return envelope, nil

@@ -431,7 +431,7 @@ func (m *mockHeavyAgent) Generate(ctx context.Context, t conversation.TurnInput)
 // mockWorkerExecutionService はテスト用のWorkerExecutionService
 type mockWorkerExecutionService struct{}
 
-func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p interface{}) (interface{}, error) {
+func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, taskID modulecore.TaskID, p interface{}) (interface{}, error) {
 	return nil, nil
 }
 
@@ -757,8 +757,8 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	verifier := &mockResponseVerifier{result: appverification.Result{
 		Response: "これは2014年公開です。",
 		Report: domainverification.VerificationReport{
-			ID:           "verify_job",
-			JobID:        "job",
+			ID:           "verify_task",
+			TaskID:       "tsk_00000000-0000-5000-8000-000000000003",
 			SessionID:    "20260302-line-U123",
 			Route:        "CHAT",
 			Status:       domainverification.StatusWeaklySupported,
@@ -788,7 +788,7 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	if resp.Verification.Status != domainverification.StatusWeaklySupported {
 		t.Fatalf("unexpected verification status: %s", resp.Verification.Status)
 	}
-	if resp.JobID == "" || modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if resp.TaskID == "" || modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.TaskID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)
 	}
 	if verifier.req.DraftResponse != "これは2014年公開です。" || verifier.req.UserMessage != "作品情報を教えて" {
@@ -1404,7 +1404,7 @@ func TestMessageOrchestrator_ProcessMessage_UnknownRoute(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown route")
 	}
-	if !strings.Contains(err.Error(), "unknown route") {
+	if !strings.Contains(err.Error(), "unsupported orchestrator route") {
 		t.Errorf("error should mention unknown route, got: %v", err)
 	}
 }
@@ -1517,8 +1517,8 @@ func TestMessageOrchestrator_ProcessMessage_ExplicitDCISavesRecallTrace(t *testi
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if resp.JobID == "" {
-		t.Fatal("response should include job id")
+	if resp.TaskID == "" {
+		t.Fatal("response should include task id")
 	}
 	if len(recall.traces) != 1 {
 		t.Fatalf("expected one recall trace, got %d", len(recall.traces))

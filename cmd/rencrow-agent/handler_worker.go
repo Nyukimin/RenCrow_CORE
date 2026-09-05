@@ -8,7 +8,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // workerHandler はWorkerエージェントのハンドラ
@@ -18,6 +17,10 @@ type workerHandler struct {
 }
 
 func (h *workerHandler) HandleMessage(ctx context.Context, msg domaintransport.Message) (domaintransport.Message, error) {
+	if err := msg.Validate(); err != nil {
+		return domaintransport.Message{}, fmt.Errorf("invalid transport message: %w", err)
+	}
+
 	// Proposal付きメッセージ → Worker即時実行
 	if msg.Proposal != nil {
 		return h.executeProposal(ctx, msg)
@@ -37,23 +40,17 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 		msg.Proposal.CostHint,
 	)
 
-	// JobID をパース
-	jobID, err := modulecore.ParseTaskID(msg.JobID)
-	if err != nil {
-		return domaintransport.Message{}, fmt.Errorf("invalid job ID: %w", err)
-	}
-
 	// Patch実行
-	result, err := h.executionService.ExecuteProposal(ctx, jobID, p)
+	result, err := h.executionService.ExecuteProposal(ctx, msg.TaskID, p)
 	if err != nil {
-		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID,
+		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.TaskID,
 			fmt.Sprintf("patch execution failed: %v", err))
 		errResp.Type = domaintransport.MessageTypeError
 		return errResp, nil
 	}
 
 	// 結果をResultPayloadに変換
-	response := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID, result.Summary)
+	response := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.TaskID, result.Summary)
 	response.Type = domaintransport.MessageTypeResult
 	response.Result = &domaintransport.ResultPayload{
 		Success:      result.FailedCmds == 0,
@@ -75,13 +72,13 @@ func (h *workerHandler) executeTask(ctx context.Context, msg domaintransport.Mes
 
 	result, err := h.shiroAgent.Execute(ctx, input)
 	if err != nil {
-		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID,
+		errResp := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.TaskID,
 			fmt.Sprintf("worker execution failed: %v", err))
 		errResp.Type = domaintransport.MessageTypeError
 		return errResp, nil
 	}
 
-	response := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.JobID, result)
+	response := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.TaskID, result)
 	response.Type = domaintransport.MessageTypeResult
 	response.Result = &domaintransport.ResultPayload{
 		Success: true,

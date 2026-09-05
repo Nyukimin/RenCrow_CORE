@@ -88,6 +88,10 @@ func TestRunJSONLSnapshotDryRunApplyAndSecondRunNoop(t *testing.T) {
 		if getErr != nil || !found {
 			t.Fatalf("event %s found=%t err=%v", event.EventID, found, getErr)
 		}
+		if got.EventSeq <= 0 {
+			t.Fatalf("event %s event_seq = %d, want positive storage-owned sequence", event.EventID, got.EventSeq)
+		}
+		event.EventSeq = got.EventSeq
 		wantJSON, _ := json.Marshal(event)
 		gotJSON, _ := json.Marshal(got)
 		if string(gotJSON) != string(wantJSON) {

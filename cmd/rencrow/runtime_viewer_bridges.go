@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	chromeadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/chrome"
@@ -38,14 +39,14 @@ func buildViewerBridgeHandlers(
 				return "", scopeErr
 			}
 			ctx = trustedCtx
-			log.Printf("[main] viewerSendFromOrch: start job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
+			log.Printf("[main] viewerSendFromOrch: start root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachments=%d %s", req.RootTaskID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, len(req.Attachments), req.Provenance.LogFields())
 			resp, err := proc.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
-				JobID:           req.JobID,
 				MessageID:       req.MessageID,
 				AgentMessageID:  req.AgentMessageID,
 				TurnID:          req.TurnID,
 				TraceID:         req.TraceID,
 				RootTaskID:      req.RootTaskID,
+				SessionID:       req.SessionID,
 				Channel:         "viewer",
 				ChatID:          "viewer-user",
 				UserMessage:     req.Message,
@@ -55,18 +56,18 @@ func buildViewerBridgeHandlers(
 				Attachments:     req.Attachments,
 			})
 			if err != nil {
-				log.Printf("[main] viewerSendFromOrch: error job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.JobID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)
+				log.Printf("[main] viewerSendFromOrch: error root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", req.RootTaskID, req.TraceID, req.MessageID, req.ViewerClientID, req.To, req.Provenance.LogFields(), err)
 				return "", err
 			}
-			log.Printf("[main] viewerSendFromOrch: complete job_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.JobID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
+			log.Printf("[main] viewerSendFromOrch: complete task_id=%s root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.TaskID, resp.RootTaskID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
 			return resp.Response, nil
 		}, func(req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {
 				if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
 					"viewer.error", "system", "viewer", err.Error(),
-					"", req.JobID, "viewer", "viewer", "viewer-user",
+					"", req.RootTaskID, req.SessionID, "viewer", "viewer-user",
 				)); publishErr != nil {
-					log.Printf("[Viewer] error event publication failed job=%s: %v", req.JobID, publishErr)
+					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 				}
 			}
 		}, attachmentStore)
@@ -78,10 +79,17 @@ func buildViewerBridgeHandlers(
 			},
 			func(ctx context.Context, stage entryadapter.Stage, req entryadapter.Request, result *entryadapter.Result, err error) {
 				route := ""
-				jobID := ""
+				taskID := ""
+				eventSessionID := strings.TrimSpace(req.SessionID)
 				if result != nil {
 					route = result.Route
-					jobID = result.JobID
+					taskID = result.TaskID
+					if strings.TrimSpace(result.SessionID) != "" {
+						eventSessionID = strings.TrimSpace(result.SessionID)
+					}
+				}
+				if modulecore.SessionID(eventSessionID).Validate() != nil {
+					eventSessionID = ""
 				}
 				if deps.eventRelay != nil {
 					if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
@@ -90,12 +98,12 @@ func buildViewerBridgeHandlers(
 						"system",
 						string(stage),
 						route,
-						jobID,
-						req.SessionID,
+						taskID,
+						eventSessionID,
 						req.Channel,
 						req.UserID,
 					)); publishErr != nil {
-						log.Printf("[Entry] stage event publication failed stage=%s session=%s job=%s: %v", stage, req.SessionID, jobID, publishErr)
+						log.Printf("[Entry] stage event publication failed stage=%s session=%s task=%s: %v", stage, req.SessionID, taskID, publishErr)
 					}
 				}
 				switch stage {
@@ -104,7 +112,7 @@ func buildViewerBridgeHandlers(
 				case entryadapter.StagePlanning:
 					log.Printf("[entry] stage=%s session=%s", stage, req.SessionID)
 				case entryadapter.StageCompleted:
-					log.Printf("[entry] stage=%s session=%s route=%s job=%s", stage, req.SessionID, route, jobID)
+					log.Printf("[entry] stage=%s session=%s route=%s task=%s", stage, req.SessionID, route, taskID)
 				case entryadapter.StageFailed:
 					log.Printf("[entry] stage=%s session=%s err=%v", stage, req.SessionID, err)
 				default:

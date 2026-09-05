@@ -7,7 +7,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 )
 
-func classifyJobPhase(ev orchestrator.OrchestratorEvent, current *JobSnapshot) (string, string) {
+func classifyTaskActivityPhase(ev orchestrator.OrchestratorEvent, current *TaskActivitySnapshot) (string, string) {
 	from := strings.ToLower(strings.TrimSpace(ev.From))
 	to := strings.ToLower(strings.TrimSpace(ev.To))
 	content := ev.Content
@@ -129,7 +129,8 @@ func componentFromAgent(agent AgentSnapshot) ComponentSnapshot {
 	return ComponentSnapshot{
 		Status:    agent.State,
 		AgentID:   agent.ID,
-		JobID:     agent.JobID,
+		TaskID:    agent.TaskID,
+		EventSeq:  agent.EventSeq,
 		Route:     agent.Route,
 		LastEvent: agent.LastEvent,
 		UpdatedAt: agent.UpdatedAt,
@@ -205,8 +206,8 @@ func monitorAgentOrDefault(id, fallback string) string {
 	return fallback
 }
 
-func (d JobDetail) MarshalJSON() ([]byte, error) {
-	type alias JobDetail
+func (d TaskActivityDetail) MarshalJSON() ([]byte, error) {
+	type alias TaskActivityDetail
 	if d.Item.Events == nil {
 		d.Item.Events = []orchestrator.OrchestratorEvent{}
 	}

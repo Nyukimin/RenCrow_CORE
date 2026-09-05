@@ -20,6 +20,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/resilience"
 	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -185,7 +186,7 @@ func parseCoreProbeEligibility(serviceProperties string, uptimeMicros uint64) bo
 func reconcileIncident(store resilience.Store, incident *resilience.Incident, now time.Time) error {
 	switch incident.Status {
 	case resilience.StatusRepairRequested:
-		result, found, err := findRepairResult(incident.RepairJobID)
+		result, found, err := findRepairResult(incident.RepairTaskID)
 		if err != nil {
 			return err
 		}
@@ -196,10 +197,10 @@ func reconcileIncident(store resilience.Store, incident *resilience.Incident, no
 			return store.MarkRepairCompleted(incident, now)
 		}
 		if found && result == "failed" {
-			return store.MarkRepairFailed(incident, "repair job failed")
+			return store.MarkRepairFailed(incident, "repair task failed")
 		}
 		if incident.RepairRequestedAt != nil && now.Sub(*incident.RepairRequestedAt) > 45*time.Minute {
-			return store.MarkRepairFailed(incident, "repair job timed out")
+			return store.MarkRepairFailed(incident, "repair task timed out")
 		}
 		return nil
 	case resilience.StatusRepairPending:
@@ -232,11 +233,11 @@ func reconcileIncident(store resilience.Store, incident *resilience.Incident, no
 	if len(doctor) > 0 {
 		_ = os.WriteFile(filepath.Join(store.IncidentDir(incident.Signature), "doctor-latest.json"), doctor, 0o600)
 	}
-	jobID, err := requestRepair(incident)
+	taskID, err := requestRepair(incident)
 	if err != nil {
 		return err
 	}
-	return store.MarkRepairRequested(incident, jobID, now, resilience.DefaultMaxRepairAttempts)
+	return store.MarkRepairRequested(incident, taskID, now, resilience.DefaultMaxRepairAttempts)
 }
 
 func resilienceStatus() error {
@@ -414,7 +415,7 @@ func runDoctor() ([]byte, error) {
 	return exec.CommandContext(ctx, exe, "doctor", "--json").CombinedOutput()
 }
 
-func requestRepair(incident *resilience.Incident) (string, error) {
+func requestRepair(incident *resilience.Incident) (modulecore.TaskID, error) {
 	repairRoute := selectedRepairRoute()
 	payload := map[string]any{
 		"reason":       "resilience incident " + incident.Signature,
@@ -441,16 +442,20 @@ func requestRepair(incident *resilience.Incident) (string, error) {
 		return "", fmt.Errorf("repair request HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 	var decoded struct {
-		OK    bool   `json:"ok"`
-		JobID string `json:"job_id"`
+		OK     bool   `json:"ok"`
+		TaskID string `json:"task_id"`
 	}
 	if err := json.Unmarshal(responseBody, &decoded); err != nil {
 		return "", err
 	}
-	if !decoded.OK || decoded.JobID == "" {
-		return "", errors.New("repair endpoint did not return a job id")
+	if !decoded.OK {
+		return "", errors.New("repair endpoint rejected the Task request")
 	}
-	return decoded.JobID, nil
+	taskID, err := modulecore.ParseTaskID(decoded.TaskID)
+	if err != nil {
+		return "", fmt.Errorf("repair endpoint returned invalid task_id: %w", err)
+	}
+	return taskID, nil
 }
 
 func selectedRepairRoute() string {
@@ -521,9 +526,9 @@ func probeGatewayModels(baseURL, apiKey string) error {
 	return nil
 }
 
-func findRepairResult(jobID string) (string, bool, error) {
-	if strings.TrimSpace(jobID) == "" {
-		return "", false, nil
+func findRepairResult(taskID modulecore.TaskID) (string, bool, error) {
+	if err := taskID.Validate(); err != nil {
+		return "", false, fmt.Errorf("repair task_id is invalid: %w", err)
 	}
 	cfg, err := config.LoadConfig(getConfigPath())
 	if err != nil {
@@ -538,7 +543,7 @@ func findRepairResult(jobID string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	events, err := projection.Query(context.Background(), viewer.LogFilter{JobID: jobID, Limit: 1000})
+	events, err := projection.Query(context.Background(), viewer.LogFilter{TaskID: taskID, Limit: 1000})
 	if err != nil {
 		return "", false, err
 	}

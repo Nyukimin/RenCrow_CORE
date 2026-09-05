@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateSkillGovernanceRejectsMissingTimestamp(t *testing.T) {
@@ -17,7 +19,7 @@ func TestValidateSkillGovernanceRejectsMissingTimestamp(t *testing.T) {
 		{name: "change", err: ValidateSkillChangeLog(SkillChangeLog{ChangeID: "chg_1", SkillID: "core.review"}), want: "created_at"},
 		{name: "contribution", err: ValidateContributionGateLog(ContributionGateLog{EventID: "evt_1", Repo: "example/repo", GateStatus: GateStatusBlocked}), want: "created_at"},
 		{name: "external PR", err: ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured"}), want: "created_at"},
-		{name: "transcript", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", Role: "assistant", Segment: "patch_evidence"}), want: "created_at"},
+		{name: "transcript", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Role: "assistant", Segment: "patch_evidence"}), want: "created_at"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,7 +47,7 @@ func TestValidateSkillGovernanceAcceptsTimestampedRecords(t *testing.T) {
 	if err := ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured", CreatedAt: now}); err != nil {
 		t.Fatalf("external PR should be valid: %v", err)
 	}
-	if err := ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", Role: "assistant", Segment: "patch_evidence", CreatedAt: now}); err != nil {
+	if err := ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Role: "assistant", Segment: "patch_evidence", CreatedAt: now}); err != nil {
 		t.Fatalf("transcript should be valid: %v", err)
 	}
 }
@@ -69,9 +71,10 @@ func TestValidateSkillGovernanceRejectsMissingRequiredFields(t *testing.T) {
 		{name: "contribution missing event id", err: ValidateContributionGateLog(ContributionGateLog{Repo: "example/repo", GateStatus: GateStatusBlocked, CreatedAt: now}), want: "event_id"},
 		{name: "contribution missing repo", err: ValidateContributionGateLog(ContributionGateLog{EventID: "evt_1", GateStatus: GateStatusBlocked, CreatedAt: now}), want: "repo"},
 		{name: "contribution missing gate status", err: ValidateContributionGateLog(ContributionGateLog{EventID: "evt_1", Repo: "example/repo", CreatedAt: now}), want: "gate_status"},
-		{name: "transcript missing event id", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{Role: "assistant", Segment: "patch_evidence", CreatedAt: now}), want: "event_id"},
-		{name: "transcript missing role", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", Segment: "patch_evidence", CreatedAt: now}), want: "role"},
-		{name: "transcript missing segment", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", Role: "assistant", CreatedAt: now}), want: "segment"},
+		{name: "transcript missing task id", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", Role: "assistant", Segment: "patch_evidence", CreatedAt: now}), want: "task_id"},
+		{name: "transcript missing event id", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{TaskID: modulecore.NewTaskID(), Role: "assistant", Segment: "patch_evidence", CreatedAt: now}), want: "event_id"},
+		{name: "transcript missing role", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Segment: "patch_evidence", CreatedAt: now}), want: "role"},
+		{name: "transcript missing segment", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Role: "assistant", CreatedAt: now}), want: "segment"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

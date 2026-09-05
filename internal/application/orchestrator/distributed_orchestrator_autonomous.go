@@ -12,7 +12,7 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type distributedDirectExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error)
+type distributedDirectExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error)
 
 type distributedAutonomousCoordinator struct {
 	reporter      ReportStore
@@ -39,32 +39,35 @@ func (c *distributedAutonomousCoordinator) SetReportStore(reporter ReportStore) 
 	c.reporter = reporter
 }
 
-func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
+func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	if err := validateDistributedTaskID(taskID); err != nil {
+		return "", err
+	}
 	contract, err := contractapp.NormalizeRequestWithRoute(input.MessageText(), route.String())
 	if err != nil {
 		return "", err
 	}
 	sessionID, channel, chatID := turnInputMetadata(input)
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
-		JobID:      jobID.String(),
+		TaskID:     taskID,
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
 		MaxRepair:  c.maxRepair(),
 		Observe: func(stage autonomousapp.Stage) {
-			log.Printf("[AutonomousExecutor] entry.stage=%s route=%s job=%s", stage, route.String(), jobID.String())
-			c.emit("entry.stage", channel, "system", string(stage), route.String(), jobID.String(), sessionID, channel, chatID)
+			log.Printf("[AutonomousExecutor] entry.stage=%s route=%s task=%s", stage, route.String(), taskID.String())
+			c.emit("entry.stage", channel, "system", string(stage), route.String(), taskID.String(), sessionID, channel, chatID)
 		},
 		ReportStore: c.reporter,
 		Execute: func(execCtx context.Context, attempt int, failureKind, failureReason string) (autonomousapp.AttemptResult, error) {
-			log.Printf("[AutonomousExecutor] execute start route=%s job=%s attempt=%d failure_kind=%q", route.String(), jobID.String(), attempt, failureKind)
+			log.Printf("[AutonomousExecutor] execute start route=%s task=%s attempt=%d failure_kind=%q", route.String(), taskID.String(), attempt, failureKind)
 			execInput := input
 			if attempt > 0 {
 				execInput = execInput.WithMessageText(buildExecutorRetryMessage(input.MessageText(), route, failureKind, failureReason, attempt))
 			}
-			resp, runErr := c.executeDirect(execCtx, execInput, route, jobID, ttsSessionID)
+			resp, runErr := c.executeDirect(execCtx, execInput, route, taskID, ttsSessionID)
 			resultKind := classifyExecutorFailure(runErr)
-			log.Printf("[AutonomousExecutor] execute complete route=%s job=%s attempt=%d success=%t failure_kind=%q", route.String(), jobID.String(), attempt, runErr == nil, resultKind)
+			log.Printf("[AutonomousExecutor] execute complete route=%s task=%s attempt=%d success=%t failure_kind=%q", route.String(), taskID.String(), attempt, runErr == nil, resultKind)
 			return autonomousapp.AttemptResult{
 				Response:      resp,
 				Steps:         routeExecutionSteps(route, runErr == nil),
@@ -74,7 +77,7 @@ func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input do
 		},
 		Verify: func(_ context.Context, c domaincontract.Contract, last autonomousapp.AttemptResult) (bool, string, string, error) {
 			ok, kind, reason := verifyByContract(route, c, last)
-			log.Printf("[AutonomousExecutor] verify route=%s job=%s passed=%t failure_kind=%q reason=%q", route.String(), jobID.String(), ok, kind, reason)
+			log.Printf("[AutonomousExecutor] verify route=%s task=%s passed=%t failure_kind=%q reason=%q", route.String(), taskID.String(), ok, kind, reason)
 			return ok, kind, reason, nil
 		},
 	})

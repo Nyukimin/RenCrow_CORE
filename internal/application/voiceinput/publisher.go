@@ -6,6 +6,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -14,34 +15,33 @@ const (
 )
 
 type EventEmitter interface {
-	Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
+	Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
 }
 
 type CorrelatedEventEmitter interface {
-	EmitWithMessageID(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID string)
+	EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID string)
 }
 
 type SessionTurnLogger interface {
 	WriteUser(sessionID, channel, content string)
-	WriteAssistant(sessionID, channel, route, jobID, content string)
+	WriteAssistant(sessionID, channel, route, taskID, content string)
 }
 
 type CorrelatedSessionTurnLogger interface {
 	WriteUserWithIdentity(sessionID, channel, messageID, traceID, content string)
-	WriteAssistantWithIdentity(sessionID, channel, route, jobID, messageID, traceID, content string)
+	WriteAssistantWithIdentity(sessionID, channel, route, taskID, messageID, traceID, content string)
 }
 
 type Publisher struct {
 	Events     EventEmitter
 	TurnLogger SessionTurnLogger
 	Input      conversation.TurnInput
-	NewJobID   func() string
-	EmitMetric func(kind, point string, startedAt time.Time, route, jobID, sessionID, channel, chatID, detail string)
+	EmitMetric func(kind, point string, startedAt time.Time, route, taskID, sessionID, channel, chatID, detail string)
 }
 
 type PublishResult struct {
 	Input     conversation.TurnInput
-	JobID     string
+	TaskID    modulecore.TaskID
 	MessageID string
 	TraceID   string
 	Result    Result
@@ -53,6 +53,10 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	}
 	if err := p.Input.Validate(); err != nil {
 		return PublishResult{}, fmt.Errorf("voice publisher input is invalid: %w", err)
+	}
+	taskID := p.Input.RootTaskID()
+	if err := taskID.Validate(); err != nil {
+		return PublishResult{}, fmt.Errorf("voice publisher root task_id is invalid: %w", err)
 	}
 	address := p.Input.ChannelAddress()
 	if result.UserText != p.Input.MessageText() {
@@ -73,24 +77,19 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	if result.Timings.PublishedAt.IsZero() {
 		result.Timings.PublishedAt = time.Now()
 	}
-	jobID := ""
-	if p.NewJobID != nil {
-		jobID = p.NewJobID()
-	}
-	if jobID != "" && jobID == string(p.Input.TurnID()) {
-		return PublishResult{}, fmt.Errorf("voice publisher job_id must differ from turn_id")
-	}
-	if jobID != "" && jobID == string(p.Input.TraceID()) {
-		return PublishResult{}, fmt.Errorf("voice publisher job_id must differ from trace_id")
-	}
-	if jobID != "" && jobID == string(p.Input.RootTaskID()) {
-		return PublishResult{}, fmt.Errorf("voice publisher job_id must differ from root_task_id")
-	}
-	if jobID != "" && jobID == string(p.Input.UserMessageID()) {
-		return PublishResult{}, fmt.Errorf("voice publisher job_id must differ from user_message_id")
-	}
-	if jobID != "" && jobID == string(p.Input.AgentMessageID()) {
-		return PublishResult{}, fmt.Errorf("voice publisher job_id must differ from agent_message_id")
+	taskIDValue := taskID.String()
+	for _, identity := range []struct {
+		name  string
+		value string
+	}{
+		{name: "turn_id", value: string(p.Input.TurnID())},
+		{name: "trace_id", value: string(p.Input.TraceID())},
+		{name: "user_message_id", value: string(p.Input.UserMessageID())},
+		{name: "agent_message_id", value: string(p.Input.AgentMessageID())},
+	} {
+		if taskIDValue == identity.value {
+			return PublishResult{}, fmt.Errorf("voice publisher task_id must differ from %s", identity.name)
+		}
 	}
 	traceID := string(p.Input.TraceID())
 	userMessageID := string(p.Input.UserMessageID())
@@ -101,10 +100,10 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	route := string(p.Input.Route())
 	if p.Events != nil {
 		if result.UserText != "" {
-			p.emitMessage("message.received", "user", "mio", result.UserText, "", jobID, sessionID, channel, chatID, userMessageID)
+			p.emitMessage("message.received", "user", "mio", result.UserText, "", taskIDValue, sessionID, channel, chatID, userMessageID)
 		}
 		if p.EmitMetric != nil {
-			p.EmitMetric("network", "server_received", result.Timings.StartedAt, "", jobID, sessionID, channel, chatID, result.UtteranceID)
+			p.EmitMetric("network", "server_received", result.Timings.StartedAt, "", taskIDValue, sessionID, channel, chatID, result.UtteranceID)
 		}
 		p.Events.Emit(
 			"routing.decision",
@@ -117,19 +116,19 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 				result.UtteranceID,
 			),
 			route,
-			jobID,
+			taskIDValue,
 			sessionID,
 			channel,
 			chatID,
 		)
 		if p.EmitMetric != nil {
 			detail := fmt.Sprintf("surface=%s source=%s", SurfaceVoiceChat, VoiceDirectEvidenceKey)
-			p.EmitMetric("llm", "route_decision", result.Timings.StartedAt, route, jobID, sessionID, channel, chatID, detail)
-			p.EmitMetric("llm", "dispatch_start", result.Timings.StartedAt, route, jobID, sessionID, channel, chatID, detail)
+			p.EmitMetric("llm", "route_decision", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, detail)
+			p.EmitMetric("llm", "dispatch_start", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, detail)
 		}
-		p.emitMessage("agent.response", "mio", "user", result.Reply, route, jobID, sessionID, channel, chatID, responseMessageID)
+		p.emitMessage("agent.response", "mio", "user", result.Reply, route, taskIDValue, sessionID, channel, chatID, responseMessageID)
 		if p.EmitMetric != nil {
-			p.EmitMetric("llm", "response_complete", result.Timings.StartedAt, route, jobID, sessionID, channel, chatID, fmt.Sprintf("utterance_id=%s response_len=%d", result.UtteranceID, len(result.Reply)))
+			p.EmitMetric("llm", "response_complete", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, fmt.Sprintf("utterance_id=%s response_len=%d", result.UtteranceID, len(result.Reply)))
 		}
 	}
 	if p.TurnLogger != nil {
@@ -137,21 +136,21 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 			if result.UserText != "" {
 				correlated.WriteUserWithIdentity(sessionID, channel, userMessageID, traceID, result.UserText)
 			}
-			correlated.WriteAssistantWithIdentity(sessionID, channel, route, jobID, responseMessageID, traceID, result.Reply)
+			correlated.WriteAssistantWithIdentity(sessionID, channel, route, taskIDValue, responseMessageID, traceID, result.Reply)
 		} else {
 			if result.UserText != "" {
 				p.TurnLogger.WriteUser(sessionID, channel, result.UserText)
 			}
-			p.TurnLogger.WriteAssistant(sessionID, channel, route, jobID, result.Reply)
+			p.TurnLogger.WriteAssistant(sessionID, channel, route, taskIDValue, result.Reply)
 		}
 	}
-	return PublishResult{Input: p.Input, JobID: jobID, MessageID: responseMessageID, TraceID: traceID, Result: result}, nil
+	return PublishResult{Input: p.Input, TaskID: taskID, MessageID: responseMessageID, TraceID: traceID, Result: result}, nil
 }
 
-func (p Publisher) emitMessage(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID string) {
+func (p Publisher) emitMessage(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID string) {
 	if correlated, ok := p.Events.(CorrelatedEventEmitter); ok && messageID != "" {
-		correlated.EmitWithMessageID(eventType, from, to, content, route, jobID, sessionID, channel, chatID, messageID)
+		correlated.EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID)
 		return
 	}
-	p.Events.Emit(eventType, from, to, content, route, jobID, sessionID, channel, chatID)
+	p.Events.Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 }

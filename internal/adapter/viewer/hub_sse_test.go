@@ -10,12 +10,18 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestHandleSSE_UsesLastEventIDForHistoryReplay(t *testing.T) {
 	hub := NewEventHub(10)
-	hub.OnEvent(orchestrator.NewEvent("entry.stage", "chrome", "system", "received", "CHAT", "j1", "s1", "local", "u1"))
-	hub.OnEvent(orchestrator.NewEvent("entry.stage", "chrome", "system", "planning", "CHAT", "j1", "s1", "local", "u1"))
+	taskID := modulecore.NewTaskID().String()
+	first := orchestrator.NewEvent("entry.stage", "chrome", "system", "received", "CHAT", taskID, "s1", "local", "u1")
+	first.EventSeq = 1
+	second := orchestrator.NewEvent("entry.stage", "chrome", "system", "planning", "CHAT", taskID, "s1", "local", "u1")
+	second.EventSeq = 2
+	hub.OnEvent(first)
+	hub.OnEvent(second)
 
 	req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
 	req.Header.Set("Last-Event-ID", "1")
@@ -28,11 +34,11 @@ func TestHandleSSE_UsesLastEventIDForHistoryReplay(t *testing.T) {
 
 	hub.HandleSSE(rec, req)
 	body := rec.Body.String()
-	if strings.Contains(body, `"seq":1`) {
-		t.Fatalf("expected seq=1 to be skipped, got: %s", body)
+	if strings.Contains(body, `"event_seq":1`) {
+		t.Fatalf("expected event_seq=1 to be skipped, got: %s", body)
 	}
-	if !strings.Contains(body, `"seq":2`) {
-		t.Fatalf("expected seq=2 in replay, got: %s", body)
+	if !strings.Contains(body, `"event_seq":2`) {
+		t.Fatalf("expected event_seq=2 in replay, got: %s", body)
 	}
 }
 

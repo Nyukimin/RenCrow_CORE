@@ -47,6 +47,7 @@ type RunResult struct {
 
 type Service struct {
 	now          func() time.Time
+	newSessionID func() string
 	newTraceID   func() string
 	newMessageID func() string
 }
@@ -54,6 +55,9 @@ type Service struct {
 func NewService() *Service {
 	return &Service{
 		now: func() time.Time { return time.Now().UTC() },
+		newSessionID: func() string {
+			return string(modulecore.NewSessionID())
+		},
 		newTraceID: func() string {
 			return string(modulecore.NewTraceID())
 		},
@@ -87,7 +91,10 @@ func (s *Service) RunRound(_ context.Context, req RunRequest) (RunResult, error)
 	userMessageID := s.newMessageID()
 	sessionID := strings.TrimSpace(req.SessionID)
 	if sessionID == "" {
-		sessionID = "char_runtime_" + now.Format("20060102150405.000000000")
+		sessionID = s.newSessionID()
+	}
+	if err := modulecore.SessionID(sessionID).Validate(); err != nil {
+		return RunResult{}, fmt.Errorf("session_id is invalid: %w", err)
 	}
 	turns := make([]Turn, 0, maxTurns)
 	for i, character := range participants[:maxTurns] {

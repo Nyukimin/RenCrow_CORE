@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubEvidenceReader struct {
@@ -36,7 +37,7 @@ func TestPipelineDisabledReturnsNotChecked(t *testing.T) {
 	result, err := p.VerifyResponse(context.Background(), Request{
 		DraftResponse: "これは2014年公開です。",
 		SessionID:     "session-1",
-		JobID:         "job-1",
+		TaskID:        modulecore.NewTaskID(),
 	})
 	if err != nil {
 		t.Fatalf("VerifyResponse failed: %v", err)
@@ -52,6 +53,20 @@ func TestPipelineDisabledReturnsNotChecked(t *testing.T) {
 	}
 }
 
+func TestPipelineRejectsMissingOrInvalidTaskIDBeforeAnyMode(t *testing.T) {
+	repo := &stubRepository{}
+	p := NewPipeline(Options{Policy: domainverification.VerificationPolicy{Enabled: false}, Repository: repo})
+	for _, taskID := range []modulecore.TaskID{"", modulecore.TaskID(modulecore.NewMessageID())} {
+		_, err := p.VerifyResponse(context.Background(), Request{DraftResponse: "draft", SessionID: "session-1", TaskID: taskID})
+		if err == nil {
+			t.Fatalf("TaskID %q was accepted", taskID)
+		}
+	}
+	if len(repo.reports) != 0 {
+		t.Fatalf("invalid TaskID reached repository: %#v", repo.reports)
+	}
+}
+
 func TestPipelineHighRiskWithoutEvidenceReaderDoesNotPretendSuccess(t *testing.T) {
 	p := NewPipeline(Options{Policy: domainverification.VerificationPolicy{Enabled: true}})
 	result, err := p.VerifyResponse(context.Background(), Request{
@@ -59,7 +74,7 @@ func TestPipelineHighRiskWithoutEvidenceReaderDoesNotPretendSuccess(t *testing.T
 		UserMessage:   "ニュースを要約して",
 		Route:         "RESEARCH",
 		SessionID:     "session-1",
-		JobID:         "job-1",
+		TaskID:        modulecore.NewTaskID(),
 		Now:           time.Date(2026, 5, 17, 0, 0, 0, 0, time.UTC),
 	})
 	if err != nil {
@@ -90,7 +105,7 @@ func TestPipelineMarksSingleEvidenceAsWeaklySupported(t *testing.T) {
 		DraftResponse: "この作品は2014年公開です。",
 		UserMessage:   "作品情報を教えて",
 		SessionID:     "session-1",
-		JobID:         "job-1",
+		TaskID:        modulecore.NewTaskID(),
 	})
 	if err != nil {
 		t.Fatalf("VerifyResponse failed: %v", err)
@@ -106,7 +121,7 @@ func TestPipelineDryRunDoesNotRewriteUnsupportedHighRiskResponse(t *testing.T) {
 		DraftResponse: "ニュースでは新モデルが2026年に発表されました。",
 		UserMessage:   "ニュースを教えて",
 		SessionID:     "session-1",
-		JobID:         "job-1",
+		TaskID:        modulecore.NewTaskID(),
 	})
 	if err != nil {
 		t.Fatalf("VerifyResponse failed: %v", err)
@@ -129,7 +144,7 @@ func TestPipelinePersistenceFailureIsReturned(t *testing.T) {
 		DraftResponse: "ニュースでは新モデルが2026年に発表されました。",
 		UserMessage:   "ニュース",
 		SessionID:     "session-1",
-		JobID:         "job-1",
+		TaskID:        modulecore.NewTaskID(),
 	})
 	if err == nil {
 		t.Fatal("expected persistence error")

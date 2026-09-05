@@ -33,6 +33,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -93,14 +94,13 @@ type Dependencies struct {
 	viewerStatus                   http.HandlerFunc                            // viewer status API
 	viewerAgents                   http.HandlerFunc                            // viewer agents API
 	viewerAgentDetail              http.HandlerFunc                            // viewer agent detail API
-	viewerJobs                     http.HandlerFunc                            // viewer jobs API
 	tasks                          http.HandlerFunc                            // canonical Task list API
 	taskDetail                     http.HandlerFunc                            // canonical Task detail API
 	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
+	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
-	viewerJobDetail                http.HandlerFunc                            // viewer job detail API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
 	agentOps                       http.HandlerFunc                            // local authenticated Agent OPS ingress
 	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
@@ -127,7 +127,7 @@ type Dependencies struct {
 	extensionHealth                http.HandlerFunc                            // viewer plugin / extension health API
 	otelExport                     http.HandlerFunc                            // viewer OpenTelemetry export API
 	artifactCleanup                http.HandlerFunc                            // viewer stale artifact cleanup API
-	repairRunner                   viewer.RepairJobRunner                      // viewer repair job runner
+	repairRunner                   viewer.RepairTaskRunner                     // viewer repair Task runner
 	voiceDirectHandler             voiceDirectFinalHandler                     // VDS llm.final -> SSE
 	evidenceHandler                http.HandlerFunc                            // viewer evidence API
 	evidenceDetail                 http.HandlerFunc                            // viewer evidence detail API
@@ -751,6 +751,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		gamePlayProvider,
 		newGameAgentDecisionService(agents),
 	)
+	if defaultTaskStorePath(cfg.WorkspaceDir) != "" && deps.taskManager == nil {
+		log.Fatal("Failed to initialize canonical Task lifecycle owner")
+	}
 	deps.webGatherDeps = newWebGatherDiagnosticsDeps(cfg, conversationRuntime.L1Store)
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,
@@ -1393,7 +1396,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		toolRuntime.SubagentMgr.SetRegistryErrorHandler(func(err error) {
 			if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEvent(
 				"registry.error", "system", "subagent", err.Error(),
-				"", "", "system", "system", "system",
+				"", "", "", "system", "system",
 			)); publishErr != nil {
 				log.Printf("[ToolRegistry] event publication failed: %v", publishErr)
 			}

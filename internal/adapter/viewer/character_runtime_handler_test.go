@@ -57,10 +57,10 @@ func TestHandleCharacterRuntimeRunRoundEmitsSixTurns(t *testing.T) {
 		t.Fatalf("missing result identity: %#v", body.Result)
 	}
 	for i, event := range events.events {
-		if event.TraceID != body.Result.TraceID || event.MessageID != body.Result.Turns[i].MessageID {
+		if string(event.TraceID) != body.Result.TraceID || string(event.MessageID) != body.Result.Turns[i].MessageID {
 			t.Fatalf("event %d identity=%#v result=%#v", i, event, body.Result.Turns[i])
 		}
-		if !strings.HasPrefix(event.MessageID, "msg_") {
+		if !strings.HasPrefix(string(event.MessageID), "msg_") {
 			t.Fatalf("event %d message_id=%q", i, event.MessageID)
 		}
 	}

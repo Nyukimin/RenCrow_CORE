@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Request struct {
@@ -16,7 +17,7 @@ type Request struct {
 	SessionID     string
 	Channel       string
 	ChatID        string
-	JobID         string
+	TaskID        modulecore.TaskID
 	Now           time.Time
 }
 
@@ -77,7 +78,11 @@ func NewPipeline(opts Options) *Pipeline {
 }
 
 func (p *Pipeline) VerifyResponse(ctx context.Context, req Request) (Result, error) {
-	req = p.normalizeRequest(req)
+	var err error
+	req, err = p.normalizeRequest(req)
+	if err != nil {
+		return Result{}, err
+	}
 	if !p.enabled {
 		report := p.newReport(req, domainverification.TriggerLow)
 		report.Status = domainverification.StatusNotChecked
@@ -129,30 +134,30 @@ func (p *Pipeline) VerifyResponse(ctx context.Context, req Request) (Result, err
 	return p.persist(ctx, result)
 }
 
-func (p *Pipeline) normalizeRequest(req Request) Request {
+func (p *Pipeline) normalizeRequest(req Request) (Request, error) {
 	req.DraftResponse = strings.TrimSpace(req.DraftResponse)
 	req.UserMessage = strings.TrimSpace(req.UserMessage)
 	req.Route = strings.TrimSpace(req.Route)
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	req.Channel = strings.TrimSpace(req.Channel)
 	req.ChatID = strings.TrimSpace(req.ChatID)
-	req.JobID = strings.TrimSpace(req.JobID)
+	req.TaskID = modulecore.TaskID(strings.TrimSpace(string(req.TaskID)))
+	if err := req.TaskID.Validate(); err != nil {
+		return Request{}, fmt.Errorf("task_id: %w", err)
+	}
 	if req.Now.IsZero() {
 		req.Now = p.now()
-	}
-	if req.JobID == "" {
-		req.JobID = "job_unknown"
 	}
 	if req.SessionID == "" {
 		req.SessionID = "session_unknown"
 	}
-	return req
+	return req, nil
 }
 
 func (p *Pipeline) newReport(req Request, level domainverification.TriggerLevel) domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_" + req.JobID,
-		JobID:        req.JobID,
+		ID:           "verify_" + string(req.TaskID),
+		TaskID:       req.TaskID,
 		SessionID:    req.SessionID,
 		Route:        req.Route,
 		Status:       domainverification.StatusNotChecked,

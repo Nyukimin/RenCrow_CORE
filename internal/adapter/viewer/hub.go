@@ -15,7 +15,6 @@ type EventHub struct {
 	clients             map[chan []byte]struct{}
 	history             []orchestrator.OrchestratorEvent
 	maxHist             int
-	nextSeq             int64
 	clientCountListener func(int)
 }
 
@@ -30,8 +29,6 @@ func NewEventHub(maxHistory int) *EventHub {
 // OnEvent projects an event to the Viewer history and SSE clients.
 func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 	h.mu.Lock()
-	h.nextSeq++
-	ev.Seq = h.nextSeq
 	h.history = append(h.history, ev)
 	if len(h.history) > h.maxHist {
 		h.history = h.history[len(h.history)-h.maxHist:]

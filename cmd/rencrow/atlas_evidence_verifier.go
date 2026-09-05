@@ -25,6 +25,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -41,7 +42,7 @@ const (
 // a fixture owner store without introducing another production persistence
 // route.
 type atlasExecutionReportReader interface {
-	GetByJobID(context.Context, string) (execution.ExecutionReport, error)
+	GetByTaskID(context.Context, modulecore.TaskID) (execution.ExecutionReport, error)
 }
 
 // atlasEvidenceVerifier is the production CORE owner of Atlas evidence
@@ -230,6 +231,10 @@ func (v *atlasEvidenceVerifier) verifyExecutionReport(ctx context.Context, reque
 	if err != nil {
 		return false, fmt.Errorf("invalid execution report evidence ref: %w", err)
 	}
+	taskID, err := modulecore.ParseTaskID(id)
+	if err != nil {
+		return false, fmt.Errorf("invalid execution report task_id: %w", err)
+	}
 	if v.reportStore == nil {
 		return false, errors.New("configured execution report store is unavailable")
 	}
@@ -251,15 +256,15 @@ func (v *atlasEvidenceVerifier) verifyExecutionReport(ctx context.Context, reque
 	} else if ref.SHA256 != "" {
 		return false, fmt.Errorf("execution report %q non-BUILD evidence cannot carry SHA-256", id)
 	}
-	report, err := v.reportStore.GetByJobID(ctx, id)
+	report, err := v.reportStore.GetByTaskID(ctx, taskID)
 	if err != nil {
 		return false, fmt.Errorf("execution report %q not found: %w", id, err)
 	}
 	if err := report.Validate(); err != nil {
 		return false, fmt.Errorf("execution report %q is invalid: %w", id, err)
 	}
-	if report.JobID != id {
-		return false, fmt.Errorf("execution report %q returned a different job ID %q", id, report.JobID)
+	if report.TaskID != taskID {
+		return false, fmt.Errorf("execution report %q returned a different task ID %q", id, report.TaskID)
 	}
 	switch strings.ToLower(strings.TrimSpace(report.Status)) {
 	case "passed", "success", "succeeded":

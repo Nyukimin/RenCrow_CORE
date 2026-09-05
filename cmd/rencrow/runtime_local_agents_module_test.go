@@ -35,7 +35,7 @@ func (r *recordingLocalWorkerExecution) ExecuteProposalInWorkspace(_ context.Con
 func TestExecuteLocalWorkerProposalUsesModuleRootContext(t *testing.T) {
 	worker := &recordingLocalWorkerExecution{}
 	taskID := modulecore.NewTaskID()
-	msg := domaintransport.NewMessage("mio", "shiro", "sess-1", taskID.String(), "Execute coder proposal")
+	msg := domaintransport.NewMessage("mio", "shiro", "sess-1", taskID, "Execute coder proposal")
 	msg.Context = map[string]interface{}{
 		"module_root": "/home/nyukimi/RenCrow/RenCrow_STT",
 	}

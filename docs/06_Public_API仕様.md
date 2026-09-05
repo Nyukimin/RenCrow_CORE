@@ -52,7 +52,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
 | `GET /viewer/tasks`, `GET /viewer/task/detail?task_id=...`, `GET /viewer/task-notifications` | durable Task の一覧、詳細／共有context、割り込み通知。Task identity は canonical `task_id` のみ |
-| `/viewer/jobs`, `/viewer/job/detail`, `/viewer/logs` | Step 09でTask基準へ置換するOrchestrator monitorと監査可能なlog。durable Task store APIではない |
+| `/viewer/logs?task_id=...`, `/viewer/logs?event_id=...` | Canonical Task／EventIDで逆参照できるOrchestrator log。旧`/viewer/jobs`系は存在しない |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `POST /viewer/superagent/runs/resume` | checkpoint付きRunを同一`run_id + checkpoint_revision`の冪等queueへ登録。checkpointなし、terminal run、非resumable runは409 |
 | `GET/POST /viewer/superagent/run-queue` | durable resume queueの照会・登録。claim lease/tokenは内部schedulerだけが所有する |
@@ -109,9 +109,10 @@ Step 08のdurable Task ownerは`internal/domain/task`である。`GET /viewer/ta
 `JobID`、`job_id`、旧`/viewer/parallel-jobs`、旧`/viewer/parallel-job/detail`、
 旧`/viewer/job-notifications`を受理・投影しない。
 
-`/viewer/jobs`と`/viewer/job/detail`は同名でもdurable Task storeの旧APIではなく、
-Root／Child Jobを観測するOrchestrator monitorである。これらの`Task`／`task_id`化は、
-routing／assignment eventと一体でIdentity正本のStep 09が所有する。
+`/viewer/jobs`と`/viewer/job/detail`は退役済みです。Canonical Taskは`/viewer/tasks`と
+`/viewer/task/detail?task_id=...`、Orchestrator Eventは`/viewer/logs?task_id=...`または
+`/viewer/logs?event_id=...`で参照します。routingとAgent assignmentはEventIDを持つ
+Canonical EventとしてTaskから逆参照できます。
 
 ### WS /voice-chat
 
@@ -131,7 +132,7 @@ multimodal contentへ保持し、CORE固定のsystem contractと
 transcriptを推測・補完せず、`user_text`が欠落したLLM resultをEvent／session log発行前に拒否します。
 その場合は`VOICE_RESULT_PUBLISH_FAILED`を返し、成功`llm.final`を送信しません。
 
-- `llm.delta`: `trace_id`、`job_id`、`message_id`を含む最初の応答event
+- `llm.delta`: `trace_id`、`task_id`、`message_id`を含む最初の応答event
 - `llm.final`: 同じ3つのIDを含む完成応答event。`ProcessVoiceDirect`成功後だけ送信される
 
 両eventのクライアント本文はLLMのraw resultではなく、同期`ProcessVoiceDirect`が返す
@@ -140,7 +141,7 @@ transcriptを推測・補完せず、`user_text`が欠落したLLM resultをEven
 
 同一受付の`llm.delta`と`llm.final`の3つのIDは、`ProcessVoiceDirect`が返す
 `ProcessMessageResponse`の値と完全一致し、`trace_id`はCanonical `trc_` ID、`message_id`は
-Canonical `msg_` ID、`job_id`は有効なJob IDで、`trace_id`と`job_id`は同一値になりません。
+Canonical `msg_` ID、`tsk_` TaskIDを使い、`trace_id`と`task_id`は同一値になりません。
 owner finalizationが失敗した場合、owner確定responseが空の場合、または返却IDが欠落・不正・衝突した場合は
 `{"type":"error","error_code":"VOICE_RESULT_PUBLISH_FAILED"}`を返し、`llm.final`を成功扱いで
 送信しません。
@@ -559,15 +560,15 @@ encoded bytesで最大32 KiBです。
 ```
 
 COREはtokenに束縛したserver設定の`user_id`からHTTP user scopeを作り、Shiro／`worker`／`ops`の
-child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、job IDを
-指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、task／responseの
-`job_id`は別に生成します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
-再現できますが、job IDは実行ごとに別です。成功時は次の6 fieldだけをHTTP 200で返します。
+child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、TaskIDを
+指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、実行の
+`task_id`とは分離します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
+再現できますが、TaskIDをRequestIDまたはTraceIDとして再利用しません。成功時は次の6 fieldだけをHTTP 200で返します。
 
 ```json
 {
   "request_id": "ops-opaque",
-  "job_id": "job-opaque",
+  "task_id": "tsk_01a07000-0000-7000-8000-000000000001",
   "agent_id": "shiro",
   "role": "worker",
   "route": "OPS",
@@ -1008,9 +1009,9 @@ RenCrow_Imageがunavailableの場合は明示的な503を返します。
 Chat吹き出し内のPNGとして表示します。Chat経路で新しい画像配信APIを増やさず、既存の
 `GET /viewer/image/result`を再利用します。
 
-COREは受付時に現行互換の`job_id`とは別に、`turn_id`、root `trace_id`、`root_task_id`、利用者発話の`message_id`、actual Agent発話の`agent_message_id`をUUIDv7で一度だけ発行します。`POST /viewer/send`の受付responseはこれらと`viewer_client_id`、`recipient`を返します。`turn_id`、`trace_id`、`root_task_id`はそれぞれ`turn_`、`trc_`、`tsk_` prefixを持つ独立IDであり、相互代用も`job_id`からの派生も行いません。同じ処理から発行する`message.received`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、`message.received.message_id`は受付responseの`message_id`と一致します。最初のactual Agent `agent.response`は`agent_message_id`を使用します。multi-Actor routeで別Actorが利用者向け発話を行う場合、その別発話は新しいcanonical `message_id`を持ちます。
+COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発話の`message_id`、actual Agent発話の`agent_message_id`をUUIDv7で一度だけ発行します。`POST /viewer/send`の受付responseはこれらと`viewer_client_id`、`recipient`を返します。`turn_id`、`trace_id`、`root_task_id`はそれぞれ`turn_`、`trc_`、`tsk_` prefixを持つ独立IDであり、相互代用しません。同じ処理から発行する`message.received`、`routing.decision`、`agent.assignment`、`agent.response`、TTS event、error eventは受付responseの`trace_id`を保持し、`message.received.message_id`は受付responseの`message_id`と一致します。最初のactual Agent `agent.response`は`agent_message_id`を使用します。multi-Actor routeで別Actorが利用者向け発話を行う場合、その別発話は新しいcanonical `message_id`を持ちます。
 
-`message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と`job_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
+`message_id`は`msg_` prefix付きUUIDのopaque値です。clientは形式を解析せず、SSE再接続・再送時の重複排除と、同じ発話に由来する表示・保存の対応付けに使用します。`turn_index`は表示順の補助であり、IDの代替にしません。受付・開始・完了・errorログには同じ`trace_id`と該当Taskの`task_id`を、会話本文を持つlogには対応する`message_id`を記録します。TTS eventはmessage確定後なら同じ`message_id`を持ち、stream開始時に未確定なら従来どおり`response_id`で応答へ対応付けます。
 
 `POST /viewer/character-runtime`は1 Roundの`trace_id`、`user_message_id`、各Turnの`message_id`と`turn_index`を返します。`trace_id`は全Turnで共通、`message_id`は利用者発話と各Character発話で別のUUIDです。
 
@@ -1018,9 +1019,9 @@ COREは受付時に現行互換の`job_id`とは別に、`turn_id`、root `trace
 
 `X-RenCrow-Client: RenCrow_CMD`で送られたterminal text chatは音声を消費しないため、COREはTTS sessionを開始しません。PORTAL／Debug Viewerなど音声再生能力を持つclientのTTS契約は維持します。client provenanceは観測と出力能力の選択に使う情報であり、認証・認可の代替にはしません。
 
-streaming生成では、COREはRenCrow_LLMから受けた本文deltaを`agent.thinking`として逐次発行し、終端後に完成本文を`agent.response`として1回発行します。対話clientはdeltaを逐次表示してよいが、永続化と完了判定には`agent.response`を使用します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`job_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
+streaming生成では、COREはRenCrow_LLMから受けた本文deltaを`agent.thinking`として逐次発行し、終端後に完成本文を`agent.response`として1回発行します。対話clientはdeltaを逐次表示してよいが、永続化と完了判定には`agent.response`を使用します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
 
-対話clientは、送信受付から同じ`job_id`を持つ利用者向け`agent.response`または終端error eventまで、送信時のrecipientを固定します。この区間に別recipientへ切り替えたり、別`job_id`の応答でpending状態を解除したりしてはいけません。
+対話clientは、送信受付から同じroot `task_id`を持つ利用者向け`agent.response`または終端error eventまで、送信時のrecipientを固定します。この区間に別recipientへ切り替えたり、別`task_id`の応答でpending状態を解除したりしてはいけません。
 
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。
 `GET /viewer/tts/audio?url=...`が取得できるremote音声は、COREのTTS設定にあるbase URLと同一hostのものだけです。

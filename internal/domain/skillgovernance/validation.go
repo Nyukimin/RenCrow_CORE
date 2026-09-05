@@ -2,6 +2,7 @@ package skillgovernance
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -125,7 +126,17 @@ func ValidateContributionGateLog(item ContributionGateLog) error {
 	return nil
 }
 
+func ValidateCoderProposalEvidence(item CoderProposalEvidence) error {
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	return nil
+}
+
 func ValidateCoderTranscriptEntry(item CoderTranscriptEntry) error {
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
 	if strings.TrimSpace(item.EventID) == "" {
 		return errors.New("event_id is required")
 	}

@@ -85,19 +85,22 @@ func assertAgentOpsWorkerBusyCalls(t *testing.T, notifier *agentOpsBusyNotifierS
 	}
 }
 
-func assertAgentOpsTurnInput(t *testing.T, input conversation.TurnInput, jobID string) {
+func assertAgentOpsTurnInput(t *testing.T, input conversation.TurnInput, taskID string) {
 	t.Helper()
 	if err := input.Validate(); err != nil {
 		t.Fatalf("agent OPS input invalid: %v", err)
 	}
+	if string(input.RootTaskID()) != taskID {
+		t.Fatalf("root TaskID=%q want response TaskID=%q", input.RootTaskID(), taskID)
+	}
 	identities := []string{
-		string(input.RootTaskID()), string(input.TurnID()), string(input.TraceID()),
+		string(input.TurnID()), string(input.TraceID()),
 		string(input.UserMessageID()), string(input.AgentMessageID()),
 	}
 	seen := make(map[string]struct{}, len(identities))
 	for _, identity := range identities {
-		if identity == jobID {
-			t.Fatalf("canonical input identity reused JobID=%q: %v", jobID, identities)
+		if identity == taskID {
+			t.Fatalf("conversation identity reused TaskID=%q: %v", taskID, identities)
 		}
 		if _, exists := seen[identity]; exists {
 			t.Fatalf("canonical input identities are not distinct: %v", identities)
@@ -128,7 +131,7 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("response JSON: %v", err)
 	}
-	wantKeys := map[string]bool{"request_id": true, "job_id": true, "agent_id": true, "role": true, "route": true, "output": true}
+	wantKeys := map[string]bool{"request_id": true, "task_id": true, "agent_id": true, "role": true, "route": true, "output": true}
 	if len(response) != len(wantKeys) {
 		t.Fatalf("response keys=%v", response)
 	}
@@ -146,16 +149,16 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if err := modulecore.SessionID(executor.input.SessionID()).Validate(); err != nil {
 		t.Fatalf("agent OPS input SessionID=%q: %v", executor.input.SessionID(), err)
 	}
-	responseJobID, ok := response["job_id"].(string)
-	if !ok || responseJobID == "" {
-		t.Fatalf("job_id=%v", response["job_id"])
+	responseTaskID, ok := response["task_id"].(string)
+	if !ok || responseTaskID == "" {
+		t.Fatalf("task_id=%v", response["task_id"])
 	}
-	assertAgentOpsTurnInput(t, executor.input, responseJobID)
+	assertAgentOpsTurnInput(t, executor.input, responseTaskID)
 	scope, ok := domaintool.ToolExecutionScopeFromContext(executor.ctx)
 	if !ok {
 		t.Fatal("executor did not receive a trusted scope")
 	}
-	if scope.RequestID != requestID || scope.RequestID == responseJobID || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
+	if scope.RequestID != requestID || scope.RequestID == responseTaskID || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
 		t.Fatalf("derived scope=%#v", scope)
 	}
 	if !scope.Allows(domaintool.DataScopePublic) || !scope.Allows(domaintool.DataScopeUser) || !scope.Allows(domaintool.DataScopeInternal) {
@@ -169,7 +172,7 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 	const requestID = "req-agent-ops-replay"
 	executor := &agentOpsExecutorStub{output: "ok"}
 	handler := newAgentOpsTestHandler(t, token, executor)
-	jobIDs := make([]string, 2)
+	taskIDs := make([]string, 2)
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"message":"repeat"}`))
 		setAgentOpsHeaders(req, token, requestID)
@@ -183,10 +186,10 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 			t.Fatalf("attempt %d response: %v", i, err)
 		}
-		if response.RequestID != requestID || response.JobID == "" {
+		if response.RequestID != requestID || response.TaskID == "" {
 			t.Fatalf("attempt %d response=%+v", i, response)
 		}
-		jobIDs[i] = response.JobID
+		taskIDs[i] = response.TaskID
 	}
 	if len(executor.ctxs) != 2 || len(executor.inputs) != 2 {
 		t.Fatalf("captured executions=%d/%d", len(executor.ctxs), len(executor.inputs))
@@ -199,16 +202,16 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 		if !ok {
 			t.Fatalf("attempt %d missing scope", i)
 		}
-		if scope.RequestID != requestID || scope.RequestID == jobIDs[i] {
+		if scope.RequestID != requestID || scope.RequestID == taskIDs[i] {
 			t.Fatalf("attempt %d scope=%#v", i, scope)
 		}
 		if err := modulecore.SessionID(executor.inputs[i].SessionID()).Validate(); err != nil {
 			t.Fatalf("attempt %d input SessionID=%q: %v", i, executor.inputs[i].SessionID(), err)
 		}
-		assertAgentOpsTurnInput(t, executor.inputs[i], jobIDs[i])
+		assertAgentOpsTurnInput(t, executor.inputs[i], taskIDs[i])
 	}
-	if jobIDs[0] == jobIDs[1] {
-		t.Fatalf("repeated requests reused job ID=%q", jobIDs[0])
+	if taskIDs[0] == taskIDs[1] {
+		t.Fatalf("repeated requests reused TaskID=%q", taskIDs[0])
 	}
 }
 

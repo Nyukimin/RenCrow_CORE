@@ -31,6 +31,12 @@ func (s *viewerBridgeTraceStore) Append(_ context.Context, event modulecore.Even
 	return nil
 }
 
+func (s *viewerBridgeTraceStore) AppendSequenced(_ context.Context, event modulecore.EventEnvelope) (modulecore.EventEnvelope, error) {
+	event.EventSeq = 1
+	s.events <- event
+	return event, nil
+}
+
 func (s *viewerBridgeTraceStore) GetByID(context.Context, modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
 	return modulecore.EventEnvelope{}, false, nil
 }
@@ -57,21 +63,21 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
 	}
 	var accepted struct {
-		OK      bool   `json:"ok"`
-		JobID   string `json:"job_id"`
-		TraceID string `json:"trace_id"`
+		OK         bool   `json:"ok"`
+		RootTaskID string `json:"root_task_id"`
+		TraceID    string `json:"trace_id"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
 		t.Fatalf("decode accepted response: %v", err)
 	}
-	if !accepted.OK || accepted.JobID == "" || accepted.TraceID == "" {
-		t.Fatalf("accepted response = %+v, want job_id and trace_id", accepted)
+	if !accepted.OK || accepted.RootTaskID == "" || accepted.TraceID == "" {
+		t.Fatalf("accepted response = %+v, want root_task_id and trace_id", accepted)
 	}
 	if err := modulecore.TraceID(accepted.TraceID).Validate(); err != nil {
 		t.Fatalf("accepted trace_id = %q is invalid: %v", accepted.TraceID, err)
 	}
-	if accepted.JobID == accepted.TraceID {
-		t.Fatalf("job_id and trace_id must remain distinct: %q", accepted.JobID)
+	if accepted.RootTaskID == accepted.TraceID {
+		t.Fatalf("root_task_id and trace_id must remain distinct: %q", accepted.RootTaskID)
 	}
 
 	var event modulecore.EventEnvelope
@@ -83,10 +89,10 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	if event.EventType != "viewer.error" {
 		t.Fatalf("event type = %q, want viewer.error", event.EventType)
 	}
-	jobID, _ := event.Payload["job_id"].(string)
+	taskID, _ := event.Payload["task_id"].(string)
 	traceID, _ := event.Payload["trace_id"].(string)
-	if jobID != accepted.JobID {
-		t.Fatalf("viewer.error job_id = %q, want accepted job_id %q", jobID, accepted.JobID)
+	if taskID != accepted.RootTaskID {
+		t.Fatalf("viewer.error task_id = %q, want accepted root_task_id %q", taskID, accepted.RootTaskID)
 	}
 	if traceID != accepted.TraceID {
 		t.Fatalf("viewer.error trace_id = %q, want accepted trace_id %q", traceID, accepted.TraceID)
