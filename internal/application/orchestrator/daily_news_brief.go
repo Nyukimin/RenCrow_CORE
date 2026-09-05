@@ -258,6 +258,7 @@ func respondWithDailyNewsBrief(
 	responseBrief := brief
 	hasResponseBrief := usable
 	shiroTaskID := taskID
+	collectorCtx := ctx
 	if usable {
 		requestCtx = domainagent.WithDailyNewsBrief(requestCtx, brief)
 	} else {
@@ -267,6 +268,9 @@ func respondWithDailyNewsBrief(
 				return ProcessMessageResponse{}, true, err
 			}
 			shiroTaskID = activatedTaskID
+			if activatedTaskID != "" {
+				collectorCtx = withOrchestrationLLMTask(ctx, activatedTaskID)
+			}
 		}
 		emit("news.brief.fallback_started", "system", "mio", "source=live_news_search reason="+dailyNewsBriefFallbackReason(brief, readerErr), "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 		emitDailyNewsFallbackHandoff(emit, req, shiroTaskID)
@@ -277,7 +281,7 @@ func respondWithDailyNewsBrief(
 			return ProcessMessageResponse{}, true, err
 		}
 		emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "まずニュース検索源を確認し、候補記事を集めます。")
-		liveBrief, err := collector.Collect(ctx, req.UserMessage, now)
+		liveBrief, err := collector.Collect(collectorCtx, req.UserMessage, now)
 		if err != nil {
 			emitDailyNewsFallbackProgress(emit, req, shiroTaskID, "検索・本文取得に失敗しました。事実データは確定できません。")
 			emit("news.brief.failed", "system", "user", err.Error(), "CHAT", shiroTaskID.String(), req.SessionID, req.Channel, req.ChatID)
@@ -303,14 +307,18 @@ func respondWithDailyNewsBrief(
 			continue
 		}
 		candidateTaskID := taskID
+		candidateCtx := requestCtx
 		if responder.name == taskLifecycleShiro && activateShiro != nil {
 			candidateTaskID, lastErr = activateShiro(ctx)
 			if lastErr != nil {
 				return ProcessMessageResponse{}, true, lastErr
 			}
+			if candidateTaskID != "" {
+				candidateCtx = withOrchestrationLLMTask(requestCtx, candidateTaskID)
+			}
 		}
 		responseTaskID = candidateTaskID
-		response, lastErr = responder.agent.Chat(requestCtx, input.WithRoute(routing.RouteCHAT))
+		response, lastErr = responder.agent.Chat(candidateCtx, input.WithRoute(routing.RouteCHAT))
 		if lastErr == nil && strings.TrimSpace(response) != "" {
 			responseAgent = responder.name
 			responseTaskID = candidateTaskID

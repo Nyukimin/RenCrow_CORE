@@ -501,6 +501,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	lifecycleCreated := false
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
+	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.message")
 	o.events.BindTrace(rootTaskID.String(), modulecore.TraceID(req.TraceID))
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
@@ -567,6 +568,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
+			ctx = withOrchestrationLLMTask(ctx, activatedTaskID)
 		}
 		return activatedTaskID, activateErr
 	}
@@ -641,6 +643,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
+			ctx = withOrchestrationLLMTask(activateCtx, activatedTaskID)
 		}
 		return activatedTaskID, activateErr
 	}
@@ -705,6 +708,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if preparedTaskID != "" {
 		executionTaskID = preparedTaskID
 		taskID = preparedTaskID
+		ctx = withOrchestrationLLMTask(ctx, preparedTaskID)
 	}
 	if err != nil {
 		return ProcessMessageResponse{}, err

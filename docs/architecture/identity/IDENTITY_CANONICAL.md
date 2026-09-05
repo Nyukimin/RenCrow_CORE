@@ -2041,6 +2041,18 @@ Failure Knowledge:
 - **Enforcement / Tests:** 移行CLIは旧IDごとのTask候補集合を保持し、report joinでだけ一意性を
   検査する。別Traceの同一旧IDにreport行が無い成功caseと、report行がある拒否caseをtestする。
 
+- **Failure:** Orchestrator経由のLLM呼出しがprompt-free observationの`task_id`、`trace_id`、
+  `session_id`なしでGatewayへ到達し、route decisionと実行childの相関を失っていた。
+- **Problem / Cause:** Message／Distributed OrchestratorがLLM-capableなroute decision前に観測を
+  設定せず、activation後の実行Taskへの帰属更新も行っていなかった。直接Shiroのdefaultsが一部を
+  覆い、上流の欠落を検出しにくくしていた。
+- **Lesson / Invariant:** Orchestratorはroot TaskID、ingress TraceID、resolved SessionIDを共有
+  observationへ設定し、activation後はTaskIDだけを実行Taskへ置換する。RequestIDは独立生成して
+  再利用し、TaskID／TraceID／SessionIDを相互変換しない。
+- **Enforcement / Tests:** Message／Distributed共通helperが`WithExecutionObservation`を所有し、
+  downstream defaultsの非上書きとdaily-news fallbackのcollector／Mio／Shiro観測を含む
+  route／execution観測テストで強制する。
+
 #### Failure Knowledge: Viewer受付が未作成SessionIDを明示した
 
 - **Failure:** Step 09配備後の実`POST /viewer/send`で、受付responseはCanonical `session_id`を

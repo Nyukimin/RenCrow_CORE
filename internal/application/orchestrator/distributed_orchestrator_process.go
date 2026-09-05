@@ -36,6 +36,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	lifecycleCreated := false
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
+	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.distributed")
 	o.events.BindTrace(rootTaskID.String(), traceID)
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
@@ -102,6 +103,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
+			ctx = withOrchestrationLLMTask(ctx, activatedTaskID)
 		}
 		return activatedTaskID, activateErr
 	}
@@ -152,6 +154,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		if activatedTaskID != "" {
 			executionTaskID = activatedTaskID
 			taskID = activatedTaskID
+			ctx = withOrchestrationLLMTask(activateCtx, activatedTaskID)
 		}
 		return activatedTaskID, activateErr
 	}
@@ -234,6 +237,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	if preparedTaskID != "" {
 		executionTaskID = preparedTaskID
 		taskID = preparedTaskID
+		ctx = withOrchestrationLLMTask(ctx, preparedTaskID)
 	}
 	if err != nil {
 		return ProcessMessageResponse{}, err
