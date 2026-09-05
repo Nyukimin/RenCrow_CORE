@@ -1924,6 +1924,28 @@ Test:
 - `internal/domain/job`と`jobmanager` directory削除
 - Schedulerに残る同名別義の`JobID`はStep 15で`ScheduleID`へ削除
 
+境界:
+
+- Step 08の直接Consumerはdurable Task storeへ接続するowner CLI、Task Viewer API、
+  Task通知projectionである。`/viewer/jobs`、`/viewer/job/detail`、event/logの`job_id`、
+  `modules/worker.JobID`、Root／Child JobはOrchestrator contractとしてStep 09で一体置換する。
+- 旧`task.JobID`値objectを削除するとき、Step 09対象のfield名を先行改名せず、内部値の型だけを
+  `modules/core.TaskID`へ収束させてcanonical ID validationを強制してよい。
+- `waiting_user`はTask statusへ移さない。外部systemまたはdependencyによる停止は、機械的な
+  `waiting`と非空reasonとして確定し、人の返答で解除するgrant／queueを作らない。
+
+Failure Knowledge:
+
+- **Failure:** durable Jobの直接Consumerと、同じ`job`語彙を持つOrchestrator monitor／eventを
+  一括してStep 08と解釈すると、routing／assignment契約の半端な先行変更になる。
+- **Cause:** 同じ名称を、owner、lifecycle、failure domainではなく文字列だけで分類した。
+- **Invariant:** durable Task storeへの直接依存だけをStep 08で閉じ、Orchestrator相関契約は
+  Step 09、Scheduler定義はStep 15でそれぞれ一つのImplementation Unitとして閉じる。
+- **Enforcement:** architecture testはStep 08 ownerと列挙済み直接Consumerを検査し、
+  Orchestrator／Schedulerの残存は各後続Stepのzero checkで検査する。
+- **Tests:** Task owner／CLI／Viewerで旧語彙zero、旧Task route拒否、Orchestrator monitor routeの
+  非接続、Gate 8後のone-shot source不存在を確認する。
+
 ---
 
 ### Step 09: OrchestratorをTask基準へ置換

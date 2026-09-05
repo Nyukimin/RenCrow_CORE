@@ -51,7 +51,8 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
-| `/viewer/jobs`, `/viewer/logs` | job と監査可能な log |
+| `GET /viewer/tasks`, `GET /viewer/task/detail?task_id=...`, `GET /viewer/task-notifications` | durable Task の一覧、詳細／共有context、割り込み通知。Task identity は canonical `task_id` のみ |
+| `/viewer/jobs`, `/viewer/job/detail`, `/viewer/logs` | Step 09でTask基準へ置換するOrchestrator monitorと監査可能なlog。durable Task store APIではない |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
 | `POST /viewer/superagent/runs/resume` | checkpoint付きRunを同一`run_id + checkpoint_revision`の冪等queueへ登録。checkpointなし、terminal run、非resumable runは409 |
 | `GET/POST /viewer/superagent/run-queue` | durable resume queueの照会・登録。claim lease/tokenは内部schedulerだけが所有する |
@@ -97,6 +98,20 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/trade/shadow/outcomes/report?study_id=<id>` または `?event_id=<audit_ref>` | Shadow Outcome台帳を検証して読み取り専用集計を返す。write→read handoffの`audit_ref`はexact `shadow-event/sha256:<64 lowercase hex>` |
 | `POST /viewer/trade/shadow/outcomes/reviews` | Outcome reportのhashとlatest event hashを束縛した独立reviewを別台帳へ追記。promotion／Portfolio変更／外部実行は行わない |
 | `GET /viewer/trade/shadow/outcomes/reviews/report?study_id=<id>` | Review ledgerを検証し、独立reviewの有無を返す読み取り専用projection |
+
+### Canonical Task API
+
+Step 08のdurable Task ownerは`internal/domain/task`である。`GET /viewer/tasks`は
+`status`、`module_id`、`assignee`、`route`、`limit`で絞り込んだTask配列を返す。
+`GET /viewer/task/detail?task_id=<canonical TaskID>`はTaskと共有contextを返し、
+`GET /viewer/task-notifications`は既定で割り込み対象だけを返す。
+`interrupt_only=false`を明示した場合は全通知を返す。いずれもread-onlyで、
+`JobID`、`job_id`、旧`/viewer/parallel-jobs`、旧`/viewer/parallel-job/detail`、
+旧`/viewer/job-notifications`を受理・投影しない。
+
+`/viewer/jobs`と`/viewer/job/detail`は同名でもdurable Task storeの旧APIではなく、
+Root／Child Jobを観測するOrchestrator monitorである。これらの`Task`／`task_id`化は、
+routing／assignment eventと一体でIdentity正本のStep 09が所有する。
 
 ### WS /voice-chat
 
