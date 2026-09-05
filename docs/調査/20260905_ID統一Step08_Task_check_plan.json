@@ -1,0 +1,157 @@
+{
+  "deferred": [
+    {
+      "check_id": "s8_full_system",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row",
+      "reason": "runs only after all Identity ledger rows close"
+    },
+    {
+      "check_id": "s8_orchestrator_jobs",
+      "consumer": "Step09 Orchestrator Task cutover",
+      "failure_action": "keep Step09 open",
+      "reason": "root and child orchestration Job identity and monitor evidence are owned by Step09, not the durable Task aggregate"
+    },
+    {
+      "check_id": "s8_scheduler_jobs",
+      "consumer": "Step15 Scheduler ScheduleID cutover",
+      "failure_action": "keep Step15 open",
+      "reason": "Scheduler Job is a schedule definition and must become Schedule rather than Task"
+    },
+    {
+      "check_id": "s8_workspace_restore",
+      "consumer": "RenCrow_Workspace whole-state migration",
+      "failure_action": "keep Workspace migration open",
+      "reason": "whole-state restore is not a Step08 Task aggregate guarantee"
+    }
+  ],
+  "excluded": [],
+  "included": [
+    {
+      "check_id": "s8_owner_source",
+      "execution_phase": "design and implementation",
+      "failure_action": "keep Step08 open",
+      "guarantee": "RenCrow_CORE internal/domain/task is the sole owner of the durable executable Task aggregate",
+      "owner": "RenCrow_CORE internal/domain/task",
+      "result_consumer": "Step08 implementation"
+    },
+    {
+      "check_id": "s8_task_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "Task uses canonical TaskID and carries status priority owner assignee parent dependency origin workstream goal supersession and execution metadata without Job aliases",
+      "owner": "RenCrow_CORE task domain",
+      "result_consumer": "taskmanager persistence CLI and Viewer"
+    },
+    {
+      "check_id": "s8_no_human_gate",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "Task waiting represents a bounded external or dependency condition with an explicit reason and no waiting_user status or human approval artifact",
+      "owner": "RenCrow_CORE task domain and taskmanager",
+      "result_consumer": "runtime policy"
+    },
+    {
+      "check_id": "s8_lifecycle_behavior",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "Create Queue Start Wait Block Resume Succeed Fail Cancel Supersede parent dependency and parallel limit behavior is deterministic",
+      "owner": "RenCrow_CORE taskmanager",
+      "result_consumer": "Step08 local acceptance"
+    },
+    {
+      "check_id": "s8_persistence_contract",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to RED",
+      "guarantee": "the Task JSONL store writes task_state task_context and task_notifications with canonical task_id fields and rejects legacy Job files or aliases",
+      "owner": "RenCrow_CORE task persistence",
+      "result_consumer": "CLI and Viewer task routes"
+    },
+    {
+      "check_id": "s8_deterministic_migration",
+      "execution_phase": "pre-cutover and cutover",
+      "failure_action": "leave the legacy directory active and keep Step08 open",
+      "guarantee": "the one-shot owner CLI maps every legacy Job identity deterministically to TaskID in a fresh directory preserves append history and metadata and emits a hash-bound receipt while rejecting unknown ambiguous or dangling references",
+      "owner": "RenCrow_CORE migration CLI",
+      "result_consumer": "production Task storage"
+    },
+    {
+      "check_id": "s8_direct_consumers",
+      "execution_phase": "pre-commit",
+      "failure_action": "return to implementation",
+      "guarantee": "the CORE tasks CLI Viewer task routes notification UI runtime wiring and log-ops skill consume only Task task_id and TaskManager contracts",
+      "owner": "RenCrow_CORE CLI Viewer and ops feature",
+      "result_consumer": "operator and user-visible Task surfaces"
+    },
+    {
+      "check_id": "s8_architecture_zero",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "failure_action": "return to implementation",
+      "guarantee": "the Task subsystem and its direct consumers contain zero internal Job JobID job_id jobmanager package or legacy one-shot migration source after Gate8 while Scheduler and Step09 namespaces remain explicitly out of scope",
+      "owner": "modules/core architecture tests",
+      "result_consumer": "Step08 ledger"
+    },
+    {
+      "check_id": "s8_predeploy_build",
+      "execution_phase": "pre-deploy",
+      "failure_action": "do not install or restart",
+      "guarantee": "targeted tests source-root vet build architecture checks and migration dry-run pass from the reviewed diff",
+      "owner": "RenCrow_CORE",
+      "result_consumer": "deploy owner"
+    },
+    {
+      "check_id": "s8_bounded_recovery",
+      "execution_phase": "pre-cutover",
+      "failure_action": "block cutover",
+      "guarantee": "the exact writer-stopped legacy Task source old and new runtimes migration binary fixed Check Plan and dry-run apply deployment receipts have a hash-bound copy on the separate recovery filesystem before cutover",
+      "owner": "RenCrow_CORE migration CLI and user systemd service owner",
+      "result_consumer": "production cutover"
+    },
+    {
+      "check_id": "s8_runtime_identity",
+      "execution_phase": "post-deploy and post-restart",
+      "failure_action": "rollback or leave Step08 unverified and diagnose the canonical route",
+      "guarantee": "pushed source installed artifact user-systemd service PID listener readiness tasks CLI Viewer Task API persisted Task state and notification receipt agree after restart",
+      "owner": "rencrow.service and RenCrow_CORE Task owner route",
+      "result_consumer": "Step08 ledger"
+    }
+  ],
+  "input": {
+    "active_runtime_artifact_sha256": "e5dc25d17ffbbd3c5a28b1387ac9927e946aaa45b7cb49ed59334922b15995c3",
+    "active_runtime_main_pid": 2446130,
+    "active_runtime_revision": "856bca7fa0e9a21b24e88260d204921df327525c",
+    "base_revision": "fafe643023fb35368a65cfbd15b50bfd3b750dc9",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-08-job-task",
+    "canonical_mapping_policy": "map a legacy JobID once with modules/core NewMigrationID target TaskID source table job_state source field job_id and reuse that exact TaskID for state context notification parent dependency and supersession references; reject collisions dangling references malformed identity unknown fields waiting_user and nonempty parent_conversation_id without deterministic canonical origin evidence",
+    "direct_consumer_contract": "rencrow tasks; GET /viewer/tasks; GET /viewer/task/detail?task_id=...; GET /viewer/task-notifications; Viewer task.notification uses task_id",
+    "legacy_context_rows_observed": 0,
+    "legacy_notification_rows_observed": 0,
+    "legacy_state_rows_observed": 0,
+    "legacy_store_file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "legacy_store_root": "/home/nyukimi/.rencrow/workspace/jobs",
+    "legacy_store_source_files": [
+      "job_state.jsonl",
+      "job_context.jsonl",
+      "job_notifications.jsonl"
+    ],
+    "new_store_root": "/home/nyukimi/.rencrow/workspace/tasks",
+    "no_human_gate_policy": "replace waiting_user with waiting; waiting requires a machine-observable reason and does not create a grant approval queue or workflow resumed by a human reply",
+    "owner_source_sha256": {
+      "cmd/rencrow/cli_jobs.go": "cb5f4f0523277f3aa3bc457cc7a8803e0be1e31bddfa3b886a2cf41edef9b63a",
+      "internal/adapter/viewer/job_handler.go": "b67c8ea513a2422e9b66565a681268a310a37e0f79bb0dea8ac5a78b7a827b90",
+      "internal/application/jobmanager/manager.go": "b0345b8ea80c52878fa454800a465af62835484a6029ccbb3aebc1703902e77e",
+      "internal/domain/job/job.go": "cd50ace779d8952b97ac9a012da77a0b24e5c705dd102092e07c77ac87bb82a5",
+      "internal/domain/task/jobid.go": "8c6e3e983bae7ae8f73512ff919372ef54722704a5578fa2a0584f65661b4ebe",
+      "internal/infrastructure/persistence/job/jsonl_store.go": "5a8579dfdc3546eaf317077884dbf899b70804f88f7b6f77c143019ba2a640c0"
+    },
+    "origin_policy": "new Task accepts canonical OriginSessionID OriginThreadID OriginTurnID and OriginMessageID independently; legacy parent_conversation_id is not guessed into any canonical origin identity",
+    "separate_recovery_filesystem": "/dev/sdb1",
+    "step09_boundary": "orchestrator Root Job Child Job routing events agent assignment Seq and trace separation remain Step09",
+    "step15_boundary": "scheduler Job JobID remains unchanged until it becomes Schedule ScheduleID in Step15"
+  },
+  "phase": "design-frozen",
+  "purpose": "identity-step08-durable-task",
+  "replacement_receipts": [],
+  "results": [],
+  "schema_version": "rencrow.check_plan.v1"
+}
