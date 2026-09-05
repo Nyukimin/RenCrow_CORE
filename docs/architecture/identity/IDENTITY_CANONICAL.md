@@ -2058,6 +2058,21 @@ Failure Knowledge:
   HTTP 503で同期拒否する。production bridge testは実JSON Session repositoryでaccepted responseと
   processor requestのSessionID一致を検査し、adapter testはresolver失敗後にhandlerが未実行であることを検査する。
 
+#### Failure Knowledge: rootとchildが同じ実行枠を二重消費した
+
+- **Failure:** 実`/viewer/send`のOPS routeでroot Taskを開始した後、Shiro child Taskが
+  `parallel limit exceeded: operations task limit reached`で開始不能になった。
+- **Problem:** rootは一つのTurn全体を追跡するcoordination containerであり、childだけが同じrouteの
+  実行を担う。両方を独立したparallel executionとして数えると、operations limit 1、research limit 1、
+  coding limit 2の契約が自分自身のTask graphを拒否する。
+- **Cause:** `CanStart`がrunning Taskを平坦に数え、開始候補のexact `ParentTaskID`を同一実行の
+  containerとして識別しなかった。
+- **Lesson / Invariant:** child Taskのparallel capacity判定では、そのchildのexact running parentを
+  global／module／route別countから一度だけ除外する。他Task graphのrootやsiblingは除外しない。
+- **Enforcement / Tests:** task manager testはglobal／operations limit 1でrunning rootからchildを
+  開始でき、無関係なOPS Taskは同じlimitで拒否されることを検査する。実routeでは失敗rootを保持し、
+  修正版deploy後の新root／childでretryを証明する。
+
 ---
 
 ### Step 10: RunID

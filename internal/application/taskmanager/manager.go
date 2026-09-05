@@ -308,6 +308,11 @@ func (m *Manager) CanStart(ctx context.Context, candidate domaintask.Task) (bool
 	}
 	global, sameModule, coding, research, operations := 0, 0, 0, 0, 0
 	for _, item := range running {
+		// A running parent is the coordination container for this candidate,
+		// not a second execution consuming the same parallel capacity.
+		if candidate.ParentTaskID != "" && item.TaskID == candidate.ParentTaskID {
+			continue
+		}
 		global++
 		if candidate.ModuleID != "" && item.ModuleID == candidate.ModuleID && !candidate.ReadOnly {
 			sameModule++

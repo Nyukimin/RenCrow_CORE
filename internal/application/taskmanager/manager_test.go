@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -89,6 +90,41 @@ func TestManagerWaitAndDependencyAndParallelLimit(t *testing.T) {
 	}
 	if _, err := manager.Start(context.Background(), dependent.TaskID); err != nil {
 		t.Fatalf("dependent task did not start after dependency succeeded: %v", err)
+	}
+}
+
+func TestManagerChildDoesNotDoubleCountItsRunningRootParallelCapacity(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := New(store, ParallelLimits{Global: 1, PerModule: 1, CodingTasks: 1, LongResearchTasks: 1, DestructiveTasks: 1})
+	root, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "OPS orchestration", Route: domaintask.RouteOperations,
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(context.Background(), root.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	child, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "OPS execution", Route: domaintask.RouteOperations, ParentTaskID: root.TaskID, Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(context.Background(), child.TaskID); err != nil {
+		t.Fatalf("child was blocked by its own running root: %v", err)
+	}
+	unrelated, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "unrelated OPS", Route: domaintask.RouteOperations, Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start(context.Background(), unrelated.TaskID); !errors.Is(err, ErrParallelLimit) {
+		t.Fatalf("unrelated operation start error=%v want ErrParallelLimit", err)
 	}
 }
 
