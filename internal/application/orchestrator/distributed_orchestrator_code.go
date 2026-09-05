@@ -98,7 +98,10 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input
 			c.emitNote("shiro", "mio", fmt.Sprintf("%sに修正版patchを再依頼します。retry=%d", displayAgentName(coderAgent), attempt), string(route), jid, sessionID, channel, chatID)
 		}
 
-		coderMsg := c.buildCoderMessage(coderAgent, requestText, route, input, jobID, attempt)
+		coderMsg, err := c.buildCoderMessage(coderAgent, requestText, route, input, jobID, attempt)
+		if err != nil {
+			return "", err
+		}
 		c.memory.RecordMessage(coderMsg)
 		coderResult, err := c.executeMailbox(ctx, coderAgent, coderMsg, "mio")
 		if err != nil {
@@ -136,9 +139,13 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input
 	return "", err
 }
 
-func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requestText string, route routing.Route, input domainconversation.TurnInput, jobID task.JobID, attempt int) domaintransport.Message {
-	sessionID, channel, chatID := turnInputMetadata(input)
-	coderMsg := domaintransport.NewMessage("shiro", coderAgent, sessionID, jobID.String(), requestText)
+func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requestText string, route routing.Route, input domainconversation.TurnInput, jobID task.JobID, attempt int) (domaintransport.Message, error) {
+	_, channel, chatID := turnInputMetadata(input)
+	coderInput := input.WithMessageText(requestText).WithRoute(route)
+	coderMsg, err := domaintransport.NewTurnInputMessage("shiro", coderAgent, jobID.String(), coderInput)
+	if err != nil {
+		return domaintransport.Message{}, fmt.Errorf("build coder turn message: %w", err)
+	}
 	coderMsg.Type = domaintransport.MessageTypeTask
 	coderMsg.Context = map[string]interface{}{
 		"route":         string(route),
@@ -151,14 +158,18 @@ func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requ
 			coderMsg.Context["coder_config"] = coderCfg
 		}
 	}
-	return coderMsg
+	return coderMsg, nil
 }
 
 func (c *distributedCodeExecutionCoordinator) finishWithoutProposal(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, coderAgent string, coderResult domaintransport.Message) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	c.emit("agent.start", "shiro", "mio", "Coder結果をShiroで整形", string(route), jid, sessionID, channel, chatID)
-	shiroTask := domaintransport.NewMessage("mio", "shiro", sessionID, jid, coderResult.Content)
+	shiroInput := input.WithMessageText(coderResult.Content).WithRoute(route)
+	shiroTask, err := domaintransport.NewTurnInputMessage("mio", "shiro", jid, shiroInput)
+	if err != nil {
+		return "", fmt.Errorf("build shiro formatted turn message: %w", err)
+	}
 	shiroTask.Type = domaintransport.MessageTypeTask
 	shiroTask.Context = map[string]interface{}{
 		"route":       string(route),

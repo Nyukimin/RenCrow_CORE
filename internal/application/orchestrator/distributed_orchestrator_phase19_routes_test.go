@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -122,6 +123,95 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 	}
 	if !strings.HasPrefix(events[delegate].Content, "Shiro、") || !strings.HasPrefix(events[readback].Content, "Mio、") || !strings.HasPrefix(events[report].Content, "Mio、") {
 		t.Fatalf("handoff speech must begin with named recipient/delegator: %#v", events)
+	}
+}
+
+func TestPhase19DistributedRemoteRouteCarriesExactTurnInputProjection(t *testing.T) {
+	var sent domaintransport.Message
+	dispatcher := newDistributedRouteDispatcher(
+		&distMockMioAgent{},
+		session.NewCentralMemory(),
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		nil,
+		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		nil,
+		func(route routing.Route) string { return "shiro" },
+		func(input conversation.TurnInput, targetAgent string) conversation.TurnInput { return input },
+		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
+			sent = msg
+			return domaintransport.Message{From: targetAgent, To: "mio", Content: "remote response", Type: domaintransport.MessageTypeResult}, nil
+		},
+	)
+
+	jobID := task.NewJobID()
+	input := newOrchestratorTestTurnInput(t, "remote request", "line", "U123").
+		WithSessionID("sess-1").
+		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
+		WithViewerRecipient("mio").
+		WithForcedRoute(routing.RouteOPS)
+	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteOPS, jobID, ""); err != nil {
+		t.Fatalf("ExecuteDirect() error = %v", err)
+	}
+	if sent.JobID != jobID.String() {
+		t.Fatalf("sent JobID=%q, want %q", sent.JobID, jobID)
+	}
+	got, err := sent.ReconstructTurnInput()
+	if err != nil {
+		t.Fatalf("sent ReconstructTurnInput() error = %v", err)
+	}
+	if got.RootTaskID() != input.RootTaskID() || got.TurnID() != input.TurnID() || got.TraceID() != input.TraceID() || got.UserMessageID() != input.UserMessageID() || got.AgentMessageID() != input.AgentMessageID() {
+		t.Fatalf("sent canonical identities changed: got=%#v want=%#v", got, input)
+	}
+	if got.SessionID() != input.SessionID() || got.MessageText() != input.MessageText() || got.ChannelAddress() != input.ChannelAddress() {
+		t.Fatalf("sent input metadata changed: got=%#v want=%#v", got, input)
+	}
+	if got.ViewerRecipient() != input.ViewerRecipient() || got.ForcedRoute() != input.ForcedRoute() || got.Route() != routing.RouteOPS || len(got.Attachments()) != 1 || got.Attachments()[0].ID != "att-1" {
+		t.Fatalf("sent projection changed: recipient=%q forced=%q route=%q attachments=%#v", got.ViewerRecipient(), got.ForcedRoute(), got.Route(), got.Attachments())
+	}
+}
+
+func TestPhase19DistributedLocalRouteStoresExactTurnInputProjection(t *testing.T) {
+	memory := session.NewCentralMemory()
+	dispatcher := newDistributedRouteDispatcher(
+		&distMockMioAgent{chatResponse: "local response"},
+		memory,
+		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(from, to, content, route, jobID, sessionID, channel, chatID string) {},
+		func(ctx context.Context, route routing.Route, jid, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
+			return ctx, &streamBundle{}
+		},
+		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		nil,
+		func(route routing.Route) string { return "" },
+		func(input conversation.TurnInput, targetAgent string) conversation.TurnInput { return input },
+		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
+			t.Fatal("local route should not call remote transport")
+			return domaintransport.Message{}, nil
+		},
+	)
+
+	jobID := task.NewJobID()
+	input := newOrchestratorTestTurnInput(t, "local request", "line", "U123").WithSessionID("sess-1")
+	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteCHAT, jobID, ""); err != nil {
+		t.Fatalf("ExecuteDirect() error = %v", err)
+	}
+	var userMessage domaintransport.Message
+	for _, entry := range memory.GetUnifiedView(20) {
+		if entry.Message.From == "user" && entry.Message.To == "mio" {
+			userMessage = entry.Message
+			break
+		}
+	}
+	if userMessage.TurnInput == nil {
+		t.Fatalf("local user message has no turn input projection: %#v", userMessage)
+	}
+	got, err := userMessage.ReconstructTurnInput()
+	if err != nil {
+		t.Fatalf("local user message ReconstructTurnInput() error = %v", err)
+	}
+	if got.RootTaskID() != input.RootTaskID() || got.TurnID() != input.TurnID() || got.TraceID() != input.TraceID() || got.UserMessageID() != input.UserMessageID() || got.AgentMessageID() != input.AgentMessageID() || got.SessionID() != input.SessionID() || got.MessageText() != input.MessageText() {
+		t.Fatalf("local user message changed input identity: got=%#v want=%#v", got, input)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -36,7 +37,11 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	)
 
 	jobID := task.JobIDFromString("job-1")
-	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").WithSessionID("sess-1")
+	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").
+		WithSessionID("sess-1").
+		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
+		WithViewerRecipient("mio").
+		WithForcedRoute(routing.RouteCODE3)
 	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -49,6 +54,25 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	}
 	if coderMsg.Context["coder_config"] != "cfg" {
 		t.Fatalf("expected coder_config, got %#v", coderMsg.Context)
+	}
+	if coderMsg.JobID != jobID.String() {
+		t.Fatalf("coder message JobID=%q, want %q", coderMsg.JobID, jobID)
+	}
+	gotInput, err := coderMsg.ReconstructTurnInput()
+	if err != nil {
+		t.Fatalf("coder message ReconstructTurnInput() error = %v", err)
+	}
+	if gotInput.RootTaskID() != input.RootTaskID() || gotInput.TurnID() != input.TurnID() || gotInput.TraceID() != input.TraceID() || gotInput.UserMessageID() != input.UserMessageID() || gotInput.AgentMessageID() != input.AgentMessageID() {
+		t.Fatalf("coder message canonical identities changed: got=%#v want=%#v", gotInput, input)
+	}
+	if gotInput.SessionID() != input.SessionID() || gotInput.MessageText() != input.MessageText() {
+		t.Fatalf("coder message session/text changed: got session=%q text=%q", gotInput.SessionID(), gotInput.MessageText())
+	}
+	if gotAddress := gotInput.ChannelAddress(); gotAddress != input.ChannelAddress() {
+		t.Fatalf("coder message address changed: got=%#v want=%#v", gotAddress, input.ChannelAddress())
+	}
+	if gotInput.ViewerRecipient() != input.ViewerRecipient() || gotInput.ForcedRoute() != input.ForcedRoute() || gotInput.Route() != routing.RouteCODE3 || len(gotInput.Attachments()) != 1 || gotInput.Attachments()[0].ID != "att-1" {
+		t.Fatalf("coder message projection changed: recipient=%q forced=%q route=%q attachments=%#v", gotInput.ViewerRecipient(), gotInput.ForcedRoute(), gotInput.Route(), gotInput.Attachments())
 	}
 	mioDelegate := orchestratorEventIndex(events, "agent.delegate", "mio", "shiro")
 	shiroReadback := orchestratorEventIndex(events, "agent.acknowledge", "shiro", "mio")

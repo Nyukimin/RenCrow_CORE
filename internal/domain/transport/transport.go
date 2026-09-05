@@ -4,6 +4,11 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Transport はAgent間通信の抽象化インターフェース
@@ -35,7 +40,25 @@ type Message struct {
 	Context   map[string]interface{} `json:"context,omitempty"`
 	Proposal  *ProposalPayload       `json:"proposal,omitempty"`
 	Result    *ResultPayload         `json:"result,omitempty"`
+	TurnInput *TurnInputContext      `json:"turn_input,omitempty"`
 	Timestamp string                 `json:"timestamp"`
+}
+
+// TurnInputContext is the deterministic transport projection of a
+// conversation.TurnInput. SessionID and message text remain on Message so the
+// transport wire has one owner for each of those values.
+type TurnInputContext struct {
+	RootTaskID             modulecore.TaskID       `json:"root_task_id"`
+	TurnID                 modulecore.TurnID       `json:"turn_id"`
+	TraceID                modulecore.TraceID      `json:"trace_id"`
+	UserMessageID          modulecore.MessageID    `json:"user_message_id"`
+	AgentMessageID         modulecore.MessageID    `json:"agent_message_id"`
+	ChannelType            string                  `json:"channel_type"`
+	ExternalConversationID string                  `json:"external_conversation_id"`
+	Attachments            []attachment.Attachment `json:"attachments,omitempty"`
+	ViewerRecipient        string                  `json:"viewer_recipient,omitempty"`
+	ForcedRoute            routing.Route           `json:"forced_route,omitempty"`
+	Route                  routing.Route           `json:"route,omitempty"`
 }
 
 // ProposalPayload はProposalのTransport用DTO
@@ -82,6 +105,66 @@ func NewMessage(from, to, sessionID, jobID, content string) Message {
 	}
 }
 
+// NewTurnInputMessage creates a task message carrying the exact conversation
+// identity assigned to the user input. JobID remains an independent legacy
+// execution identifier on Message.
+func NewTurnInputMessage(from, to, jobID string, input conversation.TurnInput) (Message, error) {
+	if err := input.Validate(); err != nil {
+		return Message{}, fmt.Errorf("turn input is invalid: %w", err)
+	}
+	address := input.ChannelAddress()
+	message := NewMessage(from, to, input.SessionID(), jobID, input.MessageText())
+	message.TurnInput = &TurnInputContext{
+		RootTaskID:             input.RootTaskID(),
+		TurnID:                 input.TurnID(),
+		TraceID:                input.TraceID(),
+		UserMessageID:          input.UserMessageID(),
+		AgentMessageID:         input.AgentMessageID(),
+		ChannelType:            address.ChannelType(),
+		ExternalConversationID: address.ExternalConversationID(),
+		Attachments:            input.Attachments(),
+		ViewerRecipient:        input.ViewerRecipient(),
+		ForcedRoute:            input.ForcedRoute(),
+		Route:                  input.Route(),
+	}
+	return message, nil
+}
+
+// ReconstructTurnInput restores the exact conversation input carried by this
+// message. A projection is mandatory; legacy messages never synthesize a new
+// input or derive one from JobID.
+func (m Message) ReconstructTurnInput() (conversation.TurnInput, error) {
+	if m.TurnInput == nil {
+		return conversation.TurnInput{}, fmt.Errorf("message.turn_input is required")
+	}
+	projection := m.TurnInput
+	address, err := conversation.NewChannelAddress(projection.ChannelType, projection.ExternalConversationID)
+	if err != nil {
+		return conversation.TurnInput{}, fmt.Errorf("message.turn_input channel address is invalid: %w", err)
+	}
+	if address.ChannelType() != projection.ChannelType || address.ExternalConversationID() != projection.ExternalConversationID {
+		return conversation.TurnInput{}, fmt.Errorf("message.turn_input channel address is not normalized")
+	}
+	input, err := conversation.ReconstructTurnInput(
+		projection.RootTaskID,
+		projection.TurnID,
+		projection.TraceID,
+		projection.UserMessageID,
+		projection.AgentMessageID,
+		m.Content,
+		address,
+	)
+	if err != nil {
+		return conversation.TurnInput{}, fmt.Errorf("message.turn_input identity is invalid: %w", err)
+	}
+	return input.
+		WithSessionID(m.SessionID).
+		WithAttachments(projection.Attachments).
+		WithViewerRecipient(projection.ViewerRecipient).
+		WithForcedRoute(projection.ForcedRoute).
+		WithRoute(projection.Route), nil
+}
+
 // NewErrorMessage はエラーメッセージを作成
 func NewErrorMessage(from, to, sessionID, jobID, errMsg string) Message {
 	return Message{
@@ -108,6 +191,11 @@ func (m Message) Validate() error {
 	}
 	if _, err := time.Parse(time.RFC3339, m.Timestamp); err != nil {
 		return fmt.Errorf("message.timestamp must be RFC3339 format: %w", err)
+	}
+	if m.TurnInput != nil {
+		if _, err := m.ReconstructTurnInput(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -158,7 +158,10 @@ func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, inpu
 	jid := jobID.String()
 	speaker := chatSpeakerForTurnInput(input)
 	guardedInput := d.withAttribution(input, speaker)
-	userMsg := domaintransport.NewMessage("user", speaker, sessionID, jid, input.MessageText())
+	userMsg, err := domaintransport.NewTurnInputMessage("user", speaker, jid, guardedInput)
+	if err != nil {
+		return "", fmt.Errorf("build local user turn message: %w", err)
+	}
 	userMsg.Type = domaintransport.MessageTypeTask
 	d.memory.RecordMessage(userMsg)
 
@@ -204,7 +207,10 @@ func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, inp
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	guardedInput := d.withAttribution(input, targetAgent)
-	msg := domaintransport.NewMessage("mio", targetAgent, sessionID, jid, guardedInput.MessageText())
+	msg, err := domaintransport.NewTurnInputMessage("mio", targetAgent, jid, guardedInput)
+	if err != nil {
+		return "", fmt.Errorf("build remote user turn message: %w", err)
+	}
 	msg.Type = domaintransport.MessageTypeTask
 	msg.Context = map[string]interface{}{
 		"route":   string(route),

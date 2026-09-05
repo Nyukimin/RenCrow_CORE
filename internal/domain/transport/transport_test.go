@@ -1,8 +1,15 @@
 package transport
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestNewMessage(t *testing.T) {
@@ -140,5 +147,129 @@ func TestMessage_WithPayloads(t *testing.T) {
 
 	if len(msg.Result.Results) != 1 {
 		t.Errorf("Expected 1 result, got %d", len(msg.Result.Results))
+	}
+}
+
+func TestTurnInputMessageJSONRoundTripPreservesCanonicalProjection(t *testing.T) {
+	rootTaskID := modulecore.NewTaskID()
+	turnID := modulecore.NewTurnID()
+	traceID := modulecore.NewTraceID()
+	userMessageID := modulecore.NewMessageID()
+	agentMessageID := modulecore.NewMessageID()
+	address, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatalf("NewChannelAddress() error = %v", err)
+	}
+	input, err := conversation.ReconstructTurnInput(
+		rootTaskID,
+		turnID,
+		traceID,
+		userMessageID,
+		agentMessageID,
+		"hello",
+		address,
+	)
+	if err != nil {
+		t.Fatalf("ReconstructTurnInput() error = %v", err)
+	}
+	input = input.
+		WithSessionID("session-1").
+		WithAttachments([]attachment.Attachment{{
+			ID:       "att-1",
+			Kind:     attachment.KindImage,
+			Filename: "photo.png",
+			Data:     []byte("must not be persisted"),
+		}}).
+		WithViewerRecipient("mio").
+		WithForcedRoute(routing.RoutePLAN).
+		WithRoute(routing.RoutePLAN)
+
+	message, err := NewTurnInputMessage("mio", "shiro", "job-1", input)
+	if err != nil {
+		t.Fatalf("NewTurnInputMessage() error = %v", err)
+	}
+	if err := message.Validate(); err != nil {
+		t.Fatalf("Message.Validate() error = %v", err)
+	}
+	encoded, err := json.Marshal(message)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if len(encoded) == 0 || bytes.Contains(encoded, []byte(`"data"`)) {
+		t.Fatalf("attachment data leaked into transport JSON: %s", encoded)
+	}
+
+	var decoded Message
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	got, err := decoded.ReconstructTurnInput()
+	if err != nil {
+		t.Fatalf("ReconstructTurnInput() error = %v", err)
+	}
+	if got.RootTaskID() != rootTaskID || got.TurnID() != turnID || got.TraceID() != traceID || got.UserMessageID() != userMessageID || got.AgentMessageID() != agentMessageID {
+		t.Fatalf("canonical identities changed: root=%q turn=%q trace=%q user=%q agent=%q", got.RootTaskID(), got.TurnID(), got.TraceID(), got.UserMessageID(), got.AgentMessageID())
+	}
+	if decoded.SessionID != "session-1" || decoded.Content != "hello" || got.SessionID() != input.SessionID() || got.MessageText() != input.MessageText() {
+		t.Fatalf("outer message/input fields changed: message=%#v input=%#v", decoded, got)
+	}
+	gotAddress := got.ChannelAddress()
+	if gotAddress.ChannelType() != "line" || gotAddress.ExternalConversationID() != "U123" {
+		t.Fatalf("address changed: %#v", gotAddress)
+	}
+	if got.ViewerRecipient() != "mio" || got.ForcedRoute() != routing.RoutePLAN || got.Route() != routing.RoutePLAN || !got.HasForcedRoute() {
+		t.Fatalf("route/recipient changed: recipient=%q forced=%q route=%q", got.ViewerRecipient(), got.ForcedRoute(), got.Route())
+	}
+	attachments := got.Attachments()
+	if len(attachments) != 1 || attachments[0].ID != "att-1" || attachments[0].Filename != "photo.png" || attachments[0].Data != nil {
+		t.Fatalf("attachment projection changed: %#v", attachments)
+	}
+}
+
+func TestTurnInputMessageRejectsMissingOrMalformedProjection(t *testing.T) {
+	legacy := NewMessage("mio", "shiro", "session-1", "job-1", "hello")
+	if _, err := legacy.ReconstructTurnInput(); err == nil {
+		t.Fatal("expected missing turn_input projection to fail")
+	}
+
+	address, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatalf("NewChannelAddress() error = %v", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), "hello", address)
+	if err != nil {
+		t.Fatalf("NewTurnInput() error = %v", err)
+	}
+	message, err := NewTurnInputMessage("mio", "shiro", "job-1", input)
+	if err != nil {
+		t.Fatalf("NewTurnInputMessage() error = %v", err)
+	}
+
+	cloneWithProjection := func(source Message) Message {
+		clone := source
+		projection := *source.TurnInput
+		clone.TurnInput = &projection
+		return clone
+	}
+
+	malformedID := cloneWithProjection(message)
+	malformedID.TurnInput.TurnID = modulecore.TurnID("not-a-turn-id")
+	if _, err := malformedID.ReconstructTurnInput(); err == nil {
+		t.Fatal("expected malformed turn ID to fail closed")
+	}
+	if err := malformedID.Validate(); err == nil {
+		t.Fatal("Validate() must reject malformed turn projection")
+	}
+
+	sameMessageIDs := cloneWithProjection(message)
+	sameMessageIDs.TurnInput.AgentMessageID = sameMessageIDs.TurnInput.UserMessageID
+	if _, err := sameMessageIDs.ReconstructTurnInput(); err == nil {
+		t.Fatal("expected identical user/agent message IDs to fail closed")
+	}
+
+	badAddress := cloneWithProjection(message)
+	badAddress.TurnInput.ChannelType = "LINE"
+	if _, err := badAddress.ReconstructTurnInput(); err == nil {
+		t.Fatal("expected non-normalized channel address to fail closed")
 	}
 }
