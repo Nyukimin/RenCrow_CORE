@@ -399,6 +399,14 @@ func TestCanonicalTaskMigrationSourceIsRemovedAfterCutover(t *testing.T) {
 			t.Fatalf("Step 08 migration source remains after production cutover: %s", relative)
 		}
 	}
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-event-task-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "eventtaskmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 09 migration source remains after production cutover: %s", relative)
+		}
+	}
 }
 
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
