@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type recordingWildImageGateway struct {
@@ -83,12 +84,15 @@ func TestBuildWildAgentInjectsImageGeneratorForMidoriChat(t *testing.T) {
 	}}
 	wild := buildWildAgent(rejectingWildLLMProvider{}, "Wild", nil, newWildImageGenerator(gateway))
 
-	response, err := wild.Generate(context.Background(), task.NewTask(
-		task.NewJobID(),
-		"海辺の白い灯台の画像を生成して",
-		"viewer",
-		"viewer-user",
-	))
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatalf("NewChannelAddress() error = %v", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), "海辺の白い灯台の画像を生成して", address)
+	if err != nil {
+		t.Fatalf("NewTurnInput() error = %v", err)
+	}
+	response, err := wild.Generate(context.Background(), input)
 	if err != nil {
 		t.Fatalf("Midori image generation error = %v", err)
 	}

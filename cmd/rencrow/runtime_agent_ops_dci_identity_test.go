@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -33,7 +33,7 @@ type agentOpsDCIToolExecutorStub struct {
 	executeCall int
 }
 
-func (s *agentOpsDCIToolExecutorStub) Execute(context.Context, task.Task) (string, error) {
+func (s *agentOpsDCIToolExecutorStub) Execute(context.Context, conversation.TurnInput) (string, error) {
 	s.mu.Lock()
 	s.executeCall++
 	s.mu.Unlock()

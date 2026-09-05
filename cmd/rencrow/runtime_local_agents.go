@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -44,6 +45,14 @@ func registerSSHTransport(
 	sshTransports[agentName] = tr
 	log.Printf("Connected SSHTransport for agent '%s'", agentName)
 	return nil
+}
+
+func reconstructLocalAgentInput(msg domaintransport.Message) (conversation.TurnInput, error) {
+	input, err := msg.ReconstructTurnInput()
+	if err != nil {
+		return conversation.TurnInput{}, fmt.Errorf("local agent turn input is invalid: %w", err)
+	}
+	return input, nil
 }
 
 func markAgentUnavailable(store *viewer.MonitorStore, agentName, reason string) {
@@ -140,14 +149,13 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 		return resp
 	}
 
-	jobID, err := task.ParseJobID(msg.JobID)
+	input, err := reconstructLocalAgentInput(msg)
 	if err != nil {
-		jobID = task.NewJobID()
+		log.Printf("[LocalWorker] invalid turn input agent=%s job=%s err=%v", agentName, msg.JobID, err)
+		return newLocalAgentError(agentName, msg, fmt.Sprintf("worker input is invalid: %v", err))
 	}
-	t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID).
-		WithSessionID(msg.SessionID)
 	log.Printf("[LocalWorker] shiro execute start agent=%s job=%s", agentName, msg.JobID)
-	result, err := shiroAgent.Execute(context.Background(), t)
+	result, err := shiroAgent.Execute(context.Background(), input)
 	if err != nil {
 		log.Printf("[LocalWorker] shiro execute error agent=%s job=%s err=%v", agentName, msg.JobID, err)
 		return newLocalAgentError(agentName, msg, fmt.Sprintf("worker execution failed: %v", err))
@@ -199,15 +207,17 @@ func (d *Dependencies) startLocalCoderAgent(agentName string, lt *transport.Loca
 				return
 			}
 			log.Printf("[LocalCoder] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content))
-			d.emitLocalAgentNote(agentName, msg.From, "依頼を受領しました。", msg)
-			jobID, parseErr := task.ParseJobID(msg.JobID)
-			if parseErr != nil {
-				jobID = task.NewJobID()
+			input, inputErr := reconstructLocalAgentInput(msg)
+			if inputErr != nil {
+				log.Printf("[LocalCoder] invalid turn input agent=%s job=%s err=%v", agentName, msg.JobID, inputErr)
+				d.emitLocalAgentNote(agentName, msg.From, "入力の正規ID検証で失敗しました。", msg)
+				d.deliverLocalAgentResponse(newLocalAgentError(agentName, msg, fmt.Sprintf("coder input is invalid: %v", inputErr)))
+				continue
 			}
-			t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID)
+			d.emitLocalAgentNote(agentName, msg.From, "依頼を受領しました。", msg)
 			log.Printf("[LocalCoder] proposal start agent=%s job=%s", agentName, msg.JobID)
 			d.emitLocalAgentNote(agentName, msg.From, "proposal 生成を開始しました。", msg)
-			p, err := coder.GenerateProposal(context.Background(), t)
+			p, err := coder.GenerateProposal(context.Background(), input)
 			if err != nil {
 				log.Printf("[LocalCoder] proposal error agent=%s job=%s err=%v", agentName, msg.JobID, err)
 				d.emitLocalAgentNote(agentName, msg.From, "proposal 生成で失敗しました。", msg)

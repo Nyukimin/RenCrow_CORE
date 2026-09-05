@@ -19,6 +19,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -43,7 +44,7 @@ var agentOpsUserIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,25
 // agentOpsExecutor is the narrow Shiro boundary used by the HTTP handler and
 // its tests. Production wiring supplies the actual agents.Shiro instance.
 type agentOpsExecutor interface {
-	Execute(context.Context, task.Task) (string, error)
+	Execute(context.Context, conversation.TurnInput) (string, error)
 }
 
 // agentOpsToolExecutor is the deterministic tool seam used by the fixed DCI
@@ -268,10 +269,20 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jobID := task.NewJobID()
-	opsTask := task.NewTask(jobID, request.Message, agentOpsTaskChannel, agentOpsTaskChatID).
+	address, err := conversation.NewChannelAddress(agentOpsTaskChannel, agentOpsTaskChatID)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
+		return
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), request.Message, address)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
+		return
+	}
+	input = input.
 		WithSessionID(string(modulecore.NewSessionID())).
 		WithRoute(routing.RouteOPS)
-	output, err := h.executor.Execute(shiroContext, opsTask)
+	output, err := h.executor.Execute(shiroContext, input)
 	if err != nil || strings.TrimSpace(output) == "" {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
 		return

@@ -10,9 +10,9 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
@@ -21,12 +21,12 @@ type coderAdapter struct {
 	domainCoder *agent.CoderAgent
 }
 
-func (a *coderAdapter) Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error) {
-	return a.domainCoder.GenerateWithPrompt(ctx, t, systemPrompt)
+func (a *coderAdapter) Generate(ctx context.Context, input conversation.TurnInput, systemPrompt string) (string, error) {
+	return a.domainCoder.GenerateWithPrompt(ctx, input, systemPrompt)
 }
 
-func (a *coderAdapter) GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error) {
-	return a.domainCoder.GenerateProposal(ctx, t)
+func (a *coderAdapter) GenerateProposal(ctx context.Context, input conversation.TurnInput) (*proposal.Proposal, error) {
+	return a.domainCoder.GenerateProposal(ctx, input)
 }
 
 func (a *coderAdapter) GenerateWithContext(ctx context.Context, messages []llm.Message) (string, error) {

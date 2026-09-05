@@ -15,28 +15,28 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type agentOpsExecutorStub struct {
 	ctx    context.Context
-	task   task.Task
+	input  conversation.TurnInput
 	calls  int
 	output string
 	err    error
 	ctxs   []context.Context
-	tasks  []task.Task
+	inputs []conversation.TurnInput
 }
 
-func (s *agentOpsExecutorStub) Execute(ctx context.Context, got task.Task) (string, error) {
+func (s *agentOpsExecutorStub) Execute(ctx context.Context, got conversation.TurnInput) (string, error) {
 	s.ctx = ctx
-	s.task = got
+	s.input = got
 	s.calls++
 	s.ctxs = append(s.ctxs, ctx)
-	s.tasks = append(s.tasks, got)
+	s.inputs = append(s.inputs, got)
 	return s.output, s.err
 }
 
@@ -62,7 +62,7 @@ type agentOpsBlockingExecutor struct {
 	release chan struct{}
 }
 
-func (s *agentOpsBlockingExecutor) Execute(ctx context.Context, got task.Task) (string, error) {
+func (s *agentOpsBlockingExecutor) Execute(ctx context.Context, got conversation.TurnInput) (string, error) {
 	s.entered <- struct{}{}
 	select {
 	case <-s.release:
@@ -82,6 +82,27 @@ func assertAgentOpsWorkerBusyCalls(t *testing.T, notifier *agentOpsBusyNotifierS
 		if got[i] != want[i] {
 			t.Fatalf("worker busy calls=%v want=%v", got, want)
 		}
+	}
+}
+
+func assertAgentOpsTurnInput(t *testing.T, input conversation.TurnInput, jobID string) {
+	t.Helper()
+	if err := input.Validate(); err != nil {
+		t.Fatalf("agent OPS input invalid: %v", err)
+	}
+	identities := []string{
+		string(input.RootTaskID()), string(input.TurnID()), string(input.TraceID()),
+		string(input.UserMessageID()), string(input.AgentMessageID()),
+	}
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if identity == jobID {
+			t.Fatalf("canonical input identity reused JobID=%q: %v", jobID, identities)
+		}
+		if _, exists := seen[identity]; exists {
+			t.Fatalf("canonical input identities are not distinct: %v", identities)
+		}
+		seen[identity] = struct{}{}
 	}
 }
 
@@ -119,20 +140,22 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if response["request_id"] != requestID || response["agent_id"] != "shiro" || response["role"] != "worker" || response["route"] != "OPS" || response["output"] != "実行結果" {
 		t.Fatalf("response=%v", response)
 	}
-	if executor.calls != 1 || executor.task.UserMessage() != "状態を確認して" || executor.task.Channel() != "agent_ops" || executor.task.ChatID() != "agent-ops" || executor.task.Route() != routing.RouteOPS {
-		t.Fatalf("task=%#v calls=%d", executor.task, executor.calls)
+	if executor.calls != 1 || executor.input.MessageText() != "状態を確認して" || executor.input.ChannelAddress().ChannelType() != "agent_ops" || executor.input.ChannelAddress().ExternalConversationID() != "agent-ops" || executor.input.Route() != routing.RouteOPS {
+		t.Fatalf("input=%#v calls=%d", executor.input, executor.calls)
 	}
-	if err := modulecore.SessionID(executor.task.SessionID()).Validate(); err != nil {
-		t.Fatalf("agent OPS task SessionID=%q: %v", executor.task.SessionID(), err)
+	if err := modulecore.SessionID(executor.input.SessionID()).Validate(); err != nil {
+		t.Fatalf("agent OPS input SessionID=%q: %v", executor.input.SessionID(), err)
 	}
-	if response["job_id"] != executor.task.JobID().String() {
-		t.Fatalf("job_id=%v task=%s", response["job_id"], executor.task.JobID())
+	responseJobID, ok := response["job_id"].(string)
+	if !ok || responseJobID == "" {
+		t.Fatalf("job_id=%v", response["job_id"])
 	}
+	assertAgentOpsTurnInput(t, executor.input, responseJobID)
 	scope, ok := domaintool.ToolExecutionScopeFromContext(executor.ctx)
 	if !ok {
 		t.Fatal("executor did not receive a trusted scope")
 	}
-	if scope.RequestID != requestID || scope.RequestID == executor.task.JobID().String() || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
+	if scope.RequestID != requestID || scope.RequestID == responseJobID || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
 		t.Fatalf("derived scope=%#v", scope)
 	}
 	if !scope.Allows(domaintool.DataScopePublic) || !scope.Allows(domaintool.DataScopeUser) || !scope.Allows(domaintool.DataScopeInternal) {
@@ -146,6 +169,7 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 	const requestID = "req-agent-ops-replay"
 	executor := &agentOpsExecutorStub{output: "ok"}
 	handler := newAgentOpsTestHandler(t, token, executor)
+	jobIDs := make([]string, 2)
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"message":"repeat"}`))
 		setAgentOpsHeaders(req, token, requestID)
@@ -162,27 +186,29 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 		if response.RequestID != requestID || response.JobID == "" {
 			t.Fatalf("attempt %d response=%+v", i, response)
 		}
+		jobIDs[i] = response.JobID
 	}
-	if len(executor.ctxs) != 2 || len(executor.tasks) != 2 {
-		t.Fatalf("captured executions=%d/%d", len(executor.ctxs), len(executor.tasks))
+	if len(executor.ctxs) != 2 || len(executor.inputs) != 2 {
+		t.Fatalf("captured executions=%d/%d", len(executor.ctxs), len(executor.inputs))
 	}
-	if executor.tasks[0].JobID().String() == executor.tasks[1].JobID().String() {
-		t.Fatalf("repeated requests reused job ID=%q", executor.tasks[0].JobID())
-	}
-	if executor.tasks[0].SessionID() == executor.tasks[1].SessionID() {
-		t.Fatalf("independent requests reused SessionID=%q", executor.tasks[0].SessionID())
+	if executor.inputs[0].SessionID() == executor.inputs[1].SessionID() {
+		t.Fatalf("independent requests reused SessionID=%q", executor.inputs[0].SessionID())
 	}
 	for i, ctx := range executor.ctxs {
 		scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
 		if !ok {
 			t.Fatalf("attempt %d missing scope", i)
 		}
-		if scope.RequestID != requestID || scope.RequestID == executor.tasks[i].JobID().String() {
-			t.Fatalf("attempt %d scope=%#v task_job=%q", i, scope, executor.tasks[i].JobID())
+		if scope.RequestID != requestID || scope.RequestID == jobIDs[i] {
+			t.Fatalf("attempt %d scope=%#v", i, scope)
 		}
-		if err := modulecore.SessionID(executor.tasks[i].SessionID()).Validate(); err != nil {
-			t.Fatalf("attempt %d task SessionID=%q: %v", i, executor.tasks[i].SessionID(), err)
+		if err := modulecore.SessionID(executor.inputs[i].SessionID()).Validate(); err != nil {
+			t.Fatalf("attempt %d input SessionID=%q: %v", i, executor.inputs[i].SessionID(), err)
 		}
+		assertAgentOpsTurnInput(t, executor.inputs[i], jobIDs[i])
+	}
+	if jobIDs[0] == jobIDs[1] {
+		t.Fatalf("repeated requests reused job ID=%q", jobIDs[0])
 	}
 }
 

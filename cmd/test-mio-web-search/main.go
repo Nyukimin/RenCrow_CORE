@@ -10,12 +10,13 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func main() {
@@ -74,11 +75,20 @@ func main() {
 	for i, msg := range testMessages {
 		fmt.Printf("--- Test %d: %s ---\n", i+1, msg)
 
-		jobID := task.NewJobID()
-		testTask := task.NewTask(jobID, msg, "test", "test_user")
+		address, err := conversation.NewChannelAddress("test", "test_user")
+		if err != nil {
+			log.Printf("ChannelAddress construction failed: %v\n", err)
+			continue
+		}
+		input, err := conversation.NewTurnInput(modulecore.NewTaskID(), msg, address)
+		if err != nil {
+			log.Printf("TurnInput construction failed: %v\n", err)
+			continue
+		}
+		input = input.WithSessionID(string(modulecore.NewSessionID()))
 
 		// ルーティング決定
-		decision, err := mioAgent.DecideAction(context.Background(), testTask)
+		decision, err := mioAgent.DecideAction(context.Background(), input)
 		if err != nil {
 			log.Printf("DecideAction failed: %v\n", err)
 			continue
@@ -88,7 +98,7 @@ func main() {
 
 		// CHAT実行（Web検索が自動的に実行されるはず）
 		if decision.Route == routing.RouteCHAT {
-			response, err := mioAgent.Chat(context.Background(), testTask)
+			response, err := mioAgent.Chat(context.Background(), input)
 			if err != nil {
 				log.Printf("Chat failed: %v\n", err)
 			} else {

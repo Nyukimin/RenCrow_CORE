@@ -11,8 +11,10 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func main() {
@@ -53,16 +55,24 @@ func main() {
 	)
 	coder := agent.NewCoderAgent(provider, nil, nil, cfg.Prompts.CoderProposal)
 
-	// Task作成
-	jobID := task.NewJobID()
-	t := task.NewTask(jobID, taskDescription, "cli", "test-user")
+	address, err := conversation.NewChannelAddress("cli", "test-user")
+	if err != nil {
+		log.Fatalf("Failed to construct channel address: %v", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), taskDescription, address)
+	if err != nil {
+		log.Fatalf("Failed to construct turn input: %v", err)
+	}
+	input = input.
+		WithSessionID(string(modulecore.NewSessionID())).
+		WithRoute(routing.RouteCODE)
 
 	fmt.Printf("🤖 Coder: %s\n", coderName)
-	fmt.Printf("📝 Task: %s\n", taskDescription)
+	fmt.Printf("📝 Input: %s\n", taskDescription)
 	fmt.Println("⏳ Generating Proposal...")
 
 	// Proposal生成
-	proposal, err := coder.GenerateProposal(ctx, t)
+	proposal, err := coder.GenerateProposal(ctx, input)
 	if err != nil {
 		log.Fatalf("❌ Failed to generate proposal: %v", err)
 	}
