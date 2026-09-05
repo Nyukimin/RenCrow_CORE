@@ -19,6 +19,7 @@ import (
 
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
 type MessageErrorHandler func(req SendRequest, err error)
+type SessionIDResolver func(ctx context.Context) (modulecore.SessionID, error)
 
 type AudioOutputIntent string
 
@@ -70,6 +71,13 @@ func HandleSend(handler MessageHandler, onError MessageErrorHandler) http.Handle
 // HandleSendWithAttachments receives text and optional file attachments from the Viewer.
 
 func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver) http.HandlerFunc {
+	return HandleSendWithAttachmentsAndSessionResolver(handler, onError, saver, nil)
+}
+
+// HandleSendWithAttachmentsAndSessionResolver resolves the canonical Session
+// before accepting an asynchronous Viewer turn. This keeps the accepted
+// session_id identical to the Session repository owner used by orchestration.
+func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			log.Printf("[Viewer] HandleSend: method not allowed: %s", r.Method)
@@ -109,7 +117,21 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			return
 		}
 		rootTaskID := string(modulecore.NewTaskID())
-		sessionID := string(modulecore.NewSessionID())
+		sessionID := ""
+		if resolveSessionID != nil {
+			resolved, err := resolveSessionID(r.Context())
+			if err != nil {
+				log.Printf("[Viewer] HandleSend: canonical session resolution failed: %v", err)
+				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if err := resolved.Validate(); err != nil {
+				log.Printf("[Viewer] HandleSend: canonical session resolver returned invalid identity: %v", err)
+				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			sessionID = string(resolved)
+		}
 		messageID := string(modulecore.NewMessageID())
 		agentMessageID := string(modulecore.NewMessageID())
 		turnID := string(modulecore.NewTurnID())

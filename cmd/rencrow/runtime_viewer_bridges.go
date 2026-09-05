@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -12,8 +13,14 @@ import (
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type canonicalViewerSessionRepository interface {
+	LoadOrCreateCanonical(context.Context, string, domainconversation.ChannelAddress, time.Time) (*domainsession.Session, error)
+}
 
 type viewerBridgeFactories struct {
 	ViewerSendFromOrch   func(messageProcessor) http.HandlerFunc
@@ -26,10 +33,31 @@ func buildViewerBridgeHandlers(
 	deps *Dependencies,
 	reportPath string,
 	ttsRuntime ttsEntryRuntime,
+	sessionRepo orchestrator.SessionRepository,
 ) viewerBridgeFactories {
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		attachmentStore := newRuntimeAttachmentStore(cfg)
-		return viewer.HandleSendWithAttachments(func(ctx context.Context, req viewer.SendRequest) (string, error) {
+		resolveSessionID := func(ctx context.Context) (modulecore.SessionID, error) {
+			canonicalRepo, ok := sessionRepo.(canonicalViewerSessionRepository)
+			if !ok {
+				return "", fmt.Errorf("canonical Viewer session repository is unavailable")
+			}
+			address, err := domainconversation.NewChannelAddress("viewer", "viewer-user")
+			if err != nil {
+				return "", err
+			}
+			now := time.Now().UTC()
+			sess, err := canonicalRepo.LoadOrCreateCanonical(ctx, now.Format("2006-01-02"), address, now)
+			if err != nil {
+				return "", err
+			}
+			sessionID := modulecore.SessionID(sess.ID())
+			if err := sessionID.Validate(); err != nil {
+				return "", err
+			}
+			return sessionID, nil
+		}
+		return viewer.HandleSendWithAttachmentsAndSessionResolver(func(ctx context.Context, req viewer.SendRequest) (string, error) {
 			// Viewer metadata may identify a user for correlation, but it is not
 			// an authentication claim. The trusted orchestrator route therefore
 			// grants only reviewed public Knowledge projections here. A future
@@ -70,7 +98,7 @@ func buildViewerBridgeHandlers(
 					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 				}
 			}
-		}, attachmentStore)
+		}, attachmentStore, resolveSessionID)
 	}
 	entryFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		return entryadapter.HandleWithObserver(

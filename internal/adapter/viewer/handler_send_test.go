@@ -68,6 +68,67 @@ func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {
 	}
 }
 
+func TestHandleSendResolvesCanonicalSessionBeforeAcceptance(t *testing.T) {
+	sessionID := modulecore.NewSessionID()
+	received := make(chan SendRequest, 1)
+	h := HandleSendWithAttachmentsAndSessionResolver(func(_ context.Context, req SendRequest) (string, error) {
+		received <- req
+		return "ok", nil
+	}, nil, nil, func(context.Context) (modulecore.SessionID, error) {
+		return sessionID, nil
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var accepted struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.SessionID != string(sessionID) {
+		t.Fatalf("accepted session_id=%q want=%q", accepted.SessionID, sessionID)
+	}
+	select {
+	case got := <-received:
+		if got.SessionID != string(sessionID) {
+			t.Fatalf("handler session_id=%q want=%q", got.SessionID, sessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("handler was not called")
+	}
+}
+
+func TestHandleSendRejectsBeforeAcceptanceWhenCanonicalSessionUnavailable(t *testing.T) {
+	called := make(chan struct{}, 1)
+	h := HandleSendWithAttachmentsAndSessionResolver(func(context.Context, SendRequest) (string, error) {
+		called <- struct{}{}
+		return "ok", nil
+	}, nil, nil, func(context.Context) (modulecore.SessionID, error) {
+		return "", errors.New("session store unavailable")
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d want=%d body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	select {
+	case <-called:
+		t.Fatal("handler must not run after session resolution failure")
+	default:
+	}
+}
+
 func TestHandleSendPreservesMultipartAudioOutputIntent(t *testing.T) {
 	received := make(chan SendRequest, 1)
 	h := HandleSendWithAttachments(func(_ context.Context, req SendRequest) (string, error) {

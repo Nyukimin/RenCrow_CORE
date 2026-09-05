@@ -1403,7 +1403,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		})
 	}
 
-	bridges := buildViewerBridgeHandlers(cfg, deps, reportPath, ttsRuntime)
+	bridges := buildViewerBridgeHandlers(cfg, deps, reportPath, ttsRuntime, sessionRuntime.SessionRepo)
 	buildIdleChatRuntime(
 		cfg,
 		deps,

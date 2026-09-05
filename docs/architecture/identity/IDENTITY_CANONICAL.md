@@ -2041,6 +2041,23 @@ Failure Knowledge:
 - **Enforcement / Tests:** 移行CLIは旧IDごとのTask候補集合を保持し、report joinでだけ一意性を
   検査する。別Traceの同一旧IDにreport行が無い成功caseと、report行がある拒否caseをtestする。
 
+#### Failure Knowledge: Viewer受付が未作成SessionIDを明示した
+
+- **Failure:** Step 09配備後の実`POST /viewer/send`で、受付responseはCanonical `session_id`を
+  返したが、そのIDをSession repositoryへ作成していなかったため、非同期処理がTask作成前の
+  `session not found`で停止した。
+- **Problem:** Step 04契約はSessionID未指定時だけ`logical_date + ChannelAddress`からSessionを
+  resolveする。Viewer adapterがUUIDを先に発行して明示IDとして渡すと、正規resolveを迂回し、
+  accepted response、Session owner、Task originが分裂する。
+- **Cause:** Step 09で同期responseへ`root_task_id`と同時に`session_id`を追加した際、SessionIDを
+  identity generatorだけで作り、既存Session repository ownerとの受付前同期を結合しなかった。
+- **Lesson / Invariant:** 非同期Viewer ingressは、受付成功を返す前にSession repositoryの
+  `LoadOrCreateCanonical`で`viewer + viewer-user + logical_date`を解決し、その同一SessionIDだけを
+  response、orchestrator request、Task originへ渡す。resolve失敗時はTaskをacceptedにしない。
+- **Enforcement / Tests:** Viewer adapterは注入されたresolverのCanonical SessionIDを検証し、失敗を
+  HTTP 503で同期拒否する。production bridge testは実JSON Session repositoryでaccepted responseと
+  processor requestのSessionID一致を検査し、adapter testはresolver失敗後にhandlerが未実行であることを検査する。
+
 ---
 
 ### Step 10: RunID

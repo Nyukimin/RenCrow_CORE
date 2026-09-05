@@ -13,6 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	sessionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/session"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -20,6 +21,48 @@ type viewerBridgeErrorProcessor struct{}
 
 func (viewerBridgeErrorProcessor) ProcessMessage(context.Context, orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
 	return orchestrator.ProcessMessageResponse{}, errors.New("viewer processing failed")
+}
+
+type viewerBridgeCaptureProcessor struct {
+	requests chan orchestrator.ProcessMessageRequest
+}
+
+func (p viewerBridgeCaptureProcessor) ProcessMessage(_ context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	p.requests <- req
+	return orchestrator.ProcessMessageResponse{SessionID: req.SessionID}, nil
+}
+
+func TestViewerBridgeResolvesProductionCanonicalSessionBeforeAcceptance(t *testing.T) {
+	repo := sessionpersistence.NewJSONSessionRepository(t.TempDir())
+	processor := viewerBridgeCaptureProcessor{requests: make(chan orchestrator.ProcessMessageRequest, 1)}
+	factories := buildViewerBridgeHandlers(&config.Config{}, &Dependencies{}, "", ttsEntryRuntime{}, repo)
+	handler := factories.ViewerSendFromOrch(processor)
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler(response, req)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var accepted struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if err := modulecore.SessionID(accepted.SessionID).Validate(); err != nil {
+		t.Fatalf("accepted session_id=%q: %v", accepted.SessionID, err)
+	}
+	select {
+	case observed := <-processor.requests:
+		if observed.SessionID != accepted.SessionID {
+			t.Fatalf("processor session_id=%q want accepted %q", observed.SessionID, accepted.SessionID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("processor did not receive the accepted request")
+	}
 }
 
 type viewerBridgeTraceStore struct {
@@ -52,7 +95,7 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
 	deps := &Dependencies{eventRelay: &idleAwareEventListener{archive: archive}}
-	factories := buildViewerBridgeHandlers(&config.Config{}, deps, "", ttsEntryRuntime{})
+	factories := buildViewerBridgeHandlers(&config.Config{}, deps, "", ttsEntryRuntime{}, sessionpersistence.NewJSONSessionRepository(t.TempDir()))
 	handler := factories.ViewerSendFromOrch(viewerBridgeErrorProcessor{})
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
