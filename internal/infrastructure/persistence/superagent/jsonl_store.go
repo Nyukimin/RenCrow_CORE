@@ -115,7 +115,25 @@ func (s *JSONLStore) ListSubagentTasks(_ context.Context, limit int) ([]domainsu
 		items = append(items, item)
 		return nil
 	})
-	return reverseLimit(items, normalizedLimit(limit)), err
+	return latestSubagentTasks(items, normalizedLimit(limit)), err
+}
+
+func latestSubagentTasks(items []domainsuperagent.SubagentTask, limit int) []domainsuperagent.SubagentTask {
+	if limit <= 0 {
+		limit = len(items)
+	}
+	seen := map[string]struct{}{}
+	out := make([]domainsuperagent.SubagentTask, 0, minRunQueueLimit(limit, len(items)))
+	for i := len(items) - 1; i >= 0 && len(out) < limit; i-- {
+		item := items[i]
+		key := string(item.TaskID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *JSONLStore) SaveContextPack(_ context.Context, item domainsuperagent.ContextPack) error {

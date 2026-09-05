@@ -37,6 +37,24 @@ func canonicalClientTestThreadID(t *testing.T, value string) modulecore.ThreadID
 	return modulecore.ThreadID(raw)
 }
 
+func canonicalClientTestTaskID(t *testing.T, value string) string {
+	t.Helper()
+	raw, err := modulecore.NewMigrationID(modulecore.CanonicalTaskID, "rencrowclient_test", "fixture", value)
+	if err != nil {
+		t.Fatalf("create canonical task id: %v", err)
+	}
+	return raw
+}
+
+func canonicalClientTestRunID(t *testing.T, value string) string {
+	t.Helper()
+	raw, err := modulecore.NewMigrationID(modulecore.CanonicalRunID, "rencrowclient_test", "fixture", value)
+	if err != nil {
+		t.Fatalf("create canonical run id: %v", err)
+	}
+	return raw
+}
+
 func newNoRequestClient(t *testing.T) (*Client, *bool, func()) {
 	t.Helper()
 	called := false
@@ -54,6 +72,8 @@ func newNoRequestClient(t *testing.T) (*Client, *bool, func()) {
 
 func TestSuperAgentStatus(t *testing.T) {
 	now := time.Date(2026, 5, 19, 15, 56, 0, 0, time.UTC)
+	taskID := canonicalClientTestTaskID(t, "run-task")
+	runID := canonicalClientTestRunID(t, "run")
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.String()
@@ -61,7 +81,7 @@ func TestSuperAgentStatus(t *testing.T) {
 			t.Fatalf("method=%s", r.Method)
 		}
 		_ = json.NewEncoder(w).Encode(SuperAgentStatus{
-			AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "completed", StartedAt: now.Add(-time.Minute), CompletedAt: now}},
+			AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now.Add(-time.Minute), CompletedAt: now}},
 			RuntimeConfig: SuperAgentRuntimeConfig{
 				RunQueueSchedulerEnabled:     true,
 				RunQueueSchedulerIntervalSec: 1,
@@ -81,7 +101,7 @@ func TestSuperAgentStatus(t *testing.T) {
 	if gotPath != "/viewer/superagent?limit=5" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if len(status.AgentRuns) != 1 || status.AgentRuns[0].RunID != "run_1" {
+	if len(status.AgentRuns) != 1 || status.AgentRuns[0].RunID != runID || status.AgentRuns[0].TaskID != taskID {
 		t.Fatalf("status=%#v", status)
 	}
 	if !status.RuntimeConfig.RunQueueSchedulerEnabled || status.RuntimeConfig.RunQueueSchedulerIntervalSec != 1 || status.RuntimeConfig.RunQueueSchedulerClaimLimit != 1 {
@@ -91,6 +111,8 @@ func TestSuperAgentStatus(t *testing.T) {
 
 func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 	now := time.Date(2026, 5, 20, 3, 5, 0, 0, time.UTC)
+	taskID := canonicalClientTestTaskID(t, "status-task")
+	runID := canonicalClientTestRunID(t, "status-run")
 	tests := []struct {
 		name string
 		resp SuperAgentStatus
@@ -100,8 +122,8 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 			name: "duplicate agent run",
 			resp: SuperAgentStatus{
 				AgentRuns: []AgentRun{
-					{RunID: "run_1", AgentType: "LeadAgent", Status: "running", StartedAt: now},
-					{RunID: "run_1", AgentType: "LeadAgent", Status: "completed", StartedAt: now, CompletedAt: now.Add(time.Minute)},
+					{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now},
+					{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now, CompletedAt: now.Add(time.Minute)},
 				},
 			},
 			want: "duplicate agent_run",
@@ -123,61 +145,111 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "missing run status",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent"}}},
 			want: "missing status",
 		},
 		{
+			name: "missing task id",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			want: "missing task_id",
+		},
+		{
+			name: "legacy run id",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			want: "invalid run_id",
+		},
+		{
+			name: "legacy task id",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: "task_1", AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			want: "invalid task_id",
+		},
+		{
 			name: "terminal run missing completed_at",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "completed", StartedAt: now}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now}}},
 			want: "terminal agent_run",
 		},
 		{
 			name: "run missing started at",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "running"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running"}}},
 			want: "missing started_at",
 		},
 		{
 			name: "invalid run status",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "done"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "done"}}},
 			want: "invalid agent_run status",
 		},
 		{
 			name: "failed run missing summary",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", AgentType: "LeadAgent", Status: "failed", StartedAt: now, CompletedAt: now.Add(time.Minute)}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "failed", StartedAt: now, CompletedAt: now.Add(time.Minute)}}},
 			want: "failed agent_run",
 		},
 		{
 			name: "duplicate subagent task",
 			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{
-				{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "Worker", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed", CreatedAt: now},
-				{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "Worker", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed", CreatedAt: now.Add(time.Second)},
+				{TaskID: taskID, RunID: runID, ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed", CreatedAt: now, CompletedAt: now.Add(time.Minute)},
+				{TaskID: taskID, RunID: runID, ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed", CreatedAt: now.Add(time.Second), CompletedAt: now.Add(2 * time.Minute)},
 			}},
 			want: "duplicate subagent_task",
 		},
 		{
 			name: "subagent task missing scope",
-			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "Worker", Task: "check", TerminationCondition: "done", Status: "completed", CreatedAt: now}}},
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: taskID, RunID: runID, ActorID: "shiro", Task: "check", TerminationCondition: "done", Status: "pending", CreatedAt: now}}},
 			want: "missing scope",
 		},
 		{
 			name: "subagent task missing created at",
-			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "Worker", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed"}}},
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: taskID, RunID: runID, ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "pending"}}},
 			want: "missing created_at",
 		},
 		{
+			name: "subagent task missing completed at",
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: taskID, RunID: runID, ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "completed", CreatedAt: now}}},
+			want: "missing completed_at",
+		},
+		{
+			name: "subagent task legacy actor",
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: taskID, RunID: runID, ActorID: "worker", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "pending", CreatedAt: now}}},
+			want: "invalid actor_id",
+		},
+		{
+			name: "subagent task malformed task id",
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: "sub_1", RunID: runID, ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "pending", CreatedAt: now}}},
+			want: "invalid task_id",
+		},
+		{
+			name: "subagent task malformed run id",
+			resp: SuperAgentStatus{SubagentTasks: []SubagentTask{{TaskID: taskID, RunID: "run_1", ActorID: "shiro", Task: "check", Scope: []string{"pkg"}, TerminationCondition: "done", Status: "pending", CreatedAt: now}}},
+			want: "invalid run_id",
+		},
+		{
 			name: "context pack missing summary",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", RunID: "run_1", CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, CreatedAt: now}}},
 			want: "missing summary",
 		},
 		{
 			name: "context pack negative tokens",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", RunID: "run_1", Summary: "summary", TokenEstimate: -1, CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, Summary: "summary", TokenEstimate: -1, CreatedAt: now}}},
 			want: "token_estimate must be >= 0",
 		},
 		{
 			name: "context pack missing created at",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", RunID: "run_1", Summary: "summary"}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, Summary: "summary"}}},
 			want: "missing created_at",
+		},
+		{
+			name: "context pack missing task id",
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", RunID: runID, Summary: "summary", CreatedAt: now}}},
+			want: "missing task_id",
+		},
+		{
+			name: "context pack malformed task id",
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: "task_1", RunID: runID, Summary: "summary", CreatedAt: now}}},
+			want: "invalid task_id",
+		},
+		{
+			name: "context pack malformed run id",
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: "run_1", Summary: "summary", CreatedAt: now}}},
+			want: "invalid run_id",
 		},
 		{
 			name: "message channel missing status",
@@ -266,6 +338,39 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				_ = json.NewEncoder(w).Encode(tt.resp)
+			}))
+			defer server.Close()
+			client, err := New(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.SuperAgentStatus(context.Background(), 0)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("SuperAgentStatus() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestSuperAgentStatusRejectsLegacySubagentFields(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "subagent id", body: `{"subagent_tasks":[{"subagent_id":"sub_1"}]}`, want: `unknown field "subagent_id"`},
+		{name: "parent run id", body: `{"subagent_tasks":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
+		{name: "agent type", body: `{"subagent_tasks":[{"agent_type":"Worker"}]}`, want: `unknown field "agent_type"`},
+		{name: "agent run parent id", body: `{"agent_runs":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/viewer/superagent" {
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, tt.body)
 			}))
 			defer server.Close()
 			client, err := New(server.URL)
@@ -624,6 +729,8 @@ func TestRuntimeConfigRejectsMalformedResponse(t *testing.T) {
 }
 
 func TestCreateAgentRun(t *testing.T) {
+	taskID := canonicalClientTestTaskID(t, "create-task")
+	runID := canonicalClientTestRunID(t, "create-run")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -632,7 +739,7 @@ func TestCreateAgentRun(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
 			t.Fatal(err)
 		}
-		if item.RunID != "run_1" || item.AgentType != "LeadAgent" {
+		if item.RunID != runID || item.TaskID != taskID || item.AgentType != "LeadAgent" {
 			t.Fatalf("payload=%#v", item)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -643,7 +750,8 @@ func TestCreateAgentRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = client.CreateAgentRun(context.Background(), AgentRun{
-		RunID:     "run_1",
+		RunID:     runID,
+		TaskID:    taskID,
 		AgentType: "LeadAgent",
 		Status:    "running",
 		StartedAt: time.Now().UTC(),
@@ -666,13 +774,28 @@ func TestCreateAgentRunRejectsInvalidRequest(t *testing.T) {
 		},
 		{
 			name: "missing agent type",
-			item: AgentRun{RunID: "run_1", Status: "running"},
+			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-agent-type"), TaskID: canonicalClientTestTaskID(t, "missing-agent-type"), Status: "running"},
 			want: "missing agent_type",
 		},
 		{
 			name: "missing status",
-			item: AgentRun{RunID: "run_1", AgentType: "LeadAgent"},
+			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-status"), TaskID: canonicalClientTestTaskID(t, "missing-status"), AgentType: "LeadAgent"},
 			want: "missing status",
+		},
+		{
+			name: "missing task id",
+			item: AgentRun{RunID: canonicalClientTestRunID(t, "missing-task-id"), AgentType: "LeadAgent", Status: "running"},
+			want: "missing task_id",
+		},
+		{
+			name: "legacy run id",
+			item: AgentRun{RunID: "run_1", TaskID: canonicalClientTestTaskID(t, "legacy-run-id"), AgentType: "LeadAgent", Status: "running"},
+			want: "invalid run_id",
+		},
+		{
+			name: "legacy task id",
+			item: AgentRun{RunID: canonicalClientTestRunID(t, "legacy-task-id"), TaskID: "task_1", AgentType: "LeadAgent", Status: "running"},
+			want: "invalid task_id",
 		},
 	}
 	for _, tt := range tests {

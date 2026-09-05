@@ -36,14 +36,16 @@ func ValidateAgentRun(item AgentRun) error {
 }
 
 func ValidateSubagentTask(item SubagentTask) error {
-	if strings.TrimSpace(item.SubagentID) == "" {
-		return fmt.Errorf("subagent_id is required")
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
 	}
-	if strings.TrimSpace(item.ParentRunID) == "" {
-		return fmt.Errorf("parent_run_id is required")
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
 	}
-	if strings.TrimSpace(item.AgentType) == "" {
-		return fmt.Errorf("agent_type is required")
+	switch strings.TrimSpace(item.ActorID) {
+	case "mio", "shiro", "midori", "kuro":
+	default:
+		return fmt.Errorf("actor_id must be one of mio, shiro, midori, kuro")
 	}
 	if strings.TrimSpace(item.Task) == "" {
 		return fmt.Errorf("task is required")
@@ -59,6 +61,9 @@ func ValidateSubagentTask(item SubagentTask) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
+	}
+	if isSubagentTaskTerminalStatus(item.Status) && item.CompletedAt.IsZero() {
+		return fmt.Errorf("completed_at is required for terminal subagent task")
 	}
 	return nil
 }
@@ -137,6 +142,15 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 func isAgentRunTerminalStatus(status string) bool {
 	switch strings.TrimSpace(status) {
 	case "completed", "failed", "cancelled", "paused":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSubagentTaskTerminalStatus(status string) bool {
+	switch strings.TrimSpace(status) {
+	case "completed", "failed", "cancelled":
 		return true
 	default:
 		return false

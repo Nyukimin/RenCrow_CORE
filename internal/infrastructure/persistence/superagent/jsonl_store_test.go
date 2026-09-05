@@ -24,9 +24,9 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveAgentRun() error = %v", err)
 	}
 	if err := store.SaveSubagentTask(context.Background(), domainsuperagent.SubagentTask{
-		SubagentID:           "sub_1",
-		ParentRunID:          "run_1",
-		AgentType:            "ResearchAgent",
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "shiro",
 		Task:                 "調査",
 		Scope:                []string{"docs/"},
 		TerminationCondition: "report",
@@ -34,6 +34,19 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		CreatedAt:            now,
 	}); err != nil {
 		t.Fatalf("SaveSubagentTask() error = %v", err)
+	}
+	if err := store.SaveSubagentTask(context.Background(), domainsuperagent.SubagentTask{
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "shiro",
+		Task:                 "調査",
+		Scope:                []string{"docs/"},
+		TerminationCondition: "report",
+		Status:               "completed",
+		CreatedAt:            now,
+		CompletedAt:          now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
@@ -60,7 +73,7 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("ListAgentRuns() = %#v, %v", runs, err)
 	}
 	tasks, err := store.ListSubagentTasks(context.Background(), 10)
-	if err != nil || len(tasks) != 1 {
+	if err != nil || len(tasks) != 1 || tasks[0].TaskID != taskID || tasks[0].Status != "completed" {
 		t.Fatalf("ListSubagentTasks() = %#v, %v", tasks, err)
 	}
 	contexts, err := store.ListContextPacks(context.Background(), 10)
@@ -70,6 +83,40 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(queue) != 1 {
 		t.Fatalf("ListRunQueueItems() = %#v, %v", queue, err)
+	}
+}
+
+func TestJSONLStoreListSubagentTasksReturnsLatestStatePerTask(t *testing.T) {
+	store := NewJSONLStore(t.TempDir(), 3000)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 19, 9, 40, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	running := domainsuperagent.SubagentTask{
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "midori",
+		Task:                 "調査",
+		Scope:                []string{"docs/"},
+		TerminationCondition: "report",
+		Status:               "running",
+		CreatedAt:            now,
+	}
+	completed := running
+	completed.Status = "completed"
+	completed.CompletedAt = now.Add(time.Second)
+	if err := store.SaveSubagentTask(ctx, running); err != nil {
+		t.Fatalf("SaveSubagentTask(running) error = %v", err)
+	}
+	if err := store.SaveSubagentTask(ctx, completed); err != nil {
+		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
+	}
+
+	tasks, err := store.ListSubagentTasks(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListSubagentTasks() error = %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].TaskID != taskID || tasks[0].Status != "completed" || tasks[0].CompletedAt.IsZero() {
+		t.Fatalf("tasks=%#v", tasks)
 	}
 }
 

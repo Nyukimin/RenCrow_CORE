@@ -741,7 +741,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		defer unregister()
 	}
 	if leadRunID != "" {
-		ctx = appsubagent.WithSuperAgentRuntime(ctx, string(leadRunID), []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+		ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
 	}
 
 	// 4. ルートに応じて実行

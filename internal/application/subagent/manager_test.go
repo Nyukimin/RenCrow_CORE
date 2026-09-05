@@ -203,7 +203,21 @@ func TestRunSync_RecordsSuperAgentSubagentTask(t *testing.T) {
 	}
 	recorder := &mockSuperAgentRecorder{}
 	mgr := NewManager(provider, &mockRunner{}, nil, toolloop.Config{MaxIterations: 10}, WithSuperAgentRecorder(recorder))
-	ctx := WithSuperAgentRuntime(context.Background(), "run_lead_1", []string{"session:s1", "route:CHAT"}, []string{"readFile"}, "return summary")
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	traceID := modulecore.NewTraceID()
+	causationEventID := modulecore.NewEventID()
+	ctx := WithSuperAgentRuntime(
+		context.Background(),
+		taskID,
+		runID,
+		"shiro",
+		traceID,
+		causationEventID,
+		[]string{"session:s1", "route:CHAT"},
+		[]string{"readFile"},
+		"return summary",
+	)
 	result, err := mgr.RunSync(ctx, agent.SubagentTask{
 		AgentName:   "worker",
 		Instruction: "do something",
@@ -220,15 +234,28 @@ func TestRunSync_RecordsSuperAgentSubagentTask(t *testing.T) {
 	if recorder.tasks[0].Status != "running" || recorder.tasks[1].Status != "completed" {
 		t.Fatalf("unexpected task statuses: %#v", recorder.tasks)
 	}
-	if recorder.tasks[0].ParentRunID != "run_lead_1" || recorder.tasks[0].Scope[0] != "session:s1" {
+	if recorder.tasks[0].TaskID != taskID || recorder.tasks[1].TaskID != taskID || recorder.tasks[0].RunID != runID || recorder.tasks[1].RunID != runID || recorder.tasks[0].ActorID != "shiro" || recorder.tasks[1].ActorID != "shiro" || recorder.tasks[0].Scope[0] != "session:s1" {
 		t.Fatalf("unexpected task linkage: %#v", recorder.tasks[0])
 	}
 	if len(recorder.events) != 2 || recorder.events[0].EventType != "subagent.started" || recorder.events[1].EventType != "subagent.completed" || recorder.events[1].CausationEventID != recorder.events[0].EventID {
 		t.Fatalf("unexpected trace events: %#v", recorder.events)
 	}
+	for _, event := range recorder.events {
+		if event.TraceID != traceID || event.TaskID != taskID || event.RunID != runID || event.ActorKind != "agent" || event.ActorID != "shiro" {
+			t.Fatalf("event identity = %#v, want task=%s run=%s trace=%s actor=shiro", event, taskID, runID, traceID)
+		}
+		for _, key := range []string{"task_id", "run_id", "actor_id", "actor_label", "subagent_id", "task_reference", "run_reference"} {
+			if _, ok := event.Payload[key]; ok {
+				t.Fatalf("event payload duplicated identity %q: %#v", key, event.Payload)
+			}
+		}
+	}
+	if recorder.events[0].CausationEventID != causationEventID {
+		t.Fatalf("start event causation = %s, want %s", recorder.events[0].CausationEventID, causationEventID)
+	}
 }
 
-func TestRunSync_SuperAgentRecorderWithoutParentRunDoesNothing(t *testing.T) {
+func TestRunSync_SuperAgentRecorderRequiresCanonicalRuntimeContext(t *testing.T) {
 	provider := &mockProvider{
 		responses: []llm.ChatResponse{
 			{
@@ -238,12 +265,50 @@ func TestRunSync_SuperAgentRecorderWithoutParentRunDoesNothing(t *testing.T) {
 		},
 	}
 	recorder := &mockSuperAgentRecorder{}
-	mgr := NewManager(provider, &mockRunner{}, nil, toolloop.Config{MaxIterations: 10}, WithSuperAgentRecorder(recorder))
-	if _, err := mgr.RunSync(context.Background(), agent.SubagentTask{AgentName: "worker", Instruction: "do something"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	runner := &mockRunner{}
+	mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 10}, WithSuperAgentRecorder(recorder))
+	if _, err := mgr.RunSync(context.Background(), agent.SubagentTask{AgentName: "worker", Instruction: "do something"}); err == nil {
+		t.Fatal("expected missing canonical runtime context error")
 	}
-	if len(recorder.tasks) != 0 || len(recorder.events) != 0 {
-		t.Fatalf("expected no superagent records without parent run, got tasks=%#v events=%#v", recorder.tasks, recorder.events)
+	if provider.callIndex != 0 || len(runner.contexts) != 0 || len(recorder.tasks) != 0 || len(recorder.events) != 0 {
+		t.Fatalf("recorder validation must fail before ToolLoop: provider_calls=%d tool_calls=%d tasks=%#v events=%#v", provider.callIndex, len(runner.contexts), recorder.tasks, recorder.events)
+	}
+}
+
+func TestRunSync_SuperAgentRecorderRejectsInvalidCanonicalRuntimeContextBeforeToolLoop(t *testing.T) {
+	validTaskID := modulecore.NewTaskID()
+	validRunID := modulecore.NewRunID()
+	validTraceID := modulecore.NewTraceID()
+	validCausationEventID := modulecore.NewEventID()
+	tests := []struct {
+		name      string
+		taskID    modulecore.TaskID
+		runID     modulecore.RunID
+		actorID   string
+		traceID   modulecore.TraceID
+		causation modulecore.EventID
+	}{
+		{name: "task", taskID: "legacy-task", runID: validRunID, actorID: "mio", traceID: validTraceID, causation: validCausationEventID},
+		{name: "run", taskID: validTaskID, runID: "legacy-run", actorID: "mio", traceID: validTraceID, causation: validCausationEventID},
+		{name: "actor", taskID: validTaskID, runID: validRunID, actorID: "worker", traceID: validTraceID, causation: validCausationEventID},
+		{name: "non canonical actor spelling", taskID: validTaskID, runID: validRunID, actorID: "Shiro", traceID: validTraceID, causation: validCausationEventID},
+		{name: "trace", taskID: validTaskID, runID: validRunID, actorID: "mio", traceID: "legacy-trace", causation: validCausationEventID},
+		{name: "causation", taskID: validTaskID, runID: validRunID, actorID: "mio", traceID: validTraceID, causation: "legacy-event"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &mockProvider{responses: []llm.ChatResponse{{Message: llm.ChatMessage{Role: "assistant", Content: "must not run"}, FinishReason: "stop"}}}
+			runner := &mockRunner{}
+			recorder := &mockSuperAgentRecorder{}
+			mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 10}, WithSuperAgentRecorder(recorder))
+			ctx := WithSuperAgentRuntime(context.Background(), tt.taskID, tt.runID, tt.actorID, tt.traceID, tt.causation, nil, nil, "")
+			if _, err := mgr.RunSync(ctx, agent.SubagentTask{AgentName: "worker", Instruction: "do something"}); err == nil {
+				t.Fatal("expected invalid canonical runtime context error")
+			}
+			if provider.callIndex != 0 || len(runner.contexts) != 0 || len(recorder.tasks) != 0 || len(recorder.events) != 0 {
+				t.Fatalf("invalid context must fail before ToolLoop: provider_calls=%d tool_calls=%d tasks=%#v events=%#v", provider.callIndex, len(runner.contexts), recorder.tasks, recorder.events)
+			}
+		})
 	}
 }
 

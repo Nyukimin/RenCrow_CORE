@@ -24,17 +24,17 @@ type AgentRun struct {
 }
 
 type SubagentTask struct {
-	SubagentID           string    `json:"subagent_id"`
-	ParentRunID          string    `json:"parent_run_id"`
-	AgentType            string    `json:"agent_type"`
-	Task                 string    `json:"task"`
-	Scope                []string  `json:"scope"`
-	Tools                []string  `json:"tools,omitempty"`
-	TerminationCondition string    `json:"termination_condition"`
-	OutputPath           string    `json:"output_path,omitempty"`
-	Status               string    `json:"status"`
-	CreatedAt            time.Time `json:"created_at"`
-	CompletedAt          time.Time `json:"completed_at,omitempty"`
+	TaskID               modulecore.TaskID `json:"task_id"`
+	RunID                modulecore.RunID  `json:"run_id"`
+	ActorID              string            `json:"actor_id"`
+	Task                 string            `json:"task"`
+	Scope                []string          `json:"scope"`
+	Tools                []string          `json:"tools,omitempty"`
+	TerminationCondition string            `json:"termination_condition"`
+	OutputPath           string            `json:"output_path,omitempty"`
+	Status               string            `json:"status"`
+	CreatedAt            time.Time         `json:"created_at"`
+	CompletedAt          time.Time         `json:"completed_at,omitempty"`
 }
 
 type ContextPack struct {

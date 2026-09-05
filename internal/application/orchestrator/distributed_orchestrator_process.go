@@ -268,7 +268,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		defer unregister()
 	}
 	if leadRunID != "" {
-		ctx = appsubagent.WithSuperAgentRuntime(ctx, string(leadRunID), []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+		ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
 	}
 
 	workerMarkedBusy := false

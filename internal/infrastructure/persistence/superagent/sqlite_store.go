@@ -55,8 +55,8 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS subagent_task (
-			subagent_id TEXT PRIMARY KEY,
-			parent_run_id TEXT,
+			task_id TEXT PRIMARY KEY,
+			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -127,7 +127,7 @@ func (s *SQLiteStore) SaveSubagentTask(ctx context.Context, item domainsuperagen
 	if err := domainsuperagent.ValidateSubagentTask(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "subagent_task", "subagent_id", item.SubagentID, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "subagent_task", "task_id", string(item.TaskID), "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListSubagentTasks(ctx context.Context, limit int) ([]domainsuperagent.SubagentTask, error) {

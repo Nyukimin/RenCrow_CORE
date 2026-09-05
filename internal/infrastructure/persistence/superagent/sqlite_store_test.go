@@ -28,9 +28,9 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveAgentRun() error = %v", err)
 	}
 	if err := store.SaveSubagentTask(context.Background(), domainsuperagent.SubagentTask{
-		SubagentID:           "sub_1",
-		ParentRunID:          "run_1",
-		AgentType:            "ResearchAgent",
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "shiro",
 		Task:                 "調査",
 		Scope:                []string{"docs/"},
 		TerminationCondition: "report",
@@ -38,6 +38,20 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		CreatedAt:            now,
 	}); err != nil {
 		t.Fatalf("SaveSubagentTask() error = %v", err)
+	}
+	completedTask := domainsuperagent.SubagentTask{
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "shiro",
+		Task:                 "調査",
+		Scope:                []string{"docs/"},
+		TerminationCondition: "report",
+		Status:               "completed",
+		CreatedAt:            now,
+		CompletedAt:          now.Add(time.Minute),
+	}
+	if err := store.SaveSubagentTask(context.Background(), completedTask); err != nil {
+		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
 		ContextPackID: "ctx_1",
@@ -72,7 +86,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("ListAgentRuns() = %#v, %v", runs, err)
 	}
 	tasks, err := store.ListSubagentTasks(context.Background(), 10)
-	if err != nil || len(tasks) != 1 || tasks[0].SubagentID != "sub_1" {
+	if err != nil || len(tasks) != 1 || tasks[0].TaskID != taskID || tasks[0].Status != "completed" {
 		t.Fatalf("ListSubagentTasks() = %#v, %v", tasks, err)
 	}
 	contexts, err := store.ListContextPacks(context.Background(), 10)
@@ -86,6 +100,46 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(queue) != 1 || queue[0].QueueID != "queue_1" {
 		t.Fatalf("ListRunQueueItems() = %#v, %v", queue, err)
+	}
+}
+
+func TestSQLiteStoreSubagentTaskSchemaUsesCanonicalTaskIdentity(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	rows, err := store.db.Query(`PRAGMA table_info(subagent_task)`)
+	if err != nil {
+		t.Fatalf("inspect subagent_task schema: %v", err)
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan subagent_task schema: %v", err)
+		}
+		columns[name] = true
+		if name == "task_id" && primaryKey != 1 {
+			t.Fatalf("task_id primary key=%d, want 1", primaryKey)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read subagent_task schema: %v", err)
+	}
+	for _, name := range []string{"task_id", "run_id", "created_at", "payload"} {
+		if !columns[name] {
+			t.Fatalf("subagent_task missing column %q", name)
+		}
+	}
+	for _, name := range []string{"subagent_id", "parent_run_id", "agent_type"} {
+		if columns[name] {
+			t.Fatalf("subagent_task contains legacy column %q", name)
+		}
 	}
 }
 

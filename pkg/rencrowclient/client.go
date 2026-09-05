@@ -95,8 +95,8 @@ type SuperAgentRuntimeConfig struct {
 
 type AgentRun struct {
 	RunID        string    `json:"run_id"`
+	TaskID       string    `json:"task_id"`
 	WorkstreamID string    `json:"workstream_id,omitempty"`
-	ParentRunID  string    `json:"parent_run_id,omitempty"`
 	AgentType    string    `json:"agent_type"`
 	Goal         string    `json:"goal,omitempty"`
 	Status       string    `json:"status"`
@@ -106,9 +106,9 @@ type AgentRun struct {
 }
 
 type SubagentTask struct {
-	SubagentID           string    `json:"subagent_id"`
-	ParentRunID          string    `json:"parent_run_id"`
-	AgentType            string    `json:"agent_type"`
+	TaskID               string    `json:"task_id"`
+	RunID                string    `json:"run_id"`
+	ActorID              string    `json:"actor_id"`
 	Task                 string    `json:"task"`
 	Scope                []string  `json:"scope"`
 	Tools                []string  `json:"tools,omitempty"`
@@ -121,6 +121,7 @@ type SubagentTask struct {
 
 type ContextPack struct {
 	ContextPackID   string    `json:"context_pack_id"`
+	TaskID          string    `json:"task_id"`
 	RunID           string    `json:"run_id"`
 	WorkstreamID    string    `json:"workstream_id,omitempty"`
 	Summary         string    `json:"summary"`
@@ -1842,7 +1843,7 @@ func (c *Client) SuperAgentStatus(ctx context.Context, limit int) (SuperAgentSta
 		path = fmt.Sprintf("%s?limit=%d", path, limit)
 	}
 	var out SuperAgentStatus
-	if err := c.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+	if err := c.doStrict(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return SuperAgentStatus{}, err
 	}
 	if err := validateSuperAgentStatus(out); err != nil {
@@ -3613,6 +3614,19 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		if runID == "" {
 			return fmt.Errorf("superagent status agent_run missing run_id")
 		}
+		if err := modulecore.RunID(runID).Validate(); err != nil {
+			return fmt.Errorf("superagent status agent_run %q invalid run_id: %w", runID, err)
+		}
+		taskID := strings.TrimSpace(run.TaskID)
+		if taskID == "" {
+			return fmt.Errorf("superagent status agent_run %q missing task_id", runID)
+		}
+		if err := modulecore.TaskID(taskID).Validate(); err != nil {
+			return fmt.Errorf("superagent status agent_run %q invalid task_id: %w", runID, err)
+		}
+		if strings.TrimSpace(run.AgentType) == "" {
+			return fmt.Errorf("superagent status agent_run %q missing agent_type", runID)
+		}
 		status := strings.TrimSpace(run.Status)
 		if status == "" {
 			return fmt.Errorf("superagent status agent_run missing status")
@@ -3636,35 +3650,47 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 	}
 	seenTasks := map[string]struct{}{}
 	for _, task := range resp.SubagentTasks {
-		subagentID := strings.TrimSpace(task.SubagentID)
-		if subagentID == "" {
-			return fmt.Errorf("superagent status subagent_task missing subagent_id")
+		taskID := strings.TrimSpace(task.TaskID)
+		if taskID == "" {
+			return fmt.Errorf("superagent status subagent_task missing task_id")
 		}
-		if strings.TrimSpace(task.ParentRunID) == "" {
-			return fmt.Errorf("superagent status subagent_task %q missing parent_run_id", subagentID)
+		if err := modulecore.TaskID(taskID).Validate(); err != nil {
+			return fmt.Errorf("superagent status subagent_task %q invalid task_id: %w", taskID, err)
 		}
-		if strings.TrimSpace(task.AgentType) == "" {
-			return fmt.Errorf("superagent status subagent_task %q missing agent_type", subagentID)
+		runID := strings.TrimSpace(task.RunID)
+		if runID == "" {
+			return fmt.Errorf("superagent status subagent_task %q missing run_id", taskID)
+		}
+		if err := modulecore.RunID(runID).Validate(); err != nil {
+			return fmt.Errorf("superagent status subagent_task %q invalid run_id: %w", taskID, err)
+		}
+		switch strings.TrimSpace(task.ActorID) {
+		case "mio", "shiro", "midori", "kuro":
+		default:
+			return fmt.Errorf("superagent status subagent_task %q invalid actor_id", taskID)
 		}
 		if strings.TrimSpace(task.Task) == "" {
-			return fmt.Errorf("superagent status subagent_task %q missing task", subagentID)
+			return fmt.Errorf("superagent status subagent_task %q missing task", taskID)
 		}
 		if len(task.Scope) == 0 {
-			return fmt.Errorf("superagent status subagent_task %q missing scope", subagentID)
+			return fmt.Errorf("superagent status subagent_task %q missing scope", taskID)
 		}
 		if strings.TrimSpace(task.TerminationCondition) == "" {
-			return fmt.Errorf("superagent status subagent_task %q missing termination_condition", subagentID)
+			return fmt.Errorf("superagent status subagent_task %q missing termination_condition", taskID)
 		}
 		if strings.TrimSpace(task.Status) == "" {
-			return fmt.Errorf("superagent status subagent_task %q missing status", subagentID)
+			return fmt.Errorf("superagent status subagent_task %q missing status", taskID)
 		}
 		if task.CreatedAt.IsZero() {
-			return fmt.Errorf("superagent status subagent_task %q missing created_at", subagentID)
+			return fmt.Errorf("superagent status subagent_task %q missing created_at", taskID)
 		}
-		if _, ok := seenTasks[subagentID]; ok {
-			return fmt.Errorf("superagent status contains duplicate subagent_task for subagent_id %q", subagentID)
+		if isSuperAgentSubagentTaskTerminalStatus(strings.TrimSpace(task.Status)) && task.CompletedAt.IsZero() {
+			return fmt.Errorf("superagent status terminal subagent_task %q missing completed_at", taskID)
 		}
-		seenTasks[subagentID] = struct{}{}
+		if _, ok := seenTasks[taskID]; ok {
+			return fmt.Errorf("superagent status contains duplicate subagent_task for task_id %q", taskID)
+		}
+		seenTasks[taskID] = struct{}{}
 	}
 	seenContexts := map[string]struct{}{}
 	for _, pack := range resp.ContextPacks {
@@ -3672,8 +3698,19 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		if contextPackID == "" {
 			return fmt.Errorf("superagent status context_pack missing context_pack_id")
 		}
-		if strings.TrimSpace(pack.RunID) == "" {
+		taskID := strings.TrimSpace(pack.TaskID)
+		if taskID == "" {
+			return fmt.Errorf("superagent status context_pack %q missing task_id", contextPackID)
+		}
+		if err := modulecore.TaskID(taskID).Validate(); err != nil {
+			return fmt.Errorf("superagent status context_pack %q invalid task_id: %w", contextPackID, err)
+		}
+		runID := strings.TrimSpace(pack.RunID)
+		if runID == "" {
 			return fmt.Errorf("superagent status context_pack %q missing run_id", contextPackID)
+		}
+		if err := modulecore.RunID(runID).Validate(); err != nil {
+			return fmt.Errorf("superagent status context_pack %q invalid run_id: %w", contextPackID, err)
 		}
 		if strings.TrimSpace(pack.Summary) == "" {
 			return fmt.Errorf("superagent status context_pack %q missing summary", contextPackID)
@@ -3778,6 +3815,15 @@ func isSuperAgentRunTerminalStatus(status string) bool {
 func isSuperAgentRunStatus(status string) bool {
 	switch status {
 	case "running", "paused", "completed", "failed", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSuperAgentSubagentTaskTerminalStatus(status string) bool {
+	switch status {
+	case "completed", "failed", "cancelled":
 		return true
 	default:
 		return false
@@ -5667,8 +5713,19 @@ func validateLineRange(lineStart, lineEnd int, label string) error {
 }
 
 func validateAgentRunRequest(item AgentRun) error {
-	if strings.TrimSpace(item.RunID) == "" {
+	runID := strings.TrimSpace(item.RunID)
+	if runID == "" {
 		return fmt.Errorf("agent run request missing run_id")
+	}
+	if err := modulecore.RunID(runID).Validate(); err != nil {
+		return fmt.Errorf("agent run request invalid run_id: %w", err)
+	}
+	taskID := strings.TrimSpace(item.TaskID)
+	if taskID == "" {
+		return fmt.Errorf("agent run request missing task_id")
+	}
+	if err := modulecore.TaskID(taskID).Validate(); err != nil {
+		return fmt.Errorf("agent run request invalid task_id: %w", err)
 	}
 	if strings.TrimSpace(item.AgentType) == "" {
 		return fmt.Errorf("agent run request missing agent_type")

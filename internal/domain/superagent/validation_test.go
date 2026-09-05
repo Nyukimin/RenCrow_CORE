@@ -14,11 +14,11 @@ func validRunID() modulecore.RunID { return modulecore.NewRunID() }
 
 func TestValidateSubagentTaskRequiresScopeAndTermination(t *testing.T) {
 	err := ValidateSubagentTask(SubagentTask{
-		SubagentID:  "sub_1",
-		ParentRunID: "run_1",
-		AgentType:   "ResearchAgent",
-		Task:        "調査",
-		Status:      "pending",
+		TaskID:  validTaskID(),
+		RunID:   validRunID(),
+		ActorID: "shiro",
+		Task:    "調査",
+		Status:  "pending",
 	})
 	if err == nil || !strings.Contains(err.Error(), "scope") {
 		t.Fatalf("expected scope error, got %v", err)
@@ -39,9 +39,9 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("agent run should validate: %v", err)
 	}
 	if err := ValidateSubagentTask(SubagentTask{
-		SubagentID:           "sub_1",
-		ParentRunID:          "run_1",
-		AgentType:            "ResearchAgent",
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              "shiro",
 		Task:                 "調査",
 		Scope:                []string{"docs/"},
 		TerminationCondition: "report",
@@ -108,6 +108,93 @@ func TestValidateContextPackRejectsLegacyProjectionRunID(t *testing.T) {
 	}
 }
 
+func TestValidateSubagentTaskRejectsLegacyOrMalformedCanonicalIDs(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name   string
+		taskID modulecore.TaskID
+		runID  modulecore.RunID
+		want   string
+	}{
+		{name: "legacy subagent id", taskID: "sub_legacy", runID: validRunID(), want: "task_id"},
+		{name: "malformed task id", taskID: "task_legacy", runID: validRunID(), want: "task_id"},
+		{name: "legacy parent run id", taskID: validTaskID(), runID: "run_legacy", want: "run_id"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateSubagentTask(SubagentTask{
+				TaskID:               tc.taskID,
+				RunID:                tc.runID,
+				ActorID:              "shiro",
+				Task:                 "調査",
+				Scope:                []string{"docs/"},
+				TerminationCondition: "report",
+				Status:               "pending",
+				CreatedAt:            now,
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %s rejection, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestValidateSubagentTaskRejectsMechanismActors(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	for _, actorID := range []string{"worker", "coder", "subagent"} {
+		t.Run(actorID, func(t *testing.T) {
+			err := ValidateSubagentTask(SubagentTask{
+				TaskID:               validTaskID(),
+				RunID:                validRunID(),
+				ActorID:              actorID,
+				Task:                 "調査",
+				Scope:                []string{"docs/"},
+				TerminationCondition: "report",
+				Status:               "pending",
+				CreatedAt:            now,
+			})
+			if err == nil || !strings.Contains(err.Error(), "actor_id") {
+				t.Fatalf("expected actor_id rejection for %q, got %v", actorID, err)
+			}
+		})
+	}
+}
+
+func TestValidateSubagentTaskRequiresCompletedAtForTerminalStatuses(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			err := ValidateSubagentTask(SubagentTask{
+				TaskID:               validTaskID(),
+				RunID:                validRunID(),
+				ActorID:              "shiro",
+				Task:                 "調査",
+				Scope:                []string{"docs/"},
+				TerminationCondition: "report",
+				Status:               status,
+				CreatedAt:            now,
+			})
+			if err == nil || !strings.Contains(err.Error(), "completed_at") {
+				t.Fatalf("expected completed_at rejection for %q, got %v", status, err)
+			}
+		})
+	}
+
+	if err := ValidateSubagentTask(SubagentTask{
+		TaskID:               validTaskID(),
+		RunID:                validRunID(),
+		ActorID:              "shiro",
+		Task:                 "調査",
+		Scope:                []string{"docs/"},
+		TerminationCondition: "report",
+		Status:               "completed",
+		CreatedAt:            now,
+		CompletedAt:          now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("terminal subagent task with completed_at should validate: %v", err)
+	}
+}
+
 func TestValidateProjectionsRejectInvalidTaskID(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -167,9 +254,9 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			err:  "created_at",
 			run: func() error {
 				return ValidateSubagentTask(SubagentTask{
-					SubagentID:           "sub_1",
-					ParentRunID:          "run_1",
-					AgentType:            "ResearchAgent",
+					TaskID:               validTaskID(),
+					RunID:                validRunID(),
+					ActorID:              "shiro",
 					Task:                 "調査",
 					Scope:                []string{"docs/"},
 					TerminationCondition: "report",
@@ -254,12 +341,12 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		{name: "agent run id", err: ValidateAgentRun(AgentRun{AgentType: "LeadAgent", Status: "running", StartedAt: now}), want: "run_id"},
 		{name: "agent type", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), Status: "running", StartedAt: now}), want: "agent_type"},
 		{name: "agent status", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", StartedAt: now}), want: "status"},
-		{name: "subagent id", err: ValidateSubagentTask(SubagentTask{ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "subagent_id"},
-		{name: "subagent parent", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "parent_run_id"},
-		{name: "subagent agent type", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "agent_type"},
-		{name: "subagent task", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task"},
-		{name: "subagent termination", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, Status: "pending", CreatedAt: now}), want: "termination_condition"},
-		{name: "subagent status", err: ValidateSubagentTask(SubagentTask{SubagentID: "sub_1", ParentRunID: "run_1", AgentType: "ResearchAgent", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", CreatedAt: now}), want: "status"},
+		{name: "subagent task id", err: ValidateSubagentTask(SubagentTask{RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task_id"},
+		{name: "subagent run id", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "run_id"},
+		{name: "subagent actor id", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "actor_id"},
+		{name: "subagent task", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task"},
+		{name: "subagent termination", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, Status: "pending", CreatedAt: now}), want: "termination_condition"},
+		{name: "subagent status", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", CreatedAt: now}), want: "status"},
 		{name: "context id", err: ValidateContextPack(ContextPack{TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", CreatedAt: now}, 0), want: "context_pack_id"},
 		{name: "context run", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), Summary: "summary", CreatedAt: now}, 0), want: "run_id"},
 		{name: "context summary", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), CreatedAt: now}, 0), want: "summary"},

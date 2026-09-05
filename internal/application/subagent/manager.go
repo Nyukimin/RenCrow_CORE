@@ -22,7 +22,11 @@ const defaultSystemPrompt = "You are a helpful assistant. Use the provided tools
 type superAgentContextKey struct{}
 
 type superAgentRuntimeContext struct {
-	ParentRunID          string
+	TaskID               modulecore.TaskID
+	RunID                modulecore.RunID
+	ActorID              string
+	TraceID              modulecore.TraceID
+	CausationEventID     modulecore.EventID
 	Scope                []string
 	Tools                []string
 	TerminationCondition string
@@ -52,10 +56,24 @@ func WithSuperAgentRecorder(recorder SuperAgentRecorder) ManagerOption {
 	}
 }
 
-// WithSuperAgentRuntime は親 Lead Agent run と subagent task の接続情報を context に載せる。
-func WithSuperAgentRuntime(ctx context.Context, parentRunID string, scope []string, tools []string, terminationCondition string) context.Context {
+// WithSuperAgentRuntime は Task owner が発行した実 Agent の Task / Run 接続情報を context に載せる。
+func WithSuperAgentRuntime(
+	ctx context.Context,
+	taskID modulecore.TaskID,
+	runID modulecore.RunID,
+	actorID string,
+	traceID modulecore.TraceID,
+	causationEventID modulecore.EventID,
+	scope []string,
+	tools []string,
+	terminationCondition string,
+) context.Context {
 	return context.WithValue(ctx, superAgentContextKey{}, superAgentRuntimeContext{
-		ParentRunID:          strings.TrimSpace(parentRunID),
+		TaskID:               taskID,
+		RunID:                runID,
+		ActorID:              strings.TrimSpace(actorID),
+		TraceID:              traceID,
+		CausationEventID:     causationEventID,
 		Scope:                cleanStrings(scope),
 		Tools:                cleanStrings(tools),
 		TerminationCondition: strings.TrimSpace(terminationCondition),
@@ -110,7 +128,10 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 		return agent.SubagentResult{}, fmt.Errorf("instruction is required")
 	}
 	log.Printf("[Subagent] start agent=%s instruction_len=%d", task.AgentName, len(task.Instruction))
-	record, recordCtx := m.newSuperAgentExecutionRecord(ctx, task)
+	record, recordCtx, err := m.newSuperAgentExecutionRecord(ctx)
+	if err != nil {
+		return agent.SubagentResult{}, err
+	}
 	if record != nil {
 		if err := m.recordSuperAgentSubagentStarted(ctx, record, recordCtx); err != nil {
 			return agent.SubagentResult{}, err
@@ -197,37 +218,37 @@ func (m *Manager) mergeToolDefs(ctx context.Context) []llm.ToolDefinition {
 }
 
 type superAgentExecutionRecord struct {
-	SubagentID     string
 	StartedAt      time.Time
 	TraceID        modulecore.TraceID
 	StartedEventID modulecore.EventID
 }
 
-func (m *Manager) newSuperAgentExecutionRecord(ctx context.Context, task agent.SubagentTask) (*superAgentExecutionRecord, superAgentRuntimeContext) {
+func (m *Manager) newSuperAgentExecutionRecord(ctx context.Context) (*superAgentExecutionRecord, superAgentRuntimeContext, error) {
 	if m.superAgentRecorder == nil {
-		return nil, superAgentRuntimeContext{}
+		return nil, superAgentRuntimeContext{}, nil
+	}
+	if ctx == nil {
+		return nil, superAgentRuntimeContext{}, fmt.Errorf("superagent runtime context is required when recorder is configured")
 	}
 	runtimeCtx, ok := ctx.Value(superAgentContextKey{}).(superAgentRuntimeContext)
-	if !ok || runtimeCtx.ParentRunID == "" {
-		return nil, superAgentRuntimeContext{}
+	if !ok {
+		return nil, superAgentRuntimeContext{}, fmt.Errorf("superagent runtime context is required when recorder is configured")
+	}
+	if err := validateSuperAgentRuntimeContext(runtimeCtx); err != nil {
+		return nil, superAgentRuntimeContext{}, err
 	}
 	startedAt := time.Now().UTC()
-	agentName := sanitizeIDPart(task.AgentName)
-	if agentName == "" {
-		agentName = "worker"
-	}
 	return &superAgentExecutionRecord{
-		SubagentID: fmt.Sprintf("sub_%s_%d", agentName, startedAt.UnixNano()),
-		StartedAt:  startedAt,
-		TraceID:    modulecore.NewTraceID(),
-	}, runtimeCtx
+		StartedAt: startedAt,
+		TraceID:   runtimeCtx.TraceID,
+	}, runtimeCtx, nil
 }
 
 func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record *superAgentExecutionRecord, runtimeCtx superAgentRuntimeContext) error {
 	item := domainsuperagent.SubagentTask{
-		SubagentID:           record.SubagentID,
-		ParentRunID:          runtimeCtx.ParentRunID,
-		AgentType:            "Subagent",
+		TaskID:               runtimeCtx.TaskID,
+		RunID:                runtimeCtx.RunID,
+		ActorID:              runtimeCtx.ActorID,
 		Task:                 "runtime delegated subagent task",
 		Scope:                fallbackStrings(runtimeCtx.Scope, []string{"runtime:subagent"}),
 		Tools:                runtimeCtx.Tools,
@@ -238,10 +259,13 @@ func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record *s
 	if err := m.superAgentRecorder.SaveSubagentTask(ctx, item); err != nil {
 		return fmt.Errorf("failed to record superagent subagent start: %w", err)
 	}
-	event := modulecore.NewEventEnvelope(record.TraceID, "", nil, "superagent", "subagent.started", record.StartedAt, map[string]any{
-		"task_reference": record.SubagentID, "run_reference": runtimeCtx.ParentRunID,
-		"actor_label": "Subagent", "status": "running", "summary": "runtime delegated subagent task",
+	event := modulecore.NewEventEnvelope(record.TraceID, runtimeCtx.CausationEventID, nil, "superagent", "subagent.started", record.StartedAt, map[string]any{
+		"status": "running", "summary": "runtime delegated subagent task",
 	})
+	event.TaskID = runtimeCtx.TaskID
+	event.RunID = runtimeCtx.RunID
+	event.ActorKind = "agent"
+	event.ActorID = runtimeCtx.ActorID
 	record.StartedEventID = event.EventID
 	if err := m.superAgentRecorder.Append(ctx, event); err != nil {
 		return fmt.Errorf("failed to record superagent subagent start trace: %w", err)
@@ -252,9 +276,9 @@ func (m *Manager) recordSuperAgentSubagentStarted(ctx context.Context, record *s
 func (m *Manager) recordSuperAgentSubagentFinished(ctx context.Context, record superAgentExecutionRecord, runtimeCtx superAgentRuntimeContext, status string, summary string) error {
 	completedAt := time.Now().UTC()
 	item := domainsuperagent.SubagentTask{
-		SubagentID:           record.SubagentID,
-		ParentRunID:          runtimeCtx.ParentRunID,
-		AgentType:            "Subagent",
+		TaskID:               runtimeCtx.TaskID,
+		RunID:                runtimeCtx.RunID,
+		ActorID:              runtimeCtx.ActorID,
 		Task:                 "runtime delegated subagent task",
 		Scope:                fallbackStrings(runtimeCtx.Scope, []string{"runtime:subagent"}),
 		Tools:                runtimeCtx.Tools,
@@ -267,9 +291,12 @@ func (m *Manager) recordSuperAgentSubagentFinished(ctx context.Context, record s
 		return fmt.Errorf("failed to record superagent subagent %s: %w", status, err)
 	}
 	event := modulecore.NewEventEnvelope(record.TraceID, record.StartedEventID, nil, "superagent", "subagent."+status, completedAt, map[string]any{
-		"task_reference": record.SubagentID, "run_reference": runtimeCtx.ParentRunID,
-		"actor_label": "Subagent", "status": status, "summary": summary,
+		"status": status, "summary": summary,
 	})
+	event.TaskID = runtimeCtx.TaskID
+	event.RunID = runtimeCtx.RunID
+	event.ActorKind = "agent"
+	event.ActorID = runtimeCtx.ActorID
 	if err := m.superAgentRecorder.Append(ctx, event); err != nil {
 		return fmt.Errorf("failed to record superagent subagent %s trace: %w", status, err)
 	}
@@ -301,17 +328,23 @@ func fallbackString(value string, fallback string) string {
 	return fallback
 }
 
-func sanitizeIDPart(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	var b strings.Builder
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-			continue
-		}
-		if r == '_' || r == '-' {
-			b.WriteRune('_')
-		}
+func validateSuperAgentRuntimeContext(runtimeCtx superAgentRuntimeContext) error {
+	if err := runtimeCtx.TaskID.Validate(); err != nil {
+		return fmt.Errorf("superagent task identity is invalid: %w", err)
 	}
-	return strings.Trim(b.String(), "_")
+	if err := runtimeCtx.RunID.Validate(); err != nil {
+		return fmt.Errorf("superagent run identity is invalid: %w", err)
+	}
+	switch runtimeCtx.ActorID {
+	case "mio", "shiro", "midori", "kuro":
+	default:
+		return fmt.Errorf("superagent actor identity is invalid: %q", runtimeCtx.ActorID)
+	}
+	if err := runtimeCtx.TraceID.Validate(); err != nil {
+		return fmt.Errorf("superagent trace identity is invalid: %w", err)
+	}
+	if err := runtimeCtx.CausationEventID.Validate(); err != nil {
+		return fmt.Errorf("superagent causation event identity is invalid: %w", err)
+	}
+	return nil
 }
