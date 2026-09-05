@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +144,90 @@ func TestTaskLifecycleMioUsesRootAndStartsOnce(t *testing.T) {
 	}
 	if _, ok := lifecycle.rootContexts[root.TaskID]; ok {
 		t.Fatalf("root context was not released after success")
+	}
+}
+
+func TestTaskLifecycleReturnsDistinctActiveRunsForRootAndChild(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	rootID := modulecore.NewTaskID()
+	root, err := lifecycle.createRoot(ctx, ProcessMessageRequest{RootTaskID: string(rootID), UserMessage: "run root and child"})
+	if err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	childID, err := lifecycle.createExecutionChild(ctx, root.TaskID, routing.RouteOPS, modulecore.NewEventID(), "shiro")
+	if err != nil {
+		t.Fatalf("createExecutionChild: %v", err)
+	}
+	if err := lifecycle.recordAssignmentAndStart(ctx, root.TaskID, root.TaskID, "mio", modulecore.NewEventID()); err != nil {
+		t.Fatalf("start root: %v", err)
+	}
+	if err := lifecycle.recordChildAssignmentAndStart(ctx, childID, "shiro", modulecore.NewEventID()); err != nil {
+		t.Fatalf("start child: %v", err)
+	}
+
+	rootRun, err := lifecycle.activeRunForTask(ctx, rootID)
+	if err != nil {
+		t.Fatalf("active root run: %v", err)
+	}
+	childRun, err := lifecycle.activeRunForTask(ctx, childID)
+	if err != nil {
+		t.Fatalf("active child run: %v", err)
+	}
+	if rootRun.RunID == childRun.RunID || rootRun.TaskID != rootID || childRun.TaskID != childID {
+		t.Fatalf("root/child runs = %#v / %#v", rootRun, childRun)
+	}
+	if rootRun.Status != domaintask.RunStatusRunning || childRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("root/child statuses = %s / %s", rootRun.Status, childRun.Status)
+	}
+}
+
+func TestTaskLifecycleActiveRunFailsClosedForMissingMultipleAndWrongRuns(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	if _, err := lifecycle.createRoot(ctx, ProcessMessageRequest{RootTaskID: string(taskID), UserMessage: "run query"}); err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	valid := lifecycleTestRun(taskID, "mio", time.Date(2026, 9, 5, 1, 0, 0, 0, time.UTC))
+	tests := []struct {
+		name string
+		runs []domaintask.Run
+	}{
+		{name: "missing"},
+		{name: "multiple", runs: []domaintask.Run{valid, lifecycleTestRun(taskID, "mio", valid.StartedAt.Add(time.Second))}},
+		{name: "wrong ownership", runs: []domaintask.Run{lifecycleTestRun(modulecore.NewTaskID(), "mio", valid.StartedAt)}},
+		{name: "wrong status", runs: []domaintask.Run{func() domaintask.Run {
+			closed := valid
+			completedAt := valid.StartedAt.Add(time.Minute)
+			closed.Status = domaintask.RunStatusSucceeded
+			closed.CompletedAt = &completedAt
+			return closed
+		}()}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			manager.runs = make(map[modulecore.RunID]domaintask.Run, len(test.runs))
+			for _, run := range test.runs {
+				manager.runs[run.RunID] = run
+			}
+			if _, err := lifecycle.activeRunForTask(ctx, taskID); err == nil {
+				t.Fatal("invalid active run set was accepted")
+			}
+		})
+	}
+}
+
+func lifecycleTestRun(taskID modulecore.TaskID, assignee string, startedAt time.Time) domaintask.Run {
+	return domaintask.Run{
+		RunID:       modulecore.NewRunID(),
+		TaskID:      taskID,
+		StartReason: domaintask.RunStartReasonFirst,
+		Assignee:    assignee,
+		Status:      domaintask.RunStatusRunning,
+		StartedAt:   startedAt,
 	}
 }
 
@@ -334,6 +419,7 @@ func equalStrings(got, want []string) bool {
 type recordingTaskLifecycleManager struct {
 	tasks     map[modulecore.TaskID]domaintask.Task
 	contexts  map[modulecore.TaskID]domaintask.SharedRoleContext
+	runs      map[modulecore.RunID]domaintask.Run
 	calls     []string
 	callIDs   []string
 	finishErr error
@@ -343,6 +429,7 @@ func newRecordingTaskLifecycleManager() *recordingTaskLifecycleManager {
 	return &recordingTaskLifecycleManager{
 		tasks:    make(map[modulecore.TaskID]domaintask.Task),
 		contexts: make(map[modulecore.TaskID]domaintask.SharedRoleContext),
+		runs:     make(map[modulecore.RunID]domaintask.Run),
 	}
 }
 
@@ -372,6 +459,32 @@ func (m *recordingTaskLifecycleManager) Start(_ context.Context, taskID moduleco
 	}
 	task.Status = domaintask.StatusRunning
 	m.tasks[taskID] = task
+	if m.runs == nil {
+		m.runs = make(map[modulecore.RunID]domaintask.Run)
+	}
+	startedAt := task.UpdatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	}
+	for runID, run := range m.runs {
+		if run.TaskID != taskID || run.Status != domaintask.RunStatusRunning {
+			continue
+		}
+		completedAt := startedAt
+		run.Status = domaintask.RunStatusInterrupted
+		run.CompletedAt = &completedAt
+		m.runs[runID] = run
+	}
+	reason := domaintask.RunStartReasonFirst
+	for _, run := range m.runs {
+		if run.TaskID == taskID {
+			reason = domaintask.RunStartReasonExplicitRerun
+			break
+		}
+	}
+	run := lifecycleTestRun(taskID, task.Assignee, startedAt)
+	run.StartReason = reason
+	m.runs[run.RunID] = run
 	return task, nil
 }
 
@@ -401,7 +514,55 @@ func (m *recordingTaskLifecycleManager) finish(taskID modulecore.TaskID, status 
 	task.Status = status
 	task.Summary = summary
 	m.tasks[taskID] = task
+	if m.runs != nil {
+		runStatus := domaintask.RunStatusSucceeded
+		if status == domaintask.StatusFailed {
+			runStatus = domaintask.RunStatusFailed
+		}
+		completedAt := task.UpdatedAt
+		for runID, run := range m.runs {
+			if run.TaskID != taskID || run.Status != domaintask.RunStatusRunning {
+				continue
+			}
+			closed, err := run.Close(runStatus, completedAt, summary)
+			if err != nil {
+				return domaintask.Task{}, err
+			}
+			m.runs[runID] = closed
+		}
+	}
 	return task, nil
+}
+
+func (m *recordingTaskLifecycleManager) ListRuns(_ context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	if filter.TaskID != "" {
+		if err := filter.TaskID.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	if filter.Status != "" && !domaintask.ValidRunStatus(filter.Status) {
+		return nil, fmt.Errorf("invalid run status: %s", filter.Status)
+	}
+	items := make([]domaintask.Run, 0, len(m.runs))
+	for _, run := range m.runs {
+		if filter.TaskID != "" && run.TaskID != filter.TaskID {
+			continue
+		}
+		if filter.Status != "" && run.Status != filter.Status {
+			continue
+		}
+		items = append(items, run)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].StartedAt.Equal(items[j].StartedAt) {
+			return string(items[i].RunID) < string(items[j].RunID)
+		}
+		return items[i].StartedAt.Before(items[j].StartedAt)
+	})
+	if filter.Limit > 0 && len(items) > filter.Limit {
+		items = items[:filter.Limit]
+	}
+	return items, nil
 }
 
 func (m *recordingTaskLifecycleManager) RecordRouting(_ context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {

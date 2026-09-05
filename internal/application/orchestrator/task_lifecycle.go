@@ -26,6 +26,7 @@ const (
 type TaskLifecycleManager interface {
 	Create(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, error)
 	Start(context.Context, modulecore.TaskID) (domaintask.Task, error)
+	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
 	RecordRouting(context.Context, modulecore.TaskID, domaintask.Route, modulecore.EventID) (domaintask.Task, error)
@@ -156,6 +157,36 @@ func newTaskLifecycle(manager TaskLifecycleManager) *taskLifecycle {
 		manager:      manager,
 		rootContexts: make(map[modulecore.TaskID]domaintask.SharedRoleContext),
 	}
+}
+
+// activeRunForTask returns the one canonical active Run for a started Task.
+// The lifecycle boundary validates the returned identity instead of trusting a
+// store implementation's filter to enforce ownership.
+func (l *taskLifecycle) activeRunForTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Run, error) {
+	if l == nil || l.manager == nil {
+		return domaintask.Run{}, fmt.Errorf("task lifecycle manager is unavailable")
+	}
+	if err := taskID.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("task ID is invalid: %w", err)
+	}
+	runs, err := l.manager.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID, Status: domaintask.RunStatusRunning})
+	if err != nil {
+		return domaintask.Run{}, fmt.Errorf("list active task runs: %w", err)
+	}
+	if len(runs) != 1 {
+		return domaintask.Run{}, fmt.Errorf("task %s must have exactly one active run, got %d", taskID, len(runs))
+	}
+	run := runs[0]
+	if err := run.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("active run is invalid: %w", err)
+	}
+	if run.TaskID != taskID {
+		return domaintask.Run{}, fmt.Errorf("active run %s belongs to task %s, want %s", run.RunID, run.TaskID, taskID)
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		return domaintask.Run{}, fmt.Errorf("run %s is not active: %s", run.RunID, run.Status)
+	}
+	return run, nil
 }
 
 func (l *taskLifecycle) createRoot(ctx context.Context, req ProcessMessageRequest) (domaintask.Task, error) {
