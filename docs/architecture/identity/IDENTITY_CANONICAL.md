@@ -1813,6 +1813,55 @@ Test:
 
 - User入力Value Objectを`Task`と呼ぶコードzero
 
+#### Step 07配備契約
+
+- `conversation.TurnInput`は`RootTaskID`、`TurnID`、`TraceID`、User／Agentの
+  `MessageID`、`messageText`、`ChannelAddress`、`SessionID`、Attachment、Viewer recipient、
+  forced／selected routeを持つ。`JobID`や`ChatID`を保持・復元・派生しない。
+- 5つのCanonical IDはingressで一度だけ付与し、通常のimmutable modifierでは
+  差し替えない。既存の正規投影はvalidation付き`ReconstructTurnInput`だけで復元する。
+- Session repositoryはStep 04で分離したparent `ChannelAddress`を維持し、historyは
+  `TurnInput`を保存する。旧`channel`／`chat_id`と旧`ChannelAddress` JSON投影の
+  読取compatibilityを通常runtimeに残さない。
+- production migrationはwriter停止後のSession directoryをsourceとし、`ses_*.json`の
+  historyだけを変換する。同じdirectoryの非Session regular fileは全てbytesとpermissionを
+  維持し、symlink、nested entry、partial／mixed schemaはfail closedにする。
+- 旧`job_id`から既存会話identityを再利用するのは、read-only Event Storeから一意な
+  `TraceID`へ結び、そのTraceの一意なconversation receiptとUser／Agent eventが
+  `SessionID`、`ChannelAddress`、本文、route、両`MessageID`についてexact matchする場合だけとする。
+  receiptがないrowは`NewMigrationID(target type, "session_history", "job_id", legacy job_id)`で
+  5 IDを決定的に生成し、矛盾するreceipt、複数Trace、ID衝突は拒否する。
+- dry-runはsource、関連Event／receipt evidence、mapping、outputをhash-boundし、applyは
+  そのreceiptとexact matchするfresh directoryだけへmaterializeする。Event Storeとconversation DBは
+  `mode=ro` / `query_only`で開き、receiptへ本文、path、個別IDを公開しない。
+- 配備後はsource、installed binary、service PID、listener／readiness、実ActorのText応答、
+  保存・再loadした5 IDと`ChannelAddress`を一つの証拠鏖で照合する。VoiceはStep 07で
+  `TurnInput`表現とidentity伝播を検証し、全ConversationTurn永続routeはStep 17で閉じる。
+
+#### Step 07 Failure Knowledge: Session JSONだけをdirectory全体と誤認した
+
+- **Failure:** Session directoryのJSON件数をSession件数とみなし、同居するIdleChat等の
+  非Session資産をcandidateに含めない計画を作った。
+- **Problem:** directory swap後にSessionは読めても、別ownerの稼働データが消失する。
+- **Cause:** filename／schemaによるSession分類と、cutover単位としてのdirectory inventoryを
+  別々に固定しなかった。
+- **Lesson:** 変換対象とswap対象は同じとは限らない。owner schemaで対象を分類し、
+  containerの全entryにpreserve／transform／rejectのどれかを割り当てる。
+- **Invariant:** fresh outputはsourceの全regular fileを一度だけ持ち、Session以外は
+  bytes／permissionが一致し、対応不明entryがzeroのときだけcutover可能である。
+- **Enforcement:** sorted inventory、strict Session filename／schema、stream copy、source／output hash、
+  fresh-output guard、owner repository reloadで機械的に強制する。
+- **Tests:** non-Session JSON／JSONL／backupのexact copy、permission、symlink／nested entry拒否、
+  source drift、history順序、canonical reloadを検査する。
+
+Gate 7:
+
+- production cutoverとactual Agent Text receiptが成功した後、`rencrow-turn-input-migrate`と
+  `turninputmigration`のone-shot sourceをproduction source treeから削除する。
+- rollbackに必要な実行済みbinaryとdry-run／apply receiptは、cutover時にhash-boundされた
+  recovery artifactとして保持する。runtime dual read／dual writeは追加しない。
+- architecture testは両source pathの不存在を検査し、one-shot migrationの再混入を拒否する。
+
 ---
 
 ### Step 08: JobをTaskへ完全置換
