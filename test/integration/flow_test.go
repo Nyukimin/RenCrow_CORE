@@ -13,7 +13,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -116,7 +115,7 @@ func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logic
 
 type mockClassifier struct{}
 
-func (m *mockClassifier) Classify(ctx context.Context, t task.Task) (routing.Decision, error) {
+func (m *mockClassifier) Classify(ctx context.Context, input conversation.TurnInput) (routing.Decision, error) {
 	return routing.NewDecision(routing.RouteCHAT, 0.8, "mock classifier"), nil
 }
 
