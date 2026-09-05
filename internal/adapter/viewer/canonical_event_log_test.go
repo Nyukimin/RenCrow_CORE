@@ -64,6 +64,7 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 	turnID := modulecore.NewTurnID()
 	traceID := modulecore.NewTraceID()
 	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	event := orchestrator.OrchestratorEvent{
 		EventID:    modulecore.NewEventID(),
 		Type:       "agent.response",
@@ -78,6 +79,9 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 		Strategy:   "direct",
 		Route:      "CHAT",
 		TaskID:     taskID,
+		RunID:      runID,
+		ActorKind:  "agent",
+		ActorID:    "mio",
 		TraceID:    traceID,
 		SessionID:  sessionID,
 		ThreadID:   threadID,
@@ -118,8 +122,8 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 	if canonical.SessionID != sessionID {
 		t.Fatalf("session_id = %q, want %q", canonical.SessionID, sessionID)
 	}
-	if canonical.TurnID != turnID || canonical.ThreadID != threadID || canonical.TaskID != taskID {
-		t.Fatalf("authoritative identities = turn=%q thread=%q task=%q, want turn=%q thread=%q task=%q", canonical.TurnID, canonical.ThreadID, canonical.TaskID, turnID, threadID, taskID)
+	if canonical.TurnID != turnID || canonical.ThreadID != threadID || canonical.TaskID != taskID || canonical.RunID != runID || canonical.ActorKind != "agent" || canonical.ActorID != "mio" {
+		t.Fatalf("authoritative identities = turn=%q thread=%q task=%q run=%q actor=%s/%s, want turn=%q thread=%q task=%q run=%q actor=agent/mio", canonical.TurnID, canonical.ThreadID, canonical.TaskID, canonical.RunID, canonical.ActorKind, canonical.ActorID, turnID, threadID, taskID, runID)
 	}
 	wantOccurredAt, _ := time.Parse(time.RFC3339Nano, event.Timestamp)
 	if !canonical.OccurredAt.Equal(wantOccurredAt.UTC()) {
@@ -195,6 +199,41 @@ func TestCanonicalEventLogQueryFiltersNewestFirstAndHonorsLimit(t *testing.T) {
 	}
 }
 
+func TestCanonicalEventLogProjectionUsesTopLevelExecutionIdentity(t *testing.T) {
+	store := &canonicalEventLogStoreStub{}
+	log, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	event := orchestrator.OrchestratorEvent{
+		EventID:   modulecore.NewEventID(),
+		Type:      "agent.response",
+		From:      "mio",
+		Content:   "authoritative top-level identity",
+		TaskID:    taskID,
+		RunID:     runID,
+		ActorKind: "agent",
+		ActorID:   "mio",
+		Timestamp: "2026-08-29T12:00:00Z",
+	}
+	if err := log.Append(event); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+	store.events[0].Payload["task_id"] = modulecore.NewTaskID().String()
+	store.events[0].Payload["run_id"] = string(modulecore.NewRunID())
+	store.events[0].Payload["actor_kind"] = "agent"
+	store.events[0].Payload["actor_id"] = "shiro"
+	items, err := log.Query(context.Background(), LogFilter{Limit: 1})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
+	if len(items) != 1 || items[0].TaskID != taskID || items[0].RunID != runID || items[0].ActorKind != "agent" || items[0].ActorID != "mio" {
+		t.Fatalf("projection = %#v, want top-level task/run/actor identity", items)
+	}
+}
+
 func TestCanonicalEventLogRejectsMalformedTypedIDs(t *testing.T) {
 	store := &canonicalEventLogStoreStub{}
 	log, err := NewCanonicalEventLog(store)
@@ -222,6 +261,44 @@ func TestCanonicalEventLogRejectsMalformedTypedIDs(t *testing.T) {
 			name: "cross typed session identity",
 			mutate: func(event *orchestrator.OrchestratorEvent) {
 				event.SessionID = modulecore.SessionID(modulecore.NewTaskID())
+			},
+		},
+		{
+			name: "run without task identity",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.RunID = modulecore.NewRunID()
+			},
+		},
+		{
+			name: "run without actual actor",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.TaskID = modulecore.NewTaskID()
+				event.RunID = modulecore.NewRunID()
+			},
+		},
+		{
+			name: "half actor pair",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.TaskID = modulecore.NewTaskID()
+				event.ActorKind = "agent"
+			},
+		},
+		{
+			name: "noncanonical execution actor",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.TaskID = modulecore.NewTaskID()
+				event.RunID = modulecore.NewRunID()
+				event.ActorKind = "agent"
+				event.ActorID = "coder"
+			},
+		},
+		{
+			name: "invalid run identity",
+			mutate: func(event *orchestrator.OrchestratorEvent) {
+				event.TaskID = modulecore.NewTaskID()
+				event.RunID = modulecore.RunID("not-a-run")
+				event.ActorKind = "agent"
+				event.ActorID = "mio"
 			},
 		},
 	}

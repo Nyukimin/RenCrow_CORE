@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,129 @@ type eventPublicationFailure struct {
 type eventPublicationFailureTracker struct {
 	mu     sync.Mutex
 	active map[modulecore.TraceID]eventPublicationFailure
+}
+
+const canonicalExecutionActorKind = "agent"
+
+// eventExecutionIdentity is the task-scoped identity that may be attached to
+// an orchestrator event only after the Task owner has issued the exact Run.
+// It is deliberately separate from the event payload so the top-level fields
+// remain the canonical projection boundary.
+type eventExecutionIdentity struct {
+	TaskID    modulecore.TaskID
+	RunID     modulecore.RunID
+	ActorKind string
+	ActorID   string
+}
+
+type eventExecutionIdentityBindings struct {
+	mu     sync.RWMutex
+	byTask map[modulecore.TaskID]eventExecutionIdentity
+}
+
+func newEventExecutionIdentityBindings() *eventExecutionIdentityBindings {
+	return &eventExecutionIdentityBindings{byTask: make(map[modulecore.TaskID]eventExecutionIdentity)}
+}
+
+// Bind records the exact execution identity for one Task. Rebinding with the
+// same identity is idempotent; a different identity is a conflict and cannot
+// silently replace the owner-issued Run.
+func (b *eventExecutionIdentityBindings) Bind(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error {
+	identity := eventExecutionIdentity{
+		TaskID:    taskID,
+		RunID:     runID,
+		ActorKind: actorKind,
+		ActorID:   actorID,
+	}
+	if err := validateEventExecutionIdentity(identity); err != nil {
+		return err
+	}
+	if b == nil {
+		return fmt.Errorf("execution identity bindings are unavailable")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.byTask == nil {
+		b.byTask = make(map[modulecore.TaskID]eventExecutionIdentity)
+	}
+	if existing, ok := b.byTask[taskID]; ok {
+		if existing != identity {
+			return fmt.Errorf("execution identity conflict for task %s: existing run=%s actor=%s/%s, requested run=%s actor=%s/%s", taskID, existing.RunID, existing.ActorKind, existing.ActorID, runID, identity.ActorKind, identity.ActorID)
+		}
+		return nil
+	}
+	b.byTask[taskID] = identity
+	return nil
+}
+
+// Resolve returns only an explicitly bound identity. It never derives a RunID
+// or actor from a Task, trace, route, payload, model, or provider.
+func (b *eventExecutionIdentityBindings) Resolve(taskID modulecore.TaskID) (eventExecutionIdentity, bool) {
+	if b == nil || taskID.Validate() != nil {
+		return eventExecutionIdentity{}, false
+	}
+	b.mu.RLock()
+	identity, ok := b.byTask[taskID]
+	b.mu.RUnlock()
+	return identity, ok
+}
+
+// Release removes the binding for exactly the supplied typed TaskID.
+func (b *eventExecutionIdentityBindings) Release(taskID modulecore.TaskID) {
+	if b == nil || taskID.Validate() != nil {
+		return
+	}
+	b.mu.Lock()
+	delete(b.byTask, taskID)
+	b.mu.Unlock()
+}
+
+func validateEventExecutionIdentity(identity eventExecutionIdentity) error {
+	if err := identity.TaskID.Validate(); err != nil {
+		return fmt.Errorf("execution task_id is invalid: %w", err)
+	}
+	if err := identity.RunID.Validate(); err != nil {
+		return fmt.Errorf("execution run_id is invalid: %w", err)
+	}
+	if identity.ActorKind != canonicalExecutionActorKind {
+		return fmt.Errorf("execution actor_kind must be %q", canonicalExecutionActorKind)
+	}
+	actorID, err := canonicalCoreActor(identity.ActorID)
+	if err != nil {
+		return fmt.Errorf("execution actor_id is invalid: %w", err)
+	}
+	if identity.ActorID != actorID {
+		return fmt.Errorf("execution actor_id must be canonical: %q", identity.ActorID)
+	}
+	return nil
+}
+
+// ValidateOrchestratorEventExecutionIdentity validates the optional
+// task-scoped execution identity carried by an OrchestratorEvent. Task-only
+// events are valid before Run issuance; a Run or actor claim is all-or-none.
+func ValidateOrchestratorEventExecutionIdentity(event OrchestratorEvent) error {
+	runSet := event.RunID != ""
+	actorKindSet := strings.TrimSpace(event.ActorKind) != ""
+	actorIDSet := strings.TrimSpace(event.ActorID) != ""
+	if actorKindSet != actorIDSet {
+		return fmt.Errorf("execution actor_kind and actor_id must be set together")
+	}
+	if !runSet {
+		if actorKindSet || actorIDSet {
+			return fmt.Errorf("execution actor identity requires run_id")
+		}
+		return nil
+	}
+	if event.TaskID == "" {
+		return fmt.Errorf("execution run_id requires task_id")
+	}
+	identity := eventExecutionIdentity{
+		TaskID:    event.TaskID,
+		RunID:     event.RunID,
+		ActorKind: event.ActorKind,
+		ActorID:   event.ActorID,
+	}
+	return validateEventExecutionIdentity(identity)
 }
 
 func newEventPublicationFailureTracker() *eventPublicationFailureTracker {
@@ -124,6 +248,9 @@ type OrchestratorEvent struct {
 	Strategy           string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
 	Route              string                `json:"route,omitempty"`       // routing category
 	TaskID             modulecore.TaskID     `json:"task_id,omitempty"`     // durable root or child execution task
+	RunID              modulecore.RunID      `json:"run_id,omitempty"`      // owner-issued execution Run; absent before Run issuance
+	ActorKind          string                `json:"actor_kind,omitempty"`  // canonical execution actor kind
+	ActorID            string                `json:"actor_id,omitempty"`    // actual CORE Agent identity
 	TraceID            modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
 	CausationEventID   modulecore.EventID    `json:"causation_event_id,omitempty"`
 	DependencyEventIDs []modulecore.EventID  `json:"dependency_event_ids,omitempty"`

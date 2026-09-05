@@ -280,7 +280,7 @@ func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOw
 		}
 		runIdentity := modulecore.RunID(runID)
 		if err := runIdentity.Validate(); err != nil {
-			http.Error(w, "run_id is invalid: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid run_id: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 		runs, err := store.ListAgentRuns(r.Context(), 500)

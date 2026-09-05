@@ -98,6 +98,66 @@ func TestTaskLifecycleStartsRepairWithExactRunAndActualShiroOwner(t *testing.T) 
 	}
 }
 
+func TestProcessRepairBindsDispatchAndOutcomeEventsToExactShiroRun(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		wantEvent string
+		fail      bool
+	}{
+		{name: "completed", wantEvent: "repair.completed"},
+		{name: "failed", wantEvent: "repair.failed", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			listener := &phase11RecordingEventListener{}
+			events := newMessageEventPort(listener)
+			manager := newRecordingTaskLifecycleManager()
+			req := repairProcessTestRequest()
+			response, err := processRepair(
+				context.Background(), req, routing.RouteCODE2, newTaskLifecycle(manager), events, events.publicationFail,
+				func(context.Context, conversation.TurnInput, routing.Route, modulecore.TaskID, modulecore.RunID) (string, error) {
+					if tc.fail {
+						return "", errors.New("repair execution failed")
+					}
+					return "repair response", nil
+				},
+			)
+			if tc.fail {
+				if err == nil || response.Response != "" {
+					t.Fatalf("failed repair response=%#v error=%v", response, err)
+				}
+			} else if err != nil {
+				t.Fatalf("successful processRepair() error = %v", err)
+			}
+			runs, listErr := manager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: req.TaskID})
+			if listErr != nil || len(runs) != 1 {
+				t.Fatalf("repair runs = %#v error=%v", runs, listErr)
+			}
+			if len(listener.events) < 4 {
+				t.Fatalf("repair events = %#v", listener.events)
+			}
+			for _, event := range listener.events {
+				switch event.Type {
+				case "routing.decision", "agent.assignment":
+					if event.RunID != "" || event.ActorKind != "" || event.ActorID != "" {
+						t.Fatalf("pre-Run repair event claimed execution identity: %#v", event)
+					}
+				case "repair.dispatch", tc.wantEvent:
+					if event.TaskID != req.TaskID || event.RunID != runs[0].RunID || event.ActorKind != canonicalExecutionActorKind || event.ActorID != taskLifecycleShiro {
+						t.Fatalf("repair event identity = %#v, want task=%s run=%s actor=agent/%s", event, req.TaskID, runs[0].RunID, taskLifecycleShiro)
+					}
+				}
+			}
+			_, publishErr := events.Publish("repair.after", "repair", "shiro", "after", routing.RouteCODE2.String(), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil)
+			if publishErr != nil {
+				t.Fatalf("post-process event publication error = %v", publishErr)
+			}
+			if got := listener.events[len(listener.events)-1]; got.RunID != "" || got.ActorKind != "" || got.ActorID != "" {
+				t.Fatalf("released repair identity was reused: %#v", got)
+			}
+		})
+	}
+}
+
 type cancelAwareRepairTaskLifecycleManager struct {
 	*recordingTaskLifecycleManager
 }

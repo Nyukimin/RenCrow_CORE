@@ -187,6 +187,10 @@ func processRepair(
 		return ProcessRepairResponse{}, err
 	}
 	runStarted = true
+	if err := events.BindExecutionIdentity(req.TaskID, run.RunID, canonicalExecutionActorKind, taskLifecycleShiro); err != nil {
+		return ProcessRepairResponse{}, fmt.Errorf("bind repair execution identity: %w", err)
+	}
+	defer events.ReleaseExecutionIdentity(req.TaskID)
 	startedAt := time.Now()
 	if _, err := events.Publish(
 		"repair.dispatch", "repair", "shiro", "dispatch repair Task to Coder via "+route.String(), route.String(), req.TaskID.String(), req.SessionID, "viewer", "repair", "", nil,

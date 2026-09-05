@@ -55,6 +55,8 @@ type taskLifecycleEventPort interface {
 	Publish(eventType, from, to, content, route, taskID, sessionID, channel, chatID string, causationEventID modulecore.EventID, dependencyEventIDs []modulecore.EventID) (OrchestratorEvent, error)
 	BindTrace(taskID string, traceID modulecore.TraceID)
 	ReleaseTrace(taskID string)
+	BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error
+	ReleaseExecutionIdentity(taskID modulecore.TaskID)
 	BindResponseMessageID(taskID string, messageID modulecore.MessageID)
 	ReleaseResponseMessageID(taskID string)
 }
@@ -162,6 +164,9 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 		if _, err := a.lifecycle.manager.RecordAssignment(ctx, a.rootTaskID, actor, assignmentEvent.EventID); err != nil {
 			return a.rootTaskID, fmt.Errorf("record attached task assignment: %w", err)
 		}
+		if err := a.bindExecutionIdentity(ctx, a.rootTaskID, actor); err != nil {
+			return a.rootTaskID, err
+		}
 		a.actorTasks[actor] = a.rootTaskID
 		return a.rootTaskID, nil
 	}
@@ -201,8 +206,60 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	if err != nil {
 		return taskID, err
 	}
+	if err := a.bindExecutionIdentity(ctx, taskID, actor); err != nil {
+		return taskID, err
+	}
 	a.actorTasks[actor] = taskID
 	return taskID, nil
+}
+
+func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, taskID modulecore.TaskID, actor string) error {
+	if a == nil || a.lifecycle == nil {
+		return nil
+	}
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("execution task ID is invalid: %w", err)
+	}
+	canonicalActor, err := canonicalCoreActor(actor)
+	if err != nil {
+		return err
+	}
+	task, err := a.lifecycle.manager.Get(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("resolve execution task %s: %w", taskID, err)
+	}
+	if task.TaskID != taskID {
+		return fmt.Errorf("execution task identity mismatch: got %s want %s", task.TaskID, taskID)
+	}
+	taskActor, err := canonicalCoreActor(task.Assignee)
+	if err != nil {
+		return fmt.Errorf("execution task %s assignee is invalid: %w", taskID, err)
+	}
+	if taskActor != canonicalActor {
+		return fmt.Errorf("execution task %s assignee mismatch: saved=%s want=%s", taskID, taskActor, canonicalActor)
+	}
+	run, err := a.lifecycle.activeRunForTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("resolve execution Run for task %s: %w", taskID, err)
+	}
+	if run.TaskID != taskID {
+		return fmt.Errorf("execution Run %s belongs to task %s, want %s", run.RunID, run.TaskID, taskID)
+	}
+	runActor, err := canonicalCoreActor(run.Assignee)
+	if err != nil {
+		return fmt.Errorf("execution Run %s assignee is invalid: %w", run.RunID, err)
+	}
+	if runActor != canonicalActor {
+		return fmt.Errorf("execution Run %s assignee mismatch: run=%s want=%s", run.RunID, runActor, canonicalActor)
+	}
+	if err := a.events.BindExecutionIdentity(taskID, run.RunID, canonicalExecutionActorKind, canonicalActor); err != nil {
+		return fmt.Errorf("bind execution identity for task %s: %w", taskID, err)
+	}
+	boundTaskID := taskID
+	a.cleanups = append(a.cleanups, func() {
+		a.events.ReleaseExecutionIdentity(boundTaskID)
+	})
+	return nil
 }
 
 func newTaskLifecycle(manager TaskLifecycleManager) *taskLifecycle {

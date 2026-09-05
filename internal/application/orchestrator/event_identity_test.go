@@ -67,3 +67,78 @@ func TestOrchestratorEventReferencesRoutingCause(t *testing.T) {
 		t.Fatalf("assignment event does not reference routing event: %#v", assignmentEvent)
 	}
 }
+
+func TestEventExecutionIdentityBindingIsExactIdempotentAndConflictSafe(t *testing.T) {
+	binding := newEventExecutionIdentityBindings()
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	if _, ok := binding.Resolve(taskID); ok {
+		t.Fatal("unbound task unexpectedly resolved an execution identity")
+	}
+	if err := binding.Bind(taskID, runID, canonicalExecutionActorKind, "shiro"); err != nil {
+		t.Fatalf("Bind() error = %v", err)
+	}
+	if err := binding.Bind(taskID, runID, canonicalExecutionActorKind, "shiro"); err != nil {
+		t.Fatalf("idempotent Bind() error = %v", err)
+	}
+	if err := binding.Bind(taskID, modulecore.NewRunID(), canonicalExecutionActorKind, "shiro"); err == nil {
+		t.Fatal("conflicting RunID rebind was accepted")
+	}
+	identity, ok := binding.Resolve(taskID)
+	if !ok || identity.TaskID != taskID || identity.RunID != runID || identity.ActorKind != canonicalExecutionActorKind || identity.ActorID != "shiro" {
+		t.Fatalf("resolved identity = %#v, ok=%v", identity, ok)
+	}
+	binding.Release(taskID)
+	if _, ok := binding.Resolve(taskID); ok {
+		t.Fatal("released execution identity was reused")
+	}
+}
+
+func TestEventExecutionIdentityValidationRejectsNonCanonicalClaims(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	for _, tc := range []struct {
+		name  string
+		event OrchestratorEvent
+	}{
+		{name: "run without task", event: OrchestratorEvent{RunID: runID}},
+		{name: "run without actor", event: OrchestratorEvent{TaskID: taskID, RunID: runID}},
+		{name: "half actor", event: OrchestratorEvent{TaskID: taskID, ActorKind: canonicalExecutionActorKind}},
+		{name: "noncanonical actor kind", event: OrchestratorEvent{TaskID: taskID, RunID: runID, ActorKind: "coder", ActorID: "shiro"}},
+		{name: "noncanonical actor id", event: OrchestratorEvent{TaskID: taskID, RunID: runID, ActorKind: canonicalExecutionActorKind, ActorID: "coder"}},
+		{name: "invalid run", event: OrchestratorEvent{TaskID: taskID, RunID: modulecore.RunID("not-a-run"), ActorKind: canonicalExecutionActorKind, ActorID: "shiro"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateOrchestratorEventExecutionIdentity(tc.event); err == nil {
+				t.Fatal("invalid execution identity was accepted")
+			}
+		})
+	}
+	if err := ValidateOrchestratorEventExecutionIdentity(OrchestratorEvent{TaskID: taskID, Type: "routing.decision"}); err != nil {
+		t.Fatalf("pre-Run Task-only event rejected: %v", err)
+	}
+}
+
+func TestEventPortBindsOnlyPostRunEvents(t *testing.T) {
+	listener := &phase11RecordingEventListener{}
+	port := newMessageEventPort(listener)
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	port.BindTrace(taskID.String(), modulecore.NewTraceID())
+	if _, err := port.Publish("routing.decision", "mio", "", "route", "CODE", taskID.String(), "session", "viewer", "chat", "", nil); err != nil {
+		t.Fatalf("pre-Run Publish() error = %v", err)
+	}
+	if got := listener.events[0]; got.RunID != "" || got.ActorKind != "" || got.ActorID != "" {
+		t.Fatalf("pre-Run event claimed execution identity: %#v", got)
+	}
+	if err := port.BindExecutionIdentity(taskID, runID, canonicalExecutionActorKind, "shiro"); err != nil {
+		t.Fatalf("BindExecutionIdentity() error = %v", err)
+	}
+	if _, err := port.Publish("agent.response", "shiro", "user", "done", "CODE", taskID.String(), "session", "viewer", "chat", "", nil); err != nil {
+		t.Fatalf("post-Run Publish() error = %v", err)
+	}
+	got := listener.events[1]
+	if got.TaskID != taskID || got.RunID != runID || got.ActorKind != canonicalExecutionActorKind || got.ActorID != "shiro" {
+		t.Fatalf("post-Run event identity = %#v", got)
+	}
+}

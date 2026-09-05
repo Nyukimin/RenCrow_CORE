@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"fmt"
 	"log"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
@@ -8,18 +9,20 @@ import (
 )
 
 type distributedEventPort struct {
-	listener        EventListener
-	identities      *conversationIdentityTracker
-	traces          *eventTraceBindings
-	publicationFail *eventPublicationFailureTracker
+	listener            EventListener
+	identities          *conversationIdentityTracker
+	traces              *eventTraceBindings
+	executionIdentities *eventExecutionIdentityBindings
+	publicationFail     *eventPublicationFailureTracker
 }
 
 func newDistributedEventPort(listener EventListener) *distributedEventPort {
 	return &distributedEventPort{
-		listener:        listener,
-		identities:      newConversationIdentityTracker(),
-		traces:          newEventTraceBindings(),
-		publicationFail: newEventPublicationFailureTracker(),
+		listener:            listener,
+		identities:          newConversationIdentityTracker(),
+		traces:              newEventTraceBindings(),
+		executionIdentities: newEventExecutionIdentityBindings(),
+		publicationFail:     newEventPublicationFailureTracker(),
 	}
 }
 
@@ -29,21 +32,21 @@ func (p *distributedEventPort) SetListener(listener EventListener) {
 
 func (p *distributedEventPort) Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
 	ev := NewEventWithTraceID(p.traces.Resolve(taskID), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
-	_ = p.emitWithMessageID(ev, "")
+	_, _ = p.emitWithMessageID(ev, "")
 }
 
 func (p *distributedEventPort) EmitMessageReceived(req ProcessMessageRequest, taskID string) error {
 	recipient := normalizeProcessViewerRecipient(req.To)
 	ev := NewEventWithTraceID(p.traces.Resolve(taskID), "message.received", "user", recipient, req.UserMessage, "", taskID, req.SessionID, req.Channel, req.ChatID)
-	return p.emitWithMessageID(ev, req.MessageID)
+	_, err := p.emitWithMessageID(ev, req.MessageID)
+	return err
 }
 
 func (p *distributedEventPort) Publish(eventType, from, to, content, route, taskID, sessionID, channel, chatID string, causationEventID modulecore.EventID, dependencyEventIDs []modulecore.EventID) (OrchestratorEvent, error) {
 	ev := NewEventWithTraceID(p.traces.Resolve(taskID), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
 	ev.CausationEventID = causationEventID
 	ev.DependencyEventIDs = append([]modulecore.EventID(nil), dependencyEventIDs...)
-	err := p.emitWithMessageID(ev, "")
-	return ev, err
+	return p.emitWithMessageID(ev, "")
 }
 
 func (p *distributedEventPort) BindTrace(taskID string, traceID modulecore.TraceID) {
@@ -54,6 +57,20 @@ func (p *distributedEventPort) ReleaseTrace(taskID string) {
 	p.traces.Release(taskID)
 }
 
+func (p *distributedEventPort) BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error {
+	if p == nil {
+		return fmt.Errorf("distributed event port is unavailable")
+	}
+	return p.executionIdentities.Bind(taskID, runID, actorKind, actorID)
+}
+
+func (p *distributedEventPort) ReleaseExecutionIdentity(taskID modulecore.TaskID) {
+	if p == nil || p.executionIdentities == nil {
+		return
+	}
+	p.executionIdentities.Release(taskID)
+}
+
 func (p *distributedEventPort) BindResponseMessageID(taskID string, messageID modulecore.MessageID) {
 	p.identities.BindResponseMessageID(taskID, messageID)
 }
@@ -62,25 +79,39 @@ func (p *distributedEventPort) ReleaseResponseMessageID(taskID string) {
 	p.identities.ReleaseResponseMessageID(taskID)
 }
 
-func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) error {
+func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) (OrchestratorEvent, error) {
+	p.applyExecutionIdentity(&ev)
 	traceID := modulecore.TraceID(ev.TraceID)
 	if p.publicationFail != nil {
 		if err := p.publicationFail.Current(traceID); err != nil {
-			return err
+			return ev, err
 		}
 	}
 	p.identities.Assign(&ev, messageID)
 	if p.listener == nil {
-		return nil
+		return ev, nil
 	}
 	if err := p.listener.OnEvent(ev); err != nil {
 		if p.publicationFail != nil {
 			p.publicationFail.Record(traceID, err)
 		}
 		log.Printf("[DistributedOrch] ERROR: canonical event publication failed: eventType=%s traceID=%s taskID=%s err=%v", ev.Type, ev.TraceID, ev.TaskID, err)
-		return err
+		return ev, err
 	}
-	return nil
+	return ev, nil
+}
+
+func (p *distributedEventPort) applyExecutionIdentity(ev *OrchestratorEvent) {
+	if p == nil || ev == nil || p.executionIdentities == nil {
+		return
+	}
+	identity, ok := p.executionIdentities.Resolve(ev.TaskID)
+	if !ok {
+		return
+	}
+	ev.RunID = identity.RunID
+	ev.ActorKind = identity.ActorKind
+	ev.ActorID = identity.ActorID
 }
 
 func (p *distributedEventPort) PublicationError(traceID modulecore.TraceID) error {

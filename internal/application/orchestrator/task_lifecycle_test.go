@@ -375,6 +375,80 @@ func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testin
 	}
 }
 
+func TestTaskLifecycleActivationBindsExactRunOnlyAfterStart(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	rootID := modulecore.NewTaskID()
+	traceID := modulecore.NewTraceID()
+	req := ProcessMessageRequest{RootTaskID: rootID.String(), TraceID: string(traceID), UserMessage: "execute"}
+	if _, err := lifecycle.createRoot(ctx, req); err != nil {
+		t.Fatalf("createRoot() error = %v", err)
+	}
+	events := newRecordingTaskLifecycleEventPort()
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
+	defer cleanup()
+	childID, err := activation.Activate(ctx, routing.RouteCODE2, taskLifecycleShiro, "execute")
+	if err != nil {
+		t.Fatalf("Activate() error = %v", err)
+	}
+	if len(events.events) != 2 {
+		t.Fatalf("activation events = %#v, want routing and assignment", events.events)
+	}
+	for _, event := range events.events {
+		if event.RunID != "" || event.ActorKind != "" || event.ActorID != "" {
+			t.Fatalf("pre-Run activation event claimed execution identity: %#v", event)
+		}
+	}
+	run, err := lifecycle.activeRunForTask(ctx, childID)
+	if err != nil {
+		t.Fatalf("activeRunForTask() error = %v", err)
+	}
+	postRun, err := events.Publish("agent.response", taskLifecycleShiro, "user", "done", "CODE2", childID.String(), "session", "viewer", "chat", "", nil)
+	if err != nil {
+		t.Fatalf("post-Run Publish() error = %v", err)
+	}
+	if postRun.TaskID != childID || postRun.RunID != run.RunID || postRun.ActorKind != canonicalExecutionActorKind || postRun.ActorID != taskLifecycleShiro {
+		t.Fatalf("post-Run event = %#v, want task=%s run=%s actor=agent/%s", postRun, childID, run.RunID, taskLifecycleShiro)
+	}
+	cleanup()
+	after, err := events.Publish("agent.after", taskLifecycleShiro, "user", "after", "CODE2", childID.String(), "session", "viewer", "chat", "", nil)
+	if err != nil {
+		t.Fatalf("post-cleanup Publish() error = %v", err)
+	}
+	if after.RunID != "" || after.ActorKind != "" || after.ActorID != "" {
+		t.Fatalf("released execution identity was reused: %#v", after)
+	}
+}
+
+func TestTaskLifecycleAttachedActivationBindsExistingRun(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	taskID := modulecore.NewTaskID()
+	run := seedRunningTask(manager, taskID, domaintask.RouteCODE2, taskLifecycleShiro)
+	attached, err := lifecycle.attachExisting(ctx, ProcessMessageRequest{RootTaskID: taskID.String(), CanonicalRunID: run.RunID})
+	if err != nil {
+		t.Fatalf("attachExisting() error = %v", err)
+	}
+	events := newRecordingTaskLifecycleEventPort()
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, ProcessMessageRequest{RootTaskID: taskID.String()}, &attached)
+	defer cleanup()
+	if _, err := activation.Activate(ctx, routing.RouteCODE2, taskLifecycleShiro, "resume"); err != nil {
+		t.Fatalf("attached Activate() error = %v", err)
+	}
+	if len(events.events) != 2 || events.events[0].RunID != "" || events.events[1].RunID != "" {
+		t.Fatalf("attached pre-Run events = %#v", events.events)
+	}
+	postRun, err := events.Publish("agent.resume", taskLifecycleShiro, "user", "resumed", "CODE2", taskID.String(), "session", "viewer", "chat", "", nil)
+	if err != nil {
+		t.Fatalf("attached post-Run Publish() error = %v", err)
+	}
+	if postRun.TaskID != taskID || postRun.RunID != run.RunID || postRun.ActorKind != canonicalExecutionActorKind || postRun.ActorID != taskLifecycleShiro {
+		t.Fatalf("attached post-Run event = %#v", postRun)
+	}
+}
+
 func TestTaskLifecycleActivationReturnsCreatedChildWhenAssignmentPublicationFails(t *testing.T) {
 	manager := newRecordingTaskLifecycleManager()
 	lifecycle := newTaskLifecycle(manager)
@@ -759,17 +833,19 @@ func (m *recordingTaskLifecycleManager) RecordAssignment(_ context.Context, task
 var _ TaskLifecycleManager = (*recordingTaskLifecycleManager)(nil)
 
 type recordingTaskLifecycleEventPort struct {
-	events    []OrchestratorEvent
-	traces    map[modulecore.TaskID]modulecore.TraceID
-	responses map[modulecore.TaskID]modulecore.MessageID
-	failType  string
-	failErr   error
+	events              []OrchestratorEvent
+	traces              map[modulecore.TaskID]modulecore.TraceID
+	executionIdentities *eventExecutionIdentityBindings
+	responses           map[modulecore.TaskID]modulecore.MessageID
+	failType            string
+	failErr             error
 }
 
 func newRecordingTaskLifecycleEventPort() *recordingTaskLifecycleEventPort {
 	return &recordingTaskLifecycleEventPort{
-		traces:    make(map[modulecore.TaskID]modulecore.TraceID),
-		responses: make(map[modulecore.TaskID]modulecore.MessageID),
+		traces:              make(map[modulecore.TaskID]modulecore.TraceID),
+		executionIdentities: newEventExecutionIdentityBindings(),
+		responses:           make(map[modulecore.TaskID]modulecore.MessageID),
 	}
 }
 
@@ -790,6 +866,11 @@ func (p *recordingTaskLifecycleEventPort) Publish(eventType, from, to, content, 
 		CausationEventID:   causationEventID,
 		DependencyEventIDs: append([]modulecore.EventID(nil), dependencyEventIDs...),
 	}
+	if identity, ok := p.executionIdentities.Resolve(typedTaskID); ok {
+		event.RunID = identity.RunID
+		event.ActorKind = identity.ActorKind
+		event.ActorID = identity.ActorID
+	}
 	p.events = append(p.events, event)
 	if eventType == p.failType {
 		return event, p.failErr
@@ -803,6 +884,14 @@ func (p *recordingTaskLifecycleEventPort) BindTrace(taskID string, traceID modul
 
 func (p *recordingTaskLifecycleEventPort) ReleaseTrace(taskID string) {
 	delete(p.traces, modulecore.TaskID(taskID))
+}
+
+func (p *recordingTaskLifecycleEventPort) BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error {
+	return p.executionIdentities.Bind(taskID, runID, actorKind, actorID)
+}
+
+func (p *recordingTaskLifecycleEventPort) ReleaseExecutionIdentity(taskID modulecore.TaskID) {
+	p.executionIdentities.Release(taskID)
 }
 
 func (p *recordingTaskLifecycleEventPort) BindResponseMessageID(taskID string, messageID modulecore.MessageID) {

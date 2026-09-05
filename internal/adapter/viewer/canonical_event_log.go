@@ -94,6 +94,9 @@ func (s *CanonicalEventLog) AppendSequenced(event orchestrator.OrchestratorEvent
 	}
 	envelope.EventID = event.EventID
 	envelope.TaskID = event.TaskID
+	envelope.RunID = event.RunID
+	envelope.ActorKind = event.ActorKind
+	envelope.ActorID = event.ActorID
 	envelope.MessageID = event.MessageID
 	envelope.SessionID = event.SessionID
 	envelope.TurnID = event.TurnID
@@ -200,23 +203,16 @@ func projectOrchestratorEvent(envelope modulecore.EventEnvelope) (orchestrator.O
 	if err := json.Unmarshal(encoded, &event); err != nil {
 		return orchestrator.OrchestratorEvent{}, false
 	}
-	if event.EventID != "" {
-		if err := event.EventID.Validate(); err != nil {
-			return orchestrator.OrchestratorEvent{}, false
-		}
-	}
-	if event.EventSeq < 0 {
-		return orchestrator.OrchestratorEvent{}, false
-	}
-	if err := validateOrchestratorEventIdentities(event); err != nil {
-		return orchestrator.OrchestratorEvent{}, false
-	}
 	// EventType is assigned in the canonical envelope and is therefore the
 	// authoritative type if a stored payload was edited independently.
 	if strings.TrimSpace(envelope.EventType) != "" {
 		event.Type = envelope.EventType
 	}
-	return authoritativeOrchestratorEvent(event, envelope), true
+	event = authoritativeOrchestratorEvent(event, envelope)
+	if err := validateOrchestratorEventIdentities(event); err != nil {
+		return orchestrator.OrchestratorEvent{}, false
+	}
+	return event, true
 }
 
 func authoritativeOrchestratorEvent(event orchestrator.OrchestratorEvent, envelope modulecore.EventEnvelope) orchestrator.OrchestratorEvent {
@@ -226,6 +222,9 @@ func authoritativeOrchestratorEvent(event orchestrator.OrchestratorEvent, envelo
 	event.CausationEventID = envelope.CausationEventID
 	event.DependencyEventIDs = append([]modulecore.EventID(nil), envelope.DependencyEventIDs...)
 	event.TaskID = envelope.TaskID
+	event.RunID = envelope.RunID
+	event.ActorKind = envelope.ActorKind
+	event.ActorID = envelope.ActorID
 	event.MessageID = envelope.MessageID
 	event.SessionID = envelope.SessionID
 	event.TurnID = envelope.TurnID
@@ -234,6 +233,9 @@ func authoritativeOrchestratorEvent(event orchestrator.OrchestratorEvent, envelo
 }
 
 func validateOrchestratorEventIdentities(event orchestrator.OrchestratorEvent) error {
+	if err := orchestrator.ValidateOrchestratorEventExecutionIdentity(event); err != nil {
+		return err
+	}
 	identities := []struct {
 		name     string
 		value    string
