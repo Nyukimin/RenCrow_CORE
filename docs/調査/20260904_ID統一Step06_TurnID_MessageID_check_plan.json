@@ -13,7 +13,7 @@
       "reason": "whole-state restore is not a Step06 ID separation guarantee"
     }
   ],
-  "evaluated_at": "2026-09-05T00:10:15Z",
+  "evaluated_at": "2026-09-05T00:11:12Z",
   "excluded": [
     {
       "check_id": "s6_rekey_canonical_message_ids",
@@ -123,6 +123,8 @@
     "base_revision": "04d28ebbf0b4e9978ff64dd060d77a317e9cc921",
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-06-turnid-messageid",
     "historical_message_id_policy": "preserve canonical msg_ values",
+    "gate7_runtime_artifact_sha256": "2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf",
+    "gate7_runtime_revision": "a4669c24475241acfd45fa6def58d87dd66001bf",
     "live_conversation_turn_receipt_canonical_trace_count": 0,
     "live_conversation_turn_receipt_canonical_turn_count": 0,
     "live_conversation_turn_receipt_count": 437,
@@ -159,7 +161,7 @@
     "retry_authorization": "user explicitly instructed continuation on the current machine for the next two unattended days",
     "retry_limits": "30 minute bound per recovery-copy/hash/migration command; stop after 120 seconds without byte progress or on kernel I/O error/USB reset",
     "target_identity_policy": "new UUIDv7; historical wrong-type UUIDv5(target_type,source_table,source_field,source_value)",
-    "worktree_state": "second production migration and actual Mio CHAT route passed on runtime 50ce3764; Gate 7 one-shot source deletion and architecture guard are locally verified; commit, push, rebuild and post-cleanup restart verification are pending"
+    "worktree_state": "Gate 7 cleanup revision a4669c24 is pushed and its runtime artifact is hash-bound; post-cleanup install, restart and actual Agent route are pending"
   },
   "observations": [
     {
@@ -219,9 +221,16 @@
       "subject": "Step06 one-shot migration source deletion",
       "evidence": "the rencrow-turn-message-migrate command and turnmigration package were deleted after the successful production cutover while the exact binary and receipts remain in the hash-bound recovery root; the new architecture test rejects either source path; modules/core tests, source-root-bounded go vet, main runtime build and git diff --check passed",
       "next_action": "commit and push Gate 7, build the runtime from the cleanup revision, restart the canonical service and execute the post-cleanup actual Agent route"
+    },
+    {
+      "at": "2026-09-05T00:11:12Z",
+      "outcome": "gate7-artifact-reviewed",
+      "subject": "post-cleanup runtime artifact",
+      "evidence": "Gate 7 revision a4669c24475241acfd45fa6def58d87dd66001bf equals origin/identity/03-dci and built runtime artifact SHA-256 2b9e9ca779fe395ccb22f4fff8d736b273d4f2e71f22d79bb78d509503f32bcf after modules/core tests, bounded source-root vet and main build passed",
+      "next_action": "preserve the reviewed artifact in the existing recovery root, install it atomically, restart the canonical owner and execute the post-cleanup actual Mio route"
     }
   ],
-  "phase": "gate7-locally-verified-deploy-pending",
+  "phase": "gate7-artifact-reviewed-restart-pending",
   "purpose": "identity-step06-turn-message",
   "replacement_receipts": [],
   "results": [
