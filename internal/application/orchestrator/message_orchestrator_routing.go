@@ -8,7 +8,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type routeDecisionCoordinator struct {
@@ -33,7 +33,7 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 	c.canonicalEvents = recorder
 }
 
-func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, jobID task.JobID) (routing.Decision, error) {
+func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, jobID modulecore.TaskID) (routing.Decision, error) {
 	decision, err := c.mio.DecideAction(ctx, input)
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
@@ -83,7 +83,7 @@ func preserveOriginalUserMessage(req *ProcessMessageRequest) {
 	}
 }
 
-func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID task.JobID) routing.Decision {
+func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID modulecore.TaskID) routing.Decision {
 	if !canHeavyPolicyElevate(decision.Route) {
 		return decision
 	}

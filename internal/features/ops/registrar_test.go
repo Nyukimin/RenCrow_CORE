@@ -9,16 +9,16 @@ import (
 func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
-		Status:           statusHandler(http.StatusOK),
-		Jobs:             statusHandler(http.StatusAccepted),
-		JobDetail:        statusHandler(http.StatusNoContent),
-		Logs:             statusHandler(http.StatusPartialContent),
-		PromptDebug:      statusHandler(http.StatusEarlyHints),
-		RepairRun:        statusHandler(http.StatusCreated),
-		Backlog:          statusHandler(http.StatusResetContent),
-		Scheduler:        statusHandler(http.StatusAlreadyReported),
-		ParallelJobs:     statusHandler(http.StatusCreated),
-		JobNotifications: statusHandler(http.StatusAccepted),
+		Status:            statusHandler(http.StatusOK),
+		Jobs:              statusHandler(http.StatusAccepted),
+		JobDetail:         statusHandler(http.StatusNoContent),
+		Logs:              statusHandler(http.StatusPartialContent),
+		PromptDebug:       statusHandler(http.StatusEarlyHints),
+		RepairRun:         statusHandler(http.StatusCreated),
+		Backlog:           statusHandler(http.StatusResetContent),
+		Scheduler:         statusHandler(http.StatusAlreadyReported),
+		Tasks:             statusHandler(http.StatusCreated),
+		TaskNotifications: statusHandler(http.StatusAccepted),
 	}})
 
 	tests := []struct {
@@ -33,8 +33,8 @@ func TestRegisterRoutesKeepsOpsViewerPaths(t *testing.T) {
 		{path: "/viewer/repair/run", want: http.StatusCreated},
 		{path: "/viewer/backlog", want: http.StatusResetContent},
 		{path: "/viewer/scheduler", want: http.StatusAlreadyReported},
-		{path: "/viewer/parallel-jobs", want: http.StatusCreated},
-		{path: "/viewer/job-notifications", want: http.StatusAccepted},
+		{path: "/viewer/tasks", want: http.StatusCreated},
+		{path: "/viewer/task-notifications", want: http.StatusAccepted},
 	}
 
 	for _, tt := range tests {

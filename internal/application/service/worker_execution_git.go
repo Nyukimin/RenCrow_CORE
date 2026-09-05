@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // executeGitOperation はGit操作を実行
@@ -37,7 +37,7 @@ func (w *workerExecutionService) executeGitOperation(
 // autoCommitChanges はGit auto-commitを実行
 func (w *workerExecutionService) autoCommitChanges(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 	message string,
 ) (string, error) {
 	timeout := time.Duration(w.config.GitTimeout) * time.Second

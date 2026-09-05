@@ -108,6 +108,22 @@ func TestCanonicalIDContracts(t *testing.T) {
 	}
 }
 
+func TestParseTaskIDValidatesCanonicalBoundary(t *testing.T) {
+	want := NewTaskID()
+	got, err := ParseTaskID("  " + string(want) + "  ")
+	if err != nil || got != want || got.String() != string(want) || got.IsZero() {
+		t.Fatalf("ParseTaskID() = %q, %v; want %q", got, err, want)
+	}
+	if (TaskID("")).IsZero() == false {
+		t.Fatal("zero TaskID must report IsZero")
+	}
+	for _, raw := range []string{"", "job_old", string(NewMessageID())} {
+		if _, err := ParseTaskID(raw); err == nil {
+			t.Fatalf("ParseTaskID(%q) accepted invalid identity", raw)
+		}
+	}
+}
+
 func TestThreadSeqValidation(t *testing.T) {
 	for _, valid := range []ThreadSeq{1, 2, 100} {
 		if err := valid.Validate(); err != nil {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type recordingVoiceDirectHandler struct {
@@ -24,11 +24,11 @@ func (h *recordingVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req 
 	return orchestrator.ProcessMessageResponse{
 		Response: req.FinalText,
 		Route:    routing.RouteCHAT,
-		JobID:    task.NewJobID().String(),
+		JobID:    modulecore.NewTaskID().String(),
 	}, nil
 }
 
-func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, modulecore.TaskID, time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.tokenCalls++

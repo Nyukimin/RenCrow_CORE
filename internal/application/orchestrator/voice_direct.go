@@ -11,7 +11,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -123,7 +122,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		WithViewerRecipient("mio").
 		WithRoute(routing.RouteCHAT)
 	decision := routing.NewDecision(routing.RouteCHAT, 1.0, voiceChatSurfaceReason)
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	o.events.BindTrace(jobID.String(), input.TraceID())
 	defer o.events.ReleaseTrace(jobID.String())
 
@@ -141,9 +140,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	publishedJobID, _ := task.ParseJobID(published.JobID)
-	if publishedJobID.IsZero() {
-		publishedJobID = jobID
+	publishedJobID, err := modulecore.ParseTaskID(published.JobID)
+	if err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("published task identity is invalid: %w", err)
 	}
 
 	if !req.FirstTokenAt.IsZero() {
@@ -173,7 +172,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 }
 
 // NotifyVoiceDirectFirstToken は bridge が初回 llm.delta を転送したタイミングで呼ぶ。
-func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, jobID task.JobID, firstTokenAt time.Time) {
+func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, jobID modulecore.TaskID, firstTokenAt time.Time) {
 	if o == nil || firstTokenAt.IsZero() {
 		return
 	}
@@ -185,7 +184,7 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 	channel := req.normalizedChannel()
 	chatID := req.normalizedChatID()
 	if jobID.IsZero() {
-		jobID = task.NewJobID()
+		jobID = modulecore.NewTaskID()
 	}
 	emitVoiceDirectPointLatency(
 		o.events.Emit,

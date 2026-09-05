@@ -7,12 +7,12 @@ import (
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type distributedAutonomousExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
-type distributedCodeExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID) (string, error)
+type distributedAutonomousExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error)
+type distributedCodeExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID) (string, error)
 type distributedRouteToAgent func(route routing.Route) string
 type distributedAttributionGuardFunc func(input domainconversation.TurnInput, targetAgent string) domainconversation.TurnInput
 type distributedAgentTransportExecutor func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error)
@@ -82,7 +82,7 @@ func (d *distributedRouteDispatcher) SetCanonicalEventRecorder(recorder Canonica
 	d.canonicalEvents = recorder
 }
 
-func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	input = input.WithRoute(route)
 	if route != routing.RouteCHAT {
 		return d.executeAutonomous(ctx, input, route, jobID, ttsSessionID)
@@ -90,7 +90,7 @@ func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input
 	return d.ExecuteDirect(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	input = input.WithRoute(route)
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
@@ -153,7 +153,7 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input do
 	return d.executeRemoteRoute(ctx, input, route, jobID, ttsSessionID, targetAgent)
 }
 
-func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	speaker := chatSpeakerForTurnInput(input)
@@ -203,7 +203,7 @@ func (d *distributedRouteDispatcher) generateLocalChatResponse(ctx context.Conte
 	}
 }
 
-func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID, targetAgent string) (string, error) {
+func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID, targetAgent string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	guardedInput := d.withAttribution(input, targetAgent)

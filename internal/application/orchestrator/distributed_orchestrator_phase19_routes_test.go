@@ -9,8 +9,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *testing.T) {
@@ -25,7 +25,7 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 			return ctx, &streamBundle{}
 		},
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
-		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID modulecore.TaskID) (string, error) {
 			t.Fatal("code executor should not be called for CHAT")
 			return "", nil
 		},
@@ -36,12 +36,12 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 			return domaintransport.Message{}, nil
 		},
 	)
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, t conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, t conversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 		autonomousCalled = true
 		return "", nil
 	})
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "hello", "line", "U123").WithSessionID("sess-1")
 	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteCHAT, jobID, "")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestPhase19DistributedRouteDispatcherNonCHATUsesAutonomousExecutor(t *testi
 		nil,
 		nil,
 	)
-	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+	dispatcher.SetAutonomousExecutor(func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 		autonomousCalled = true
 		if route != routing.RouteOPS {
 			t.Fatalf("expected OPS route, got %s", route)
@@ -80,7 +80,7 @@ func TestPhase19DistributedRouteDispatcherNonCHATUsesAutonomousExecutor(t *testi
 		return "ops ok", nil
 	})
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "run", "line", "U123").WithSessionID("sess-1")
 	resp, err := dispatcher.ExecuteTurnInput(context.Background(), input, routing.RouteOPS, jobID, "tts-1")
 	if err != nil {
@@ -110,7 +110,7 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 		},
 	)
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "TTSの接続を確認して", "viewer", "viewer-user").WithSessionID("sess-1")
 	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, jobID, "tts-1"); err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
@@ -144,7 +144,7 @@ func TestPhase19DistributedRemoteRouteCarriesExactTurnInputProjection(t *testing
 		},
 	)
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "remote request", "line", "U123").
 		WithSessionID("sess-1").
 		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
@@ -191,7 +191,7 @@ func TestPhase19DistributedLocalRouteStoresExactTurnInputProjection(t *testing.T
 		},
 	)
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "local request", "line", "U123").WithSessionID("sess-1")
 	if _, err := dispatcher.ExecuteDirect(context.Background(), input, routing.RouteCHAT, jobID, ""); err != nil {
 		t.Fatalf("ExecuteDirect() error = %v", err)

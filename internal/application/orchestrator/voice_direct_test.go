@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -201,7 +200,7 @@ func TestNotifyVoiceDirectFirstToken_EmitsMetricOnce(t *testing.T) {
 		ChatID:      "viewer-user",
 		StartedAt:   time.Now().Add(-100 * time.Millisecond),
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	firstAt := req.StartedAt.Add(50 * time.Millisecond)
 	orch.NotifyVoiceDirectFirstToken(context.Background(), req, jobID, firstAt)
 

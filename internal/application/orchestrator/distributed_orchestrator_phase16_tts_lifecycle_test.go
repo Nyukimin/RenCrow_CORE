@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -22,7 +21,7 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
 	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision)
@@ -55,7 +54,7 @@ func TestPhase16DistributedTTSLifecyclePassesRequestTraceToTTSSession(t *testing
 
 	lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 		TraceID: string(traceID), SessionID: "sess-trace", Channel: "viewer", ChatID: "viewer-user",
-	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
+	}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
 
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected one TTS start request, got %d", len(bridge.startReqs))
@@ -74,7 +73,7 @@ func TestPhase16DistributedTTSLifecycleStartFailureClearsSession(t *testing.T) {
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "実行して",
-	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
+	}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
 
 	if ttsSessionID != "" {
 		t.Fatalf("expected empty TTS session after start failure, got %s", ttsSessionID)
@@ -102,7 +101,7 @@ func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
 			ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
 				OperationSource: "RenCrow_CMD", AudioOutput: tt.intent,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
+			}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
 
 			if (ttsSessionID == "") != tt.wantEmpty {
 				t.Fatalf("ttsSessionID=%q wantEmpty=%t", ttsSessionID, tt.wantEmpty)

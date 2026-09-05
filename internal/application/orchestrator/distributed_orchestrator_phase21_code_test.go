@@ -8,8 +8,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWithoutProposal(t *testing.T) {
@@ -36,7 +36,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 		},
 	)
 
-	jobID := task.JobIDFromString("job-1")
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").
 		WithSessionID("sess-1").
 		WithAttachments([]attachment.Attachment{{ID: "att-1"}}).
@@ -100,7 +100,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorReturnsNoCoderMapped(t *testi
 		nil,
 	)
 
-	jobID := task.JobIDFromString("job-1")
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").WithSessionID("sess-1")
 	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE, jobID)
 	if err == nil || err.Error() != "no coder mapped for route CODE" {
@@ -129,7 +129,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 		},
 	)
 
-	jobID := task.JobIDFromString("job-1")
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "code please", "line", "U123").WithSessionID("sess-1")
 	resp, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
 	if err != nil {
@@ -185,7 +185,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 	)
 	coordinator.SetCoderProposalEvidenceRecorder(evidence)
 
-	jobID := task.JobIDFromString("job-1")
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, "Skillを更新して", "line", "U123").WithSessionID("sess-1")
 	_, err := coordinator.Execute(context.Background(), input, routing.RouteCODE3, jobID)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 		t.Fatalf("recorded evidence count=%d, want 1", len(evidence.items))
 	}
 	got := evidence.items[0]
-	if got.JobID != "job-1" || got.SessionID != "sess-1" || got.Route != "CODE3" || got.Agent != "coder3" {
+	if got.JobID != jobID.String() || got.SessionID != "sess-1" || got.Route != "CODE3" || got.Agent != "coder3" {
 		t.Fatalf("unexpected evidence metadata: %#v", got)
 	}
 	if got.Patch == "" || got.Plan == "" || got.FormattedResult != "final result" {

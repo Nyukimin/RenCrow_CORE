@@ -248,6 +248,19 @@ func NewQueueItemID() QueueItemID   { return QueueItemID(mustNewCanonicalID(queu
 func NewCheckpointID() CheckpointID { return CheckpointID(mustNewCanonicalID(checkpointIDPrefix)) }
 func NewReceiptID() ReceiptID       { return ReceiptID(mustNewCanonicalID(receiptIDPrefix)) }
 
+// ParseTaskID validates a Task identity received at a module or transport
+// boundary. New identity generation remains owned solely by NewTaskID.
+func ParseTaskID(raw string) (TaskID, error) {
+	id := TaskID(strings.TrimSpace(raw))
+	if err := id.Validate(); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (id TaskID) String() string { return string(id) }
+func (id TaskID) IsZero() bool   { return id == "" }
+
 func (id TraceID) Validate() error                   { return validateCanonicalID(string(id), traceIDPrefix) }
 func (id TraceID) Value() (driver.Value, error)      { return canonicalIDValue(id, traceIDPrefix) }
 func (id *TraceID) Scan(src any) error               { return scanCanonicalID(id, src, traceIDPrefix) }

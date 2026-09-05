@@ -3,6 +3,8 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type messageEventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
@@ -29,7 +31,10 @@ func (h *preRoutingCommandHandler) Handle(ctx context.Context, req ProcessMessag
 	if !cmdResult.Handled {
 		return ProcessMessageResponse{}, false, nil
 	}
-	jobID := resolveProcessMessageJobID(req.JobID)
+	jobID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return ProcessMessageResponse{}, false, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	}
 	h.emit("agent.response", "mio", "user", cmdResult.Response, "CHAT", jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	return h.responses.BuildChatCommand(cmdResult.Response, jobID), true, nil
 }

@@ -9,7 +9,7 @@ import (
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (o *DistributedOrchestrator) SetDCISearcher(searcher DCISearcher) {
@@ -20,7 +20,7 @@ func (o *DistributedOrchestrator) SetRecallTraceStore(store RecallTraceStore) {
 	o.recallTrace = store
 }
 
-func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *DistributedOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, input domainconversation.TurnInput, jobID modulecore.TaskID) (ProcessMessageResponse, bool, error) {
 	// スラッシュコマンド（/code3, /analyze 等）はルーティングを最優先。DCI をスキップ。
 	if strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil

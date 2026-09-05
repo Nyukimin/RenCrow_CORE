@@ -41,7 +41,8 @@ const PROGRESS_DONE_LIMIT = 10;
 const seenEventKeys = new Set();
 const seenEventQueue = [];
 const seenJobNotificationKeys = new Set();
-let jobNotificationPollInFlight = false;
+const seenTaskNotificationKeys = new Set();
+let taskNotificationPollInFlight = false;
 let investmentRefreshTimer = null;
 
 function ag(n) { return A[(n || '').toLowerCase()] || A.system; }
@@ -3589,6 +3590,11 @@ function ingestEvent(ev) {
     if (key && seenJobNotificationKeys.has(key)) return;
     if (key) rememberJobNotificationKey(key);
   }
+  if (ev && ev.type === 'task.notification') {
+    const key = taskNotificationEventKey(ev);
+    if (key && seenTaskNotificationKeys.has(key)) return;
+    if (key) rememberTaskNotificationKey(key);
+  }
   const key = eventKey(ev);
   if (seenEventKeys.has(key)) return;
   rememberEventKey(key);
@@ -3648,7 +3654,7 @@ function jobNotificationKey(n) {
   ].join('|');
 }
 
-function normalizeJobNotificationAssignee(n) {
+function normalizeNotificationAssignee(n) {
   const raw = String((n && n.assignee) || '').trim().toLowerCase();
   if (!raw || raw === 'worker' || raw === 'heavy') return 'shiro';
   if (raw === 'aka') return 'coder1';
@@ -3658,7 +3664,7 @@ function normalizeJobNotificationAssignee(n) {
   return raw;
 }
 
-function formatJobNotificationContent(n) {
+function formatNotificationContent(n) {
   const title = String((n && n.title) || 'job').trim();
   const status = String((n && n.status) || '').trim();
   const summary = String((n && n.summary) || '').trim();
@@ -3674,9 +3680,9 @@ function jobNotificationToEvent(n) {
   const status = String((n && n.status) || '').trim();
   return {
     type: 'job.notification',
-    from: normalizeJobNotificationAssignee(n),
+    from: normalizeNotificationAssignee(n),
     to: 'mio',
-    content: formatJobNotificationContent(n),
+    content: formatNotificationContent(n),
     route: String((n && n.route) || '').trim(),
     job_id: String((n && n.job_id) || '').trim(),
     timestamp: String((n && n.created_at) || new Date().toISOString()),
@@ -3693,18 +3699,69 @@ function ingestJobNotification(n) {
   ingestEvent(jobNotificationToEvent(n));
 }
 
-async function refreshJobNotifications() {
-  if (jobNotificationPollInFlight) return;
-  jobNotificationPollInFlight = true;
+function rememberTaskNotificationKey(key) {
+  seenTaskNotificationKeys.add(key);
+  if (seenTaskNotificationKeys.size > 300) {
+    const first = seenTaskNotificationKeys.values().next().value;
+    if (first) seenTaskNotificationKeys.delete(first);
+  }
+}
+
+function taskNotificationEventKey(ev) {
+  return [
+    ev.task_id || '',
+    ev.status || ev.category || '',
+    ev.level || '',
+    ev.timestamp || '',
+    ev.content || '',
+  ].join('|');
+}
+
+function taskNotificationKey(n) {
+  return [
+    n.task_id || '',
+    n.status || '',
+    n.level || '',
+    n.created_at || '',
+    n.summary || '',
+  ].join('|');
+}
+
+function taskNotificationToEvent(n) {
+  const status = String((n && n.status) || '').trim();
+  return {
+    type: 'task.notification',
+    from: normalizeNotificationAssignee(n),
+    to: 'mio',
+    content: formatNotificationContent(n),
+    route: String((n && n.route) || '').trim(),
+    task_id: String((n && n.task_id) || '').trim(),
+    timestamp: String((n && n.created_at) || new Date().toISOString()),
+    category: status,
+    status,
+    level: String((n && n.level) || '').trim(),
+  };
+}
+
+function ingestTaskNotification(n) {
+  const key = taskNotificationKey(n);
+  if (!key.trim() || seenTaskNotificationKeys.has(key)) return;
+  rememberTaskNotificationKey(key);
+  ingestEvent(taskNotificationToEvent(n));
+}
+
+async function refreshTaskNotifications() {
+  if (taskNotificationPollInFlight) return;
+  taskNotificationPollInFlight = true;
   try {
-    const res = await fetch('/viewer/job-notifications?limit=20', {cache: 'no-store'});
+    const res = await fetch('/viewer/task-notifications?limit=20', {cache: 'no-store'});
     if (!res.ok) return;
     const data = await res.json();
     const items = Array.isArray(data.items) ? data.items.slice().reverse() : [];
-    items.forEach(ingestJobNotification);
+    items.forEach(ingestTaskNotification);
   } catch (_) {
   } finally {
-    jobNotificationPollInFlight = false;
+    taskNotificationPollInFlight = false;
   }
 }
 
@@ -5606,7 +5663,7 @@ refreshIdleEpisodes();
 initTabFromQuery();
 initEvidenceFromQuery();
 refreshOptionalPanelData();
-refreshJobNotifications();
+refreshTaskNotifications();
 refreshViewerStatus();
 setInterval(() => {
   if (!derivedDirty) return;
@@ -5614,7 +5671,7 @@ setInterval(() => {
   derivedDirty = false;
 }, 500);
 setInterval(refreshViewerStatus, 5000);
-setInterval(refreshJobNotifications, 3000);
+setInterval(refreshTaskNotifications, 3000);
 setInterval(refreshIdleStatus, 3000);
 setInterval(refreshIdleLogs, 5000);
 setInterval(refreshIdleEpisodes, 10000);

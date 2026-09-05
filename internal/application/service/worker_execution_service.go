@@ -6,17 +6,17 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // WorkerExecutionService はPatch実行サービスのインターフェース
 type WorkerExecutionService interface {
-	ExecuteProposal(ctx context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
+	ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
 	ExecuteObservation(ctx context.Context, actions []ObservationAction) ([]ObservationActionResult, error)
 }
 
 type WorkspaceOverrideWorkerExecutionService interface {
-	ExecuteProposalInWorkspace(ctx context.Context, jobID task.JobID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
+	ExecuteProposalInWorkspace(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
 }
 
 // MCPToolCaller は MCP プロトコル経由でツールを呼び出すインターフェース
@@ -45,7 +45,7 @@ func (w *workerExecutionService) SetMCPToolCaller(caller MCPToolCaller) {
 // ExecuteProposal はProposalのPatchを解析・実行する
 func (w *workerExecutionService) ExecuteProposal(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
 	commands, err := w.parseProposalCommands(p)
@@ -69,7 +69,7 @@ func (w *workerExecutionService) ExecuteProposal(
 
 func (w *workerExecutionService) ExecuteProposalInWorkspace(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 	p *proposal.Proposal,
 	workspace string,
 ) (*patch.PatchExecutionResult, error) {

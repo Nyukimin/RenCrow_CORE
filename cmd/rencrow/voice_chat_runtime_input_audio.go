@@ -14,7 +14,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
@@ -345,7 +344,7 @@ func validateVoiceChatProcessResponseIdentity(response orchestrator.ProcessMessa
 	if strings.TrimSpace(response.JobID) != response.JobID {
 		return fmt.Errorf("job_id contains surrounding whitespace")
 	}
-	jobID, err := task.ParseJobID(response.JobID)
+	jobID, err := modulecore.ParseTaskID(response.JobID)
 	if err != nil || jobID.IsZero() {
 		if err == nil {
 			err = fmt.Errorf("job_id is empty")

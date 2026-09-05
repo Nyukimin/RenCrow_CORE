@@ -5,7 +5,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -22,7 +21,7 @@ func newOrchestratorTestTurnInput(t *testing.T, message, channel, externalConver
 	return input
 }
 
-func newOrchestratorTestCodeExecutionRequest(t *testing.T, jobID task.JobID, message string, route routing.Route, sessionID, channel, externalConversationID string) CodeExecutionRequest {
+func newOrchestratorTestCodeExecutionRequest(t *testing.T, jobID modulecore.TaskID, message string, route routing.Route, sessionID, channel, externalConversationID string) CodeExecutionRequest {
 	t.Helper()
 	input := newOrchestratorTestTurnInput(t, message, channel, externalConversationID).
 		WithSessionID(sessionID).

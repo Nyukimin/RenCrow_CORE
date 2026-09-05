@@ -7,8 +7,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // workerHandler はWorkerエージェントのハンドラ
@@ -38,7 +38,7 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 	)
 
 	// JobID をパース
-	jobID, err := task.ParseJobID(msg.JobID)
+	jobID, err := modulecore.ParseTaskID(msg.JobID)
 	if err != nil {
 		return domaintransport.Message{}, fmt.Errorf("invalid job ID: %w", err)
 	}

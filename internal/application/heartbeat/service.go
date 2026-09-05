@@ -22,7 +22,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -407,7 +406,7 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 		s.emitEvent("heartbeat.error", fmt.Sprintf("worker input failed: %v", err))
 		return fmt.Errorf("worker input construction failed: %w", err)
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
@@ -885,7 +884,7 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.ItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target)); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
@@ -988,7 +987,7 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		return report, err
 	}
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String())); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
@@ -1078,7 +1077,7 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 	if err != nil {
 		return fmt.Errorf("workstream heartbeat %s input construction failed: %w", schedule.HeartbeatID, err)
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 		RequestID: jobID.String(), TraceID: string(input.TraceID()), JobID: jobID.String(),
 		Initiator: "shiro", Caller: "heartbeat.workstream", Purpose: "draft_workstream_report",

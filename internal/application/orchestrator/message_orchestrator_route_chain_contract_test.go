@@ -13,7 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestMessageOrchestrator_RouteChainContract_RoutingDecisionBeforeDispatch(t *testing.T) {
@@ -213,7 +213,7 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	orch.SetEventListener(rec)
 
 	req := defaultReq()
-	req.JobID = "viewer-command-job"
+	req.JobID = modulecore.NewTaskID().String()
 	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
@@ -407,7 +407,7 @@ type recordingWorkerExecutionService struct {
 	result *patch.PatchExecutionResult
 }
 
-func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
 	w.calls++
 	if w.err != nil {
 		return nil, w.err

@@ -5,11 +5,10 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func buildPhase12TurnInput(t *testing.T, builder *messageTurnInputBuilder, req ProcessMessageRequest) (conversation.TurnInput, task.JobID, string) {
+func buildPhase12TurnInput(t *testing.T, builder *messageTurnInputBuilder, req ProcessMessageRequest) (conversation.TurnInput, modulecore.TaskID, string) {
 	t.Helper()
 	if err := ensureProcessRequestIdentity(&req); err != nil {
 		t.Fatalf("ensureProcessRequestIdentity() error = %v", err)
@@ -56,8 +55,9 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	rootTaskID := modulecore.NewTaskID()
 	userMessageID := modulecore.NewMessageID()
 	agentMessageID := modulecore.NewMessageID()
+	companionTaskID := modulecore.NewTaskID()
 	tk, jobID, ttsSessionID := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
-		JobID:  "companion-job-1",
+		JobID:  companionTaskID.String(),
 		TurnID: string(turnID), TraceID: string(traceID), RootTaskID: string(rootTaskID),
 		MessageID: string(userMessageID), AgentMessageID: string(agentMessageID),
 		SessionID:   "sess-1",
@@ -68,7 +68,7 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 		Attachments: []attachment.Attachment{{ID: "att-1"}},
 	})
 
-	if jobID.String() != "companion-job-1" || jobID.String() == string(rootTaskID) {
+	if jobID != companionTaskID || jobID.String() == string(rootTaskID) {
 		t.Fatalf("companion job ID = %q, root task ID = %q", jobID, rootTaskID)
 	}
 	if tk.MessageText() != "この画像を見て" || tk.SessionID() != "sess-1" {
@@ -160,16 +160,17 @@ func TestPhase12TurnInputBuilderPreservesProvidedJobID(t *testing.T) {
 		func() bool { return false },
 	)
 
+	companionTaskID := modulecore.NewTaskID()
 	input, jobID, _ := buildPhase12TurnInput(t, builder, ProcessMessageRequest{
-		JobID:       "viewer-job-1",
+		JobID:       companionTaskID.String(),
 		SessionID:   "viewer",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "こんにちは",
 	})
 
-	if jobID.String() != "viewer-job-1" {
-		t.Fatalf("job ID = %q, want viewer-job-1", jobID.String())
+	if jobID != companionTaskID {
+		t.Fatalf("job ID = %q, want %q", jobID.String(), companionTaskID)
 	}
 	if jobID.String() == string(input.RootTaskID()) {
 		t.Fatalf("companion JobID was mixed into TurnInput root task ID: job=%q root=%q", jobID, input.RootTaskID())

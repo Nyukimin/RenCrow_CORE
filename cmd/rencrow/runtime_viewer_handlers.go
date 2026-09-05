@@ -12,7 +12,7 @@ import (
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
-	jobpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/job"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
 func buildViewerRuntimeHandlers(
@@ -154,16 +154,16 @@ func buildViewerRuntimeHandlers(
 		log.Printf("Viewer evidence API enabled: %s", reportPath)
 	}
 	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), deps.eventRelay)
-	jobStorePath := defaultParallelJobStorePath(cfg.WorkspaceDir)
-	if jobStorePath == "" {
-		log.Printf("WARN: parallel job API disabled: workspace_dir is empty")
-	} else if jobStore, err := jobpersistence.NewJSONLStore(jobStorePath); err != nil {
-		log.Printf("WARN: parallel job API disabled: %v", err)
+	taskStorePath := defaultTaskStorePath(cfg.WorkspaceDir)
+	if taskStorePath == "" {
+		log.Printf("WARN: task API disabled: workspace_dir is empty")
+	} else if taskStore, err := taskpersistence.NewJSONLStore(taskStorePath); err != nil {
+		log.Printf("WARN: task API disabled: %v", err)
 	} else {
-		deps.parallelJobs = viewer.HandleParallelJobs(jobStore)
-		deps.parallelJobDetail = viewer.HandleParallelJobDetail(jobStore)
-		deps.jobNotifications = viewer.HandleJobNotifications(jobStore)
-		log.Printf("Viewer parallel job API enabled: %s", jobStorePath)
+		deps.tasks = viewer.HandleTasks(taskStore)
+		deps.taskDetail = viewer.HandleTaskDetail(taskStore)
+		deps.taskNotifications = viewer.HandleTaskNotifications(taskStore)
+		log.Printf("Viewer task API enabled: %s", taskStorePath)
 	}
 }
 

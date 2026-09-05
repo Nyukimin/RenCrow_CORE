@@ -6,9 +6,9 @@ import (
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type messageStreamHook func(ctx context.Context, route routing.Route, jid, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)
@@ -72,7 +72,7 @@ func turnInputMetadata(input domainconversation.TurnInput) (sessionID, channel, 
 	return input.SessionID(), address.ChannelType(), address.ExternalConversationID()
 }
 
-func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	input = input.WithRoute(route)
 	if route != routing.RouteCHAT {
 		if shouldTraceShiroDelegation(route) {
@@ -86,7 +86,7 @@ func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input dom
 	return d.executeChatRoute(ctx, input, jobID, ttsSessionID)
 }
 
-func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	input = input.WithRoute(route)
 	switch route {
 	case routing.RouteOPS:
@@ -106,7 +106,7 @@ func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domain
 	}
 }
 
-func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	speaker := chatSpeakerForTurnInput(input)
@@ -152,7 +152,7 @@ func chatSpeakerForTurnInput(input domainconversation.TurnInput) string {
 	return recipient
 }
 
-func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	shiroCtx, err := domaintool.DeriveAgentToolExecutionScope(ctx, jid, "shiro", "worker", "ops", true)
@@ -172,7 +172,7 @@ func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input doma
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executeCodeRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeCodeRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	resp, err := d.executeCodeViaShiro(ctx, input, route, jobID)
 	if err == nil {
 		d.pushTTS(ctx, ttsSessionID, route, "agent.response", resp)
@@ -180,7 +180,7 @@ func (d *messageRouteDispatcher) executeCodeRoute(ctx context.Context, input dom
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	if d.wild == nil {
 		return "", fmt.Errorf("no wild agent available")
@@ -202,7 +202,7 @@ func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, input dom
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	d.emit("agent.start", "mio", "user", "計画を検討中...", "PLAN", jid, sessionID, channel, chatID)
@@ -215,7 +215,7 @@ func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, input dom
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	if d.heavy == nil {
@@ -241,7 +241,7 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, input 
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executeResearchRoute(ctx context.Context, input domainconversation.TurnInput, jobID task.JobID, ttsSessionID string) (string, error) {
+func (d *messageRouteDispatcher) executeResearchRoute(ctx context.Context, input domainconversation.TurnInput, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	d.emit("agent.start", "mio", "user", "調査中...", "RESEARCH", jid, sessionID, channel, chatID)
@@ -254,7 +254,7 @@ func (d *messageRouteDispatcher) executeResearchRoute(ctx context.Context, input
 	return resp, err
 }
 
-func (d *messageRouteDispatcher) executeCodeViaShiro(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID) (string, error) {
+func (d *messageRouteDispatcher) executeCodeViaShiro(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID) (string, error) {
 	req := CodeExecutionRequest{
 		Input: input.WithRoute(route),
 		JobID: jobID.String(),

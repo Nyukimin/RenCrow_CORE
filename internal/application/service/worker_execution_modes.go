@@ -6,10 +6,10 @@ import (
 	"sync"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func (w *workerExecutionService) executeCommands(ctx context.Context, jobID task.JobID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeCommands(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	if w.config.ParallelExecution {
 		return w.executeParallel(ctx, jobID, commands)
 	}
@@ -17,7 +17,7 @@ func (w *workerExecutionService) executeCommands(ctx context.Context, jobID task
 }
 
 // executeSequential はコマンドを順次実行
-func (w *workerExecutionService) executeSequential(ctx context.Context, jobID task.JobID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeSequential(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	result := patch.NewPatchExecutionResult()
 	for i, cmd := range commands {
 		cmdResult := w.executeCommand(ctx, jobID, cmd, i)
@@ -34,7 +34,7 @@ func (w *workerExecutionService) executeSequential(ctx context.Context, jobID ta
 // executeParallel はType-Based Phased Executionで並列実行
 // file_edit → shell_command → git_operation のフェーズ順
 // 同フェーズ内は goroutine + semaphore で並列化
-func (w *workerExecutionService) executeParallel(ctx context.Context, jobID task.JobID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
+func (w *workerExecutionService) executeParallel(ctx context.Context, jobID modulecore.TaskID, commands []patch.PatchCommand) *patch.PatchExecutionResult {
 	// フェーズ分類
 	phases := []patch.Type{patch.TypeFileEdit, patch.TypeShellCommand, patch.TypeGitOperation}
 	grouped := make(map[patch.Type][]indexedCommand)

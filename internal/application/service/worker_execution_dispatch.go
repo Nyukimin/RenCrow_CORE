@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // executeCommand は単一コマンドを実行
 func (w *workerExecutionService) executeCommand(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 	cmd patch.PatchCommand,
 	index int,
 ) patch.CommandResult {

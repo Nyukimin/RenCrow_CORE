@@ -21,7 +21,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -432,7 +431,7 @@ func (m *mockHeavyAgent) Generate(ctx context.Context, t conversation.TurnInput)
 // mockWorkerExecutionService はテスト用のWorkerExecutionService
 type mockWorkerExecutionService struct{}
 
-func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.JobID, p interface{}) (interface{}, error) {
+func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p interface{}) (interface{}, error) {
 	return nil, nil
 }
 

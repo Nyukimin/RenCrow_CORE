@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -23,7 +22,7 @@ func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
 	lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision, "tts-1")
@@ -52,7 +51,7 @@ func TestPhase10TTSLifecyclePassesRequestTraceToTTSSession(t *testing.T) {
 
 	lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 		TraceID: string(traceID), SessionID: "sess-trace", Channel: "viewer", ChatID: "viewer-user",
-	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"), "tts-trace")
+	}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"), "tts-trace")
 
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected one TTS start request, got %d", len(bridge.startReqs))

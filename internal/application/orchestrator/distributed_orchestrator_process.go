@@ -30,8 +30,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			resp.SessionID = req.SessionID
 		}
 	}()
-	jobID := resolveProcessMessageJobID(req.JobID)
-	req.JobID = jobID.String()
+	jobID := modulecore.TaskID(req.JobID)
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
 	o.events.BindTrace(jobID.String(), traceID)

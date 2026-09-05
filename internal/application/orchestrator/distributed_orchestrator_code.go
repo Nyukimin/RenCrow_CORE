@@ -10,8 +10,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type distributedCoderSelector func(route routing.Route, userMessage string) string
@@ -63,7 +63,7 @@ func (c *distributedCodeExecutionCoordinator) SetModuleResolver(resolver ModuleR
 	c.moduleResolver = resolver
 }
 
-func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID) (string, error) {
+func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	coderAgent := c.selectCoder(route, input.MessageText())
@@ -139,7 +139,7 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input
 	return "", err
 }
 
-func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requestText string, route routing.Route, input domainconversation.TurnInput, jobID task.JobID, attempt int) (domaintransport.Message, error) {
+func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requestText string, route routing.Route, input domainconversation.TurnInput, jobID modulecore.TaskID, attempt int) (domaintransport.Message, error) {
 	_, channel, chatID := turnInputMetadata(input)
 	coderInput := input.WithMessageText(requestText).WithRoute(route)
 	coderMsg, err := domaintransport.NewTurnInputMessage("shiro", coderAgent, jobID.String(), coderInput)
@@ -161,7 +161,7 @@ func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requ
 	return coderMsg, nil
 }
 
-func (c *distributedCodeExecutionCoordinator) finishWithoutProposal(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, coderAgent string, coderResult domaintransport.Message) (string, error) {
+func (c *distributedCodeExecutionCoordinator) finishWithoutProposal(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, coderAgent string, coderResult domaintransport.Message) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	c.emit("agent.start", "shiro", "mio", "Coder結果をShiroで整形", string(route), jid, sessionID, channel, chatID)
@@ -189,7 +189,7 @@ func (c *distributedCodeExecutionCoordinator) finishWithoutProposal(ctx context.
 	return shiroResult.Content, nil
 }
 
-func (c *distributedCodeExecutionCoordinator) executeProposal(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, coderAgent string, coderResult domaintransport.Message, attempt int) (response, retryRequest string, retryable bool, err error) {
+func (c *distributedCodeExecutionCoordinator) executeProposal(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, coderAgent string, coderResult domaintransport.Message, attempt int) (response, retryRequest string, retryable bool, err error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	jid := jobID.String()
 	c.emit("agent.start", "shiro", "mio", "CoderのProposalをWorker実行", string(route), jid, sessionID, channel, chatID)
@@ -239,7 +239,7 @@ func (c *distributedCodeExecutionCoordinator) recordCoderProposalEvidence(
 	ctx context.Context,
 	input domainconversation.TurnInput,
 	route routing.Route,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 	coderAgent string,
 	p *domaintransport.ProposalPayload,
 	shiroResult domaintransport.Message,

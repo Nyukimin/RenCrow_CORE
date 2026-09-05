@@ -9,11 +9,11 @@ import (
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
-type autonomousRouteExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
+type autonomousRouteExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error)
 
 type autonomousExecutionCoordinator struct {
 	reporter      ReportStore
@@ -40,7 +40,7 @@ func (c *autonomousExecutionCoordinator) SetReportStore(reporter ReportStore) {
 	c.reporter = reporter
 }
 
-func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	if !isAutonomousRoute(route) {
 		return "", fmt.Errorf("unknown route: %s", route)
 	}

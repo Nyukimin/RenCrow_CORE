@@ -9,7 +9,6 @@ import (
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -55,7 +54,7 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 	prompt := BuildCoderDiffGenerationPrompt(req.Hotspot, req.Evidence)
 	jobID := strings.TrimSpace(req.JobID)
 	if jobID == "" {
-		jobID = task.NewJobID().String()
+		jobID = modulecore.NewTaskID().String()
 	}
 	externalConversationID := strings.TrimSpace(req.WorkstreamID)
 	if externalConversationID == "" {

@@ -21,7 +21,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -268,7 +267,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	address, err := conversation.NewChannelAddress(agentOpsTaskChannel, agentOpsTaskChatID)
 	if err != nil {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")

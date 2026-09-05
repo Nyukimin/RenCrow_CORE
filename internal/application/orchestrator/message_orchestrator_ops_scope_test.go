@@ -6,8 +6,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type opsScopeCaptureShiro struct {
@@ -43,7 +43,7 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "line", "user-a").WithSessionID("session-1")
 
 	response, err := dispatcher.ExecuteDirect(parentCtx, tk, routing.RouteOPS, jobID, "")
@@ -85,7 +85,7 @@ func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) 
 		nil,
 		func(context.Context, string, routing.Route, string, string) {},
 	)
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "運用データを確認して", "viewer", "viewer-user").WithSessionID("session-1")
 
 	if _, err := dispatcher.ExecuteDirect(domaintool.WithToolExecutionScope(context.Background(), invalidParent), tk, routing.RouteOPS, jobID, ""); err == nil {

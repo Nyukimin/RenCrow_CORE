@@ -10,13 +10,13 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 )
 
 type voiceDirectFinalHandler interface {
 	ProcessVoiceDirect(ctx context.Context, req orchestrator.ProcessVoiceDirectRequest) (orchestrator.ProcessMessageResponse, error)
-	NotifyVoiceDirectFirstToken(ctx context.Context, req orchestrator.ProcessVoiceDirectRequest, jobID task.JobID, firstTokenAt time.Time)
+	NotifyVoiceDirectFirstToken(ctx context.Context, req orchestrator.ProcessVoiceDirectRequest, jobID modulecore.TaskID, firstTokenAt time.Time)
 }
 
 // voiceDirectBridgeAdapter は orchestrator 連携を bridge から切り離すための薄い adapter。
@@ -31,7 +31,7 @@ func (a voiceDirectBridgeAdapter) ProcessVoiceDirect(ctx context.Context, req or
 	return a.handler.ProcessVoiceDirect(ctx, req)
 }
 
-func (a voiceDirectBridgeAdapter) NotifyVoiceDirectFirstToken(ctx context.Context, req orchestrator.ProcessVoiceDirectRequest, jobID task.JobID, firstTokenAt time.Time) {
+func (a voiceDirectBridgeAdapter) NotifyVoiceDirectFirstToken(ctx context.Context, req orchestrator.ProcessVoiceDirectRequest, jobID modulecore.TaskID, firstTokenAt time.Time) {
 	if a.handler == nil {
 		return
 	}
@@ -41,7 +41,7 @@ func (a voiceDirectBridgeAdapter) NotifyVoiceDirectFirstToken(ctx context.Contex
 type voiceChatBridgeTracker struct {
 	mu                     sync.Mutex
 	active                 orchestrator.ProcessVoiceDirectRequest
-	jobID                  task.JobID
+	jobID                  modulecore.TaskID
 	startedAt              time.Time
 	firstTokenSent         bool
 	deltaText              string
@@ -109,7 +109,7 @@ func (t *voiceChatBridgeTracker) beginUtterance(ev map[string]any) {
 		}
 	}
 	t.startedAt = time.Now()
-	t.jobID = task.NewJobID()
+	t.jobID = modulecore.NewTaskID()
 	t.firstTokenSent = false
 	t.deltaText = ""
 	t.active = orchestrator.ProcessVoiceDirectRequest{
@@ -144,7 +144,7 @@ func (t *voiceChatBridgeTracker) onLLMDelta(ev map[string]any) {
 		req := t.active
 		jobID := t.jobID
 		if jobID.IsZero() {
-			jobID = task.NewJobID()
+			jobID = modulecore.NewTaskID()
 			t.jobID = jobID
 		}
 		t.mu.Unlock()
@@ -219,7 +219,7 @@ func (t *voiceChatBridgeTracker) finalizeVoiceDirect(text, eventUtteranceID, use
 		req.StartedAt = t.startedAt
 	}
 	t.active = orchestrator.ProcessVoiceDirectRequest{}
-	t.jobID = task.JobID{}
+	t.jobID = ""
 	t.startedAt = time.Time{}
 	t.firstTokenSent = false
 	t.deltaText = ""
@@ -248,7 +248,7 @@ func (t *voiceChatBridgeTracker) reset() {
 		t.idleChatBusy = false
 	}
 	t.active = orchestrator.ProcessVoiceDirectRequest{}
-	t.jobID = task.JobID{}
+	t.jobID = ""
 	t.startedAt = time.Time{}
 	t.firstTokenSent = false
 	t.deltaText = ""

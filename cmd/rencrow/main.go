@@ -65,8 +65,8 @@ func main() {
 		cmdLogs()
 	case "evidence":
 		cmdEvidence()
-	case "jobs":
-		cmdJobs()
+	case "tasks":
+		cmdTasks()
 	case "source-registry":
 		cmdSourceRegistry()
 	case "web-gather":

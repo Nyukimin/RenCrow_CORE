@@ -12,7 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func shouldUseProposalPath(route routing.Route, target codeTarget) bool {
@@ -265,16 +265,20 @@ func (e *DefaultCodeExecutor) executeProposalWithResolvedWorkspace(
 	req CodeExecutionRequest,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
+	taskID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	}
 	if req.Module.Found() && req.Module.Module.Root != "" {
 		if worker, ok := e.workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
 			sessionID, channel, chatID := turnInputMetadata(req.Input)
 			e.emit("worker.workspace", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
-			return worker.ExecuteProposalInWorkspace(ctx, task.JobIDFromString(req.JobID), p, req.Module.Module.Root)
+			return worker.ExecuteProposalInWorkspace(ctx, taskID, p, req.Module.Module.Root)
 		}
 		sessionID, channel, chatID := turnInputMetadata(req.Input)
 		e.emit("worker.workspace_unavailable", "shiro", "worker", req.Module.Summary(), req.Input.Route().String(), req.JobID, sessionID, channel, chatID)
 	}
-	return e.workerExecution.ExecuteProposal(ctx, task.JobIDFromString(req.JobID), p)
+	return e.workerExecution.ExecuteProposal(ctx, taskID, p)
 }
 
 func (e *DefaultCodeExecutor) emitProposalExecutionResult(req CodeExecutionRequest, formatted string) {

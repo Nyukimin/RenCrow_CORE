@@ -13,9 +13,9 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
@@ -121,7 +121,7 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 	log.Printf("[LocalWorker] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d has_proposal=%t", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content), msg.Proposal != nil)
 	if msg.Proposal != nil && workerExecution != nil {
 		p := proposal.Reconstruct(msg.Proposal.Plan, msg.Proposal.Patch, msg.Proposal.Risk, msg.Proposal.CostHint)
-		jobID, err := task.ParseJobID(msg.JobID)
+		jobID, err := modulecore.ParseTaskID(msg.JobID)
 		if err != nil {
 			log.Printf("[LocalWorker] invalid job id agent=%s job=%s err=%v", agentName, msg.JobID, err)
 			return newLocalAgentError(agentName, msg, fmt.Sprintf("invalid job ID: %v", err))
@@ -170,7 +170,7 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 	return resp
 }
 
-func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, jobID task.JobID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
+func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, jobID modulecore.TaskID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
 	if root := localMessageContextString(msg, "module_root"); root != "" {
 		if worker, ok := workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
 			log.Printf("[LocalWorker] proposal workspace override job=%s module_root=%s", msg.JobID, root)

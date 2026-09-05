@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -26,16 +25,12 @@ func newMessageTurnInputBuilder(emit messageEventEmitter, ttsEnabled ttsEnabledF
 	}
 }
 
-func (b *messageTurnInputBuilder) Build(req ProcessMessageRequest) (conversation.TurnInput, task.JobID, string, error) {
-	jobID := resolveProcessMessageJobID(req.JobID)
-	return b.BuildWithJobID(req, jobID)
-}
-
-func resolveProcessMessageJobID(raw string) task.JobID {
-	if jobID := strings.TrimSpace(raw); jobID != "" {
-		return task.JobIDFromString(jobID)
+func (b *messageTurnInputBuilder) Build(req ProcessMessageRequest) (conversation.TurnInput, modulecore.TaskID, string, error) {
+	jobID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return conversation.TurnInput{}, "", "", fmt.Errorf("invalid task identity in job_id field: %w", err)
 	}
-	return task.NewJobID()
+	return b.BuildWithJobID(req, jobID)
 }
 
 // buildTurnInputFromProcessRequest reconstructs the exact identities assigned
@@ -64,7 +59,7 @@ func buildTurnInputFromProcessRequest(req ProcessMessageRequest) (conversation.T
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To)), nil
 }
 
-func (b *messageTurnInputBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.JobID) (conversation.TurnInput, task.JobID, string, error) {
+func (b *messageTurnInputBuilder) BuildWithJobID(req ProcessMessageRequest, jobID modulecore.TaskID) (conversation.TurnInput, modulecore.TaskID, string, error) {
 	input, err := buildTurnInputFromProcessRequest(req)
 	if err != nil {
 		return conversation.TurnInput{}, jobID, "", err

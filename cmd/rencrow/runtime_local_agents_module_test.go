@@ -7,8 +7,8 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type recordingLocalWorkerExecution struct {
@@ -19,13 +19,13 @@ func (r *recordingLocalWorkerExecution) ExecuteObservation(_ context.Context, _ 
 	return nil, nil
 }
 
-func (r *recordingLocalWorkerExecution) ExecuteProposal(_ context.Context, _ task.JobID, _ *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+func (r *recordingLocalWorkerExecution) ExecuteProposal(_ context.Context, _ modulecore.TaskID, _ *proposal.Proposal) (*patch.PatchExecutionResult, error) {
 	result := patch.NewPatchExecutionResult()
 	result.AddResult(patch.CommandResult{Success: true, Output: "default"})
 	return result.WithSummary("default workspace"), nil
 }
 
-func (r *recordingLocalWorkerExecution) ExecuteProposalInWorkspace(_ context.Context, _ task.JobID, _ *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error) {
+func (r *recordingLocalWorkerExecution) ExecuteProposalInWorkspace(_ context.Context, _ modulecore.TaskID, _ *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error) {
 	r.workspace = workspace
 	result := patch.NewPatchExecutionResult()
 	result.AddResult(patch.CommandResult{Success: true, Output: "override"})
@@ -34,13 +34,14 @@ func (r *recordingLocalWorkerExecution) ExecuteProposalInWorkspace(_ context.Con
 
 func TestExecuteLocalWorkerProposalUsesModuleRootContext(t *testing.T) {
 	worker := &recordingLocalWorkerExecution{}
-	msg := domaintransport.NewMessage("mio", "shiro", "sess-1", "job-1", "Execute coder proposal")
+	taskID := modulecore.NewTaskID()
+	msg := domaintransport.NewMessage("mio", "shiro", "sess-1", taskID.String(), "Execute coder proposal")
 	msg.Context = map[string]interface{}{
 		"module_root": "/home/nyukimi/RenCrow/RenCrow_STT",
 	}
 	p := proposal.NewProposal("plan", "[]", "risk", "cost")
 
-	_, err := executeLocalWorkerProposal(context.Background(), worker, task.JobIDFromString("job-1"), p, msg)
+	_, err := executeLocalWorkerProposal(context.Background(), worker, taskID, p, msg)
 	if err != nil {
 		t.Fatalf("executeLocalWorkerProposal failed: %v", err)
 	}

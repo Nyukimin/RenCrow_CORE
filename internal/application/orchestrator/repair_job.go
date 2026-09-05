@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -32,7 +31,7 @@ type ProcessRepairResponse struct {
 func normalizeRepairProcessRequest(req ProcessRepairRequest) ProcessRepairRequest {
 	req.JobID = strings.TrimSpace(req.JobID)
 	if req.JobID == "" {
-		req.JobID = task.NewJobID().String()
+		req.JobID = modulecore.NewTaskID().String()
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
@@ -116,7 +115,10 @@ func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepa
 	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	jobID := task.JobIDFromString(req.JobID)
+	jobID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return ProcessRepairResponse{}, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	}
 	startedAt := time.Now()
 	if o.events != nil {
 		o.events.Emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
@@ -141,7 +143,10 @@ func (o *DistributedOrchestrator) ProcessRepair(ctx context.Context, req Process
 	if err != nil {
 		return ProcessRepairResponse{}, err
 	}
-	jobID := task.JobIDFromString(req.JobID)
+	jobID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return ProcessRepairResponse{}, fmt.Errorf("invalid task identity in job_id field: %w", err)
+	}
 	startedAt := time.Now()
 	o.emit("repair.dispatch", "repair", "shiro", "dispatch repair job to Coder via "+route.String(), route.String(), req.JobID, req.SessionID, "viewer", "repair")
 	response, err := o.routes.ExecuteTurnInput(ctx, input, route, jobID, "")

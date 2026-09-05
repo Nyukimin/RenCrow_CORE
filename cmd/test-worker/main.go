@@ -9,7 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func main() {
@@ -46,7 +46,7 @@ func main() {
 
 	// Worker実行
 	ctx := context.Background()
-	jobID := task.JobIDFromString("test-worker-001")
+	jobID := modulecore.NewTaskID()
 
 	fmt.Printf("📋 Patch: %s\n", patchFile)
 	fmt.Printf("🆔 JobID: %s\n", jobID)

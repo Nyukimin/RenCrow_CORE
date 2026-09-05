@@ -11,16 +11,16 @@ type Dependencies struct {
 	Routes Routes
 }
 
-// Routes groups cross-cutting Ops, job, backlog, and scheduler handlers.
+// Routes groups cross-cutting Ops, task, backlog, and scheduler handlers.
 // The handlers are supplied by cmd/rencrow.
 type Routes struct {
 	Status            http.HandlerFunc
 	Agents            http.HandlerFunc
 	AgentDetail       http.HandlerFunc
 	Jobs              http.HandlerFunc
-	ParallelJobs      http.HandlerFunc
-	ParallelJobDetail http.HandlerFunc
-	JobNotifications  http.HandlerFunc
+	Tasks             http.HandlerFunc
+	TaskDetail        http.HandlerFunc
+	TaskNotifications http.HandlerFunc
 	Logs              http.HandlerFunc
 	PromptDebug       http.HandlerFunc
 	AuditSummary      http.HandlerFunc
@@ -44,9 +44,9 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/agents", routes.Agents)
 	registerRoute(mux, "/viewer/agent/detail", routes.AgentDetail)
 	registerRoute(mux, "/viewer/jobs", routes.Jobs)
-	registerRoute(mux, "/viewer/parallel-jobs", routes.ParallelJobs)
-	registerRoute(mux, "/viewer/parallel-job/detail", routes.ParallelJobDetail)
-	registerRoute(mux, "/viewer/job-notifications", routes.JobNotifications)
+	registerRoute(mux, "/viewer/tasks", routes.Tasks)
+	registerRoute(mux, "/viewer/task/detail", routes.TaskDetail)
+	registerRoute(mux, "/viewer/task-notifications", routes.TaskNotifications)
 	registerRoute(mux, "/viewer/logs", routes.Logs)
 	registerRoute(mux, "/viewer/prompt-debug", routes.PromptDebug)
 	registerRoute(mux, "/viewer/audit/summary", routes.AuditSummary)

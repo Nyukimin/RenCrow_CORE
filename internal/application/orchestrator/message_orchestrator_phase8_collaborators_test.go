@@ -7,7 +7,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type phase8RecordingIdleNotifier struct {
@@ -39,7 +39,7 @@ func (s *phase8RecordingReportStore) Save(_ context.Context, report domainexecut
 
 func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	assembler := messageResponseAssembler{}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	decision := routing.NewDecision(routing.RoutePLAN, 0.82, "plan")
 
 	resp := assembler.Build("計画しました", decision, jobID)
@@ -116,7 +116,7 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 		func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string) {
 			emitted = append(emitted, eventType+":"+content)
 		},
-		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 			executed = true
 			if route != routing.RoutePLAN {
 				t.Fatalf("expected route PLAN, got %s", route)
@@ -130,7 +130,7 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 	)
 	coordinator.SetReportStore(reporter)
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	tk := newOrchestratorTestTurnInput(t, "買い物の計画を作ってください", "line", "U123").WithSessionID("sess-1")
 	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, jobID, "tts-1")
 	if err != nil {

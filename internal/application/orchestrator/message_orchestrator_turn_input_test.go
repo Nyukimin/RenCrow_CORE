@@ -13,9 +13,10 @@ func TestMessageTurnInputBuilderPreservesCanonicalInputAndCompanionJobID(t *test
 	rootTaskID := modulecore.NewTaskID()
 	userMessageID := modulecore.NewMessageID()
 	agentMessageID := modulecore.NewMessageID()
+	jobID := modulecore.NewTaskID()
 	attachments := []attachment.Attachment{{ID: "att-1"}}
 	req := ProcessMessageRequest{
-		JobID:          "legacy-job-companion",
+		JobID:          jobID.String(),
 		TurnID:         string(turnID),
 		TraceID:        string(traceID),
 		RootTaskID:     string(rootTaskID),

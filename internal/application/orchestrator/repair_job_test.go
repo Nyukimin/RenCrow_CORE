@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -26,7 +25,7 @@ func TestRepairTargetRouteUsesExplicitCoderSlot(t *testing.T) {
 
 func TestRepairTurnInputCarriesCanonicalIdentitySeparatelyFromCompanionJobID(t *testing.T) {
 	sessionID := string(modulecore.NewSessionID())
-	jobID := task.JobIDFromString("repair-companion-job")
+	jobID := modulecore.NewTaskID()
 	got, err := repairTurnInput(ProcessRepairRequest{
 		JobID:     jobID.String(),
 		SessionID: sessionID,

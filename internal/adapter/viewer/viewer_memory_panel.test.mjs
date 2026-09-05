@@ -5023,3 +5023,30 @@ test('Atlas Current renders implementation revision and counts evidence refs', (
   assert.match(html, /<th>Evidence<\/th>/);
   assert.match(html, /<td>2<\/td>/);
 });
+
+test('Task notifications keep canonical task identity through the Viewer projection', () => {
+  const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
+  const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8').replace(/\r\n/g, '\n');
+  const projection = sourceBetween(viewerJs, 'function taskNotificationEventKey', 'function ingestTaskNotification');
+  const context = vm.createContext({});
+  vm.runInContext(`
+function normalizeNotificationAssignee() { return 'shiro'; }
+function formatNotificationContent(value) { return String(value.title || 'task'); }
+${projection}
+`, context);
+  context.notice = {
+    task_id: 'tsk_01991a00-0000-7000-8000-000000000001',
+    title: 'canonical Task',
+    status: 'succeeded',
+    level: 'done',
+    created_at: '2026-09-05T04:00:00Z',
+  };
+  const event = JSON.parse(vm.runInContext('JSON.stringify(taskNotificationToEvent(notice))', context));
+  assert.equal(event.type, 'task.notification');
+  assert.equal(event.task_id, context.notice.task_id);
+  assert.equal(Object.hasOwn(event, 'job_id'), false);
+  assert.match(viewerJs, /fetch\('\/viewer\/task-notifications\?limit=20'/);
+  assert.doesNotMatch(viewerJs, /fetch\('\/viewer\/job-notifications\?limit=20'/);
+  assert.match(timelineJs, /ev\.type === 'task\.notification'/);
+  assert.match(timelineJs, /const taskID = String\(ev\.task_id/);
+});

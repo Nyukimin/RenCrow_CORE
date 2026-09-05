@@ -10,7 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -37,7 +37,7 @@ type CoderLoopExecutor struct {
 // workerObservationExecutor は観測実行とパッチ実行の両方を持つ
 type workerObservationExecutor interface {
 	ExecuteObservation(ctx context.Context, actions []coderloop.ObservationAction) ([]coderloop.ObservationActionResult, error)
-	ExecuteProposal(ctx context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
+	ExecuteProposal(ctx context.Context, jobID modulecore.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
 }
 
 // NewCoderLoopExecutor は CoderLoopExecutor を生成する
@@ -247,7 +247,11 @@ func (e *CoderLoopExecutor) executePatchProposal(
 	e.emit("worker.request", "coder_loop", "worker",
 		fmt.Sprintf("[turn %d] patch_proposal 適用中: %s", turn, pp.Intent), req)
 
-	result, err := e.workerExecution.ExecuteProposal(ctx, task.JobIDFromString(req.JobID), p)
+	taskID, err := modulecore.ParseTaskID(req.JobID)
+	if err != nil {
+		return "", fmt.Errorf("invalid task identity in job_id field: %w", err)
+	}
+	result, err := e.workerExecution.ExecuteProposal(ctx, taskID, p)
 	if err != nil {
 		obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
 			coderloop.NewObservationActionResult("apply_patch", pp.Intent, "", err),

@@ -9,10 +9,10 @@ import (
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type distributedDirectExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error)
+type distributedDirectExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error)
 
 type distributedAutonomousCoordinator struct {
 	reporter      ReportStore
@@ -39,7 +39,7 @@ func (c *distributedAutonomousCoordinator) SetReportStore(reporter ReportStore) 
 	c.reporter = reporter
 }
 
-func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (c *distributedAutonomousCoordinator) Execute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	contract, err := contractapp.NormalizeRequestWithRoute(input.MessageText(), route.String())
 	if err != nil {
 		return "", err

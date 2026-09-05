@@ -7,7 +7,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -125,7 +124,7 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 		Input:      conversation.TurnInput{},
 		NewJobID: func() string {
 			jobCalls++
-			return task.NewJobID().String()
+			return modulecore.NewTaskID().String()
 		},
 	}
 
@@ -155,7 +154,7 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 }
 
 func TestPublisherDoesNotReuseJobIDAsTraceID(t *testing.T) {
-	jobID := task.NewJobID().String()
+	jobID := modulecore.NewTaskID().String()
 	result := Result{
 		Mode:        ModeLLM,
 		UtteranceID: "utt-trace-reuse",
@@ -197,7 +196,7 @@ func TestPublisherPassesExplicitTraceIDToCorrelatedSessionLogs(t *testing.T) {
 	published, err := (Publisher{
 		TurnLogger: logger,
 		Input:      input,
-		NewJobID:   func() string { return task.NewJobID().String() },
+		NewJobID:   func() string { return modulecore.NewTaskID().String() },
 	}).Publish(result)
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
@@ -371,7 +370,7 @@ func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
 		Input:      newPublisherInput(t, "viewer", "viewer", "default", "入力"),
 		NewJobID: func() string {
 			jobCalls++
-			return task.NewJobID().String()
+			return modulecore.NewTaskID().String()
 		},
 	}
 

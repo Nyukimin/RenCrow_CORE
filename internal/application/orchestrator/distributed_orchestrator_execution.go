@@ -6,8 +6,8 @@ import (
 
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, jobID, goal, route string, startedAt, finishedAt time.Time, runErr error) {
@@ -15,15 +15,15 @@ func (o *DistributedOrchestrator) saveExecutionReport(ctx context.Context, jobID
 }
 
 // executeDistributed はルートに応じてTransport経由でAgent間通信
-func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (o *DistributedOrchestrator) executeDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	return o.routes.ExecuteTurnInput(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (o *DistributedOrchestrator) executeAutonomousDistributed(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	return o.autonomous.Execute(ctx, input, route, jobID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID task.JobID, ttsSessionID string) (string, error) {
+func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, jobID modulecore.TaskID, ttsSessionID string) (string, error) {
 	return o.routes.ExecuteDirect(ctx, input, route, jobID, ttsSessionID)
 }
 
@@ -43,7 +43,7 @@ func (o *DistributedOrchestrator) executeCodeViaShiro(
 	ctx context.Context,
 	input domainconversation.TurnInput,
 	route routing.Route,
-	jobID task.JobID,
+	jobID modulecore.TaskID,
 ) (string, error) {
 	return o.codeExecution.Execute(ctx, input.WithRoute(route), route, jobID)
 }

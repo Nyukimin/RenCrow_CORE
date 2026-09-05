@@ -65,6 +65,7 @@ function renderTrustedGeneratedImages(message) {
 
 function addMsgToTimeline(ev) {
   if (ev.type === 'job.notification') { addJobNotificationToTimeline(ev); return; }
+  if (ev.type === 'task.notification') { addTaskNotificationToTimeline(ev); return; }
   if (ev.type === 'agent.response') removeThinking(ev.job_id);
   if (ev.type === 'agent.thinking') { addThinking(ev); return; }
   if (ev.type === 'agent.start') { addThinkingStart(ev); return; }
@@ -166,6 +167,32 @@ function addJobNotificationToTimeline(ev) {
       '<span class="tm">' + ftime(ev.timestamp) + '</span>' +
     '</div><button class="cp" onclick="copyMsg(this)">Copy</button>' +
     '<div class="coord-meta">' + esc(meta || 'job.notification') + '</div>' +
+    '<div class="mc">' + fmt(normalizeViewerDisplayText(ev.content || '')) + '</div></div>';
+  el.querySelector('.mc').dataset.raw = ev.content || '';
+  chat.appendChild(el);
+  trimTimelineNodes();
+  bump();
+}
+
+function addTaskNotificationToTimeline(ev) {
+  const em = document.getElementById('empty');
+  if (em) em.remove();
+  const fromName = String(ev.from || '').trim() || 'shiro';
+  const f = ag(fromName);
+  const route = String(ev.route || '').trim();
+  const status = String(ev.status || ev.category || '').trim();
+  const taskID = String(ev.task_id || '').trim();
+  const meta = [route, status, taskID].filter(Boolean).join(' / ');
+  const el = document.createElement('div');
+  el.className = 'msg assistant task-interrupt';
+  el.innerHTML =
+    '<div class="av" style="background:' + f.c + '18;color:' + f.c + '">' + f.e + '</div>' +
+    '<div class="mb"><div class="mh">' +
+      '<span class="an" style="color:' + f.c + '">' + f.l + '</span>' +
+      '<span class="dir">割り込み報告</span>' +
+      '<span class="tm">' + ftime(ev.timestamp) + '</span>' +
+    '</div><button class="cp" onclick="copyMsg(this)">Copy</button>' +
+    '<div class="coord-meta">' + esc(meta || 'task.notification') + '</div>' +
     '<div class="mc">' + fmt(normalizeViewerDisplayText(ev.content || '')) + '</div></div>';
   el.querySelector('.mc').dataset.raw = ev.content || '';
   chat.appendChild(el);

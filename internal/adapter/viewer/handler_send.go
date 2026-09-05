@@ -13,7 +13,6 @@ import (
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -109,7 +108,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		jobID := task.NewJobID().String()
+		jobID := modulecore.NewTaskID().String()
 		messageID := string(modulecore.NewMessageID())
 		agentMessageID := string(modulecore.NewMessageID())
 		turnID := string(modulecore.NewTurnID())

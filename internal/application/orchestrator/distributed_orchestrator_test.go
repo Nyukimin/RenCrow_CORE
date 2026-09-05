@@ -179,9 +179,10 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	memory := session.NewCentralMemory()
 
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
+	taskID := modulecore.NewTaskID()
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID:       "viewer-distributed-job",
+		JobID:       taskID.String(),
 		SessionID:   "test-session",
 		Channel:     "line",
 		ChatID:      "U123",
@@ -195,8 +196,8 @@ func TestDistributedOrchestrator_ProcessMessage_LocalRoute(t *testing.T) {
 	if resp.Response != "Hello from Mio!" {
 		t.Errorf("Expected 'Hello from Mio!', got '%s'", resp.Response)
 	}
-	if resp.JobID != "viewer-distributed-job" {
-		t.Errorf("JobID = %q, want viewer-distributed-job", resp.JobID)
+	if resp.JobID != taskID.String() {
+		t.Errorf("JobID = %q, want %q", resp.JobID, taskID)
 	}
 	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
 		t.Fatalf("response identity is incomplete: %+v", resp)

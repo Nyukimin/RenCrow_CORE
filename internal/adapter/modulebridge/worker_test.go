@@ -8,19 +8,18 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
 
 type fakeWorkerExecutionService struct {
-	jobID task.JobID
+	jobID core.TaskID
 	plan  string
 	patch string
 	err   error
 }
 
-func (s *fakeWorkerExecutionService) ExecuteProposal(_ context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+func (s *fakeWorkerExecutionService) ExecuteProposal(_ context.Context, jobID core.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
 	s.jobID = jobID
 	s.plan = p.Plan()
 	s.patch = p.Patch()
@@ -37,6 +36,7 @@ func (s *fakeWorkerExecutionService) ExecuteObservation(_ context.Context, _ []s
 func TestWorkerExecutorAdapterExecuteProposalPatch(t *testing.T) {
 	service := &fakeWorkerExecutionService{}
 	adapter := NewWorkerExecutorAdapter(service)
+	taskID := core.NewTaskID()
 
 	health := adapter.Health(context.Background())
 	if health.Status != core.HealthReady || !health.Ready {
@@ -44,7 +44,7 @@ func TestWorkerExecutorAdapterExecuteProposalPatch(t *testing.T) {
 	}
 
 	got, err := adapter.Execute(context.Background(), moduleworker.Action{
-		JobID: "20260301-120000-abcd1234",
+		JobID: moduleworker.JobID(taskID),
 		Tool:  moduleworker.ToolProposalPatch,
 		Arguments: map[string]any{
 			"plan":  "plan text",
@@ -54,7 +54,7 @@ func TestWorkerExecutorAdapterExecuteProposalPatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}
-	if service.jobID.String() != "20260301-120000-abcd1234" {
+	if service.jobID != taskID {
 		t.Fatalf("job id was not mapped: %s", service.jobID.String())
 	}
 	if service.plan != "plan text" || service.patch == "" {
@@ -96,7 +96,7 @@ func TestWorkerExecutorAdapterRejectsUnsupportedTool(t *testing.T) {
 func TestWorkerExecutorAdapterPropagatesWorkerError(t *testing.T) {
 	adapter := NewWorkerExecutorAdapter(&fakeWorkerExecutionService{err: fmt.Errorf("boom")})
 	got, err := adapter.Execute(context.Background(), moduleworker.Action{
-		JobID: "20260301-120000-abcd1234",
+		JobID: moduleworker.JobID(core.NewTaskID()),
 		Tool:  moduleworker.ToolProposalPatch,
 		Arguments: map[string]any{
 			"plan":  "plan text",

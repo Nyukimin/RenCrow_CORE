@@ -485,8 +485,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			resp.SessionID = req.SessionID
 		}
 	}()
-	jobID := resolveProcessMessageJobID(req.JobID)
-	req.JobID = jobID.String()
+	jobID := modulecore.TaskID(req.JobID)
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
 	o.events.BindTrace(jobID.String(), modulecore.TraceID(req.TraceID))

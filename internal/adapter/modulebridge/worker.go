@@ -8,7 +8,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduleworker "github.com/Nyukimin/RenCrow_CORE/modules/worker"
 )
@@ -42,7 +41,7 @@ func (a *WorkerExecutorAdapter) Execute(ctx context.Context, action moduleworker
 	if err != nil {
 		return moduleworker.BuildActionErrorResult(action, err, startedAt, time.Now().UTC()), err
 	}
-	jobID, err := task.ParseJobID(string(action.JobID))
+	jobID, err := core.ParseTaskID(string(action.JobID))
 	if err != nil {
 		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, time.Now().UTC()), err
 	}

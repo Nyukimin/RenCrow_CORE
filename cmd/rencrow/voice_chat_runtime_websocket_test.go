@@ -13,7 +13,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
 	"golang.org/x/net/websocket"
@@ -35,7 +34,7 @@ func (h *slowVoiceDirectHandler) ProcessVoiceDirect(context.Context, orchestrato
 	return orchestrator.ProcessMessageResponse{}, nil
 }
 
-func (h *slowVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+func (h *slowVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, modulecore.TaskID, time.Time) {
 }
 
 type inputAudioVoiceDirectHandler struct {
@@ -66,7 +65,7 @@ func (h *inputAudioVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req
 	return response, err
 }
 
-func (h *inputAudioVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+func (h *inputAudioVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, modulecore.TaskID, time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.notifyCalls++
@@ -88,7 +87,7 @@ func (h *inputAudioVoiceDirectHandler) unblock() {
 func validInputAudioVoiceDirectResponse(text string) orchestrator.ProcessMessageResponse {
 	return orchestrator.ProcessMessageResponse{
 		Response:  text,
-		JobID:     task.NewJobID().String(),
+		JobID:     modulecore.NewTaskID().String(),
 		TraceID:   string(modulecore.NewTraceID()),
 		MessageID: string(modulecore.NewMessageID()),
 	}
@@ -627,7 +626,7 @@ func TestVoiceChatInputAudioBridge_FailsClosedWhenVoiceResultCannotBePublished(t
 		{
 			name: "invalid trace identity",
 			response: orchestrator.ProcessMessageResponse{
-				JobID:     task.NewJobID().String(),
+				JobID:     modulecore.NewTaskID().String(),
 				TraceID:   "not-a-trace",
 				MessageID: string(modulecore.NewMessageID()),
 			},
@@ -646,7 +645,7 @@ func TestVoiceChatInputAudioBridge_FailsClosedWhenVoiceResultCannotBePublished(t
 		{
 			name: "missing message identity",
 			response: orchestrator.ProcessMessageResponse{
-				JobID:   task.NewJobID().String(),
+				JobID:   modulecore.NewTaskID().String(),
 				TraceID: string(modulecore.NewTraceID()),
 			},
 		},

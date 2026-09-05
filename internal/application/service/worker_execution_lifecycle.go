@@ -6,7 +6,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (w *workerExecutionService) parseProposalCommands(p *proposal.Proposal) ([]patch.PatchCommand, error) {
@@ -17,13 +17,13 @@ func (w *workerExecutionService) parseProposalCommands(p *proposal.Proposal) ([]
 	return commands, nil
 }
 
-func (w *workerExecutionService) showExecutionSummaryIfEnabled(jobID task.JobID, commands []patch.PatchCommand) {
+func (w *workerExecutionService) showExecutionSummaryIfEnabled(jobID modulecore.TaskID, commands []patch.PatchCommand) {
 	if w.config.ShowExecutionSummary {
 		w.showExecutionSummary(jobID, commands)
 	}
 }
 
-func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, jobID task.JobID) error {
+func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, jobID modulecore.TaskID) error {
 	if !w.config.AutoCommit {
 		return nil
 	}
@@ -35,7 +35,7 @@ func (w *workerExecutionService) autoCommitBeforeExecution(ctx context.Context, 
 	return nil
 }
 
-func (w *workerExecutionService) autoCommitAfterExecution(ctx context.Context, jobID task.JobID, result *patch.PatchExecutionResult) {
+func (w *workerExecutionService) autoCommitAfterExecution(ctx context.Context, jobID modulecore.TaskID, result *patch.PatchExecutionResult) {
 	if !w.config.AutoCommit || result.ExecutedCmds == 0 {
 		return
 	}

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
@@ -18,7 +18,7 @@ func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
 	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
@@ -43,7 +43,7 @@ func TestRouteDecisionKeepsExplicitWildCommandAboveMidoriSelection(t *testing.T)
 		UserMessage: "/wild 青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
 	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
@@ -65,7 +65,7 @@ func TestRouteDecisionKeepsAutomaticRoutingForDefaultMio(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "mio",
 	}
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	input := newOrchestratorTestTurnInput(t, req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
 	decision, err := coordinator.Decide(context.Background(), input, req, jobID)
@@ -108,7 +108,7 @@ func TestRouteDecisionDoesNotPinOutsideDirectViewerMidoriChat(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 0.99, "automatic route")}
 			coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
-			jobID := task.NewJobID()
+			jobID := modulecore.NewTaskID()
 			input := newOrchestratorTestTurnInput(t, test.req.UserMessage, test.req.Channel, "viewer-user").WithViewerRecipient(test.req.To)
 
 			decision, err := coordinator.Decide(context.Background(), input, test.req, jobID)

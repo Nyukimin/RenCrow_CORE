@@ -320,6 +320,71 @@ func TestCanonicalTurnInputMigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestCanonicalTaskSubsystemHasNoLegacyJobContract(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	for _, relative := range []string{
+		filepath.Join("internal", "domain", "job"),
+		filepath.Join("internal", "application", "jobmanager"),
+		filepath.Join("internal", "infrastructure", "persistence", "job"),
+		filepath.Join("cmd", "rencrow", "cli_jobs.go"),
+		filepath.Join("internal", "adapter", "viewer", "job_handler.go"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Errorf("retired Step08 Job owner remains: %s", relative)
+		}
+	}
+
+	for _, relative := range []string{
+		filepath.Join("internal", "domain", "task"),
+		filepath.Join("internal", "application", "taskmanager"),
+		filepath.Join("internal", "infrastructure", "persistence", "task"),
+		filepath.Join("cmd", "rencrow", "cli_tasks.go"),
+		filepath.Join("internal", "adapter", "viewer", "task_handler.go"),
+	} {
+		path := filepath.Join(repoRoot, relative)
+		err := filepath.WalkDir(path, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || strings.HasSuffix(candidate, "_test.go") {
+				return nil
+			}
+			content, err := os.ReadFile(candidate)
+			if err != nil {
+				return err
+			}
+			for _, token := range []string{"JobID", "job_id", "internal/domain/job", "jobmanager"} {
+				if strings.Contains(string(content), token) {
+					t.Errorf("legacy Step08 token %q remains in %s", token, strings.TrimPrefix(candidate, repoRoot+string(filepath.Separator)))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan canonical Task owner %s: %v", relative, err)
+		}
+	}
+
+	registrar, err := os.ReadFile(filepath.Join(repoRoot, "internal", "features", "ops", "registrar.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacyRoute := range []string{"/viewer/parallel-jobs", "/viewer/parallel-job/detail", "/viewer/job-notifications"} {
+		if strings.Contains(string(registrar), legacyRoute) {
+			t.Errorf("legacy Task route remains: %s", legacyRoute)
+		}
+	}
+	for _, canonicalRoute := range []string{"/viewer/tasks", "/viewer/task/detail", "/viewer/task-notifications"} {
+		if !strings.Contains(string(registrar), canonicalRoute) {
+			t.Errorf("canonical Task route is missing: %s", canonicalRoute)
+		}
+	}
+}
+
 func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -1046,77 +1111,49 @@ func canonicalThreadViolation(fileSet *token.FileSet, position token.Pos, relati
 }
 
 const (
-	canonicalTaskImportPath         = "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	canonicalConversationImportPath = "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
 
-func TestCanonicalTaskValueObjectArchitecture(t *testing.T) {
+func TestCanonicalTaskAggregateArchitecture(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
+	relative := filepath.ToSlash(filepath.Join("internal", "domain", "task", "task.go"))
+	path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse canonical Task aggregate: %v", err)
+	}
 	var violations []string
-
-	legacyTaskFile := filepath.Join(repoRoot, "internal", "domain", "task", "task.go")
-	if _, err := os.Stat(legacyTaskFile); err == nil {
-		violations = append(violations, "internal/domain/task/task.go:retired user-input Task source remains")
-	} else if !os.IsNotExist(err) {
-		t.Fatalf("stat retired task source: %v", err)
-	}
-
 	jobIDFile := filepath.Join(repoRoot, "internal", "domain", "task", "jobid.go")
-	if _, err := os.Stat(jobIDFile); os.IsNotExist(err) {
-		violations = append(violations, "internal/domain/task/jobid.go:JobID value object is missing")
-	} else if err != nil {
-		t.Fatalf("stat JobID source: %v", err)
+	if _, err := os.Stat(jobIDFile); err == nil || !os.IsNotExist(err) {
+		violations = append(violations, "internal/domain/task/jobid.go:retired JobID value object remains")
 	}
-
-	err := canonicalWalkProductionGoFiles(repoRoot, func(relative string, fileSet *token.FileSet, parsed *ast.File) error {
-		aliases, dotImport := canonicalImportAliases(parsed, canonicalTaskImportPath)
+	taskStruct, found := canonicalArchitectureNamedStruct(parsed, "Task")
+	if !found {
+		violations = append(violations, relative+":canonical durable Task struct is missing")
+	} else {
+		coreAliases, dotImport := canonicalImportAliases(parsed, "github.com/Nyukimin/RenCrow_CORE/modules/core")
 		if dotImport {
-			violations = append(violations, relative+":dot import of canonical task package is forbidden")
+			violations = append(violations, relative+":dot import of modules/core is forbidden")
 		}
-		if canonicalArchitectureInPackageDir(relative, "internal/domain/task") {
-			for _, declaration := range parsed.Decls {
-				switch declaration := declaration.(type) {
-				case *ast.GenDecl:
-					if declaration.Tok != token.TYPE {
-						continue
-					}
-					for _, specification := range declaration.Specs {
-						typeSpec, ok := specification.(*ast.TypeSpec)
-						if ok && typeSpec.Name.Name == "Task" {
-							violations = append(violations, canonicalArchitectureViolation(fileSet, typeSpec.Name.Pos(), relative, "retired type declaration Task"))
-						}
-					}
-				case *ast.FuncDecl:
-					if declaration.Name.Name == "NewTask" {
-						violations = append(violations, canonicalArchitectureViolation(fileSet, declaration.Name.Pos(), relative, "retired function NewTask"))
-					}
+		foundTaskID := false
+		for _, field := range taskStruct.Fields.List {
+			for _, name := range field.Names {
+				normalized := canonicalArchitectureFieldName(name.Name)
+				switch normalized {
+				case "jobid", "usermessage", "channel", "chatid", "attachment", "attachments":
+					violations = append(violations, canonicalArchitectureViolation(fileSet, name.Pos(), relative, "retired input or Job field "+name.Name))
+				}
+				if name.Name == "TaskID" {
+					foundTaskID = canonicalArchitectureConversationType(field.Type, coreAliases, "TaskID", false)
 				}
 			}
 		}
-		if len(aliases) == 0 {
-			return nil
+		if !foundTaskID {
+			violations = append(violations, relative+":TaskID must use modules/core.TaskID")
 		}
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			selector, ok := node.(*ast.SelectorExpr)
-			if !ok || (selector.Sel.Name != "Task" && selector.Sel.Name != "NewTask") {
-				return true
-			}
-			packageName, ok := selector.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if _, exactImport := aliases[packageName.Name]; exactImport {
-				violations = append(violations, canonicalArchitectureViolation(fileSet, selector.Pos(), relative, packageName.Name+"."+selector.Sel.Name))
-			}
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("scan production Go source for retired task selectors: %v", err)
 	}
-
-	canonicalArchitectureFail(t, "retired user-input Task must not return and JobID must remain", violations)
+	canonicalArchitectureFail(t, "Task must be the durable canonical aggregate and not the retired TurnInput value", violations)
 }
 
 func TestCanonicalTurnInputArchitecture(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestMessageTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
@@ -19,7 +19,7 @@ func TestMessageTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 				Channel:   "viewer",
 				ChatID:    "viewer-user",
 				To:        characterID,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"), "tts-chat")
+			}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"), "tts-chat")
 
 			if len(bridge.startReqs) != 1 {
 				t.Fatalf("TTS start request count = %d, want 1", len(bridge.startReqs))
@@ -43,7 +43,7 @@ func TestDistributedTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 				Channel:   "viewer",
 				ChatID:    "viewer-user",
 				To:        characterID,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"))
+			}, modulecore.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"))
 
 			if ttsSessionID == "" || len(bridge.startReqs) != 1 {
 				t.Fatalf("expected one started TTS session, session=%q starts=%d", ttsSessionID, len(bridge.startReqs))

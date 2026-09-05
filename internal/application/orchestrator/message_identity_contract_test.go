@@ -107,8 +107,9 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	ingressRootTaskID := string(modulecore.NewTaskID())
 	ingressMessageID := string(modulecore.NewMessageID())
 	ingressAgentMessageID := string(modulecore.NewMessageID())
+	ingressJobID := string(modulecore.NewTaskID())
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID: "job-fixed", TurnID: ingressTurnID, TraceID: ingressTraceID, RootTaskID: ingressRootTaskID,
+		JobID: ingressJobID, TurnID: ingressTurnID, TraceID: ingressTraceID, RootTaskID: ingressRootTaskID,
 		MessageID: ingressMessageID, AgentMessageID: ingressAgentMessageID,
 		SessionID: "session-1", Channel: "viewer", ChatID: "viewer-user", UserMessage: "hello",
 	})
@@ -159,6 +160,7 @@ func TestEnsureProcessRequestIdentityRejectsMalformedIngressWithoutRepair(t *tes
 
 func TestEnsureProcessRequestIdentityRejectsEveryWrongCanonicalTypeWithoutRepair(t *testing.T) {
 	valid := ProcessMessageRequest{
+		JobID:          string(modulecore.NewTaskID()),
 		TurnID:         string(modulecore.NewTurnID()),
 		TraceID:        string(modulecore.NewTraceID()),
 		RootTaskID:     string(modulecore.NewTaskID()),
@@ -169,6 +171,7 @@ func TestEnsureProcessRequestIdentityRejectsEveryWrongCanonicalTypeWithoutRepair
 		name   string
 		mutate func(*ProcessMessageRequest)
 	}{
+		{name: "job_id", mutate: func(req *ProcessMessageRequest) { req.JobID = string(modulecore.NewMessageID()) }},
 		{name: "turn_id", mutate: func(req *ProcessMessageRequest) { req.TurnID = string(modulecore.NewTraceID()) }},
 		{name: "trace_id", mutate: func(req *ProcessMessageRequest) { req.TraceID = string(modulecore.NewTurnID()) }},
 		{name: "root_task_id", mutate: func(req *ProcessMessageRequest) { req.RootTaskID = string(modulecore.NewMessageID()) }},

@@ -16,6 +16,10 @@ func ensureProcessRequestIdentity(req *ProcessMessageRequest) error {
 	if req == nil {
 		return errors.New("process message request is nil")
 	}
+	jobID, err := canonicalProcessID(req.JobID, func() string { return string(modulecore.NewTaskID()) }, func(value string) error { return modulecore.TaskID(value).Validate() })
+	if err != nil {
+		return err
+	}
 	turnID, err := canonicalProcessID(req.TurnID, func() string { return string(modulecore.NewTurnID()) }, func(value string) error { return modulecore.TurnID(value).Validate() })
 	if err != nil {
 		return err
@@ -39,6 +43,7 @@ func ensureProcessRequestIdentity(req *ProcessMessageRequest) error {
 	if messageID == agentMessageID {
 		return errors.New("user and agent message IDs must differ")
 	}
+	req.JobID = jobID
 	req.TurnID = turnID
 	req.TraceID = traceID
 	req.RootTaskID = rootTaskID

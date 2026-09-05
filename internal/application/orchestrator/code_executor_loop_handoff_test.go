@@ -8,7 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type loopHandoffCoderStub struct {
@@ -30,7 +30,7 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder, nil, nil, nil, worker, nil, recordingCodeEventEmitter(&events)).
 		WithCoderLoopPrompts(map[string]string{"coder1": "CoderLoop prompt"})
 
-	jobID := task.NewJobID()
+	jobID := modulecore.NewTaskID()
 	req := newOrchestratorTestCodeExecutionRequest(t, jobID, "会話内容を保ったまま修正して", routing.RouteCODE1, "sess-1", "test", "chat-1")
 
 	if _, err := executor.ExecuteCode(context.Background(), req); err != nil {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -18,7 +17,7 @@ type leadAgentRunRecord struct {
 	StartedEventID modulecore.EventID
 }
 
-func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.JobID, route routing.Route) (leadAgentRunRecord, error) {
+func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID modulecore.TaskID, route routing.Route) (leadAgentRunRecord, error) {
 	startedAt := time.Now().UTC()
 	if recorder == nil {
 		return leadAgentRunRecord{StartedAt: startedAt}, nil
@@ -66,7 +65,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	return leadAgentRunRecord{StartedAt: startedAt, TraceID: traceID, StartedEventID: event.EventID}, nil
 }
 
-func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.JobID, route routing.Route, record leadAgentRunRecord, status string, summary string) error {
+func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID modulecore.TaskID, route routing.Route, record leadAgentRunRecord, status string, summary string) error {
 	if recorder == nil {
 		return nil
 	}
@@ -113,11 +112,11 @@ func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt
 	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch task with the same job_id", fallbackAt
 }
 
-func leadAgentRunID(jobID task.JobID) string {
+func leadAgentRunID(jobID modulecore.TaskID) string {
 	return "run_lead_" + jobID.String()
 }
 
-func leadAgentContextPackID(jobID task.JobID) string {
+func leadAgentContextPackID(jobID modulecore.TaskID) string {
 	return "ctx_lead_" + jobID.String()
 }
 

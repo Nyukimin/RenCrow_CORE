@@ -46,7 +46,7 @@ Commands:
   gateway   Gateway status/restart operations
   logs      Show logs (use --follow to stream)
   evidence  List/show/summarize execution evidence
-  jobs      Manage Mio parallel jobs and interrupt notifications
+  tasks     Manage canonical Tasks and interrupt notifications
   source-registry  List/register L1 source registry entries
   web-gather  Fetch public web pages into pending L1 staging
   browser-actor  Operate an allowlisted browser session from JSON
