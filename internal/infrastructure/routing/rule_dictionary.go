@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // RuleDictionary はキーワードベースのルール辞書実装
@@ -163,8 +163,8 @@ func NewRuleDictionary() *RuleDictionary {
 }
 
 // Match はタスクメッセージをルールと照合
-func (d *RuleDictionary) Match(t task.Task) (routing.Route, float64, bool) {
-	message := strings.ToLower(t.UserMessage())
+func (d *RuleDictionary) Match(t conversation.TurnInput) (routing.Route, float64, bool) {
+	message := strings.ToLower(t.MessageText())
 
 	if path := routing.DetectCodexWorkPath(message); path.Found() {
 		return routing.RouteWILD, 0.92, true

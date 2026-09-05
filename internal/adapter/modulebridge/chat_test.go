@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -29,11 +29,15 @@ func (p *fakeChatProcessor) ProcessMessage(_ context.Context, req orchestrator.P
 }
 
 type fakeRouteDecisionProvider struct {
-	route routing.Route
+	route      routing.Route
+	decideFunc func(conversation.TurnInput) (routing.Decision, error)
 }
 
-func (p fakeRouteDecisionProvider) DecideAction(_ context.Context, t task.Task) (routing.Decision, error) {
-	return routing.NewDecision(p.route, 0.9, "decided for "+t.UserMessage()), nil
+func (p fakeRouteDecisionProvider) DecideAction(_ context.Context, t conversation.TurnInput) (routing.Decision, error) {
+	if p.decideFunc != nil {
+		return p.decideFunc(t)
+	}
+	return routing.NewDecision(p.route, 0.9, "decided for "+t.MessageText()), nil
 }
 
 func TestChatServiceAdapterRespond(t *testing.T) {
@@ -106,6 +110,35 @@ func TestChatServiceAdapterDecideRouteUsesInjectedDecider(t *testing.T) {
 	}
 	if got.Reason != "decided for 実装して" {
 		t.Fatalf("reason was not mapped: %+v", got)
+	}
+}
+
+func TestChatServiceAdapterDecideRouteBuildsCanonicalTurnInput(t *testing.T) {
+	var got conversation.TurnInput
+	provider := fakeRouteDecisionProvider{
+		route: routing.RouteCHAT,
+		decideFunc: func(input conversation.TurnInput) (routing.Decision, error) {
+			got = input
+			return routing.NewDecision(routing.RouteCHAT, 1, "captured"), nil
+		},
+	}
+	adapter := NewChatServiceAdapterWithRoutePolicy(&fakeChatProcessor{}, NewMioRoutePolicy(provider))
+
+	if _, err := adapter.DecideRoute(context.Background(), chat.Input{
+		Channel: " LINE ",
+		UserID:  " user-1 ",
+		Text:    "こんにちは",
+	}); err != nil {
+		t.Fatalf("DecideRoute returned error: %v", err)
+	}
+	if err := got.Validate(); err != nil {
+		t.Fatalf("bridge built invalid TurnInput: %v", err)
+	}
+	if got.MessageText() != "こんにちは" || got.ChannelAddress().ChannelType() != "line" || got.ChannelAddress().ExternalConversationID() != "user-1" {
+		t.Fatalf("bridge input=%#v address=%#v", got, got.ChannelAddress())
+	}
+	if got.RootTaskID().Validate() != nil || got.TurnID().Validate() != nil || got.TraceID().Validate() != nil || got.UserMessageID().Validate() != nil || got.AgentMessageID().Validate() != nil {
+		t.Fatalf("bridge did not generate canonical identities: %#v", got)
 	}
 }
 

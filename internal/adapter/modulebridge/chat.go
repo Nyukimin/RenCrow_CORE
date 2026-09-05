@@ -2,17 +2,18 @@ package modulebridge
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
 )
 
 type RouteDecisionProvider interface {
-	DecideAction(ctx context.Context, t task.Task) (routing.Decision, error)
+	DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
 }
 
 type ChatServiceAdapter struct {
@@ -55,7 +56,15 @@ func (p mioRoutePolicy) DecideRoute(ctx context.Context, input chat.Input) (chat
 		}, nil
 	}
 	input = chat.NormalizeInput(input)
-	decision, err := p.decider.DecideAction(ctx, task.NewTask(task.NewJobID(), input.Text, input.Channel, input.UserID))
+	address, err := conversation.NewChannelAddress(input.Channel, input.UserID)
+	if err != nil {
+		return chat.RouteDecision{}, fmt.Errorf("build channel address: %w", err)
+	}
+	turnInput, err := conversation.NewTurnInput(core.NewTaskID(), input.Text, address)
+	if err != nil {
+		return chat.RouteDecision{}, fmt.Errorf("build turn input: %w", err)
+	}
+	decision, err := p.decider.DecideAction(ctx, turnInput)
 	if err != nil {
 		return chat.RouteDecision{}, err
 	}

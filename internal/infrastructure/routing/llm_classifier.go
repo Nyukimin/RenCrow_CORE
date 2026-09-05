@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 const classifierMaxTokens = 8
@@ -27,8 +27,8 @@ func NewLLMClassifier(llmProvider llm.LLMProvider, systemPrompt string) *LLMClas
 }
 
 // Classify はタスクを分類
-func (c *LLMClassifier) Classify(ctx context.Context, t task.Task) (routing.Decision, error) {
-	userMessage := fmt.Sprintf("ユーザーからのメッセージ: %s", t.UserMessage())
+func (c *LLMClassifier) Classify(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
+	userMessage := fmt.Sprintf("ユーザーからのメッセージ: %s", t.MessageText())
 
 	req := llm.GenerateRequest{
 		SystemPrompt: c.systemPrompt,
