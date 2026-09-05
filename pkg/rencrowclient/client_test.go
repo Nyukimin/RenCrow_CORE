@@ -112,7 +112,7 @@ func TestSuperAgentStatus(t *testing.T) {
 			t.Fatalf("method=%s", r.Method)
 		}
 		_ = json.NewEncoder(w).Encode(SuperAgentStatus{
-			AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now.Add(-time.Minute), CompletedAt: now}},
+			AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "completed", StartedAt: now.Add(-time.Minute), CompletedAt: now}},
 			RuntimeConfig: SuperAgentRuntimeConfig{
 				RunQueueSchedulerEnabled:     true,
 				RunQueueSchedulerIntervalSec: 1,
@@ -153,8 +153,8 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 			name: "duplicate agent run",
 			resp: SuperAgentStatus{
 				AgentRuns: []AgentRun{
-					{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now},
-					{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now, CompletedAt: now.Add(time.Minute)},
+					{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "running", StartedAt: now},
+					{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "completed", StartedAt: now, CompletedAt: now.Add(time.Minute)},
 				},
 			},
 			want: "duplicate agent_run",
@@ -171,47 +171,62 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "missing run id",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{AgentType: "LeadAgent", Status: "running"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{ActorID: "mio", Status: "running"}}},
 			want: "missing run_id",
 		},
 		{
 			name: "missing run status",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio"}}},
 			want: "missing status",
 		},
 		{
+			name: "missing run actor",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, Status: "running", StartedAt: now}}},
+			want: "invalid actor_id",
+		},
+		{
+			name: "noncanonical run actor",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "MIO", Status: "running", StartedAt: now}}},
+			want: "invalid actor_id",
+		},
+		{
 			name: "missing task id",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, ActorID: "mio", Status: "running", StartedAt: now}}},
 			want: "missing task_id",
 		},
 		{
 			name: "legacy run id",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: "run_1", TaskID: taskID, ActorID: "mio", Status: "running", StartedAt: now}}},
 			want: "invalid run_id",
 		},
 		{
 			name: "legacy task id",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: "task_1", AgentType: "LeadAgent", Status: "running", StartedAt: now}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: "task_1", ActorID: "mio", Status: "running", StartedAt: now}}},
 			want: "invalid task_id",
 		},
 		{
 			name: "terminal run missing completed_at",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "completed", StartedAt: now}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "completed", StartedAt: now}}},
 			want: "terminal agent_run",
 		},
 		{
 			name: "run missing started at",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "running"}}},
 			want: "missing started_at",
 		},
 		{
 			name: "invalid run status",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "done"}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "done"}}},
 			want: "invalid agent_run status",
 		},
 		{
+			name: "running run must not have completed_at",
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "running", StartedAt: now, CompletedAt: now.Add(time.Minute)}}},
+			want: "must not have completed_at",
+		},
+		{
 			name: "failed run missing summary",
-			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "failed", StartedAt: now, CompletedAt: now.Add(time.Minute)}}},
+			resp: SuperAgentStatus{AgentRuns: []AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "failed", StartedAt: now, CompletedAt: now.Add(time.Minute)}}},
 			want: "failed agent_run",
 		},
 		{
@@ -422,6 +437,24 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 	}
 }
 
+func TestValidateSuperAgentStatusAcceptsClosedAgentRunStatuses(t *testing.T) {
+	now := time.Date(2026, 5, 20, 3, 5, 0, 0, time.UTC)
+	for _, status := range []string{"running", "paused", "completed", "failed", "cancelled", "blocked", "interrupted", "reassigned", "superseded"} {
+		t.Run(status, func(t *testing.T) {
+			run := AgentRun{RunID: canonicalClientTestRunID(t, "status-"+status), TaskID: canonicalClientTestTaskID(t, "task-"+status), ActorID: "mio", Status: status, StartedAt: now}
+			if status != "running" {
+				run.CompletedAt = now.Add(time.Minute)
+			}
+			if status == "failed" {
+				run.Summary = "failed"
+			}
+			if err := validateSuperAgentStatus(SuperAgentStatus{AgentRuns: []AgentRun{run}}); err != nil {
+				t.Fatalf("status %q should validate: %v", status, err)
+			}
+		})
+	}
+}
+
 func TestSuperAgentStatusRejectsLegacySubagentFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -431,6 +464,7 @@ func TestSuperAgentStatusRejectsLegacySubagentFields(t *testing.T) {
 		{name: "subagent id", body: `{"subagent_tasks":[{"subagent_id":"sub_1"}]}`, want: `unknown field "subagent_id"`},
 		{name: "parent run id", body: `{"subagent_tasks":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
 		{name: "agent type", body: `{"subagent_tasks":[{"agent_type":"Worker"}]}`, want: `unknown field "agent_type"`},
+		{name: "agent run legacy type", body: `{"agent_runs":[{"agent_type":"LeadAgent"}]}`, want: `unknown field "agent_type"`},
 		{name: "agent run parent id", body: `{"agent_runs":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
 		{name: "run queue legacy parent run id", body: `{"run_queue":[{"parent_run_id":"run_1"}]}`, want: `unknown field "parent_run_id"`},
 		{name: "run queue unknown field", body: `{"run_queue":[{"future_run_field":"value"}]}`, want: `unknown field "future_run_field"`},

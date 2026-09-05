@@ -204,8 +204,8 @@ func registerRuntimeDataRecallSuperAgentHarness(r *runtimeDataRecallRegistry, s 
 		}
 		records := []map[string]any{}
 		for _, v := range items {
-			if dataRecallMatches(q.Query, string(v.RunID), v.AgentType, v.Status) {
-				records = append(records, map[string]any{"run_id": v.RunID, "agent": v.AgentType, "status": v.Status, "started_at": v.StartedAt, "completed_at": v.CompletedAt})
+			if dataRecallMatches(q.Query, string(v.RunID), v.ActorID, v.Status) {
+				records = append(records, map[string]any{"run_id": v.RunID, "actor_id": v.ActorID, "status": v.Status, "started_at": v.StartedAt, "completed_at": v.CompletedAt})
 			}
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil

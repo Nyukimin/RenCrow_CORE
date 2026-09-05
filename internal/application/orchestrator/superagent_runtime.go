@@ -42,6 +42,9 @@ func validateLeadAgentIdentity(taskID modulecore.TaskID, runID modulecore.RunID,
 	if err != nil {
 		return "", fmt.Errorf("lead agent actor identity is invalid: %w", err)
 	}
+	if err := domainsuperagent.ValidateActorID(actor); err != nil {
+		return "", fmt.Errorf("lead agent actor identity is invalid: %w", err)
+	}
 	return actorID, nil
 }
 
@@ -63,7 +66,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		RunID:              runID,
 		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
-		AgentType:          "LeadAgent",
+		ActorID:            actorID,
 		Goal:               req.UserMessage,
 		Status:             "running",
 		StartedAt:          startedAt,
@@ -78,7 +81,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent run start: %w", err)
 	}
 	event := modulecore.NewEventEnvelope(traceID, "", nil, "superagent", "lead_agent.started", startedAt, map[string]any{
-		"run_reference": run.RunID, "actor_label": "LeadAgent", "route": string(route), "status": "running",
+		"route": string(route), "status": "running",
 	})
 	event.TaskID = taskID
 	event.RunID = runID
@@ -88,7 +91,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
 	}
 	pack := domainsuperagent.ContextPack{
-		ContextPackID:   leadAgentContextPackID(taskID),
+		ContextPackID:   leadAgentContextPackID(runID),
 		TaskID:          taskID,
 		RunID:           runID,
 		WorkstreamID:    req.SessionID,
@@ -120,7 +123,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		RunID:              runID,
 		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
-		AgentType:          "LeadAgent",
+		ActorID:            actorID,
 		Goal:               req.UserMessage,
 		Status:             status,
 		StartedAt:          record.StartedAt,
@@ -139,7 +142,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		return fmt.Errorf("lead agent event context is missing")
 	}
 	event := modulecore.NewEventEnvelope(record.TraceID, record.StartedEventID, nil, "superagent", "lead_agent."+status, completedAt, map[string]any{
-		"run_reference": run.RunID, "actor_label": "LeadAgent", "route": string(route),
+		"route":  string(route),
 		"status": status, "summary": summary,
 	})
 	event.TaskID = taskID
@@ -159,8 +162,8 @@ func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt
 	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch with the same task_id", fallbackAt
 }
 
-func leadAgentContextPackID(taskID modulecore.TaskID) string {
-	return "ctx_lead_" + taskID.String()
+func leadAgentContextPackID(runID modulecore.RunID) string {
+	return "ctx_lead_" + string(runID)
 }
 
 func estimateRuntimeContextTokens(text string) int {

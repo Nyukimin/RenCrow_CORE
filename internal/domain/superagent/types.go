@@ -11,7 +11,7 @@ type AgentRun struct {
 	RunID              modulecore.RunID  `json:"run_id"`
 	TaskID             modulecore.TaskID `json:"task_id"`
 	WorkstreamID       string            `json:"workstream_id,omitempty"`
-	AgentType          string            `json:"agent_type"`
+	ActorID            string            `json:"actor_id"`
 	Goal               string            `json:"goal,omitempty"`
 	Status             string            `json:"status"`
 	StartedAt          time.Time         `json:"started_at"`

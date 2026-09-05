@@ -1849,10 +1849,10 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if super.runs[0].Status != "running" || super.runs[1].Status != "completed" {
 		t.Fatalf("unexpected agent_run statuses: %+v", super.runs)
 	}
-	if super.runs[0].RunID != super.runs[1].RunID || super.runs[0].WorkstreamID != resp.SessionID {
+	if super.runs[0].RunID != super.runs[1].RunID || super.runs[0].WorkstreamID != resp.SessionID || super.runs[0].ActorID != "mio" || super.runs[1].ActorID != "mio" {
 		t.Fatalf("unexpected agent_run identity: %+v", super.runs)
 	}
-	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID {
+	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID || super.contextPacks[0].ContextPackID != "ctx_lead_"+string(super.runs[0].RunID) {
 		t.Fatalf("unexpected context pack: %+v", super.contextPacks)
 	}
 	if runID := modulecore.RunID(super.runs[0].RunID); runID.Validate() != nil {
@@ -1874,6 +1874,12 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 		}
 		if event.TaskID != modulecore.TaskID(resp.TaskID) || event.RunID != modulecore.RunID(super.runs[0].RunID) || event.ActorKind != "agent" || event.ActorID != "mio" {
 			t.Fatalf("lead event attribution = %#v", event)
+		}
+		if _, ok := event.Payload["run_reference"]; ok {
+			t.Fatalf("lead event retained run_reference: %#v", event.Payload)
+		}
+		if _, ok := event.Payload["actor_label"]; ok {
+			t.Fatalf("lead event retained actor_label: %#v", event.Payload)
 		}
 	}
 }
@@ -1903,6 +1909,9 @@ func TestProcessMessage_RecordsPausedLeadAgentRunWhenRuntimePauseCancelsContext(
 	}
 	if super.runs[0].Status != "running" || super.runs[1].Status != "paused" {
 		t.Fatalf("unexpected agent_run statuses: %+v", super.runs)
+	}
+	if super.runs[0].ActorID != "mio" || super.runs[1].ActorID != "mio" {
+		t.Fatalf("paused agent_run actor identity: %+v", super.runs)
 	}
 	if !strings.Contains(super.runs[1].Summary, "pause requested") {
 		t.Fatalf("paused run summary did not record pause reason: %+v", super.runs[1])

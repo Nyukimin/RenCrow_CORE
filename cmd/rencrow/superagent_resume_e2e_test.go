@@ -48,7 +48,7 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 		TaskID:   modulecore.NewTaskID(),
 		Title:    "finish step two",
 		Route:    domaintask.RouteCode,
-		Assignee: "LeadAgent",
+		Assignee: "mio",
 	}, domaintask.SharedRoleContext{})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 		RunID:              firstRun.RunID,
 		TaskID:             task.TaskID,
 		WorkstreamID:       "thread-e2e",
-		AgentType:          "LeadAgent",
+		ActorID:            "mio",
 		Goal:               task.Title,
 		Status:             "running",
 		StartedAt:          firstRun.StartedAt,

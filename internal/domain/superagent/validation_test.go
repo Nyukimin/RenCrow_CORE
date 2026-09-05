@@ -32,7 +32,7 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 	if err := ValidateAgentRun(AgentRun{
 		RunID:       runID,
 		TaskID:      taskID,
-		AgentType:   "LeadAgent",
+		ActorID:     "mio",
 		Status:      "completed",
 		StartedAt:   now,
 		CompletedAt: now.Add(time.Minute),
@@ -89,7 +89,7 @@ func TestValidateAgentRunRejectsLegacyProjectionRunID(t *testing.T) {
 	err := ValidateAgentRun(AgentRun{
 		RunID:     "run_legacy",
 		TaskID:    validTaskID(),
-		AgentType: "LeadAgent",
+		ActorID:   "mio",
 		Status:    "running",
 		StartedAt: now,
 	})
@@ -164,6 +164,57 @@ func TestValidateSubagentTaskRejectsMechanismActors(t *testing.T) {
 	}
 }
 
+func TestValidateAgentRunRequiresExactActorID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	for _, actorID := range []string{"", " mio", "mio ", "MIO", "LeadAgent", "worker", "provider", "model"} {
+		t.Run(actorID, func(t *testing.T) {
+			err := ValidateAgentRun(AgentRun{
+				RunID: validRunID(), TaskID: validTaskID(), ActorID: actorID, Status: "running", StartedAt: now,
+			})
+			if err == nil || !strings.Contains(err.Error(), "actor_id") {
+				t.Fatalf("expected exact actor_id rejection for %q, got %v", actorID, err)
+			}
+		})
+	}
+}
+
+func TestValidateAgentRunUsesClosedStatusAndCompletionTimestampContract(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
+	valid := func(status string) AgentRun {
+		run := AgentRun{RunID: validRunID(), TaskID: validTaskID(), ActorID: "mio", Status: status, StartedAt: now}
+		if status != "running" {
+			run.CompletedAt = now.Add(time.Minute)
+		}
+		return run
+	}
+	for _, status := range []string{"running", "paused", "completed", "failed", "cancelled", "blocked", "interrupted", "reassigned", "superseded"} {
+		t.Run("accept "+status, func(t *testing.T) {
+			if err := ValidateAgentRun(valid(status)); err != nil {
+				t.Fatalf("status %q should validate: %v", status, err)
+			}
+		})
+	}
+	for _, status := range []string{"queued", "done", "unknown", " RUNNING"} {
+		t.Run("reject "+status, func(t *testing.T) {
+			if err := ValidateAgentRun(valid(status)); err == nil || !strings.Contains(err.Error(), "status") {
+				t.Fatalf("status %q should be rejected, got %v", status, err)
+			}
+		})
+	}
+	runningWithCompletion := valid("running")
+	runningWithCompletion.CompletedAt = now.Add(time.Minute)
+	if err := ValidateAgentRun(runningWithCompletion); err == nil || !strings.Contains(err.Error(), "completed_at") {
+		t.Fatalf("running run with completed_at should be rejected, got %v", err)
+	}
+	for _, status := range []string{"paused", "completed", "failed", "cancelled", "blocked", "interrupted", "reassigned", "superseded"} {
+		terminalWithoutCompletion := valid(status)
+		terminalWithoutCompletion.CompletedAt = time.Time{}
+		if err := ValidateAgentRun(terminalWithoutCompletion); err == nil || !strings.Contains(err.Error(), "completed_at") {
+			t.Fatalf("terminal status %q without completed_at should be rejected, got %v", status, err)
+		}
+	}
+}
+
 func TestValidateSubagentTaskRequiresCompletedAtForTerminalStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	for _, status := range []string{"completed", "failed", "cancelled"} {
@@ -208,7 +259,7 @@ func TestValidateProjectionsRejectInvalidTaskID(t *testing.T) {
 		{
 			name: "agent run",
 			err: ValidateAgentRun(AgentRun{
-				RunID: validRunID(), TaskID: "task_legacy", AgentType: "LeadAgent", Status: "running", StartedAt: now,
+				RunID: validRunID(), TaskID: "task_legacy", ActorID: "mio", Status: "running", StartedAt: now,
 			}),
 		},
 		{
@@ -250,7 +301,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "agent run started_at",
 			err:  "started_at",
 			run: func() error {
-				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: "running"})
+				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), ActorID: "mio", Status: "running"})
 			},
 		},
 		{
@@ -313,7 +364,7 @@ func TestValidateSuperAgentRejectsTerminalWithoutCompletedAt(t *testing.T) {
 		{
 			name: "agent run",
 			run: func() error {
-				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: "failed", StartedAt: now, Summary: "failed"})
+				return ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), ActorID: "mio", Status: "failed", StartedAt: now, Summary: "failed"})
 			},
 		},
 		{
@@ -343,9 +394,9 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "agent run id", err: ValidateAgentRun(AgentRun{AgentType: "LeadAgent", Status: "running", StartedAt: now}), want: "run_id"},
-		{name: "agent type", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), Status: "running", StartedAt: now}), want: "agent_type"},
-		{name: "agent status", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", StartedAt: now}), want: "status"},
+		{name: "agent run id", err: ValidateAgentRun(AgentRun{ActorID: "mio", Status: "running", StartedAt: now}), want: "run_id"},
+		{name: "agent actor", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), Status: "running", StartedAt: now}), want: "actor_id"},
+		{name: "agent status", err: ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), ActorID: "mio", StartedAt: now}), want: "status"},
 		{name: "subagent task id", err: ValidateSubagentTask(SubagentTask{RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task_id"},
 		{name: "subagent run id", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "run_id"},
 		{name: "subagent actor id", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "actor_id"},
@@ -378,7 +429,7 @@ func TestValidateSuperAgentTerminalStatusVariants(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	for _, status := range []string{"completed", "failed", "cancelled", "paused"} {
 		t.Run("agent "+status, func(t *testing.T) {
-			err := ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), AgentType: "LeadAgent", Status: status, StartedAt: now})
+			err := ValidateAgentRun(AgentRun{RunID: validRunID(), TaskID: validTaskID(), ActorID: "mio", Status: status, StartedAt: now})
 			if err == nil || !strings.Contains(err.Error(), "completed_at") {
 				t.Fatalf("err=%v, want completed_at", err)
 			}

@@ -102,7 +102,7 @@ func (s *stubSuperAgentStore) SaveRunQueueItem(_ context.Context, item domainsup
 }
 
 func TestHandleSuperAgentStatus(t *testing.T) {
-	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: modulecore.NewRunID(), TaskID: modulecore.NewTaskID(), AgentType: "LeadAgent", Status: "running"}}}
+	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: modulecore.NewRunID(), TaskID: modulecore.NewTaskID(), ActorID: "mio", Status: "running"}}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/superagent", nil)
 	rec := httptest.NewRecorder()
 	HandleSuperAgentStatus(store).ServeHTTP(rec, req)
@@ -151,7 +151,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
 		RunID:              runID,
 		TaskID:             taskID,
-		AgentType:          "LeadAgent",
+		ActorID:            "mio",
 		Goal:               "continue durable work",
 		Status:             "running",
 		StartedAt:          startedAt,
@@ -261,7 +261,7 @@ func TestHandleSuperAgentRunResumeRequiresPausedProjection(t *testing.T) {
 			runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 			owner := newStubSuperAgentTaskOwner(taskID, startedAt)
 			run := domainsuperagent.AgentRun{
-				RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "work", Status: status, StartedAt: startedAt,
+				RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "work", Status: status, StartedAt: startedAt,
 				ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 			}
 			if status != "running" {
@@ -282,7 +282,7 @@ func TestHandleSuperAgentRunResumeRejectsMissingCheckpoint(t *testing.T) {
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	owner := newStubSuperAgentTaskOwner(taskID, startedAt)
-	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "work", Status: "paused", StartedAt: startedAt, CompletedAt: startedAt}}}
+	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "work", Status: "paused", StartedAt: startedAt, CompletedAt: startedAt}}}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q}`, runID))))
 	rec := httptest.NewRecorder()
 	HandleSuperAgentRunResumeWithTaskOwner(store, owner).ServeHTTP(rec, req)
@@ -295,7 +295,7 @@ func TestHandleSuperAgentRunResumeRejectsMismatchedExistingIntentBeforeTaskResum
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	run := domainsuperagent.AgentRun{
-		RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "work", Status: "paused", StartedAt: startedAt,
+		RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "work", Status: "paused", StartedAt: startedAt,
 		CompletedAt: startedAt.Add(time.Minute), ResumePolicy: "checkpoint", CheckpointRevision: 2,
 		CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 	}
@@ -342,7 +342,7 @@ func TestHandleSuperAgentRunPauseAppliesRuntimeControl(t *testing.T) {
 	store := &stubSuperAgentStore{runs: []domainsuperagent.AgentRun{{
 		RunID:     runID,
 		TaskID:    taskID,
-		AgentType: "LeadAgent",
+		ActorID:   "mio",
 		Status:    "running",
 		StartedAt: startedAt,
 	}}}
@@ -373,7 +373,7 @@ func TestHandleSuperAgentRunStateOwnerFailureLeavesProjectionAndQueueUntouched(t
 	startedAt := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	run := domainsuperagent.AgentRun{
-		RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Goal: "durable work", Status: "running", StartedAt: startedAt,
+		RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "durable work", Status: "running", StartedAt: startedAt,
 		ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 	}
 	controller := &stubSuperAgentRunController{}

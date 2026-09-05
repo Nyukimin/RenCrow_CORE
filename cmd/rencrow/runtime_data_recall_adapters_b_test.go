@@ -121,21 +121,21 @@ func TestRegisterDataRecallComplexityHotspot(t *testing.T) {
 func TestRegisterDataRecallSuperAgentHarness(t *testing.T) {
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	store := &dataRecallSuperAgentListerStub{runs: []domainsuperagent.AgentRun{
-		{RunID: runID, TaskID: taskID, AgentType: "Luna", Goal: "secret context", Status: "completed", StartedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC), CompletedAt: time.Date(2026, 8, 13, 0, 1, 0, 0, time.UTC), Summary: "private context pack"},
+		{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "secret context", Status: "completed", StartedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC), CompletedAt: time.Date(2026, 8, 13, 0, 1, 0, 0, time.UTC), Summary: "private context pack"},
 	}}
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallSuperAgentHarness(registry, store); err != nil {
 		t.Fatalf("registerRuntimeDataRecallSuperAgentHarness() error = %v", err)
 	}
 	result := recallDataRecallAdapter(t, registry, dataRecallInternalContext(t), toolsinfra.DataRecallRequest{
-		Store: "super_agent_harness", Operation: "agent_runs", Query: "luna", Limit: 2,
+		Store: "super_agent_harness", Operation: "agent_runs", Query: "mio", Limit: 2,
 	})
 	assertRecallResult(t, result, "super_agent_harness", "agent_runs", 1)
 	if store.gotLimit != 2 {
 		t.Fatalf("superagent ListAgentRuns limit = %d, want 2", store.gotLimit)
 	}
 	record := result.Records[0]
-	assertRecordKeys(t, record, "agent", "completed_at", "run_id", "started_at", "status")
+	assertRecordKeys(t, record, "actor_id", "completed_at", "run_id", "started_at", "status")
 	encoded := string(mustJSON(record))
 	for _, forbidden := range []string{"secret context", "private context", "goal", "summary", "context_pack"} {
 		if strings.Contains(strings.ToLower(encoded), forbidden) {

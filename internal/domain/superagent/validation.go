@@ -14,16 +14,23 @@ func ValidateAgentRun(item AgentRun) error {
 	if err := item.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id is invalid: %w", err)
 	}
-	if strings.TrimSpace(item.AgentType) == "" {
-		return fmt.Errorf("agent_type is required")
+	if err := ValidateActorID(item.ActorID); err != nil {
+		return err
 	}
-	if strings.TrimSpace(item.Status) == "" {
+	if item.Status == "" {
 		return fmt.Errorf("status is required")
+	}
+	if !isAgentRunStatus(item.Status) {
+		return fmt.Errorf("status %q is invalid", item.Status)
 	}
 	if item.StartedAt.IsZero() {
 		return fmt.Errorf("started_at is required")
 	}
-	if isAgentRunTerminalStatus(item.Status) && item.CompletedAt.IsZero() {
+	if item.Status == "running" {
+		if !item.CompletedAt.IsZero() {
+			return fmt.Errorf("completed_at must be zero for running agent run")
+		}
+	} else if item.CompletedAt.IsZero() {
 		return fmt.Errorf("completed_at is required for terminal agent run")
 	}
 	if strings.TrimSpace(item.ResumePolicy) != "" && strings.TrimSpace(item.ResumePolicy) != "checkpoint" {
@@ -44,10 +51,8 @@ func ValidateSubagentTask(item SubagentTask) error {
 	if err := item.RunID.Validate(); err != nil {
 		return fmt.Errorf("run_id is invalid: %w", err)
 	}
-	switch strings.TrimSpace(item.ActorID) {
-	case "mio", "shiro", "midori", "kuro":
-	default:
-		return fmt.Errorf("actor_id must be one of mio, shiro, midori, kuro")
+	if err := ValidateActorID(item.ActorID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.Task) == "" {
 		return fmt.Errorf("task is required")
@@ -184,11 +189,27 @@ func isRunQueueStatus(status string) bool {
 }
 
 func isAgentRunTerminalStatus(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "completed", "failed", "cancelled", "paused":
+	return status != "running" && isAgentRunStatus(status)
+}
+
+func isAgentRunStatus(status string) bool {
+	switch status {
+	case "running", "paused", "completed", "failed", "cancelled", "blocked", "interrupted", "reassigned", "superseded":
 		return true
 	default:
 		return false
+	}
+}
+
+// ValidateActorID accepts only the exact identities of CORE-managed Actors.
+// Mechanism labels such as LeadAgent, worker, provider, or model names are not
+// Actor identities and must never be persisted in a projection.
+func ValidateActorID(actorID string) error {
+	switch actorID {
+	case "mio", "shiro", "midori", "kuro":
+		return nil
+	default:
+		return fmt.Errorf("actor_id must be one of mio, shiro, midori, kuro")
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -98,7 +99,7 @@ type AgentRun struct {
 	RunID        string    `json:"run_id"`
 	TaskID       string    `json:"task_id"`
 	WorkstreamID string    `json:"workstream_id,omitempty"`
-	AgentType    string    `json:"agent_type"`
+	ActorID      string    `json:"actor_id"`
 	Goal         string    `json:"goal,omitempty"`
 	Status       string    `json:"status"`
 	StartedAt    time.Time `json:"started_at"`
@@ -3578,10 +3579,10 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		if err := modulecore.TaskID(taskID).Validate(); err != nil {
 			return fmt.Errorf("superagent status agent_run %q invalid task_id: %w", runID, err)
 		}
-		if strings.TrimSpace(run.AgentType) == "" {
-			return fmt.Errorf("superagent status agent_run %q missing agent_type", runID)
+		if err := domainsuperagent.ValidateActorID(run.ActorID); err != nil {
+			return fmt.Errorf("superagent status agent_run %q invalid actor_id: %w", runID, err)
 		}
-		status := strings.TrimSpace(run.Status)
+		status := run.Status
 		if status == "" {
 			return fmt.Errorf("superagent status agent_run missing status")
 		}
@@ -3590,6 +3591,9 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		}
 		if run.StartedAt.IsZero() {
 			return fmt.Errorf("superagent status agent_run %q missing started_at", runID)
+		}
+		if status == "running" && !run.CompletedAt.IsZero() {
+			return fmt.Errorf("superagent status running agent_run %q must not have completed_at", runID)
 		}
 		if isSuperAgentRunTerminalStatus(status) && run.CompletedAt.IsZero() {
 			return fmt.Errorf("superagent status terminal agent_run %q missing completed_at", runID)
@@ -3618,10 +3622,8 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		if err := modulecore.RunID(runID).Validate(); err != nil {
 			return fmt.Errorf("superagent status subagent_task %q invalid run_id: %w", taskID, err)
 		}
-		switch strings.TrimSpace(task.ActorID) {
-		case "mio", "shiro", "midori", "kuro":
-		default:
-			return fmt.Errorf("superagent status subagent_task %q invalid actor_id", taskID)
+		if err := domainsuperagent.ValidateActorID(task.ActorID); err != nil {
+			return fmt.Errorf("superagent status subagent_task %q invalid actor_id: %w", taskID, err)
 		}
 		if strings.TrimSpace(task.Task) == "" {
 			return fmt.Errorf("superagent status subagent_task %q missing task", taskID)
@@ -3742,17 +3744,12 @@ func validateSuperAgentRuntimeConfig(cfg SuperAgentRuntimeConfig) error {
 }
 
 func isSuperAgentRunTerminalStatus(status string) bool {
-	switch status {
-	case "completed", "failed", "cancelled", "paused":
-		return true
-	default:
-		return false
-	}
+	return status != "running" && isSuperAgentRunStatus(status)
 }
 
 func isSuperAgentRunStatus(status string) bool {
 	switch status {
-	case "running", "paused", "completed", "failed", "cancelled":
+	case "running", "paused", "completed", "failed", "cancelled", "blocked", "interrupted", "reassigned", "superseded":
 		return true
 	default:
 		return false

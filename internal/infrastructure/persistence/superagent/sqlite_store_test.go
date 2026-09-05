@@ -22,7 +22,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	if err := store.SaveAgentRun(context.Background(), domainsuperagent.AgentRun{
 		RunID:     runID,
 		TaskID:    taskID,
-		AgentType: "LeadAgent",
+		ActorID:   "mio",
 		Status:    "running",
 		StartedAt: now,
 	}); err != nil {
@@ -316,7 +316,7 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 	}
 	defer store.Close()
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
-	running := domainsuperagent.AgentRun{RunID: runID, TaskID: taskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}
+	running := domainsuperagent.AgentRun{RunID: runID, TaskID: taskID, ActorID: "mio", Status: "running", StartedAt: now}
 	completed := running
 	completed.Status = "completed"
 	completed.CompletedAt = now.Add(time.Minute)
@@ -341,7 +341,7 @@ func TestSQLiteStoreFindAgentRunByIDUsesPrimaryKeyAndRejectsMalformedPayload(t *
 	}
 	defer prefixStore.Close()
 	prefixTaskID, prefixRunID := modulecore.NewTaskID(), modulecore.NewRunID()
-	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: prefixRunID, TaskID: prefixTaskID, AgentType: "LeadAgent", Status: "running", StartedAt: now}); err != nil {
+	if err := prefixStore.SaveAgentRun(ctx, domainsuperagent.AgentRun{RunID: prefixRunID, TaskID: prefixTaskID, ActorID: "mio", Status: "running", StartedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	item, found, err = prefixStore.FindAgentRunByID(ctx, string(runID))
