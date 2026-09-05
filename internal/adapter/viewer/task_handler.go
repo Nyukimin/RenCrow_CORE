@@ -15,6 +15,7 @@ type TaskStore interface {
 	ListTasks(context.Context, domaintask.Filter) ([]domaintask.Task, error)
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	GetContext(context.Context, modulecore.TaskID) (domaintask.SharedRoleContext, error)
+	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	ListNotifications(context.Context, int, bool) ([]domaintask.Notification, error)
 }
 
@@ -71,7 +72,15 @@ func HandleTaskDetail(store TaskStore) http.HandlerFunc {
 			http.Error(w, "failed to get task context", http.StatusInternalServerError)
 			return
 		}
-		writeMonitorJSON(w, map[string]any{"task": value, "context": shared})
+		runs, err := store.ListRuns(r.Context(), domaintask.RunFilter{TaskID: taskID})
+		if err != nil {
+			http.Error(w, "failed to list task runs", http.StatusInternalServerError)
+			return
+		}
+		if runs == nil {
+			runs = []domaintask.Run{}
+		}
+		writeMonitorJSON(w, map[string]any{"task": value, "context": shared, "runs": runs})
 	}
 }
 
