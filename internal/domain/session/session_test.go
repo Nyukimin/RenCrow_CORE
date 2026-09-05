@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func newCanonicalSessionForTest(t *testing.T) *Session {
 	t.Helper()
-	address, err := NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,12 +24,16 @@ func newCanonicalSessionForTest(t *testing.T) *Session {
 
 func TestNewCanonicalSession(t *testing.T) {
 	session := newCanonicalSessionForTest(t)
+	expectedAddress, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := modulecore.SessionID(session.ID()).Validate(); err != nil {
 		t.Fatalf("SessionID: %v", err)
 	}
 
-	if session.ChannelAddress() != (ChannelAddress{Channel: "line", Address: "U123"}) {
+	if session.ChannelAddress() != expectedAddress {
 		t.Errorf("ChannelAddress = %#v", session.ChannelAddress())
 	}
 
@@ -144,7 +149,7 @@ func TestSessionClearMemory(t *testing.T) {
 func TestReconstructCanonicalSession(t *testing.T) {
 	createdAt := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	updatedAt := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	address, err := NewChannelAddress("line", "U999")
+	address, err := conversation.NewChannelAddress("line", "U999")
 	if err != nil {
 		t.Fatal(err)
 	}

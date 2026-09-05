@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -23,15 +24,43 @@ type JSONSessionRepository struct {
 }
 
 type sessionIdentityProbe struct {
-	ID             string                  `json:"id"`
-	LogicalDate    string                  `json:"logical_date"`
-	ChannelAddress *session.ChannelAddress `json:"channel_address"`
+	ID             string             `json:"id"`
+	LogicalDate    string             `json:"logical_date"`
+	ChannelAddress *channelAddressDTO `json:"channel_address"`
+}
+
+// channelAddressDTO is the persistence projection for conversation's private
+// ChannelAddress fields. It is deliberately not the domain value object.
+type channelAddressDTO struct {
+	ChannelType            string `json:"channel_type"`
+	ExternalConversationID string `json:"external_conversation_id"`
+}
+
+func channelAddressDTOFromDomain(address conversation.ChannelAddress) channelAddressDTO {
+	return channelAddressDTO{
+		ChannelType:            address.ChannelType(),
+		ExternalConversationID: address.ExternalConversationID(),
+	}
+}
+
+func channelAddressFromDTO(dto *channelAddressDTO) (conversation.ChannelAddress, error) {
+	if dto == nil {
+		return conversation.ChannelAddress{}, fmt.Errorf("channel_address is required")
+	}
+	address, err := conversation.NewChannelAddress(dto.ChannelType, dto.ExternalConversationID)
+	if err != nil {
+		return conversation.ChannelAddress{}, fmt.Errorf("invalid channel_address: %w", err)
+	}
+	if dto.ChannelType != address.ChannelType() || dto.ExternalConversationID != address.ExternalConversationID() {
+		return conversation.ChannelAddress{}, fmt.Errorf("channel_address is not normalized")
+	}
+	return address, nil
 }
 
 // LoadOrCreateCanonical resolves a daily conversation using explicit lookup
 // attributes. SessionID remains opaque and is generated only when no matching
 // canonical session exists.
-func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address session.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -76,7 +105,8 @@ func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logic
 		if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
 			return nil, fmt.Errorf("canonical session identity is incomplete")
 		}
-		if err := probe.ChannelAddress.Validate(); err != nil {
+		candidateAddress, err := channelAddressFromDTO(probe.ChannelAddress)
+		if err != nil {
 			return nil, fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
 		}
 		if err := session.ValidateLogicalDate(probe.LogicalDate); err != nil {
@@ -85,7 +115,7 @@ func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logic
 		if err := modulecore.SessionID(probe.ID).Validate(); err != nil {
 			return nil, fmt.Errorf("canonical session_id is invalid: %w", err)
 		}
-		if probe.LogicalDate != logicalDate || *probe.ChannelAddress != address {
+		if probe.LogicalDate != logicalDate || candidateAddress != address {
 			continue
 		}
 		if matchedID != "" && matchedID != probe.ID {
@@ -115,13 +145,13 @@ func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 
 // sessionDTO はJSONシリアライズ用のDTO
 type sessionDTO struct {
-	ID             string                  `json:"id"`
-	LogicalDate    string                  `json:"logical_date"`
-	ChannelAddress *session.ChannelAddress `json:"channel_address"`
-	History        []taskDTO               `json:"history"`
-	Memory         map[string]interface{}  `json:"memory"`
-	CreatedAt      time.Time               `json:"created_at"`
-	UpdatedAt      time.Time               `json:"updated_at"`
+	ID             string                 `json:"id"`
+	LogicalDate    string                 `json:"logical_date"`
+	ChannelAddress *channelAddressDTO     `json:"channel_address"`
+	History        []taskDTO              `json:"history"`
+	Memory         map[string]interface{} `json:"memory"`
+	CreatedAt      time.Time              `json:"created_at"`
+	UpdatedAt      time.Time              `json:"updated_at"`
 }
 
 // taskDTO はJSONシリアライズ用のDTO
@@ -236,6 +266,18 @@ func rejectLegacySessionIdentityFields(data []byte) error {
 	if _, exists := fields["chat_id"]; exists {
 		return fmt.Errorf("legacy session identity field chat_id is not supported")
 	}
+	if rawAddress, exists := fields["channel_address"]; exists {
+		var nested map[string]json.RawMessage
+		if err := json.Unmarshal(rawAddress, &nested); err != nil {
+			return fmt.Errorf("decode channel_address: %w", err)
+		}
+		if _, exists := nested["channel"]; exists {
+			return fmt.Errorf("legacy channel_address field channel is not supported")
+		}
+		if _, exists := nested["address"]; exists {
+			return fmt.Errorf("legacy channel_address field address is not supported")
+		}
+	}
 	return nil
 }
 
@@ -294,10 +336,11 @@ func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
 	}
 
 	address := sess.ChannelAddress()
+	addressDTO := channelAddressDTOFromDomain(address)
 	dto := &sessionDTO{
 		ID:             sess.ID(),
 		LogicalDate:    sess.LogicalDate(),
-		ChannelAddress: &address,
+		ChannelAddress: &addressDTO,
 		History:        history,
 		Memory:         sess.GetAllMemory(),
 		CreatedAt:      sess.CreatedAt(),
@@ -308,6 +351,10 @@ func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
 
 // fromDTO はDTOからSessionを生成
 func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, error) {
+	address, err := channelAddressFromDTO(dto.ChannelAddress)
+	if err != nil {
+		return nil, err
+	}
 	history := make([]task.Task, 0, len(dto.History))
 	for _, taskDTO := range dto.History {
 		jobID := task.JobIDFromString(taskDTO.JobID)
@@ -322,10 +369,7 @@ func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, erro
 		history = append(history, t)
 	}
 
-	if dto.ChannelAddress == nil {
-		return nil, fmt.Errorf("channel_address is required")
-	}
-	return session.ReconstructCanonicalSession(modulecore.SessionID(dto.ID), dto.LogicalDate, *dto.ChannelAddress, history, dto.Memory, dto.CreatedAt, dto.UpdatedAt)
+	return session.ReconstructCanonicalSession(modulecore.SessionID(dto.ID), dto.LogicalDate, address, history, dto.Memory, dto.CreatedAt, dto.UpdatedAt)
 }
 
 func validateCanonicalSession(sess *session.Session) error {

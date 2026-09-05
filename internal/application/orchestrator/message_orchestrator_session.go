@@ -6,12 +6,13 @@ import (
 	"log"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type canonicalSessionRepository interface {
-	LoadOrCreateCanonical(context.Context, string, session.ChannelAddress, time.Time) (*session.Session, error)
+	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*session.Session, error)
 }
 
 type messageSessionLifecycle struct {
@@ -41,7 +42,7 @@ func (l *messageSessionLifecycle) ResolveForRequest(ctx context.Context, req Pro
 		req.SessionID = sess.ID()
 		return sess, req, nil
 	}
-	address, err := session.NewChannelAddress(req.Channel, req.ChatID)
+	address, err := conversation.NewChannelAddress(req.Channel, req.ChatID)
 	if err != nil {
 		return nil, req, fmt.Errorf("invalid ChannelAddress: %w", err)
 	}

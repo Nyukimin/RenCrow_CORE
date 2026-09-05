@@ -111,7 +111,7 @@ func newMockSessionRepository() *mockSessionRepository {
 }
 
 func newCanonicalOrchestratorTestSession(channel, address string) *session.Session {
-	channelAddress, err := session.NewChannelAddress(channel, address)
+	channelAddress, err := domainconversation.NewChannelAddress(channel, address)
 	if err != nil {
 		panic(err)
 	}

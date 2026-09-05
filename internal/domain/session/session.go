@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
@@ -15,7 +16,7 @@ var ErrSessionNotFound = errors.New("session not found")
 type Session struct {
 	id             string // 不透明なCanonical SessionID。日付やrouting情報を埋め込まない。
 	logicalDate    string
-	channelAddress ChannelAddress
+	channelAddress conversation.ChannelAddress
 	history        []task.Task            // 会話履歴
 	memory         map[string]interface{} // セッションメモリ
 	createdAt      time.Time              // セッション作成時刻
@@ -33,7 +34,7 @@ func (s *Session) LogicalDate() string {
 }
 
 // ChannelAddress returns routing information kept outside the opaque SessionID.
-func (s *Session) ChannelAddress() ChannelAddress {
+func (s *Session) ChannelAddress() conversation.ChannelAddress {
 	return s.channelAddress
 }
 

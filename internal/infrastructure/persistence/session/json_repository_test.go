@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -16,7 +17,7 @@ import (
 
 func newCanonicalRepositoryTestSession(t *testing.T) *session.Session {
 	t.Helper()
-	address, err := session.NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func newCanonicalRepositoryTestSession(t *testing.T) *session.Session {
 
 func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(t *testing.T) {
 	repo := NewJSONSessionRepository(t.TempDir())
-	address, err := session.NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(
 func TestJSONSessionRepositoryLoadOrCreateCanonicalIsConcurrentSafe(t *testing.T) {
 	dir := t.TempDir()
 	repo := NewJSONSessionRepository(dir)
-	address, err := session.NewChannelAddress("viewer", "ren")
+	address, err := conversation.NewChannelAddress("viewer", "ren")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalIsConcurrentSafe(t *testing.T
 func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	repo := NewJSONSessionRepository(dir)
-	address, err := session.NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +144,23 @@ func TestJSONSessionRepositoryCanonicalIdentityRoundTrip(t *testing.T) {
 	if _, ok := fields["chat_id"]; ok {
 		t.Fatal("legacy chat_id must not be written for a canonical session")
 	}
+	var channelAddress map[string]json.RawMessage
+	if err := json.Unmarshal(fields["channel_address"], &channelAddress); err != nil {
+		t.Fatalf("channel_address: %v", err)
+	}
+	if len(channelAddress) != 2 {
+		t.Fatalf("channel_address keys = %v, want exactly channel_type and external_conversation_id", channelAddress)
+	}
+	for _, key := range []string{"channel_type", "external_conversation_id"} {
+		if _, ok := channelAddress[key]; !ok {
+			t.Fatalf("channel_address.%s is absent", key)
+		}
+	}
+	for _, key := range []string{"channel", "address"} {
+		if _, ok := channelAddress[key]; ok {
+			t.Fatalf("legacy channel_address.%s must not be written", key)
+		}
+	}
 
 	loaded, err := repo.Load(context.Background(), string(id))
 	if err != nil {
@@ -166,7 +184,7 @@ func TestJSONSessionRepositoryRejectsLegacySessionContract(t *testing.T) {
 	if _, err := repo.Load(context.Background(), "20260301-line-U123"); err == nil {
 		t.Fatal("legacy Session was accepted by canonical repository Load")
 	}
-	address, err := session.NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,13 +196,20 @@ func TestJSONSessionRepositoryRejectsLegacySessionContract(t *testing.T) {
 func TestJSONSessionRepositoryRejectsCanonicalRecordWithLegacyIdentityFields(t *testing.T) {
 	dir := t.TempDir()
 	id := modulecore.NewSessionID()
-	mixed := []byte(`{"id":"` + string(id) + `","logical_date":"2026-03-01","channel_address":{"channel":"line","address":"U123"},"channel":"line","chat_id":"U123","history":[],"memory":{},"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"}`)
+	mixed := []byte(`{"id":"` + string(id) + `","logical_date":"2026-03-01","channel_address":{"channel":"line","address":"U123"},"history":[],"memory":{},"created_at":"2026-03-01T00:00:00Z","updated_at":"2026-03-01T00:00:00Z"}`)
 	if err := os.WriteFile(filepath.Join(dir, string(id)+".json"), mixed, 0600); err != nil {
 		t.Fatal(err)
 	}
 	repo := NewJSONSessionRepository(dir)
 	if _, err := repo.Load(context.Background(), string(id)); err == nil {
 		t.Fatal("canonical Session with legacy identity fields was accepted")
+	}
+	address, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
+		t.Fatal("canonical lookup accepted legacy nested channel_address fields")
 	}
 }
 

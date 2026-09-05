@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -97,7 +98,7 @@ func (m *mockSessionRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address session.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, error) {
 	for _, existing := range m.sessions {
 		if existing.LogicalDate() == logicalDate && existing.ChannelAddress() == address {
 			return existing, nil

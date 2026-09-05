@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -983,7 +984,7 @@ func TestDistributedOrchestratorProcessMessageBuildsTaskWithCanonicalSessionID(t
 	orch := NewDistributedOrchestrator(mockRepo, mockMio, router, memory, nil)
 
 	sessionID := string(modulecore.NewSessionID())
-	address, err := session.NewChannelAddress("viewer", "viewer-user")
+	address, err := domainconversation.NewChannelAddress("viewer", "viewer-user")
 	if err != nil {
 		t.Fatalf("NewChannelAddress: %v", err)
 	}

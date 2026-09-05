@@ -4,13 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestNewCanonicalSessionSeparatesOpaqueIDFromRoutingAttributes(t *testing.T) {
 	id := modulecore.NewSessionID()
 	logicalDate := "2026-09-02"
-	address, err := NewChannelAddress("line", "U123")
+	address, err := conversation.NewChannelAddress("line", "U123")
 	if err != nil {
 		t.Fatalf("NewChannelAddress: %v", err)
 	}
@@ -32,7 +33,7 @@ func TestNewCanonicalSessionSeparatesOpaqueIDFromRoutingAttributes(t *testing.T)
 
 func TestCanonicalSessionRejectsInvalidIdentityAndRoutingAttributes(t *testing.T) {
 	validID := modulecore.NewSessionID()
-	validAddress, err := NewChannelAddress("viewer", "ren")
+	validAddress, err := conversation.NewChannelAddress("viewer", "ren")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,12 +41,11 @@ func TestCanonicalSessionRejectsInvalidIdentityAndRoutingAttributes(t *testing.T
 		name    string
 		id      modulecore.SessionID
 		date    string
-		address ChannelAddress
+		address conversation.ChannelAddress
 	}{
 		{name: "legacy id", id: "20260902-line-U123", date: "2026-09-02", address: validAddress},
 		{name: "invalid date", id: validID, date: "2026092", address: validAddress},
-		{name: "empty channel", id: validID, date: "2026-09-02", address: ChannelAddress{Address: "ren"}},
-		{name: "empty address", id: validID, date: "2026-09-02", address: ChannelAddress{Channel: "viewer"}},
+		{name: "empty address", id: validID, date: "2026-09-02", address: conversation.ChannelAddress{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,16 +56,16 @@ func TestCanonicalSessionRejectsInvalidIdentityAndRoutingAttributes(t *testing.T
 	}
 }
 
-func TestNewChannelAddressNormalizesAndRejectsAmbiguousValues(t *testing.T) {
-	got, err := NewChannelAddress(" LINE ", " U123 ")
+func TestConversationChannelAddressNormalizesAndRejectsAmbiguousValues(t *testing.T) {
+	got, err := conversation.NewChannelAddress(" LINE ", " U123 ")
 	if err != nil {
 		t.Fatalf("NewChannelAddress: %v", err)
 	}
-	if got.Channel != "line" || got.Address != "U123" {
+	if got.ChannelType() != "line" || got.ExternalConversationID() != "U123" {
 		t.Fatalf("address = %#v", got)
 	}
 	for _, input := range [][2]string{{"", "U123"}, {"line", ""}} {
-		if _, err := NewChannelAddress(input[0], input[1]); err == nil {
+		if _, err := conversation.NewChannelAddress(input[0], input[1]); err == nil {
 			t.Fatalf("NewChannelAddress(%q, %q) error = nil", input[0], input[1])
 		}
 	}
