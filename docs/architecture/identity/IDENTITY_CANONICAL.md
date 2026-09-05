@@ -1875,6 +1875,16 @@ Test:
 - **Tests:** top-level canonical TraceIDとpayload legacy traceが異なるfixtureの成功、
   canonical column／envelope不一致の拒否、relevant／unrelated evidence driftを検査する。
 
+#### Step 07 Gate 7
+
+- production cutover、actual AgentのText応答、保存した5 IDのowner repository再loadが
+  成功した後、`rencrow-turn-input-migrate`と`turninputmigration`のone-shot sourceを
+  production source treeから削除する。
+- rollback用の旧／新runtime、移行binary、writer停止snapshot、固定Check Plan、
+  dry-run／apply／deployment receiptは別filesystemのhash-bound recovery artifactとして保持する。
+  installed owner、ongoing migration route、backup／restore compatibility layerにしない。
+- architecture testは両source pathの不存在を検査し、one-shot migrationの再混入を拒否する。
+
 Gate 7:
 
 - production cutoverとactual Agent Text receiptが成功した後、`rencrow-turn-input-migrate`と

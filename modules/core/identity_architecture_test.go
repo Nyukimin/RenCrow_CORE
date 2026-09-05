@@ -304,6 +304,22 @@ func TestCanonicalTurnMessageMigrationSourceIsRemovedAfterCutover(t *testing.T) 
 	}
 }
 
+func TestCanonicalTurnInputMigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-turn-input-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "turninputmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 07 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
