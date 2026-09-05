@@ -169,16 +169,6 @@ func (t TurnInput) WithSessionID(sessionID string) TurnInput {
 	return t
 }
 
-// WithConversationIdentity returns a copy with the exact supplied identities.
-func (t TurnInput) WithConversationIdentity(turnID modulecore.TurnID, traceID modulecore.TraceID, rootTaskID modulecore.TaskID, userMessageID, agentMessageID modulecore.MessageID) TurnInput {
-	t.turnID = turnID
-	t.traceID = traceID
-	t.rootTaskID = rootTaskID
-	t.userMessageID = userMessageID
-	t.agentMessageID = agentMessageID
-	return t
-}
-
 // WithAttachments returns a copy with copied user attachments.
 func (t TurnInput) WithAttachments(attachments []attachment.Attachment) TurnInput {
 	t.attachments = append([]attachment.Attachment(nil), attachments...)

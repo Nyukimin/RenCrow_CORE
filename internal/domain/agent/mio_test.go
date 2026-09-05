@@ -679,7 +679,15 @@ func TestMioAgent_Chat_CommitsTypedTurnWithTaskIdentityAndFilteredRecall(t *test
 		return llm.GenerateResponse{Content: "typed response"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
-	testTask := newAgentTurnInputWithRoot(t, rootTaskID, "hello", "viewer", "chat-typed").WithSessionID(sessionID).WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
+	address, err := conversation.NewChannelAddress("viewer", "chat-typed")
+	if err != nil {
+		t.Fatalf("NewChannelAddress() error = %v", err)
+	}
+	testTask, err := conversation.ReconstructTurnInput(rootTaskID, turnID, traceID, userMessageID, agentMessageID, "hello", address)
+	if err != nil {
+		t.Fatalf("ReconstructTurnInput() error = %v", err)
+	}
+	testTask = testTask.WithSessionID(sessionID)
 	response, err := mio.Chat(context.Background(), testTask)
 	if err != nil {
 		t.Fatalf("Chat failed: %v", err)

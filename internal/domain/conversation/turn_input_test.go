@@ -94,18 +94,20 @@ func TestNewTurnInputRejectsInvalidRootAndAddress(t *testing.T) {
 func TestTurnInputValidateRejectsInvalidConversationIdentity(t *testing.T) {
 	input := newTestTurnInput(t)
 	for _, test := range []struct {
-		name  string
-		input TurnInput
+		name   string
+		mutate func(*TurnInput)
 	}{
-		{name: "turn", input: input.WithConversationIdentity(modulecore.TurnID("bad-turn"), input.TraceID(), input.RootTaskID(), input.UserMessageID(), input.AgentMessageID())},
-		{name: "trace", input: input.WithConversationIdentity(input.TurnID(), modulecore.TraceID("bad-trace"), input.RootTaskID(), input.UserMessageID(), input.AgentMessageID())},
-		{name: "root task", input: input.WithConversationIdentity(input.TurnID(), input.TraceID(), modulecore.TaskID("bad-task"), input.UserMessageID(), input.AgentMessageID())},
-		{name: "user message", input: input.WithConversationIdentity(input.TurnID(), input.TraceID(), input.RootTaskID(), modulecore.MessageID("bad-user-message"), input.AgentMessageID())},
-		{name: "agent message", input: input.WithConversationIdentity(input.TurnID(), input.TraceID(), input.RootTaskID(), input.UserMessageID(), modulecore.MessageID("bad-agent-message"))},
-		{name: "same message identity", input: input.WithConversationIdentity(input.TurnID(), input.TraceID(), input.RootTaskID(), input.UserMessageID(), input.UserMessageID())},
+		{name: "turn", mutate: func(candidate *TurnInput) { candidate.turnID = modulecore.TurnID("bad-turn") }},
+		{name: "trace", mutate: func(candidate *TurnInput) { candidate.traceID = modulecore.TraceID("bad-trace") }},
+		{name: "root task", mutate: func(candidate *TurnInput) { candidate.rootTaskID = modulecore.TaskID("bad-task") }},
+		{name: "user message", mutate: func(candidate *TurnInput) { candidate.userMessageID = modulecore.MessageID("bad-user-message") }},
+		{name: "agent message", mutate: func(candidate *TurnInput) { candidate.agentMessageID = modulecore.MessageID("bad-agent-message") }},
+		{name: "same message identity", mutate: func(candidate *TurnInput) { candidate.agentMessageID = candidate.userMessageID }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := test.input.Validate(); err == nil {
+			candidate := input
+			test.mutate(&candidate)
+			if err := candidate.Validate(); err == nil {
 				t.Fatal("TurnInput.Validate() error = nil")
 			}
 		})
@@ -124,6 +126,12 @@ func TestReconstructTurnInputPreservesAssignedIdentities(t *testing.T) {
 	}
 	if input.RootTaskID() != rootTaskID || input.TurnID() != turnID || input.TraceID() != traceID || input.UserMessageID() != userMessageID || input.AgentMessageID() != agentMessageID {
 		t.Fatalf("reconstructed identity = %q/%q/%q/%q/%q", input.RootTaskID(), input.TurnID(), input.TraceID(), input.UserMessageID(), input.AgentMessageID())
+	}
+	if input.MessageText() != "restored" || input.ChannelAddress() != testTurnInputAddress(t) {
+		t.Fatalf("reconstructed value = text=%q address=%#v", input.MessageText(), input.ChannelAddress())
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("reconstructed input Validate() error = %v", err)
 	}
 }
 
@@ -181,29 +189,6 @@ func TestTurnInputModifiersAreImmutableAndPreserveUnrelatedFields(t *testing.T) 
 	got[0].Filename = "mutated.txt"
 	if gotAgain := updated.Attachments(); gotAgain[0].Filename != "memo.txt" {
 		t.Fatalf("Attachments() exposed backing slice: %#v", gotAgain)
-	}
-	if err := updated.Validate(); err != nil {
-		t.Fatalf("updated input Validate() error = %v", err)
-	}
-}
-
-func TestTurnInputWithConversationIdentityIsExactAndImmutable(t *testing.T) {
-	original := newTestTurnInput(t)
-	turnID := modulecore.NewTurnID()
-	traceID := modulecore.NewTraceID()
-	rootTaskID := modulecore.NewTaskID()
-	userMessageID := modulecore.NewMessageID()
-	agentMessageID := modulecore.NewMessageID()
-	updated := original.WithConversationIdentity(turnID, traceID, rootTaskID, userMessageID, agentMessageID)
-
-	if original.TurnID() == turnID || original.TraceID() == traceID || original.RootTaskID() == rootTaskID || original.UserMessageID() == userMessageID || original.AgentMessageID() == agentMessageID {
-		t.Fatal("WithConversationIdentity mutated the original input")
-	}
-	if updated.TurnID() != turnID || updated.TraceID() != traceID || updated.RootTaskID() != rootTaskID || updated.UserMessageID() != userMessageID || updated.AgentMessageID() != agentMessageID {
-		t.Fatalf("updated identity = %q/%q/%q/%q/%q", updated.TurnID(), updated.TraceID(), updated.RootTaskID(), updated.UserMessageID(), updated.AgentMessageID())
-	}
-	if got, want := updated.ChannelAddress(), original.ChannelAddress(); got != want {
-		t.Fatalf("updated ChannelAddress() = %#v, want %#v", got, want)
 	}
 	if err := updated.Validate(); err != nil {
 		t.Fatalf("updated input Validate() error = %v", err)

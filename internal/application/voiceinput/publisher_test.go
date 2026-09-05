@@ -154,54 +154,6 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 	}
 }
 
-func TestPublisherRejectsMalformedTraceIDBeforeEmittingOrLogging(t *testing.T) {
-	emitter := &recordingEmitter{}
-	logger := &recordingPublisherCorrelatedTurnLogger{}
-	jobCalls := 0
-	result := Result{
-		Mode:        ModeLLM,
-		UtteranceID: "utt-malformed-trace",
-		SessionID:   "viewer",
-		Channel:     "viewer",
-		ChatID:      "default",
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
-	}
-	validInput := inputForResult(t, result)
-	malformedInput := validInput.WithConversationIdentity(
-		validInput.TurnID(),
-		modulecore.TraceID("not-a-canonical-trace"),
-		validInput.RootTaskID(),
-		validInput.UserMessageID(),
-		validInput.AgentMessageID(),
-	)
-	publisher := Publisher{
-		Events:     emitter,
-		TurnLogger: logger,
-		Input:      malformedInput,
-		NewJobID: func() string {
-			jobCalls++
-			return task.NewJobID().String()
-		},
-	}
-
-	_, err := publisher.Publish(result)
-	if err == nil {
-		t.Fatal("expected malformed publisher trace_id to fail closed")
-	}
-	if len(emitter.events) != 0 {
-		t.Fatalf("malformed trace_id must not emit events: %#v", emitter.events)
-	}
-	if logger.userCalls != 0 || logger.assistantCalls != 0 {
-		t.Fatalf("malformed trace_id must not write session logs: %+v", logger)
-	}
-	if jobCalls != 0 {
-		t.Fatalf("malformed trace_id must fail before allocating a job: calls=%d", jobCalls)
-	}
-}
-
 func TestPublisherDoesNotReuseJobIDAsTraceID(t *testing.T) {
 	jobID := task.NewJobID().String()
 	result := Result{
@@ -324,20 +276,12 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 		Source:      "RenCrow_LLM llm.final",
 	}
 	validInput := newPublisherInput(t, baseResult.SessionID, baseResult.Channel, baseResult.ChatID, baseResult.UserText)
-	malformedInput := validInput.WithConversationIdentity(
-		validInput.TurnID(),
-		modulecore.TraceID("not-a-trace"),
-		validInput.RootTaskID(),
-		validInput.UserMessageID(),
-		validInput.AgentMessageID(),
-	)
 	tests := []struct {
 		name   string
 		input  conversation.TurnInput
 		result Result
 	}{
 		{name: "missing input", input: conversation.TurnInput{}, result: baseResult},
-		{name: "malformed input", input: malformedInput, result: baseResult},
 		{name: "user text mismatch", input: validInput, result: func() Result { r := baseResult; r.UserText = "別の入力"; return r }()},
 		{name: "session mismatch", input: validInput, result: func() Result { r := baseResult; r.SessionID = "session-2"; return r }()},
 		{name: "channel mismatch", input: validInput, result: func() Result { r := baseResult; r.Channel = "slack"; return r }()},
