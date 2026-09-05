@@ -195,7 +195,7 @@ func TestAmbiguousReceiptFailsClosed(t *testing.T) {
 	}
 }
 
-func TestAmbiguousLegacyEventJobMappingFailsClosed(t *testing.T) {
+func TestAmbiguousLegacyEventJobMappingFailsClosedAtExecutionReportJoin(t *testing.T) {
 	fixture := newMigrationFixture(t)
 	db := openWritable(t, fixture.eventSource)
 	var raw string
@@ -214,7 +214,35 @@ func TestAmbiguousLegacyEventJobMappingFailsClosed(t *testing.T) {
 	}
 	_ = db.Close()
 	receipt, err := Run(context.Background(), fixture.options(ModeDryRun))
-	if err == nil || receipt.ErrorCode != "event_job_ambiguous" {
+	if err == nil || receipt.ErrorCode != "report_job_ambiguous" {
+		t.Fatalf("receipt=%#v err=%v", receipt, err)
+	}
+}
+
+func TestRepeatedLegacyEventJobAcrossTracesIsAllowedWithoutReportJoin(t *testing.T) {
+	fixture := newMigrationFixture(t)
+	db := openWritable(t, fixture.eventSource)
+	var raw string
+	if err := db.QueryRow(`SELECT envelope_json FROM event_envelope WHERE rowid=2`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	envelope["payload"].(map[string]any)["job_id"] = "legacy-a"
+	encoded, _ := json.Marshal(envelope)
+	if _, err := db.Exec(`UPDATE event_envelope SET envelope_json=? WHERE rowid=2`, string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reports := readReportObjects(t, fixture.reportSource)
+	reports[0]["job_id"] = "report-without-event"
+	writeReportObjects(t, fixture.reportSource, reports)
+	receipt, err := Run(context.Background(), fixture.options(ModeDryRun))
+	if err != nil || receipt.Status != StatusReady {
 		t.Fatalf("receipt=%#v err=%v", receipt, err)
 	}
 }

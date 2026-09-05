@@ -79,7 +79,7 @@ func prepare(ctx context.Context, paths resolvedPaths) (prepared, error) {
 	}
 	events := make([]modulecore.EventEnvelope, len(legacy))
 	derived := make(map[string]modulecore.TaskID)
-	eventTasksByLegacyJob := make(map[string]modulecore.TaskID)
+	eventTasksByLegacyJob := make(map[string]map[modulecore.TaskID]struct{})
 	for index, item := range legacy {
 		event := item.event
 		event.EventSeq = modulecore.EventSeq(index + 1)
@@ -95,10 +95,12 @@ func prepare(ctx context.Context, paths resolvedPaths) (prepared, error) {
 			}
 			if mapped != "" {
 				event.TaskID = mapped
-				if existing, ok := eventTasksByLegacyJob[legacyJob]; ok && existing != mapped {
-					return prepared{}, coded("event_job_ambiguous", "legacy orchestrator job_id maps to multiple TaskID values")
+				candidates := eventTasksByLegacyJob[legacyJob]
+				if candidates == nil {
+					candidates = make(map[modulecore.TaskID]struct{})
+					eventTasksByLegacyJob[legacyJob] = candidates
 				}
-				eventTasksByLegacyJob[legacyJob] = mapped
+				candidates[mapped] = struct{}{}
 			}
 			switch method {
 			case "receipt":

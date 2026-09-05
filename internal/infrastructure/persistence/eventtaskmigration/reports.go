@@ -31,7 +31,7 @@ type executionReportCounts struct {
 	derived int
 }
 
-func loadAndMigrateExecutionReports(ctx context.Context, path string, eventTasks map[string]modulecore.TaskID) ([]migratedExecutionReport, executionReportCounts, string, error) {
+func loadAndMigrateExecutionReports(ctx context.Context, path string, eventTasks map[string]map[modulecore.TaskID]struct{}) ([]migratedExecutionReport, executionReportCounts, string, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, executionReportCounts{}, "", coded("report_source_invalid", "open execution report snapshot: %v", err)
@@ -66,8 +66,15 @@ func loadAndMigrateExecutionReports(ctx context.Context, path string, eventTasks
 			return nil, executionReportCounts{}, "", coded("report_job_duplicate", "execution report snapshot contains duplicate job_id rows")
 		}
 		seenJobs[legacyJob] = struct{}{}
-		taskID, mapped := eventTasks[legacyJob]
-		if mapped {
+		var taskID modulecore.TaskID
+		candidates := eventTasks[legacyJob]
+		if len(candidates) > 1 {
+			return nil, executionReportCounts{}, "", coded("report_job_ambiguous", "execution report job_id matches multiple per-trace Event TaskID values")
+		}
+		if len(candidates) == 1 {
+			for candidate := range candidates {
+				taskID = candidate
+			}
 			counts.byEvent++
 		} else {
 			raw, err := modulecore.NewMigrationID(modulecore.CanonicalTaskID, "execution_report", "job_id", legacyJob)

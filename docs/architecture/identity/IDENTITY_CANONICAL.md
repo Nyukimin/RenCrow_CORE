@@ -2027,6 +2027,20 @@ Gate 9:
   architecture testはone-shot sourceの再混入と、列挙済みStep 09 owner／consumerでの`JobID`／`job_id`／
   旧`Seq`を拒否する。Scheduler `JobID`はStep 15、その他の未分類domain-local jobは各owner Stepへ残す。
 
+Failure Knowledge:
+
+- **Failure:** production preflightで、同じlegacy `job_id`が独立した通常Turnとresume Turnの別Traceに
+  再利用されていたため、Eventだけを読む段階で全体一意性を要求した移行CLIが停止した。
+- **Problem:** 正本の`trace_id+job_id`規則は別Traceを別Taskへ分離するのに、旧ID単体の一意性を
+  先に要求すると、曖昧なjoinが存在しない履歴まで移行不能になる。
+- **Cause:** Eventのper-Trace mappingと、単一Taskを必要とするexecution report joinの検査境界を
+  同じmapへ潰していた。
+- **Lesson / Invariant:** legacy Eventはexact TraceごとにTaskへ写像し、同じ旧IDから複数Taskが
+  生じることを許す。execution reportがその旧IDを参照するときだけ、候補が一つでなければ
+  `report_job_ambiguous`でfail closedにする。
+- **Enforcement / Tests:** 移行CLIは旧IDごとのTask候補集合を保持し、report joinでだけ一意性を
+  検査する。別Traceの同一旧IDにreport行が無い成功caseと、report行がある拒否caseをtestする。
+
 ---
 
 ### Step 10: RunID
