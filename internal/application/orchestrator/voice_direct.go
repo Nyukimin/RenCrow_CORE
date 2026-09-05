@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/voiceinput"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -109,23 +110,29 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	address, err := conversation.NewChannelAddress(channel, chatID)
+	if err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("build voice direct channel address: %w", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), result.UserText, address)
+	if err != nil {
+		return ProcessMessageResponse{}, fmt.Errorf("build voice direct turn input: %w", err)
+	}
+	input = input.
+		WithSessionID(sessionID).
+		WithViewerRecipient("mio").
+		WithRoute(routing.RouteCHAT)
 	decision := routing.NewDecision(routing.RouteCHAT, 1.0, voiceChatSurfaceReason)
 	jobID := task.NewJobID()
-	turnID := modulecore.NewTurnID()
-	traceID := modulecore.NewTraceID()
-	rootTaskID := modulecore.NewTaskID()
-	o.events.BindTrace(jobID.String(), traceID)
+	o.events.BindTrace(jobID.String(), input.TraceID())
 	defer o.events.ReleaseTrace(jobID.String())
 
 	published, err := voiceinput.Publisher{
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
-		TraceID:    traceID,
+		Input:      input,
 		NewJobID: func() string {
 			return jobID.String()
-		},
-		NewMessageID: func() string {
-			return string(modulecore.NewMessageID())
 		},
 		EmitMetric: func(kind, point string, startedAt time.Time, route, jobID, sessionID, channel, chatID, detail string) {
 			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, jobID, sessionID, channel, chatID, detail)
@@ -156,15 +163,13 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	}
 
 	_ = ctx
-	return ensureProcessResponseIdentity(
-		o.responses.Build(result.Reply, decision, publishedJobID),
-		publishedJobID.String(),
-		string(turnID),
-		string(traceID),
-		string(rootTaskID),
-		published.MessageID,
-		o.events.TakeResponseMessageID,
-	), nil
+	response := o.responses.Build(result.Reply, decision, publishedJobID)
+	response.TurnID = string(input.TurnID())
+	response.TraceID = string(input.TraceID())
+	response.RootTaskID = string(input.RootTaskID())
+	response.MessageID = string(input.AgentMessageID())
+	_ = o.events.TakeResponseMessageID(published.JobID)
+	return response, nil
 }
 
 // NotifyVoiceDirectFirstToken は bridge が初回 llm.delta を転送したタイミングで呼ぶ。

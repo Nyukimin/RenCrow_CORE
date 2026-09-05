@@ -44,7 +44,7 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if resp.Route != routing.RouteCHAT || resp.Response != "おはよう" || resp.JobID == "" {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
-	if modulecore.TraceID(resp.TraceID).Validate() != nil || resp.TraceID == resp.JobID || !strings.HasPrefix(resp.MessageID, "msg_") {
+	if modulecore.TurnID(resp.TurnID).Validate() != nil || modulecore.TraceID(resp.TraceID).Validate() != nil || modulecore.TaskID(resp.RootTaskID).Validate() != nil || modulecore.MessageID(resp.MessageID).Validate() != nil || resp.TraceID == resp.JobID {
 		t.Fatalf("voice response identity is incomplete: %+v", resp)
 	}
 
@@ -56,6 +56,13 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 	if decisionIdx >= responseIdx {
 		t.Fatalf("routing.decision should precede agent.response: decision=%d response=%d", decisionIdx, responseIdx)
 	}
+	receivedIdx := indexOfEvent(rec.events, "message.received", "user", "mio", "")
+	if receivedIdx < 0 {
+		t.Fatalf("missing canonical user message event: %#v", rec.events)
+	}
+	if rec.events[receivedIdx].MessageID == "" || rec.events[receivedIdx].MessageID == rec.events[responseIdx].MessageID {
+		t.Fatalf("user/agent message identities must be present and distinct: user=%+v response=%+v", rec.events[receivedIdx], rec.events[responseIdx])
+	}
 	if !strings.Contains(rec.events[decisionIdx].Content, "surface=voice_chat") {
 		t.Fatalf("routing.decision should mention voice_chat surface: %#v", rec.events[decisionIdx])
 	}
@@ -66,7 +73,7 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 		t.Fatalf("voice response identity drifted: response=%+v event=%+v", resp, rec.events[responseIdx])
 	}
 	for _, ev := range rec.events {
-		if ev.JobID != "" && ev.TraceID != resp.TraceID {
+		if ev.TraceID != resp.TraceID {
 			t.Fatalf("voice event lost root trace: %+v", ev)
 		}
 	}
