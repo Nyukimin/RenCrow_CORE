@@ -7,12 +7,14 @@ import (
 	"strings"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type CoderDiffGenerator interface {
-	Generate(ctx context.Context, t task.Task, systemPrompt string) (string, error)
+	Generate(ctx context.Context, input conversation.TurnInput, systemPrompt string) (string, error)
 }
 
 type CoderDiffRequest struct {
@@ -52,19 +54,27 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 	}
 	prompt := BuildCoderDiffGenerationPrompt(req.Hotspot, req.Evidence)
 	jobID := strings.TrimSpace(req.JobID)
-	var jid task.JobID
 	if jobID == "" {
-		jid = task.NewJobID()
-		jobID = jid.String()
-	} else {
-		jid = task.JobIDFromString(jobID)
+		jobID = task.NewJobID().String()
 	}
-	t := task.NewTask(jid, prompt, "viewer", strings.TrimSpace(req.WorkstreamID)).WithRoute(routing.RouteCODE)
+	externalConversationID := strings.TrimSpace(req.WorkstreamID)
+	if externalConversationID == "" {
+		externalConversationID = strings.TrimSpace(req.Hotspot.HotspotID)
+	}
+	address, err := conversation.NewChannelAddress("viewer", externalConversationID)
+	if err != nil {
+		return CoderDiffResult{}, fmt.Errorf("coder diff channel address: %w", err)
+	}
+	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), prompt, address)
+	if err != nil {
+		return CoderDiffResult{}, fmt.Errorf("coder diff turn input: %w", err)
+	}
+	input = input.WithRoute(routing.RouteCODE)
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
 	if systemPrompt == "" {
 		systemPrompt = defaultCoderDiffSystemPrompt
 	}
-	raw, err := s.coder.Generate(ctx, t, systemPrompt)
+	raw, err := s.coder.Generate(ctx, input, systemPrompt)
 	if err != nil {
 		return CoderDiffResult{}, err
 	}

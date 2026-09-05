@@ -12,11 +12,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -29,27 +29,27 @@ type mockWorkerAgent struct {
 	chatCalled bool
 	executed   bool
 	lastMsg    string
-	lastTask   task.Task
+	lastInput  conversation.TurnInput
 	lastCtx    context.Context
 }
 
-func (m *mockWorkerAgent) Chat(ctx context.Context, t task.Task) (string, error) {
+func (m *mockWorkerAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
 	m.chatCalled = true
 	m.recordCall(t)
 	return m.response, m.err
 }
 
-func (m *mockWorkerAgent) Execute(ctx context.Context, t task.Task) (string, error) {
+func (m *mockWorkerAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {
 	m.executed = true
 	m.lastCtx = ctx
 	m.recordCall(t)
 	return m.response, m.err
 }
 
-func (m *mockWorkerAgent) recordCall(t task.Task) {
+func (m *mockWorkerAgent) recordCall(t conversation.TurnInput) {
 	m.called = true
-	m.lastMsg = t.UserMessage()
-	m.lastTask = t
+	m.lastMsg = t.MessageText()
+	m.lastInput = t
 }
 
 // mockSender はテスト用のNotificationSenderモック
@@ -678,14 +678,35 @@ func TestTick_HeartbeatUsesShiroWorkerRoute(t *testing.T) {
 	if agent.chatCalled {
 		t.Fatal("Heartbeat must not use the Mio/chat path")
 	}
-	if agent.lastTask.Route() != routing.RouteOPS || agent.lastTask.ForcedRoute() != routing.RouteOPS {
-		t.Fatalf("expected OPS route task, got route=%q forced=%q", agent.lastTask.Route(), agent.lastTask.ForcedRoute())
+	if agent.lastInput.Route() != routing.RouteOPS || agent.lastInput.ForcedRoute() != routing.RouteOPS {
+		t.Fatalf("expected OPS route input, got route=%q forced=%q", agent.lastInput.Route(), agent.lastInput.ForcedRoute())
 	}
-	if err := modulecore.SessionID(agent.lastTask.SessionID()).Validate(); err != nil {
-		t.Fatalf("heartbeat task SessionID=%q: %v", agent.lastTask.SessionID(), err)
+	if err := modulecore.SessionID(agent.lastInput.SessionID()).Validate(); err != nil {
+		t.Fatalf("heartbeat input SessionID=%q: %v", agent.lastInput.SessionID(), err)
 	}
-	if agent.lastTask.SessionID() == agent.lastTask.ChatID() {
-		t.Fatalf("heartbeat task must keep canonical SessionID separate from ChatID: %#v", agent.lastTask)
+	if agent.lastInput.SessionID() == agent.lastInput.ChannelAddress().ExternalConversationID() {
+		t.Fatalf("heartbeat input must keep canonical SessionID separate from external conversation ID: %#v", agent.lastInput)
+	}
+	if err := agent.lastInput.Validate(); err != nil {
+		t.Fatalf("heartbeat input invalid: %v", err)
+	}
+	observation, ok := llm.ExecutionObservationFromContext(agent.lastCtx)
+	if !ok || observation.JobID == "" || observation.TraceID == "" || observation.RequestID != observation.JobID || observation.TraceID != string(agent.lastInput.TraceID()) {
+		t.Fatalf("unexpected heartbeat execution observation: %+v ok=%v", observation, ok)
+	}
+	if observation.TraceID == observation.JobID {
+		t.Fatalf("heartbeat TraceID must remain distinct from companion JobID: %+v", observation)
+	}
+	identities := []string{
+		string(agent.lastInput.RootTaskID()), string(agent.lastInput.TurnID()), string(agent.lastInput.TraceID()),
+		string(agent.lastInput.UserMessageID()), string(agent.lastInput.AgentMessageID()),
+	}
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if _, exists := seen[identity]; exists {
+			t.Fatalf("heartbeat canonical identities must be distinct: %v", identities)
+		}
+		seen[identity] = struct{}{}
 	}
 	if strings.Contains(agent.lastMsg, "Mio persona") {
 		t.Fatalf("Heartbeat OPS prompt must not include Mio chat persona: %q", agent.lastMsg)
@@ -818,8 +839,8 @@ func TestRunDueWorkstreamHeartbeatsCreatesDraftReportAndPendingVaultUpdate(t *te
 	if agent.chatCalled {
 		t.Fatal("workstream heartbeat must not use the Mio/chat path")
 	}
-	if agent.lastTask.Route() != routing.RouteOPS || agent.lastTask.ForcedRoute() != routing.RouteOPS {
-		t.Fatalf("expected OPS route task, got route=%q forced=%q", agent.lastTask.Route(), agent.lastTask.ForcedRoute())
+	if agent.lastInput.Route() != routing.RouteOPS || agent.lastInput.ForcedRoute() != routing.RouteOPS {
+		t.Fatalf("expected OPS route input, got route=%q forced=%q", agent.lastInput.Route(), agent.lastInput.ForcedRoute())
 	}
 }
 

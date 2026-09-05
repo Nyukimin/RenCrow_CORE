@@ -6,17 +6,18 @@ import (
 	"testing"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 )
 
 type stubCoderDiffGenerator struct {
 	response      string
-	requests      []task.Task
+	requests      []conversation.TurnInput
 	systemPrompts []string
 }
 
-func (s *stubCoderDiffGenerator) Generate(_ context.Context, t task.Task, systemPrompt string) (string, error) {
-	s.requests = append(s.requests, t)
+func (s *stubCoderDiffGenerator) Generate(_ context.Context, input conversation.TurnInput, systemPrompt string) (string, error) {
+	s.requests = append(s.requests, input)
 	s.systemPrompts = append(s.systemPrompts, systemPrompt)
 	return s.response, nil
 }
@@ -55,13 +56,51 @@ func TestCoderDiffServiceGenerateConcreteDiffExtractsAndValidatesReviewOnlyDiff(
 	if len(coder.systemPrompts) != 1 || !strings.Contains(coder.systemPrompts[0], "Return only a minimal unified diff") {
 		t.Fatalf("coder system prompt=%#v", coder.systemPrompts)
 	}
-	if !strings.Contains(coder.requests[0].UserMessage(), "Do not apply it") {
-		t.Fatalf("prompt missing review-only boundary:\n%s", coder.requests[0].UserMessage())
+	input := coder.requests[0]
+	if err := input.Validate(); err != nil {
+		t.Fatalf("coder input invalid: %v", err)
 	}
-	if !strings.Contains(coder.requests[0].UserMessage(), "Observed Evidence Snippets") ||
-		!strings.Contains(coder.requests[0].UserMessage(), "loop evidence") ||
-		!strings.Contains(coder.requests[0].UserMessage(), "for _, item := range items") {
-		t.Fatalf("prompt missing hotspot evidence:\n%s", coder.requests[0].UserMessage())
+	if input.ChannelAddress().ChannelType() != "viewer" || input.ChannelAddress().ExternalConversationID() != "ws_1" {
+		t.Fatalf("unexpected coder input address: %#v", input.ChannelAddress())
+	}
+	if input.Route() != routing.RouteCODE || input.ForcedRoute() != "" {
+		t.Fatalf("unexpected coder input route: route=%q forced=%q", input.Route(), input.ForcedRoute())
+	}
+	identities := []string{
+		string(input.RootTaskID()), string(input.TurnID()), string(input.TraceID()),
+		string(input.UserMessageID()), string(input.AgentMessageID()),
+	}
+	seen := make(map[string]struct{}, len(identities))
+	for _, identity := range identities {
+		if _, exists := seen[identity]; exists {
+			t.Fatalf("coder canonical identities must be distinct: %v", identities)
+		}
+		seen[identity] = struct{}{}
+	}
+	if string(input.RootTaskID()) == result.JobID || string(input.TurnID()) == result.JobID || string(input.TraceID()) == result.JobID || string(input.UserMessageID()) == result.JobID || string(input.AgentMessageID()) == result.JobID {
+		t.Fatalf("job ID must remain independent from canonical input identities: input=%#v job_id=%q", input, result.JobID)
+	}
+	if !strings.Contains(input.MessageText(), "Do not apply it") {
+		t.Fatalf("prompt missing review-only boundary:\n%s", input.MessageText())
+	}
+	if !strings.Contains(input.MessageText(), "Observed Evidence Snippets") ||
+		!strings.Contains(input.MessageText(), "loop evidence") ||
+		!strings.Contains(input.MessageText(), "for _, item := range items") {
+		t.Fatalf("prompt missing hotspot evidence:\n%s", input.MessageText())
+	}
+}
+
+func TestCoderDiffServiceUsesHotspotAsExternalConversationFallback(t *testing.T) {
+	hotspot := domaincomplexity.Hotspot{HotspotID: "hot_1", FilePath: "internal/application/example.go"}
+	coder := &stubCoderDiffGenerator{response: "diff --git a/internal/application/example.go b/internal/application/example.go\n--- a/internal/application/example.go\n+++ b/internal/application/example.go\n@@ -1 +1 @@\n-old\n+new"}
+	if _, err := NewCoderDiffService(coder).GenerateConcreteDiff(context.Background(), CoderDiffRequest{
+		Hotspot:      hotspot,
+		WorkstreamID: "   ",
+	}); err != nil {
+		t.Fatalf("GenerateConcreteDiff failed: %v", err)
+	}
+	if got := coder.requests[0].ChannelAddress().ExternalConversationID(); got != "hot_1" {
+		t.Fatalf("external conversation fallback = %q, want hotspot ID", got)
 	}
 }
 
