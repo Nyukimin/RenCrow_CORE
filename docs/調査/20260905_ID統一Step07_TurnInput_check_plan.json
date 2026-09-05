@@ -81,7 +81,7 @@
       "check_id": "s7_architecture_zero",
       "execution_phase": "pre-commit and post-cutover cleanup",
       "failure_action": "return to implementation",
-      "guarantee": "production code contains zero User input Value Object named Task, zero TurnInput ChatID accessor or field, zero session-owned ChannelAddress, and after Gate 7 zero one-shot migration source",
+      "guarantee": "production code contains zero User input Value Object named Task, zero TurnInput ChatID accessor or field, zero legacy Session channel or chat_id scalar ownership while retaining the Step 04 canonical Session ChannelAddress field, and after Gate 7 zero one-shot migration source",
       "owner": "modules/core architecture tests",
       "result_consumer": "Step07 ledger"
     },
@@ -118,6 +118,7 @@
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-07-input-value-object",
     "channel_address_owner": "internal/domain/conversation",
     "historical_mapping_policy": "reuse only one exact receipt linkage; otherwise modules/core NewMigrationID keyed by target type session_history job_id and legacy job_id; fail closed on ambiguity or mismatch",
+    "plan_correction": "s7_architecture_zero was aligned with IDENTITY_CANONICAL Step 04: Session repository retains ChannelAddress as an independent canonical field; only legacy channel and chat_id scalar ownership is prohibited",
     "legacy_history_rows_observed": 494,
     "legacy_history_rows_with_unique_receipt_mapping_observed": 3,
     "legacy_history_rows_with_unique_trace_without_receipt_observed": 94,
@@ -127,6 +128,7 @@
     "session_root": "/srv/rencrow/db/core/memory/sessions",
     "session_root_filesystem": "/dev/sdd1",
     "separate_recovery_filesystem": "/dev/sdb1",
+    "supersedes_plan_sha256": "sha256:9cd58aa66690cc93161545d38ef697e1a6f3f51b3776f19e4bdbae8dadc11159",
     "step08_boundary": "internal/domain/task JobID and internal/domain/job remain until Step08; TurnInput does not carry JobID"
   },
   "phase": "design-frozen",
