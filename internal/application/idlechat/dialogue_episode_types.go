@@ -1,6 +1,10 @@
 package idlechat
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 const DialogueEpisodeSchemaVersion = 1
 
@@ -40,7 +44,8 @@ type DialogueEpisodeValidation struct {
 type DialogueEpisodeArtifact struct {
 	SchemaVersion       int                       `json:"schema_version"`
 	EpisodeID           string                    `json:"episode_id"`
-	GenerationID        string                    `json:"generation_id"`
+	TaskID              modulecore.TaskID         `json:"task_id"`
+	RunID               modulecore.RunID          `json:"run_id"`
 	Revision            int                       `json:"revision"`
 	SessionID           string                    `json:"session_id"`
 	InitiatedBy         string                    `json:"initiated_by"`

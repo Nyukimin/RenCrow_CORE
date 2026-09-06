@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -255,10 +256,22 @@ func HandleAIWorkflowCommandRun(store AIWorkflowStore, skills AIWorkflowSkillBoo
 }
 
 func HandleAIWorkflowContextUsageCreate(store AIWorkflowStore) http.HandlerFunc {
+	return HandleAIWorkflowContextUsageCreateWithVerifier(store, nil)
+}
+
+func HandleAIWorkflowContextUsageCreateWithVerifier(store AIWorkflowStore, verifier BrowserTraceRunVerifier) http.HandlerFunc {
 	return saveAIWorkflowItem(store, "context usage", func(ctx context.Context, store AIWorkflowStore, dec *json.Decoder) error {
 		var item domainai.ContextUsage
 		if err := dec.Decode(&item); err != nil {
 			return err
+		}
+		if err := domainai.ValidateContextUsage(item); err != nil {
+			return err
+		}
+		if verifier != nil && (!item.TaskID.IsZero() || item.RunID != "") {
+			if _, err := verifier.VerifyTaskRun(ctx, item.TaskID, item.RunID); err != nil {
+				return fmt.Errorf("task run verification failed: %w", err)
+			}
 		}
 		return store.SaveContextUsage(ctx, item)
 	})
@@ -281,6 +294,10 @@ func HandleAIWorkflowContextBudgetCheck(store AIWorkflowStore, policy domainai.C
 		}
 		var usage domainai.ContextUsage
 		if err := json.NewDecoder(r.Body).Decode(&usage); err != nil {
+			http.Error(w, "invalid context budget payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := domainai.ValidateContextUsage(usage); err != nil {
 			http.Error(w, "invalid context budget payload: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -608,9 +625,9 @@ type usageScope struct {
 
 func contextUsageScopes(usage domainai.ContextUsage) []usageScope {
 	candidates := []usageScope{
-		{Scope: "job", ScopeID: strings.TrimSpace(usage.JobID)},
+		{Scope: "task", ScopeID: usage.TaskID.String()},
 		{Scope: "workstream", ScopeID: strings.TrimSpace(usage.WorkstreamID)},
-		{Scope: "run", ScopeID: strings.TrimSpace(usage.RunID)},
+		{Scope: "run", ScopeID: string(usage.RunID)},
 		{Scope: "session", ScopeID: strings.TrimSpace(usage.SessionID)},
 	}
 	out := make([]usageScope, 0, len(candidates))

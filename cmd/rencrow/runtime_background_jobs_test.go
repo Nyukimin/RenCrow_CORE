@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainrouting "github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -202,7 +203,7 @@ func TestNewSuperAgentRunQueueProcessorReportsFailure(t *testing.T) {
 	processor := &captureSuperAgentRunQueueProcessor{}
 	listener := &captureBackgroundJobEventListener{}
 	traceID := modulecore.NewTraceID()
-	_, err := newSuperAgentRunQueueProcessor(processor, newBackgroundJobFailureReporter(listener)).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
+	_, err := newSuperAgentRunQueueProcessor(processor, newBackgroundJobFailureReporter(listener, nil)).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
 		QueueID: "q-1", TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(),
 		Goal: "run", Action: "external_pr",
 	}, traceID)
@@ -232,7 +233,7 @@ func TestNewSuperAgentRunQueueProcessorReportsFailure(t *testing.T) {
 
 func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 	listener := &captureBackgroundJobEventListener{}
-	reporter := newBackgroundJobFailureReporter(listener)
+	reporter := newBackgroundJobFailureReporter(listener, nil)
 	reporter.Failed("daily_intake_sweep", errors.New("boom"), "rule_limit=100")
 
 	events := listener.Events()
@@ -250,6 +251,9 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 	if payload["job"] != "daily_intake_sweep" || payload["status"] != "failed" || payload["error"] != "boom" || payload["llm_policy"] != "no_llm_until_failure" {
 		t.Fatalf("payload = %#v", payload)
 	}
+	if _, ok := payload["task_id"]; ok {
+		t.Fatalf("payload must not invent task_id without owner: %#v", payload)
+	}
 	notification := events[1]
 	if notification.Type != "task.notification" || notification.From != "shiro" || notification.To != "mio" || notification.TaskID != failed.TaskID || notification.SessionID != failed.SessionID {
 		t.Fatalf("notification event = %#v", notification)
@@ -262,9 +266,37 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 	}
 }
 
+func TestBackgroundJobFailureReporterUsesDurableTaskOwnerIdentity(t *testing.T) {
+	listener := &captureBackgroundJobEventListener{}
+	owner := &captureBackgroundFailureTaskOwner{}
+	reporter := newBackgroundJobFailureReporter(listener, owner)
+	reporter.Failed("daily_intake_sweep", errors.New("boom"), "rule_limit=100")
+
+	if len(owner.created) != 1 || owner.created[0].Route != domaintask.RouteOperations || owner.created[0].Assignee != "shiro" {
+		t.Fatalf("created=%#v", owner.created)
+	}
+	if len(owner.started) != 1 || owner.started[0] != owner.created[0].TaskID {
+		t.Fatalf("started=%#v task=%s", owner.started, owner.created[0].TaskID)
+	}
+	events := listener.Events()
+	if len(events) != 2 {
+		t.Fatalf("events=%d, want 2", len(events))
+	}
+	var payload map[string]string
+	if err := json.Unmarshal([]byte(events[0].Content), &payload); err != nil {
+		t.Fatalf("payload decode: %v", err)
+	}
+	if payload["task_id"] != owner.created[0].TaskID.String() || payload["run_id"] != string(owner.runID) {
+		t.Fatalf("payload=%#v", payload)
+	}
+	if events[0].TaskID != owner.created[0].TaskID {
+		t.Fatalf("failed event task=%q want=%q", events[0].TaskID, owner.created[0].TaskID)
+	}
+}
+
 func TestBackgroundJobFailureReporterStopsNotificationAfterPublicationFailure(t *testing.T) {
 	listener := &captureBackgroundJobEventListener{err: errors.New("canonical append failed")}
-	newBackgroundJobFailureReporter(listener).Failed("daily_intake_sweep", errors.New("boom"), "rule_limit=100")
+	newBackgroundJobFailureReporter(listener, nil).Failed("daily_intake_sweep", errors.New("boom"), "rule_limit=100")
 
 	listener.mu.Lock()
 	calls := listener.calls
@@ -279,7 +311,7 @@ func TestBackgroundJobFailureReporterStopsNotificationAfterPublicationFailure(t 
 
 func TestBackgroundJobFailureReporterIgnoresTypedNilListener(t *testing.T) {
 	var listener *idleAwareEventListener
-	reporter := newBackgroundJobFailureReporter(listener)
+	reporter := newBackgroundJobFailureReporter(listener, nil)
 	reporter.Failed("identity", errors.New("source unavailable"), "bounded failure")
 }
 
@@ -292,7 +324,7 @@ func TestStartMemoryLifecycleJobReportsFailure(t *testing.T) {
 		Interval: time.Hour,
 		Now:      func() time.Time { return time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC) },
 		Label:    "test",
-	}, stop, newBackgroundJobFailureReporter(listener))
+	}, stop, newBackgroundJobFailureReporter(listener, nil))
 	if !listener.EventCountReachesWithin(2, 500*time.Millisecond) {
 		t.Fatalf("events=%d, want failure notification events", len(listener.Events()))
 	}
@@ -395,6 +427,29 @@ func TestStartMemoryLifecycleJobWithConfigUsesConfiguredInterval(t *testing.T) {
 	if !countReachesWithin(&runner.calls, 3, 500*time.Millisecond) {
 		t.Fatalf("maintenance calls=%d, want at least 3 using configured interval", runner.calls.Load())
 	}
+}
+
+type captureBackgroundFailureTaskOwner struct {
+	created []domaintask.Task
+	started []modulecore.TaskID
+	runID   modulecore.RunID
+}
+
+func (o *captureBackgroundFailureTaskOwner) Create(_ context.Context, draft domaintask.Task, _ domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.TaskID == "" {
+		draft.TaskID = modulecore.NewTaskID()
+	}
+	now := time.Now().UTC()
+	draft.CreatedAt = now
+	draft.UpdatedAt = now
+	o.created = append(o.created, draft)
+	return draft, nil
+}
+
+func (o *captureBackgroundFailureTaskOwner) StartRunWithReason(_ context.Context, taskID modulecore.TaskID, _ domaintask.RunStartReason) (domaintask.Run, error) {
+	o.started = append(o.started, taskID)
+	o.runID = modulecore.NewRunID()
+	return domaintask.Run{RunID: o.runID, TaskID: taskID, Status: domaintask.RunStatusRunning}, nil
 }
 
 type captureSuperAgentRunQueueProcessor struct {

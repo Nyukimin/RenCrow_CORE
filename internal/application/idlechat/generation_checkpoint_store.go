@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const generationCheckpointSchemaVersion = 1
@@ -19,7 +21,8 @@ const generationCheckpointSchemaVersion = 1
 type GenerationCheckpoint struct {
 	Key             string                 `json:"key"`
 	Kind            string                 `json:"kind"`
-	GenerationID    string                 `json:"generation_id"`
+	TaskID          modulecore.TaskID      `json:"task_id"`
+	RunID           modulecore.RunID       `json:"run_id"`
 	Stage           string                 `json:"stage"`
 	Attempt         int                    `json:"attempt,omitempty"`
 	Category        TopicCategory          `json:"category,omitempty"`
@@ -83,6 +86,9 @@ func (s *GenerationCheckpointStore) Put(checkpoint GenerationCheckpoint) error {
 	checkpoint.Key = strings.TrimSpace(checkpoint.Key)
 	if checkpoint.Key == "" {
 		return errors.New("generation checkpoint key is empty")
+	}
+	if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+		return fmt.Errorf("generation checkpoint identity: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

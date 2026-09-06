@@ -901,18 +901,22 @@ type BrowserTraceAPIStatus struct {
 }
 
 type BrowserTraceRun struct {
-	TraceRunID   string    `json:"trace_run_id"`
-	WorkstreamID string    `json:"workstream_id,omitempty"`
-	SiteID       string    `json:"site_id,omitempty"`
-	Goal         string    `json:"goal,omitempty"`
-	TracePath    string    `json:"trace_path"`
-	CapturedAt   time.Time `json:"captured_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	RunID        modulecore.RunID  `json:"run_id"`
+	ActorID      string            `json:"actor_id"`
+	WorkstreamID string            `json:"workstream_id,omitempty"`
+	SiteID       string            `json:"site_id,omitempty"`
+	Goal         string            `json:"goal,omitempty"`
+	TracePath    string            `json:"trace_path"`
+	CapturedAt   time.Time         `json:"captured_at,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 type BrowserTraceAPICandidate struct {
 	CandidateID          string                      `json:"candidate_id"`
-	TraceRunID           string                      `json:"trace_run_id"`
+	TaskID               modulecore.TaskID           `json:"task_id"`
+	RunID                modulecore.RunID            `json:"run_id"`
+	ActorID              string                      `json:"actor_id"`
 	SiteID               string                      `json:"site_id,omitempty"`
 	Method               string                      `json:"method"`
 	ObservedURL          string                      `json:"observed_url"`
@@ -946,7 +950,9 @@ type BrowserTraceAPISchema struct {
 type BrowserTraceAPIValidation struct {
 	ValidationID string                           `json:"validation_id"`
 	CandidateID  string                           `json:"candidate_id"`
-	TraceRunID   string                           `json:"trace_run_id"`
+	TaskID       modulecore.TaskID                `json:"task_id"`
+	RunID        modulecore.RunID                 `json:"run_id"`
+	ActorID      string                           `json:"actor_id"`
 	Passed       bool                             `json:"passed"`
 	Status       string                           `json:"status"`
 	Issues       []BrowserTraceAPIValidationIssue `json:"issues,omitempty"`
@@ -960,36 +966,42 @@ type BrowserTraceAPIValidationIssue struct {
 }
 
 type BrowserTraceAPICoverage struct {
-	ReportID              string    `json:"report_id"`
-	TraceRunID            string    `json:"trace_run_id"`
-	ObservedFlows         []string  `json:"observed_flows,omitempty"`
-	ObservedEndpoints     []string  `json:"observed_endpoints,omitempty"`
-	MissingFlows          []string  `json:"missing_flows,omitempty"`
-	RecommendedNextTraces []string  `json:"recommended_next_traces,omitempty"`
-	CreatedAt             time.Time `json:"created_at"`
+	ReportID              string            `json:"report_id"`
+	TaskID                modulecore.TaskID `json:"task_id"`
+	RunID                 modulecore.RunID  `json:"run_id"`
+	ActorID               string            `json:"actor_id"`
+	ObservedFlows         []string          `json:"observed_flows,omitempty"`
+	ObservedEndpoints     []string          `json:"observed_endpoints,omitempty"`
+	MissingFlows          []string          `json:"missing_flows,omitempty"`
+	RecommendedNextTraces []string          `json:"recommended_next_traces,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
 }
 
 type BrowserTraceAPIArtifact struct {
-	ArtifactID   string    `json:"artifact_id"`
-	TraceRunID   string    `json:"trace_run_id"`
-	WorkstreamID string    `json:"workstream_id,omitempty"`
-	Type         string    `json:"artifact_type"`
-	Title        string    `json:"title"`
-	Status       string    `json:"status"`
-	Content      string    `json:"content"`
-	CreatedAt    time.Time `json:"created_at"`
+	ArtifactID   string            `json:"artifact_id"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	RunID        modulecore.RunID  `json:"run_id"`
+	ActorID      string            `json:"actor_id"`
+	WorkstreamID string            `json:"workstream_id,omitempty"`
+	Type         string            `json:"artifact_type"`
+	Title        string            `json:"title"`
+	Status       string            `json:"status"`
+	Content      string            `json:"content"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 type BrowserTraceAPIDiscoverRequest struct {
-	TraceRunID      string    `json:"trace_run_id"`
-	WorkstreamID    string    `json:"workstream_id,omitempty"`
-	SiteID          string    `json:"site_id,omitempty"`
-	Goal            string    `json:"goal,omitempty"`
-	TracePath       string    `json:"trace_path"`
-	RequestsPath    string    `json:"requests_path"`
-	ResponsesPath   string    `json:"responses_path"`
-	LivePolicyCheck bool      `json:"live_policy_check,omitempty"`
-	CapturedAt      time.Time `json:"captured_at,omitempty"`
+	TaskID          modulecore.TaskID `json:"task_id"`
+	RunID           modulecore.RunID  `json:"run_id"`
+	ActorID         string            `json:"actor_id"`
+	WorkstreamID    string            `json:"workstream_id,omitempty"`
+	SiteID          string            `json:"site_id,omitempty"`
+	Goal            string            `json:"goal,omitempty"`
+	TracePath       string            `json:"trace_path"`
+	RequestsPath    string            `json:"requests_path"`
+	ResponsesPath   string            `json:"responses_path"`
+	LivePolicyCheck bool              `json:"live_policy_check,omitempty"`
+	CapturedAt      time.Time         `json:"captured_at,omitempty"`
 }
 
 type BrowserTraceAPIDiscoverResponse struct {
@@ -5065,9 +5077,9 @@ func validateBrowserTraceAPIStatus(resp BrowserTraceAPIStatus) error {
 		if err := validateBrowserTraceRun(item, "browser trace api status"); err != nil {
 			return err
 		}
-		id := strings.TrimSpace(item.TraceRunID)
+		id := string(item.RunID)
 		if _, ok := seenRuns[id]; ok {
-			return fmt.Errorf("browser trace api status contains duplicate trace_run_id %q", id)
+			return fmt.Errorf("browser trace api status contains duplicate run_id %q", id)
 		}
 		seenRuns[id] = struct{}{}
 	}
@@ -5129,8 +5141,8 @@ func validateBrowserTraceAPIStatus(resp BrowserTraceAPIStatus) error {
 }
 
 func validateBrowserTraceAPIDiscoverRequest(req BrowserTraceAPIDiscoverRequest) error {
-	if strings.TrimSpace(req.TraceRunID) == "" {
-		return fmt.Errorf("browser trace api discover request missing trace_run_id")
+	if err := validateBrowserTraceProjectionIdentity(req.TaskID, req.RunID, req.ActorID, "browser trace api discover request"); err != nil {
+		return err
 	}
 	if strings.TrimSpace(req.TracePath) == "" {
 		return fmt.Errorf("browser trace api discover request missing trace_path")
@@ -5145,8 +5157,8 @@ func validateBrowserTraceAPIDiscoverRequest(req BrowserTraceAPIDiscoverRequest) 
 }
 
 func validateBrowserTraceAPIDiscoverResponse(resp BrowserTraceAPIDiscoverResponse, req BrowserTraceAPIDiscoverRequest) error {
-	if resp.TraceRun.TraceRunID != strings.TrimSpace(req.TraceRunID) {
-		return fmt.Errorf("browser trace api discover response trace_run_id mismatch")
+	if resp.TraceRun.TaskID != req.TaskID || resp.TraceRun.RunID != req.RunID || resp.TraceRun.ActorID != req.ActorID {
+		return fmt.Errorf("browser trace api discover response task/run/actor identity mismatch")
 	}
 	if resp.TraceRun.TracePath != strings.TrimSpace(req.TracePath) {
 		return fmt.Errorf("browser trace api discover response trace_path mismatch")
@@ -5155,8 +5167,8 @@ func validateBrowserTraceAPIDiscoverResponse(resp BrowserTraceAPIDiscoverRespons
 		return err
 	}
 	for _, item := range resp.APICandidates {
-		if item.TraceRunID != resp.TraceRun.TraceRunID {
-			return fmt.Errorf("browser trace api discover response candidate trace_run_id mismatch")
+		if !sameBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, resp.TraceRun.TaskID, resp.TraceRun.RunID, resp.TraceRun.ActorID) {
+			return fmt.Errorf("browser trace api discover response candidate identity mismatch")
 		}
 		if err := validateBrowserTraceAPICandidate(item, "browser trace api discover response"); err != nil {
 			return err
@@ -5168,22 +5180,22 @@ func validateBrowserTraceAPIDiscoverResponse(resp BrowserTraceAPIDiscoverRespons
 		}
 	}
 	for _, item := range resp.APIValidations {
-		if item.TraceRunID != resp.TraceRun.TraceRunID {
-			return fmt.Errorf("browser trace api discover response validation trace_run_id mismatch")
+		if !sameBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, resp.TraceRun.TaskID, resp.TraceRun.RunID, resp.TraceRun.ActorID) {
+			return fmt.Errorf("browser trace api discover response validation identity mismatch")
 		}
 		if err := validateBrowserTraceAPIValidation(item, "browser trace api discover response"); err != nil {
 			return err
 		}
 	}
-	if resp.CoverageReport.TraceRunID != resp.TraceRun.TraceRunID {
-		return fmt.Errorf("browser trace api discover response coverage trace_run_id mismatch")
+	if !sameBrowserTraceProjectionIdentity(resp.CoverageReport.TaskID, resp.CoverageReport.RunID, resp.CoverageReport.ActorID, resp.TraceRun.TaskID, resp.TraceRun.RunID, resp.TraceRun.ActorID) {
+		return fmt.Errorf("browser trace api discover response coverage identity mismatch")
 	}
 	if err := validateBrowserTraceAPICoverage(resp.CoverageReport, "browser trace api discover response"); err != nil {
 		return err
 	}
 	for _, item := range resp.APIArtifacts {
-		if item.TraceRunID != resp.TraceRun.TraceRunID {
-			return fmt.Errorf("browser trace api discover response artifact trace_run_id mismatch")
+		if !sameBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, resp.TraceRun.TaskID, resp.TraceRun.RunID, resp.TraceRun.ActorID) {
+			return fmt.Errorf("browser trace api discover response artifact identity mismatch")
 		}
 		if err := validateBrowserTraceAPIArtifact(item, "browser trace api discover response"); err != nil {
 			return err
@@ -5225,8 +5237,8 @@ func validateBrowserTraceAPIValidationReviewResponse(resp BrowserTraceAPIValidat
 	if resp.Validation.CandidateID != strings.TrimSpace(req.CandidateID) {
 		return fmt.Errorf("browser trace api validation review response validation candidate_id mismatch")
 	}
-	if resp.Validation.TraceRunID != resp.Candidate.TraceRunID {
-		return fmt.Errorf("browser trace api validation review response validation trace_run_id mismatch")
+	if !sameBrowserTraceProjectionIdentity(resp.Validation.TaskID, resp.Validation.RunID, resp.Validation.ActorID, resp.Candidate.TaskID, resp.Candidate.RunID, resp.Candidate.ActorID) {
+		return fmt.Errorf("browser trace api validation review response validation identity mismatch")
 	}
 	if err := validateBrowserTraceAPIValidation(resp.Validation, "browser trace api validation review response"); err != nil {
 		return err
@@ -5288,8 +5300,8 @@ func validateBrowserTraceAPIFetcherProposalResponse(resp BrowserTraceAPIFetcherP
 }
 
 func validateBrowserTraceRun(item BrowserTraceRun, label string) error {
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return fmt.Errorf("%s trace_run missing trace_run_id", label)
+	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" trace_run"); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.TracePath) == "" {
 		return fmt.Errorf("%s trace_run missing trace_path", label)
@@ -5304,8 +5316,8 @@ func validateBrowserTraceAPICandidate(item BrowserTraceAPICandidate, label strin
 	if strings.TrimSpace(item.CandidateID) == "" {
 		return fmt.Errorf("%s candidate missing candidate_id", label)
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return fmt.Errorf("%s candidate missing trace_run_id", label)
+	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" candidate"); err != nil {
+		return err
 	}
 	method := strings.ToUpper(strings.TrimSpace(item.Method))
 	if method == "" {
@@ -5370,8 +5382,8 @@ func validateBrowserTraceAPIValidation(item BrowserTraceAPIValidation, label str
 	if strings.TrimSpace(item.CandidateID) == "" {
 		return fmt.Errorf("%s validation missing candidate_id", label)
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return fmt.Errorf("%s validation missing trace_run_id", label)
+	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" validation"); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.Status) == "" {
 		return fmt.Errorf("%s validation missing status", label)
@@ -5414,8 +5426,8 @@ func validateBrowserTraceAPICoverage(item BrowserTraceAPICoverage, label string)
 	if strings.TrimSpace(item.ReportID) == "" {
 		return fmt.Errorf("%s coverage missing report_id", label)
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return fmt.Errorf("%s coverage missing trace_run_id", label)
+	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" coverage"); err != nil {
+		return err
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("%s coverage missing created_at", label)
@@ -5427,8 +5439,8 @@ func validateBrowserTraceAPIArtifact(item BrowserTraceAPIArtifact, label string)
 	if strings.TrimSpace(item.ArtifactID) == "" {
 		return fmt.Errorf("%s artifact missing artifact_id", label)
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return fmt.Errorf("%s artifact missing trace_run_id", label)
+	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" artifact"); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.Type) == "" {
 		return fmt.Errorf("%s artifact missing artifact_type", label)
@@ -5449,6 +5461,25 @@ func validateBrowserTraceAPIArtifact(item BrowserTraceAPIArtifact, label string)
 		return fmt.Errorf("%s artifact missing created_at", label)
 	}
 	return nil
+}
+
+func validateBrowserTraceProjectionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorID, label string) error {
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("%s invalid task_id: %w", label, err)
+	}
+	if err := runID.Validate(); err != nil {
+		return fmt.Errorf("%s invalid run_id: %w", label, err)
+	}
+	switch actorID {
+	case "mio", "shiro", "midori", "kuro":
+		return nil
+	default:
+		return fmt.Errorf("%s invalid actor_id", label)
+	}
+}
+
+func sameBrowserTraceProjectionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorID string, wantTaskID modulecore.TaskID, wantRunID modulecore.RunID, wantActorID string) bool {
+	return taskID == wantTaskID && runID == wantRunID && actorID == wantActorID
 }
 
 func isBrowserTraceAPICandidateStatus(status string) bool {

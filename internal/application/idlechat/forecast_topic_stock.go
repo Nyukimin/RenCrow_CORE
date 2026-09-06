@@ -11,7 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // PreparedTopic は事前生成済みのお題。
@@ -19,7 +20,8 @@ type PreparedTopic struct {
 	Domain       ForecastDomain `json:"domain"`
 	Topic        string         `json:"topic"`
 	Seeds        []string       `json:"seeds"`
-	GenerationID string         `json:"generation_id"`
+	TaskID      modulecore.TaskID `json:"task_id"`
+	RunID       modulecore.RunID  `json:"run_id"`
 	InitiatedBy  string         `json:"initiated_by,omitempty"`
 	Created      time.Time      `json:"created"`
 }
@@ -101,7 +103,6 @@ func (s *forecastTopicStock) load() {
 	cleaned := make(map[string][]PreparedTopic, len(forecastDomains))
 	seen := make(map[string]struct{})
 	discarded := 0
-	normalized := false
 	for _, domain := range forecastDomains {
 		for _, item := range f.Stock[domain.Name] {
 			topic := strings.TrimSpace(item.Topic)
@@ -121,9 +122,9 @@ func (s *forecastTopicStock) load() {
 			seen[key] = struct{}{}
 			item.Domain = domain
 			item.Topic = topic
-			if strings.TrimSpace(item.GenerationID) == "" {
-				item.GenerationID = uuid.NewString()
-				normalized = true
+			if err := validateIdleChatRunIdentity(item.TaskID, item.RunID); err != nil {
+				discarded++
+				continue
 			}
 			cleaned[domain.Name] = append(cleaned[domain.Name], item)
 		}
@@ -136,7 +137,7 @@ func (s *forecastTopicStock) load() {
 	s.stock = cleaned
 	total := s.totalLocked()
 	log.Printf("[Forecast] Stock loaded from file: %d topics across %d domains", total, len(f.Stock))
-	if discarded > 0 || normalized {
+	if discarded > 0 {
 		log.Printf("[Forecast] Stock validation discarded %d invalid, duplicate, overflow, or unknown records", discarded)
 		s.saveLocked()
 	}
@@ -215,8 +216,8 @@ func (s *forecastTopicStock) pop(domain string) *PreparedTopic {
 	return &item
 }
 
-func (s *forecastTopicStock) takeByGenerationID(generationID string) *PreparedTopic {
-	if s == nil || strings.TrimSpace(generationID) == "" {
+func (s *forecastTopicStock) takeByRunID(runID modulecore.RunID) *PreparedTopic {
+	if s == nil || runID == "" {
 		return nil
 	}
 	s.mu.Lock()
@@ -224,7 +225,7 @@ func (s *forecastTopicStock) takeByGenerationID(generationID string) *PreparedTo
 	for _, domain := range forecastDomains {
 		items := s.stock[domain.Name]
 		for index, item := range items {
-			if item.GenerationID != generationID {
+			if item.RunID != runID {
 				continue
 			}
 			s.stock[domain.Name] = append(append([]PreparedTopic(nil), items[:index]...), items[index+1:]...)
@@ -235,15 +236,15 @@ func (s *forecastTopicStock) takeByGenerationID(generationID string) *PreparedTo
 	return nil
 }
 
-func (s *forecastTopicStock) hasGenerationID(generationID string) bool {
-	if s == nil || strings.TrimSpace(generationID) == "" {
+func (s *forecastTopicStock) hasRunID(runID modulecore.RunID) bool {
+	if s == nil || runID == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, items := range s.stock {
 		for _, item := range items {
-			if item.GenerationID == generationID {
+			if item.RunID == runID {
 				return true
 			}
 		}
@@ -261,8 +262,8 @@ func (s *forecastTopicStock) push(domain string, item PreparedTopic) bool {
 	if strings.TrimSpace(item.InitiatedBy) == "" {
 		item.InitiatedBy = "shiro"
 	}
-	if strings.TrimSpace(item.GenerationID) == "" {
-		item.GenerationID = uuid.NewString()
+	if err := validateIdleChatRunIdentity(item.TaskID, item.RunID); err != nil {
+		return false
 	}
 	items := s.stock[domain]
 	itemKey := normalizeLoopText(item.Topic)
@@ -487,6 +488,7 @@ func (o *IdleChatOrchestrator) forecastTopicRefillAvailable() bool {
 
 func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock, domain ForecastDomain, trigger string) {
 	defer o.endTopicProduction()
+	ctx := o.topicProductionContext()
 	checkpointKey := "forecast:" + domain.Name
 	checkpointStore := o.generationCheckpointStore()
 	checkpoint, found := checkpointStore.Get(checkpointKey)
@@ -494,16 +496,38 @@ func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock,
 		_ = checkpointStore.Delete(checkpointKey)
 		found = false
 	}
-	if found && stock.hasGenerationID(checkpoint.GenerationID) {
+	if found {
+		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+			_ = checkpointStore.Delete(checkpointKey)
+			found = false
+		}
+	}
+	if found && stock.hasRunID(checkpoint.RunID) {
 		_ = checkpointStore.Delete(checkpointKey)
 		stock.doneFilling(domain.Name, nil)
 		return
 	}
 	if !found {
+		taskID, runID, err := issueIdleChatRun(ctx, o.runIssuer, "IdleChat forecast topic", "shiro", domaintask.RunStartReasonFirst, "")
+		if err != nil {
+			stock.doneFilling(domain.Name, err)
+			return
+		}
 		checkpoint = GenerationCheckpoint{
-			Key: checkpointKey, Kind: "forecast", GenerationID: uuid.NewString(), Stage: "created",
+			Key: checkpointKey, Kind: "forecast", TaskID: taskID, RunID: runID, Stage: "created",
 			Category: TopicCategoryForecast, Domain: domain,
 		}
+		if err := checkpointStore.Put(checkpoint); err != nil {
+			stock.doneFilling(domain.Name, err)
+			return
+		}
+	} else {
+		runID, err := resumeIdleChatRun(ctx, o.runIssuer, checkpoint.TaskID)
+		if err != nil {
+			stock.doneFilling(domain.Name, err)
+			return
+		}
+		checkpoint.RunID = runID
 		if err := checkpointStore.Put(checkpoint); err != nil {
 			stock.doneFilling(domain.Name, err)
 			return
@@ -523,8 +547,8 @@ func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock,
 		log.Printf("[Forecast] Stock refill skipped: trigger=%s domain=%s error_code=empty_topic", trigger, domain.Name)
 		return
 	}
-	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: topic, Seeds: seeds, GenerationID: checkpoint.GenerationID, InitiatedBy: "shiro", Created: time.Now().UTC()}) {
-		if stock.hasGenerationID(checkpoint.GenerationID) {
+	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: topic, Seeds: seeds, TaskID: checkpoint.TaskID, RunID: checkpoint.RunID, InitiatedBy: "shiro", Created: time.Now().UTC()}) {
+		if stock.hasRunID(checkpoint.RunID) {
 			_ = checkpointStore.Delete(checkpointKey)
 			stock.doneFilling(domain.Name, nil)
 			return

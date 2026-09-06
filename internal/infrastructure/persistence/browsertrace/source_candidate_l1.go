@@ -54,14 +54,14 @@ func (s *L1APICandidateStore) SaveBrowserTraceAPICandidates(ctx context.Context,
 		if strings.TrimSpace(candidate.CandidateID) == "" {
 			return fmt.Errorf("browser trace api candidate_id is required")
 		}
-		if strings.TrimSpace(candidate.TraceRunID) == "" {
-			return fmt.Errorf("browser trace api trace_run_id is required")
+		if err := candidate.RunID.Validate(); err != nil {
+			return fmt.Errorf("browser trace api run_id is invalid: %w", err)
 		}
 		item := l1sqlite.L1StagingItem{
 			Kind:         l1sqlite.L1StagingKindSearchResult,
 			Namespace:    s.namespace,
-			EventID:      fmt.Sprintf("%s:%s", candidate.TraceRunID, candidate.CandidateID),
-			SourceID:     fmt.Sprintf("browser_trace:%s", candidate.TraceRunID),
+			EventID:      fmt.Sprintf("%s:%s", candidate.RunID, candidate.CandidateID),
+			SourceID:     fmt.Sprintf("browser_trace:%s", candidate.RunID),
 			SourceURL:    candidate.ObservedURL,
 			FetchedAt:    fetchedAt,
 			RawText:      apiCandidateRawText(candidate),
@@ -70,7 +70,9 @@ func (s *L1APICandidateStore) SaveBrowserTraceAPICandidates(ctx context.Context,
 			LicenseNote:  "browser trace observed API candidate; terms validation is required before promote",
 			Meta: map[string]interface{}{
 				"source_kind":                "browser_trace_api",
-				"trace_run_id":               candidate.TraceRunID,
+				"task_id":                    string(candidate.TaskID),
+				"run_id":                     string(candidate.RunID),
+				"actor_id":                   candidate.ActorID,
 				"candidate_id":               candidate.CandidateID,
 				"site_id":                    candidate.SiteID,
 				"method":                     candidate.Method,

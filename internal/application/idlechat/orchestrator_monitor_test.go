@@ -31,6 +31,7 @@ func TestAutomaticIdleChatWaitsForDailyEnrichmentCompletion(t *testing.T) {
 func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, seedWord string, turns int) *queuedIdleChatCodexGenerator {
 	t.Helper()
 	stock := newWordTopicStock("")
+	taskID, runID := testIdleChatRunIdentityPair()
 	if !stock.push(WordPreparedTopic{
 		Category:    TopicCategorySingle,
 		Topic:       topic,
@@ -38,6 +39,8 @@ func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, se
 		Axis:        "観察",
 		OpeningHook: "店内の具体物から始める",
 		Avoid:       "一般論だけで終わる",
+		TaskID:      taskID,
+		RunID:       runID,
 	}) {
 		t.Fatal("failed to prepare word topic")
 	}
@@ -74,8 +77,10 @@ func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, se
 	generator := &queuedIdleChatCodexGenerator{responses: []string{string(payload)}}
 	config := DefaultDialogueInterestingnessConfig()
 	config.MaxTurnsPerTopic = turns
+	dialogueService := NewPersistentDialogueEpisodeService("", generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config)
+	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer())
 	o.SetDialogueInterestingnessConfig(config)
-	o.SetDialogueEpisodeService(NewPersistentDialogueEpisodeService("", generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config))
+	o.SetDialogueEpisodeService(dialogueService)
 	return generator
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func BuildAPIArtifacts(result domaintrace.DiscoveryResult) []domaintrace.APIArtifact {
@@ -16,8 +17,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 	now := result.Run.CreatedAt
 	return []domaintrace.APIArtifact{
 		{
-			ArtifactID:   "art_openapi_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "observed_openapi",
 			Title:        "Observed OpenAPI Draft",
@@ -26,8 +29,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 			CreatedAt:    now,
 		},
 		{
-			ArtifactID:   "art_coverage_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "coverage_report",
 			Title:        "API Coverage Report",
@@ -36,8 +41,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 			CreatedAt:    now,
 		},
 		{
-			ArtifactID:   "art_endpoint_inventory_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "endpoint_inventory",
 			Title:        "Endpoint Inventory",
@@ -46,8 +53,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 			CreatedAt:    now,
 		},
 		{
-			ArtifactID:   "art_risk_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "risk_assessment",
 			Title:        "API Risk Assessment",
@@ -56,8 +65,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 			CreatedAt:    now,
 		},
 		{
-			ArtifactID:   "art_fetcher_plan_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "fetcher_plan",
 			Title:        "Fetcher Plan",
@@ -66,8 +77,10 @@ func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, valida
 			CreatedAt:    now,
 		},
 		{
-			ArtifactID:   "art_client_draft_" + result.Run.TraceRunID,
-			TraceRunID:   result.Run.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       result.Run.TaskID,
+			RunID:        result.Run.RunID,
+			ActorID:      result.Run.ActorID,
 			WorkstreamID: result.Run.WorkstreamID,
 			Type:         "client_draft",
 			Title:        "Client Draft",
@@ -93,13 +106,17 @@ func BuildEndpointInventoryJSON(result domaintrace.DiscoveryResult) string {
 		Confidence           float64                     `json:"confidence,omitempty"`
 	}
 	payload := struct {
-		TraceRunID string              `json:"trace_run_id"`
-		SiteID     string              `json:"site_id,omitempty"`
-		Endpoints  []inventoryEndpoint `json:"endpoints"`
+		TaskID    string              `json:"task_id"`
+		RunID     string              `json:"run_id"`
+		ActorID   string              `json:"actor_id"`
+		SiteID    string              `json:"site_id,omitempty"`
+		Endpoints []inventoryEndpoint `json:"endpoints"`
 	}{
-		TraceRunID: result.Run.TraceRunID,
-		SiteID:     result.Run.SiteID,
-		Endpoints:  make([]inventoryEndpoint, 0, len(result.Candidates)),
+		TaskID:    string(result.Run.TaskID),
+		RunID:     string(result.Run.RunID),
+		ActorID:   result.Run.ActorID,
+		SiteID:    result.Run.SiteID,
+		Endpoints: make([]inventoryEndpoint, 0, len(result.Candidates)),
 	}
 	for _, candidate := range result.Candidates {
 		payload.Endpoints = append(payload.Endpoints, inventoryEndpoint{
@@ -118,7 +135,7 @@ func BuildEndpointInventoryJSON(result domaintrace.DiscoveryResult) string {
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		return `{"trace_run_id":"` + result.Run.TraceRunID + `","endpoints":[]}`
+		return `{"run_id":"` + string(result.Run.RunID) + `","endpoints":[]}`
 	}
 	return string(data)
 }
@@ -187,7 +204,7 @@ func BuildFetcherPlanMarkdown(result domaintrace.DiscoveryResult, validations []
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Fetcher Plan\n\n")
-	fmt.Fprintf(&b, "Trace run: `%s`\n\n", result.Run.TraceRunID)
+	fmt.Fprintf(&b, "Run: `%s`\n\n", result.Run.RunID)
 	if len(result.Candidates) == 0 {
 		fmt.Fprintf(&b, "No API candidates were observed.\n")
 		return b.String()
@@ -226,9 +243,9 @@ func BuildClientDraftMJS(result domaintrace.DiscoveryResult, validations []domai
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "// Generated client draft from observed browser trace.\n")
-	fmt.Fprintf(&b, "// Trace run: %s\n", result.Run.TraceRunID)
+	fmt.Fprintf(&b, "// Run: %s\n", result.Run.RunID)
 	fmt.Fprintf(&b, "// This draft is review-only. Do not run it against live services before validator and execution policy pass.\n\n")
-	fmt.Fprintf(&b, "export const traceRunId = %q;\n\n", result.Run.TraceRunID)
+	fmt.Fprintf(&b, "export const runId = %q;\n\n", result.Run.RunID)
 	fmt.Fprintf(&b, "export const endpoints = [\n")
 	for _, candidate := range result.Candidates {
 		validation, ok := validationByCandidate[candidate.CandidateID]

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type DreamConsolidationStore interface {
@@ -18,9 +19,12 @@ type DreamConsolidationStore interface {
 }
 
 type DreamProposalInput struct {
-	Scope []string
-	Limit int
-	Now   time.Time
+	TaskID  modulecore.TaskID `json:"task_id"`
+	RunID   modulecore.RunID  `json:"run_id"`
+	ActorID string            `json:"actor_id"`
+	Scope   []string          `json:"scope,omitempty"`
+	Limit   int               `json:"limit,omitempty"`
+	Now     time.Time         `json:"now,omitempty"`
 }
 
 func BuildDreamConsolidationProposal(ctx context.Context, store DreamConsolidationStore, input DreamProposalInput) (domainkm.DreamConsolidationRun, error) {
@@ -47,7 +51,9 @@ func BuildDreamConsolidationProposal(ctx context.Context, store DreamConsolidati
 		seeds = append(seeds, "no reviewed memory source was available; keep this dream proposal pending")
 	}
 	run := domainkm.DreamConsolidationRun{
-		RunID:        "dream_" + now.UTC().Format("20060102_150405"),
+		TaskID:       input.TaskID,
+		RunID:        input.RunID,
+		ActorID:      input.ActorID,
 		Scope:        scope,
 		IdeaSeeds:    seeds,
 		Status:       "proposal",

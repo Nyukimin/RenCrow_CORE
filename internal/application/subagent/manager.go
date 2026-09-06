@@ -149,7 +149,14 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 	}
 
 	mergedDefs := m.mergeToolDefs(ctx)
-	output, err := toolloop.Run(ctx, m.provider, m.toolRunner, mergedDefs, messages, m.loopConfig)
+	loopCfg := m.loopConfig
+	if runtimeCtx, ok := ctx.Value(superAgentContextKey{}).(superAgentRuntimeContext); ok {
+		if !runtimeCtx.TaskID.IsZero() || runtimeCtx.RunID != "" {
+			loopCfg.TaskID = runtimeCtx.TaskID
+			loopCfg.RunID = runtimeCtx.RunID
+		}
+	}
+	output, err := toolloop.Run(ctx, m.provider, m.toolRunner, mergedDefs, messages, loopCfg)
 	if err != nil {
 		log.Printf("[Subagent] error agent=%s err=%v", task.AgentName, err)
 		if record != nil {

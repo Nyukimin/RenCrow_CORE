@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateAIWorkflowRecords(t *testing.T) {
@@ -74,6 +76,48 @@ func TestValidateAIWorkflowRejectsMissingTimestamp(t *testing.T) {
 				t.Fatalf("expected error to contain %q, got %v", tc.err, err)
 			}
 		})
+	}
+}
+
+func TestValidateContextUsageRejectsPartialIdentity(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 10, 0, 0, time.UTC)
+	taskID := modulecore.NewTaskID()
+	cases := []struct {
+		name  string
+		usage ContextUsage
+	}{
+		{
+			name:  "task only",
+			usage: ContextUsage{EventID: "ctx_1", Agent: "Coder", TaskID: taskID, CreatedAt: now},
+		},
+		{
+			name:  "run only",
+			usage: ContextUsage{EventID: "ctx_1", Agent: "Coder", RunID: modulecore.NewRunID(), CreatedAt: now},
+		},
+		{
+			name:  "legacy plain run",
+			usage: ContextUsage{EventID: "ctx_1", Agent: "Coder", RunID: "run_1", CreatedAt: now},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateContextUsage(tc.usage); err == nil {
+				t.Fatal("expected identity validation failure")
+			}
+		})
+	}
+}
+
+func TestValidateContextUsageAcceptsCanonicalTaskRunPair(t *testing.T) {
+	now := time.Date(2026, 5, 20, 7, 10, 0, 0, time.UTC)
+	if err := ValidateContextUsage(ContextUsage{
+		EventID: "ctx_1",
+		Agent:   "Coder",
+		TaskID:  modulecore.NewTaskID(),
+		RunID:   modulecore.NewRunID(),
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("ValidateContextUsage() error = %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // ValidationReviewInput contains the trusted identity and the explicit checks
@@ -14,7 +15,9 @@ import (
 type ValidationReviewInput struct {
 	ValidationID        string
 	CandidateID         string
-	TraceRunID          string
+	TaskID              modulecore.TaskID
+	RunID               modulecore.RunID
+	ActorID             string
 	Reviewer            string
 	ReviewNote          string
 	TermsReviewed       bool
@@ -31,7 +34,9 @@ func BuildValidationReview(input ValidationReviewInput) (domaintrace.APICandidat
 	item := domaintrace.APICandidateValidationResult{
 		ValidationID: strings.TrimSpace(input.ValidationID),
 		CandidateID:  strings.TrimSpace(input.CandidateID),
-		TraceRunID:   strings.TrimSpace(input.TraceRunID),
+		TaskID:       input.TaskID,
+		RunID:        input.RunID,
+		ActorID:      strings.TrimSpace(input.ActorID),
 		Reviewer:     strings.TrimSpace(input.Reviewer),
 		ReviewNote:   strings.TrimSpace(input.ReviewNote),
 		Passed:       true,

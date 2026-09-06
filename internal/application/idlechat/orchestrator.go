@@ -191,6 +191,7 @@ type IdleChatOrchestrator struct {
 	topicProducerCtx          context.Context
 	topicProducerCancel       context.CancelFunc
 	generationCheckpoints     *GenerationCheckpointStore
+	runIssuer                 idlechatRunIssuer
 	topicPlaybackMu           sync.Mutex
 	topicPlaybackHistory      []TopicStockPlaybackItem
 	topicPlaybackIndex        int

@@ -44,11 +44,14 @@ func TestWordTopicStockPersistsAndRejectsCrossCategoryDuplicate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "word_topic_stock.json")
 	stock := newWordTopicStock(path)
 	created := time.Date(2026, 8, 5, 9, 0, 0, 0, time.UTC)
+	taskID, runID := testIdleChatRunIdentityPair()
 	item := WordPreparedTopic{
 		Category: TopicCategorySingle,
 		Topic:    "生成AIを店頭端末に入れるとき誰が最後の判断を持つか",
 		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "生成AI", Genre1Kind: topicWordKindStatic},
 		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
 		Created:  created,
 	}
 	if !stock.push(item) {
@@ -78,11 +81,14 @@ func TestWordTopicStockPersistsAndRejectsCrossCategoryDuplicate(t *testing.T) {
 
 func TestWordTopicStockRejectsReversedDoubleSeedPair(t *testing.T) {
 	stock := newWordTopicStock(filepath.Join(t.TempDir(), "word_topic_stock.json"))
+	firstTaskID, firstRunID := testIdleChatRunIdentityPair()
 	first := WordPreparedTopic{
 		Category: TopicCategoryDouble,
 		Topic:    "生成AIと防災訓練に共通する判断を引き継ぐ仕組み",
 		Seed:     TopicSeed{Category: TopicCategoryDouble, Genre1: "生成AI", Genre2: "防災"},
 		Axis:     "接続",
+		TaskID:   firstTaskID,
+		RunID:    firstRunID,
 		Created:  time.Now().UTC(),
 	}
 	if !stock.push(first) {

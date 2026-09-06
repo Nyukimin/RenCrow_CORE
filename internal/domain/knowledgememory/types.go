@@ -1,6 +1,10 @@
 package knowledgememory
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type PersonalArchiveEntry struct {
 	EntryID      string    `json:"entry_id"`
@@ -59,10 +63,12 @@ type TemporalMemoryMarker struct {
 }
 
 type DreamConsolidationRun struct {
-	RunID        string    `json:"run_id"`
-	Scope        []string  `json:"scope,omitempty"`
-	IdeaSeeds    []string  `json:"idea_seeds,omitempty"`
-	Status       string    `json:"status"`
-	ReviewStatus string    `json:"review_status"`
-	CreatedAt    time.Time `json:"created_at"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	RunID        modulecore.RunID  `json:"run_id"`
+	ActorID      string            `json:"actor_id"`
+	Scope        []string          `json:"scope,omitempty"`
+	IdeaSeeds    []string          `json:"idea_seeds,omitempty"`
+	Status       string            `json:"status"`
+	ReviewStatus string            `json:"review_status"`
+	CreatedAt    time.Time         `json:"created_at"`
 }

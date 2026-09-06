@@ -16,10 +16,10 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
-	run := domaintrace.TraceRun{TraceRunID: "trace_1", TracePath: "traces/trace_1", CreatedAt: now}
+	run := domaintrace.TraceRun{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/trace_1", CreatedAt: now}
 	candidate := domaintrace.APICandidate{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "unknown",
@@ -38,9 +38,9 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 	validation := domaintrace.APICandidateValidationResult{
 		ValidationID: "api_val_1",
 		CandidateID:  "api_cand_1",
-		TraceRunID:   "trace_1",
-		Passed:       false,
-		Status:       "needs_review",
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Passed: false,
+		Status: "needs_review",
 		Issues: []domaintrace.APIValidationIssue{{
 			Code:    "terms_review_required",
 			Message: "terms review is required",
@@ -48,8 +48,8 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 		CreatedAt: now,
 	}
 	coverage := domaintrace.APICoverageReport{
-		ReportID:          "coverage_1",
-		TraceRunID:        "trace_1",
+		ReportID: "coverage_1",
+		TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		ObservedEndpoints: []string{"GET /api/items"},
 		CreatedAt:         now,
 	}
@@ -71,18 +71,18 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 	}
 	if err := store.SaveAPIArtifact(ctx, domaintrace.APIArtifact{
 		ArtifactID: "art_openapi_1",
-		TraceRunID: "trace_1",
-		Type:       "observed_openapi",
-		Title:      "Observed OpenAPI",
-		Status:     "generated",
-		Content:    "openapi: 3.1.0",
-		CreatedAt:  now,
+		TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Type:      "observed_openapi",
+		Title:     "Observed OpenAPI",
+		Status:    "generated",
+		Content:   "openapi: 3.1.0",
+		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("SaveAPIArtifact() error = %v", err)
 	}
 
 	runs, err := store.ListTraceRuns(ctx, 10)
-	if err != nil || len(runs) != 1 || runs[0].TraceRunID != "trace_1" {
+	if err != nil || len(runs) != 1 || runs[0].RunID != "run_00000000-0000-5000-8000-000000000002" {
 		t.Fatalf("ListTraceRuns() = %#v, %v", runs, err)
 	}
 	candidates, err := store.ListAPICandidates(ctx, 10)
@@ -110,8 +110,8 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 func TestJSONLStoreRejectsWriteMethodCandidate(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	err := store.SaveAPICandidate(context.Background(), domaintrace.APICandidate{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "DELETE",
 		ObservedURL:          "https://example.com/api/items/1",
 		ContainsPersonalData: "unknown",
@@ -127,8 +127,8 @@ func TestJSONLStoreFindAPICandidateByIDReturnsLatestExactRecord(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
 	first := domaintrace.APICandidate{
-		CandidateID:          "candidate-exact",
-		TraceRunID:           "trace-1",
+		CandidateID: "candidate-exact",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "unknown",
@@ -164,9 +164,9 @@ func TestJSONLStoreFindAPICandidateValidationResultPreservesOwnerAuditFields(t *
 	first := domaintrace.APICandidateValidationResult{
 		ValidationID: "validation-exact",
 		CandidateID:  "candidate-1",
-		TraceRunID:   "trace-1",
-		Passed:       false,
-		Status:       "needs_review",
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Passed: false,
+		Status: "needs_review",
 		Issues: []domaintrace.APIValidationIssue{{
 			Code:    "terms_review_required",
 			Message: "terms review is required",

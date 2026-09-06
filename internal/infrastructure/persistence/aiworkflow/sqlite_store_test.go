@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
@@ -30,7 +31,8 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	if err := store.SaveCommandRegistry(ctx, domainai.CommandRegistry{CommandName: "/review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}); err != nil {
 		t.Fatalf("SaveCommandRegistry() error = %v", err)
 	}
-	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", RunID: "run_1", WorkstreamID: "ws_1", JobID: "job_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", TaskID: taskID, RunID: runID, WorkstreamID: "ws_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
 		t.Fatalf("SaveContextUsage() error = %v", err)
 	}
 	if items, err := store.ListProjectMemoryIndexes(ctx, 10); err != nil || len(items) != 1 || items[0].ID != "mem_1" {
@@ -42,7 +44,7 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	if items, err := store.ListCommandRegistries(ctx, 10); err != nil || len(items) != 1 || items[0].CommandName != "/review-architecture" {
 		t.Fatalf("commands=%#v err=%v", items, err)
 	}
-	if items, err := store.ListContextUsages(ctx, 10); err != nil || len(items) != 1 || items[0].EventID != "ctx_1" || items[0].JobID != "job_1" || items[0].RunID != "run_1" || items[0].WorkstreamID != "ws_1" || items[0].CompactionID != "compact_1" {
+	if items, err := store.ListContextUsages(ctx, 10); err != nil || len(items) != 1 || items[0].EventID != "ctx_1" || items[0].TaskID != taskID || items[0].RunID != runID || items[0].WorkstreamID != "ws_1" || items[0].CompactionID != "compact_1" {
 		t.Fatalf("contexts=%#v err=%v", items, err)
 	}
 }

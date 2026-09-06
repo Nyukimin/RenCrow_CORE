@@ -125,12 +125,13 @@ func (s *stubAIWorkflowSkillBootstrap) Record(_ context.Context, task domainskil
 
 func TestHandleAIWorkflowStatus(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID := modulecore.NewTaskID()
 	store := &stubAIWorkflowStore{
 		events:    []modulecore.EventEnvelope{modulecore.NewRootEventEnvelope("ai_workflow", "project_init.started", now, map[string]any{"status": "completed"})},
 		memories:  []domainai.ProjectMemoryIndex{{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}},
 		worktrees: []domainai.WorktreeRegistry{{WorktreeID: "wt_1", Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}},
 		commands:  []domainai.CommandRegistry{{CommandName: "/review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}},
-		contexts:  []domainai.ContextUsage{{EventID: "ctx_1", JobID: "job_1", WorkstreamID: "ws_1", Agent: "Coder", ContextTokens: 120, CreatedAt: now}},
+		contexts:  []domainai.ContextUsage{{EventID: "ctx_1", TaskID: taskID, WorkstreamID: "ws_1", Agent: "Coder", ContextTokens: 120, CreatedAt: now}},
 	}
 	rec := httptest.NewRecorder()
 	HandleAIWorkflowStatus(store).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/viewer/ai-workflow", nil))
@@ -138,7 +139,7 @@ func TestHandleAIWorkflowStatus(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"events", "project_memory_indexes", "worktree_registries", "command_registries", "context_usages", "usage_continuity", "context_budget_policy", "job_1", "ws_1"} {
+	for _, want := range []string{"events", "project_memory_indexes", "worktree_registries", "command_registries", "context_usages", "usage_continuity", "context_budget_policy", taskID.String(), "ws_1"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response missing %s: %s", want, body)
 		}
@@ -343,18 +344,20 @@ func TestHandleAIWorkflowCommandAndContextBudgetAreVisibleInStatus(t *testing.T)
 	}
 }
 
-func TestHandleAIWorkflowStatusShowsUsageContinuityAcrossJobAndWorkstream(t *testing.T) {
+func TestHandleAIWorkflowStatusShowsUsageContinuityAcrossTaskAndWorkstream(t *testing.T) {
 	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	store := &stubAIWorkflowStore{
 		events: []modulecore.EventEnvelope{func() modulecore.EventEnvelope {
 			event := modulecore.NewRootEventEnvelope("ai_workflow", "backlog_runner.completed", now.Add(2*time.Minute), map[string]any{"status": "completed"})
-			event.RunID = modulecore.RunID("run_1")
+			event.RunID = runID
 			event.WorkstreamID = modulecore.WorkstreamID("ws_1")
 			return event
 		}()},
 		contexts: []domainai.ContextUsage{
-			{EventID: "ctx_before", JobID: "job_1", RunID: "run_1", WorkstreamID: "ws_1", SessionID: "session_1", Agent: "Coder", ContextTokens: 100, CreatedAt: now},
-			{EventID: "ctx_after", JobID: "job_1", RunID: "run_1", WorkstreamID: "ws_1", SessionID: "session_1", CompactionID: "compact_1", Agent: "Coder", Model: "Worker", ContextTokens: 80, InputTokens: 12, OutputTokens: 5, CreatedAt: now.Add(time.Minute)},
+			{EventID: "ctx_before", TaskID: taskID, RunID: runID, WorkstreamID: "ws_1", SessionID: "session_1", Agent: "Coder", ContextTokens: 100, CreatedAt: now},
+			{EventID: "ctx_after", TaskID: taskID, RunID: runID, WorkstreamID: "ws_1", SessionID: "session_1", CompactionID: "compact_1", Agent: "Coder", Model: "Worker", ContextTokens: 80, InputTokens: 12, OutputTokens: 5, CreatedAt: now.Add(time.Minute)},
 		},
 	}
 	rec := httptest.NewRecorder()
@@ -367,8 +370,8 @@ func TestHandleAIWorkflowStatusShowsUsageContinuityAcrossJobAndWorkstream(t *tes
 	body := rec.Body.String()
 	for _, want := range []string{
 		`"usage_continuity"`,
-		`"scope":"job"`,
-		`"scope_id":"job_1"`,
+		`"scope":"task"`,
+		`"scope_id":"` + taskID.String() + `"`,
 		`"scope":"workstream"`,
 		`"scope_id":"ws_1"`,
 		`"latest_event_id":"ctx_after"`,

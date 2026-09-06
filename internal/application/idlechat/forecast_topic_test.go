@@ -87,6 +87,7 @@ func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T
 		nil,
 		"",
 	)
+	o.SetRunIssuer(newTestIdleChatRunIssuer())
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		calls.Add(1)
@@ -118,8 +119,9 @@ func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T
 
 func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	taskID, runID := testIdleChatRunIdentityPair()
 	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
-		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", TaskID: taskID, RunID: runID, Created: time.Now().UTC()}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +130,7 @@ func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.SetRunIssuer(newTestIdleChatRunIssuer())
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		calls.Add(1)
@@ -147,8 +150,9 @@ func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T
 
 func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	taskID, runID := testIdleChatRunIdentityPair()
 	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
-		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", TaskID: taskID, RunID: runID, Created: time.Now().UTC()}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -157,6 +161,7 @@ func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.SetRunIssuer(newTestIdleChatRunIssuer())
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		n := calls.Add(1)
@@ -185,8 +190,9 @@ func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 
 func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	taskID, runID := testIdleChatRunIdentityPair()
 	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
-		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", Created: time.Now().UTC()}},
+		"AI技術": {{Domain: forecastDomains[0], Topic: "保存済みのお題", TaskID: taskID, RunID: runID, Created: time.Now().UTC()}},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -195,6 +201,7 @@ func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	o.SetRunIssuer(newTestIdleChatRunIssuer())
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32
@@ -226,9 +233,10 @@ func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T
 
 func TestForecastTopicStockLoadDiscardsInvalidDuplicateAndUnknownRecords(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	validTaskID, validRunID := testIdleChatRunIdentityPair()
 	data, err := json.Marshal(stockFile{Stock: map[string][]PreparedTopic{
 		"AI技術": {
-			{Topic: "有効なお題", Created: time.Now().UTC()},
+			{Topic: "有効なお題", TaskID: validTaskID, RunID: validRunID, Created: time.Now().UTC()},
 			{Topic: "  有効なお題  ", Created: time.Now().UTC()},
 			{Topic: "   ", Created: time.Now().UTC()},
 		},

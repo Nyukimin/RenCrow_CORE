@@ -8,10 +8,12 @@ import (
 
 func TestForecastGenerationRejectsTopicAlreadyInWordStock(t *testing.T) {
 	topic := "生活の記録をAIがどう変えるか"
+	wordTaskID, wordRunID := testIdleChatRunIdentityPair()
 	wordStock := newWordTopicStock("")
 	if !wordStock.push(WordPreparedTopic{
 		Category: TopicCategorySingle, Topic: topic,
 		Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "生活"}, Axis: "観察",
+		TaskID: wordTaskID, RunID: wordRunID,
 	}) {
 		t.Fatal("failed to prepare word stock")
 	}
@@ -33,8 +35,9 @@ func TestForecastGenerationRejectsTopicAlreadyInWordStock(t *testing.T) {
 
 func TestWordGenerationRejectsTopicAlreadyInForecastStock(t *testing.T) {
 	topic := "生活の記録をAIがどう変えるか"
+	forecastTaskID, forecastRunID := testIdleChatRunIdentityPair()
 	forecastStock := newForecastTopicStock("")
-	if !forecastStock.push("AI技術", PreparedTopic{Domain: ForecastDomain{Name: "AI技術"}, Topic: topic, Created: time.Now().UTC()}) {
+	if !forecastStock.push("AI技術", PreparedTopic{Domain: ForecastDomain{Name: "AI技術"}, Topic: topic, TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC()}) {
 		t.Fatal("failed to prepare Forecast stock")
 	}
 	generator := &queuedIdleChatCodexGenerator{responses: []string{

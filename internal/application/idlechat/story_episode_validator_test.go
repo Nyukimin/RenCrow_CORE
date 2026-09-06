@@ -3,6 +3,8 @@ package idlechat
 import (
 	"strings"
 	"testing"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateStoryEpisodeAcceptsReaderAndListenerPerformance(t *testing.T) {
@@ -80,7 +82,8 @@ func validStoryEpisodeFixture() StoryEpisodeArtifact {
 		EpisodeID:     "episode-1",
 		Revision:      1,
 		EpisodeKind:   StoryEpisodeKind,
-		GenerationID:  "generation-1",
+		TaskID:        modulecore.NewTaskID(),
+		RunID:         modulecore.NewRunID(),
 		StoryTitle:    "鬼ヶ島、採用面接中",
 		Source:        StoryEpisodeSource{Title: "桃太郎", Synopsis: "桃から生まれた子が仲間と鬼ヶ島へ向かう"},
 		Reader:        "mio",

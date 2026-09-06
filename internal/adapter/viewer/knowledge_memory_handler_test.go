@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubKnowledgeMemoryStore struct {
@@ -202,26 +204,6 @@ func TestKnowledgeMemoryCreateHandlers(t *testing.T) {
 				}
 			},
 		},
-		{
-			name:    "dream consolidation run",
-			path:    "/viewer/knowledge-memory/dream-runs",
-			handler: HandleDreamConsolidationRunCreate,
-			body: `{
-				"run_id":"dream_1",
-				"scope":["knowledge"],
-				"status":"draft",
-				"review_status":"pending"
-			}`,
-			assertion: func(t *testing.T, store *stubKnowledgeMemoryStore) {
-				t.Helper()
-				if len(store.dream) != 1 || store.dream[0].ReviewStatus != "pending" {
-					t.Fatalf("dream=%#v", store.dream)
-				}
-				if store.dream[0].CreatedAt.IsZero() {
-					t.Fatalf("dream created_at was not assigned: %#v", store.dream[0])
-				}
-			},
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -239,16 +221,36 @@ func TestKnowledgeMemoryCreateHandlers(t *testing.T) {
 	}
 }
 
-func TestDreamConsolidationCreateRejectsAdoptedReviewStatus(t *testing.T) {
+func TestDreamConsolidationCreateStoresTaskOwnedIdentity(t *testing.T) {
 	store := &stubKnowledgeMemoryStore{}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs", bytes.NewBufferString(`{
-		"run_id":"dream_1",
-		"status":"draft",
-		"review_status":"adopted"
-	}`))
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs", bytes.NewBufferString(dreamRunCreateBody(taskID, runID, "mio", "draft", "pending")))
 	rec := httptest.NewRecorder()
 
-	HandleDreamConsolidationRunCreate(store).ServeHTTP(rec, req)
+	HandleDreamConsolidationRunCreate(store, stubBrowserTraceRunVerifier{assignee: "mio"}).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(store.dream) != 1 {
+		t.Fatalf("dream=%#v", store.dream)
+	}
+	saved := store.dream[0]
+	if saved.TaskID != taskID || saved.RunID != runID || saved.ActorID != "mio" {
+		t.Fatalf("dream identity=%#v", saved)
+	}
+	if saved.ReviewStatus != "pending" || saved.CreatedAt.IsZero() {
+		t.Fatalf("dream=%#v", saved)
+	}
+}
+
+func TestDreamConsolidationCreateRejectsAdoptedReviewStatus(t *testing.T) {
+	store := &stubKnowledgeMemoryStore{}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs", bytes.NewBufferString(dreamRunCreateBody(modulecore.NewTaskID(), modulecore.NewRunID(), "mio", "draft", "adopted")))
+	rec := httptest.NewRecorder()
+
+	HandleDreamConsolidationRunCreate(store, stubBrowserTraceRunVerifier{assignee: "mio"}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -256,6 +258,81 @@ func TestDreamConsolidationCreateRejectsAdoptedReviewStatus(t *testing.T) {
 	if len(store.dream) != 0 {
 		t.Fatalf("dream=%#v", store.dream)
 	}
+}
+
+func TestDreamConsolidationCreateRequiresVerifiedTaskOwnedRun(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	tests := []struct {
+		name     string
+		body     string
+		verifier BrowserTraceRunVerifier
+		wantCode int
+	}{
+		{
+			name:     "legacy minted run id",
+			body:     `{"task_id":"` + string(taskID) + `","run_id":"dream_1","actor_id":"mio","status":"draft","review_status":"pending"}`,
+			verifier: stubBrowserTraceRunVerifier{assignee: "mio"},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "missing task id",
+			body:     `{"run_id":"` + string(runID) + `","actor_id":"mio","status":"draft","review_status":"pending"}`,
+			verifier: stubBrowserTraceRunVerifier{assignee: "mio"},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "actor is not a core agent",
+			body:     dreamRunCreateBody(taskID, runID, "ren", "draft", "pending"),
+			verifier: stubBrowserTraceRunVerifier{},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "task or run missing",
+			body:     dreamRunCreateBody(taskID, runID, "mio", "draft", "pending"),
+			verifier: stubBrowserTraceRunVerifier{err: fmt.Errorf("not found")},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "actor differs from assignee",
+			body:     dreamRunCreateBody(taskID, runID, "mio", "draft", "pending"),
+			verifier: stubBrowserTraceRunVerifier{assignee: "shiro"},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "verifier unavailable",
+			body:     dreamRunCreateBody(taskID, runID, "mio", "draft", "pending"),
+			verifier: nil,
+			wantCode: http.StatusServiceUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubKnowledgeMemoryStore{}
+			req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs", bytes.NewBufferString(tt.body))
+			rec := httptest.NewRecorder()
+
+			HandleDreamConsolidationRunCreate(store, tt.verifier).ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status=%d want=%d body=%s", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if len(store.dream) != 0 {
+				t.Fatalf("dream=%#v", store.dream)
+			}
+		})
+	}
+}
+
+func dreamRunCreateBody(taskID modulecore.TaskID, runID modulecore.RunID, actorID string, status string, reviewStatus string) string {
+	return fmt.Sprintf(`{
+		"task_id":%q,
+		"run_id":%q,
+		"actor_id":%q,
+		"scope":["knowledge"],
+		"status":%q,
+		"review_status":%q
+	}`, string(taskID), string(runID), actorID, status, reviewStatus)
 }
 
 func TestDreamConsolidationProposalCreateBuildsPendingProposal(t *testing.T) {
@@ -267,14 +344,19 @@ func TestDreamConsolidationProposalCreateBuildsPendingProposal(t *testing.T) {
 			Protected:    true,
 		}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/propose", bytes.NewBufferString(`{
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/propose", bytes.NewBufferString(fmt.Sprintf(`{
+		"task_id":%q,
+		"run_id":%q,
+		"actor_id":"mio",
 		"scope":["personal_archive"],
 		"limit":5,
 		"now":"2026-05-18T12:00:00Z"
-	}`))
+	}`, string(taskID), string(runID))))
 	rec := httptest.NewRecorder()
 
-	HandleDreamConsolidationProposalCreate(store).ServeHTTP(rec, req)
+	HandleDreamConsolidationProposalCreate(store, stubBrowserTraceRunVerifier{assignee: "mio"}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -282,16 +364,75 @@ func TestDreamConsolidationProposalCreateBuildsPendingProposal(t *testing.T) {
 	if len(store.dream) != 1 || store.dream[0].Status != "proposal" || store.dream[0].ReviewStatus != "pending" {
 		t.Fatalf("dream=%#v", store.dream)
 	}
+	if store.dream[0].TaskID != taskID || store.dream[0].RunID != runID || store.dream[0].ActorID != "mio" {
+		t.Fatalf("dream identity=%#v", store.dream[0])
+	}
 	if len(store.dream[0].IdeaSeeds) != 1 || store.dream[0].IdeaSeeds[0] == "" {
 		t.Fatalf("idea seeds=%#v", store.dream[0].IdeaSeeds)
 	}
 }
 
+func TestDreamConsolidationProposalCreateRequiresVerifiedTaskOwnedRun(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	tests := []struct {
+		name     string
+		body     string
+		verifier BrowserTraceRunVerifier
+		wantCode int
+	}{
+		{
+			name:     "identity missing",
+			body:     `{"scope":["personal_archive"]}`,
+			verifier: stubBrowserTraceRunVerifier{assignee: "mio"},
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "task or run missing",
+			body:     fmt.Sprintf(`{"task_id":%q,"run_id":%q,"actor_id":"mio"}`, string(taskID), string(runID)),
+			verifier: stubBrowserTraceRunVerifier{err: fmt.Errorf("not found")},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "actor differs from assignee",
+			body:     fmt.Sprintf(`{"task_id":%q,"run_id":%q,"actor_id":"mio"}`, string(taskID), string(runID)),
+			verifier: stubBrowserTraceRunVerifier{assignee: "shiro"},
+			wantCode: http.StatusForbidden,
+		},
+		{
+			name:     "verifier unavailable",
+			body:     fmt.Sprintf(`{"task_id":%q,"run_id":%q,"actor_id":"mio"}`, string(taskID), string(runID)),
+			verifier: nil,
+			wantCode: http.StatusServiceUnavailable,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubKnowledgeMemoryStore{}
+			req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/propose", bytes.NewBufferString(tt.body))
+			rec := httptest.NewRecorder()
+
+			HandleDreamConsolidationProposalCreate(store, tt.verifier).ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status=%d want=%d body=%s", rec.Code, tt.wantCode, rec.Body.String())
+			}
+			if len(store.dream) != 0 {
+				t.Fatalf("dream=%#v", store.dream)
+			}
+		})
+	}
+}
+
 func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 	now := fixedViewerKnowledgeMemoryTime()
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	store := &stubKnowledgeMemoryStore{
 		dream: []domainkm.DreamConsolidationRun{{
-			RunID:        "dream_1",
+			TaskID:       taskID,
+			RunID:        runID,
+			ActorID:      "mio",
 			Scope:        []string{"personal_archive"},
 			IdeaSeeds:    []string{"seed"},
 			Status:       "proposal",
@@ -299,10 +440,10 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 			CreatedAt:    now,
 		}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(`{
-		"run_id":"dream_1",
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(fmt.Sprintf(`{
+		"run_id":%q,
 		"review_status":"adopted"
-	}`))
+	}`, string(runID))))
 	rec := httptest.NewRecorder()
 
 	HandleDreamConsolidationReview(store).ServeHTTP(rec, req)
@@ -314,7 +455,10 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 		t.Fatalf("dream=%#v", store.dream)
 	}
 	reviewed := store.dream[1]
-	if reviewed.RunID != "dream_1" || reviewed.Status != "reviewed" || reviewed.ReviewStatus != "adopted" {
+	if reviewed.RunID != runID || reviewed.TaskID != taskID || reviewed.ActorID != "mio" {
+		t.Fatalf("reviewed dream identity=%#v", reviewed)
+	}
+	if reviewed.Status != "reviewed" || reviewed.ReviewStatus != "adopted" {
 		t.Fatalf("reviewed dream=%#v", reviewed)
 	}
 	var body map[string]any
@@ -328,20 +472,23 @@ func TestDreamConsolidationReviewApprovesWithoutAutoPromote(t *testing.T) {
 
 func TestDreamConsolidationReviewPromotesOnlyAdopted(t *testing.T) {
 	now := fixedViewerKnowledgeMemoryTime()
+	runID := modulecore.NewRunID()
 	store := &stubKnowledgeMemoryStore{
 		dream: []domainkm.DreamConsolidationRun{{
-			RunID:        "dream_1",
+			TaskID:       modulecore.NewTaskID(),
+			RunID:        runID,
+			ActorID:      "mio",
 			IdeaSeeds:    []string{"seed"},
 			Status:       "proposal",
 			ReviewStatus: "pending",
 			CreatedAt:    now,
 		}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(`{
-		"run_id":"dream_1",
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(fmt.Sprintf(`{
+		"run_id":%q,
 		"review_status":"adopted",
 		"promote":true
-	}`))
+	}`, string(runID))))
 	rec := httptest.NewRecorder()
 
 	HandleDreamConsolidationReview(store).ServeHTTP(rec, req)
@@ -363,18 +510,21 @@ func TestDreamConsolidationReviewPromotesOnlyAdopted(t *testing.T) {
 }
 
 func TestDreamConsolidationReviewRejectsPromoteWithoutAdoption(t *testing.T) {
+	runID := modulecore.NewRunID()
 	store := &stubKnowledgeMemoryStore{
 		dream: []domainkm.DreamConsolidationRun{{
-			RunID:        "dream_1",
+			TaskID:       modulecore.NewTaskID(),
+			RunID:        runID,
+			ActorID:      "mio",
 			Status:       "proposal",
 			ReviewStatus: "pending",
 		}},
 	}
-	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(`{
-		"run_id":"dream_1",
+	req := httptest.NewRequest(http.MethodPost, "/viewer/knowledge-memory/dream-runs/review", bytes.NewBufferString(fmt.Sprintf(`{
+		"run_id":%q,
 		"review_status":"rejected",
 		"promote":true
-	}`))
+	}`, string(runID))))
 	rec := httptest.NewRecorder()
 
 	HandleDreamConsolidationReview(store).ServeHTTP(rec, req)
@@ -522,7 +672,9 @@ func TestKnowledgeMemoryStatusReturnsDetailByTypeAndID(t *testing.T) {
 			Protected:    true,
 		}},
 		dream: []domainkm.DreamConsolidationRun{{
-			RunID:        "dream_1",
+			TaskID:       modulecore.NewTaskID(),
+			RunID:        modulecore.NewRunID(),
+			ActorID:      "mio",
 			Status:       "draft",
 			ReviewStatus: "pending",
 		}},

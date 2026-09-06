@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/google/uuid"
 )
 
@@ -23,6 +24,7 @@ type DialogueEpisodeService struct {
 	personas               map[string]string
 	config                 DialogueInterestingnessConfig
 	maxSuffixRegenerations int
+	runIssuer              idlechatRunIssuer
 	mu                     sync.Mutex
 }
 
@@ -68,6 +70,15 @@ func (s *DialogueEpisodeService) SetMaxSuffixRegenerations(limit int) {
 	}
 }
 
+func (s *DialogueEpisodeService) SetRunIssuer(issuer idlechatRunIssuer) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.runIssuer = issuer
+	s.mu.Unlock()
+}
+
 func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, result TopicGenerationResult, turnCount int) (DialogueEpisodeArtifact, error) {
 	if s == nil || s.generator == nil {
 		return DialogueEpisodeArtifact{}, errors.New("dialogue CodexExe producer is not configured")
@@ -95,13 +106,22 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 		return DialogueEpisodeArtifact{}, fmt.Errorf("decode CodexExe dialogue: %w", err)
 	}
 	now := time.Now().UTC()
+	initiatedBy := strings.TrimSpace(result.Initiator)
+	if initiatedBy == "" {
+		initiatedBy = "shiro"
+	}
+	taskID, runID, err := issueIdleChatRun(ctx, s.runIssuer, "IdleChat dialogue episode", initiatedBy, domaintask.RunStartReasonFirst, "")
+	if err != nil {
+		return DialogueEpisodeArtifact{}, err
+	}
 	artifact := DialogueEpisodeArtifact{
 		SchemaVersion:    DialogueEpisodeSchemaVersion,
 		EpisodeID:        "dialogue-" + uuid.NewString(),
-		GenerationID:     "dialogue-generation-" + uuid.NewString(),
+		TaskID:           taskID,
+		RunID:            runID,
 		Revision:         1,
 		SessionID:        strings.TrimSpace(sessionID),
-		InitiatedBy:      "shiro",
+		InitiatedBy:      initiatedBy,
 		TopicResult:      result,
 		ArcPlan:          plan,
 		Participants:     []string{"mio", "shiro"},

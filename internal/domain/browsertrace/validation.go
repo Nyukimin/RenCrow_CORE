@@ -3,7 +3,10 @@ package browsertrace
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var deniedWriteMethods = map[string]bool{
@@ -29,8 +32,8 @@ var allowedAPIArtifactStatuses = map[string]bool{
 }
 
 func ValidateTraceRun(item TraceRun) error {
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return errors.New("trace_run_id is required")
+	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.TracePath) == "" {
 		return errors.New("trace_path is required")
@@ -45,8 +48,8 @@ func ValidateAPICandidate(item APICandidate) error {
 	if strings.TrimSpace(item.CandidateID) == "" {
 		return errors.New("candidate_id is required")
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return errors.New("trace_run_id is required")
+	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
+		return err
 	}
 	method := strings.ToUpper(strings.TrimSpace(item.Method))
 	if method == "" {
@@ -112,8 +115,8 @@ func ValidateAPICandidateValidationResult(item APICandidateValidationResult) err
 	if strings.TrimSpace(item.CandidateID) == "" {
 		return errors.New("candidate_id is required")
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return errors.New("trace_run_id is required")
+	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.ReviewNote) != "" && strings.TrimSpace(item.Reviewer) == "" {
 		return errors.New("reviewer is required when review_note is provided")
@@ -170,8 +173,8 @@ func ValidateAPICoverageReport(item APICoverageReport) error {
 	if strings.TrimSpace(item.ReportID) == "" {
 		return errors.New("report_id is required")
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return errors.New("trace_run_id is required")
+	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
+		return err
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
@@ -183,8 +186,8 @@ func ValidateAPIArtifact(item APIArtifact) error {
 	if strings.TrimSpace(item.ArtifactID) == "" {
 		return errors.New("artifact_id is required")
 	}
-	if strings.TrimSpace(item.TraceRunID) == "" {
-		return errors.New("trace_run_id is required")
+	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.Type) == "" {
 		return errors.New("artifact_type is required")
@@ -206,4 +209,19 @@ func ValidateAPIArtifact(item APIArtifact) error {
 		return errors.New("created_at is required")
 	}
 	return nil
+}
+
+func validateProjectionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorID string) error {
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := runID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
+	}
+	switch actorID {
+	case "mio", "shiro", "midori", "kuro":
+		return nil
+	default:
+		return errors.New("actor_id must be one of mio, shiro, midori, kuro")
+	}
 }

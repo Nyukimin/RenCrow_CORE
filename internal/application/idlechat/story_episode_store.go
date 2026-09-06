@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type storyEpisodeStore struct {
@@ -51,6 +53,9 @@ func (s *storyEpisodeStore) append(artifact StoryEpisodeArtifact) error {
 	artifact.EpisodeID = strings.TrimSpace(artifact.EpisodeID)
 	if artifact.EpisodeID == "" {
 		return errors.New("story episode id is empty")
+	}
+	if err := validateIdleChatRunIdentity(artifact.TaskID, artifact.RunID); err != nil {
+		return fmt.Errorf("story episode identity: %w", err)
 	}
 	now := time.Now().UTC()
 	if artifact.CreatedAt.IsZero() {
@@ -179,14 +184,14 @@ func (s *storyEpisodeStore) get(episodeID string) (StoryEpisodeArtifact, bool) {
 	return cloneStoryEpisode(artifact), ok
 }
 
-func (s *storyEpisodeStore) hasGenerationID(generationID string) bool {
-	if s == nil || strings.TrimSpace(generationID) == "" {
+func (s *storyEpisodeStore) hasRunID(runID modulecore.RunID) bool {
+	if s == nil || runID == "" {
 		return false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, artifact := range s.episodes {
-		if artifact.GenerationID == generationID {
+		if artifact.RunID == runID {
 			return true
 		}
 	}

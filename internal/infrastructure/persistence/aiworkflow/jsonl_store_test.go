@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreSaveAndListAIWorkflowRecords(t *testing.T) {
@@ -22,7 +23,8 @@ func TestJSONLStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	if err := store.SaveCommandRegistry(ctx, domainai.CommandRegistry{CommandName: "/review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}); err != nil {
 		t.Fatalf("SaveCommandRegistry() error = %v", err)
 	}
-	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", RunID: "run_1", WorkstreamID: "ws_1", JobID: "job_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", TaskID: taskID, RunID: runID, WorkstreamID: "ws_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
 		t.Fatalf("SaveContextUsage() error = %v", err)
 	}
 	if items, err := store.ListProjectMemoryIndexes(ctx, 10); err != nil || len(items) != 1 || items[0].ID != "mem_1" {
@@ -34,7 +36,7 @@ func TestJSONLStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	if items, err := store.ListCommandRegistries(ctx, 10); err != nil || len(items) != 1 || items[0].CommandName != "/review-architecture" {
 		t.Fatalf("commands=%#v err=%v", items, err)
 	}
-	if items, err := store.ListContextUsages(ctx, 10); err != nil || len(items) != 1 || items[0].EventID != "ctx_1" || items[0].JobID != "job_1" || items[0].RunID != "run_1" || items[0].WorkstreamID != "ws_1" || items[0].CompactionID != "compact_1" {
+	if items, err := store.ListContextUsages(ctx, 10); err != nil || len(items) != 1 || items[0].EventID != "ctx_1" || items[0].TaskID != taskID || items[0].RunID != runID || items[0].WorkstreamID != "ws_1" || items[0].CompactionID != "compact_1" {
 		t.Fatalf("contexts=%#v err=%v", items, err)
 	}
 }
@@ -79,10 +81,13 @@ func TestJSONLStoreCompactsOperationalContextUsage(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	ctx := context.Background()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	compactTaskID := modulecore.NewTaskID()
+	compactRunID := modulecore.NewRunID()
 	for i := 0; i < contextUsageMaxRecords+3; i++ {
 		if err := store.SaveContextUsage(ctx, domainai.ContextUsage{
 			EventID:      "ctx_" + strconv.Itoa(i),
-			JobID:        "job_compact",
+			TaskID:       compactTaskID,
+			RunID:        compactRunID,
 			WorkstreamID: "ws_compact",
 			CompactionID: "compact_1",
 			Agent:        "Coder",
@@ -106,7 +111,7 @@ func TestJSONLStoreCompactsOperationalContextUsage(t *testing.T) {
 	if items[0].EventID != "ctx_"+strconv.Itoa(contextUsageMaxRecords+2) {
 		t.Fatalf("newest context usage=%q", items[0].EventID)
 	}
-	if items[0].JobID != "job_compact" || items[0].WorkstreamID != "ws_compact" || items[0].CompactionID != "compact_1" {
+	if items[0].TaskID != compactTaskID || items[0].RunID != compactRunID || items[0].WorkstreamID != "ws_compact" || items[0].CompactionID != "compact_1" {
 		t.Fatalf("newest context usage lost continuity keys: %#v", items[0])
 	}
 }

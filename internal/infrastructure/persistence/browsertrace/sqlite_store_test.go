@@ -2,14 +2,15 @@ package browsertrace
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
@@ -21,10 +22,10 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 
-	run := domaintrace.TraceRun{TraceRunID: "trace_1", TracePath: "traces/trace_1", CreatedAt: now}
+	run := domaintrace.TraceRun{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/trace_1", CreatedAt: now}
 	candidate := domaintrace.APICandidate{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "unknown",
@@ -43,23 +44,23 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 	validation := domaintrace.APICandidateValidationResult{
 		ValidationID: "api_val_1",
 		CandidateID:  "api_cand_1",
-		TraceRunID:   "trace_1",
-		Status:       "needs_review",
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Status: "needs_review",
 		Issues: []domaintrace.APIValidationIssue{{
 			Code:    "terms_review_required",
 			Message: "terms review is required",
 		}},
 		CreatedAt: now,
 	}
-	coverage := domaintrace.APICoverageReport{ReportID: "coverage_1", TraceRunID: "trace_1", CreatedAt: now}
+	coverage := domaintrace.APICoverageReport{ReportID: "coverage_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}
 	artifact := domaintrace.APIArtifact{
 		ArtifactID: "art_openapi_1",
-		TraceRunID: "trace_1",
-		Type:       "observed_openapi",
-		Title:      "Observed OpenAPI",
-		Status:     "generated",
-		Content:    "openapi: 3.1.0",
-		CreatedAt:  now,
+		TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Type:      "observed_openapi",
+		Title:     "Observed OpenAPI",
+		Status:    "generated",
+		Content:   "openapi: 3.1.0",
+		CreatedAt: now,
 	}
 
 	if err := store.SaveTraceRun(ctx, run); err != nil {
@@ -82,7 +83,7 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 	}
 
 	runs, err := store.ListTraceRuns(ctx, 10)
-	if err != nil || len(runs) != 1 || runs[0].TraceRunID != "trace_1" {
+	if err != nil || len(runs) != 1 || runs[0].RunID != "run_00000000-0000-5000-8000-000000000002" {
 		t.Fatalf("ListTraceRuns() = %#v, %v", runs, err)
 	}
 	candidates, err := store.ListAPICandidates(ctx, 10)
@@ -107,6 +108,39 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreUsesCanonicalRunIDColumns(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "browser_trace.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	tables := []string{"browser_trace_run", "api_candidate", "api_candidate_validation", "api_coverage_report", "api_artifact"}
+	for _, table := range tables {
+		rows, err := store.db.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			t.Fatal(err)
+		}
+		hasRunID := false
+		hasLegacyID := false
+		for rows.Next() {
+			var cid int
+			var name, columnType string
+			var notNull, primaryKey int
+			var defaultValue any
+			if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			hasRunID = hasRunID || name == "run_id"
+			hasLegacyID = hasLegacyID || name == "trace_run_id"
+		}
+		rows.Close()
+		if !hasRunID || hasLegacyID {
+			t.Fatalf("%s columns: run_id=%t trace_run_id=%t", table, hasRunID, hasLegacyID)
+		}
+	}
+}
+
 func TestSQLiteStoreFindBrowserTraceByIDUsesExactPrimaryKeysAndPreservesOwnerAuditFields(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "browser_trace.sqlite"))
 	if err != nil {
@@ -116,8 +150,8 @@ func TestSQLiteStoreFindBrowserTraceByIDUsesExactPrimaryKeysAndPreservesOwnerAud
 	ctx := context.Background()
 	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
 	candidate := domaintrace.APICandidate{
-		CandidateID:          "candidate-exact",
-		TraceRunID:           "trace-1",
+		CandidateID: "candidate-exact",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "unknown",
@@ -128,7 +162,9 @@ func TestSQLiteStoreFindBrowserTraceByIDUsesExactPrimaryKeysAndPreservesOwnerAud
 	validation := domaintrace.APICandidateValidationResult{
 		ValidationID: "validation-exact",
 		CandidateID:  candidate.CandidateID,
-		TraceRunID:   candidate.TraceRunID,
+		TaskID:       candidate.TaskID,
+		RunID:        candidate.RunID,
+		ActorID:      candidate.ActorID,
 		Passed:       false,
 		Status:       "needs_review",
 		Issues: []domaintrace.APIValidationIssue{{
@@ -170,8 +206,8 @@ func TestSQLiteStoreFindBrowserTraceByIDRejectsMalformedPayload(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	candidate := domaintrace.APICandidate{
-		CandidateID:          "candidate-malformed",
-		TraceRunID:           "trace-1",
+		CandidateID: "candidate-malformed",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "unknown",
@@ -182,7 +218,9 @@ func TestSQLiteStoreFindBrowserTraceByIDRejectsMalformedPayload(t *testing.T) {
 	validation := domaintrace.APICandidateValidationResult{
 		ValidationID: "validation-malformed",
 		CandidateID:  candidate.CandidateID,
-		TraceRunID:   candidate.TraceRunID,
+		TaskID:       candidate.TaskID,
+		RunID:        candidate.RunID,
+		ActorID:      candidate.ActorID,
 		Passed:       false,
 		Status:       "needs_review",
 		Issues: []domaintrace.APIValidationIssue{{
@@ -244,9 +282,11 @@ func TestSQLiteStoreConcurrentWritesAreSerialized(t *testing.T) {
 		go func(index int) {
 			defer wg.Done()
 			err := store.SaveTraceRun(context.Background(), domaintrace.TraceRun{
-				TraceRunID: "trace-concurrent-" + strconv.Itoa(index),
-				TracePath:  "traces/concurrent",
-				CreatedAt:  time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC),
+				TaskID:    "tsk_00000000-0000-5000-8000-000000000001",
+				RunID:     modulecore.RunID(fmt.Sprintf("run_00000000-0000-5000-8000-%012d", index)),
+				ActorID:   "mio",
+				TracePath: "traces/concurrent",
+				CreatedAt: time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC),
 			})
 			if err != nil {
 				errs <- err

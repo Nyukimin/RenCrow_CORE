@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
@@ -160,12 +161,24 @@ func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
 		t.Fatalf("create RenCrow client: %v", err)
 	}
 
-	runID := "trace_e2e_" + time.Now().UTC().Format("20060102150405.000000000")
+	taskID := modulecore.TaskID(strings.TrimSpace(os.Getenv("RENCROW_BROWSER_TRACE_TASK_ID")))
+	runID := modulecore.RunID(strings.TrimSpace(os.Getenv("RENCROW_BROWSER_TRACE_RUN_ID")))
+	actorID := strings.TrimSpace(os.Getenv("RENCROW_BROWSER_TRACE_ACTOR_ID"))
+	if taskID == "" || runID == "" || actorID == "" {
+		t.Skip("set RENCROW_BROWSER_TRACE_TASK_ID, RENCROW_BROWSER_TRACE_RUN_ID, and RENCROW_BROWSER_TRACE_ACTOR_ID to an existing owned Task/Run")
+	}
+	if err := taskID.Validate(); err != nil {
+		t.Fatalf("invalid RENCROW_BROWSER_TRACE_TASK_ID: %v", err)
+	}
+	if err := runID.Validate(); err != nil {
+		t.Fatalf("invalid RENCROW_BROWSER_TRACE_RUN_ID: %v", err)
+	}
+	traceFixtureID := "trace_e2e_" + time.Now().UTC().Format("20060102150405.000000000")
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get working directory: %v", err)
 	}
-	traceDir := filepath.Join(wd, ".o11y", "browser-trace-e2e", runID)
+	traceDir := filepath.Join(wd, ".o11y", "browser-trace-e2e", traceFixtureID)
 	if err := os.MkdirAll(traceDir, 0755); err != nil {
 		t.Fatalf("create trace dir: %v", err)
 	}
@@ -194,7 +207,9 @@ func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
 	defer cancel()
 
 	discovered, err := client.DiscoverBrowserTraceAPI(ctx, rencrowclient.BrowserTraceAPIDiscoverRequest{
-		TraceRunID:    runID,
+		TaskID:        taskID,
+		RunID:         runID,
+		ActorID:       actorID,
 		SiteID:        "browser-trace-e2e",
 		Goal:          "verify live Browser Trace API discover validate proposal flow",
 		TracePath:     traceDir,
@@ -246,7 +261,7 @@ func TestE2E_BrowserTraceAPIDiscoverValidateAndFetcherProposal(t *testing.T) {
 	if !browserTraceStatusContains(status, runID, candidate.CandidateID, proposal.APIArtifact.ArtifactID) {
 		t.Fatalf("browser trace current view missing run/candidate/proposal: run_id=%s candidate_id=%s artifact_id=%s status=%#v", runID, candidate.CandidateID, proposal.APIArtifact.ArtifactID, status)
 	}
-	t.Logf("browser trace live E2E trace_run_id=%s candidate_id=%s validation_id=%s proposal_artifact_id=%s", runID, candidate.CandidateID, review.Validation.ValidationID, proposal.APIArtifact.ArtifactID)
+	t.Logf("browser trace live E2E task_id=%s run_id=%s actor_id=%s candidate_id=%s validation_id=%s proposal_artifact_id=%s", taskID, runID, actorID, candidate.CandidateID, review.Validation.ValidationID, proposal.APIArtifact.ArtifactID)
 }
 
 func writeBrowserTraceJSONL(path string, value any) error {
@@ -297,10 +312,10 @@ func totalBrowserTraceAPIItems(status rencrowclient.BrowserTraceAPIStatus) int {
 		len(status.APIArtifacts)
 }
 
-func browserTraceStatusContains(status rencrowclient.BrowserTraceAPIStatus, runID string, candidateID string, artifactID string) bool {
+func browserTraceStatusContains(status rencrowclient.BrowserTraceAPIStatus, runID modulecore.RunID, candidateID string, artifactID string) bool {
 	hasRun := false
 	for _, item := range status.TraceRuns {
-		if item.TraceRunID == runID {
+		if item.RunID == runID {
 			hasRun = true
 			break
 		}

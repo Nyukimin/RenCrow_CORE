@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type BrowserTraceAPILister interface {
@@ -35,6 +38,40 @@ type BrowserTraceAPIDiscoverer interface {
 	Discover(req browsertraceapp.DiscoverRequest) (domaintrace.DiscoveryResult, error)
 }
 
+type BrowserTraceRunVerifier interface {
+	VerifyTaskRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID) (assignee string, err error)
+}
+
+type BrowserTraceTaskRunStore interface {
+	Get(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error)
+	GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error)
+}
+
+type browserTraceTaskRunVerifier struct {
+	store BrowserTraceTaskRunStore
+}
+
+func NewBrowserTraceRunVerifier(store BrowserTraceTaskRunStore) BrowserTraceRunVerifier {
+	return browserTraceTaskRunVerifier{store: store}
+}
+
+func (v browserTraceTaskRunVerifier) VerifyTaskRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID) (string, error) {
+	if v.store == nil {
+		return "", fmt.Errorf("task run verifier unavailable")
+	}
+	if _, err := v.store.Get(ctx, taskID); err != nil {
+		return "", fmt.Errorf("task verification failed: %w", err)
+	}
+	run, err := v.store.GetRun(ctx, runID)
+	if err != nil {
+		return "", fmt.Errorf("run verification failed: %w", err)
+	}
+	if run.TaskID != taskID {
+		return "", fmt.Errorf("run %s does not belong to task %s", runID, taskID)
+	}
+	return strings.TrimSpace(run.Assignee), nil
+}
+
 type BrowserTraceAPICandidateSink interface {
 	SaveBrowserTraceAPICandidates(ctx context.Context, result domaintrace.DiscoveryResult) error
 }
@@ -44,15 +81,17 @@ type BrowserTraceWorkstreamArtifactSink interface {
 }
 
 type BrowserTraceAPIDiscoverRequest struct {
-	TraceRunID      string    `json:"trace_run_id"`
-	WorkstreamID    string    `json:"workstream_id,omitempty"`
-	SiteID          string    `json:"site_id,omitempty"`
-	Goal            string    `json:"goal,omitempty"`
-	TracePath       string    `json:"trace_path"`
-	RequestsPath    string    `json:"requests_path"`
-	ResponsesPath   string    `json:"responses_path"`
-	LivePolicyCheck bool      `json:"live_policy_check,omitempty"`
-	CapturedAt      time.Time `json:"captured_at,omitempty"`
+	TaskID          modulecore.TaskID `json:"task_id"`
+	RunID           modulecore.RunID  `json:"run_id"`
+	ActorID         string            `json:"actor_id"`
+	WorkstreamID    string            `json:"workstream_id,omitempty"`
+	SiteID          string            `json:"site_id,omitempty"`
+	Goal            string            `json:"goal,omitempty"`
+	TracePath       string            `json:"trace_path"`
+	RequestsPath    string            `json:"requests_path"`
+	ResponsesPath   string            `json:"responses_path"`
+	LivePolicyCheck bool              `json:"live_policy_check,omitempty"`
+	CapturedAt      time.Time         `json:"captured_at,omitempty"`
 }
 
 type BrowserTraceAPIFetcherProposalRequest struct {
@@ -145,17 +184,17 @@ func HandleBrowserTraceAPIStatus(store BrowserTraceAPILister) http.HandlerFunc {
 	}
 }
 
-func HandleBrowserTraceAPIDiscover(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink) http.HandlerFunc {
-	return HandleBrowserTraceAPIDiscoverWithPolicy(store, discoverer, candidateSink, workstreamArtifactSink, browsertraceapp.DefaultValidationPolicy())
+func HandleBrowserTraceAPIDiscover(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink) http.HandlerFunc {
+	return HandleBrowserTraceAPIDiscoverWithPolicy(store, discoverer, verifier, candidateSink, workstreamArtifactSink, browsertraceapp.DefaultValidationPolicy())
 }
 
-func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, validationPolicy browsertraceapp.ValidationPolicy) http.HandlerFunc {
+func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, validationPolicy browsertraceapp.ValidationPolicy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if store == nil || discoverer == nil {
+		if store == nil || discoverer == nil || verifier == nil {
 			http.Error(w, "browser trace api discovery unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -164,8 +203,31 @@ func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discove
 			http.Error(w, "invalid browser trace api payload", http.StatusBadRequest)
 			return
 		}
+		if err := req.TaskID.Validate(); err != nil {
+			http.Error(w, "task_id is invalid", http.StatusBadRequest)
+			return
+		}
+		if err := req.RunID.Validate(); err != nil {
+			http.Error(w, "run_id is invalid", http.StatusBadRequest)
+			return
+		}
+		if !isCoreActorID(req.ActorID) {
+			http.Error(w, "actor_id is invalid", http.StatusBadRequest)
+			return
+		}
+		assignee, err := verifier.VerifyTaskRun(r.Context(), req.TaskID, req.RunID)
+		if err != nil {
+			http.Error(w, "browser trace task/run ownership verification failed", http.StatusForbidden)
+			return
+		}
+		if assignee != "" && assignee != req.ActorID {
+			http.Error(w, "browser trace actor does not own run", http.StatusForbidden)
+			return
+		}
 		result, err := discoverer.Discover(browsertraceapp.DiscoverRequest{
-			TraceRunID:    req.TraceRunID,
+			TaskID:        req.TaskID,
+			RunID:         req.RunID,
+			ActorID:       req.ActorID,
 			WorkstreamID:  req.WorkstreamID,
 			SiteID:        req.SiteID,
 			Goal:          req.Goal,
@@ -291,7 +353,9 @@ func HandleBrowserTraceAPIValidationReview(store BrowserTraceAPIStore) http.Hand
 		validation, err := browsertraceapp.BuildValidationReview(browsertraceapp.ValidationReviewInput{
 			ValidationID:        fmt.Sprintf("api_val_review_%s_%d", req.CandidateID, now.UnixNano()),
 			CandidateID:         req.CandidateID,
-			TraceRunID:          candidate.TraceRunID,
+			TaskID:              candidate.TaskID,
+			RunID:               candidate.RunID,
+			ActorID:             candidate.ActorID,
 			Reviewer:            req.Reviewer,
 			ReviewNote:          req.ReviewNote,
 			TermsReviewed:       req.TermsReviewed,
@@ -382,8 +446,10 @@ func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstream
 		}
 		now := time.Now().UTC()
 		artifact := domaintrace.APIArtifact{
-			ArtifactID:   "art_fetcher_proposal_" + req.CandidateID,
-			TraceRunID:   candidate.TraceRunID,
+			ArtifactID:   string(modulecore.NewArtifactID()),
+			TaskID:       candidate.TaskID,
+			RunID:        candidate.RunID,
+			ActorID:      candidate.ActorID,
 			WorkstreamID: req.WorkstreamID,
 			Type:         "fetcher_proposal",
 			Title:        "Fetcher Proposal: " + req.CandidateID,
@@ -419,5 +485,14 @@ func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstream
 			"official_promotion":   false,
 			"implementation_apply": false,
 		})
+	}
+}
+
+func isCoreActorID(actorID string) bool {
+	switch actorID {
+	case "mio", "shiro", "midori", "kuro":
+		return true
+	default:
+		return false
 	}
 }

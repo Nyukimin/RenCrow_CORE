@@ -9,6 +9,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // --- モック ---
@@ -393,6 +394,27 @@ func (r *countingErrorRunner) ExecuteV2(context.Context, string, map[string]any)
 }
 
 func (*countingErrorRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) { return nil, nil }
+
+func TestRun_RejectsPartialIdentity(t *testing.T) {
+	_, err := Run(context.Background(), &mockToolCallingProvider{}, &mockRunnerV2{}, nil,
+		[]llm.ChatMessage{{Role: "user", Content: "test"}},
+		Config{TaskID: modulecore.NewTaskID()})
+	if err == nil || !strings.Contains(err.Error(), "task_id and run_id") {
+		t.Fatalf("Run() error = %v, want paired identity error", err)
+	}
+}
+
+func TestRun_AcceptsEnclosingIdentity(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}}
+	if _, err := Run(context.Background(), provider, &mockRunnerV2{}, nil,
+		[]llm.ChatMessage{{Role: "user", Content: "test"}},
+		Config{TaskID: taskID, RunID: runID}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
 
 func TestRun_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

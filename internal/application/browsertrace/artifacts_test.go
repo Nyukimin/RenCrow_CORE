@@ -12,14 +12,14 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	artifacts := BuildAPIArtifacts(domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID:   "trace_1",
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			WorkstreamID: "ws_1",
 			TracePath:    "traces/trace_1",
 			CreatedAt:    now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			PathTemplate:         "/api/items",
@@ -29,8 +29,8 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID:          "coverage_1",
-			TraceRunID:        "trace_1",
+			ReportID: "coverage_1",
+			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			ObservedEndpoints: []string{"GET /api/items"},
 			MissingFlows:      []string{"terms review"},
 			CreatedAt:         now,
@@ -63,13 +63,13 @@ func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	artifacts := BuildAPIArtifactsWithValidations(domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID: "trace_1",
-			TracePath:  "traces/trace_1",
-			CreatedAt:  now,
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			TracePath: "traces/trace_1",
+			CreatedAt: now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			PathTemplate:         "/api/items",
@@ -79,17 +79,17 @@ func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID:   "coverage_1",
-			TraceRunID: "trace_1",
-			CreatedAt:  now,
+			ReportID: "coverage_1",
+			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			CreatedAt: now,
 		},
 	}, []domaintrace.APICandidateValidationResult{{
 		ValidationID: "api_val_1",
 		CandidateID:  "api_cand_1",
-		TraceRunID:   "trace_1",
-		Passed:       true,
-		Status:       "validated",
-		CreatedAt:    now,
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Passed:    true,
+		Status:    "validated",
+		CreatedAt: now,
 	}})
 
 	if !strings.Contains(artifacts[4].Content, "proposal allowed by synchronous execution policy") {

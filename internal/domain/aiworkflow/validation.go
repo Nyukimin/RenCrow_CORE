@@ -73,5 +73,18 @@ func ValidateContextUsage(item ContextUsage) error {
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
+	taskSet := !item.TaskID.IsZero()
+	runSet := item.RunID != ""
+	if taskSet != runSet {
+		return errors.New("task_id and run_id must both be set when either is set")
+	}
+	if taskSet {
+		if err := item.TaskID.Validate(); err != nil {
+			return err
+		}
+		if err := item.RunID.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }

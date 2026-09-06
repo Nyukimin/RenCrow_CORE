@@ -12,7 +12,7 @@ import (
 	"time"
 
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
-	"github.com/google/uuid"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const wordTopicStockCapacityPerCategory = 12
@@ -30,7 +30,8 @@ type WordPreparedTopic struct {
 	Judge              *TopicJudgeResult `json:"judge,omitempty"`
 	ContentMode        string            `json:"content_mode"`
 	ContentModeReasons []string          `json:"content_mode_reasons,omitempty"`
-	GenerationID       string            `json:"generation_id"`
+	TaskID             modulecore.TaskID `json:"task_id"`
+	RunID              modulecore.RunID  `json:"run_id"`
 	InitiatedBy        string            `json:"initiated_by"`
 	Created            time.Time         `json:"created"`
 }
@@ -129,8 +130,8 @@ func normalizeWordPreparedTopic(item WordPreparedTopic) (WordPreparedTopic, erro
 		item.ContentMode = string(policy.Mode)
 		item.ContentModeReasons = append([]string(nil), policy.Reasons...)
 	}
-	if strings.TrimSpace(item.GenerationID) == "" {
-		item.GenerationID = uuid.NewString()
+	if err := validateIdleChatRunIdentity(item.TaskID, item.RunID); err != nil {
+		return WordPreparedTopic{}, err
 	}
 	if strings.TrimSpace(item.InitiatedBy) == "" {
 		item.InitiatedBy = "shiro"
@@ -265,8 +266,8 @@ func (s *wordTopicStock) pop(category TopicCategory) *WordPreparedTopic {
 	return &item
 }
 
-func (s *wordTopicStock) takeByGenerationID(generationID string) *WordPreparedTopic {
-	if s == nil || strings.TrimSpace(generationID) == "" {
+func (s *wordTopicStock) takeByRunID(runID modulecore.RunID) *WordPreparedTopic {
+	if s == nil || runID == "" {
 		return nil
 	}
 	s.mu.Lock()
@@ -274,7 +275,7 @@ func (s *wordTopicStock) takeByGenerationID(generationID string) *WordPreparedTo
 	for _, category := range wordTopicStockCategories {
 		items := s.stock[category]
 		for index, item := range items {
-			if item.GenerationID != generationID {
+			if item.RunID != runID {
 				continue
 			}
 			s.stock[category] = append(append([]WordPreparedTopic(nil), items[:index]...), items[index+1:]...)
@@ -285,15 +286,15 @@ func (s *wordTopicStock) takeByGenerationID(generationID string) *WordPreparedTo
 	return nil
 }
 
-func (s *wordTopicStock) hasGenerationID(generationID string) bool {
-	if s == nil || strings.TrimSpace(generationID) == "" {
+func (s *wordTopicStock) hasRunID(runID modulecore.RunID) bool {
+	if s == nil || runID == "" {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, category := range wordTopicStockCategories {
 		for _, item := range s.stock[category] {
-			if item.GenerationID == generationID {
+			if item.RunID == runID {
 				return true
 			}
 		}

@@ -10,9 +10,9 @@ import (
 func TestBuildValidationReviewPassesOnlyWhenAllChecksAreComplete(t *testing.T) {
 	createdAt := time.Date(2026, 8, 14, 3, 4, 5, 0, time.UTC)
 	item, err := BuildValidationReview(ValidationReviewInput{
-		ValidationID:        "browser-validation/sha256:abc",
-		CandidateID:         "candidate-1",
-		TraceRunID:          "trace-1",
+		ValidationID: "browser-validation/sha256:abc",
+		CandidateID:  "candidate-1",
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Reviewer:            "shiro",
 		ReviewNote:          "all checks complete",
 		TermsReviewed:       true,
@@ -37,9 +37,9 @@ func TestBuildValidationReviewRejectsIncompleteChecksWithStableIssues(t *testing
 	item, err := BuildValidationReview(ValidationReviewInput{
 		ValidationID: "browser-validation/sha256:def",
 		CandidateID:  "candidate-1",
-		TraceRunID:   "trace-1",
-		Reviewer:     "shiro",
-		CreatedAt:    time.Date(2026, 8, 14, 3, 4, 5, 0, time.UTC),
+		TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		Reviewer:  "shiro",
+		CreatedAt: time.Date(2026, 8, 14, 3, 4, 5, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("BuildValidationReview() error = %v", err)

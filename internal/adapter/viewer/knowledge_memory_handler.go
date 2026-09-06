@@ -10,6 +10,7 @@ import (
 
 	kmapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type KnowledgeMemoryLister interface {
@@ -32,9 +33,9 @@ type KnowledgeMemoryStore interface {
 }
 
 type DreamConsolidationReviewRequest struct {
-	RunID        string `json:"run_id"`
-	ReviewStatus string `json:"review_status"`
-	Promote      bool   `json:"promote,omitempty"`
+	RunID        modulecore.RunID `json:"run_id"`
+	ReviewStatus string           `json:"review_status"`
+	Promote      bool             `json:"promote,omitempty"`
 }
 
 type KnowledgeMemoryReviewRequest struct {
@@ -303,7 +304,7 @@ func findKnowledgeMemoryDetail(ctx context.Context, store KnowledgeMemoryLister,
 			return nil, false, err
 		}
 		for _, item := range items {
-			if item.RunID == id {
+			if string(item.RunID) == id {
 				return item, true, nil
 			}
 		}
@@ -378,35 +379,56 @@ func HandleTemporalMemoryMarkerCreate(store KnowledgeMemoryStore) http.HandlerFu
 	})
 }
 
-func HandleDreamConsolidationRunCreate(store KnowledgeMemoryStore) http.HandlerFunc {
-	return saveKnowledgeMemoryItem(store, "dream consolidation run", func(ctx context.Context, store KnowledgeMemoryStore, dec *json.Decoder) error {
-		var item domainkm.DreamConsolidationRun
-		if err := dec.Decode(&item); err != nil {
-			return err
-		}
-		if item.ReviewStatus == "adopted" {
-			return fmt.Errorf("dream consolidation cannot be created with adopted review_status; use review API")
-		}
-		if item.CreatedAt.IsZero() {
-			item.CreatedAt = time.Now().UTC()
-		}
-		return store.SaveDreamConsolidationRun(ctx, item)
-	})
-}
-
-func HandleDreamConsolidationProposalCreate(store KnowledgeMemoryStore) http.HandlerFunc {
+func HandleDreamConsolidationRunCreate(store KnowledgeMemoryStore, verifier BrowserTraceRunVerifier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if store == nil {
+		if store == nil || verifier == nil {
+			http.Error(w, "knowledge memory store unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer r.Body.Close()
+		var item domainkm.DreamConsolidationRun
+		if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
+			http.Error(w, "invalid dream consolidation run payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if item.ReviewStatus == "adopted" {
+			http.Error(w, "dream consolidation cannot be created with adopted review_status; use review API", http.StatusBadRequest)
+			return
+		}
+		if !verifyDreamRunOwner(w, r, verifier, item.TaskID, item.RunID, item.ActorID) {
+			return
+		}
+		if item.CreatedAt.IsZero() {
+			item.CreatedAt = time.Now().UTC()
+		}
+		if err := store.SaveDreamConsolidationRun(r.Context(), item); err != nil {
+			http.Error(w, "invalid dream consolidation run payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"status": "created"})
+	}
+}
+
+func HandleDreamConsolidationProposalCreate(store KnowledgeMemoryStore, verifier BrowserTraceRunVerifier) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if store == nil || verifier == nil {
 			http.Error(w, "knowledge memory store unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		var input kmapp.DreamProposalInput
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			http.Error(w, "invalid dream consolidation proposal payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !verifyDreamRunOwner(w, r, verifier, input.TaskID, input.RunID, input.ActorID) {
 			return
 		}
 		run, err := kmapp.BuildDreamConsolidationProposal(r.Context(), store, input)
@@ -416,6 +438,34 @@ func HandleDreamConsolidationProposalCreate(store KnowledgeMemoryStore) http.Han
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"status": "created", "dream_run": run})
 	}
+}
+
+// verifyDreamRunOwner keeps dream consolidation writes on the Task-owned
+// identity: the caller must present an existing Task/Run pair assigned to the
+// requesting CORE actor instead of minting its own run identifier.
+func verifyDreamRunOwner(w http.ResponseWriter, r *http.Request, verifier BrowserTraceRunVerifier, taskID modulecore.TaskID, runID modulecore.RunID, actorID string) bool {
+	if err := taskID.Validate(); err != nil {
+		http.Error(w, "task_id is invalid", http.StatusBadRequest)
+		return false
+	}
+	if err := runID.Validate(); err != nil {
+		http.Error(w, "run_id is invalid", http.StatusBadRequest)
+		return false
+	}
+	if !isCoreActorID(actorID) {
+		http.Error(w, "actor_id is invalid", http.StatusBadRequest)
+		return false
+	}
+	assignee, err := verifier.VerifyTaskRun(r.Context(), taskID, runID)
+	if err != nil {
+		http.Error(w, "dream consolidation task/run ownership verification failed", http.StatusForbidden)
+		return false
+	}
+	if assignee != "" && assignee != actorID {
+		http.Error(w, "dream consolidation actor does not own run", http.StatusForbidden)
+		return false
+	}
+	return true
 }
 
 func HandleDreamConsolidationReview(store KnowledgeMemoryStore) http.HandlerFunc {
@@ -433,10 +483,14 @@ func HandleDreamConsolidationReview(store KnowledgeMemoryStore) http.HandlerFunc
 			http.Error(w, "invalid dream consolidation review payload: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		req.RunID = strings.TrimSpace(req.RunID)
+		req.RunID = modulecore.RunID(strings.TrimSpace(string(req.RunID)))
 		req.ReviewStatus = strings.TrimSpace(req.ReviewStatus)
-		if req.RunID == "" || req.ReviewStatus == "" {
-			http.Error(w, "run_id and review_status are required", http.StatusBadRequest)
+		if err := req.RunID.Validate(); err != nil {
+			http.Error(w, "run_id is invalid", http.StatusBadRequest)
+			return
+		}
+		if req.ReviewStatus == "" {
+			http.Error(w, "review_status is required", http.StatusBadRequest)
 			return
 		}
 		if req.ReviewStatus != "adopted" && req.ReviewStatus != "rejected" {
@@ -477,7 +531,7 @@ func HandleDreamConsolidationReview(store KnowledgeMemoryStore) http.HandlerFunc
 	}
 }
 
-func findDreamConsolidationRun(ctx context.Context, store KnowledgeMemoryLister, runID string, limit int) (domainkm.DreamConsolidationRun, bool, error) {
+func findDreamConsolidationRun(ctx context.Context, store KnowledgeMemoryLister, runID modulecore.RunID, limit int) (domainkm.DreamConsolidationRun, bool, error) {
 	items, err := store.ListDreamConsolidationRuns(ctx, limit)
 	if err != nil {
 		return domainkm.DreamConsolidationRun{}, false, err

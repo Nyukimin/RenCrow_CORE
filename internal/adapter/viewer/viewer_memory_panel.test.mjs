@@ -915,8 +915,8 @@ function sandboxField(obj, snake, pascal) {
 }
 const state = {ops: {
   browserTraceAPIFetchError: 'HTTP 500: browser trace store unavailable',
-  browserTraceRuns: [{trace_run_id: 'stale_trace'}],
-  browserTraceAPICandidates: [{candidate_id: 'stale_candidate', path_template: '/stale'}],
+  browserTraceRuns: [{task_id: 'tsk_stale_task', run_id: 'run_stale_trace'}],
+  browserTraceAPICandidates: [{candidate_id: 'stale_candidate', path_template: '/stale', task_id: 'tsk_stale_task', run_id: 'run_stale_trace'}],
   browserTraceAPISchemas: [{schema_id: 'stale_schema'}],
   browserTraceAPICoverageReports: [],
   browserTraceAPIArtifacts: [{artifact_id: 'stale_fetcher', artifact_type: 'fetcher_proposal'}],

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 var errWordTopicCodexUnavailable = errors.New("word_topic_codex_unavailable")
@@ -85,6 +85,15 @@ func (o *IdleChatOrchestrator) cancelTopicProduction(reason string) {
 			log.Printf("[IdleChat] Stock generation yielded to foreground: reason=%s", strings.TrimSpace(reason))
 		}
 	}
+}
+
+func (o *IdleChatOrchestrator) SetRunIssuer(issuer idlechatRunIssuer) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.runIssuer = issuer
+	o.mu.Unlock()
 }
 
 func (o *IdleChatOrchestrator) SetGenerationCheckpointStore(store *GenerationCheckpointStore) {
@@ -187,6 +196,7 @@ func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdle(trigger string) bool {
 
 func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, category TopicCategory, trigger string) {
 	defer o.endTopicProduction()
+	ctx := o.topicProductionContext()
 	checkpointKey := "word:" + string(category)
 	checkpointStore := o.generationCheckpointStore()
 	checkpoint, found := checkpointStore.Get(checkpointKey)
@@ -194,7 +204,13 @@ func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, categor
 		_ = checkpointStore.Delete(checkpointKey)
 		found = false
 	}
-	if found && stock.hasGenerationID(checkpoint.GenerationID) {
+	if found {
+		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+			_ = checkpointStore.Delete(checkpointKey)
+			found = false
+		}
+	}
+	if found && stock.hasRunID(checkpoint.RunID) {
 		_ = checkpointStore.Delete(checkpointKey)
 		stock.done(category, nil)
 		return
@@ -211,10 +227,29 @@ func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, categor
 			logWordTopicStockFailure(category, trigger, err)
 			return
 		}
+		taskID, runID, err := issueIdleChatRun(ctx, o.runIssuer, "IdleChat word topic", "shiro", domaintask.RunStartReasonFirst, "")
+		if err != nil {
+			stock.done(category, err)
+			logWordTopicStockFailure(category, trigger, err)
+			return
+		}
 		checkpoint = GenerationCheckpoint{
-			Key: checkpointKey, Kind: "word", GenerationID: uuid.NewString(), Stage: "seed",
+			Key: checkpointKey, Kind: "word", TaskID: taskID, RunID: runID, Stage: "seed",
 			Category: category, Seed: seed,
 		}
+		if err := checkpointStore.Put(checkpoint); err != nil {
+			stock.done(category, err)
+			logWordTopicStockFailure(category, trigger, err)
+			return
+		}
+	} else {
+		runID, err := resumeIdleChatRun(ctx, o.runIssuer, checkpoint.TaskID)
+		if err != nil {
+			stock.done(category, err)
+			logWordTopicStockFailure(category, trigger, err)
+			return
+		}
+		checkpoint.RunID = runID
 		if err := checkpointStore.Put(checkpoint); err != nil {
 			stock.done(category, err)
 			logWordTopicStockFailure(category, trigger, err)
@@ -238,13 +273,14 @@ func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, categor
 		Judge:              result.Judge,
 		ContentMode:        string(policy.Mode),
 		ContentModeReasons: append([]string(nil), policy.Reasons...),
-		GenerationID:       checkpoint.GenerationID,
+		TaskID:             checkpoint.TaskID,
+		RunID:              checkpoint.RunID,
 		InitiatedBy:        "shiro",
 		Created:            time.Now().UTC(),
 	}
 	if !stock.push(item) {
 		err := fmt.Errorf("topic_duplicate_or_full: category=%s", category)
-		if stock.hasGenerationID(checkpoint.GenerationID) {
+		if stock.hasRunID(checkpoint.RunID) {
 			_ = checkpointStore.Delete(checkpointKey)
 			stock.done(category, nil)
 			return

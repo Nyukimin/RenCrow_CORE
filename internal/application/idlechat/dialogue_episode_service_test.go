@@ -17,6 +17,7 @@ func TestDialogueEpisodeRepairsOnlySuffixAndPreservesAcceptedPrefixID(t *testing
 	config := DefaultDialogueInterestingnessConfig()
 	config.MaxTurnsPerTopic = 2
 	service := NewPersistentDialogueEpisodeService(path, generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config)
+	service.SetRunIssuer(newTestIdleChatRunIssuer())
 	result := TopicGenerationResult{
 		Topic: "防災設備を店頭に入れるとき誰が最後の判断を持つか", Category: TopicCategorySingle, Strategy: string(StrategySingleGenre),
 		InterestingnessAxis: "観察", Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "防災"},

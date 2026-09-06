@@ -4,7 +4,20 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+func canonicalDreamRun(status string, reviewStatus string, createdAt time.Time) DreamConsolidationRun {
+	return DreamConsolidationRun{
+		TaskID:       modulecore.NewTaskID(),
+		RunID:        modulecore.NewRunID(),
+		ActorID:      "mio",
+		Status:       status,
+		ReviewStatus: reviewStatus,
+		CreatedAt:    createdAt,
+	}
+}
 
 func TestValidatePersonalArchiveRequiresProtectedOriginal(t *testing.T) {
 	err := ValidatePersonalArchiveEntry(PersonalArchiveEntry{
@@ -67,9 +80,9 @@ func TestValidateKnowledgeMemoryAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("temporal marker should validate: %v", err)
 	}
 	for _, run := range []DreamConsolidationRun{
-		{RunID: "dream_1", Status: "proposal", ReviewStatus: "pending", CreatedAt: now},
-		{RunID: "dream_2", Status: "reviewed", ReviewStatus: "adopted", CreatedAt: now},
-		{RunID: "dream_3", Status: "rejected", ReviewStatus: "rejected", CreatedAt: now},
+		canonicalDreamRun("proposal", "pending", now),
+		canonicalDreamRun("reviewed", "adopted", now),
+		canonicalDreamRun("rejected", "rejected", now),
 	} {
 		if err := ValidateDreamConsolidationRun(run); err != nil {
 			t.Fatalf("dream run should validate: %#v err=%v", run, err)
@@ -154,11 +167,7 @@ func TestValidateKnowledgeMemoryRejectsMissingCreatedAt(t *testing.T) {
 		},
 		{
 			name: "dream",
-			err: ValidateDreamConsolidationRun(DreamConsolidationRun{
-				RunID:        "dream_1",
-				Status:       "proposal",
-				ReviewStatus: "pending",
-			}),
+			err:  ValidateDreamConsolidationRun(canonicalDreamRun("proposal", "pending", time.Time{})),
 		},
 	}
 	for _, tt := range tests {
@@ -208,21 +217,11 @@ func TestValidateKnowledgeMemoryRejectsUnknownStatus(t *testing.T) {
 		},
 		{
 			name: "dream status",
-			err: ValidateDreamConsolidationRun(DreamConsolidationRun{
-				RunID:        "dream_1",
-				Status:       "done",
-				ReviewStatus: "pending",
-				CreatedAt:    now,
-			}),
+			err:  ValidateDreamConsolidationRun(canonicalDreamRun("done", "pending", now)),
 		},
 		{
 			name: "dream review status",
-			err: ValidateDreamConsolidationRun(DreamConsolidationRun{
-				RunID:        "dream_1",
-				Status:       "proposal",
-				ReviewStatus: "done",
-				CreatedAt:    now,
-			}),
+			err:  ValidateDreamConsolidationRun(canonicalDreamRun("proposal", "done", now)),
 		},
 	}
 	for _, tt := range tests {
@@ -235,14 +234,21 @@ func TestValidateKnowledgeMemoryRejectsUnknownStatus(t *testing.T) {
 }
 
 func TestValidateDreamConsolidationRejectsAutoApprove(t *testing.T) {
-	err := ValidateDreamConsolidationRun(DreamConsolidationRun{
-		RunID:        "dream_1",
-		Status:       "draft",
-		ReviewStatus: "adopted",
-		CreatedAt:    time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
-	})
+	err := ValidateDreamConsolidationRun(canonicalDreamRun("draft", "adopted", time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)))
 	if err == nil || !strings.Contains(err.Error(), "auto-adopted") {
 		t.Fatalf("expected auto-adopted error, got %v", err)
+	}
+}
+
+func TestValidateDreamConsolidationRejectsLegacyDomainRunID(t *testing.T) {
+	err := ValidateDreamConsolidationRun(DreamConsolidationRun{
+		RunID:        "dream_1",
+		Status:       "proposal",
+		ReviewStatus: "pending",
+		CreatedAt:    time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+	})
+	if err == nil || !strings.Contains(err.Error(), "run_id") {
+		t.Fatalf("expected canonical run_id error, got %v", err)
 	}
 }
 
@@ -255,12 +261,12 @@ func TestValidateDreamConsolidationRejectsInconsistentReviewState(t *testing.T) 
 	}{
 		{
 			name: "pending promoted",
-			run:  DreamConsolidationRun{RunID: "dream_1", Status: "promoted", ReviewStatus: "pending", CreatedAt: now},
+			run:  canonicalDreamRun("promoted", "pending", now),
 			want: "pending review",
 		},
 		{
 			name: "rejected reviewed",
-			run:  DreamConsolidationRun{RunID: "dream_1", Status: "reviewed", ReviewStatus: "rejected", CreatedAt: now},
+			run:  canonicalDreamRun("reviewed", "rejected", now),
 			want: "rejected review",
 		},
 	}
@@ -293,9 +299,11 @@ func TestValidateKnowledgeMemoryRequiredFields(t *testing.T) {
 		{name: "marker id", err: ValidateTemporalMemoryMarker(TemporalMemoryMarker{Layer: "today", ReferenceID: "ref_1", Summary: "summary", CreatedAt: now}), want: "marker_id"},
 		{name: "marker reference", err: ValidateTemporalMemoryMarker(TemporalMemoryMarker{MarkerID: "tm_1", Layer: "today", Summary: "summary", CreatedAt: now}), want: "reference_id"},
 		{name: "marker summary", err: ValidateTemporalMemoryMarker(TemporalMemoryMarker{MarkerID: "tm_1", Layer: "today", ReferenceID: "ref_1", CreatedAt: now}), want: "summary"},
-		{name: "dream run id", err: ValidateDreamConsolidationRun(DreamConsolidationRun{Status: "proposal", ReviewStatus: "pending", CreatedAt: now}), want: "run_id"},
-		{name: "dream status", err: ValidateDreamConsolidationRun(DreamConsolidationRun{RunID: "dream_1", ReviewStatus: "pending", CreatedAt: now}), want: "status"},
-		{name: "dream review", err: ValidateDreamConsolidationRun(DreamConsolidationRun{RunID: "dream_1", Status: "proposal", CreatedAt: now}), want: "review_status"},
+		{name: "dream run id", err: ValidateDreamConsolidationRun(DreamConsolidationRun{TaskID: modulecore.NewTaskID(), ActorID: "mio", Status: "proposal", ReviewStatus: "pending", CreatedAt: now}), want: "run_id"},
+		{name: "dream task id", err: ValidateDreamConsolidationRun(DreamConsolidationRun{RunID: modulecore.NewRunID(), ActorID: "mio", Status: "proposal", ReviewStatus: "pending", CreatedAt: now}), want: "task_id"},
+		{name: "dream actor id", err: ValidateDreamConsolidationRun(DreamConsolidationRun{TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(), Status: "proposal", ReviewStatus: "pending", CreatedAt: now}), want: "actor_id"},
+		{name: "dream status", err: ValidateDreamConsolidationRun(canonicalDreamRun("", "pending", now)), want: "status"},
+		{name: "dream review", err: ValidateDreamConsolidationRun(canonicalDreamRun("proposal", "", now)), want: "review_status"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,6 +1,10 @@
 package idlechat
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 const (
 	StoryEpisodeKind           = "story_reading"
@@ -19,7 +23,8 @@ type StoryEpisodeArtifact struct {
 	EpisodeID               string                `json:"episode_id"`
 	Revision                int                   `json:"revision"`
 	EpisodeKind             string                `json:"episode_kind"`
-	GenerationID            string                `json:"generation_id"`
+	TaskID                  modulecore.TaskID     `json:"task_id"`
+	RunID                   modulecore.RunID      `json:"run_id"`
 	StoryTitle              string                `json:"story_title,omitempty"`
 	ReplacementForEpisodeID string                `json:"replacement_for_episode_id,omitempty"`
 	Source                  StoryEpisodeSource    `json:"source"`

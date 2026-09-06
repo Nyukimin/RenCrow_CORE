@@ -10,6 +10,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type cancelOnJudgeTopicProvider struct {
@@ -78,8 +79,10 @@ func TestTopicGeneratorResumesAtJudgeWithoutRegeneratingCandidates(t *testing.T)
 func TestGenerationCheckpointStorePersistsCompletedStage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "checkpoints.json")
 	store := NewGenerationCheckpointStore(path)
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	want := GenerationCheckpoint{
-		Key: "word:single", Kind: "word", GenerationID: "generation-1", Stage: "candidates", Attempt: 1,
+		Key: "word:single", Kind: "word", TaskID: taskID, RunID: runID, Stage: "candidates", Attempt: 1,
 		Category: TopicCategorySingle, Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "郵便"},
 		Candidates: []TopicCandidate{{Topic: "郵便受けから始まる観察", InterestingnessAxis: "観察"}},
 	}
@@ -88,7 +91,7 @@ func TestGenerationCheckpointStorePersistsCompletedStage(t *testing.T) {
 	}
 	reloaded := NewGenerationCheckpointStore(path)
 	got, ok := reloaded.Get(want.Key)
-	if !ok || got.Stage != want.Stage || got.GenerationID != want.GenerationID || len(got.Candidates) != 1 {
+	if !ok || got.Stage != want.Stage || got.TaskID != want.TaskID || got.RunID != want.RunID || len(got.Candidates) != 1 {
 		t.Fatalf("reloaded checkpoint = %+v ok=%t", got, ok)
 	}
 	if err := reloaded.Delete(want.Key); err != nil {
@@ -138,7 +141,8 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	dir := t.TempDir()
 	fixture := validStoryEpisodeFixture()
 	fixture.EpisodeID = ""
-	fixture.GenerationID = ""
+	fixture.TaskID = ""
+	fixture.RunID = ""
 	payload, err := json.Marshal(fixture)
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +153,7 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	first := NewPersistentStoryEpisodeService(storePath, 1, firstGenerator, nil)
 	first.maxAttempts = 1
 	first.SetGenerationCheckpointStore(checkpoints)
+	first.SetRunIssuer(newTestIdleChatRunIssuer())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- first.PrepareToTarget(ctx) }()
@@ -171,6 +176,7 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	second := NewPersistentStoryEpisodeService(storePath, 1, secondGenerator, nil)
 	second.maxAttempts = 1
 	second.SetGenerationCheckpointStore(checkpoints)
+	second.SetRunIssuer(newTestIdleChatRunIssuer())
 	if err := second.PrepareToTarget(context.Background()); err != nil {
 		t.Fatalf("resumed prepare: %v", err)
 	}

@@ -208,8 +208,16 @@ func ValidateTemporalMemoryMarker(item TemporalMemoryMarker) error {
 }
 
 func ValidateDreamConsolidationRun(item DreamConsolidationRun) error {
-	if strings.TrimSpace(item.RunID) == "" {
-		return fmt.Errorf("run_id is required")
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
+	}
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	switch item.ActorID {
+	case "mio", "shiro", "midori", "kuro":
+	default:
+		return fmt.Errorf("actor_id must be one of mio, shiro, midori, kuro")
 	}
 	if strings.TrimSpace(item.Status) == "" {
 		return fmt.Errorf("status is required")

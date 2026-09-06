@@ -2005,7 +2005,7 @@ function browserTraceAPIOpsCard() {
   return {
     title: 'Browser Trace API',
     big: String(candidates.length) + '/' + String(runs.length),
-    sub: runs.length || candidates.length || schemas.length || coverage.length || artifacts.length ? ('auth candidates: ' + String(auth) + ' schemas: ' + String(schemas.length) + '\ncoverage reports: ' + String(coverage.length) + ' fetcher proposals: ' + String(fetcherProposals) + '\nlatest: ' + String(sandboxField(latest, 'path_template', 'PathTemplate') || sandboxField(latest, 'trace_run_id', 'TraceRunID') || '-') + '\nreview-only: no official API adoption') : 'browser trace api record なし\nblocked: no trace candidates\nblocked: no official API adoption',
+    sub: runs.length || candidates.length || schemas.length || coverage.length || artifacts.length ? ('auth candidates: ' + String(auth) + ' schemas: ' + String(schemas.length) + '\ncoverage reports: ' + String(coverage.length) + ' fetcher proposals: ' + String(fetcherProposals) + '\nlatest: ' + String(sandboxField(latest, 'path_template', 'PathTemplate') || sandboxField(latest, 'run_id', 'RunID') || sandboxField(latest, 'task_id', 'TaskID') || '-') + '\nreview-only: no official API adoption') : 'browser trace api record なし\nblocked: no trace candidates\nblocked: no official API adoption',
   };
 }
 
@@ -2086,7 +2086,7 @@ function superAgentOpsCard() {
   return {
     title: 'SuperAgent Harness',
     big: String(runs.length) + '/' + String(tasks.length),
-    sub: runs.length || tasks.length || contexts.length || channels.length || events.length || queue.length || runtimeConfig ? ('running: ' + String(running) + ' context packs: ' + String(contexts.length) + '\nchannels: ' + String(channels.length) + ' trace events: ' + String(events.length) + '\nrun queue: ' + String(queue.length) + ' queued: ' + String(queued) + '\n' + schedulerDetail + '\nlatest: ' + String(sandboxField(latest, 'run_id', 'RunID') || sandboxField(latest, 'subagent_id', 'SubagentID') || '-')) : 'superagent harness record なし',
+    sub: runs.length || tasks.length || contexts.length || channels.length || events.length || queue.length || runtimeConfig ? ('running: ' + String(running) + ' context packs: ' + String(contexts.length) + '\nchannels: ' + String(channels.length) + ' trace events: ' + String(events.length) + '\nrun queue: ' + String(queue.length) + ' queued: ' + String(queued) + '\n' + schedulerDetail + '\nlatest: ' + String(sandboxField(latest, 'run_id', 'RunID') || sandboxField(latest, 'task_id', 'TaskID') || '-')) : 'superagent harness record なし',
   };
 }
 

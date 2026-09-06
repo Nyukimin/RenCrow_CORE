@@ -4,14 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	browsertraceapp "github.com/Nyukimin/RenCrow_CORE/internal/application/browsertrace"
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubBrowserTraceAPIStore struct {
@@ -92,6 +96,29 @@ func (s stubBrowserTraceDiscoverer) Discover(_ browsertraceapp.DiscoverRequest) 
 	return s.result, nil
 }
 
+type stubBrowserTraceRunVerifier struct {
+	assignee string
+	err      error
+}
+
+type stubBrowserTraceTaskRunStore struct {
+	run     domaintask.Run
+	taskErr error
+	runErr  error
+}
+
+func (s stubBrowserTraceTaskRunStore) Get(_ context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	return domaintask.Task{TaskID: taskID}, s.taskErr
+}
+
+func (s stubBrowserTraceTaskRunStore) GetRun(_ context.Context, _ modulecore.RunID) (domaintask.Run, error) {
+	return s.run, s.runErr
+}
+
+func (s stubBrowserTraceRunVerifier) VerifyTaskRun(_ context.Context, _ modulecore.TaskID, _ modulecore.RunID) (string, error) {
+	return s.assignee, s.err
+}
+
 type stubBrowserTraceCandidateSink struct {
 	results []domaintrace.DiscoveryResult
 }
@@ -116,12 +143,12 @@ func (s *stubBrowserTraceWorkstreamArtifactSink) SaveArtifact(_ context.Context,
 func TestHandleBrowserTraceAPIStatus(t *testing.T) {
 	store := &stubBrowserTraceAPIStore{
 		runs: []domaintrace.TraceRun{{
-			TraceRunID: "trace_1",
-			TracePath:  "traces/trace_1",
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			TracePath: "traces/trace_1",
 		}},
 		candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -153,13 +180,13 @@ func TestHandleBrowserTraceAPIDiscoverSavesResult(t *testing.T) {
 	store := &stubBrowserTraceAPIStore{}
 	discoverer := stubBrowserTraceDiscoverer{result: domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID: "trace_1",
-			TracePath:  "traces/trace_1",
-			CreatedAt:  now,
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			TracePath: "traces/trace_1",
+			CreatedAt: now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -175,20 +202,22 @@ func TestHandleBrowserTraceAPIDiscoverSavesResult(t *testing.T) {
 			CreatedAt:   now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID:   "coverage_1",
-			TraceRunID: "trace_1",
-			CreatedAt:  now,
+			ReportID: "coverage_1",
+			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			CreatedAt: now,
 		},
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/discover", bytes.NewBufferString(`{
-		"trace_run_id":"trace_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001",
+		"run_id":"run_00000000-0000-5000-8000-000000000002",
+		"actor_id":"mio",
 		"trace_path":"traces/trace_1",
 		"requests_path":"traces/trace_1/requests.jsonl",
 		"responses_path":"traces/trace_1/responses.jsonl"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleBrowserTraceAPIDiscover(store, discoverer, nil, nil).ServeHTTP(rec, req)
+	HandleBrowserTraceAPIDiscover(store, discoverer, stubBrowserTraceRunVerifier{assignee: "mio"}, nil, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -204,19 +233,95 @@ func TestHandleBrowserTraceAPIDiscoverSavesResult(t *testing.T) {
 	}
 }
 
+func TestHandleBrowserTraceAPIDiscoverFailsClosedOnTaskRunOwnership(t *testing.T) {
+	store := &stubBrowserTraceAPIStore{}
+	body := `{
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001",
+		"run_id":"run_00000000-0000-5000-8000-000000000002",
+		"actor_id":"mio",
+		"trace_path":"traces/run",
+		"requests_path":"traces/run/requests.jsonl",
+		"responses_path":"traces/run/responses.jsonl"
+	}`
+	tests := []struct {
+		name     string
+		verifier BrowserTraceRunVerifier
+		wantCode int
+	}{
+		{name: "verifier missing", verifier: nil, wantCode: http.StatusServiceUnavailable},
+		{name: "task or run missing", verifier: stubBrowserTraceRunVerifier{err: fmt.Errorf("not found")}, wantCode: http.StatusForbidden},
+		{name: "actor differs from assignee", verifier: stubBrowserTraceRunVerifier{assignee: "shiro"}, wantCode: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/discover", bytes.NewBufferString(body))
+			rec := httptest.NewRecorder()
+			HandleBrowserTraceAPIDiscover(store, stubBrowserTraceDiscoverer{}, tt.verifier, nil, nil).ServeHTTP(rec, req)
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if len(store.runs) != 0 {
+				t.Fatalf("ownership failure persisted trace runs: %#v", store.runs)
+			}
+		})
+	}
+}
+
+func TestBrowserTraceRunVerifierRequiresExistingMatchingTaskRun(t *testing.T) {
+	taskID := modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001")
+	runID := modulecore.RunID("run_00000000-0000-5000-8000-000000000002")
+	tests := []struct {
+		name  string
+		store stubBrowserTraceTaskRunStore
+		want  string
+	}{
+		{name: "task missing", store: stubBrowserTraceTaskRunStore{taskErr: fmt.Errorf("not found")}, want: "task verification failed"},
+		{name: "run missing", store: stubBrowserTraceTaskRunStore{runErr: fmt.Errorf("not found")}, want: "run verification failed"},
+		{name: "run belongs to other task", store: stubBrowserTraceTaskRunStore{run: domaintask.Run{TaskID: "tsk_00000000-0000-5000-8000-000000000003"}}, want: "does not belong"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewBrowserTraceRunVerifier(tt.store).VerifyTaskRun(context.Background(), taskID, runID); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("VerifyTaskRun() error=%v want=%q", err, tt.want)
+			}
+		})
+	}
+	assignee, err := NewBrowserTraceRunVerifier(stubBrowserTraceTaskRunStore{run: domaintask.Run{TaskID: taskID, Assignee: " mio "}}).VerifyTaskRun(context.Background(), taskID, runID)
+	if err != nil || assignee != "mio" {
+		t.Fatalf("VerifyTaskRun() assignee=%q error=%v", assignee, err)
+	}
+}
+
+func TestHandleBrowserTraceAPIDiscoverRejectsMalformedIdentity(t *testing.T) {
+	body := `{
+		"task_id":"trace_legacy",
+		"run_id":"trace_legacy",
+		"actor_id":"worker",
+		"trace_path":"traces/run",
+		"requests_path":"traces/run/requests.jsonl",
+		"responses_path":"traces/run/responses.jsonl"
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/discover", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	HandleBrowserTraceAPIDiscover(&stubBrowserTraceAPIStore{}, stubBrowserTraceDiscoverer{}, stubBrowserTraceRunVerifier{}, nil, nil).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleBrowserTraceAPIDiscoverStagesAPICandidates(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{}
 	sink := &stubBrowserTraceCandidateSink{}
 	discoverer := stubBrowserTraceDiscoverer{result: domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID: "trace_1",
-			TracePath:  "traces/trace_1",
-			CreatedAt:  now,
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			TracePath: "traces/trace_1",
+			CreatedAt: now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -224,20 +329,22 @@ func TestHandleBrowserTraceAPIDiscoverStagesAPICandidates(t *testing.T) {
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID:   "coverage_1",
-			TraceRunID: "trace_1",
-			CreatedAt:  now,
+			ReportID: "coverage_1",
+			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			CreatedAt: now,
 		},
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/discover", bytes.NewBufferString(`{
-		"trace_run_id":"trace_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001",
+		"run_id":"run_00000000-0000-5000-8000-000000000002",
+		"actor_id":"mio",
 		"trace_path":"traces/trace_1",
 		"requests_path":"traces/trace_1/requests.jsonl",
 		"responses_path":"traces/trace_1/responses.jsonl"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleBrowserTraceAPIDiscover(store, discoverer, sink, nil).ServeHTTP(rec, req)
+	HandleBrowserTraceAPIDiscover(store, discoverer, stubBrowserTraceRunVerifier{assignee: "mio"}, sink, nil).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -256,14 +363,14 @@ func TestHandleBrowserTraceAPIDiscoverRegistersWorkstreamArtifacts(t *testing.T)
 	workstreamSink := &stubBrowserTraceWorkstreamArtifactSink{}
 	discoverer := stubBrowserTraceDiscoverer{result: domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID:   "trace_1",
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			WorkstreamID: "ws_1",
 			TracePath:    "traces/trace_1",
 			CreatedAt:    now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -271,13 +378,15 @@ func TestHandleBrowserTraceAPIDiscoverRegistersWorkstreamArtifacts(t *testing.T)
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID:   "coverage_1",
-			TraceRunID: "trace_1",
-			CreatedAt:  now,
+			ReportID: "coverage_1",
+			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			CreatedAt: now,
 		},
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/browser-trace-api/discover", bytes.NewBufferString(`{
-		"trace_run_id":"trace_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001",
+		"run_id":"run_00000000-0000-5000-8000-000000000002",
+		"actor_id":"mio",
 		"workstream_id":"ws_1",
 		"trace_path":"traces/trace_1",
 		"requests_path":"traces/trace_1/requests.jsonl",
@@ -285,7 +394,7 @@ func TestHandleBrowserTraceAPIDiscoverRegistersWorkstreamArtifacts(t *testing.T)
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleBrowserTraceAPIDiscover(store, discoverer, nil, workstreamSink).ServeHTTP(rec, req)
+	HandleBrowserTraceAPIDiscover(store, discoverer, stubBrowserTraceRunVerifier{assignee: "mio"}, nil, workstreamSink).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -302,8 +411,8 @@ func TestHandleBrowserTraceAPIFetcherProposalCreatesReviewArtifactForValidatedCa
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{
 		candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			PathTemplate:         "/api/items",
@@ -315,10 +424,10 @@ func TestHandleBrowserTraceAPIFetcherProposalCreatesReviewArtifactForValidatedCa
 		validations: []domaintrace.APICandidateValidationResult{{
 			ValidationID: "api_val_1",
 			CandidateID:  "api_cand_1",
-			TraceRunID:   "trace_1",
-			Passed:       true,
-			Status:       "validated",
-			CreatedAt:    now,
+			TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			Passed:    true,
+			Status:    "validated",
+			CreatedAt: now,
 		}},
 		schemas: []domaintrace.APICandidateSchema{{
 			SchemaID:    "schema_1",
@@ -366,8 +475,8 @@ func TestHandleBrowserTraceAPIValidationReviewMarksCandidateValidated(t *testing
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{
 		candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -408,8 +517,8 @@ func TestHandleBrowserTraceAPIValidationReviewRecordsMissingEvidenceAsRejected(t
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{
 		candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -439,8 +548,8 @@ func TestHandleBrowserTraceAPIFetcherProposalRejectsUnvalidatedCandidate(t *test
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &stubBrowserTraceAPIStore{
 		candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items",
 			ContainsPersonalData: "unknown",
@@ -450,10 +559,10 @@ func TestHandleBrowserTraceAPIFetcherProposalRejectsUnvalidatedCandidate(t *test
 		validations: []domaintrace.APICandidateValidationResult{{
 			ValidationID: "api_val_1",
 			CandidateID:  "api_cand_1",
-			TraceRunID:   "trace_1",
-			Passed:       false,
-			Status:       "needs_review",
-			CreatedAt:    now,
+			TaskID:       "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			Passed:    false,
+			Status:    "needs_review",
+			CreatedAt: now,
 		}},
 	}
 	body := []byte(`{"candidate_id":"api_cand_1"}`)

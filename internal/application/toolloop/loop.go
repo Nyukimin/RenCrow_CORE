@@ -8,12 +8,15 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Config はツールループの設定
 type Config struct {
 	MaxIterations int // 最大反復回数（0の場合デフォルト10）
 	MaxTokens     int // 1回のモデル呼び出しの最大出力トークン数（0の場合デフォルト4096）
+	TaskID        modulecore.TaskID
+	RunID         modulecore.RunID
 }
 
 func (c Config) maxIterations() int {
@@ -46,6 +49,10 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 	toolRunner tool.RunnerV2, toolDefs []llm.ToolDefinition,
 	messages []llm.ChatMessage, cfg Config) (string, error) {
 
+	if err := validateLoopIdentity(cfg); err != nil {
+		return "", err
+	}
+
 	maxIter := cfg.maxIterations()
 	maxTokens := cfg.maxTokens()
 	failedCalls := make(map[string]struct{})
@@ -56,7 +63,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 			return "", ctx.Err()
 		default:
 		}
-		log.Printf("[ToolLoop] iteration=%d/%d messages=%d tools=%d", i+1, maxIter, len(messages), len(toolDefs))
+		log.Printf("[ToolLoop] iteration=%d/%d messages=%d tools=%d task_id=%s run_id=%s", i+1, maxIter, len(messages), len(toolDefs), cfg.TaskID.String(), string(cfg.RunID))
 
 		resp, err := provider.Chat(ctx, llm.ChatRequest{
 			Messages:        messages,
@@ -136,4 +143,21 @@ func failedToolCallSignature(call llm.ToolCall) (string, bool) {
 		return "", false
 	}
 	return call.Function.Name + "\n" + string(arguments), true
+}
+
+func validateLoopIdentity(cfg Config) error {
+	taskSet := !cfg.TaskID.IsZero()
+	runSet := cfg.RunID != ""
+	if taskSet != runSet {
+		return fmt.Errorf("task_id and run_id must both be set when either is set")
+	}
+	if taskSet {
+		if err := cfg.TaskID.Validate(); err != nil {
+			return fmt.Errorf("task_id must be canonical: %w", err)
+		}
+		if err := cfg.RunID.Validate(); err != nil {
+			return fmt.Errorf("run_id must be canonical: %w", err)
+		}
+	}
+	return nil
 }

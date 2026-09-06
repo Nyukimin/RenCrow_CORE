@@ -21,22 +21,29 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type backgroundJobFailureReporter struct {
-	listener orchestrator.EventListener
+type backgroundFailureTaskOwner interface {
+	Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error)
+	StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error)
 }
 
-func newBackgroundJobFailureReporter(listener orchestrator.EventListener) backgroundJobFailureReporter {
+type backgroundJobFailureReporter struct {
+	listener orchestrator.EventListener
+	owner    backgroundFailureTaskOwner
+}
+
+func newBackgroundJobFailureReporter(listener orchestrator.EventListener, owner backgroundFailureTaskOwner) backgroundJobFailureReporter {
 	if listener != nil {
 		value := reflect.ValueOf(listener)
 		if value.Kind() == reflect.Pointer && value.IsNil() {
 			listener = nil
 		}
 	}
-	return backgroundJobFailureReporter{listener: listener}
+	return backgroundJobFailureReporter{listener: listener, owner: owner}
 }
 
 func (r backgroundJobFailureReporter) Failed(job string, err error, detail string) {
@@ -57,9 +64,8 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 	job = normalizeBackgroundJobName(job)
 	errorText := compactBackgroundJobText(err.Error(), 600)
 	detail = compactBackgroundJobText(detail, 600)
-	taskID := modulecore.NewTaskID()
+	taskID, runID := r.resolveFailureIdentity(job)
 	payload := map[string]string{
-		"task_id":        taskID.String(),
 		"job":            job,
 		"status":         "failed",
 		"error":          errorText,
@@ -68,17 +74,46 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 		"mio_action":     "report_if_user_visible",
 		"background_job": "true",
 	}
+	if !taskID.IsZero() {
+		payload["task_id"] = taskID.String()
+	}
+	if runID != "" {
+		payload["run_id"] = string(runID)
+	}
 	if detail != "" {
 		payload["detail"] = detail
 	}
 	payloadJSON, _ := json.Marshal(payload)
-	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", taskID.String(), "", "background", job)); publishErr != nil {
-		log.Printf("[BackgroundJob] failure event publication failed task=%s job=%s: %v", taskID, job, publishErr)
+	taskIDText := taskID.String()
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "background_job.failed", "background_job", "shiro", string(payloadJSON), "OPS", taskIDText, "", "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] failure event publication failed task=%s job=%s: %v", taskIDText, job, publishErr)
 		return
 	}
-	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "task.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", taskID.String(), "", "background", job)); publishErr != nil {
-		log.Printf("[BackgroundJob] notification event publication failed task=%s job=%s: %v", taskID, job, publishErr)
+	if publishErr := r.listener.OnEvent(orchestrator.NewEventWithTraceID(traceID, "task.notification", "shiro", "mio", backgroundJobFailureNotification(job, errorText, detail), "OPS", taskIDText, "", "background", job)); publishErr != nil {
+		log.Printf("[BackgroundJob] notification event publication failed task=%s job=%s: %v", taskIDText, job, publishErr)
 	}
+}
+
+func (r backgroundJobFailureReporter) resolveFailureIdentity(job string) (modulecore.TaskID, modulecore.RunID) {
+	if r.owner == nil {
+		return "", ""
+	}
+	ctx := context.Background()
+	created, err := r.owner.Create(ctx, domaintask.Task{
+		Title:    fmt.Sprintf("Background job failure: %s", job),
+		Route:    domaintask.RouteOperations,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		log.Printf("[BackgroundJob] durable task creation failed job=%s: %v", job, err)
+		return "", ""
+	}
+	run, err := r.owner.StartRunWithReason(ctx, created.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		log.Printf("[BackgroundJob] durable run start failed task=%s job=%s: %v", created.TaskID, job, err)
+		return created.TaskID, ""
+	}
+	return created.TaskID, run.RunID
 }
 
 func normalizeBackgroundJobName(job string) string {
@@ -109,8 +144,8 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 	return content
 }
 
-func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener) {
-	reporter := newBackgroundJobFailureReporter(listener)
+func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener, owner backgroundFailureTaskOwner) {
+	reporter := newBackgroundJobFailureReporter(listener, owner)
 	if runtime.L1Store != nil {
 		bootstrapDefaultNewsSources(runtime.L1Store, reporter)
 		startSourceRegistrySweeper(cfg, runtime.L1Store, reporter)

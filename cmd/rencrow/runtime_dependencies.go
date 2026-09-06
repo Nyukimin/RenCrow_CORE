@@ -682,19 +682,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
 		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
 			toolRuntime.PersonRelatedSummaryWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay),
+			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 		)
 	}
 	if toolRuntime.PersonRelatedIdentityWorker != nil {
 		deps.personRelatedIdentityCancel = startRuntimePersonRelatedIdentityWorker(
 			toolRuntime.PersonRelatedIdentityWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay),
+			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 		)
 	}
 	if toolRuntime.PersonRelatedCollectionWorker != nil {
 		deps.personRelatedCollectionCancel = startRuntimePersonRelatedCollectionWorker(
 			toolRuntime.PersonRelatedCollectionWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay),
+			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 		)
 	}
 	if toolRuntime.PersonRelatedCatalogLookup != nil {
@@ -752,7 +752,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,
 		advisorRuntime.Profiles,
-		newBackgroundJobFailureReporter(deps.eventRelay),
+		newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 	)
 	if conversationRuntime.ProfilePromotion != nil {
 		deps.memoryPromotionCancel = startMemoryPromotionWorker(
@@ -760,10 +760,10 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			llmBusyTracker,
 			time.Duration(cfg.Conversation.ProfilePromotionIdleGraceSeconds)*time.Second,
 			time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds)*time.Second,
-			newBackgroundJobFailureReporter(deps.eventRelay),
+			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 		)
 	}
-	startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay)
+	startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.taskManager)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
@@ -1168,7 +1168,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		validationPolicy.ReadOnlyOnly = cfg.BrowserTraceToAPI.ReadOnlyOnly
 		validationPolicy.RequireTermsReview = cfg.BrowserTraceToAPI.RequireTermsReview
 		validationPolicy.DenySensitiveFlows = append([]string(nil), cfg.BrowserTraceToAPI.DenySensitiveFlows...)
-		deps.browserTraceAPIDiscover = viewer.HandleBrowserTraceAPIDiscoverWithPolicy(browserTraceStore, browsertraceapp.NewDiscovererWithAcceptedPaths(cfg.BrowserTraceToAPI.AcceptedPaths), candidateSink, workstreamArtifactSink, validationPolicy)
+		var runVerifier viewer.BrowserTraceRunVerifier
+		if deps.taskManager != nil {
+			runVerifier = viewer.NewBrowserTraceRunVerifier(deps.taskManager)
+		}
+		deps.browserTraceAPIDiscover = viewer.HandleBrowserTraceAPIDiscoverWithPolicy(browserTraceStore, browsertraceapp.NewDiscovererWithAcceptedPaths(cfg.BrowserTraceToAPI.AcceptedPaths), runVerifier, candidateSink, workstreamArtifactSink, validationPolicy)
 		deps.browserTraceAPIValidation = viewer.HandleBrowserTraceAPIValidationReview(browserTraceStore)
 		deps.browserTraceAPIFetcherProposal = viewer.HandleBrowserTraceAPIFetcherProposal(browserTraceStore, workstreamArtifactSink)
 	}
@@ -1256,7 +1260,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.aiWorkflowWorktree = viewer.HandleAIWorkflowWorktreeCreate(aiWorkflowStore)
 		deps.aiWorkflowCommand = viewer.HandleAIWorkflowCommandCreate(aiWorkflowStore)
 		deps.aiWorkflowCommandRun = viewer.HandleAIWorkflowCommandRun(aiWorkflowStore, deps.skillBootstrap)
-		deps.aiWorkflowContextUsage = viewer.HandleAIWorkflowContextUsageCreate(aiWorkflowStore)
+		var aiWorkflowRunVerifier viewer.BrowserTraceRunVerifier
+		if deps.taskManager != nil {
+			aiWorkflowRunVerifier = viewer.NewBrowserTraceRunVerifier(deps.taskManager)
+		}
+		deps.aiWorkflowContextUsage = viewer.HandleAIWorkflowContextUsageCreateWithVerifier(aiWorkflowStore, aiWorkflowRunVerifier)
 		deps.aiWorkflowContextBudget = viewer.HandleAIWorkflowContextBudgetCheck(aiWorkflowStore, domainai.ContextBudgetPolicy{
 			MaxContextTokens: cfg.AIWorkflow.ContextBudgetTokens,
 			WarnAtRatio:      cfg.AIWorkflow.ContextBudgetWarnRatio,
@@ -1325,7 +1333,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if knowledgeMemoryStore != nil {
 			knowledgeMemoryStore = knowledgememorypersistence.WithL1Connection(knowledgeMemoryStore, conversationRuntime.L1Store)
 			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
-				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
+				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager))
 			}
 			deps.knowledgeMemoryStatus = viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore)
 			deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
@@ -1334,8 +1342,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			deps.dailyIntakeRuleCreate = viewer.HandleDailyIntakeRuleCreate(knowledgeMemoryStore)
 			deps.temporalMemoryCreate = viewer.HandleTemporalMemoryMarkerCreate(knowledgeMemoryStore)
 			deps.knowledgeMemoryReview = viewer.HandleKnowledgeMemoryReview(knowledgeMemoryStore)
-			deps.dreamConsolidationCreate = viewer.HandleDreamConsolidationRunCreate(knowledgeMemoryStore)
-			deps.dreamConsolidationProposal = viewer.HandleDreamConsolidationProposalCreate(knowledgeMemoryStore)
+			var dreamRunVerifier viewer.BrowserTraceRunVerifier
+			if deps.taskManager != nil {
+				dreamRunVerifier = viewer.NewBrowserTraceRunVerifier(deps.taskManager)
+			}
+			deps.dreamConsolidationCreate = viewer.HandleDreamConsolidationRunCreate(knowledgeMemoryStore, dreamRunVerifier)
+			deps.dreamConsolidationProposal = viewer.HandleDreamConsolidationProposalCreate(knowledgeMemoryStore, dreamRunVerifier)
 			deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 		}
 	}
@@ -1420,7 +1432,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)
 	}
 	deps.dailyNewsBriefReader = newsbriefapp.NewFallbackReader(deps.idleChatOrch, persistentNewsReader)
-	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))
+	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager))
 	buildOrchestratorRuntime(
 		cfg,
 		deps,

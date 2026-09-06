@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryDreamStore struct {
@@ -45,11 +46,16 @@ func TestBuildDreamConsolidationProposalCreatesPendingReviewSeeds(t *testing.T) 
 		temporal: []domainkm.TemporalMemoryMarker{{MarkerID: "tm_1", Layer: "week", ReferenceID: "pa_1", Summary: "weekly pattern"}},
 	}
 
-	run, err := BuildDreamConsolidationProposal(context.Background(), store, DreamProposalInput{Now: now})
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	run, err := BuildDreamConsolidationProposal(context.Background(), store, DreamProposalInput{TaskID: taskID, RunID: runID, ActorID: "mio", Now: now})
 	if err != nil {
 		t.Fatalf("BuildDreamConsolidationProposal failed: %v", err)
 	}
-	if run.RunID != "dream_20260518_120000" || run.Status != "proposal" || run.ReviewStatus != "pending" {
+	if run.TaskID != taskID || run.RunID != runID || run.ActorID != "mio" {
+		t.Fatalf("run identity = %#v", run)
+	}
+	if run.Status != "proposal" || run.ReviewStatus != "pending" {
 		t.Fatalf("run = %#v", run)
 	}
 	if len(run.IdeaSeeds) != 4 {
@@ -64,7 +70,13 @@ func TestBuildDreamConsolidationProposalNeverAutoApprovesEmptySources(t *testing
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &memoryDreamStore{}
 
-	run, err := BuildDreamConsolidationProposal(context.Background(), store, DreamProposalInput{Now: now, Scope: []string{"news_knowledge"}})
+	run, err := BuildDreamConsolidationProposal(context.Background(), store, DreamProposalInput{
+		TaskID:  modulecore.NewTaskID(),
+		RunID:   modulecore.NewRunID(),
+		ActorID: "mio",
+		Now:     now,
+		Scope:   []string{"news_knowledge"},
+	})
 	if err != nil {
 		t.Fatalf("BuildDreamConsolidationProposal failed: %v", err)
 	}

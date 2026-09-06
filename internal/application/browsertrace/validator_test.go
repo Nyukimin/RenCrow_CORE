@@ -13,8 +13,8 @@ import (
 func TestValidateAPICandidatesRequiresReviewForTermsPIIAndAuth(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	results := ValidateAPICandidates([]domaintrace.APICandidate{{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "POST",
 		ObservedURL:          "https://example.com/api/search",
 		AuthRequired:         true,
@@ -66,8 +66,8 @@ func TestValidateAPICandidatesWithLivePolicyConfirmsRobotsAndRateLimit(t *testin
 	defer server.Close()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	results := ValidateAPICandidatesWithLivePolicy(context.Background(), []domaintrace.APICandidate{{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          server.URL + "/api/items",
 		ContainsPersonalData: "none",
@@ -95,8 +95,8 @@ func TestValidateAPICandidatesWithLivePolicyRequiresReviewWhenRateLimitMissing(t
 	defer server.Close()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	results := ValidateAPICandidatesWithLivePolicy(context.Background(), []domaintrace.APICandidate{{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          server.URL + "/api/items",
 		ContainsPersonalData: "none",
@@ -122,8 +122,8 @@ func TestValidateAPICandidatesWithLivePolicyRequiresReviewWhenRateLimitMissing(t
 func TestValidateAPICandidatesCanPassWhenPolicyChecksAreSatisfied(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	results := ValidateAPICandidates([]domaintrace.APICandidate{{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/items",
 		ContainsPersonalData: "none",
@@ -140,8 +140,8 @@ func TestValidateAPICandidatesCanPassWhenPolicyChecksAreSatisfied(t *testing.T) 
 func TestValidateAPICandidatesRequiresReviewForDeniedSensitiveFlow(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	results := ValidateAPICandidates([]domaintrace.APICandidate{{
-		CandidateID:          "api_cand_1",
-		TraceRunID:           "trace_1",
+		CandidateID: "api_cand_1",
+		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		Method:               "GET",
 		ObservedURL:          "https://example.com/api/payment/status",
 		TemplatedURL:         "https://example.com/api/payment/status",

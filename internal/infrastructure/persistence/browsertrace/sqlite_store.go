@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -47,13 +48,13 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS browser_trace_run (
-			trace_run_id TEXT PRIMARY KEY,
+			run_id TEXT PRIMARY KEY,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_candidate (
 			candidate_id TEXT PRIMARY KEY,
-			trace_run_id TEXT,
+			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -66,19 +67,19 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS api_candidate_validation (
 			validation_id TEXT PRIMARY KEY,
 			candidate_id TEXT,
-			trace_run_id TEXT,
+			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_coverage_report (
 			report_id TEXT PRIMARY KEY,
-			trace_run_id TEXT,
+			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_artifact (
 			artifact_id TEXT PRIMARY KEY,
-			trace_run_id TEXT,
+			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -95,7 +96,7 @@ func (s *SQLiteStore) SaveTraceRun(ctx context.Context, item domaintrace.TraceRu
 	if err := domaintrace.ValidateTraceRun(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "browser_trace_run", "trace_run_id", item.TraceRunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "browser_trace_run", "run_id", string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListTraceRuns(ctx context.Context, limit int) ([]domaintrace.TraceRun, error) {
@@ -106,7 +107,7 @@ func (s *SQLiteStore) SaveAPICandidate(ctx context.Context, item domaintrace.API
 	if err := domaintrace.ValidateAPICandidate(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "api_candidate", "candidate_id", item.CandidateID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveOwned(ctx, "api_candidate", "candidate_id", item.CandidateID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAPICandidates(ctx context.Context, limit int) ([]domaintrace.APICandidate, error) {
@@ -148,7 +149,7 @@ func (s *SQLiteStore) SaveAPICandidateValidationResult(ctx context.Context, item
 	if err := domaintrace.ValidateAPICandidateValidationResult(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "api_candidate_validation", "validation_id", item.ValidationID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveOwned(ctx, "api_candidate_validation", "validation_id", item.ValidationID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAPICandidateValidationResults(ctx context.Context, limit int) ([]domaintrace.APICandidateValidationResult, error) {
@@ -179,7 +180,7 @@ func (s *SQLiteStore) SaveAPICoverageReport(ctx context.Context, item domaintrac
 	if err := domaintrace.ValidateAPICoverageReport(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "api_coverage_report", "report_id", item.ReportID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveOwned(ctx, "api_coverage_report", "report_id", item.ReportID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAPICoverageReports(ctx context.Context, limit int) ([]domaintrace.APICoverageReport, error) {
@@ -190,7 +191,7 @@ func (s *SQLiteStore) SaveAPIArtifact(ctx context.Context, item domaintrace.APIA
 	if err := domaintrace.ValidateAPIArtifact(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "api_artifact", "artifact_id", item.ArtifactID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveOwned(ctx, "api_artifact", "artifact_id", item.ArtifactID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAPIArtifacts(ctx context.Context, limit int) ([]domaintrace.APIArtifact, error) {
@@ -207,6 +208,19 @@ func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, i
 	}
 	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, created_at, payload) VALUES (?, ?, ?)`, table, idColumn)
 	_, err = s.db.ExecContext(ctx, query, id, createdAt, string(payload))
+	return err
+}
+
+func (s *SQLiteStore) saveOwned(ctx context.Context, table, idColumn, id string, runID modulecore.RunID, createdAt string, item any) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("browser trace sqlite store is closed")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, run_id, created_at, payload) VALUES (?, ?, ?, ?)`, table, idColumn)
+	_, err = s.db.ExecContext(ctx, query, id, string(runID), createdAt, string(payload))
 	return err
 }
 

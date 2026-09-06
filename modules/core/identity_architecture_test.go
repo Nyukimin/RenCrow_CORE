@@ -35,7 +35,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 	legacyGeneratorSites := map[string]struct{}{
 		// Frozen legacy sites are removed by later canonical replacement steps.
 		// This allowlist prevents Step 01 from increasing their scope.
-		"internal/adapter/viewer/browser_trace_api_handler.go:HandleBrowserTraceAPIFetcherProposal":            {},
 		"internal/adapter/viewer/complexity_hotspot_handler.go:HandleComplexityHotspotConcreteDiffWithSandbox": {},
 		"internal/adapter/viewer/complexity_hotspot_handler.go:HandleComplexityHotspotProposalWithSandbox":     {},
 		"internal/adapter/viewer/complexity_hotspot_handler.go:HandleComplexityHotspotScan":                    {},
@@ -48,7 +47,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/adapter/viewer/sandbox_handler.go:HandleSandboxPromotionRollback":                            {},
 		"internal/adapter/viewer/skill_governance_handler.go:HandleSkillGovernanceBootstrap":                   {},
 		"internal/adapter/viewer/skill_governance_handler.go:HandleSkillGovernanceContributionGate":            {},
-		"internal/application/browsertrace/artifacts.go:BuildAPIArtifactsWithValidations":                      {},
 		"internal/application/backlog/service.go:Adopt":                                                        {},
 		"internal/application/heartbeat/service.go:RunBacklogIntake":                                           {},
 		"internal/application/idlechat/orchestrator.go:applyPersonaCanonicalResponse":                          {},
@@ -406,6 +404,146 @@ func TestCanonicalTaskMigrationSourceIsRemovedAfterCutover(t *testing.T) {
 			t.Fatalf("Step 09 migration source remains after production cutover: %s", relative)
 		}
 	}
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-step10-run-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "step10runmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 10 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
+func TestStep10RunIdentityLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"ParentRunID",
+		"TraceRunID",
+		"GenerationID",
+		"SubagentID",
+		"parent_run_id",
+		"trace_run_id",
+		"subagent_id",
+		"generation_id",
+	}
+	var violations []string
+	checkGoSource := func(relative string, content []byte) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			for _, token := range legacyTokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-run-identity:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	shouldSkipStep10Path := func(relative string) bool {
+		return strings.Contains(relative, "step10runmigration") ||
+			strings.Contains(relative, "rencrow-step10-run-migrate")
+	}
+	walkDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step10runmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkipStep10Path(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkGoSource(rel, content)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step10 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/browsertrace",
+		"internal/application/browsertrace",
+		"internal/infrastructure/persistence/browsertrace",
+		"internal/domain/knowledgememory",
+		"internal/application/knowledgememory",
+		"internal/infrastructure/persistence/knowledgememory",
+		"internal/domain/aiworkflow",
+		"internal/infrastructure/persistence/aiworkflow",
+		"internal/application/toolloop",
+		"internal/application/idlechat",
+		"pkg/rencrowclient",
+	} {
+		walkDirectory(relative)
+	}
+	viewerDir := filepath.Join(repoRoot, "internal", "adapter", "viewer")
+	viewerEntries, err := os.ReadDir(viewerDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read viewer adapter directory: %v", err)
+	}
+	for _, entry := range viewerEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "browser_trace") &&
+			!strings.HasPrefix(name, "knowledge_memory") &&
+			!strings.HasPrefix(name, "ai_workflow") {
+			continue
+		}
+		relative := filepath.ToSlash(filepath.Join("internal", "adapter", "viewer", name))
+		content, err := os.ReadFile(filepath.Join(viewerDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkGoSource(relative, content)
+	}
+	opsJSRelative := filepath.ToSlash(filepath.Join("internal", "adapter", "viewer", "assets", "js", "tabs", "ops.js"))
+	opsJSPath := filepath.Join(repoRoot, filepath.FromSlash(opsJSRelative))
+	if opsContent, err := os.ReadFile(opsJSPath); err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("read %s: %v", opsJSRelative, err)
+		}
+	} else {
+		checkGoSource(opsJSRelative, opsContent)
+	}
+	cmdDir := filepath.Join(repoRoot, "cmd", "rencrow")
+	cmdEntries, err := os.ReadDir(cmdDir)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read cmd/rencrow directory: %v", err)
+	}
+	for _, entry := range cmdEntries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "runtime_background_jobs") && !strings.HasPrefix(name, "runtime_idlechat") {
+			continue
+		}
+		relative := filepath.ToSlash(filepath.Join("cmd", "rencrow", name))
+		content, err := os.ReadFile(filepath.Join(cmdDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkGoSource(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step10 owner packages must not retain legacy Run identity fields", violations)
 }
 
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {

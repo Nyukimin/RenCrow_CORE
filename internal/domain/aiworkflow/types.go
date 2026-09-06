@@ -1,6 +1,10 @@
 package aiworkflow
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type ProjectMemoryIndex struct {
 	ID          string    `json:"id"`
@@ -35,12 +39,12 @@ type CommandRegistry struct {
 }
 
 type ContextUsage struct {
-	EventID         string    `json:"event_id"`
-	SessionID       string    `json:"session_id,omitempty"`
-	RunID           string    `json:"run_id,omitempty"`
-	WorkstreamID    string    `json:"workstream_id,omitempty"`
-	JobID           string    `json:"job_id,omitempty"`
-	CompactionID    string    `json:"compaction_id,omitempty"`
+	EventID         string            `json:"event_id"`
+	SessionID       string            `json:"session_id,omitempty"`
+	TaskID          modulecore.TaskID `json:"task_id,omitempty"`
+	RunID           modulecore.RunID  `json:"run_id,omitempty"`
+	WorkstreamID    string            `json:"workstream_id,omitempty"`
+	CompactionID    string            `json:"compaction_id,omitempty"`
 	Agent           string    `json:"agent"`
 	Model           string    `json:"model,omitempty"`
 	InputTokens     int       `json:"input_tokens,omitempty"`

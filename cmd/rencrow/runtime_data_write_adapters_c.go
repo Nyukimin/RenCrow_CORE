@@ -173,7 +173,9 @@ func (w *runtimeBrowserTraceValidationWriter) write(ctx context.Context, request
 	validation, err := browsertraceapp.BuildValidationReview(browsertraceapp.ValidationReviewInput{
 		ValidationID:        runtimeDataWriteDerivedID(runtimeBrowserValidationIDPrefix, scope.RequestID),
 		CandidateID:         candidate.CandidateID,
-		TraceRunID:          candidate.TraceRunID,
+		TaskID:              candidate.TaskID,
+		RunID:               candidate.RunID,
+		ActorID:             candidate.ActorID,
 		Reviewer:            strings.TrimSpace(scope.ActorID),
 		ReviewNote:          payload.ReviewNote,
 		TermsReviewed:       *payload.TermsReviewed,

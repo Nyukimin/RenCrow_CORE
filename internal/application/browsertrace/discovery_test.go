@@ -64,7 +64,7 @@ func TestDiscoverRejectsWriteMethodAndDoesNotStoreCredentialValues(t *testing.T)
 	d := NewDiscoverer()
 	d.now = func() time.Time { return time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC) }
 	result, err := d.Discover(DiscoverRequest{
-		TraceRunID:    "trace_1",
+		TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		SiteID:        "example",
 		TracePath:     tmp,
 		RequestsPath:  requestsPath,
@@ -76,12 +76,18 @@ func TestDiscoverRejectsWriteMethodAndDoesNotStoreCredentialValues(t *testing.T)
 	if len(result.Candidates) != 1 {
 		t.Fatalf("candidates=%#v", result.Candidates)
 	}
+	if result.Run.TaskID != "tsk_00000000-0000-5000-8000-000000000001" || result.Run.RunID != "run_00000000-0000-5000-8000-000000000002" || result.Run.ActorID != "mio" {
+		t.Fatalf("projection identity was not copied: %#v", result.Run)
+	}
 	if result.Candidates[0].Method != "GET" || !result.Candidates[0].AuthRequired {
 		t.Fatalf("candidate=%#v", result.Candidates[0])
 	}
 	encoded := mustMarshalString(t, result)
 	if strings.Contains(encoded, "secret-token") {
 		t.Fatalf("credential value leaked: %s", encoded)
+	}
+	if strings.Contains(encoded, "trace_run_id") {
+		t.Fatalf("legacy trace_run_id leaked: %s", encoded)
 	}
 	if len(result.Schemas) != 1 || !strings.Contains(result.Schemas[0].SchemaJSON, `"items"`) {
 		t.Fatalf("schemas=%#v", result.Schemas)
@@ -100,7 +106,7 @@ func TestDiscoverRejectsTracePathsOutsideAcceptedRoots(t *testing.T) {
 	}
 	d := NewDiscovererWithAcceptedPaths([]string{"traces/"})
 	_, err := d.Discover(DiscoverRequest{
-		TraceRunID:    "trace_1",
+		TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		SiteID:        "example",
 		TracePath:     tmp,
 		RequestsPath:  requestsPath,
@@ -127,7 +133,7 @@ func TestDiscoverAllowsTracePathsInsideAcceptedRoots(t *testing.T) {
 	}
 	d := NewDiscovererWithAcceptedPaths([]string{"traces/"})
 	result, err := d.Discover(DiscoverRequest{
-		TraceRunID:    "trace_1",
+		TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		SiteID:        "example",
 		TracePath:     traceDir,
 		RequestsPath:  requestsPath,

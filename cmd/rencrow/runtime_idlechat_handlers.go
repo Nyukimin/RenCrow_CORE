@@ -420,7 +420,7 @@ func (d *Dependencies) handleIdleChatEpisodes() http.HandlerFunc {
 		for _, episode := range snapshot.Episodes {
 			episodes = append(episodes, map[string]any{
 				"episode_id": episode.EpisodeID, "revision": episode.Revision,
-				"episode_kind": episode.EpisodeKind, "generation_id": episode.GenerationID,
+				"episode_kind": episode.EpisodeKind, "task_id": episode.TaskID, "run_id": episode.RunID,
 				"story_title":                episode.StoryTitle,
 				"replacement_for_episode_id": episode.ReplacementForEpisodeID,
 				"source":                     episode.Source, "reader": episode.Reader, "listener": episode.Listener,

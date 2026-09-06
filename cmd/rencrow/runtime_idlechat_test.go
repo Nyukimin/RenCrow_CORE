@@ -14,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestIdleChatCodexWorkingDirPrefersCodexConfig(t *testing.T) {
@@ -82,11 +83,15 @@ func TestBuildIdleChatRuntimeFailsClosedOnInvalidTopicStore(t *testing.T) {
 }
 
 func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T) {
+	forecastTaskID := modulecore.NewTaskID()
+	forecastRunID := modulecore.NewRunID()
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
 	data, err := json.Marshal(map[string]any{"stock": map[string]any{
 		"AI技術": []map[string]any{{
 			"topic":   "保存済みのAI技術お題",
 			"seeds":   []string{"seed"},
+			"task_id": forecastTaskID,
+			"run_id":  forecastRunID,
 			"created": time.Now().UTC(),
 		}},
 	}})
@@ -97,11 +102,14 @@ func TestHandleIdleChatStatusIncludesWordAndForecastStockSnapshots(t *testing.T)
 		t.Fatal(err)
 	}
 	orch := idlechat.NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
+	wordTaskID := modulecore.NewTaskID()
+	wordRunID := modulecore.NewRunID()
 	wordPath := filepath.Join(t.TempDir(), "word_topic_stock.json")
 	wordData, err := json.Marshal(map[string]any{"stock": map[string]any{
 		"single": []map[string]any{{
 			"category": "single", "topic": "防災設備を店頭に入れるとき誰が最後の判断を持つか",
-			"seed": map[string]any{"category": "single", "genre_1": "防災"}, "interestingness_axis": "観察", "created": time.Now().UTC(),
+			"seed": map[string]any{"category": "single", "genre_1": "防災"}, "interestingness_axis": "観察",
+			"task_id": wordTaskID, "run_id": wordRunID, "created": time.Now().UTC(),
 		}},
 	}})
 	if err != nil {

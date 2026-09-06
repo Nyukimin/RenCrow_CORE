@@ -23,15 +23,15 @@ func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t 
 	now := time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)
 	result := domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
-			TraceRunID: "trace_1",
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			SiteID:     "example",
 			TracePath:  "traces/trace_1",
 			CapturedAt: now,
 			CreatedAt:  now,
 		},
 		Candidates: []domaintrace.APICandidate{{
-			CandidateID:          "api_cand_1",
-			TraceRunID:           "trace_1",
+			CandidateID: "api_cand_1",
+			TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			SiteID:               "example",
 			Method:               "GET",
 			ObservedURL:          "https://example.com/api/items?page=1",
@@ -60,7 +60,7 @@ func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t 
 	if item.Kind != l1sqlite.L1StagingKindSearchResult {
 		t.Fatalf("kind = %s", item.Kind)
 	}
-	if item.Namespace != "kb:browser_trace_api" || item.SourceID != "browser_trace:trace_1" {
+	if item.Namespace != "kb:browser_trace_api" || item.SourceID != "browser_trace:run_00000000-0000-5000-8000-000000000002" {
 		t.Fatalf("unexpected source fields: %+v", item)
 	}
 	if item.SourceURL != "https://example.com/api/items?page=1" {
@@ -71,6 +71,9 @@ func TestL1APICandidateStoreStagesBrowserTraceCandidatesAsPendingSearchResult(t 
 	}
 	if item.Meta["promote_requires_validator"] != true || item.Meta["candidate_id"] != "api_cand_1" {
 		t.Fatalf("missing validator metadata: %#v", item.Meta)
+	}
+	if item.Meta["task_id"] != "tsk_00000000-0000-5000-8000-000000000001" || item.Meta["run_id"] != "run_00000000-0000-5000-8000-000000000002" || item.Meta["actor_id"] != "mio" {
+		t.Fatalf("missing canonical identity metadata: %#v", item.Meta)
 	}
 	if item.Meta["auth_required"] != true || item.Meta["risk_level"] != "medium" {
 		t.Fatalf("missing risk metadata: %#v", item.Meta)

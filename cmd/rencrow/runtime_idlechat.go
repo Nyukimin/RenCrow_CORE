@@ -92,6 +92,10 @@ func buildIdleChatRuntime(
 	)
 	dialogueService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
 	idleChatOrch.SetDialogueEpisodeService(dialogueService)
+	if deps.taskManager != nil {
+		idleChatOrch.SetRunIssuer(deps.taskManager)
+		dialogueService.SetRunIssuer(deps.taskManager)
+	}
 	idleChatOrch.InitWordTopicStock(filepath.Join(cfg.Session.StorageDir, "word_topic_stock.json"))
 	idleChatOrch.InitForecastTopicStock(filepath.Join(cfg.Session.StorageDir, "forecast_topic_stock.json"))
 	log.Printf("IdleChat topic/dialogue producers enabled (generator=codex_exe sandbox=read-only ephemeral=true)")
@@ -105,6 +109,9 @@ func buildIdleChatRuntime(
 		storyService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
 		storyService.SetGenerationCheckpointStore(generationCheckpoints)
 		idleChatOrch.SetStoryEpisodeService(storyService)
+		if deps.taskManager != nil {
+			storyService.SetRunIssuer(deps.taskManager)
+		}
 		idleChatOrch.SetStoryTTSPrefetchWindow(cfg.IdleChat.TTSPrefetch.LookaheadUtterances)
 		log.Printf("IdleChat story producer enabled (generator=codex_exe sandbox=read-only ephemeral=true target=%d)", cfg.IdleChat.EpisodePreparation.ReadyTarget)
 	}

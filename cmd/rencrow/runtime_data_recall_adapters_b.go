@@ -136,7 +136,9 @@ func registerRuntimeDataRecallBrowserTraceValidationReviews(r *runtimeDataRecall
 			records = append(records, map[string]any{
 				"validation_id": item.ValidationID,
 				"candidate_id":  item.CandidateID,
-				"trace_run_id":  item.TraceRunID,
+				"task_id":       item.TaskID,
+				"run_id":        item.RunID,
+				"actor_id":      item.ActorID,
 				"passed":        item.Passed,
 				"status":        item.Status,
 				"issues":        append([]domainbrowser.APIValidationIssue(nil), item.Issues...),

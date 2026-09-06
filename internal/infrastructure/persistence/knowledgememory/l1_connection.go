@@ -265,8 +265,10 @@ func (s *L1ConnectedStore) SaveDreamConsolidationRun(ctx context.Context, item d
 		"status: " + item.Status,
 		"review_status: " + item.ReviewStatus,
 	}, item.IdeaSeeds...)), "\n")
-	return s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, "kb:dream", item.RunID, "dream_consolidation_run", "", raw, strings.Join(item.IdeaSeeds, "\n"), item.IdeaSeeds, map[string]interface{}{
+	return s.stage(ctx, l1sqlite.L1StagingKindMemoryCandidate, "kb:dream", string(item.RunID), "dream_consolidation_run", "", raw, strings.Join(item.IdeaSeeds, "\n"), item.IdeaSeeds, map[string]interface{}{
 		"knowledge_memory_type": "dream_consolidation_run",
+		"task_id":               string(item.TaskID),
+		"actor_id":              item.ActorID,
 		"scope":                 item.Scope,
 		"review_status":         item.ReviewStatus,
 		"review_required":       true,

@@ -3105,8 +3105,8 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				t.Fatalf("method=%s", r.Method)
 			}
 			_ = json.NewEncoder(w).Encode(BrowserTraceAPIStatus{
-				TraceRuns:     []BrowserTraceRun{{TraceRunID: "trace_1", TracePath: "traces/trace_1", CreatedAt: now}},
-				APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
+				TraceRuns:     []BrowserTraceRun{{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/trace_1", CreatedAt: now}},
+				APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
 			})
 		case "/viewer/browser-trace-api/discover":
 			if r.Method != http.MethodPost {
@@ -3117,12 +3117,12 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(BrowserTraceAPIDiscoverResponse{
-				TraceRun:       BrowserTraceRun{TraceRunID: req.TraceRunID, TracePath: req.TracePath, CreatedAt: now},
-				APICandidates:  []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TraceRunID: req.TraceRunID, Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
+				TraceRun:       BrowserTraceRun{TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, TracePath: req.TracePath, CreatedAt: now},
+				APICandidates:  []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
 				APISchemas:     []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_cand_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1, CreatedAt: now}},
-				APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_cand_1", TraceRunID: req.TraceRunID, Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "official_api_unverified", Message: "needs review"}}, CreatedAt: now}},
-				CoverageReport: BrowserTraceAPICoverage{ReportID: "coverage_1", TraceRunID: req.TraceRunID, CreatedAt: now},
-				APIArtifacts:   []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TraceRunID: req.TraceRunID, Type: "fetcher_plan", Title: "Fetcher plan", Status: "pending_review", Content: "review only", CreatedAt: now}},
+				APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "official_api_unverified", Message: "needs review"}}, CreatedAt: now}},
+				CoverageReport: BrowserTraceAPICoverage{ReportID: "coverage_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, CreatedAt: now},
+				APIArtifacts:   []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Type: "fetcher_plan", Title: "Fetcher plan", Status: "pending_review", Content: "review only", CreatedAt: now}},
 			})
 		case "/viewer/browser-trace-api/validations":
 			if r.Method != http.MethodPost {
@@ -3133,8 +3133,8 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(BrowserTraceAPIValidationReviewResponse{
-				Candidate:           BrowserTraceAPICandidate{CandidateID: req.CandidateID, TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "unknown", Status: "candidate", CreatedAt: now},
-				Validation:          BrowserTraceAPIValidation{ValidationID: "val_review_1", CandidateID: req.CandidateID, TraceRunID: "trace_1", Passed: true, Status: "validated", CreatedAt: now},
+				Candidate:           BrowserTraceAPICandidate{CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "unknown", Status: "candidate", CreatedAt: now},
+				Validation:          BrowserTraceAPIValidation{ValidationID: "val_review_1", CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated", CreatedAt: now},
 				OfficialPromotion:   false,
 				ImplementationApply: false,
 			})
@@ -3147,10 +3147,10 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_fetcher_proposal_api_cand_1", TraceRunID: "trace_1", WorkstreamID: req.WorkstreamID, Type: "fetcher_proposal", Title: "Fetcher Proposal", Status: "pending_review", Content: "no direct promoted DB write", CreatedAt: now},
+				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_fetcher_proposal_api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: req.WorkstreamID, Type: "fetcher_proposal", Title: "Fetcher Proposal", Status: "pending_review", Content: "no direct promoted DB write", CreatedAt: now},
 				WorkstreamArtifact:  &WorkstreamArtifact{ArtifactID: "art_fetcher_proposal_api_cand_1", WorkstreamID: req.WorkstreamID, Type: "browser_trace_fetcher_proposal", Status: "pending_review", CreatedAt: now},
-				Candidate:           BrowserTraceAPICandidate{CandidateID: req.CandidateID, TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
-				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: req.CandidateID, TraceRunID: "trace_1", Passed: true, Status: "validated", CreatedAt: now},
+				Candidate:           BrowserTraceAPICandidate{CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
+				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated", CreatedAt: now},
 				OfficialPromotion:   false,
 				ImplementationApply: false,
 			})
@@ -3171,7 +3171,7 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 		t.Fatalf("status=%#v", status)
 	}
 	discovered, err := client.DiscoverBrowserTraceAPI(context.Background(), BrowserTraceAPIDiscoverRequest{
-		TraceRunID:    "trace_1",
+		TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		TracePath:     "traces/trace_1",
 		RequestsPath:  "traces/requests.jsonl",
 		ResponsesPath: "traces/responses.jsonl",
@@ -3179,7 +3179,7 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverBrowserTraceAPI() error = %v", err)
 	}
-	if discovered.TraceRun.TraceRunID != "trace_1" || len(discovered.APIArtifacts) != 1 {
+	if discovered.TraceRun.RunID != "run_00000000-0000-5000-8000-000000000002" || len(discovered.APIArtifacts) != 1 {
 		t.Fatalf("discovered=%#v", discovered)
 	}
 	review, err := client.ValidateBrowserTraceAPICandidate(context.Background(), BrowserTraceAPIValidationReviewRequest{
@@ -3219,26 +3219,26 @@ func TestBrowserTraceAPIStatusRejectsMalformedCurrentView(t *testing.T) {
 		resp BrowserTraceAPIStatus
 		want string
 	}{
-		{name: "duplicate run", resp: BrowserTraceAPIStatus{TraceRuns: []BrowserTraceRun{{TraceRunID: "trace_1", TracePath: "traces/1", CreatedAt: now}, {TraceRunID: "trace_1", TracePath: "traces/2", CreatedAt: now.Add(time.Second)}}}, want: "duplicate trace_run_id"},
-		{name: "run missing created at", resp: BrowserTraceAPIStatus{TraceRuns: []BrowserTraceRun{{TraceRunID: "trace_1", TracePath: "traces/1"}}}, want: "trace_run missing created_at"},
-		{name: "write method candidate", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TraceRunID: "trace_1", Method: "DELETE", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}}}, want: "write method"},
-		{name: "candidate unknown status", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "promoted", CreatedAt: now}}}, want: "candidate status"},
-		{name: "candidate confidence out of range", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", Confidence: 1.2, CreatedAt: now}}}, want: "candidate confidence out of range"},
-		{name: "candidate missing created at", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate"}}}, want: "candidate missing created_at"},
+		{name: "duplicate run", resp: BrowserTraceAPIStatus{TraceRuns: []BrowserTraceRun{{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/1", CreatedAt: now}, {TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/2", CreatedAt: now.Add(time.Second)}}}, want: "duplicate run_id"},
+		{name: "run missing created at", resp: BrowserTraceAPIStatus{TraceRuns: []BrowserTraceRun{{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/1"}}}, want: "trace_run missing created_at"},
+		{name: "write method candidate", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "DELETE", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}}}, want: "write method"},
+		{name: "candidate unknown status", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "promoted", CreatedAt: now}}}, want: "candidate status"},
+		{name: "candidate confidence out of range", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", Confidence: 1.2, CreatedAt: now}}}, want: "candidate confidence out of range"},
+		{name: "candidate missing created at", resp: BrowserTraceAPIStatus{APICandidates: []BrowserTraceAPICandidate{{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate"}}}, want: "candidate missing created_at"},
 		{name: "schema negative sample count", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: -1, CreatedAt: now}}}, want: "sample_count"},
 		{name: "schema invalid json", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":`, SampleCount: 1, CreatedAt: now}}}, want: "valid json"},
 		{name: "schema confidence out of range", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1, Confidence: -0.1, CreatedAt: now}}}, want: "schema confidence out of range"},
 		{name: "schema missing created at", resp: BrowserTraceAPIStatus{APISchemas: []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1}}}, want: "schema missing created_at"},
-		{name: "validation failed without issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "needs_review", CreatedAt: now}}}, want: "failed without issues"},
-		{name: "validation unknown status", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "adopted", Passed: false, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validation status"},
-		{name: "validated without passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "validated", CreatedAt: now}}}, want: "validated status without passed"},
-		{name: "validated with issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "validated", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validated status with issues"},
-		{name: "needs review with passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "needs_review", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "passed without validated status"},
-		{name: "validation missing created at", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}}}}, want: "validation missing created_at"},
-		{name: "coverage missing created at", resp: BrowserTraceAPIStatus{CoverageReports: []BrowserTraceAPICoverage{{ReportID: "coverage_1", TraceRunID: "trace_1"}}}, want: "coverage missing created_at"},
-		{name: "artifact unknown status", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TraceRunID: "trace_1", Type: "fetcher_plan", Title: "Plan", Status: "promoted", Content: "review only", CreatedAt: now}}}, want: "artifact status"},
-		{name: "artifact missing content", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TraceRunID: "trace_1", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", CreatedAt: now}}}, want: "missing content"},
-		{name: "artifact missing created at", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TraceRunID: "trace_1", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only"}}}, want: "artifact missing created_at"},
+		{name: "validation failed without issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", CreatedAt: now}}}, want: "failed without issues"},
+		{name: "validation unknown status", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "adopted", Passed: false, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validation status"},
+		{name: "validated without passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "validated", CreatedAt: now}}}, want: "validated status without passed"},
+		{name: "validated with issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "validated", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validated status with issues"},
+		{name: "needs review with passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "passed without validated status"},
+		{name: "validation missing created at", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}}}}, want: "validation missing created_at"},
+		{name: "coverage missing created at", resp: BrowserTraceAPIStatus{CoverageReports: []BrowserTraceAPICoverage{{ReportID: "coverage_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio"}}}, want: "coverage missing created_at"},
+		{name: "artifact unknown status", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "promoted", Content: "review only", CreatedAt: now}}}, want: "artifact status"},
+		{name: "artifact missing content", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", CreatedAt: now}}}, want: "missing content"},
+		{name: "artifact missing created at", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only"}}}, want: "artifact missing created_at"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3265,7 +3265,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 	now := time.Date(2026, 5, 20, 3, 45, 0, 0, time.UTC)
 	client, called, cleanup := newNoRequestClient(t)
 	defer cleanup()
-	_, err := client.DiscoverBrowserTraceAPI(context.Background(), BrowserTraceAPIDiscoverRequest{TraceRunID: "trace_1"})
+	_, err := client.DiscoverBrowserTraceAPI(context.Background(), BrowserTraceAPIDiscoverRequest{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio"})
 	if err == nil || !strings.Contains(err.Error(), "missing trace_path") {
 		t.Fatalf("DiscoverBrowserTraceAPI() error = %v, want missing trace_path", err)
 	}
@@ -3289,22 +3289,22 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 		want string
 	}{
 		{
-			name: "discover trace mismatch",
+			name: "discover run mismatch",
 			path: "/viewer/browser-trace-api/discover",
-			resp: BrowserTraceAPIDiscoverResponse{TraceRun: BrowserTraceRun{TraceRunID: "other", TracePath: "traces/trace_1"}},
+			resp: BrowserTraceAPIDiscoverResponse{TraceRun: BrowserTraceRun{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000003", ActorID: "mio", TracePath: "traces/trace_1"}},
 			call: func(c *Client) error {
-				_, err := c.DiscoverBrowserTraceAPI(context.Background(), BrowserTraceAPIDiscoverRequest{TraceRunID: "trace_1", TracePath: "traces/trace_1", RequestsPath: "requests.jsonl", ResponsesPath: "responses.jsonl"})
+				_, err := c.DiscoverBrowserTraceAPI(context.Background(), BrowserTraceAPIDiscoverRequest{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", TracePath: "traces/trace_1", RequestsPath: "requests.jsonl", ResponsesPath: "responses.jsonl"})
 				return err
 			},
-			want: "trace_run_id mismatch",
+			want: "task/run/actor identity mismatch",
 		},
 		{
 			name: "proposal applies implementation",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_1", TraceRunID: "trace_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
-				Candidate:           BrowserTraceAPICandidate{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate"},
-				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: true, Status: "validated"},
+				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
+				Candidate:           BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate"},
+				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated"},
 				ImplementationApply: true,
 			},
 			call: func(c *Client) error {
@@ -3317,8 +3317,8 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "validation review applies implementation",
 			path: "/viewer/browser-trace-api/validations",
 			resp: BrowserTraceAPIValidationReviewResponse{
-				Candidate:           BrowserTraceAPICandidate{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "unknown", Status: "candidate"},
-				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: true, Status: "validated"},
+				Candidate:           BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "unknown", Status: "candidate"},
+				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated"},
 				ImplementationApply: true,
 			},
 			call: func(c *Client) error {
@@ -3331,8 +3331,8 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "validation review missing expected validated result",
 			path: "/viewer/browser-trace-api/validations",
 			resp: BrowserTraceAPIValidationReviewResponse{
-				Candidate:  BrowserTraceAPICandidate{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "unknown", Status: "candidate", CreatedAt: now},
-				Validation: BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now},
+				Candidate:  BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "unknown", Status: "candidate", CreatedAt: now},
+				Validation: BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now},
 			},
 			call: func(c *Client) error {
 				_, err := c.ValidateBrowserTraceAPICandidate(context.Background(), BrowserTraceAPIValidationReviewRequest{CandidateID: "api_1", Reviewer: "reviewer", TermsReviewed: true, OfficialAPIReviewed: true, PIIReviewed: true, SchemaReviewed: true, RiskReviewed: true})
@@ -3344,10 +3344,10 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "proposal workstream artifact missing created at",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:        BrowserTraceAPIArtifact{ArtifactID: "art_1", TraceRunID: "trace_1", WorkstreamID: "ws_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", CreatedAt: now},
+				APIArtifact:        BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: "ws_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", CreatedAt: now},
 				WorkstreamArtifact: &WorkstreamArtifact{ArtifactID: "art_1", WorkstreamID: "ws_1", Type: "browser_trace_fetcher_proposal", Status: "pending_review"},
-				Candidate:          BrowserTraceAPICandidate{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
-				Validation:         BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: true, Status: "validated", CreatedAt: now},
+				Candidate:          BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
+				Validation:         BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated", CreatedAt: now},
 			},
 			call: func(c *Client) error {
 				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1", WorkstreamID: "ws_1"})
@@ -3359,9 +3359,9 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "proposal unvalidated",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact: BrowserTraceAPIArtifact{ArtifactID: "art_1", TraceRunID: "trace_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
-				Candidate:   BrowserTraceAPICandidate{CandidateID: "api_1", TraceRunID: "trace_1", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
-				Validation:  BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TraceRunID: "trace_1", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms_unverified", Message: "terms required"}}},
+				APIArtifact: BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
+				Candidate:   BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
+				Validation:  BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms_unverified", Message: "terms required"}}},
 			},
 			call: func(c *Client) error {
 				_, err := c.CreateBrowserTraceAPIFetcherProposal(context.Background(), BrowserTraceAPIFetcherProposalRequest{CandidateID: "api_1"})

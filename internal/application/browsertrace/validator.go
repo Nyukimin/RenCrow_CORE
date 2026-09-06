@@ -40,9 +40,11 @@ func ValidateAPICandidates(candidates []domaintrace.APICandidate, policy Validat
 			status = "needs_review"
 		}
 		results = append(results, domaintrace.APICandidateValidationResult{
-			ValidationID: "api_val_" + validationHash(candidate.TraceRunID+"|"+candidate.CandidateID),
+			ValidationID: "api_val_" + validationHash(string(candidate.RunID)+"|"+candidate.CandidateID),
 			CandidateID:  candidate.CandidateID,
-			TraceRunID:   candidate.TraceRunID,
+			TaskID:       candidate.TaskID,
+			RunID:        candidate.RunID,
+			ActorID:      candidate.ActorID,
 			Passed:       passed,
 			Status:       status,
 			Issues:       issues,

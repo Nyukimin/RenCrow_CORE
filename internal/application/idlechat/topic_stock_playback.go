@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -39,8 +41,8 @@ type TopicStockPlaybackSnapshot struct {
 	CanNext     bool                    `json:"can_next"`
 }
 
-func wordPlaybackID(id string) string     { return "word:" + strings.TrimSpace(id) }
-func forecastPlaybackID(id string) string { return "forecast:" + strings.TrimSpace(id) }
+func wordPlaybackID(runID modulecore.RunID) string     { return "word:" + strings.TrimSpace(string(runID)) }
+func forecastPlaybackID(runID modulecore.RunID) string { return "forecast:" + strings.TrimSpace(string(runID)) }
 func storyPlaybackID(id string) string    { return "story:" + strings.TrimSpace(id) }
 
 func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPlaybackItem {
@@ -52,7 +54,7 @@ func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPl
 		for _, prepared := range category.Topics {
 			copy := prepared
 			items = append(items, TopicStockPlaybackItem{
-				ID: wordPlaybackID(prepared.GenerationID), Stock: string(prepared.Category),
+				ID: wordPlaybackID(prepared.RunID), Stock: string(prepared.Category),
 				Label: wordTopicCategoryLabel(prepared.Category), Topic: prepared.Topic, word: &copy,
 			})
 		}
@@ -61,7 +63,7 @@ func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPl
 		for _, prepared := range domain.Topics {
 			copy := prepared
 			items = append(items, TopicStockPlaybackItem{
-				ID: forecastPlaybackID(prepared.GenerationID), Stock: "forecast",
+				ID: forecastPlaybackID(prepared.RunID), Stock: "forecast",
 				Label: domain.Name, Topic: prepared.Topic, forecast: &copy,
 			})
 		}
@@ -89,13 +91,13 @@ func (o *IdleChatOrchestrator) consumeTopicStockPlaybackItem(id string) (TopicSt
 	switch {
 	case strings.HasPrefix(id, "word:"):
 		if wordStock != nil {
-			if prepared := wordStock.takeByGenerationID(strings.TrimPrefix(id, "word:")); prepared != nil {
+			if prepared := wordStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "word:"))); prepared != nil {
 				return TopicStockPlaybackItem{ID: id, Stock: string(prepared.Category), Label: wordTopicCategoryLabel(prepared.Category), Topic: prepared.Topic, word: prepared}, nil
 			}
 		}
 	case strings.HasPrefix(id, "forecast:"):
 		if forecastStock != nil {
-			if prepared := forecastStock.takeByGenerationID(strings.TrimPrefix(id, "forecast:")); prepared != nil {
+			if prepared := forecastStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "forecast:"))); prepared != nil {
 				return TopicStockPlaybackItem{ID: id, Stock: "forecast", Label: prepared.Domain.Name, Topic: prepared.Topic, forecast: prepared}, nil
 			}
 		}

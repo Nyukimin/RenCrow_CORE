@@ -156,7 +156,7 @@ func (s *JSONLStore) ListDreamConsolidationRuns(_ context.Context, limit int) ([
 		return nil
 	})
 	return latestByID(items, normalizedLimit(limit), func(item domainkm.DreamConsolidationRun) string {
-		return item.RunID
+		return string(item.RunID)
 	}), err
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreSavesKnowledgeMemoryRecords(t *testing.T) {
@@ -62,8 +63,11 @@ func TestSQLiteStoreSavesKnowledgeMemoryRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveTemporalMemoryMarker() error = %v", err)
 	}
+	dreamRunID := modulecore.NewRunID()
 	if err := store.SaveDreamConsolidationRun(context.Background(), domainkm.DreamConsolidationRun{
-		RunID:        "dream_1",
+		TaskID:       modulecore.NewTaskID(),
+		RunID:        dreamRunID,
+		ActorID:      "mio",
 		Status:       "proposal",
 		ReviewStatus: "pending",
 		CreatedAt:    now,
@@ -88,6 +92,16 @@ func TestSQLiteStoreSavesKnowledgeMemoryRecords(t *testing.T) {
 	assertOne("markers", err, len(markers))
 	dreams, err := store.ListDreamConsolidationRuns(context.Background(), 10)
 	assertOne("dreams", err, len(dreams))
+	if dreams[0].RunID != dreamRunID {
+		t.Fatalf("dream run id = %q, want %q", dreams[0].RunID, dreamRunID)
+	}
+	var storedRunID string
+	if err := store.db.QueryRow(`SELECT run_id FROM dream_consolidation_run`).Scan(&storedRunID); err != nil {
+		t.Fatalf("query dream run_id: %v", err)
+	}
+	if storedRunID != string(dreamRunID) {
+		t.Fatalf("dream run_id column = %q, want %q", storedRunID, string(dreamRunID))
+	}
 }
 
 func TestSQLiteStoreRejectsUnprotectedPersonalArchive(t *testing.T) {

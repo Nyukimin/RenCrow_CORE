@@ -78,11 +78,14 @@ func TestGenerateTopicFromChatConsumesWordStockWithoutWorkerProvider(t *testing.
 		"chatworker": workerProvider,
 	})
 	stock := newWordTopicStock("")
+	taskID, runID := testIdleChatRunIdentityPair()
 	if !stock.push(WordPreparedTopic{
 		Category: TopicCategorySingle,
 		Topic:    "郵便と古書店に残る、宛先不明の手紙の扱い方",
 		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "郵便"},
 		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
 	}) {
 		t.Fatal("failed to prepare word topic stock")
 	}

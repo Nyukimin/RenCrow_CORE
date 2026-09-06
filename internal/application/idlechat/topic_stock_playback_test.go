@@ -4,28 +4,34 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestTopicStockPlaybackMovesForwardAndBackWithoutRestoringConsumedStock(t *testing.T) {
 	wordStock := newWordTopicStock("")
+	wordRunID := modulecore.NewRunID()
+	wordTaskID := modulecore.NewTaskID()
 	if !wordStock.push(WordPreparedTopic{
 		Category: TopicCategorySingle, Topic: "駅前の店で防災設備を選ぶ最後の判断者は誰か",
 		Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "防災"}, Axis: "観察",
-		GenerationID: "word-1", Created: time.Now().UTC(),
+		TaskID: wordTaskID, RunID: wordRunID, Created: time.Now().UTC(),
 	}) {
 		t.Fatal("word topic push failed")
 	}
 	forecastStock := newForecastTopicStock("")
 	domain := forecastDomains[0]
+	forecastRunID := modulecore.NewRunID()
+	forecastTaskID := modulecore.NewTaskID()
 	if !forecastStock.push(domain.Name, PreparedTopic{
 		Domain: domain, Topic: "AIの普及で地域の窓口が2年後に担う相談の変化",
-		Seeds: []string{"窓口", "AI"}, GenerationID: "forecast-1", Created: time.Now().UTC(),
+		Seeds: []string{"窓口", "AI"}, TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC(),
 	}) {
 		t.Fatal("forecast topic push failed")
 	}
 
 	orchestrator := &IdleChatOrchestrator{wordTopicStock: wordStock, topicStockBuf: forecastStock}
-	first, err := orchestrator.selectTopicStockPlaybackItem(TopicStockPlaybackPlay, wordPlaybackID("word-1"))
+	first, err := orchestrator.selectTopicStockPlaybackItem(TopicStockPlaybackPlay, wordPlaybackID(wordRunID))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -530,7 +530,7 @@ func readSourceSnapshot(root string) (sourceSnapshot, error) {
 	if snapshot.temporal, err = readLatestJSONL(jsonl.temporalPath, func(item domainkm.TemporalMemoryMarker) string { return item.MarkerID }, domainkm.ValidateTemporalMemoryMarker); err != nil {
 		return snapshot, err
 	}
-	if snapshot.dream, err = readLatestJSONL(jsonl.dreamPath, func(item domainkm.DreamConsolidationRun) string { return item.RunID }, domainkm.ValidateDreamConsolidationRun); err != nil {
+	if snapshot.dream, err = readLatestJSONL(jsonl.dreamPath, func(item domainkm.DreamConsolidationRun) string { return string(item.RunID) }, domainkm.ValidateDreamConsolidationRun); err != nil {
 		return snapshot, err
 	}
 	accumulator := newManifestAccumulator()
@@ -556,7 +556,7 @@ func readSourceSnapshot(root string) (sourceSnapshot, error) {
 	}
 	for _, item := range snapshot.dream {
 		payload, _ := json.Marshal(item)
-		accumulator.Add("dream_consolidation_run", item.RunID, payload)
+		accumulator.Add("dream_consolidation_run", string(item.RunID), payload)
 	}
 	snapshot.count = accumulator.Count
 	snapshot.hash = hex.EncodeToString(accumulator.Hash.Sum(nil))

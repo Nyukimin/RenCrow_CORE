@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/google/uuid"
 )
 
@@ -26,6 +28,7 @@ type StoryEpisodeService struct {
 	maxSuffixRegenerations int
 	prepareMu              sync.Mutex
 	checkpoints            *GenerationCheckpointStore
+	runIssuer              idlechatRunIssuer
 }
 
 func (s *StoryEpisodeService) SetGenerationCheckpointStore(store *GenerationCheckpointStore) {
@@ -34,6 +37,15 @@ func (s *StoryEpisodeService) SetGenerationCheckpointStore(store *GenerationChec
 	}
 	s.prepareMu.Lock()
 	s.checkpoints = store
+	s.prepareMu.Unlock()
+}
+
+func (s *StoryEpisodeService) SetRunIssuer(issuer idlechatRunIssuer) {
+	if s == nil {
+		return
+	}
+	s.prepareMu.Lock()
+	s.runIssuer = issuer
 	s.prepareMu.Unlock()
 }
 
@@ -208,16 +220,35 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 		}
 		checkpointKey := "story:prepare"
 		checkpoint, found := s.checkpoints.Get(checkpointKey)
-		if found && checkpoint.StoryArtifact != nil && s.store.hasGenerationID(checkpoint.StoryArtifact.GenerationID) {
+		if found && checkpoint.StoryArtifact != nil && s.store.hasRunID(checkpoint.StoryArtifact.RunID) {
 			_ = s.checkpoints.Delete(checkpointKey)
 			continue
+		}
+		if found {
+			if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+				_ = s.checkpoints.Delete(checkpointKey)
+				found = false
+			}
 		}
 		if !found {
 			s.store.recordGenerationAttempt()
 			seed := s.seedForAttempt(attempt, replacementFor)
-			checkpoint = GenerationCheckpoint{
-				Key: checkpointKey, Kind: "story", GenerationID: "story-job-" + uuid.NewString(), Stage: "seed", StorySeed: &seed,
+			taskID, runID, err := issueIdleChatRun(ctx, s.runIssuer, "IdleChat story episode", "shiro", domaintask.RunStartReasonFirst, "")
+			if err != nil {
+				return err
 			}
+			checkpoint = GenerationCheckpoint{
+				Key: checkpointKey, Kind: "story", TaskID: taskID, RunID: runID, Stage: "seed", StorySeed: &seed,
+			}
+			if err := s.checkpoints.Put(checkpoint); err != nil {
+				return err
+			}
+		} else {
+			runID, err := resumeIdleChatRun(ctx, s.runIssuer, checkpoint.TaskID)
+			if err != nil {
+				return err
+			}
+			checkpoint.RunID = runID
 			if err := s.checkpoints.Put(checkpoint); err != nil {
 				return err
 			}
@@ -232,7 +263,7 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 				continue
 			}
 			var err error
-			artifact, err = s.generateArtifact(ctx, *checkpoint.StorySeed)
+			artifact, err = s.generateArtifact(ctx, *checkpoint.StorySeed, checkpoint.TaskID, checkpoint.RunID)
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -464,7 +495,10 @@ func storyValidationOnlyHasCode(validation StoryValidationResult, code string) b
 	return true
 }
 
-func (s *StoryEpisodeService) generateArtifact(ctx context.Context, seed storyGenerationSeed) (StoryEpisodeArtifact, error) {
+func (s *StoryEpisodeService) generateArtifact(ctx context.Context, seed storyGenerationSeed, taskID modulecore.TaskID, runID modulecore.RunID) (StoryEpisodeArtifact, error) {
+	if err := validateIdleChatRunIdentity(taskID, runID); err != nil {
+		return StoryEpisodeArtifact{}, err
+	}
 	prompt := s.generationPrompt(seed)
 	raw, err := s.generator.Generate(ctx, prompt)
 	if err != nil {
@@ -479,7 +513,8 @@ func (s *StoryEpisodeService) generateArtifact(ctx context.Context, seed storyGe
 	artifact.EpisodeID = "story-" + uuid.NewString()
 	artifact.Revision = 1
 	artifact.EpisodeKind = StoryEpisodeKind
-	artifact.GenerationID = "story-generation-" + uuid.NewString()
+	artifact.TaskID = taskID
+	artifact.RunID = runID
 	artifact.ReplacementForEpisodeID = seed.ReplacementForID
 	artifact.StoryTitle = strings.TrimSpace(artifact.StoryTitle)
 	artifact.Source = seed.Source

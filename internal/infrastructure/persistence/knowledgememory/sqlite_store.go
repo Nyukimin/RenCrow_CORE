@@ -390,7 +390,7 @@ func (s *SQLiteStore) SaveDreamConsolidationRun(ctx context.Context, item domain
 	if err := domainkm.ValidateDreamConsolidationRun(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "dream_consolidation_run", "run_id", item.RunID, "", "", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "dream_consolidation_run", "run_id", string(item.RunID), "", "", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListDreamConsolidationRuns(ctx context.Context, limit int) ([]domainkm.DreamConsolidationRun, error) {

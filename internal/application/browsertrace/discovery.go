@@ -17,10 +17,13 @@ import (
 	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type DiscoverRequest struct {
-	TraceRunID    string
+	TaskID        modulecore.TaskID
+	RunID         modulecore.RunID
+	ActorID       string
 	WorkstreamID  string
 	SiteID        string
 	Goal          string
@@ -48,7 +51,9 @@ func NewDiscovererWithAcceptedPaths(acceptedPaths []string) *Discoverer {
 func (d *Discoverer) Discover(req DiscoverRequest) (domaintrace.DiscoveryResult, error) {
 	now := d.now()
 	run := domaintrace.TraceRun{
-		TraceRunID:   strings.TrimSpace(req.TraceRunID),
+		TaskID:       req.TaskID,
+		RunID:        req.RunID,
+		ActorID:      strings.TrimSpace(req.ActorID),
 		WorkstreamID: strings.TrimSpace(req.WorkstreamID),
 		SiteID:       strings.TrimSpace(req.SiteID),
 		Goal:         strings.TrimSpace(req.Goal),
@@ -183,7 +188,7 @@ func BuildCandidates(run domaintrace.TraceRun, exchanges []domaintrace.Exchange,
 		g := groups[key]
 		ex := g.first
 		templated, pathTemplate, params := TemplatizeURL(ex.Request.URL)
-		candidateID := "api_cand_" + shortHash(run.TraceRunID+"|"+key)
+		candidateID := "api_cand_" + shortHash(string(run.RunID)+"|"+key)
 		risk := "low"
 		if strings.ToUpper(ex.Request.Method) == "POST" {
 			risk = "medium"
@@ -193,7 +198,9 @@ func BuildCandidates(run domaintrace.TraceRun, exchanges []domaintrace.Exchange,
 		}
 		candidate := domaintrace.APICandidate{
 			CandidateID:          candidateID,
-			TraceRunID:           run.TraceRunID,
+			TaskID:               run.TaskID,
+			RunID:                run.RunID,
+			ActorID:              run.ActorID,
 			SiteID:               run.SiteID,
 			Method:               strings.ToUpper(ex.Request.Method),
 			ObservedURL:          ex.Request.URL,
@@ -225,8 +232,10 @@ func BuildCandidates(run domaintrace.TraceRun, exchanges []domaintrace.Exchange,
 		}
 	}
 	coverage := domaintrace.APICoverageReport{
-		ReportID:              "api_cov_" + shortHash(run.TraceRunID),
-		TraceRunID:            run.TraceRunID,
+		ReportID:              "api_cov_" + shortHash(string(run.RunID)),
+		TaskID:                run.TaskID,
+		RunID:                 run.RunID,
+		ActorID:               run.ActorID,
 		ObservedFlows:         []string{"network_trace"},
 		ObservedEndpoints:     endpoints,
 		MissingFlows:          []string{"error cases", "pagination edge cases", "terms review"},
