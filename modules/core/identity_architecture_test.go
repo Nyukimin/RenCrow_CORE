@@ -1549,6 +1549,103 @@ func TestStep18WorkstreamAtlasBacklogLegacyFieldsAreBanned(t *testing.T) {
 	canonicalArchitectureFail(t, "Step18 owner packages must not retain legacy backlog/workstream atlas ItemID fields", violations)
 }
 
+func TestStep19ViewerOTelGraphLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"job_id",
+		"chat_id",
+	}
+	syntheticTraceMarkers := []string{
+		`fmt.Sprintf("trace-`,
+		`"trace-"`,
+		`'trace-'`,
+		`trace-%d`,
+	}
+	var violations []string
+	allowLegacyToken := func(relative, line, token string) bool {
+		return false
+	}
+	allowSyntheticTrace := func(relative, line string) bool {
+		if strings.Contains(line, "browser-trace-api") {
+			return true
+		}
+		return false
+	}
+	checkContent := func(relative string, content []byte) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if !canonicalSourceContainsToken(line, token) {
+					continue
+				}
+				if allowLegacyToken(relative, line, token) {
+					continue
+				}
+				violations = append(violations, fmt.Sprintf("%s:%d:legacy-step19:%s", relative, lineNumber+1, token))
+			}
+			for _, marker := range syntheticTraceMarkers {
+				if strings.Contains(line, marker) && !allowSyntheticTrace(relative, line) {
+					violations = append(violations, fmt.Sprintf("%s:%d:synthetic-trace-step19:%s", relative, lineNumber+1, marker))
+				}
+			}
+		}
+	}
+	walkGoDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		info, err := os.Stat(root)
+		if os.IsNotExist(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("stat Step19 owner %s: %v", relative, err)
+		}
+		if !info.IsDir() {
+			checkContent(relative, mustReadFile(t, root))
+			return
+		}
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			checkContent(filepath.ToSlash(rel), mustReadFile(t, path))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step19 owner %s: %v", relative, err)
+		}
+	}
+	walkGoDirectory("internal/application/otelexport")
+	for _, relative := range []string{
+		"internal/adapter/viewer/assets/js/viewer.js",
+		"internal/adapter/viewer/assets/js/tabs/timeline.js",
+		"internal/adapter/viewer/assets/js/tabs/ops.js",
+		"internal/adapter/viewer/assets/js/tabs/idlechat.js",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step19 Viewer/OTel graph owners must not retain legacy identity fields or synthetic trace IDs", violations)
+}
 
 func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)

@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Event struct {
@@ -67,6 +69,11 @@ func (s *Service) Export(ctx context.Context, req ExportRequest) (ExportReport, 
 		sampleRate = 1
 	}
 	events, dropped := sampleEvents(req.Events, sampleRate)
+	events, traceDropped := filterEventsWithCanonicalTraceID(events)
+	dropped += traceDropped
+	if len(events) == 0 {
+		return ExportReport{}, fmt.Errorf("no events with canonical trace_id")
+	}
 	payload, redacted := s.buildPayload(firstNonEmpty(req.Service, "rencrow"), events)
 	report := ExportReport{
 		Status:       "preview",
@@ -115,9 +122,10 @@ func (s *Service) buildPayload(service string, events []Event) (map[string]any, 
 			}
 			attrs = append(attrs, map[string]string{"key": key, "value": value})
 		}
+		traceID := strings.TrimSpace(event.TraceID)
 		spans = append(spans, map[string]any{
 			"name":        firstNonEmpty(event.Name, fmt.Sprintf("rencrow.event.%d", i+1)),
-			"trace_id":    firstNonEmpty(event.TraceID, fmt.Sprintf("trace-%d", i+1)),
+			"trace_id":    traceID,
 			"span_id":     firstNonEmpty(event.SpanID, fmt.Sprintf("span-%d", i+1)),
 			"parent_id":   event.ParentID,
 			"kind":        firstNonEmpty(event.Kind, "internal"),
@@ -136,6 +144,19 @@ func (s *Service) buildPayload(service string, events []Event) (map[string]any, 
 			}},
 		}},
 	}, redacted
+}
+
+func filterEventsWithCanonicalTraceID(events []Event) ([]Event, int) {
+	out := make([]Event, 0, len(events))
+	skipped := 0
+	for _, event := range events {
+		if modulecore.TraceID(strings.TrimSpace(event.TraceID)).Validate() != nil {
+			skipped++
+			continue
+		}
+		out = append(out, event)
+	}
+	return out, skipped
 }
 
 func sampleEvents(events []Event, sampleRate float64) ([]Event, int) {

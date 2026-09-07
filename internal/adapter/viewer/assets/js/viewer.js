@@ -90,10 +90,9 @@ function eventKey(ev) {
     ev.from || '',
     ev.to || '',
     ev.route || '',
-    ev.job_id || '',
+    ev.task_id || '',
     ev.session_id || '',
     ev.channel || '',
-    ev.chat_id || '',
     structuredIDs.messageId,
     structuredIDs.responseId,
     structuredIDs.utteranceId,
@@ -1385,7 +1384,7 @@ function matchesFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.job_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
 }
@@ -1567,7 +1566,7 @@ function ingestLatencyMetricEvent(ev) {
     valueMS: Number(payload.since_ms !== undefined ? payload.since_ms : payload.elapsed_ms),
     detail: payload.detail || '',
     route: ev.route || '',
-    job: ev.job_id || '',
+    job: ev.task_id || '',
     session: ev.session_id || '',
     source: 'server',
   });
@@ -1577,7 +1576,7 @@ function ingestLatencyMetricEvent(ev) {
       valueMS: Math.max(0, nowLatencyMS() - emittedAt),
       detail: String(payload.kind || '-') + '/' + String(payload.point || '-'),
       route: ev.route || '',
-      job: ev.job_id || '',
+      job: ev.task_id || '',
       session: ev.session_id || '',
     });
   }
@@ -1589,7 +1588,7 @@ function noteViewerEventLatency(ev, receivedMS) {
     ingestLatencyMetricEvent(ev);
     return;
   }
-  const job = String(ev.job_id || '').trim();
+  const job = String(ev.task_id || '').trim();
   const eventType = String(ev.type || '').trim();
   if (eventType === 'message.received') {
     const key = 'sse-message:' + String(ev.seq || ev.timestamp || receivedMS);
@@ -1786,7 +1785,7 @@ function matchesThinkingFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && id !== fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.job_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
 }
@@ -1799,7 +1798,7 @@ function renderThinkingDots(el) {
 function addThinkingStart(ev) {
   if (!matchesThinkingFilters(ev)) return;
   if (!shouldRenderThinking(ev)) return;
-  const jid = ev.job_id || '_';
+  const jid = ev.task_id || '_';
   if (thinkingBubbles[jid]) return;
   const f = ag(thinkingDisplayAgentID(ev));
   const el = document.createElement('div');
@@ -1823,7 +1822,7 @@ function addThinkingStart(ev) {
 function addThinking(ev) {
   if (!matchesThinkingFilters(ev)) return;
   if (!shouldRenderThinking(ev)) return;
-  const jid = ev.job_id || '_';
+  const jid = ev.task_id || '_';
   let b = thinkingBubbles[jid];
   if (!b) {
     const f = ag(thinkingDisplayAgentID(ev));
@@ -2020,7 +2019,6 @@ function upsertSession(ev) {
   }
   s.count++;
   if (ev.channel) s.channel = ev.channel;
-  if (ev.chat_id) s.chatID = ev.chat_id;
   if (ev.route) s.lastRoute = ev.route;
   if (ev.from === 'user' && ev.content) s.lastUserMessage = ev.content;
   if (ev.from) s.agents[ev.from] = true;
@@ -2029,7 +2027,7 @@ function upsertSession(ev) {
 }
 
 function upsertJob(ev) {
-  const jid = ev.job_id || '-';
+  const jid = ev.task_id || '-';
   if (jid === '-') return;
   let j = state.jobs[jid];
   if (!j) {
@@ -2073,7 +2071,7 @@ function applyMonitorStatusSnapshot(payload) {
       lastEvent: item.last_event || '-',
       preview: item.preview || '-',
       updatedAt: item.updated_at || '',
-      jobID: item.job_id || '-',
+      jobID: item.task_id || '-',
     });
   });
   renderOverview();
@@ -2083,7 +2081,7 @@ function applyMonitorStatusSnapshot(payload) {
 
 function addOpenTask(owner, ev) {
   if (!AGENTS.includes(owner)) return;
-  const jid = ev.job_id || '';
+  const jid = ev.task_id || '';
   if (!jid) return;
   state.openTasks[owner][jid] = {
     jobID: jid,
@@ -2109,7 +2107,7 @@ function openTaskSummary(agentID) {
 function updateAgents(ev) {
   const ts = ev.timestamp || new Date().toISOString();
   const route = ev.route || '-';
-  const jid = ev.job_id || '-';
+  const jid = ev.task_id || '-';
 
   if (ev.type === 'message.received') {
     touchAgent('mio', {state: 'running', route, lastEvent: ev.type, peer: ev.from || '-', preview: short(ev.content, 80), updatedAt: ts, jobID: jid});
@@ -2221,7 +2219,7 @@ function renderEvidence() {
     const tb = Date.parse(b.finished_at || b.created_at || 0) || 0;
     return state.evidenceSortDesc ? (tb - ta) : (ta - tb);
   });
-  state.evidenceOrder = list.map((r) => String(r.job_id || '')).filter((id) => id !== '');
+  state.evidenceOrder = list.map((r) => String(r.task_id || '')).filter((id) => id !== '');
   if (state.selectedEvidenceJobID && state.evidenceOrder.indexOf(state.selectedEvidenceJobID) < 0) {
     state.selectedEvidenceJobID = '';
     state.selectedEvidenceItem = null;
@@ -2244,27 +2242,27 @@ function renderEvidence() {
     const ek = String(r.error_kind || '');
     const stepsCount = Array.isArray(r.steps) ? r.steps.length : 0;
     const verifyCount = isVerificationReport ? Number(r.claim_count || 0) : (Array.isArray(r.verification) ? r.verification.length : 0);
-    const latestVerify = isVerificationReport ? latestVerificationReportLink(r.job_id || '', r.status) : latestVerificationLink(r.job_id || '', r.verification);
+    const latestVerify = isVerificationReport ? latestVerificationReportLink(r.task_id || '', r.status) : latestVerificationLink(r.task_id || '', r.verification);
     const tr = document.createElement('tr');
-    if ((r.job_id || '') === (state.selectedEvidenceJobID || '')) tr.classList.add('evi-selected');
+    if ((r.task_id || '') === (state.selectedEvidenceJobID || '')) tr.classList.add('evi-selected');
     tr.innerHTML =
-      '<td class="code">' + esc((isVerificationReport ? 'verification_report:' : 'execution_report:') + (r.job_id || '-')) + '</td>' +
-      '<td class="code">' + esc(r.job_id || '-') + '</td>' +
+      '<td class="code">' + esc((isVerificationReport ? 'verification_report:' : 'execution_report:') + (r.task_id || '-')) + '</td>' +
+      '<td class="code">' + esc(r.task_id || '-') + '</td>' +
       '<td><span class="badge ' + stateClass(st) + '">' + esc(r.status || '-') + '</span></td>' +
       '<td><span class="badge ' + (isVerificationReport ? 'state-thinking' : errorKindClass(ek)) + '">' + esc(ek || r.trigger_level || '-') + '</span></td>' +
       '<td>' + latestVerify + '</td>' +
-      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.job_id || '') + '\', \'steps\', event)">' + esc(String(stepsCount)) + '</button></td>' +
-      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.job_id || '') + '\', \'verification\', event)">' + esc(String(verifyCount)) + '</button></td>' +
-      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.job_id || '') + '\', \'\', event)">' + esc(short(r.goal || r.route || '-', 90)) + '</button></td>' +
+      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.task_id || '') + '\', \'steps\', event)">' + esc(String(stepsCount)) + '</button></td>' +
+      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.task_id || '') + '\', \'verification\', event)">' + esc(String(verifyCount)) + '</button></td>' +
+      '<td><button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(r.task_id || '') + '\', \'\', event)">' + esc(short(r.goal || r.route || '-', 90)) + '</button></td>' +
       '<td>' + esc(String(r.attempt_count || 0)) + '</td>' +
       '<td>' + esc(String(r.repair_count || 0)) + '</td>' +
       '<td>' + esc(fdt(r.finished_at)) + '</td>' +
-      '<td><button class="ctl-btn" onclick="openEvidence(\'' + esc(r.job_id || '') + '\')">View</button></td>';
+      '<td><button class="ctl-btn" onclick="openEvidence(\'' + esc(r.task_id || '') + '\')">View</button></td>';
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', function(evt) {
       const t = evt.target;
       if (t && t.tagName === 'BUTTON') return;
-      openEvidence(r.job_id || '');
+      openEvidence(r.task_id || '');
     });
     body.appendChild(tr);
   });
@@ -2272,9 +2270,9 @@ function renderEvidence() {
 
 function combinedEvidenceList() {
   const out = Array.isArray(state.evidence) ? state.evidence.slice() : [];
-  const seenJobs = new Set(out.map((r) => String(r.job_id || '')).filter((id) => id !== ''));
+  const seenJobs = new Set(out.map((r) => String(r.task_id || '')).filter((id) => id !== ''));
   (state.verificationReports || []).forEach((r) => {
-    const jobID = String(r.job_id || '');
+    const jobID = String(r.task_id || '');
     if (!jobID || seenJobs.has(jobID)) return;
     out.push(Object.assign({_kind: 'verification_report'}, r));
   });
@@ -2382,7 +2380,7 @@ function refreshOpsData() {
       state.ops.opsLogsFetchError = '';
       state.ops.persistedLogs = items;
       state.ops.lastMioReport = items.find((ev) => String(ev.from || '').toLowerCase() === 'mio' && String(ev.to || '').toLowerCase() === 'user') || null;
-      state.ops.latestJobID = items[0] ? (items[0].job_id || '') : '';
+      state.ops.latestJobID = items[0] ? (items[0].task_id || '') : '';
       state.ops.latestRoute = items[0] ? (items[0].route || '') : '';
       state.ops.latestError = items.find((ev) => {
         const t = String(ev.type || '').toLowerCase();
@@ -3010,16 +3008,16 @@ function refreshEvidence() {
       renderDeskViews();
       if (state.pendingEvidenceJobID) {
         const want = state.pendingEvidenceJobID;
-        const found = state.evidence.some((r) => String(r.job_id || '') === want);
+        const found = state.evidence.some((r) => String(r.task_id || '') === want);
         if (found) {
           state.pendingEvidenceJobID = '';
           openEvidence(want);
         } else {
           const detail = document.getElementById('evidenceDetail');
-          if (detail) detail.innerHTML = '<span class="badge state-error">not found</span> job_id=' + esc(want);
+          if (detail) detail.innerHTML = '<span class="badge state-error">not found</span> task_id=' + esc(want);
           state.pendingEvidenceJobID = '';
           if (state.evidenceOrder.length > 0) {
-            showToast('job_id not found, switched to newest evidence', 'error');
+            showToast('task_id not found, switched to newest evidence', 'error');
             openEvidence(state.evidenceOrder[0]);
           }
         }
@@ -3120,9 +3118,9 @@ function openEvidence(jobID) {
   state.selectedEvidenceJobID = jobID;
   syncEvidenceQuery(jobID);
   renderEvidence();
-  const hasVerificationOnly = (state.verificationReports || []).some((r) => String(r.job_id || '') === String(jobID)) &&
-    !(state.evidence || []).some((r) => String(r.job_id || '') === String(jobID));
-  const detailURL = hasVerificationOnly ? '/viewer/verification/detail?job_id=' : '/viewer/evidence/detail?job_id=';
+  const hasVerificationOnly = (state.verificationReports || []).some((r) => String(r.task_id || '') === String(jobID)) &&
+    !(state.evidence || []).some((r) => String(r.task_id || '') === String(jobID));
+  const detailURL = hasVerificationOnly ? '/viewer/verification/detail?task_id=' : '/viewer/evidence/detail?task_id=';
   fetch(detailURL + encodeURIComponent(jobID))
     .then((r) => {
       if (!r.ok) {
@@ -3150,7 +3148,7 @@ function openEvidence(jobID) {
       const el = document.getElementById('evidenceDetail');
       if (el) {
         const msg = String(err && err.message ? err.message : 'error');
-        el.innerHTML = '<span class="badge state-error">' + esc(msg) + '</span> job_id=' + esc(jobID);
+        el.innerHTML = '<span class="badge state-error">' + esc(msg) + '</span> task_id=' + esc(jobID);
       }
       if (state.evidenceOrder.length > 0 && String(state.evidenceOrder[0]) !== String(jobID)) {
         showToast('evidence unavailable, switched to newest evidence', 'error');
@@ -3247,7 +3245,7 @@ function renderEvidenceDetail(item) {
   const stepHTML = steps.length > 0 ? steps.map((s, i) => (String(i + 1) + '. ' + esc(s))).join('<br>') : '-';
   const verifyHTML = verification.length > 0 ? verification.map((v, i) => (String(i + 1) + '. ' + renderVerificationLine(v))).join('<br>') : '-';
   return '' +
-    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.job_id || '-') + '</span></div>' +
+    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
     '<div class="row"><span>Status</span><span class="badge ' + statusClass + '">' + esc(item.status || '-') + '</span></div>' +
     '<div class="row"><span>Error Kind</span><span class="badge ' + errorKindClass(item.error_kind || '') + '">' + esc(item.error_kind || '-') + '</span></div>' +
     '<div class="row"><span>Goal</span><span>' + esc(item.goal || '-') + '</span></div>' +
@@ -3289,7 +3287,7 @@ function renderVerificationReportDetail(item) {
   }).join('<br>') : '-';
   const questionHTML = questions.length > 0 ? questions.map((q, i) => String(i + 1) + '. ' + esc(q.query || '-')).join('<br>') : '-';
   return '' +
-    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.job_id || '-') + '</span></div>' +
+    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
     '<div class="row"><span>Status</span><span class="badge ' + stateClass(verificationStatusClass(status)) + '">' + esc(status) + '</span></div>' +
     '<div class="row"><span>Trigger</span><span class="badge state-thinking">' + esc(item.trigger_level || '-') + '</span></div>' +
     '<div class="row"><span>Route</span><span>' + esc(item.route || '-') + '</span></div>' +
@@ -3343,7 +3341,7 @@ function latestVerificationLabel(list) {
 
 function buildEvidenceSummary(item) {
   const parts = [
-    'job_id=' + String(item.job_id || '-'),
+    'task_id=' + String(item.task_id || '-'),
     'status=' + String(item.status || '-'),
     'error_kind=' + String(item.error_kind || '-'),
     'latest_verify=' + latestVerificationLabel(item.verification),
@@ -3357,8 +3355,8 @@ function buildEvidenceSummary(item) {
 function syncEvidenceQuery(jobID) {
   if (!window.history || !window.history.replaceState) return;
   const u = new URL(window.location.href);
-  if (jobID) u.searchParams.set('job_id', String(jobID));
-  else u.searchParams.delete('job_id');
+  if (jobID) u.searchParams.set('task_id', String(jobID));
+  else u.searchParams.delete('task_id');
   window.history.replaceState(null, '', u.toString());
 }
 
@@ -3460,7 +3458,7 @@ function setOptionalPanelRefreshIntervals() {
 function initEvidenceFromQuery() {
   try {
     const u = new URL(window.location.href);
-    const q = (u.searchParams.get('job_id') || '').trim();
+    const q = (u.searchParams.get('task_id') || '').trim();
     if (q) {
       state.pendingEvidenceJobID = q;
       switchTab('jobs');
@@ -3613,7 +3611,7 @@ function ingestEvent(ev) {
     pushDebugTrace('think', {
       time: ftime(ev.timestamp),
       agent: agName(ev.from || '-'),
-      job: ev.job_id || '-',
+      job: ev.task_id || '-',
       text: short(ev.content || '', 240),
     });
   }
@@ -3636,7 +3634,7 @@ function rememberJobNotificationKey(key) {
 
 function jobNotificationEventKey(ev) {
   return [
-    ev.job_id || '',
+    ev.task_id || '',
     ev.status || ev.category || '',
     ev.level || '',
     ev.timestamp || '',
@@ -3646,7 +3644,7 @@ function jobNotificationEventKey(ev) {
 
 function jobNotificationKey(n) {
   return [
-    n.job_id || '',
+    n.task_id || '',
     n.status || '',
     n.level || '',
     n.created_at || '',
@@ -3684,7 +3682,7 @@ function jobNotificationToEvent(n) {
     to: 'mio',
     content: formatNotificationContent(n),
     route: String((n && n.route) || '').trim(),
-    job_id: String((n && n.job_id) || '').trim(),
+    task_id: String((n && n.task_id) || '').trim(),
     timestamp: String((n && n.created_at) || new Date().toISOString()),
     category: status,
     status,
@@ -3779,7 +3777,7 @@ function isStaleIdleChatEvent(ev) {
 	if (!state.idleChat.interrupted) return false;
 	const type = String(ev.type || '').trim();
 	if (type === 'idlechat.message' || type === 'idlechat.summary' || type === 'idlechat.topic') {
-		return isStoppedIdleChatSession(String(ev.session_id || ev.chat_id || '').trim());
+		return isStoppedIdleChatSession(String(ev.session_id || '').trim());
 	}
 	if (type === 'tts.audio_chunk') {
 		try {
@@ -5476,11 +5474,11 @@ async function requestRepairFromChat() {
       target_route: 'CHAT',
       target_agent: 'mio',
     });
-    showToast('修復ジョブを受け付けました: ' + String(payload.job_id || ''), 'success');
-    ingestJobNotification({
+    showToast('修復ジョブを受け付けました: ' + String(payload.task_id || ''), 'success');
+    ingestTaskNotification({
       type: 'repair',
       level: 'interrupt',
-      job_id: String(payload.job_id || ''),
+      task_id: String(payload.task_id || ''),
       title: '修復ジョブを受け付けました',
       assignee: 'shiro',
       route: 'OPS',
@@ -6506,7 +6504,6 @@ function sendVDSSessionStart() {
     voice_input_mode: 'vds_sub',
     viewer_session_id: 'viewer',
     channel: 'viewer',
-    chat_id: 'default',
     prompt: VDS_DEFAULT_PROMPT,
   };
   vdsState.ws.send(JSON.stringify(control));
@@ -6679,10 +6676,9 @@ function renderVDSFinalTranscriptToChat(text, msg) {
     from: 'user',
     to: 'mio',
     route: 'CHAT',
-    job_id: String((msg && msg.utterance_id) || vdsState.utteranceID || '').trim(),
+    utterance_id: String((msg && msg.utterance_id) || vdsState.utteranceID || '').trim(),
     session_id: String((msg && msg.session_id) || vdsState.sessionID || 'viewer').trim(),
     channel: 'viewer',
-    chat_id: 'default',
     timestamp: new Date().toISOString(),
     content: finalText,
   });

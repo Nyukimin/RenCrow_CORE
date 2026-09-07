@@ -28,7 +28,7 @@ function buildViewerSendRequest(message) {
 const voiceDirectTimelineJobIDs = new Set();
 
 function rememberVoiceDirectTimelineJob(ev) {
-  const jobID = String(ev && ev.job_id || '').trim();
+  const jobID = String(ev && ev.task_id || '').trim();
   if (!jobID) return;
   const content = String(ev && ev.content || '');
   if (!content.includes('voice_direct')) return;
@@ -40,7 +40,7 @@ function rememberVoiceDirectTimelineJob(ev) {
 }
 
 function isVoiceDirectTimelineResponse(ev) {
-  const jobID = String(ev && ev.job_id || '').trim();
+  const jobID = String(ev && ev.task_id || '').trim();
   return !!(jobID && voiceDirectTimelineJobIDs.has(jobID));
 }
 
@@ -66,7 +66,7 @@ function renderTrustedGeneratedImages(message) {
 function addMsgToTimeline(ev) {
   if (ev.type === 'job.notification') { addJobNotificationToTimeline(ev); return; }
   if (ev.type === 'task.notification') { addTaskNotificationToTimeline(ev); return; }
-  if (ev.type === 'agent.response') removeThinking(ev.job_id);
+  if (ev.type === 'agent.response') removeThinking(ev.task_id);
   if (ev.type === 'agent.thinking') { addThinking(ev); return; }
   if (ev.type === 'agent.start') { addThinkingStart(ev); return; }
   if (isCoordinationTraceEvent(ev)) { addCoordinationTraceToTimeline(ev); return; }
@@ -122,7 +122,7 @@ function addCoordinationTraceToTimeline(ev) {
   const f = ag(ev.from);
   const t = ev.to ? ag(ev.to) : null;
   const dir = t && ev.to ? '<span class="dir">→ ' + t.e + ' ' + t.l + '</span>' : '';
-  const meta = [ev.type || '', ev.route || '', ev.job_id || ''].filter(Boolean).join(' / ');
+  const meta = [ev.type || '', ev.route || '', ev.task_id || ''].filter(Boolean).join(' / ');
   const el = document.createElement('div');
   el.className = 'msg assistant coordination-trace';
   el.innerHTML =
@@ -143,7 +143,7 @@ function matchesCoordinationTraceFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.job_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
 }
@@ -155,7 +155,7 @@ function addJobNotificationToTimeline(ev) {
   const f = ag(fromName);
   const route = String(ev.route || '').trim();
   const status = String(ev.status || ev.category || '').trim();
-  const jobID = String(ev.job_id || '').trim();
+  const jobID = String(ev.task_id || '').trim();
   const meta = [route, status, jobID].filter(Boolean).join(' / ');
   const el = document.createElement('div');
   el.className = 'msg assistant job-interrupt';

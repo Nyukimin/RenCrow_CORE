@@ -13,7 +13,7 @@ function currentOpsSummary() {
   const persisted = logsFetchError ? [] : (Array.isArray(state.ops.persistedLogs) ? state.ops.persistedLogs : []);
   const runningJobs = Object.values(state.jobs).filter((j) => String(j.status || '') !== 'done');
   const lastMio = logsFetchError ? null : (state.ops.lastMioReport || latestOpsEventBy((ev) => String(ev.from || '').toLowerCase() === 'mio' && String(ev.to || '').toLowerCase() === 'user'));
-  const latestJobID = logsFetchError ? '' : (state.ops.latestJobID || ((persisted[0] && persisted[0].job_id) || '-'));
+  const latestJobID = logsFetchError ? '' : (state.ops.latestJobID || ((persisted[0] && persisted[0].task_id) || '-'));
   const latestRoute = logsFetchError ? '' : (state.ops.latestRoute || ((persisted[0] && persisted[0].route) || '-'));
   const latestError = logsFetchError ? null : (state.ops.latestError || latestOpsEventBy((ev) => {
     const t = String(ev.type || '').toLowerCase();
@@ -190,7 +190,7 @@ function renderOps() {
     {
       title: 'Mio Last Report',
       big: logsFetchError ? 'unavailable' : (lastMio ? short(lastMio.content || '-', 48) : '-'),
-      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (lastMio ? ('time: ' + fdt(lastMio.timestamp) + '\njob: ' + (lastMio.job_id || '-')) : 'Mio からの最終報告はまだありません'),
+      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (lastMio ? ('time: ' + fdt(lastMio.timestamp) + '\njob: ' + (lastMio.task_id || '-')) : 'Mio からの最終報告はまだありません'),
     },
     {
       title: 'Running Jobs',
@@ -200,7 +200,7 @@ function renderOps() {
     {
       title: 'Last Error',
       big: logsFetchError ? 'unavailable' : (latestError ? short(latestError.type || '-', 24) : 'none'),
-      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (latestError ? (short(latestError.content || '-', 120) + '\njob: ' + (latestError.job_id || '-')) : '直近の失敗イベントなし'),
+      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (latestError ? (short(latestError.content || '-', 120) + '\njob: ' + (latestError.task_id || '-')) : '直近の失敗イベントなし'),
     },
     {
       title: 'Active Agents',
@@ -268,7 +268,7 @@ function renderOps() {
       '<td><span class="ops-log-level ' + levelClass + '">' + esc(level) + '</span></td>' +
       '<td>' + esc(ev.type || '-') + '</td>' +
       '<td>' + esc(agName(ev.from || '-')) + ' → ' + esc(agName(ev.to || '-')) + '</td>' +
-      '<td class="code">' + esc(ev.job_id || '-') + '</td>' +
+      '<td class="code">' + esc(ev.task_id || '-') + '</td>' +
       '<td>' + esc(ev.route || '-') + '</td>' +
       '<td>' + esc(short(ev.content || '-', 140)) + '</td>';
     feedBody.appendChild(tr);
@@ -875,8 +875,8 @@ function skillEvidenceAuditRows() {
     rows.push({
       time: sandboxField(item, 'created_at', 'CreatedAt'),
       kind: 'coder_transcript',
-      id: sandboxField(item, 'event_id', 'EventID') || sandboxField(item, 'entry_id', 'EntryID') || sandboxField(item, 'job_id', 'JobID') || '',
-      target: sandboxField(item, 'skill_id', 'SkillID') || sandboxField(item, 'job_id', 'JobID') || '',
+      id: sandboxField(item, 'event_id', 'EventID') || sandboxField(item, 'entry_id', 'EntryID') || sandboxField(item, 'task_id', 'TaskID') || '',
+      target: sandboxField(item, 'skill_id', 'SkillID') || sandboxField(item, 'task_id', 'TaskID') || '',
       status: String(sandboxField(item, 'status', 'Status') || segment || 'recorded'),
       evidenceOK: evidencePath.trim() !== '',
       evidence: evidencePath || 'missing evidence_path',
@@ -888,7 +888,7 @@ function skillEvidenceAuditRows() {
 function countCoderTranscriptEvidencePairs(transcripts) {
   const groups = new Map();
   transcripts.forEach((item) => {
-    const key = String(sandboxField(item, 'job_id', 'JobID') || sandboxField(item, 'session_id', 'SessionID') || sandboxField(item, 'entry_id', 'EntryID') || '');
+    const key = String(sandboxField(item, 'task_id', 'TaskID') || sandboxField(item, 'session_id', 'SessionID') || sandboxField(item, 'entry_id', 'EntryID') || '');
     if (!key) return;
     const segment = String(sandboxField(item, 'segment', 'Segment') || '');
     const evidencePath = String(sandboxField(item, 'evidence_path', 'EvidencePath') || '');

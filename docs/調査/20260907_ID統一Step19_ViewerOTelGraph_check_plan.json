@@ -1,0 +1,84 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step19-viewer-otel-graph",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T10:15:00Z",
+  "input": {
+    "base_revision": "pending-after-step17-push",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-19-viewer--otel--graph",
+    "otel_rule": "otelexport requires canonical trc_ TraceID; synthetic trace-{n} fallback is forbidden; events without canonical trace_id are dropped or fail closed without inventing TraceID",
+    "viewer_rule": "high-hit Viewer tabs read task_id session_id trace_id only; job_id and chat_id fallbacks are removed from viewer.js timeline.js ops.js idlechat.js",
+    "handler_rule": "Viewer handlers for those tabs emit task_id not job_id for the same payload fields",
+    "completion_rule": "Step19 bounded owners contain zero job_id chat_id and synthetic trace- generation; full graph rebuild and all tabs remain deferred"
+  },
+  "included": [
+    {
+      "check_id": "s19_otel_trace_id",
+      "guarantee": "otelexport buildPayload and Export never invent trace-{n}; only canonical TraceID spans are exported; invalid or missing trace_id events are dropped with fail-closed when none remain",
+      "owner": "RenCrow_CORE internal/application/otelexport",
+      "execution_phase": "pre-commit",
+      "result_consumer": "OTel export runtime",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s19_viewer_js_task_id",
+      "guarantee": "viewer.js timeline.js ops.js idlechat.js use task_id session_id trace_id reads with zero job_id chat_id legacy field tokens",
+      "owner": "RenCrow_CORE Viewer assets",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Viewer SSE and tab rendering",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s19_viewer_handler_task_id",
+      "guarantee": "Go viewer handlers for timeline ops monitor evidence verification paths emit task_id query and JSON fields aligned with Step19 JS consumers",
+      "owner": "RenCrow_CORE internal/adapter/viewer",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Viewer tab APIs",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s19_architecture_zero",
+      "guarantee": "TestStep19ViewerOTelGraphLegacyFieldsAreBanned passes for otelexport and Step19 Viewer JS owners",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Step19 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s19_predeploy_verification",
+      "guarantee": "go test ./internal/application/otelexport/ go test ./modules/core/ -run TestStep19 go build ./cmd/rencrow/ pass",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s19_full_event_task_comm_graph",
+      "reason": "Full Event Task Communication graph rebuild is outside Step19 bounded IU",
+      "consumer": "Step19 follow-up or Step20 cleanup",
+      "failure_action": "keep outside Step19 zero claim"
+    },
+    {
+      "check_id": "s19_all_viewer_tabs_secret_redaction",
+      "reason": "all Viewer tabs secret-redaction suite is not Step19 scope",
+      "consumer": "Viewer security audit",
+      "failure_action": "keep outside Step19 zero claim"
+    },
+    {
+      "check_id": "s19_sse_reconnect_matrix",
+      "reason": "SSE reconnect full matrix belongs to post-cutover E2E not this bounded IU",
+      "consumer": "Step19 E2E ledger",
+      "failure_action": "keep Step19 open until dedicated E2E pass"
+    },
+    {
+      "check_id": "s19_remaining_viewer_tabs_job_id",
+      "reason": "home develop progress reports system instructions tabs still carry legacy job_id until full graph rebuild",
+      "consumer": "Step19 follow-up IU",
+      "failure_action": "keep outside Step19 architecture zero for non-owner tabs"
+    }
+  ],
+  "replacement_receipts": []
+}
