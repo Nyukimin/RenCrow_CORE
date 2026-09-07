@@ -116,7 +116,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	var blocked, replacement domainbacklog.Item
 	blockedFound, replacementFound := false, false
 	for _, item := range items {
-		byID[item.ItemID] = item
+		byID[string(item.BacklogItemID)] = item
 		if item.ImplementationUnit == freeze.BlockedUnitID {
 			blocked = item
 			blockedFound = true
@@ -142,7 +142,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	for index, ref := range request.BlockerResolutionRefs {
 		verified, verifyErr := s.verifyEvidence(ctx, EvidenceVerificationRequest{
 			Ref:                    ref,
-			ItemID:                 blocked.ItemID,
+			BacklogItemID: string(blocked.BacklogItemID),
 			ImplementationUnitID:   freeze.BlockedUnitID,
 			ImplementationRevision: freeze.BlockedRevision,
 			TargetDeliveryState:    domainbacklog.DeliveryBlocked,

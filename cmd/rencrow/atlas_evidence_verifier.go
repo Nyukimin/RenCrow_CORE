@@ -171,7 +171,7 @@ func (v *atlasEvidenceVerifier) Verify(ctx context.Context, request backlogapp.E
 	ref := request.Ref
 	target := strings.ToUpper(strings.TrimSpace(request.TargetDeliveryState))
 	unitID := strings.TrimSpace(request.ImplementationUnitID)
-	if strings.TrimSpace(request.ItemID) == "" || unitID == "" || request.ImplementationRevision < 1 || target == "" {
+	if strings.TrimSpace(string(request.BacklogItemID)) == "" || unitID == "" || request.ImplementationRevision < 1 || target == "" {
 		return false, errors.New("authoritative Atlas evidence context is incomplete")
 	}
 	if stage := strings.TrimSpace(ref.Stage); stage != "" && !strings.EqualFold(stage, target) {
@@ -275,7 +275,7 @@ func (v *atlasEvidenceVerifier) verifyExecutionReport(ctx context.Context, reque
 		return false, fmt.Errorf("execution report %q has no finished_at", id)
 	}
 	implementationRevision := strconv.Itoa(request.ImplementationRevision)
-	if !executionReportHasAtlasMarker(report, "atlas.item", strings.TrimSpace(request.ItemID)) ||
+	if !executionReportHasAtlasMarker(report, "atlas.item", strings.TrimSpace(string(request.BacklogItemID))) ||
 		!executionReportHasAtlasMarker(report, "atlas.unit", unitID) ||
 		!executionReportHasAtlasMarker(report, "atlas.implementation_revision", implementationRevision) ||
 		!executionReportHasAtlasMarker(report, "atlas.stage", stage) {
@@ -396,7 +396,7 @@ func (v *atlasEvidenceVerifier) verifyProductionSmoke(ctx context.Context, reque
 	if err := v.verifyExecutableRevision(request.Ref.Revision); err != nil {
 		return false, err
 	}
-	itemID := strings.TrimSpace(request.ItemID)
+	itemID := strings.TrimSpace(string(request.BacklogItemID))
 	if itemID == "" {
 		return false, errors.New("production smoke evidence requires authoritative item ID")
 	}
@@ -531,8 +531,8 @@ func verifyAtlasExecutableRevisionWithReader(expected, executablePath string, re
 
 func validateAtlasSmokeItem(payload atlasSmokeProbeResponse, request backlogapp.EvidenceVerificationRequest) error {
 	item := payload.Item
-	if strings.TrimSpace(item.ItemID) != strings.TrimSpace(request.ItemID) {
-		return fmt.Errorf("Atlas smoke item ID %q does not match authoritative %q", item.ItemID, request.ItemID)
+	if strings.TrimSpace(string(item.BacklogItemID)) != strings.TrimSpace(string(request.BacklogItemID)) {
+		return fmt.Errorf("Atlas smoke item ID %q does not match authoritative %q", item.BacklogItemID, request.BacklogItemID)
 	}
 	if strings.TrimSpace(item.ImplementationUnit) != strings.TrimSpace(request.ImplementationUnitID) {
 		return fmt.Errorf("Atlas smoke implementation unit %q does not match authoritative %q", item.ImplementationUnit, request.ImplementationUnitID)

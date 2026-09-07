@@ -21,7 +21,7 @@ import (
 // cannot choose a different implementation unit or revision by editing Ref.
 type EvidenceVerificationRequest struct {
 	Ref                    domainbacklog.EvidenceRef `json:"ref"`
-	ItemID                 string                    `json:"item_id"`
+	BacklogItemID                 string                    `json:"backlog_item_id"`
 	ImplementationUnitID   string                    `json:"implementation_unit_id"`
 	ImplementationRevision int                       `json:"implementation_revision"`
 	TargetDeliveryState    string                    `json:"target_delivery_state"`
@@ -125,7 +125,7 @@ func (s *Service) verifyEvidence(ctx context.Context, request EvidenceVerificati
 		return clean, normalizeErr
 	}
 	request.Ref = normalized
-	if strings.TrimSpace(request.ItemID) == "" || strings.TrimSpace(request.ImplementationUnitID) == "" || request.ImplementationRevision < 1 || strings.TrimSpace(request.TargetDeliveryState) == "" {
+	if strings.TrimSpace(request.BacklogItemID) == "" || strings.TrimSpace(request.ImplementationUnitID) == "" || request.ImplementationRevision < 1 || strings.TrimSpace(request.TargetDeliveryState) == "" {
 		return clean, errors.New("authoritative Atlas evidence context is incomplete")
 	}
 	if s == nil || s.verifier == nil {
@@ -196,6 +196,13 @@ func receiptActionID(request ReviseRequest, existing modulecore.ActionID) module
 	return id
 }
 
+func transitionEventID(existing modulecore.EventID) modulecore.EventID {
+	if existing != "" {
+		return existing
+	}
+	return modulecore.NewEventID()
+}
+
 func (s *Service) findStageReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
 	store, ok := s.workstream.(LifecycleStore)
 	if !ok {
@@ -247,7 +254,7 @@ func (s *Service) findFreeze(ctx context.Context, id string) (domainworkstream.Q
 func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.Item, request ReviseRequest, key, payloadHash string) error {
 	unitID := strings.TrimSpace(next.ImplementationUnit)
 	if unitID == "" {
-		unitID = next.ItemID
+		unitID = string(next.BacklogItemID)
 	}
 	receipt, found, err := s.findClosureReceipt(ctx, key)
 	if err != nil {
@@ -257,10 +264,11 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 	if !found {
 		receipt = domainworkstream.ClosureReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, ""),
-			UnitID: unitID, ItemID: next.ItemID, ImplementationRevision: next.ImplementationRevision,
+			TransitionEventID: transitionEventID(""),
+			UnitID: unitID, BacklogItemID: next.BacklogItemID, ImplementationRevision: next.ImplementationRevision,
 			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
-			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(next.ItemID),
-			ArtifactID: "artifact_atlas_" + safeSegment(next.ItemID), LeaseName: domainbacklog.ImplementationLeaseName,
+			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(string(next.BacklogItemID)),
+			ArtifactID: "artifact_atlas_" + safeSegment(string(next.BacklogItemID)), LeaseName: domainbacklog.ImplementationLeaseName,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		if err := s.saveClosureReceipt(ctx, receipt); err != nil {
@@ -276,7 +284,7 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 			completedAt := now
 			if err := s.workstream.SaveWorkstream(ctx, domainworkstream.Workstream{
 				WorkstreamID: next.WorkstreamID, Name: "Atlas: " + next.Title,
-				Description: "Implementation Unit " + unitID + " for Atlas item " + next.ItemID,
+				Description: "Implementation Unit " + unitID + " for Atlas item " + string(next.BacklogItemID),
 				Status:      domainworkstream.StatusCompleted, PrimaryAgent: "Coder", CreatedAt: now, UpdatedAt: now,
 			}); err != nil {
 				return s.failClosure(ctx, receipt, err)
@@ -336,7 +344,7 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainbacklog.Item, request ReviseRequest) (domainbacklog.Item, error) {
 	unitID := strings.TrimSpace(live.ImplementationUnit)
 	if unitID == "" {
-		unitID = live.ItemID
+		unitID = string(live.BacklogItemID)
 	}
 	doneRequest := request
 	doneRequest.TargetDeliveryState = domainbacklog.DeliveryDone
@@ -369,7 +377,8 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 		}
 		doneReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: doneKey,
-			ActionID: receiptActionID(doneRequest, doneReceipt.ActionID), UnitID: unitID, ItemID: live.ItemID,
+			ActionID: receiptActionID(doneRequest, doneReceipt.ActionID), TransitionEventID: transitionEventID(""),
+			UnitID: unitID, BacklogItemID: live.BacklogItemID,
 			ImplementationRevision: live.ImplementationRevision, TargetStage: domainbacklog.DeliveryDone,
 			PayloadHash: donePayloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: domainbacklog.DeliveryDone, ResultJSON: string(resultJSON), CreatedAt: s.now(),
@@ -422,6 +431,7 @@ func (s *Service) completeBlocked(ctx context.Context, before, next domainbacklo
 	freeze := domainworkstream.QueueFreeze{
 		FreezeID:      queueFreezeID(next.ImplementationUnit, next.ImplementationRevision),
 		BlockedUnitID: next.ImplementationUnit, BlockedRevision: next.ImplementationRevision, FreezeRevision: 1,
+		TransitionEventID:    transitionEventID(""),
 		ReasonCode:           firstNonEmpty(strings.TrimSpace(request.Reason), "stage_failed"),
 		InvalidatedFromStage: next.InvalidatedFromStage,
 		EvidenceRefs:         append([]domainbacklog.EvidenceRef(nil), request.EvidenceRefs...),

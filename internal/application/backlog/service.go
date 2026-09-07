@@ -37,7 +37,7 @@ type ImplementationLeaseStore interface {
 }
 
 type IntakeRequest struct {
-	ItemID             string                    `json:"item_id,omitempty"`
+	BacklogItemID      modulecore.BacklogItemID    `json:"backlog_item_id,omitempty"`
 	FeatureID          string                    `json:"feature_id,omitempty"`
 	Kind               string                    `json:"kind,omitempty"`
 	Title              string                    `json:"title"`
@@ -74,9 +74,9 @@ type ReviseRequest struct {
 }
 
 type IntakeResult struct {
-	Item      domainbacklog.Item `json:"item"`
-	ItemID    string             `json:"item_id"`
-	Duplicate bool               `json:"duplicate"`
+	Item          domainbacklog.Item     `json:"item"`
+	BacklogItemID modulecore.BacklogItemID `json:"backlog_item_id"`
+	Duplicate     bool                   `json:"duplicate"`
 }
 
 type AdoptionResult struct {
@@ -192,7 +192,7 @@ func (s *Service) find(ctx context.Context, id string) (domainbacklog.Item, erro
 		return domainbacklog.Item{}, err
 	}
 	for _, item := range items {
-		if item.ItemID == strings.TrimSpace(id) {
+		if string(item.BacklogItemID) == strings.TrimSpace(id) {
 			return item, nil
 		}
 	}
@@ -274,17 +274,17 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 	for _, existing := range items {
 		for _, ref := range existing.SourceRefs {
 			if _, ok := keys[ref.DedupeKey()]; ok && ref.DedupeKey() != "\x00\x00" {
-				return IntakeResult{Item: existing, ItemID: existing.ItemID, Duplicate: true}, nil
+				return IntakeResult{Item: existing, BacklogItemID: existing.BacklogItemID, Duplicate: true}, nil
 			}
 		}
 	}
 	now := s.now()
-	id := strings.TrimSpace(request.ItemID)
+	id := modulecore.BacklogItemID(strings.TrimSpace(string(request.BacklogItemID)))
 	if id == "" {
-		id = domainbacklog.NewDeterministicID(refs, request.Title)
+		id = modulecore.BacklogItemID(domainbacklog.NewDeterministicID(refs, request.Title))
 	}
 	item := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: id, FeatureID: request.FeatureID,
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: id, FeatureID: request.FeatureID,
 		Kind: request.Kind, Title: strings.TrimSpace(request.Title), Body: strings.TrimSpace(request.Body),
 		Purpose: strings.TrimSpace(request.Purpose), Problem: request.Problem, Idea: request.Idea, Background: request.Background,
 		ExpectedEffect: append([]string(nil), request.ExpectedEffect...), RelationRefs: append([]string(nil), request.RelationRefs...),
@@ -302,7 +302,7 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 	if err := s.save(ctx, item); err != nil {
 		return IntakeResult{}, err
 	}
-	return IntakeResult{Item: item, ItemID: item.ItemID}, nil
+	return IntakeResult{Item: item, BacklogItemID: item.BacklogItemID}, nil
 }
 
 func validateSpecificationRefs(specificationRefs []string) error {
@@ -401,8 +401,8 @@ func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult,
 	item.DeliveryState = domainbacklog.DeliveryQueued
 	item.AdoptionReason = strings.TrimSpace(reason)
 	item.AdoptedAt = now.Format(time.RFC3339)
-	item.ImplementationUnit = "unit_atlas_" + safeSegment(item.ItemID)
-	item.WorkstreamID = "ws_atlas_" + safeSegment(item.ItemID)
+	item.ImplementationUnit = "unit_atlas_" + safeSegment(string(item.BacklogItemID))
+	item.WorkstreamID = "ws_atlas_" + safeSegment(string(item.BacklogItemID))
 
 	lease := domainworkstream.ImplementationLease{
 		LeaseName: domainbacklog.ImplementationLeaseName, HolderUnitID: item.ImplementationUnit,
@@ -420,7 +420,7 @@ func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult,
 		}
 		if err := s.workstream.SaveWorkstream(ctx, domainworkstream.Workstream{
 			WorkstreamID: item.WorkstreamID, Name: "Atlas: " + item.Title,
-			Description: "Implementation Unit " + item.ImplementationUnit + " for Atlas item " + item.ItemID,
+			Description: "Implementation Unit " + item.ImplementationUnit + " for Atlas item " + string(item.BacklogItemID),
 			Status:      status, PrimaryAgent: "Coder", CreatedAt: now, UpdatedAt: now,
 		}); err != nil {
 			if acquired {
@@ -429,7 +429,7 @@ func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult,
 			return AdoptionResult{}, err
 		}
 		if err := s.workstream.SaveGoal(ctx, domainworkstream.Goal{
-			GoalID: "goal_atlas_" + safeSegment(item.ItemID), WorkstreamID: item.WorkstreamID,
+			GoalID: "goal_atlas_" + safeSegment(string(item.BacklogItemID)), WorkstreamID: item.WorkstreamID,
 			Title: item.Title, Description: item.Body,
 			SuccessCriteria: []string{"required Atlas evidence exists", "the unit reaches LIVE_VERIFIED before DONE"},
 			Verification:    []string{"owner API stage transitions", "post-deploy/readiness evidence"},
@@ -438,7 +438,7 @@ func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult,
 			return AdoptionResult{}, err
 		}
 		if err := s.workstream.SaveArtifact(ctx, domainworkstream.Artifact{
-			ArtifactID: "artifact_atlas_" + safeSegment(item.ItemID), WorkstreamID: item.WorkstreamID,
+			ArtifactID: "artifact_atlas_" + safeSegment(string(item.BacklogItemID)), WorkstreamID: item.WorkstreamID,
 			Type: "atlas_implementation_unit", Title: item.Title, Status: "pending", CreatedAt: now,
 		}); err != nil {
 			return AdoptionResult{}, err
@@ -570,7 +570,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 		if target != domainbacklog.DeliveryBlocked && target != domainbacklog.DeliveryRejected {
 			verified, verifyErr := s.verifyEvidence(ctx, EvidenceVerificationRequest{
 				Ref:                    ref,
-				ItemID:                 item.ItemID,
+				BacklogItemID: string(item.BacklogItemID),
 				ImplementationUnitID:   unitID,
 				ImplementationRevision: revision,
 				TargetDeliveryState:    target,
@@ -612,7 +612,8 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	if !receiptFound {
 		preparedReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, existingReceipt.ActionID),
-			UnitID: unitID, ItemID: item.ItemID, ImplementationRevision: revision,
+			TransitionEventID: transitionEventID(existingReceipt.TransitionEventID),
+			UnitID: unitID, BacklogItemID: item.BacklogItemID, ImplementationRevision: revision,
 			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: next.DeliveryState, ResultJSON: string(resultJSON), CreatedAt: s.now(),
 		}
@@ -694,7 +695,7 @@ func (s *Service) queue(items []domainbacklog.Item) []domainbacklog.Item {
 	queue := make([]domainbacklog.Item, 0)
 	byID := make(map[string]domainbacklog.Item, len(items))
 	for _, item := range items {
-		byID[item.ItemID] = item
+		byID[string(item.BacklogItemID)] = item
 	}
 	for _, item := range items {
 		if item.ConceptState == domainbacklog.ConceptAdopted && item.DeliveryState == domainbacklog.DeliveryQueued && dependenciesDone(item, byID, map[string]bool{}) {
@@ -716,7 +717,7 @@ func (s *Service) queue(items []domainbacklog.Item) []domainbacklog.Item {
 		if queue[i].AdoptedAt != queue[j].AdoptedAt {
 			return queue[i].AdoptedAt < queue[j].AdoptedAt
 		}
-		return queue[i].ItemID < queue[j].ItemID
+		return string(queue[i].BacklogItemID) < string(queue[j].BacklogItemID)
 	})
 	return queue
 }
@@ -724,13 +725,13 @@ func (s *Service) queue(items []domainbacklog.Item) []domainbacklog.Item {
 // dependencyDepth places dependency roots before dependent work in the
 // eligible queue.  Dependency eligibility is checked separately below.
 func dependencyDepth(item domainbacklog.Item, byID map[string]domainbacklog.Item, visiting map[string]bool, memo map[string]int) int {
-	if value, ok := memo[item.ItemID]; ok {
+	if value, ok := memo[string(item.BacklogItemID)]; ok {
 		return value
 	}
-	if visiting[item.ItemID] {
+	if visiting[string(item.BacklogItemID)] {
 		return 1
 	}
-	visiting[item.ItemID] = true
+	visiting[string(item.BacklogItemID)] = true
 	depth := 0
 	for _, dependencyID := range item.DependsOn {
 		dependency, ok := byID[strings.TrimSpace(dependencyID)]
@@ -742,8 +743,8 @@ func dependencyDepth(item domainbacklog.Item, byID map[string]domainbacklog.Item
 			depth = candidate
 		}
 	}
-	delete(visiting, item.ItemID)
-	memo[item.ItemID] = depth
+	delete(visiting, string(item.BacklogItemID))
+	memo[string(item.BacklogItemID)] = depth
 	return depth
 }
 
@@ -751,11 +752,11 @@ func dependencyDepth(item domainbacklog.Item, byID map[string]domainbacklog.Item
 // already be DONE.  A dependency cycle is rejected while traversing the
 // current path instead of being treated as an ordering hint.
 func dependenciesDone(item domainbacklog.Item, byID map[string]domainbacklog.Item, visiting map[string]bool) bool {
-	if visiting[item.ItemID] {
+	if visiting[string(item.BacklogItemID)] {
 		return false
 	}
-	visiting[item.ItemID] = true
-	defer delete(visiting, item.ItemID)
+	visiting[string(item.BacklogItemID)] = true
+	defer delete(visiting, string(item.BacklogItemID))
 	for _, dependencyID := range item.DependsOn {
 		dependencyID = strings.TrimSpace(dependencyID)
 		dependency, ok := byID[dependencyID]
@@ -789,7 +790,7 @@ func (s *Service) Evidence(ctx context.Context, unitID string) ([]domainbacklog.
 		return nil, err
 	}
 	for _, item := range items {
-		if item.ImplementationUnit == strings.TrimSpace(unitID) || item.ItemID == strings.TrimSpace(unitID) {
+		if item.ImplementationUnit == strings.TrimSpace(unitID) || string(item.BacklogItemID) == strings.TrimSpace(unitID) {
 			return append([]domainbacklog.EvidenceRef(nil), item.EvidenceRefs...), nil
 		}
 	}
@@ -913,7 +914,7 @@ func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item dom
 	}
 	unitID := strings.TrimSpace(item.ImplementationUnit)
 	if unitID == "" {
-		unitID = strings.TrimSpace(item.ItemID)
+		unitID = strings.TrimSpace(string(item.BacklogItemID))
 	}
 	revision := item.ImplementationRevision
 	if revision < 1 {

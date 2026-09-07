@@ -7,6 +7,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -68,7 +69,7 @@ func (s *Service) repairCompletedAtlasLifecycle(ctx context.Context, item domain
 		return false, fmt.Errorf("list Atlas lifecycle closure receipts: %w", err)
 	}
 	for _, receipt := range receipts {
-		if receipt.ItemID != item.ItemID || receipt.UnitID != item.ImplementationUnit || receipt.ImplementationRevision != legacyAtlasLifecycleTargetRevision || receipt.Phase != domainworkstream.ClosurePhaseDone || receipt.Status != domainworkstream.ClosureStatusCompleted {
+		if receipt.BacklogItemID != item.BacklogItemID || receipt.UnitID != item.ImplementationUnit || receipt.ImplementationRevision != legacyAtlasLifecycleTargetRevision || receipt.Phase != domainworkstream.ClosurePhaseDone || receipt.Status != domainworkstream.ClosureStatusCompleted {
 			continue
 		}
 		repaired := item
@@ -85,7 +86,7 @@ func (s *Service) repairCompletedAtlasLifecycle(ctx context.Context, item domain
 
 func isLegacyCompletedAtlasLifecycle(item domainbacklog.Item) bool {
 	return item.SchemaVersion == domainbacklog.SchemaVersion2 &&
-		item.ItemID == legacyAtlasLifecycleItemID &&
+		item.BacklogItemID == modulecore.BacklogItemID(legacyAtlasLifecycleItemID) &&
 		item.ImplementationUnit == legacyAtlasLifecycleUnitID &&
 		item.ConceptState == domainbacklog.ConceptAdopted &&
 		item.DeliveryState == domainbacklog.DeliveryDone &&
@@ -94,7 +95,7 @@ func isLegacyCompletedAtlasLifecycle(item domainbacklog.Item) bool {
 
 func isLegacyAtlasLifecycle(item domainbacklog.Item) bool {
 	return item.SchemaVersion == domainbacklog.SchemaVersion2 &&
-		item.ItemID == legacyAtlasLifecycleItemID &&
+		item.BacklogItemID == modulecore.BacklogItemID(legacyAtlasLifecycleItemID) &&
 		item.ImplementationUnit == legacyAtlasLifecycleUnitID &&
 		item.ConceptState == domainbacklog.ConceptAdopted &&
 		item.DeliveryState == domainbacklog.DeliveryLiveVerified &&

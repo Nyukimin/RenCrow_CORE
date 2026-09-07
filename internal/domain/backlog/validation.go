@@ -116,8 +116,8 @@ func ValidateBackfillImportReceipt(receipt BackfillImportReceipt) error {
 }
 
 func ValidateItem(item Item) error {
-	if strings.TrimSpace(item.ItemID) == "" {
-		return errors.New("item_id is required")
+	if err := item.BacklogItemID.Validate(); err != nil {
+		return errors.New("backlog_item_id is required")
 	}
 	if strings.TrimSpace(item.Title) == "" {
 		return errors.New("title is required")

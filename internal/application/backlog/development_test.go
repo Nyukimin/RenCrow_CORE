@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,7 +33,7 @@ func TestDevelopmentProjectionFailsClosedWhenCompleteArtifactSetExceedsBound(t *
 func developmentServiceFixture(t *testing.T) (*Service, string) {
 	t.Helper()
 	now := time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)
-	items := &memoryItemStore{items: []domainbacklog.Item{{SchemaVersion: 2, ItemID: "methodology", Title: "Methodology", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliverySpec, ImplementationUnit: "rencrow-development-methodology-v1", ImplementationRevision: 1, WorkstreamID: "ws-methodology", OwnerModule: domainbacklog.LifecycleOwnerModule, AdoptedAt: now.Add(-time.Hour).Format(time.RFC3339), CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}}}
+	items := &memoryItemStore{items: []domainbacklog.Item{{SchemaVersion: 2, BacklogItemID: modulecore.BacklogItemID("methodology"), Title: "Methodology", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliverySpec, ImplementationUnit: "rencrow-development-methodology-v1", ImplementationRevision: 1, WorkstreamID: "ws-methodology", OwnerModule: domainbacklog.LifecycleOwnerModule, AdoptedAt: now.Add(-time.Hour).Format(time.RFC3339), CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}}}
 	return NewService(items, &memoryWorkstreamStore{}).WithClock(func() time.Time { return now }), "rencrow-development-methodology-v1"
 }
 

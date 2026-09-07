@@ -14,7 +14,7 @@ import (
 func TestRevision2StageReplayIsIdempotent(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "revision2-replay",
+		BacklogItemID: modulecore.BacklogItemID("revision2-replay"),
 		ImplementationUnit: "unit-revision2-replay",
 		Title:              "stage replay",
 		ConceptState:       domainbacklog.ConceptAdopted,
@@ -58,7 +58,7 @@ func TestRevision2StageReplayIsIdempotent(t *testing.T) {
 
 func TestRevision2StageHashIgnoresCallerVerificationMetadata(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "revision2-hash-claims", ImplementationUnit: "unit-hash-claims",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("revision2-hash-claims"), ImplementationUnit: "unit-hash-claims",
 		Title: "hash claims", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	workstream := &memoryWorkstreamStore{}
@@ -101,7 +101,7 @@ func TestRevision2StageHashIgnoresCallerVerificationMetadata(t *testing.T) {
 
 func TestRevision2EvidenceVerificationUsesAuthoritativeContextAndClearsClaims(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "context-item", ImplementationUnit: "unit-authoritative",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("context-item"), ImplementationUnit: "unit-authoritative",
 		Title: "context", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	verifier := &captureEvidenceVerifier{ok: true}
@@ -120,7 +120,7 @@ func TestRevision2EvidenceVerificationUsesAuthoritativeContextAndClearsClaims(t 
 		t.Fatalf("verifier calls=%d want=1", len(verifier.requests))
 	}
 	request := verifier.requests[0]
-	if request.ItemID != "context-item" || request.ImplementationUnitID != "unit-authoritative" || request.ImplementationRevision != 1 || request.TargetDeliveryState != domainbacklog.DeliverySpec || request.Purpose != "delivery_stage" {
+	if request.BacklogItemID != "context-item" || request.ImplementationUnitID != "unit-authoritative" || request.ImplementationRevision != 1 || request.TargetDeliveryState != domainbacklog.DeliverySpec || request.Purpose != "delivery_stage" {
 		t.Fatalf("authoritative evidence context=%+v", request)
 	}
 	if request.Ref.Stage != domainbacklog.DeliverySpec || request.Ref.Verified || request.Ref.VerificationResult != "" || request.Ref.VerifiedAt != "" || request.Ref.Verifier != "" {
@@ -133,7 +133,7 @@ func TestRevision2EvidenceVerificationUsesAuthoritativeContextAndClearsClaims(t 
 
 func TestRevision2EvidenceStageMismatchFailsBeforeVerifier(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "stage-bound-item", ImplementationUnit: "unit-stage-bound",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("stage-bound-item"), ImplementationUnit: "unit-stage-bound",
 		Title: "stage bound", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	verifier := &captureEvidenceVerifier{ok: true}
@@ -149,12 +149,12 @@ func TestRevision2EvidenceStageMismatchFailsBeforeVerifier(t *testing.T) {
 
 func TestRevision2FreezeEvidenceUsesBlockedUnitRevisionContext(t *testing.T) {
 	blocked := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "blocked-context-item", ImplementationUnit: "unit-blocked-context",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("blocked-context-item"), ImplementationUnit: "unit-blocked-context",
 		Title: "blocked context", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryBlocked,
 		ImplementationRevision: 3,
 	}
 	replacement := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "replacement-context-item", ImplementationUnit: "unit-replacement-context",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("replacement-context-item"), ImplementationUnit: "unit-replacement-context",
 		WorkstreamID: "ws-replacement-context", Title: "replacement context", ConceptState: domainbacklog.ConceptAdopted,
 		DeliveryState: domainbacklog.DeliveryQueued, ImplementationRevision: 1, SupersedesUnitID: "unit-blocked-context",
 	}
@@ -181,7 +181,7 @@ func TestRevision2FreezeEvidenceUsesBlockedUnitRevisionContext(t *testing.T) {
 		t.Fatalf("verifier calls=%d want=1", len(verifier.requests))
 	}
 	request := verifier.requests[0]
-	if request.ItemID != blocked.ItemID || request.ImplementationUnitID != blocked.ImplementationUnit || request.ImplementationRevision != blocked.ImplementationRevision || request.TargetDeliveryState != domainbacklog.DeliveryBlocked || request.Purpose != "blocker_resolution" {
+	if request.BacklogItemID != string(blocked.BacklogItemID) || request.ImplementationUnitID != blocked.ImplementationUnit || request.ImplementationRevision != blocked.ImplementationRevision || request.TargetDeliveryState != domainbacklog.DeliveryBlocked || request.Purpose != "blocker_resolution" {
 		t.Fatalf("blocked evidence context=%+v", request)
 	}
 	if request.Ref.Stage != domainbacklog.DeliveryBlocked || request.Ref.Verified {
@@ -191,7 +191,7 @@ func TestRevision2FreezeEvidenceUsesBlockedUnitRevisionContext(t *testing.T) {
 
 func TestRevision2ReviseFailsClosedWithoutLifecycleStore(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "revision2-no-lifecycle", ImplementationUnit: "unit-no-lifecycle",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("revision2-no-lifecycle"), ImplementationUnit: "unit-no-lifecycle",
 		Title: "no lifecycle", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	service := NewService(store, nil).WithEvidenceVerifier(revision2Verifier{})
@@ -207,7 +207,7 @@ func TestRevision2ReviseFailsClosedWithoutLifecycleStore(t *testing.T) {
 func TestRevision2StageReceiptPreparedBeforeItemMutation(t *testing.T) {
 	events := []string{}
 	store := &revision2OrderedItemStore{item: domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "revision2-order", ImplementationUnit: "unit-revision2-order",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("revision2-order"), ImplementationUnit: "unit-revision2-order",
 		Title: "receipt order", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}, events: &events}
 	workstream := &revision2OrderedWorkstreamStore{events: &events}
@@ -233,7 +233,7 @@ func TestRevision2LiveVerifiedImmediatelyClosesToDone(t *testing.T) {
 	refs := revision2CumulativeEvidence()
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "revision2-live-lease",
+		BacklogItemID: modulecore.BacklogItemID("revision2-live-lease"),
 		ImplementationUnit: "unit-revision2-live-lease",
 		WorkstreamID:       "ws-revision2-live-lease",
 		Title:              "live lease",
@@ -271,7 +271,7 @@ func TestRevision2LiveVerifiedImmediatelyClosesToDone(t *testing.T) {
 		t.Fatalf("closure=%+v found=%v err=%v", closure, found, err)
 	}
 	projection, err := service.Projection(context.Background())
-	if err != nil || len(projection.Current) != 1 || projection.Current[0].ItemID != "revision2-live-lease" {
+	if err != nil || len(projection.Current) != 1 || projection.Current[0].BacklogItemID != "revision2-live-lease" {
 		t.Fatalf("Current projection=%+v err=%v", projection.Current, err)
 	}
 }
@@ -289,7 +289,7 @@ func TestRevision2DoneRejectsLeaseReleaseFailure(t *testing.T) {
 	refs := revision2CumulativeEvidence()
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "revision2-done-release",
+		BacklogItemID: modulecore.BacklogItemID("revision2-done-release"),
 		ImplementationUnit: "unit-revision2-done-release",
 		Title:              "done release",
 		ConceptState:       domainbacklog.ConceptAdopted,
@@ -309,7 +309,7 @@ func TestRevision2DoneRejectsLeaseReleaseFailure(t *testing.T) {
 
 func TestRevision2RecoverLiveWithoutClosureReceiptCompletesDone(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "revision2-recover-live", ImplementationUnit: "unit-revision2-recover-live",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("revision2-recover-live"), ImplementationUnit: "unit-revision2-recover-live",
 		WorkstreamID: "ws-revision2-recover-live", Title: "recover live", ConceptState: domainbacklog.ConceptAdopted,
 		DeliveryState: domainbacklog.DeliveryLiveVerified, ImplementationRevision: 1,
 	}}}
@@ -341,7 +341,7 @@ func TestRevision2QueueOrderingHonorsDependenciesBeforePriority(t *testing.T) {
 	service := NewService(&memoryItemStore{}, nil)
 	items := []domainbacklog.Item{
 		{
-			ItemID:        "dependency-blocker",
+			BacklogItemID: modulecore.BacklogItemID("dependency-blocker"),
 			Title:         "dependency blocker",
 			ConceptState:  domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliveryQueued,
@@ -349,7 +349,7 @@ func TestRevision2QueueOrderingHonorsDependenciesBeforePriority(t *testing.T) {
 			AdoptedAt:     "2026-08-22T00:00:00Z",
 		},
 		{
-			ItemID:        "dependency-dependent",
+			BacklogItemID: modulecore.BacklogItemID("dependency-dependent"),
 			Title:         "dependent item",
 			ConceptState:  domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliveryQueued,
@@ -359,7 +359,7 @@ func TestRevision2QueueOrderingHonorsDependenciesBeforePriority(t *testing.T) {
 		},
 	}
 	queue := service.queue(items)
-	if len(queue) != 1 || queue[0].ItemID != "dependency-blocker" {
+	if len(queue) != 1 || queue[0].BacklogItemID != "dependency-blocker" {
 		t.Fatalf("dependency-unsatisfied item must be excluded and root retained: %+v", queue)
 	}
 }
@@ -367,32 +367,32 @@ func TestRevision2QueueOrderingHonorsDependenciesBeforePriority(t *testing.T) {
 func TestRevision2QueueExcludesMissingAndCyclicDependencies(t *testing.T) {
 	service := NewService(&memoryItemStore{}, nil)
 	items := []domainbacklog.Item{
-		{ItemID: "missing", Title: "missing", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"does-not-exist"}},
-		{ItemID: "cycle-a", Title: "cycle a", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"cycle-b"}},
-		{ItemID: "cycle-b", Title: "cycle b", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"cycle-a"}},
-		{ItemID: "root", Title: "root", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued},
+		{BacklogItemID: modulecore.BacklogItemID("missing"), Title: "missing", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"does-not-exist"}},
+		{BacklogItemID: modulecore.BacklogItemID("cycle-a"), Title: "cycle a", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"cycle-b"}},
+		{BacklogItemID: modulecore.BacklogItemID("cycle-b"), Title: "cycle b", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued, DependsOn: []string{"cycle-a"}},
+		{BacklogItemID: modulecore.BacklogItemID("root"), Title: "root", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued},
 	}
 	queue := service.queue(items)
-	if len(queue) != 1 || queue[0].ItemID != "root" {
+	if len(queue) != 1 || queue[0].BacklogItemID != "root" {
 		t.Fatalf("missing/cyclic dependencies must be excluded: %+v", queue)
 	}
 }
 
 func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "live", Title: "live", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryLiveVerified},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-no-closure", ImplementationUnit: "unit-no-closure", ImplementationRevision: 1, Title: "done without closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-exact", ImplementationUnit: "unit-exact", ImplementationRevision: 2, Title: "done with closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-wrong-unit", ImplementationUnit: "unit-wrong-unit", ImplementationRevision: 3, Title: "done with wrong unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-wrong-revision", ImplementationUnit: "unit-wrong-revision", ImplementationRevision: 4, Title: "done with wrong revision", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-prepared", ImplementationUnit: "unit-prepared", ImplementationRevision: 5, Title: "done with prepared closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-no-unit", Title: "done without lifecycle unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("live"), Title: "live", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryLiveVerified},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-no-closure"), ImplementationUnit: "unit-no-closure", ImplementationRevision: 1, Title: "done without closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-exact"), ImplementationUnit: "unit-exact", ImplementationRevision: 2, Title: "done with closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-wrong-unit"), ImplementationUnit: "unit-wrong-unit", ImplementationRevision: 3, Title: "done with wrong unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-wrong-revision"), ImplementationUnit: "unit-wrong-revision", ImplementationRevision: 4, Title: "done with wrong revision", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-prepared"), ImplementationUnit: "unit-prepared", ImplementationRevision: 5, Title: "done with prepared closure", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-no-unit"), Title: "done without lifecycle unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
 	}}
 	workstream := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{
-		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000010"), UnitID: "unit-exact", ItemID: "done-exact", ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000011"), UnitID: "different-unit", ItemID: "done-wrong-unit", ImplementationRevision: 3, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000012"), UnitID: "unit-wrong-revision", ItemID: "done-wrong-revision", ImplementationRevision: 99, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000013"), UnitID: "unit-prepared", ItemID: "done-prepared", ImplementationRevision: 5, Status: domainworkstream.ClosureStatusPrepared, Phase: domainworkstream.ClosurePhasePrepared},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000010"), UnitID: "unit-exact", BacklogItemID: modulecore.BacklogItemID("done-exact"), ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000011"), UnitID: "different-unit", BacklogItemID: modulecore.BacklogItemID("done-wrong-unit"), ImplementationRevision: 3, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000012"), UnitID: "unit-wrong-revision", BacklogItemID: modulecore.BacklogItemID("done-wrong-revision"), ImplementationRevision: 99, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000013"), UnitID: "unit-prepared", BacklogItemID: modulecore.BacklogItemID("done-prepared"), ImplementationRevision: 5, Status: domainworkstream.ClosureStatusPrepared, Phase: domainworkstream.ClosurePhasePrepared},
 	}}
 	service := NewService(store, workstream)
 	projection, err := service.Projection(context.Background())
@@ -404,7 +404,7 @@ func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 	}
 	currentIDs := map[string]bool{}
 	for _, item := range projection.Current {
-		currentIDs[item.ItemID] = true
+		currentIDs[string(item.BacklogItemID)] = true
 	}
 	if !currentIDs["done-exact"] || !currentIDs["done-no-unit"] {
 		t.Fatalf("Current missing exact closure or record without lifecycle identity: %+v", projection.Current)
@@ -418,12 +418,12 @@ func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 
 func TestRevision2ResolveQueueFreezeValidatesReplacementAndIsIdempotent(t *testing.T) {
 	blocked := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "blocked-item", ImplementationUnit: "unit-blocked",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("blocked-item"), ImplementationUnit: "unit-blocked",
 		Title: "blocked", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryBlocked,
 		ImplementationRevision: 2,
 	}
 	replacement := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "replacement-item", ImplementationUnit: "unit-replacement",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("replacement-item"), ImplementationUnit: "unit-replacement",
 		WorkstreamID: "ws-replacement", Title: "replacement", ConceptState: domainbacklog.ConceptAdopted,
 		DeliveryState: domainbacklog.DeliveryQueued, ImplementationRevision: 1, SupersedesUnitID: "unit-blocked",
 	}
@@ -461,7 +461,7 @@ func TestRevision2ResolveQueueFreezeValidatesReplacementAndIsIdempotent(t *testi
 
 func TestRevision2AcquireRunnableReturnsNoneWhileQueueFrozen(t *testing.T) {
 	items := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "queued-runnable", ImplementationUnit: "unit-runnable",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("queued-runnable"), ImplementationUnit: "unit-runnable",
 		Title: "queued", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	ws := &memoryWorkstreamStore{}
@@ -476,7 +476,7 @@ func TestRevision2AcquireRunnableReturnsNoneWhileQueueFrozen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Acquired || result.Item.ItemID != "" || result.Reason != domainworkstream.ErrQueueFrozen.Error() {
+	if result.Acquired || result.Item.BacklogItemID != "" || result.Reason != domainworkstream.ErrQueueFrozen.Error() {
 		t.Fatalf("frozen dispatch result=%+v", result)
 	}
 	if ws.lease != nil {
@@ -486,7 +486,7 @@ func TestRevision2AcquireRunnableReturnsNoneWhileQueueFrozen(t *testing.T) {
 
 func TestRevision2AcquireRunnableResumesExistingLeaseHolder(t *testing.T) {
 	items := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "resume-item", ImplementationUnit: "unit-resume",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("resume-item"), ImplementationUnit: "unit-resume",
 		WorkstreamID: "ws-resume", Title: "resume", ConceptState: domainbacklog.ConceptAdopted,
 		DeliveryState: domainbacklog.DeliveryQueued,
 	}}}

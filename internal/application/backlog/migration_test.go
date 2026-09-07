@@ -31,7 +31,7 @@ func (s *atlasMigrationItemStore) Save(_ context.Context, item domainbacklog.Ite
 		return s.saveErr
 	}
 	for index := range s.items {
-		if s.items[index].ItemID == item.ItemID {
+		if s.items[index].BacklogItemID == item.BacklogItemID {
 			s.items[index] = item
 			return nil
 		}
@@ -43,7 +43,7 @@ func (s *atlasMigrationItemStore) Save(_ context.Context, item domainbacklog.Ite
 func legacyAtlasLifecycleItem() domainbacklog.Item {
 	return domainbacklog.Item{
 		SchemaVersion:          domainbacklog.SchemaVersion2,
-		ItemID:                 "atlas:atlas.lifecycle",
+		BacklogItemID: modulecore.BacklogItemID("atlas:atlas.lifecycle"),
 		FeatureID:              "atlas.lifecycle",
 		Kind:                   "idea",
 		Title:                  "Atlas lifecycle",
@@ -96,7 +96,7 @@ func TestMigrateLegacyAtlasLifecycleRepairsDoneOnlyWithExactClosureReceipt(t *te
 		ReceiptID:              modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000020"),
 		IdempotencyKey:         "atlas-lifecycle-v1:2:DONE",
 		UnitID:                 "atlas-lifecycle-v1",
-		ItemID:                 "atlas:atlas.lifecycle",
+		BacklogItemID: modulecore.BacklogItemID("atlas:atlas.lifecycle"),
 		ImplementationRevision: 2,
 		Phase:                  domainworkstream.ClosurePhaseDone,
 		Status:                 domainworkstream.ClosureStatusCompleted,
@@ -132,7 +132,7 @@ func TestMigrateLegacyAtlasLifecycleDoesNotRepairDoneWithoutExactClosure(t *test
 	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy}}
 	service := NewService(store, &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{
 		UnitID:                 legacy.ImplementationUnit,
-		ItemID:                 legacy.ItemID,
+		BacklogItemID:                 legacy.BacklogItemID,
 		ImplementationRevision: 1,
 		Phase:                  domainworkstream.ClosurePhaseDone,
 		Status:                 domainworkstream.ClosureStatusCompleted,
@@ -150,7 +150,7 @@ func TestMigrateLegacyAtlasLifecycleDoesNotRepairDoneWithoutExactClosure(t *test
 func TestMigrateLegacyAtlasLifecycleQueuesUnverifiedRevisionAndPreservesClaims(t *testing.T) {
 	legacy := legacyAtlasLifecycleItem()
 	unrelated := legacy
-	unrelated.ItemID = "atlas:unrelated"
+	unrelated.BacklogItemID = "atlas:unrelated"
 	unrelated.FeatureID = "unrelated"
 	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy, unrelated}}
 	service := NewService(store, nil)
@@ -204,7 +204,7 @@ func TestMigrateLegacyAtlasLifecycleIgnoresNonLegacyShapes(t *testing.T) {
 			item.ConceptState = domainbacklog.ConceptCandidate
 			return item
 		}(),
-		func() domainbacklog.Item { item := base; item.ItemID = "atlas:other"; return item }(),
+		func() domainbacklog.Item { item := base; item.BacklogItemID = "atlas:other"; return item }(),
 	}
 	store := &atlasMigrationItemStore{items: cases}
 	service := NewService(store, nil)

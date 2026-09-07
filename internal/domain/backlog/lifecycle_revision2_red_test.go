@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"errors"
 	"testing"
 )
@@ -11,7 +12,7 @@ import (
 func TestRevision2OwnerVerificationRejectsPassedClaim(t *testing.T) {
 	item := Item{
 		SchemaVersion: SchemaVersion2,
-		ItemID:        "revision2-evidence-gate",
+		BacklogItemID: modulecore.BacklogItemID("revision2-evidence-gate"),
 		Title:         "revision 2 evidence gate",
 		ConceptState:  ConceptAdopted,
 		DeliveryState: DeliveryPostDeployVerify,

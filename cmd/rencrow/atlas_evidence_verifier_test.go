@@ -134,7 +134,7 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 		}
 	}
 	for name, mutate := range map[string]func(*backlogapp.EvidenceVerificationRequest){
-		"cross-item":     func(request *backlogapp.EvidenceVerificationRequest) { request.ItemID = "item-other" },
+		"cross-item":     func(request *backlogapp.EvidenceVerificationRequest) { request.BacklogItemID = "item-other" },
 		"cross-unit":     func(request *backlogapp.EvidenceVerificationRequest) { request.ImplementationUnitID = "unit-other" },
 		"cross-revision": func(request *backlogapp.EvidenceVerificationRequest) { request.ImplementationRevision = 3 },
 		"cross-stage-context": func(request *backlogapp.EvidenceVerificationRequest) {
@@ -541,7 +541,7 @@ func TestAtlasEvidenceVerifierProductionSmokeRequiresReconstructedItem(t *testin
 	verifier := newAtlasProbeFixtureVerifier(t, server.URL, revision)
 	request := backlogapp.EvidenceVerificationRequest{
 		Ref:    domainbacklog.EvidenceRef{Kind: "production_smoke", Ref: atlasSmokeEvidenceRef, Revision: revision, Verified: true},
-		ItemID: item.ItemID, ImplementationUnitID: item.ImplementationUnit, ImplementationRevision: item.ImplementationRevision,
+		ItemID: item.BacklogItemID, ImplementationUnitID: item.ImplementationUnit, ImplementationRevision: item.ImplementationRevision,
 		TargetDeliveryState: domainbacklog.DeliveryLiveVerified,
 	}
 	if ok, err := verifier.Verify(context.Background(), request); err != nil || !ok {

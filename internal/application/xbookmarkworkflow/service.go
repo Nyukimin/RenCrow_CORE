@@ -19,6 +19,7 @@ import (
 	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainworkflow "github.com/Nyukimin/RenCrow_CORE/internal/domain/xbookmarkworkflow"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -215,7 +216,7 @@ func (s *Service) runAITip(ctx context.Context, source domainworkflow.SourceReco
 		return result, s.save(ctx, &result)
 	}
 	result.Status = domainworkflow.StatusCompleted
-	result.BacklogItemID = item.ItemID
+	result.BacklogItemID = string(item.BacklogItemID)
 	result.FailureStage = ""
 	result.Error = ""
 	return result, s.save(ctx, &result)
@@ -417,7 +418,7 @@ func backlogItem(source domainworkflow.SourceRecord, result domainworkflow.Resul
 		strings.Join(result.AffectedModules, ", "), strings.Join(result.Prerequisites, ", "), result.Cost,
 		strings.Join(result.Risks, ", "), strings.Join(result.ValidationPlan, ", "), strings.Join(result.EvidenceURLs, ", "))
 	return domainbacklog.Item{
-		ItemID: stableID("x-bookmark-ai", result.SourceRecordID), Kind: "idea", Title: title, Body: body,
+		BacklogItemID: modulecore.BacklogItemID(stableID("x-bookmark-ai", result.SourceRecordID)), Kind: "idea", Title: title, Body: body,
 		Source: "x-bookmark", Status: domainbacklog.StatusProposalReview, Priority: result.Priority,
 		Tags: compactStrings(append([]string{"x-bookmark", "ai-tip", result.Decision}, result.AffectedModules...), 16),
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // JSONLStore preserves the original append-only Backlog file contract. Every
@@ -61,10 +62,10 @@ func (s *JSONLStore) listLocked(limit int) ([]domainbacklog.Item, error) {
 			return nil
 		}
 		item = NormalizeForRead(item)
-		if strings.TrimSpace(item.ItemID) == "" {
+		if strings.TrimSpace(string(item.BacklogItemID)) == "" {
 			return nil
 		}
-		latest[item.ItemID] = item
+		latest[string(item.BacklogItemID)] = item
 		return nil
 	}); err != nil {
 		return nil, err
@@ -91,7 +92,7 @@ func (s *JSONLStore) FindByID(ctx context.Context, itemID string) (domainbacklog
 		return domainbacklog.Item{}, false, err
 	}
 	for _, item := range items {
-		if item.ItemID == strings.TrimSpace(itemID) {
+		if string(item.BacklogItemID) == strings.TrimSpace(itemID) {
 			return item, true, nil
 		}
 	}
@@ -142,10 +143,10 @@ func (s *JSONLStore) ReconcileBackfill(_ context.Context, items []domainbacklog.
 	latest := map[string]domainbacklog.Item{}
 	if err := readBacklogJSONL(s.path, func(raw []byte) error {
 		var item domainbacklog.Item
-		if err := json.Unmarshal(raw, &item); err != nil || strings.TrimSpace(item.ItemID) == "" {
+		if err := json.Unmarshal(raw, &item); err != nil || strings.TrimSpace(string(item.BacklogItemID)) == "" {
 			return nil
 		}
-		latest[item.ItemID] = NormalizeForRead(item)
+		latest[string(item.BacklogItemID)] = NormalizeForRead(item)
 		return nil
 	}); err != nil {
 		return domainbacklog.BackfillReconcileResult{}, err
@@ -166,7 +167,7 @@ func (s *JSONLStore) ReconcileBackfill(_ context.Context, items []domainbacklog.
 	}
 	result := domainbacklog.BackfillReconcileResult{}
 	for _, item := range normalized {
-		if current, ok := latest[item.ItemID]; ok {
+		if current, ok := latest[string(item.BacklogItemID)]; ok {
 			currentJSON, _ := json.Marshal(current)
 			nextJSON, _ := json.Marshal(item)
 			if bytes.Equal(currentJSON, nextJSON) {
@@ -184,7 +185,7 @@ func (s *JSONLStore) ReconcileBackfill(_ context.Context, items []domainbacklog.
 		if err := appendBacklogRecord(s.path, encoded); err != nil {
 			return domainbacklog.BackfillReconcileResult{}, err
 		}
-		latest[item.ItemID] = item
+		latest[string(item.BacklogItemID)] = item
 	}
 	if !backfillReceiptExists(s.path, receipt.ImportID) {
 		encoded, err := json.Marshal(receipt)
@@ -224,9 +225,9 @@ func appendBacklogRecord(path string, encoded []byte) error {
 }
 
 func NormalizeForSave(item domainbacklog.Item, now time.Time) domainbacklog.Item {
-	item.ItemID = strings.TrimSpace(item.ItemID)
-	if item.ItemID == "" {
-		item.ItemID = fmt.Sprintf("backlog-%d", now.UnixNano())
+	item.BacklogItemID = modulecore.BacklogItemID(strings.TrimSpace(string(item.BacklogItemID)))
+	if item.BacklogItemID == "" {
+		item.BacklogItemID = modulecore.BacklogItemID(fmt.Sprintf("backlog-%d", now.UnixNano()))
 	}
 	item.Kind = normalizeKind(item.Kind)
 	item.Title = strings.TrimSpace(item.Title)

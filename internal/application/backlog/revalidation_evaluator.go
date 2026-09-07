@@ -53,7 +53,7 @@ type RevalidationSweepReport struct {
 	Attempted int      `json:"attempted"`
 	Completed int      `json:"completed"`
 	Failed    int      `json:"failed"`
-	ItemIDs   []string `json:"item_ids"`
+	ItemIDs   []string `json:"backlog_item_ids"`
 }
 
 type RevalidationEvaluator interface {
@@ -145,7 +145,7 @@ func (s *Service) RunEligibleRevalidations(ctx context.Context, limit int) (Reva
 		}
 		at, set, parseErr := parseMaturationTime(item.MaturationEligibleAt)
 		if parseErr != nil {
-			return report, fmt.Errorf("Atlas item %s eligibility: %w", item.ItemID, parseErr)
+			return report, fmt.Errorf("Atlas item %s eligibility: %w", item.BacklogItemID, parseErr)
 		}
 		if !set {
 			created, createdErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(item.CreatedAt))
@@ -155,7 +155,7 @@ func (s *Service) RunEligibleRevalidations(ctx context.Context, limit int) (Reva
 			at = created.UTC().Add(maturationPeriod)
 		}
 		if !s.now().Before(at) {
-			eligible = append(eligible, eligibleItem{id: item.ItemID, at: at})
+			eligible = append(eligible, eligibleItem{id: string(item.BacklogItemID), at: at})
 		}
 	}
 	sort.SliceStable(eligible, func(i, j int) bool {
@@ -195,11 +195,11 @@ func relatedRevalidationItems(subject domainbacklog.Item, items []domainbacklog.
 	}
 	rows := make([]scored, 0, len(items))
 	for _, candidate := range items {
-		if candidate.ItemID == subject.ItemID {
+		if candidate.BacklogItemID == subject.BacklogItemID {
 			continue
 		}
 		score := 0
-		if _, ok := explicit[candidate.ItemID]; ok {
+		if _, ok := explicit[string(candidate.BacklogItemID)]; ok {
 			score += 100
 		}
 		if strings.EqualFold(strings.TrimSpace(subject.Category), strings.TrimSpace(candidate.Category)) && strings.TrimSpace(subject.Category) != "" {
@@ -223,7 +223,7 @@ func relatedRevalidationItems(subject domainbacklog.Item, items []domainbacklog.
 		if rows[i].score != rows[j].score {
 			return rows[i].score > rows[j].score
 		}
-		return rows[i].item.ItemID < rows[j].item.ItemID
+		return string(rows[i].item.BacklogItemID) < string(rows[j].item.BacklogItemID)
 	})
 	if len(rows) > limit {
 		rows = rows[:limit]
@@ -279,7 +279,7 @@ const (
 // to the LLM. Full item bodies, source bodies, evidence receipts and prior
 // review prose remain in CORE and are never copied into a model request.
 type revalidationEvidence struct {
-	ItemID              string   `json:"item_id"`
+	BacklogItemID              string   `json:"backlog_item_id"`
 	Title               string   `json:"title"`
 	Purpose             string   `json:"purpose,omitempty"`
 	Problem             string   `json:"problem,omitempty"`
@@ -364,7 +364,7 @@ func compactRevalidationEvidence(item domainbacklog.Item) revalidationEvidence {
 		}
 	}
 	return revalidationEvidence{
-		ItemID: boundedRevalidationText(item.ItemID), Title: boundedRevalidationText(item.Title),
+		BacklogItemID: boundedRevalidationText(string(item.BacklogItemID)), Title: boundedRevalidationText(item.Title),
 		Purpose: boundedRevalidationText(item.Purpose), Problem: boundedRevalidationText(item.Problem),
 		Idea: boundedRevalidationText(item.Idea), Category: boundedRevalidationText(item.Category),
 		ConceptState: item.ConceptState, DeliveryState: item.DeliveryState, MaturationState: item.MaturationState,

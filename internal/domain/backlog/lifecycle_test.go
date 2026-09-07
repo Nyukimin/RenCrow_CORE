@@ -1,13 +1,14 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"errors"
 	"testing"
 )
 
 func TestProjectLegacyOpenAndProposalReviewAreCandidates(t *testing.T) {
 	for _, status := range []string{"open", StatusProposalReview} {
-		item := ProjectLegacy(Item{ItemID: "legacy-" + status, Title: "legacy", Status: status})
+		item := ProjectLegacy(Item{BacklogItemID: modulecore.BacklogItemID("legacy-" + status), Title: "legacy", Status: status})
 		if item.ConceptState != ConceptCandidate || item.DeliveryState != DeliveryNone {
 			t.Fatalf("status %q projected to %+v", status, item)
 		}
@@ -15,7 +16,7 @@ func TestProjectLegacyOpenAndProposalReviewAreCandidates(t *testing.T) {
 }
 
 func TestTransitionDeliveryRejectsForgedCheckOK(t *testing.T) {
-	item := ProjectLegacy(Item{ItemID: "legacy", Title: "legacy", Status: "ok", CheckOK: true})
+	item := ProjectLegacy(Item{BacklogItemID: modulecore.BacklogItemID("legacy"), Title: "legacy", Status: "ok", CheckOK: true})
 	if item.DeliveryState == DeliveryLiveVerified || item.DeliveryState == DeliveryDone {
 		t.Fatalf("legacy check_ok forged completion: %+v", item)
 	}
@@ -29,7 +30,7 @@ func TestTransitionDeliveryRejectsForgedCheckOK(t *testing.T) {
 }
 
 func TestDeliveryTransitionsRequireEvidenceAndAreAdjacent(t *testing.T) {
-	item := Item{SchemaVersion: SchemaVersion2, ItemID: "u", Title: "unit", ConceptState: ConceptAdopted, DeliveryState: DeliveryQueued}
+	item := Item{SchemaVersion: SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("u"), Title: "unit", ConceptState: ConceptAdopted, DeliveryState: DeliveryQueued}
 	if _, err := TransitionDelivery(item, DeliveryBuild, []EvidenceRef{{Stage: DeliveryBuild, Ref: "build-1", Passed: true}}); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("expected adjacent transition error, got %v", err)
 	}
@@ -41,7 +42,7 @@ func TestDeliveryTransitionsRequireEvidenceAndAreAdjacent(t *testing.T) {
 
 func TestLiveVerifiedRequiresCumulativeStageEvidence(t *testing.T) {
 	item := Item{
-		SchemaVersion: SchemaVersion2, ItemID: "cumulative", Title: "unit",
+		SchemaVersion: SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("cumulative"), Title: "unit",
 		ConceptState: ConceptAdopted, DeliveryState: DeliveryPostDeployVerify,
 	}
 	if _, err := TransitionDelivery(item, DeliveryLiveVerified, []EvidenceRef{{Stage: DeliveryLiveVerified, Ref: "live-only", Passed: true}}); !errors.Is(err, ErrEvidenceRequired) {

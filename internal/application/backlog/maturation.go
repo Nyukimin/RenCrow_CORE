@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const maturationPeriod = 7 * 24 * time.Hour
@@ -306,14 +307,14 @@ func (s *Service) Revalidate(ctx context.Context, id string, request RevalidateR
 		request.BypassReason = ""
 	}
 	if request.Decision == domainbacklog.RevalidationDecisionMerge {
-		if request.MergedInto == "" || request.MergedInto == item.ItemID {
+		if request.MergedInto == "" || request.MergedInto == string(item.BacklogItemID) {
 			return domainbacklog.Item{}, errors.New("merge requires a different existing Atlas item")
 		}
 		target, targetErr := s.find(ctx, request.MergedInto)
 		if targetErr != nil {
 			return domainbacklog.Item{}, fmt.Errorf("merge target %q: %w", request.MergedInto, targetErr)
 		}
-		if target.ItemID == item.ItemID {
+		if target.BacklogItemID == item.BacklogItemID {
 			return domainbacklog.Item{}, errors.New("merge requires a different existing Atlas item")
 		}
 	}
@@ -342,7 +343,7 @@ func (s *Service) Revalidate(ctx context.Context, id string, request RevalidateR
 		maturationDays = int(elapsed / (24 * time.Hour))
 	}
 	record := domainbacklog.RevalidationRecord{
-		BacklogID: item.ItemID, RevalidationDate: formatMaturationTime(now), MaturationDays: maturationDays,
+		BacklogID: string(item.BacklogItemID), RevalidationDate: formatMaturationTime(now), MaturationDays: maturationDays,
 		Decision: request.Decision, Reason: request.Reason,
 		Necessity: request.Necessity, Duplication: request.Duplication,
 		Mergeability: request.Mergeability, ArchitecturalConsistency: request.ArchitecturalConsistency,
@@ -352,6 +353,7 @@ func (s *Service) Revalidate(ctx context.Context, id string, request RevalidateR
 		ArchitectureImpact: request.ArchitectureImpact, ImplementationValue: request.ImplementationValue,
 		NextReviewTrigger: request.NextReviewTrigger, ReviewAgents: append([]string(nil), request.ReviewAgents...),
 		Forced: request.Forced, MaturationBypass: bypassUsed, BypassReason: request.BypassReason,
+		TransitionEventID: modulecore.NewEventID(),
 	}
 	if err := domainbacklog.ValidateRevalidationRecord(record); err != nil {
 		return domainbacklog.Item{}, err

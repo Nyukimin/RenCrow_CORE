@@ -475,7 +475,7 @@ func backlogActiveItems(items []domainbacklog.Item) []domainbacklog.Item {
 	active := make([]domainbacklog.Item, 0, len(items))
 	seen := map[string]struct{}{}
 	for _, item := range items {
-		id := strings.TrimSpace(item.ItemID)
+		id := strings.TrimSpace(string(item.BacklogItemID))
 		if id == "" {
 			continue
 		}
@@ -514,7 +514,7 @@ func backlogActiveItems(items []domainbacklog.Item) []domainbacklog.Item {
 		if !leftTime.Equal(rightTime) {
 			return leftTime.Before(rightTime)
 		}
-		return active[i].ItemID < active[j].ItemID
+		return string(active[i].BacklogItemID) < string(active[j].BacklogItemID)
 	})
 	return active
 }
@@ -535,7 +535,7 @@ func backlogIntakeCandidates(items []domainbacklog.Item) []domainbacklog.Item {
 	candidates := make([]domainbacklog.Item, 0, len(items))
 	seen := map[string]struct{}{}
 	for _, item := range items {
-		id := strings.TrimSpace(item.ItemID)
+		id := strings.TrimSpace(string(item.BacklogItemID))
 		if id == "" {
 			continue
 		}
@@ -567,7 +567,7 @@ func backlogIntakeCandidates(items []domainbacklog.Item) []domainbacklog.Item {
 		if !leftTime.Equal(rightTime) {
 			return leftTime.Before(rightTime)
 		}
-		return candidates[i].ItemID < candidates[j].ItemID
+		return string(candidates[i].BacklogItemID) < string(candidates[j].BacklogItemID)
 	})
 	return candidates
 }
@@ -591,7 +591,7 @@ func backlogRunnerMessage(item domainbacklog.Item) string {
 - build、deploy、restart、readiness、production smokeを実施していない場合は、そのstageのEvidenceを作らない。
 - 失敗時は理由付きBLOCKEDへ確定し、待機状態を作らない。`,
 			strings.TrimSpace(item.ImplementationUnit), strings.TrimSpace(item.DeliveryState),
-			strings.TrimSpace(item.Title), strings.TrimSpace(item.ItemID))
+			strings.TrimSpace(item.Title), strings.TrimSpace(string(item.BacklogItemID)))
 	}
 	return fmt.Sprintf(`/code2 Backlog item %s を1件だけ実装してください。
 
@@ -612,11 +612,11 @@ func backlogRunnerMessage(item domainbacklog.Item) string {
 - 検証コマンドを必ず実行する。
 - 成功したら /viewer/backlog に item_id=%s を status=ok, check_ok=true, checked_by=coder, test_result に検証結果つきで POST する。
 - 失敗または実装不能なら /viewer/backlog に status=blocked, check_ok=false とし、implementation/test_result に理由を残す。`,
-		strings.TrimSpace(item.ItemID),
+		strings.TrimSpace(string(item.BacklogItemID)),
 		strings.TrimSpace(item.Title),
 		strings.TrimSpace(item.Body),
 		strings.TrimSpace(item.Implementation),
-		strings.TrimSpace(item.ItemID),
+		strings.TrimSpace(string(item.BacklogItemID)),
 	)
 }
 
@@ -646,7 +646,7 @@ func backlogItemTime(item domainbacklog.Item) time.Time {
 
 func backlogWorkstreamDescription(item domainbacklog.Item) string {
 	parts := []string{
-		fmt.Sprintf("Backlog item: %s", strings.TrimSpace(item.ItemID)),
+		fmt.Sprintf("Backlog item: %s", strings.TrimSpace(string(item.BacklogItemID))),
 		fmt.Sprintf("kind: %s", strings.TrimSpace(item.Kind)),
 		fmt.Sprintf("priority: %s", strings.TrimSpace(item.Priority)),
 		fmt.Sprintf("source: %s", strings.TrimSpace(item.Source)),
@@ -666,7 +666,7 @@ func backlogGoalDescription(item domainbacklog.Item) string {
 		body = strings.TrimSpace(item.Title)
 	}
 	return fmt.Sprintf("Backlog item %s を実装可能な作業単位に落とし込み、実装・検証・Backlog更新まで完了させる。\n\n%s",
-		strings.TrimSpace(item.ItemID),
+		strings.TrimSpace(string(item.BacklogItemID)),
 		body,
 	)
 }
@@ -706,8 +706,8 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 	report.Active = len(active)
 	if len(active) > 0 {
 		report.Skipped = len(items)
-		report.ItemID = active[0].ItemID
-		s.emitEvent("backlog.runner.waiting_active", fmt.Sprintf("%s status=%s", active[0].ItemID, active[0].Status))
+		report.ItemID = string(active[0].BacklogItemID)
+		s.emitEvent("backlog.runner.waiting_active", fmt.Sprintf("%s status=%s", string(active[0].BacklogItemID), active[0].Status))
 		return report, nil
 	}
 	report.Skipped = len(items) - len(candidates)
@@ -715,9 +715,9 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 		return report, nil
 	}
 	item := candidates[0]
-	workstreamID := "ws_backlog_" + safePathSegment(item.ItemID)
-	goalID := "goal_backlog_" + safePathSegment(item.ItemID)
-	artifactID := "art_backlog_" + safePathSegment(item.ItemID)
+	workstreamID := "ws_backlog_" + safePathSegment(string(item.BacklogItemID))
+	goalID := "goal_backlog_" + safePathSegment(string(item.BacklogItemID))
+	artifactID := "art_backlog_" + safePathSegment(string(item.BacklogItemID))
 
 	if err := s.workstreamStore.SaveWorkstream(ctx, domainworkstream.Workstream{
 		WorkstreamID: workstreamID,
@@ -729,7 +729,7 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 		UpdatedAt:    now.UTC(),
 	}); err != nil {
 		report.Failed++
-		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save workstream for %s: %v", item.ItemID, err))
+		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save workstream for %s: %v", item.BacklogItemID, err))
 		return report, err
 	}
 	if err := s.workstreamStore.SaveGoal(ctx, domainworkstream.Goal{
@@ -751,7 +751,7 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 		CreatedAt: now.UTC(),
 	}); err != nil {
 		report.Failed++
-		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save goal for %s: %v", item.ItemID, err))
+		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save goal for %s: %v", item.BacklogItemID, err))
 		return report, err
 	}
 	if err := s.workstreamStore.SaveArtifact(ctx, domainworkstream.Artifact{
@@ -763,7 +763,7 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 		CreatedAt:    now.UTC(),
 	}); err != nil {
 		report.Failed++
-		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save artifact for %s: %v", item.ItemID, err))
+		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to save artifact for %s: %v", item.BacklogItemID, err))
 		return report, err
 	}
 
@@ -778,15 +778,15 @@ func (s *HeartbeatService) RunBacklogIntake(ctx context.Context, now time.Time) 
 	))
 	if err := s.backlogStore.Save(ctx, item); err != nil {
 		report.Failed++
-		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to update backlog %s: %v", item.ItemID, err))
+		s.emitEvent("backlog.intake.error", fmt.Sprintf("failed to update backlog %s: %v", item.BacklogItemID, err))
 		return report, err
 	}
 	report.Promoted = 1
-	report.ItemID = item.ItemID
+	report.ItemID = string(item.BacklogItemID)
 	report.WorkstreamID = workstreamID
 	report.GoalID = goalID
 	report.ArtifactID = artifactID
-	s.emitEvent("backlog.intake.promoted", fmt.Sprintf("%s -> %s", item.ItemID, workstreamID))
+	s.emitEvent("backlog.intake.promoted", fmt.Sprintf("%s -> %s", item.BacklogItemID, workstreamID))
 	return report, nil
 }
 
@@ -867,12 +867,12 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 	}
 	// No item is a normal owner decision. In particular, a queue freeze must
 	// not fall through to backlogActiveItems and start a following unit.
-	if !result.Acquired || strings.TrimSpace(result.Item.ItemID) == "" {
+	if !result.Acquired || strings.TrimSpace(string(result.Item.BacklogItemID)) == "" {
 		report.Skipped = len(items)
 		return report, nil
 	}
 	item := result.Item
-	report.ItemID = item.ItemID
+	report.ItemID = string(item.BacklogItemID)
 	target := atlasNextDeliveryStage(item.DeliveryState)
 	if target == "" {
 		report.Skipped = len(items)
@@ -882,12 +882,12 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 	input, err := newHeartbeatWorkerInput(backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
 	if err != nil {
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.ItemID, err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
 	taskID := input.RootTaskID()
 	requestID := modulecore.NewRequestID()
-	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s target=%s", item.ItemID, taskID.String(), target)); err != nil {
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s target=%s", item.BacklogItemID, taskID.String(), target)); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
@@ -906,13 +906,13 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 			TargetDeliveryState: domainbacklog.DeliveryBlocked,
 			EvidenceRefs:        []domainbacklog.EvidenceRef{failureRef}, Reason: reason,
 		}
-		if _, reviseErr := s.atlasService.Revise(ctx, item.ItemID, request); reviseErr != nil {
+		if _, reviseErr := s.atlasService.Revise(ctx, string(item.BacklogItemID), request); reviseErr != nil {
 			report.Failed++
-			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s owner BLOCKED revise failed: %v", item.ItemID, taskID.String(), reviseErr))
+			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s owner BLOCKED revise failed: %v", item.BacklogItemID, taskID.String(), reviseErr))
 			return report, fmt.Errorf("%s; owner BLOCKED revise failed: %w", reason, reviseErr)
 		}
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.ItemID, taskID.String(), err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.BacklogItemID, taskID.String(), err))
 		return report, err
 	}
 	report.Started = 1
@@ -938,7 +938,7 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		return report, nil
 	}
 	item := active[0]
-	report.ItemID = item.ItemID
+	report.ItemID = string(item.BacklogItemID)
 	if strings.TrimSpace(item.ConceptState) != "" {
 		leaseStore, ok := s.workstreamStore.(atlasImplementationLeaseStore)
 		if !ok {
@@ -969,28 +969,28 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		}
 	}
 	if backlogRunnerAlreadyStarted(item) {
-		s.emitEvent("backlog.runner.waiting_active", fmt.Sprintf("%s status=%s runner=started", item.ItemID, item.Status))
+		s.emitEvent("backlog.runner.waiting_active", fmt.Sprintf("%s status=%s runner=started", item.BacklogItemID, item.Status))
 		return report, nil
 	}
 
-	startedNote := fmt.Sprintf("%s item_id=%s at %s.", backlogRunnerStartedMarker, item.ItemID, now.UTC().Format(time.RFC3339))
+	startedNote := fmt.Sprintf("%s item_id=%s at %s.", backlogRunnerStartedMarker, item.BacklogItemID, now.UTC().Format(time.RFC3339))
 	item.Implementation = appendBacklogImplementation(item.Implementation, startedNote)
 	item.Status = "implementing"
 	item.Implementer = "coder"
 	input, err := newHeartbeatWorkerInput(backlogRunnerMessage(item), "backlog-runner", "heartbeat")
 	if err != nil {
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.ItemID, err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
 	if err := s.backlogStore.Save(ctx, item); err != nil {
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to mark runner start for %s: %v", item.ItemID, err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to mark runner start for %s: %v", item.BacklogItemID, err))
 		return report, err
 	}
 
 	taskID := input.RootTaskID()
-	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s", item.ItemID, taskID.String())); err != nil {
+	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s", item.BacklogItemID, taskID.String())); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
@@ -1004,7 +1004,7 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		item.Implementation = appendBacklogImplementation(item.Implementation, item.TestResult)
 		_ = s.backlogStore.Save(ctx, item)
 		report.Failed++
-		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.ItemID, taskID.String(), err))
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.BacklogItemID, taskID.String(), err))
 		return report, err
 	}
 	report.Started = 1

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreReadsLegacyAndProjectsWithoutAdopting(t *testing.T) {
@@ -27,7 +28,7 @@ func TestJSONLStoreReadsLegacyAndProjectsWithoutAdopting(t *testing.T) {
 func TestJSONLStoreReconcilesBackfillWithoutDuplicateItems(t *testing.T) {
 	store := NewJSONLStore(filepath.Join(t.TempDir(), "backlog.jsonl"))
 	items := []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "atlas:one", FeatureID: "one", Title: "one",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("atlas:one"), FeatureID: "one", Title: "one",
 		ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryNone,
 	}}
 	receipt := domainbacklog.BackfillImportReceipt{
@@ -45,7 +46,7 @@ func TestJSONLStoreReconcilesBackfillWithoutDuplicateItems(t *testing.T) {
 		t.Fatalf("second reconcile result=%+v err=%v", second, err)
 	}
 	got, err := store.List(context.Background(), 10)
-	if err != nil || len(got) != 1 || got[0].ItemID != "atlas:one" {
+	if err != nil || len(got) != 1 || got[0].BacklogItemID != "atlas:one" {
 		t.Fatalf("items=%+v err=%v", got, err)
 	}
 }

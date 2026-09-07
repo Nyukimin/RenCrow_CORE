@@ -70,7 +70,7 @@ func (s *Service) emitDevelopmentTransition(ctx context.Context, eventType strin
 	}
 	safeRequestID := methodology.RedactSecrets(strings.TrimSpace(requestID))
 	artifactID := strings.Join([]string{"transition", boundedDevelopmentArtifactSegment(item.ImplementationUnit), boundedDevelopmentArtifactSegment(target), boundedDevelopmentArtifactSegment(safeRequestID)}, ":")
-	fields := map[string]any{"target_stage": target, "item_id": item.ItemID, "implementation_revision": item.ImplementationRevision}
+	fields := map[string]any{"target_stage": target, "backlog_item_id": item.BacklogItemID, "implementation_revision": item.ImplementationRevision}
 	if strings.TrimSpace(reason) != "" {
 		fields["reason"] = methodology.RedactSecrets(reason)
 	}
@@ -302,7 +302,7 @@ func (s *Service) IssueDevelopmentImplementationAuthority(ctx context.Context, u
 	if err != nil {
 		return DevelopmentProjection{}, false, errors.New("adoption timestamp is invalid")
 	}
-	adoption := methodology.AdoptionEvidence{EvidenceID: "atlas-adoption:" + item.ItemID, UnitID: unitID, SpecRef: projection.Specification.SpecID, SpecHash: projection.Specification.ContentHash, Decision: "ADOPTED", Verified: true, CreatedAt: adoptedAt}
+	adoption := methodology.AdoptionEvidence{EvidenceID: "atlas-adoption:" + string(item.BacklogItemID), UnitID: unitID, SpecRef: projection.Specification.SpecID, SpecHash: projection.Specification.ContentHash, Decision: "ADOPTED", Verified: true, CreatedAt: adoptedAt}
 	token, err := methodology.IssueImplementationAuthorityToken(methodology.ImplementationAuthorityRequest{ImplementationAuthorityTokenID: tokenID, UnitID: unitID, SpecRef: projection.Specification.SpecID, SpecHash: projection.Specification.ContentHash, Issuer: strings.TrimSpace(request.Issuer), Scope: append([]string(nil), request.Scope...), Reason: strings.TrimSpace(request.Reason), IssuedAt: s.now(), ExpiresAt: request.ExpiresAt}, adoption, methodology.ClockFunc(s.clock))
 	if err != nil {
 		return DevelopmentProjection{}, false, err
@@ -716,7 +716,7 @@ func validateDevelopmentProjectionBindings(item domainbacklog.Item, projection D
 		if err != nil {
 			return errors.New("adoption timestamp is invalid")
 		}
-		adoption := methodology.AdoptionEvidence{EvidenceID: "atlas-adoption:" + item.ItemID, UnitID: item.ImplementationUnit, SpecRef: projection.Specification.SpecID, SpecHash: projection.Specification.ContentHash, Decision: "ADOPTED", Verified: true, CreatedAt: adoptedAt}
+		adoption := methodology.AdoptionEvidence{EvidenceID: "atlas-adoption:" + string(item.BacklogItemID), UnitID: item.ImplementationUnit, SpecRef: projection.Specification.SpecID, SpecHash: projection.Specification.ContentHash, Decision: "ADOPTED", Verified: true, CreatedAt: adoptedAt}
 		if err := projection.ImplementationAuthorityToken.ValidateFor(adoption, projection.ImplementationAuthorityToken.IssuedAt); err != nil {
 			return err
 		}

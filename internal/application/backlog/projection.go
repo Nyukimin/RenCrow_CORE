@@ -35,7 +35,7 @@ type PipelineStage struct {
 // closure state visible without asking the Viewer to reconstruct authority.
 type PipelineEntry struct {
 	UnitID                 string                                `json:"unit_id"`
-	ItemID                 string                                `json:"item_id"`
+	BacklogItemID                 string                                `json:"backlog_item_id"`
 	Title                  string                                `json:"title"`
 	OwnerModule            string                                `json:"owner_module,omitempty"`
 	ConceptState           string                                `json:"concept_state"`
@@ -135,7 +135,7 @@ func unitKey(item domainbacklog.Item) string {
 	if unit := strings.TrimSpace(item.ImplementationUnit); unit != "" {
 		return unit
 	}
-	return strings.TrimSpace(item.ItemID)
+	return strings.TrimSpace(string(item.BacklogItemID))
 }
 
 func newerPipelineItem(current, candidate domainbacklog.Item) bool {
@@ -145,7 +145,7 @@ func newerPipelineItem(current, candidate domainbacklog.Item) bool {
 	if candidate.UpdatedAt != current.UpdatedAt {
 		return candidate.UpdatedAt > current.UpdatedAt
 	}
-	return candidate.ItemID > current.ItemID
+	return string(candidate.BacklogItemID) > string(current.BacklogItemID)
 }
 
 func latestPipelineItems(items []domainbacklog.Item) []domainbacklog.Item {
@@ -178,7 +178,7 @@ func sameFreezeUnit(freeze domainworkstream.QueueFreeze, unitID string) bool {
 }
 
 func sameClosureUnit(receipt domainworkstream.ClosureReceipt, item domainbacklog.Item, unitID string) bool {
-	return strings.TrimSpace(receipt.UnitID) == unitID || strings.TrimSpace(receipt.ItemID) == strings.TrimSpace(item.ItemID)
+	return strings.TrimSpace(receipt.UnitID) == unitID || strings.TrimSpace(string(receipt.BacklogItemID)) == strings.TrimSpace(string(item.BacklogItemID))
 }
 
 func sameStageReceiptUnit(receipt domainworkstream.StageRunReceipt, unitID string) bool {
@@ -269,7 +269,7 @@ func currentItemClosureCompleted(item domainbacklog.Item, closures []domainworks
 		if strings.TrimSpace(receipt.UnitID) != unitID || receipt.ImplementationRevision != item.ImplementationRevision {
 			continue
 		}
-		if receiptItemID := strings.TrimSpace(receipt.ItemID); receiptItemID != "" && receiptItemID != strings.TrimSpace(item.ItemID) {
+		if receiptItemID := strings.TrimSpace(string(receipt.BacklogItemID)); receiptItemID != "" && receiptItemID != strings.TrimSpace(string(item.BacklogItemID)) {
 			continue
 		}
 		if !found || newerClosureReceipt(latest, receipt) {
@@ -496,7 +496,7 @@ func (s *Service) buildProjection(ctx context.Context) (Projection, error) {
 	for _, item := range latestPipelineItems(items) {
 		unitID := unitKey(item)
 		entry := PipelineEntry{
-			UnitID: unitID, ItemID: item.ItemID, Title: item.Title, OwnerModule: item.OwnerModule,
+			UnitID: unitID, BacklogItemID: string(item.BacklogItemID), Title: item.Title, OwnerModule: item.OwnerModule,
 			ConceptState: item.ConceptState, DeliveryState: item.DeliveryState, ImplementationRevision: item.ImplementationRevision,
 			InvalidatedFromStage: item.InvalidatedFromStage, SupersedesUnitID: item.SupersedesUnitID,
 			Stages: pipelineStages(item, nil, nil, nil, nil), EvidenceRefs: append([]domainbacklog.EvidenceRef(nil), item.EvidenceRefs...),

@@ -1,0 +1,62 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step18-workstream-atlas-backlog",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T10:10:00Z",
+  "input": {
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-18-workstream--atlas--backlog",
+    "item_rule": "Backlog domain primary identity is typed BacklogItemID not generic ItemID",
+    "event_rule": "Atlas lifecycle state transitions record EventID on at least maturation promotion and freeze/closure paths",
+    "completion_rule": "Cross-module generic ItemID ResultID RecordID zero in Step18 backlog workstream atlas owners; Atlas transitions carry EventID; Receipt and Event meaning not shared"
+  },
+  "included": [
+    {
+      "check_id": "s18_backlog_item_id",
+      "guarantee": "backlog domain and application use BacklogItemID with zero generic ItemID json item_id in those owners",
+      "owner": "RenCrow_CORE backlog",
+      "execution_phase": "pre-commit cutover post-deploy",
+      "result_consumer": "Atlas backlog API",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s18_atlas_event_refs",
+      "guarantee": "maturation promotion freeze and closure write EventID references on receipts or companion events",
+      "owner": "RenCrow_CORE backlog lifecycle",
+      "execution_phase": "pre-commit post-deploy",
+      "result_consumer": "Atlas lifecycle",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s18_architecture_zero",
+      "guarantee": "Step18 owners ban generic ItemID ResultID RecordID after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Step18 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s18_runtime_route",
+      "guarantee": "health ok after Step18 deploy",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover",
+      "result_consumer": "Step18 ledger",
+      "failure_action": "rollback"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s18_full_synthetic_ws_goal_artifact_generators",
+      "reason": "ws_atlas goal_atlas artifact_atlas generators require broader Workstream redesign",
+      "consumer": "later Atlas IU",
+      "failure_action": "keep deferred"
+    },
+    {
+      "check_id": "s18_full_system_restorecheck",
+      "reason": "final Identity",
+      "consumer": "all-clear",
+      "failure_action": "reopen"
+    }
+  ],
+  "replacement_receipts": []
+}

@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestMaturationAdoptRequiresPromoted(t *testing.T) {
 	store := &memoryItemStore{}
 	service := NewService(store, &memoryWorkstreamStore{})
 	intake, err := service.Intake(context.Background(), IntakeRequest{
-		ItemID:  "maturation-red",
+		BacklogItemID: modulecore.BacklogItemID("maturation-red"),
 		Title:   "maturation gate",
 		Purpose: "verify before adoption",
 		SourceRefs: []domainbacklog.SourceRef{{
@@ -24,10 +25,10 @@ func TestMaturationAdoptRequiresPromoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Candidate(context.Background(), intake.ItemID); err != nil {
+	if _, err := service.Candidate(context.Background(), string(intake.BacklogItemID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Adopt(context.Background(), intake.ItemID, "owner selected"); err == nil {
+	if _, err := service.Adopt(context.Background(), string(intake.BacklogItemID), "owner selected"); err == nil {
 		t.Fatal("adoption must fail before maturation PROMOTED")
 	}
 }

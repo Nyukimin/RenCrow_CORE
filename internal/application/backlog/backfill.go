@@ -8,6 +8,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // BackfillReconcileStore is an optional atomic batch extension on the existing
@@ -37,7 +38,7 @@ func (s *Service) ReconcileBackfill(ctx context.Context, pkg featurebacklog.Back
 	}
 	byID := make(map[string]domainbacklog.Item, len(existing))
 	for _, item := range existing {
-		byID[item.ItemID] = item
+		byID[string(item.BacklogItemID)] = item
 	}
 
 	desired := make([]domainbacklog.Item, 0, len(pkg.Items))
@@ -48,7 +49,7 @@ func (s *Service) ReconcileBackfill(ctx context.Context, pkg featurebacklog.Back
 		if err := domainbacklog.ValidateItem(incoming); err != nil {
 			return BackfillReconcileReport{}, err
 		}
-		current, found := byID[incoming.ItemID]
+		current, found := byID[string(incoming.BacklogItemID)]
 		if found {
 			incoming = preserveRuntimeOverlay(current, incoming)
 		}
@@ -98,7 +99,7 @@ func backfillItemToDomain(source featurebacklog.BackfillItem) domainbacklog.Item
 	}
 	item := domainbacklog.Item{
 		SchemaVersion:         domainbacklog.SchemaVersion2,
-		ItemID:                "atlas:" + strings.TrimSpace(source.FeatureID),
+		BacklogItemID:         modulecore.BacklogItemID("atlas:" + strings.TrimSpace(source.FeatureID)),
 		FeatureID:             strings.TrimSpace(source.FeatureID),
 		Kind:                  "idea",
 		Title:                 strings.TrimSpace(source.Title),
@@ -212,7 +213,7 @@ func cloneRevalidationRecords(records []domainbacklog.RevalidationRecord) []doma
 func countNew(existing map[string]domainbacklog.Item, desired []domainbacklog.Item) int {
 	count := 0
 	for _, item := range desired {
-		if _, ok := existing[item.ItemID]; !ok {
+		if _, ok := existing[string(item.BacklogItemID)]; !ok {
 			count++
 		}
 	}

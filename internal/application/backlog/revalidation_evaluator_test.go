@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"encoding/json"
 	"strings"
@@ -31,8 +32,8 @@ func TestLLMRevalidationEvaluatorUsesBoundedJSONContract(t *testing.T) {
 	provider := &revalidationLLMStub{content: validRevalidationJSON()}
 	evaluator := NewLLMRevalidationEvaluator(provider, "shiro")
 	result, err := evaluator.Evaluate(context.Background(), RevalidationEvaluationInput{
-		Item:         domainbacklog.Item{ItemID: "subject", Title: "subject"},
-		RelatedItems: []domainbacklog.Item{{ItemID: "related", Title: "related"}},
+		Item:         domainbacklog.Item{BacklogItemID: modulecore.BacklogItemID("subject"), Title: "subject"},
+		RelatedItems: []domainbacklog.Item{{BacklogItemID: modulecore.BacklogItemID("related"), Title: "related"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func TestLLMRevalidationEvaluatorUsesBoundedJSONContract(t *testing.T) {
 	if provider.request.ResponseFormat != domainllm.ResponseFormatJSONObject || provider.request.Temperature != 0 || provider.request.MaxTokens > 2048 {
 		t.Fatalf("unbounded request contract: %+v", provider.request)
 	}
-	if len(provider.request.Messages) != 1 || !strings.Contains(provider.request.Messages[0].Content, `"item_id":"subject"`) || !strings.Contains(provider.request.Messages[0].Content, `"item_id":"related"`) {
+	if len(provider.request.Messages) != 1 || !strings.Contains(provider.request.Messages[0].Content, `"backlog_item_id":"subject"`) || !strings.Contains(provider.request.Messages[0].Content, `"backlog_item_id":"related"`) {
 		t.Fatalf("evaluation input missing: %+v", provider.request.Messages)
 	}
 }
@@ -54,14 +55,14 @@ func TestLLMRevalidationEvaluatorMinimizesAndBoundsEvidenceBeforeModel(t *testin
 	related := make([]domainbacklog.Item, revalidationRelatedLimit+8)
 	for i := range related {
 		related[i] = domainbacklog.Item{
-			ItemID: "related-" + strings.Repeat("x", i), Title: long,
+			BacklogItemID: modulecore.BacklogItemID("related-" + strings.Repeat("x", i)), Title: long,
 			Body: "DO_NOT_SEND_BODY", Background: "DO_NOT_SEND_BACKGROUND",
 			SourceRefs:          []domainbacklog.SourceRef{{Locator: long, RawOrSummary: "DO_NOT_SEND_SOURCE_BODY"}},
 			RevalidationRecords: []domainbacklog.RevalidationRecord{{Reason: "DO_NOT_SEND_PRIOR_REVIEW"}},
 		}
 	}
 	_, err := NewLLMRevalidationEvaluator(provider, "shiro").Evaluate(context.Background(), RevalidationEvaluationInput{
-		Item: domainbacklog.Item{ItemID: "subject", Title: long, Body: "DO_NOT_SEND_BODY"}, RelatedItems: related,
+		Item: domainbacklog.Item{BacklogItemID: modulecore.BacklogItemID("subject"), Title: long, Body: "DO_NOT_SEND_BODY"}, RelatedItems: related,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,8 +121,8 @@ func (s *revalidationEvaluatorStub) Evaluate(_ context.Context, input Revalidati
 func TestEvaluateAndRevalidateSearchesRelatedAndPersistsSevenDimensions(t *testing.T) {
 	now := time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC)
 	store := &memoryItemStore{items: []domainbacklog.Item{
-		{SchemaVersion: 2, ItemID: "subject", Title: "Shared routing", Purpose: "routing owner", Category: "runtime", TargetModules: []string{"RenCrow_CORE"}, ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone, MaturationState: domainbacklog.MaturationStateMaturation, MaturationStartedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339), MaturationEligibleAt: now.Add(-24 * time.Hour).Format(time.RFC3339), CreatedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339)},
-		{SchemaVersion: 2, ItemID: "related", Title: "Shared routing contract", Purpose: "routing owner", Category: "runtime", TargetModules: []string{"RenCrow_CORE"}, ConceptState: domainbacklog.ConceptRejected, DeliveryState: domainbacklog.DeliveryRejected, MaturationState: domainbacklog.MaturationStateDropped, CreatedAt: now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)},
+		{SchemaVersion: 2, BacklogItemID: modulecore.BacklogItemID("subject"), Title: "Shared routing", Purpose: "routing owner", Category: "runtime", TargetModules: []string{"RenCrow_CORE"}, ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone, MaturationState: domainbacklog.MaturationStateMaturation, MaturationStartedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339), MaturationEligibleAt: now.Add(-24 * time.Hour).Format(time.RFC3339), CreatedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339)},
+		{SchemaVersion: 2, BacklogItemID: modulecore.BacklogItemID("related"), Title: "Shared routing contract", Purpose: "routing owner", Category: "runtime", TargetModules: []string{"RenCrow_CORE"}, ConceptState: domainbacklog.ConceptRejected, DeliveryState: domainbacklog.DeliveryRejected, MaturationState: domainbacklog.MaturationStateDropped, CreatedAt: now.Add(-30 * 24 * time.Hour).Format(time.RFC3339)},
 	}}
 	evaluator := &revalidationEvaluatorStub{}
 	service := NewService(store, nil).WithClock(func() time.Time { return now }).WithRevalidationEvaluator(evaluator)
@@ -129,7 +130,7 @@ func TestEvaluateAndRevalidateSearchesRelatedAndPersistsSevenDimensions(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(evaluator.input.RelatedItems) != 1 || evaluator.input.RelatedItems[0].ItemID != "related" {
+	if len(evaluator.input.RelatedItems) != 1 || evaluator.input.RelatedItems[0].BacklogItemID != "related" {
 		t.Fatalf("related search omitted dropped history: %+v", evaluator.input.RelatedItems)
 	}
 	if item.MaturationState != domainbacklog.MaturationStateHold || len(item.RevalidationRecords) != 1 {
@@ -145,7 +146,7 @@ func TestRunEligibleRevalidationsIsBoundedAndSkipsHold(t *testing.T) {
 	now := time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC)
 	eligible := func(id string, age time.Duration) domainbacklog.Item {
 		started := now.Add(-age)
-		return domainbacklog.Item{SchemaVersion: 2, ItemID: id, Title: id, Purpose: "review", ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone, MaturationState: domainbacklog.MaturationStateMaturation, MaturationStartedAt: started.Format(time.RFC3339), MaturationEligibleAt: started.Add(maturationPeriod).Format(time.RFC3339), CreatedAt: started.Format(time.RFC3339)}
+		return domainbacklog.Item{SchemaVersion: 2, BacklogItemID: modulecore.BacklogItemID(id), Title: id, Purpose: "review", ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone, MaturationState: domainbacklog.MaturationStateMaturation, MaturationStartedAt: started.Format(time.RFC3339), MaturationEligibleAt: started.Add(maturationPeriod).Format(time.RFC3339), CreatedAt: started.Format(time.RFC3339)}
 	}
 	hold := eligible("hold", 20*24*time.Hour)
 	hold.ConceptState = domainbacklog.ConceptDeferred

@@ -123,6 +123,7 @@ type QueueFreeze struct {
 	EvidenceRefs          []domainbacklog.EvidenceRef `json:"evidence_refs,omitempty"`
 	Status                string                      `json:"status,omitempty"`
 	ActionID              modulecore.ActionID         `json:"action_id,omitempty"`
+	TransitionEventID     modulecore.EventID          `json:"transition_event_id,omitempty"`
 	ReplacementUnitID     string                      `json:"replacement_unit_id,omitempty"`
 	ReplacementLease      ImplementationLease         `json:"replacement_lease,omitempty"`
 	ResolutionAcquired    bool                        `json:"resolution_acquired,omitempty"`
@@ -166,18 +167,19 @@ type StageRunReceipt struct {
 	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
 	IdempotencyKey         string               `json:"idempotency_key"`
 	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
-	UnitID                 string    `json:"unit_id"`
-	ItemID                 string    `json:"item_id,omitempty"`
-	ImplementationRevision int       `json:"implementation_revision"`
-	TargetStage            string    `json:"target_stage"`
-	PayloadHash            string    `json:"payload_hash"`
-	Status                 string    `json:"status"`
-	DeliveryState          string    `json:"delivery_state,omitempty"`
-	ResultJSON             string    `json:"result_json,omitempty"`
-	ReasonCode             string    `json:"reason_code,omitempty"`
-	Error                  string    `json:"error,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	CompletedAt            time.Time `json:"completed_at,omitempty"`
+	TransitionEventID      modulecore.EventID   `json:"transition_event_id,omitempty"`
+	UnitID                 string               `json:"unit_id"`
+	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id,omitempty"`
+	ImplementationRevision int                  `json:"implementation_revision"`
+	TargetStage            string               `json:"target_stage"`
+	PayloadHash            string               `json:"payload_hash"`
+	Status                 string               `json:"status"`
+	DeliveryState          string               `json:"delivery_state,omitempty"`
+	ResultJSON             string               `json:"result_json,omitempty"`
+	ReasonCode             string               `json:"reason_code,omitempty"`
+	Error                  string               `json:"error,omitempty"`
+	CreatedAt              time.Time            `json:"created_at"`
+	CompletedAt            time.Time            `json:"completed_at,omitempty"`
 }
 
 const (
@@ -192,10 +194,11 @@ type ClosureReceipt struct {
 	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
 	IdempotencyKey         string               `json:"idempotency_key"`
 	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
-	UnitID                 string    `json:"unit_id"`
-	ItemID                 string    `json:"item_id,omitempty"`
-	ImplementationRevision int       `json:"implementation_revision"`
-	Phase                  string    `json:"phase"`
+	TransitionEventID      modulecore.EventID   `json:"transition_event_id,omitempty"`
+	UnitID                 string               `json:"unit_id"`
+	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id,omitempty"`
+	ImplementationRevision int                  `json:"implementation_revision"`
+	Phase                  string               `json:"phase"`
 	Status                 string    `json:"status"`
 	WorkstreamID           string    `json:"workstream_id,omitempty"`
 	GoalID                 string    `json:"goal_id,omitempty"`

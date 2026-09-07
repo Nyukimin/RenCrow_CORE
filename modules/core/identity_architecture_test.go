@@ -30,7 +30,7 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"NewGoalID": {}, "NewTaskID": {}, "NewRunID": {}, "NewActionID": {},
 		"NewAttemptID": {}, "NewRequestID": {}, "NewResponseID": {}, "NewArtifactID": {},
 		"NewEvidenceID": {}, "NewMemoryID": {}, "NewRelationID": {}, "NewScheduleID": {},
-		"NewQueueItemID": {}, "NewCheckpointID": {}, "NewReceiptID": {},
+		"NewQueueItemID": {}, "NewCheckpointID": {}, "NewReceiptID": {}, "NewBacklogItemID": {},
 	}
 	legacyGeneratorSites := map[string]struct{}{
 		// Frozen legacy sites are removed by later canonical replacement steps.
@@ -1435,6 +1435,120 @@ func TestStep17VoiceIdleChatLegacyFieldsAreBanned(t *testing.T) {
 	}
 	canonicalArchitectureFail(t, "Step17 owner packages must not retain legacy Voice/IdleChat identity fields", violations)
 }
+
+func TestStep18WorkstreamAtlasBacklogLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"ItemID",
+		"item_id",
+		"ResultID",
+		"RecordID",
+	}
+	allowedTokens := map[string]struct{}{
+		"BacklogItemID":   {},
+		"backlog_item_id": {},
+	}
+	var violations []string
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step18backlogitemmigration") ||
+			strings.Contains(relative, "rencrow-step18-backlog-item-migrate")
+	}
+	allowToken := func(line string, token string) bool {
+		if token == "item_id" && strings.Contains(line, `json:"item_id"`) && strings.Contains(line, "LegacyItemID") {
+			return true
+		}
+		if token == "item_id" && strings.Contains(line, "no item_id") {
+			return true
+		}
+		return false
+	}
+	checkContent := func(relative string, content []byte) {
+		if shouldSkip(relative) {
+			return
+		}
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if !canonicalSourceContainsToken(line, token) {
+					continue
+				}
+				if _, allowed := allowedTokens[token]; allowed {
+					continue
+				}
+				if allowToken(line, token) {
+					continue
+				}
+				violations = append(violations, fmt.Sprintf("%s:%d:legacy-step18:%s", relative, lineNumber+1, token))
+			}
+		}
+	}
+	walkDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step18backlogitemmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkip(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkContent(rel, content)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step18 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/backlog",
+		"internal/application/backlog",
+		"internal/infrastructure/backlog",
+		"internal/features/backlog",
+		"internal/domain/workstream",
+		"internal/infrastructure/persistence/workstream",
+	} {
+		walkDirectory(relative)
+	}
+	for _, relative := range []string{
+		"internal/adapter/viewer/backlog_handler.go",
+		"internal/adapter/viewer/atlas_handler.go",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step18 owner packages must not retain legacy backlog/workstream atlas ItemID fields", violations)
+}
+
 
 func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)

@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"errors"
 	"reflect"
@@ -18,7 +19,7 @@ func (s *memoryItemStore) List(_ context.Context, _ int) ([]domainbacklog.Item, 
 }
 func (s *memoryItemStore) Save(_ context.Context, item domainbacklog.Item) error {
 	for i := range s.items {
-		if s.items[i].ItemID == item.ItemID {
+		if s.items[i].BacklogItemID == item.BacklogItemID {
 			s.items[i] = item
 			return nil
 		}
@@ -229,11 +230,11 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	ws := &memoryWorkstreamStore{}
 	svc := NewService(store, ws).WithClock(func() time.Time { return time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC) })
 
-	first, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "a", Title: "A", Purpose: "test A", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "a"}}})
+	first, err := svc.Intake(context.Background(), IntakeRequest{BacklogItemID: modulecore.BacklogItemID("a"), Title: "A", Purpose: "test A", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "a"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstCandidate, err := svc.Candidate(context.Background(), first.ItemID)
+	firstCandidate, err := svc.Candidate(context.Background(), string(first.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,24 +242,24 @@ func TestServiceAdoptCreatesUnitWorkstreamAndSingletonQueue(t *testing.T) {
 	// covered by the dedicated tests; seed the owner-approved decision here.
 	firstCandidate.MaturationState = domainbacklog.MaturationStatePromoted
 	store.items[0] = firstCandidate
-	firstResult, err := svc.Adopt(context.Background(), first.ItemID, "owner selected")
+	firstResult, err := svc.Adopt(context.Background(), string(first.BacklogItemID), "owner selected")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if firstResult.Item.DeliveryState != domainbacklog.DeliveryQueued || !firstResult.LeaseAcquired {
 		t.Fatalf("first adoption=%+v", firstResult)
 	}
-	second, err := svc.Intake(context.Background(), IntakeRequest{ItemID: "b", Title: "B", Purpose: "test B", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "b"}}})
+	second, err := svc.Intake(context.Background(), IntakeRequest{BacklogItemID: modulecore.BacklogItemID("b"), Title: "B", Purpose: "test B", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "b"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondCandidate, err := svc.Candidate(context.Background(), second.ItemID)
+	secondCandidate, err := svc.Candidate(context.Background(), string(second.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	secondCandidate.MaturationState = domainbacklog.MaturationStatePromoted
 	store.items[1] = secondCandidate
-	secondResult, err := svc.Adopt(context.Background(), second.ItemID, "owner selected")
+	secondResult, err := svc.Adopt(context.Background(), string(second.BacklogItemID), "owner selected")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,7 +283,7 @@ func TestServiceIntakeDeduplicatesExactSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.Duplicate || second.Item.ItemID != first.Item.ItemID || len(store.items) != 1 {
+	if !second.Duplicate || second.Item.BacklogItemID != first.Item.BacklogItemID || len(store.items) != 1 {
 		t.Fatalf("dedupe result first=%+v second=%+v items=%d", first, second, len(store.items))
 	}
 }
@@ -291,7 +292,7 @@ func TestServiceIntakeFixesLifecycleOwnerAndSeparatesModuleScope(t *testing.T) {
 	store := &memoryItemStore{}
 	svc := NewService(store, nil)
 	result, err := svc.Intake(context.Background(), IntakeRequest{
-		ItemID:          "module-scope",
+		BacklogItemID: modulecore.BacklogItemID("module-scope"),
 		Title:           "Module scope",
 		OwnerModule:     "RenCrow_STT",
 		TargetModules:   []string{"RenCrow_STT"},
@@ -317,13 +318,13 @@ func TestServiceCandidateRequiresPurpose(t *testing.T) {
 	store := &memoryItemStore{}
 	svc := NewService(store, nil)
 	intake, err := svc.Intake(context.Background(), IntakeRequest{
-		ItemID: "missing-purpose", Title: "Missing purpose",
+		BacklogItemID: modulecore.BacklogItemID("missing-purpose"), Title: "Missing purpose",
 		SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "missing-purpose"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Candidate(context.Background(), intake.ItemID); err == nil {
+	if _, err := svc.Candidate(context.Background(), string(intake.BacklogItemID)); err == nil {
 		t.Fatal("candidate promotion accepted an item without purpose")
 	}
 }
@@ -335,22 +336,22 @@ func TestServiceRecoverFindsLeaseHolderByImplementationUnit(t *testing.T) {
 		return time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC)
 	})
 	intake, err := svc.Intake(context.Background(), IntakeRequest{
-		ItemID: "recover-item", Title: "recover", Purpose: "recover test", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "recover"}},
+		BacklogItemID: modulecore.BacklogItemID("recover-item"), Title: "recover", Purpose: "recover test", SourceRefs: []domainbacklog.SourceRef{{Type: "manual", Locator: "recover"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := svc.Candidate(context.Background(), intake.ItemID)
+	candidate, err := svc.Candidate(context.Background(), string(intake.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	candidate.MaturationState = domainbacklog.MaturationStatePromoted
 	store.items[0] = candidate
-	adopted, err := svc.Adopt(context.Background(), intake.ItemID, "recover test")
+	adopted, err := svc.Adopt(context.Background(), string(intake.BacklogItemID), "recover test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adopted.Lease.HolderUnitID == adopted.Item.ItemID {
+	if adopted.Lease.HolderUnitID == string(adopted.Item.BacklogItemID) {
 		t.Fatalf("test must cover distinct item and unit IDs: %+v", adopted)
 	}
 	if err := svc.Recover(context.Background()); err != nil {
@@ -397,13 +398,13 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 	now := time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC)
 	items := &memoryItemStore{items: []domainbacklog.Item{
 		{
-			SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "recover-blocked", ImplementationUnit: "unit-recover-blocked",
+			SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("recover-blocked"), ImplementationUnit: "unit-recover-blocked",
 			WorkstreamID: "ws-recover-blocked", Title: "recover blocked", ConceptState: domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliverySpec, ImplementationRevision: 1,
 			CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339),
 		},
 		{
-			SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "recover-next", ImplementationUnit: "unit-recover-next",
+			SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("recover-next"), ImplementationUnit: "unit-recover-next",
 			WorkstreamID: "ws-recover-next", Title: "recover next", ConceptState: domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliveryQueued, ImplementationRevision: 1,
 			CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339),
@@ -455,7 +456,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 		t.Fatalf("lease must release only after freeze persistence found=%v err=%v", found, err)
 	}
 	result, err := service.AcquireRunnable(context.Background())
-	if err != nil || result.Acquired || result.Reason != domainworkstream.ErrQueueFrozen.Error() || result.Item.ItemID != "" {
+	if err != nil || result.Acquired || result.Reason != domainworkstream.ErrQueueFrozen.Error() || result.Item.BacklogItemID != "" {
 		t.Fatalf("recovered queue must remain frozen result=%+v err=%v", result, err)
 	}
 }
@@ -463,7 +464,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 func TestRecoverBlockedExistingFreezeRetainsAttemptedStageEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 22, 4, 30, 0, 0, time.UTC)
 	items := &memoryItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "recover-blocked-existing", ImplementationUnit: "unit-recover-blocked-existing",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("recover-blocked-existing"), ImplementationUnit: "unit-recover-blocked-existing",
 		WorkstreamID: "ws-recover-blocked-existing", Title: "recover blocked existing", ConceptState: domainbacklog.ConceptAdopted,
 		DeliveryState: domainbacklog.DeliveryBlocked, ImplementationRevision: 1, InvalidatedFromStage: domainbacklog.DeliverySpec,
 		Implementation: "worker_failure", EvidenceRefs: []domainbacklog.EvidenceRef{{Stage: domainbacklog.DeliverySpec, Kind: "worker_failure", Ref: "item-failure", Passed: false}},
@@ -519,13 +520,13 @@ func newLiveClosureRecoveryFixture(t *testing.T) (*Service, *recoveryDoneFailure
 	now := time.Date(2026, 8, 22, 5, 0, 0, 0, time.UTC)
 	items := &recoveryDoneFailureItemStore{failDoneSave: true, memoryItemStore: memoryItemStore{items: []domainbacklog.Item{
 		{
-			SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "recover-live", ImplementationUnit: "unit-recover-live",
+			SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("recover-live"), ImplementationUnit: "unit-recover-live",
 			WorkstreamID: "ws-recover-live", Title: "recover live", ConceptState: domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliveryLiveVerified, ImplementationRevision: 1,
 			CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339),
 		},
 		{
-			SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "recover-live-next", ImplementationUnit: "unit-recover-live-next",
+			SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("recover-live-next"), ImplementationUnit: "unit-recover-live-next",
 			WorkstreamID: "ws-recover-live-next", Title: "recover live next", ConceptState: domainbacklog.ConceptAdopted,
 			DeliveryState: domainbacklog.DeliveryQueued, ImplementationRevision: 1,
 			CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339),
@@ -576,7 +577,7 @@ func TestAcquireRunnableResumesLiveClosureBeforeSelectingQueue(t *testing.T) {
 	service, items, workstream := newLiveClosureRecoveryFixture(t)
 	items.failDoneSave = false
 	result, err := service.AcquireRunnable(context.Background())
-	if err != nil || result.Item.ItemID != "recover-live" || result.Item.DeliveryState != domainbacklog.DeliveryDone || result.Reason != "LIVE_VERIFIED closure resumed" {
+	if err != nil || result.Item.BacklogItemID != "recover-live" || result.Item.DeliveryState != domainbacklog.DeliveryDone || result.Reason != "LIVE_VERIFIED closure resumed" {
 		t.Fatalf("AcquireRunnable closure recovery result=%+v err=%v", result, err)
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || found {
@@ -599,7 +600,7 @@ func (s *intakeDesignCardItemStore) List(_ context.Context, _ int) ([]domainback
 func (s *intakeDesignCardItemStore) Save(_ context.Context, item domainbacklog.Item) error {
 	s.saveCount++
 	for i := range s.items {
-		if s.items[i].ItemID == item.ItemID {
+		if s.items[i].BacklogItemID == item.BacklogItemID {
 			s.items[i] = item
 			return nil
 		}
@@ -612,7 +613,7 @@ func TestServiceIntakePreservesSchemaV2DesignCardAndRejectsUnknownSpecification(
 	store := &intakeDesignCardItemStore{}
 	service := NewService(store, nil)
 	request := IntakeRequest{
-		ItemID:         "design-card",
+		BacklogItemID: modulecore.BacklogItemID("design-card"),
 		FeatureID:      "atlas.design-card",
 		Kind:           "idea",
 		Title:          "Lossless Design Card",
@@ -647,7 +648,7 @@ func TestServiceIntakePreservesSchemaV2DesignCardAndRejectsUnknownSpecification(
 
 	saveCount := store.saveCount
 	_, err = service.Intake(context.Background(), IntakeRequest{
-		ItemID: "unknown-spec", Title: "Unknown specification", Purpose: "partial input is allowed",
+		BacklogItemID: modulecore.BacklogItemID("unknown-spec"), Title: "Unknown specification", Purpose: "partial input is allowed",
 		SpecificationRefs: []string{"spec_not_embedded"},
 		SourceRefs:        []domainbacklog.SourceRef{{Type: "test", Locator: "unknown-spec"}},
 	})

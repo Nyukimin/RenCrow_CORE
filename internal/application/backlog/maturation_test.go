@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"errors"
 	"reflect"
@@ -13,7 +14,7 @@ import (
 func maturationCandidate(id string, start time.Time) domainbacklog.Item {
 	return domainbacklog.Item{
 		SchemaVersion:        domainbacklog.SchemaVersion2,
-		ItemID:               id,
+		BacklogItemID: modulecore.BacklogItemID(id),
 		Title:                "maturation " + id,
 		Purpose:              "validate Atlas maturation",
 		ConceptState:         domainbacklog.ConceptCandidate,
@@ -35,13 +36,13 @@ func TestCandidateInitializesAndReplaysMaturationWithoutReset(t *testing.T) {
 	store := &memoryItemStore{}
 	service := NewService(store, nil).WithClock(func() time.Time { return clock })
 	intake, err := service.Intake(context.Background(), IntakeRequest{
-		ItemID: "candidate-clock", Title: "candidate clock", Purpose: "maturation clock",
+		BacklogItemID: modulecore.BacklogItemID("candidate-clock"), Title: "candidate clock", Purpose: "maturation clock",
 		SourceRefs: []domainbacklog.SourceRef{{Type: "test", Locator: "candidate-clock"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := service.Candidate(context.Background(), intake.ItemID)
+	first, err := service.Candidate(context.Background(), string(intake.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestCandidateInitializesAndReplaysMaturationWithoutReset(t *testing.T) {
 		t.Fatalf("candidate maturation=%+v", first)
 	}
 	clock = start.Add(2 * time.Hour)
-	second, err := service.Candidate(context.Background(), intake.ItemID)
+	second, err := service.Candidate(context.Background(), string(intake.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,33 +68,33 @@ func TestCandidateBackfillsLegacyClockAndDoesNotTouchAdoptedHistory(t *testing.T
 	legacy.MaturationEligibleAt = ""
 	legacy.CreatedAt = created.Format(time.RFC3339)
 	unknown := legacy
-	unknown.ItemID = "unknown-created"
+	unknown.BacklogItemID = modulecore.BacklogItemID("unknown-created")
 	unknown.Title = "unknown created"
 	unknown.CreatedAt = "not-a-timestamp"
-	unknown.SourceRefs = []domainbacklog.SourceRef{{Type: "test", Locator: unknown.ItemID}}
+	unknown.SourceRefs = []domainbacklog.SourceRef{{Type: "test", Locator: string(unknown.BacklogItemID)}}
 	adopted := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "already-adopted", Title: "adopted",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("already-adopted"), Title: "adopted",
 		ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 		CreatedAt: created.Format(time.RFC3339), UpdatedAt: created.Format(time.RFC3339),
 	}
 	beforeAdopted := adopted
 	store := &memoryItemStore{items: []domainbacklog.Item{legacy, unknown, adopted}}
 	service := NewService(store, nil).WithClock(func() time.Time { return now })
-	got, err := service.Candidate(context.Background(), legacy.ItemID)
+	got, err := service.Candidate(context.Background(), string(legacy.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.MaturationStartedAt != created.Format(time.RFC3339) || got.MaturationEligibleAt != created.Add(maturationPeriod).Format(time.RFC3339) {
 		t.Fatalf("legacy CreatedAt was not used: %+v", got)
 	}
-	got, err = service.Candidate(context.Background(), unknown.ItemID)
+	got, err = service.Candidate(context.Background(), string(unknown.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.MaturationStartedAt != now.Format(time.RFC3339) || got.MaturationEligibleAt != now.Add(maturationPeriod).Format(time.RFC3339) {
 		t.Fatalf("unparseable CreatedAt did not use service clock: %+v", got)
 	}
-	if _, err := service.Candidate(context.Background(), adopted.ItemID); err == nil {
+	if _, err := service.Candidate(context.Background(), string(adopted.BacklogItemID)); err == nil {
 		t.Fatal("already-adopted item unexpectedly became a candidate")
 	}
 	if !reflect.DeepEqual(store.items[2], beforeAdopted) {
@@ -115,15 +116,15 @@ func TestRevalidateUsesExactSevenDayBoundaryAndPreservesAuditPayload(t *testing.
 		ImplementationValue: "high", NextReviewTrigger: "new evidence",
 		ReviewAgents: []string{"Mio", "Shiro"},
 	}
-	before, err := service.Revalidate(context.Background(), item.ItemID, request)
-	if !errors.Is(err, ErrMaturationNotEligible) || before.ItemID != "" {
+	before, err := service.Revalidate(context.Background(), string(item.BacklogItemID), request)
+	if !errors.Is(err, ErrMaturationNotEligible) || before.BacklogItemID != "" {
 		t.Fatalf("pre-boundary revalidation result=%+v err=%v", before, err)
 	}
 	if !reflect.DeepEqual(store.items[0], item) {
 		t.Fatalf("rejected early request mutated item: got=%+v want=%+v", store.items[0], item)
 	}
 	now = start.Add(7 * 24 * time.Hour)
-	result, err := service.Revalidate(context.Background(), item.ItemID, request)
+	result, err := service.Revalidate(context.Background(), string(item.BacklogItemID), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +135,7 @@ func TestRevalidateUsesExactSevenDayBoundaryAndPreservesAuditPayload(t *testing.
 		t.Fatalf("records=%+v", result.RevalidationRecords)
 	}
 	record := result.RevalidationRecords[0]
-	if record.BacklogID != item.ItemID || record.RevalidationDate != now.Format(time.RFC3339) || record.MaturationDays != 7 || record.Decision != domainbacklog.RevalidationDecisionPromote || record.Reason != request.Reason || !reflect.DeepEqual(record.RelatedBacklogs, request.RelatedBacklogs) || !reflect.DeepEqual(record.ConflictingSpecs, request.ConflictingSpecs) || !reflect.DeepEqual(record.TechnologyChanges, request.TechnologyChanges) || !reflect.DeepEqual(record.ReviewAgents, request.ReviewAgents) {
+	if record.BacklogID != string(item.BacklogItemID) || record.RevalidationDate != now.Format(time.RFC3339) || record.MaturationDays != 7 || record.Decision != domainbacklog.RevalidationDecisionPromote || record.Reason != request.Reason || !reflect.DeepEqual(record.RelatedBacklogs, request.RelatedBacklogs) || !reflect.DeepEqual(record.ConflictingSpecs, request.ConflictingSpecs) || !reflect.DeepEqual(record.TechnologyChanges, request.TechnologyChanges) || !reflect.DeepEqual(record.ReviewAgents, request.ReviewAgents) {
 		t.Fatalf("revalidation audit not preserved: %+v", record)
 	}
 }
@@ -283,11 +284,11 @@ func TestHoldRemainsEventDrivenAfterEligibilityDate(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{item}}
 	service := NewService(store, nil).WithClock(func() time.Time { return now })
 	request := RevalidateRequest{Decision: domainbacklog.RevalidationDecisionPromote, Reason: "dependency is ready", ReviewAgents: []string{"Shiro"}}
-	if _, err := service.Revalidate(context.Background(), item.ItemID, request); !errors.Is(err, ErrMaturationNotEligible) {
+	if _, err := service.Revalidate(context.Background(), string(item.BacklogItemID), request); !errors.Is(err, ErrMaturationNotEligible) {
 		t.Fatalf("triggerless expired HOLD error=%v want=%v", err, ErrMaturationNotEligible)
 	}
 	request.Trigger = "dependency-ready"
-	if _, err := service.Revalidate(context.Background(), item.ItemID, request); err != nil {
+	if _, err := service.Revalidate(context.Background(), string(item.BacklogItemID), request); err != nil {
 		t.Fatalf("matching HOLD trigger rejected: %v", err)
 	}
 }
@@ -298,7 +299,7 @@ func TestHoldDecisionAlwaysRequiresNextReviewTrigger(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{item}}
 	service := NewService(store, nil).WithClock(func() time.Time { return now })
 	request := RevalidateRequest{Decision: domainbacklog.RevalidationDecisionHold, Reason: "wait", ReviewAgents: []string{"Shiro"}}
-	if _, err := service.Revalidate(context.Background(), item.ItemID, request); !errors.Is(err, ErrMaturationDecisionInvalid) {
+	if _, err := service.Revalidate(context.Background(), string(item.BacklogItemID), request); !errors.Is(err, ErrMaturationDecisionInvalid) {
 		t.Fatalf("HOLD without trigger error=%v want=%v", err, ErrMaturationDecisionInvalid)
 	}
 }
@@ -309,12 +310,12 @@ func TestEnrichMinorPreservesClockAndMaterialChangeResetsWithHistory(t *testing.
 	item := maturationCandidate("enrich", start)
 	item.MaturationState = domainbacklog.MaturationStatePromoted
 	item.RevalidationRecords = []domainbacklog.RevalidationRecord{{
-		BacklogID: item.ItemID, RevalidationDate: now.Format(time.RFC3339), MaturationDays: 7,
+		BacklogID: string(item.BacklogItemID), RevalidationDate: now.Format(time.RFC3339), MaturationDays: 7,
 		Decision: domainbacklog.RevalidationDecisionPromote, Reason: "initial", ReviewAgents: []string{"Mio"},
 	}}
 	store := &memoryItemStore{items: []domainbacklog.Item{item}}
 	service := NewService(store, nil).WithClock(func() time.Time { return now })
-	minor, err := service.Enrich(context.Background(), item.ItemID, EnrichRequest{
+	minor, err := service.Enrich(context.Background(), string(item.BacklogItemID), EnrichRequest{
 		SourceRefs: []domainbacklog.SourceRef{{Type: "url", Locator: "https://example.test/new"}},
 		RelatedIDs: []string{"related"}, RelationRefs: []string{"relation"},
 		Body: "updated body", Background: "updated background", Priority: "high",
@@ -328,11 +329,11 @@ func TestEnrichMinorPreservesClockAndMaterialChangeResetsWithHistory(t *testing.
 	if minor.Body != "updated body" || minor.Background != "updated background" || minor.Priority != "high" || len(minor.SourceRefs) != 2 || len(minor.RelatedIDs) != 1 || len(minor.RelationRefs) != 1 {
 		t.Fatalf("minor enrichment fields=%+v", minor)
 	}
-	if _, err := service.Enrich(context.Background(), item.ItemID, EnrichRequest{MaterialChange: true}); !errors.Is(err, ErrMaturationReasonRequired) {
+	if _, err := service.Enrich(context.Background(), string(item.BacklogItemID), EnrichRequest{MaterialChange: true}); !errors.Is(err, ErrMaturationReasonRequired) {
 		t.Fatalf("material change without reason err=%v", err)
 	}
 	now = start.Add(8 * 24 * time.Hour)
-	major, err := service.Enrich(context.Background(), item.ItemID, EnrichRequest{MaterialChange: true, Reason: "new architecture changes the value"})
+	major, err := service.Enrich(context.Background(), string(item.BacklogItemID), EnrichRequest{MaterialChange: true, Reason: "new architecture changes the value"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +359,7 @@ func TestBackfillPreservesMaturationRuntimeOverlay(t *testing.T) {
 	current.MaturationBypass = true
 	current.BypassReason = domainbacklog.MaturationBypassSecurityIssue
 	current.RevalidationRecords = []domainbacklog.RevalidationRecord{record}
-	incoming := domainbacklog.Item{ItemID: current.ItemID, Title: "incoming", ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone}
+	incoming := domainbacklog.Item{BacklogItemID: current.BacklogItemID, Title: "incoming", ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone}
 	got := preserveRuntimeOverlay(current, incoming)
 	if got.MaturationState != current.MaturationState || got.MaturationStartedAt != current.MaturationStartedAt || got.MaturationEligibleAt != current.MaturationEligibleAt || got.LastMaterialChangeAt != current.LastMaterialChangeAt || got.MergedInto != current.MergedInto || got.NextReviewTrigger != current.NextReviewTrigger || got.MaturationBypass != current.MaturationBypass || got.BypassReason != current.BypassReason || !reflect.DeepEqual(got.RevalidationRecords, current.RevalidationRecords) {
 		t.Fatalf("runtime maturation overlay lost fields: got=%+v current=%+v", got, current)

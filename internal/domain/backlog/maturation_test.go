@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"errors"
 	"testing"
 )
@@ -19,7 +20,7 @@ func TestMaturationStateTransitionsKeepConceptAndDeliveryOrthogonal(t *testing.T
 		}
 	}
 	item := Item{
-		SchemaVersion: SchemaVersion2, ItemID: "maturation-domain", Title: "domain",
+		SchemaVersion: SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("maturation-domain"), Title: "domain",
 		ConceptState: ConceptCandidate, DeliveryState: DeliveryNone,
 		MaturationState: MaturationStateMaturation,
 	}
@@ -96,8 +97,8 @@ func TestValidateRevalidationRecordRequiresHoldTrigger(t *testing.T) {
 
 func TestValidateItemAcceptsLegacyCandidateAndAdoptedWithoutMaturation(t *testing.T) {
 	for _, item := range []Item{
-		{SchemaVersion: SchemaVersion2, ItemID: "legacy-candidate", Title: "candidate", ConceptState: ConceptCandidate, DeliveryState: DeliveryNone},
-		{SchemaVersion: SchemaVersion2, ItemID: "legacy-adopted", Title: "adopted", ConceptState: ConceptAdopted, DeliveryState: DeliveryQueued},
+		{SchemaVersion: SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("legacy-candidate"), Title: "candidate", ConceptState: ConceptCandidate, DeliveryState: DeliveryNone},
+		{SchemaVersion: SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("legacy-adopted"), Title: "adopted", ConceptState: ConceptAdopted, DeliveryState: DeliveryQueued},
 	} {
 		if err := ValidateItem(item); err != nil {
 			t.Fatalf("legacy item rejected: %+v: %v", item, err)

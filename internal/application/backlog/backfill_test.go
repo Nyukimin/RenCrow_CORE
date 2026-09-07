@@ -37,7 +37,7 @@ func TestReconcileBackfillPreservesRuntimeLifecycleIdentityAndOverlay(t *testing
 	if first.Imported != len(pkg.Items)-1 || first.Updated != 1 || len(store.items) != len(pkg.Items) {
 		t.Fatalf("first reconcile report=%+v items=%d", first, len(store.items))
 	}
-	item, err := service.Get(context.Background(), runtime.ItemID)
+	item, err := service.Get(context.Background(), string(runtime.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestReconcileBackfillPreservesRuntimeLifecycleIdentityAndOverlay(t *testing
 	}
 
 	runtime.BlockerResolutionRefs[0].Ref = "mutated-outside-store"
-	stored, err := service.Get(context.Background(), runtime.ItemID)
+	stored, err := service.Get(context.Background(), string(runtime.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestReconcileBackfillPreservesRuntimeLifecycleIdentityAndOverlay(t *testing
 	if second.Imported != 0 || second.Updated != 0 || second.Skipped != len(pkg.Items) || len(store.items) != len(pkg.Items) {
 		t.Fatalf("identical reconcile was not idempotent: report=%+v items=%d", second, len(store.items))
 	}
-	item, err = service.Get(context.Background(), runtime.ItemID)
+	item, err = service.Get(context.Background(), string(runtime.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestReconcileBackfillIsIdempotentAndPreservesRuntimeOverlay(t *testing.T) {
 	}
 	for _, item := range store.items {
 		if item.OwnerModule != "RenCrow_CORE" {
-			t.Fatalf("canonical lifecycle owner=%q for %s", item.OwnerModule, item.ItemID)
+			t.Fatalf("canonical lifecycle owner=%q for %s", item.OwnerModule, item.BacklogItemID)
 		}
 	}
 	second, err := service.ReconcileBackfill(context.Background(), pkg)
@@ -136,7 +136,7 @@ func TestReconcileBackfillIsIdempotentAndPreservesRuntimeOverlay(t *testing.T) {
 	if third.Imported != 0 || third.Updated != 0 || third.Skipped != 114 || len(store.items) != 114 {
 		t.Fatalf("overlay reconcile report=%+v items=%d", third, len(store.items))
 	}
-	item, err = service.Get(context.Background(), item.ItemID)
+	item, err = service.Get(context.Background(), string(item.BacklogItemID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestReconcileBackfillRepairsEmptyAndConflictingLifecycleOwners(t *testing.T
 	}
 	for _, item := range store.items {
 		if item.OwnerModule != "RenCrow_CORE" {
-			t.Fatalf("lifecycle owner=%q for %s", item.OwnerModule, item.ItemID)
+			t.Fatalf("lifecycle owner=%q for %s", item.OwnerModule, item.BacklogItemID)
 		}
 	}
 }

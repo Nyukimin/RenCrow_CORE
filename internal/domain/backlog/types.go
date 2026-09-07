@@ -3,8 +3,11 @@ package backlog
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -176,10 +179,11 @@ type RevalidationRecord struct {
 	ArchitectureImpact       string   `json:"architecture_impact,omitempty"`
 	ImplementationValue      string   `json:"implementation_value,omitempty"`
 	NextReviewTrigger        string   `json:"next_review_trigger,omitempty"`
-	ReviewAgents             []string `json:"review_agents"`
-	Forced                   bool     `json:"forced,omitempty"`
-	MaturationBypass         bool     `json:"maturation_bypass,omitempty"`
-	BypassReason             string   `json:"bypass_reason,omitempty"`
+	ReviewAgents             []string            `json:"review_agents"`
+	Forced                   bool                `json:"forced,omitempty"`
+	MaturationBypass         bool                `json:"maturation_bypass,omitempty"`
+	BypassReason             string              `json:"bypass_reason,omitempty"`
+	TransitionEventID        modulecore.EventID  `json:"transition_event_id,omitempty"`
 }
 
 func BackfillImportID(packageSHA256 string, revision int) string {
@@ -200,7 +204,7 @@ func (e EvidenceRef) Key() string {
 type Item struct {
 	SchemaVersion int `json:"schema_version"`
 
-	ItemID             string   `json:"item_id"`
+	BacklogItemID      modulecore.BacklogItemID `json:"backlog_item_id"`
 	FeatureID          string   `json:"feature_id,omitempty"`
 	Kind               string   `json:"kind"`
 	Title              string   `json:"title"`
@@ -273,8 +277,8 @@ type Item struct {
 // ImplementationUnit is the typed lifecycle projection used by the owner API.
 // Durable item state remains in the append-only backlog record.
 type ImplementationUnit struct {
-	UnitID                 string        `json:"unit_id"`
-	ItemID                 string        `json:"item_id"`
+	UnitID                 string                      `json:"unit_id"`
+	BacklogItemID          modulecore.BacklogItemID    `json:"backlog_item_id"`
 	Title                  string        `json:"title"`
 	OwnerModule            string        `json:"owner_module,omitempty"`
 	TargetModules          []string      `json:"target_modules,omitempty"`
@@ -296,7 +300,7 @@ type ImplementationUnit struct {
 
 func (i Item) Unit() ImplementationUnit {
 	return ImplementationUnit{
-		UnitID: i.ImplementationUnit, ItemID: i.ItemID, Title: i.Title,
+		UnitID: i.ImplementationUnit, BacklogItemID: i.BacklogItemID, Title: i.Title,
 		OwnerModule:     i.OwnerModule,
 		TargetModules:   append([]string(nil), i.TargetModules...),
 		ConsumerModules: append([]string(nil), i.ConsumerModules...),
@@ -411,4 +415,39 @@ func NewDeterministicID(refs []SourceRef, title string) string {
 	}
 	_, _ = h.Write([]byte(strings.TrimSpace(title)))
 	return fmt.Sprintf("atlas-%s", hex.EncodeToString(h.Sum(nil))[:20])
+}
+
+// UnmarshalJSON accepts the canonical backlog_item_id field and the legacy
+// item_id wire name so append-only JSONL history remains readable.
+func (i *Item) UnmarshalJSON(data []byte) error {
+	type itemAlias Item
+	var wire struct {
+		itemAlias
+		LegacyItemID string `json:"item_id"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*i = Item(wire.itemAlias)
+	if i.BacklogItemID == "" && strings.TrimSpace(wire.LegacyItemID) != "" {
+		i.BacklogItemID = modulecore.BacklogItemID(strings.TrimSpace(wire.LegacyItemID))
+	}
+	return nil
+}
+
+// UnmarshalJSON accepts canonical and legacy backlog item identity fields.
+func (u *ImplementationUnit) UnmarshalJSON(data []byte) error {
+	type unitAlias ImplementationUnit
+	var wire struct {
+		unitAlias
+		LegacyItemID string `json:"item_id"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*u = ImplementationUnit(wire.unitAlias)
+	if u.BacklogItemID == "" && strings.TrimSpace(wire.LegacyItemID) != "" {
+		u.BacklogItemID = modulecore.BacklogItemID(strings.TrimSpace(wire.LegacyItemID))
+	}
+	return nil
 }

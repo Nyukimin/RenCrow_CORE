@@ -31,9 +31,10 @@ type (
 	MemoryID     string
 	RelationID   string
 	ScheduleID   string
-	QueueItemID  string
-	CheckpointID string
-	ReceiptID    string
+	QueueItemID   string
+	CheckpointID  string
+	ReceiptID     string
+	BacklogItemID string
 )
 
 // ThreadSeq is the explicit, positive ordering number of a thread in a session.
@@ -128,9 +129,10 @@ const (
 	CanonicalMemoryID     CanonicalIDType = "MemoryID"
 	CanonicalRelationID   CanonicalIDType = "RelationID"
 	CanonicalScheduleID   CanonicalIDType = "ScheduleID"
-	CanonicalQueueItemID  CanonicalIDType = "QueueItemID"
-	CanonicalCheckpointID CanonicalIDType = "CheckpointID"
-	CanonicalReceiptID    CanonicalIDType = "ReceiptID"
+	CanonicalQueueItemID   CanonicalIDType = "QueueItemID"
+	CanonicalCheckpointID  CanonicalIDType = "CheckpointID"
+	CanonicalReceiptID     CanonicalIDType = "ReceiptID"
+	CanonicalBacklogItemID CanonicalIDType = "BacklogItemID"
 )
 
 const (
@@ -158,6 +160,7 @@ const (
 	queueItemIDPrefix             = "qit_"
 	checkpointIDPrefix            = "ckp_"
 	receiptIDPrefix               = "rcp_"
+	backlogItemIDPrefix           = "bli_"
 )
 
 var (
@@ -171,6 +174,7 @@ var (
 		CanonicalArtifactID: artifactIDPrefix, CanonicalEvidenceID: evidenceIDPrefix, CanonicalMemoryID: memoryIDPrefix,
 		CanonicalRelationID: relationIDPrefix, CanonicalScheduleID: scheduleIDPrefix, CanonicalQueueItemID: queueItemIDPrefix,
 		CanonicalCheckpointID: checkpointIDPrefix, CanonicalReceiptID: receiptIDPrefix,
+		CanonicalBacklogItemID: backlogItemIDPrefix,
 	}
 )
 
@@ -284,7 +288,8 @@ func NewRelationID() RelationID     { return RelationID(mustNewCanonicalID(relat
 func NewScheduleID() ScheduleID     { return ScheduleID(mustNewCanonicalID(scheduleIDPrefix)) }
 func NewQueueItemID() QueueItemID   { return QueueItemID(mustNewCanonicalID(queueItemIDPrefix)) }
 func NewCheckpointID() CheckpointID { return CheckpointID(mustNewCanonicalID(checkpointIDPrefix)) }
-func NewReceiptID() ReceiptID       { return ReceiptID(mustNewCanonicalID(receiptIDPrefix)) }
+func NewReceiptID() ReceiptID             { return ReceiptID(mustNewCanonicalID(receiptIDPrefix)) }
+func NewBacklogItemID() BacklogItemID     { return BacklogItemID(mustNewCanonicalID(backlogItemIDPrefix)) }
 
 // ParseTaskID validates a Task identity received at a module or transport
 // boundary. New identity generation remains owned solely by NewTaskID.
@@ -368,3 +373,40 @@ func (id *CheckpointID) Scan(src any) error          { return scanCanonicalID(id
 func (id ReceiptID) Validate() error                 { return validateCanonicalID(string(id), receiptIDPrefix) }
 func (id ReceiptID) Value() (driver.Value, error)    { return canonicalIDValue(id, receiptIDPrefix) }
 func (id *ReceiptID) Scan(src any) error             { return scanCanonicalID(id, src, receiptIDPrefix) }
+func (id BacklogItemID) String() string              { return string(id) }
+func (id BacklogItemID) IsZero() bool                { return id == "" }
+func (id BacklogItemID) Validate() error {
+	if id == "" {
+		return fmt.Errorf("backlog item ID is required")
+	}
+	if strings.HasPrefix(string(id), backlogItemIDPrefix) {
+		return validateCanonicalID(string(id), backlogItemIDPrefix)
+	}
+	return nil
+}
+func (id BacklogItemID) Value() (driver.Value, error) {
+	if err := id.Validate(); err != nil {
+		return nil, err
+	}
+	return string(id), nil
+}
+func (id *BacklogItemID) Scan(src any) error {
+	if id == nil {
+		return fmt.Errorf("backlog item ID destination is nil")
+	}
+	var raw string
+	switch value := src.(type) {
+	case string:
+		raw = value
+	case []byte:
+		raw = string(value)
+	default:
+		return fmt.Errorf("scan backlog item ID from %T", src)
+	}
+	parsed := BacklogItemID(strings.TrimSpace(raw))
+	if err := parsed.Validate(); err != nil {
+		return err
+	}
+	*id = parsed
+	return nil
+}
