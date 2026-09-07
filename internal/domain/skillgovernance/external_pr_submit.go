@@ -13,8 +13,8 @@ const (
 )
 
 func ValidateExternalPRSubmitRecord(record ExternalPRSubmitRecord) error {
-	if strings.TrimSpace(record.SubmitID) == "" {
-		return errors.New("submit_id is required")
+	if err := record.ActionID.Validate(); err != nil {
+		return errors.New("action_id is required")
 	}
 	if strings.TrimSpace(record.ContributionEventID) == "" {
 		return errors.New("contribution_event_id is required")

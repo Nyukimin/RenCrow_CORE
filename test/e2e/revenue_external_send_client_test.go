@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
@@ -26,7 +27,8 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	suffix := time.Now().UTC().Format("20060102150405")
 	draftID := "rev_draft_client_e2e_" + suffix
 	decisionID := "rev_decision_client_e2e_" + suffix
-	applyID := "rev_apply_client_e2e_" + suffix
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -58,7 +60,8 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	}
 
 	apply, err := client.ApplyRevenueExternalSend(ctx, rencrowclient.RevenueExternalSendApplyRequest{
-		ApplyID:     applyID,
+		TaskID:      taskID,
+		RunID:       runID,
 		DraftID:     draftID,
 		DecisionID:  decisionID,
 		Destination: "customer@example.invalid",
@@ -72,6 +75,9 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	if apply.Record.FailureReason != "external channel adapter is not configured" {
 		t.Fatalf("failure_reason=%q", apply.Record.FailureReason)
 	}
+	if err := apply.Record.ActionID.Validate(); err != nil {
+		t.Fatalf("owner-issued action_id missing: %v", err)
+	}
 
 	status, err := client.RevenueStatus(ctx, 20)
 	if err != nil {
@@ -81,9 +87,9 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 		t.Fatalf("revenue external channel readiness=%+v", status)
 	}
 	for _, record := range status.ExternalSendApplyRecords {
-		if record.ApplyID == applyID && record.ApplyStatus == "blocked" && !record.ExternalSendApplied {
+		if record.ActionID == apply.Record.ActionID && record.ApplyStatus == "blocked" && !record.ExternalSendApplied {
 			return
 		}
 	}
-	t.Fatalf("live Revenue status did not include blocked external send audit for %s; records=%+v", applyID, status.ExternalSendApplyRecords)
+	t.Fatalf("live Revenue status did not include blocked external send audit for %s; records=%+v", apply.Record.ActionID, status.ExternalSendApplyRecords)
 }

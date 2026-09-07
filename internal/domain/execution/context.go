@@ -70,3 +70,52 @@ func (i Identity) Validate() error {
 	}
 	return nil
 }
+
+type boundActionAttemptContextKey struct{}
+
+// BoundActionAttempt binds one already-minted ActionID and AttemptID to the
+// execution context so downstream policy mediation reuses them instead of
+// issuing new identities.
+type BoundActionAttempt struct {
+	ActionID  modulecore.ActionID
+	AttemptID modulecore.AttemptID
+}
+
+// WithBoundActionAttempt binds an owner-minted Action and Attempt pair.
+func WithBoundActionAttempt(ctx context.Context, actionID modulecore.ActionID, attemptID modulecore.AttemptID) (context.Context, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if err := actionID.Validate(); err != nil {
+		return nil, fmt.Errorf("action_id: %w", err)
+	}
+	if err := attemptID.Validate(); err != nil {
+		return nil, fmt.Errorf("attempt_id: %w", err)
+	}
+	bound := BoundActionAttempt{ActionID: actionID, AttemptID: attemptID}
+	if existing, ok := ctx.Value(boundActionAttemptContextKey{}).(BoundActionAttempt); ok {
+		if existing != bound {
+			return nil, fmt.Errorf("bound action attempt is already set: action_id=%s attempt_id=%s", existing.ActionID, existing.AttemptID)
+		}
+		return ctx, nil
+	}
+	return context.WithValue(ctx, boundActionAttemptContextKey{}, bound), nil
+}
+
+// BoundActionAttemptFromContext returns a bound ActionID and AttemptID when present.
+func BoundActionAttemptFromContext(ctx context.Context) (modulecore.ActionID, modulecore.AttemptID, bool) {
+	if ctx == nil {
+		return "", "", false
+	}
+	bound, ok := ctx.Value(boundActionAttemptContextKey{}).(BoundActionAttempt)
+	if !ok {
+		return "", "", false
+	}
+	if err := bound.ActionID.Validate(); err != nil {
+		return "", "", false
+	}
+	if err := bound.AttemptID.Validate(); err != nil {
+		return "", "", false
+	}
+	return bound.ActionID, bound.AttemptID, true
+}

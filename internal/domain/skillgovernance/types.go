@@ -118,7 +118,7 @@ type ContributionGateLog struct {
 }
 
 type ExternalPRSubmitRecord struct {
-	SubmitID            string    `json:"submit_id"`
+	ActionID            modulecore.ActionID `json:"action_id"`
 	ContributionEventID string    `json:"contribution_event_id"`
 	Repo                string    `json:"repo"`
 	TargetBranch        string    `json:"target_branch,omitempty"`

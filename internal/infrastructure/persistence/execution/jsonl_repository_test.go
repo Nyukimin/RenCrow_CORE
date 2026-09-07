@@ -17,9 +17,10 @@ func TestJSONLRepository_CreateUpdateCount(t *testing.T) {
 	}
 
 	taskID := modulecore.NewTaskID()
+	actionID := modulecore.NewActionID()
 	rec := domain.Record{
 		TaskID:    taskID,
-		ActionID:  "a1",
+		ActionID:  actionID,
 		Tool:      "shell",
 		Decision:  domain.DecisionAllow,
 		Status:    domain.StatusRunning,
@@ -29,7 +30,7 @@ func TestJSONLRepository_CreateUpdateCount(t *testing.T) {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	updated, err := repo.UpdateStatus(context.Background(), taskID, "a1", domain.StatusSucceeded, "")
+	updated, err := repo.UpdateStatus(context.Background(), taskID, actionID, domain.StatusSucceeded, "")
 	if err != nil {
 		t.Fatalf("UpdateStatus failed: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestJSONLRepositoryRejectsInvalidTaskIdentity(t *testing.T) {
 		t.Fatalf("NewJSONLRepository failed: %v", err)
 	}
 
-	err = repo.Create(context.Background(), domain.Record{TaskID: "legacy", ActionID: "a1", Status: domain.StatusRunning, StartedAt: time.Now().UTC()})
+	err = repo.Create(context.Background(), domain.Record{TaskID: "legacy", ActionID: modulecore.NewActionID(), Status: domain.StatusRunning, StartedAt: time.Now().UTC()})
 	if err == nil {
 		t.Fatal("expected invalid task identity rejection")
 	}

@@ -42,7 +42,7 @@ func (m *memRepo) Create(_ context.Context, record domain.Record) error {
 	return nil
 }
 
-func (m *memRepo) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
+func (m *memRepo) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID, status domain.Status, errMsg string) (domain.Record, error) {
 	k := recordKey(taskID, actionID)
 	rec := m.records[k]
 	rec.Status = status
@@ -55,7 +55,7 @@ func (m *memRepo) UpdateStatus(_ context.Context, taskID modulecore.TaskID, acti
 	return rec, nil
 }
 
-func (m *memRepo) Get(_ context.Context, taskID modulecore.TaskID, actionID string) (domain.Record, error) {
+func (m *memRepo) Get(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID) (domain.Record, error) {
 	return m.records[recordKey(taskID, actionID)], nil
 }
 
@@ -72,7 +72,7 @@ func TestService_RequestToolExecution_Deny(t *testing.T) {
 	exec := &stubExecutor{}
 	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionDeny}}, exec, repo)
 
-	res, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: modulecore.NewTaskID(), ActionID: "a", Tool: "shell"})
+	res, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"})
 	if err != nil {
 		t.Fatalf("RequestToolExecution failed: %v", err)
 	}
@@ -92,11 +92,10 @@ func TestService_RequestAllowExecutesImmediately(t *testing.T) {
 	exec := &stubExecutor{resp: tool.NewSuccess("ok")}
 	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
 	now := time.Now().UTC()
-	svc.now = func() time.Time { return now }
 
 	res, err := svc.RequestToolExecution(context.Background(), domain.Action{
 		TaskID:      modulecore.NewTaskID(),
-		ActionID:    "a1",
+		ActionID:    modulecore.NewActionID(),
 		Tool:        "shell",
 		Arguments:   map[string]any{"command": "echo ok"},
 		RequestedAt: now,
@@ -120,7 +119,7 @@ func TestServiceRejectsMissingTaskIDBeforePolicyEvaluation(t *testing.T) {
 	exec := &stubExecutor{resp: tool.NewSuccess("ok")}
 	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
 
-	if _, err := svc.RequestToolExecution(context.Background(), domain.Action{ActionID: "a", Tool: "shell"}); err == nil {
+	if _, err := svc.RequestToolExecution(context.Background(), domain.Action{ActionID: modulecore.NewActionID(), Tool: "shell"}); err == nil {
 		t.Fatal("expected canonical task identity validation error")
 	}
 	if exec.called {
@@ -133,7 +132,7 @@ func TestServiceRejectsInvalidTraceIdentityBeforePolicyEvaluation(t *testing.T) 
 	exec := &stubExecutor{resp: tool.NewSuccess("ok")}
 	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
 
-	if _, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: modulecore.NewTaskID(), TraceID: "legacy", ActionID: "a", Tool: "shell"}); err == nil {
+	if _, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: modulecore.NewTaskID(), TraceID: "legacy", ActionID: modulecore.NewActionID(), Tool: "shell"}); err == nil {
 		t.Fatal("expected canonical trace identity validation error")
 	}
 	if exec.called {
@@ -147,7 +146,7 @@ func TestServiceCopiesOnlyProvidedTraceID(t *testing.T) {
 	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
 	taskID := modulecore.NewTaskID()
 
-	result, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: taskID, ActionID: "a", Tool: "shell"})
+	result, err := svc.RequestToolExecution(context.Background(), domain.Action{TaskID: taskID, ActionID: modulecore.NewActionID(), Tool: "shell"})
 	if err != nil {
 		t.Fatalf("RequestToolExecution failed: %v", err)
 	}
@@ -156,7 +155,7 @@ func TestServiceCopiesOnlyProvidedTraceID(t *testing.T) {
 	}
 
 	traceID := modulecore.NewTraceID()
-	result, err = svc.RequestToolExecution(context.Background(), domain.Action{TaskID: taskID, TraceID: traceID, ActionID: "b", Tool: "shell"})
+	result, err = svc.RequestToolExecution(context.Background(), domain.Action{TaskID: taskID, TraceID: traceID, ActionID: modulecore.NewActionID(), Tool: "shell"})
 	if err != nil {
 		t.Fatalf("RequestToolExecution with trace failed: %v", err)
 	}
@@ -165,6 +164,6 @@ func TestServiceCopiesOnlyProvidedTraceID(t *testing.T) {
 	}
 }
 
-func recordKey(taskID modulecore.TaskID, actionID string) string {
-	return taskID.String() + "::" + actionID
+func recordKey(taskID modulecore.TaskID, actionID modulecore.ActionID) string {
+	return taskID.String() + "::" + string(actionID)
 }

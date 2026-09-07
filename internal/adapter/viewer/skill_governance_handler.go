@@ -11,10 +11,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const maxSkillGovernanceEvidenceBytes = 256 * 1024
+
+type SkillGovernanceExternalPRSubmitRequest struct {
+	TaskID              modulecore.TaskID `json:"task_id"`
+	RunID               modulecore.RunID  `json:"run_id"`
+	ContributionEventID string            `json:"contribution_event_id"`
+	Repo                string            `json:"repo"`
+	TargetBranch        string            `json:"target_branch,omitempty"`
+	Title               string            `json:"title,omitempty"`
+	DiffPath            string            `json:"diff_path,omitempty"`
+	TestResult          string            `json:"test_result,omitempty"`
+}
 
 type SkillGovernanceLister interface {
 	ListSkillManifests(ctx context.Context, limit int) ([]domainskill.SkillManifest, error)
@@ -242,7 +256,7 @@ func HandleSkillGovernanceSkillChange(store SkillGovernanceStore) http.HandlerFu
 	}
 }
 
-func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.HandlerFunc {
+func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore, actions *actionmanager.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -252,9 +266,21 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.Hand
 			http.Error(w, "skill governance store unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		var req domainskill.ExternalPRSubmitRecord
+		if actions == nil {
+			http.Error(w, "action manager unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var req SkillGovernanceExternalPRSubmitRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid external PR submit payload", http.StatusBadRequest)
+			return
+		}
+		if err := req.TaskID.Validate(); err != nil {
+			http.Error(w, "task_id is required", http.StatusBadRequest)
+			return
+		}
+		if err := req.RunID.Validate(); err != nil {
+			http.Error(w, "run_id is required", http.StatusBadRequest)
 			return
 		}
 		gate, ok, err := findPassedContributionGate(r.Context(), store, req.ContributionEventID, req.Repo)
@@ -266,11 +292,30 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore) http.Hand
 			http.Error(w, "passed contribution gate is required before external PR submit", http.StatusConflict)
 			return
 		}
-		now := time.Now().UTC()
-		if req.TargetBranch == "" {
-			req.TargetBranch = gate.TargetBranch
+		createdAction, _, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
+			TaskID: req.TaskID,
+			RunID:  req.RunID,
+			Kind:   domainaction.KindExternalPRSubmit,
+			Name:   "skill_governance_external_pr_submit",
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		record, err := domainskill.NewBlockedExternalPRSubmitRecord(req, now)
+		now := time.Now().UTC()
+		targetBranch := req.TargetBranch
+		if targetBranch == "" {
+			targetBranch = gate.TargetBranch
+		}
+		record, err := domainskill.NewBlockedExternalPRSubmitRecord(domainskill.ExternalPRSubmitRecord{
+			ActionID:            createdAction.ActionID,
+			ContributionEventID: req.ContributionEventID,
+			Repo:                req.Repo,
+			TargetBranch:        targetBranch,
+			Title:               req.Title,
+			DiffPath:            req.DiffPath,
+			TestResult:          req.TestResult,
+		}, now)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

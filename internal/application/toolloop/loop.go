@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -17,6 +20,7 @@ type Config struct {
 	MaxTokens     int // 1回のモデル呼び出しの最大出力トークン数（0の場合デフォルト4096）
 	TaskID        modulecore.TaskID
 	RunID         modulecore.RunID
+	Actions       *actionmanager.Manager
 }
 
 func (c Config) maxIterations() int {
@@ -56,6 +60,8 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 	maxIter := cfg.maxIterations()
 	maxTokens := cfg.maxTokens()
 	failedCalls := make(map[string]struct{})
+	actionByToolName := make(map[string]modulecore.ActionID)
+	taskScoped := !cfg.TaskID.IsZero() && cfg.RunID != ""
 
 	for i := 0; i < maxIter; i++ {
 		select {
@@ -94,7 +100,15 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 				return fmt.Sprintf("blocked: repeated identical failed tool call: %s", tc.Function.Name), nil
 			}
 			log.Printf("[ToolLoop] tool start name=%s args_keys=%d", tc.Function.Name, len(tc.Function.Arguments))
-			result, err := toolRunner.ExecuteV2(ctx, tc.Function.Name, tc.Function.Arguments)
+			execCtx := ctx
+			if taskScoped {
+				var bindErr error
+				execCtx, bindErr = bindToolActionAttempt(execCtx, cfg, actionByToolName, tc.Function.Name)
+				if bindErr != nil {
+					return "", bindErr
+				}
+			}
+			result, err := toolRunner.ExecuteV2(execCtx, tc.Function.Name, tc.Function.Arguments)
 
 			var content string
 			failed := false
@@ -152,6 +166,9 @@ func validateLoopIdentity(cfg Config) error {
 		return fmt.Errorf("task_id and run_id must both be set when either is set")
 	}
 	if taskSet {
+		if cfg.Actions == nil {
+			return fmt.Errorf("actions manager is required when task_id and run_id are set")
+		}
 		if err := cfg.TaskID.Validate(); err != nil {
 			return fmt.Errorf("task_id must be canonical: %w", err)
 		}
@@ -160,4 +177,40 @@ func validateLoopIdentity(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+func bindToolActionAttempt(ctx context.Context, cfg Config, actionByToolName map[string]modulecore.ActionID, toolName string) (context.Context, error) {
+	execCtx, err := ensureLoopIdentity(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if actionID, exists := actionByToolName[toolName]; exists {
+		_, attempt, err := cfg.Actions.StartAttempt(execCtx, actionID, domainaction.AttemptStartReasonRetry)
+		if err != nil {
+			return nil, fmt.Errorf("start tool action attempt: %w", err)
+		}
+		return domainexecution.WithBoundActionAttempt(execCtx, actionID, attempt.AttemptID)
+	}
+	action, attempt, err := cfg.Actions.CreateAction(execCtx, actionmanager.CreateInput{
+		TaskID: cfg.TaskID,
+		RunID:  cfg.RunID,
+		Kind:   domainaction.KindTool,
+		Name:   toolName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create tool action: %w", err)
+	}
+	actionByToolName[toolName] = action.ActionID
+	return domainexecution.WithBoundActionAttempt(execCtx, action.ActionID, attempt.AttemptID)
+}
+
+func ensureLoopIdentity(ctx context.Context, cfg Config) (context.Context, error) {
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return domainexecution.WithIdentity(ctx, cfg.TaskID, cfg.RunID, "")
+	}
+	if identity.TaskID != cfg.TaskID || identity.RunID != cfg.RunID {
+		return nil, fmt.Errorf("execution identity mismatch: context task_id=%s run_id=%s config task_id=%s run_id=%s", identity.TaskID, identity.RunID, cfg.TaskID, cfg.RunID)
+	}
+	return ctx, nil
 }

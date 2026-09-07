@@ -5,25 +5,32 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	executionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/execution"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // PolicyRunner は RunnerV2 をポリシー適用付きでラップする
 type PolicyRunner struct {
 	inner        tool.RunnerV2
 	execService  *executionapp.Service
+	actions      *actionmanager.Manager
 	toolMetaByID map[string]tool.ToolMetadata
 	requestedBy  string
 }
 
-func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecution.Repository, requestedBy string) (*PolicyRunner, error) {
+func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecution.Repository, actions *actionmanager.Manager, requestedBy string) (*PolicyRunner, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("inner runner is required")
 	}
 	if engine == nil {
 		return nil, fmt.Errorf("policy engine is required")
+	}
+	if actions == nil {
+		return nil, fmt.Errorf("action manager is required")
 	}
 	metas, err := inner.ListTools(context.Background())
 	if err != nil {
@@ -37,6 +44,7 @@ func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecu
 	return &PolicyRunner{
 		inner:        inner,
 		execService:  svc,
+		actions:      actions,
 		toolMetaByID: metaMap,
 		requestedBy:  requestedBy,
 	}, nil
@@ -51,11 +59,32 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 	if err != nil {
 		return nil, err
 	}
-	actionID := nextActionID()
+	if r.actions == nil {
+		return nil, fmt.Errorf("action manager is required")
+	}
+	var actionID modulecore.ActionID
+	var attemptID modulecore.AttemptID
+	if boundActionID, boundAttemptID, ok := domainexecution.BoundActionAttemptFromContext(ctx); ok {
+		actionID = boundActionID
+		attemptID = boundAttemptID
+	} else {
+		createdAction, createdAttempt, err := r.actions.CreateAction(ctx, actionmanager.CreateInput{
+			TaskID: identity.TaskID,
+			RunID:  identity.RunID,
+			Kind:   domainaction.KindTool,
+			Name:   toolName,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create action: %w", err)
+		}
+		actionID = createdAction.ActionID
+		attemptID = createdAttempt.AttemptID
+	}
 	action := domainexecution.Action{
 		TaskID:      identity.TaskID,
 		TraceID:     identity.TraceID,
 		ActionID:    actionID,
+		AttemptID:   attemptID,
 		Tool:        toolName,
 		Arguments:   args,
 		RequestedBy: r.requestedBy,

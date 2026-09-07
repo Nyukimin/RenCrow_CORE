@@ -2998,7 +2998,7 @@ func TestSourceRegistryValidateAndPromoteRejectMalformedResponse(t *testing.T) {
 		{
 			name: "promotion item mismatch",
 			handler: func(w http.ResponseWriter) {
-				_ = json.NewEncoder(w).Encode(SourceRegistryPromotionResponse{Target: "news", Item: map[string]any{"ID": "news_1", "StagingID": "other", "Category": "ai", "CreatedAt": promotedAt}})
+				_ = json.NewEncoder(w).Encode(SourceRegistryPromotionResponse{Target: "news", Item: map[string]any{"ID": "news_1", "StagingID": modulecore.ActionID("act_00000000-0000-5000-8000-000000000099"), "Category": "ai", "CreatedAt": promotedAt}})
 			},
 			call: func(c *Client) error {
 				_, err := c.PromoteSourceRegistryStaging(context.Background(), SourceRegistryPromoteRequest{ID: "stg_1", Target: "news", Category: "ai"})
@@ -5320,6 +5320,9 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 
 func TestApplyRevenueExternalSend(t *testing.T) {
 	now := time.Date(2026, 5, 20, 4, 35, 0, 0, time.UTC)
+	taskID := modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001")
+	runID := modulecore.RunID("run_00000000-0000-5000-8000-000000000002")
+	actionID := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/revenue/channel-drafts/external-send-apply" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -5328,12 +5331,12 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.ApplyID != "apply_1" || req.DraftID != "draft_1" || req.DecisionID != "dec_1" {
+		if req.TaskID != taskID || req.RunID != runID || req.DraftID != "draft_1" || req.DecisionID != "dec_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(RevenueExternalSendApplyResponse{
 			Record: RevenueExternalSendApplyRecord{
-				ApplyID:             req.ApplyID,
+				ActionID:            actionID,
 				DraftID:             req.DraftID,
 				DecisionID:          req.DecisionID,
 				Channel:             "email",
@@ -5356,7 +5359,8 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
-		ApplyID:    "apply_1",
+		TaskID:     taskID,
+		RunID:      runID,
 		DraftID:    "draft_1",
 		DecisionID: "dec_1",
 	})
@@ -5374,9 +5378,9 @@ func TestApplyRevenueExternalSendRejectsInvalidRequest(t *testing.T) {
 		item RevenueExternalSendApplyRequest
 		want string
 	}{
-		{name: "missing apply", item: RevenueExternalSendApplyRequest{DraftID: "draft_1", DecisionID: "dec_1"}, want: "missing apply_id"},
-		{name: "missing draft", item: RevenueExternalSendApplyRequest{ApplyID: "apply_1", DecisionID: "dec_1"}, want: "missing draft_id"},
-		{name: "missing decision", item: RevenueExternalSendApplyRequest{ApplyID: "apply_1", DraftID: "draft_1"}, want: "missing decision_id"},
+		{name: "missing task", item: RevenueExternalSendApplyRequest{RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DraftID: "draft_1", DecisionID: "dec_1"}, want: "missing task_id"},
+		{name: "missing draft", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1"}, want: "missing draft_id"},
+		{name: "missing decision", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DraftID: "draft_1"}, want: "missing decision_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -5400,23 +5404,23 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 		want string
 	}{
 		{
-			name: "apply id mismatch",
+			name: "missing action id",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ApplyID: "other", DraftID: "draft_1", DecisionID: "dec_1", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: "other", DraftID: "draft_1", DecisionID: "dec_1", ApplyStatus: "blocked"},
 			},
-			want: "apply_id mismatch",
+			want: "missing action_id",
 		},
 		{
 			name: "draft id mismatch",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "other", DecisionID: "dec_1", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "other", DecisionID: "dec_1", ApplyStatus: "blocked"},
 			},
 			want: "draft_id mismatch",
 		},
 		{
 			name: "decision id mismatch",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "other", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "other", ApplyStatus: "blocked"},
 			},
 			want: "decision_id mismatch",
 		},
@@ -5424,7 +5428,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "state mismatch",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ApplyID:             "apply_1",
+					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5443,7 +5447,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "blocked without failure reason",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ApplyID:             "apply_1",
+					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5461,7 +5465,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "blocked with sent result",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ApplyID:             "apply_1",
+					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5482,7 +5486,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "required channel adapter but record configured",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ApplyID:             "apply_1",
+					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5503,7 +5507,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "missing created at",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ApplyID:             "apply_1",
+					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					DraftID:             "draft_1",
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5533,7 +5537,8 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
-				ApplyID:    "apply_1",
+				TaskID:     modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"),
+				RunID:      modulecore.RunID("run_00000000-0000-5000-8000-000000000002"),
 				DraftID:    "draft_1",
 				DecisionID: "dec_1",
 			})
@@ -5572,7 +5577,7 @@ func TestRevenueStatus(t *testing.T) {
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ApplyID:       "apply_1",
+				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 				DraftID:       "draft_1",
 				DecisionID:    "dec_1",
 				Channel:       "email",
@@ -5597,7 +5602,7 @@ func TestRevenueStatus(t *testing.T) {
 	if gotPath != "/viewer/revenue?limit=7" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if len(status.ExternalSendApplyRecords) != 1 || status.ExternalSendApplyRecords[0].ApplyID != "apply_1" {
+	if len(status.ExternalSendApplyRecords) != 1 || status.ExternalSendApplyRecords[0].ActionID != modulecore.ActionID("act_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("status=%#v", status)
 	}
 	if status.ExternalChannelAdapter != "unconfigured" || status.ExternalChannelAdapterConfigured == nil || *status.ExternalChannelAdapterConfigured {
@@ -5628,7 +5633,7 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ApplyID:       "apply_1",
+				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 				DraftID:       "draft_1",
 				DecisionID:    "dec_1",
 				Channel:       "email",
@@ -5666,7 +5671,7 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 		}, want: "duplicate external_send_apply_record"},
 		{name: "external send apply missing created at", mutate: func(s *RevenueStatus) {
 			s.ExternalSendApplyRecords[0].CreatedAt = time.Time{}
-		}, want: "external_send_apply_record apply_1 missing created_at"},
+		}, want: "external_send_apply_record act_00000000-0000-5000-8000-000000000001 missing created_at"},
 		{name: "applied without evidence", mutate: func(s *RevenueStatus) {
 			s.ExternalSendApplyRecords[0].ApplyStatus = "sent"
 			s.ExternalSendApplyRecords[0].ExternalSendApplied = true
@@ -6970,6 +6975,9 @@ func TestSubmitPromotionWorkflowDoesNotMarkMalformedApplyResponseApplied(t *test
 
 func TestSubmitSkillGovernanceExternalPRSendsPolicyGatedAuditRequest(t *testing.T) {
 	now := time.Date(2026, 5, 20, 4, 35, 0, 0, time.UTC)
+	taskID := modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001")
+	runID := modulecore.RunID("run_00000000-0000-5000-8000-000000000002")
+	actionID := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/skill-governance/external-pr-submit" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -6978,12 +6986,12 @@ func TestSubmitSkillGovernanceExternalPRSendsPolicyGatedAuditRequest(t *testing.
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.SubmitID != "submit_1" || req.ContributionEventID != "evt_contrib_1" {
+		if req.TaskID != taskID || req.RunID != runID || req.ContributionEventID != "evt_contrib_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(SkillGovernanceExternalPRSubmitResponse{
 			Record: SkillGovernanceExternalPRSubmitRecord{
-				SubmitID:            req.SubmitID,
+				ActionID:            actionID,
 				ContributionEventID: req.ContributionEventID,
 				Repo:                req.Repo,
 				Title:               req.Title,
@@ -7005,7 +7013,8 @@ func TestSubmitSkillGovernanceExternalPRSendsPolicyGatedAuditRequest(t *testing.
 		t.Fatal(err)
 	}
 	resp, err := client.SubmitSkillGovernanceExternalPR(context.Background(), SkillGovernanceExternalPRSubmitRequest{
-		SubmitID:            "submit_1",
+		TaskID:              taskID,
+		RunID:               runID,
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -7024,10 +7033,10 @@ func TestSubmitSkillGovernanceExternalPRRejectsInvalidRequest(t *testing.T) {
 		item SkillGovernanceExternalPRSubmitRequest
 		want string
 	}{
-		{name: "missing submit", item: SkillGovernanceExternalPRSubmitRequest{ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix bug"}, want: "missing submit_id"},
-		{name: "missing gate", item: SkillGovernanceExternalPRSubmitRequest{SubmitID: "submit_1", Repo: "example/repo", Title: "Fix bug"}, want: "missing contribution_event_id"},
-		{name: "missing repo", item: SkillGovernanceExternalPRSubmitRequest{SubmitID: "submit_1", ContributionEventID: "evt_1", Title: "Fix bug"}, want: "missing repo"},
-		{name: "missing title", item: SkillGovernanceExternalPRSubmitRequest{SubmitID: "submit_1", ContributionEventID: "evt_1", Repo: "example/repo"}, want: "missing title"},
+		{name: "missing task", item: SkillGovernanceExternalPRSubmitRequest{ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix bug"}, want: "missing task_id"},
+		{name: "missing gate", item: SkillGovernanceExternalPRSubmitRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), Repo: "example/repo", Title: "Fix bug"}, want: "missing contribution_event_id"},
+		{name: "missing repo", item: SkillGovernanceExternalPRSubmitRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), ContributionEventID: "evt_1", Title: "Fix bug"}, want: "missing repo"},
+		{name: "missing title", item: SkillGovernanceExternalPRSubmitRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), ContributionEventID: "evt_1", Repo: "example/repo"}, want: "missing title"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -7051,23 +7060,23 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 		want string
 	}{
 		{
-			name: "submit id mismatch",
+			name: "missing action id",
 			resp: SkillGovernanceExternalPRSubmitResponse{
-				Record: SkillGovernanceExternalPRSubmitRecord{SubmitID: "other", ContributionEventID: "evt_contrib_1", Repo: "example/repo", SubmitStatus: "blocked"},
+				Record: SkillGovernanceExternalPRSubmitRecord{ActionID: "other", ContributionEventID: "evt_contrib_1", Repo: "example/repo", SubmitStatus: "blocked"},
 			},
-			want: "submit_id mismatch",
+			want: "missing action_id",
 		},
 		{
 			name: "contribution event mismatch",
 			resp: SkillGovernanceExternalPRSubmitResponse{
-				Record: SkillGovernanceExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "other", Repo: "example/repo", SubmitStatus: "blocked"},
+				Record: SkillGovernanceExternalPRSubmitRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ContributionEventID: "other", Repo: "example/repo", SubmitStatus: "blocked"},
 			},
 			want: "contribution_event_id mismatch",
 		},
 		{
 			name: "repo mismatch",
 			resp: SkillGovernanceExternalPRSubmitResponse{
-				Record: SkillGovernanceExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_contrib_1", Repo: "other/repo", SubmitStatus: "blocked"},
+				Record: SkillGovernanceExternalPRSubmitRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ContributionEventID: "evt_contrib_1", Repo: "other/repo", SubmitStatus: "blocked"},
 			},
 			want: "repo mismatch",
 		},
@@ -7075,7 +7084,7 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 			name: "state mismatch",
 			resp: SkillGovernanceExternalPRSubmitResponse{
 				Record: SkillGovernanceExternalPRSubmitRecord{
-					SubmitID:            "submit_1",
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
@@ -7092,7 +7101,7 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 		{
 			name: "title mismatch",
 			resp: SkillGovernanceExternalPRSubmitResponse{
-				Record: SkillGovernanceExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_contrib_1", Repo: "example/repo", Title: "Other title", SubmitStatus: "blocked"},
+				Record: SkillGovernanceExternalPRSubmitRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ContributionEventID: "evt_contrib_1", Repo: "example/repo", Title: "Other title", SubmitStatus: "blocked"},
 			},
 			want: "title mismatch",
 		},
@@ -7100,7 +7109,7 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 			name: "blocked without failure reason",
 			resp: SkillGovernanceExternalPRSubmitResponse{
 				Record: SkillGovernanceExternalPRSubmitRecord{
-					SubmitID:            "submit_1",
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
@@ -7117,7 +7126,7 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 			name: "missing created at",
 			resp: SkillGovernanceExternalPRSubmitResponse{
 				Record: SkillGovernanceExternalPRSubmitRecord{
-					SubmitID:            "submit_1",
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
@@ -7135,7 +7144,7 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 			name: "required pr adapter but record configured",
 			resp: SkillGovernanceExternalPRSubmitResponse{
 				Record: SkillGovernanceExternalPRSubmitRecord{
-					SubmitID:            "submit_1",
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ContributionEventID: "evt_contrib_1",
 					Repo:                "example/repo",
 					Title:               "Fix bug",
@@ -7166,7 +7175,8 @@ func TestSubmitSkillGovernanceExternalPRRejectsMalformedCreatedResponse(t *testi
 				t.Fatal(err)
 			}
 			_, err = client.SubmitSkillGovernanceExternalPR(context.Background(), SkillGovernanceExternalPRSubmitRequest{
-				SubmitID:            "submit_1",
+				TaskID:              modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"),
+				RunID:               modulecore.RunID("run_00000000-0000-5000-8000-000000000002"),
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
@@ -7213,7 +7223,7 @@ func TestSkillGovernanceStatus(t *testing.T) {
 				CreatedAt:  now,
 			}},
 			ExternalPRSubmitRecords: []SkillGovernanceExternalPRSubmitRecord{{
-				SubmitID:            "submit_1",
+				ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
@@ -7258,7 +7268,7 @@ func TestSkillGovernanceStatus(t *testing.T) {
 	if gotPath != "/viewer/skill-governance/recent?limit=6" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if len(status.ExternalPRSubmitRecords) != 1 || status.ExternalPRSubmitRecords[0].SubmitID != "submit_1" {
+	if len(status.ExternalPRSubmitRecords) != 1 || status.ExternalPRSubmitRecords[0].ActionID != modulecore.ActionID("act_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("status=%#v", status)
 	}
 	if status.ExternalPRAdapter != "unconfigured" || status.ExternalPRAdapterConfigured == nil || *status.ExternalPRAdapterConfigured {
@@ -7327,7 +7337,7 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 				CreatedAt:  now,
 			}},
 			ExternalPRSubmitRecords: []SkillGovernanceExternalPRSubmitRecord{{
-				SubmitID:            "submit_1",
+				ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 				ContributionEventID: "evt_contrib_1",
 				Repo:                "example/repo",
 				Title:               "Fix bug",
@@ -7398,7 +7408,7 @@ func TestSkillGovernanceStatusRejectsMalformedCurrentView(t *testing.T) {
 		}, want: "without pr_url"},
 		{name: "external pr submit missing created at", mutate: func(s *SkillGovernanceStatus) {
 			s.ExternalPRSubmitRecords[0].CreatedAt = time.Time{}
-		}, want: "external_pr_submit_record submit_1 missing created_at"},
+		}, want: "external_pr_submit_record act_00000000-0000-5000-8000-000000000001 missing created_at"},
 		{name: "created status without external pr created", mutate: func(s *SkillGovernanceStatus) {
 			s.ExternalPRSubmitRecords[0].SubmitStatus = "created"
 		}, want: "created without external_pr_created"},

@@ -18,7 +18,7 @@ func TestValidateSkillGovernanceRejectsMissingTimestamp(t *testing.T) {
 		{name: "trigger", err: ValidateSkillTriggerLog(SkillTriggerLog{EventID: "evt_1", SkillID: "core.review", Status: TriggerStatusTriggered}), want: "created_at"},
 		{name: "change", err: ValidateSkillChangeLog(SkillChangeLog{ChangeID: "chg_1", SkillID: "core.review"}), want: "created_at"},
 		{name: "contribution", err: ValidateContributionGateLog(ContributionGateLog{EventID: "evt_1", Repo: "example/repo", GateStatus: GateStatusBlocked}), want: "created_at"},
-		{name: "external PR", err: ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured"}), want: "created_at"},
+		{name: "external PR", err: ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured"}), want: "created_at"},
 		{name: "transcript", err: ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Role: "assistant", Segment: "patch_evidence"}), want: "created_at"},
 	}
 	for _, tc := range cases {
@@ -44,7 +44,7 @@ func TestValidateSkillGovernanceAcceptsTimestampedRecords(t *testing.T) {
 	if err := ValidateContributionGateLog(ContributionGateLog{EventID: "evt_1", Repo: "example/repo", GateStatus: GateStatusBlocked, CreatedAt: now}); err != nil {
 		t.Fatalf("contribution should be valid: %v", err)
 	}
-	if err := ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{SubmitID: "submit_1", ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured", CreatedAt: now}); err != nil {
+	if err := ValidateExternalPRSubmitRecord(ExternalPRSubmitRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ContributionEventID: "evt_1", Repo: "example/repo", Title: "Fix", SubmitStatus: ExternalPRSubmitStatusBlocked, FailureReason: "external PR adapter is not configured", CreatedAt: now}); err != nil {
 		t.Fatalf("external PR should be valid: %v", err)
 	}
 	if err := ValidateCoderTranscriptEntry(CoderTranscriptEntry{EventID: "evt_1", TaskID: modulecore.NewTaskID(), Role: "assistant", Segment: "patch_evidence", CreatedAt: now}); err != nil {

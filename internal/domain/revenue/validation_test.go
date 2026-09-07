@@ -1,6 +1,7 @@
 package revenue
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 		{name: "revenue event", err: ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase"})},
 		{name: "daily routine", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-20", Status: "draft_report"})},
 		{name: "channel draft", err: ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文"})},
-		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
+		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
 		{name: "policy decision", err: ValidatePolicyDecisionRecord(PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"})},
 		{name: "product updated_at optional", err: ValidateProduct(Product{ProductID: "prod_1", ProductName: "商品設計シート", Status: "draft", CreatedAt: now})},
 	}
@@ -253,7 +254,7 @@ func TestValidatePolicyDecisionRecordRequiredFields(t *testing.T) {
 func TestValidateExternalSendApplyRecordUsesPolicyDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
@@ -307,7 +308,7 @@ func TestValidateDeliveryRequiresStableTraceAndProtectsExternalCompletion(t *tes
 func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	validBlocked := ExternalSendApplyRecord{
-		ApplyID:       "apply_1",
+		ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:       "draft_1",
 		DecisionID:    "dec_1",
 		Channel:       "email",
@@ -321,7 +322,7 @@ func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) 
 		mutate func(*ExternalSendApplyRecord)
 		want   string
 	}{
-		{name: "missing apply id", mutate: func(item *ExternalSendApplyRecord) { item.ApplyID = "" }, want: "apply_id"},
+		{name: "missing apply id", mutate: func(item *ExternalSendApplyRecord) { item.ActionID = "" }, want: "action_id"},
 		{name: "missing draft id", mutate: func(item *ExternalSendApplyRecord) { item.DraftID = "" }, want: "draft_id"},
 		{name: "missing decision id", mutate: func(item *ExternalSendApplyRecord) { item.DecisionID = "" }, want: "decision_id"},
 		{name: "missing channel", mutate: func(item *ExternalSendApplyRecord) { item.Channel = "" }, want: "channel"},
@@ -344,7 +345,7 @@ func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) 
 func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
@@ -376,7 +377,7 @@ func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *te
 
 func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
@@ -393,7 +394,7 @@ func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *
 
 func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",

@@ -21,6 +21,7 @@ import (
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	durablestoreapp "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/heartbeat"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
@@ -767,6 +768,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
+	var runtimeActionManager *actionmanager.Manager
 	if cfg.SkillGovernance.IsEnabled() {
 		type skillGovernanceRuntimeStore interface {
 			viewer.SkillGovernanceStore
@@ -810,7 +812,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.skillContributionGate = viewer.HandleSkillGovernanceContributionGate(skillStore)
 		deps.skillChangeGate = viewer.HandleSkillGovernanceSkillChange(skillStore)
 		deps.skillChangeEval = viewer.HandleSkillGovernanceSkillChangeEval(skillStore)
-		deps.skillExternalPRSubmit = viewer.HandleSkillGovernanceExternalPRSubmit(skillStore)
+		if runtimeActionManager == nil {
+			manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+			if err != nil {
+				log.Fatalf("Failed to initialize action manager: %v", err)
+			}
+			runtimeActionManager = manager
+		}
+		deps.skillExternalPRSubmit = viewer.HandleSkillGovernanceExternalPRSubmit(skillStore, runtimeActionManager)
 	}
 	if cfg.DCI.IsEnabled() {
 		dciStore, err := dcipersistence.NewSQLiteStore(cfg.DCI.SQLitePath)
@@ -1077,7 +1086,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenuePolicyDecision = viewer.HandleRevenuePolicyDecision(revenueStore)
 		deps.revenueDailyRoutine = viewer.HandleRevenueDailyRoutineReportCreate(revenueStore)
 		deps.revenueChannelDraft = viewer.HandleRevenueChannelDraftCreate(revenueStore)
-		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore)
+		if runtimeActionManager == nil {
+			manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+			if err != nil {
+				log.Fatalf("Failed to initialize action manager: %v", err)
+			}
+			runtimeActionManager = manager
+		}
+		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore, runtimeActionManager)
 		deps.revenueOpportunities = viewer.HandleRevenueOpportunities(revenueStore)
 		deps.revenueEconomicTasks = viewer.HandleRevenueEconomicTasks(revenueStore)
 		deps.revenueDeliveries = viewer.HandleRevenueDeliveries(revenueStore)

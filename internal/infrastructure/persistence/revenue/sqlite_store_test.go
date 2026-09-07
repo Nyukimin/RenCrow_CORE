@@ -1,6 +1,7 @@
 package revenue
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -173,7 +174,7 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",

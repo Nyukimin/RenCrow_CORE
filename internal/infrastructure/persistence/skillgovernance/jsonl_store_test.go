@@ -57,7 +57,7 @@ func TestJSONLStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 		t.Fatalf("SaveContributionGateLog failed: %v", err)
 	}
 	if err := store.SaveExternalPRSubmitRecord(ctx, domainskill.ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -97,7 +97,7 @@ func TestJSONLStoreSaveAndListSkillGovernanceRecords(t *testing.T) {
 		t.Fatalf("gates=%#v err=%v", gates, err)
 	}
 	submits, err := store.ListExternalPRSubmitRecords(ctx, 10)
-	if err != nil || len(submits) != 1 || submits[0].SubmitID != "submit_1" {
+	if err != nil || len(submits) != 1 || submits[0].ActionID != modulecore.ActionID("act_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("submits=%#v err=%v", submits, err)
 	}
 	transcripts, err := store.ListCoderTranscriptEntries(ctx, 10)

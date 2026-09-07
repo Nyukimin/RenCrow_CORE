@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/pkg/rencrowclient"
 )
 
@@ -25,7 +26,8 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 
 	suffix := time.Now().UTC().Format("20060102150405")
 	contributionEventID := "evt_skill_pr_client_e2e_" + suffix
-	submitID := "submit_skill_pr_client_e2e_" + suffix
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -48,7 +50,8 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 	}
 
 	resp, err := client.SubmitSkillGovernanceExternalPR(ctx, rencrowclient.SkillGovernanceExternalPRSubmitRequest{
-		SubmitID:            submitID,
+		TaskID:              taskID,
+		RunID:               runID,
 		ContributionEventID: contributionEventID,
 		Repo:                "example/repo",
 		Title:               "Live client E2E audit boundary",
@@ -64,6 +67,9 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 	if resp.Record.FailureReason != "external PR adapter is not configured" {
 		t.Fatalf("failure_reason=%q", resp.Record.FailureReason)
 	}
+	if err := resp.Record.ActionID.Validate(); err != nil {
+		t.Fatalf("owner-issued action_id missing: %v", err)
+	}
 
 	status, err := client.SkillGovernanceStatus(ctx, 20)
 	if err != nil {
@@ -73,9 +79,9 @@ func TestE2E_SkillGovernanceExternalPRClientAuditsPolicyBlockedSubmit(t *testing
 		t.Fatalf("live Skill Governance external PR readiness=%+v", status)
 	}
 	for _, record := range status.ExternalPRSubmitRecords {
-		if record.SubmitID == submitID && record.SubmitStatus == "blocked" && !record.ExternalPRCreated {
+		if record.ActionID == resp.Record.ActionID && record.SubmitStatus == "blocked" && !record.ExternalPRCreated {
 			return
 		}
 	}
-	t.Fatalf("live Skill Governance status did not include blocked external PR audit for %s; records=%+v", submitID, status.ExternalPRSubmitRecords)
+	t.Fatalf("live Skill Governance status did not include blocked external PR audit for %s; records=%+v", resp.Record.ActionID, status.ExternalPRSubmitRecords)
 }

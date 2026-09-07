@@ -1,6 +1,7 @@
 package revenue
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"testing"
 	"time"
@@ -114,7 +115,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
-		ApplyID:             "apply_1",
+		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		DraftID:             "draft_1",
 		DecisionID:          "dec_1",
 		Channel:             "email",
@@ -178,7 +179,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("drafts=%#v err=%v", drafts, err)
 	}
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
-	if err != nil || len(applies) != 1 || applies[0].ApplyID != "apply_1" {
+	if err != nil || len(applies) != 1 || applies[0].ActionID != modulecore.ActionID("act_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("applies=%#v err=%v", applies, err)
 	}
 	deliveries, err := store.ListDeliveries(ctx, 10)
@@ -208,7 +209,7 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "送信済み", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected externally applied channel draft to fail")
 	}
-	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
+	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("external send audit failed: %v", err)
 	}
 	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", CreatedAt: time.Now()}); err == nil {

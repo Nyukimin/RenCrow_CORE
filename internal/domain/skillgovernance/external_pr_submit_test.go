@@ -1,6 +1,7 @@
 package skillgovernance
 
 import (
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +10,7 @@ import (
 func TestNewBlockedExternalPRSubmitRecordCreatesBlockedAudit(t *testing.T) {
 	now := time.Date(2026, 5, 19, 10, 0, 0, 0, time.UTC)
 	record, err := NewBlockedExternalPRSubmitRecord(ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		TargetBranch:        "main",
@@ -34,7 +35,7 @@ func TestNewBlockedExternalPRSubmitRecordCreatesBlockedAudit(t *testing.T) {
 func TestValidateExternalPRSubmitRecordRejectsMissingRequiredFieldsAndInvalidStatus(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 40, 0, 0, time.UTC)
 	validBlocked := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -47,7 +48,7 @@ func TestValidateExternalPRSubmitRecordRejectsMissingRequiredFieldsAndInvalidSta
 		mutate func(*ExternalPRSubmitRecord)
 		want   string
 	}{
-		{name: "missing submit id", mutate: func(record *ExternalPRSubmitRecord) { record.SubmitID = "" }, want: "submit_id"},
+		{name: "missing submit id", mutate: func(record *ExternalPRSubmitRecord) { record.ActionID = "" }, want: "action_id"},
 		{name: "missing contribution event id", mutate: func(record *ExternalPRSubmitRecord) { record.ContributionEventID = "" }, want: "contribution_event_id"},
 		{name: "missing repo", mutate: func(record *ExternalPRSubmitRecord) { record.Repo = "" }, want: "repo"},
 		{name: "missing title", mutate: func(record *ExternalPRSubmitRecord) { record.Title = "" }, want: "title"},
@@ -70,7 +71,7 @@ func TestValidateExternalPRSubmitRecordRejectsMissingRequiredFieldsAndInvalidSta
 
 func TestValidateExternalPRSubmitRecordRejectsCreatedStatusWithoutCreatedPR(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -86,7 +87,7 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedStatusWithoutCreatedPR(t *t
 
 func TestValidateExternalPRSubmitRecordRejectsCreatedFlagWithoutCreatedStatus(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -102,7 +103,7 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedFlagWithoutCreatedStatus(t 
 
 func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutCreatedPR(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -119,7 +120,7 @@ func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutCreat
 
 func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPostSubmitVerification(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -136,7 +137,7 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPostSubmitVerifica
 
 func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPRURL(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -153,7 +154,7 @@ func TestValidateExternalPRSubmitRecordRejectsCreatedPRWithoutPRURL(t *testing.T
 
 func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutEvidence(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",
@@ -170,7 +171,7 @@ func TestValidateExternalPRSubmitRecordRejectsPostSubmitVerificationWithoutEvide
 
 func TestValidateExternalPRSubmitRecordAcceptsCreatedPRWithVerificationEvidence(t *testing.T) {
 	record := ExternalPRSubmitRecord{
-		SubmitID:            "submit_1",
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ContributionEventID: "evt_contrib_1",
 		Repo:                "example/repo",
 		Title:               "Fix bug",

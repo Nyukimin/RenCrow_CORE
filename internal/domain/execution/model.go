@@ -2,7 +2,6 @@ package execution
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -38,21 +37,23 @@ type PolicyDecision struct {
 
 // Action は1回のツール実行要求
 type Action struct {
-	TaskID      modulecore.TaskID  `json:"task_id"`
-	TraceID     modulecore.TraceID `json:"trace_id,omitempty"`
-	ActionID    string             `json:"action_id"`
-	Tool        string             `json:"tool"`
-	Arguments   map[string]any     `json:"arguments"`
-	RequestedBy string             `json:"requested_by"`
-	RequestedAt time.Time          `json:"requested_at"`
+	TaskID      modulecore.TaskID    `json:"task_id"`
+	TraceID     modulecore.TraceID   `json:"trace_id,omitempty"`
+	ActionID    modulecore.ActionID  `json:"action_id"`
+	AttemptID   modulecore.AttemptID `json:"attempt_id,omitempty"`
+	Tool        string               `json:"tool"`
+	Arguments   map[string]any       `json:"arguments"`
+	RequestedBy string               `json:"requested_by"`
+	RequestedAt time.Time            `json:"requested_at"`
 }
 
 // Record は実行監査レコード
 type Record struct {
-	TaskID      modulecore.TaskID  `json:"task_id"`
-	TraceID     modulecore.TraceID `json:"trace_id,omitempty"`
-	ActionID    string             `json:"action_id"`
-	Tool        string             `json:"tool"`
+	TaskID      modulecore.TaskID    `json:"task_id"`
+	TraceID     modulecore.TraceID   `json:"trace_id,omitempty"`
+	ActionID    modulecore.ActionID  `json:"action_id"`
+	AttemptID   modulecore.AttemptID `json:"attempt_id,omitempty"`
+	Tool        string               `json:"tool"`
 	RequestedBy string             `json:"requested_by"`
 	Arguments   map[string]any     `json:"arguments,omitempty"`
 	EventType   string             `json:"event_type,omitempty"` // security.decision|security.violation
@@ -64,9 +65,7 @@ type Record struct {
 	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
 }
 
-// Validate checks the canonical identity boundary before an action is
-// evaluated or persisted. ActionID remains a legacy execution-local key until
-// the ActionID cutover; it is intentionally not reinterpreted here.
+// Validate checks the canonical identity boundary before an action is evaluated or persisted.
 func (a Action) Validate() error {
 	if err := a.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id: %w", err)
@@ -76,8 +75,13 @@ func (a Action) Validate() error {
 			return fmt.Errorf("trace_id: %w", err)
 		}
 	}
-	if strings.TrimSpace(a.ActionID) == "" {
-		return fmt.Errorf("action_id is required")
+	if err := a.ActionID.Validate(); err != nil {
+		return fmt.Errorf("action_id: %w", err)
+	}
+	if a.AttemptID != "" {
+		if err := a.AttemptID.Validate(); err != nil {
+			return fmt.Errorf("attempt_id: %w", err)
+		}
 	}
 	return nil
 }
@@ -92,8 +96,13 @@ func (r Record) Validate() error {
 			return fmt.Errorf("trace_id: %w", err)
 		}
 	}
-	if strings.TrimSpace(r.ActionID) == "" {
-		return fmt.Errorf("action_id is required")
+	if err := r.ActionID.Validate(); err != nil {
+		return fmt.Errorf("action_id: %w", err)
+	}
+	if r.AttemptID != "" {
+		if err := r.AttemptID.Validate(); err != nil {
+			return fmt.Errorf("attempt_id: %w", err)
+		}
 	}
 	return nil
 }

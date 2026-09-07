@@ -20,8 +20,10 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	browseractorinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/browseractor"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	toolharnesspersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolharness"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	securityinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -310,6 +312,15 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("CompositeRunnerV2 enabled (ToolRegistry fallback for worker)")
 	}
 
+	var actionManager *actionmanager.Manager
+	if cfg.Security.Enabled || cfg.Subagent.Enabled {
+		actionStore, err := actionpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "state", "actions"))
+		if err != nil {
+			log.Fatalf("Failed to initialize action store: %v", err)
+		}
+		actionManager = actionmanager.New(actionStore)
+	}
+
 	if cfg.Security.Enabled {
 		var execRepo domainexecution.Repository
 		if cfg.Security.Audit.Enabled && cfg.Security.Audit.Backend == "jsonl" {
@@ -331,11 +342,15 @@ func buildToolRuntimeWithCapabilities(
 			SandboxWriteOnly:  cfg.Sandbox.Enabled && cfg.Sandbox.DenyOutsideSandboxWrite,
 		})
 
-		securedChatRunner, err := securityinfra.NewPolicyRunner(chatToolRunnerV2, policy, execRepo, "chat")
+		if actionManager == nil {
+			log.Fatalf("action manager is required when security is enabled")
+		}
+
+		securedChatRunner, err := securityinfra.NewPolicyRunner(chatToolRunnerV2, policy, execRepo, actionManager, "chat")
 		if err != nil {
 			log.Fatalf("Failed to create chat policy runner: %v", err)
 		}
-		securedWorkerRunner, err := securityinfra.NewPolicyRunner(workerRunnerV2, policy, execRepo, "worker")
+		securedWorkerRunner, err := securityinfra.NewPolicyRunner(workerRunnerV2, policy, execRepo, actionManager, "worker")
 		if err != nil {
 			log.Fatalf("Failed to create worker policy runner: %v", err)
 		}
@@ -382,7 +397,7 @@ func buildToolRuntimeWithCapabilities(
 			subagentProvider,
 			workerRunnerV2,
 			toolDefs,
-			toolloop.Config{MaxIterations: cfg.Subagent.MaxIterations},
+			toolloop.Config{MaxIterations: cfg.Subagent.MaxIterations, Actions: actionManager},
 			subagentOpts...,
 		)
 		workerToolRunnerV2.RegisterSubagent("worker", tools.NewSubagentFuncFromManager(subagentMgr))

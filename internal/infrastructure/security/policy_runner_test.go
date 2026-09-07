@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	execrepo "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
+	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -25,6 +27,20 @@ func (f *fakeRunner) ListTools(_ context.Context) ([]tool.ToolMetadata, error) {
 	return f.metas, nil
 }
 
+func newTestPolicyRunner(t *testing.T, inner tool.RunnerV2, engine *PolicyEngine, repo domainexecution.Repository) *PolicyRunner {
+	t.Helper()
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatalf("action store init failed: %v", err)
+	}
+	actions := actionmanager.New(store)
+	runner, err := NewPolicyRunner(inner, engine, repo, actions, "test")
+	if err != nil {
+		t.Fatalf("NewPolicyRunner failed: %v", err)
+	}
+	return runner
+}
+
 func TestPolicyRunner_DenyBlockedCommand(t *testing.T) {
 	repo, err := execrepo.NewJSONLRepository(filepath.Join(t.TempDir(), "audit.jsonl"))
 	if err != nil {
@@ -33,10 +49,7 @@ func TestPolicyRunner_DenyBlockedCommand(t *testing.T) {
 
 	inner := &fakeRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
 	engine := NewPolicyEngine(PolicyConfig{DenyCommands: []string{"rm -rf"}})
-	runner, err := NewPolicyRunner(inner, engine, repo, "test")
-	if err != nil {
-		t.Fatalf("NewPolicyRunner failed: %v", err)
-	}
+	runner := newTestPolicyRunner(t, inner, engine, repo)
 
 	taskID := modulecore.NewTaskID()
 	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, modulecore.NewRunID(), "")
@@ -69,10 +82,7 @@ func TestPolicyRunner_DeniesMediatedFileWriteOutsideWorkspace(t *testing.T) {
 		Workspace:         workspace,
 		WorkspaceEnforced: true,
 	})
-	policyRunner, err := NewPolicyRunner(inner, engine, nil, "test")
-	if err != nil {
-		t.Fatalf("NewPolicyRunner failed: %v", err)
-	}
+	policyRunner := newTestPolicyRunner(t, inner, engine, nil)
 	runner := tools.NewToolHarnessRunner(policyRunner, nil)
 
 	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
@@ -99,10 +109,7 @@ func TestPolicyRunner_DeniesMediatedFileWriteOutsideWorkspace(t *testing.T) {
 func TestPolicyRunner_RefreshesToolMetadataAfterDynamicRegistration(t *testing.T) {
 	inner := &fakeRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
 	engine := NewPolicyEngine(PolicyConfig{})
-	runner, err := NewPolicyRunner(inner, engine, nil, "test")
-	if err != nil {
-		t.Fatalf("NewPolicyRunner failed: %v", err)
-	}
+	runner := newTestPolicyRunner(t, inner, engine, nil)
 
 	inner.metas = append(inner.metas, tool.ToolMetadata{ToolID: "subagent"})
 	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
@@ -122,10 +129,7 @@ func TestPolicyRunnerRequiresOwnerProvidedTaskIdentity(t *testing.T) {
 	inner := &fakeRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
 	engine := NewPolicyEngine(PolicyConfig{DenyCommands: []string{"blocked"}})
 	repo := &recordingExecutionRepository{}
-	runner, err := NewPolicyRunner(inner, engine, repo, "test")
-	if err != nil {
-		t.Fatalf("NewPolicyRunner failed: %v", err)
-	}
+	runner := newTestPolicyRunner(t, inner, engine, repo)
 
 	if _, err := runner.ExecuteV2(context.Background(), "shell", map[string]any{}); err == nil {
 		t.Fatal("expected missing owner task identity error")
@@ -145,6 +149,48 @@ func TestPolicyRunnerRequiresOwnerProvidedTaskIdentity(t *testing.T) {
 	if repo.record.TaskID != taskID || repo.record.TraceID != "" {
 		t.Fatalf("record identities = task %q trace %q, want owner task %q and empty trace", repo.record.TaskID, repo.record.TraceID, taskID)
 	}
+	if err := repo.record.ActionID.Validate(); err != nil {
+		t.Fatalf("record action_id must be canonical: %v", err)
+	}
+}
+
+func TestNewPolicyRunnerRejectsNilActionManager(t *testing.T) {
+	inner := &fakeRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
+	engine := NewPolicyEngine(PolicyConfig{})
+	if _, err := NewPolicyRunner(inner, engine, nil, nil, "test"); err == nil {
+		t.Fatal("expected nil action manager rejection")
+	}
+}
+
+func TestPolicyRunnerUsesBoundActionAttemptWithoutMinting(t *testing.T) {
+	inner := &fakeRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
+	engine := NewPolicyEngine(PolicyConfig{})
+	repo := &recordingExecutionRepository{}
+	runner := newTestPolicyRunner(t, inner, engine, repo)
+
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	actionID := modulecore.NewActionID()
+	attemptID := modulecore.NewAttemptID()
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, "")
+	if err != nil {
+		t.Fatalf("WithIdentity failed: %v", err)
+	}
+	ctx, err = domainexecution.WithBoundActionAttempt(ctx, actionID, attemptID)
+	if err != nil {
+		t.Fatalf("WithBoundActionAttempt failed: %v", err)
+	}
+
+	resp, err := runner.ExecuteV2(ctx, "shell", map[string]any{"command": "echo ok"})
+	if err != nil {
+		t.Fatalf("ExecuteV2 failed: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("unexpected tool error: %+v", resp.Error)
+	}
+	if repo.record.ActionID != actionID || repo.record.AttemptID != attemptID {
+		t.Fatalf("record ids = action %q attempt %q, want bound action %q attempt %q", repo.record.ActionID, repo.record.AttemptID, actionID, attemptID)
+	}
 }
 
 type recordingExecutionRepository struct {
@@ -156,7 +202,7 @@ func (r *recordingExecutionRepository) Create(_ context.Context, record domainex
 	return nil
 }
 
-func (r *recordingExecutionRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID string, status domainexecution.Status, errMsg string) (domainexecution.Record, error) {
+func (r *recordingExecutionRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID, status domainexecution.Status, errMsg string) (domainexecution.Record, error) {
 	r.record.TaskID = taskID
 	r.record.ActionID = actionID
 	r.record.Status = status
@@ -164,7 +210,7 @@ func (r *recordingExecutionRepository) UpdateStatus(_ context.Context, taskID mo
 	return r.record, nil
 }
 
-func (r *recordingExecutionRepository) Get(_ context.Context, _ modulecore.TaskID, _ string) (domainexecution.Record, error) {
+func (r *recordingExecutionRepository) Get(_ context.Context, _ modulecore.TaskID, _ modulecore.ActionID) (domainexecution.Record, error) {
 	return r.record, nil
 }
 

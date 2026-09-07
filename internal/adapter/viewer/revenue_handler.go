@@ -10,6 +10,8 @@ import (
 	"time"
 
 	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -55,14 +57,15 @@ type RevenueDailyRoutineRequest struct {
 }
 
 type RevenueExternalSendApplyRequest struct {
-	ApplyID        string `json:"apply_id"`
-	DeliveryID     string `json:"delivery_id,omitempty"`
-	TraceID        string `json:"trace_id,omitempty"`
-	OpportunityID  string `json:"opportunity_id,omitempty"`
-	DraftID        string `json:"draft_id"`
-	DecisionID     string `json:"decision_id"`
-	Destination    string `json:"destination,omitempty"`
-	ChannelAdapter string `json:"channel_adapter,omitempty"`
+	TaskID         modulecore.TaskID `json:"task_id"`
+	RunID          modulecore.RunID  `json:"run_id"`
+	DeliveryID     string            `json:"delivery_id,omitempty"`
+	TraceID        string            `json:"trace_id,omitempty"`
+	OpportunityID  string            `json:"opportunity_id,omitempty"`
+	DraftID        string            `json:"draft_id"`
+	DecisionID     string            `json:"decision_id"`
+	Destination    string            `json:"destination,omitempty"`
+	ChannelAdapter string            `json:"channel_adapter,omitempty"`
 }
 
 type RevenueDashboardSummary struct {
@@ -665,14 +668,22 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 	}
 }
 
-func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
+func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.Manager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req RevenueExternalSendApplyRequest
 		if !decodeRevenuePost(w, r, &req, store) {
 			return
 		}
-		if strings.TrimSpace(req.ApplyID) == "" {
-			http.Error(w, "apply_id is required", http.StatusBadRequest)
+		if actions == nil {
+			http.Error(w, "action manager unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := req.TaskID.Validate(); err != nil {
+			http.Error(w, "task_id is required", http.StatusBadRequest)
+			return
+		}
+		if err := req.RunID.Validate(); err != nil {
+			http.Error(w, "run_id is required", http.StatusBadRequest)
 			return
 		}
 		if strings.TrimSpace(req.DraftID) == "" {
@@ -739,9 +750,19 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 		if traceID == "" {
 			traceID = string(modulecore.NewTraceID())
 		}
+		createdAction, _, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
+			TaskID: req.TaskID,
+			RunID:  req.RunID,
+			Kind:   domainaction.KindExternalSend,
+			Name:   "revenue_external_send_apply",
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		deliveryID := strings.TrimSpace(req.DeliveryID)
 		if deliveryID == "" {
-			deliveryID = "delivery_" + strings.TrimSpace(req.ApplyID)
+			deliveryID = "delivery_" + string(createdAction.ActionID)
 		}
 		now := time.Now().UTC()
 		delivery := domainrevenue.Delivery{
@@ -767,7 +788,7 @@ func HandleRevenueExternalSendApply(store RevenueStore) http.HandlerFunc {
 			return
 		}
 		record := domainrevenue.ExternalSendApplyRecord{
-			ApplyID:             strings.TrimSpace(req.ApplyID),
+			ActionID:            createdAction.ActionID,
 			TraceID:             traceID,
 			DeliveryID:          deliveryID,
 			DraftID:             draft.DraftID,

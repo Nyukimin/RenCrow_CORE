@@ -760,7 +760,7 @@ function renderSkillExternalPRAudits() {
     return;
   }
   records.slice(0, 20).forEach((item) => {
-    const submitID = String(sandboxField(item, 'submit_id', 'SubmitID') || '');
+    const actionID = String(sandboxField(item, 'action_id', 'ActionID') || '');
     const eventID = String(sandboxField(item, 'contribution_event_id', 'ContributionEventID') || '');
     const repo = String(sandboxField(item, 'repo', 'Repo') || '-');
     const branch = String(sandboxField(item, 'target_branch', 'TargetBranch') || '-');
@@ -774,7 +774,7 @@ function renderSkillExternalPRAudits() {
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(sandboxField(item, 'created_at', 'CreatedAt'))) + '</td>' +
-      '<td class="code">' + esc(submitID || '-') + '</td>' +
+      '<td class="code">' + esc(actionID || '-') + '</td>' +
       '<td class="code">' + esc(short(eventID || '-', 42)) + '</td>' +
       '<td>' + esc(repo) + '</td>' +
       '<td>' + esc(branch) + '</td>' +
@@ -1710,7 +1710,7 @@ function renderRevenueExternalSendAudits() {
     return;
   }
   records.slice(0, 20).forEach((item) => {
-    const applyID = String(sandboxField(item, 'apply_id', 'ApplyID') || '');
+    const actionID = String(sandboxField(item, 'action_id', 'ActionID') || '');
     const draftID = String(sandboxField(item, 'draft_id', 'DraftID') || '');
     const decisionID = String(sandboxField(item, 'decision_id', 'DecisionID') || '');
     const channel = String(sandboxField(item, 'channel', 'Channel') || '-');
@@ -1724,7 +1724,7 @@ function renderRevenueExternalSendAudits() {
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td>' + esc(ftime(sandboxField(item, 'created_at', 'CreatedAt'))) + '</td>' +
-      '<td class="code">' + esc(applyID || '-') + '</td>' +
+      '<td class="code">' + esc(actionID || '-') + '</td>' +
       '<td class="code">' + esc(short(draftID || '-', 42)) + '</td>' +
       '<td class="code">' + esc(short(decisionID || '-', 42)) + '</td>' +
       '<td>' + esc(channel) + '</td>' +

@@ -1,6 +1,10 @@
 package revenue
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type MarketResearchItem struct {
 	ItemID         string    `json:"item_id"`
@@ -151,7 +155,7 @@ type ChannelDraft struct {
 }
 
 type ExternalSendApplyRecord struct {
-	ApplyID             string    `json:"apply_id"`
+	ActionID            modulecore.ActionID `json:"action_id"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	DeliveryID          string    `json:"delivery_id,omitempty"`
 	DraftID             string    `json:"draft_id"`

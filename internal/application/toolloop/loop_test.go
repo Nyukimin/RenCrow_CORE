@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -406,15 +410,111 @@ func TestRun_RejectsPartialIdentity(t *testing.T) {
 
 func TestRun_AcceptsEnclosingIdentity(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := actionmanager.New(store)
 	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
 		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
 	}}
 	if _, err := Run(context.Background(), provider, &mockRunnerV2{}, nil,
 		[]llm.ChatMessage{{Role: "user", Content: "test"}},
-		Config{TaskID: taskID, RunID: runID}); err != nil {
+		Config{TaskID: taskID, RunID: runID, Actions: actions}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 }
+
+func TestRun_RequiresActionsWhenIdentitySet(t *testing.T) {
+	_, err := Run(context.Background(), &mockToolCallingProvider{}, &mockRunnerV2{}, nil,
+		[]llm.ChatMessage{{Role: "user", Content: "test"}},
+		Config{TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID()})
+	if err == nil || !strings.Contains(err.Error(), "actions manager is required") {
+		t.Fatalf("Run() error = %v, want actions manager requirement", err)
+	}
+}
+
+func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := actionmanager.New(store)
+	spy := &actionAttemptSpyRunner{results: map[string]*tool.ToolResponse{
+		"web_search": tool.NewSuccess("ok"),
+	}}
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{
+			Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+				ID: "provider-call-1", Function: llm.ToolCallFunction{Name: "web_search", Arguments: map[string]any{"query": "first"}},
+			}}},
+			FinishReason: "tool_calls",
+		},
+		{
+			Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+				ID: "provider-call-2", Function: llm.ToolCallFunction{Name: "web_search", Arguments: map[string]any{"query": "second"}},
+			}}},
+			FinishReason: "tool_calls",
+		},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}}
+
+	if _, err := Run(context.Background(), provider, spy, nil,
+		[]llm.ChatMessage{{Role: "user", Content: "search twice"}},
+		Config{TaskID: taskID, RunID: runID, Actions: actions}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(spy.observations) != 2 {
+		t.Fatalf("observations = %d, want 2", len(spy.observations))
+	}
+	if spy.observations[0].ActionID != spy.observations[1].ActionID {
+		t.Fatalf("ActionID changed: %s -> %s", spy.observations[0].ActionID, spy.observations[1].ActionID)
+	}
+	if spy.observations[0].AttemptID == spy.observations[1].AttemptID {
+		t.Fatalf("AttemptID must change on retry: %s", spy.observations[0].AttemptID)
+	}
+	if err := spy.observations[0].ActionID.Validate(); err != nil {
+		t.Fatalf("action id: %v", err)
+	}
+
+	toolMessages := make([]llm.ChatMessage, 0, 2)
+	for _, request := range provider.requests[1:] {
+		last := request.Messages[len(request.Messages)-1]
+		if last.Role == "tool" {
+			toolMessages = append(toolMessages, last)
+		}
+	}
+	if len(toolMessages) != 2 {
+		t.Fatalf("tool messages = %d, want 2", len(toolMessages))
+	}
+	if toolMessages[0].ToolCallID != "provider-call-1" || toolMessages[1].ToolCallID != "provider-call-2" {
+		t.Fatalf("tool message ToolCallIDs = %q and %q, want provider ids preserved", toolMessages[0].ToolCallID, toolMessages[1].ToolCallID)
+	}
+	if toolMessages[0].ToolCallID == string(spy.observations[0].ActionID) {
+		t.Fatal("tool message must not use ActionID as ToolCallID")
+	}
+}
+
+type actionAttemptSpyRunner struct {
+	results      map[string]*tool.ToolResponse
+	observations []domainexecution.BoundActionAttempt
+}
+
+func (s *actionAttemptSpyRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+	if actionID, attemptID, ok := domainexecution.BoundActionAttemptFromContext(ctx); ok {
+		s.observations = append(s.observations, domainexecution.BoundActionAttempt{
+			ActionID:  actionID,
+			AttemptID: attemptID,
+		})
+	}
+	if r, ok := s.results[toolName]; ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("unknown tool: %s", toolName)
+}
+
+func (s *actionAttemptSpyRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) { return nil, nil }
 
 func TestRun_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

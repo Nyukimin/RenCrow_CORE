@@ -46,9 +46,12 @@ func (r *JSONLRepository) Create(_ context.Context, record domain.Record) error 
 	return r.append(record)
 }
 
-func (r *JSONLRepository) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
+func (r *JSONLRepository) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID, status domain.Status, errMsg string) (domain.Record, error) {
 	if err := taskID.Validate(); err != nil {
 		return domain.Record{}, fmt.Errorf("task_id: %w", err)
+	}
+	if err := actionID.Validate(); err != nil {
+		return domain.Record{}, fmt.Errorf("action_id: %w", err)
 	}
 	rec, err := r.Get(ctx, taskID, actionID)
 	if err != nil {
@@ -73,9 +76,12 @@ func (r *JSONLRepository) UpdateStatus(ctx context.Context, taskID modulecore.Ta
 	return rec, nil
 }
 
-func (r *JSONLRepository) Get(_ context.Context, taskID modulecore.TaskID, actionID string) (domain.Record, error) {
+func (r *JSONLRepository) Get(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID) (domain.Record, error) {
 	if err := taskID.Validate(); err != nil {
 		return domain.Record{}, fmt.Errorf("task_id: %w", err)
+	}
+	if err := actionID.Validate(); err != nil {
+		return domain.Record{}, fmt.Errorf("action_id: %w", err)
 	}
 	records, err := r.loadLatestByAction()
 	if err != nil {
@@ -139,6 +145,6 @@ func (r *JSONLRepository) loadLatestByAction() (map[string]domain.Record, error)
 	return latest, nil
 }
 
-func actionKey(taskID modulecore.TaskID, actionID string) string {
-	return taskID.String() + "::" + actionID
+func actionKey(taskID modulecore.TaskID, actionID modulecore.ActionID) string {
+	return taskID.String() + "::" + string(actionID)
 }

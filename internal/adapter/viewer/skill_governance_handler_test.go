@@ -557,14 +557,14 @@ func TestHandleSkillGovernanceExternalPRSubmitAcceptsPassedGate(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/skill-governance/external-pr-submit", bytes.NewBufferString(`{
-		"submit_id":"submit_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000003","run_id":"run_00000000-0000-5000-8000-000000000004",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo",
 		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleSkillGovernanceExternalPRSubmit(store).ServeHTTP(rec, req)
+	HandleSkillGovernanceExternalPRSubmit(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -590,7 +590,7 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/skill-governance/external-pr-submit", bytes.NewBufferString(`{
-		"submit_id":"submit_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000003","run_id":"run_00000000-0000-5000-8000-000000000004",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo",
 		"title":"Fix bug",
@@ -605,7 +605,7 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleSkillGovernanceExternalPRSubmit(store).ServeHTTP(rec, req)
+	HandleSkillGovernanceExternalPRSubmit(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -627,7 +627,7 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Record.SubmitID != "submit_1" || body.ExternalPRCreated {
+	if body.Record.ActionID.Validate() != nil || body.ExternalPRCreated {
 		t.Fatalf("body=%#v", body)
 	}
 }
@@ -641,14 +641,14 @@ func TestHandleSkillGovernanceExternalPRSubmitRequiresPassedGate(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/skill-governance/external-pr-submit", bytes.NewBufferString(`{
-		"submit_id":"submit_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000003","run_id":"run_00000000-0000-5000-8000-000000000004",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo",
 		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleSkillGovernanceExternalPRSubmit(store).ServeHTTP(rec, req)
+	HandleSkillGovernanceExternalPRSubmit(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -674,14 +674,14 @@ func TestHandleSkillGovernanceExternalPRSubmitRejectsGateRepoMismatch(t *testing
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/skill-governance/external-pr-submit", bytes.NewBufferString(`{
-		"submit_id":"submit_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000003","run_id":"run_00000000-0000-5000-8000-000000000004",
 		"contribution_event_id":"evt_contrib_1",
 		"repo":"example/repo-b",
 		"title":"Fix bug"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleSkillGovernanceExternalPRSubmit(store).ServeHTTP(rec, req)
+	HandleSkillGovernanceExternalPRSubmit(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())

@@ -74,3 +74,38 @@ func TestExecutionIdentityContextRebindIsIdempotentOnlyForExactIdentity(t *testi
 		})
 	}
 }
+
+func TestBoundActionAttemptContextPreservesExactPair(t *testing.T) {
+	actionID := modulecore.NewActionID()
+	attemptID := modulecore.NewAttemptID()
+	ctx, err := WithBoundActionAttempt(context.Background(), actionID, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotActionID, gotAttemptID, ok := BoundActionAttemptFromContext(ctx)
+	if !ok {
+		t.Fatal("bound action attempt missing")
+	}
+	if gotActionID != actionID || gotAttemptID != attemptID {
+		t.Fatalf("bound pair = action %q attempt %q, want action %q attempt %q", gotActionID, gotAttemptID, actionID, attemptID)
+	}
+}
+
+func TestBoundActionAttemptContextRebindIsIdempotentOnlyForExactPair(t *testing.T) {
+	actionID := modulecore.NewActionID()
+	attemptID := modulecore.NewAttemptID()
+	ctx, err := WithBoundActionAttempt(context.Background(), actionID, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebound, err := WithBoundActionAttempt(ctx, actionID, attemptID)
+	if err != nil {
+		t.Fatalf("exact pair rebind failed: %v", err)
+	}
+	if rebound != ctx {
+		t.Fatal("exact pair rebind should preserve the existing context")
+	}
+	if _, err := WithBoundActionAttempt(ctx, modulecore.NewActionID(), attemptID); err == nil {
+		t.Fatal("different action id replaced an existing bound pair")
+	}
+}

@@ -1,0 +1,111 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step11-action-attempt",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-06T23:32:00Z",
+  "input": {
+    "base_revision": "d17ea5f0a679d6f43af50b3fff90c8fad3c2a0e2",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-11-actionidとattemptid",
+    "action_owner_rule": "a dedicated CORE Action owner owns every canonical Action and Attempt history bound to exactly one TaskID and RunID; projections retain typed ActionID and AttemptID only",
+    "action_creation_rule": "CreateAction mints ActionID via modulecore.NewActionID only through actionmanager; retry preserves ActionID and issues a fresh AttemptID via NewAttemptID",
+    "legacy_replacement_rule": "ApplyID SubmitID execution-local act-{nano}-{seq} nextActionID and internal RequestID-as-Action become ActionID with no dual-write alias or runtime compatibility",
+    "toolloop_rule": "ToolLoop binds retries to the same ActionID with a new AttemptID each attempt while ToolCallID remains the provider-side identifier until Step12",
+    "historical_mapping_rule": "UUIDv5 under RenCrowMigrationNamespace maps exact source owner field and value to ActionID or AttemptID; offline fixture CLI only until Sol cutover"
+  },
+  "included": [
+    {
+      "check_id": "s11_action_owner",
+      "guarantee": "internal/domain/action actionmanager and the dedicated JSONL action store own typed Action and Attempt history linked to TaskID and RunID without a second route registry alias or dual owner",
+      "owner": "RenCrow_CORE Action owner",
+      "execution_phase": "pre-commit and post-restart",
+      "result_consumer": "execution revenue skillgovernance toolloop and Event producers",
+      "failure_action": "return to design or rollback"
+    },
+    {
+      "check_id": "s11_execution_typed",
+      "guarantee": "execution domain Action and Record use typed modulecore.ActionID security nextActionID is removed and PolicyRunner obtains ActionID AttemptID only from the Action owner",
+      "owner": "RenCrow_CORE execution and security",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "tool policy mediation and execution audit",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s11_apply_submit",
+      "guarantee": "revenue ExternalSendApply and skillgovernance ExternalPRSubmit use ActionID with JSON key action_id and contain zero ApplyID SubmitID apply_id submit_id in owner scope",
+      "owner": "RenCrow_CORE revenue and skillgovernance",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Viewer client API and stores",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s11_toolloop_attempt",
+      "guarantee": "ToolLoop retries preserve ActionID issue a new AttemptID each attempt and do not rename ToolCallID or treat it as ActionID",
+      "owner": "RenCrow_CORE toolloop",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "tool execution receipts and Events",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s11_historical_migration",
+      "guarantee": "one offline owner CLI consumes writer-stopped fixtures and atomically remaps ApplyID SubmitID and legacy execution action keys to ActionID AttemptID with exact counts checksums dry-run apply agreement and second-run no-op without touching live /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step11 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state and rollback",
+      "failure_action": "leave the old binary and state active or rollback all targets"
+    },
+    {
+      "check_id": "s11_viewer_receipt",
+      "guarantee": "authenticated Viewer and client surfaces expose ActionID AttemptID for apply submit and tool attempts without arbitrary paths SQL or owner-external data",
+      "owner": "RenCrow_CORE Viewer and rencrowclient",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "authenticated user",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s11_architecture_zero",
+      "guarantee": "confirmed Step11 owner and consumers contain zero ApplyID SubmitID apply_id submit_id nextActionID act-{nano} mint non-typed execution ActionID and one-shot migration source after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step11 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s11_predeploy_verification",
+      "guarantee": "targeted owner consumer migration and Viewer tests plus relevant Go tests vet build and diff checks pass against the reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s11_runtime_route",
+      "guarantee": "installed artifact active config user service PID listeners readiness canonical route Action retry Attempt Events Viewer receipt and ActionID invariance agree before and after restart",
+      "owner": "RenCrow_CORE runtime and rencrow user service",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step11 ledger",
+      "failure_action": "rollback or keep Step11 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s11_provider_tool_call_id",
+      "reason": "ToolCallID rename to ProviderToolCallID is Step12",
+      "consumer": "Step12 cutover",
+      "failure_action": "keep Step12 open"
+    },
+    {
+      "check_id": "s11_transport_request_response",
+      "reason": "RequestID ResponseID transport finalization is Step12",
+      "consumer": "Step12 cutover",
+      "failure_action": "keep Step12 open"
+    },
+    {
+      "check_id": "s11_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

@@ -56,6 +56,7 @@ func (s *Service) RequestToolExecution(ctx context.Context, action domain.Action
 	rec := domain.Record{
 		TaskID:      action.TaskID,
 		ActionID:    action.ActionID,
+		AttemptID:   action.AttemptID,
 		Tool:        action.Tool,
 		RequestedBy: action.RequestedBy,
 		Arguments:   action.Arguments,
@@ -116,7 +117,7 @@ func (n *noopRepository) Create(context.Context, domain.Record) error {
 	return nil
 }
 
-func (n *noopRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID string, status domain.Status, errMsg string) (domain.Record, error) {
+func (n *noopRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID, status domain.Status, errMsg string) (domain.Record, error) {
 	now := time.Now().UTC()
 	rec := domain.Record{TaskID: taskID, ActionID: actionID, Status: status, Error: errMsg, StartedAt: now}
 	if status.IsTerminal() {
@@ -125,7 +126,7 @@ func (n *noopRepository) UpdateStatus(_ context.Context, taskID modulecore.TaskI
 	return rec, nil
 }
 
-func (n *noopRepository) Get(context.Context, modulecore.TaskID, string) (domain.Record, error) {
+func (n *noopRepository) Get(context.Context, modulecore.TaskID, modulecore.ActionID) (domain.Record, error) {
 	return domain.Record{}, fmt.Errorf("record not found")
 }
 

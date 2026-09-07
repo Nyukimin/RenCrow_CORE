@@ -263,8 +263,8 @@ func ValidateChannelDraft(item ChannelDraft) error {
 }
 
 func ValidateExternalSendApplyRecord(item ExternalSendApplyRecord) error {
-	if strings.TrimSpace(item.ApplyID) == "" {
-		return errors.New("apply_id is required")
+	if err := item.ActionID.Validate(); err != nil {
+		return errors.New("action_id is required")
 	}
 	if strings.TrimSpace(item.DraftID) == "" {
 		return errors.New("draft_id is required")

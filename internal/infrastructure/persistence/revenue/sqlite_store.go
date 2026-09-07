@@ -104,7 +104,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS external_send_apply (
-			apply_id TEXT PRIMARY KEY,
+			action_id TEXT PRIMARY KEY,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -268,7 +268,7 @@ func (s *SQLiteStore) SaveExternalSendApplyRecord(ctx context.Context, item doma
 	if err := domainrevenue.ValidateExternalSendApplyRecord(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "external_send_apply", "apply_id", item.ApplyID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "external_send_apply", "action_id", string(item.ActionID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListExternalSendApplyRecords(ctx context.Context, limit int) ([]domainrevenue.ExternalSendApplyRecord, error) {

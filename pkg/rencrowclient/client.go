@@ -1570,18 +1570,19 @@ type RevenueChannelDraftResponse struct {
 }
 
 type RevenueExternalSendApplyRequest struct {
-	ApplyID        string `json:"apply_id"`
-	DeliveryID     string `json:"delivery_id,omitempty"`
-	TraceID        string `json:"trace_id,omitempty"`
-	OpportunityID  string `json:"opportunity_id,omitempty"`
-	DraftID        string `json:"draft_id"`
-	DecisionID     string `json:"decision_id"`
-	Destination    string `json:"destination,omitempty"`
-	ChannelAdapter string `json:"channel_adapter,omitempty"`
+	TaskID         modulecore.TaskID `json:"task_id"`
+	RunID          modulecore.RunID  `json:"run_id"`
+	DeliveryID     string            `json:"delivery_id,omitempty"`
+	TraceID        string            `json:"trace_id,omitempty"`
+	OpportunityID  string            `json:"opportunity_id,omitempty"`
+	DraftID        string            `json:"draft_id"`
+	DecisionID     string            `json:"decision_id"`
+	Destination    string            `json:"destination,omitempty"`
+	ChannelAdapter string            `json:"channel_adapter,omitempty"`
 }
 
 type RevenueExternalSendApplyRecord struct {
-	ApplyID             string    `json:"apply_id"`
+	ActionID            modulecore.ActionID `json:"action_id"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	DeliveryID          string    `json:"delivery_id,omitempty"`
 	DraftID             string    `json:"draft_id"`
@@ -1626,17 +1627,18 @@ type RevenueExternalSendApplyResponse struct {
 }
 
 type SkillGovernanceExternalPRSubmitRequest struct {
-	SubmitID            string `json:"submit_id"`
-	ContributionEventID string `json:"contribution_event_id"`
-	Repo                string `json:"repo"`
-	TargetBranch        string `json:"target_branch,omitempty"`
-	Title               string `json:"title,omitempty"`
-	DiffPath            string `json:"diff_path,omitempty"`
-	TestResult          string `json:"test_result,omitempty"`
+	TaskID              modulecore.TaskID `json:"task_id"`
+	RunID               modulecore.RunID  `json:"run_id"`
+	ContributionEventID string            `json:"contribution_event_id"`
+	Repo                string            `json:"repo"`
+	TargetBranch        string            `json:"target_branch,omitempty"`
+	Title               string            `json:"title,omitempty"`
+	DiffPath            string            `json:"diff_path,omitempty"`
+	TestResult          string            `json:"test_result,omitempty"`
 }
 
 type SkillGovernanceExternalPRSubmitRecord struct {
-	SubmitID            string    `json:"submit_id"`
+	ActionID            modulecore.ActionID `json:"action_id"`
 	ContributionEventID string    `json:"contribution_event_id"`
 	Repo                string    `json:"repo"`
 	TargetBranch        string    `json:"target_branch,omitempty"`
@@ -2984,12 +2986,12 @@ func validateRevenueStatus(resp RevenueStatus) error {
 	}
 	applies := map[string]struct{}{}
 	for _, item := range resp.ExternalSendApplyRecords {
-		id := strings.TrimSpace(item.ApplyID)
-		if id == "" {
-			return fmt.Errorf("revenue status external_send_apply_records missing apply_id")
+		if err := item.ActionID.Validate(); err != nil {
+			return fmt.Errorf("revenue status external_send_apply_records missing action_id")
 		}
+		id := string(item.ActionID)
 		if _, ok := applies[id]; ok {
-			return fmt.Errorf("revenue status duplicate external_send_apply_record apply_id=%s", id)
+			return fmt.Errorf("revenue status duplicate external_send_apply_record action_id=%s", id)
 		}
 		applies[id] = struct{}{}
 		if strings.TrimSpace(item.DraftID) == "" {
@@ -3143,12 +3145,12 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 	}
 	submits := map[string]struct{}{}
 	for _, item := range resp.ExternalPRSubmitRecords {
-		id := strings.TrimSpace(item.SubmitID)
-		if id == "" {
-			return fmt.Errorf("skill governance status external_pr_submit_records missing submit_id")
+		if err := item.ActionID.Validate(); err != nil {
+			return fmt.Errorf("skill governance status external_pr_submit_records missing action_id")
 		}
+		id := string(item.ActionID)
 		if _, ok := submits[id]; ok {
-			return fmt.Errorf("skill governance status duplicate external_pr_submit_record submit_id=%s", id)
+			return fmt.Errorf("skill governance status duplicate external_pr_submit_record action_id=%s", id)
 		}
 		submits[id] = struct{}{}
 		if strings.TrimSpace(item.ContributionEventID) == "" {
@@ -3304,8 +3306,11 @@ func validateRevenueChannelDraftRequest(item RevenueChannelDraft) error {
 }
 
 func validateRevenueExternalSendApplyRequest(item RevenueExternalSendApplyRequest) error {
-	if strings.TrimSpace(item.ApplyID) == "" {
-		return fmt.Errorf("revenue external send apply request missing apply_id")
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("revenue external send apply request missing task_id")
+	}
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("revenue external send apply request missing run_id")
 	}
 	if strings.TrimSpace(item.DraftID) == "" {
 		return fmt.Errorf("revenue external send apply request missing draft_id")
@@ -3448,8 +3453,8 @@ func validateRevenueChannelDraftResponse(resp RevenueChannelDraftResponse, req R
 
 func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyResponse, req RevenueExternalSendApplyRequest) error {
 	record := resp.Record
-	if strings.TrimSpace(record.ApplyID) != strings.TrimSpace(req.ApplyID) {
-		return fmt.Errorf("external send apply response apply_id mismatch")
+	if err := record.ActionID.Validate(); err != nil {
+		return fmt.Errorf("external send apply response missing action_id")
 	}
 	if strings.TrimSpace(record.DraftID) != strings.TrimSpace(req.DraftID) {
 		return fmt.Errorf("external send apply response draft_id mismatch")
@@ -3495,8 +3500,8 @@ func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyRespo
 
 func validateSkillGovernanceExternalPRSubmitResponse(resp SkillGovernanceExternalPRSubmitResponse, req SkillGovernanceExternalPRSubmitRequest) error {
 	record := resp.Record
-	if strings.TrimSpace(record.SubmitID) != strings.TrimSpace(req.SubmitID) {
-		return fmt.Errorf("external PR submit response submit_id mismatch")
+	if err := record.ActionID.Validate(); err != nil {
+		return fmt.Errorf("external PR submit response missing action_id")
 	}
 	if strings.TrimSpace(record.ContributionEventID) != strings.TrimSpace(req.ContributionEventID) {
 		return fmt.Errorf("external PR submit response contribution_event_id mismatch")
@@ -3549,8 +3554,11 @@ func recordAdapterConfigured(adapter string) bool {
 }
 
 func validateSkillGovernanceExternalPRSubmitRequest(item SkillGovernanceExternalPRSubmitRequest) error {
-	if strings.TrimSpace(item.SubmitID) == "" {
-		return fmt.Errorf("external PR submit request missing submit_id")
+	if err := item.TaskID.Validate(); err != nil {
+		return fmt.Errorf("external PR submit request missing task_id")
+	}
+	if err := item.RunID.Validate(); err != nil {
+		return fmt.Errorf("external PR submit request missing run_id")
 	}
 	if strings.TrimSpace(item.ContributionEventID) == "" {
 		return fmt.Errorf("external PR submit request missing contribution_event_id")

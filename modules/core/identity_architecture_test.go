@@ -546,6 +546,123 @@ func TestStep10RunIdentityLegacyFieldsAreBanned(t *testing.T) {
 	canonicalArchitectureFail(t, "Step10 owner packages must not retain legacy Run identity fields", violations)
 }
 
+
+func TestStep11ActionIdentityLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"ApplyID",
+		"SubmitID",
+		"apply_id",
+		"submit_id",
+		"nextActionID",
+	}
+	var violations []string
+	checkContent := func(relative string, content []byte) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-action-identity:%s", relative, lineNumber+1, token))
+				}
+			}
+			if strings.Contains(line, `"act-%d-%d"`) || strings.Contains(line, `"act-%d"`) {
+				violations = append(violations, fmt.Sprintf("%s:%d:legacy-action-mint", relative, lineNumber+1))
+			}
+		}
+	}
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step11actionmigration") ||
+			strings.Contains(relative, "rencrow-step11-action-migrate")
+	}
+	walkDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step11actionmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !(strings.HasSuffix(path, ".go") || strings.HasSuffix(path, ".js")) {
+				return nil
+			}
+			if strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkip(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkContent(rel, content)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step11 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/execution",
+		"internal/application/execution",
+		"internal/infrastructure/persistence/execution",
+		"internal/infrastructure/security",
+		"internal/domain/revenue",
+		"internal/domain/skillgovernance",
+		"internal/infrastructure/persistence/revenue",
+		"internal/infrastructure/persistence/skillgovernance",
+		"internal/application/toolloop",
+		"internal/application/actionmanager",
+		"internal/domain/action",
+		"pkg/rencrowclient",
+	} {
+		walkDirectory(relative)
+	}
+	for _, relative := range []string{
+		"internal/adapter/viewer/revenue_handler.go",
+		"internal/adapter/viewer/skill_governance_handler.go",
+		"internal/adapter/viewer/assets/js/tabs/ops.js",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step11 owner packages must not retain ApplyID SubmitID nextActionID or legacy JSON keys", violations)
+}
+
+func TestStep11MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-step11-action-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "step11actionmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 11 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	directories := []string{

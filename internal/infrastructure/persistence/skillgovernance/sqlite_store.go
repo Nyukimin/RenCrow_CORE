@@ -74,7 +74,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS external_pr_submit_log (
-			submit_id TEXT PRIMARY KEY,
+			action_id TEXT PRIMARY KEY,
 			repo TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -162,7 +162,7 @@ func (s *SQLiteStore) SaveExternalPRSubmitRecord(ctx context.Context, item domai
 	if err := domainskill.ValidateExternalPRSubmitRecord(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "external_pr_submit_log", "submit_id", item.SubmitID, "repo", item.Repo, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "external_pr_submit_log", "action_id", string(item.ActionID), "repo", item.Repo, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListExternalPRSubmitRecords(ctx context.Context, limit int) ([]domainskill.ExternalPRSubmitRecord, error) {

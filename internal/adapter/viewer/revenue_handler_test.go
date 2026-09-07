@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
+
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubRevenueGoalStore struct {
@@ -232,7 +237,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 		decisions:     []domainrevenue.PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
 		daily:         []domainrevenue.DailyRoutineReport{{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report"}},
 		drafts:        []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", CreatedAt: day}},
-		applies:       []domainrevenue.ExternalSendApplyRecord{{ApplyID: "apply_1", DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
+		applies:       []domainrevenue.ExternalSendApplyRecord{{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
 		opportunities: []domainrevenue.Opportunity{{OpportunityID: "opp_1", SourceKind: "market_research", Title: "Draft opportunity", CreatedAt: day}},
 		economicTasks: []domainrevenue.EconomicTask{{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "draft", CreatedAt: day}},
 		reflections:   []domainrevenue.EconomicReflection{{ReflectionID: "reflection_1", OpportunityID: "opp_1", Outcome: "drafted", CreatedAt: day}},
@@ -277,7 +282,7 @@ func TestHandleRevenueStatus(t *testing.T) {
 	if len(body.ChannelDrafts) != 1 || body.ChannelDrafts[0].DraftID != "draft_1" {
 		t.Fatalf("channel drafts=%#v", body.ChannelDrafts)
 	}
-	if len(body.Applies) != 1 || body.Applies[0].ApplyID != "apply_1" {
+	if len(body.Applies) != 1 || body.Applies[0].ActionID.Validate() != nil {
 		t.Fatalf("external send applies=%#v", body.Applies)
 	}
 	if body.ExternalChannelAdapter != "unconfigured" || body.ExternalChannelAdapterConfigured {
@@ -719,13 +724,13 @@ func TestHandleRevenueExternalSendApplyRequiresAllowedPolicy(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
-		"apply_id":"apply_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
 		"draft_id":"draft_1",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
+	HandleRevenueExternalSendApply(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -747,7 +752,7 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
-		"apply_id":"apply_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
 		"draft_id":"draft_1",
 			"decision_id":"dec_1",
 			"destination":"customer@example.test",
@@ -755,7 +760,7 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
+	HandleRevenueExternalSendApply(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -789,7 +794,7 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Record.ApplyID != "apply_1" || body.ExternalActionsApplied || body.PostSendVerified || body.FailureReason == "" {
+	if body.Record.ActionID.Validate() != nil || body.ExternalActionsApplied || body.PostSendVerified || body.FailureReason == "" {
 		t.Fatalf("unexpected response: %#v", body)
 	}
 }
@@ -805,13 +810,13 @@ func TestHandleRevenueExternalSendApplyUsesAllowedPolicyDecision(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
-		"apply_id":"apply_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
 		"draft_id":"draft_1",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
+	HandleRevenueExternalSendApply(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -832,13 +837,13 @@ func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
-		"apply_id":"apply_1",
+		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
 		"draft_id":"draft_1",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
 
-	HandleRevenueExternalSendApply(store).ServeHTTP(rec, req)
+	HandleRevenueExternalSendApply(store, testActionManager(t)).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -846,4 +851,14 @@ func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing
 	if len(store.applies) != 0 {
 		t.Fatalf("applies=%#v", store.applies)
 	}
+}
+
+
+func testActionManager(t *testing.T) *actionmanager.Manager {
+	t.Helper()
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatalf("action store: %v", err)
+	}
+	return actionmanager.New(store)
 }

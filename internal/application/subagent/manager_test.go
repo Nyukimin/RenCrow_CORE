@@ -4,16 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -202,7 +205,11 @@ func TestRunSync_RecordsSuperAgentSubagentTask(t *testing.T) {
 		},
 	}
 	recorder := &mockSuperAgentRecorder{}
-	mgr := NewManager(provider, &mockRunner{}, nil, toolloop.Config{MaxIterations: 10}, WithSuperAgentRecorder(recorder))
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(provider, &mockRunner{}, nil, toolloop.Config{MaxIterations: 10, Actions: actionmanager.New(store)}, WithSuperAgentRecorder(recorder))
 	taskID := modulecore.NewTaskID()
 	runID := modulecore.NewRunID()
 	traceID := modulecore.NewTraceID()
