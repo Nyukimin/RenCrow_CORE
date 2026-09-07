@@ -17,24 +17,24 @@ func TestBacklogStoreSaveListLatest(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.Save(ctx, BacklogItem{
-		ItemID:   "item-1",
-		Kind:     "idea",
-		Title:    "面白い案",
-		Source:   "mio",
-		Status:   "open",
-		Priority: "high",
+		BacklogItemID: "item-1",
+		Kind:          "idea",
+		Title:         "面白い案",
+		Source:        "mio",
+		Status:        "open",
+		Priority:      "high",
 	}); err != nil {
 		t.Fatalf("save first: %v", err)
 	}
 	if err := store.Save(ctx, BacklogItem{
-		ItemID:     "item-1",
-		Kind:       "idea",
-		Title:      "面白い案",
-		Source:     "mio",
-		Status:     "ok",
-		CheckOK:    true,
-		CheckedBy:  "ren",
-		TestResult: "passed",
+		BacklogItemID: "item-1",
+		Kind:          "idea",
+		Title:         "面白い案",
+		Source:        "mio",
+		Status:        "ok",
+		CheckOK:       true,
+		CheckedBy:     "ren",
+		TestResult:    "passed",
 	}); err != nil {
 		t.Fatalf("save update: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestLegacyBacklogPostCannotBypassAtlasOwner(t *testing.T) {
 }
 
 func TestNormalizeBacklogItemPreservesProposalReview(t *testing.T) {
-	item := normalizeBacklogItem(BacklogItem{ItemID: "proposal", Title: "候補", Status: domainbacklog.StatusProposalReview})
+	item := normalizeBacklogItem(BacklogItem{BacklogItemID: "proposal", Title: "候補", Status: domainbacklog.StatusProposalReview})
 	if item.Status != domainbacklog.StatusProposalReview {
 		t.Fatalf("proposal review must not become executable open state: %+v", item)
 	}
@@ -75,7 +75,7 @@ func TestNormalizeBacklogItemPreservesProposalReview(t *testing.T) {
 
 func TestBacklogStoreListPreservesUpdatedAt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backlog.jsonl")
-	if err := os.WriteFile(path, []byte(`{"item_id":"item-1","kind":"unimplemented","title":"固定時刻","source":"user","status":"open","priority":"normal","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z"}`+"\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"backlog_item_id":"item-1","kind":"unimplemented","title":"固定時刻","source":"user","status":"open","priority":"normal","created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z"}`+"\n"), 0644); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	store := NewBacklogStore(path)

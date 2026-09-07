@@ -3,7 +3,6 @@ package backlog
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -161,29 +160,29 @@ type BackfillReconcileResult struct {
 // decision.  It keeps the semantic review payload alongside the item rather
 // than introducing a second store or mutable decision table.
 type RevalidationRecord struct {
-	BacklogID                string   `json:"backlog_id"`
-	RevalidationDate         string   `json:"revalidation_date"`
-	MaturationDays           int      `json:"maturation_days"`
-	Decision                 string   `json:"decision"`
-	Reason                   string   `json:"reason"`
-	Necessity                string   `json:"necessity,omitempty"`
-	Duplication              string   `json:"duplication,omitempty"`
-	Mergeability             string   `json:"mergeability,omitempty"`
-	ArchitecturalConsistency string   `json:"architectural_consistency,omitempty"`
-	TechnologyValidity       string   `json:"technology_validity,omitempty"`
-	Timing                   string   `json:"timing,omitempty"`
-	RelatedBacklogs          []string `json:"related_backlogs,omitempty"`
-	ConflictingSpecs         []string `json:"conflicting_specs,omitempty"`
-	MergedInto               string   `json:"merged_into,omitempty"`
-	TechnologyChanges        []string `json:"technology_changes,omitempty"`
-	ArchitectureImpact       string   `json:"architecture_impact,omitempty"`
-	ImplementationValue      string   `json:"implementation_value,omitempty"`
-	NextReviewTrigger        string   `json:"next_review_trigger,omitempty"`
-	ReviewAgents             []string            `json:"review_agents"`
-	Forced                   bool                `json:"forced,omitempty"`
-	MaturationBypass         bool                `json:"maturation_bypass,omitempty"`
-	BypassReason             string              `json:"bypass_reason,omitempty"`
-	TransitionEventID        modulecore.EventID  `json:"transition_event_id,omitempty"`
+	BacklogID                string             `json:"backlog_id"`
+	RevalidationDate         string             `json:"revalidation_date"`
+	MaturationDays           int                `json:"maturation_days"`
+	Decision                 string             `json:"decision"`
+	Reason                   string             `json:"reason"`
+	Necessity                string             `json:"necessity,omitempty"`
+	Duplication              string             `json:"duplication,omitempty"`
+	Mergeability             string             `json:"mergeability,omitempty"`
+	ArchitecturalConsistency string             `json:"architectural_consistency,omitempty"`
+	TechnologyValidity       string             `json:"technology_validity,omitempty"`
+	Timing                   string             `json:"timing,omitempty"`
+	RelatedBacklogs          []string           `json:"related_backlogs,omitempty"`
+	ConflictingSpecs         []string           `json:"conflicting_specs,omitempty"`
+	MergedInto               string             `json:"merged_into,omitempty"`
+	TechnologyChanges        []string           `json:"technology_changes,omitempty"`
+	ArchitectureImpact       string             `json:"architecture_impact,omitempty"`
+	ImplementationValue      string             `json:"implementation_value,omitempty"`
+	NextReviewTrigger        string             `json:"next_review_trigger,omitempty"`
+	ReviewAgents             []string           `json:"review_agents"`
+	Forced                   bool               `json:"forced,omitempty"`
+	MaturationBypass         bool               `json:"maturation_bypass,omitempty"`
+	BypassReason             string             `json:"bypass_reason,omitempty"`
+	TransitionEventID        modulecore.EventID `json:"transition_event_id,omitempty"`
 }
 
 func BackfillImportID(packageSHA256 string, revision int) string {
@@ -205,20 +204,20 @@ type Item struct {
 	SchemaVersion int `json:"schema_version"`
 
 	BacklogItemID      modulecore.BacklogItemID `json:"backlog_item_id"`
-	FeatureID          string   `json:"feature_id,omitempty"`
-	Kind               string   `json:"kind"`
-	Title              string   `json:"title"`
-	Body               string   `json:"body,omitempty"`
-	Purpose            string   `json:"purpose,omitempty"`
-	Problem            string   `json:"problem,omitempty"`
-	Idea               string   `json:"idea,omitempty"`
-	Background         string   `json:"background,omitempty"`
-	ExpectedEffect     []string `json:"expected_effect,omitempty"`
-	RelationRefs       []string `json:"relation_refs,omitempty"`
-	TargetModules      []string `json:"target_modules,omitempty"`
-	ConsumerModules    []string `json:"consumer_modules,omitempty"`
-	AffectedModules    []string `json:"affected_modules,omitempty"`
-	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
+	FeatureID          string                   `json:"feature_id,omitempty"`
+	Kind               string                   `json:"kind"`
+	Title              string                   `json:"title"`
+	Body               string                   `json:"body,omitempty"`
+	Purpose            string                   `json:"purpose,omitempty"`
+	Problem            string                   `json:"problem,omitempty"`
+	Idea               string                   `json:"idea,omitempty"`
+	Background         string                   `json:"background,omitempty"`
+	ExpectedEffect     []string                 `json:"expected_effect,omitempty"`
+	RelationRefs       []string                 `json:"relation_refs,omitempty"`
+	TargetModules      []string                 `json:"target_modules,omitempty"`
+	ConsumerModules    []string                 `json:"consumer_modules,omitempty"`
+	AffectedModules    []string                 `json:"affected_modules,omitempty"`
+	AcceptanceCriteria []string                 `json:"acceptance_criteria,omitempty"`
 
 	Category    string      `json:"category,omitempty"`
 	Source      string      `json:"source"`
@@ -277,25 +276,25 @@ type Item struct {
 // ImplementationUnit is the typed lifecycle projection used by the owner API.
 // Durable item state remains in the append-only backlog record.
 type ImplementationUnit struct {
-	UnitID                 string                      `json:"unit_id"`
-	BacklogItemID          modulecore.BacklogItemID    `json:"backlog_item_id"`
-	Title                  string        `json:"title"`
-	OwnerModule            string        `json:"owner_module,omitempty"`
-	TargetModules          []string      `json:"target_modules,omitempty"`
-	ConsumerModules        []string      `json:"consumer_modules,omitempty"`
-	AffectedModules        []string      `json:"affected_modules,omitempty"`
-	ConceptState           string        `json:"concept_state"`
-	DeliveryState          string        `json:"delivery_state"`
-	WorkstreamID           string        `json:"workstream_id,omitempty"`
-	Priority               string        `json:"priority,omitempty"`
-	QueueRank              int           `json:"queue_rank,omitempty"`
-	ImplementationRevision int           `json:"implementation_revision,omitempty"`
-	InvalidatedFromStage   string        `json:"invalidated_from_stage,omitempty"`
-	SupersedesUnitID       string        `json:"supersedes_unit_id,omitempty"`
-	BlockerResolutionRefs  []EvidenceRef `json:"blocker_resolution_refs,omitempty"`
-	EvidenceRefs           []EvidenceRef `json:"evidence_refs,omitempty"`
-	CreatedAt              string        `json:"created_at"`
-	UpdatedAt              string        `json:"updated_at"`
+	UnitID                 string                   `json:"unit_id"`
+	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id"`
+	Title                  string                   `json:"title"`
+	OwnerModule            string                   `json:"owner_module,omitempty"`
+	TargetModules          []string                 `json:"target_modules,omitempty"`
+	ConsumerModules        []string                 `json:"consumer_modules,omitempty"`
+	AffectedModules        []string                 `json:"affected_modules,omitempty"`
+	ConceptState           string                   `json:"concept_state"`
+	DeliveryState          string                   `json:"delivery_state"`
+	WorkstreamID           string                   `json:"workstream_id,omitempty"`
+	Priority               string                   `json:"priority,omitempty"`
+	QueueRank              int                      `json:"queue_rank,omitempty"`
+	ImplementationRevision int                      `json:"implementation_revision,omitempty"`
+	InvalidatedFromStage   string                   `json:"invalidated_from_stage,omitempty"`
+	SupersedesUnitID       string                   `json:"supersedes_unit_id,omitempty"`
+	BlockerResolutionRefs  []EvidenceRef            `json:"blocker_resolution_refs,omitempty"`
+	EvidenceRefs           []EvidenceRef            `json:"evidence_refs,omitempty"`
+	CreatedAt              string                   `json:"created_at"`
+	UpdatedAt              string                   `json:"updated_at"`
 }
 
 func (i Item) Unit() ImplementationUnit {
@@ -415,39 +414,4 @@ func NewDeterministicID(refs []SourceRef, title string) string {
 	}
 	_, _ = h.Write([]byte(strings.TrimSpace(title)))
 	return fmt.Sprintf("atlas-%s", hex.EncodeToString(h.Sum(nil))[:20])
-}
-
-// UnmarshalJSON accepts the canonical backlog_item_id field and the legacy
-// item_id wire name so append-only JSONL history remains readable.
-func (i *Item) UnmarshalJSON(data []byte) error {
-	type itemAlias Item
-	var wire struct {
-		itemAlias
-		LegacyItemID string `json:"item_id"`
-	}
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	*i = Item(wire.itemAlias)
-	if i.BacklogItemID == "" && strings.TrimSpace(wire.LegacyItemID) != "" {
-		i.BacklogItemID = modulecore.BacklogItemID(strings.TrimSpace(wire.LegacyItemID))
-	}
-	return nil
-}
-
-// UnmarshalJSON accepts canonical and legacy backlog item identity fields.
-func (u *ImplementationUnit) UnmarshalJSON(data []byte) error {
-	type unitAlias ImplementationUnit
-	var wire struct {
-		unitAlias
-		LegacyItemID string `json:"item_id"`
-	}
-	if err := json.Unmarshal(data, &wire); err != nil {
-		return err
-	}
-	*u = ImplementationUnit(wire.unitAlias)
-	if u.BacklogItemID == "" && strings.TrimSpace(wire.LegacyItemID) != "" {
-		u.BacklogItemID = modulecore.BacklogItemID(strings.TrimSpace(wire.LegacyItemID))
-	}
-	return nil
 }

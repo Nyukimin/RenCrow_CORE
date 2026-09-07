@@ -95,7 +95,7 @@ func TestAtlasDevelopmentMethodologyHTTPLifecycleReachesLiveVerified(t *testing.
 	}
 
 	itemID := "methodology-http-e2e"
-	if record := post("/v1/atlas/intake", `{"item_id":"methodology-http-e2e","title":"Development Methodology HTTP E2E","purpose":"prove the canonical methodology lifecycle","body":"owner API lifecycle acceptance","source_refs":[{"type":"test","locator":"methodology-http-e2e"}]}`, true); record.Code != http.StatusCreated {
+	if record := post("/v1/atlas/intake", `{"backlog_item_id":"methodology-http-e2e","title":"Development Methodology HTTP E2E","purpose":"prove the canonical methodology lifecycle","body":"owner API lifecycle acceptance","source_refs":[{"type":"test","locator":"methodology-http-e2e"}]}`, true); record.Code != http.StatusCreated {
 		t.Fatalf("intake status=%d body=%s", record.Code, record.Body.String())
 	}
 	if record := post("/v1/atlas/items/"+itemID+"/candidate", `{}`, true); record.Code != http.StatusOK {

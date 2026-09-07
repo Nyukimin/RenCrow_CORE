@@ -1,0 +1,87 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step20-cleanup",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T10:28:00Z",
+  "input": {
+    "base_revision": "identity/03-dci-with-uncommitted-steps18-19",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-20-全体cleanup",
+    "owner_rule": "v1 scans only the bounded Step18 Step19 and canonical identity owners; repository-wide zero remains outside this implementation unit",
+    "compatibility_rule": "backlog item_id dual-read removed after home-workspace JSONL remapper cutover; LegacyItemID UnmarshalJSON deleted",
+    "completion_rule": "bounded owners reject fair-game Step20 legacy identity tokens; dual-read removed; migration sources deleted after cutover"
+  },
+  "included": [
+    {
+      "check_id": "s20_bounded_owner_identity_zero",
+      "guarantee": "TestStep20IdentityCleanupLegacyTokensAreBanned rejects final-condition legacy identity tokens in bounded Step18 and Step19 owners",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Step20 cleanup ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s20_step19_viewer_otel_zero",
+      "guarantee": "Step19 Viewer assets contain zero job_id chat_id fields and otelexport contains zero synthetic trace fallback",
+      "owner": "RenCrow_CORE Viewer and otelexport",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Viewer and OTel runtime",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s20_step18_backlog_single_read_boundary",
+      "guarantee": "Backlog domain reads only backlog_item_id and retains no LegacyItemID or json item_id compatibility field",
+      "owner": "RenCrow_CORE backlog",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Atlas backlog JSONL reader",
+      "failure_action": "block Step20 backlog cutover"
+    },
+    {
+      "check_id": "s20_backlog_item_id_offline_remapper",
+      "guarantee": "The stdlib-only offline JSONL remapper converts item_id to backlog_item_id, fails closed on malformed lines, refuses apply under /srv/rencrow, and is idempotent on a second run",
+      "owner": "RenCrow_CORE step20backlogitemmigration package and migration CLI",
+      "execution_phase": "pre-live-cutover",
+      "result_consumer": "Backlog Step20 cutover",
+      "failure_action": "do not migrate the home-workspace backlog and keep operational cutover open"
+    },
+    {
+      "check_id": "s20_minimal_validation",
+      "guarantee": "gofmt and the bounded Step20 modules/core architecture test pass",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Sol review",
+      "failure_action": "do not commit"
+    },
+    {
+      "check_id": "s20_backlog_item_id_offline_remapper",
+      "guarantee": "home-workspace backlog.jsonl remapped item_id to backlog_item_id with dry-run apply noop; dual-read removed; migration sources deleted",
+      "owner": "RenCrow_CORE backlog",
+      "execution_phase": "cutover post-deploy",
+      "result_consumer": "Step20 cleanup ledger",
+      "failure_action": "rollback dual-read removal"
+    },
+    {
+      "check_id": "s20_migration_source_removed",
+      "guarantee": "TestStep20MigrationSourceIsRemovedAfterCutover passes",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit",
+      "result_consumer": "Step20 cleanup ledger",
+      "failure_action": "delete leftover migrate package"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s20_full_golden_flows_e2e_matrix",
+      "reason": "full Golden flow restart recovery retry long-running background voice Atlas Memory Viewer matrix requires deployed canonical runtime and is outside this bounded implementation packet",
+      "consumer": "Identity final all-clear",
+      "failure_action": "keep Step20 operational completion open"
+    },
+    {
+      "check_id": "s20_channel_adapter_chat_id_outside_core",
+      "reason": "channel adapter ChatID cleanup belongs to the external channel owners and was already deferred outside CORE bounded owners",
+      "consumer": "cross-module Identity cleanup",
+      "failure_action": "retain owner handoff and do not claim repository-wide Internal ChatID zero"
+    }
+  ],
+  "replacement_receipts": []
+}

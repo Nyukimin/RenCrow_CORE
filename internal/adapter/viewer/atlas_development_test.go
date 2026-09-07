@@ -16,7 +16,7 @@ import (
 
 func TestAtlasDevelopmentOwnerAPIAndReadProjection(t *testing.T) {
 	now := time.Date(2026, 8, 28, 20, 0, 0, 0, time.UTC)
-	items := &atlasHTTPItemStore{items: []domainbacklog.Item{{SchemaVersion: 2, ItemID: "methodology", Title: "Methodology", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliverySpec, ImplementationUnit: "unit-methodology", ImplementationRevision: 1, WorkstreamID: "ws-methodology", OwnerModule: domainbacklog.LifecycleOwnerModule, AdoptedAt: now.Add(-time.Hour).Format(time.RFC3339), CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}}}
+	items := &atlasHTTPItemStore{items: []domainbacklog.Item{{SchemaVersion: 2, BacklogItemID: "methodology", Title: "Methodology", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliverySpec, ImplementationUnit: "unit-methodology", ImplementationRevision: 1, WorkstreamID: "ws-methodology", OwnerModule: domainbacklog.LifecycleOwnerModule, AdoptedAt: now.Add(-time.Hour).Format(time.RFC3339), CreatedAt: now.Format(time.RFC3339), UpdatedAt: now.Format(time.RFC3339)}}}
 	service := appbacklog.NewService(items, workstreampersistence.NewJSONLStore(t.TempDir())).WithClock(func() time.Time { return now })
 	token := "atlas-owner-token-012345678901234567890123"
 	handler := NewAtlasHandler(service, "ren", []byte(token))

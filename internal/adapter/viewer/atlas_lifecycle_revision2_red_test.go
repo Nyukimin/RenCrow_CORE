@@ -14,7 +14,7 @@ import (
 func TestRevision2AtlasViewerExposesDerivedPipelineStageStates(t *testing.T) {
 	items := &atlasHTTPItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "pipeline-item",
+		BacklogItemID:      "pipeline-item",
 		ImplementationUnit: "unit-pipeline-item",
 		Title:              "pipeline item",
 		Purpose:            "make stage state visible",

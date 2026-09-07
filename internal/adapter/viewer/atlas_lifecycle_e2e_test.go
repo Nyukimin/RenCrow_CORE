@@ -18,9 +18,9 @@ import (
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	backlogpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/backlog"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // TestAtlasHTTPBackfillAndSpecificationProjection exercises the actual Viewer
@@ -81,7 +81,7 @@ func TestAtlasHTTPBackfillAndSpecificationProjection(t *testing.T) {
 	if err := json.Unmarshal(body, &detail); err != nil {
 		t.Fatalf("decode Atlas item detail: %v body=%s", err, body)
 	}
-	if detail.Item.ItemID != "atlas:atlas.lifecycle" || detail.Item.Purpose == "" || detail.Item.Problem == "" || detail.Item.Idea == "" || detail.Item.Background == "" {
+	if detail.Item.BacklogItemID != "atlas:atlas.lifecycle" || detail.Item.Purpose == "" || detail.Item.Problem == "" || detail.Item.Idea == "" || detail.Item.Background == "" {
 		t.Fatalf("lossless design card detail=%+v", detail.Item)
 	}
 	if len(detail.Item.SourceRefs) == 0 || detail.Item.SourceRefs[0].Strength == "" {
@@ -126,7 +126,7 @@ func TestAtlasHTTPBackfillReconcilePreservesCompletedRevision(t *testing.T) {
 	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
 	if err := runtime.workstream.SaveClosureReceipt(context.Background(), domainworkstream.ClosureReceipt{
 		ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000030"), IdempotencyKey: "atlas-lifecycle-v1:2:DONE",
-		UnitID: "atlas-lifecycle-v1", ItemID: item.ItemID, ImplementationRevision: 2,
+		UnitID: "atlas-lifecycle-v1", BacklogItemID: item.BacklogItemID, ImplementationRevision: 2,
 		Phase: domainworkstream.ClosurePhaseDone, Status: domainworkstream.ClosureStatusCompleted,
 		LeaseReleased: true, CreatedAt: now, UpdatedAt: now, CompletedAt: now,
 	}); err != nil {
@@ -159,7 +159,7 @@ func TestAtlasHTTPBackfillReconcilePreservesCompletedRevision(t *testing.T) {
 	}
 	var projection appbacklog.Projection
 	decodeAtlasLifecycleJSON(t, body, &projection)
-	if len(projection.Current) != 1 || projection.Current[0].ItemID != item.ItemID || projection.Current[0].ImplementationRevision != 2 {
+	if len(projection.Current) != 1 || projection.Current[0].BacklogItemID != item.BacklogItemID || projection.Current[0].ImplementationRevision != 2 {
 		t.Fatalf("completed lifecycle missing from Current: %+v", projection.Current)
 	}
 }
@@ -173,10 +173,10 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 	runtime := newAtlasLifecycleHTTPRuntime(t)
 
 	first := runtime.intakeDesignCard(t, "http-lifecycle-blocked", "HTTP lifecycle blocked unit")
-	first = runtime.candidateAndAdopt(t, first.ItemID)
-	runtime.verifier.expected[first.ItemID] = atlasVerifierExpectation{itemID: first.ItemID, unitID: first.ImplementationUnit, revision: first.ImplementationRevision}
+	first = runtime.candidateAndAdopt(t, string(first.BacklogItemID))
+	runtime.verifier.expected[string(first.BacklogItemID)] = atlasVerifierExpectation{itemID: string(first.BacklogItemID), unitID: first.ImplementationUnit, revision: first.ImplementationRevision}
 
-	status, body := runtime.post(t, "/v1/atlas/items/"+first.ItemID+"/revise", map[string]any{
+	status, body := runtime.post(t, "/v1/atlas/items/"+string(first.BacklogItemID)+"/revise", map[string]any{
 		"request_id":        "http-blocked-request",
 		"expected_revision": first.ImplementationRevision,
 		"delivery_state":    domainbacklog.DeliveryBlocked,
@@ -210,11 +210,11 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 	freeze := freezeList.Freezes[0]
 
 	second := runtime.intakeDesignCard(t, "http-lifecycle-replacement", "HTTP lifecycle replacement")
-	status, body = runtime.post(t, "/v1/atlas/items/"+second.ItemID+"/candidate", map[string]any{})
+	status, body = runtime.post(t, "/v1/atlas/items/"+string(second.BacklogItemID)+"/candidate", map[string]any{})
 	if status != http.StatusOK {
 		t.Fatalf("replacement candidate status=%d body=%s", status, body)
 	}
-	status, body = runtime.post(t, "/v1/atlas/items/"+second.ItemID+"/revalidate", map[string]any{
+	status, body = runtime.post(t, "/v1/atlas/items/"+string(second.BacklogItemID)+"/revalidate", map[string]any{
 		"decision": "PROMOTE", "reason": "replacement owner review",
 		"forced": true, "bypass_reason": domainbacklog.MaturationBypassRuntimeContinuity,
 	})
@@ -222,7 +222,7 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 		t.Fatalf("replacement revalidate status=%d body=%s", status, body)
 	}
 	var adoption appbacklog.AdoptionResult
-	status, body = runtime.post(t, "/v1/atlas/items/"+second.ItemID+"/adopt", map[string]any{"reason": "replace blocked unit"})
+	status, body = runtime.post(t, "/v1/atlas/items/"+string(second.BacklogItemID)+"/adopt", map[string]any{"reason": "replace blocked unit"})
 	if status == http.StatusOK {
 		decodeAtlasLifecycleJSON(t, body, &adoption)
 	} else {
@@ -235,7 +235,7 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 	// Intake/adopt has no field for the replacement relation yet. Preserve the
 	// HTTP-created/adopted unit and seed only that setup relation through the
 	// owner backlog store; freeze resolution itself remains HTTP-only below.
-	replacement, found, err := runtime.items.FindByID(context.Background(), second.ItemID)
+	replacement, found, err := runtime.items.FindByID(context.Background(), string(second.BacklogItemID))
 	if err != nil || !found {
 		t.Fatalf("replacement lookup found=%v err=%v", found, err)
 	}
@@ -379,7 +379,7 @@ func (r *atlasLifecycleHTTPRuntime) get(t *testing.T, path string) (int, []byte)
 func (r *atlasLifecycleHTTPRuntime) intakeDesignCard(t *testing.T, itemID, title string) domainbacklog.Item {
 	t.Helper()
 	status, body := r.post(t, "/v1/atlas/intake", map[string]any{
-		"item_id": itemID, "kind": "idea", "title": title,
+		"backlog_item_id": itemID, "kind": "idea", "title": title,
 		"purpose":         "prove the full Atlas design card survives the HTTP owner route",
 		"problem":         "HTTP intake may drop the design memory needed for later recovery",
 		"idea":            "carry the complete design card through canonical CORE intake",
@@ -393,7 +393,7 @@ func (r *atlasLifecycleHTTPRuntime) intakeDesignCard(t *testing.T, itemID, title
 	}
 	var result appbacklog.IntakeResult
 	decodeAtlasLifecycleJSON(t, body, &result)
-	if result.Item.ItemID != itemID || result.Item.Purpose == "" || result.Item.Problem == "" || result.Item.Idea == "" || result.Item.Background == "" || len(result.Item.ExpectedEffect) == 0 {
+	if result.Item.BacklogItemID != modulecore.BacklogItemID(itemID) || result.Item.Purpose == "" || result.Item.Problem == "" || result.Item.Idea == "" || result.Item.Background == "" || len(result.Item.ExpectedEffect) == 0 {
 		t.Fatalf("HTTP intake lost Design Card fields: %+v", result.Item)
 	}
 	return result.Item
@@ -432,11 +432,11 @@ type atlasStrictHTTPVerifier struct {
 }
 
 func (v *atlasStrictHTTPVerifier) Verify(_ context.Context, request appbacklog.EvidenceVerificationRequest) (bool, error) {
-	want, ok := v.expected[request.ItemID]
+	want, ok := v.expected[request.BacklogItemID]
 	if !ok {
-		return false, fmt.Errorf("unexpected HTTP evidence item %q", request.ItemID)
+		return false, fmt.Errorf("unexpected HTTP evidence item %q", request.BacklogItemID)
 	}
-	if request.ItemID != want.itemID || request.ImplementationUnitID != want.unitID || request.ImplementationRevision != want.revision || strings.TrimSpace(request.TargetDeliveryState) == "" {
+	if string(request.BacklogItemID) != want.itemID || request.ImplementationUnitID != want.unitID || request.ImplementationRevision != want.revision || strings.TrimSpace(request.TargetDeliveryState) == "" {
 		return false, fmt.Errorf("typed HTTP evidence context mismatch: %+v want=%+v", request, want)
 	}
 	if !strings.EqualFold(request.Ref.Stage, request.TargetDeliveryState) || strings.TrimSpace(request.Ref.Ref) == "" {

@@ -546,7 +546,6 @@ func TestStep10RunIdentityLegacyFieldsAreBanned(t *testing.T) {
 	canonicalArchitectureFail(t, "Step10 owner packages must not retain legacy Run identity fields", violations)
 }
 
-
 func TestStep11ActionIdentityLegacyFieldsAreBanned(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	legacyTokens := []string{
@@ -1265,7 +1264,6 @@ func TestStep16QueueCheckpointReceiptLegacyFieldsAreBanned(t *testing.T) {
 	canonicalArchitectureFail(t, "Step16 owner packages must not retain legacy Queue/Checkpoint/Receipt identity fields", violations)
 }
 
-
 func TestStep16MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	leftovers := []string{
@@ -1645,6 +1643,159 @@ func TestStep19ViewerOTelGraphLegacyFieldsAreBanned(t *testing.T) {
 		checkContent(relative, content)
 	}
 	canonicalArchitectureFail(t, "Step19 Viewer/OTel graph owners must not retain legacy identity fields or synthetic trace IDs", violations)
+}
+
+
+func TestStep20MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	leftovers := []string{
+		filepath.Join(repoRoot, "cmd", "rencrow-step20-backlog-item-migrate"),
+		filepath.Join(repoRoot, "internal", "application", "step20backlogitemmigration"),
+	}
+	var found []string
+	for _, path := range leftovers {
+		if _, err := os.Stat(path); err == nil {
+			found = append(found, path)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+	if len(found) != 0 {
+		t.Fatalf("Step20 migration source must be removed after cutover: %v", found)
+	}
+}
+
+func TestStep20IdentityCleanupLegacyTokensAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	finalLegacyTokens := []string{
+		"JobID", "job_id",
+		"DiscussionID", "discussion_id",
+		"ParentEventID", "parent_event_id",
+		"ParentRunID", "parent_run_id",
+		"TraceRunID", "trace_run_id",
+		"GenerationID", "generation_id",
+		"SubagentID", "subagent_id",
+		"DecisionID", "decision_id",
+		"AssignmentID", "assignment_id",
+		"ApplyID", "apply_id",
+		"SubmitID", "submit_id",
+		"ReportID", "report_id",
+		"DraftID", "draft_id",
+		"ContextPackID", "context_pack_id",
+		"QueueID", "queue_id",
+		"ChatID", "chat_id",
+		"LegacyItemID", `json:"item_id"`,
+	}
+	step19Tokens := []string{
+		"JobID", "job_id",
+		"ChatID", "chat_id",
+		`"trace-%d"`, `"trace-"`,
+	}
+	owners := []struct {
+		relative string
+		tokens   []string
+	}{
+		{"internal/application/otelexport", step19Tokens},
+		{"internal/adapter/viewer/assets/js/viewer.js", step19Tokens},
+		{"internal/adapter/viewer/assets/js/tabs/timeline.js", step19Tokens},
+		{"internal/adapter/viewer/assets/js/tabs/ops.js", step19Tokens},
+		{"internal/adapter/viewer/assets/js/tabs/idlechat.js", step19Tokens},
+		{"internal/domain/backlog", finalLegacyTokens},
+		{"internal/application/backlog", finalLegacyTokens},
+		{"internal/infrastructure/backlog", finalLegacyTokens},
+		{"internal/domain/workstream", finalLegacyTokens},
+		{"modules/core/identity.go", finalLegacyTokens},
+	}
+
+	var violations []string
+	checkFile := func(relative string, content []byte, tokens []string) {
+		if strings.Contains(relative, "step20backlogitemmigration") ||
+			strings.Contains(relative, "rencrow-step20-backlog-item-migrate") {
+			return
+		}
+		inBlockComment := false
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			code := canonicalStep20CodeOnly(line, &inBlockComment)
+			if strings.TrimSpace(code) == "" {
+				continue
+			}
+			for _, legacy := range tokens {
+				if !canonicalSourceContainsToken(code, legacy) {
+					continue
+				}
+				violations = append(violations, fmt.Sprintf("%s:%d:legacy-step20:%s", relative, lineNumber+1, legacy))
+			}
+		}
+	}
+
+	for _, owner := range owners {
+		path := filepath.Join(repoRoot, filepath.FromSlash(owner.relative))
+		info, err := os.Stat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("stat Step20 owner %s: %v", owner.relative, err)
+		}
+		if !info.IsDir() {
+			checkFile(owner.relative, mustReadFile(t, path), owner.tokens)
+			continue
+		}
+		err = filepath.WalkDir(path, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "vendor" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(candidate, "_test.go") ||
+				(!strings.HasSuffix(candidate, ".go") && !strings.HasSuffix(candidate, ".js")) {
+				return nil
+			}
+			relative, err := filepath.Rel(repoRoot, candidate)
+			if err != nil {
+				return err
+			}
+			checkFile(filepath.ToSlash(relative), mustReadFile(t, candidate), owner.tokens)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step20 owner %s: %v", owner.relative, err)
+		}
+	}
+	canonicalArchitectureFail(t, "Step20 bounded owners must not retain fair-game legacy identity tokens", violations)
+}
+
+func canonicalStep20CodeOnly(line string, inBlockComment *bool) string {
+	var code strings.Builder
+	for index := 0; index < len(line); {
+		if *inBlockComment {
+			end := strings.Index(line[index:], "*/")
+			if end < 0 {
+				return code.String()
+			}
+			index += end + 2
+			*inBlockComment = false
+			continue
+		}
+		block := strings.Index(line[index:], "/*")
+		single := strings.Index(line[index:], "//")
+		if single >= 0 && (block < 0 || single < block) {
+			code.WriteString(line[index : index+single])
+			return code.String()
+		}
+		if block < 0 {
+			code.WriteString(line[index:])
+			return code.String()
+		}
+		code.WriteString(line[index : index+block])
+		index += block + 2
+		*inBlockComment = true
+	}
+	return code.String()
 }
 
 func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {

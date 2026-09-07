@@ -15,6 +15,7 @@ import (
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
@@ -44,7 +45,7 @@ func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
 		return body.Item
 	}
 
-	if rec := post("/v1/atlas/intake", `{"item_id":"e2e","title":"Atlas E2E","purpose":"verify the Atlas lifecycle","source_refs":[{"type":"manual","locator":"e2e"}]}`); rec.Code < 200 || rec.Code >= 300 {
+	if rec := post("/v1/atlas/intake", `{"backlog_item_id":"e2e","title":"Atlas E2E","purpose":"verify the Atlas lifecycle","source_refs":[{"type":"manual","locator":"e2e"}]}`); rec.Code < 200 || rec.Code >= 300 {
 		t.Fatalf("intake status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if rec := post("/v1/atlas/items/e2e/candidate", `{}`); rec.Code != http.StatusOK {
@@ -98,7 +99,7 @@ func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
 	if err := json.Unmarshal(get.Body.Bytes(), &projection); err != nil {
 		t.Fatalf("decode projection: %v body=%s", err, get.Body.String())
 	}
-	if projection.Active != nil || len(projection.Current) != 1 || projection.Current[0].ItemID != "e2e" || projection.Current[0].DeliveryState != domainbacklog.DeliveryDone {
+	if projection.Active != nil || len(projection.Current) != 1 || projection.Current[0].BacklogItemID != "e2e" || projection.Current[0].DeliveryState != domainbacklog.DeliveryDone {
 		t.Fatalf("canonical DONE projection=%+v body=%s", projection, get.Body.String())
 	}
 	closureFound := false
@@ -131,7 +132,7 @@ func (s *atlasHTTPItemStore) List(_ context.Context, _ int) ([]domainbacklog.Ite
 }
 func (s *atlasHTTPItemStore) Save(_ context.Context, item domainbacklog.Item) error {
 	for i := range s.items {
-		if s.items[i].ItemID == item.ItemID {
+		if s.items[i].BacklogItemID == item.BacklogItemID {
 			s.items[i] = item
 			return nil
 		}
@@ -208,7 +209,7 @@ func TestAtlasOwnerRevalidateHTTPReturnsLatestPersistedRecord(t *testing.T) {
 	if response.Item.MaturationState != domainbacklog.MaturationStatePromoted || len(response.Item.RevalidationRecords) != 1 {
 		t.Fatalf("revalidate item=%+v", response.Item)
 	}
-	if response.RevalidationRecord.BacklogID != response.Item.ItemID || response.RevalidationRecord.Decision != domainbacklog.RevalidationDecisionPromote || response.RevalidationRecord.MaturationDays != 7 || response.RevalidationRecord.Reason != "still valuable" {
+	if response.RevalidationRecord.BacklogID != string(response.Item.BacklogItemID) || response.RevalidationRecord.Decision != domainbacklog.RevalidationDecisionPromote || response.RevalidationRecord.MaturationDays != 7 || response.RevalidationRecord.Reason != "still valuable" {
 		t.Fatalf("revalidation receipt=%+v item=%+v", response.RevalidationRecord, response.Item)
 	}
 	if !reflect.DeepEqual(response.RevalidationRecord, response.Item.RevalidationRecords[len(response.Item.RevalidationRecords)-1]) {
@@ -381,7 +382,7 @@ const atlasOwnerHTTPToken = "atlas-owner-token-012345678901234567890123"
 func atlasMaturationHTTPItem(id string, start time.Time) domainbacklog.Item {
 	return domainbacklog.Item{
 		SchemaVersion:        domainbacklog.SchemaVersion2,
-		ItemID:               id,
+		BacklogItemID:        modulecore.BacklogItemID(id),
 		FeatureID:            id,
 		Title:                "Atlas maturation " + id,
 		Purpose:              "validate Atlas maturation over HTTP",
@@ -411,7 +412,7 @@ func atlasOwnerHTTPPost(t *testing.T, handler http.HandlerFunc, token, path, bod
 
 func TestAtlasSpecificationProjectionUsesSpecIDAndResolvesItemReferences(t *testing.T) {
 	store := &atlasHTTPItemStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "atlas:spec-item", FeatureID: "spec-item", Title: "spec item",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "atlas:spec-item", FeatureID: "spec-item", Title: "spec item",
 		ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone,
 		SpecificationRefs: []string{"spec_atlas_lifecycle_functional_v1"},
 	}}}
@@ -449,7 +450,7 @@ func TestAtlasOwnerHTTPIntakePreservesSchemaV2DesignCard(t *testing.T) {
 	store := &atlasHTTPItemStore{}
 	token := []byte("atlas-owner-token-012345678901234567890123")
 	handler := NewAtlasHandler(appbacklog.NewService(store, nil), "ren", token)
-	body := `{"item_id":"http-design-card","feature_id":"atlas.http-design-card","kind":"idea","title":"HTTP design card","purpose":"retain a partial design card","problem":"owner intake dropped design memory","idea":"carry every card field through CORE","background":"the owner API is the normal intake path","expected_effect":["lossless reconstruction","auditable state"],"relation_refs":["atlas:lifecycle","atlas:memory"],"specification_refs":["spec_atlas_idea_recording_v1","spec_l0v2_external"],"source_refs":[{"type":"test","locator":"http-design-card"}]}`
+	body := `{"backlog_item_id":"http-design-card","feature_id":"atlas.http-design-card","kind":"idea","title":"HTTP design card","purpose":"retain a partial design card","problem":"owner intake dropped design memory","idea":"carry every card field through CORE","background":"the owner API is the normal intake path","expected_effect":["lossless reconstruction","auditable state"],"relation_refs":["atlas:lifecycle","atlas:memory"],"specification_refs":["spec_atlas_idea_recording_v1","spec_l0v2_external"],"source_refs":[{"type":"test","locator":"http-design-card"}]}`
 	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/atlas/intake", bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+string(token))
 	request.Header.Set("Content-Type", "application/json")

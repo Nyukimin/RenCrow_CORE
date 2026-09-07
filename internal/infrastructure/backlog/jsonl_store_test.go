@@ -12,7 +12,7 @@ import (
 
 func TestJSONLStoreReadsLegacyAndProjectsWithoutAdopting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "backlog.jsonl")
-	if err := os.WriteFile(path, []byte(`{"item_id":"legacy","title":"old","source":"user","status":"proposal_review","priority":"normal"}`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"backlog_item_id":"legacy","title":"old","source":"user","status":"proposal_review","priority":"normal"}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	store := NewJSONLStore(path)
