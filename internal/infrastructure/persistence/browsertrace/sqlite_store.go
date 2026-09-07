@@ -72,7 +72,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_coverage_report (
-			report_id TEXT PRIMARY KEY,
+			artifact_id TEXT PRIMARY KEY,
 			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -180,7 +180,7 @@ func (s *SQLiteStore) SaveAPICoverageReport(ctx context.Context, item domaintrac
 	if err := domaintrace.ValidateAPICoverageReport(item); err != nil {
 		return err
 	}
-	return s.saveOwned(ctx, "api_coverage_report", "report_id", item.ReportID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.saveOwned(ctx, "api_coverage_report", "artifact_id", string(item.ArtifactID), item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListAPICoverageReports(ctx context.Context, limit int) ([]domaintrace.APICoverageReport, error) {

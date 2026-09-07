@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateAPICandidateRejectsWriteMethods(t *testing.T) {
@@ -66,8 +68,9 @@ func TestValidateBrowserTraceAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("schema should validate: %v", err)
 	}
 	if err := ValidateAPICoverageReport(APICoverageReport{
-		ReportID: "coverage_1",
-		TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+		Kind:       modulecore.ArtifactKindReport,
+		TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("coverage report should validate: %v", err)
@@ -236,8 +239,9 @@ func TestValidateBrowserTraceAPIRejectsMissingCreatedAt(t *testing.T) {
 		{
 			name: "coverage",
 			err: ValidateAPICoverageReport(APICoverageReport{
-				ReportID: "coverage_1",
-				TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+				Kind:       modulecore.ArtifactKindReport,
+				TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			}),
 		},
 		{
@@ -316,8 +320,9 @@ func TestValidateBrowserTraceRequiredFields(t *testing.T) {
 		{name: "validation status", err: ValidateAPICandidateValidationResult(APICandidateValidationResult{ValidationID: "api_val_1", CandidateID: "api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}), want: "status"},
 		{name: "validation passed mismatch", err: ValidateAPICandidateValidationResult(APICandidateValidationResult{ValidationID: "api_val_1", CandidateID: "api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "needs_review", CreatedAt: now, Issues: []APIValidationIssue{{Code: "terms", Message: "terms issue"}}}), want: "passed validation"},
 		{name: "validation issue message", err: ValidateAPICandidateValidationResult(APICandidateValidationResult{ValidationID: "api_val_1", CandidateID: "api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Issues: []APIValidationIssue{{Code: "terms"}}, CreatedAt: now}), want: "message"},
-		{name: "coverage report id", err: ValidateAPICoverageReport(APICoverageReport{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}), want: "report_id"},
-		{name: "coverage owner", err: ValidateAPICoverageReport(APICoverageReport{ReportID: "coverage_1", CreatedAt: now}), want: "task_id"},
+		{name: "coverage report id", err: ValidateAPICoverageReport(APICoverageReport{Kind: modulecore.ArtifactKindReport, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}), want: "artifact_id"},
+		{name: "coverage artifact kind", err: ValidateAPICoverageReport(APICoverageReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}), want: "artifact_kind"},
+		{name: "coverage owner", err: ValidateAPICoverageReport(APICoverageReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, CreatedAt: now}), want: "task_id"},
 		{name: "artifact id", err: ValidateAPIArtifact(APIArtifact{TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "observed_openapi", Title: "Observed OpenAPI", Status: "generated", Content: "openapi: 3.1.0", CreatedAt: now}), want: "artifact_id"},
 		{name: "artifact owner", err: ValidateAPIArtifact(APIArtifact{ArtifactID: "art_1", Type: "observed_openapi", Title: "Observed OpenAPI", Status: "generated", Content: "openapi: 3.1.0", CreatedAt: now}), want: "task_id"},
 		{name: "artifact type", err: ValidateAPIArtifact(APIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Title: "Observed OpenAPI", Status: "generated", Content: "openapi: 3.1.0", CreatedAt: now}), want: "artifact_type"},

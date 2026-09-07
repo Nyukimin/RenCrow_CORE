@@ -52,7 +52,7 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 		}},
 		CreatedAt: now,
 	}
-	coverage := domaintrace.APICoverageReport{ReportID: "coverage_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}
+	coverage := domaintrace.APICoverageReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", CreatedAt: now}
 	artifact := domaintrace.APIArtifact{
 		ArtifactID: "art_openapi_1",
 		TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
@@ -99,7 +99,7 @@ func TestSQLiteStoreBrowserTraceToAPI(t *testing.T) {
 		t.Fatalf("ListAPICandidateValidationResults() = %#v, %v", validations, err)
 	}
 	reports, err := store.ListAPICoverageReports(ctx, 10)
-	if err != nil || len(reports) != 1 || reports[0].ReportID != "coverage_1" {
+	if err != nil || len(reports) != 1 || reports[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003") {
 		t.Fatalf("ListAPICoverageReports() = %#v, %v", reports, err)
 	}
 	artifacts, err := store.ListAPIArtifacts(ctx, 10)

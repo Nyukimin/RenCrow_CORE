@@ -50,22 +50,22 @@ type RevenueStore interface {
 }
 
 type RevenueDailyRoutineRequest struct {
-	ReportID     string `json:"report_id,omitempty"`
-	WorkstreamID string `json:"workstream_id,omitempty"`
-	Date         string `json:"date,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
+	ArtifactID   modulecore.ArtifactID `json:"artifact_id,omitempty"`
+	WorkstreamID string                `json:"workstream_id,omitempty"`
+	Date         string                `json:"date,omitempty"`
+	Limit        int                   `json:"limit,omitempty"`
 }
 
 type RevenueExternalSendApplyRequest struct {
-	TaskID         modulecore.TaskID `json:"task_id"`
-	RunID          modulecore.RunID  `json:"run_id"`
-	DeliveryID     string            `json:"delivery_id,omitempty"`
-	TraceID        string            `json:"trace_id,omitempty"`
-	OpportunityID  string            `json:"opportunity_id,omitempty"`
-	DraftID        string            `json:"draft_id"`
-	DecisionID     string            `json:"decision_id"`
-	Destination    string            `json:"destination,omitempty"`
-	ChannelAdapter string            `json:"channel_adapter,omitempty"`
+	TaskID         modulecore.TaskID     `json:"task_id"`
+	RunID          modulecore.RunID      `json:"run_id"`
+	DeliveryID     string                `json:"delivery_id,omitempty"`
+	TraceID        string                `json:"trace_id,omitempty"`
+	OpportunityID  string                `json:"opportunity_id,omitempty"`
+	ArtifactID     modulecore.ArtifactID `json:"artifact_id"`
+	DecisionID     string                `json:"decision_id"`
+	Destination    string                `json:"destination,omitempty"`
+	ChannelAdapter string                `json:"channel_adapter,omitempty"`
 }
 
 type RevenueDashboardSummary struct {
@@ -81,9 +81,9 @@ type RevenueDashboardSummary struct {
 	TotalRevenueAmount     int                         `json:"total_revenue_amount"`
 	BlockedDecisionCount   int                         `json:"blocked_decision_count"`
 	DailyReportCount       int                         `json:"daily_report_count"`
-	LatestDailyReportID    string                      `json:"latest_daily_report_id,omitempty"`
-	ChannelDraftCount      int                         `json:"channel_draft_count"`
-	LatestChannelDraftID   string                      `json:"latest_channel_draft_id,omitempty"`
+	LatestDailyReportArtifactID  modulecore.ArtifactID `json:"latest_daily_report_artifact_id,omitempty"`
+	ChannelDraftCount            int                   `json:"channel_draft_count"`
+	LatestChannelDraftArtifactID modulecore.ArtifactID `json:"latest_channel_draft_artifact_id,omitempty"`
 	ExternalSendApplyCount int                         `json:"external_send_apply_count"`
 	KPITrend               []RevenueKPIDay             `json:"kpi_trend,omitempty"`
 	ProductSales           []RevenueProductSales       `json:"product_sales,omitempty"`
@@ -314,10 +314,10 @@ func buildRevenueDashboardSummary(market []domainrevenue.MarketResearchItem, pos
 		}
 	}
 	if len(reports) > 0 {
-		summary.LatestDailyReportID = reports[0].ReportID
+		summary.LatestDailyReportArtifactID = reports[0].ArtifactID
 	}
 	if len(channelDrafts) > 0 {
-		summary.LatestChannelDraftID = channelDrafts[0].DraftID
+		summary.LatestChannelDraftArtifactID = channelDrafts[0].ArtifactID
 	}
 	for _, record := range externalSendApplyRecords {
 		if record.ExternalSendApplied {
@@ -569,7 +569,7 @@ func HandleRevenuePolicyDecision(store RevenueStore) http.HandlerFunc {
 				return
 			}
 			for i := range drafts {
-				if drafts[i].DraftID == item.SubjectID {
+				if string(drafts[i].ArtifactID) == item.SubjectID {
 					item.TraceID = drafts[i].TraceID
 					break
 				}
@@ -611,7 +611,7 @@ func HandleRevenueDailyRoutineReportCreate(store RevenueStore) http.HandlerFunc 
 			return
 		}
 		result, err := service.RunDailyRoutine(r.Context(), revenueapp.DailyRoutineRequest{
-			ReportID:     req.ReportID,
+			ArtifactID:   req.ArtifactID,
 			WorkstreamID: req.WorkstreamID,
 			Date:         req.Date,
 			Limit:        req.Limit,
@@ -645,6 +645,9 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 			return
 		}
 		item.ExternalSendApplied = false
+		if item.Kind == "" {
+			item.Kind = modulecore.ArtifactKindDraft
+		}
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
 		}
@@ -686,8 +689,8 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 			http.Error(w, "run_id is required", http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.DraftID) == "" {
-			http.Error(w, "draft_id is required", http.StatusBadRequest)
+		if err := req.ArtifactID.Validate(); err != nil {
+			http.Error(w, "artifact_id is required", http.StatusBadRequest)
 			return
 		}
 		if strings.TrimSpace(req.DecisionID) == "" {
@@ -701,7 +704,7 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 		}
 		var draft *domainrevenue.ChannelDraft
 		for i := range drafts {
-			if drafts[i].DraftID == req.DraftID {
+			if drafts[i].ArtifactID == req.ArtifactID {
 				draft = &drafts[i]
 				break
 			}
@@ -731,7 +734,7 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 			DecisionType: decision.DecisionType,
 			Description:  decision.Description,
 		})
-		if decision.DecisionType != "closed_channel_send" || decision.SubjectID != draft.DraftID || policyResult.Status != "allowed" {
+		if decision.DecisionType != "closed_channel_send" || decision.SubjectID != string(draft.ArtifactID) || policyResult.Status != "allowed" {
 			http.Error(w, "allowed closed_channel_send policy decision for draft is required", http.StatusConflict)
 			return
 		}
@@ -791,7 +794,7 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 			ActionID:            createdAction.ActionID,
 			TraceID:             traceID,
 			DeliveryID:          deliveryID,
-			DraftID:             draft.DraftID,
+			ArtifactID:          draft.ArtifactID,
 			DecisionID:          decision.DecisionID,
 			Channel:             draft.Channel,
 			Destination:         strings.TrimSpace(req.Destination),

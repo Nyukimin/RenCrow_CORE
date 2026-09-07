@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
@@ -48,8 +49,9 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 		CreatedAt: now,
 	}
 	coverage := domaintrace.APICoverageReport{
-		ReportID: "coverage_1",
-		TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+		Kind:       modulecore.ArtifactKindReport,
+		TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 		ObservedEndpoints: []string{"GET /api/items"},
 		CreatedAt:         now,
 	}
@@ -98,7 +100,7 @@ func TestJSONLStoreBrowserTraceToAPI(t *testing.T) {
 		t.Fatalf("ListAPICandidateValidationResults() = %#v, %v", validations, err)
 	}
 	reports, err := store.ListAPICoverageReports(ctx, 10)
-	if err != nil || len(reports) != 1 || reports[0].ReportID != "coverage_1" {
+	if err != nil || len(reports) != 1 || reports[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003") {
 		t.Fatalf("ListAPICoverageReports() = %#v, %v", reports, err)
 	}
 	artifacts, err := store.ListAPIArtifacts(ctx, 10)

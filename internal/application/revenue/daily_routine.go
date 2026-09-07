@@ -7,6 +7,7 @@ import (
 	"time"
 
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -31,7 +32,7 @@ type DailyRoutineService struct {
 }
 
 type DailyRoutineRequest struct {
-	ReportID     string
+	ArtifactID   modulecore.ArtifactID
 	WorkstreamID string
 	Date         string
 	Limit        int
@@ -82,7 +83,7 @@ func (s *DailyRoutineService) RunDailyRoutine(ctx context.Context, req DailyRout
 		return DailyRoutineResult{}, fmt.Errorf("failed to load policy decision records: %w", err)
 	}
 	report := domainrevenue.BuildDailyRoutineReport(domainrevenue.DailyRoutineInput{
-		ReportID:       req.ReportID,
+		ArtifactID:     req.ArtifactID,
 		WorkstreamID:   req.WorkstreamID,
 		Date:           req.Date,
 		Now:            req.Now,

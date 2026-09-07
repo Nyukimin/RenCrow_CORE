@@ -42,7 +42,7 @@ func TestValidateRevenueRecords(t *testing.T) {
 	if err := ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase", Amount: 980, CreatedAt: now}); err != nil {
 		t.Fatalf("revenue event should be valid: %v", err)
 	}
-	if err := ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report", CreatedAt: now}); err != nil {
+	if err := ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-18", Status: "draft_report", CreatedAt: now}); err != nil {
 		t.Fatalf("daily routine report should be valid: %v", err)
 	}
 }
@@ -70,10 +70,10 @@ func TestValidateRevenueRecordRequiredFieldsAndNumericBounds(t *testing.T) {
 		{name: "revenue event missing id", err: ValidateRevenueEvent(RevenueEvent{EventType: "purchase", Amount: 980, CreatedAt: now}), want: "event_id"},
 		{name: "revenue event missing type", err: ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", Amount: 980, CreatedAt: now}), want: "event_type"},
 		{name: "revenue event negative amount", err: ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase", Amount: -1, CreatedAt: now}), want: "amount"},
-		{name: "daily report missing id", err: ValidateDailyRoutineReport(DailyRoutineReport{Date: "2026-05-20", Status: "draft_report", CreatedAt: now}), want: "report_id"},
-		{name: "daily report missing date", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Status: "draft_report", CreatedAt: now}), want: "date"},
-		{name: "daily report invalid status", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-20", Status: "sent", CreatedAt: now}), want: "status"},
-		{name: "daily report negative count", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-20", Status: "draft_report", MarketResearch: -1, CreatedAt: now}), want: "counts"},
+		{name: "daily report missing id", err: ValidateDailyRoutineReport(DailyRoutineReport{Kind: modulecore.ArtifactKindReport, Date: "2026-05-20", Status: "draft_report", CreatedAt: now}), want: "artifact_id"},
+		{name: "daily report missing date", err: ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Status: "draft_report", CreatedAt: now}), want: "date"},
+		{name: "daily report invalid status", err: ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-20", Status: "sent", CreatedAt: now}), want: "status"},
+		{name: "daily report negative count", err: ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-20", Status: "draft_report", MarketResearch: -1, CreatedAt: now}), want: "counts"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,9 +95,9 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 		{name: "product", err: ValidateProduct(Product{ProductID: "prod_1", ProductName: "商品設計シート", Status: "draft"})},
 		{name: "customer voice", err: ValidateCustomerVoice(CustomerVoice{VoiceID: "voice_1", RawText: "よかった", PermissionStatus: "unknown"})},
 		{name: "revenue event", err: ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase"})},
-		{name: "daily routine", err: ValidateDailyRoutineReport(DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-20", Status: "draft_report"})},
-		{name: "channel draft", err: ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文"})},
-		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
+		{name: "daily routine", err: ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-20", Status: "draft_report"})},
+		{name: "channel draft", err: ValidateChannelDraft(ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文"})},
+		{name: "external send apply", err: ValidateExternalSendApplyRecord(ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured"})},
 		{name: "policy decision", err: ValidatePolicyDecisionRecord(PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"})},
 		{name: "product updated_at optional", err: ValidateProduct(Product{ProductID: "prod_1", ProductName: "商品設計シート", Status: "draft", CreatedAt: now})},
 	}
@@ -118,7 +118,7 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 
 func TestValidateChannelDraft(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	if err := ValidateChannelDraft(ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", CreatedAt: now}); err != nil {
+	if err := ValidateChannelDraft(ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文", CreatedAt: now}); err != nil {
 		t.Fatalf("empty policy metadata should be accepted: %v", err)
 	}
 
@@ -127,11 +127,11 @@ func TestValidateChannelDraft(t *testing.T) {
 		item ChannelDraft
 		want string
 	}{
-		{name: "missing id", item: ChannelDraft{Channel: "email", Body: "下書き本文", CreatedAt: now}, want: "draft_id"},
-		{name: "missing channel", item: ChannelDraft{DraftID: "draft_1", Body: "下書き本文", CreatedAt: now}, want: "channel"},
-		{name: "missing body", item: ChannelDraft{DraftID: "draft_1", Channel: "email", CreatedAt: now}, want: "body"},
-		{name: "external send applied", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "下書き本文", ExternalSendApplied: true, CreatedAt: now}, want: "external send"},
-		{name: "prohibited claim", item: ChannelDraft{DraftID: "draft_1", Channel: "email", Subject: "案内", Body: "誰でも必ず稼げる", CreatedAt: now}, want: "prohibited revenue claim"},
+		{name: "missing id", item: ChannelDraft{Channel: "email", Body: "下書き本文", CreatedAt: now}, want: "artifact_id"},
+		{name: "missing channel", item: ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Body: "下書き本文", CreatedAt: now}, want: "channel"},
+		{name: "missing body", item: ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", CreatedAt: now}, want: "body"},
+		{name: "external send applied", item: ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文", ExternalSendApplied: true, CreatedAt: now}, want: "external send"},
+		{name: "prohibited claim", item: ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Subject: "案内", Body: "誰でも必ず稼げる", CreatedAt: now}, want: "prohibited revenue claim"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,7 +255,7 @@ func TestValidateExternalSendApplyRecordUsesPolicyDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -309,7 +309,7 @@ func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) 
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	validBlocked := ExternalSendApplyRecord{
 		ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:       "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:    "dec_1",
 		Channel:       "email",
 		ApplyStatus:   "blocked",
@@ -323,7 +323,7 @@ func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) 
 		want   string
 	}{
 		{name: "missing apply id", mutate: func(item *ExternalSendApplyRecord) { item.ActionID = "" }, want: "action_id"},
-		{name: "missing draft id", mutate: func(item *ExternalSendApplyRecord) { item.DraftID = "" }, want: "draft_id"},
+		{name: "missing draft id", mutate: func(item *ExternalSendApplyRecord) { item.ArtifactID = "" }, want: "artifact_id"},
 		{name: "missing decision id", mutate: func(item *ExternalSendApplyRecord) { item.DecisionID = "" }, want: "decision_id"},
 		{name: "missing channel", mutate: func(item *ExternalSendApplyRecord) { item.Channel = "" }, want: "channel"},
 		{name: "invalid apply status", mutate: func(item *ExternalSendApplyRecord) { item.ApplyStatus = "queued" }, want: "apply_status"},
@@ -346,7 +346,7 @@ func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *te
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "sent",
@@ -378,7 +378,7 @@ func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *te
 func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -395,7 +395,7 @@ func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *
 func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -410,7 +410,7 @@ func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *te
 
 func TestBuildDailyRoutineReportIsDraftOnly(t *testing.T) {
 	report := BuildDailyRoutineReport(DailyRoutineInput{
-		ReportID:       "daily_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		WorkstreamID:   "ws_revenue",
 		Date:           "2026-05-18",
 		Now:            time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
@@ -440,7 +440,7 @@ func TestBuildDailyRoutineReportDefaultsAndSuggestedActions(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	report := BuildDailyRoutineReport(DailyRoutineInput{Now: now})
 
-	if report.ReportID != "rev_daily_20260520T073000Z" || report.Date != "2026-05-20" || !report.CreatedAt.Equal(now) {
+	if err := report.ArtifactID.Validate(); err != nil || report.Kind != modulecore.ArtifactKindReport || report.Date != "2026-05-20" || !report.CreatedAt.Equal(now) {
 		t.Fatalf("unexpected defaults: %#v", report)
 	}
 	wantActions := []string{
@@ -462,7 +462,7 @@ func TestBuildDailyRoutineReportDefaultsAndSuggestedActions(t *testing.T) {
 func TestBuildDailyRoutineReportCountsAnonymousPurchasesAndDefaultAction(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	report := BuildDailyRoutineReport(DailyRoutineInput{
-		ReportID:       "daily_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		Date:           "2026-05-20",
 		Now:            now,
 		MarketResearch: []MarketResearchItem{{ItemID: "mkt_1"}},
@@ -488,7 +488,7 @@ func TestBuildDailyRoutineReportCountsAnonymousPurchasesAndDefaultAction(t *test
 
 func TestValidateDailyRoutineReportRejectsExternalSend(t *testing.T) {
 	err := ValidateDailyRoutineReport(DailyRoutineReport{
-		ReportID:            "daily_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 		Date:                "2026-05-18",
 		Status:              "draft_report",
 		ExternalSendApplied: true,

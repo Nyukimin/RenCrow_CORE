@@ -39,8 +39,9 @@ type SubagentTask struct {
 }
 
 type ContextPack struct {
-	ContextPackID   string            `json:"context_pack_id"`
-	TaskID          modulecore.TaskID `json:"task_id"`
+	ArtifactID      modulecore.ArtifactID   `json:"artifact_id"`
+	Kind            modulecore.ArtifactKind `json:"artifact_kind"`
+	TaskID          modulecore.TaskID       `json:"task_id"`
 	RunID           modulecore.RunID  `json:"run_id"`
 	WorkstreamID    string            `json:"workstream_id,omitempty"`
 	Summary         string            `json:"summary"`

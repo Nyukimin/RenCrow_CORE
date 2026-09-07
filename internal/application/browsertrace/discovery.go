@@ -232,7 +232,8 @@ func BuildCandidates(run domaintrace.TraceRun, exchanges []domaintrace.Exchange,
 		}
 	}
 	coverage := domaintrace.APICoverageReport{
-		ReportID:              "api_cov_" + shortHash(string(run.RunID)),
+		ArtifactID:            modulecore.NewArtifactID(),
+		Kind:                  modulecore.ArtifactKindReport,
 		TaskID:                run.TaskID,
 		RunID:                 run.RunID,
 		ActorID:               run.ActorID,

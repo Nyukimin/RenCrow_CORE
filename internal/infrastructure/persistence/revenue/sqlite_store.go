@@ -94,12 +94,12 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS revenue_daily_routine_report (
-			report_id TEXT PRIMARY KEY,
+			artifact_id TEXT PRIMARY KEY,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS channel_draft (
-			draft_id TEXT PRIMARY KEY,
+			artifact_id TEXT PRIMARY KEY,
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
@@ -246,7 +246,7 @@ func (s *SQLiteStore) SaveDailyRoutineReport(ctx context.Context, item domainrev
 	if err := domainrevenue.ValidateDailyRoutineReport(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "revenue_daily_routine_report", "report_id", item.ReportID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "revenue_daily_routine_report", "artifact_id", string(item.ArtifactID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListDailyRoutineReports(ctx context.Context, limit int) ([]domainrevenue.DailyRoutineReport, error) {
@@ -257,7 +257,7 @@ func (s *SQLiteStore) SaveChannelDraft(ctx context.Context, item domainrevenue.C
 	if err := domainrevenue.ValidateChannelDraft(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "channel_draft", "draft_id", item.DraftID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "channel_draft", "artifact_id", string(item.ArtifactID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListChannelDrafts(ctx context.Context, limit int) ([]domainrevenue.ChannelDraft, error) {

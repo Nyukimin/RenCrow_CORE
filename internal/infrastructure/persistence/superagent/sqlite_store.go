@@ -63,7 +63,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS context_pack (
-			context_pack_id TEXT PRIMARY KEY,
+			artifact_id TEXT PRIMARY KEY,
 			run_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -140,7 +140,7 @@ func (s *SQLiteStore) SaveContextPack(ctx context.Context, item domainsuperagent
 	if err := domainsuperagent.ValidateContextPack(item, s.maxContextTokens); err != nil {
 		return err
 	}
-	return s.save(ctx, "context_pack", "context_pack_id", item.ContextPackID, "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "context_pack", "artifact_id", string(item.ArtifactID), "created_at", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListContextPacks(ctx context.Context, limit int) ([]domainsuperagent.ContextPack, error) {

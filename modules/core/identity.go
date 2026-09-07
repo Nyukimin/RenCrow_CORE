@@ -77,6 +77,33 @@ func (kind ThreadKind) Validate() error {
 	}
 }
 
+// ArtifactKind identifies the domain meaning of an Artifact.
+type ArtifactKind string
+
+const (
+	ArtifactKindReport        ArtifactKind = "report"
+	ArtifactKindDraft         ArtifactKind = "draft"
+	ArtifactKindContextPack   ArtifactKind = "context_pack"
+	ArtifactKindImage         ArtifactKind = "image"
+	ArtifactKindPatch         ArtifactKind = "patch"
+	ArtifactKindSpecification ArtifactKind = "specification"
+	ArtifactKindTranscript    ArtifactKind = "transcript"
+	ArtifactKindDiff          ArtifactKind = "diff"
+	ArtifactKindDocument      ArtifactKind = "document"
+)
+
+func (kind ArtifactKind) Validate() error {
+	switch kind {
+	case ArtifactKindReport, ArtifactKindDraft, ArtifactKindContextPack, ArtifactKindImage, ArtifactKindPatch, ArtifactKindSpecification, ArtifactKindTranscript, ArtifactKindDiff, ArtifactKindDocument:
+		return nil
+	default:
+		if kind == "" {
+			return fmt.Errorf("artifact kind is required")
+		}
+		return fmt.Errorf("invalid artifact kind %q", kind)
+	}
+}
+
 // CanonicalIDType selects the target type for deterministic migration IDs.
 type CanonicalIDType string
 

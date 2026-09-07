@@ -124,8 +124,9 @@ type EconomicReflection struct {
 }
 
 type DailyRoutineReport struct {
-	ReportID            string    `json:"report_id"`
-	WorkstreamID        string    `json:"workstream_id,omitempty"`
+	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
+	WorkstreamID        string                  `json:"workstream_id,omitempty"`
 	Date                string    `json:"date"`
 	Summary             string    `json:"summary,omitempty"`
 	MarketResearch      int       `json:"market_research_count"`
@@ -142,14 +143,15 @@ type DailyRoutineReport struct {
 }
 
 type ChannelDraft struct {
-	DraftID             string    `json:"draft_id"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	OpportunityID       string    `json:"opportunity_id,omitempty"`
-	WorkstreamID        string    `json:"workstream_id,omitempty"`
-	Channel             string    `json:"channel"`
-	Subject             string    `json:"subject,omitempty"`
-	Body                string    `json:"body"`
-	SourceReportID      string    `json:"source_report_id,omitempty"`
+	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
+	TraceID             string                  `json:"trace_id,omitempty"`
+	OpportunityID       string                  `json:"opportunity_id,omitempty"`
+	WorkstreamID        string                  `json:"workstream_id,omitempty"`
+	Channel             string                  `json:"channel"`
+	Subject             string                  `json:"subject,omitempty"`
+	Body                string                  `json:"body"`
+	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
 	CreatedAt           time.Time `json:"created_at"`
 }
@@ -158,8 +160,8 @@ type ExternalSendApplyRecord struct {
 	ActionID            modulecore.ActionID `json:"action_id"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	DeliveryID          string    `json:"delivery_id,omitempty"`
-	DraftID             string    `json:"draft_id"`
-	DecisionID          string    `json:"decision_id"`
+	ArtifactID          modulecore.ArtifactID `json:"artifact_id"`
+	DecisionID          string                `json:"decision_id"`
 	Channel             string    `json:"channel"`
 	Destination         string    `json:"destination,omitempty"`
 	ChannelAdapter      string    `json:"channel_adapter,omitempty"`

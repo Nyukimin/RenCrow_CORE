@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func ValidateAgentRun(item AgentRun) error {
@@ -76,8 +77,11 @@ func ValidateSubagentTask(item SubagentTask) error {
 }
 
 func ValidateContextPack(item ContextPack, maxTokens int) error {
-	if strings.TrimSpace(item.ContextPackID) == "" {
-		return fmt.Errorf("context_pack_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("artifact_id is invalid: %w", err)
+	}
+	if item.Kind != modulecore.ArtifactKindContextPack {
+		return fmt.Errorf("artifact_kind must be %q", modulecore.ArtifactKindContextPack)
 	}
 	if err := item.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id is invalid: %w", err)

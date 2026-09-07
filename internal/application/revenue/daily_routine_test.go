@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryDailyRoutineStore struct {
@@ -67,7 +68,7 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 		}},
 	}
 	result, err := NewDailyRoutineService(store).RunDailyRoutine(context.Background(), DailyRoutineRequest{
-		ReportID:     "daily_1",
+		ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		WorkstreamID: "ws_revenue",
 		Date:         "2026-05-18",
 		Limit:        20,
@@ -86,7 +87,7 @@ func TestDailyRoutineServiceCreatesRevenueAgentDraftOnlyReport(t *testing.T) {
 		t.Fatalf("expected one saved report, got %#v", store.reports)
 	}
 	report := store.reports[0]
-	if report.ReportID != "daily_1" || report.WorkstreamID != "ws_revenue" || report.Status != "draft_report" || report.ExternalSendApplied {
+	if report.ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") || report.Kind != modulecore.ArtifactKindReport || report.WorkstreamID != "ws_revenue" || report.Status != "draft_report" || report.ExternalSendApplied {
 		t.Fatalf("unexpected saved report: %#v", report)
 	}
 	if report.MarketResearch != 1 || report.SNSPosts != 1 || report.Products != 1 || report.CustomerVoices != 1 || report.RevenueEvents != 1 || report.PaidCustomers != 1 || report.BlockedDecisions != 1 {

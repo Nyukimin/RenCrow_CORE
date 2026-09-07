@@ -49,8 +49,10 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
+	artifactID := modulecore.NewArtifactID()
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    artifactID,
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        taskID,
 		RunID:         runID,
 		Summary:       "summary",
@@ -79,7 +81,7 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("ListSubagentTasks() = %#v, %v", tasks, err)
 	}
 	contexts, err := store.ListContextPacks(context.Background(), 10)
-	if err != nil || len(contexts) != 1 {
+	if err != nil || len(contexts) != 1 || contexts[0].ArtifactID != artifactID || contexts[0].Kind != modulecore.ArtifactKindContextPack {
 		t.Fatalf("ListContextPacks() = %#v, %v", contexts, err)
 	}
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
@@ -126,7 +128,8 @@ func TestJSONLStoreRejectsOversizedContextPack(t *testing.T) {
 	store := NewJSONLStore(t.TempDir(), 100)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    modulecore.NewArtifactID(),
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        taskID,
 		RunID:         runID,
 		Summary:       "summary",

@@ -13,6 +13,8 @@ func validTaskID() modulecore.TaskID { return modulecore.NewTaskID() }
 
 func validRunID() modulecore.RunID { return modulecore.NewRunID() }
 
+func validArtifactID() modulecore.ArtifactID { return modulecore.NewArtifactID() }
+
 func TestValidateSubagentTaskRequiresScopeAndTermination(t *testing.T) {
 	err := ValidateSubagentTask(SubagentTask{
 		TaskID:  validTaskID(),
@@ -52,7 +54,8 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("subagent task should validate: %v", err)
 	}
 	if err := ValidateContextPack(ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    validArtifactID(),
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        taskID,
 		RunID:         runID,
 		Summary:       "summary",
@@ -101,11 +104,12 @@ func TestValidateAgentRunRejectsLegacyProjectionRunID(t *testing.T) {
 func TestValidateContextPackRejectsLegacyProjectionRunID(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	err := ValidateContextPack(ContextPack{
-		ContextPackID: "ctx_legacy",
-		TaskID:        validTaskID(),
-		RunID:         "run_legacy",
-		Summary:       "summary",
-		CreatedAt:     now,
+		ArtifactID: validArtifactID(),
+		Kind:       modulecore.ArtifactKindContextPack,
+		TaskID:     validTaskID(),
+		RunID:      "run_legacy",
+		Summary:    "summary",
+		CreatedAt:  now,
 	}, 0)
 	if err == nil || !strings.Contains(err.Error(), "run_id") {
 		t.Fatalf("expected malformed canonical run_id rejection, got %v", err)
@@ -265,7 +269,8 @@ func TestValidateProjectionsRejectInvalidTaskID(t *testing.T) {
 		{
 			name: "context pack",
 			err: ValidateContextPack(ContextPack{
-				ContextPackID: "ctx_legacy", TaskID: "task_legacy", RunID: validRunID(), Summary: "summary", CreatedAt: now,
+				ArtifactID: validArtifactID(), Kind: modulecore.ArtifactKindContextPack,
+				TaskID: "task_legacy", RunID: validRunID(), Summary: "summary", CreatedAt: now,
 			}, 0),
 		},
 	}
@@ -280,7 +285,8 @@ func TestValidateProjectionsRejectInvalidTaskID(t *testing.T) {
 
 func TestValidateContextPackRespectsMaxTokens(t *testing.T) {
 	err := ValidateContextPack(ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    validArtifactID(),
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        validTaskID(),
 		RunID:         validRunID(),
 		Summary:       "summary",
@@ -323,7 +329,10 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "context pack created_at",
 			err:  "created_at",
 			run: func() error {
-				return ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: 1200}, 3000)
+				return ValidateContextPack(ContextPack{
+					ArtifactID: validArtifactID(), Kind: modulecore.ArtifactKindContextPack,
+					TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: 1200,
+				}, 3000)
 			},
 		},
 		{
@@ -403,10 +412,11 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		{name: "subagent task", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Scope: []string{"docs/"}, TerminationCondition: "report", Status: "pending", CreatedAt: now}), want: "task"},
 		{name: "subagent termination", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, Status: "pending", CreatedAt: now}), want: "termination_condition"},
 		{name: "subagent status", err: ValidateSubagentTask(SubagentTask{TaskID: validTaskID(), RunID: validRunID(), ActorID: "shiro", Task: "調査", Scope: []string{"docs/"}, TerminationCondition: "report", CreatedAt: now}), want: "status"},
-		{name: "context id", err: ValidateContextPack(ContextPack{TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", CreatedAt: now}, 0), want: "context_pack_id"},
-		{name: "context run", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), Summary: "summary", CreatedAt: now}, 0), want: "run_id"},
-		{name: "context summary", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), CreatedAt: now}, 0), want: "summary"},
-		{name: "context negative tokens", err: ValidateContextPack(ContextPack{ContextPackID: "ctx_1", TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: -1, CreatedAt: now}, 0), want: "token_estimate"},
+		{name: "context artifact id", err: ValidateContextPack(ContextPack{Kind: modulecore.ArtifactKindContextPack, TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", CreatedAt: now}, 0), want: "artifact_id"},
+		{name: "context kind", err: ValidateContextPack(ContextPack{ArtifactID: validArtifactID(), TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", CreatedAt: now}, 0), want: "artifact_kind"},
+		{name: "context run", err: ValidateContextPack(ContextPack{ArtifactID: validArtifactID(), Kind: modulecore.ArtifactKindContextPack, TaskID: validTaskID(), Summary: "summary", CreatedAt: now}, 0), want: "run_id"},
+		{name: "context summary", err: ValidateContextPack(ContextPack{ArtifactID: validArtifactID(), Kind: modulecore.ArtifactKindContextPack, TaskID: validTaskID(), RunID: validRunID(), CreatedAt: now}, 0), want: "summary"},
+		{name: "context negative tokens", err: ValidateContextPack(ContextPack{ArtifactID: validArtifactID(), Kind: modulecore.ArtifactKindContextPack, TaskID: validTaskID(), RunID: validRunID(), Summary: "summary", TokenEstimate: -1, CreatedAt: now}, 0), want: "token_estimate"},
 		{name: "channel id", err: ValidateMessageChannel(MessageChannel{ChannelType: "superagent", Status: "active", CreatedAt: now}), want: "channel_id"},
 		{name: "channel type", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", Status: "active", CreatedAt: now}), want: "channel_type"},
 		{name: "channel status", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", ChannelType: "superagent", CreatedAt: now}), want: "status"},

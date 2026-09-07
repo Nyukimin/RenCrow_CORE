@@ -1883,8 +1883,14 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if super.runs[0].RunID != super.runs[1].RunID || super.runs[0].WorkstreamID != resp.SessionID || super.runs[0].ActorID != "mio" || super.runs[1].ActorID != "mio" {
 		t.Fatalf("unexpected agent_run identity: %+v", super.runs)
 	}
-	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID || super.contextPacks[0].ContextPackID != "ctx_lead_"+string(super.runs[0].RunID) {
+	if len(super.contextPacks) != 1 || super.contextPacks[0].RunID != super.runs[0].RunID {
 		t.Fatalf("unexpected context pack: %+v", super.contextPacks)
+	}
+	if err := super.contextPacks[0].ArtifactID.Validate(); err != nil {
+		t.Fatalf("context pack artifact_id is not canonical: %v", err)
+	}
+	if super.contextPacks[0].Kind != modulecore.ArtifactKindContextPack {
+		t.Fatalf("context pack kind=%q want=%q", super.contextPacks[0].Kind, modulecore.ArtifactKindContextPack)
 	}
 	if runID := modulecore.RunID(super.runs[0].RunID); runID.Validate() != nil {
 		t.Fatalf("lead agent RunID is not canonical: %q", runID)

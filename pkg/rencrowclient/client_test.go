@@ -55,6 +55,27 @@ func canonicalClientTestRunID(t *testing.T, value string) string {
 	return raw
 }
 
+func canonicalClientTestArtifactID(t *testing.T, value string) string {
+	t.Helper()
+	raw, err := modulecore.NewMigrationID(modulecore.CanonicalArtifactID, "rencrowclient_test", "fixture", value)
+	if err != nil {
+		t.Fatalf("create canonical artifact id: %v", err)
+	}
+	return raw
+}
+
+func canonicalClientTestContextPack(t *testing.T, artifactKey, taskID, runID string, now time.Time) ContextPack {
+	t.Helper()
+	return ContextPack{
+		ArtifactID: canonicalClientTestArtifactID(t, artifactKey),
+		Kind:       string(modulecore.ArtifactKindContextPack),
+		TaskID:     taskID,
+		RunID:      runID,
+		Summary:    "summary",
+		CreatedAt:  now,
+	}
+}
+
 func canonicalClientTestRunQueueItem(t *testing.T, queueID, status string, now time.Time) RunQueueItem {
 	t.Helper()
 	item := RunQueueItem{
@@ -269,32 +290,32 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "context pack missing summary",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-summary", taskID, runID, now); p.Summary = ""; return p }()}},
 			want: "missing summary",
 		},
 		{
 			name: "context pack negative tokens",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, Summary: "summary", TokenEstimate: -1, CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-negative-tokens", taskID, runID, now); p.TokenEstimate = -1; return p }()}},
 			want: "token_estimate must be >= 0",
 		},
 		{
 			name: "context pack missing created at",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: runID, Summary: "summary"}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-created-at", taskID, runID, now); p.CreatedAt = time.Time{}; return p }()}},
 			want: "missing created_at",
 		},
 		{
 			name: "context pack missing task id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", RunID: runID, Summary: "summary", CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-task-id", taskID, runID, now); p.TaskID = ""; return p }()}},
 			want: "missing task_id",
 		},
 		{
 			name: "context pack malformed task id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: "task_1", RunID: runID, Summary: "summary", CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-malformed-task-id", taskID, runID, now); p.TaskID = "task_1"; return p }()}},
 			want: "invalid task_id",
 		},
 		{
 			name: "context pack malformed run id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{{ContextPackID: "ctx_1", TaskID: taskID, RunID: "run_1", Summary: "summary", CreatedAt: now}}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-malformed-run-id", taskID, runID, now); p.RunID = "run_1"; return p }()}},
 			want: "invalid run_id",
 		},
 		{
@@ -3121,7 +3142,7 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				APICandidates:  []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
 				APISchemas:     []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_cand_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1, CreatedAt: now}},
 				APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "official_api_unverified", Message: "needs review"}}, CreatedAt: now}},
-				CoverageReport: BrowserTraceAPICoverage{ReportID: "coverage_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, CreatedAt: now},
+				CoverageReport: BrowserTraceAPICoverage{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, CreatedAt: now},
 				APIArtifacts:   []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Type: "fetcher_plan", Title: "Fetcher plan", Status: "pending_review", Content: "review only", CreatedAt: now}},
 			})
 		case "/viewer/browser-trace-api/validations":
@@ -3235,7 +3256,7 @@ func TestBrowserTraceAPIStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "validated with issues", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "validated", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "validated status with issues"},
 		{name: "needs review with passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "passed without validated status"},
 		{name: "validation missing created at", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}}}}, want: "validation missing created_at"},
-		{name: "coverage missing created at", resp: BrowserTraceAPIStatus{CoverageReports: []BrowserTraceAPICoverage{{ReportID: "coverage_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio"}}}, want: "coverage missing created_at"},
+		{name: "coverage missing created at", resp: BrowserTraceAPIStatus{CoverageReports: []BrowserTraceAPICoverage{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio"}}}, want: "coverage missing created_at"},
 		{name: "artifact unknown status", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "promoted", Content: "review only", CreatedAt: now}}}, want: "artifact status"},
 		{name: "artifact missing content", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", CreatedAt: now}}}, want: "missing content"},
 		{name: "artifact missing created at", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only"}}}, want: "artifact missing created_at"},
@@ -5036,12 +5057,13 @@ func TestCreateRevenueDailyRoutineReport(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.ReportID != "daily_1" || req.WorkstreamID != "ws_revenue" || req.Limit != 20 {
+		if req.ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") || req.WorkstreamID != "ws_revenue" || req.Limit != 20 {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(RevenueDailyRoutineResponse{
 			Report: RevenueDailyRoutineReport{
-				ReportID:            req.ReportID,
+				ArtifactID:          req.ArtifactID,
+				Kind:                modulecore.ArtifactKindReport,
 				WorkstreamID:        req.WorkstreamID,
 				Date:                "2026-05-18",
 				Status:              "draft_report",
@@ -5058,7 +5080,7 @@ func TestCreateRevenueDailyRoutineReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.CreateRevenueDailyRoutineReport(context.Background(), RevenueDailyRoutineRequest{
-		ReportID:     "daily_1",
+		ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		WorkstreamID: "ws_revenue",
 		Date:         "2026-05-18",
 		Limit:        20,
@@ -5093,19 +5115,20 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 			name: "report id mismatch",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ReportID:     "other",
+					ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000099"),
 					WorkstreamID: "ws_revenue",
 					Date:         "2026-05-18",
 					Status:       "draft_report",
 				},
 			},
-			want: "report_id mismatch",
+			want: "artifact_id mismatch",
 		},
 		{
 			name: "not draft",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ReportID:     "daily_1",
+					ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+					Kind:         modulecore.ArtifactKindReport,
 					WorkstreamID: "ws_revenue",
 					Date:         "2026-05-18",
 					Status:       "sent",
@@ -5117,7 +5140,8 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 			name: "external action applied",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ReportID:     "daily_1",
+					ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+					Kind:         modulecore.ArtifactKindReport,
 					WorkstreamID: "ws_revenue",
 					Date:         "2026-05-18",
 					Status:       "draft_report",
@@ -5130,7 +5154,7 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 			name: "report claims sent",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ReportID:            "daily_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 					WorkstreamID:        "ws_revenue",
 					Date:                "2026-05-18",
 					Status:              "draft_report",
@@ -5143,7 +5167,8 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 			name: "missing created at",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ReportID:     "daily_1",
+					ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+					Kind:         modulecore.ArtifactKindReport,
 					WorkstreamID: "ws_revenue",
 					Date:         "2026-05-18",
 					Status:       "draft_report",
@@ -5166,7 +5191,7 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.CreateRevenueDailyRoutineReport(context.Background(), RevenueDailyRoutineRequest{
-				ReportID:     "daily_1",
+				ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 				WorkstreamID: "ws_revenue",
 				Date:         "2026-05-18",
 				Limit:        20,
@@ -5188,10 +5213,13 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.DraftID != "draft_1" || req.Channel != "email" || !req.ExternalSendApplied {
+		if req.ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") || req.Channel != "email" || !req.ExternalSendApplied {
 			t.Fatalf("payload=%#v", req)
 		}
 		req.ExternalSendApplied = false
+		if req.Kind == "" {
+			req.Kind = modulecore.ArtifactKindDraft
+		}
 		req.CreatedAt = now
 		_ = json.NewEncoder(w).Encode(RevenueChannelDraftResponse{
 			Draft:                  req,
@@ -5204,7 +5232,7 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.CreateRevenueChannelDraft(context.Background(), RevenueChannelDraft{
-		DraftID:             "draft_1",
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 		Channel:             "email",
 		Subject:             "Draft",
 		Body:                "外部送信しない下書きです",
@@ -5224,9 +5252,9 @@ func TestCreateRevenueChannelDraftRejectsInvalidRequest(t *testing.T) {
 		item RevenueChannelDraft
 		want string
 	}{
-		{name: "missing draft", item: RevenueChannelDraft{Channel: "email", Body: "draft"}, want: "missing draft_id"},
-		{name: "missing channel", item: RevenueChannelDraft{DraftID: "draft_1", Body: "draft"}, want: "missing channel"},
-		{name: "missing body", item: RevenueChannelDraft{DraftID: "draft_1", Channel: "email"}, want: "missing body"},
+		{name: "missing draft", item: RevenueChannelDraft{Channel: "email", Body: "draft"}, want: "missing artifact_id"},
+		{name: "missing channel", item: RevenueChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Body: "draft"}, want: "missing channel"},
+		{name: "missing body", item: RevenueChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Channel: "email"}, want: "missing body"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -5253,18 +5281,19 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "draft id mismatch",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID: "other",
+					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000099"),
 					Channel: "email",
 				},
 			},
-			want: "draft_id mismatch",
+			want: "artifact_id mismatch",
 		},
 		{
 			name: "external action applied",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID: "draft_1",
-					Channel: "email",
+					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+					Kind:       modulecore.ArtifactKindDraft,
+					Channel:    "email",
 				},
 				ExternalActionsApplied: true,
 			},
@@ -5274,7 +5303,7 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "draft claims sent",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 					Channel:             "email",
 					ExternalSendApplied: true,
 				},
@@ -5285,8 +5314,9 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "missing created at",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					DraftID: "draft_1",
-					Channel: "email",
+					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+					Kind:       modulecore.ArtifactKindDraft,
+					Channel:    "email",
 				},
 			},
 			want: "draft missing created_at",
@@ -5306,7 +5336,7 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err = client.CreateRevenueChannelDraft(context.Background(), RevenueChannelDraft{
-				DraftID: "draft_1",
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				Channel: "email",
 				Subject: "Draft",
 				Body:    "外部送信しない下書きです",
@@ -5331,13 +5361,13 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.TaskID != taskID || req.RunID != runID || req.DraftID != "draft_1" || req.DecisionID != "dec_1" {
+		if req.TaskID != taskID || req.RunID != runID || req.ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") || req.DecisionID != "dec_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		_ = json.NewEncoder(w).Encode(RevenueExternalSendApplyResponse{
 			Record: RevenueExternalSendApplyRecord{
 				ActionID:            actionID,
-				DraftID:             req.DraftID,
+				ArtifactID:          req.ArtifactID,
 				DecisionID:          req.DecisionID,
 				Channel:             "email",
 				ChannelAdapter:      "unconfigured",
@@ -5361,7 +5391,7 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 	resp, err := client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
 		TaskID:     taskID,
 		RunID:      runID,
-		DraftID:    "draft_1",
+		ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID: "dec_1",
 	})
 	if err != nil {
@@ -5378,9 +5408,9 @@ func TestApplyRevenueExternalSendRejectsInvalidRequest(t *testing.T) {
 		item RevenueExternalSendApplyRequest
 		want string
 	}{
-		{name: "missing task", item: RevenueExternalSendApplyRequest{RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DraftID: "draft_1", DecisionID: "dec_1"}, want: "missing task_id"},
-		{name: "missing draft", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1"}, want: "missing draft_id"},
-		{name: "missing decision", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DraftID: "draft_1"}, want: "missing decision_id"},
+		{name: "missing task", item: RevenueExternalSendApplyRequest{RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1"}, want: "missing task_id"},
+		{name: "missing draft", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1"}, want: "missing artifact_id"},
+		{name: "missing decision", item: RevenueExternalSendApplyRequest{TaskID: modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"), RunID: modulecore.RunID("run_00000000-0000-5000-8000-000000000002"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002")}, want: "missing decision_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -5406,21 +5436,21 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 		{
 			name: "missing action id",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ActionID: "other", DraftID: "draft_1", DecisionID: "dec_1", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: "other", ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1", ApplyStatus: "blocked"},
 			},
 			want: "missing action_id",
 		},
 		{
 			name: "draft id mismatch",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "other", DecisionID: "dec_1", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000099"), DecisionID: "dec_1", ApplyStatus: "blocked"},
 			},
-			want: "draft_id mismatch",
+			want: "artifact_id mismatch",
 		},
 		{
 			name: "decision id mismatch",
 			resp: RevenueExternalSendApplyResponse{
-				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "other", ApplyStatus: "blocked"},
+				Record: RevenueExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "other", ApplyStatus: "blocked"},
 			},
 			want: "decision_id mismatch",
 		},
@@ -5429,7 +5459,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
 					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ApplyStatus:         "blocked",
@@ -5448,7 +5478,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
 					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ApplyStatus:         "blocked",
@@ -5466,7 +5496,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
 					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ChannelAdapter:      "unconfigured",
@@ -5487,7 +5517,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
 					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ChannelAdapter:      "email_api",
@@ -5508,7 +5538,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
 					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-					DraftID:             "draft_1",
+					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
 					ApplyStatus:         "blocked",
@@ -5539,7 +5569,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			_, err = client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
 				TaskID:     modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"),
 				RunID:      modulecore.RunID("run_00000000-0000-5000-8000-000000000002"),
-				DraftID:    "draft_1",
+				ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID: "dec_1",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -5565,20 +5595,20 @@ func TestRevenueStatus(t *testing.T) {
 				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
-				ReportID:  "report_1",
+				ArtifactID:  modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 				Date:      "2026-05-19",
 				Status:    "draft_report",
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				DraftID:   "draft_1",
+				ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 				Channel:   "email",
 				Body:      "下書き",
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
 				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-				DraftID:       "draft_1",
+				ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID:    "dec_1",
 				Channel:       "email",
 				ApplyStatus:   "blocked",
@@ -5621,20 +5651,20 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
-				ReportID:  "report_1",
+				ArtifactID:  modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 				Date:      "2026-05-19",
 				Status:    "draft_report",
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				DraftID:   "draft_1",
+				ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 				Channel:   "email",
 				Body:      "下書き",
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
 				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-				DraftID:       "draft_1",
+				ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID:    "dec_1",
 				Channel:       "email",
 				ApplyStatus:   "blocked",
@@ -5662,10 +5692,10 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 		}, want: "missing body"},
 		{name: "daily routine report missing created at", mutate: func(s *RevenueStatus) {
 			s.DailyRoutineReports[0].CreatedAt = time.Time{}
-		}, want: "daily_routine_report report_1 missing created_at"},
+		}, want: "daily_routine_report art_00000000-0000-5000-8000-000000000001 missing created_at"},
 		{name: "channel draft missing created at", mutate: func(s *RevenueStatus) {
 			s.ChannelDrafts[0].CreatedAt = time.Time{}
-		}, want: "channel_draft draft_1 missing created_at"},
+		}, want: "channel_draft art_00000000-0000-5000-8000-000000000002 missing created_at"},
 		{name: "duplicate apply", mutate: func(s *RevenueStatus) {
 			s.ExternalSendApplyRecords = append(s.ExternalSendApplyRecords, s.ExternalSendApplyRecords[0])
 		}, want: "duplicate external_send_apply_record"},

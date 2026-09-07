@@ -1143,7 +1143,7 @@ func (s *HeartbeatService) runRevenueDailyRoutine(ctx context.Context, schedule 
 		return nil
 	}
 	result, err := s.revenueRoutine.RunDailyRoutine(ctx, revenueapp.DailyRoutineRequest{
-		ReportID:     fmt.Sprintf("rev_daily_%s_%d", safePathSegment(schedule.HeartbeatID), now.UnixNano()),
+		ArtifactID:   modulecore.NewArtifactID(),
 		WorkstreamID: schedule.WorkstreamID,
 		Date:         now.UTC().Format("2006-01-02"),
 		Now:          now.UTC(),
@@ -1151,7 +1151,7 @@ func (s *HeartbeatService) runRevenueDailyRoutine(ctx context.Context, schedule 
 	if err != nil {
 		return err
 	}
-	s.emitEvent("revenue.daily_routine.draft_report", fmt.Sprintf("%s:%s", result.Agent, result.Report.ReportID))
+	s.emitEvent("revenue.daily_routine.draft_report", fmt.Sprintf("%s:%s", result.Agent, result.Report.ArtifactID))
 	return nil
 }
 

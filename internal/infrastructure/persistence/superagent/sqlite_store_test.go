@@ -54,8 +54,10 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	if err := store.SaveSubagentTask(context.Background(), completedTask); err != nil {
 		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
+	artifactID := modulecore.NewArtifactID()
 	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    artifactID,
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        taskID,
 		RunID:         runID,
 		Summary:       "summary",
@@ -92,7 +94,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("ListSubagentTasks() = %#v, %v", tasks, err)
 	}
 	contexts, err := store.ListContextPacks(context.Background(), 10)
-	if err != nil || len(contexts) != 1 || contexts[0].ContextPackID != "ctx_1" {
+	if err != nil || len(contexts) != 1 || contexts[0].ArtifactID != artifactID || contexts[0].Kind != modulecore.ArtifactKindContextPack {
 		t.Fatalf("ListContextPacks() = %#v, %v", contexts, err)
 	}
 	channels, err := store.ListMessageChannels(context.Background(), 10)
@@ -142,6 +144,44 @@ func TestSQLiteStoreSubagentTaskSchemaUsesCanonicalTaskIdentity(t *testing.T) {
 		if columns[name] {
 			t.Fatalf("subagent_task contains legacy column %q", name)
 		}
+	}
+}
+
+func TestSQLiteStoreContextPackSchemaUsesArtifactIdentity(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	rows, err := store.db.Query(`PRAGMA table_info(context_pack)`)
+	if err != nil {
+		t.Fatalf("inspect context_pack schema: %v", err)
+	}
+	defer rows.Close()
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			t.Fatalf("scan context_pack schema: %v", err)
+		}
+		columns[name] = true
+		if name == "artifact_id" && primaryKey != 1 {
+			t.Fatalf("artifact_id primary key=%d, want 1", primaryKey)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read context_pack schema: %v", err)
+	}
+	for _, name := range []string{"artifact_id", "run_id", "created_at", "payload"} {
+		if !columns[name] {
+			t.Fatalf("context_pack missing column %q", name)
+		}
+	}
+	if columns["context_pack_id"] {
+		t.Fatal("context_pack contains legacy column context_pack_id")
 	}
 }
 
@@ -295,7 +335,8 @@ func TestSQLiteStoreRejectsOversizedContextPack(t *testing.T) {
 	defer store.Close()
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	err = store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ContextPackID: "ctx_1",
+		ArtifactID:    modulecore.NewArtifactID(),
+		Kind:          modulecore.ArtifactKindContextPack,
 		TaskID:        taskID,
 		RunID:         runID,
 		Summary:       "summary",

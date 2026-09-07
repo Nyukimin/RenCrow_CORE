@@ -1,0 +1,107 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step13-artifact",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T01:20:00Z",
+  "input": {
+    "base_revision": "3e8b0bf",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-13-artifactid",
+    "artifact_rule": "Report Draft ContextPack Image Patch Specification Transcript are Artifacts addressed by typed ArtifactID art_ plus ArtifactKind; generic ReportID DraftID ContextPackID are forbidden",
+    "domain_exception": "Independent domain entities may keep Domain IDs but durable File Body products are addressed by ArtifactID",
+    "completion_rule": "Generic ReportID DraftID ContextPackID zero in owner packages after cutover and migration source removal"
+  },
+  "included": [
+    {
+      "check_id": "s13_artifact_kind_contract",
+      "guarantee": "ArtifactKind constants cover report draft context_pack image patch specification transcript diff document and typed ArtifactID validation uses art_ prefix",
+      "owner": "RenCrow_CORE modules/core",
+      "execution_phase": "pre-commit",
+      "result_consumer": "all Artifact owners",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s13_revenue_report_draft",
+      "guarantee": "DailyRoutineReport and ChannelDraft and ExternalSendApplyRecord use ArtifactID with ArtifactKind report or draft and JSON artifact_id with zero ReportID DraftID SourceReportID",
+      "owner": "RenCrow_CORE revenue",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Viewer revenue and client",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s13_superagent_context_pack",
+      "guarantee": "SuperAgent ContextPack primary identity is ArtifactID with ArtifactKind context_pack and zero ContextPackID context_pack_id",
+      "owner": "RenCrow_CORE superagent",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "SuperAgent status and harness store",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s13_browser_coverage_report",
+      "guarantee": "BrowserTrace coverage report identity uses ArtifactID with ArtifactKind report and zero ReportID on coverage contracts",
+      "owner": "RenCrow_CORE browsertrace client",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "browser trace API",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s13_historical_migration",
+      "guarantee": "offline one-shot CLI remaps revenue report_id draft_id and superagent context_pack_id to artifact_id with deterministic NewMigrationID remints dry-run apply agreement second-run noop and refuses live /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step13 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state",
+      "failure_action": "leave old binary and state active or rollback"
+    },
+    {
+      "check_id": "s13_architecture_zero",
+      "guarantee": "confirmed Step13 owners contain zero ReportID DraftID ContextPackID report_id draft_id context_pack_id after cleanup except migration package until deleted",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step13 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s13_predeploy_verification",
+      "guarantee": "targeted owner tests vet build and diff checks pass against reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s13_runtime_route",
+      "guarantee": "installed artifact readiness revenue and superagent ArtifactID projections agree before and after restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step13 ledger",
+      "failure_action": "rollback or keep Step13 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s13_xbookmark_image_id",
+      "reason": "xbookmarkworkflow ImageID is a narrow external generation product ID; remapping requires Image module contract confirmation beyond revenue and SuperAgent owners in this IU",
+      "consumer": "follow-up ArtifactKind image IU or Image module binding",
+      "failure_action": "keep ImageID open without claiming full internal ImageID zero"
+    },
+    {
+      "check_id": "s13_patch_spec_transcript_absent",
+      "reason": "PatchID SpecificationID TranscriptID have no current Go owners; keep watch via architecture zero rather than inventing stores",
+      "consumer": "architecture zero continuous ban",
+      "failure_action": "fail closed if they reappear as generic IDs"
+    },
+    {
+      "check_id": "s13_tts_public_playback_ref",
+      "reason": "inherited deferred from Step12; not ArtifactID",
+      "consumer": "post-Step12 TTS PublicPlaybackRef Implementation Unit",
+      "failure_action": "keep public playback rename open"
+    },
+    {
+      "check_id": "s13_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

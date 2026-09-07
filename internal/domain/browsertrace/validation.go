@@ -170,8 +170,11 @@ func ValidateAPICandidateValidationResult(item APICandidateValidationResult) err
 }
 
 func ValidateAPICoverageReport(item APICoverageReport) error {
-	if strings.TrimSpace(item.ReportID) == "" {
-		return errors.New("report_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return errors.New("artifact_id is required")
+	}
+	if item.Kind != modulecore.ArtifactKindReport {
+		return errors.New("artifact_kind must be report")
 	}
 	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
 		return err

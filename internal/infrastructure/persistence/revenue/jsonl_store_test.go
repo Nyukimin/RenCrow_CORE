@@ -97,7 +97,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
 	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
-		ReportID:            "daily_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 		Date:                "2026-05-18",
 		Status:              "draft_report",
 		ExternalSendApplied: false,
@@ -106,7 +106,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		DraftID:   "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 		Channel:   "email",
 		Subject:   "購入者向け案内",
 		Body:      "下書き本文",
@@ -116,7 +116,7 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -171,11 +171,11 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("decisions=%#v err=%v", decisions, err)
 	}
 	daily, err := store.ListDailyRoutineReports(ctx, 10)
-	if err != nil || len(daily) != 1 || daily[0].ReportID != "daily_1" {
+	if err != nil || len(daily) != 1 || daily[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("daily=%#v err=%v", daily, err)
 	}
 	drafts, err := store.ListChannelDrafts(ctx, 10)
-	if err != nil || len(drafts) != 1 || drafts[0].DraftID != "draft_1" {
+	if err != nil || len(drafts) != 1 || drafts[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") {
 		t.Fatalf("drafts=%#v err=%v", drafts, err)
 	}
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
@@ -203,13 +203,13 @@ func TestJSONLStoreRejectsInvalidRevenueRecords(t *testing.T) {
 	if err := store.SavePolicyDecisionRecord(ctx, domainrevenue.PolicyDecisionRecord{DecisionID: "dec_1", DecisionType: "external_publish", Status: "adopted"}); err == nil {
 		t.Fatal("expected invalid decision status to fail")
 	}
-	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{ReportID: "daily_1", Date: "2026-05-18", Status: "sent", ExternalSendApplied: true}); err == nil {
+	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-18", Status: "sent", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected non-draft daily routine report to fail")
 	}
-	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{DraftID: "draft_1", Channel: "email", Body: "送信済み", ExternalSendApplied: true}); err == nil {
+	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "送信済み", ExternalSendApplied: true}); err == nil {
 		t.Fatal("expected externally applied channel draft to fail")
 	}
-	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
+	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_1", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "no adapter", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("external send audit failed: %v", err)
 	}
 	if err := store.SaveOpportunity(ctx, domainrevenue.Opportunity{OpportunityID: "opp_1", SourceKind: "note", Title: "必ず稼げる資料", CreatedAt: time.Now()}); err == nil {

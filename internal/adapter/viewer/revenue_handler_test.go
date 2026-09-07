@@ -235,9 +235,9 @@ func TestHandleRevenueStatus(t *testing.T) {
 		voices:        []domainrevenue.CustomerVoice{{VoiceID: "voice_1", VoiceType: "confusion", RawText: "good", UsableForMarketing: true, CreatedAt: day}},
 		events:        []domainrevenue.RevenueEvent{{EventID: "rev_1", EventType: "purchase", ProductID: "prod_1", Amount: 980, CustomerID: "cust_1", CreatedAt: day}},
 		decisions:     []domainrevenue.PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
-		daily:         []domainrevenue.DailyRoutineReport{{ReportID: "daily_1", Date: "2026-05-18", Status: "draft_report"}},
-		drafts:        []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "本文", CreatedAt: day}},
-		applies:       []domainrevenue.ExternalSendApplyRecord{{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), DraftID: "draft_1", DecisionID: "dec_2", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
+		daily:         []domainrevenue.DailyRoutineReport{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-18", Status: "draft_report"}},
+		drafts:        []domainrevenue.ChannelDraft{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "本文", CreatedAt: day}},
+		applies:       []domainrevenue.ExternalSendApplyRecord{{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), DecisionID: "dec_2", Channel: "email", ApplyStatus: "blocked", SendResult: "not_sent", FailureReason: "external channel adapter is not configured", CreatedAt: day}},
 		opportunities: []domainrevenue.Opportunity{{OpportunityID: "opp_1", SourceKind: "market_research", Title: "Draft opportunity", CreatedAt: day}},
 		economicTasks: []domainrevenue.EconomicTask{{TaskID: "task_1", OpportunityID: "opp_1", AgentID: "shiro", TaskKind: "billing", Status: "draft", CreatedAt: day}},
 		reflections:   []domainrevenue.EconomicReflection{{ReflectionID: "reflection_1", OpportunityID: "opp_1", Outcome: "drafted", CreatedAt: day}},
@@ -276,10 +276,10 @@ func TestHandleRevenueStatus(t *testing.T) {
 	if body.Products == nil || body.Voices == nil || body.Events == nil || body.Decisions == nil {
 		t.Fatalf("expected response arrays: %#v", body)
 	}
-	if len(body.DailyReports) != 1 || body.DailyReports[0].ReportID != "daily_1" {
+	if len(body.DailyReports) != 1 || body.DailyReports[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("daily reports=%#v", body.DailyReports)
 	}
-	if len(body.ChannelDrafts) != 1 || body.ChannelDrafts[0].DraftID != "draft_1" {
+	if len(body.ChannelDrafts) != 1 || body.ChannelDrafts[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") {
 		t.Fatalf("channel drafts=%#v", body.ChannelDrafts)
 	}
 	if len(body.Applies) != 1 || body.Applies[0].ActionID.Validate() != nil {
@@ -295,9 +295,9 @@ func TestHandleRevenueStatus(t *testing.T) {
 		body.Summary.TotalRevenueAmount != 980 ||
 		body.Summary.PaidCustomerCount != 1 ||
 		body.Summary.BlockedDecisionCount != 1 ||
-		body.Summary.LatestDailyReportID != "daily_1" ||
+		body.Summary.LatestDailyReportArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") ||
 		body.Summary.ChannelDraftCount != 1 ||
-		body.Summary.LatestChannelDraftID != "draft_1" ||
+		body.Summary.LatestChannelDraftArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") ||
 		body.Summary.ExternalSendApplyCount != 1 {
 		t.Fatalf("summary=%#v", body.Summary)
 	}
@@ -394,7 +394,7 @@ func TestHandleRevenueCreateEndpoints(t *testing.T) {
 			name:    "channel draft",
 			handler: HandleRevenueChannelDraftCreate(store),
 			path:    "/viewer/revenue/channel-drafts",
-			body:    `{"draft_id":"draft_1","channel":"email","subject":"案内","body":"下書き本文"}`,
+			body:    `{"artifact_id":"art_00000000-0000-5000-8000-000000000002","artifact_kind":"draft","channel":"email","subject":"案内","body":"下書き本文"}`,
 			assert: func(t *testing.T, store *stubRevenueStore) {
 				if len(store.drafts) != 1 || store.drafts[0].ExternalSendApplied {
 					t.Fatalf("drafts=%#v", store.drafts)
@@ -602,7 +602,7 @@ func TestHandleRevenueChannelDraftCreateInheritsOpportunityTrace(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts", bytes.NewBufferString(`{
-		"draft_id":"draft_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
 		"opportunity_id":"opp_1",
 		"channel":"email",
 		"body":"下書き本文"
@@ -677,7 +677,7 @@ func TestHandleRevenueDailyRoutineReportCreatesDraftOnlyReport(t *testing.T) {
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/daily-routine", bytes.NewBufferString(`{
-		"report_id":"daily_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000001","artifact_kind":"report",
 		"workstream_id":"ws_revenue",
 		"date":"2026-05-18",
 		"limit":20
@@ -708,24 +708,24 @@ func TestHandleRevenueDailyRoutineReportCreatesDraftOnlyReport(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ReportID != "daily_1" || body.ExternalActionsApplied {
+	if body.Agent != "RevenueAgent" || body.Mode != "draft_report_only" || body.Report.ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") || body.ExternalActionsApplied {
 		t.Fatalf("unexpected response: %#v", body)
 	}
 }
 
 func TestHandleRevenueExternalSendApplyRequiresAllowedPolicy(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		drafts: []domainrevenue.ChannelDraft{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文"}},
 		decisions: []domainrevenue.PolicyDecisionRecord{{
 			DecisionID:   "dec_1",
 			DecisionType: "closed_channel_send",
-			SubjectID:    "draft_1",
+			SubjectID:    "art_00000000-0000-5000-8000-000000000002",
 			Status:       "allowed",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
-		"draft_id":"draft_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
@@ -742,18 +742,18 @@ func TestHandleRevenueExternalSendApplyRequiresAllowedPolicy(t *testing.T) {
 
 func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", TraceID: "trc_external_send", Channel: "email", Body: "下書き本文"}},
+		drafts: []domainrevenue.ChannelDraft{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, TraceID: "trc_external_send", Channel: "email", Body: "下書き本文"}},
 		decisions: []domainrevenue.PolicyDecisionRecord{{
 			DecisionID:   "dec_1",
 			TraceID:      "trc_external_send",
 			DecisionType: "closed_channel_send",
-			SubjectID:    "draft_1",
+			SubjectID:    "art_00000000-0000-5000-8000-000000000002",
 			Status:       "adopted",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
-		"draft_id":"draft_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
 			"decision_id":"dec_1",
 			"destination":"customer@example.test",
 			"channel_adapter":"slack"
@@ -801,17 +801,17 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 
 func TestHandleRevenueExternalSendApplyUsesAllowedPolicyDecision(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		drafts: []domainrevenue.ChannelDraft{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文"}},
 		decisions: []domainrevenue.PolicyDecisionRecord{{
 			DecisionID:   "dec_1",
 			DecisionType: "closed_channel_send",
-			SubjectID:    "draft_1",
+			SubjectID:    "art_00000000-0000-5000-8000-000000000002",
 			Status:       "needs_review",
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
-		"draft_id":"draft_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()
@@ -828,7 +828,7 @@ func TestHandleRevenueExternalSendApplyUsesAllowedPolicyDecision(t *testing.T) {
 
 func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing.T) {
 	store := &stubRevenueStore{
-		drafts: []domainrevenue.ChannelDraft{{DraftID: "draft_1", Channel: "email", Body: "下書き本文"}},
+		drafts: []domainrevenue.ChannelDraft{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文"}},
 		decisions: []domainrevenue.PolicyDecisionRecord{{
 			DecisionID:   "dec_1",
 			DecisionType: "closed_channel_send",
@@ -838,7 +838,7 @@ func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts/external-send-apply", bytes.NewBufferString(`{
 		"task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",
-		"draft_id":"draft_1",
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
 		"decision_id":"dec_1"
 	}`))
 	rec := httptest.NewRecorder()

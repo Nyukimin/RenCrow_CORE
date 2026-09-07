@@ -788,6 +788,114 @@ func TestStep12MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestStep13ArtifactIdentityLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"ReportID",
+		"DraftID",
+		"ContextPackID",
+		"report_id",
+		"draft_id",
+		"context_pack_id",
+	}
+	var violations []string
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step13artifactmigration") ||
+			strings.Contains(relative, "rencrow-step13-artifact-migrate")
+	}
+	checkContent := func(relative string, content []byte) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-step13:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	walkDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step13artifactmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkip(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkContent(rel, content)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step13 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/revenue",
+		"internal/application/revenue",
+		"internal/infrastructure/persistence/revenue",
+		"internal/domain/superagent",
+		"internal/application/superagent",
+		"internal/infrastructure/persistence/superagent",
+		"internal/domain/browsertrace",
+		"internal/application/browsertrace",
+		"internal/infrastructure/persistence/browsertrace",
+		"pkg/rencrowclient",
+	} {
+		walkDirectory(relative)
+	}
+	for _, relative := range []string{
+		"internal/adapter/viewer/revenue_handler.go",
+		"internal/adapter/viewer/browser_trace_api_handler.go",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step13 owner packages must not retain legacy Artifact identity fields", violations)
+}
+
+func TestStep13MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-step13-artifact-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "step13artifactmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 13 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	directories := []string{

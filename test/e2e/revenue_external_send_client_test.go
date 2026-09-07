@@ -25,7 +25,7 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	}
 
 	suffix := time.Now().UTC().Format("20060102150405")
-	draftID := "rev_draft_client_e2e_" + suffix
+	draftID := string(modulecore.NewArtifactID())
 	decisionID := "rev_decision_client_e2e_" + suffix
 	taskID := modulecore.NewTaskID()
 	runID := modulecore.NewRunID()
@@ -33,7 +33,8 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	defer cancel()
 
 	draft, err := client.CreateRevenueChannelDraft(ctx, rencrowclient.RevenueChannelDraft{
-		DraftID:             draftID,
+		ArtifactID:          modulecore.ArtifactID(draftID),
+		Kind:                modulecore.ArtifactKindDraft,
 		Channel:             "email",
 		Subject:             "Live client E2E audit boundary",
 		Body:                "外部送信せず、同期policyの apply audit だけを確認する下書きです。",
@@ -62,7 +63,7 @@ func TestE2E_RevenueExternalSendClientAuditsPolicyBlockedApply(t *testing.T) {
 	apply, err := client.ApplyRevenueExternalSend(ctx, rencrowclient.RevenueExternalSendApplyRequest{
 		TaskID:      taskID,
 		RunID:       runID,
-		DraftID:     draftID,
+		ArtifactID:  modulecore.ArtifactID(draftID),
 		DecisionID:  decisionID,
 		Destination: "customer@example.invalid",
 	})

@@ -202,8 +202,9 @@ func TestHandleBrowserTraceAPIDiscoverSavesResult(t *testing.T) {
 			CreatedAt:   now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID: "coverage_1",
-			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+			Kind:       modulecore.ArtifactKindReport,
+			TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			CreatedAt: now,
 		},
 	}}
@@ -329,8 +330,9 @@ func TestHandleBrowserTraceAPIDiscoverStagesAPICandidates(t *testing.T) {
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID: "coverage_1",
-			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+			Kind:       modulecore.ArtifactKindReport,
+			TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			CreatedAt: now,
 		},
 	}}
@@ -378,8 +380,9 @@ func TestHandleBrowserTraceAPIDiscoverRegistersWorkstreamArtifacts(t *testing.T)
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID: "coverage_1",
-			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+			Kind:       modulecore.ArtifactKindReport,
+			TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			CreatedAt: now,
 		},
 	}}

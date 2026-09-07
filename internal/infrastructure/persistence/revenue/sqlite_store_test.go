@@ -156,7 +156,7 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
 	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
-		ReportID:            "daily_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 		Date:                "2026-05-18",
 		Status:              "draft_report",
 		ExternalSendApplied: false,
@@ -165,7 +165,7 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
 	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		DraftID:   "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 		Channel:   "email",
 		Subject:   "購入者向け案内",
 		Body:      "下書き本文",
@@ -175,7 +175,7 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
 		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		DraftID:             "draft_1",
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",

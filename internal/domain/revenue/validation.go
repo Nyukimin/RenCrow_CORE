@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var prohibitedClaims = []string{
@@ -219,8 +221,11 @@ func ValidateDelivery(item Delivery) error {
 }
 
 func ValidateDailyRoutineReport(item DailyRoutineReport) error {
-	if strings.TrimSpace(item.ReportID) == "" {
-		return errors.New("report_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return errors.New("artifact_id is required")
+	}
+	if item.Kind != modulecore.ArtifactKindReport {
+		return errors.New("artifact_kind must be report")
 	}
 	if strings.TrimSpace(item.Date) == "" {
 		return errors.New("date is required")
@@ -241,8 +246,16 @@ func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 }
 
 func ValidateChannelDraft(item ChannelDraft) error {
-	if strings.TrimSpace(item.DraftID) == "" {
-		return errors.New("draft_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return errors.New("artifact_id is required")
+	}
+	if item.Kind != modulecore.ArtifactKindDraft {
+		return errors.New("artifact_kind must be draft")
+	}
+	if item.SourceArtifactID != "" {
+		if err := item.SourceArtifactID.Validate(); err != nil {
+			return errors.New("source_artifact_id is invalid")
+		}
 	}
 	if strings.TrimSpace(item.Channel) == "" {
 		return errors.New("channel is required")
@@ -266,8 +279,8 @@ func ValidateExternalSendApplyRecord(item ExternalSendApplyRecord) error {
 	if err := item.ActionID.Validate(); err != nil {
 		return errors.New("action_id is required")
 	}
-	if strings.TrimSpace(item.DraftID) == "" {
-		return errors.New("draft_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return errors.New("artifact_id is required")
 	}
 	if strings.TrimSpace(item.DecisionID) == "" {
 		return errors.New("decision_id is required")
@@ -342,7 +355,7 @@ func CheckEthics(text string) EthicsCheck {
 }
 
 type DailyRoutineInput struct {
-	ReportID       string
+	ArtifactID     modulecore.ArtifactID
 	WorkstreamID   string
 	Date           string
 	Now            time.Time
@@ -363,9 +376,9 @@ func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
 	if date == "" {
 		date = now.Format("2006-01-02")
 	}
-	reportID := strings.TrimSpace(input.ReportID)
-	if reportID == "" {
-		reportID = "rev_daily_" + now.UTC().Format("20060102T150405Z")
+	artifactID := input.ArtifactID
+	if artifactID == "" {
+		artifactID = modulecore.NewArtifactID()
 	}
 	paidCustomers := uniquePaidCustomerCount(input.RevenueEvents)
 	blockedDecisions := 0
@@ -375,7 +388,8 @@ func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
 		}
 	}
 	report := DailyRoutineReport{
-		ReportID:            reportID,
+		ArtifactID:          artifactID,
+		Kind:                modulecore.ArtifactKindReport,
 		WorkstreamID:        strings.TrimSpace(input.WorkstreamID),
 		Date:                date,
 		MarketResearch:      len(input.MarketResearch),

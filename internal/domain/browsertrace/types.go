@@ -74,7 +74,8 @@ type APIValidationIssue struct {
 }
 
 type APICoverageReport struct {
-	ReportID              string            `json:"report_id"`
+	ArtifactID            modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                  modulecore.ArtifactKind `json:"artifact_kind"`
 	TaskID                modulecore.TaskID `json:"task_id"`
 	RunID                 modulecore.RunID  `json:"run_id"`
 	ActorID               string            `json:"actor_id"`

@@ -122,7 +122,8 @@ type SubagentTask struct {
 }
 
 type ContextPack struct {
-	ContextPackID   string    `json:"context_pack_id"`
+	ArtifactID      string    `json:"artifact_id"`
+	Kind            string    `json:"artifact_kind"`
 	TaskID          string    `json:"task_id"`
 	RunID           string    `json:"run_id"`
 	WorkstreamID    string    `json:"workstream_id,omitempty"`
@@ -966,7 +967,8 @@ type BrowserTraceAPIValidationIssue struct {
 }
 
 type BrowserTraceAPICoverage struct {
-	ReportID              string            `json:"report_id"`
+	ArtifactID            modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                  modulecore.ArtifactKind `json:"artifact_kind"`
 	TaskID                modulecore.TaskID `json:"task_id"`
 	RunID                 modulecore.RunID  `json:"run_id"`
 	ActorID               string            `json:"actor_id"`
@@ -1522,15 +1524,16 @@ type RevenueOpportunityWorkstreamGoalResponse struct {
 }
 
 type RevenueDailyRoutineRequest struct {
-	ReportID     string `json:"report_id,omitempty"`
-	WorkstreamID string `json:"workstream_id,omitempty"`
-	Date         string `json:"date,omitempty"`
-	Limit        int    `json:"limit,omitempty"`
+	ArtifactID   modulecore.ArtifactID `json:"artifact_id,omitempty"`
+	WorkstreamID string                `json:"workstream_id,omitempty"`
+	Date         string                `json:"date,omitempty"`
+	Limit        int                   `json:"limit,omitempty"`
 }
 
 type RevenueDailyRoutineReport struct {
-	ReportID            string    `json:"report_id"`
-	WorkstreamID        string    `json:"workstream_id,omitempty"`
+	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
+	WorkstreamID        string                  `json:"workstream_id,omitempty"`
 	Date                string    `json:"date"`
 	Summary             string    `json:"summary,omitempty"`
 	MarketResearch      int       `json:"market_research_count"`
@@ -1552,14 +1555,15 @@ type RevenueDailyRoutineResponse struct {
 }
 
 type RevenueChannelDraft struct {
-	DraftID             string    `json:"draft_id"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	OpportunityID       string    `json:"opportunity_id,omitempty"`
-	WorkstreamID        string    `json:"workstream_id,omitempty"`
-	Channel             string    `json:"channel"`
-	Subject             string    `json:"subject,omitempty"`
-	Body                string    `json:"body"`
-	SourceReportID      string    `json:"source_report_id,omitempty"`
+	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
+	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
+	TraceID             string                  `json:"trace_id,omitempty"`
+	OpportunityID       string                  `json:"opportunity_id,omitempty"`
+	WorkstreamID        string                  `json:"workstream_id,omitempty"`
+	Channel             string                  `json:"channel"`
+	Subject             string                  `json:"subject,omitempty"`
+	Body                string                  `json:"body"`
+	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
 	ExternalSendApplied bool      `json:"external_send_applied"`
 	CreatedAt           time.Time `json:"created_at,omitempty"`
 }
@@ -1575,8 +1579,8 @@ type RevenueExternalSendApplyRequest struct {
 	DeliveryID     string            `json:"delivery_id,omitempty"`
 	TraceID        string            `json:"trace_id,omitempty"`
 	OpportunityID  string            `json:"opportunity_id,omitempty"`
-	DraftID        string            `json:"draft_id"`
-	DecisionID     string            `json:"decision_id"`
+	ArtifactID     modulecore.ArtifactID `json:"artifact_id"`
+	DecisionID     string                `json:"decision_id"`
 	Destination    string            `json:"destination,omitempty"`
 	ChannelAdapter string            `json:"channel_adapter,omitempty"`
 }
@@ -1585,8 +1589,8 @@ type RevenueExternalSendApplyRecord struct {
 	ActionID            modulecore.ActionID `json:"action_id"`
 	TraceID             string    `json:"trace_id,omitempty"`
 	DeliveryID          string    `json:"delivery_id,omitempty"`
-	DraftID             string    `json:"draft_id"`
-	DecisionID          string    `json:"decision_id"`
+	ArtifactID          modulecore.ArtifactID `json:"artifact_id"`
+	DecisionID          string                `json:"decision_id"`
 	Channel             string    `json:"channel"`
 	Destination         string    `json:"destination,omitempty"`
 	ChannelAdapter      string    `json:"channel_adapter,omitempty"`
@@ -2940,14 +2944,17 @@ func validateRevenueStatus(resp RevenueStatus) error {
 	}
 	reports := map[string]struct{}{}
 	for _, item := range resp.DailyRoutineReports {
-		id := strings.TrimSpace(item.ReportID)
-		if id == "" {
-			return fmt.Errorf("revenue status daily_routine_reports missing report_id")
+		if err := item.ArtifactID.Validate(); err != nil {
+			return fmt.Errorf("revenue status daily_routine_reports missing artifact_id")
 		}
+		id := string(item.ArtifactID)
 		if _, ok := reports[id]; ok {
-			return fmt.Errorf("revenue status duplicate daily_routine_report report_id=%s", id)
+			return fmt.Errorf("revenue status duplicate daily_routine_report artifact_id=%s", id)
 		}
 		reports[id] = struct{}{}
+		if item.Kind != modulecore.ArtifactKindReport {
+			return fmt.Errorf("revenue status daily_routine_report artifact_kind must be report")
+		}
 		if strings.TrimSpace(item.Date) == "" {
 			return fmt.Errorf("revenue status daily_routine_report missing date")
 		}
@@ -2963,14 +2970,17 @@ func validateRevenueStatus(resp RevenueStatus) error {
 	}
 	drafts := map[string]struct{}{}
 	for _, item := range resp.ChannelDrafts {
-		id := strings.TrimSpace(item.DraftID)
-		if id == "" {
-			return fmt.Errorf("revenue status channel_drafts missing draft_id")
+		if err := item.ArtifactID.Validate(); err != nil {
+			return fmt.Errorf("revenue status channel_drafts missing artifact_id")
 		}
+		id := string(item.ArtifactID)
 		if _, ok := drafts[id]; ok {
-			return fmt.Errorf("revenue status duplicate channel_draft draft_id=%s", id)
+			return fmt.Errorf("revenue status duplicate channel_draft artifact_id=%s", id)
 		}
 		drafts[id] = struct{}{}
+		if item.Kind != modulecore.ArtifactKindDraft {
+			return fmt.Errorf("revenue status channel_draft artifact_kind must be draft")
+		}
 		if strings.TrimSpace(item.Channel) == "" {
 			return fmt.Errorf("revenue status channel_draft missing channel")
 		}
@@ -2994,8 +3004,8 @@ func validateRevenueStatus(resp RevenueStatus) error {
 			return fmt.Errorf("revenue status duplicate external_send_apply_record action_id=%s", id)
 		}
 		applies[id] = struct{}{}
-		if strings.TrimSpace(item.DraftID) == "" {
-			return fmt.Errorf("revenue status external_send_apply_record missing draft_id")
+		if err := item.ArtifactID.Validate(); err != nil {
+			return fmt.Errorf("revenue status external_send_apply_record missing artifact_id")
 		}
 		if strings.TrimSpace(item.DecisionID) == "" {
 			return fmt.Errorf("revenue status external_send_apply_record missing decision_id")
@@ -3257,8 +3267,11 @@ func validateSkillGovernanceStatus(resp SkillGovernanceStatus) error {
 
 func validateRevenueDailyRoutineResponse(resp RevenueDailyRoutineResponse, req RevenueDailyRoutineRequest) error {
 	report := resp.Report
-	if strings.TrimSpace(req.ReportID) != "" && strings.TrimSpace(report.ReportID) != strings.TrimSpace(req.ReportID) {
-		return fmt.Errorf("revenue daily routine response report_id mismatch")
+	if req.ArtifactID != "" && report.ArtifactID != req.ArtifactID {
+		return fmt.Errorf("revenue daily routine response artifact_id mismatch")
+	}
+	if report.Kind != modulecore.ArtifactKindReport {
+		return fmt.Errorf("revenue daily routine response artifact_kind must be report")
 	}
 	if strings.TrimSpace(req.WorkstreamID) != "" && strings.TrimSpace(report.WorkstreamID) != strings.TrimSpace(req.WorkstreamID) {
 		return fmt.Errorf("revenue daily routine response workstream_id mismatch")
@@ -3293,8 +3306,11 @@ func validateRevenueDailyRoutineRequest(item RevenueDailyRoutineRequest) error {
 }
 
 func validateRevenueChannelDraftRequest(item RevenueChannelDraft) error {
-	if strings.TrimSpace(item.DraftID) == "" {
-		return fmt.Errorf("revenue channel draft request missing draft_id")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("revenue channel draft request missing artifact_id")
+	}
+	if item.Kind != "" && item.Kind != modulecore.ArtifactKindDraft {
+		return fmt.Errorf("revenue channel draft request artifact_kind must be draft")
 	}
 	if strings.TrimSpace(item.Channel) == "" {
 		return fmt.Errorf("revenue channel draft request missing channel")
@@ -3312,8 +3328,8 @@ func validateRevenueExternalSendApplyRequest(item RevenueExternalSendApplyReques
 	if err := item.RunID.Validate(); err != nil {
 		return fmt.Errorf("revenue external send apply request missing run_id")
 	}
-	if strings.TrimSpace(item.DraftID) == "" {
-		return fmt.Errorf("revenue external send apply request missing draft_id")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("revenue external send apply request missing artifact_id")
 	}
 	if strings.TrimSpace(item.DecisionID) == "" {
 		return fmt.Errorf("revenue external send apply request missing decision_id")
@@ -3430,8 +3446,11 @@ func validateComplexityDiffResponse(resp ComplexityDiffResponse, req ComplexityC
 }
 
 func validateRevenueChannelDraftResponse(resp RevenueChannelDraftResponse, req RevenueChannelDraft) error {
-	if strings.TrimSpace(req.DraftID) != "" && strings.TrimSpace(resp.Draft.DraftID) != strings.TrimSpace(req.DraftID) {
-		return fmt.Errorf("revenue channel draft response draft_id mismatch")
+	if req.ArtifactID != "" && resp.Draft.ArtifactID != req.ArtifactID {
+		return fmt.Errorf("revenue channel draft response artifact_id mismatch")
+	}
+	if resp.Draft.Kind != modulecore.ArtifactKindDraft {
+		return fmt.Errorf("revenue channel draft response artifact_kind must be draft")
 	}
 	if strings.TrimSpace(req.WorkstreamID) != "" && strings.TrimSpace(resp.Draft.WorkstreamID) != strings.TrimSpace(req.WorkstreamID) {
 		return fmt.Errorf("revenue channel draft response workstream_id mismatch")
@@ -3456,8 +3475,8 @@ func validateRevenueExternalSendApplyResponse(resp RevenueExternalSendApplyRespo
 	if err := record.ActionID.Validate(); err != nil {
 		return fmt.Errorf("external send apply response missing action_id")
 	}
-	if strings.TrimSpace(record.DraftID) != strings.TrimSpace(req.DraftID) {
-		return fmt.Errorf("external send apply response draft_id mismatch")
+	if record.ArtifactID != req.ArtifactID {
+		return fmt.Errorf("external send apply response artifact_id mismatch")
 	}
 	if strings.TrimSpace(record.DecisionID) != strings.TrimSpace(req.DecisionID) {
 		return fmt.Errorf("external send apply response decision_id mismatch")
@@ -3670,37 +3689,50 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 	}
 	seenContexts := map[string]struct{}{}
 	for _, pack := range resp.ContextPacks {
-		contextPackID := strings.TrimSpace(pack.ContextPackID)
-		if contextPackID == "" {
-			return fmt.Errorf("superagent status context_pack missing context_pack_id")
+		artifactID := strings.TrimSpace(pack.ArtifactID)
+		if artifactID == "" {
+			return fmt.Errorf("superagent status context_pack missing artifact_id")
+		}
+		if err := modulecore.ArtifactID(artifactID).Validate(); err != nil {
+			return fmt.Errorf("superagent status context_pack %q invalid artifact_id: %w", artifactID, err)
+		}
+		kind := strings.TrimSpace(pack.Kind)
+		if kind == "" {
+			return fmt.Errorf("superagent status context_pack %q missing artifact_kind", artifactID)
+		}
+		if err := modulecore.ArtifactKind(kind).Validate(); err != nil {
+			return fmt.Errorf("superagent status context_pack %q invalid artifact_kind: %w", artifactID, err)
+		}
+		if modulecore.ArtifactKind(kind) != modulecore.ArtifactKindContextPack {
+			return fmt.Errorf("superagent status context_pack %q artifact_kind must be %q", artifactID, modulecore.ArtifactKindContextPack)
 		}
 		taskID := strings.TrimSpace(pack.TaskID)
 		if taskID == "" {
-			return fmt.Errorf("superagent status context_pack %q missing task_id", contextPackID)
+			return fmt.Errorf("superagent status context_pack %q missing task_id", artifactID)
 		}
 		if err := modulecore.TaskID(taskID).Validate(); err != nil {
-			return fmt.Errorf("superagent status context_pack %q invalid task_id: %w", contextPackID, err)
+			return fmt.Errorf("superagent status context_pack %q invalid task_id: %w", artifactID, err)
 		}
 		runID := strings.TrimSpace(pack.RunID)
 		if runID == "" {
-			return fmt.Errorf("superagent status context_pack %q missing run_id", contextPackID)
+			return fmt.Errorf("superagent status context_pack %q missing run_id", artifactID)
 		}
 		if err := modulecore.RunID(runID).Validate(); err != nil {
-			return fmt.Errorf("superagent status context_pack %q invalid run_id: %w", contextPackID, err)
+			return fmt.Errorf("superagent status context_pack %q invalid run_id: %w", artifactID, err)
 		}
 		if strings.TrimSpace(pack.Summary) == "" {
-			return fmt.Errorf("superagent status context_pack %q missing summary", contextPackID)
+			return fmt.Errorf("superagent status context_pack %q missing summary", artifactID)
 		}
 		if pack.TokenEstimate < 0 {
-			return fmt.Errorf("superagent status context_pack %q token_estimate must be >= 0", contextPackID)
+			return fmt.Errorf("superagent status context_pack %q token_estimate must be >= 0", artifactID)
 		}
 		if pack.CreatedAt.IsZero() {
-			return fmt.Errorf("superagent status context_pack %q missing created_at", contextPackID)
+			return fmt.Errorf("superagent status context_pack %q missing created_at", artifactID)
 		}
-		if _, ok := seenContexts[contextPackID]; ok {
-			return fmt.Errorf("superagent status contains duplicate context_pack for context_pack_id %q", contextPackID)
+		if _, ok := seenContexts[artifactID]; ok {
+			return fmt.Errorf("superagent status contains duplicate context_pack for artifact_id %q", artifactID)
 		}
-		seenContexts[contextPackID] = struct{}{}
+		seenContexts[artifactID] = struct{}{}
 	}
 	seenChannels := map[string]struct{}{}
 	for _, channel := range resp.MessageChannels {
@@ -5129,10 +5161,11 @@ func validateBrowserTraceAPIStatus(resp BrowserTraceAPIStatus) error {
 		if err := validateBrowserTraceAPICoverage(item, "browser trace api status"); err != nil {
 			return err
 		}
-		if _, ok := seenCoverage[item.ReportID]; ok {
-			return fmt.Errorf("browser trace api status contains duplicate coverage report_id %q", item.ReportID)
+		id := string(item.ArtifactID)
+		if _, ok := seenCoverage[id]; ok {
+			return fmt.Errorf("browser trace api status contains duplicate coverage artifact_id %q", id)
 		}
-		seenCoverage[item.ReportID] = struct{}{}
+		seenCoverage[id] = struct{}{}
 	}
 	seenArtifacts := map[string]struct{}{}
 	for _, item := range resp.APIArtifacts {
@@ -5431,8 +5464,11 @@ func validateBrowserTraceAPIValidation(item BrowserTraceAPIValidation, label str
 }
 
 func validateBrowserTraceAPICoverage(item BrowserTraceAPICoverage, label string) error {
-	if strings.TrimSpace(item.ReportID) == "" {
-		return fmt.Errorf("%s coverage missing report_id", label)
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("%s coverage missing artifact_id", label)
+	}
+	if item.Kind != modulecore.ArtifactKindReport {
+		return fmt.Errorf("%s coverage artifact_kind must be report", label)
 	}
 	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" coverage"); err != nil {
 		return err

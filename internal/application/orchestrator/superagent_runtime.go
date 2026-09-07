@@ -91,7 +91,8 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
 	}
 	pack := domainsuperagent.ContextPack{
-		ContextPackID:   leadAgentContextPackID(runID),
+		ArtifactID:      modulecore.NewArtifactID(),
+		Kind:            modulecore.ArtifactKindContextPack,
 		TaskID:          taskID,
 		RunID:           runID,
 		WorkstreamID:    req.SessionID,
@@ -160,10 +161,6 @@ func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt
 		return req.ResumeCheckpointRevision, strings.TrimSpace(req.ResumeCheckpointSummary), strings.TrimSpace(req.ResumeNextAction), fallbackAt
 	}
 	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch with the same task_id", fallbackAt
-}
-
-func leadAgentContextPackID(runID modulecore.RunID) string {
-	return "ctx_lead_" + string(runID)
 }
 
 func estimateRuntimeContextTokens(text string) int {

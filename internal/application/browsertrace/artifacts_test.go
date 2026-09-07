@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
@@ -29,8 +30,9 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID: "coverage_1",
-			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+			Kind:       modulecore.ArtifactKindReport,
+			TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			ObservedEndpoints: []string{"GET /api/items"},
 			MissingFlows:      []string{"terms review"},
 			CreatedAt:         now,
@@ -79,8 +81,9 @@ func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(
 			CreatedAt:            now,
 		}},
 		Coverage: domaintrace.APICoverageReport{
-			ReportID: "coverage_1",
-			TaskID:   "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"),
+			Kind:       modulecore.ArtifactKindReport,
+			TaskID:     "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			CreatedAt: now,
 		},
 	}, []domaintrace.APICandidateValidationResult{{
