@@ -136,7 +136,7 @@ func (s *RunQueueScheduler) RunOnce(ctx context.Context) (int, error) {
 			return processed, err
 		}
 		if leaseStore, ok := s.store.(RunQueueLeaseStore); ok {
-			attached, attachErr := leaseStore.AttachRunQueueRun(ctx, item.QueueID, item.LeaseToken, run.RunID)
+			attached, attachErr := leaseStore.AttachRunQueueRun(ctx, string(item.QueueItemID), item.LeaseToken, run.RunID)
 			if attachErr != nil {
 				originalErr := fmt.Errorf("attach canonical run to run queue item: %w", attachErr)
 				if cleanupErr := s.interruptIssuedRun(ctx, *item, run, originalErr.Error()); cleanupErr != nil {
@@ -388,7 +388,7 @@ func (s *RunQueueScheduler) blockReservation(ctx context.Context, item domainsup
 	item.RunID = ""
 	item.CompletedAt = at
 	if store, ok := s.store.(RunQueueLeaseStore); ok {
-		blocked, err := store.CompleteRunQueueItem(ctx, item.QueueID, item.LeaseToken, "blocked", item.Reason, at)
+		blocked, err := store.CompleteRunQueueItem(ctx, string(item.QueueItemID), item.LeaseToken, "blocked", item.Reason, at)
 		if err != nil {
 			return err
 		}
@@ -422,7 +422,7 @@ func (s *RunQueueScheduler) processWithHeartbeat(ctx context.Context, item domai
 				heartbeatErr <- nil
 				return
 			case <-ticker.C:
-				ok, err := store.RenewRunQueueLease(runCtx, item.QueueID, item.LeaseToken, s.options.Now().UTC().Add(s.options.LeaseDuration))
+				ok, err := store.RenewRunQueueLease(runCtx, string(item.QueueItemID), item.LeaseToken, s.options.Now().UTC().Add(s.options.LeaseDuration))
 				if err != nil || !ok {
 					if err == nil {
 						err = fmt.Errorf("run queue lease lost")
@@ -444,7 +444,7 @@ func (s *RunQueueScheduler) processWithHeartbeat(ctx context.Context, item domai
 
 func (s *RunQueueScheduler) complete(ctx context.Context, item domainsuperagent.RunQueueItem, status, reason string, at time.Time) error {
 	if store, ok := s.store.(RunQueueLeaseStore); ok {
-		completed, err := store.CompleteRunQueueItem(ctx, item.QueueID, item.LeaseToken, status, reason, at)
+		completed, err := store.CompleteRunQueueItem(ctx, string(item.QueueItemID), item.LeaseToken, status, reason, at)
 		if err != nil {
 			return err
 		}
@@ -490,7 +490,7 @@ func (s *RunQueueScheduler) saveTrace(ctx context.Context, item domainsuperagent
 	}
 	now := s.options.Now().UTC()
 	event := modulecore.NewEventEnvelope(traceID, causationEventID, nil, "superagent", eventType, now, map[string]any{
-		"queue_reference": item.QueueID, "status": status, "summary": strings.TrimSpace(summary),
+		"queue_reference": item.QueueItemID, "status": status, "summary": strings.TrimSpace(summary),
 	})
 	event.TaskID = item.TaskID
 	event.RunID = item.RunID

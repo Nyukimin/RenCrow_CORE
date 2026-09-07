@@ -85,14 +85,14 @@ func TestSQLiteStoreLifecycleReceiptsAndFreezeSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.SaveStageRunReceipt(ctx, domainworkstream.StageRunReceipt{
-		ReceiptID: "stage-1", IdempotencyKey: "unit-1:2:BUILD", UnitID: "unit-1",
+		ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000001"), IdempotencyKey: "unit-1:2:BUILD", UnitID: "unit-1",
 		ImplementationRevision: 2, TargetStage: "BUILD", PayloadHash: "hash-1",
 		Status: domainworkstream.StageRunCompleted, CreatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SaveClosureReceipt(ctx, domainworkstream.ClosureReceipt{
-		ReceiptID: "closure-1", IdempotencyKey: "unit-1:2:DONE", UnitID: "unit-1",
+		ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000002"), IdempotencyKey: "unit-1:2:DONE", UnitID: "unit-1",
 		ImplementationRevision: 2, Phase: domainworkstream.ClosurePhasePrepared,
 		Status: domainworkstream.ClosureStatusPrepared, CreatedAt: now,
 	}); err != nil {

@@ -17,9 +17,10 @@ type AgentRun struct {
 	StartedAt          time.Time         `json:"started_at"`
 	CompletedAt        time.Time         `json:"completed_at,omitempty"`
 	Summary            string            `json:"summary,omitempty"`
-	ResumePolicy       string            `json:"resume_policy,omitempty"`
-	CheckpointRevision int               `json:"checkpoint_revision,omitempty"`
-	CheckpointSummary  string            `json:"checkpoint_summary,omitempty"`
+	ResumePolicy       string                   `json:"resume_policy,omitempty"`
+	CheckpointID       modulecore.CheckpointID  `json:"checkpoint_id,omitempty"`
+	CheckpointRevision int                      `json:"checkpoint_revision,omitempty"`
+	CheckpointSummary  string                   `json:"checkpoint_summary,omitempty"`
 	NextAction         string            `json:"next_action,omitempty"`
 	LastCheckpointAt   time.Time         `json:"last_checkpoint_at,omitempty"`
 }
@@ -61,7 +62,7 @@ type MessageChannel struct {
 }
 
 type RunQueueItem struct {
-	QueueID            string                    `json:"queue_id"`
+	QueueItemID        modulecore.QueueItemID    `json:"queue_item_id"`
 	TaskID             modulecore.TaskID         `json:"task_id"`
 	RunID              modulecore.RunID          `json:"run_id,omitempty"`
 	RunStartReason     domaintask.RunStartReason `json:"run_start_reason"`
@@ -76,6 +77,7 @@ type RunQueueItem struct {
 	LeaseToken         string                    `json:"lease_token,omitempty"`
 	LeaseUntil         time.Time                 `json:"lease_until,omitempty"`
 	AttemptCount       int                       `json:"attempt_count,omitempty"`
+	CheckpointID       modulecore.CheckpointID   `json:"checkpoint_id,omitempty"`
 	CheckpointRevision int                       `json:"checkpoint_revision,omitempty"`
 	CheckpointSummary  string                    `json:"checkpoint_summary,omitempty"`
 	NextAction         string                    `json:"next_action,omitempty"`

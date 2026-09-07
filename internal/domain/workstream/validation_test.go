@@ -246,6 +246,40 @@ func TestValidateVaultUpdateReviewAllowsOnlyTerminalReviewStatus(t *testing.T) {
 	}
 }
 
+func TestValidateStageRunReceiptRequiresCanonicalReceiptID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 6, 50, 0, 0, time.UTC)
+	item := StageRunReceipt{
+		IdempotencyKey: "unit-1:1:SPEC", UnitID: "unit-1",
+		ImplementationRevision: 1, TargetStage: "SPEC", CreatedAt: now,
+	}
+	if err := ValidateStageRunReceipt(item); err == nil {
+		t.Fatal("expected missing receipt_id to fail")
+	}
+	item.ReceiptID = modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000001")
+	if err := ValidateStageRunReceipt(item); err != nil {
+		t.Fatalf("ValidateStageRunReceipt failed: %v", err)
+	}
+	item.ActionID = modulecore.ActionID("not-an-action")
+	if err := ValidateStageRunReceipt(item); err == nil {
+		t.Fatal("expected invalid action_id to fail")
+	}
+}
+
+func TestValidateClosureReceiptRequiresCanonicalReceiptID(t *testing.T) {
+	now := time.Date(2026, 5, 20, 6, 50, 0, 0, time.UTC)
+	item := ClosureReceipt{
+		IdempotencyKey: "unit-1:1:DONE", UnitID: "unit-1",
+		ImplementationRevision: 1, CreatedAt: now,
+	}
+	if err := ValidateClosureReceipt(item); err == nil {
+		t.Fatal("expected missing receipt_id to fail")
+	}
+	item.ReceiptID = modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000002")
+	if err := ValidateClosureReceipt(item); err != nil {
+		t.Fatalf("ValidateClosureReceipt failed: %v", err)
+	}
+}
+
 func TestValidateWorkstreamRejectsMissingCreatedAt(t *testing.T) {
 	cases := []struct {
 		name string

@@ -174,12 +174,26 @@ func stagePayloadHash(request ReviseRequest) string {
 	return hex.EncodeToString(hash[:])
 }
 
-func stageRunReceiptID(key string) string { return "atlas-stage:" + key }
-func closureReceiptID(unitID string, revision int) string {
-	return fmt.Sprintf("atlas-closure:%s:%d", strings.TrimSpace(unitID), revision)
-}
 func queueFreezeID(unitID string, revision int) string {
 	return fmt.Sprintf("atlas-freeze:%s:%d", strings.TrimSpace(unitID), revision)
+}
+
+// receiptActionID binds a stage or closure receipt to the caller action.
+// Replay reuses the persisted ActionID; first execution accepts a valid
+// act_* request_id or mints a fresh ActionID.
+func receiptActionID(request ReviseRequest, existing modulecore.ActionID) modulecore.ActionID {
+	if existing != "" {
+		return existing
+	}
+	raw := strings.TrimSpace(request.RequestID)
+	if raw == "" {
+		return modulecore.NewActionID()
+	}
+	id := modulecore.ActionID(raw)
+	if err := id.Validate(); err != nil {
+		return modulecore.NewActionID()
+	}
+	return id
 }
 
 func (s *Service) findStageReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
@@ -235,7 +249,6 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 	if unitID == "" {
 		unitID = next.ItemID
 	}
-	receiptID := closureReceiptID(unitID, next.ImplementationRevision)
 	receipt, found, err := s.findClosureReceipt(ctx, key)
 	if err != nil {
 		return err
@@ -243,7 +256,7 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 	now := s.now()
 	if !found {
 		receipt = domainworkstream.ClosureReceipt{
-			ReceiptID: receiptID, IdempotencyKey: key, RequestID: strings.TrimSpace(request.RequestID),
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, ""),
 			UnitID: unitID, ItemID: next.ItemID, ImplementationRevision: next.ImplementationRevision,
 			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
 			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(next.ItemID),
@@ -355,8 +368,8 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 			return domainbacklog.Item{}, marshalErr
 		}
 		doneReceipt = domainworkstream.StageRunReceipt{
-			ReceiptID: stageRunReceiptID(doneKey), IdempotencyKey: doneKey,
-			RequestID: strings.TrimSpace(doneRequest.RequestID), UnitID: unitID, ItemID: live.ItemID,
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: doneKey,
+			ActionID: receiptActionID(doneRequest, doneReceipt.ActionID), UnitID: unitID, ItemID: live.ItemID,
 			ImplementationRevision: live.ImplementationRevision, TargetStage: domainbacklog.DeliveryDone,
 			PayloadHash: donePayloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: domainbacklog.DeliveryDone, ResultJSON: string(resultJSON), CreatedAt: s.now(),

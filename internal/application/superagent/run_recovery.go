@@ -55,11 +55,13 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 	if err != nil {
 		return 0, 0, err
 	}
-	queueByID := make(map[string]domainsuperagent.RunQueueItem, len(queue))
+	queueByCheckpointID := make(map[string]domainsuperagent.RunQueueItem, len(queue))
 	for _, item := range queue {
-		queueByID[item.QueueID] = item
+		if item.CheckpointID != "" {
+			queueByCheckpointID[string(item.CheckpointID)] = item
+		}
 		if key := strings.TrimSpace(item.IdempotencyKey); key != "" {
-			queueByID[key] = item
+			queueByCheckpointID[key] = item
 		}
 	}
 
@@ -110,8 +112,8 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		if !isWaitingCheckpointResumeCandidate(candidate) {
 			continue
 		}
-		queueID := interruptedRunResumeQueueID(candidate.projection)
-		existing, ok := queueByID[queueID]
+		checkpointKey := interruptedRunResumeCheckpointKey(candidate.projection)
+		existing, ok := queueByCheckpointID[checkpointKey]
 		if !ok {
 			continue
 		}
@@ -123,8 +125,8 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		if !isProcessRestartResumeCandidate(candidate) {
 			continue
 		}
-		queueID := interruptedRunResumeQueueID(candidate.projection)
-		existing, ok := queueByID[queueID]
+		checkpointKey := interruptedRunResumeCheckpointKey(candidate.projection)
+		existing, ok := queueByCheckpointID[checkpointKey]
 		if !ok {
 			continue
 		}
@@ -153,15 +155,15 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		if !isWaitingCheckpointResumeCandidate(candidate) {
 			continue
 		}
-		queueID := interruptedRunResumeQueueID(candidate.projection)
-		if _, ok := queueByID[queueID]; ok {
+		checkpointKey := interruptedRunResumeCheckpointKey(candidate.projection)
+		if _, ok := queueByCheckpointID[checkpointKey]; ok {
 			continue
 		}
 		item := checkpointResumeQueueItem(candidate.projection, now)
 		if err := store.SaveRunQueueItem(ctx, item); err != nil {
 			return queued, blocked, err
 		}
-		queueByID[queueID] = item
+		queueByCheckpointID[checkpointKey] = item
 		queued++
 	}
 
@@ -197,8 +199,8 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 			continue
 		}
 
-		queueID := interruptedRunResumeQueueID(candidate.projection)
-		if _, ok := queueByID[queueID]; ok {
+		checkpointKey := interruptedRunResumeCheckpointKey(candidate.projection)
+		if _, ok := queueByCheckpointID[checkpointKey]; ok {
 			// An existing intent, including a stale/terminal receipt, is already
 			// idempotent for this Task+source Run+checkpoint. Never use it to close or rewrite
 			// the historical RunID projection.
@@ -208,14 +210,14 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		if err := store.SaveRunQueueItem(ctx, item); err != nil {
 			return queued, blocked, err
 		}
-		queueByID[queueID] = item
+		queueByCheckpointID[checkpointKey] = item
 		queued++
 	}
 	return queued, blocked, nil
 }
 
-func interruptedRunResumeQueueID(projection domainsuperagent.AgentRun) string {
-	return fmt.Sprintf("resume:%s:%s:%d", projection.TaskID, projection.RunID, projection.CheckpointRevision)
+func interruptedRunResumeCheckpointKey(projection domainsuperagent.AgentRun) string {
+	return string(projection.CheckpointID)
 }
 
 func isWaitingCheckpointResumeCandidate(candidate interruptedRunRecoveryCandidate) bool {
@@ -235,21 +237,22 @@ func processRestartResumeQueueItem(projection domainsuperagent.AgentRun, now tim
 }
 
 func recoveryQueueItem(projection domainsuperagent.AgentRun, reason domaintask.RunStartReason, now time.Time) domainsuperagent.RunQueueItem {
-	queueID := interruptedRunResumeQueueID(projection)
+	checkpointKey := interruptedRunResumeCheckpointKey(projection)
 	return domainsuperagent.RunQueueItem{
-		QueueID: queueID, TaskID: projection.TaskID, RunStartReason: reason,
+		QueueItemID: modulecore.NewQueueItemID(), TaskID: projection.TaskID, RunStartReason: reason,
 		WorkstreamID: projection.WorkstreamID, Goal: projection.Goal, Action: "resume", Status: "queued",
-		CheckpointRevision: projection.CheckpointRevision, CheckpointSummary: projection.CheckpointSummary,
-		NextAction: projection.NextAction, IdempotencyKey: queueID, CreatedAt: now.UTC(),
+		CheckpointID: projection.CheckpointID, CheckpointRevision: projection.CheckpointRevision,
+		CheckpointSummary: projection.CheckpointSummary, NextAction: projection.NextAction,
+		IdempotencyKey: checkpointKey, CreatedAt: now.UTC(),
 	}
 }
 
 func validateCheckpointResumeQueueIntent(existing, expected domainsuperagent.RunQueueItem) error {
-	if existing.QueueID != expected.QueueID || existing.TaskID != expected.TaskID || existing.RunID != "" || existing.RunStartReason != expected.RunStartReason ||
+	if existing.CheckpointID != expected.CheckpointID || existing.TaskID != expected.TaskID || existing.RunID != "" || existing.RunStartReason != expected.RunStartReason ||
 		existing.WorkstreamID != expected.WorkstreamID || existing.Goal != expected.Goal || existing.Action != expected.Action || existing.Status != expected.Status ||
 		existing.CheckpointRevision != expected.CheckpointRevision || existing.CheckpointSummary != expected.CheckpointSummary || existing.NextAction != expected.NextAction ||
 		existing.IdempotencyKey != expected.IdempotencyKey {
-		return fmt.Errorf("recovery queue intent mismatch for %s", expected.QueueID)
+		return fmt.Errorf("recovery queue intent mismatch for checkpoint %s", expected.CheckpointID)
 	}
 	return nil
 }
@@ -291,7 +294,8 @@ func validateInterruptedRunState(task domaintask.Task, run domaintask.Run) error
 }
 
 func hasDurableCheckpoint(run domainsuperagent.AgentRun) bool {
-	return run.ResumePolicy == "checkpoint" && run.CheckpointRevision > 0 &&
+	return run.ResumePolicy == "checkpoint" && run.CheckpointID != "" &&
+		run.CheckpointRevision > 0 &&
 		strings.TrimSpace(run.CheckpointSummary) != "" && strings.TrimSpace(run.NextAction) != "" &&
 		!run.LastCheckpointAt.IsZero()
 }

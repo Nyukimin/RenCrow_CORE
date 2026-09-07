@@ -15,6 +15,8 @@ import (
 func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
+	lowQueueID, highQueueID, futureQueueID := modulecore.NewQueueItemID(), modulecore.NewQueueItemID(), modulecore.NewQueueItemID()
+	checkpointID := modulecore.NewCheckpointID()
 	owner := &recordingTaskOwner{
 		now:       func() time.Time { return now },
 		tasks:     map[modulecore.TaskID]domaintask.Task{taskID: {TaskID: taskID, Status: domaintask.StatusSucceeded}},
@@ -23,11 +25,11 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	store := &recordingRunQueueStore{
 		runs: []domainsuperagent.AgentRun{{
 			RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "run this", Status: "running", StartedAt: now.Add(-time.Minute),
-			ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "request committed", NextAction: "run this", LastCheckpointAt: now.Add(-time.Minute),
+			ResumePolicy: "checkpoint", CheckpointID: checkpointID, CheckpointRevision: 1, CheckpointSummary: "request committed", NextAction: "run this", LastCheckpointAt: now.Add(-time.Minute),
 		}},
 		items: []domainsuperagent.RunQueueItem{
 			{
-				QueueID:        "q-low",
+				QueueItemID:        lowQueueID,
 				TaskID:         modulecore.NewTaskID(),
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "later",
@@ -37,7 +39,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 				CreatedAt:      now.Add(-2 * time.Minute),
 			},
 			{
-				QueueID:        "q-high",
+				QueueItemID:        highQueueID,
 				TaskID:         taskID,
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "run this",
@@ -47,7 +49,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 				CreatedAt:      now.Add(-time.Minute),
 			},
 			{
-				QueueID:        "q-future",
+				QueueItemID:        futureQueueID,
 				TaskID:         modulecore.NewTaskID(),
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "not yet",
@@ -74,10 +76,10 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("RunOnce() count = %d, want 1", count)
 	}
-	if processed.QueueID != "q-high" {
-		t.Fatalf("processed queue = %q, want q-high", processed.QueueID)
+	if processed.QueueItemID != highQueueID {
+		t.Fatalf("processed queue = %q, want %q", processed.QueueItemID, highQueueID)
 	}
-	item := store.item("q-high")
+	item := store.item(highQueueID)
 	if item.Status != "completed" || item.Reason != "ok" || item.ClaimedAt.IsZero() || item.CompletedAt.IsZero() {
 		t.Fatalf("completed item = %#v", item)
 	}
@@ -106,7 +108,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 func TestRunQueueSchedulerClaimNextReservesLeaseBeforeCanonicalRun(t *testing.T) {
 	now := time.Date(2026, 8, 23, 14, 0, 0, 0, time.UTC)
 	item := domainsuperagent.RunQueueItem{
-		QueueID:        "reserve-first",
+		QueueItemID:        "reserve-first",
 		TaskID:         modulecore.NewTaskID(),
 		RunStartReason: domaintask.RunStartReasonFirst,
 		RunID:          modulecore.NewRunID(),
@@ -139,7 +141,7 @@ func TestRunQueueSchedulerDoesNotProcessOrOverwriteAfterLeaseLostBeforeAttachmen
 	now := time.Date(2026, 8, 23, 14, 30, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	base := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueID:        "stale-attach",
+		QueueItemID:        "stale-attach",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "attach only while lease is current",
@@ -196,7 +198,7 @@ func TestRunQueueSchedulerCleansIssuedRunWhenAttachmentErrors(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	attachErr := errors.New("attachment write failed")
 	base := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueID:        "attach-error",
+		QueueItemID:        "attach-error",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "cleanup after attachment error",
@@ -240,7 +242,7 @@ func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	store := &recordingRunQueueStore{
 		items: []domainsuperagent.RunQueueItem{{
-			QueueID:        "q1",
+			QueueItemID:        "q1",
 			TaskID:         taskID,
 			RunStartReason: domaintask.RunStartReasonFirst,
 			Goal:           "run",
@@ -287,7 +289,7 @@ func TestRunQueueSchedulerPauseCancelsQueueAndPreservesPausedProjection(t *testi
 			StartedAt: now.Add(-time.Minute), CompletedAt: pausedAt, Summary: "user requested pause",
 		}},
 		items: []domainsuperagent.RunQueueItem{{
-			QueueID: "pause-q", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst,
+			QueueItemID: "pause-q", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst,
 			Goal: "pause this", Action: "resume", Status: "queued", CreatedAt: now,
 		}},
 	}
@@ -334,7 +336,7 @@ func TestRunQueueSchedulerProcessorErrorKeepsClaimWhenTaskLookupFails(t *testing
 	lookupErr := errors.New("canonical task lookup unavailable")
 	store := &recordingRunQueueStore{
 		runs:  []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "run", Status: "running", StartedAt: now}},
-		items: []domainsuperagent.RunQueueItem{{QueueID: "lookup-fail", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "run", Action: "resume", Status: "queued", CreatedAt: now}},
+		items: []domainsuperagent.RunQueueItem{{QueueItemID: "lookup-fail", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "run", Action: "resume", Status: "queued", CreatedAt: now}},
 	}
 	processorErr := errors.New("worker failed")
 	owner := &recordingTaskOwner{
@@ -367,7 +369,7 @@ func TestRunQueueSchedulerProcessorErrorDoesNotReFailCanonicalFailedTask(t *test
 	processorErr := errors.New("worker failed")
 	store := &recordingRunQueueStore{
 		runs:  []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "already failed", Status: "running", StartedAt: now}},
-		items: []domainsuperagent.RunQueueItem{{QueueID: "already-failed", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "already failed", Action: "resume", Status: "queued", CreatedAt: now}},
+		items: []domainsuperagent.RunQueueItem{{QueueItemID: "already-failed", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "already failed", Action: "resume", Status: "queued", CreatedAt: now}},
 	}
 	owner := &recordingTaskOwner{
 		now:       func() time.Time { return now },
@@ -396,9 +398,10 @@ func TestRunQueueSchedulerProcessorErrorDoesNotReFailCanonicalFailedTask(t *test
 func TestRunQueueSchedulerProcessorErrorDoesNotOverwriteTerminalTask(t *testing.T) {
 	now := time.Date(2026, 8, 23, 19, 0, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	terminalQueueID := modulecore.NewQueueItemID()
 	store := &recordingRunQueueStore{
 		runs:  []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "already done", Status: "completed", StartedAt: now.Add(-time.Minute), CompletedAt: now.Add(-time.Second), Summary: "already done"}},
-		items: []domainsuperagent.RunQueueItem{{QueueID: "terminal-task", TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "already done", Action: "resume", Status: "queued", CreatedAt: now}},
+		items: []domainsuperagent.RunQueueItem{{QueueItemID: terminalQueueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "already done", Action: "resume", Status: "queued", CreatedAt: now}},
 	}
 	owner := &recordingTaskOwner{
 		now:       func() time.Time { return now },
@@ -413,7 +416,7 @@ func TestRunQueueSchedulerProcessorErrorDoesNotOverwriteTerminalTask(t *testing.
 	if count != 0 || err == nil || !strings.Contains(err.Error(), string(domaintask.StatusSucceeded)) {
 		t.Fatalf("RunOnce() count=%d err=%v, want explicit terminal-task conflict", count, err)
 	}
-	if item := store.item("terminal-task"); item.Status != "claimed" {
+	if item := store.item(terminalQueueID); item.Status != "claimed" {
 		t.Fatalf("terminal-task queue was finalized despite conflict = %#v", item)
 	}
 	if run := store.runs[0]; run.Status != "completed" || run.Summary != "already done" {
@@ -441,9 +444,10 @@ func TestRunQueueSchedulerSuccessRequiresCanonicalSucceededTask(t *testing.T) {
 	for _, testCase := range statuses {
 		t.Run(testCase.name, func(t *testing.T) {
 			taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+			queueItemID := modulecore.NewQueueItemID()
 			store := &recordingRunQueueStore{
 				runs:  []domainsuperagent.AgentRun{{RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "complete", Status: "running", StartedAt: now}},
-				items: []domainsuperagent.RunQueueItem{{QueueID: "success-state-" + testCase.name, TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "complete", Action: "resume", Status: "queued", CreatedAt: now}},
+				items: []domainsuperagent.RunQueueItem{{QueueItemID: queueItemID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonFirst, Goal: "complete", Action: "resume", Status: "queued", CreatedAt: now}},
 			}
 			owner := &recordingTaskOwner{
 				now:       func() time.Time { return now },
@@ -461,7 +465,7 @@ func TestRunQueueSchedulerSuccessRequiresCanonicalSucceededTask(t *testing.T) {
 			if count != 0 || err == nil || !strings.Contains(err.Error(), testCase.wantError) {
 				t.Fatalf("RunOnce() count=%d err=%v, want canonical success rejection", count, err)
 			}
-			item := store.item("success-state-" + testCase.name)
+			item := store.item(queueItemID)
 			if item.Status != "claimed" || !item.CompletedAt.IsZero() {
 				t.Fatalf("success-state queue item = %#v, want claimed lease", item)
 			}
@@ -479,14 +483,18 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 	now := time.Date(2026, 8, 23, 15, 0, 0, 0, time.UTC)
 	oldRunID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	freshRunID := modulecore.NewRunID()
+	expiredQueueID := modulecore.NewQueueItemID()
+	activeQueueID := modulecore.NewQueueItemID()
+	expiredCheckpointID := modulecore.NewCheckpointID()
+	activeCheckpointID := modulecore.NewCheckpointID()
 	owner := &recordingTaskOwner{
 		now:       func() time.Time { return now },
 		tasks:     map[modulecore.TaskID]domaintask.Task{taskID: {TaskID: taskID, Status: domaintask.StatusSucceeded}},
 		responses: []domaintask.Run{{RunID: freshRunID, TaskID: taskID, StartReason: domaintask.RunStartReasonLeaseReacquire, Status: domaintask.RunStatusRunning, StartedAt: now}},
 	}
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{
-		{QueueID: "expired", TaskID: taskID, RunID: oldRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "continue", Action: "resume", Status: "claimed", LeaseToken: "dead-owner", LeaseUntil: now.Add(-time.Second), CheckpointRevision: 4, AttemptCount: 1, CreatedAt: now.Add(-time.Hour)},
-		{QueueID: "active", TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "do not duplicate", Action: "resume", Status: "claimed", LeaseToken: "live-owner", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 2, AttemptCount: 1, CreatedAt: now.Add(-time.Hour)},
+		{QueueItemID: expiredQueueID, TaskID: taskID, RunID: oldRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "continue", Action: "resume", Status: "claimed", CheckpointID: expiredCheckpointID, LeaseToken: "dead-owner", LeaseUntil: now.Add(-time.Second), CheckpointRevision: 4, AttemptCount: 1, CreatedAt: now.Add(-time.Hour)},
+		{QueueItemID: activeQueueID, TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "do not duplicate", Action: "resume", Status: "claimed", CheckpointID: activeCheckpointID, LeaseToken: "live-owner", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 2, AttemptCount: 1, CreatedAt: now.Add(-time.Hour)},
 	}}
 	var processed domainsuperagent.RunQueueItem
 	var recoveredTrace modulecore.TraceID
@@ -500,7 +508,7 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 	if err != nil || count != 1 {
 		t.Fatalf("RunOnce() count=%d err=%v", count, err)
 	}
-	if processed.QueueID != "expired" || processed.TaskID != taskID || processed.RunID != freshRunID || processed.CheckpointRevision != 4 || processed.AttemptCount != 2 {
+	if processed.QueueItemID != expiredQueueID || processed.TaskID != taskID || processed.RunID != freshRunID || processed.CheckpointRevision != 4 || processed.AttemptCount != 2 {
 		t.Fatalf("recovered item=%#v", processed)
 	}
 	if len(owner.calls) != 1 || owner.calls[0].taskID != taskID || owner.calls[0].reason != domaintask.RunStartReasonLeaseReacquire {
@@ -509,7 +517,7 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 	if recoveredTrace.Validate() != nil || len(store.traces) == 0 || recoveredTrace != store.traces[0].TraceID {
 		t.Fatalf("recovered processor trace=%q events=%#v", recoveredTrace, store.traces)
 	}
-	if got := store.item("active"); got.LeaseToken != "live-owner" || got.Status != "claimed" {
+	if got := store.item(activeQueueID); got.LeaseToken != "live-owner" || got.Status != "claimed" {
 		t.Fatalf("unexpired claim changed: %#v", got)
 	}
 }
@@ -517,9 +525,11 @@ func TestRunQueueSchedulerRecoversOnlyExpiredClaimWithSameCheckpoint(t *testing.
 func TestRunQueueSchedulerOwnerFailureBlocksWithoutInventedRun(t *testing.T) {
 	now := time.Date(2026, 8, 23, 17, 0, 0, 0, time.UTC)
 	taskID := modulecore.NewTaskID()
+	blockedQueueID := modulecore.NewQueueItemID()
+	blockedCheckpointID := modulecore.NewCheckpointID()
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueID: "blocked-owner", TaskID: taskID, RunStartReason: domaintask.RunStartReasonProcessRestartResume,
-		Goal: "resume", Action: "resume", Status: "queued", CreatedAt: now,
+		QueueItemID: blockedQueueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonProcessRestartResume,
+		Goal: "resume", Action: "resume", Status: "queued", CheckpointID: blockedCheckpointID, CheckpointRevision: 1, CreatedAt: now,
 	}}}
 	owner := &recordingTaskOwner{now: func() time.Time { return now }, err: errors.New("task owner unavailable")}
 	scheduler := NewRunQueueScheduler(store, RunQueueProcessorFunc(func(context.Context, domainsuperagent.RunQueueItem, modulecore.TraceID) (string, error) {
@@ -530,7 +540,7 @@ func TestRunQueueSchedulerOwnerFailureBlocksWithoutInventedRun(t *testing.T) {
 	if _, err := scheduler.RunOnce(context.Background()); err == nil {
 		t.Fatal("RunOnce() error = nil, want owner error")
 	}
-	item := store.item("blocked-owner")
+	item := store.item(blockedQueueID)
 	if item.Status != "blocked" || item.RunID != "" || item.LeaseToken != "" || item.CompletedAt.IsZero() || item.Reason == "" {
 		t.Fatalf("blocked item = %#v", item)
 	}
@@ -552,7 +562,7 @@ func TestRunQueueSchedulerCleansOwnerRunWhenPostStartValidationFails(t *testing.
 	now := time.Date(2026, 8, 23, 17, 30, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueID:        "invalid-owner-run",
+		QueueItemID:        "invalid-owner-run",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "cleanup invalid owner metadata",
@@ -602,7 +612,7 @@ func TestRunQueueSchedulerReportsTaskMismatchWithoutGuessingCleanupOwner(t *test
 	now := time.Date(2026, 8, 23, 17, 45, 0, 0, time.UTC)
 	taskID, otherTaskID, runID := modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewRunID()
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueID:        "mismatched-owner-run",
+		QueueItemID:        "mismatched-owner-run",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "do not guess cleanup task",
@@ -686,7 +696,7 @@ func (s *staleLeaseRunQueueStore) AttachRunQueueRun(_ context.Context, queueID, 
 		return false, s.attachErr
 	}
 	for index := range s.items {
-		if s.items[index].QueueID != queueID || s.items[index].LeaseToken != leaseToken {
+		if s.items[index].QueueItemID != modulecore.QueueItemID(queueID) || s.items[index].LeaseToken != leaseToken {
 			continue
 		}
 		item := s.items[index]
@@ -730,7 +740,7 @@ func (s *recordingRunQueueStore) ListRunQueueItems(context.Context, int) ([]doma
 
 func (s *recordingRunQueueStore) SaveRunQueueItem(_ context.Context, item domainsuperagent.RunQueueItem) error {
 	for idx := range s.items {
-		if s.items[idx].QueueID == item.QueueID {
+		if s.items[idx].QueueItemID == item.QueueItemID {
 			s.items[idx] = item
 			return nil
 		}
@@ -744,9 +754,18 @@ func (s *recordingRunQueueStore) Append(_ context.Context, item modulecore.Event
 	return nil
 }
 
-func (s *recordingRunQueueStore) item(queueID string) domainsuperagent.RunQueueItem {
+func (s *recordingRunQueueStore) itemByCheckpoint(checkpointID modulecore.CheckpointID) domainsuperagent.RunQueueItem {
 	for _, item := range s.items {
-		if item.QueueID == queueID {
+		if item.CheckpointID == checkpointID {
+			return item
+		}
+	}
+	return domainsuperagent.RunQueueItem{}
+}
+
+func (s *recordingRunQueueStore) item(queueItemID modulecore.QueueItemID) domainsuperagent.RunQueueItem {
+	for _, item := range s.items {
+		if item.QueueItemID == queueItemID {
 			return item
 		}
 	}
@@ -757,16 +776,19 @@ func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 	now := time.Date(2026, 8, 23, 16, 0, 0, 0, time.UTC)
 	resumableRunID, legacyRunID, finishedRunID, queueFinishedRunID := modulecore.NewRunID(), modulecore.NewRunID(), modulecore.NewRunID(), modulecore.NewRunID()
 	resumableTaskID, legacyTaskID, finishedTaskID, queueFinishedTaskID := modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewTaskID()
-	finishedQueueID := "resume:" + string(finishedRunID) + ":1"
-	queueFinishedQueueID := "resume:" + string(queueFinishedRunID) + ":2"
+	resumableCheckpointID := modulecore.NewCheckpointID()
+	finishedCheckpointID := modulecore.NewCheckpointID()
+	queueFinishedCheckpointID := modulecore.NewCheckpointID()
+	finishedQueueItemID := modulecore.NewQueueItemID()
+	queueFinishedQueueItemID := modulecore.NewQueueItemID()
 	store := &recordingRunQueueStore{runs: []domainsuperagent.AgentRun{
-		{RunID: resumableRunID, TaskID: resumableTaskID, WorkstreamID: "thread-1", ActorID: "mio", Goal: "continue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 5, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-time.Minute)},
+		{RunID: resumableRunID, TaskID: resumableTaskID, WorkstreamID: "thread-1", ActorID: "mio", Goal: "continue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointID: resumableCheckpointID, CheckpointRevision: 5, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-time.Minute)},
 		{RunID: legacyRunID, TaskID: legacyTaskID, ActorID: "mio", Goal: "unknown position", Status: "running", StartedAt: now.Add(-time.Hour)},
-		{RunID: finishedRunID, TaskID: finishedTaskID, ActorID: "mio", Goal: "done", Status: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Minute), Summary: "receipt committed", ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
-		{RunID: queueFinishedRunID, TaskID: queueFinishedTaskID, ActorID: "mio", Goal: "done by queue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointRevision: 2, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
+		{RunID: finishedRunID, TaskID: finishedTaskID, ActorID: "mio", Goal: "done", Status: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Minute), Summary: "receipt committed", ResumePolicy: "checkpoint", CheckpointID: finishedCheckpointID, CheckpointRevision: 1, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
+		{RunID: queueFinishedRunID, TaskID: queueFinishedTaskID, ActorID: "mio", Goal: "done by queue", Status: "running", StartedAt: now.Add(-time.Hour), ResumePolicy: "checkpoint", CheckpointID: queueFinishedCheckpointID, CheckpointRevision: 2, CheckpointSummary: "dispatch", NextAction: "execute", LastCheckpointAt: now.Add(-time.Hour)},
 	}, items: []domainsuperagent.RunQueueItem{
-		{QueueID: finishedQueueID, TaskID: finishedTaskID, RunID: finishedRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "done", Action: "resume", Status: "claimed", ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)},
-		{QueueID: queueFinishedQueueID, TaskID: queueFinishedTaskID, RunID: queueFinishedRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "done by queue", Action: "resume", Status: "completed", Reason: "queue receipt", CompletedAt: now.Add(-time.Minute), CheckpointRevision: 2, CreatedAt: now.Add(-2 * time.Minute)},
+		{QueueItemID: finishedQueueItemID, TaskID: finishedTaskID, RunID: finishedRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "done", Action: "resume", Status: "claimed", CheckpointID: finishedCheckpointID, ClaimedAt: now.Add(-2 * time.Minute), LeaseToken: "dead", LeaseUntil: now.Add(time.Minute), CheckpointRevision: 1, CreatedAt: now.Add(-2 * time.Minute)},
+		{QueueItemID: queueFinishedQueueItemID, TaskID: queueFinishedTaskID, RunID: queueFinishedRunID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "done by queue", Action: "resume", Status: "completed", CheckpointID: queueFinishedCheckpointID, Reason: "queue receipt", CompletedAt: now.Add(-time.Minute), CheckpointRevision: 2, CreatedAt: now.Add(-2 * time.Minute)},
 	}}
 	finishedAt := now.Add(-time.Minute)
 	queueFinishedAt := now.Add(-30 * time.Second)
@@ -789,9 +811,8 @@ func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 	if err != nil || queued != 1 || blocked != 1 {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
-	resumableQueueID := "resume:" + string(resumableTaskID) + ":" + string(resumableRunID) + ":5"
-	resumable := store.item(resumableQueueID)
-	if len(store.items) != 3 || resumable.TaskID != resumableTaskID || resumable.RunID != "" || resumable.RunStartReason != domaintask.RunStartReasonProcessRestartResume || resumable.IdempotencyKey != resumableQueueID || resumable.CheckpointSummary != "step four committed" || resumable.NextAction != "step five" || store.item(finishedQueueID).Status != "claimed" {
+	resumable := store.itemByCheckpoint(resumableCheckpointID)
+	if len(store.items) != 3 || resumable.TaskID != resumableTaskID || resumable.RunID != "" || resumable.RunStartReason != domaintask.RunStartReasonProcessRestartResume || resumable.IdempotencyKey != string(resumableCheckpointID) || resumable.CheckpointSummary != "step four committed" || resumable.NextAction != "step five" || store.item(finishedQueueItemID).Status != "claimed" {
 		t.Fatalf("recovery queue=%#v", store.items)
 	}
 	if run := store.runs[3]; run.Status != "completed" || run.Summary != "canonical queue receipt" || !run.CompletedAt.Equal(queueFinishedAt) {
@@ -807,16 +828,19 @@ func TestRecoverInterruptedAgentRunsRepairsHistoricalRunWhileRecoveringCurrentRu
 	now := time.Date(2026, 8, 24, 9, 0, 0, 0, time.UTC)
 	taskID := modulecore.NewTaskID()
 	oldRunID, activeRunID := modulecore.NewRunID(), modulecore.NewRunID()
+	activeCheckpointID := modulecore.NewCheckpointID()
+	historicalCheckpointID := modulecore.NewCheckpointID()
+	historicalQueueItemID := modulecore.NewQueueItemID()
 	oldCompletedAt := now.Add(-time.Hour)
 	store := &recordingRunQueueStore{
 		runs: []domainsuperagent.AgentRun{
 			{RunID: oldRunID, TaskID: taskID, ActorID: "mio", Goal: "historical", Status: "running", StartedAt: now.Add(-2 * time.Hour), Summary: "stale projection"},
-			{RunID: activeRunID, TaskID: taskID, ActorID: "mio", Goal: "continue current", Status: "running", StartedAt: now.Add(-time.Minute), ResumePolicy: "checkpoint", CheckpointRevision: 4, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-30 * time.Second)},
+			{RunID: activeRunID, TaskID: taskID, ActorID: "mio", Goal: "continue current", Status: "running", StartedAt: now.Add(-time.Minute), ResumePolicy: "checkpoint", CheckpointID: activeCheckpointID, CheckpointRevision: 4, CheckpointSummary: "step four committed", NextAction: "step five", LastCheckpointAt: now.Add(-30 * time.Second)},
 		},
 		items: []domainsuperagent.RunQueueItem{{
-			QueueID: "resume:" + string(taskID) + ":" + string(oldRunID) + ":4", TaskID: taskID, RunID: oldRunID,
+			QueueItemID: historicalQueueItemID, TaskID: taskID, RunID: oldRunID,
 			RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "historical", Action: "resume", Status: "completed",
-			CheckpointRevision: 4, CompletedAt: oldCompletedAt, CreatedAt: now.Add(-time.Hour),
+			CheckpointID: historicalCheckpointID, CheckpointRevision: 4, CompletedAt: oldCompletedAt, CreatedAt: now.Add(-time.Hour),
 		}},
 	}
 	owner := &recordingTaskOwner{
@@ -842,9 +866,8 @@ func TestRecoverInterruptedAgentRunsRepairsHistoricalRunWhileRecoveringCurrentRu
 	if historical.Status != "completed" || historical.Summary != "historical success" || !historical.CompletedAt.Equal(oldCompletedAt) {
 		t.Fatalf("historical projection=%#v", historical)
 	}
-	queueID := "resume:" + string(taskID) + ":" + string(activeRunID) + ":4"
-	resumed := store.item(queueID)
-	if resumed.QueueID != queueID || resumed.TaskID != taskID || resumed.RunID != "" || resumed.Status != "queued" || resumed.IdempotencyKey != queueID {
+	resumed := store.itemByCheckpoint(activeCheckpointID)
+	if resumed.TaskID != taskID || resumed.RunID != "" || resumed.Status != "queued" || resumed.IdempotencyKey != string(activeCheckpointID) {
 		t.Fatalf("active recovery queue=%#v", resumed)
 	}
 }
@@ -852,10 +875,11 @@ func TestRecoverInterruptedAgentRunsRepairsHistoricalRunWhileRecoveringCurrentRu
 func TestRecoverInterruptedAgentRunsRebuildsViewerCheckpointResumeGap(t *testing.T) {
 	now := time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	checkpointID := modulecore.NewCheckpointID()
 	completedAt := now.Add(-time.Minute)
 	store := &recordingRunQueueStore{runs: []domainsuperagent.AgentRun{{
 		RunID: runID, TaskID: taskID, WorkstreamID: "thread-gap", ActorID: "mio", Goal: "continue after viewer crash", Status: "paused", StartedAt: now.Add(-time.Hour), CompletedAt: completedAt,
-		ResumePolicy: "checkpoint", CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", LastCheckpointAt: now.Add(-2 * time.Minute),
+		ResumePolicy: "checkpoint", CheckpointID: checkpointID, CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", LastCheckpointAt: now.Add(-2 * time.Minute),
 	}}}
 	owner := &recordingTaskOwner{
 		now:   func() time.Time { return now },
@@ -869,9 +893,8 @@ func TestRecoverInterruptedAgentRunsRebuildsViewerCheckpointResumeGap(t *testing
 	if err != nil || queued != 1 || blocked != 0 {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
-	queueID := "resume:" + string(taskID) + ":" + string(runID) + ":7"
-	item := store.item(queueID)
-	if item.QueueID != queueID || item.TaskID != taskID || item.RunID != "" || item.RunStartReason != domaintask.RunStartReasonCheckpointResume || item.Status != "queued" || item.WorkstreamID != "thread-gap" || item.Goal != "continue after viewer crash" || item.Action != "resume" || item.CheckpointRevision != 7 || item.CheckpointSummary != "step seven committed" || item.NextAction != "step eight" || item.IdempotencyKey != queueID {
+	item := store.itemByCheckpoint(checkpointID)
+	if item.TaskID != taskID || item.RunID != "" || item.RunStartReason != domaintask.RunStartReasonCheckpointResume || item.Status != "queued" || item.WorkstreamID != "thread-gap" || item.Goal != "continue after viewer crash" || item.Action != "resume" || item.CheckpointRevision != 7 || item.CheckpointSummary != "step seven committed" || item.NextAction != "step eight" || item.IdempotencyKey != string(checkpointID) {
 		t.Fatalf("checkpoint resume queue=%#v", item)
 	}
 	if store.runs[0].Status != "paused" || !store.runs[0].CompletedAt.Equal(completedAt) {
@@ -886,16 +909,17 @@ func TestRecoverInterruptedAgentRunsRebuildsViewerCheckpointResumeGap(t *testing
 func TestRecoverInterruptedAgentRunsRejectsMismatchedViewerCheckpointResumeIntent(t *testing.T) {
 	now := time.Date(2026, 8, 24, 11, 0, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	checkpointID := modulecore.NewCheckpointID()
+	queueItemID := modulecore.NewQueueItemID()
 	completedAt := now.Add(-time.Minute)
-	queueID := "resume:" + string(taskID) + ":" + string(runID) + ":7"
 	store := &recordingRunQueueStore{
 		runs: []domainsuperagent.AgentRun{{
 			RunID: runID, TaskID: taskID, WorkstreamID: "thread-gap", ActorID: "mio", Goal: "continue after viewer crash", Status: "running", StartedAt: now.Add(-time.Hour),
-			ResumePolicy: "checkpoint", CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", LastCheckpointAt: now.Add(-2 * time.Minute),
+			ResumePolicy: "checkpoint", CheckpointID: checkpointID, CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", LastCheckpointAt: now.Add(-2 * time.Minute),
 		}},
 		items: []domainsuperagent.RunQueueItem{{
-			QueueID: queueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume, WorkstreamID: "thread-gap", Goal: "wrong goal", Action: "resume", Status: "queued",
-			CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", IdempotencyKey: queueID, CreatedAt: now,
+			QueueItemID: queueItemID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume, WorkstreamID: "thread-gap", Goal: "wrong goal", Action: "resume", Status: "queued",
+			CheckpointID: checkpointID, CheckpointRevision: 7, CheckpointSummary: "step seven committed", NextAction: "step eight", IdempotencyKey: string(checkpointID), CreatedAt: now,
 		}},
 	}
 	owner := &recordingTaskOwner{
@@ -921,16 +945,17 @@ func TestRecoverInterruptedAgentRunsRejectsMalformedProcessRestartIntentBeforePr
 	now := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 	terminalTaskID, terminalRunID := modulecore.NewTaskID(), modulecore.NewRunID()
 	activeTaskID, activeRunID := modulecore.NewTaskID(), modulecore.NewRunID()
+	activeCheckpointID := modulecore.NewCheckpointID()
+	queueItemID := modulecore.NewQueueItemID()
 	terminalCompletedAt := now.Add(-time.Hour)
-	queueID := "resume:" + string(activeTaskID) + ":" + string(activeRunID) + ":8"
 	store := &recordingRunQueueStore{
 		runs: []domainsuperagent.AgentRun{
 			{RunID: terminalRunID, TaskID: terminalTaskID, ActorID: "mio", Goal: "historical", Status: "running", StartedAt: now.Add(-2 * time.Hour), Summary: "stale historical projection"},
-			{RunID: activeRunID, TaskID: activeTaskID, WorkstreamID: "thread-active", ActorID: "mio", Goal: "continue active", Status: "running", StartedAt: now.Add(-time.Minute), ResumePolicy: "checkpoint", CheckpointRevision: 8, CheckpointSummary: "step eight committed", NextAction: "step nine", LastCheckpointAt: now.Add(-30 * time.Second)},
+			{RunID: activeRunID, TaskID: activeTaskID, WorkstreamID: "thread-active", ActorID: "mio", Goal: "continue active", Status: "running", StartedAt: now.Add(-time.Minute), ResumePolicy: "checkpoint", CheckpointID: activeCheckpointID, CheckpointRevision: 8, CheckpointSummary: "step eight committed", NextAction: "step nine", LastCheckpointAt: now.Add(-30 * time.Second)},
 		},
 		items: []domainsuperagent.RunQueueItem{{
-			QueueID: queueID, TaskID: activeTaskID, RunStartReason: domaintask.RunStartReasonProcessRestartResume, WorkstreamID: "thread-active", Goal: "wrong active goal", Action: "resume", Status: "queued",
-			CheckpointRevision: 8, CheckpointSummary: "step eight committed", NextAction: "step nine", IdempotencyKey: queueID, CreatedAt: now,
+			QueueItemID: queueItemID, TaskID: activeTaskID, RunStartReason: domaintask.RunStartReasonProcessRestartResume, WorkstreamID: "thread-active", Goal: "wrong active goal", Action: "resume", Status: "queued",
+			CheckpointID: activeCheckpointID, CheckpointRevision: 8, CheckpointSummary: "step eight committed", NextAction: "step nine", IdempotencyKey: string(activeCheckpointID), CreatedAt: now,
 		}},
 	}
 	owner := &recordingTaskOwner{

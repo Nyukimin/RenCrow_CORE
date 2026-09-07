@@ -163,9 +163,9 @@ var (
 
 // StageRunReceipt records one idempotent unit/revision/stage execution.
 type StageRunReceipt struct {
-	ReceiptID              string    `json:"receipt_id"`
-	IdempotencyKey         string    `json:"idempotency_key"`
-	RequestID              string    `json:"request_id,omitempty"`
+	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
+	IdempotencyKey         string               `json:"idempotency_key"`
+	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
 	UnitID                 string    `json:"unit_id"`
 	ItemID                 string    `json:"item_id,omitempty"`
 	ImplementationRevision int       `json:"implementation_revision"`
@@ -189,9 +189,9 @@ const (
 // ClosureReceipt is the durable phase marker for LIVE_VERIFIED -> DONE.
 // Prepared receipts are intentionally replayable after a process restart.
 type ClosureReceipt struct {
-	ReceiptID              string    `json:"receipt_id"`
-	IdempotencyKey         string    `json:"idempotency_key"`
-	RequestID              string    `json:"request_id,omitempty"`
+	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
+	IdempotencyKey         string               `json:"idempotency_key"`
+	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
 	UnitID                 string    `json:"unit_id"`
 	ItemID                 string    `json:"item_id,omitempty"`
 	ImplementationRevision int       `json:"implementation_revision"`
@@ -285,8 +285,16 @@ func (item QueueFreeze) MatchesResolved(resolution QueueFreezeResolution) bool {
 }
 
 func ValidateStageRunReceipt(item StageRunReceipt) error {
-	if strings.TrimSpace(item.ReceiptID) == "" || strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.UnitID) == "" {
+	if err := item.ReceiptID.Validate(); err != nil {
+		return fmt.Errorf("receipt identity is required: %w", err)
+	}
+	if strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.UnitID) == "" {
 		return fmt.Errorf("receipt identity is required")
+	}
+	if item.ActionID != "" {
+		if err := item.ActionID.Validate(); err != nil {
+			return fmt.Errorf("stage receipt action_id is invalid: %w", err)
+		}
 	}
 	if item.ImplementationRevision < 1 || strings.TrimSpace(item.TargetStage) == "" || item.CreatedAt.IsZero() {
 		return fmt.Errorf("stage receipt revision, target_stage, and created_at are required")
@@ -295,8 +303,16 @@ func ValidateStageRunReceipt(item StageRunReceipt) error {
 }
 
 func ValidateClosureReceipt(item ClosureReceipt) error {
-	if strings.TrimSpace(item.ReceiptID) == "" || strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.UnitID) == "" {
+	if err := item.ReceiptID.Validate(); err != nil {
+		return fmt.Errorf("closure receipt identity is required: %w", err)
+	}
+	if strings.TrimSpace(item.IdempotencyKey) == "" || strings.TrimSpace(item.UnitID) == "" {
 		return fmt.Errorf("closure receipt identity is required")
+	}
+	if item.ActionID != "" {
+		if err := item.ActionID.Validate(); err != nil {
+			return fmt.Errorf("closure receipt action_id is invalid: %w", err)
+		}
 	}
 	if item.ImplementationRevision < 1 || item.CreatedAt.IsZero() {
 		return fmt.Errorf("closure receipt revision and created_at are required")

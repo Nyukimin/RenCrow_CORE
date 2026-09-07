@@ -75,13 +75,15 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveMessageChannel() error = %v", err)
 	}
 	if err := store.SaveRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
-		QueueID:        "queue_1",
-		TaskID:         taskID,
-		RunStartReason: domaintask.RunStartReasonCheckpointResume,
-		Goal:           "resume run",
-		Action:         "resume",
-		Status:         "queued",
-		CreatedAt:      now,
+		QueueItemID:        modulecore.NewQueueItemID(),
+		TaskID:             taskID,
+		RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+		Goal:               "resume run",
+		Action:             "resume",
+		Status:             "queued",
+		CheckpointID:       modulecore.NewCheckpointID(),
+		CheckpointRevision: 1,
+		CreatedAt:          now,
 	}); err != nil {
 		t.Fatalf("SaveRunQueueItem() error = %v", err)
 	}
@@ -102,7 +104,7 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("ListMessageChannels() = %#v, %v", channels, err)
 	}
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
-	if err != nil || len(queue) != 1 || queue[0].QueueID != "queue_1" {
+	if err != nil || len(queue) != 1 || queue[0].QueueItemID == "" || queue[0].QueueItemID.Validate() != nil {
 		t.Fatalf("ListRunQueueItems() = %#v, %v", queue, err)
 	}
 }
@@ -208,7 +210,7 @@ func TestSQLiteRunQueueClaimSurvivesReopenAndRecoversAfterLeaseExpiry(t *testing
 		t.Fatal(err)
 	}
 	taskID := modulecore.NewTaskID()
-	item := domainsuperagent.RunQueueItem{QueueID: "resume:task-1:7", TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "continue", Action: "resume", Status: "queued", CheckpointRevision: 7, CreatedAt: now}
+	item := domainsuperagent.RunQueueItem{QueueItemID: modulecore.NewQueueItemID(), CheckpointID: modulecore.NewCheckpointID(), CheckpointRevision: 7, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "continue", Action: "resume", Status: "queued", CreatedAt: now}
 	if err := first.SaveRunQueueItem(context.Background(), item); err != nil {
 		t.Fatal(err)
 	}
@@ -216,10 +218,10 @@ func TestSQLiteRunQueueClaimSurvivesReopenAndRecoversAfterLeaseExpiry(t *testing
 	if err != nil || claimed == nil || claimed.Status != "reserved" || claimed.RunID != "" || claimed.AttemptCount != 1 {
 		t.Fatalf("first claim=%#v err=%v", claimed, err)
 	}
-	if renewed, err := first.RenewRunQueueLease(context.Background(), claimed.QueueID, "wrong-owner", now.Add(30*time.Second)); err != nil || renewed {
+	if renewed, err := first.RenewRunQueueLease(context.Background(), string(claimed.QueueItemID), "wrong-owner", now.Add(30*time.Second)); err != nil || renewed {
 		t.Fatalf("reservation renewed with wrong token=%v err=%v", renewed, err)
 	}
-	if renewed, err := first.RenewRunQueueLease(context.Background(), claimed.QueueID, "owner-1", now.Add(75*time.Second)); err != nil || !renewed {
+	if renewed, err := first.RenewRunQueueLease(context.Background(), string(claimed.QueueItemID), "owner-1", now.Add(75*time.Second)); err != nil || !renewed {
 		t.Fatalf("reservation renewal=%v err=%v", renewed, err)
 	}
 	firstRunID := modulecore.NewRunID()
@@ -244,7 +246,7 @@ func TestSQLiteRunQueueClaimSurvivesReopenAndRecoversAfterLeaseExpiry(t *testing
 	if err != nil || recovered == nil || recovered.Status != "reserved" || recovered.RunID != "" || recovered.LeaseToken != "owner-2" || recovered.AttemptCount != 2 || recovered.CheckpointRevision != 7 {
 		t.Fatalf("recovered=%#v err=%v", recovered, err)
 	}
-	if completed, err := reopened.CompleteRunQueueItem(context.Background(), recovered.QueueID, "owner-2", "completed", "reservation must attach a run first", now.Add(77*time.Second)); err != nil || completed {
+	if completed, err := reopened.CompleteRunQueueItem(context.Background(), string(recovered.QueueItemID), "owner-2", "completed", "reservation must attach a run first", now.Add(77*time.Second)); err != nil || completed {
 		t.Fatalf("reserved completion accepted=%v err=%v", completed, err)
 	}
 	secondRunID := modulecore.NewRunID()
@@ -253,10 +255,10 @@ func TestSQLiteRunQueueClaimSurvivesReopenAndRecoversAfterLeaseExpiry(t *testing
 	if err := reopened.SaveRunQueueItem(context.Background(), *recovered); err != nil {
 		t.Fatalf("persist recovered scheduler-attached run: %v", err)
 	}
-	if completed, err := reopened.CompleteRunQueueItem(context.Background(), recovered.QueueID, "owner-1", "completed", "stale result", now.Add(62*time.Second)); err != nil || completed {
+	if completed, err := reopened.CompleteRunQueueItem(context.Background(), string(recovered.QueueItemID), "owner-1", "completed", "stale result", now.Add(62*time.Second)); err != nil || completed {
 		t.Fatalf("stale owner completion accepted=%v err=%v", completed, err)
 	}
-	if completed, err := reopened.CompleteRunQueueItem(context.Background(), recovered.QueueID, "owner-2", "completed", "resumed", now.Add(78*time.Second)); err != nil || !completed {
+	if completed, err := reopened.CompleteRunQueueItem(context.Background(), string(recovered.QueueItemID), "owner-2", "completed", "resumed", now.Add(78*time.Second)); err != nil || !completed {
 		t.Fatalf("current owner completion=%v err=%v", completed, err)
 	}
 	items, err := reopened.ListRunQueueItems(context.Background(), 10)
@@ -274,15 +276,17 @@ func TestSQLiteAttachRunQueueRunRejectsStaleLeaseAndPreservesCurrentReservation(
 	defer store.Close()
 	now := time.Date(2026, 8, 23, 15, 0, 0, 0, time.UTC)
 	item := domainsuperagent.RunQueueItem{
-		QueueID:        "attach:task-1",
-		TaskID:         modulecore.NewTaskID(),
-		RunStartReason: domaintask.RunStartReasonCheckpointResume,
-		Goal:           "attach canonical run",
-		Action:         "resume",
-		Reason:         "preserve this reason",
-		Status:         "queued",
-		AttemptCount:   3,
-		CreatedAt:      now,
+		QueueItemID:        modulecore.NewQueueItemID(),
+		TaskID:             modulecore.NewTaskID(),
+		RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+		Goal:               "attach canonical run",
+		Action:             "resume",
+		Reason:             "preserve this reason",
+		Status:             "queued",
+		CheckpointID:       modulecore.NewCheckpointID(),
+		CheckpointRevision: 1,
+		AttemptCount:       3,
+		CreatedAt:          now,
 	}
 	if err := store.SaveRunQueueItem(context.Background(), item); err != nil {
 		t.Fatal(err)
@@ -291,11 +295,11 @@ func TestSQLiteAttachRunQueueRunRejectsStaleLeaseAndPreservesCurrentReservation(
 	if err != nil || first == nil {
 		t.Fatalf("first claim=%#v err=%v", first, err)
 	}
-	if attached, err := store.AttachRunQueueRun(context.Background(), first.QueueID, "owner-1", modulecore.RunID("run_legacy")); err == nil || attached {
+	if attached, err := store.AttachRunQueueRun(context.Background(), string(first.QueueItemID), "owner-1", modulecore.RunID("run_legacy")); err == nil || attached {
 		t.Fatalf("invalid canonical run attach=%v err=%v, want validation error", attached, err)
 	}
 	staleRunID := modulecore.NewRunID()
-	if attached, err := store.AttachRunQueueRun(context.Background(), first.QueueID, "stale-owner", staleRunID); err != nil || attached {
+	if attached, err := store.AttachRunQueueRun(context.Background(), string(first.QueueItemID), "stale-owner", staleRunID); err != nil || attached {
 		t.Fatalf("stale attach=%v err=%v, want false", attached, err)
 	}
 	reserved, err := store.ListRunQueueItems(context.Background(), 10)
@@ -307,14 +311,14 @@ func TestSQLiteAttachRunQueueRunRejectsStaleLeaseAndPreservesCurrentReservation(
 	if err != nil || second == nil || second.LeaseToken != "owner-2" || second.AttemptCount != 5 {
 		t.Fatalf("reacquired reservation=%#v err=%v", second, err)
 	}
-	if attached, err := store.AttachRunQueueRun(context.Background(), second.QueueID, "owner-1", staleRunID); err != nil || attached {
+	if attached, err := store.AttachRunQueueRun(context.Background(), string(second.QueueItemID), "owner-1", staleRunID); err != nil || attached {
 		t.Fatalf("old owner attach after reacquire=%v err=%v, want false", attached, err)
 	}
 	currentRunID := modulecore.NewRunID()
-	if attached, err := store.AttachRunQueueRun(context.Background(), second.QueueID, "owner-2", currentRunID); err != nil || !attached {
+	if attached, err := store.AttachRunQueueRun(context.Background(), string(second.QueueItemID), "owner-2", currentRunID); err != nil || !attached {
 		t.Fatalf("current owner attach=%v err=%v, want true", attached, err)
 	}
-	if attached, err := store.AttachRunQueueRun(context.Background(), second.QueueID, "owner-1", staleRunID); err != nil || attached {
+	if attached, err := store.AttachRunQueueRun(context.Background(), string(second.QueueItemID), "owner-1", staleRunID); err != nil || attached {
 		t.Fatalf("stale overwrite after current attach=%v err=%v, want false", attached, err)
 	}
 	items, err := store.ListRunQueueItems(context.Background(), 10)

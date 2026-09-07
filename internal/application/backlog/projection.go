@@ -226,7 +226,7 @@ func latestClosureRecords(records []domainworkstream.ClosureReceipt) []domainwor
 		if key := strings.TrimSpace(record.IdempotencyKey); key != "" {
 			return key
 		}
-		return strings.TrimSpace(record.ReceiptID)
+		return strings.TrimSpace(string(record.ReceiptID))
 	}, newerClosureReceipt)
 }
 
@@ -285,7 +285,7 @@ func latestStageRecords(records []domainworkstream.StageRunReceipt) []domainwork
 		if key := strings.TrimSpace(record.IdempotencyKey); key != "" {
 			return key
 		}
-		return strings.TrimSpace(record.ReceiptID)
+		return strings.TrimSpace(string(record.ReceiptID))
 	}, func(current, candidate domainworkstream.StageRunReceipt) bool {
 		return candidate.CompletedAt.After(current.CompletedAt) || candidate.CreatedAt.After(current.CreatedAt)
 	})

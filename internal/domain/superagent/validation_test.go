@@ -15,6 +15,10 @@ func validRunID() modulecore.RunID { return modulecore.NewRunID() }
 
 func validArtifactID() modulecore.ArtifactID { return modulecore.NewArtifactID() }
 
+func validQueueItemID() modulecore.QueueItemID { return modulecore.NewQueueItemID() }
+
+func validCheckpointID() modulecore.CheckpointID { return modulecore.NewCheckpointID() }
+
 func TestValidateSubagentTaskRequiresScopeAndTermination(t *testing.T) {
 	err := ValidateSubagentTask(SubagentTask{
 		TaskID:  validTaskID(),
@@ -73,15 +77,17 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("message channel should validate: %v", err)
 	}
 	if err := ValidateRunQueueItem(RunQueueItem{
-		QueueID:        "queue_1",
-		TaskID:         taskID,
-		RunID:          runID,
-		RunStartReason: domaintask.RunStartReasonCheckpointResume,
-		Goal:           "resume run",
-		Action:         "resume",
-		Status:         "completed",
-		CreatedAt:      now,
-		CompletedAt:    now.Add(time.Minute),
+		QueueItemID:        validQueueItemID(),
+		TaskID:             taskID,
+		RunID:              runID,
+		RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+		Goal:               "resume run",
+		Action:             "resume",
+		Status:             "completed",
+		CheckpointID:       validCheckpointID(),
+		CheckpointRevision: 1,
+		CreatedAt:          now,
+		CompletedAt:        now.Add(time.Minute),
 	}); err != nil {
 		t.Fatalf("run queue item should validate: %v", err)
 	}
@@ -346,7 +352,7 @@ func TestValidateSuperAgentRejectsMissingTimestamp(t *testing.T) {
 			name: "run queue created_at",
 			err:  "created_at",
 			run: func() error {
-				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued"})
+				return ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued"})
 			},
 		},
 	}
@@ -379,7 +385,7 @@ func TestValidateSuperAgentRejectsTerminalWithoutCompletedAt(t *testing.T) {
 		{
 			name: "run queue",
 			run: func() error {
-				return ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: taskID, RunID: runID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "completed", CreatedAt: now})
+				return ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: taskID, RunID: runID, RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "completed", CreatedAt: now})
 			},
 		},
 	}
@@ -420,11 +426,11 @@ func TestValidateSuperAgentRequiredFields(t *testing.T) {
 		{name: "channel id", err: ValidateMessageChannel(MessageChannel{ChannelType: "superagent", Status: "active", CreatedAt: now}), want: "channel_id"},
 		{name: "channel type", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", Status: "active", CreatedAt: now}), want: "channel_type"},
 		{name: "channel status", err: ValidateMessageChannel(MessageChannel{ChannelID: "chan_1", ChannelType: "superagent", CreatedAt: now}), want: "status"},
-		{name: "queue id", err: ValidateRunQueueItem(RunQueueItem{Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "queue_id"},
-		{name: "queue task id", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "task_id"},
-		{name: "queue goal", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Action: "resume", Status: "queued", CreatedAt: now}), want: "goal"},
-		{name: "queue action", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Status: "queued", CreatedAt: now}), want: "action"},
-		{name: "queue status", err: ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", CreatedAt: now}), want: "status"},
+		{name: "queue id", err: ValidateRunQueueItem(RunQueueItem{Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "queue_item_id"},
+		{name: "queue task id", err: ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: "queued", CreatedAt: now}), want: "task_id"},
+		{name: "queue goal", err: ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Action: "resume", Status: "queued", CreatedAt: now}), want: "goal"},
+		{name: "queue action", err: ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Status: "queued", CreatedAt: now}), want: "action"},
+		{name: "queue status", err: ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", CreatedAt: now}), want: "status"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -447,7 +453,7 @@ func TestValidateSuperAgentTerminalStatusVariants(t *testing.T) {
 	}
 	for _, status := range []string{"completed", "failed", "cancelled"} {
 		t.Run("queue "+status, func(t *testing.T) {
-			err := ValidateRunQueueItem(RunQueueItem{QueueID: "queue_1", TaskID: validTaskID(), RunID: validRunID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: status, CreatedAt: now})
+			err := ValidateRunQueueItem(RunQueueItem{QueueItemID: validQueueItemID(), TaskID: validTaskID(), RunID: validRunID(), RunStartReason: domaintask.RunStartReasonCheckpointResume, Goal: "resume run", Action: "resume", Status: status, CreatedAt: now})
 			if err == nil || !strings.Contains(err.Error(), "completed_at") {
 				t.Fatalf("err=%v, want completed_at", err)
 			}
@@ -459,17 +465,19 @@ func TestValidateRunQueueCanonicalTaskAndRunLifecycle(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	lease := func(status string, runID modulecore.RunID) RunQueueItem {
 		return RunQueueItem{
-			QueueID:        "queue_1",
-			TaskID:         validTaskID(),
-			RunID:          runID,
-			RunStartReason: domaintask.RunStartReasonCheckpointResume,
-			Goal:           "resume run",
-			Action:         "resume",
-			Status:         status,
-			ClaimedAt:      now,
-			LeaseToken:     "lease-1",
-			LeaseUntil:     now.Add(time.Minute),
-			CreatedAt:      now,
+			QueueItemID:        validQueueItemID(),
+			TaskID:             validTaskID(),
+			RunID:              runID,
+			RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+			Goal:               "resume run",
+			Action:             "resume",
+			Status:             status,
+			CheckpointID:       validCheckpointID(),
+			CheckpointRevision: 1,
+			ClaimedAt:          now,
+			LeaseToken:         "lease-1",
+			LeaseUntil:         now.Add(time.Minute),
+			CreatedAt:          now,
 		}
 	}
 
@@ -581,15 +589,17 @@ func TestValidateRunQueueBlockedBeforeRun(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC)
 	blocked := func() RunQueueItem {
 		return RunQueueItem{
-			QueueID:        "queue_1",
-			TaskID:         validTaskID(),
-			RunStartReason: domaintask.RunStartReasonCheckpointResume,
-			Goal:           "resume run",
-			Action:         "resume",
-			Status:         "blocked",
-			Reason:         "Task owner unavailable",
-			CompletedAt:    now.Add(time.Minute),
-			CreatedAt:      now,
+			QueueItemID:        validQueueItemID(),
+			TaskID:             validTaskID(),
+			RunStartReason:     domaintask.RunStartReasonCheckpointResume,
+			Goal:               "resume run",
+			Action:             "resume",
+			Status:             "blocked",
+			CheckpointID:       validCheckpointID(),
+			CheckpointRevision: 1,
+			Reason:             "Task owner unavailable",
+			CompletedAt:        now.Add(time.Minute),
+			CreatedAt:          now,
 		}
 	}
 

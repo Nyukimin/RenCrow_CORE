@@ -170,7 +170,7 @@ func (s *JSONLStore) FindStageRunReceipt(_ context.Context, key string) (domainw
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}
-		if item.IdempotencyKey == key || item.ReceiptID == key {
+		if item.IdempotencyKey == key || string(item.ReceiptID) == key {
 			found, matched = item, true
 		}
 		return nil
@@ -199,7 +199,7 @@ func (s *JSONLStore) ListStageRunReceipts(_ context.Context, limit int) ([]domai
 	for index := len(items) - 1; index >= 0; index-- {
 		key := items[index].IdempotencyKey
 		if key == "" {
-			key = items[index].ReceiptID
+			key = string(items[index].ReceiptID)
 		}
 		if _, ok := seen[key]; ok {
 			continue
@@ -228,7 +228,7 @@ func (s *JSONLStore) FindClosureReceipt(_ context.Context, key string) (domainwo
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
 		}
-		if item.IdempotencyKey == key || item.ReceiptID == key {
+		if item.IdempotencyKey == key || string(item.ReceiptID) == key {
 			found, matched = item, true
 		}
 		return nil
@@ -257,7 +257,7 @@ func (s *JSONLStore) ListClosureReceipts(_ context.Context, limit int) ([]domain
 	for index := len(items) - 1; index >= 0; index-- {
 		key := items[index].IdempotencyKey
 		if key == "" {
-			key = items[index].ReceiptID
+			key = string(items[index].ReceiptID)
 		}
 		if _, ok := seen[key]; ok {
 			continue

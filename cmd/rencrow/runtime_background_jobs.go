@@ -553,7 +553,7 @@ func startSuperAgentRunQueueScheduler(cfg *config.Config, store superAgentRunQue
 func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor, reporter backgroundJobFailureReporter) superagentapp.RunQueueProcessorFunc {
 	return superagentapp.RunQueueProcessorFunc(func(ctx context.Context, item domainsuperagent.RunQueueItem, traceID modulecore.TraceID) (string, error) {
 		fail := func(err error) (string, error) {
-			detail := fmt.Sprintf("queue_id=%s task_id=%s run_id=%s workstream_id=%s action=%s", strings.TrimSpace(item.QueueID), item.TaskID, item.RunID, strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
+			detail := fmt.Sprintf("queue_item_id=%s task_id=%s run_id=%s workstream_id=%s action=%s", string(item.QueueItemID), item.TaskID, item.RunID, strings.TrimSpace(item.WorkstreamID), strings.TrimSpace(item.Action))
 			reporter.FailedWithTrace(traceID, "superagent_run_queue", err, detail)
 			return "", err
 		}
@@ -572,7 +572,7 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 		}
 		sessionID := strings.TrimSpace(item.WorkstreamID)
 		if sessionID == "" {
-			sessionID = "superagent:" + strings.TrimSpace(item.QueueID)
+			sessionID = "superagent:" + string(item.QueueItemID)
 		}
 		resp, err := processor.ProcessMessage(ctx, orchestrator.ProcessMessageRequest{
 			TraceID:                  string(traceID),
@@ -580,8 +580,9 @@ func newSuperAgentRunQueueProcessor(processor superAgentRunQueueMessageProcessor
 			CanonicalRunID:           item.RunID,
 			SessionID:                sessionID,
 			Channel:                  "superagent",
-			ChatID:                   strings.TrimSpace(item.QueueID),
+			ChatID:                   string(item.QueueItemID),
 			UserMessage:              strings.TrimSpace(item.Goal),
+			ResumeCheckpointID:       item.CheckpointID,
 			ResumeCheckpointRevision: item.CheckpointRevision,
 			ResumeCheckpointSummary:  strings.TrimSpace(item.CheckpointSummary),
 			ResumeNextAction:         strings.TrimSpace(item.NextAction),

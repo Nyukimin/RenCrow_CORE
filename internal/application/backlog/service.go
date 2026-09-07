@@ -13,6 +13,7 @@ import (
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ItemStore interface {
@@ -532,8 +533,8 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, fmt.Errorf("decode stage receipt result: %w", err)
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if strings.TrimSpace(request.RequestID) == "" {
-					request.RequestID = existingReceipt.RequestID
+				if strings.TrimSpace(request.RequestID) == "" && existingReceipt.ActionID != "" {
+					request.RequestID = string(existingReceipt.ActionID)
 				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
 			}
@@ -556,8 +557,8 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, err
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if strings.TrimSpace(request.RequestID) == "" {
-					request.RequestID = existingReceipt.RequestID
+				if strings.TrimSpace(request.RequestID) == "" && existingReceipt.ActionID != "" {
+					request.RequestID = string(existingReceipt.ActionID)
 				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
 			}
@@ -610,7 +611,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	preparedReceipt := existingReceipt
 	if !receiptFound {
 		preparedReceipt = domainworkstream.StageRunReceipt{
-			ReceiptID: stageRunReceiptID(key), IdempotencyKey: key, RequestID: strings.TrimSpace(request.RequestID),
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, existingReceipt.ActionID),
 			UnitID: unitID, ItemID: item.ItemID, ImplementationRevision: revision,
 			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: next.DeliveryState, ResultJSON: string(resultJSON), CreatedAt: s.now(),
@@ -925,7 +926,7 @@ func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item dom
 	}
 	request := ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}
 	if found {
-		request.RequestID = closure.RequestID
+		request.RequestID = string(closure.ActionID)
 	}
 	done, closeErr := s.completeLiveVerifiedClosure(ctx, item, request)
 	return done, true, closeErr

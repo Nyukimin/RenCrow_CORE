@@ -389,10 +389,10 @@ func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "done-no-unit", Title: "done without lifecycle unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
 	}}
 	workstream := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{
-		{ReceiptID: "closure-exact", UnitID: "unit-exact", ItemID: "done-exact", ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: "closure-wrong-unit", UnitID: "different-unit", ItemID: "done-wrong-unit", ImplementationRevision: 3, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: "closure-wrong-revision", UnitID: "unit-wrong-revision", ItemID: "done-wrong-revision", ImplementationRevision: 99, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
-		{ReceiptID: "closure-prepared", UnitID: "unit-prepared", ItemID: "done-prepared", ImplementationRevision: 5, Status: domainworkstream.ClosureStatusPrepared, Phase: domainworkstream.ClosurePhasePrepared},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000010"), UnitID: "unit-exact", ItemID: "done-exact", ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000011"), UnitID: "different-unit", ItemID: "done-wrong-unit", ImplementationRevision: 3, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000012"), UnitID: "unit-wrong-revision", ItemID: "done-wrong-revision", ImplementationRevision: 99, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000013"), UnitID: "unit-prepared", ItemID: "done-prepared", ImplementationRevision: 5, Status: domainworkstream.ClosureStatusPrepared, Phase: domainworkstream.ClosurePhasePrepared},
 	}}
 	service := NewService(store, workstream)
 	projection, err := service.Projection(context.Background())

@@ -144,7 +144,7 @@ type MessageChannel struct {
 }
 
 type RunQueueItem struct {
-	QueueID            string    `json:"queue_id"`
+	QueueItemID        string    `json:"queue_item_id"`
 	TaskID             string    `json:"task_id"`
 	RunID              string    `json:"run_id,omitempty"`
 	RunStartReason     string    `json:"run_start_reason"`
@@ -159,6 +159,7 @@ type RunQueueItem struct {
 	LeaseToken         string    `json:"lease_token,omitempty"`
 	LeaseUntil         time.Time `json:"lease_until,omitempty"`
 	AttemptCount       int       `json:"attempt_count,omitempty"`
+	CheckpointID       string    `json:"checkpoint_id,omitempty"`
 	CheckpointRevision int       `json:"checkpoint_revision,omitempty"`
 	CheckpointSummary  string    `json:"checkpoint_summary,omitempty"`
 	NextAction         string    `json:"next_action,omitempty"`
@@ -1118,7 +1119,7 @@ type ResumeRunResponse struct {
 	SourceRunID           modulecore.RunID  `json:"source_run_id"`
 	RunID                 modulecore.RunID  `json:"run_id,omitempty"`
 	Status                string            `json:"status"`
-	QueueID               string            `json:"queue_id"`
+	QueueItemID           string            `json:"queue_item_id"`
 	QueueStatus           string            `json:"queue_status"`
 	QueueItem             RunQueueItem      `json:"queue_item"`
 	EventID               string            `json:"event_id"`
@@ -3770,14 +3771,14 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 	}
 	seenQueues := map[string]struct{}{}
 	for _, item := range resp.RunQueue {
-		queueID := strings.TrimSpace(item.QueueID)
+		queueItemID := strings.TrimSpace(item.QueueItemID)
 		if err := validateRunQueueItem(item, "superagent status run_queue item", true); err != nil {
 			return err
 		}
-		if _, ok := seenQueues[queueID]; ok {
-			return fmt.Errorf("superagent status contains duplicate run_queue item for queue_id %q", queueID)
+		if _, ok := seenQueues[queueItemID]; ok {
+			return fmt.Errorf("superagent status contains duplicate run_queue item for queue_item_id %q", queueItemID)
 		}
-		seenQueues[queueID] = struct{}{}
+		seenQueues[queueItemID] = struct{}{}
 	}
 	return nil
 }
@@ -5731,9 +5732,12 @@ func validateRunQueueItem(item RunQueueItem, label string, requireCreatedAt bool
 	if label == "" {
 		label = "run queue item"
 	}
-	queueID := strings.TrimSpace(item.QueueID)
-	if queueID == "" {
-		return fmt.Errorf("%s missing queue_id", label)
+	queueItemID := strings.TrimSpace(item.QueueItemID)
+	if queueItemID == "" {
+		return fmt.Errorf("%s missing queue_item_id", label)
+	}
+	if err := modulecore.QueueItemID(queueItemID).Validate(); err != nil {
+		return fmt.Errorf("%s %q invalid queue_item_id: %w", label, queueItemID, err)
 	}
 	status := strings.TrimSpace(item.Status)
 	if status == "" {
@@ -5743,66 +5747,84 @@ func validateRunQueueItem(item RunQueueItem, label string, requireCreatedAt bool
 		return fmt.Errorf("%s invalid run_queue status=%q", label, item.Status)
 	}
 	if requireCreatedAt && item.CreatedAt.IsZero() {
-		return fmt.Errorf("%s %q missing created_at", label, queueID)
+		return fmt.Errorf("%s %q missing created_at", label, queueItemID)
 	}
 	taskID := strings.TrimSpace(item.TaskID)
 	if taskID == "" {
-		return fmt.Errorf("%s %q missing task_id", label, queueID)
+		return fmt.Errorf("%s %q missing task_id", label, queueItemID)
 	}
 	if err := modulecore.TaskID(taskID).Validate(); err != nil {
-		return fmt.Errorf("%s %q invalid task_id: %w", label, queueID, err)
+		return fmt.Errorf("%s %q invalid task_id: %w", label, queueItemID, err)
 	}
 	reason := strings.TrimSpace(item.RunStartReason)
 	if reason == "" {
-		return fmt.Errorf("%s %q missing run_start_reason", label, queueID)
+		return fmt.Errorf("%s %q missing run_start_reason", label, queueItemID)
 	}
 	if !domaintask.ValidRunStartReason(domaintask.RunStartReason(reason)) {
-		return fmt.Errorf("%s %q invalid run_start_reason=%q", label, queueID, item.RunStartReason)
+		return fmt.Errorf("%s %q invalid run_start_reason=%q", label, queueItemID, item.RunStartReason)
 	}
 	if strings.TrimSpace(item.Goal) == "" {
-		return fmt.Errorf("%s %q missing goal", label, queueID)
+		return fmt.Errorf("%s %q missing goal", label, queueItemID)
 	}
 	if strings.TrimSpace(item.Action) == "" {
-		return fmt.Errorf("%s %q missing action", label, queueID)
+		return fmt.Errorf("%s %q missing action", label, queueItemID)
 	}
 	runID := strings.TrimSpace(item.RunID)
 	if runID != "" {
 		if err := modulecore.RunID(runID).Validate(); err != nil {
-			return fmt.Errorf("%s %q invalid run_id: %w", label, queueID, err)
+			return fmt.Errorf("%s %q invalid run_id: %w", label, queueItemID, err)
 		}
 	}
 	if status == "queued" || status == "reserved" || status == "blocked" {
 		if runID != "" {
-			return fmt.Errorf("%s %q %s run queue item must not retain run_id", label, queueID, status)
+			return fmt.Errorf("%s %q %s run queue item must not retain run_id", label, queueItemID, status)
 		}
 	}
 	if status == "reserved" || status == "claimed" {
 		if strings.TrimSpace(item.LeaseToken) == "" || item.LeaseUntil.IsZero() || item.ClaimedAt.IsZero() {
-			return fmt.Errorf("%s %q %s run queue item requires lease token, lease_until, and claimed_at", label, queueID, status)
+			return fmt.Errorf("%s %q %s run queue item requires lease token, lease_until, and claimed_at", label, queueItemID, status)
 		}
 	}
 	if status == "claimed" && runID == "" {
-		return fmt.Errorf("%s %q run_id is required for claimed run queue item", label, queueID)
+		return fmt.Errorf("%s %q run_id is required for claimed run queue item", label, queueItemID)
 	}
 	if isRunQueueTerminalStatus(status) {
 		if status == "blocked" {
 			if strings.TrimSpace(item.Reason) == "" {
-				return fmt.Errorf("%s %q reason is required for blocked run queue item", label, queueID)
+				return fmt.Errorf("%s %q reason is required for blocked run queue item", label, queueItemID)
 			}
 		} else if runID == "" {
-			return fmt.Errorf("%s %q run_id is required for terminal run queue item", label, queueID)
+			return fmt.Errorf("%s %q run_id is required for terminal run queue item", label, queueItemID)
 		}
 		if item.CompletedAt.IsZero() {
-			return fmt.Errorf("%s %q terminal run_queue missing completed_at", label, queueID)
+			return fmt.Errorf("%s %q terminal run_queue missing completed_at", label, queueItemID)
 		}
 	}
 	if status == "failed" && strings.TrimSpace(item.Reason) == "" {
-		return fmt.Errorf("%s %q failed run_queue item missing reason", label, queueID)
+		return fmt.Errorf("%s %q failed run_queue item missing reason", label, queueItemID)
 	}
 	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
-		return fmt.Errorf("%s %q attempt_count and checkpoint_revision must be >= 0", label, queueID)
+		return fmt.Errorf("%s %q attempt_count and checkpoint_revision must be >= 0", label, queueItemID)
+	}
+	if isCheckpointResumeRunQueueItem(item) {
+		checkpointID := strings.TrimSpace(item.CheckpointID)
+		if checkpointID == "" {
+			return fmt.Errorf("%s %q missing checkpoint_id", label, queueItemID)
+		}
+		if err := modulecore.CheckpointID(checkpointID).Validate(); err != nil {
+			return fmt.Errorf("%s %q invalid checkpoint_id: %w", label, queueItemID, err)
+		}
 	}
 	return nil
+}
+
+func isCheckpointResumeRunQueueItem(item RunQueueItem) bool {
+	switch domaintask.RunStartReason(strings.TrimSpace(item.RunStartReason)) {
+	case domaintask.RunStartReasonCheckpointResume, domaintask.RunStartReasonProcessRestartResume:
+		return strings.TrimSpace(item.Action) == "resume"
+	default:
+		return false
+	}
 }
 
 func parseRunStateRunID(runID string) (modulecore.RunID, error) {
@@ -5866,9 +5888,12 @@ func validateResumeRunResponse(resp ResumeRunResponse, expectedSourceRunID modul
 	if strings.TrimSpace(resp.Status) != "queued" {
 		return fmt.Errorf("resume response status mismatch: got %q want %q", resp.Status, "queued")
 	}
-	queueID := strings.TrimSpace(resp.QueueID)
-	if queueID == "" {
-		return fmt.Errorf("resume response missing queue_id")
+	queueItemID := strings.TrimSpace(resp.QueueItemID)
+	if queueItemID == "" {
+		return fmt.Errorf("resume response missing queue_item_id")
+	}
+	if err := modulecore.QueueItemID(queueItemID).Validate(); err != nil {
+		return fmt.Errorf("resume response invalid queue_item_id: %w", err)
 	}
 	queueStatus := strings.TrimSpace(resp.QueueStatus)
 	if queueStatus != "queued" {
@@ -5877,14 +5902,14 @@ func validateResumeRunResponse(resp ResumeRunResponse, expectedSourceRunID modul
 	if strings.TrimSpace(resp.EventID) == "" {
 		return fmt.Errorf("resume response missing event_id")
 	}
-	if strings.TrimSpace(resp.QueueItem.QueueID) == "" {
+	if strings.TrimSpace(resp.QueueItem.QueueItemID) == "" {
 		return fmt.Errorf("resume response missing queue_item")
 	}
 	if err := validateRunQueueItem(resp.QueueItem, "resume response queue_item", true); err != nil {
 		return err
 	}
-	if resp.QueueItem.QueueID != queueID {
-		return fmt.Errorf("resume response queue_item queue_id mismatch")
+	if resp.QueueItem.QueueItemID != queueItemID {
+		return fmt.Errorf("resume response queue_item queue_item_id mismatch")
 	}
 	if resp.QueueItem.TaskID != string(resp.TaskID) {
 		return fmt.Errorf("resume response queue_item task_id mismatch")
@@ -5895,11 +5920,14 @@ func validateResumeRunResponse(resp ResumeRunResponse, expectedSourceRunID modul
 	if resp.QueueItem.RunID != "" {
 		return fmt.Errorf("resume response queue_item must not assign run_id before queue claim")
 	}
-	expectedQueueID := fmt.Sprintf("resume:%s:%s:%d", resp.TaskID, resp.SourceRunID, resp.QueueItem.CheckpointRevision)
-	if queueID != expectedQueueID {
-		return fmt.Errorf("resume response queue_id is not bound to task/source/checkpoint")
+	checkpointID := strings.TrimSpace(resp.QueueItem.CheckpointID)
+	if checkpointID == "" {
+		return fmt.Errorf("resume response queue_item missing checkpoint_id")
 	}
-	if strings.TrimSpace(resp.QueueItem.IdempotencyKey) != queueID {
+	if err := modulecore.CheckpointID(checkpointID).Validate(); err != nil {
+		return fmt.Errorf("resume response queue_item invalid checkpoint_id: %w", err)
+	}
+	if strings.TrimSpace(resp.QueueItem.IdempotencyKey) != checkpointID {
 		return fmt.Errorf("resume response queue_item idempotency_key mismatch")
 	}
 	return validateRunControlAction(resp.RuntimeControlApplied, resp.RuntimeControlAction, allowedActions, "resume response")

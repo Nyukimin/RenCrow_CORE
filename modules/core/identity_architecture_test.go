@@ -1130,6 +1130,160 @@ func TestStep15SchedulerLegacyFieldsAreBanned(t *testing.T) {
 	canonicalArchitectureFail(t, "Step15 owner packages must not retain legacy Scheduler/Heartbeat identity fields", violations)
 }
 
+func TestStep16QueueCheckpointReceiptLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	superagentTokens := []string{
+		"QueueID",
+		"queue_id",
+		"GenerationID",
+		"generation_id",
+	}
+	receiptTokens := []string{
+		"atlas-stage",
+		"atlas-closure",
+		"RequestID",
+		"request_id",
+	}
+	atlasTokens := []string{
+		"atlas-stage",
+		"atlas-closure",
+	}
+	var violations []string
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step16queuecheckpointreceiptmigration") ||
+			strings.Contains(relative, "rencrow-step16-queue-checkpoint-receipt-migrate")
+	}
+	allowToken := func(relative string, lineNumber int, token string) bool {
+		if relative == "internal/infrastructure/persistence/superagent/sqlite_store.go" &&
+			token == "queue_id" && strings.Contains(lineAt(repoRoot, relative, lineNumber), "RENAME COLUMN") {
+			return true
+		}
+		return false
+	}
+	checkContent := func(relative string, content []byte, tokens []string) {
+		if shouldSkip(relative) {
+			return
+		}
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range tokens {
+				if canonicalSourceContainsToken(line, token) {
+					if allowToken(relative, lineNumber+1, token) {
+						continue
+					}
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-step16:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	walkDirectory := func(relative string, tokens []string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step16queuecheckpointreceiptmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkip(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkContent(rel, content, tokens)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step16 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/superagent",
+		"internal/application/superagent",
+		"internal/infrastructure/persistence/superagent",
+	} {
+		walkDirectory(relative, superagentTokens)
+	}
+	for _, relative := range []string{
+		"internal/domain/workstream",
+		"internal/infrastructure/persistence/workstream",
+	} {
+		walkDirectory(relative, receiptTokens)
+	}
+	lifecyclePath := filepath.Join(repoRoot, "internal/application/backlog/lifecycle.go")
+	if lifecycleContent, err := os.ReadFile(lifecyclePath); err != nil {
+		if !os.IsNotExist(err) {
+			t.Fatalf("read backlog lifecycle: %v", err)
+		}
+	} else {
+		checkContent(filepath.ToSlash(filepath.Join("internal", "application", "backlog", "lifecycle.go")), lifecycleContent, atlasTokens)
+	}
+	for _, relative := range []string{
+		"internal/adapter/viewer/superagent_handler.go",
+		"cmd/rencrow/runtime_background_jobs.go",
+		"pkg/rencrowclient/client.go",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content, superagentTokens)
+	}
+	if block := canonicalArchitectureStructBlock(repoRoot, "internal/domain/workstream/types.go", "StageRunReceipt"); block != "" {
+		if strings.Contains(block, "RequestID") || strings.Contains(block, `json:"request_id"`) {
+			violations = append(violations, "internal/domain/workstream/types.go:StageRunReceipt retains legacy request_id field")
+		}
+	}
+	if block := canonicalArchitectureStructBlock(repoRoot, "internal/domain/workstream/types.go", "ClosureReceipt"); block != "" {
+		if strings.Contains(block, "RequestID") || strings.Contains(block, `json:"request_id"`) {
+			violations = append(violations, "internal/domain/workstream/types.go:ClosureReceipt retains legacy request_id field")
+		}
+	}
+	canonicalArchitectureFail(t, "Step16 owner packages must not retain legacy Queue/Checkpoint/Receipt identity fields", violations)
+}
+
+
+func TestStep16MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	leftovers := []string{
+		filepath.Join(repoRoot, "cmd", "rencrow-step16-queue-checkpoint-receipt-migrate"),
+		filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "step16queuecheckpointreceiptmigration"),
+	}
+	var found []string
+	for _, path := range leftovers {
+		if _, err := os.Stat(path); err == nil {
+			found = append(found, path)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+	if len(found) != 0 {
+		t.Fatalf("Step16 migration source must be removed after cutover: %v", found)
+	}
+}
 
 func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)

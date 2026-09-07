@@ -305,11 +305,15 @@ func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOw
 			http.Error(w, "only a paused agent run can be resumed", http.StatusConflict)
 			return
 		}
-		if run.ResumePolicy != "checkpoint" || run.CheckpointRevision <= 0 || strings.TrimSpace(run.CheckpointSummary) == "" || strings.TrimSpace(run.NextAction) == "" || run.LastCheckpointAt.IsZero() {
+		if run.ResumePolicy != "checkpoint" || run.CheckpointID == "" || run.CheckpointRevision <= 0 || strings.TrimSpace(run.CheckpointSummary) == "" || strings.TrimSpace(run.NextAction) == "" || run.LastCheckpointAt.IsZero() {
 			http.Error(w, "agent run has no durable resumable checkpoint", http.StatusConflict)
 			return
 		}
-		queueID := fmt.Sprintf("resume:%s:%s:%d", run.TaskID, run.RunID, run.CheckpointRevision)
+		if err := run.CheckpointID.Validate(); err != nil {
+			http.Error(w, "agent run checkpoint identity is invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		checkpointKey := string(run.CheckpointID)
 		queue, err := store.ListRunQueueItems(r.Context(), 500)
 		if err != nil {
 			http.Error(w, "failed to load resume queue", http.StatusInternalServerError)
@@ -317,19 +321,20 @@ func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOw
 		}
 		var item domainsuperagent.RunQueueItem
 		expectedItem := domainsuperagent.RunQueueItem{
-			QueueID:            queueID,
+			QueueItemID:        modulecore.NewQueueItemID(),
 			TaskID:             run.TaskID,
 			WorkstreamID:       run.WorkstreamID,
 			RunStartReason:     domaintask.RunStartReasonCheckpointResume,
 			Goal:               run.Goal,
 			Action:             "resume",
 			Status:             "queued",
+			CheckpointID:       run.CheckpointID,
 			CheckpointRevision: run.CheckpointRevision,
 			CheckpointSummary:  run.CheckpointSummary,
 			NextAction:         run.NextAction,
-			IdempotencyKey:     queueID,
+			IdempotencyKey:     checkpointKey,
 		}
-		existing, exists := findRunQueueItemByID(queue, queueID)
+		existing, exists := findRunQueueItemByCheckpointID(queue, run.CheckpointID)
 		if exists {
 			if !sameResumeQueueIntent(existing, expectedItem) {
 				http.Error(w, "resume queue item is not an unclaimed queue intent", http.StatusConflict)
@@ -374,7 +379,7 @@ func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOw
 			"source_run_id":           string(run.RunID),
 			"run_id":                  "",
 			"status":                  "queued",
-			"queue_id":                item.QueueID,
+			"queue_item_id":           string(item.QueueItemID),
 			"queue_status":            item.Status,
 			"queue_item":              item,
 			"event_id":                trace.EventID,
@@ -385,7 +390,7 @@ func handleSuperAgentRunResume(store SuperAgentStore, taskOwner SuperAgentTaskOw
 }
 
 func sameResumeQueueIntent(existing, expected domainsuperagent.RunQueueItem) bool {
-	return existing.QueueID == expected.QueueID &&
+	return existing.CheckpointID == expected.CheckpointID &&
 		existing.TaskID == expected.TaskID &&
 		existing.RunID == "" &&
 		existing.RunStartReason == expected.RunStartReason &&
@@ -440,9 +445,18 @@ func findAgentRunByID(items []domainsuperagent.AgentRun, runID string) (domainsu
 	return domainsuperagent.AgentRun{}, false
 }
 
-func findRunQueueItemByID(items []domainsuperagent.RunQueueItem, queueID string) (domainsuperagent.RunQueueItem, bool) {
+func findRunQueueItemByCheckpointID(items []domainsuperagent.RunQueueItem, checkpointID modulecore.CheckpointID) (domainsuperagent.RunQueueItem, bool) {
 	for _, item := range items {
-		if item.QueueID == queueID {
+		if item.CheckpointID == checkpointID {
+			return item, true
+		}
+	}
+	return domainsuperagent.RunQueueItem{}, false
+}
+
+func findRunQueueItemByID(items []domainsuperagent.RunQueueItem, queueItemID modulecore.QueueItemID) (domainsuperagent.RunQueueItem, bool) {
+	for _, item := range items {
+		if item.QueueItemID == queueItemID {
 			return item, true
 		}
 	}

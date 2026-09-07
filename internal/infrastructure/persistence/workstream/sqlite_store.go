@@ -442,7 +442,7 @@ func (s *SQLiteStore) SaveStageRunReceipt(ctx context.Context, item domainworkst
 	if err := domainworkstream.ValidateStageRunReceipt(item); err != nil {
 		return err
 	}
-	return s.saveLifecycleReceipt(ctx, "stage_run_receipt", item.ReceiptID, item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
+	return s.saveLifecycleReceipt(ctx, "stage_run_receipt", string(item.ReceiptID), item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
 }
 
 func (s *SQLiteStore) FindStageRunReceipt(ctx context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
@@ -461,7 +461,7 @@ func (s *SQLiteStore) SaveClosureReceipt(ctx context.Context, item domainworkstr
 	if err := domainworkstream.ValidateClosureReceipt(item); err != nil {
 		return err
 	}
-	return s.saveLifecycleReceipt(ctx, "closure_receipt", item.ReceiptID, item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
+	return s.saveLifecycleReceipt(ctx, "closure_receipt", string(item.ReceiptID), item.IdempotencyKey, item.UnitID, item.ImplementationRevision, item.CreatedAt, item)
 }
 
 func (s *SQLiteStore) FindClosureReceipt(ctx context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {

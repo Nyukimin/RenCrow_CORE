@@ -8,6 +8,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type atlasMigrationItemStore struct {
@@ -92,7 +93,7 @@ func TestMigrateLegacyAtlasLifecycleRepairsDoneOnlyWithExactClosureReceipt(t *te
 	}}
 	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy}}
 	workstream := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{
-		ReceiptID:              "atlas-closure:atlas-lifecycle-v1:2",
+		ReceiptID:              modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000020"),
 		IdempotencyKey:         "atlas-lifecycle-v1:2:DONE",
 		UnitID:                 "atlas-lifecycle-v1",
 		ItemID:                 "atlas:atlas.lifecycle",

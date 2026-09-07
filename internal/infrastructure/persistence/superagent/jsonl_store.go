@@ -239,7 +239,7 @@ func (s *JSONLStore) AttachRunQueueRun(_ context.Context, queueID, leaseToken st
 		return false, err
 	}
 	for index := range items {
-		if items[index].QueueID != queueID {
+		if items[index].QueueItemID != modulecore.QueueItemID(queueID) {
 			continue
 		}
 		item := items[index]
@@ -275,7 +275,7 @@ func (s *JSONLStore) updateRunQueueLease(queueID, leaseToken string, claimedOnly
 		return false, err
 	}
 	for index := range items {
-		if items[index].QueueID != queueID {
+		if items[index].QueueItemID != modulecore.QueueItemID(queueID) {
 			continue
 		}
 		item := items[index]
@@ -318,10 +318,10 @@ func latestRunQueueItems(items []domainsuperagent.RunQueueItem, limit int) []dom
 	out := make([]domainsuperagent.RunQueueItem, 0, minRunQueueLimit(limit, len(items)))
 	for i := len(items) - 1; i >= 0 && len(out) < limit; i-- {
 		item := items[i]
-		if _, ok := seen[item.QueueID]; ok {
+		if _, ok := seen[string(item.QueueItemID)]; ok {
 			continue
 		}
-		seen[item.QueueID] = struct{}{}
+		seen[string(item.QueueItemID)] = struct{}{}
 		out = append(out, item)
 	}
 	return out

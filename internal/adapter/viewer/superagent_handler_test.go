@@ -225,14 +225,14 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 			t.Fatalf("resume trace contains %s identity payload: %#v", field, store.events[1])
 		}
 	}
-	if len(store.queue) != 1 || store.queue[0].QueueID != "resume:"+string(taskID)+":"+string(runID)+":3" || store.queue[0].TaskID != taskID || store.queue[0].RunID != "" || store.queue[0].RunStartReason != domaintask.RunStartReasonCheckpointResume || store.queue[0].Status != "queued" || store.queue[0].CheckpointRevision != 3 {
+	if len(store.queue) != 1 || store.queue[0].QueueItemID != "resume:"+string(taskID)+":"+string(runID)+":3" || store.queue[0].TaskID != taskID || store.queue[0].RunID != "" || store.queue[0].RunStartReason != domaintask.RunStartReasonCheckpointResume || store.queue[0].Status != "queued" || store.queue[0].CheckpointRevision != 3 {
 		t.Fatalf("resume queue=%#v", store.queue)
 	}
 	var resumeResponse map[string]any
 	if err := json.Unmarshal(resumeRec.Body.Bytes(), &resumeResponse); err != nil {
 		t.Fatal(err)
 	}
-	if resumeResponse["task_id"] != string(taskID) || resumeResponse["source_run_id"] != string(runID) || resumeResponse["run_id"] != "" || resumeResponse["status"] != "queued" || resumeResponse["queue_id"] != store.queue[0].QueueID || resumeResponse["queue_status"] != "queued" || resumeResponse["queue_item"] == nil {
+	if resumeResponse["task_id"] != string(taskID) || resumeResponse["source_run_id"] != string(runID) || resumeResponse["run_id"] != "" || resumeResponse["status"] != "queued" || resumeResponse["queue_item_id"] != store.queue[0].QueueItemID || resumeResponse["queue_status"] != "queued" || resumeResponse["queue_item"] == nil {
 		t.Fatalf("resume response receipt=%#v", resumeResponse)
 	}
 	resumeTraceID := store.events[1].TraceID
@@ -308,7 +308,7 @@ func TestHandleSuperAgentRunResumeRejectsMismatchedExistingIntentBeforeTaskResum
 	store := &stubSuperAgentStore{
 		runs: []domainsuperagent.AgentRun{run},
 		queue: []domainsuperagent.RunQueueItem{{
-			QueueID: queueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume,
+			QueueItemID: queueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume,
 			Goal: "work", Action: "resume", Status: "queued", CheckpointRevision: 2,
 			CheckpointSummary: "tampered", NextAction: "continue", IdempotencyKey: queueID, CreatedAt: startedAt,
 		}},

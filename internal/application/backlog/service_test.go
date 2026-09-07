@@ -181,7 +181,7 @@ func (s *memoryWorkstreamStore) SaveStageRunReceipt(_ context.Context, item doma
 
 func (s *memoryWorkstreamStore) FindStageRunReceipt(_ context.Context, key string) (domainworkstream.StageRunReceipt, bool, error) {
 	for index := len(s.stageReceipts) - 1; index >= 0; index-- {
-		if s.stageReceipts[index].IdempotencyKey == key || s.stageReceipts[index].ReceiptID == key {
+		if s.stageReceipts[index].IdempotencyKey == key || string(s.stageReceipts[index].ReceiptID) == key {
 			return s.stageReceipts[index], true, nil
 		}
 	}
@@ -209,7 +209,7 @@ func (s *memoryWorkstreamStore) SaveClosureReceipt(_ context.Context, item domai
 
 func (s *memoryWorkstreamStore) FindClosureReceipt(_ context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
 	for index := len(s.closureReceipts) - 1; index >= 0; index-- {
-		if s.closureReceipts[index].IdempotencyKey == key || s.closureReceipts[index].ReceiptID == key {
+		if s.closureReceipts[index].IdempotencyKey == key || string(s.closureReceipts[index].ReceiptID) == key {
 			return s.closureReceipts[index], true, nil
 		}
 	}

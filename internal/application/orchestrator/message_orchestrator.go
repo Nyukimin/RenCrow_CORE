@@ -56,6 +56,7 @@ type ProcessMessageRequest struct {
 	ResumeCheckpointRevision int
 	ResumeCheckpointSummary  string
 	ResumeNextAction         string
+	ResumeCheckpointID       modulecore.CheckpointID
 	CanonicalRunID           modulecore.RunID `json:"-"`
 	originalUserMessage      string
 }

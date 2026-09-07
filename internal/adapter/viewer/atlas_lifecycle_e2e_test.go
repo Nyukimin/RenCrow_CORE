@@ -18,6 +18,7 @@ import (
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	backlogpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/backlog"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 )
@@ -124,7 +125,7 @@ func TestAtlasHTTPBackfillReconcilePreservesCompletedRevision(t *testing.T) {
 	}
 	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
 	if err := runtime.workstream.SaveClosureReceipt(context.Background(), domainworkstream.ClosureReceipt{
-		ReceiptID: "isolated-closure", IdempotencyKey: "atlas-lifecycle-v1:2:DONE",
+		ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000030"), IdempotencyKey: "atlas-lifecycle-v1:2:DONE",
 		UnitID: "atlas-lifecycle-v1", ItemID: item.ItemID, ImplementationRevision: 2,
 		Phase: domainworkstream.ClosurePhaseDone, Status: domainworkstream.ClosureStatusCompleted,
 		LeaseReleased: true, CreatedAt: now, UpdatedAt: now, CompletedAt: now,

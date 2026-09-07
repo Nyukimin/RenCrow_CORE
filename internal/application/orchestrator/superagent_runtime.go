@@ -61,7 +61,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if err := traceID.Validate(); err != nil {
 		return leadAgentRunRecord{}, fmt.Errorf("lead agent trace identity is invalid: %w", err)
 	}
-	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, startedAt)
+	checkpointRevision, checkpointSummary, nextAction, checkpointAt, checkpointID := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
 		RunID:              runID,
 		TaskID:             taskID,
@@ -72,6 +72,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		StartedAt:          startedAt,
 		Summary:            fmt.Sprintf("route=%s", route),
 		ResumePolicy:       "checkpoint",
+		CheckpointID:       checkpointID,
 		CheckpointRevision: checkpointRevision,
 		CheckpointSummary:  checkpointSummary,
 		NextAction:         nextAction,
@@ -119,7 +120,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		record.StartedAt = time.Now().UTC()
 	}
 	completedAt := time.Now().UTC()
-	checkpointRevision, checkpointSummary, nextAction, checkpointAt := resumeCheckpoint(req, route, record.StartedAt)
+	checkpointRevision, checkpointSummary, nextAction, checkpointAt, checkpointID := resumeCheckpoint(req, route, record.StartedAt)
 	run := domainsuperagent.AgentRun{
 		RunID:              runID,
 		TaskID:             taskID,
@@ -131,6 +132,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		CompletedAt:        completedAt,
 		Summary:            summary,
 		ResumePolicy:       "checkpoint",
+		CheckpointID:       checkpointID,
 		CheckpointRevision: checkpointRevision,
 		CheckpointSummary:  checkpointSummary,
 		NextAction:         nextAction,
@@ -156,11 +158,14 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 	return nil
 }
 
-func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt time.Time) (int, string, string, time.Time) {
+func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt time.Time) (int, string, string, time.Time, modulecore.CheckpointID) {
 	if req.ResumeCheckpointRevision > 0 && strings.TrimSpace(req.ResumeCheckpointSummary) != "" && strings.TrimSpace(req.ResumeNextAction) != "" {
-		return req.ResumeCheckpointRevision, strings.TrimSpace(req.ResumeCheckpointSummary), strings.TrimSpace(req.ResumeNextAction), fallbackAt
+		if err := req.ResumeCheckpointID.Validate(); err != nil {
+			panic(fmt.Errorf("resume checkpoint requires canonical checkpoint_id: %w", err))
+		}
+		return req.ResumeCheckpointRevision, strings.TrimSpace(req.ResumeCheckpointSummary), strings.TrimSpace(req.ResumeNextAction), fallbackAt, req.ResumeCheckpointID
 	}
-	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch with the same task_id", fallbackAt
+	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch with the same task_id", fallbackAt, modulecore.NewCheckpointID()
 }
 
 func estimateRuntimeContextTokens(text string) int {

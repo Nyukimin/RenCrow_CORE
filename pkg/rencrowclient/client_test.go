@@ -76,16 +76,21 @@ func canonicalClientTestContextPack(t *testing.T, artifactKey, taskID, runID str
 	}
 }
 
-func canonicalClientTestRunQueueItem(t *testing.T, queueID, status string, now time.Time) RunQueueItem {
+func canonicalClientTestRunQueueItem(t *testing.T, queueKey, status string, now time.Time) RunQueueItem {
 	t.Helper()
+	queueItemID := string(modulecore.NewQueueItemID())
+	checkpointID := string(modulecore.NewCheckpointID())
 	item := RunQueueItem{
-		QueueID:        queueID,
-		TaskID:         canonicalClientTestTaskID(t, queueID+"-task"),
-		RunStartReason: "checkpoint_resume",
-		Goal:           "manual ledger test",
-		Action:         "resume",
-		Status:         status,
-		CreatedAt:      now,
+		QueueItemID:        queueItemID,
+		TaskID:             canonicalClientTestTaskID(t, queueKey+"-task"),
+		RunStartReason:     "checkpoint_resume",
+		Goal:               "manual ledger test",
+		Action:             "resume",
+		Status:             status,
+		CheckpointID:       checkpointID,
+		CheckpointRevision: 1,
+		IdempotencyKey:     checkpointID,
+		CreatedAt:          now,
 	}
 	switch status {
 	case "reserved", "claimed":
@@ -95,7 +100,7 @@ func canonicalClientTestRunQueueItem(t *testing.T, queueID, status string, now t
 	}
 	switch status {
 	case "claimed", "completed", "failed", "cancelled":
-		item.RunID = canonicalClientTestRunID(t, queueID+"-run")
+		item.RunID = canonicalClientTestRunID(t, queueKey+"-run")
 	}
 	switch status {
 	case "completed", "failed", "cancelled", "blocked":
@@ -182,12 +187,14 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "duplicate run queue",
-			resp: SuperAgentStatus{
-				RunQueue: []RunQueueItem{
-					canonicalClientTestRunQueueItem(t, "rq_1", "queued", now),
-					canonicalClientTestRunQueueItem(t, "rq_1", "completed", now),
-				},
-			},
+			resp: func() SuperAgentStatus {
+				sharedQueueItemID := string(modulecore.NewQueueItemID())
+				queued := canonicalClientTestRunQueueItem(t, "rq-dup", "queued", now)
+				queued.QueueItemID = sharedQueueItemID
+				completed := canonicalClientTestRunQueueItem(t, "rq-dup", "completed", now)
+				completed.QueueItemID = sharedQueueItemID
+				return SuperAgentStatus{RunQueue: []RunQueueItem{queued, completed}}
+			}(),
 			want: "duplicate run_queue",
 		},
 		{
@@ -360,11 +367,11 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		{
 			name: "missing queue id",
 			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{Status: "queued"}}},
-			want: "missing queue_id",
+			want: "missing queue_item_id",
 		},
 		{
 			name: "missing queue status",
-			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueID: "rq_1"}}},
+			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueItemID: string(modulecore.NewQueueItemID())}}},
 			want: "missing status",
 		},
 		{
@@ -387,7 +394,7 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "invalid queue status",
-			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueID: "rq_1", Status: "done"}}},
+			resp: SuperAgentStatus{RunQueue: []RunQueueItem{{QueueItemID: string(modulecore.NewQueueItemID()), Status: "done"}}},
 			want: "invalid run_queue status",
 		},
 		{
@@ -3706,11 +3713,12 @@ func TestCheckContextBudgetRejectsMalformedResponse(t *testing.T) {
 func TestPauseAndResumeRun(t *testing.T) {
 	runID := canonicalClientTestRunID(t, "state-run")
 	taskID := canonicalClientTestTaskID(t, "state-task")
-	queueID := "resume:" + taskID + ":" + runID + ":3"
+	queueItemID := string(modulecore.NewQueueItemID())
+	checkpointID := string(modulecore.NewCheckpointID())
 	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
 	queueItem := RunQueueItem{
-		QueueID: queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
-		Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: queueID, CreatedAt: now,
+		QueueItemID: queueItemID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+		Action: "resume", Status: "queued", CheckpointID: checkpointID, CheckpointRevision: 3, IdempotencyKey: checkpointID, CreatedAt: now,
 	}
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -3730,7 +3738,7 @@ func TestPauseAndResumeRun(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(ResumeRunResponse{
-			TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued", QueueID: queueID, QueueStatus: "queued", QueueItem: queueItem,
+			TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued", QueueItemID: queueItemID, QueueStatus: "queued", QueueItem: queueItem,
 			EventID: "evt_resume", RuntimeControlApplied: true, RuntimeControlAction: "resume_marker_cleared",
 		})
 	}))
@@ -3750,7 +3758,7 @@ func TestPauseAndResumeRun(t *testing.T) {
 	if paused.TaskID != modulecore.TaskID(taskID) || paused.RunID != modulecore.RunID(runID) || paused.Status != "paused" {
 		t.Fatalf("pause response=%#v", paused)
 	}
-	if resumed.TaskID != modulecore.TaskID(taskID) || resumed.SourceRunID != modulecore.RunID(runID) || resumed.RunID != "" || resumed.Status != "queued" || resumed.QueueID != queueID || resumed.QueueStatus != "queued" || !resumed.RuntimeControlApplied || resumed.RuntimeControlAction != "resume_marker_cleared" {
+	if resumed.TaskID != modulecore.TaskID(taskID) || resumed.SourceRunID != modulecore.RunID(runID) || resumed.RunID != "" || resumed.Status != "queued" || resumed.QueueItemID != queueItemID || resumed.QueueStatus != "queued" || !resumed.RuntimeControlApplied || resumed.RuntimeControlAction != "resume_marker_cleared" {
 		t.Fatalf("statuses paused=%#v resumed=%#v", paused, resumed)
 	}
 	if len(paths) != 2 || paths[0] != "/viewer/superagent/runs/pause" || paths[1] != "/viewer/superagent/runs/resume" {
@@ -3839,10 +3847,11 @@ func TestPauseRunRejectsMalformedResponse(t *testing.T) {
 func TestResumeRunRejectsMalformedResponse(t *testing.T) {
 	runID := canonicalClientTestRunID(t, "resume-response-run")
 	taskID := canonicalClientTestTaskID(t, "resume-response-task")
-	queueID := "resume:" + taskID + ":" + runID + ":3"
+	queueItemID := string(modulecore.NewQueueItemID())
+	checkpointID := string(modulecore.NewCheckpointID())
 	queueItem := RunQueueItem{
-		QueueID: queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
-		Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: queueID, CreatedAt: time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC),
+		QueueItemID: queueItemID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+		Action: "resume", Status: "queued", CheckpointID: checkpointID, CheckpointRevision: 3, IdempotencyKey: checkpointID, CreatedAt: time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC),
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs/resume" {
@@ -3852,7 +3861,7 @@ func TestResumeRunRejectsMalformedResponse(t *testing.T) {
 			TaskID:               modulecore.TaskID(taskID),
 			SourceRunID:          modulecore.RunID(runID),
 			Status:               "queued",
-			QueueID:              queueID,
+			QueueItemID:          queueItemID,
 			QueueStatus:          "queued",
 			QueueItem:            queueItem,
 			EventID:              "evt_1",
@@ -3873,25 +3882,29 @@ func TestResumeRunRejectsMalformedResponse(t *testing.T) {
 func TestResumeRunRejectsUnboundQueueReceipt(t *testing.T) {
 	runID := canonicalClientTestRunID(t, "queue-binding-run")
 	taskID := canonicalClientTestTaskID(t, "queue-binding-task")
-	otherRunID := canonicalClientTestRunID(t, "queue-binding-other-run")
-	validQueueID := "resume:" + taskID + ":" + runID + ":3"
+	validQueueItemID := string(modulecore.NewQueueItemID())
+	validCheckpointID := string(modulecore.NewCheckpointID())
+	otherCheckpointID := string(modulecore.NewCheckpointID())
 	now := time.Date(2026, 5, 20, 5, 40, 0, 0, time.UTC)
 	tests := []struct {
 		name           string
-		queueID        string
+		queueItemID    string
+		checkpointID   string
 		idempotencyKey string
 		want           string
 	}{
 		{
-			name:           "source binding",
-			queueID:        "resume:" + taskID + ":" + otherRunID + ":3",
-			idempotencyKey: "resume:" + taskID + ":" + otherRunID + ":3",
-			want:           "queue_id is not bound",
+			name:           "checkpoint binding",
+			queueItemID:    validQueueItemID,
+			checkpointID:   validCheckpointID,
+			idempotencyKey: otherCheckpointID,
+			want:           "idempotency_key mismatch",
 		},
 		{
 			name:           "idempotency binding",
-			queueID:        validQueueID,
-			idempotencyKey: "resume:other",
+			queueItemID:    validQueueItemID,
+			checkpointID:   validCheckpointID,
+			idempotencyKey: string(modulecore.NewCheckpointID()),
 			want:           "idempotency_key mismatch",
 		},
 	}
@@ -3902,12 +3915,12 @@ func TestResumeRunRejectsUnboundQueueReceipt(t *testing.T) {
 					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 				}
 				queueItem := RunQueueItem{
-					QueueID: tt.queueID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
-					Action: "resume", Status: "queued", CheckpointRevision: 3, IdempotencyKey: tt.idempotencyKey, CreatedAt: now,
+					QueueItemID: tt.queueItemID, TaskID: taskID, RunStartReason: "checkpoint_resume", Goal: "continue durable work",
+					Action: "resume", Status: "queued", CheckpointID: tt.checkpointID, CheckpointRevision: 3, IdempotencyKey: tt.idempotencyKey, CreatedAt: now,
 				}
 				_ = json.NewEncoder(w).Encode(ResumeRunResponse{
 					TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued",
-					QueueID: tt.queueID, QueueStatus: "queued", QueueItem: queueItem, EventID: "evt_1", RuntimeControlAction: "none",
+					QueueItemID: tt.queueItemID, QueueStatus: "queued", QueueItem: queueItem, EventID: "evt_1", RuntimeControlAction: "none",
 				})
 			}))
 			defer server.Close()
@@ -3926,14 +3939,14 @@ func TestResumeRunRejectsUnboundQueueReceipt(t *testing.T) {
 func TestResumeRunRejectsMissingQueueItem(t *testing.T) {
 	runID := canonicalClientTestRunID(t, "missing-queue-item-run")
 	taskID := canonicalClientTestTaskID(t, "missing-queue-item-task")
-	queueID := "resume:" + taskID + ":" + runID + ":3"
+	queueItemID := string(modulecore.NewQueueItemID())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/superagent/runs/resume" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(ResumeRunResponse{
 			TaskID: modulecore.TaskID(taskID), SourceRunID: modulecore.RunID(runID), Status: "queued",
-			QueueID: queueID, QueueStatus: "queued", EventID: "evt_1", RuntimeControlAction: "none",
+			QueueItemID: queueItemID, QueueStatus: "queued", EventID: "evt_1", RuntimeControlAction: "none",
 		})
 	}))
 	defer server.Close()

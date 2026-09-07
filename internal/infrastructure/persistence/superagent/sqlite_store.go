@@ -74,7 +74,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS run_queue (
-			queue_id TEXT PRIMARY KEY,
+			queue_item_id TEXT PRIMARY KEY,
 			status TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -85,6 +85,8 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
+	// Best-effort rename for local DBs created before queue_item_id was canonical.
+	_, _ = s.db.Exec(`ALTER TABLE run_queue RENAME COLUMN queue_id TO queue_item_id`)
 	return nil
 }
 
@@ -166,7 +168,7 @@ func (s *SQLiteStore) SaveRunQueueItem(ctx context.Context, item domainsuperagen
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO run_queue (queue_id, status, created_at, payload) VALUES (?, ?, ?, ?)`, item.QueueID, item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
+	_, err = s.db.ExecContext(ctx, `INSERT OR REPLACE INTO run_queue (queue_item_id, status, created_at, payload) VALUES (?, ?, ?, ?)`, string(item.QueueItemID), item.Status, item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload))
 	return err
 }
 
@@ -231,7 +233,7 @@ func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil
 	if err != nil {
 		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='reserved', payload=? WHERE queue_id=? AND payload=?`, string(encoded), item.QueueID, selected.payload)
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='reserved', payload=? WHERE queue_item_id=? AND payload=?`, string(encoded), string(item.QueueItemID), selected.payload)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +253,7 @@ func (s *SQLiteStore) ClaimNextRunQueueItem(ctx context.Context, now, leaseUntil
 // AttachRunQueueRun atomically binds a canonical Task-owned Run to the current
 // reserved lease. A stale or already-attached token returns false without a
 // write.
-func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueID, leaseToken string, canonicalRunID modulecore.RunID) (bool, error) {
+func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueItemID, leaseToken string, canonicalRunID modulecore.RunID) (bool, error) {
 	if err := canonicalRunID.Validate(); err != nil {
 		return false, fmt.Errorf("canonical run_id is invalid: %w", err)
 	}
@@ -267,7 +269,7 @@ func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueID, leaseToken
 	}
 	defer tx.Rollback()
 	var payload string
-	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_id=?`, queueID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_item_id=?`, queueItemID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
 		return false, tx.Commit()
 	} else if err != nil {
 		return false, err
@@ -288,7 +290,7 @@ func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueID, leaseToken
 	if err != nil {
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='claimed', payload=? WHERE queue_id=? AND payload=?`, string(encoded), queueID, payload)
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status='claimed', payload=? WHERE queue_item_id=? AND payload=?`, string(encoded), queueItemID, payload)
 	if err != nil {
 		return false, err
 	}
@@ -302,20 +304,20 @@ func (s *SQLiteStore) AttachRunQueueRun(ctx context.Context, queueID, leaseToken
 	return changed == 1, nil
 }
 
-func (s *SQLiteStore) RenewRunQueueLease(ctx context.Context, queueID, leaseToken string, leaseUntil time.Time) (bool, error) {
-	return s.updateRunQueueLease(ctx, queueID, leaseToken, false, false, func(item *domainsuperagent.RunQueueItem) {
+func (s *SQLiteStore) RenewRunQueueLease(ctx context.Context, queueItemID, leaseToken string, leaseUntil time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueItemID, leaseToken, false, false, func(item *domainsuperagent.RunQueueItem) {
 		item.LeaseUntil = leaseUntil
 	})
 }
 
-func (s *SQLiteStore) CompleteRunQueueItem(ctx context.Context, queueID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
-	return s.updateRunQueueLease(ctx, queueID, leaseToken, true, status == "blocked", func(item *domainsuperagent.RunQueueItem) {
+func (s *SQLiteStore) CompleteRunQueueItem(ctx context.Context, queueItemID, leaseToken, status, reason string, completedAt time.Time) (bool, error) {
+	return s.updateRunQueueLease(ctx, queueItemID, leaseToken, true, status == "blocked", func(item *domainsuperagent.RunQueueItem) {
 		item.Status, item.Reason, item.CompletedAt = status, reason, completedAt
 		item.LeaseToken, item.LeaseUntil = "", time.Time{}
 	})
 }
 
-func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseToken string, claimedOnly, allowReservedBlock bool, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
+func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueItemID, leaseToken string, claimedOnly, allowReservedBlock bool, mutate func(*domainsuperagent.RunQueueItem)) (bool, error) {
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("superagent sqlite store is closed")
 	}
@@ -325,7 +327,7 @@ func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseTok
 	}
 	defer tx.Rollback()
 	var payload string
-	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_id=?`, queueID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT payload FROM run_queue WHERE queue_item_id=?`, queueItemID).Scan(&payload); errors.Is(err, sql.ErrNoRows) {
 		return false, tx.Commit()
 	} else if err != nil {
 		return false, err
@@ -345,7 +347,7 @@ func (s *SQLiteStore) updateRunQueueLease(ctx context.Context, queueID, leaseTok
 	if err != nil {
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status=?, payload=? WHERE queue_id=? AND payload=?`, item.Status, string(encoded), queueID, payload)
+	result, err := tx.ExecContext(ctx, `UPDATE run_queue SET status=?, payload=? WHERE queue_item_id=? AND payload=?`, item.Status, string(encoded), queueItemID, payload)
 	if err != nil {
 		return false, err
 	}

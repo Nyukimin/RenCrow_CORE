@@ -38,6 +38,9 @@ func ValidateAgentRun(item AgentRun) error {
 		return fmt.Errorf("resume_policy must be checkpoint when set")
 	}
 	if strings.TrimSpace(item.ResumePolicy) == "checkpoint" {
+		if err := item.CheckpointID.Validate(); err != nil {
+			return fmt.Errorf("checkpoint_id is invalid: %w", err)
+		}
 		if item.CheckpointRevision <= 0 || strings.TrimSpace(item.CheckpointSummary) == "" || strings.TrimSpace(item.NextAction) == "" || item.LastCheckpointAt.IsZero() {
 			return fmt.Errorf("checkpoint resume requires revision, summary, next_action, and last_checkpoint_at")
 		}
@@ -121,8 +124,8 @@ func ValidateMessageChannel(item MessageChannel) error {
 }
 
 func ValidateRunQueueItem(item RunQueueItem) error {
-	if strings.TrimSpace(item.QueueID) == "" {
-		return fmt.Errorf("queue_id is required")
+	if err := item.QueueItemID.Validate(); err != nil {
+		return fmt.Errorf("queue_item_id is invalid: %w", err)
 	}
 	if err := item.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id is invalid: %w", err)
@@ -180,7 +183,21 @@ func ValidateRunQueueItem(item RunQueueItem) error {
 	if item.AttemptCount < 0 || item.CheckpointRevision < 0 {
 		return fmt.Errorf("attempt_count and checkpoint_revision must be >= 0")
 	}
+	if isCheckpointResumeQueueItem(item) {
+		if err := item.CheckpointID.Validate(); err != nil {
+			return fmt.Errorf("checkpoint_id is invalid: %w", err)
+		}
+	}
 	return nil
+}
+
+func isCheckpointResumeQueueItem(item RunQueueItem) bool {
+	switch item.RunStartReason {
+	case domaintask.RunStartReasonCheckpointResume, domaintask.RunStartReasonProcessRestartResume:
+		return strings.TrimSpace(item.Action) == "resume"
+	default:
+		return false
+	}
 }
 
 func isRunQueueStatus(status string) bool {

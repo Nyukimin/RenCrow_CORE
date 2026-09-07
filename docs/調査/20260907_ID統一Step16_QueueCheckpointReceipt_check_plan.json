@@ -1,0 +1,88 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step16-queue-checkpoint-receipt",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T09:40:00Z",
+  "input": {
+    "base_revision": "pending-after-step15-push",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-16-queueitemid--checkpointid--receiptid",
+    "queue_rule": "SuperAgent run queue primary identity is typed QueueItemID qit_ with JSON queue_item_id; generic QueueID and queue_id are forbidden in Step16 owners",
+    "checkpoint_rule": "Resume and generation checkpoints use typed CheckpointID ckp_; composite resume keys and GenerationID-as-checkpoint are forbidden in Step16 owners",
+    "receipt_rule": "StageRunReceipt and ClosureReceipt use typed ReceiptID rcp_ and ActionID for former request_id; ReceiptID is never EventID",
+    "completion_rule": "Generic QueueID zero; Checkpoint pointed by GenerationID zero; ReceiptID used as EventID zero in Step16 owners after cutover and migration source removal"
+  },
+  "included": [
+    {
+      "check_id": "s16_queue_item_id",
+      "guarantee": "superagent run queue uses QueueItemID queue_item_id with zero QueueID queue_id in domain application persistence viewer client owners",
+      "owner": "RenCrow_CORE superagent",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "run queue runtime",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s16_checkpoint_id",
+      "guarantee": "superagent resume checkpoint identity is CheckpointID not GenerationID or resume composite string as sole identity",
+      "owner": "RenCrow_CORE superagent recovery",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "resume runtime",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s16_receipt_action",
+      "guarantee": "StageRunReceipt and ClosureReceipt use ReceiptID and ActionID with zero request_id and zero ReceiptID-as-EventID assignment in workstream backlog owners",
+      "owner": "RenCrow_CORE workstream backlog",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Atlas lifecycle receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s16_historical_migration",
+      "guarantee": "offline one-shot CLI remaps superagent run_queue and workstream stage/closure receipts with dry-run apply agreement second-run noop and refuses /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step16 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state",
+      "failure_action": "leave old binary and state active or rollback"
+    },
+    {
+      "check_id": "s16_architecture_zero",
+      "guarantee": "Step16 owners contain zero generic QueueID queue_id Stage request_id and ReceiptID-as-EventID patterns after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step16 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s16_predeploy_verification",
+      "guarantee": "targeted owner tests and build pass",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s16_runtime_route",
+      "guarantee": "installed artifact readiness after restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step16 ledger",
+      "failure_action": "rollback or keep Step16 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s16_l1_archive_receipt_event",
+      "reason": "L1 archive receipt.EventID and trade AuditRef are not Step16 run-queue or Atlas stage receipt owners",
+      "consumer": "Step18 or owner-local cleanup",
+      "failure_action": "keep outside Step16 zero claim"
+    },
+    {
+      "check_id": "s16_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen failed ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}
