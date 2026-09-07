@@ -9,6 +9,7 @@ import (
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -16,7 +17,7 @@ const runtimeKnowledgeMemorySearchMaxLimit = 20
 
 type runtimeKnowledgeMemoryCandidateFinder interface {
 	FindCreativeCandidateByID(context.Context, string, string) (domainkm.CreativeKnowledgeItem, bool, error)
-	FindKnowledgeMemoryRequestReceipt(context.Context, string, string) (knowledgememorypersistence.KnowledgeMemoryRequestReceipt, bool, error)
+	FindKnowledgeMemoryActionReceipt(context.Context, string, modulecore.ActionID) (knowledgememorypersistence.KnowledgeMemoryRequestReceipt, bool, error)
 }
 
 type runtimeKnowledgeMemoryIndexedSearcher interface {
@@ -72,17 +73,17 @@ func registerRuntimeDataRecallKnowledgeMemoryRequests(r *runtimeDataRecallRegist
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
-		receipt, found, err := candidates.FindKnowledgeMemoryRequestReceipt(ctx, userID, q.Query)
+		receipt, found, err := candidates.FindKnowledgeMemoryActionReceipt(ctx, userID, modulecore.ActionID(strings.TrimSpace(q.Query)))
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
 		if found {
-			if receipt.RequestID != q.Query || receipt.UserID != userID || strings.TrimSpace(receipt.ItemID) == "" || receipt.CreatedAt.IsZero() {
-				return runtimeDataRecallResult{}, fmt.Errorf("knowledge memory request receipt identity mismatch")
+			if receipt.ActionID != modulecore.ActionID(q.Query) || receipt.UserID != userID || strings.TrimSpace(receipt.ItemID) == "" || receipt.CreatedAt.IsZero() {
+				return runtimeDataRecallResult{}, fmt.Errorf("knowledge memory action receipt identity mismatch")
 			}
 			records = append(records, map[string]any{
-				"request_id": receipt.RequestID, "user_id": receipt.UserID, "actor_id": receipt.ActorID,
+				"action_id": string(receipt.ActionID), "user_id": receipt.UserID, "actor_id": receipt.ActorID,
 				"payload_hash": receipt.PayloadHash, "item_id": receipt.ItemID, "created_at": receipt.CreatedAt,
 			})
 		}

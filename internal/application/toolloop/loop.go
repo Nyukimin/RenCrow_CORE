@@ -135,7 +135,7 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 			messages = append(messages, llm.ChatMessage{
 				Role:       "tool",
 				Content:    content,
-				ToolCallID: tc.ID,
+				ProviderToolCallID: tc.ID,
 			})
 		}
 	}

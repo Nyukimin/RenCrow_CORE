@@ -85,7 +85,7 @@ func durableStoreInput(req ProcessMessageRequest) appstore.Input {
 	if requestedBy == "" {
 		requestedBy = "authenticated_user"
 	}
-	return appstore.Input{RequestID: req.MessageID, TraceID: req.TraceID, RequestedBy: requestedBy, UserScope: req.Channel + ":" + req.ChatID, Message: req.UserMessage}
+	return appstore.Input{ActionID: modulecore.ActionID(strings.TrimSpace(req.MessageID)), TraceID: req.TraceID, RequestedBy: requestedBy, UserScope: req.Channel + ":" + req.ChatID, Message: req.UserMessage}
 }
 
 func durableStoreResponse(response string, result domainstore.WorkflowResult, taskID modulecore.TaskID) ProcessMessageResponse {

@@ -94,7 +94,7 @@ type ChatMessage struct {
 	Role       string // "system", "user", "assistant", "tool"
 	Content    string
 	ToolCalls  []ToolCall // role="assistant" 時のツール呼び出し
-	ToolCallID string     // role="tool" 時の対応ID
+	ProviderToolCallID string // role="tool": provider-side correlation; not ActionID
 	Type       PromptContextType
 	Metadata   map[string]string
 }

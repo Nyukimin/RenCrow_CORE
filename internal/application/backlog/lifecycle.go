@@ -12,6 +12,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // EvidenceVerificationRequest carries an EvidenceRef claim together with the
@@ -66,9 +67,9 @@ var (
 )
 
 // ResolveQueueFreezeRequest is the owner request used to replace a blocked
-// unit. RequestID is the idempotency key for the resolution operation.
+// unit. ActionID is the canonical resolution action identity and idempotency key.
 type ResolveQueueFreezeRequest struct {
-	RequestID              string                      `json:"request_id"`
+	ActionID               modulecore.ActionID         `json:"action_id"`
 	ExpectedFreezeRevision int                         `json:"expected_freeze_revision"`
 	ReplacementUnitID      string                      `json:"replacement_unit_id"`
 	SupersedesUnitID       string                      `json:"supersedes_unit_id"`

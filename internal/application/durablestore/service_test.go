@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryStore struct {
@@ -35,11 +36,11 @@ func (s *memoryStore) FindByDedupeKey(_ context.Context, key string) (*domain.Wo
 	return &r, nil
 }
 
-func (s *memoryStore) FindByRequestID(_ context.Context, requestID string) (*domain.RequestReceipt, error) {
+func (s *memoryStore) FindByActionID(_ context.Context, actionID modulecore.ActionID) (*domain.RequestReceipt, error) {
 	if s.receipts == nil {
 		return nil, nil
 	}
-	r, ok := s.receipts[requestID]
+	r, ok := s.receipts[string(actionID)]
 	if !ok {
 		return nil, nil
 	}
@@ -64,7 +65,7 @@ func (s *memoryStore) SaveWithReceipt(_ context.Context, result *domain.Workflow
 	if s.receipts == nil {
 		s.receipts = map[string]domain.RequestReceipt{}
 	}
-	if _, exists := s.receipts[receipt.RequestID]; exists {
+	if _, exists := s.receipts[string(receipt.ActionID)]; exists {
 		return ErrRequestConflict
 	}
 	if result != nil {
@@ -80,7 +81,7 @@ func (s *memoryStore) SaveWithReceipt(_ context.Context, result *domain.Workflow
 		s.byKey[result.Requirement.DedupeKey] = *result
 		s.byRequirement[result.Requirement.RequirementID] = *result
 	}
-	s.receipts[receipt.RequestID] = receipt
+	s.receipts[string(receipt.ActionID)] = receipt
 	return nil
 }
 func (s *memoryStore) Save(_ context.Context, r domain.WorkflowResult) error {
@@ -94,7 +95,7 @@ func (s *memoryStore) Save(_ context.Context, r domain.WorkflowResult) error {
 func TestServiceAssessAndDedupe(t *testing.T) {
 	store := &memoryStore{}
 	svc := NewService([]domain.Manifest{domainTestManifest()}, store, nil)
-	in := Input{RequestID: "req-1", TraceID: "trace-1", RequestedBy: "ren", UserScope: "user:ren", Message: "XのBookmarkを保存するDBの設計を確認して"}
+	in := Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), TraceID: "trace-1", RequestedBy: "ren", UserScope: "user:ren", Message: "XのBookmarkを保存するDBの設計を確認して"}
 	first, handled, err := svc.Handle(context.Background(), in)
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
@@ -111,7 +112,7 @@ func TestServiceAssessAndDedupe(t *testing.T) {
 func TestServiceRequestReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
 	store := &memoryStore{}
 	svc := NewService([]domain.Manifest{domainTestManifest()}, store, nil)
-	input := Input{RequestID: "request-1", TraceID: "trace-1", RequestedBy: "shiro", UserScope: "user-1", Message: "XのBookmarkを保存するDBの設計を確認して"}
+	input := Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), TraceID: "trace-1", RequestedBy: "shiro", UserScope: "user-1", Message: "XのBookmarkを保存するDBの設計を確認して"}
 	first, handled, err := svc.Handle(context.Background(), input)
 	if err != nil || !handled {
 		t.Fatalf("first handled=%v err=%v", handled, err)
@@ -128,18 +129,18 @@ func TestServiceRequestReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
 	if len(store.byKey) != 1 || len(store.receipts) != 1 {
 		t.Fatalf("conflicting request mutated store: byKey=%d receipts=%d", len(store.byKey), len(store.receipts))
 	}
-	semantic, handled, err := svc.Handle(context.Background(), Input{RequestID: "request-2", TraceID: "trace-2", RequestedBy: "shiro", UserScope: "user-1", Message: input.Message})
+	semantic, handled, err := svc.Handle(context.Background(), Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000002"), TraceID: "trace-2", RequestedBy: "shiro", UserScope: "user-1", Message: input.Message})
 	if err != nil || !handled || semantic.RequestReplay || !semantic.Deduplicated || semantic.Requirement.RequirementID != first.Requirement.RequirementID {
 		t.Fatalf("semantic result=%+v handled=%v err=%v", semantic, handled, err)
 	}
-	if receipt, ok := store.receipts["request-2"]; !ok || receipt.RequirementID != first.Requirement.RequirementID {
+	if receipt, ok := store.receipts["act_00000000-0000-5000-8000-000000000002"]; !ok || receipt.RequirementID != first.Requirement.RequirementID {
 		t.Fatalf("semantic receipt=%+v", receipt)
 	}
 }
 
 func TestServiceImplementNewStoreBlocksWithoutValidatedImplementer(t *testing.T) {
 	svc := NewService([]domain.Manifest{domainTestManifest()}, &memoryStore{}, nil)
-	got, handled, err := svc.Handle(context.Background(), Input{RequestID: "req-2", RequestedBy: "ren", Message: "ゲームの観測値を新しいDBに保存する仕組みを実装して"})
+	got, handled, err := svc.Handle(context.Background(), Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000003"), RequestedBy: "ren", Message: "ゲームの観測値を新しいDBに保存する仕組みを実装して"})
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
 	}
@@ -151,7 +152,7 @@ func TestServiceImplementNewStoreBlocksWithoutValidatedImplementer(t *testing.T)
 func TestServiceDoesNotActivateWithIncompleteOperationalEvidence(t *testing.T) {
 	implementer := &countingImplementer{evidence: domain.ActivationEvidence{MigrationPassed: true, BackupDryRun: true, ScratchRestore: true, IntegrityPassed: true}}
 	svc := NewService([]domain.Manifest{domainTestManifest()}, &memoryStore{}, implementer)
-	got, handled, err := svc.Handle(context.Background(), Input{RequestID: "req-3", RequestedBy: "ren", Message: "ゲームの観測値を新しいDBに保存する仕組みを実装して"})
+	got, handled, err := svc.Handle(context.Background(), Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000004"), RequestedBy: "ren", Message: "ゲームの観測値を新しいDBに保存する仕組みを実装して"})
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
 	}

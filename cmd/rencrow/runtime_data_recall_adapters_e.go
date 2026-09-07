@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -52,7 +53,7 @@ func registerRuntimeDataRecallToolRegistry(r *runtimeDataRecallRegistry, runtime
 		return err
 	}
 	return r.Register("tool_registry", "requests", dataRecallAccessInternal, func(ctx context.Context, q tools.DataRecallRequest) (runtimeDataRecallResult, error) {
-		receipt, found, err := owner.FindRequestReceipt(ctx, q.Query)
+		receipt, found, err := owner.FindActionReceipt(ctx, modulecore.ActionID(strings.TrimSpace(q.Query)))
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
@@ -60,7 +61,7 @@ func registerRuntimeDataRecallToolRegistry(r *runtimeDataRecallRegistry, runtime
 			return newRuntimeDataRecallResult(q.Store, q.Operation, []map[string]any{}), nil
 		}
 		record := map[string]any{
-			"request_id":   receipt.RequestID,
+			"action_id":    string(receipt.ActionID),
 			"actor_id":     receipt.ActorID,
 			"payload_hash": receipt.PayloadHash,
 			"tool_name":    receipt.ToolName,

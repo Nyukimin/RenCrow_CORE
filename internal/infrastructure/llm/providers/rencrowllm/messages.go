@@ -33,8 +33,9 @@ func (p *GatewayProvider) convertChatMessages(msgs []llm.ChatMessage) []map[stri
 			}
 			msg["tool_calls"] = tcs
 		}
-		if m.ToolCallID != "" {
-			msg["tool_call_id"] = m.ToolCallID
+		if m.ProviderToolCallID != "" {
+			// OpenAI-compatible wire key; RenCrow domain field is ProviderToolCallID.
+			msg["tool_call_id"] = m.ProviderToolCallID
 		}
 		messages = append(messages, msg)
 	}

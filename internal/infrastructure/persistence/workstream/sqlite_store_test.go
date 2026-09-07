@@ -13,6 +13,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreConfiguresSerializedBusyTimeout(t *testing.T) {
@@ -150,7 +151,7 @@ func TestSQLiteStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *test
 	replacement.HolderWorkstreamID = "ws-replacement"
 	resolution := domainworkstream.QueueFreezeResolution{
 		ExpectedFreezeRevision: 7,
-		ResolutionRequestID:    "resolve-1",
+		ActionID:               modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ReplacementUnitID:      "unit-replacement",
 		SupersedesUnitID:       "unit-blocked",
 		BlockerResolutionRefs:  []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-1", Verified: true, VerificationResult: domainbacklog.EvidenceVerificationVerified}},
@@ -164,7 +165,7 @@ func TestSQLiteStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *test
 		t.Fatalf("resolved freeze lost complete metadata: %+v", resolved)
 	}
 	replayed, replayLease, replayAcquired, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", resolution, replacement)
-	if err != nil || !replayAcquired || replayed.ResolutionRequestID != resolved.ResolutionRequestID || replayLease.HolderUnitID != replacement.HolderUnitID {
+	if err != nil || !replayAcquired || replayed.ActionID != resolved.ActionID || replayLease.HolderUnitID != replacement.HolderUnitID {
 		t.Fatalf("replay freeze=%+v lease=%+v acquired=%v err=%v", replayed, replayLease, replayAcquired, err)
 	}
 	sameRequestConflict := resolution
@@ -173,7 +174,7 @@ func TestSQLiteStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *test
 		t.Fatalf("same request with different resolution payload err=%v", err)
 	}
 	conflicting := resolution
-	conflicting.ResolutionRequestID = "resolve-2"
+	conflicting.ActionID = modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
 	if _, _, _, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", conflicting, replacement); !errors.Is(err, domainworkstream.ErrQueueFreezeResolutionConflict) {
 		t.Fatalf("conflicting resolution err=%v", err)
 	}

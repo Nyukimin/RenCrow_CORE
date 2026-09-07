@@ -13,6 +13,7 @@ import (
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -79,7 +80,7 @@ func (w *runtimeKnowledgeMemoryCandidateWriter) write(ctx context.Context, reque
 		return runtimeDataWriteOwnerResult{}, err
 	}
 	receipt := knowledgememorypersistence.KnowledgeMemoryRequestReceipt{
-		RequestID:   scope.RequestID,
+		ActionID:    modulecore.ActionID(strings.TrimSpace(scope.RequestID)),
 		UserID:      userID,
 		ActorID:     strings.TrimSpace(scope.ActorID),
 		PayloadHash: payloadHash,

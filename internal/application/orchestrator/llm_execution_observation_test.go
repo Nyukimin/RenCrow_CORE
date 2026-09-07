@@ -175,7 +175,7 @@ func assertOrchestrationObservation(t *testing.T, observation domainllm.Executio
 	if observation.TaskID != taskID || observation.TraceID != string(traceID) || observation.SessionID != sessionID {
 		t.Fatalf("observation correlation = %+v, want task=%s trace=%s session=%s", observation, taskID, traceID, sessionID)
 	}
-	if observation.RequestID == "" || observation.RequestID == string(taskID) || observation.RequestID == observation.TraceID || observation.RequestID == observation.SessionID {
+	if observation.RequestID == "" || string(observation.RequestID) == string(taskID) || string(observation.RequestID) == observation.TraceID || string(observation.RequestID) == observation.SessionID {
 		t.Fatalf("request ID is not independent: %+v", observation)
 	}
 	if observation.Initiator != "mio" || observation.Caller != caller || observation.Purpose != "route_and_execute" {

@@ -138,7 +138,7 @@ func estimateChatContextTokens(req domainllm.ChatRequest) int {
 	for _, msg := range req.Messages {
 		total += estimateTextTokens(msg.Role)
 		total += estimateTextTokens(msg.Content)
-		total += estimateTextTokens(msg.ToolCallID)
+		total += estimateTextTokens(msg.ProviderToolCallID)
 		for _, call := range msg.ToolCalls {
 			total += estimateTextTokens(call.ID)
 			total += estimateTextTokens(call.Function.Name)

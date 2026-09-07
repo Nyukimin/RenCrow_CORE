@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // ErrToolRegistryEntryNotFound is returned by exact ToolRegistry reads when
@@ -31,10 +33,10 @@ type ToolEntry struct {
 }
 
 // ToolRegistryRequestReceipt is the durable audit binding for an Owner
-// registration request. The request payload, actor and tool name are supplied
+// registration action. The action payload, actor and tool name are supplied
 // by the trusted runtime boundary; they are never read from a Tool payload.
 type ToolRegistryRequestReceipt struct {
-	RequestID   string
+	ActionID    modulecore.ActionID
 	ActorID     string
 	PayloadHash string
 	ToolName    string
@@ -55,8 +57,8 @@ type ToolRegistryRegistrationResult struct {
 // CORE data.write/data.recall routes. Keeping it separate preserves the
 // existing ToolRegistry interface and its legacy callers/mocks.
 type ToolRegistryReceiptOwner interface {
-	RegisterWithReceipt(ctx context.Context, entry ToolEntry, requestID, actorID, payloadHash string) (ToolRegistryRegistrationResult, error)
-	FindRequestReceipt(ctx context.Context, requestID string) (ToolRegistryRequestReceipt, bool, error)
+	RegisterWithReceipt(ctx context.Context, entry ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string) (ToolRegistryRegistrationResult, error)
+	FindActionReceipt(ctx context.Context, actionID modulecore.ActionID) (ToolRegistryRequestReceipt, bool, error)
 }
 
 // ToolRegistry はツールの永続管理インターフェース

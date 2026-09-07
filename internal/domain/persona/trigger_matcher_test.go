@@ -60,7 +60,7 @@ func TestMatchTriggerUsesPriorityWhenConfidenceTies(t *testing.T) {
 
 func TestCanUseCanonicalResponseRespectsCooldownMaxAndContext(t *testing.T) {
 	policy := CanonicalResponsePolicy{
-		ResponseID:       "kuro_destructive_block",
+		ResponseKey:       "kuro_destructive_block",
 		CooldownTurns:    3,
 		MaxPerSession:    2,
 		RequiredContexts: []string{"danger", "destructive"},
@@ -69,21 +69,21 @@ func TestCanUseCanonicalResponseRespectsCooldownMaxAndContext(t *testing.T) {
 		t.Fatal("expected response to be allowed before recent use")
 	}
 	recent := []CanonicalResponseLog{
-		{ResponseID: "kuro_destructive_block", Used: true},
-		{ResponseID: "other", Used: true},
+		{ResponseKey: "kuro_destructive_block", Used: true},
+		{ResponseKey: "other", Used: true},
 	}
 	if CanUseCanonicalResponse(policy, recent, []string{"danger", "destructive"}) {
 		t.Fatal("expected cooldown to block recent canonical response")
 	}
 	recent = []CanonicalResponseLog{
-		{ResponseID: "kuro_destructive_block", Used: true},
-		{ResponseID: "other", Used: true},
-		{ResponseID: "other", Used: true},
-		{ResponseID: "other", Used: true},
-		{ResponseID: "kuro_destructive_block", Used: true},
-		{ResponseID: "other", Used: true},
-		{ResponseID: "other", Used: true},
-		{ResponseID: "other", Used: true},
+		{ResponseKey: "kuro_destructive_block", Used: true},
+		{ResponseKey: "other", Used: true},
+		{ResponseKey: "other", Used: true},
+		{ResponseKey: "other", Used: true},
+		{ResponseKey: "kuro_destructive_block", Used: true},
+		{ResponseKey: "other", Used: true},
+		{ResponseKey: "other", Used: true},
+		{ResponseKey: "other", Used: true},
 	}
 	if CanUseCanonicalResponse(policy, recent, []string{"danger", "destructive"}) {
 		t.Fatal("expected max per session to block canonical response")

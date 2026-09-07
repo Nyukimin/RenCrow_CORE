@@ -37,8 +37,9 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 
 	provider := NewPromptReceiptProvider(promptReceiptStubProvider{}, "chat")
 	taskID := modulecore.NewTaskID()
+	requestID := modulecore.NewRequestID()
 	ctx := domainllm.WithExecutionObservation(context.Background(), domainllm.ExecutionObservation{
-		RequestID: "request-1", TraceID: "trace-1", TaskID: taskID, SessionID: "session-1",
+		RequestID: requestID, TraceID: "trace-1", TaskID: taskID, SessionID: "session-1",
 		Initiator: "mio", Caller: "agent.mio", Purpose: "chat",
 	})
 	_, err := provider.Generate(ctx, domainllm.GenerateRequest{
@@ -63,7 +64,7 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 	if receipt.SchemaVersion != 1 || receipt.Kind != "generate" || receipt.Provider != "chat" {
 		t.Fatalf("receipt identity = %+v", receipt)
 	}
-	if receipt.RequestID != "request-1" || receipt.TraceID != "trace-1" || receipt.TaskID != taskID {
+	if receipt.RequestID != string(requestID) || receipt.TraceID != "trace-1" || receipt.TaskID != taskID {
 		t.Fatalf("receipt correlation = %+v", receipt)
 	}
 	if strings.Contains(string(data), "job_id") {

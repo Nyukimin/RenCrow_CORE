@@ -58,7 +58,7 @@ type promptReceiptMessage struct {
 	Content    string                  `json:"content,omitempty"`
 	Parts      []promptReceiptPart     `json:"parts,omitempty"`
 	ToolCalls  []promptReceiptToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string                  `json:"tool_call_id,omitempty"`
+	ProviderToolCallID string                  `json:"provider_tool_call_id,omitempty"`
 }
 
 type promptReceiptPart struct {
@@ -184,7 +184,7 @@ func buildChatPromptReceipt(ctx context.Context, provider string, req domainllm.
 			Role:       message.Role,
 			Content:    message.Content,
 			ToolCalls:  toolCalls,
-			ToolCallID: message.ToolCallID,
+			ProviderToolCallID: message.ProviderToolCallID,
 		})
 	}
 	return buildPromptReceipt(ctx, provider, "chat", messages, req.Tools)
@@ -251,7 +251,7 @@ func buildPromptReceipt(ctx context.Context, provider, kind string, messages []p
 		receipt.RedactionApplied = receipt.LatestPromptSentence != sentence
 	}
 	if observation, ok := domainllm.ExecutionObservationFromContext(ctx); ok {
-		receipt.RequestID = observation.RequestID
+		receipt.RequestID = string(observation.RequestID)
 		receipt.TraceID = observation.TraceID
 		receipt.TaskID = observation.TaskID
 		receipt.SessionID = observation.SessionID

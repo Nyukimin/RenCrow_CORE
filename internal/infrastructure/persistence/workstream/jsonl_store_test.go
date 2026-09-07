@@ -12,6 +12,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
@@ -250,7 +251,7 @@ func TestJSONLStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *testi
 	replacement.HolderWorkstreamID = "ws-replacement"
 	resolution := domainworkstream.QueueFreezeResolution{
 		ExpectedFreezeRevision: 7,
-		ResolutionRequestID:    "resolve-1",
+		ActionID:               modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		ReplacementUnitID:      "unit-replacement",
 		SupersedesUnitID:       "unit-blocked",
 		BlockerResolutionRefs:  []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-1", Verified: true, VerificationResult: domainbacklog.EvidenceVerificationVerified}},
@@ -264,7 +265,7 @@ func TestJSONLStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *testi
 		t.Fatalf("resolved freeze lost complete metadata: %+v", resolved)
 	}
 	replayed, replayLease, replayAcquired, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", resolution, replacement)
-	if err != nil || !replayAcquired || replayed.ResolutionRequestID != resolved.ResolutionRequestID || replayLease.HolderUnitID != replacement.HolderUnitID {
+	if err != nil || !replayAcquired || replayed.ActionID != resolved.ActionID || replayLease.HolderUnitID != replacement.HolderUnitID {
 		t.Fatalf("replay freeze=%+v lease=%+v acquired=%v err=%v", replayed, replayLease, replayAcquired, err)
 	}
 	sameRequestConflict := resolution
@@ -273,7 +274,7 @@ func TestJSONLStoreAtomicFreezeLeaseOperationsAreIdempotentAndPersisted(t *testi
 		t.Fatalf("same request with different resolution payload err=%v", err)
 	}
 	conflicting := resolution
-	conflicting.ResolutionRequestID = "resolve-2"
+	conflicting.ActionID = modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
 	if _, _, _, err := store.ResolveQueueFreezeAndAcquireLease(ctx, "freeze-atomic", conflicting, replacement); !errors.Is(err, domainworkstream.ErrQueueFreezeResolutionConflict) {
 		t.Fatalf("conflicting resolution err=%v", err)
 	}
@@ -305,7 +306,7 @@ func TestJSONLStoreFreezeResolutionRecoversAfterResolvedAppendFailure(t *testing
 	}
 	resolution := domainworkstream.QueueFreezeResolution{
 		ExpectedFreezeRevision: 7,
-		ResolutionRequestID:    "resolve-crash-1",
+		ActionID:               modulecore.ActionID("act_00000000-0000-5000-8000-000000000003"),
 		ReplacementUnitID:      "unit-replacement",
 		SupersedesUnitID:       "unit-blocked",
 		BlockerResolutionRefs:  []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-crash", Verified: true, VerificationResult: domainbacklog.EvidenceVerificationVerified}},
@@ -326,7 +327,7 @@ func TestJSONLStoreFreezeResolutionRecoversAfterResolvedAppendFailure(t *testing
 	if err != nil || !found || pending.Status != domainworkstream.QueueFreezeActive {
 		t.Fatalf("reopened pending freeze=%+v found=%v err=%v", pending, found, err)
 	}
-	if pending.ResolutionRequestID != resolution.ResolutionRequestID || pending.SupersedesUnitID != resolution.SupersedesUnitID || pending.ResolutionPayloadHash != resolution.ResolutionPayloadHash || len(pending.BlockerResolutionRefs) != 1 {
+	if pending.ActionID != resolution.ActionID || pending.SupersedesUnitID != resolution.SupersedesUnitID || pending.ResolutionPayloadHash != resolution.ResolutionPayloadHash || len(pending.BlockerResolutionRefs) != 1 {
 		t.Fatalf("pending freeze lost request metadata: %+v", pending)
 	}
 	persistedLease, leaseFound, err := reopened.GetImplementationLease(ctx, replacement.LeaseName)

@@ -23,8 +23,8 @@ import (
 func TestRegisterDataRecallPersonaArchitecture(t *testing.T) {
 	store := &dataRecallPersonaListerStub{
 		canonicals: []domainpersona.CanonicalResponseLog{
-			{EventID: "evt-1", CharacterID: "mio", ResponseID: "Block-Destructive", MessageID: "secret-message", Used: true, Rewritten: false, CreatedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)},
-			{EventID: "evt-2", CharacterID: "mio", ResponseID: "unrelated", CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)},
+			{EventID: "evt-1", CharacterID: "mio", ResponseKey: "Block-Destructive", MessageID: "secret-message", Used: true, Rewritten: false, CreatedAt: time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)},
+			{EventID: "evt-2", CharacterID: "mio", ResponseKey: "unrelated", CreatedAt: time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)},
 		},
 	}
 	registry := newRuntimeDataRecallRegistry()
@@ -39,8 +39,8 @@ func TestRegisterDataRecallPersonaArchitecture(t *testing.T) {
 		t.Fatalf("persona ListCanonicalResponseLogs limit = %d, want 1", store.gotLimit)
 	}
 	record := result.Records[0]
-	if got, want := record["response_id"], "Block-Destructive"; got != want {
-		t.Fatalf("response_id = %#v, want %#v", got, want)
+	if got, want := record["response_key"], "Block-Destructive"; got != want {
+		t.Fatalf("response_key = %#v, want %#v", got, want)
 	}
 	if _, leaked := record["message_id"]; leaked {
 		t.Fatal("persona projection must not expose message_id or response body")
@@ -48,7 +48,7 @@ func TestRegisterDataRecallPersonaArchitecture(t *testing.T) {
 	if _, leaked := record["response"]; leaked {
 		t.Fatal("persona projection must not expose response body")
 	}
-	assertRecordKeys(t, record, "created_at", "response_id", "status", "trigger")
+	assertRecordKeys(t, record, "created_at", "response_key", "status", "trigger")
 }
 
 func TestRegisterDataRecallBrowserTraceToAPI(t *testing.T) {
@@ -171,35 +171,36 @@ func TestRegisterDataRecallAIWorkflow(t *testing.T) {
 
 func TestRegisterDataRecallDurableStoreWorkflow(t *testing.T) {
 	created := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
 	store := &dataRecallDurableStoreStub{result: &domaindurable.WorkflowResult{
 		Status:    domaindurable.StatusCompleted,
 		CreatedAt: created,
 		Requirement: domaindurable.StorageRequirement{
 			RequirementID:    "sr-1",
 			DedupeKey:        "dedupe-key-1",
-			RequestID:        "request-1",
+			ActionID:         action1,
 			UserScope:        "user-1",
 			RequestedOutcome: domaindurable.OutcomeAssess,
 			FactsToStore:     []string{"secret payload"},
 		},
 		Classification: domaindurable.Classification{OwnerModule: "RenCrow_CORE"},
 	}}
-	store.receipt = &domaindurable.RequestReceipt{RequestID: "request-1", UserScope: "user-1", PayloadHash: "hash", RequirementID: "sr-1", CreatedAt: created}
+	store.receipt = &domaindurable.RequestReceipt{ActionID: action1, UserScope: "user-1", PayloadHash: "hash", RequirementID: "sr-1", CreatedAt: created}
 	registry := newRuntimeDataRecallRegistry()
 	if err := registerRuntimeDataRecallDurableStoreWorkflow(registry, store); err != nil {
 		t.Fatalf("registerRuntimeDataRecallDurableStoreWorkflow() error = %v", err)
 	}
 	result := recallDataRecallAdapter(t, registry, dataRecallUserContext(t), toolsinfra.DataRecallRequest{
-		Store: "durable_store_workflow", Operation: "exact_request", Query: "request-1", Limit: 50,
+		Store: "durable_store_workflow", Operation: "exact_request", Query: string(action1), Limit: 50,
 	})
 	assertRecallResult(t, result, "durable_store_workflow", "exact_request", 1)
-	if store.gotKey != "request-1" {
+	if store.gotKey != string(action1) {
 		t.Fatalf("durable lookup key = %q, want exact query", store.gotKey)
 	}
 	record := result.Records[0]
 	assertRecordKeys(t, record, "created_at", "deduplicated", "lifecycle", "owner_module", "reason_code", "requested_outcome", "requirement_id", "status")
 	encoded := strings.ToLower(string(mustJSON(record)))
-	for _, forbidden := range []string{"secret payload", "facts_to_store", "dedupe_key", "request_id", "payload"} {
+	for _, forbidden := range []string{"secret payload", "facts_to_store", "dedupe_key", "action_id", "payload"} {
 		if strings.Contains(encoded, forbidden) {
 			t.Fatalf("durable projection leaked %q: %s", forbidden, encoded)
 		}
@@ -209,6 +210,7 @@ func TestRegisterDataRecallDurableStoreWorkflow(t *testing.T) {
 func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
 	created := time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
 	updated := created.Add(time.Minute)
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
 	stored := &domaindurable.WorkflowResult{
 		Status:    domaindurable.StatusCompleted,
 		Lifecycle: domaindurable.LifecycleValidated,
@@ -218,7 +220,7 @@ func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
 		Requirement: domaindurable.StorageRequirement{
 			RequirementID:    "sr-1",
 			DedupeKey:        "dedupe-key-1",
-			RequestID:        "request-1",
+			ActionID:         action1,
 			UserScope:        "user-1",
 			FactsToStore:     []string{"private message"},
 			RequestedOutcome: domaindurable.OutcomeAssess,
@@ -237,8 +239,8 @@ func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
 		t.Fatalf("durable requirement lookup key = %q, want exact query", store.gotRequirementKey)
 	}
 	record := result.Records[0]
-	assertRecordKeys(t, record, "created_at", "dedupe_key", "lifecycle", "request_id", "requirement_id", "status", "updated_at")
-	if record["request_id"] != "request-1" || record["requirement_id"] != "sr-1" || record["dedupe_key"] != "dedupe-key-1" || record["status"] != "completed" || record["lifecycle"] != "validated" || record["created_at"] != created || record["updated_at"] != updated {
+	assertRecordKeys(t, record, "action_id", "created_at", "dedupe_key", "lifecycle", "requirement_id", "status", "updated_at")
+	if record["action_id"] != string(action1) || record["requirement_id"] != "sr-1" || record["dedupe_key"] != "dedupe-key-1" || record["status"] != "completed" || record["lifecycle"] != "validated" || record["created_at"] != created || record["updated_at"] != updated {
 		t.Fatalf("durable requirement projection = %#v", record)
 	}
 	encoded := strings.ToLower(string(mustJSON(record)))
@@ -263,7 +265,7 @@ func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
 		CreatedAt: created,
 		UpdatedAt: updated,
 		Requirement: domaindurable.StorageRequirement{
-			RequirementID: "sr-1", DedupeKey: "dedupe-key-1", RequestID: "request-1", UserScope: "user-2",
+			RequirementID: "sr-1", DedupeKey: "dedupe-key-1", ActionID: action1, UserScope: "user-2",
 		},
 	}}
 	otherRegistry := newRuntimeDataRecallRegistry()
@@ -291,7 +293,7 @@ func TestRegisterDataRecallDurableStoreWorkflowRequirement(t *testing.T) {
 		CreatedAt: created,
 		UpdatedAt: updated,
 		Requirement: domaindurable.StorageRequirement{
-			RequirementID: "sr-1", RequestID: "request-1", UserScope: "user-1",
+			RequirementID: "sr-1", ActionID: action1, UserScope: "user-1",
 		},
 	}}); err != nil {
 		t.Fatal(err)
@@ -489,8 +491,8 @@ func (s *dataRecallDurableStoreStub) FindByDedupeKey(_ context.Context, key stri
 	s.gotKey = key
 	return s.result, nil
 }
-func (s *dataRecallDurableStoreStub) FindByRequestID(_ context.Context, key string) (*domaindurable.RequestReceipt, error) {
-	s.gotKey = key
+func (s *dataRecallDurableStoreStub) FindByActionID(_ context.Context, actionID modulecore.ActionID) (*domaindurable.RequestReceipt, error) {
+	s.gotKey = string(actionID)
 	return s.receipt, nil
 }
 func (s *dataRecallDurableStoreStub) FindByRequirementID(_ context.Context, key string) (*domaindurable.WorkflowResult, error) {

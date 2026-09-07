@@ -9,6 +9,7 @@ import (
 
 	appkm "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestImportJSONLToSQLiteCreatesPromotionReceiptWithoutChangingSource(t *testing.T) {
@@ -109,7 +110,7 @@ func TestPrivateCandidateDoesNotInvalidatePromotedReadinessAfterRestart(t *testi
 		CreatedAt:  now.Add(time.Minute),
 	}
 	receipt := KnowledgeMemoryRequestReceipt{
-		RequestID:   "request-owner-candidate-1",
+		ActionID:    modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 		UserID:      candidate.UserID,
 		ActorID:     "shiro",
 		PayloadHash: "sha256:owner-candidate-1",

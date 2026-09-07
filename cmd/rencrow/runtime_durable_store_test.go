@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildDurableStoreRuntimeFromCanonicalManifest(t *testing.T) {
@@ -19,7 +20,7 @@ func TestBuildDurableStoreRuntimeFromCanonicalManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closer.Close()
-	result, handled, err := workflow.Handle(context.Background(), appstore.Input{RequestID: "req-runtime", RequestedBy: "ren", Message: "XのBookmarkを保存するDBの設計を確認して"})
+	result, handled, err := workflow.Handle(context.Background(), appstore.Input{ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"), RequestedBy: "ren", Message: "XのBookmarkを保存するDBの設計を確認して"})
 	if err != nil || !handled {
 		t.Fatalf("handled=%v err=%v", handled, err)
 	}

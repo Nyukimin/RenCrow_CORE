@@ -1,6 +1,10 @@
 package durablestore
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type RequestedOutcome string
 
@@ -49,7 +53,7 @@ const (
 type StorageRequirement struct {
 	RequirementID        string           `json:"requirement_id"`
 	DedupeKey            string           `json:"dedupe_key"`
-	RequestID            string           `json:"request_id"`
+	ActionID             modulecore.ActionID `json:"action_id"`
 	TraceID              string           `json:"trace_id,omitempty"`
 	RequestedBy          string           `json:"requested_by"`
 	UserScope            string           `json:"user_scope,omitempty"`
@@ -134,11 +138,11 @@ func (e ActivationEvidence) Complete() bool {
 	return e.MigrationPassed && e.BackupDryRun && e.ScratchRestore && e.IntegrityPassed && e.HealthPassed
 }
 
-// RequestReceipt binds one trusted request identity to the canonical durable
+// RequestReceipt binds one trusted action identity to the canonical durable
 // workflow result. It is persisted separately so a replay can be resolved by
-// request ID without exposing the workflow payload to the caller.
+// action ID without exposing the workflow payload to the caller.
 type RequestReceipt struct {
-	RequestID     string    `json:"request_id"`
+	ActionID      modulecore.ActionID `json:"action_id"`
 	UserScope     string    `json:"user_scope"`
 	PayloadHash   string    `json:"payload_hash"`
 	RequirementID string    `json:"requirement_id"`

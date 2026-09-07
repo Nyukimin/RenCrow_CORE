@@ -11,7 +11,7 @@ import (
 const StorageRequirementHashVersion = "storage-requirement/v1"
 
 type canonicalStorageRequirement struct {
-	RequestID            string   `json:"request_id"`
+	ActionID             string   `json:"action_id"`
 	TraceID              string   `json:"trace_id,omitempty"`
 	RequestedBy          string   `json:"requested_by"`
 	UserScope            string   `json:"user_scope,omitempty"`
@@ -29,11 +29,11 @@ type canonicalStorageRequirement struct {
 }
 
 // HashStorageRequirement returns the deterministic payload hash used by the
-// durable request receipt. Derived RequirementID and DedupeKey are excluded;
-// trusted request identity and all semantic requirement fields are included.
+// durable action receipt. Derived RequirementID and DedupeKey are excluded;
+// trusted action identity and all semantic requirement fields are included.
 func HashStorageRequirement(req StorageRequirement) string {
 	canonical := canonicalStorageRequirement{
-		RequestID:            strings.TrimSpace(req.RequestID),
+		ActionID:             strings.TrimSpace(string(req.ActionID)),
 		TraceID:              strings.TrimSpace(req.TraceID),
 		RequestedBy:          strings.TrimSpace(req.RequestedBy),
 		UserScope:            strings.TrimSpace(req.UserScope),
@@ -58,8 +58,14 @@ func HashStorageRequirement(req StorageRequirement) string {
 }
 
 func ValidateRequestReceipt(receipt RequestReceipt) error {
-	if strings.TrimSpace(receipt.RequestID) == "" {
-		return fmt.Errorf("request_id is required")
+	actionID := strings.TrimSpace(string(receipt.ActionID))
+	if actionID == "" {
+		return fmt.Errorf("action_id is required")
+	}
+	if !strings.HasPrefix(actionID, "legacy/") {
+		if err := receipt.ActionID.Validate(); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(receipt.PayloadHash) == "" {
 		return fmt.Errorf("payload_hash is required")

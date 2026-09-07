@@ -26,7 +26,7 @@ type TriggerLog struct {
 type CanonicalResponseLog struct {
 	EventID     string    `json:"event_id"`
 	CharacterID string    `json:"character_id"`
-	ResponseID  string    `json:"response_id"`
+	ResponseKey string    `json:"response_key"`
 	MessageID   string    `json:"message_id,omitempty"`
 	Used        bool      `json:"used"`
 	Rewritten   bool      `json:"rewritten"`
@@ -84,14 +84,14 @@ type TriggerMatch struct {
 }
 
 type CanonicalResponsePolicy struct {
-	ResponseID       string   `json:"response_id"`
+	ResponseKey      string   `json:"response_key"`
 	CooldownTurns    int      `json:"cooldown_turns,omitempty"`
 	MaxPerSession    int      `json:"max_per_session,omitempty"`
 	RequiredContexts []string `json:"required_contexts,omitempty"`
 }
 
 type CanonicalResponseDefinition struct {
-	ResponseID       string   `json:"response_id"`
+	ResponseKey      string   `json:"response_key"`
 	CharacterID      string   `json:"character_id"`
 	Category         string   `json:"category"`
 	Response         string   `json:"response"`

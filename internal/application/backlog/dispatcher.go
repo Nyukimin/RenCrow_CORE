@@ -12,6 +12,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // ListQueueFreezes returns the latest durable freeze record for each freeze
@@ -47,11 +48,11 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, ErrLifecycleStoreUnavailable
 	}
 	freezeID = strings.TrimSpace(freezeID)
-	request.RequestID = strings.TrimSpace(request.RequestID)
+	request.ActionID = modulecore.ActionID(strings.TrimSpace(string(request.ActionID)))
 	request.ReplacementUnitID = strings.TrimSpace(request.ReplacementUnitID)
 	request.SupersedesUnitID = strings.TrimSpace(request.SupersedesUnitID)
 	request.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), request.BlockerResolutionRefs...)
-	if freezeID == "" || request.RequestID == "" || request.ExpectedFreezeRevision < 1 || request.ReplacementUnitID == "" || request.SupersedesUnitID == "" || len(request.BlockerResolutionRefs) == 0 {
+	if freezeID == "" || request.ActionID.Validate() != nil || request.ExpectedFreezeRevision < 1 || request.ReplacementUnitID == "" || request.SupersedesUnitID == "" || len(request.BlockerResolutionRefs) == 0 {
 		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, errors.New("freeze resolution request fields are required")
 	}
 	for index, ref := range request.BlockerResolutionRefs {
@@ -75,7 +76,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	if freeze.Status == domainworkstream.QueueFreezeResolved {
 		resolution := domainworkstream.QueueFreezeResolution{
 			ExpectedFreezeRevision: request.ExpectedFreezeRevision,
-			ResolutionRequestID:    request.RequestID,
+			ActionID:               request.ActionID,
 			ReplacementUnitID:      request.ReplacementUnitID,
 			SupersedesUnitID:       request.SupersedesUnitID,
 			ResolutionPayloadHash:  payloadHash,
@@ -92,7 +93,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 			}
 		}
 		resolution.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), freeze.BlockerResolutionRefs...)
-		if freeze.ResolutionRequestID != request.RequestID || !freeze.MatchesResolved(resolution) {
+		if freeze.ActionID != request.ActionID || !freeze.MatchesResolved(resolution) {
 			return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
 		}
 		return freeze, freeze.ReplacementLease, freeze.ResolutionAcquired, nil
@@ -164,7 +165,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	}
 	resolution := domainworkstream.QueueFreezeResolution{
 		ExpectedFreezeRevision: request.ExpectedFreezeRevision,
-		ResolutionRequestID:    request.RequestID,
+		ActionID:               request.ActionID,
 		ReplacementUnitID:      request.ReplacementUnitID,
 		SupersedesUnitID:       request.SupersedesUnitID,
 		BlockerResolutionRefs:  verifiedRefs,
@@ -276,12 +277,12 @@ func resolveQueueFreezePayloadHash(request ResolveQueueFreezeRequest) string {
 		refs[index] = clearVerification(ref)
 	}
 	payload, _ := json.Marshal(struct {
-		RequestID              string                      `json:"request_id"`
+		ActionID               modulecore.ActionID         `json:"action_id"`
 		ExpectedFreezeRevision int                         `json:"expected_freeze_revision"`
 		ReplacementUnitID      string                      `json:"replacement_unit_id"`
 		SupersedesUnitID       string                      `json:"supersedes_unit_id"`
 		BlockerResolutionRefs  []domainbacklog.EvidenceRef `json:"blocker_resolution_refs"`
-	}{request.RequestID, request.ExpectedFreezeRevision, request.ReplacementUnitID, request.SupersedesUnitID, refs})
+	}{request.ActionID, request.ExpectedFreezeRevision, request.ReplacementUnitID, request.SupersedesUnitID, refs})
 	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:])
 }

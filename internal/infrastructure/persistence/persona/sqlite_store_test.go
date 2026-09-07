@@ -99,7 +99,7 @@ func TestSQLiteStorePersonaLogs(t *testing.T) {
 	if err := store.SaveCanonicalResponseLog(ctx, domainpersona.CanonicalResponseLog{
 		EventID:     "evt_canonical_1",
 		CharacterID: "kuro",
-		ResponseID:  "block_destructive",
+		ResponseKey:  "block_destructive",
 		Used:        true,
 		CreatedAt:   now,
 	}); err != nil {
@@ -148,7 +148,7 @@ func TestSQLiteStorePersonaLogs(t *testing.T) {
 		t.Fatalf("triggers=%#v err=%v", triggers, err)
 	}
 	canonicals, err := store.ListCanonicalResponseLogs(ctx, 10)
-	if err != nil || len(canonicals) != 1 || canonicals[0].ResponseID != "block_destructive" {
+	if err != nil || len(canonicals) != 1 || canonicals[0].ResponseKey != "block_destructive" {
 		t.Fatalf("canonicals=%#v err=%v", canonicals, err)
 	}
 	observations, err := store.ListObservationLogs(ctx, 10)

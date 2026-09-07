@@ -354,7 +354,7 @@ func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, paylo
 		Purpose:   "unattributed",
 	})
 	observation, _ := llm.ExecutionObservationFromContext(observationCtx)
-	addNonEmptyMetadata(metadata, "request_id", observation.RequestID)
+	addNonEmptyMetadata(metadata, "request_id", string(observation.RequestID))
 	addNonEmptyMetadata(metadata, "trace_id", observation.TraceID)
 	addNonEmptyMetadata(metadata, "task_id", string(observation.TaskID))
 	addNonEmptyMetadata(metadata, "session_id", observation.SessionID)

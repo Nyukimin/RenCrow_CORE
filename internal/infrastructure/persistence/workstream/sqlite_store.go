@@ -252,7 +252,7 @@ func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLease(ctx context.Context, fre
 
 	now := time.Now().UTC()
 	freeze.Status = domainworkstream.QueueFreezeResolved
-	freeze.ResolutionRequestID = resolution.ResolutionRequestID
+	freeze.ActionID = resolution.ActionID
 	freeze.ReplacementUnitID = resolution.ReplacementUnitID
 	freeze.ReplacementLease = replacement
 	freeze.ResolutionAcquired = true

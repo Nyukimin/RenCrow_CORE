@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func newTestStore(t *testing.T) *SQLiteToolRegistryStore {
@@ -195,30 +196,33 @@ func TestRegisterWithReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
 		Name: "existing_tool", Description: "same", SchemaJSON: `{"type":"object"}`,
 		Platforms: []string{"windows", "linux"}, Source: capability.ToolSource("/workspace/tools/existing_tool.sh"), CreatedBy: "mio",
 	}
-	first, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
-	if err != nil || first.RequestReplay || first.SemanticDedupe || first.Receipt.RequestID != "request-1" {
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
+	action2 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
+	action3 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000003")
+	first, err := store.RegisterWithReceipt(ctx, entry, action1, "mio", "hash-1")
+	if err != nil || first.RequestReplay || first.SemanticDedupe || first.Receipt.ActionID != action1 {
 		t.Fatalf("first registration = %+v err=%v", first, err)
 	}
-	replay, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
+	replay, err := store.RegisterWithReceipt(ctx, entry, action1, "mio", "hash-1")
 	if err != nil || !replay.RequestReplay || replay.SemanticDedupe || !replay.Receipt.CreatedAt.Equal(first.Receipt.CreatedAt) {
 		t.Fatalf("replay = %+v err=%v first=%+v", replay, err, first)
 	}
-	if _, err := store.RegisterWithReceipt(ctx, entry, "request-1", "mio", "different-hash"); !errors.Is(err, ErrToolRegistryRequestConflict) {
+	if _, err := store.RegisterWithReceipt(ctx, entry, action1, "mio", "different-hash"); !errors.Is(err, ErrToolRegistryRequestConflict) {
 		t.Fatalf("payload conflict err=%v", err)
 	}
-	if _, err := store.RegisterWithReceipt(ctx, entry, "request-1", "other-agent", "hash-1"); !errors.Is(err, ErrToolRegistryRequestConflict) {
+	if _, err := store.RegisterWithReceipt(ctx, entry, action1, "other-agent", "hash-1"); !errors.Is(err, ErrToolRegistryRequestConflict) {
 		t.Fatalf("actor conflict err=%v", err)
 	}
-	semantic, err := store.RegisterWithReceipt(ctx, entry, "request-2", "shiro", "hash-2")
-	if err != nil || semantic.RequestReplay || !semantic.SemanticDedupe || semantic.Receipt.RequestID != "request-2" {
+	semantic, err := store.RegisterWithReceipt(ctx, entry, action2, "shiro", "hash-2")
+	if err != nil || semantic.RequestReplay || !semantic.SemanticDedupe || semantic.Receipt.ActionID != action2 {
 		t.Fatalf("semantic dedupe = %+v err=%v", semantic, err)
 	}
 	changed := entry
 	changed.Description = "changed"
-	if _, err := store.RegisterWithReceipt(ctx, changed, "request-3", "mio", "hash-3"); !errors.Is(err, ErrToolRegistryEntryConflict) {
+	if _, err := store.RegisterWithReceipt(ctx, changed, action3, "mio", "hash-3"); !errors.Is(err, ErrToolRegistryEntryConflict) {
 		t.Fatalf("entry conflict err=%v", err)
 	}
-	if receipt, found, err := store.FindRequestReceipt(ctx, "request-3"); err != nil || found {
+	if receipt, found, err := store.FindActionReceipt(ctx, action3); err != nil || found {
 		t.Fatalf("conflicting request receipt = %+v found=%v err=%v", receipt, found, err)
 	}
 
@@ -230,11 +234,11 @@ func TestRegisterWithReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer reopened.Close()
-	reopenedReplay, err := reopened.RegisterWithReceipt(ctx, entry, "request-1", "mio", "hash-1")
+	reopenedReplay, err := reopened.RegisterWithReceipt(ctx, entry, action1, "mio", "hash-1")
 	if err != nil || !reopenedReplay.RequestReplay {
 		t.Fatalf("reopened replay = %+v err=%v", reopenedReplay, err)
 	}
-	got, found, err := reopened.FindRequestReceipt(ctx, "request-2")
+	got, found, err := reopened.FindActionReceipt(ctx, action2)
 	if err != nil || !found || got.ActorID != "shiro" || got.ToolName != entry.Name || got.PayloadHash != "hash-2" {
 		t.Fatalf("semantic receipt = %+v found=%v err=%v", got, found, err)
 	}
@@ -265,7 +269,7 @@ func TestLegacyToolRegistryRowsRemainReadableAfterReceiptMigration(t *testing.T)
 	if err != nil || got.Name != legacy.Name || got.Description != legacy.Description || got.Source != legacy.Source {
 		t.Fatalf("legacy row = %+v err=%v", got, err)
 	}
-	if receipt, found, err := reopened.FindRequestReceipt(context.Background(), "missing"); err != nil || found || receipt.RequestID != "" {
+	if receipt, found, err := reopened.FindActionReceipt(context.Background(), modulecore.ActionID("act_00000000-0000-5000-8000-000000000099")); err != nil || found || receipt.ActionID != "" {
 		t.Fatalf("missing receipt = %+v found=%v err=%v", receipt, found, err)
 	}
 }

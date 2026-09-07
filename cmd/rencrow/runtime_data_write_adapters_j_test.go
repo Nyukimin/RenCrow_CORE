@@ -13,6 +13,7 @@ import (
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	toolregistrypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolregistry"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -46,9 +47,10 @@ func TestRuntimeDataWriteToolRegistryOwnerThroughWorkerAndExactRecall(t *testing
 		"schema_json": "{\"type\": \"object\", \"properties\": {}}",
 		"platforms":   []any{"windows", "linux"},
 	}
-	ctx := runtimeToolRegistryOwnerContext(t, "tool-owner-1", "mio")
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
+	ctx := runtimeToolRegistryOwnerContext(t, string(action1), "mio")
 	first := runtimeDataWriteOwnerExecuteWrite(t, worker, ctx, "tool_registry", "register_existing_script", payload)
-	if first.IdempotentReplay || first.SchemaVersion != "tool-registry/v1" || first.MigrationState != "embedded_current" || first.ValidationState != "owner_validated" || first.OwnerRoute != "tool_registry/register_existing_script" || first.AuditRef != "tool-owner-1" || first.IdempotencyKey != "tool-owner-1" {
+	if first.IdempotentReplay || first.SchemaVersion != "tool-registry/v1" || first.MigrationState != "embedded_current" || first.ValidationState != "owner_validated" || first.OwnerRoute != "tool_registry/register_existing_script" || first.AuditRef != string(action1) || first.IdempotencyKey != string(action1) {
 		t.Fatalf("first receipt = %#v", first)
 	}
 	entry, err := store.Get(ctx, "report_tool")
@@ -83,7 +85,7 @@ func TestRuntimeDataWriteToolRegistryOwnerThroughWorkerAndExactRecall(t *testing
 		t.Fatalf("list tools = %#v", listResponse.Result)
 	}
 	receiptRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, ctx, "tool_registry", "requests", first.AuditRef)
-	if len(receiptRecall.Records) != 1 || receiptRecall.Records[0]["request_id"] != first.AuditRef || receiptRecall.Records[0]["actor_id"] != "mio" || receiptRecall.Records[0]["tool_name"] != "report_tool" || receiptRecall.Records[0]["payload_hash"] == "" {
+	if len(receiptRecall.Records) != 1 || receiptRecall.Records[0]["action_id"] != first.AuditRef || receiptRecall.Records[0]["actor_id"] != "mio" || receiptRecall.Records[0]["tool_name"] != "report_tool" || receiptRecall.Records[0]["payload_hash"] == "" {
 		t.Fatalf("receipt recall = %#v", receiptRecall)
 	}
 
@@ -121,7 +123,9 @@ func TestRuntimeDataWriteToolRegistryOwnerReopenConflictAndSemanticDedupe(t *tes
 	}
 	worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true})
 	payload := runtimeToolRegistryPayload("reopen_tool")
-	first := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, "reopen-1", "shiro"), "tool_registry", "register_existing_script", payload)
+	actionReopen1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
+	actionReopen2 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000003")
+	first := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, string(actionReopen1), "shiro"), "tool_registry", "register_existing_script", payload)
 	if err := store.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -140,26 +144,26 @@ func TestRuntimeDataWriteToolRegistryOwnerReopenConflictAndSemanticDedupe(t *tes
 		t.Fatal(err)
 	}
 	worker = toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true})
-	replay := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, "reopen-1", "shiro"), "tool_registry", "register_existing_script", payload)
+	replay := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, string(actionReopen1), "shiro"), "tool_registry", "register_existing_script", payload)
 	if !replay.IdempotentReplay || replay.AuditRef != first.AuditRef {
 		t.Fatalf("reopened replay = %#v first=%#v", replay, first)
 	}
 	changed := runtimeToolRegistryPayload("reopen_tool")
 	changed["description"] = "changed"
-	if response, err := worker.ExecuteV2(runtimeToolRegistryOwnerContext(t, "reopen-1", "shiro"), "data.write", map[string]any{"store": "tool_registry", "operation": "register_existing_script", "payload": changed}); err != nil || response == nil || !response.IsError() {
+	if response, err := worker.ExecuteV2(runtimeToolRegistryOwnerContext(t, string(actionReopen1), "shiro"), "data.write", map[string]any{"store": "tool_registry", "operation": "register_existing_script", "payload": changed}); err != nil || response == nil || !response.IsError() {
 		t.Fatalf("same-request payload conflict response=%#v err=%v", response, err)
 	}
-	if response, err := worker.ExecuteV2(runtimeToolRegistryOwnerContext(t, "reopen-1", "mio"), "data.write", map[string]any{"store": "tool_registry", "operation": "register_existing_script", "payload": payload}); err != nil || response == nil || !response.IsError() {
+	if response, err := worker.ExecuteV2(runtimeToolRegistryOwnerContext(t, string(actionReopen1), "mio"), "data.write", map[string]any{"store": "tool_registry", "operation": "register_existing_script", "payload": payload}); err != nil || response == nil || !response.IsError() {
 		t.Fatalf("same-request actor conflict response=%#v err=%v", response, err)
 	}
-	semantic := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, "reopen-2", "mio"), "tool_registry", "register_existing_script", payload)
-	if semantic.IdempotentReplay || semantic.AuditRef != "reopen-2" {
+	semantic := runtimeDataWriteOwnerExecuteWrite(t, worker, runtimeToolRegistryOwnerContext(t, string(actionReopen2), "mio"), "tool_registry", "register_existing_script", payload)
+	if semantic.IdempotentReplay || semantic.AuditRef != string(actionReopen2) {
 		t.Fatalf("semantic dedupe receipt = %#v", semantic)
 	}
 	if entries, err := reopened.ListForPlatform(context.Background(), "linux"); err != nil || len(entries) != 1 {
 		t.Fatalf("semantic dedupe mutated tools = %#v err=%v", entries, err)
 	}
-	if receipt, found, err := reopened.FindRequestReceipt(context.Background(), "reopen-2"); err != nil || !found || receipt.ToolName != "reopen_tool" {
+	if receipt, found, err := reopened.FindActionReceipt(context.Background(), actionReopen2); err != nil || !found || receipt.ToolName != "reopen_tool" {
 		t.Fatalf("semantic receipt=%+v found=%v err=%v", receipt, found, err)
 	}
 }

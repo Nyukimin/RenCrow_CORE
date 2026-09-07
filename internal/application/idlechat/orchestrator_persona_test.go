@@ -153,7 +153,7 @@ func TestIdleChatAppliesPersonaCanonicalResponse(t *testing.T) {
 		Keywords:    []string{"削除"},
 	}})
 	o.SetPersonaCanonicalResponses([]domainpersona.CanonicalResponseDefinition{{
-		ResponseID:       "kuro_destructive_block",
+		ResponseKey:       "kuro_destructive_block",
 		CharacterID:      "kuro",
 		Category:         "danger",
 		Response:         "その操作は止めます。",
@@ -173,7 +173,7 @@ func TestIdleChatAppliesPersonaCanonicalResponse(t *testing.T) {
 	if raw == got {
 		t.Fatalf("raw response should preserve model output, got %q", raw)
 	}
-	if len(recorder.canonical) != 1 || recorder.canonical[0].ResponseID != "kuro_destructive_block" || !recorder.canonical[0].Used {
+	if len(recorder.canonical) != 1 || recorder.canonical[0].ResponseKey != "kuro_destructive_block" || !recorder.canonical[0].Used {
 		t.Fatalf("canonical logs = %#v", recorder.canonical)
 	}
 	if !strings.HasPrefix(recorder.canonical[0].MessageID, "msg_") {

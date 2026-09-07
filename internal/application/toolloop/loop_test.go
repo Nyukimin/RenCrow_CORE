@@ -488,11 +488,11 @@ func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
 	if len(toolMessages) != 2 {
 		t.Fatalf("tool messages = %d, want 2", len(toolMessages))
 	}
-	if toolMessages[0].ToolCallID != "provider-call-1" || toolMessages[1].ToolCallID != "provider-call-2" {
-		t.Fatalf("tool message ToolCallIDs = %q and %q, want provider ids preserved", toolMessages[0].ToolCallID, toolMessages[1].ToolCallID)
+	if toolMessages[0].ProviderToolCallID != "provider-call-1" || toolMessages[1].ProviderToolCallID != "provider-call-2" {
+		t.Fatalf("tool message ProviderToolCallIDs = %q and %q, want provider ids preserved", toolMessages[0].ProviderToolCallID, toolMessages[1].ProviderToolCallID)
 	}
-	if toolMessages[0].ToolCallID == string(spy.observations[0].ActionID) {
-		t.Fatal("tool message must not use ActionID as ToolCallID")
+	if toolMessages[0].ProviderToolCallID == string(spy.observations[0].ActionID) {
+		t.Fatal("tool message must not use ActionID as ProviderToolCallID")
 	}
 }
 

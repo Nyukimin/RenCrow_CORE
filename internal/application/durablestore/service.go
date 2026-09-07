@@ -10,11 +10,12 @@ import (
 	"time"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type Store interface {
 	FindByDedupeKey(context.Context, string) (*domain.WorkflowResult, error)
-	FindByRequestID(context.Context, string) (*domain.RequestReceipt, error)
+	FindByActionID(context.Context, modulecore.ActionID) (*domain.RequestReceipt, error)
 	FindByRequirementID(context.Context, string) (*domain.WorkflowResult, error)
 	SaveWithReceipt(context.Context, *domain.WorkflowResult, domain.RequestReceipt) error
 }
@@ -26,7 +27,8 @@ type Implementer interface {
 }
 
 type Input struct {
-	RequestID, TraceID, RequestedBy, UserScope, Message string
+	ActionID modulecore.ActionID
+	TraceID, RequestedBy, UserScope, Message string
 }
 
 type Service struct {
@@ -48,18 +50,18 @@ func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, 
 	if err := domain.ValidateRegistry(s.manifests); err != nil {
 		return domain.WorkflowResult{}, true, fmt.Errorf("durable store registry: %w", err)
 	}
-	req.RequestID = strings.TrimSpace(in.RequestID)
+	req.ActionID = in.ActionID
 	req.TraceID = strings.TrimSpace(in.TraceID)
 	req.RequestedBy = strings.TrimSpace(in.RequestedBy)
 	req.UserScope = strings.TrimSpace(in.UserScope)
 	classification := domain.Classify(req, s.manifests)
 	req.OwnerModule = classification.OwnerModule
 	req.DedupeKey = digest(strings.Join([]string{string(req.RequestedOutcome), req.OwnerModule, req.UserScope, normalizeDedupeText(in.Message), "contract:v1"}, "\x00"))
-	req.RequirementID = "sr-" + digest(req.RequestID + "\x00" + req.DedupeKey)[:20]
+	req.RequirementID = "sr-" + digest(string(req.ActionID)+"\x00"+req.DedupeKey)[:20]
 	payloadHash := domain.HashStorageRequirement(req)
 	if s.store != nil {
-		if req.RequestID != "" {
-			receipt, err := s.store.FindByRequestID(ctx, req.RequestID)
+		if strings.TrimSpace(string(req.ActionID)) != "" {
+			receipt, err := s.store.FindByActionID(ctx, req.ActionID)
 			if err != nil {
 				return domain.WorkflowResult{}, true, err
 			}
@@ -76,7 +78,7 @@ func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, 
 			return domain.WorkflowResult{}, true, err
 		}
 		if prior != nil {
-			receipt := requestReceipt(req, payloadHash, prior.Requirement.RequirementID, s.now())
+			receipt := actionReceipt(req, payloadHash, prior.Requirement.RequirementID, s.now())
 			if err := s.store.SaveWithReceipt(ctx, nil, receipt); err != nil {
 				resolved, ok, resolveErr := s.resolvePersistenceConflict(ctx, req, payloadHash, prior)
 				if resolveErr != nil {
@@ -123,7 +125,7 @@ func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, 
 		}
 	}
 	if s.store != nil {
-		receipt := requestReceipt(req, payloadHash, result.Requirement.RequirementID, result.CreatedAt)
+		receipt := actionReceipt(req, payloadHash, result.Requirement.RequirementID, result.CreatedAt)
 		if err := s.store.SaveWithReceipt(ctx, &result, receipt); err != nil {
 			resolved, ok, resolveErr := s.resolvePersistenceConflict(ctx, req, payloadHash, &result)
 			if resolveErr != nil {
@@ -140,14 +142,14 @@ func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, 
 
 func (s *Service) replayReceipt(ctx context.Context, req domain.StorageRequirement, payloadHash string, receipt domain.RequestReceipt) (domain.WorkflowResult, error) {
 	if strings.TrimSpace(receipt.UserScope) != req.UserScope || strings.TrimSpace(receipt.PayloadHash) != payloadHash {
-		return domain.WorkflowResult{}, fmt.Errorf("%w: request_id %q has a different payload or user scope", ErrRequestConflict, req.RequestID)
+		return domain.WorkflowResult{}, fmt.Errorf("%w: action_id %q has a different payload or user scope", ErrRequestConflict, req.ActionID)
 	}
 	prior, err := s.store.FindByRequirementID(ctx, receipt.RequirementID)
 	if err != nil {
 		return domain.WorkflowResult{}, err
 	}
 	if prior == nil {
-		return domain.WorkflowResult{}, fmt.Errorf("durable request receipt %q references missing requirement %q", req.RequestID, receipt.RequirementID)
+		return domain.WorkflowResult{}, fmt.Errorf("durable action receipt %q references missing requirement %q", req.ActionID, receipt.RequirementID)
 	}
 	prior.Deduplicated = true
 	prior.RequestReplay = true
@@ -155,8 +157,8 @@ func (s *Service) replayReceipt(ctx context.Context, req domain.StorageRequireme
 }
 
 func (s *Service) resolvePersistenceConflict(ctx context.Context, req domain.StorageRequirement, payloadHash string, candidate *domain.WorkflowResult) (domain.WorkflowResult, bool, error) {
-	if req.RequestID != "" {
-		receipt, err := s.store.FindByRequestID(ctx, req.RequestID)
+	if strings.TrimSpace(string(req.ActionID)) != "" {
+		receipt, err := s.store.FindByActionID(ctx, req.ActionID)
 		if err != nil {
 			return domain.WorkflowResult{}, false, err
 		}
@@ -175,7 +177,7 @@ func (s *Service) resolvePersistenceConflict(ctx context.Context, req domain.Sto
 	if prior == nil || candidate == nil || prior.Requirement.RequirementID == candidate.Requirement.RequirementID {
 		return domain.WorkflowResult{}, false, nil
 	}
-	receipt := requestReceipt(req, payloadHash, prior.Requirement.RequirementID, s.now())
+	receipt := actionReceipt(req, payloadHash, prior.Requirement.RequirementID, s.now())
 	if err := s.store.SaveWithReceipt(ctx, nil, receipt); err != nil {
 		return domain.WorkflowResult{}, false, err
 	}
@@ -183,15 +185,15 @@ func (s *Service) resolvePersistenceConflict(ctx context.Context, req domain.Sto
 	return *prior, true, nil
 }
 
-func requestReceipt(req domain.StorageRequirement, payloadHash, requirementID string, createdAt time.Time) domain.RequestReceipt {
-	requestID := strings.TrimSpace(req.RequestID)
-	if requestID == "" {
-		// Existing direct callers may omit the new trusted request identity. Keep
+func actionReceipt(req domain.StorageRequirement, payloadHash, requirementID string, createdAt time.Time) domain.RequestReceipt {
+	actionID := req.ActionID
+	if strings.TrimSpace(string(actionID)) == "" {
+		// Existing direct callers may omit the new trusted action identity. Keep
 		// those callers persistable without making the Owner route accept it.
-		requestID = "legacy/" + digest(requirementID+"\x00"+req.DedupeKey)
+		actionID = modulecore.ActionID("legacy/" + digest(requirementID+"\x00"+req.DedupeKey))
 	}
 	return domain.RequestReceipt{
-		RequestID: requestID, UserScope: req.UserScope, PayloadHash: payloadHash,
+		ActionID: actionID, UserScope: req.UserScope, PayloadHash: payloadHash,
 		RequirementID: requirementID, CreatedAt: createdAt,
 	}
 }

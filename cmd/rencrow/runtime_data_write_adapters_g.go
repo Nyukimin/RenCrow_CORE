@@ -8,6 +8,7 @@ import (
 	appstore "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -34,7 +35,7 @@ func registerRuntimeDataWriteDurableStoreWorkflow(r *runtimeDataWriteRegistry, w
 			return runtimeDataWriteOwnerResult{}, err
 		}
 		result, handled, err := workflow.Handle(ctx, appstore.Input{
-			RequestID:   strings.TrimSpace(scope.RequestID),
+			ActionID:    modulecore.ActionID(strings.TrimSpace(scope.RequestID)),
 			TraceID:     runtimeDataWriteDerivedID(runtimeTraceIDPrefix, scope.RequestID),
 			RequestedBy: strings.TrimSpace(scope.ActorID),
 			UserScope:   strings.TrimSpace(scope.AuthenticatedUserID),

@@ -1,0 +1,116 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step12-request-response",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T00:10:02Z",
+  "input": {
+    "base_revision": "a68e5feb27fcb8faec67815c58c50770461ebab2",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-12-requestid--responseid",
+    "transport_rule": "RequestID and ResponseID identify one Provider API or Transport call and its response only; they are never internal commands queues resolutions or write receipts",
+    "provider_tool_call_rule": "RenCrow domain and receipts name the provider tool call correlation ProviderToolCallID; OpenAI-compatible wire JSON may still emit tool_call_id only at the provider adapter boundary",
+    "internal_request_rule": "ResolutionRequestID and other internal request_id identities become ActionID via the Action owner; dual-write and alias fields are forbidden",
+    "persona_response_rule": "persona template ResponseID strings that are not rsp_ transport responses must be renamed away from ResponseID in the same Step12 Implementation Unit"
+  },
+  "included": [
+    {
+      "check_id": "s12_provider_tool_call_id",
+      "guarantee": "LLM ChatMessage ToolLoop promptreceipt and related RenCrow types use ProviderToolCallID with JSON provider_tool_call_id while provider adapters alone map to wire tool_call_id and never treat it as ActionID",
+      "owner": "RenCrow_CORE llm toolloop",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "ToolLoop and LLM receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_resolution_action",
+      "guarantee": "workstream and backlog ResolutionRequestID become typed ActionID with JSON action_id and zero resolution_request_id in owner packages",
+      "owner": "RenCrow_CORE workstream backlog",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "freeze resolution replay",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_internal_request_zero",
+      "guarantee": "knowledge_memory tool_registry durable_store and similar owner-scoped write receipt keys that were named RequestID for internal commands are ActionID or an explicit non-Request identity with zero internal RequestID meaning",
+      "owner": "RenCrow_CORE owning stores",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "write receipts and idempotent replay",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_transport_request_response",
+      "guarantee": "LLM TTS STT Vision and TRADE transport calls mint or propagate canonical RequestID and ResponseID for the communication attempt only and record them on Events without deriving TraceID from them",
+      "owner": "RenCrow_CORE transport adapters",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Events Viewer receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_persona_response_rename",
+      "guarantee": "persona canonical response template identifiers are not named ResponseID or response_id",
+      "owner": "RenCrow_CORE persona IdleChat",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "persona observation and IdleChat",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_historical_migration",
+      "guarantee": "offline one-shot CLI remaps resolution_request_id and confirmed internal request_id receipt keys on fixtures with dry-run apply agreement second-run no-op and refuses live /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step12 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state",
+      "failure_action": "leave old binary and state active or rollback"
+    },
+    {
+      "check_id": "s12_architecture_zero",
+      "guarantee": "confirmed Step12 owners contain zero ToolCallID tool_call_id outside provider wire adapters zero ResolutionRequestID resolution_request_id zero internal RequestID-as-command and zero persona ResponseID template naming after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step12 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s12_predeploy_verification",
+      "guarantee": "targeted owner tests vet build and diff checks pass against reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s12_runtime_route",
+      "guarantee": "installed artifact readiness transport Request Response ProviderToolCallID Action binding Viewer receipt agree before and after restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step12 ledger",
+      "failure_action": "rollback or keep Step12 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s12_tts_public_playback_ref",
+      "reason": "IdleChat TTS public playback keys such as session:seq are Viewer-coupled composite refs named ResponseID but are not canonical rsp_ transport ResponseIDs; renaming to PublicPlaybackRef requires a dedicated Viewer contract IU after Step12 transport ResponseID cutover",
+      "consumer": "post-Step12 TTS PublicPlaybackRef Implementation Unit",
+      "failure_action": "keep public playback rename open without claiming Step12 ResponseID zero for TTS playback keys"
+    },
+    {
+      "check_id": "s12_workstream_stage_receipt_request_id",
+      "reason": "StageRunReceipt and ClosureReceipt still carry caller-scoped request_id strings for atlas lifecycle receipts; they are not ResolutionRequestID and are outside the Step12 write-receipt owners already remapped to ActionID",
+      "consumer": "follow-up ActionID binding for workstream stage or closure receipts when that owner is frozen",
+      "failure_action": "keep stage receipt RequestID open"
+    },
+    {
+      "check_id": "s12_artifact_identity",
+      "reason": "ArtifactID unification is Step13",
+      "consumer": "Step13 cutover",
+      "failure_action": "keep Step13 open"
+    },
+    {
+      "check_id": "s12_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

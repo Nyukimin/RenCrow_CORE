@@ -48,8 +48,9 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second).
 		WithRenCrowExecution("shiro", "worker", "worker")
 	taskID := modulecore.NewTaskID()
+	requestID := modulecore.NewRequestID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
-		RequestID: "request-1",
+		RequestID: requestID,
 		TraceID:   "trace-1",
 		TaskID:    taskID,
 		SessionID: "session-1",
@@ -68,7 +69,7 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		"agent_id":        "shiro",
 		"execution_role":  "worker",
 		"execution_alias": "worker",
-		"request_id":      "request-1",
+		"request_id":      string(requestID),
 		"trace_id":        "trace-1",
 		"task_id":         string(taskID),
 		"session_id":      "session-1",
@@ -96,8 +97,9 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 	defer server.Close()
 
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	requestID := modulecore.NewRequestID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
-		RequestID: "request-chat",
+		RequestID: requestID,
 		Initiator: "shiro",
 		Caller:    "heartbeat.backlog",
 		Purpose:   "process_backlog_item",
@@ -110,7 +112,7 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 
 	metadata, _ := payload["rencrow"].(map[string]any)
 	for key, want := range map[string]string{
-		"request_id": "request-chat",
+		"request_id": string(requestID),
 		"initiator":  "shiro",
 		"caller":     "heartbeat.backlog",
 		"purpose":    "process_backlog_item",
@@ -231,8 +233,8 @@ func TestGatewayProviderAddsCanonicalMetadataForKnownAlias(t *testing.T) {
 		}
 	}
 	requestID, _ := metadata["request_id"].(string)
-	if !strings.HasPrefix(requestID, "llmreq_") {
-		t.Fatalf("rencrow.request_id=%q want generated llmreq_ id", requestID)
+	if !strings.HasPrefix(requestID, "req_") {
+		t.Fatalf("rencrow.request_id=%q want generated req_ id", requestID)
 	}
 }
 
@@ -1090,7 +1092,7 @@ func TestChat_ToolResultRoundtrip(t *testing.T) {
 			{Role: "assistant", ToolCalls: []llm.ToolCall{
 				{ID: "call_1", Function: llm.ToolCallFunction{Name: "web_search", Arguments: map[string]any{"query": "test"}}},
 			}},
-			{Role: "tool", Content: "result data", ToolCallID: "call_1"},
+			{Role: "tool", Content: "result data", ProviderToolCallID: "call_1"},
 		},
 	})
 

@@ -8,6 +8,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRevision2StageReplayIsIdempotent(t *testing.T) {
@@ -169,7 +170,7 @@ func TestRevision2FreezeEvidenceUsesBlockedUnitRevisionContext(t *testing.T) {
 	verifier := &captureEvidenceVerifier{ok: true}
 	service := NewService(items, workstream).WithEvidenceVerifier(verifier)
 	_, _, acquired, err := service.ResolveQueueFreeze(context.Background(), "freeze-context", ResolveQueueFreezeRequest{
-		RequestID: "resolve-context", ExpectedFreezeRevision: 1, ReplacementUnitID: replacement.ImplementationUnit,
+		ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000004"), ExpectedFreezeRevision: 1, ReplacementUnitID: replacement.ImplementationUnit,
 		SupersedesUnitID:      blocked.ImplementationUnit,
 		BlockerResolutionRefs: []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-context", Verified: true, Passed: true}},
 	})
@@ -437,7 +438,7 @@ func TestRevision2ResolveQueueFreezeValidatesReplacementAndIsIdempotent(t *testi
 	}
 	service := NewService(items, ws).WithEvidenceVerifier(revision2Verifier{})
 	request := ResolveQueueFreezeRequest{
-		RequestID: "resolve-service-1", ExpectedFreezeRevision: 4, ReplacementUnitID: "unit-replacement",
+		ActionID: modulecore.ActionID("act_00000000-0000-5000-8000-000000000005"), ExpectedFreezeRevision: 4, ReplacementUnitID: "unit-replacement",
 		SupersedesUnitID: "wrong-unit", BlockerResolutionRefs: []domainbacklog.EvidenceRef{{Kind: "fix", Ref: "fix-1"}},
 	}
 	if _, _, _, err := service.ResolveQueueFreeze(context.Background(), "freeze-service", request); err == nil {
@@ -449,7 +450,7 @@ func TestRevision2ResolveQueueFreezeValidatesReplacementAndIsIdempotent(t *testi
 		t.Fatalf("resolved freeze=%+v lease=%+v acquired=%v err=%v", freeze, lease, acquired, err)
 	}
 	replayed, replayLease, replayAcquired, err := service.ResolveQueueFreeze(context.Background(), "freeze-service", request)
-	if err != nil || !replayAcquired || replayed.ResolutionRequestID != freeze.ResolutionRequestID || replayLease.HolderUnitID != lease.HolderUnitID {
+	if err != nil || !replayAcquired || replayed.ActionID != freeze.ActionID || replayLease.HolderUnitID != lease.HolderUnitID {
 		t.Fatalf("resolution replay freeze=%+v lease=%+v acquired=%v err=%v", replayed, replayLease, replayAcquired, err)
 	}
 	request.BlockerResolutionRefs[0].Ref = "different-payload"

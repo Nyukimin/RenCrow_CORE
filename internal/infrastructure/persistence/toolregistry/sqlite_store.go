@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -77,7 +78,7 @@ func (s *SQLiteToolRegistryStore) initTables(ctx context.Context) error {
 		created_by   TEXT NOT NULL
 	);
 	CREATE TABLE IF NOT EXISTS tool_registry_request_receipts (
-		request_id   TEXT PRIMARY KEY,
+		action_id    TEXT PRIMARY KEY,
 		actor_id     TEXT NOT NULL,
 		payload_hash TEXT NOT NULL,
 		tool_name    TEXT NOT NULL,
@@ -129,15 +130,15 @@ func (s *SQLiteToolRegistryStore) Register(ctx context.Context, entry capability
 // overwrites an existing ToolEntry: an identical entry receives a semantic
 // dedupe receipt, while different content is rejected. The entry and receipt
 // are inserted in one SQLite transaction.
-func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry capability.ToolEntry, requestID, actorID, payloadHash string) (capability.ToolRegistryRegistrationResult, error) {
+func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry capability.ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string) (capability.ToolRegistryRegistrationResult, error) {
 	if s == nil || s.db == nil {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("tool registry sqlite store is closed")
 	}
-	requestID = strings.TrimSpace(requestID)
+	actionID = modulecore.ActionID(strings.TrimSpace(string(actionID)))
 	actorID = strings.TrimSpace(actorID)
 	payloadHash = strings.TrimSpace(payloadHash)
 	entry.Name = strings.TrimSpace(entry.Name)
-	if requestID == "" || actorID == "" || payloadHash == "" || entry.Name == "" {
+	if strings.TrimSpace(string(actionID)) == "" || actorID == "" || payloadHash == "" || entry.Name == "" {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("tool registry receipt fields are required")
 	}
 
@@ -159,16 +160,18 @@ func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry
 
 	var receipt capability.ToolRegistryRequestReceipt
 	var receiptCreatedAt time.Time
+	var actionIDRaw string
 	err = tx.QueryRowContext(ctx, `
-		SELECT request_id, actor_id, payload_hash, tool_name, created_at
-		FROM tool_registry_request_receipts WHERE request_id = ?
-	`, requestID).Scan(
-		&receipt.RequestID, &receipt.ActorID, &receipt.PayloadHash, &receipt.ToolName, &receiptCreatedAt,
+		SELECT action_id, actor_id, payload_hash, tool_name, created_at
+		FROM tool_registry_request_receipts WHERE action_id = ?
+	`, string(actionID)).Scan(
+		&actionIDRaw, &receipt.ActorID, &receipt.PayloadHash, &receipt.ToolName, &receiptCreatedAt,
 	)
 	if err == nil {
+		receipt.ActionID = modulecore.ActionID(actionIDRaw)
 		receipt.CreatedAt = receiptCreatedAt
 		if receipt.ActorID != actorID || receipt.PayloadHash != payloadHash || receipt.ToolName != entry.Name {
-			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("%w: request_id %q", ErrToolRegistryRequestConflict, requestID)
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("%w: action_id %q", ErrToolRegistryRequestConflict, actionID)
 		}
 		if err := tx.Commit(); err != nil {
 			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("commit tool registry request replay: %w", err)
@@ -200,13 +203,13 @@ func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry
 	}
 
 	receipt = capability.ToolRegistryRequestReceipt{
-		RequestID: requestID, ActorID: actorID, PayloadHash: payloadHash,
+		ActionID: actionID, ActorID: actorID, PayloadHash: payloadHash,
 		ToolName: entry.Name, CreatedAt: entry.CreatedAt,
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tool_registry_request_receipts (request_id, actor_id, payload_hash, tool_name, created_at)
+		INSERT INTO tool_registry_request_receipts (action_id, actor_id, payload_hash, tool_name, created_at)
 		VALUES (?, ?, ?, ?, ?)
-	`, receipt.RequestID, receipt.ActorID, receipt.PayloadHash, receipt.ToolName, receipt.CreatedAt); err != nil {
+	`, string(receipt.ActionID), receipt.ActorID, receipt.PayloadHash, receipt.ToolName, receipt.CreatedAt); err != nil {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("insert tool registry request receipt: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -215,40 +218,42 @@ func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry
 	return capability.ToolRegistryRegistrationResult{Receipt: receipt, SemanticDedupe: semanticDedupe}, nil
 }
 
-// FindRequestReceipt returns the exact durable receipt for requestID.
-func (s *SQLiteToolRegistryStore) FindRequestReceipt(ctx context.Context, requestID string) (capability.ToolRegistryRequestReceipt, bool, error) {
+// FindActionReceipt returns the exact durable receipt for actionID.
+func (s *SQLiteToolRegistryStore) FindActionReceipt(ctx context.Context, actionID modulecore.ActionID) (capability.ToolRegistryRequestReceipt, bool, error) {
 	if s == nil || s.db == nil {
 		return capability.ToolRegistryRequestReceipt{}, false, fmt.Errorf("tool registry sqlite store is closed")
 	}
-	requestID = strings.TrimSpace(requestID)
-	if requestID == "" {
+	actionID = modulecore.ActionID(strings.TrimSpace(string(actionID)))
+	if strings.TrimSpace(string(actionID)) == "" {
 		return capability.ToolRegistryRequestReceipt{}, false, nil
 	}
 	var receipt capability.ToolRegistryRequestReceipt
+	var actionIDRaw string
 	var createdAt time.Time
 	err := s.db.QueryRowContext(ctx, `
-		SELECT request_id, actor_id, payload_hash, tool_name, created_at
-		FROM tool_registry_request_receipts WHERE request_id = ?
-	`, requestID).Scan(&receipt.RequestID, &receipt.ActorID, &receipt.PayloadHash, &receipt.ToolName, &createdAt)
+		SELECT action_id, actor_id, payload_hash, tool_name, created_at
+		FROM tool_registry_request_receipts WHERE action_id = ?
+	`, string(actionID)).Scan(&actionIDRaw, &receipt.ActorID, &receipt.PayloadHash, &receipt.ToolName, &createdAt)
 	if err == sql.ErrNoRows {
 		return capability.ToolRegistryRequestReceipt{}, false, nil
 	}
 	if err != nil {
-		return capability.ToolRegistryRequestReceipt{}, false, fmt.Errorf("find tool registry request receipt %q: %w", requestID, err)
+		return capability.ToolRegistryRequestReceipt{}, false, fmt.Errorf("find tool registry action receipt %q: %w", actionID, err)
 	}
+	receipt.ActionID = modulecore.ActionID(actionIDRaw)
 	receipt.CreatedAt = createdAt
 	return receipt, true, nil
 }
 
-// GetRequestReceipt is the strict form of FindRequestReceipt for direct
-// persistence callers that want an error when the request is absent.
-func (s *SQLiteToolRegistryStore) GetRequestReceipt(ctx context.Context, requestID string) (capability.ToolRegistryRequestReceipt, error) {
-	receipt, found, err := s.FindRequestReceipt(ctx, requestID)
+// GetActionReceipt is the strict form of FindActionReceipt for direct
+// persistence callers that want an error when the action is absent.
+func (s *SQLiteToolRegistryStore) GetActionReceipt(ctx context.Context, actionID modulecore.ActionID) (capability.ToolRegistryRequestReceipt, error) {
+	receipt, found, err := s.FindActionReceipt(ctx, actionID)
 	if err != nil {
 		return capability.ToolRegistryRequestReceipt{}, err
 	}
 	if !found {
-		return capability.ToolRegistryRequestReceipt{}, fmt.Errorf("%w: %q", ErrToolRegistryRequestNotFound, strings.TrimSpace(requestID))
+		return capability.ToolRegistryRequestReceipt{}, fmt.Errorf("%w: %q", ErrToolRegistryRequestNotFound, strings.TrimSpace(string(actionID)))
 	}
 	return receipt, nil
 }

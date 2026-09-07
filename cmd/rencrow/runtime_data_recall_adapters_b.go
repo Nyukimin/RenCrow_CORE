@@ -48,8 +48,8 @@ func registerRuntimeDataRecallPersonaArchitecture(r *runtimeDataRecallRegistry, 
 			if v.Rewritten {
 				status = "rewritten"
 			}
-			if dataRecallMatches(q.Query, v.ResponseID, v.CharacterID, status) {
-				records = append(records, map[string]any{"response_id": v.ResponseID, "trigger": v.CharacterID, "status": status, "created_at": v.CreatedAt})
+			if dataRecallMatches(q.Query, v.ResponseKey, v.CharacterID, status) {
+				records = append(records, map[string]any{"response_key": v.ResponseKey, "trigger": v.CharacterID, "status": status, "created_at": v.CreatedAt})
 			}
 		}
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
@@ -263,12 +263,12 @@ func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry,
 		if !found || strings.TrimSpace(scope.AuthenticatedUserID) == "" {
 			return runtimeDataRecallResult{}, fmt.Errorf("authenticated user scope is required")
 		}
-		receipt, err := s.FindByRequestID(ctx, q.Query)
+		receipt, err := s.FindByActionID(ctx, modulecore.ActionID(strings.TrimSpace(q.Query)))
 		if err != nil {
 			return runtimeDataRecallResult{}, err
 		}
 		records := []map[string]any{}
-		if receipt == nil || strings.TrimSpace(receipt.RequestID) != q.Query || strings.TrimSpace(receipt.UserScope) != strings.TrimSpace(scope.AuthenticatedUserID) {
+		if receipt == nil || strings.TrimSpace(string(receipt.ActionID)) != q.Query || strings.TrimSpace(receipt.UserScope) != strings.TrimSpace(scope.AuthenticatedUserID) {
 			return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
 		}
 		v, err := s.FindByRequirementID(ctx, receipt.RequirementID)
@@ -285,7 +285,7 @@ func registerRuntimeDataRecallDurableStoreWorkflow(r *runtimeDataRecallRegistry,
 			"owner_module":      v.Classification.OwnerModule,
 			"requested_outcome": string(v.Requirement.RequestedOutcome),
 			"reason_code":       v.ReasonCode,
-			"deduplicated":      receipt.RequestID != v.Requirement.RequestID,
+			"deduplicated":      receipt.ActionID != v.Requirement.ActionID,
 			"created_at":        v.CreatedAt,
 		})
 		return newRuntimeDataRecallResult(q.Store, q.Operation, records), nil
@@ -320,8 +320,8 @@ func durableStoreWorkflowRequirementProjection(workflow *domaindurable.WorkflowR
 	if strings.TrimSpace(requirement.RequirementID) == "" || requirement.RequirementID != requirementID {
 		return nil, false, fmt.Errorf("durable workflow requirement_id is invalid")
 	}
-	if strings.TrimSpace(requirement.RequestID) == "" || requirement.RequestID != strings.TrimSpace(requirement.RequestID) {
-		return nil, false, fmt.Errorf("durable workflow request_id is invalid")
+	if strings.TrimSpace(string(requirement.ActionID)) == "" || string(requirement.ActionID) != strings.TrimSpace(string(requirement.ActionID)) {
+		return nil, false, fmt.Errorf("durable workflow action_id is invalid")
 	}
 	if strings.TrimSpace(requirement.DedupeKey) == "" || requirement.DedupeKey != strings.TrimSpace(requirement.DedupeKey) {
 		return nil, false, fmt.Errorf("durable workflow dedupe_key is invalid")
@@ -346,7 +346,7 @@ func durableStoreWorkflowRequirementProjection(workflow *domaindurable.WorkflowR
 		return nil, false, nil
 	}
 	return map[string]any{
-		"request_id":     requirement.RequestID,
+		"action_id":      string(requirement.ActionID),
 		"requirement_id": requirement.RequirementID,
 		"dedupe_key":     requirement.DedupeKey,
 		"status":         string(workflow.Status),

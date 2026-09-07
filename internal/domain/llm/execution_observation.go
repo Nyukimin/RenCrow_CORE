@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
-	"github.com/google/uuid"
 )
 
 type executionObservationContextKey struct{}
@@ -13,7 +12,7 @@ type executionObservationContextKey struct{}
 // ExecutionObservation is prompt-free metadata that identifies why CORE is
 // using an LLM. Existing correlation IDs remain authoritative.
 type ExecutionObservation struct {
-	RequestID string
+	RequestID modulecore.RequestID
 	TraceID   string
 	TaskID    modulecore.TaskID
 	SessionID string
@@ -74,7 +73,7 @@ func ExecutionObservationFromContext(ctx context.Context) (ExecutionObservation,
 }
 
 func normalizeExecutionObservation(observation ExecutionObservation) ExecutionObservation {
-	observation.RequestID = strings.TrimSpace(observation.RequestID)
+	observation.RequestID = modulecore.RequestID(strings.TrimSpace(string(observation.RequestID)))
 	observation.TraceID = strings.TrimSpace(observation.TraceID)
 	observation.TaskID = normalizeObservationTaskID(observation.TaskID)
 	observation.SessionID = strings.TrimSpace(observation.SessionID)
@@ -82,7 +81,10 @@ func normalizeExecutionObservation(observation ExecutionObservation) ExecutionOb
 	observation.Caller = strings.TrimSpace(observation.Caller)
 	observation.Purpose = strings.TrimSpace(observation.Purpose)
 	if observation.RequestID == "" {
-		observation.RequestID = newLLMRequestID()
+		observation.RequestID = modulecore.NewRequestID()
+	} else if err := observation.RequestID.Validate(); err != nil {
+		// Non-canonical legacy values are not transport RequestIDs; replace.
+		observation.RequestID = modulecore.NewRequestID()
 	}
 	return observation
 }
@@ -92,8 +94,4 @@ func normalizeObservationTaskID(value modulecore.TaskID) modulecore.TaskID {
 		return ""
 	}
 	return value
-}
-
-func newLLMRequestID() string {
-	return "llmreq_" + uuid.NewString()
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -121,7 +122,7 @@ type QueueFreeze struct {
 	InvalidatedFromStage  string                      `json:"invalidated_from_stage"`
 	EvidenceRefs          []domainbacklog.EvidenceRef `json:"evidence_refs,omitempty"`
 	Status                string                      `json:"status,omitempty"`
-	ResolutionRequestID   string                      `json:"resolution_request_id,omitempty"`
+	ActionID              modulecore.ActionID         `json:"action_id,omitempty"`
 	ReplacementUnitID     string                      `json:"replacement_unit_id,omitempty"`
 	ReplacementLease      ImplementationLease         `json:"replacement_lease,omitempty"`
 	ResolutionAcquired    bool                        `json:"resolution_acquired,omitempty"`
@@ -140,7 +141,7 @@ type QueueFreeze struct {
 // payload identity.
 type QueueFreezeResolution struct {
 	ExpectedFreezeRevision int                         `json:"expected_freeze_revision"`
-	ResolutionRequestID    string                      `json:"resolution_request_id"`
+	ActionID               modulecore.ActionID         `json:"action_id"`
 	ReplacementUnitID      string                      `json:"replacement_unit_id"`
 	SupersedesUnitID       string                      `json:"supersedes_unit_id"`
 	BlockerResolutionRefs  []domainbacklog.EvidenceRef `json:"blocker_resolution_refs"`
@@ -231,7 +232,10 @@ func ValidateQueueFreezeResolution(item QueueFreezeResolution, replacement Imple
 	if item.ExpectedFreezeRevision < 1 {
 		return fmt.Errorf("expected_freeze_revision is required")
 	}
-	if strings.TrimSpace(item.ResolutionRequestID) == "" || strings.TrimSpace(item.ReplacementUnitID) == "" || strings.TrimSpace(item.SupersedesUnitID) == "" {
+	if err := item.ActionID.Validate(); err != nil {
+		return fmt.Errorf("queue freeze resolution action_id is required: %w", err)
+	}
+	if strings.TrimSpace(item.ReplacementUnitID) == "" || strings.TrimSpace(item.SupersedesUnitID) == "" {
 		return fmt.Errorf("queue freeze resolution identity is required")
 	}
 	if strings.TrimSpace(item.ResolutionPayloadHash) == "" {
@@ -259,7 +263,7 @@ func ValidateQueueFreezeResolution(item QueueFreezeResolution, replacement Imple
 // a crash between the replacement lease append and the resolved freeze
 // append.
 func (item QueueFreeze) MatchesResolution(resolution QueueFreezeResolution) bool {
-	if item.FreezeRevision != resolution.ExpectedFreezeRevision || item.ResolutionRequestID != resolution.ResolutionRequestID || item.ReplacementUnitID != resolution.ReplacementUnitID || item.SupersedesUnitID != resolution.SupersedesUnitID || item.ResolutionPayloadHash != resolution.ResolutionPayloadHash {
+	if item.FreezeRevision != resolution.ExpectedFreezeRevision || item.ActionID != resolution.ActionID || item.ReplacementUnitID != resolution.ReplacementUnitID || item.SupersedesUnitID != resolution.SupersedesUnitID || item.ResolutionPayloadHash != resolution.ResolutionPayloadHash {
 		return false
 	}
 	if len(item.BlockerResolutionRefs) != len(resolution.BlockerResolutionRefs) {

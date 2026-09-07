@@ -17,6 +17,7 @@ import (
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -93,18 +94,18 @@ func (w *runtimeToolRegistryWriter) write(ctx context.Context, request tools.Dat
 		Platforms:   append([]string(nil), canonicalPayload.Platforms...),
 		Source:      capdomain.ToolSource(scriptPath),
 		CreatedBy:   strings.TrimSpace(scope.ActorID),
-	}, scope.RequestID, scope.ActorID, payloadHash)
+	}, modulecore.ActionID(strings.TrimSpace(scope.RequestID)), scope.ActorID, payloadHash)
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
-	if strings.TrimSpace(result.Receipt.RequestID) != strings.TrimSpace(scope.RequestID) || strings.TrimSpace(result.Receipt.ToolName) != payload.Name {
+	if result.Receipt.ActionID != modulecore.ActionID(strings.TrimSpace(scope.RequestID)) || strings.TrimSpace(result.Receipt.ToolName) != payload.Name {
 		return runtimeDataWriteOwnerResult{}, fmt.Errorf("tool registry receipt identity mismatch")
 	}
 	return runtimeDataWriteOwnerResult{
 		SchemaVersion:    "tool-registry/v1",
 		MigrationState:   "embedded_current",
 		ValidationState:  "owner_validated",
-		AuditRef:         result.Receipt.RequestID,
+		AuditRef:         string(result.Receipt.ActionID),
 		IdempotencyKey:   scope.RequestID,
 		IdempotentReplay: result.RequestReplay,
 		PolicyRevision:   runtimeDataWritePolicyRevision,

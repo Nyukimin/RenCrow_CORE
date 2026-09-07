@@ -10,6 +10,7 @@ import (
 	domaindurable "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	durablepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -31,12 +32,14 @@ func TestRuntimeDataWriteDurableStoreWorkflowUsesDurableRequestReceipts(t *testi
 	}
 	worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true})
 	message := "XのBookmarkを保存するDBの設計を確認して"
-	firstContext := runtimeDurableWriteTestContext(t, "durable-write-1", "user-1")
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
+	action2 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
+	firstContext := runtimeDurableWriteTestContext(t, string(action1), "user-1")
 	first := runtimeDataWriteOwnerExecuteWrite(t, worker, firstContext, "durable_store_workflow", "handle_storage_intent", map[string]any{"message": message})
-	if first.IdempotentReplay || first.AuditRef == "" || first.IdempotencyKey != "durable-write-1" {
+	if first.IdempotentReplay || first.AuditRef == "" || first.IdempotencyKey != string(action1) {
 		t.Fatalf("first receipt=%#v", first)
 	}
-	receipt, err := store.FindByRequestID(context.Background(), "durable-write-1")
+	receipt, err := store.FindByActionID(context.Background(), action1)
 	if err != nil || receipt == nil || receipt.RequirementID != first.AuditRef || receipt.UserScope != "user-1" {
 		t.Fatalf("first receipt persistence=%+v err=%v", receipt, err)
 	}
@@ -51,22 +54,22 @@ func TestRuntimeDataWriteDurableStoreWorkflowUsesDurableRequestReceipts(t *testi
 		t.Fatalf("same-request conflict response=%#v err=%v", changedResponse, err)
 	}
 
-	secondRequestContext := runtimeDurableWriteTestContext(t, "durable-write-2", "user-1")
+	secondRequestContext := runtimeDurableWriteTestContext(t, string(action2), "user-1")
 	semantic := runtimeDataWriteOwnerExecuteWrite(t, worker, secondRequestContext, "durable_store_workflow", "handle_storage_intent", map[string]any{"message": message})
 	if semantic.IdempotentReplay || semantic.AuditRef != first.AuditRef {
 		t.Fatalf("semantic dedupe receipt=%#v first=%#v", semantic, first)
 	}
-	semanticReceipt, err := store.FindByRequestID(context.Background(), "durable-write-2")
+	semanticReceipt, err := store.FindByActionID(context.Background(), action2)
 	if err != nil || semanticReceipt == nil || semanticReceipt.RequirementID != first.AuditRef {
 		t.Fatalf("semantic receipt=%+v err=%v", semanticReceipt, err)
 	}
 
-	recalled := runtimeDataWriteOwnerExecuteRecall(t, worker, firstContext, "durable_store_workflow", "exact_request", "durable-write-2")
+	recalled := runtimeDataWriteOwnerExecuteRecall(t, worker, firstContext, "durable_store_workflow", "exact_request", string(action2))
 	if len(recalled.Records) != 1 || recalled.Records[0]["requirement_id"] != first.AuditRef || recalled.Records[0]["deduplicated"] != true {
 		t.Fatalf("semantic recall=%#v", recalled)
 	}
 	requirementRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, firstContext, "durable_store_workflow", "requirement", first.AuditRef)
-	if len(requirementRecall.Records) != 1 || requirementRecall.Records[0]["requirement_id"] != first.AuditRef || requirementRecall.Records[0]["request_id"] != "durable-write-1" || requirementRecall.Records[0]["status"] == "" || requirementRecall.Records[0]["lifecycle"] == "" {
+	if len(requirementRecall.Records) != 1 || requirementRecall.Records[0]["requirement_id"] != first.AuditRef || requirementRecall.Records[0]["action_id"] != string(action1) || requirementRecall.Records[0]["status"] == "" || requirementRecall.Records[0]["lifecycle"] == "" {
 		t.Fatalf("requirement recall=%#v", requirementRecall)
 	}
 	for _, forbidden := range []string{"message", "user_scope", "path", "database", "sql"} {
@@ -74,8 +77,8 @@ func TestRuntimeDataWriteDurableStoreWorkflowUsesDurableRequestReceipts(t *testi
 			t.Fatalf("requirement recall leaked %q: %#v", forbidden, requirementRecall.Records[0])
 		}
 	}
-	otherUser := runtimeDurableWriteTestContext(t, "durable-recall-other", "user-2")
-	otherRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, otherUser, "durable_store_workflow", "exact_request", "durable-write-2")
+	otherUser := runtimeDurableWriteTestContext(t, "act_00000000-0000-5000-8000-000000000099", "user-2")
+	otherRecall := runtimeDataWriteOwnerExecuteRecall(t, worker, otherUser, "durable_store_workflow", "exact_request", string(action2))
 	if len(otherRecall.Records) != 0 {
 		t.Fatalf("cross-user recall leaked=%#v", otherRecall)
 	}
@@ -88,7 +91,7 @@ func TestRuntimeDataWriteDurableStoreWorkflowUsesDurableRequestReceipts(t *testi
 		t.Fatalf("missing requirement recall=%#v", missingRequirementRecall)
 	}
 
-	for _, forbidden := range []string{"request_id", "trace_id", "requested_by", "user_scope", "requirement_id"} {
+	for _, forbidden := range []string{"action_id", "trace_id", "requested_by", "user_scope", "requirement_id"} {
 		response, err := worker.ExecuteV2(firstContext, "data.write", map[string]any{
 			"store": "durable_store_workflow", "operation": "handle_storage_intent",
 			"payload": map[string]any{"message": message, forbidden: "model-owned"},

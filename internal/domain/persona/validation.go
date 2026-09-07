@@ -50,8 +50,8 @@ func ValidateCanonicalResponseLog(item CanonicalResponseLog) error {
 	if strings.TrimSpace(item.CharacterID) == "" {
 		return errors.New("character_id is required")
 	}
-	if strings.TrimSpace(item.ResponseID) == "" {
-		return errors.New("response_id is required")
+	if strings.TrimSpace(item.ResponseKey) == "" {
+		return errors.New("response_key is required")
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")

@@ -339,7 +339,7 @@ func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freeze
 	if freeze.FreezeRevision != resolution.ExpectedFreezeRevision {
 		return freeze, domainworkstream.ImplementationLease{}, false, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, resolution.ExpectedFreezeRevision, freeze.FreezeRevision)
 	}
-	pendingResolution := strings.TrimSpace(freeze.ResolutionRequestID) != ""
+	pendingResolution := freeze.ActionID != ""
 	if pendingResolution && !freeze.MatchesResolution(resolution) {
 		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
 	}
@@ -366,7 +366,7 @@ func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freeze
 	// flight.
 	if !pendingResolution {
 		now := time.Now().UTC()
-		freeze.ResolutionRequestID = resolution.ResolutionRequestID
+		freeze.ActionID = resolution.ActionID
 		freeze.ReplacementUnitID = resolution.ReplacementUnitID
 		freeze.SupersedesUnitID = resolution.SupersedesUnitID
 		freeze.BlockerResolutionRefs = append([]domainbacklog.EvidenceRef(nil), resolution.BlockerResolutionRefs...)

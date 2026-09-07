@@ -192,7 +192,7 @@ func TestHandlePersonaObservationCreateEndpoints(t *testing.T) {
 			name:    "canonical",
 			handler: HandlePersonaCanonicalResponseLogCreate(store),
 			path:    "/viewer/persona-observation/canonical-responses",
-			body:    `{"event_id":"evt_canonical_1","character_id":"kuro","response_id":"block","used":true}`,
+			body:    `{"event_id":"evt_canonical_1","character_id":"kuro","response_key":"block","used":true}`,
 		},
 		{
 			name:    "observation",

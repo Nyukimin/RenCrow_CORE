@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
 
@@ -38,7 +40,9 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateOwnerE2EThroughWorkerAndExactRe
 	worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{
 		OperationalDataWrite: writeRegistry, OperationalDataRecall: recallRegistry, DisableToolHarness: true,
 	})
-	ctx := runtimeKnowledgeMemoryUserContext(t, "knowledge-memory-write-1", "user-1", "shiro")
+	action1 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
+	action2 := modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
+	ctx := runtimeKnowledgeMemoryUserContext(t, string(action1), "user-1", "shiro")
 	payload := map[string]any{
 		"title":         "  Private Candidate Work  ",
 		"creator_names": []any{"  Creator One  "},
@@ -48,7 +52,7 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateOwnerE2EThroughWorkerAndExactRe
 	}
 
 	first := runtimeKnowledgeMemoryExecuteWrite(t, worker, ctx, payload)
-	if first.IdempotentReplay || first.SchemaVersion != "knowledge-memory-creative-candidate/v1" || first.MigrationState != "embedded_current" || first.ValidationState != "owner_validated" || first.PolicyRevision != runtimeDataWritePolicyRevision || first.AuditRef == "" || first.IdempotencyKey != "knowledge-memory-write-1" {
+	if first.IdempotentReplay || first.SchemaVersion != "knowledge-memory-creative-candidate/v1" || first.MigrationState != "embedded_current" || first.ValidationState != "owner_validated" || first.PolicyRevision != runtimeDataWritePolicyRevision || first.AuditRef == "" || first.IdempotencyKey != string(action1) {
 		t.Fatalf("first receipt = %#v", first)
 	}
 	if !strings.HasPrefix(first.AuditRef, runtimeKnowledgeMemoryCandidateIDPrefix) {
@@ -72,8 +76,8 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateOwnerE2EThroughWorkerAndExactRe
 	if _, leaked := exact.Records[0]["payload"]; leaked {
 		t.Fatal("candidate exact recall exposed raw payload")
 	}
-	receipt := runtimeKnowledgeMemoryExecuteRecall(t, worker, ctx, "requests", "knowledge-memory-write-1", 10)
-	if len(receipt.Records) != 1 || receipt.Records[0]["request_id"] != "knowledge-memory-write-1" || receipt.Records[0]["user_id"] != "user-1" || receipt.Records[0]["item_id"] != first.AuditRef || receipt.Records[0]["payload_hash"] == "" {
+	receipt := runtimeKnowledgeMemoryExecuteRecall(t, worker, ctx, "requests", string(action1), 10)
+	if len(receipt.Records) != 1 || receipt.Records[0]["action_id"] != string(action1) || receipt.Records[0]["user_id"] != "user-1" || receipt.Records[0]["item_id"] != first.AuditRef || receipt.Records[0]["payload_hash"] == "" {
 		t.Fatalf("request receipt recall = %#v", receipt)
 	}
 
@@ -90,7 +94,7 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateOwnerE2EThroughWorkerAndExactRe
 		t.Fatalf("mismatched request response=%#v err=%v", conflict, err)
 	}
 
-	secondCtx := runtimeKnowledgeMemoryUserContext(t, "knowledge-memory-write-2", "user-1", "shiro")
+	secondCtx := runtimeKnowledgeMemoryUserContext(t, string(action2), "user-1", "shiro")
 	second := runtimeKnowledgeMemoryExecuteWrite(t, worker, secondCtx, payload)
 	if second.IdempotentReplay || second.AuditRef == first.AuditRef {
 		t.Fatalf("same-content new request was collapsed: first=%#v second=%#v", first, second)
@@ -100,12 +104,12 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateOwnerE2EThroughWorkerAndExactRe
 		t.Fatalf("candidate rows = %#v err=%v", items, err)
 	}
 
-	otherUserCtx := runtimeKnowledgeMemoryUserContext(t, "knowledge-memory-other", "other-user", "shiro")
+	otherUserCtx := runtimeKnowledgeMemoryUserContext(t, "act_00000000-0000-5000-8000-000000000099", "other-user", "shiro")
 	otherCandidate := runtimeKnowledgeMemoryExecuteRecall(t, worker, otherUserCtx, "creative_candidate", first.AuditRef, 10)
 	if len(otherCandidate.Records) != 0 {
 		t.Fatalf("cross-user candidate recall leaked = %#v", otherCandidate)
 	}
-	otherReceipt := runtimeKnowledgeMemoryExecuteRecall(t, worker, otherUserCtx, "requests", "knowledge-memory-write-1", 10)
+	otherReceipt := runtimeKnowledgeMemoryExecuteRecall(t, worker, otherUserCtx, "requests", string(action1), 10)
 	if len(otherReceipt.Records) != 0 {
 		t.Fatalf("cross-user request recall leaked = %#v", otherReceipt)
 	}
@@ -151,10 +155,10 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateRejectsModelOwnedFieldsAndUnsaf
 	}
 	worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{OperationalDataWrite: registry, DisableToolHarness: true})
 	base := map[string]any{"title": "Candidate"}
-	for _, key := range []string{"item_id", "user_id", "status", "visibility", "created_at", "request_id", "actor_id", "source", "path", "db", "sql"} {
+	for i, key := range []string{"item_id", "user_id", "status", "visibility", "created_at", "action_id", "actor_id", "source", "path", "db", "sql"} {
 		payload := runtimeDataWriteOwnerClonePayload(base)
 		payload[key] = "model-owned"
-		response, err := worker.ExecuteV2(runtimeKnowledgeMemoryUserContext(t, "knowledge-memory-forbidden-"+key, "user-1", "shiro"), "data.write", map[string]any{
+		response, err := worker.ExecuteV2(runtimeKnowledgeMemoryUserContext(t, fmt.Sprintf("act_00000000-0000-5000-8000-%012d", 100+i), "user-1", "shiro"), "data.write", map[string]any{
 			"store": "knowledge_memory", "operation": "propose_creative_candidate", "payload": payload,
 		})
 		if err != nil || response == nil || !response.IsError() {
@@ -163,13 +167,13 @@ func TestRuntimeDataWriteKnowledgeMemoryCandidateRejectsModelOwnedFieldsAndUnsaf
 	}
 	tooLong := runtimeDataWriteOwnerClonePayload(base)
 	tooLong["title"] = strings.Repeat("a", domainkm.MaxCreativeCandidateTitleRunes+1)
-	response, err := worker.ExecuteV2(runtimeKnowledgeMemoryUserContext(t, "knowledge-memory-too-long", "user-1", "shiro"), "data.write", map[string]any{
+	response, err := worker.ExecuteV2(runtimeKnowledgeMemoryUserContext(t, "act_00000000-0000-5000-8000-000000000200", "user-1", "shiro"), "data.write", map[string]any{
 		"store": "knowledge_memory", "operation": "propose_creative_candidate", "payload": tooLong,
 	})
 	if err != nil || response == nil || !response.IsError() {
 		t.Fatalf("overlong title response=%#v err=%v", response, err)
 	}
-	publicScope := runtimeKnowledgeMemoryPublicContext(t, "knowledge-memory-public-write")
+	publicScope := runtimeKnowledgeMemoryPublicContext(t, "act_00000000-0000-5000-8000-000000000201")
 	response, err = worker.ExecuteV2(publicScope, "data.write", map[string]any{
 		"store": "knowledge_memory", "operation": "propose_creative_candidate", "payload": base,
 	})

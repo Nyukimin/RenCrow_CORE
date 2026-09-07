@@ -76,7 +76,7 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS canonical_response_log (
 			event_id TEXT PRIMARY KEY,
 			character_id TEXT,
-			response_id TEXT,
+			response_key TEXT,
 			message_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -152,9 +152,9 @@ func (s *SQLiteStore) SaveCanonicalResponseLog(ctx context.Context, item domainp
 		return err
 	}
 	return s.save(ctx, `INSERT OR REPLACE INTO canonical_response_log (
-		event_id, character_id, response_id, message_id, created_at, payload
+		event_id, character_id, response_key, message_id, created_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
-		item.EventID, item.CharacterID, item.ResponseID, item.MessageID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+		item.EventID, item.CharacterID, item.ResponseKey, item.MessageID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListCanonicalResponseLogs(ctx context.Context, limit int) ([]domainpersona.CanonicalResponseLog, error) {

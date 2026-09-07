@@ -14,6 +14,7 @@ import (
 	"time"
 
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -32,7 +33,7 @@ var ErrKnowledgeMemoryRequestConflict = errors.New("knowledge memory request con
 // by their hash; model-owned raw payload and database details never leave this
 // persistence boundary.
 type KnowledgeMemoryRequestReceipt struct {
-	RequestID   string    `json:"request_id"`
+	ActionID    modulecore.ActionID `json:"action_id"`
 	UserID      string    `json:"user_id"`
 	ActorID     string    `json:"actor_id"`
 	PayloadHash string    `json:"payload_hash"`
@@ -85,7 +86,7 @@ func (s *SQLiteStore) EnsureOwnerRouteSchema(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 	for _, stmt := range []string{
 		`CREATE TABLE IF NOT EXISTS knowledge_memory_request_receipts (
-			request_id TEXT PRIMARY KEY,
+			action_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
 			actor_id TEXT NOT NULL,
 			payload_hash TEXT NOT NULL,
@@ -119,7 +120,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS knowledge_memory_request_receipts (
-			request_id TEXT PRIMARY KEY,
+			action_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
 			actor_id TEXT NOT NULL,
 			payload_hash TEXT NOT NULL,
@@ -239,7 +240,7 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 	item.CreatorNames = trimKnowledgeMemoryStrings(item.CreatorNames)
 	item.RelatedWorks = trimKnowledgeMemoryStrings(item.RelatedWorks)
 	item.ContentHints = trimKnowledgeMemoryStrings(item.ContentHints)
-	receipt.RequestID = strings.TrimSpace(receipt.RequestID)
+	receipt.ActionID = modulecore.ActionID(strings.TrimSpace(string(receipt.ActionID)))
 	receipt.UserID = strings.TrimSpace(receipt.UserID)
 	receipt.ActorID = strings.TrimSpace(receipt.ActorID)
 	receipt.PayloadHash = strings.TrimSpace(receipt.PayloadHash)
@@ -252,7 +253,7 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 	if err := domainkm.ValidateCreativeCandidate(item); err != nil {
 		return false, err
 	}
-	if receipt.RequestID == "" || receipt.UserID == "" || receipt.ActorID == "" || receipt.PayloadHash == "" || receipt.ItemID == "" {
+	if strings.TrimSpace(string(receipt.ActionID)) == "" || receipt.UserID == "" || receipt.ActorID == "" || receipt.PayloadHash == "" || receipt.ItemID == "" {
 		return false, fmt.Errorf("knowledge memory request receipt fields are required")
 	}
 	if receipt.UserID != item.UserID || receipt.ItemID != item.ItemID {
@@ -272,20 +273,20 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	existingReceipt, found, err := findKnowledgeMemoryRequestReceipt(ctx, tx, receipt.RequestID, "")
+	existingReceipt, found, err := findKnowledgeMemoryActionReceipt(ctx, tx, receipt.ActionID, "")
 	if err != nil {
 		return false, err
 	}
 	if found {
 		if !knowledgeMemoryReceiptBindingEqual(existingReceipt, receipt) {
-			return false, fmt.Errorf("%w: request_id %q", ErrKnowledgeMemoryRequestConflict, receipt.RequestID)
+			return false, fmt.Errorf("%w: action_id %q", ErrKnowledgeMemoryRequestConflict, receipt.ActionID)
 		}
 		existingItem, itemFound, err := findCreativeCandidateByID(ctx, tx, receipt.ItemID)
 		if err != nil {
 			return false, err
 		}
 		if !itemFound || existingItem.UserID != item.UserID || !creativeCandidateEqual(existingItem, item) {
-			return false, fmt.Errorf("%w: request_id %q candidate binding", ErrKnowledgeMemoryRequestConflict, receipt.RequestID)
+			return false, fmt.Errorf("%w: action_id %q candidate binding", ErrKnowledgeMemoryRequestConflict, receipt.ActionID)
 		}
 		if err := tx.Commit(); err != nil {
 			return false, fmt.Errorf("commit knowledge memory candidate replay: %w", err)
@@ -302,8 +303,8 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 		return false, fmt.Errorf("insert creative candidate: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO knowledge_memory_request_receipts
-		(request_id, user_id, actor_id, payload_hash, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		receipt.RequestID, receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.ItemID,
+		(action_id, user_id, actor_id, payload_hash, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		string(receipt.ActionID), receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.ItemID,
 		receipt.CreatedAt.Format(timeFormatRFC3339Nano)); err != nil {
 		return false, fmt.Errorf("insert knowledge memory request receipt: %w", err)
 	}
@@ -335,18 +336,18 @@ func (s *SQLiteStore) FindCreativeCandidateByID(ctx context.Context, userID, ite
 	return item, true, nil
 }
 
-// FindKnowledgeMemoryRequestReceipt performs an exact request-and-user lookup
+// FindKnowledgeMemoryActionReceipt performs an exact action-and-user lookup
 // without exposing another user's receipt.
-func (s *SQLiteStore) FindKnowledgeMemoryRequestReceipt(ctx context.Context, userID, requestID string) (KnowledgeMemoryRequestReceipt, bool, error) {
+func (s *SQLiteStore) FindKnowledgeMemoryActionReceipt(ctx context.Context, userID string, actionID modulecore.ActionID) (KnowledgeMemoryRequestReceipt, bool, error) {
 	if s == nil || s.db == nil {
 		return KnowledgeMemoryRequestReceipt{}, false, fmt.Errorf("knowledge memory sqlite store is closed")
 	}
 	userID = strings.TrimSpace(userID)
-	requestID = strings.TrimSpace(requestID)
-	if userID == "" || requestID == "" {
-		return KnowledgeMemoryRequestReceipt{}, false, fmt.Errorf("knowledge memory request user_id and request_id are required")
+	actionID = modulecore.ActionID(strings.TrimSpace(string(actionID)))
+	if userID == "" || strings.TrimSpace(string(actionID)) == "" {
+		return KnowledgeMemoryRequestReceipt{}, false, fmt.Errorf("knowledge memory request user_id and action_id are required")
 	}
-	return findKnowledgeMemoryRequestReceipt(ctx, s.db, requestID, userID)
+	return findKnowledgeMemoryActionReceipt(ctx, s.db, actionID, userID)
 }
 
 func (s *SQLiteStore) ListCreativeKnowledgeItems(ctx context.Context, limit int) ([]domainkm.CreativeKnowledgeItem, error) {
@@ -468,24 +469,26 @@ func findCreativeCandidateByID(ctx context.Context, queryer knowledgeMemoryQuery
 	return item, true, nil
 }
 
-func findKnowledgeMemoryRequestReceipt(ctx context.Context, queryer knowledgeMemoryQueryer, requestID, userID string) (KnowledgeMemoryRequestReceipt, bool, error) {
-	query := `SELECT request_id, user_id, actor_id, payload_hash, item_id, created_at
-		FROM knowledge_memory_request_receipts WHERE request_id = ?`
-	args := []any{requestID}
+func findKnowledgeMemoryActionReceipt(ctx context.Context, queryer knowledgeMemoryQueryer, actionID modulecore.ActionID, userID string) (KnowledgeMemoryRequestReceipt, bool, error) {
+	query := `SELECT action_id, user_id, actor_id, payload_hash, item_id, created_at
+		FROM knowledge_memory_request_receipts WHERE action_id = ?`
+	args := []any{string(actionID)}
 	if userID != "" {
 		query += ` AND user_id = ?`
 		args = append(args, userID)
 	}
 	var receipt KnowledgeMemoryRequestReceipt
+	var actionIDRaw string
 	var createdAt string
 	if err := queryer.QueryRowContext(ctx, query, args...).Scan(
-		&receipt.RequestID, &receipt.UserID, &receipt.ActorID, &receipt.PayloadHash, &receipt.ItemID, &createdAt,
+		&actionIDRaw, &receipt.UserID, &receipt.ActorID, &receipt.PayloadHash, &receipt.ItemID, &createdAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return KnowledgeMemoryRequestReceipt{}, false, nil
 		}
 		return KnowledgeMemoryRequestReceipt{}, false, fmt.Errorf("find knowledge memory request receipt: %w", err)
 	}
+	receipt.ActionID = modulecore.ActionID(actionIDRaw)
 	parsed, err := time.Parse(timeFormatRFC3339Nano, createdAt)
 	if err != nil {
 		return KnowledgeMemoryRequestReceipt{}, false, fmt.Errorf("parse knowledge memory request receipt timestamp: %w", err)
@@ -495,7 +498,7 @@ func findKnowledgeMemoryRequestReceipt(ctx context.Context, queryer knowledgeMem
 }
 
 func knowledgeMemoryReceiptBindingEqual(left, right KnowledgeMemoryRequestReceipt) bool {
-	return left.RequestID == right.RequestID && left.UserID == right.UserID && left.ActorID == right.ActorID &&
+	return left.ActionID == right.ActionID && left.UserID == right.UserID && left.ActorID == right.ActorID &&
 		left.PayloadHash == right.PayloadHash && left.ItemID == right.ItemID
 }
 

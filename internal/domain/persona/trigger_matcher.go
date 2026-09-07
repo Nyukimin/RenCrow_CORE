@@ -42,7 +42,7 @@ func MatchTrigger(input string, definitions []TriggerDefinition) (TriggerMatch, 
 }
 
 func CanUseCanonicalResponse(policy CanonicalResponsePolicy, recent []CanonicalResponseLog, contexts []string) bool {
-	if strings.TrimSpace(policy.ResponseID) == "" {
+	if strings.TrimSpace(policy.ResponseKey) == "" {
 		return false
 	}
 	if !containsAllContexts(contexts, policy.RequiredContexts) {
@@ -50,7 +50,7 @@ func CanUseCanonicalResponse(policy CanonicalResponsePolicy, recent []CanonicalR
 	}
 	uses := 0
 	for i := len(recent) - 1; i >= 0; i-- {
-		if recent[i].ResponseID != policy.ResponseID || !recent[i].Used {
+		if recent[i].ResponseKey != policy.ResponseKey || !recent[i].Used {
 			continue
 		}
 		uses++

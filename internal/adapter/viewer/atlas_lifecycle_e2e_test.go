@@ -244,7 +244,7 @@ func TestAtlasHTTPDesignCardLifecycleAndFreezeResolution(t *testing.T) {
 	}
 
 	resolutionBody := map[string]any{
-		"request_id":               "http-freeze-resolution-1",
+		"action_id":                "act_00000000-0000-5000-8000-000000000006",
 		"expected_freeze_revision": freeze.FreezeRevision,
 		"replacement_unit_id":      replacement.ImplementationUnit,
 		"supersedes_unit_id":       first.ImplementationUnit,

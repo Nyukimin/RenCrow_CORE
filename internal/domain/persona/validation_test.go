@@ -126,7 +126,7 @@ func TestValidatePersonaRejectsMissingCreatedAt(t *testing.T) {
 		{
 			name: "canonical",
 			run: func() error {
-				return ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", CharacterID: "kuro", ResponseID: "block_destructive"})
+				return ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", CharacterID: "kuro", ResponseKey: "block_destructive"})
 			},
 		},
 		{
@@ -175,9 +175,9 @@ func TestValidatePersonaRejectsMissingRequiredFields(t *testing.T) {
 		{name: "trigger missing character id", err: ValidateTriggerLog(TriggerLog{EventID: "evt_1", TriggerID: "danger", Confidence: 0.8, CreatedAt: now}), want: "character_id"},
 		{name: "trigger missing trigger id", err: ValidateTriggerLog(TriggerLog{EventID: "evt_1", CharacterID: "kuro", Confidence: 0.8, CreatedAt: now}), want: "trigger_id"},
 		{name: "trigger negative confidence", err: ValidateTriggerLog(TriggerLog{EventID: "evt_1", CharacterID: "kuro", TriggerID: "danger", Confidence: -0.1, CreatedAt: now}), want: "confidence"},
-		{name: "canonical missing event id", err: ValidateCanonicalResponseLog(CanonicalResponseLog{CharacterID: "kuro", ResponseID: "block_destructive", CreatedAt: now}), want: "event_id"},
-		{name: "canonical missing character id", err: ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", ResponseID: "block_destructive", CreatedAt: now}), want: "character_id"},
-		{name: "canonical missing response id", err: ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", CharacterID: "kuro", CreatedAt: now}), want: "response_id"},
+		{name: "canonical missing event id", err: ValidateCanonicalResponseLog(CanonicalResponseLog{CharacterID: "kuro", ResponseKey: "block_destructive", CreatedAt: now}), want: "event_id"},
+		{name: "canonical missing character id", err: ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", ResponseKey: "block_destructive", CreatedAt: now}), want: "character_id"},
+		{name: "canonical missing response key", err: ValidateCanonicalResponseLog(CanonicalResponseLog{EventID: "evt_1", CharacterID: "kuro", CreatedAt: now}), want: "response_key"},
 		{name: "observation missing event id", err: ValidateObservationLog(ObservationLog{ObserverID: "lumina", TargetID: "ren", ObservationType: "daily", Sensitivity: "normal", ReviewStatus: "pending", CreatedAt: now}), want: "event_id"},
 		{name: "observation missing observer id", err: ValidateObservationLog(ObservationLog{EventID: "evt_1", TargetID: "ren", ObservationType: "daily", Sensitivity: "normal", ReviewStatus: "pending", CreatedAt: now}), want: "observer_id"},
 		{name: "observation missing target id", err: ValidateObservationLog(ObservationLog{EventID: "evt_1", ObserverID: "lumina", ObservationType: "daily", Sensitivity: "normal", ReviewStatus: "pending", CreatedAt: now}), want: "target_id"},

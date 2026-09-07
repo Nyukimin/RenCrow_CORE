@@ -1634,7 +1634,7 @@ func buildPersonaRuntimeCanonicalResponsesWithOptions(characters map[string]doma
 			}
 			category := personaCategoryFromKey(key, opts.canonicalResponsePath)
 			definitions = append(definitions, domainpersona.CanonicalResponseDefinition{
-				ResponseID:       characterID + ":" + key,
+				ResponseKey:       characterID + ":" + key,
 				CharacterID:      characterID,
 				Category:         category,
 				Response:         response,

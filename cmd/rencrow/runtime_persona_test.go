@@ -42,7 +42,7 @@ func TestBuildPersonaRuntimeCanonicalResponsesFromCharacterProfiles(t *testing.T
 		t.Fatalf("defs = %#v", defs)
 	}
 	def := defs[0]
-	if def.CharacterID != "kuro" || def.Category != "danger" || def.ResponseID != "kuro:canonical_responses/danger" {
+	if def.CharacterID != "kuro" || def.Category != "danger" || def.ResponseKey != "kuro:canonical_responses/danger" {
 		t.Fatalf("def = %#v", def)
 	}
 	if def.Response != "その操作は止めます。\n理由を確認します。" {
@@ -85,7 +85,7 @@ func TestBuildPersonaRuntimeDefinitionsUseConfiguredPathsAndCanonicalPolicy(t *t
 		t.Fatalf("canonicals = %#v", canonicals)
 	}
 	def := canonicals[0]
-	if def.Category != "tiredness" || def.ResponseID != "mio:canonical/tiredness" {
+	if def.Category != "tiredness" || def.ResponseKey != "mio:canonical/tiredness" {
 		t.Fatalf("canonical = %#v", def)
 	}
 	if def.CooldownTurns != 9 || def.MaxPerSession != 1 {

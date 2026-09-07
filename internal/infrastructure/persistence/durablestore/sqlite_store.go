@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -108,7 +109,7 @@ func (s *SQLiteStore) migrate() error {
 
 func createReceiptTable(tx *sql.Tx) error {
 	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS durable_store_workflow_receipt (
-		request_id TEXT PRIMARY KEY,
+		action_id TEXT PRIMARY KEY,
 		user_scope TEXT NOT NULL,
 		payload_hash TEXT NOT NULL,
 		requirement_id TEXT NOT NULL,
@@ -136,22 +137,22 @@ func migrateLegacyReceipts(tx *sql.Tx) error {
 		if err != nil {
 			return fmt.Errorf("migrate durable workflow %q: %w", rowRequirementID, err)
 		}
-		requestID := strings.TrimSpace(result.Requirement.RequestID)
-		if requestID == "" {
-			return fmt.Errorf("migrate durable workflow %q: request_id is required", rowRequirementID)
+		actionID := strings.TrimSpace(string(result.Requirement.ActionID))
+		if actionID == "" {
+			return fmt.Errorf("migrate durable workflow %q: action_id is required", rowRequirementID)
 		}
 		createdAt, err := time.Parse(timeFormat, rowCreatedAt)
 		if err != nil || createdAt.IsZero() {
 			return fmt.Errorf("migrate durable workflow %q: created_at is invalid", rowRequirementID)
 		}
 		receipt := domain.RequestReceipt{
-			RequestID: requestID, UserScope: strings.TrimSpace(result.Requirement.UserScope),
+			ActionID: modulecore.ActionID(actionID), UserScope: strings.TrimSpace(result.Requirement.UserScope),
 			PayloadHash: domain.HashStorageRequirement(result.Requirement), RequirementID: rowRequirementID, CreatedAt: createdAt,
 		}
 		if err := domain.ValidateRequestReceipt(receipt); err != nil {
 			return fmt.Errorf("migrate durable workflow %q receipt: %w", rowRequirementID, err)
 		}
-		if _, err := tx.Exec(`INSERT INTO durable_store_workflow_receipt (request_id, user_scope, payload_hash, requirement_id, created_at) VALUES (?, ?, ?, ?, ?)`, receipt.RequestID, receipt.UserScope, receipt.PayloadHash, receipt.RequirementID, receipt.CreatedAt.UTC().Format(timeFormat)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO durable_store_workflow_receipt (action_id, user_scope, payload_hash, requirement_id, created_at) VALUES (?, ?, ?, ?, ?)`, string(receipt.ActionID), receipt.UserScope, receipt.PayloadHash, receipt.RequirementID, receipt.CreatedAt.UTC().Format(timeFormat)); err != nil {
 			return fmt.Errorf("migrate durable workflow %q receipt: %w", rowRequirementID, err)
 		}
 	}
@@ -164,12 +165,12 @@ func migrateLegacyReceipts(tx *sql.Tx) error {
 // Save is retained for direct persistence callers. New Owner writes use
 // SaveWithReceipt so the canonical result and request receipt share one tx.
 func (s *SQLiteStore) Save(ctx context.Context, result domain.WorkflowResult) error {
-	requestID := strings.TrimSpace(result.Requirement.RequestID)
-	if requestID == "" {
-		requestID = "legacy/" + legacyDigest(result.Requirement.RequirementID, result.Requirement.DedupeKey)
+	actionID := strings.TrimSpace(string(result.Requirement.ActionID))
+	if actionID == "" {
+		actionID = "legacy/" + legacyDigest(result.Requirement.RequirementID, result.Requirement.DedupeKey)
 	}
 	receipt := domain.RequestReceipt{
-		RequestID: requestID, UserScope: strings.TrimSpace(result.Requirement.UserScope),
+		ActionID: modulecore.ActionID(actionID), UserScope: strings.TrimSpace(result.Requirement.UserScope),
 		PayloadHash: domain.HashStorageRequirement(result.Requirement), RequirementID: result.Requirement.RequirementID, CreatedAt: result.CreatedAt,
 	}
 	return s.SaveWithReceipt(ctx, &result, receipt)
@@ -179,7 +180,7 @@ func (s *SQLiteStore) SaveWithReceipt(ctx context.Context, result *domain.Workfl
 	if s == nil || s.db == nil {
 		return fmt.Errorf("durable store workflow sqlite store is closed")
 	}
-	receipt.RequestID = strings.TrimSpace(receipt.RequestID)
+	receipt.ActionID = modulecore.ActionID(strings.TrimSpace(string(receipt.ActionID)))
 	receipt.UserScope = strings.TrimSpace(receipt.UserScope)
 	receipt.PayloadHash = strings.TrimSpace(receipt.PayloadHash)
 	receipt.RequirementID = strings.TrimSpace(receipt.RequirementID)
@@ -222,7 +223,7 @@ func (s *SQLiteStore) SaveWithReceipt(ctx context.Context, result *domain.Workfl
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO durable_store_workflow_receipt (request_id, user_scope, payload_hash, requirement_id, created_at) VALUES (?, ?, ?, ?, ?)`, receipt.RequestID, receipt.UserScope, receipt.PayloadHash, receipt.RequirementID, receipt.CreatedAt.UTC().Format(timeFormat)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO durable_store_workflow_receipt (action_id, user_scope, payload_hash, requirement_id, created_at) VALUES (?, ?, ?, ?, ?)`, string(receipt.ActionID), receipt.UserScope, receipt.PayloadHash, receipt.RequirementID, receipt.CreatedAt.UTC().Format(timeFormat)); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -236,19 +237,21 @@ func (s *SQLiteStore) FindByRequirementID(ctx context.Context, requirementID str
 	return s.findWorkflow(ctx, `SELECT requirement_id, payload FROM durable_store_workflow WHERE requirement_id = ?`, requirementID)
 }
 
-func (s *SQLiteStore) FindByRequestID(ctx context.Context, requestID string) (*domain.RequestReceipt, error) {
+func (s *SQLiteStore) FindByActionID(ctx context.Context, actionID modulecore.ActionID) (*domain.RequestReceipt, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("durable store workflow sqlite store is closed")
 	}
 	var receipt domain.RequestReceipt
+	var actionIDRaw string
 	var createdAt string
-	err := s.db.QueryRowContext(ctx, `SELECT request_id, user_scope, payload_hash, requirement_id, created_at FROM durable_store_workflow_receipt WHERE request_id = ?`, requestID).Scan(&receipt.RequestID, &receipt.UserScope, &receipt.PayloadHash, &receipt.RequirementID, &createdAt)
+	err := s.db.QueryRowContext(ctx, `SELECT action_id, user_scope, payload_hash, requirement_id, created_at FROM durable_store_workflow_receipt WHERE action_id = ?`, strings.TrimSpace(string(actionID))).Scan(&actionIDRaw, &receipt.UserScope, &receipt.PayloadHash, &receipt.RequirementID, &createdAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	receipt.ActionID = modulecore.ActionID(actionIDRaw)
 	receipt.CreatedAt, err = time.Parse(timeFormat, createdAt)
 	if err != nil {
 		return nil, err

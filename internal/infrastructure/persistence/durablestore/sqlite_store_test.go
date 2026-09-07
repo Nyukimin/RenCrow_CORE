@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreRoundTripAndRequiresExistingParent(t *testing.T) {
@@ -40,23 +41,24 @@ func TestSQLiteStoreRequestReceiptRoundTripAndExactConflict(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	actionID := modulecore.ActionID("act_00000000-0000-5000-8000-000000000001")
 	result := domain.WorkflowResult{
 		Status: domain.StatusCompleted, Lifecycle: domain.LifecycleValidated, CreatedAt: now, UpdatedAt: now,
 		Requirement: domain.StorageRequirement{
-			RequirementID: "sr-receipt", DedupeKey: "dedupe-receipt", RequestID: "request-receipt",
+			RequirementID: "sr-receipt", DedupeKey: "dedupe-receipt", ActionID: actionID,
 			TraceID: "trace-receipt", RequestedBy: "shiro", UserScope: "user-1",
 			RequestedOutcome: domain.OutcomeAssess, FactsToStore: []string{"x_bookmark"}, OwnerModule: "RenCrow_CORE",
 		},
 		Classification: domain.Classification{OwnerModule: "RenCrow_CORE"},
 	}
 	receipt := domain.RequestReceipt{
-		RequestID: result.Requirement.RequestID, UserScope: result.Requirement.UserScope,
+		ActionID: result.Requirement.ActionID, UserScope: result.Requirement.UserScope,
 		PayloadHash: domain.HashStorageRequirement(result.Requirement), RequirementID: result.Requirement.RequirementID, CreatedAt: now,
 	}
 	if err := store.SaveWithReceipt(context.Background(), &result, receipt); err != nil {
 		t.Fatal(err)
 	}
-	gotReceipt, err := store.FindByRequestID(context.Background(), receipt.RequestID)
+	gotReceipt, err := store.FindByActionID(context.Background(), receipt.ActionID)
 	if err != nil || gotReceipt == nil || *gotReceipt != receipt {
 		t.Fatalf("receipt=%+v err=%v want=%+v", gotReceipt, err, receipt)
 	}
@@ -64,21 +66,22 @@ func TestSQLiteStoreRequestReceiptRoundTripAndExactConflict(t *testing.T) {
 	if err != nil || gotResult == nil || gotResult.Requirement.RequirementID != result.Requirement.RequirementID {
 		t.Fatalf("result=%+v err=%v", gotResult, err)
 	}
-	if got, err := store.FindByRequestID(context.Background(), "request-receipt-suffix"); err != nil || got != nil {
-		t.Fatalf("request lookup must be exact: got=%+v err=%v", got, err)
+	if got, err := store.FindByActionID(context.Background(), modulecore.ActionID("act_00000000-0000-5000-8000-000000000099")); err != nil || got != nil {
+		t.Fatalf("action lookup must be exact: got=%+v err=%v", got, err)
 	}
 	if err := store.SaveWithReceipt(context.Background(), nil, receipt); err == nil {
-		t.Fatal("duplicate request receipt must fail")
+		t.Fatal("duplicate action receipt must fail")
 	}
 }
 
 func TestSQLiteStoreMigratesV1WorkflowRowsToReceipts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "workflow.db")
 	now := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
+	actionID := modulecore.ActionID("act_00000000-0000-5000-8000-000000000002")
 	result := domain.WorkflowResult{
 		Status: domain.StatusCompleted, Lifecycle: domain.LifecycleValidated, CreatedAt: now, UpdatedAt: now,
 		Requirement: domain.StorageRequirement{
-			RequirementID: "sr-v1", DedupeKey: "dedupe-v1", RequestID: "request-v1", RequestedBy: "shiro", UserScope: "user-1",
+			RequirementID: "sr-v1", DedupeKey: "dedupe-v1", ActionID: actionID, RequestedBy: "shiro", UserScope: "user-1",
 			RequestedOutcome: domain.OutcomeAssess, FactsToStore: []string{"x_bookmark"}, OwnerModule: "RenCrow_CORE",
 		},
 	}
@@ -110,7 +113,7 @@ func TestSQLiteStoreMigratesV1WorkflowRowsToReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	receipt, err := store.FindByRequestID(context.Background(), result.Requirement.RequestID)
+	receipt, err := store.FindByActionID(context.Background(), result.Requirement.ActionID)
 	if err != nil || receipt == nil {
 		t.Fatalf("migrated receipt=%+v err=%v", receipt, err)
 	}
@@ -120,6 +123,7 @@ func TestSQLiteStoreMigratesV1WorkflowRowsToReceipts(t *testing.T) {
 }
 
 func TestSQLiteStoreMigrationFailsClosedForMalformedOrDuplicateLegacyRequests(t *testing.T) {
+	sameActionID := modulecore.ActionID("act_00000000-0000-5000-8000-000000000003")
 	tests := []struct {
 		name string
 		rows []struct {
@@ -133,13 +137,13 @@ func TestSQLiteStoreMigrationFailsClosedForMalformedOrDuplicateLegacyRequests(t 
 			dedupeKey     string
 			payload       string
 		}{{requirementID: "sr-bad", dedupeKey: "dedupe-bad", payload: "{"}}},
-		{name: "duplicate_request", rows: func() []struct {
+		{name: "duplicate_action", rows: func() []struct {
 			requirementID string
 			dedupeKey     string
 			payload       string
 		} {
 			makeRow := func(id, dedupe string) string {
-				value := domain.WorkflowResult{Status: domain.StatusCompleted, Lifecycle: domain.LifecycleValidated, Requirement: domain.StorageRequirement{RequirementID: id, DedupeKey: dedupe, RequestID: "same-request", UserScope: "user-1", RequestedOutcome: domain.OutcomeAssess, FactsToStore: []string{"x"}}}
+				value := domain.WorkflowResult{Status: domain.StatusCompleted, Lifecycle: domain.LifecycleValidated, Requirement: domain.StorageRequirement{RequirementID: id, DedupeKey: dedupe, ActionID: sameActionID, UserScope: "user-1", RequestedOutcome: domain.OutcomeAssess, FactsToStore: []string{"x"}}}
 				encoded, _ := json.Marshal(value)
 				return string(encoded)
 			}

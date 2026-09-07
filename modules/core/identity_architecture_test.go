@@ -663,6 +663,131 @@ func TestStep11MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestStep12RequestResponseLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	var violations []string
+
+	shouldSkipStep12Path := func(relative string) bool {
+		return strings.Contains(relative, "step12requestmigration") ||
+			strings.Contains(relative, "rencrow-step12-request-migrate")
+	}
+	shouldSkipToolCallPath := func(relative string) bool {
+		return strings.Contains(relative, "providers/rencrowllm")
+	}
+	shouldSkipResponseIDPath := func(relative string) bool {
+		return strings.Contains(relative, "modules/core") ||
+			strings.Contains(relative, "internal/infrastructure/tts")
+	}
+
+	checkContent := func(relative string, content []byte, tokens []string, skip func(string, string) bool) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			if skip != nil && skip(relative, line) {
+				continue
+			}
+			for _, token := range tokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-step12:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	walkDirectory := func(relative string, tokens []string, skipPath func(string) bool, skipLine func(string, string) bool) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step12requestmigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkipStep12Path(rel) || (skipPath != nil && skipPath(rel)) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			checkContent(rel, content, tokens, skipLine)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step12 owner %s: %v", relative, err)
+		}
+	}
+
+	toolCallTokens := []string{"ToolCallID", "tool_call_id"}
+	for _, relative := range []string{
+		"internal/domain/llm",
+		"internal/application/toolloop",
+		"internal/infrastructure/llm/middleware",
+	} {
+		walkDirectory(relative, toolCallTokens, shouldSkipToolCallPath, nil)
+	}
+
+	resolutionTokens := []string{"ResolutionRequestID", "resolution_request_id"}
+	for _, relative := range []string{
+		"internal/domain/workstream",
+		"internal/domain/backlog",
+		"internal/application/backlog",
+	} {
+		walkDirectory(relative, resolutionTokens, nil, nil)
+	}
+
+	writeReceiptTokens := []string{"RequestID"}
+	for _, relative := range []string{
+		"internal/domain/knowledgememory",
+		"internal/application/knowledgememory",
+		"internal/infrastructure/persistence/knowledgememory",
+		"internal/infrastructure/persistence/toolregistry",
+		"internal/domain/durablestore",
+		"internal/application/durablestore",
+		"internal/infrastructure/persistence/durablestore",
+	} {
+		walkDirectory(relative, writeReceiptTokens, nil, nil)
+	}
+
+	personaTokens := []string{"ResponseID", "response_id"}
+	for _, relative := range []string{
+		"internal/domain/persona",
+		"internal/application/idlechat",
+		"internal/infrastructure/persistence/persona",
+	} {
+		walkDirectory(relative, personaTokens, shouldSkipResponseIDPath, nil)
+	}
+
+	canonicalArchitectureFail(t, "Step12 owner packages must not retain legacy Request/Response identity fields", violations)
+}
+
+func TestStep12MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	for _, relative := range []string{
+		filepath.Join("cmd", "rencrow-step12-request-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "step12requestmigration"),
+	} {
+		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
+			t.Fatalf("Step 12 migration source remains after production cutover: %s", relative)
+		}
+	}
+}
+
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	directories := []string{
