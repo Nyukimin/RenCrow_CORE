@@ -91,12 +91,12 @@ type LLMProvider interface {
 
 // ChatMessage はツール呼び出し対応メッセージ
 type ChatMessage struct {
-	Role       string // "system", "user", "assistant", "tool"
-	Content    string
-	ToolCalls  []ToolCall // role="assistant" 時のツール呼び出し
-	ProviderToolCallID string // role="tool": provider-side correlation; not ActionID
-	Type       PromptContextType
-	Metadata   map[string]string
+	Role               string // "system", "user", "assistant", "tool"
+	Content            string
+	ToolCalls          []ToolCall // role="assistant" 時のツール呼び出し
+	ProviderToolCallID string     // role="tool": provider-side correlation; not ActionID
+	Type               PromptContextType
+	Metadata           map[string]string
 }
 
 // ToolCall はLLMが返すツール呼び出し

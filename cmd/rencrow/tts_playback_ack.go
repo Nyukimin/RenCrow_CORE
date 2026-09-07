@@ -10,13 +10,13 @@ import (
 )
 
 type ttsPlaybackAckRequest struct {
-	ResponseID     string `json:"response_id"`
-	SessionID      string `json:"session_id"`
-	UtteranceID    string `json:"utterance_id"`
-	ViewerClientID string `json:"viewer_client_id,omitempty"`
-	Status         string `json:"status"`
-	ErrorCode      string `json:"error_code,omitempty"`
-	Error          string `json:"error,omitempty"`
+	PublicPlaybackRef string `json:"public_playback_ref"`
+	SessionID         string `json:"session_id"`
+	UtteranceID       string `json:"utterance_id"`
+	ViewerClientID    string `json:"viewer_client_id,omitempty"`
+	Status            string `json:"status"`
+	ErrorCode         string `json:"error_code,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 func handleTTSPlaybackAck() http.HandlerFunc {
@@ -31,28 +31,28 @@ func handleTTSPlaybackAck() http.HandlerFunc {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		responseID := strings.TrimSpace(req.ResponseID)
-		if responseID == "" {
-			http.Error(w, "response_id is required", http.StatusBadRequest)
+		publicPlaybackRef := strings.TrimSpace(req.PublicPlaybackRef)
+		if publicPlaybackRef == "" {
+			http.Error(w, "public_playback_ref is required", http.StatusBadRequest)
 			return
 		}
 		viewerClientID := strings.TrimSpace(req.ViewerClientID)
 		activeAudio := activeViewerControl.IsActiveAudio(viewerClientID)
 		ok := false
 		if moduletts.ShouldConsumePendingForPlaybackAck(activeAudio) {
-			ok = notifyIdleChatTTSPlaybackCompleted(responseID)
+			ok = notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef)
 		}
 		receipt := moduletts.BuildPlaybackAckReceipt(moduletts.PlaybackAckInput{
-			ResponseID:     req.ResponseID,
-			SessionID:      req.SessionID,
-			UtteranceID:    req.UtteranceID,
-			ViewerClientID: req.ViewerClientID,
-			Status:         req.Status,
-			ErrorCode:      req.ErrorCode,
-			Error:          req.Error,
+			PublicPlaybackRef: req.PublicPlaybackRef,
+			SessionID:         req.SessionID,
+			UtteranceID:       req.UtteranceID,
+			ViewerClientID:    req.ViewerClientID,
+			Status:            req.Status,
+			ErrorCode:         req.ErrorCode,
+			Error:             req.Error,
 		}, activeAudio, ok)
-		log.Printf("[TTSPlayback] ack response_id=%s session=%s utterance=%s viewer_client_id=%s active_audio=%t status=%s matched=%t error_code=%s error=%s",
-			receipt.ResponseID,
+		log.Printf("[TTSPlayback] ack public_playback_ref=%s session=%s utterance=%s viewer_client_id=%s active_audio=%t status=%s matched=%t error_code=%s error=%s",
+			receipt.PublicPlaybackRef,
 			receipt.SessionID,
 			receipt.UtteranceID,
 			receipt.ViewerClientID,

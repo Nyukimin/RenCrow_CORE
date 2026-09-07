@@ -8,6 +8,7 @@ import (
 
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type VisionOptions struct {
@@ -90,8 +91,9 @@ func (p *visionRequestProcessor) Process(
 		}
 
 		emitVisionEvent(emit, "vision.request.started", visionEventContent(*item, "", ""), request)
+		requestID := string(modulecore.NewRequestID())
 		result, err := p.analyzer.Analyze(ctx, domainvision.AnalyzeRequest{
-			RequestID:   request.TraceID,
+			RequestID:   requestID,
 			SessionID:   request.SessionID,
 			Prompt:      request.UserMessage,
 			Kind:        string(item.Kind),

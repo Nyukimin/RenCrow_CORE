@@ -3,6 +3,7 @@ package security
 import (
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -31,33 +32,88 @@ func (g *SandboxGuard) IsCommandDenied(command string, denyCommands []string) bo
 
 // IsPathWithinWorkspace は path が workspace 配下かを判定する
 func (g *SandboxGuard) IsPathWithinWorkspace(path, workspace string) bool {
-	if strings.TrimSpace(path) == "" || strings.TrimSpace(workspace) == "" {
-		return false
-	}
+	_, ok := physicalWorkspaceTarget(path, workspace)
+	return ok
+}
 
-	targetAbs, err := filepath.Abs(filepath.Clean(path))
-	if err != nil {
-		return false
+// physicalPath resolves existing ancestors without accepting dangling symlinks.
+// This is a preflight check; callers still need race-safe filesystem I/O.
+func physicalPath(path string) (string, bool) {
+	if strings.TrimSpace(path) == "" {
+		return "", false
 	}
-	workspaceAbs, err := filepath.Abs(filepath.Clean(workspace))
-	if err != nil {
-		return false
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r < 128 && os.IsPathSeparator(uint8(r)) }) {
+		if part == ".." {
+			return "", false
+		}
 	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	current := absolute
+	var missing []string
+	for {
+		info, err := os.Lstat(current)
+		if err == nil {
+			resolved, err := filepath.EvalSymlinks(current)
+			if err != nil {
+				return "", false
+			}
+			if len(missing) > 0 {
+				if info.Mode()&os.ModeSymlink != 0 {
+					info, err = os.Stat(resolved)
+					if err != nil {
+						return "", false
+					}
+				}
+				if !info.IsDir() {
+					return "", false
+				}
+			}
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, true
+		}
+		if !os.IsNotExist(err) {
+			return "", false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", false
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
 
-	rel, err := filepath.Rel(workspaceAbs, targetAbs)
-	if err != nil {
-		return false
+func physicalWorkspaceTarget(path, workspace string) (string, bool) {
+	target, ok := physicalPath(path)
+	if !ok {
+		return "", false
 	}
-	if rel == "." {
-		return true
+	root, ok := physicalPath(workspace)
+	if !ok {
+		return "", false
 	}
-	return !strings.HasPrefix(rel, "..")
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return target, true
 }
 
 func (g *SandboxGuard) IsSafeSandboxWritePath(path, sandboxRoot string) bool {
-	if !g.IsPathWithinWorkspace(path, sandboxRoot) {
-		return false
-	}
+	target, ok := physicalWorkspaceTarget(path, sandboxRoot)
+	return ok && safeSandboxPathName(path) && safeSandboxPathName(target)
+}
+
+func safeSandboxPathName(path string) bool {
 	clean := filepath.Clean(path)
 	base := filepath.Base(clean)
 	if base == ".env" || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {

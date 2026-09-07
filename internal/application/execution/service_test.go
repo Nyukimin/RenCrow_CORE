@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -30,7 +31,9 @@ func (s *stubExecutor) ExecuteV2(_ context.Context, _ string, _ map[string]any) 
 }
 
 type memRepo struct {
-	records map[string]domain.Record
+	records     map[string]domain.Record
+	updateErr   error
+	updateCalls int
 }
 
 func newMemRepo() *memRepo {
@@ -43,6 +46,15 @@ func (m *memRepo) Create(_ context.Context, record domain.Record) error {
 }
 
 func (m *memRepo) UpdateStatus(_ context.Context, taskID modulecore.TaskID, actionID modulecore.ActionID, status domain.Status, errMsg string) (domain.Record, error) {
+	m.updateCalls++
+	if m.updateErr != nil {
+		return domain.Record{
+			TaskID:   taskID,
+			ActionID: actionID,
+			Status:   status,
+			Error:    errMsg,
+		}, m.updateErr
+	}
 	k := recordKey(taskID, actionID)
 	rec := m.records[k]
 	rec.Status = status
@@ -161,6 +173,125 @@ func TestServiceCopiesOnlyProvidedTraceID(t *testing.T) {
 	}
 	if result.Record.TraceID != traceID {
 		t.Fatalf("TraceID = %q, want owner-provided %q", result.Record.TraceID, traceID)
+	}
+}
+
+func TestServiceExecutorErrorRetainsResponseAndError(t *testing.T) {
+	repo := newMemRepo()
+	executorErr := errors.New("executor failed")
+	response := tool.NewSuccess("partial result")
+	exec := &stubExecutor{resp: response, err: executorErr}
+	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
+	action := domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"}
+
+	result, err := svc.RequestToolExecution(context.Background(), action)
+	if !errors.Is(err, executorErr) {
+		t.Fatalf("RequestToolExecution error = %v, want executor error", err)
+	}
+	if result == nil || result.Response != response {
+		t.Fatalf("result = %#v, want response %p", result, response)
+	}
+	if result.Record.Status != domain.StatusFailed {
+		t.Fatalf("result record status = %s, want failed", result.Record.Status)
+	}
+	if repo.updateCalls != 1 {
+		t.Fatalf("audit update calls = %d, want 1", repo.updateCalls)
+	}
+}
+
+func TestServiceExecutorErrorJoinsAuditFailureAndKeepsRunningRecord(t *testing.T) {
+	auditErr := errors.New("audit update failed")
+	repo := newMemRepo()
+	repo.updateErr = auditErr
+	executorErr := errors.New("executor failed")
+	response := tool.NewSuccess("partial result")
+	exec := &stubExecutor{resp: response, err: executorErr}
+	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
+	action := domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"}
+
+	result, err := svc.RequestToolExecution(context.Background(), action)
+	if !errors.Is(err, executorErr) || !errors.Is(err, auditErr) {
+		t.Fatalf("RequestToolExecution error = %v, want executor and audit errors", err)
+	}
+	if result == nil || result.Response != response {
+		t.Fatalf("result = %#v, want response %p", result, response)
+	}
+	if result.Record.Status != domain.StatusRunning {
+		t.Fatalf("result record status = %s, want original running record", result.Record.Status)
+	}
+	stored, ok := repo.records[recordKey(action.TaskID, action.ActionID)]
+	if !ok || stored.Status != domain.StatusRunning {
+		t.Fatalf("stored record = %#v, want unchanged running record", stored)
+	}
+}
+
+func TestServiceStructuredErrorJoinsAuditFailureAndKeepsResponse(t *testing.T) {
+	auditErr := errors.New("audit update failed")
+	repo := newMemRepo()
+	repo.updateErr = auditErr
+	response := tool.NewError(tool.ErrTimeout, "timed out", nil)
+	exec := &stubExecutor{resp: response}
+	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
+	action := domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"}
+
+	result, err := svc.RequestToolExecution(context.Background(), action)
+	var toolErr *tool.ToolError
+	if !errors.As(err, &toolErr) || toolErr != response.Error || !errors.Is(err, auditErr) {
+		t.Fatalf("RequestToolExecution error = %v, want structured tool and audit errors", err)
+	}
+	if result == nil || result.Response != response {
+		t.Fatalf("result = %#v, want response %p", result, response)
+	}
+	if result.Record.Status != domain.StatusRunning {
+		t.Fatalf("result record status = %s, want original running record", result.Record.Status)
+	}
+}
+
+func TestServiceSuccessfulResponseAuditFailureRetainsResponse(t *testing.T) {
+	auditErr := errors.New("audit update failed")
+	repo := newMemRepo()
+	repo.updateErr = auditErr
+	response := tool.NewSuccess("ok")
+	exec := &stubExecutor{resp: response}
+	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
+	action := domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"}
+
+	result, err := svc.RequestToolExecution(context.Background(), action)
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("RequestToolExecution error = %v, want audit error", err)
+	}
+	if result == nil || result.Response != response {
+		t.Fatalf("result = %#v, want response %p", result, response)
+	}
+	if result.Record.Status != domain.StatusRunning {
+		t.Fatalf("result record status = %s, want original running record", result.Record.Status)
+	}
+}
+
+func TestServiceNilResponseIsAuditedAsFailure(t *testing.T) {
+	repo := newMemRepo()
+	exec := &stubExecutor{}
+	svc := NewService(&stubPolicy{decision: domain.PolicyDecision{Decision: domain.DecisionAllow}}, exec, repo)
+	action := domain.Action{TaskID: modulecore.NewTaskID(), ActionID: modulecore.NewActionID(), Tool: "shell"}
+
+	result, err := svc.RequestToolExecution(context.Background(), action)
+	if err != nil {
+		t.Fatalf("RequestToolExecution failed: %v", err)
+	}
+	if result == nil || result.Response == nil || result.Response.Error == nil {
+		t.Fatalf("nil response should produce a structured error result: %#v", result)
+	}
+	if result.Response.Error.Code != tool.ErrInternalError {
+		t.Fatalf("synthesized error code = %s, want %s", result.Response.Error.Code, tool.ErrInternalError)
+	}
+	if result.Record.Status != domain.StatusFailed {
+		t.Fatalf("result record status = %s, want failed", result.Record.Status)
+	}
+	if result.Record.Error != "empty tool response" {
+		t.Fatalf("audit error = %q, want empty tool response", result.Record.Error)
+	}
+	if repo.updateCalls != 1 {
+		t.Fatalf("audit update calls = %d, want 1", repo.updateCalls)
 	}
 }
 

@@ -4,18 +4,18 @@ import moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 
 var idleChatTTSPendingStore = moduletts.NewPendingPlaybackStore()
 
-func registerIdleChatTTSPending(sessionID, responseID string) <-chan struct{} {
-	return idleChatTTSPendingStore.Register(sessionID, responseID)
+func registerIdleChatTTSPending(sessionID, publicPlaybackRef string) <-chan struct{} {
+	return idleChatTTSPendingStore.Register(sessionID, publicPlaybackRef)
 }
 
 func registerIdleChatTopicGate(idleSessionID, ttsSessionID string) {
 	idleChatTTSPendingStore.RegisterTopicGate(idleSessionID, ttsSessionID)
 }
 
-func notifyIdleChatTTSPlaybackCompleted(responseID string) bool {
-	action := idleChatTTSPendingStore.CompleteByResponse(responseID)
+func notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef string) bool {
+	action := idleChatTTSPendingStore.CompleteByPublicPlaybackRef(publicPlaybackRef)
 	if action.ClearPublicBy != "" {
-		clearTTSPublicSessionByResponse(action.ClearPublicBy)
+		clearTTSPublicSessionByPlaybackRef(action.ClearPublicBy)
 	}
 	return action.Matched
 }

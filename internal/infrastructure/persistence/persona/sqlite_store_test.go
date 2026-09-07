@@ -99,7 +99,7 @@ func TestSQLiteStorePersonaLogs(t *testing.T) {
 	if err := store.SaveCanonicalResponseLog(ctx, domainpersona.CanonicalResponseLog{
 		EventID:     "evt_canonical_1",
 		CharacterID: "kuro",
-		ResponseKey:  "block_destructive",
+		ResponseKey: "block_destructive",
 		Used:        true,
 		CreatedAt:   now,
 	}); err != nil {

@@ -19,3 +19,11 @@ type ToolMetadata struct {
 	Parameters  map[string]any `json:"parameters,omitempty"`  // JSON Schema（tool calling用）
 	Origin      string         `json:"origin,omitempty"`
 }
+
+// MCPToolDefinition is an observed remote argument contract, not a permission
+// grant or a CORE Actor identity. Catalogs retain it at the observed connection.
+type MCPToolDefinition struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"inputSchema"`
+}

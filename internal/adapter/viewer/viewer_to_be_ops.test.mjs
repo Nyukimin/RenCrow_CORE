@@ -22,7 +22,7 @@ test('To-Be Ops renders exactly five safe summary blocks', () => {
       economic_objective: {enabled: false, draft_only: true, external_action_blocked: true},
       policy_decisions: [{decision_id: 'decision-1', decision_type: 'billing', subject_id: 'opp-1', status: 'allowed', description: 'DO_NOT_RENDER_DESCRIPTION'}],
     },
-    traces: {items: [{ResponseID: 'response-1', Role: 'mio', Items: [{Kind: 'knowledge_relation', SourceID: 'source-1', Status: 'injected', Summary: 'DO_NOT_RENDER_TRACE_SUMMARY', PromptSection: 'knowledge'}]}]},
+    traces: {items: [{TraceID: 'trc_00000000-0000-5000-8000-000000000101', TurnID: 'turn_00000000-0000-5000-8000-000000000102', ResponseID: 'response-obsolete-sentinel', Role: 'mio', Items: [{Kind: 'knowledge_relation', SourceID: 'source-1', Status: 'injected', Summary: 'DO_NOT_RENDER_TRACE_SUMMARY', PromptSection: 'knowledge'}]}]},
     errors: {},
   });
 
@@ -37,8 +37,9 @@ test('To-Be Ops renders exactly five safe summary blocks', () => {
   assert.equal((html.match(/<details/g) || []).length, 5);
   assert.doesNotMatch(html, /<details[^>]*\sopen/);
   assert.doesNotMatch(html, /<table|<button/i);
-  assert.doesNotMatch(html, /DO_NOT_RENDER_RAW_OUTPUT|DO_NOT_RENDER_POLICY_REASON|DO_NOT_RENDER_DESCRIPTION|DO_NOT_RENDER_TRACE_SUMMARY/);
+  assert.doesNotMatch(html, /DO_NOT_RENDER_RAW_OUTPUT|DO_NOT_RENDER_POLICY_REASON|DO_NOT_RENDER_DESCRIPTION|DO_NOT_RENDER_TRACE_SUMMARY|response-obsolete-sentinel/);
   assert.match(html, /run-with-a-very-long-identifier-1234567890/);
+  assert.match(html, /trace trc_00000000-0000-5000-8000-000000000101 · turn turn_00000000-0000-5000-8000-000000000102 · role mio/);
   assert.match(html, /task task-1 · billing · draft/);
   assert.match(html, /decision decision-1 · target opp-1 · billing · allowed/);
   assert.match(html, /Evaluation<\/dt><dd>synchronous/);
@@ -69,6 +70,22 @@ test('To-Be Ops preserves Recall Trace unavailable status', () => {
   assert.equal(model[4].key, 'recent-trace');
   assert.equal(model[4].status, 'unavailable');
   assert.match(model[4].emptyDetail, /unavailable/i);
+});
+
+test('To-Be Ops does not fall back from missing Recall Trace or Turn IDs', () => {
+  const {buildToBeOpsViewModel, renderToBeOpsHTML} = require('./assets/js/tabs/to-be-ops.js');
+  const model = buildToBeOpsViewModel({
+    traces: {items: [
+      {ResponseID: 'response-obsolete-trace', TurnID: 'turn_00000000-0000-5000-8000-000000000201', Role: 'mio', Items: [{Kind: 'knowledge_relation', SourceID: 'source-1', Status: 'injected'}]},
+      {TraceID: 'trc_00000000-0000-5000-8000-000000000202', ResponseID: 'response-obsolete-turn', Role: 'shiro', Items: [{Kind: 'knowledge_relation', SourceID: 'source-2', Status: 'filtered'}]},
+    ]},
+    errors: {},
+  });
+
+  const html = renderToBeOpsHTML(model);
+  assert.match(html, /trace - · turn turn_00000000-0000-5000-8000-000000000201/);
+  assert.match(html, /trace trc_00000000-0000-5000-8000-000000000202 · turn -/);
+  assert.doesNotMatch(html, /response-obsolete-trace|response-obsolete-turn/);
 });
 
 test('To-Be Ops API fetch has a finite timeout', async () => {

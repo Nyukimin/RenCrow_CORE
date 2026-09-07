@@ -20,6 +20,8 @@ type PatchExecutionResult struct {
 	FailureReason string          // 失敗理由の要約
 	Retryable     bool            // 再試行対象か
 	FailedIndex   int             // 最初に失敗したコマンドインデックス
+	TestReceipt   string          // owner test-impact receipt の repo-local path
+	TestStatus    string          // passed / failed / blocked / not_applicable / not_run
 }
 
 // NewPatchExecutionResult は新しいPatchExecutionResultを作成

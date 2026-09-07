@@ -15,7 +15,7 @@ func TestHandleOTelExportDryRun(t *testing.T) {
 
 	handler(rec, httptest.NewRequest(http.MethodPost, "/viewer/otel/export", strings.NewReader(`{
 		"dry_run": true,
-		"events": [{"name":"heartbeat","attributes":{"token":"secret","status":"ok"}}]
+		"events": [{"name":"heartbeat","trace_id":"trc_00000000-0000-5000-8000-000000000001","attributes":{"token":"secret","status":"ok"}}]
 	}`)))
 
 	if rec.Code != http.StatusOK {

@@ -55,13 +55,14 @@ func ProposalFailureInfo(err error) (kind, reason string, retryable bool, ok boo
 
 // CoderAgent は Coder（設計・実装）を担当するエンティティ
 type CoderAgent struct {
-	llmProvider          llm.LLMProvider
-	toolRunner           ToolRunner
-	mcpClient            MCPClient
-	proposalPrompt       string
-	persona              *AgentPersona // Optional: v4.1 Agent Persona
-	lightMemory          *LightMemory  // Optional: v4.1 Short-term memory
-	stableRuntimeContext string        // Runtime capability awareness; does not grant execution
+	llmProvider            llm.LLMProvider
+	toolRunner             ToolRunner
+	mcpClient              MCPClient
+	proposalPrompt         string
+	persona                *AgentPersona // Optional: v4.1 Agent Persona
+	lightMemory            *LightMemory  // Optional: v4.1 Short-term memory
+	runtimeContextProvider RuntimeContextProvider
+	stableRuntimeContext   string // Runtime capability awareness; does not grant execution
 }
 
 // NewCoderAgent は新しいCoderAgentを作成
@@ -110,7 +111,7 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnIn
 		systemPrompt = c.persona.BuildSystemPrompt(c.proposalPrompt)
 	}
 
-	messages := c.coderSystemMessages(systemPrompt)
+	messages := c.coderSystemMessages(ctx, systemPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(externalConversationID)...)
 	}
@@ -148,7 +149,7 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t conversation.TurnIn
 // GenerateWithContext は会話履歴を渡して LLM 応答を生成する（CoderLoop 多ターン用）
 func (c *CoderAgent) GenerateWithContext(ctx context.Context, messages []llm.Message) (string, error) {
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
-		Messages:    appendCoderStableRuntimeContext(messages, c.stableRuntimeContext),
+		Messages:    appendCoderStableRuntimeContext(messages, currentRuntimeContext(ctx, c.runtimeContextProvider, "coder", c.stableRuntimeContext)),
 		MaxTokens:   8192,
 		Temperature: 0.5,
 	})
@@ -167,7 +168,7 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t conversation.Turn
 		finalSystemPrompt = c.persona.BuildSystemPrompt(systemPrompt)
 	}
 
-	messages := c.coderSystemMessages(finalSystemPrompt)
+	messages := c.coderSystemMessages(ctx, finalSystemPrompt)
 	if c.lightMemory != nil {
 		messages = append(messages, c.lightMemory.RecentMessages(t.ChannelAddress().ExternalConversationID())...)
 	}
@@ -189,16 +190,16 @@ func (c *CoderAgent) GenerateWithPrompt(ctx context.Context, t conversation.Turn
 	return resp.Content, nil
 }
 
-func (c *CoderAgent) coderSystemMessages(systemPrompt string) []llm.Message {
+func (c *CoderAgent) coderSystemMessages(ctx context.Context, systemPrompt string) []llm.Message {
 	messages := []llm.Message{{
 		Role:    "system",
 		Content: systemPrompt,
 		Type:    llm.PromptContextCharacter,
 	}}
-	if c.stableRuntimeContext != "" {
+	if content := currentRuntimeContext(ctx, c.runtimeContextProvider, "coder", c.stableRuntimeContext); content != "" {
 		messages = append(messages, llm.Message{
 			Role:    "system",
-			Content: c.stableRuntimeContext,
+			Content: content,
 			Type:    llm.PromptContextStable,
 			Metadata: map[string]string{
 				"runtime_context_kind": "capability_snapshot",
@@ -209,7 +210,13 @@ func (c *CoderAgent) coderSystemMessages(systemPrompt string) []llm.Message {
 }
 
 func appendCoderStableRuntimeContext(messages []llm.Message, content string) []llm.Message {
-	result := append([]llm.Message(nil), messages...)
+	result := make([]llm.Message, 0, len(messages)+1)
+	for _, message := range messages {
+		if message.Type == llm.PromptContextStable && message.Metadata["runtime_context_kind"] == "capability_snapshot" {
+			continue
+		}
+		result = append(result, message)
+	}
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return result
@@ -458,4 +465,9 @@ func hasBarePipCommand(patchText string, commands []patch.PatchCommand) bool {
 		}
 	}
 	return false
+}
+
+func (c *CoderAgent) WithRuntimeContextProvider(provider RuntimeContextProvider) *CoderAgent {
+	c.runtimeContextProvider = provider
+	return c
 }

@@ -43,7 +43,7 @@ func (s *atlasMigrationItemStore) Save(_ context.Context, item domainbacklog.Ite
 func legacyAtlasLifecycleItem() domainbacklog.Item {
 	return domainbacklog.Item{
 		SchemaVersion:          domainbacklog.SchemaVersion2,
-		BacklogItemID: modulecore.BacklogItemID("atlas:atlas.lifecycle"),
+		BacklogItemID:          modulecore.BacklogItemID("atlas:atlas.lifecycle"),
 		FeatureID:              "atlas.lifecycle",
 		Kind:                   "idea",
 		Title:                  "Atlas lifecycle",
@@ -96,7 +96,7 @@ func TestMigrateLegacyAtlasLifecycleRepairsDoneOnlyWithExactClosureReceipt(t *te
 		ReceiptID:              modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000020"),
 		IdempotencyKey:         "atlas-lifecycle-v1:2:DONE",
 		UnitID:                 "atlas-lifecycle-v1",
-		BacklogItemID: modulecore.BacklogItemID("atlas:atlas.lifecycle"),
+		BacklogItemID:          modulecore.BacklogItemID("atlas:atlas.lifecycle"),
 		ImplementationRevision: 2,
 		Phase:                  domainworkstream.ClosurePhaseDone,
 		Status:                 domainworkstream.ClosureStatusCompleted,
@@ -132,7 +132,7 @@ func TestMigrateLegacyAtlasLifecycleDoesNotRepairDoneWithoutExactClosure(t *test
 	store := &atlasMigrationItemStore{items: []domainbacklog.Item{legacy}}
 	service := NewService(store, &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{
 		UnitID:                 legacy.ImplementationUnit,
-		BacklogItemID:                 legacy.BacklogItemID,
+		BacklogItemID:          legacy.BacklogItemID,
 		ImplementationRevision: 1,
 		Phase:                  domainworkstream.ClosurePhaseDone,
 		Status:                 domainworkstream.ClosureStatusCompleted,

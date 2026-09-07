@@ -162,9 +162,9 @@ test('viewer exposes memory inspector and news pack UI hooks', () => {
   assert.match(js, /Diagnostic render trace only\. Never drive transcript, pending TTS, ACK, or session progression from this log\./);
   assert.match(idleChatJs, /Diagnostic write-only trace for tests\/debugging/);
   assert.doesNotMatch(js + '\n' + idleChatJs, /idleLiveRenderedLog\.(some|find|filter|map|forEach|reduce|entries|values)/);
-  assert.match(js, /completedResponses \/ responsePlaybackCounts \/ responsePlaybackResults \/ seenAudioResponses form one response-level ACK lifecycle/);
+  assert.match(js, /completedPublicPlaybacks \/ publicPlaybackCounts \/ publicPlaybackResults \/ seenAudioPublicPlaybacks form one response-level ACK lifecycle/);
   assert.match(js, /seenUtterances and blockedAckKeys are chunk-level local dedupe guards/);
-  assert.match(js, /function clearResponsePlaybackLifecycle\(responseId\)/);
+  assert.match(js, /function clearPublicPlaybackLifecycle\(publicPlaybackRef\)/);
   assert.match(js, /function eventStructuredIDParts\(ev\)/);
   assert.match(js, /structuredIDs\.messageId/);
   assert.match(js, /rencrow\.viewer_tab_client_id/);
@@ -1978,8 +1978,8 @@ const knowledgeMemoryOpsCard = stubCard;
 const runtimeBlockedRoutesOpsCard = stubCard;
 const AGENTS = ['mio', 'shiro'];
 const state = {
-  jobs: {},
-  agents: {mio: {state: 'idle', jobID: 'stale_mio_job'}, shiro: {state: 'offline', jobID: 'stale_worker_job'}},
+  tasks: {},
+  agents: {mio: {state: 'idle', taskID: 'stale_mio_job'}, shiro: {state: 'offline', taskID: 'stale_worker_job'}},
   ops: {
     persistedLogs: [
       {type: 'agent.response', from: 'mio', to: 'user', job_id: 'stale_job', route: 'CHAT', content: 'stale persisted report', timestamp: '2026-05-20T00:00:00Z'},
@@ -1987,7 +1987,7 @@ const state = {
     ],
     opsLogsFetchError: '',
     lastMioReport: {type: 'agent.response', from: 'mio', to: 'user', job_id: 'stale_job', content: 'stale mio report', timestamp: '2026-05-20T00:00:00Z'},
-    latestJobID: 'stale_job',
+    latestTaskID: 'stale_job',
     latestRoute: 'CHAT',
     latestError: {type: 'agent.error', job_id: 'stale_error_job', content: 'stale error'},
   },
@@ -2013,7 +2013,7 @@ globalThis.__state = state;
   context.__refreshOpsData();
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.match(get('opsCards').innerHTML, /Latest Job/);
+  assert.match(get('opsCards').innerHTML, /Latest Task/);
   assert.match(get('opsCards').innerHTML, /unavailable/);
   assert.match(get('opsCards').innerHTML, /ops logs unavailable: HTTP 500: persisted log store unavailable/);
   assert.match(get('opsTriageCards').innerHTML, /Errors/);
@@ -2025,7 +2025,7 @@ globalThis.__state = state;
   assert.doesNotMatch(get('opsFeedBody').innerHTML, /stale persisted report|stale_error_job/);
   assert.equal(context.__state.ops.persistedLogs.length, 0);
   assert.equal(context.__state.ops.lastMioReport, null);
-  assert.equal(context.__state.ops.latestJobID, '');
+  assert.equal(context.__state.ops.latestTaskID, '');
   assert.equal(context.__state.ops.latestRoute, '');
   assert.equal(context.__state.ops.latestError, null);
   assert.equal(context.__deskRendered, true);
@@ -2038,9 +2038,9 @@ const AGENTS = ['mio', 'shiro', 'coder'];
 const state = {
   viewerStatusFetchError: '',
   agents: {
-    mio: {state: 'running', route: 'CHAT', jobID: 'stale_mio_job', reason: '', preview: 'stale mio'},
-    shiro: {state: 'idle', route: 'CODE', jobID: 'stale_worker_job', reason: '', preview: 'stale worker'},
-    coder: {state: 'idle', route: 'CODE', jobID: 'stale_coder_job', reason: '', preview: 'stale coder'},
+    mio: {state: 'running', route: 'CHAT', taskID: 'stale_mio_job', reason: '', preview: 'stale mio'},
+    shiro: {state: 'idle', route: 'CODE', taskID: 'stale_worker_job', reason: '', preview: 'stale worker'},
+    coder: {state: 'idle', route: 'CODE', taskID: 'stale_coder_job', reason: '', preview: 'stale coder'},
   },
 };
 function renderOverview() { globalThis.__overviewRendered = true; }
@@ -2069,7 +2069,7 @@ globalThis.__state = state;
   for (const id of ['mio', 'shiro', 'coder']) {
     assert.equal(context.__state.agents[id].state, 'unavailable');
     assert.equal(context.__state.agents[id].route, '-');
-    assert.equal(context.__state.agents[id].jobID, '-');
+    assert.equal(context.__state.agents[id].taskID, '-');
     assert.match(context.__state.agents[id].reason, /viewer status unavailable: HTTP 503: monitor snapshot unavailable/);
     assert.equal(context.__state.agents[id].lastEvent, 'viewer status fetch failed');
     assert.equal(context.__state.agents[id].preview, 'viewer status unavailable');
@@ -2200,6 +2200,96 @@ globalThis.__renderRecallTraces = renderRecallTraces;
   assert.match(html, /budget_dropped/);
   assert.match(html, /budget/);
   assert.match(html, /120/);
+});
+
+test('viewer uses canonical trace identity in memory and news recall projections', () => {
+  const memoryJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/memory.js', 'utf8');
+  const newsPackJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/news-pack.js', 'utf8');
+  const itemTraceID = 'trc_019f1234-5678-7000-8000-000000000001';
+  const emptyTraceID = 'trc_019f1234-5678-7000-8000-000000000002';
+  const newsTraceID = 'trc_019f1234-5678-7000-8000-000000000003';
+  const legacyResponseID = 'retired-response-sentinel';
+  const newsURL = 'https://news.example.test/article';
+
+  const memoryElements = new Map();
+  const memoryGet = (id) => {
+    if (!memoryElements.has(id)) memoryElements.set(id, new FakeElement(id));
+    return memoryElements.get(id);
+  };
+  const memoryDocument = {
+    getElementById: memoryGet,
+    createElement() {
+      return new FakeElement();
+    },
+  };
+  const memorySource = `
+function esc(s) { return String(s || ''); }
+function short(s, n) { const v = String(s || ''); return v.length > n ? v.slice(0, n) + '...' : v; }
+function fdt(s) { return String(s || '-'); }
+const state = {memory: {
+  recallTraceFetchError: '',
+  traces: [
+    {TraceID: '${itemTraceID}', Role: 'mio', CreatedAt: '2026-06-19T00:00:00Z', Items: [
+      {Layer: 'L3', Kind: 'user_memory', Status: 'injected', PromptSection: '[RecallPack: UserMemory]', TokenCount: 8, Reason: 'candidate passed injection policy', Summary: 'canonical memory'},
+    ]},
+    {TraceID: '${emptyTraceID}', Role: 'shiro', CreatedAt: '2026-06-19T00:01:00Z', Items: []},
+    {ResponseID: '${legacyResponseID}', Role: 'kuro', CreatedAt: '2026-06-19T00:02:00Z', Items: [
+      {Layer: 'L2', Kind: 'search_cache', Status: 'filtered_status', PromptSection: '[RecallPack: Search]', TokenCount: 4, Reason: 'legacy response must not be adopted', Summary: 'legacy trace'},
+    ]},
+  ],
+}};
+` + sourceBetween(memoryJs, 'function renderRecallTraces', 'function refreshRecallTraces') + `
+globalThis.__renderRecallTraces = renderRecallTraces;
+`;
+  const memoryContext = vm.createContext({document: memoryDocument});
+  vm.runInContext(memorySource, memoryContext);
+  memoryContext.__renderRecallTraces();
+  const memoryHTML = memoryGet('recallTraceBody').innerHTML;
+  assert.match(memoryHTML, new RegExp(itemTraceID));
+  assert.match(memoryHTML, new RegExp(emptyTraceID));
+  assert.match(memoryHTML, /injected/);
+  assert.match(memoryHTML, /unpromoted/);
+  assert.match(memoryHTML, /filtered_status/);
+  assert.doesNotMatch(memoryHTML, new RegExp(legacyResponseID));
+
+  const newsElements = new Map();
+  const newsGet = (id) => {
+    if (!newsElements.has(id)) newsElements.set(id, new FakeElement(id));
+    return newsElements.get(id);
+  };
+  const newsDocument = {
+    getElementById: newsGet,
+    createElement() {
+      return new FakeElement();
+    },
+  };
+  const newsSource = `
+function esc(s) { return String(s || ''); }
+function short(s, n) { const v = String(s || ''); return v.length > n ? v.slice(0, n) + '...' : v; }
+function fdt(s) { return String(s || '-'); }
+const state = {memory: {
+  newsPackSnapshot: {news: [{SourceURL: '${newsURL}', Category: 'tech', SummaryDraft: 'canonical article'}], digests: []},
+  traces: [
+    {TraceID: '${newsTraceID}', Role: 'mio', CreatedAt: '2026-06-19T00:03:00Z', Items: [
+      {Kind: 'search_cache', SourceURLs: ['${newsURL}'], Summary: 'canonical usage'},
+    ]},
+    {ResponseID: '${legacyResponseID}', Role: 'kuro', CreatedAt: '2026-06-19T00:04:00Z', Items: [
+      {Kind: 'search_cache', SourceURLs: ['${newsURL}'], Summary: 'legacy usage'},
+    ]},
+  ],
+  selectedNewsIndex: 0,
+  newsPackFetchError: '',
+}};
+` + sourceBetween(newsPackJs, 'function newsItems', 'function refreshNewsPack') + `
+globalThis.__renderNewsPackPanel = renderNewsPackPanel;
+`;
+  const newsContext = vm.createContext({document: newsDocument});
+  vm.runInContext(newsSource, newsContext);
+  newsContext.__renderNewsPackPanel();
+  const newsHTML = newsGet('newsUsageBody').innerHTML;
+  assert.match(newsHTML, new RegExp(newsTraceID));
+  assert.match(newsHTML, new RegExp(newsURL.replaceAll('.', '\\.')));
+  assert.doesNotMatch(newsHTML, new RegExp(legacyResponseID));
 });
 
 test('viewer renders memory snapshot fetch errors as visible state', async () => {
@@ -2425,7 +2515,7 @@ const state = {ops: {
   },
   revenuePolicyDecisions: [{decision_id: 'dec_1', decision_type: 'external_publish', status: 'blocked'}],
   revenueChannelDrafts: [{draft_id: 'draft_1'}],
-  revenueExternalSendApplyRecords: [{apply_id: 'apply_1', apply_status: 'blocked', send_result: 'not_sent'}],
+  revenueExternalSendApplyRecords: [{action_id: 'act_019f1234-5678-7000-8000-000000000001', apply_status: 'blocked', send_result: 'not_sent'}],
 }};
 ` + sourceBetween(opsJs, 'function revenueOpsCard', 'function personaObservationOpsCard') + `
 renderRevenueDrilldown();
@@ -2450,7 +2540,7 @@ globalThis.__externalSendAuditResult = document.getElementById('revenueExternalS
   assert.match(context.__drilldown, /dec_1/);
   assert.match(context.__channelDraftResult, /1 total \/ 1 draft-only \/ 0 external_send_applied/);
   assert.match(context.__channelDraftResult, /external send execution policy: synchronous/);
-  assert.match(context.__externalSendAudits, /apply_1/);
+  assert.match(context.__externalSendAudits, /act_019f1234-5678-7000-8000-000000000001/);
   assert.match(context.__externalSendAudits, /blocked/);
   assert.match(context.__externalSendAudits, /not_sent/);
   assert.match(context.__externalSendAudits, /unconfigured/);
@@ -2605,7 +2695,7 @@ const state = {
   evidenceSummary: {status: {passed: 9}, error_kind: {none: 9}},
   verificationSummary: {status: {verified: 7}, trigger_level: {high: 7}},
   evidenceOrder: ['stale_job'],
-  selectedEvidenceJobID: 'stale_job',
+  selectedEvidenceTaskID: 'stale_job',
   selectedEvidenceItem: {job_id: 'stale_job'},
   evidenceSortDesc: true,
 };
@@ -2625,7 +2715,7 @@ globalThis.__state = state;
   assert.doesNotMatch(context.__rows, /stale verification/);
   assert.equal(context.__detail, 'No selection');
   assert.equal(context.__state.evidenceOrder.length, 0);
-  assert.equal(context.__state.selectedEvidenceJobID, '');
+  assert.equal(context.__state.selectedEvidenceTaskID, '');
   assert.match(context.__summary, /Evidence Total/);
   assert.match(context.__summary, /unavailable/);
   assert.match(context.__summary, /evidence summary unavailable: evidence summary: HTTP 500: evidence summary unavailable; verification summary: HTTP 500: verification summary unavailable/);
@@ -2658,11 +2748,11 @@ function renderVerificationReportDetail() { return 'unexpected verification deta
 function scrollEvidenceFocus() {}
 function showToast() {}
 const state = {
-  evidence: [{job_id: 'job_fail', status: 'passed'}],
+  evidence: [{task_id: 'tsk_019f1234-5678-7000-8000-000000000003', status: 'passed'}],
   verificationReports: [],
-  evidenceOrder: ['job_fail'],
-  selectedEvidenceJobID: '',
-  selectedEvidenceItem: {job_id: 'stale_job', status: 'passed'},
+  evidenceOrder: ['tsk_019f1234-5678-7000-8000-000000000003'],
+  selectedEvidenceTaskID: '',
+  selectedEvidenceItem: {task_id: 'stale_job', status: 'passed'},
   selectedEvidenceFocus: '',
 };
 ` + sourceBetween(viewerJs, 'function openEvidence', 'window.openEvidence = openEvidence;') + `
@@ -2682,12 +2772,12 @@ globalThis.__state = state;
     },
   });
   vm.runInContext(source, context);
-  context.__openEvidence('job_fail');
+  context.__openEvidence('tsk_019f1234-5678-7000-8000-000000000003');
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(requested[0], '/viewer/evidence/detail?job_id=job_fail');
+  assert.equal(requested[0], '/viewer/evidence/detail?task_id=tsk_019f1234-5678-7000-8000-000000000003');
   assert.match(get('evidenceDetail').innerHTML, /HTTP 500: execution evidence detail store unavailable/);
-  assert.match(get('evidenceDetail').innerHTML, /job_id=job_fail/);
+  assert.match(get('evidenceDetail').innerHTML, /task_id=tsk_019f1234-5678-7000-8000-000000000003/);
   assert.doesNotMatch(get('evidenceDetail').innerHTML, /evidence detail fetch failed/);
   assert.equal(context.__state.selectedEvidenceItem, null);
 });
@@ -2710,7 +2800,7 @@ test('viewer renders evidence copy failures as visible button state', async () =
 const state = {
   selectedEvidenceItem: {job_id: 'job_1', status: 'failed', error: 'apply failed'},
   evidenceOrder: ['job_1'],
-  selectedEvidenceJobID: 'job_1',
+  selectedEvidenceTaskID: 'job_1',
 };
 const eviCopy = globalThis.__eviCopy;
 const eviCopySummary = globalThis.__eviCopySummary;
@@ -3190,7 +3280,7 @@ const state = {ops: {
   skillExternalPRAdapter: 'unconfigured',
   skillExternalPRAdapterConfigured: false,
   skillExternalPRSubmitRecords: [{
-    submit_id: 'submit_1',
+    action_id: 'act_019f1234-5678-7000-8000-000000000002',
     contribution_event_id: 'gate_1',
     repo: 'owner/repo',
     target_branch: 'feature/test',
@@ -3209,7 +3299,7 @@ globalThis.__skillPRAuditResult = document.getElementById('skillExternalPRAuditR
   const context = vm.createContext({document});
   vm.runInContext(source, context);
 
-  assert.match(context.__skillPRAudits, /submit_1/);
+  assert.match(context.__skillPRAudits, /act_019f1234-5678-7000-8000-000000000002/);
   assert.match(context.__skillPRAudits, /gate_1/);
   assert.match(context.__skillPRAudits, /owner\/repo/);
   assert.match(context.__skillPRAudits, /blocked/);
@@ -3319,7 +3409,7 @@ globalThis.__skillEvidenceResult = document.getElementById('skillEvidenceAuditRe
   assert.match(context.__skillEvidenceResult, /blocked: passed contribution gate is not external PR evidence/);
 });
 
-test('viewer counts coder transcript evidence path pairs by job', () => {
+test('viewer counts coder transcript evidence path pairs by task', () => {
   const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
   const elements = new Map();
   const document = {
@@ -3346,8 +3436,8 @@ const state = {ops: {
   skillTriggerLogs: [],
   contributionGateLogs: [],
   coderTranscripts: [
-    {event_id: 'evt_patch', job_id: 'job_coder_1', role: 'coder', segment: 'patch_evidence', evidence_path: 'workspace/logs/skill_governance/coder_evidence/job_coder_1/skill_diff.md'},
-    {event_id: 'evt_transcript', job_id: 'job_coder_1', role: 'system', segment: 'transcript_evidence', evidence_path: 'workspace/logs/skill_governance/coder_evidence/job_coder_1/agent_transcript.md'},
+    {event_id: 'evt_patch', task_id: 'tsk_019f1234-5678-7000-8000-000000000005', role: 'coder', segment: 'patch_evidence', evidence_path: 'workspace/logs/skill_governance/coder_evidence/tsk_019f1234-5678-7000-8000-000000000005/skill_diff.md'},
+    {event_id: 'evt_transcript', task_id: 'tsk_019f1234-5678-7000-8000-000000000005', role: 'system', segment: 'transcript_evidence', evidence_path: 'workspace/logs/skill_governance/coder_evidence/tsk_019f1234-5678-7000-8000-000000000005/agent_transcript.md'},
   ],
 }};
 ` + sourceBetween(opsJs, 'function renderSkillEvidenceAudits', 'function renderSuperAgentTerminalAudits') + `
@@ -3889,7 +3979,7 @@ var ttsPlayback = {
   currentSessionId: '',
   currentChunkIndex: -1,
   currentUtteranceId: '',
-  currentResponseId: '',
+  currentPublicPlaybackRef: '',
   currentShown: false,
   fallbackActive: false,
   fallbackTimer: null,
@@ -3949,7 +4039,7 @@ var ttsPlayback = {
   currentSessionId: '',
   currentChunkIndex: -1,
   currentUtteranceId: '',
-  currentResponseId: '',
+  currentPublicPlaybackRef: '',
   currentShown: false,
   fallbackActive: false,
   fallbackTimer: null,
@@ -3979,7 +4069,7 @@ globalThis.__sync.enqueueAudio({
   chunkIndex: 0,
   text: '長い読み上げテキスト',
   displayText: '長い読み上げテキスト',
-  responseId: 'response-1',
+  publicPlaybackRef: 'response-1',
   utteranceId: 'utterance-1',
 });
 `;
@@ -4389,7 +4479,7 @@ test('viewer renders home send failures as visible desk state', async () => {
   const source = `
 const state = {
   logs: [],
-  jobs: {},
+  tasks: {},
   agents: {},
   evidence: [],
   verificationReports: [],
@@ -4494,9 +4584,9 @@ function trimTimelineNodes() {}
 function bump() {}
 function isViewerLocalFailureMessage(ev) { return String(ev && ev.content || '').startsWith('Viewer send unavailable:'); }
 function isCoordinationTraceEvent() { return false; }
-function rememberVoiceDirectTimelineJob() {}
+function rememberVoiceDirectTimelineTask() {}
 function isVoiceDirectTimelineResponse() { return false; }
-function addJobNotificationToTimeline() {}
+function addTaskNotificationToTimeline() {}
 function addCoordinationTraceToTimeline() {}
 ` + sourceBetween(timelineJs, 'function renderTrustedGeneratedImages', 'function isCoordinationTraceEvent') + `
 globalThis.__addMsgToTimeline = addMsgToTimeline;
@@ -4564,7 +4654,7 @@ function isTTSSyncedSpeaker() { return true; }
 function isViewerLocalFailureMessage(ev) { return String(ev && ev.content || '').startsWith('Viewer send unavailable:'); }
 function trimTimelineNodes() {}
 function bump() {}
-` + sourceBetween(timelineJs, 'const voiceDirectTimelineJobIDs', 'function matchesCoordinationTraceFilters') + `
+` + sourceBetween(timelineJs, 'const voiceDirectTimelineTaskIDs', 'function matchesCoordinationTraceFilters') + `
 globalThis.__addMsgToTimeline = addMsgToTimeline;
 `;
   const context = vm.createContext({
@@ -4591,7 +4681,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
     type: 'message.received',
     from: 'user',
     to: 'mio',
-    job_id: 'voice-job-1',
+    task_id: 'tsk_019f1234-5678-7000-8000-000000000004',
     timestamp: '2026-06-15T02:40:00Z',
     content: '[voice_direct] あなたはMioです。入力された音声をユーザーの発話として扱い...',
   });
@@ -4599,7 +4689,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
     type: 'routing.decision',
     from: 'mio',
     to: '',
-    job_id: 'voice-job-1',
+    task_id: 'tsk_019f1234-5678-7000-8000-000000000004',
     timestamp: '2026-06-15T02:40:00Z',
     content: 'confidence 100% evidence=voice_direct:matched:CHAT utterance_id=utt-1',
   });
@@ -4607,7 +4697,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
     type: 'agent.response',
     from: 'mio',
     to: 'user',
-    job_id: 'voice-job-1',
+    task_id: 'tsk_019f1234-5678-7000-8000-000000000004',
     timestamp: '2026-06-15T02:40:01Z',
     content: '承知いたしました。',
   });
@@ -5064,4 +5154,323 @@ ${projection}
   assert.doesNotMatch(viewerJs, /fetch\('\/viewer\/job-notifications\?limit=20'/);
   assert.match(timelineJs, /ev\.type === 'task\.notification'/);
   assert.match(timelineJs, /const taskID = String\(ev\.task_id/);
+});
+
+
+test('daily desk reports join canonical task evidence and open canonical detail links', () => {
+  const taskID = 'tsk_019f1234-5678-7000-8000-000000000001';
+  const context = vm.createContext({
+    state: {evidence: [{task_id: taskID, goal: 'Canonical work', status: 'passed'}], verificationReports: [{task_id: taskID, status: 'verified', claim_count: 2}]},
+    localStorage: {getItem() { return null; }},
+    esc: String, escAttr: String, short: String, fdt: String,
+    switchTab(tab) { context.selectedTab = tab; },
+    openEvidence(id) { context.openedTask = id; },
+  });
+  for (const name of ['home', 'reports']) vm.runInContext(fs.readFileSync(`internal/adapter/viewer/assets/js/tabs/${name}.js`, 'utf8'), context);
+  const reports = vm.runInContext('deskAllReports()', context);
+  assert.equal(reports.length, 1, 'canonical API results must appear in Reports');
+  const report = reports[0];
+  assert.equal(report.task_id, taskID);
+  assert.equal(report.status, 'success');
+  assert.equal(report.unconfirmed.length, 0);
+  assert.equal(report.evidence_refs.length, 2);
+  for (const ref of report.evidence_refs) {
+    assert.equal(new URL(ref.path, 'http://localhost').searchParams.get('task_id'), taskID);
+    assert.equal(new URL(ref.path, 'http://localhost').searchParams.has('job_id'), false);
+  }
+  context.report = report;
+  assert.match(vm.runInContext('renderReportDetail(report)', context), /Task ID/);
+  assert.ok(vm.runInContext('renderReportCard(report)', context).includes(taskID));
+  assert.ok(vm.runInContext('deskReportSummaryText(report)', context).includes('task_id=' + taskID));
+  vm.runInContext('deskOpenReportRef("evidence", report.task_id)', context);
+  assert.equal(context.openedTask, taskID);
+  context.state.evidence = [{job_id: 'legacy', status: 'passed'}];
+  context.state.verificationReports = [];
+  assert.equal(vm.runInContext('deskAllReports().length', context), 0, 'do not revive legacy identity via fallback');
+});
+
+
+test('develop correlates canonical task artifacts and isolates missing task selection', () => {
+  const taskID = 'tsk_019f1234-5678-7000-8000-000000000001';
+  const otherID = 'tsk_019f1234-5678-7000-8000-000000000002';
+  const elements = Object.fromEntries(['developCurrentTask', 'developAgentPhase', 'developLogSummary', 'developArtifacts', 'developNextActions'].map(id => [id, {innerHTML: ''}]));
+  const evidence = {task_id: taskID, steps: ['selected-artifact']};
+  const verification = {task_id: taskID, status: 'verified', claim_count: 3};
+  const state = {
+    tasks: {[taskID]: {id: taskID, status: 'running'}},
+    evidence: [{job_id: taskID, steps: ['legacy-artifact']}, {task_id: otherID, steps: ['other-artifact']}, evidence],
+    verificationReports: [{job_id: taskID, status: 'legacy'}, {task_id: otherID, status: 'other'}, verification],
+    logs: [{job_id: taskID, content: 'legacy-log'}, {task_id: otherID, content: 'other-log'}, ...Array.from({length: 10}, (_, i) => ({task_id: taskID, content: 'selected-log-' + i}))],
+  };
+  const context = vm.createContext({state, document: {getElementById: id => elements[id]}, esc: String, short: String, fdt: String, agName: String, taskID});
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/tabs/develop.js', 'utf8'), context);
+  assert.equal(vm.runInContext('developRelatedEvidence(taskID)', context), evidence);
+  assert.equal(vm.runInContext('developRelatedVerification(taskID)', context), verification);
+  const logs = vm.runInContext('developRecentLogs(taskID)', context);
+  assert.equal(logs.length, 8);
+  assert.equal(logs[0].content, 'selected-log-2');
+  assert.equal(logs[7].content, 'selected-log-9');
+  vm.runInContext('renderDevelopDesk()', context);
+  assert.match(elements.developArtifacts.innerHTML, /selected-artifact/);
+  assert.match(elements.developArtifacts.innerHTML, /verified claims=3/);
+  assert.doesNotMatch(elements.developArtifacts.innerHTML, /other-artifact|legacy-artifact/);
+  assert.match(elements.developLogSummary.innerHTML, /selected-log-9/);
+  assert.doesNotMatch(elements.developLogSummary.innerHTML, /other-log|legacy-log/);
+  for (const missing of ['', null, undefined]) {
+    context.missing = missing;
+    assert.equal(vm.runInContext('developRelatedEvidence(missing)', context), null);
+    assert.equal(vm.runInContext('developRelatedVerification(missing)', context), null);
+    assert.equal(vm.runInContext('developRecentLogs(missing).length', context), 0);
+  }
+  state.tasks = {};
+  vm.runInContext('renderDevelopDesk()', context);
+  assert.doesNotMatch(elements.developLogSummary.innerHTML, /selected-log|other-log|legacy-log/);
+});
+
+
+test('instructions preserve canonical task links across creation status and reload', () => {
+  const taskID = 'tsk_019f1234-5678-7000-8000-000000000001';
+  const legacy = JSON.stringify([{instruction_id: 'old', text: 'old draft', job_ids: ['old-job']}]);
+  const storage = new Map([['rencrow.viewer.instructions.v1', legacy]]);
+  const root = {innerHTML: ''};
+  const makeContext = () => {
+    const context = vm.createContext({
+      state: {tasks: {[taskID]: {id: taskID, status: 'running', preview: 'continue task'}}},
+      localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
+      document: {getElementById: id => id === 'instructionColumns' ? root : null},
+      esc: String, escAttr: String, short: String, fdt: String, switchTab() {},
+    });
+    for (const name of ['home', 'instructions', 'develop']) vm.runInContext(fs.readFileSync(`internal/adapter/viewer/assets/js/tabs/${name}.js`, 'utf8'), context);
+    vm.runInContext('renderHomeDesk = function() {}', context);
+    return context;
+  };
+  let context = makeContext();
+  vm.runInContext('deskCreateInstructionFromDevelop()', context);
+  let items = JSON.parse(vm.runInContext('JSON.stringify(deskInstructions())', context));
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].task_ids, [taskID]);
+  assert.equal(Object.hasOwn(items[0], 'job_ids'), false);
+  context.id = items[0].instruction_id;
+  vm.runInContext('deskInstructionStatus(id, "running")', context);
+  context = makeContext();
+  vm.runInContext('renderInstructionsDesk()', context);
+  items = JSON.parse(vm.runInContext('JSON.stringify(deskInstructions())', context));
+  assert.deepEqual(items[0].task_ids, [taskID]);
+  assert.equal(items[0].status, 'running');
+  assert.ok(root.innerHTML.includes(taskID));
+  assert.match(root.innerHTML, /旧形式/);
+  assert.equal(storage.get('rencrow.viewer.instructions.v1'), legacy);
+  assert.equal(vm.runInContext('deskNormalizeInstruction({job_ids:["old-job"]}).task_ids.length', context), 0);
+});
+
+
+test('instructions recover old draft text without IDs writes or editor overwrite', () => {
+  const original = '  old <script>draft</script>\nsecond line  ';
+  const raw = JSON.stringify([{text: original, job_ids: ['old-job'], status: 'done'}]);
+  const storage = new Map([['rencrow.viewer.instructions.v1', raw]]);
+  const elements = {instructionColumns: {innerHTML: ''}, instructionText: {value: '', focus() {}}, instructionRecoveryResult: {textContent: ''}};
+  const context = vm.createContext({
+    localStorage: {getItem: key => storage.get(key) ?? null, setItem() { throw new Error('recovery must not write'); }},
+    document: {getElementById: id => elements[id]},
+    esc: value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'),
+    escAttr: String, short: String, fdt: String,
+  });
+  for (const name of ['home', 'instructions']) vm.runInContext(fs.readFileSync(`internal/adapter/viewer/assets/js/tabs/${name}.js`, 'utf8'), context);
+  vm.runInContext('renderInstructionsDesk()', context);
+  assert.match(elements.instructionColumns.innerHTML, /old &lt;script&gt;/);
+  assert.doesNotMatch(elements.instructionColumns.innerHTML, /<script>/);
+  vm.runInContext('deskRecoverInstructionText(0)', context);
+  assert.equal(elements.instructionText.value, original);
+  assert.equal(storage.get('rencrow.viewer.instructions.v1'), raw);
+  assert.equal(storage.has('rencrow.viewer.instructions.v2'), false);
+  elements.instructionText.value = 'unsaved edit';
+  vm.runInContext('deskRecoverInstructionText(0)', context);
+  assert.equal(elements.instructionText.value, 'unsaved edit');
+  assert.match(elements.instructionRecoveryResult.textContent, /編集中/);
+  storage.set('rencrow.viewer.instructions.v1', '{invalid');
+  vm.runInContext('renderInstructionsDesk()', context);
+  assert.match(elements.instructionColumns.innerHTML, /読み取れません/);
+  elements.instructionText.value = '';
+  vm.runInContext('deskRecoverInstructionText(0)', context);
+  assert.equal(elements.instructionText.value, '');
+  context.localStorage.getItem = () => {throw new Error('storage denied');};
+  assert.doesNotThrow(() => vm.runInContext('renderInstructionsDesk()', context));
+  assert.match(elements.instructionColumns.innerHTML, /読み取れません/);
+});
+
+
+test('progress derives separate canonical tasks and opens matching event details', () => {
+  const a = 'tsk_019f1234-5678-7000-8000-000000000001';
+  const b = 'tsk_019f1234-5678-7000-8000-000000000002';
+  const nodes = Object.fromEntries(['progressAgentCards','progressBody','progressAgentSummary','progressTaskSummary'].map(id => [id,new FakeElement(id)]));
+  const context = vm.createContext({
+    state: {logs: [
+      {task_id:a,type:'message.received',content:'A received',timestamp:'2026-09-07T01:00:00Z'},
+      {task_id:b,type:'agent.error',from:'shiro',content:'B failure',timestamp:'2026-09-07T01:01:00Z'},
+      {task_id:a,type:'agent.response',from:'mio',to:'user',content:'A complete',timestamp:'2026-09-07T01:02:00Z'},
+      {job_id:a,type:'agent.error',content:'legacy failure'},
+      {type:'agent.error',content:'unattributed failure'},
+    ], agents:{},openTasks:{},progressOpenTasks:{}},
+    AGENTS:['mio','shiro'],PROGRESS_RECENT_EVENTS:8,PROGRESS_DONE_LIMIT:10,
+    window:{},document:{getElementById:id=>nodes[id],createElement:()=>new FakeElement()},
+    esc:String,short:String,agName:String,ftime:String,fdt:String,stateClass:String,errorKindClass:String,ag:id=>({e:'',l:id}),a,b,
+  });
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/tabs/progress.js','utf8'), context);
+  const data = vm.runInContext('deriveProgressData()',context);
+  assert.equal(data.tasks.length,2);
+  const first = data.tasks.find(row=>row.taskID===a);
+  const second = data.tasks.find(row=>row.taskID===b);
+  assert.equal(first.status,'done');
+  assert.equal(second.status,'error');
+  assert.equal(second.failureReason,'B failure');
+  assert.equal(first.recentEvents.length,2);
+  vm.runInContext('renderProgress();toggleProgressTask(a)',context);
+  assert.match(nodes.progressTaskSummary.textContent,/2 tasks/);
+  assert.match(nodes.progressBody.innerHTML,/A received/);
+  assert.doesNotMatch(nodes.progressBody.innerHTML,/legacy failure|unattributed failure/);
+  assert.match(nodes.progressAgentCards.innerHTML,/>Task</);
+  vm.runInContext('toggleProgressTask(a)',context);
+  assert.doesNotMatch(nodes.progressBody.innerHTML,/A received/);
+});
+
+
+test('system displays and copies canonical task identity without legacy fallback', () => {
+  const taskID = 'tsk_019f1234-5678-7000-8000-000000000001';
+  const body = new FakeElement();
+  const payloads = [];
+  const context = vm.createContext({
+    state: {logs:[{task_id:taskID,job_id:'wrong-old-id',type:'agent.error',content:'task error',route:'WORKER'}]},
+    document:{getElementById:()=>body,createElement:()=>new FakeElement()},
+    matchesSystemFilters:()=>true,esc:String,ftime:String,agName:String,
+    escAttr(value) {payloads.push(value);return value;},
+  });
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/tabs/system.js','utf8'),context);
+  vm.runInContext('renderSystem()',context);
+  const row = JSON.parse(JSON.parse(payloads[1]));
+  assert.equal(row.task_id,taskID);
+  assert.equal(Object.hasOwn(row,'job_id'),false);
+  assert.equal(row.content,'task error');
+  assert.equal(JSON.parse(payloads[0]),'task error');
+  assert.ok(body.innerHTML.includes(taskID));
+  assert.doesNotMatch(body.innerHTML,/wrong-old-id/);
+  context.state.logs=[{job_id:'old-only',type:'agent.error',content:'unattributed event'}];
+  payloads.length=0;
+  vm.runInContext('renderSystem()',context);
+  const unassociated = JSON.parse(JSON.parse(payloads[1]));
+  assert.equal(unassociated.task_id,'');
+  assert.doesNotMatch(body.innerHTML,/old-only/);
+  assert.match(body.innerHTML,/unattributed event/);
+  context.matchesSystemFilters=()=>false;
+  vm.runInContext('renderSystem()',context);
+  assert.match(body.innerHTML,/No system events/);
+});
+
+
+test('Task notification ingress uses a single bounded deduplication path', () => {
+  const source = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js','utf8');
+  const timeline = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js','utf8');
+  const events = [];
+  const context = vm.createContext({ingestEvent: ev=>events.push(ev)});
+  vm.runInContext('const seenTaskNotificationKeys = new Set();' + sourceBetween(source,'function normalizeNotificationAssignee','async function refreshTaskNotifications'),context);
+  context.notice={task_id:'tsk_019f1234-5678-7000-8000-000000000001',status:'succeeded',summary:'done',created_at:'2026-09-07T00:00:00Z',assignee:'shiro'};
+  vm.runInContext('ingestTaskNotification(notice);ingestTaskNotification(notice)',context);
+  assert.equal(events.length,1);
+  assert.equal(events[0].type,'task.notification');
+  assert.equal(events[0].task_id,context.notice.task_id);
+  assert.match(events[0].content,/^task/);
+  assert.doesNotMatch(source+timeline,/job\.notification|function (?:ingestJobNotification|addJobNotificationToTimeline)/);
+  assert.match(fs.readFileSync('internal/adapter/viewer/assets/css/viewer.css','utf8'),/\.task-interrupt \.mc/);
+});
+
+
+test('Viewer Task projection and navigation contain no retired Job identity names', () => {
+  const root = 'internal/adapter/viewer/';
+  const viewer = fs.readFileSync(root+'assets/js/viewer.js','utf8');
+  const html = fs.readFileSync(root+'viewer.html','utf8');
+  const sources = [viewer,...fs.readdirSync(root+'assets/js/tabs').filter(name=>name.endsWith('.js')).map(name=>fs.readFileSync(root+'assets/js/tabs/'+name,'utf8'))].join('\n');
+  assert.doesNotMatch(sources,/\bjobID\b|\bjob_id\b|job\.notification|state\.jobs\b/);
+  assert.match(html,/data-tab="tasks"/);
+  assert.match(html,/id="panel-tasks"/);
+  assert.doesNotMatch(html,/panel-jobs|tabs\/jobs\.js|>Job(?: ID)?</);
+  for (const match of html.matchAll(/src="\/viewer\/(assets\/[^"?]+)(?:\?[^" ]*)?"/g)) assert.ok(fs.existsSync(root+match[1]),'missing asset '+match[1]);
+  const context = vm.createContext({AGENTS:['shiro'],state:{agents:{shiro:{state:'idle'}},tasks:{a:{status:'running'},b:{status:'done'}},logs:[{},{}]}});
+  vm.runInContext(sourceBetween(viewer,'function buildViewerStatusSnapshot','function registerWebMCPTools'),context);
+  const snapshot = vm.runInContext('buildViewerStatusSnapshot()',context);
+  assert.equal(snapshot.task_count,2);
+  assert.equal(snapshot.running_task_count,1);
+  assert.equal(Object.hasOwn(snapshot,'job_count'),false);
+});
+
+test('Identity graph selection keeps the latest trace and renders only identity fields', async () => {
+  const nodes = {identityGraphStatus:new FakeElement(),identityGraphBody:new FakeElement()};
+  const pending = [];
+  const context = vm.createContext({
+    document:{getElementById:id=>nodes[id]},
+    esc:value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),
+    fetch:url=>new Promise(resolve=>pending.push({url,resolve})),
+  });
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/tabs/tasks.js','utf8'),context);
+  const graph = trace=>({schema:'rencrow.identity-graph.v1',trace_id:trace,
+    events:[{event_id:'evt-one',event_seq:1,event_type:'<img onerror=alert(1)>',task_id:'tsk-one',actor_kind:'agent',actor_id:'shiro',payload:{secret:'private-value'}}],
+    event_edges:[],tasks:[{task_id:'tsk-one',status:'succeeded'}],task_edges:[],
+    messages:[{message_id:'msg-one'}],message_edges:[{message_id:'msg-one',event_id:'evt-one'}]});
+  const first=vm.runInContext("loadIdentityGraph('trace-first')",context);
+  const second=vm.runInContext("loadIdentityGraph('trace-second')",context);
+  assert.equal(pending[1].url,'/viewer/identity-graph?trace_id=trace-second');
+  pending[1].resolve({ok:true,json:async()=>graph('trace-second')});
+  await second;
+  assert.match(nodes.identityGraphStatus.textContent,/trace-second/);
+  assert.match(nodes.identityGraphBody.innerHTML,/Communication Graph|msg-one/);
+  assert.match(nodes.identityGraphBody.innerHTML,/&lt;img/);
+  assert.doesNotMatch(nodes.identityGraphBody.innerHTML,/<img|private-value/);
+  pending[0].resolve({ok:true,json:async()=>graph('trace-first')});
+  await first;
+  assert.match(nodes.identityGraphStatus.textContent,/trace-second/);
+  const failed=vm.runInContext("loadIdentityGraph('trace-missing')",context);
+  pending[2].resolve({ok:false,status:503});
+  await failed;
+  assert.equal(nodes.identityGraphBody.innerHTML,'');
+  assert.match(nodes.identityGraphStatus.textContent,/503/);
+});
+
+test('Atlas Pipeline visibly blocks closure identity conflicts and escapes the reason', () => {
+  const js = fs.readFileSync(new URL('./assets/js/tabs/atlas.js', import.meta.url), 'utf8');
+  const context = vm.createContext({document: {
+    getElementById: () => null,
+    createElement: () => ({
+      set textContent(value) {
+        this.innerHTML = String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      },
+    }),
+  }});
+  vm.runInContext(js, context);
+  const html = context.atlasRenderPipelineUnit({
+    unit_id: 'unit-action-conflict',
+    title: 'Unverified closure',
+    delivery_state: 'BLOCKED',
+    stages: [{stage: 'DONE', name: 'Done', status: 'blocked', reason: 'closure action mismatch <untrusted>'}],
+  }, '');
+  assert.match(html, /blocked/i);
+  assert.match(html, /closure action mismatch &lt;untrusted&gt;/);
+  assert.doesNotMatch(html, /<untrusted>/);
+  assert.match(html, /unit-action-conflict/);
+});
+
+
+test('tool mediation table displays canonical execution lineage safely', () => {
+  const opsJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/ops.js', 'utf8');
+  const rows = [];
+  const body = {innerHTML: '', appendChild(row) { rows.push(row.innerHTML); }};
+  const document = {getElementById() {return body;}, createElement() {return {innerHTML: ''};}};
+  const context = vm.createContext({document});
+  vm.runInContext(`
+function esc(s) { return String(s).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
+function ftime(s) {return s || '-';}
+function stateClass() {return '';}
+function short(s) {return s;}
+const state = {ops: {toolHarnessEvents: [{event_id:'evt_canonical', task_id:'tsk_owner',run_id:'run_owner',trace_id:'trc_owner',actor_kind:'agent',actor_id:'<actor>',tool_name:'file_read',validation_status:'valid'}]}};
+` + sourceBetween(opsJs, 'function toolHarnessField', 'function dciField') + '\nrenderToolHarnessEvents();', context);
+  assert.equal(rows.length, 1);
+  for (const expected of ['evt_canonical','tsk_owner','run_owner','trc_owner','actor_kind: agent','&lt;actor&gt;']) assert.ok(rows[0].includes(expected), expected);
+  assert.ok(!rows[0].includes('<actor>'));
 });

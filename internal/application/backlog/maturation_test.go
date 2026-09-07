@@ -1,9 +1,9 @@
 package backlog
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"errors"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"reflect"
 	"testing"
 	"time"
@@ -14,7 +14,7 @@ import (
 func maturationCandidate(id string, start time.Time) domainbacklog.Item {
 	return domainbacklog.Item{
 		SchemaVersion:        domainbacklog.SchemaVersion2,
-		BacklogItemID: modulecore.BacklogItemID(id),
+		BacklogItemID:        modulecore.BacklogItemID(id),
 		Title:                "maturation " + id,
 		Purpose:              "validate Atlas maturation",
 		ConceptState:         domainbacklog.ConceptCandidate,

@@ -16,11 +16,13 @@ type ObservationAction struct {
 
 // ObservationActionResult は単一アクションの実行結果
 type ObservationActionResult struct {
-	Action    string `json:"action"`
-	Target    string `json:"target"`
-	Status    string `json:"status"` // "ok" | "error"
-	Output    string `json:"output"`
-	Truncated bool   `json:"truncated,omitempty"`
+	Action      string `json:"action"`
+	Target      string `json:"target"`
+	Status      string `json:"status"` // "ok" | "error"
+	Output      string `json:"output"`
+	Truncated   bool   `json:"truncated,omitempty"`
+	TestStatus  string `json:"test_status,omitempty"`
+	TestReceipt string `json:"test_receipt,omitempty"`
 }
 
 // ObservationResult は Worker → Coder への観測返却

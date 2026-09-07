@@ -20,8 +20,8 @@ type pronunciationSchedulerExecutor struct {
 }
 
 func (e pronunciationSchedulerExecutor) ExecuteSchedule(ctx context.Context, schedule domainscheduler.Schedule) (string, error) {
-	if schedule.Target != pronunciationapp.ScheduledTarget {
-		return "scheduler run recorded without an executor", nil
+	if schedule.Target != pronunciationapp.ScheduledTarget || e.inner == nil {
+		return "", schedulerapp.ErrExecutorUnavailable
 	}
 	return e.inner.ExecuteSchedule(ctx, schedule)
 }

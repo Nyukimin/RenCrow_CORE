@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 
 	mcpinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -20,8 +22,9 @@ const (
 type serenaMCPClient interface {
 	Start(context.Context) error
 	Stop()
-	ListTools(context.Context) ([]string, error)
-	CallTool(context.Context, string, map[string]any) (string, error)
+	ListTools(context.Context) ([]domaintool.MCPToolDefinition, error)
+	ConnectionGeneration() uint64
+	CallToolAtGeneration(context.Context, uint64, string, map[string]any) (string, error)
 }
 
 type serenaMCPClientFactory func(workspace string) serenaMCPClient
@@ -54,12 +57,17 @@ func newSerenaMCPRuntime(
 		client.Stop()
 		return unavailableSerenaMCPRuntime(serenaMCPStateUnavailable, "Serena MCPの起動に失敗しました")
 	}
-	remoteNames, err := client.ListTools(ctx)
+	generation := client.ConnectionGeneration()
+	definitions, err := client.ListTools(ctx)
 	if err != nil {
 		client.Stop()
 		return unavailableSerenaMCPRuntime(serenaMCPStateUnavailable, "Serena MCP Tool一覧を取得できません")
 	}
-	catalog := toolsinfra.NewMCPToolCatalog("serena", client, remoteNames)
+	if generation == 0 || client.ConnectionGeneration() != generation {
+		client.Stop()
+		return unavailableSerenaMCPRuntime(serenaMCPStateUnavailable, "Serena MCP connection changed during discovery")
+	}
+	catalog := toolsinfra.NewMCPToolCatalog("serena", client, definitions, generation)
 	entries := catalog.Entries()
 	if len(entries) == 0 {
 		client.Stop()
@@ -98,4 +106,61 @@ func unavailableSerenaMCPRuntime(state serenaMCPState, reason string) serenaMCPR
 
 func productionSerenaMCPClientFactory(workspace string) serenaMCPClient {
 	return mcpinfra.NewSerenaClient(workspace)
+}
+
+// workerMCPObservationCaller adapts the legacy observation name through the
+// canonical startup catalog; policy and execution remain in the runtime runner.
+type workerMCPObservationCaller struct {
+	runner  domaintool.RunnerV2
+	catalog *toolsinfra.MCPToolCatalog
+}
+
+func (c *workerMCPObservationCaller) CallTool(ctx context.Context, name string, args map[string]any) (string, error) {
+	if c == nil || c.runner == nil || c.catalog == nil {
+		return "", fmt.Errorf("Worker MCP observation runtime is unavailable")
+	}
+	for _, entry := range c.catalog.Entries() {
+		if entry.RemoteName != name {
+			continue
+		}
+		metas, err := c.runner.ListTools(ctx)
+		if err != nil {
+			return "", fmt.Errorf("MCP observation metadata unavailable: %w", err)
+		}
+		matches, query := 0, false
+		for _, meta := range metas {
+			if meta.ToolID == entry.ToolID {
+				matches++
+				query = meta.Category == "query"
+			}
+		}
+		if matches != 1 || !query {
+			return "", fmt.Errorf("MCP observation requires unambiguous query metadata: %s", entry.ToolID)
+		}
+		response, err := c.runner.ExecuteV2(ctx, entry.ToolID, args)
+		if err != nil {
+			return "", err
+		}
+		if response == nil {
+			return "", fmt.Errorf("Worker MCP observation returned no result")
+		}
+		if response.Error != nil {
+			return "", response.Error
+		}
+		return response.String(), nil
+	}
+	return "", fmt.Errorf("MCP observation tool is not in the startup catalog: %q", name)
+}
+
+func (r serenaMCPRuntime) currentObservations() []runtimeMCPObservation {
+	observations := append([]runtimeMCPObservation(nil), r.observations...)
+	if r.catalog == nil || r.catalog.Len() == 0 {
+		for i := range observations {
+			if observations[i].Available {
+				observations[i].Available = false
+				observations[i].Reason = "MCP observed connection is unavailable; rediscovery required"
+			}
+		}
+	}
+	return observations
 }

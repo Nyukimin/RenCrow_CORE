@@ -1,36 +1,38 @@
 // Develop tab module: human-readable view of active development work.
-function developJobs() {
-  return Object.values(state.jobs || {}).sort((a, b) => (String(b.updatedAt || '')).localeCompare(String(a.updatedAt || '')));
+function developTasks() {
+  return Object.values(state.tasks || {}).sort((a, b) => (String(b.updatedAt || '')).localeCompare(String(a.updatedAt || '')));
 }
 
-function developCurrentJob() {
-  const jobs = developJobs();
-  return jobs.find((j) => !['done', 'idle'].includes(String(j.status || '').toLowerCase())) || jobs[0] || null;
+function developCurrentTask() {
+  const tasks = developTasks();
+  return tasks.find((j) => !['done', 'idle'].includes(String(j.status || '').toLowerCase())) || tasks[0] || null;
 }
 
-function developInferPhase(job) {
-  if (!job) return 'Waiting User';
-  const text = String((job.preview || '') + ' ' + (job.route || '') + ' ' + (job.status || '')).toLowerCase();
+function developInferPhase(task) {
+  if (!task) return 'Waiting User';
+  const text = String((task.preview || '') + ' ' + (task.route || '') + ' ' + (task.status || '')).toLowerCase();
   if (/failed|error|失敗|エラー/.test(text)) return 'Failed';
   if (/done|passed|complete|完了/.test(text)) return 'Done';
   if (/test|go test|e2e|verify|検証/.test(text)) return 'Testing';
   if (/patch|diff|file|apply|実装|変更|更新/.test(text)) return 'Implementing';
   if (/plan|proposal|route|設計|仕様/.test(text)) return 'Planning';
   if (/report|summary|報告/.test(text)) return 'Reporting';
-  return String(job.status || '').toLowerCase() === 'running' ? 'Implementing' : 'Waiting User';
+  return String(task.status || '').toLowerCase() === 'running' ? 'Implementing' : 'Waiting User';
 }
 
-function developRelatedEvidence(jobID) {
-  return (state.evidence || []).find((r) => String(r.job_id || '') === String(jobID || '')) || null;
+function developRelatedEvidence(taskID) {
+  if (!taskID) return null;
+  return (state.evidence || []).find((r) => String(r.task_id || '') === String(taskID)) || null;
 }
 
-function developRelatedVerification(jobID) {
-  return (state.verificationReports || []).find((r) => String(r.job_id || '') === String(jobID || '')) || null;
+function developRelatedVerification(taskID) {
+  if (!taskID) return null;
+  return (state.verificationReports || []).find((r) => String(r.task_id || '') === String(taskID)) || null;
 }
 
-function developRecentLogs(jobID) {
-  const jid = String(jobID || '');
-  return (state.logs || []).filter((ev) => !jid || String(ev.job_id || '') === jid).slice(-8);
+function developRecentLogs(taskID) {
+  if (!taskID) return [];
+  return (state.logs || []).filter((ev) => String(ev.task_id || '') === String(taskID)).slice(-8);
 }
 
 function renderDevelopDesk() {
@@ -41,26 +43,26 @@ function renderDevelopDesk() {
   const actionsEl = document.getElementById('developNextActions');
   if (!taskEl || !phaseEl || !logsEl || !artifactsEl || !actionsEl) return;
 
-  const job = developCurrentJob();
-  const evidence = developRelatedEvidence(job && job.id);
-  const verification = developRelatedVerification(job && job.id);
-  const phase = developInferPhase(job);
-  const logs = developRecentLogs(job && job.id);
-  const agent = job ? (job.to || job.from || '-') : '-';
+  const task = developCurrentTask();
+  const evidence = developRelatedEvidence(task && task.id);
+  const verification = developRelatedVerification(task && task.id);
+  const phase = developInferPhase(task);
+  const logs = developRecentLogs(task && task.id);
+  const agent = task ? (task.to || task.from || '-') : '-';
 
-  taskEl.innerHTML = '<h3>Current Task</h3>' + (job ? (
-    '<div class="desk-code">' + esc(job.id || '-') + '</div>' +
-    '<div class="daily-desk-body">' + esc(short(job.preview || evidence && evidence.goal || '-', 180)) + '</div>' +
-    '<div class="desk-row"><span>Route</span><span>' + esc(job.route || evidence && evidence.route || '-') + '</span></div>' +
-    '<div class="desk-row"><span>Started</span><span>' + esc(fdt(job.startedAt || evidence && evidence.created_at)) + '</span></div>' +
-    '<div class="desk-row"><span>Updated</span><span>' + esc(fdt(job.updatedAt || evidence && evidence.finished_at)) + '</span></div>'
+  taskEl.innerHTML = '<h3>Current Task</h3>' + (task ? (
+    '<div class="desk-code">' + esc(task.id || '-') + '</div>' +
+    '<div class="daily-desk-body">' + esc(short(task.preview || evidence && evidence.goal || '-', 180)) + '</div>' +
+    '<div class="desk-row"><span>Route</span><span>' + esc(task.route || evidence && evidence.route || '-') + '</span></div>' +
+    '<div class="desk-row"><span>Started</span><span>' + esc(fdt(task.startedAt || evidence && evidence.created_at)) + '</span></div>' +
+    '<div class="desk-row"><span>Updated</span><span>' + esc(fdt(task.updatedAt || evidence && evidence.finished_at)) + '</span></div>'
   ) : '<div class="daily-desk-muted">現在の開発タスクはありません。</div>');
 
   phaseEl.innerHTML =
     '<h3>Agent / Phase</h3>' +
     '<div class="desk-row"><span>Owner</span><span>' + esc(agName(agent)) + '</span></div>' +
     '<div class="desk-row"><span>Phase</span><span class="desk-pill">' + esc(phase) + '</span></div>' +
-    '<div class="desk-row"><span>Status</span><span>' + esc(job ? job.status || '-' : '-') + '</span></div>' +
+    '<div class="desk-row"><span>Status</span><span>' + esc(task ? task.status || '-' : '-') + '</span></div>' +
     '<div class="desk-row"><span>Retry / Error</span><span>' + esc(evidence ? String(evidence.repair_count || 0) + ' / ' + (evidence.error_kind || '-') : '-') + '</span></div>';
 
   logsEl.innerHTML = '<h3>作業ログ要約</h3>' + (logs.length ? logs.map((ev) => (
@@ -89,22 +91,22 @@ function renderDevelopDesk() {
 }
 
 function deskCreateInstructionFromDevelop(prefix) {
-  const job = developCurrentJob();
+  const task = developCurrentTask();
   const items = deskInstructions();
   const now = new Date().toISOString();
   items.unshift({
     instruction_id: 'inst_' + now.replace(/[-:.TZ]/g, '').slice(0, 14),
     source: 'develop',
-    text: (prefix || '続ける') + (job ? ': ' + (job.preview || job.route || job.id) : ''),
+    text: (prefix || '続ける') + (task ? ': ' + (task.preview || task.route || task.id) : ''),
     status: 'open',
     priority: 'normal',
     target_agent: 'Worker',
     created_at: now,
     updated_at: now,
     timing_hint: 'next',
-    job_ids: job && job.id ? [job.id] : [],
-    route: job && job.route ? job.route : '',
-    last_summary: job && job.preview ? job.preview : '',
+    task_ids: task && task.id ? [task.id] : [],
+    route: task && task.route ? task.route : '',
+    last_summary: task && task.preview ? task.preview : '',
     blocked_reason: null,
     cancel_reason: null,
   });

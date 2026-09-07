@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
@@ -96,6 +97,14 @@ func routeExecutionSteps(route routing.Route, ok bool) []string {
 }
 
 func classifyExecutorFailure(err error) string {
+	var terminal *workerResultError
+	if errors.As(err, &terminal) {
+		return "worker_result_failed"
+	}
+	var incomplete *coderLoopIncompleteError
+	if errors.As(err, &incomplete) {
+		return "coder_loop_incomplete"
+	}
 	return moduleworker.ClassifyExecutorFailure(err)
 }
 

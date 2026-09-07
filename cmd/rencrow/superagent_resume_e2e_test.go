@@ -43,6 +43,11 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 		_ = firstEvents.Close()
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := firstTaskStore.Close(); err != nil {
+			t.Errorf("close first task store: %v", err)
+		}
+	})
 	firstTaskOwner := taskmanager.New(firstTaskStore, taskmanager.DefaultParallelLimits())
 	task, err := firstTaskOwner.Create(ctx, domaintask.Task{
 		TaskID:   modulecore.NewTaskID(),
@@ -66,6 +71,7 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 		Status:             "running",
 		StartedAt:          firstRun.StartedAt,
 		ResumePolicy:       "checkpoint",
+		CheckpointID:       modulecore.NewCheckpointID(),
 		CheckpointRevision: 2,
 		CheckpointSummary:  "step one receipt committed",
 		NextAction:         "execute step two",
@@ -176,6 +182,9 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	if err := firstEvents.Close(); err != nil {
 		t.Fatal(err)
 	}
+	if err := firstTaskStore.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	restarted, err := storesuperagent.NewSQLiteStore(superAgentPath, 3000)
 	if err != nil {
@@ -191,6 +200,11 @@ func TestSuperAgentResumeE2EHTTPToRestartedScheduler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := restartedTaskStore.Close(); err != nil {
+			t.Errorf("close restarted task store: %v", err)
+		}
+	})
 	restartedTaskOwner := taskmanager.New(restartedTaskStore, taskmanager.DefaultParallelLimits())
 
 	var resumed domainsuperagent.RunQueueItem

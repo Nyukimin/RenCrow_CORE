@@ -11,9 +11,9 @@ function latestOpsEventBy(fn) {
 function currentOpsSummary() {
   const logsFetchError = String(state.ops.opsLogsFetchError || '');
   const persisted = logsFetchError ? [] : (Array.isArray(state.ops.persistedLogs) ? state.ops.persistedLogs : []);
-  const runningJobs = Object.values(state.jobs).filter((j) => String(j.status || '') !== 'done');
+  const runningTasks = Object.values(state.tasks).filter((j) => String(j.status || '') !== 'done');
   const lastMio = logsFetchError ? null : (state.ops.lastMioReport || latestOpsEventBy((ev) => String(ev.from || '').toLowerCase() === 'mio' && String(ev.to || '').toLowerCase() === 'user'));
-  const latestJobID = logsFetchError ? '' : (state.ops.latestJobID || ((persisted[0] && persisted[0].task_id) || '-'));
+  const latestTaskID = logsFetchError ? '' : (state.ops.latestTaskID || ((persisted[0] && persisted[0].task_id) || '-'));
   const latestRoute = logsFetchError ? '' : (state.ops.latestRoute || ((persisted[0] && persisted[0].route) || '-'));
   const latestError = logsFetchError ? null : (state.ops.latestError || latestOpsEventBy((ev) => {
     const t = String(ev.type || '').toLowerCase();
@@ -23,7 +23,7 @@ function currentOpsSummary() {
     const s = state.agents[id];
     return s && s.state !== 'offline';
   });
-  return {logsFetchError, persisted, runningJobs, lastMio, latestJobID, latestRoute, latestError, activeAgents};
+  return {logsFetchError, persisted, runningTasks, lastMio, latestTaskID, latestRoute, latestError, activeAgents};
 }
 
 function opsTriageCard(title, value, detail, stateName) {
@@ -82,7 +82,7 @@ function refreshOpsTriageFromState(summary) {
     opsTriageCard('Runtime', state.ops.runtimeHealthError ? 'blocked' : (runtimeOK ? 'ok' : 'checking'), runtimeDetail, state.ops.runtimeHealthError ? 'error' : (runtimeOK ? 'running' : 'thinking')),
     opsTriageCard('LLM', llm.value, llm.detail, llm.state),
     opsTriageCard('Audio', audio.value, audio.detail, audio.state),
-    opsTriageCard('Jobs', String(data.runningJobs.length), data.runningJobs.slice(0, 2).map((j) => (j.id || '-') + ' · ' + (j.route || '-') + ' · ' + (j.status || '-')).join('\n') || '進行中ジョブなし', data.runningJobs.length ? 'thinking' : 'running'),
+    opsTriageCard('Tasks', String(data.runningTasks.length), data.runningTasks.slice(0, 2).map((j) => (j.id || '-') + ' · ' + (j.route || '-') + ' · ' + (j.status || '-')).join('\n') || '進行中タスクなし', data.runningTasks.length ? 'thinking' : 'running'),
     opsTriageCard('Errors', data.logsFetchError ? 'unavailable' : (data.latestError ? short(data.latestError.type || '-', 20) : 'none'), data.logsFetchError ? ('ops logs unavailable: ' + data.logsFetchError) : (data.latestError ? short(data.latestError.content || '-', 90) : '直近の失敗イベントなし'), data.logsFetchError || data.latestError ? 'error' : 'running'),
   ].join('');
 }
@@ -173,9 +173,9 @@ function renderOps() {
   const summary = currentOpsSummary();
   const logsFetchError = summary.logsFetchError;
   const persisted = summary.persisted;
-  const runningJobs = summary.runningJobs;
+  const runningTasks = summary.runningTasks;
   const lastMio = summary.lastMio;
-  const latestJobID = summary.latestJobID;
+  const latestTaskID = summary.latestTaskID;
   const latestRoute = summary.latestRoute;
   const latestError = summary.latestError;
   const activeAgents = summary.activeAgents;
@@ -183,24 +183,24 @@ function renderOps() {
 
   const primaryCards = [
     {
-      title: 'Latest Job',
-      big: logsFetchError ? 'unavailable' : (latestJobID || '-'),
+      title: 'Latest Task',
+      big: logsFetchError ? 'unavailable' : (latestTaskID || '-'),
       sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : ('route: ' + (latestRoute || '-')),
     },
     {
       title: 'Mio Last Report',
       big: logsFetchError ? 'unavailable' : (lastMio ? short(lastMio.content || '-', 48) : '-'),
-      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (lastMio ? ('time: ' + fdt(lastMio.timestamp) + '\njob: ' + (lastMio.task_id || '-')) : 'Mio からの最終報告はまだありません'),
+      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (lastMio ? ('time: ' + fdt(lastMio.timestamp) + '\ntask: ' + (lastMio.task_id || '-')) : 'Mio からの最終報告はまだありません'),
     },
     {
-      title: 'Running Jobs',
-      big: String(runningJobs.length),
-      sub: runningJobs.slice(0, 3).map((j) => (j.id || '-') + ' · ' + (j.route || '-') + ' · ' + (j.status || '-')).join('\n') || '進行中ジョブなし',
+      title: 'Running Tasks',
+      big: String(runningTasks.length),
+      sub: runningTasks.slice(0, 3).map((j) => (j.id || '-') + ' · ' + (j.route || '-') + ' · ' + (j.status || '-')).join('\n') || '進行中タスクなし',
     },
     {
       title: 'Last Error',
       big: logsFetchError ? 'unavailable' : (latestError ? short(latestError.type || '-', 24) : 'none'),
-      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (latestError ? (short(latestError.content || '-', 120) + '\njob: ' + (latestError.task_id || '-')) : '直近の失敗イベントなし'),
+      sub: logsFetchError ? ('ops logs unavailable: ' + logsFetchError) : (latestError ? (short(latestError.content || '-', 120) + '\ntask: ' + (latestError.task_id || '-')) : '直近の失敗イベントなし'),
     },
     {
       title: 'Active Agents',
@@ -232,8 +232,8 @@ function renderOps() {
   [
     {label: '最新 route', value: logsFetchError ? 'unavailable' : (latestRoute || '-')},
     {label: '最新 persisted event', value: logsFetchError ? ('Ops logs unavailable: ' + logsFetchError) : (persisted[0] ? ((persisted[0].type || '-') + ' @ ' + fdt(persisted[0].timestamp)) : '-')},
-    {label: 'Mio job', value: state.agents.mio && state.agents.mio.jobID ? state.agents.mio.jobID : '-'},
-    {label: 'Worker job', value: state.agents.shiro && state.agents.shiro.jobID ? state.agents.shiro.jobID : '-'},
+    {label: 'Mio task', value: state.agents.mio && state.agents.mio.taskID ? state.agents.mio.taskID : '-'},
+    {label: 'Worker task', value: state.agents.shiro && state.agents.shiro.taskID ? state.agents.shiro.taskID : '-'},
   ].forEach((row) => {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td>' + esc(row.label) + '</td><td>' + esc(row.value) + '</td>';
@@ -361,14 +361,14 @@ function renderToolHarnessEvents() {
   const fetchError = String(state.ops.toolHarnessFetchError || '');
   if (fetchError) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">Tool Harness events unavailable: ' + esc(fetchError) + '</td>';
+    tr.innerHTML = '<td colspan="7" class="small">Tool Harness events unavailable: ' + esc(fetchError) + '</td>';
     body.appendChild(tr);
     return;
   }
   const events = Array.isArray(state.ops.toolHarnessEvents) ? state.ops.toolHarnessEvents : [];
   if (events.length === 0) {
     const tr = document.createElement('tr');
-    tr.innerHTML = '<td colspan="6" class="small">No tool mediation events yet</td>';
+    tr.innerHTML = '<td colspan="7" class="small">No tool mediation events yet</td>';
     body.appendChild(tr);
     return;
   }
@@ -383,7 +383,8 @@ function renderToolHarnessEvents() {
       '<td><span class="badge ' + stateClass(status) + '">' + esc(status) + '</span></td>' +
       '<td class="code">' + esc(Array.isArray(repairs) && repairs.length ? repairs.map(toolHarnessRepairSummary).join(', ') : '-') + '</td>' +
       '<td class="code">' + esc(Array.isArray(defaults) && defaults.length ? defaults.map((d) => String(toolHarnessField(d, 'field', 'Field') || '-') + '=' + String(toolHarnessField(d, 'value', 'Value'))).join(', ') : '-') + '</td>' +
-      '<td class="code">' + esc(short(toolHarnessField(ev, 'raw_input_hash', 'RawInputHash') || '-', 32)) + '</td>';
+      '<td class="code">' + esc(short(toolHarnessField(ev, 'raw_input_hash', 'RawInputHash') || '-', 32)) + '</td>' +
+      '<td class="code">' + ['event_id', 'task_id', 'run_id', 'trace_id', 'actor_kind', 'actor_id'].map((field) => esc(field + ': ' + String(ev[field] || '-'))).join('<br>') + '</td>';
     body.appendChild(tr);
   });
 }

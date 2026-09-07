@@ -2,6 +2,7 @@ package taskmanager
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -12,11 +13,21 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func registerTaskStoreCleanup(t *testing.T, store *taskpersistence.JSONLStore) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
+}
+
 func TestManagerLifecycleAndNotification(t *testing.T) {
 	store, err := taskpersistence.NewJSONLStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC) }
 	value, err := manager.Create(context.Background(), domaintask.Task{Title: "write spec", Route: domaintask.RouteCode}, domaintask.SharedRoleContext{})
@@ -52,6 +63,7 @@ func TestManagerWaitAndDependencyAndParallelLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, ParallelLimits{Global: 1, PerModule: 1, CodingTasks: 1, LongResearchTasks: 1, DestructiveTasks: 1})
 	dependency, err := manager.Create(context.Background(), domaintask.Task{Title: "dependency", Route: domaintask.RouteCode}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -99,6 +111,7 @@ func TestManagerChildDoesNotDoubleCountItsRunningRootParallelCapacity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, ParallelLimits{Global: 1, PerModule: 1, CodingTasks: 1, LongResearchTasks: 1, DestructiveTasks: 1})
 	root, err := manager.Create(context.Background(), domaintask.Task{
 		Title: "OPS orchestration", Route: domaintask.RouteOperations,
@@ -134,6 +147,7 @@ func TestManagerBlockResumeFailCancelAndParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	parent, err := manager.Create(context.Background(), domaintask.Task{Title: "parent", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -181,6 +195,7 @@ func TestManagerSupersedePersistsReplacementRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	old, err := manager.Create(context.Background(), domaintask.Task{Title: "old", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -215,6 +230,7 @@ func TestManagerRejectsMismatchedContextIdentityBeforeSaving(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	taskID := modulecore.NewTaskID()
 	otherID := modulecore.NewTaskID()
@@ -231,6 +247,7 @@ func TestManagerRecordsRoutingAndAssignmentWithoutStatusTransition(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 2, 0, 0, 0, time.UTC) }
 	value, err := manager.Create(context.Background(), domaintask.Task{Title: "route task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -267,6 +284,7 @@ func TestManagerRejectsInvalidReferencesAndBlankAssignmentBeforeSaving(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 3, 0, 0, 0, time.UTC) }
 	value, err := manager.Create(context.Background(), domaintask.Task{Title: "validation task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -301,6 +319,7 @@ func TestManagerRunLifecycleCreatesDistinctRunsAndClosesCurrentRun(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	now := time.Date(2026, 9, 5, 4, 0, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
@@ -379,6 +398,7 @@ func TestManagerStartRunWithReasonReturnsPersistedRunForCheckpointAndLeaseResume
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 4, 30, 0, 0, time.UTC) }
 	task, err := manager.Create(ctx, domaintask.Task{Title: "run handoff", Route: domaintask.RouteGeneral, Assignee: "Mio"}, domaintask.SharedRoleContext{})
@@ -459,6 +479,7 @@ func TestManagerInterruptRunClosesExactRunWithoutChangingTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	now := time.Date(2026, 9, 5, 4, 45, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
@@ -497,6 +518,7 @@ func TestManagerInterruptRunRejectsCrossTaskAndPreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 5, 0, 0, 0, time.UTC) }
 	first, err := manager.Create(ctx, domaintask.Task{Title: "first task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -532,6 +554,7 @@ func TestManagerInterruptRunIsIdempotentOnlyForInterruptedRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	now := time.Date(2026, 9, 5, 5, 15, 0, 0, time.UTC)
 	manager.now = func() time.Time { return now }
@@ -584,6 +607,7 @@ func TestManagerAssignmentReassignmentClosesAndReopensRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 5, 0, 0, 0, time.UTC) }
 	task, err := manager.Create(ctx, domaintask.Task{Title: "reassign", Route: domaintask.RouteGeneral, Assignee: "Mio"}, domaintask.SharedRoleContext{})
@@ -630,6 +654,7 @@ func TestManagerStartWithReasonSupportsAllCanonicalReasons(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		registerTaskStoreCleanup(t, store)
 		manager := New(store, DefaultParallelLimits())
 		manager.now = func() time.Time { return time.Date(2026, 9, 5, 8, 0, 0, 0, time.UTC) }
 		task, err := manager.Create(context.Background(), domaintask.Task{Title: "reason", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -667,6 +692,7 @@ func TestManagerExplicitRerunReopensTerminalTaskWithFreshRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registerTaskStoreCleanup(t, store)
 	manager := New(store, DefaultParallelLimits())
 	manager.now = func() time.Time { return time.Date(2026, 9, 5, 9, 0, 0, 0, time.UTC) }
 	task, err := manager.Create(ctx, domaintask.Task{Title: "rerun terminal", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -724,6 +750,7 @@ func TestManagerNonExplicitReasonsCannotReopenTerminalTask(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		registerTaskStoreCleanup(t, store)
 		manager := New(store, DefaultParallelLimits())
 		manager.now = func() time.Time { return time.Date(2026, 9, 5, 10, 0, 0, 0, time.UTC) }
 		task, err := manager.Create(context.Background(), domaintask.Task{Title: "terminal reason", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
@@ -743,5 +770,255 @@ func TestManagerNonExplicitReasonsCannotReopenTerminalTask(t *testing.T) {
 		if err != nil || persisted.Status != domaintask.StatusSucceeded || persisted.FinishedAt == nil {
 			t.Fatalf("terminal task changed for reason %s: %#v err=%v", reason, persisted, err)
 		}
+	}
+}
+
+func TestManagerRunPersistsWriterGeneration(t *testing.T) {
+	root := t.TempDir()
+	var previous float64
+	for i := 0; i < 2; i++ {
+		store, err := taskpersistence.NewJSONLStore(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		registerTaskStoreCleanup(t, store)
+		manager := New(store, DefaultParallelLimits())
+		task, err := manager.Create(context.Background(), domaintask.Task{Title: "generation test", Assignee: "shiro", Route: domaintask.RouteOperations}, domaintask.SharedRoleContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := manager.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire map[string]any
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			t.Fatal(err)
+		}
+		generation, _ := wire["writer_generation"].(float64)
+		if generation <= previous {
+			t.Fatalf("Run lacks advanced owner generation: previous=%v wire=%v", previous, wire)
+		}
+		saved, err := manager.GetRun(context.Background(), run.RunID)
+		if err != nil || !reflect.DeepEqual(saved, run) {
+			t.Fatalf("returned/persisted Run mismatch: %+v %+v %v", run, saved, err)
+		}
+		previous = generation
+		if _, err := manager.Succeed(context.Background(), task.TaskID, "done"); err != nil {
+			t.Fatal(err)
+		}
+		if err := manager.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func newRunningExecutionTaskRun(t *testing.T, manager *Manager, assignee string) (domaintask.Task, domaintask.Run) {
+	t.Helper()
+	task, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "execution admission", Route: domaintask.RouteGeneral, Assignee: assignee,
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := manager.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task, run
+}
+
+func TestManagerValidateRunExecutionRequiresCanonicalOwner(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	firstTask, firstRun := newRunningExecutionTaskRun(t, manager, "Mio")
+	secondTask, secondRun := newRunningExecutionTaskRun(t, manager, "Shiro")
+
+	if err := manager.ValidateRunExecution(ctx, firstTask.TaskID, firstRun.RunID, "Mio"); err != nil {
+		t.Fatalf("valid execution admission rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name       string
+		taskID     modulecore.TaskID
+		runID      modulecore.RunID
+		actorID    string
+		wantReason string
+	}{
+		{name: "wrong_actor", taskID: firstTask.TaskID, runID: firstRun.RunID, actorID: "Shiro", wantReason: "actor"},
+		{name: "wrong_task", taskID: secondTask.TaskID, runID: firstRun.RunID, actorID: "Mio", wantReason: "task"},
+		{name: "wrong_run", taskID: firstTask.TaskID, runID: secondRun.RunID, actorID: "Mio", wantReason: "run"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := manager.ValidateRunExecution(ctx, test.taskID, test.runID, test.actorID)
+			if !errors.Is(err, ErrRunConflict) {
+				t.Fatalf("%s error = %v, want ErrRunConflict", test.wantReason, err)
+			}
+		})
+	}
+}
+
+func TestManagerValidateRunExecutionRejectsInvalidAdmissionInputs(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, test := range []struct {
+		name string
+		call func() error
+	}{
+		{name: "nil_context", call: func() error {
+			return manager.ValidateRunExecution(nil, task.TaskID, run.RunID, "Mio")
+		}},
+		{name: "cancelled_context", call: func() error {
+			return manager.ValidateRunExecution(cancelled, task.TaskID, run.RunID, "Mio")
+		}},
+		{name: "invalid_task_id", call: func() error {
+			return manager.ValidateRunExecution(context.Background(), modulecore.TaskID(""), run.RunID, "Mio")
+		}},
+		{name: "invalid_run_id", call: func() error {
+			return manager.ValidateRunExecution(context.Background(), task.TaskID, modulecore.RunID(""), "Mio")
+		}},
+		{name: "blank_actor", call: func() error {
+			return manager.ValidateRunExecution(context.Background(), task.TaskID, run.RunID, " ")
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.call(); err == nil {
+				t.Fatal("invalid admission input was accepted")
+			}
+		})
+	}
+
+	if err := (*Manager)(nil).ValidateRunExecution(context.Background(), task.TaskID, run.RunID, "Mio"); err == nil {
+		t.Fatal("nil manager was accepted")
+	}
+	if err := (&Manager{}).ValidateRunExecution(context.Background(), task.TaskID, run.RunID, "Mio"); err == nil {
+		t.Fatal("nil store was accepted")
+	}
+}
+
+func TestManagerValidateRunExecutionRejectsTerminalTaskAndRun(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+	if _, err := manager.Succeed(context.Background(), task.TaskID, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ValidateRunExecution(context.Background(), task.TaskID, run.RunID, "Mio"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("terminal admission error = %v, want ErrRunConflict", err)
+	}
+}
+
+func TestManagerValidateRunExecutionFencesClosedAndRestartedOwners(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	firstStore, err := taskpersistence.NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstManager := New(firstStore, DefaultParallelLimits())
+	task, oldRun := newRunningExecutionTaskRun(t, firstManager, "Mio")
+	if err := firstStore.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstManager.ValidateRunExecution(ctx, task.TaskID, oldRun.RunID, "Mio"); err == nil {
+		t.Fatal("closed writer admitted execution")
+	}
+
+	secondStore, err := taskpersistence.NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondStore.Close()
+	secondManager := New(secondStore, DefaultParallelLimits())
+	if err := secondManager.ValidateRunExecution(ctx, task.TaskID, oldRun.RunID, "Mio"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("stale running Run error = %v, want ErrRunConflict", err)
+	}
+
+	newRun, err := secondManager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonProcessRestartResume)
+	if err != nil {
+		t.Fatalf("restart Run: %v", err)
+	}
+	if err := secondManager.ValidateRunExecution(ctx, task.TaskID, newRun.RunID, "Mio"); err != nil {
+		t.Fatalf("current restart Run rejected: %v", err)
+	}
+	if err := secondManager.ValidateRunExecution(ctx, task.TaskID, oldRun.RunID, "Mio"); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("closed old Run error = %v, want ErrRunConflict", err)
+	}
+}
+
+// admissionRunStore injects read-boundary faults without mutating historical records.
+type admissionRunStore struct {
+	Store
+	readRun func(context.Context, modulecore.RunID) (domaintask.Run, error)
+}
+
+func (s admissionRunStore) GetRun(ctx context.Context, id modulecore.RunID) (domaintask.Run, error) {
+	return s.readRun(ctx, id)
+}
+
+func TestManagerValidateRunExecutionRejectsReadBoundaryFaults(t *testing.T) {
+	for _, name := range []string{"historical_zero", "wrong_returned_run", "read_failure", "writer_closed_during_read", "cancelled_during_read"} {
+		t.Run(name, func(t *testing.T) {
+			store, err := taskpersistence.NewJSONLStore(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			registerTaskStoreCleanup(t, store)
+			manager := New(store, DefaultParallelLimits())
+			task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			readFailure := errors.New("read unavailable")
+			manager.store = admissionRunStore{Store: store, readRun: func(context.Context, modulecore.RunID) (domaintask.Run, error) {
+				switch name {
+				case "historical_zero":
+					run.WriterGeneration = 0
+				case "wrong_returned_run":
+					run.RunID = modulecore.NewRunID()
+				case "read_failure":
+					return domaintask.Run{}, readFailure
+				case "writer_closed_during_read":
+					if err := store.Close(); err != nil {
+						t.Fatal(err)
+					}
+				case "cancelled_during_read":
+					cancel()
+				}
+				return run, nil
+			}}
+			err = manager.ValidateRunExecution(ctx, task.TaskID, run.RunID, "Mio")
+			if err == nil {
+				t.Fatal("read-boundary fault admitted execution")
+			}
+			if name == "read_failure" && !errors.Is(err, readFailure) {
+				t.Fatalf("read error lost: %v", err)
+			}
+			if name == "cancelled_during_read" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancel error lost: %v", err)
+			}
+			if (name == "historical_zero" || name == "wrong_returned_run") && !errors.Is(err, ErrRunConflict) {
+				t.Fatalf("conflict error lost: %v", err)
+			}
+		})
 	}
 }

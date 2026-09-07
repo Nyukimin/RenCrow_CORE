@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,9 +12,12 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
@@ -25,10 +31,73 @@ type runtimeContextBudgetRecorderStub struct {
 	events []modulecore.EventEnvelope
 }
 
+func TestBuildToolRuntimeSharesSecurityActionManagerWithPolicyRunner(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{
+		WorkspaceDir: workspace,
+		Security: config.SecurityConfig{
+			Enabled:    true,
+			PolicyMode: "balanced",
+		},
+	}
+	owner, ctx := runtimeToolOwnerFixture(t, workspace, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+	if runtime.ActionManager == nil {
+		t.Fatal("security-enabled runtime must expose its ActionManager")
+	}
+
+	path := filepath.Join(workspace, "read.txt")
+	if err := os.WriteFile(path, []byte("shared-action-manager"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(ctx, "file_read", map[string]any{"path": path})
+	if err != nil || response == nil || response.IsError() {
+		t.Fatalf("permitted tool failed: response=%#v error=%v", response, err)
+	}
+
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions, err := runtime.ActionManager.ListActions(ctx, domainaction.Filter{TaskID: identity.TaskID, RunID: identity.RunID})
+	if err != nil {
+		t.Fatalf("list actions: %v", err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("want one PolicyRunner action, got %d", len(actions))
+	}
+	action := actions[0]
+	if action.TaskID != identity.TaskID || action.RunID != identity.RunID || action.Kind != domainaction.KindTool || action.Name != "file_read" {
+		t.Fatalf("unexpected action: %+v", action)
+	}
+	if action.CurrentAttemptID == "" {
+		t.Fatal("PolicyRunner action has no current attempt")
+	}
+	attempts, err := runtime.ActionManager.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: action.ActionID})
+	if err != nil {
+		t.Fatalf("list PolicyRunner attempts: %v", err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("want one PolicyRunner attempt, got %d", len(attempts))
+	}
+	attempt := attempts[0]
+	if attempt.AttemptID != action.CurrentAttemptID || attempt.ActionID != action.ActionID || attempt.StartReason != domainaction.AttemptStartReasonFirst {
+		t.Fatalf("unexpected attempt: %+v", attempt)
+	}
+}
+
+func TestBuildToolRuntimeLeavesActionManagerNilWhenSecurityAndSubagentDisabled(t *testing.T) {
+	cfg := &config.Config{WorkspaceDir: t.TempDir()}
+	runtime := buildToolRuntimeForTest(t, cfg)
+	if runtime.ActionManager != nil {
+		t.Fatal("runtime must not create an ActionManager when Security and Subagent are disabled")
+	}
+}
+
 func TestViewerRuntimeToolsUsesProductionWorkerRunner(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	runtime := buildToolRuntimeForTest(t, cfg)
 	metas, err := viewerRuntimeTools(&Dependencies{workerToolRunner: runtime.WorkerRuntimeRunnerV2})(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +114,11 @@ func TestBuildToolRuntimeInstallsSkillReadOnlyForWorker(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	catalog := toolsinfra.NewSkillCatalog([]domaincontext.SkillMetadata{{Name: "review", BodyText: "trusted body"}})
-	runtime := buildToolRuntime(cfg, nil, nil, nil, catalog)
+	if cfg.WorkspaceDir == "" {
+		cfg.WorkspaceDir = t.TempDir()
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, catalog, nil, testCanonicalMediationStore(t))
 
 	workerMetas, err := runtime.WorkerRunnerV2.ListTools(context.Background())
 	if err != nil {
@@ -61,7 +134,7 @@ func TestBuildToolRuntimeInstallsSkillReadOnlyForWorker(t *testing.T) {
 	if hasToolMetadata(chatMetas, "skill.read") {
 		t.Fatalf("Chat runner must not receive skill.read: %#v", chatMetas)
 	}
-	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(context.Background(), "skill.read", map[string]any{"name": "review"})
+	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "skill.read", map[string]any{"name": "review"})
 	if err != nil || resp == nil || resp.IsError() || resp.String() != "trusted body" {
 		t.Fatalf("Worker skill.read failed: resp=%#v err=%v", resp, err)
 	}
@@ -86,7 +159,11 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 		KnowledgeMemory: config.KnowledgeMemoryConfig{Storage: "sqlite", SQLitePath: dbPath},
 		ToolHarness:     config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
 	}
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	if cfg.WorkspaceDir == "" {
+		cfg.WorkspaceDir = t.TempDir()
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "mio")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	if runtime.KnowledgeMemoryToolStore == nil {
 		t.Fatal("SQLite Knowledge Memory Tool store was not initialized")
 	}
@@ -121,7 +198,7 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 			t.Fatalf("%s knowledge.search is not exposed after SQLite schema gate: %#v", name, metadata)
 		}
 		response, executeErr := runner.ExecuteV2(
-			domaintool.WithToolExecutionScope(context.Background(), publicScope),
+			domaintool.WithToolExecutionScope(executionCtx, publicScope),
 			"knowledge.search",
 			map[string]any{"query": "日本語", "record_type": "creative_knowledge"},
 		)
@@ -132,7 +209,7 @@ func TestBuildToolRuntimeRegistersKnowledgeSearchOnlyAfterSQLiteIndexGate(t *tes
 	disabledMemory := false
 	disabledCfg := *cfg
 	disabledCfg.KnowledgeMemory.Enabled = &disabledMemory
-	disabledRuntime := buildToolRuntime(&disabledCfg, nil, nil, nil)
+	disabledRuntime := buildToolRuntimeForTest(t, &disabledCfg)
 	disabledMetadata, metadataErr := disabledRuntime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	if metadataErr != nil {
 		t.Fatalf("disabled Worker ListTools() error = %v", metadataErr)
@@ -175,7 +252,7 @@ func TestBuildToolRuntimeAdvertisesPrivateKnowledgeSearchOnlyWithCompleteLineIng
 				Line:            config.LineConfig{ChannelSecret: tt.secret, AccessToken: tt.token},
 				ToolHarness:     config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
 			}
-			runtime := buildToolRuntime(cfg, nil, nil, nil)
+			runtime := buildToolRuntimeForTest(t, cfg)
 			if runtime.KnowledgeMemoryToolStore != nil {
 				t.Cleanup(func() { _ = runtime.KnowledgeMemoryToolStore.Close() })
 			}
@@ -212,7 +289,7 @@ func TestBuildToolRuntimeDoesNotCreateOrExposeUnreadyKnowledgeDatabase(t *testin
 		},
 		ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
 	}
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	runtime := buildToolRuntimeForTest(t, cfg)
 	if runtime.KnowledgeMemoryToolStore != nil {
 		t.Fatal("unready knowledge database must not be retained as a runtime store")
 	}
@@ -251,7 +328,7 @@ func (s *runtimeContextBudgetRecorderStub) Append(_ context.Context, item module
 	return nil
 }
 
-func TestBuildToolMediationRecorderUsesConfiguredLogPath(t *testing.T) {
+func TestBuildToolMediationRecorderPreservesLegacyPathWithoutWriting(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "tool_mediation.jsonl")
 	cfg := &config.Config{
 		WorkspaceDir: t.TempDir(),
@@ -260,12 +337,15 @@ func TestBuildToolMediationRecorderUsesConfiguredLogPath(t *testing.T) {
 		},
 	}
 
-	recorder := buildToolMediationRecorder(cfg)
+	recorder, err := buildToolMediationRecorder(cfg, testCanonicalMediationStore(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if recorder == nil {
 		t.Fatal("expected recorder")
 	}
-	if _, err := os.Stat(logPath); err != nil {
-		t.Fatalf("expected recorder file at configured path: %v", err)
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy JSONL destination used: %v", err)
 	}
 }
 
@@ -278,7 +358,7 @@ func TestBuildToolMediationRecorderDisabledByConfig(t *testing.T) {
 		},
 	}
 
-	if recorder := buildToolMediationRecorder(cfg); recorder != nil {
+	if recorder, err := buildToolMediationRecorder(cfg, testCanonicalMediationStore(t)); recorder != nil || err != nil {
 		t.Fatal("disabled tool harness should not create recorder")
 	}
 }
@@ -292,7 +372,7 @@ func TestBuildToolMediationRecorderRecordEventsDisabled(t *testing.T) {
 		},
 	}
 
-	if recorder := buildToolMediationRecorder(cfg); recorder != nil {
+	if recorder, err := buildToolMediationRecorder(cfg, testCanonicalMediationStore(t)); recorder != nil || err != nil {
 		t.Fatal("record_events=false should not create recorder")
 	}
 }
@@ -316,8 +396,12 @@ func TestBuildToolRuntimeWrapsToolContextBudget(t *testing.T) {
 		},
 	}
 
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
-	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(context.Background(), "file_read", map[string]any{"path": path})
+	if cfg.WorkspaceDir == "" {
+		cfg.WorkspaceDir = t.TempDir()
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "file_read", map[string]any{"path": path})
 	if err != nil {
 		t.Fatalf("ExecuteV2 returned err: %v", err)
 	}
@@ -349,8 +433,12 @@ func TestBuildToolRuntimeRecordsToolContextBudgetUsage(t *testing.T) {
 	}
 	recorder := &runtimeContextBudgetRecorderStub{}
 
-	runtime := buildToolRuntime(cfg, nil, nil, recorder)
-	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(context.Background(), "file_read", map[string]any{"path": path})
+	if cfg.WorkspaceDir == "" {
+		cfg.WorkspaceDir = t.TempDir()
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, recorder, nil, nil, testCanonicalMediationStore(t))
+	resp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "file_read", map[string]any{"path": path})
 	if err != nil {
 		t.Fatalf("ExecuteV2 returned err: %v", err)
 	}
@@ -402,8 +490,12 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 		},
 	}
 
-	runtime := buildToolRuntime(cfg, nil, nil, store)
-	warnResp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(ctx, "file_read", map[string]any{"path": warnPath})
+	if cfg.WorkspaceDir == "" {
+		cfg.WorkspaceDir = t.TempDir()
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, store, nil, nil, testCanonicalMediationStore(t))
+	warnResp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "file_read", map[string]any{"path": warnPath})
 	if err != nil {
 		t.Fatalf("warning ExecuteV2 returned err: %v", err)
 	}
@@ -414,7 +506,7 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 		t.Fatalf("expected warning metadata, got %#v", warnResp.Metadata)
 	}
 
-	stopResp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(ctx, "file_read", map[string]any{"path": stopPath})
+	stopResp, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "file_read", map[string]any{"path": stopPath})
 	if err != nil {
 		t.Fatalf("stop ExecuteV2 returned err: %v", err)
 	}
@@ -439,8 +531,20 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 	if len(usages) != 2 {
 		t.Fatalf("expected two persisted context usages, got %#v", usages)
 	}
+	identity, err := domainexecution.IdentityFromContext(executionCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, usage := range usages {
+		if usage.TaskID != identity.TaskID || usage.RunID != identity.RunID {
+			t.Fatalf("persisted context usage lost execution identity: %#v", usage)
+		}
+	}
 	byType := map[string]modulecore.EventEnvelope{}
 	for _, event := range events {
+		if event.TaskID != identity.TaskID || event.RunID != identity.RunID || event.TraceID != identity.TraceID || event.ActorKind != "agent" || event.ActorID != "shiro" {
+			t.Fatalf("persisted budget event lost owner lineage: %#v", event)
+		}
 		byType[event.EventType] = event
 	}
 	for _, want := range []string{"context_budget_warning", "context_budget_exceeded"} {
@@ -451,5 +555,366 @@ func TestBuildToolRuntimePersistsToolContextBudgetToAIWorkflowStore(t *testing.T
 		if event.Payload["command_name"] != "file_read" || event.Payload["agent_label"] != "Worker" || event.CausationEventID != "" || event.Payload["context_usage_record_id"] == "" {
 			t.Fatalf("unexpected persisted event for %s: %#v", want, event)
 		}
+	}
+}
+
+type taskExecutionRunnerMarker struct{}
+
+type countingTaskExecutionRunner struct {
+	executeCalls int
+	listCalls    int
+	lastToolName string
+	lastArgs     map[string]any
+	sawMarker    bool
+	sawIdentity  bool
+	sawScope     bool
+}
+
+func (r *countingTaskExecutionRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*domaintool.ToolResponse, error) {
+	r.executeCalls++
+	r.lastToolName = toolName
+	r.lastArgs = args
+	r.sawMarker = ctx != nil && ctx.Value(taskExecutionRunnerMarker{}) == "preserved"
+	if ctx != nil {
+		_, identityErr := domainexecution.IdentityFromContext(ctx)
+		r.sawIdentity = identityErr == nil
+		_, r.sawScope = domaintool.ToolExecutionScopeFromContext(ctx)
+	}
+	return domaintool.NewSuccess("fixture success"), nil
+}
+
+func (r *countingTaskExecutionRunner) ListTools(context.Context) ([]domaintool.ToolMetadata, error) {
+	r.listCalls++
+	return []domaintool.ToolMetadata{{ToolID: "fixture.tool", Version: "test"}}, nil
+}
+
+func newTaskExecutionRunnerFixture(t *testing.T) (*Dependencies, domaintask.Task, domaintask.Run) {
+	t.Helper()
+	deps := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err != nil {
+		t.Fatalf("initializeRuntimeTaskOwner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := deps.taskManager.Close(); err != nil {
+			t.Errorf("close task owner: %v", err)
+		}
+	})
+	ctx := context.Background()
+	task, err := deps.taskManager.Create(ctx, domaintask.Task{
+		Title:    "tool execution admission fixture",
+		Route:    domaintask.RouteGeneral,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create admission Task: %v", err)
+	}
+	run, err := deps.taskManager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatalf("start admission Run: %v", err)
+	}
+	return deps, task, run
+}
+
+func newTaskExecutionRunnerContext(t *testing.T, task domaintask.Task, run domaintask.Run, actorKind domaintool.ActorKind, actorID string, includeIdentity, includeScope bool) context.Context {
+	t.Helper()
+	ctx := context.WithValue(context.Background(), taskExecutionRunnerMarker{}, "preserved")
+	if includeIdentity {
+		var err error
+		ctx, err = domainexecution.WithIdentity(ctx, task.TaskID, run.RunID, modulecore.NewTraceID())
+		if err != nil {
+			t.Fatalf("bind execution identity: %v", err)
+		}
+	}
+	if includeScope {
+		authenticatedUserID := ""
+		authenticationSource := domaintool.AuthenticationSourceAgentOrchestrator
+		if actorKind == domaintool.ActorKindUser {
+			authenticatedUserID = actorID
+			authenticationSource = domaintool.AuthenticationSourceHTTP
+		}
+		scope, err := domaintool.NewToolExecutionScope(
+			"runtime-tool-admission",
+			actorKind,
+			actorID,
+			authenticatedUserID,
+			[]string{domaintool.DataScopePublic},
+			authenticationSource,
+		)
+		if err != nil {
+			t.Fatalf("create execution scope: %v", err)
+		}
+		ctx = domaintool.WithToolExecutionScope(ctx, scope)
+	}
+	return ctx
+}
+
+func TestTaskExecutionRunnerAdmitsCurrentAgentRunAndPreservesContext(t *testing.T) {
+	deps, task, run := newTaskExecutionRunnerFixture(t)
+	inner := &countingTaskExecutionRunner{}
+	runner := &taskExecutionRunner{owner: deps.taskManager, inner: inner}
+	ctx := newTaskExecutionRunnerContext(t, task, run, domaintool.ActorKindAgent, "shiro", true, true)
+	args := map[string]any{"fixture": "unchanged"}
+
+	response, err := runner.ExecuteV2(ctx, "fixture.tool", args)
+	if err != nil {
+		t.Fatalf("admitted ExecuteV2: %v", err)
+	}
+	if response == nil || response.String() != "fixture success" {
+		t.Fatalf("response = %#v", response)
+	}
+	if inner.executeCalls != 1 {
+		t.Fatalf("inner ExecuteV2 calls = %d, want 1", inner.executeCalls)
+	}
+	if inner.lastToolName != "fixture.tool" || inner.lastArgs["fixture"] != "unchanged" {
+		t.Fatalf("inner arguments = tool=%q args=%#v", inner.lastToolName, inner.lastArgs)
+	}
+	if !inner.sawMarker || !inner.sawIdentity || !inner.sawScope {
+		t.Fatalf("inner did not receive unchanged execution context: marker=%t identity=%t scope=%t", inner.sawMarker, inner.sawIdentity, inner.sawScope)
+	}
+}
+
+func TestTaskExecutionRunnerRejectsInvalidAdmissionBeforeInner(t *testing.T) {
+	cases := []struct {
+		name            string
+		actorKind       domaintool.ActorKind
+		actorID         string
+		includeIdentity bool
+		includeScope    bool
+		before          func(*testing.T, *Dependencies, domaintask.Task)
+	}{
+		{name: "missing_identity", actorKind: domaintool.ActorKindAgent, actorID: "shiro", includeScope: true},
+		{name: "missing_scope", actorKind: domaintool.ActorKindAgent, actorID: "shiro", includeIdentity: true},
+		{name: "user_scope", actorKind: domaintool.ActorKindUser, actorID: "shiro", includeIdentity: true, includeScope: true},
+		{name: "wrong_agent", actorKind: domaintool.ActorKindAgent, actorID: "mio", includeIdentity: true, includeScope: true},
+		{
+			name:            "closed_owner",
+			actorKind:       domaintool.ActorKindAgent,
+			actorID:         "shiro",
+			includeIdentity: true,
+			includeScope:    true,
+			before: func(t *testing.T, deps *Dependencies, _ domaintask.Task) {
+				if err := deps.taskManager.Close(); err != nil {
+					t.Fatalf("close owner: %v", err)
+				}
+			},
+		},
+		{
+			name:            "terminal_task_and_run",
+			actorKind:       domaintool.ActorKindAgent,
+			actorID:         "shiro",
+			includeIdentity: true,
+			includeScope:    true,
+			before: func(t *testing.T, deps *Dependencies, task domaintask.Task) {
+				if _, err := deps.taskManager.Succeed(context.Background(), task.TaskID, "fixture terminal"); err != nil {
+					t.Fatalf("finish fixture Task: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			deps, task, run := newTaskExecutionRunnerFixture(t)
+			if test.before != nil {
+				test.before(t, deps, task)
+			}
+			inner := &countingTaskExecutionRunner{}
+			runner := &taskExecutionRunner{owner: deps.taskManager, inner: inner}
+			ctx := newTaskExecutionRunnerContext(t, task, run, test.actorKind, test.actorID, test.includeIdentity, test.includeScope)
+
+			response, err := runner.ExecuteV2(ctx, "fixture.tool", map[string]any{"fixture": test.name})
+			if err == nil {
+				t.Fatalf("invalid admission was accepted: response=%#v", response)
+			}
+			if response != nil {
+				t.Fatalf("rejected admission returned response: %#v", response)
+			}
+			if inner.executeCalls != 0 {
+				t.Fatalf("inner ExecuteV2 calls = %d, want 0", inner.executeCalls)
+			}
+		})
+	}
+}
+
+func TestTaskExecutionRunnerRejectsStaleRunAfterWriterRestart(t *testing.T) {
+	root := t.TempDir()
+	first := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(first, root); err != nil {
+		t.Fatalf("initialize first owner: %v", err)
+	}
+	task, err := first.taskManager.Create(context.Background(), domaintask.Task{
+		Title:    "stale Run fixture",
+		Route:    domaintask.RouteGeneral,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create stale Task: %v", err)
+	}
+	oldRun, err := first.taskManager.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatalf("start stale Run: %v", err)
+	}
+	if err := first.taskManager.Close(); err != nil {
+		t.Fatalf("close first owner: %v", err)
+	}
+
+	second := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(second, root); err != nil {
+		t.Fatalf("initialize restarted owner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := second.taskManager.Close(); err != nil {
+			t.Errorf("close restarted owner: %v", err)
+		}
+	})
+	inner := &countingTaskExecutionRunner{}
+	runner := &taskExecutionRunner{owner: second.taskManager, inner: inner}
+	ctx := newTaskExecutionRunnerContext(t, task, oldRun, domaintool.ActorKindAgent, "shiro", true, true)
+
+	response, err := runner.ExecuteV2(ctx, "fixture.tool", map[string]any{"fixture": "stale"})
+	if err == nil {
+		t.Fatalf("stale Run was accepted: response=%#v", response)
+	}
+	if response != nil || inner.executeCalls != 0 {
+		t.Fatalf("stale Run reached inner: response=%#v calls=%d", response, inner.executeCalls)
+	}
+}
+
+func TestTaskExecutionRunnerRejectsNilDependenciesBeforeInner(t *testing.T) {
+	inner := &countingTaskExecutionRunner{}
+	var nilRunner *taskExecutionRunner
+	if response, err := nilRunner.ExecuteV2(context.Background(), "fixture.tool", nil); err == nil || response != nil {
+		t.Fatalf("nil receiver result = response=%#v err=%v", response, err)
+	}
+	if response, err := (&taskExecutionRunner{inner: inner}).ExecuteV2(context.Background(), "fixture.tool", nil); err == nil || response != nil {
+		t.Fatalf("nil owner result = response=%#v err=%v", response, err)
+	}
+	if inner.executeCalls != 0 {
+		t.Fatalf("nil owner reached inner: calls=%d", inner.executeCalls)
+	}
+
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	if response, err := (&taskExecutionRunner{owner: deps.taskManager}).ExecuteV2(context.Background(), "fixture.tool", nil); err == nil || response != nil {
+		t.Fatalf("nil inner result = response=%#v err=%v", response, err)
+	}
+	if inner.executeCalls != 0 {
+		t.Fatalf("nil inner changed fake calls: %d", inner.executeCalls)
+	}
+}
+
+func TestTaskExecutionRunnerListsMetadataWithoutExecutionIdentity(t *testing.T) {
+	inner := &countingTaskExecutionRunner{}
+	runner := &taskExecutionRunner{inner: inner}
+	metadata, err := runner.ListTools(context.Background())
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(metadata) != 1 || metadata[0].ToolID != "fixture.tool" || inner.listCalls != 1 {
+		t.Fatalf("metadata=%#v listCalls=%d", metadata, inner.listCalls)
+	}
+	if _, err := (&taskExecutionRunner{}).ListTools(context.Background()); err == nil {
+		t.Fatal("nil inner ListTools was accepted")
+	}
+}
+
+func TestBuildToolMediationRecorderCannotSilentlyDisableAfterFailure(t *testing.T) {
+	recorder, err := buildToolMediationRecorder(&config.Config{}, nil)
+	if err == nil || recorder != nil {
+		t.Fatal("missing canonical store did not fail closed")
+	}
+}
+
+func TestToolRuntimeAdmitsOwnerBeforeMediationPersistence(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{WorkspaceDir: workspace}
+	owner, valid := runtimeToolOwnerFixture(t, workspace, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+	if runtime.ToolMediationRecorder == nil {
+		t.Fatal("fixture recorder unavailable")
+	}
+	canceled, cancel := context.WithCancel(valid)
+	cancel()
+	for _, ctx := range []context.Context{context.Background(), canceled} {
+		response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(ctx, "file_read", map[string]any{"path": filepath.Join(workspace, "missing")})
+		if err == nil && (response == nil || !response.IsError()) {
+			t.Fatalf("unowned request accepted: %#v", response)
+		}
+		events, err := runtime.ToolMediationRecorder.ListRecent(context.Background(), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("unadmitted request wrote %d mediation events", len(events))
+		}
+	}
+	file := filepath.Join(workspace, "source.txt")
+	if err := os.WriteFile(file, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(valid, "file_read", map[string]any{"path": file})
+	if err != nil || response == nil || response.IsError() {
+		t.Fatalf("valid owner failed: %#v %v", response, err)
+	}
+	events, err := runtime.ToolMediationRecorder.ListRecent(context.Background(), 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("valid request not recorded: %d %v", len(events), err)
+	}
+}
+
+func testCanonicalMediationStore(t *testing.T) *eventpersistence.SQLiteStore {
+	t.Helper()
+	store, err := eventpersistence.NewSQLiteStore(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return store
+}
+func buildToolRuntimeForTest(t *testing.T, cfg *config.Config) toolRuntime {
+	t.Helper()
+	return buildToolRuntimeWithCapabilities(nil, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+}
+
+func TestToolRuntimeMediationViewerUsesCanonicalEvent(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{WorkspaceDir: workspace}
+	owner, ctx := runtimeToolOwnerFixture(t, workspace, "shiro")
+	store := testCanonicalMediationStore(t)
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, store)
+	path := filepath.Join(workspace, "read.txt")
+	if err := os.WriteFile(path, []byte("fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(ctx, "file_read", map[string]any{"path": path})
+	if err != nil || response == nil || response.IsError() {
+		t.Fatalf("tool failed: %#v %v", response, err)
+	}
+	events, err := store.ListByComponent(ctx, "tool_harness", 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("canonical record missing: %d %v", len(events), err)
+	}
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := events[0]
+	if event.TaskID != identity.TaskID || event.RunID != identity.RunID || event.TraceID != identity.TraceID || event.ActorID != "shiro" || event.EventSeq <= 0 {
+		t.Fatalf("lineage mismatch: %#v", event)
+	}
+	request := httptest.NewRequest("GET", "/viewer/tool-harness/recent", nil)
+	result := httptest.NewRecorder()
+	viewer.HandleToolHarnessRecent(runtime.ToolMediationRecorder).ServeHTTP(result, request)
+	var body struct {
+		Items []map[string]any `json:"items"`
+	}
+	if result.Code != 200 || json.Unmarshal(result.Body.Bytes(), &body) != nil || len(body.Items) != 1 {
+		t.Fatalf("Viewer projection failed: %s", result.Body.String())
+	}
+	if body.Items[0]["event_id"] != string(event.EventID) || body.Items[0]["task_id"] != string(event.TaskID) || body.Items[0]["run_id"] != string(event.RunID) {
+		t.Fatalf("Viewer disagrees with canonical event: %#v", body.Items)
 	}
 }

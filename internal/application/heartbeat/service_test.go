@@ -11,13 +11,17 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -31,6 +35,7 @@ type mockWorkerAgent struct {
 	lastMsg    string
 	lastInput  conversation.TurnInput
 	lastCtx    context.Context
+	onExecute  func(context.Context, conversation.TurnInput)
 }
 
 func (m *mockWorkerAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
@@ -43,6 +48,9 @@ func (m *mockWorkerAgent) Execute(ctx context.Context, t conversation.TurnInput)
 	m.executed = true
 	m.lastCtx = ctx
 	m.recordCall(t)
+	if m.onExecute != nil {
+		m.onExecute(ctx, t)
+	}
 	return m.response, m.err
 }
 
@@ -240,7 +248,7 @@ func (m *memoryBacklogStore) Save(_ context.Context, item domainbacklog.Item) er
 	m.saved = append(m.saved, item)
 	next := append([]domainbacklog.Item(nil), m.items...)
 	for idx, existing := range next {
-		if existing.ItemID == item.ItemID {
+		if existing.BacklogItemID == item.BacklogItemID {
 			next[idx] = item
 			m.items = next
 			return nil
@@ -267,7 +275,7 @@ func TestRunIdleChatSequenceCheckEmitsRecoveredEvent(t *testing.T) {
 			Action:     "interrupt_idlechat_and_clear_active_state_and_reset_tts_queue",
 		},
 	}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, &mockSender{}, dir, 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{response: "HEARTBEAT_OK"}, &mockSender{}, dir, 30).
 		WithEventListener(listener).
 		WithIdleChatSequenceMonitor(monitor)
 
@@ -311,7 +319,7 @@ func TestTick_HeartbeatOKEmitsViewerEvent(t *testing.T) {
 
 	listener := &recordingEventListener{}
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30).WithEventListener(listener)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30).WithEventListener(listener)
 
 	if err := svc.tick(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -334,7 +342,7 @@ func TestTick_NotificationEmitsViewerEvent(t *testing.T) {
 
 	listener := &recordingEventListener{}
 	agent := &mockWorkerAgent{response: "Disk usage is 95%"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30).WithEventListener(listener)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30).WithEventListener(listener)
 
 	if err := svc.tick(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -358,7 +366,7 @@ func TestTick_DoesNotNotifyUserAfterHeartbeatEventPublicationFailure(t *testing.
 	}
 	listener := &recordingEventListener{err: errors.New("canonical append failed")}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "Disk usage is 95%"}, sender, dir, 30).WithEventListener(listener)
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{response: "Disk usage is 95%"}, sender, dir, 30).WithEventListener(listener)
 
 	if err := svc.tick(context.Background()); err == nil {
 		t.Fatal("tick error = nil, want publication failure")
@@ -371,7 +379,7 @@ func TestTick_DoesNotNotifyUserAfterHeartbeatEventPublicationFailure(t *testing.
 func TestTick_MissingFileEmitsViewerSkipEvent(t *testing.T) {
 	dir := t.TempDir()
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, &mockSender{}, dir, 30).WithEventListener(listener)
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{response: "HEARTBEAT_OK"}, &mockSender{}, dir, 30).WithEventListener(listener)
 
 	if err := svc.tick(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -388,42 +396,42 @@ func TestRunBacklogIntakePromotesOpenItemToWorkstream(t *testing.T) {
 	now := time.Date(2026, 6, 21, 12, 0, 0, 0, time.UTC)
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
 		{
-			ItemID:    "normal-old",
-			Kind:      "unimplemented",
-			Title:     "通常項目",
-			Body:      "通常優先度の実装",
-			Source:    "user",
-			Status:    "open",
-			Priority:  "normal",
-			CreatedAt: "2026-06-20T00:00:00Z",
-			UpdatedAt: "2026-06-20T00:00:00Z",
+			BacklogItemID: "normal-old",
+			Kind:          "unimplemented",
+			Title:         "通常項目",
+			Body:          "通常優先度の実装",
+			Source:        "user",
+			Status:        "open",
+			Priority:      "normal",
+			CreatedAt:     "2026-06-20T00:00:00Z",
+			UpdatedAt:     "2026-06-20T00:00:00Z",
 		},
 		{
-			ItemID:    "urgent-new",
-			Kind:      "unimplemented",
-			Title:     "緊急項目",
-			Body:      "緊急優先度の実装",
-			Source:    "mio",
-			Status:    "open",
-			Priority:  "urgent",
-			CreatedAt: "2026-06-21T00:00:00Z",
-			UpdatedAt: "2026-06-21T00:00:00Z",
+			BacklogItemID: "urgent-new",
+			Kind:          "unimplemented",
+			Title:         "緊急項目",
+			Body:          "緊急優先度の実装",
+			Source:        "mio",
+			Status:        "open",
+			Priority:      "urgent",
+			CreatedAt:     "2026-06-21T00:00:00Z",
+			UpdatedAt:     "2026-06-21T00:00:00Z",
 		},
 		{
-			ItemID:    "done",
-			Kind:      "unimplemented",
-			Title:     "完了済み",
-			Source:    "coder",
-			Status:    "ok",
-			Priority:  "urgent",
-			CheckOK:   true,
-			CreatedAt: "2026-06-19T00:00:00Z",
-			UpdatedAt: "2026-06-19T00:00:00Z",
+			BacklogItemID: "done",
+			Kind:          "unimplemented",
+			Title:         "完了済み",
+			Source:        "coder",
+			Status:        "ok",
+			Priority:      "urgent",
+			CheckOK:       true,
+			CreatedAt:     "2026-06-19T00:00:00Z",
+			UpdatedAt:     "2026-06-19T00:00:00Z",
 		},
 	}}
 	workstreamStore := &memoryWorkstreamHeartbeatStore{}
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithWorkstreamStore(workstreamStore).
 		WithEventListener(listener)
@@ -457,12 +465,12 @@ func TestRunBacklogIntakePromotesOpenItemToWorkstream(t *testing.T) {
 
 func TestRunBacklogIntakeDoesNotAdoptAtlasCandidate(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "candidate", Title: "candidate",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "candidate", Title: "candidate",
 		ConceptState: domainbacklog.ConceptCandidate, DeliveryState: domainbacklog.DeliveryNone,
 		Status: "open", Priority: "urgent",
 	}}}
 	workstreamStore := &memoryWorkstreamHeartbeatStore{}
-	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).WithWorkstreamStore(workstreamStore)
 
 	report, err := svc.RunBacklogIntake(context.Background(), time.Date(2026, 8, 21, 0, 0, 0, 0, time.UTC))
@@ -476,11 +484,11 @@ func TestRunBacklogIntakeDoesNotAdoptAtlasCandidate(t *testing.T) {
 
 func TestRunBacklogIntakeSkipsWithoutRunnableItems(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
-		{ItemID: "active", Title: "実装中", Status: "implementing", Priority: "urgent"},
-		{ItemID: "done", Title: "完了", Status: "ok", Priority: "urgent", CheckOK: true},
+		{BacklogItemID: "active", Title: "実装中", Status: "implementing", Priority: "urgent"},
+		{BacklogItemID: "done", Title: "完了", Status: "ok", Priority: "urgent", CheckOK: true},
 	}}
 	workstreamStore := &memoryWorkstreamHeartbeatStore{}
-	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithWorkstreamStore(workstreamStore)
 
@@ -499,23 +507,23 @@ func TestRunBacklogIntakeSkipsWithoutRunnableItems(t *testing.T) {
 func TestRunBacklogIntakeDoesNotPromoteNextItemWhileActiveItemExists(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
 		{
-			ItemID:    "active",
-			Title:     "実装中",
-			Status:    "implementing",
-			Priority:  "normal",
-			UpdatedAt: "2026-06-21T00:00:00Z",
+			BacklogItemID: "active",
+			Title:         "実装中",
+			Status:        "implementing",
+			Priority:      "normal",
+			UpdatedAt:     "2026-06-21T00:00:00Z",
 		},
 		{
-			ItemID:    "next-high",
-			Title:     "次の高優先",
-			Status:    "open",
-			Priority:  "high",
-			UpdatedAt: "2026-06-20T00:00:00Z",
+			BacklogItemID: "next-high",
+			Title:         "次の高優先",
+			Status:        "open",
+			Priority:      "high",
+			UpdatedAt:     "2026-06-20T00:00:00Z",
 		},
 	}}
 	workstreamStore := &memoryWorkstreamHeartbeatStore{}
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{}, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithWorkstreamStore(workstreamStore).
 		WithEventListener(listener)
@@ -538,22 +546,22 @@ func TestRunBacklogIntakeDoesNotPromoteNextItemWhileActiveItemExists(t *testing.
 func TestRunBacklogRunnerStartsActiveItemOnce(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
 		{
-			ItemID:   "active",
-			Title:    "P01 terminal outcome",
-			Body:     "visible terminal outcome を実装する",
-			Status:   "implementing",
-			Priority: "high",
+			BacklogItemID: "active",
+			Title:         "P01 terminal outcome",
+			Body:          "visible terminal outcome を実装する",
+			Status:        "implementing",
+			Priority:      "high",
 		},
 		{
-			ItemID:   "next",
-			Title:    "次の項目",
-			Status:   "open",
-			Priority: "high",
+			BacklogItemID: "next",
+			Title:         "次の項目",
+			Status:        "open",
+			Priority:      "high",
 		},
 	}}
 	agent := &mockWorkerAgent{response: "accepted"}
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(agent, &mockSender{}, t.TempDir(), 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithEventListener(listener)
 
@@ -591,7 +599,7 @@ func TestRunBacklogRunnerStartsActiveItemOnce(t *testing.T) {
 func TestBacklogActiveItemsKeepsStartedRunnerFirst(t *testing.T) {
 	items := []domainbacklog.Item{
 		{
-			ItemID:         "older-active",
+			BacklogItemID:  "older-active",
 			Title:          "older",
 			Status:         "implementing",
 			Priority:       "high",
@@ -599,7 +607,7 @@ func TestBacklogActiveItemsKeepsStartedRunnerFirst(t *testing.T) {
 			UpdatedAt:      "2026-06-20T00:00:00Z",
 		},
 		{
-			ItemID:         "started-active",
+			BacklogItemID:  "started-active",
 			Title:          "started",
 			Status:         "implementing",
 			Priority:       "high",
@@ -609,17 +617,17 @@ func TestBacklogActiveItemsKeepsStartedRunnerFirst(t *testing.T) {
 	}
 
 	active := backlogActiveItems(items)
-	if len(active) != 2 || active[0].ItemID != "started-active" {
+	if len(active) != 2 || active[0].BacklogItemID != "started-active" {
 		t.Fatalf("started runner item should stay first while active: %+v", active)
 	}
 }
 
 func TestRunBacklogRunnerBlocksItemWhenWorkerStartFails(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{
-		{ItemID: "active", Title: "実装中", Status: "implementing", Priority: "high"},
+		{BacklogItemID: "active", Title: "実装中", Status: "implementing", Priority: "high"},
 	}}
 	agent := &mockWorkerAgent{err: context.Canceled}
-	svc := NewHeartbeatService(agent, &mockSender{}, t.TempDir(), 30).WithBacklogStore(backlogStore)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, t.TempDir(), 30).WithBacklogStore(backlogStore)
 
 	report, err := svc.RunBacklogRunner(context.Background(), time.Date(2026, 6, 22, 5, 0, 0, 0, time.UTC))
 	if err == nil {
@@ -643,7 +651,7 @@ func TestTick_HeartbeatOK(t *testing.T) {
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -663,6 +671,22 @@ func TestTick_HeartbeatOK(t *testing.T) {
 	}
 }
 
+func TestHeartbeatWorkerRequiresTaskOwnerBeforeExecute(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check system status"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
+	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30)
+
+	if err := svc.tick(context.Background()); err == nil {
+		t.Fatal("tick error = nil, want missing task owner")
+	}
+	if agent.called {
+		t.Fatal("worker executed without a configured task owner")
+	}
+}
+
 func TestTick_HeartbeatUsesShiroWorkerRoute(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "persona"), 0755)
@@ -670,7 +694,7 @@ func TestTick_HeartbeatUsesShiroWorkerRoute(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check system status"), 0644)
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30)
 
 	if err := svc.tick(context.Background()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -722,7 +746,7 @@ func TestTick_Notification(t *testing.T) {
 
 	agent := &mockWorkerAgent{response: "Disk usage is 95%"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -742,7 +766,7 @@ func TestTick_NoFile(t *testing.T) {
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -760,7 +784,7 @@ func TestTick_EmptyFile(t *testing.T) {
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -778,7 +802,7 @@ func TestTick_WorkerError(t *testing.T) {
 
 	agent := &mockWorkerAgent{err: context.DeadlineExceeded}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err == nil {
@@ -806,7 +830,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesDraftReportAndPendingVaultUpdate(t *te
 	listener := &recordingEventListener{}
 	agent := &mockWorkerAgent{response: "draft report body"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, dir, 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, dir, 30).
 		WithWorkstreamStore(store).
 		WithEventListener(listener)
 
@@ -874,7 +898,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesRevenueDailyRoutineDraftReport(t *test
 		decisions: []domainrevenue.PolicyDecisionRecord{{DecisionID: "dec_1", DecisionType: "external_publish", Status: "blocked"}},
 	}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "revenue draft"}, sender, dir, 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{response: "revenue draft"}, sender, dir, 30).
 		WithWorkstreamStore(workstreamStore).
 		WithRevenueDailyRoutineStore(revenueStore)
 
@@ -922,7 +946,7 @@ func TestRunDueWorkstreamHeartbeatsRecordsSkillBootstrap(t *testing.T) {
 		}},
 	}
 	skills := skillbootstrap.NewBootstrapService(skillStore).WithNow(func() time.Time { return now })
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "draft"}, &mockSender{}, dir, 30).
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{response: "draft"}, &mockSender{}, dir, 30).
 		WithWorkstreamStore(workstreamStore).
 		WithSkillBootstrap(skills)
 
@@ -972,7 +996,7 @@ func TestRunDueWorkstreamHeartbeatsAppliesPendingSteeringAtSafeCheckpoint(t *tes
 		},
 	}
 	agent := &mockWorkerAgent{response: "draft"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30).WithWorkstreamStore(store)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30).WithWorkstreamStore(store)
 
 	if _, err := svc.RunDueWorkstreamHeartbeats(context.Background(), now); err != nil {
 		t.Fatalf("RunDueWorkstreamHeartbeats failed: %v", err)
@@ -1017,7 +1041,7 @@ func TestRunDueWorkstreamHeartbeatsSkipsInactiveOrFutureSchedules(t *testing.T) 
 		},
 	}
 	agent := &mockWorkerAgent{response: "should not run"}
-	svc := NewHeartbeatService(agent, &mockSender{}, t.TempDir(), 30).WithWorkstreamStore(store)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, t.TempDir(), 30).WithWorkstreamStore(store)
 
 	report, err := svc.RunDueWorkstreamHeartbeats(context.Background(), now)
 	if err != nil {
@@ -1036,7 +1060,7 @@ func TestTick_NilSender(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check"), 0644)
 
 	agent := &mockWorkerAgent{response: "Alert: something is wrong"}
-	svc := NewHeartbeatService(agent, nil, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, nil, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -1047,7 +1071,7 @@ func TestTick_NilSender(t *testing.T) {
 func TestStartStop(t *testing.T) {
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
 	sender := &mockSender{}
-	svc := NewHeartbeatService(agent, sender, t.TempDir(), 5)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, sender, t.TempDir(), 5)
 
 	svc.Start()
 	svc.Start() // 二重起動しないこと
@@ -1072,7 +1096,7 @@ func TestContextBuilder_WithWorkspaceFiles(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "skills", "weather"), 0755)
 	os.WriteFile(filepath.Join(dir, "skills", "weather", "SKILL.md"), []byte("# Weather lookup"), 0644)
 
-	svc := NewHeartbeatService(&mockWorkerAgent{}, &mockSender{}, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, &mockWorkerAgent{}, &mockSender{}, dir, 30)
 
 	// tick 経由で ContextBuilder が使われることを確認
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check system status"), 0644)
@@ -1117,7 +1141,7 @@ func TestContextBuilder_NoWorkspaceFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check system status"), 0644)
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -1138,7 +1162,7 @@ func TestTick_WithWorkspaceContext(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("Check alerts"), 0644)
 
 	agent := &mockWorkerAgent{response: "HEARTBEAT_OK"}
-	svc := NewHeartbeatService(agent, &mockSender{}, dir, 30)
+	svc := newHeartbeatServiceWithTaskOwner(t, agent, &mockSender{}, dir, 30)
 
 	err := svc.tick(context.Background())
 	if err != nil {
@@ -1151,5 +1175,160 @@ func TestTick_WithWorkspaceContext(t *testing.T) {
 	}
 	if !strings.Contains(agent.lastMsg, "# HEARTBEAT TASKS\nCheck alerts") {
 		t.Error("expected heartbeat tasks in message sent to agent")
+	}
+}
+
+func withHeartbeatTestTaskOwner(t *testing.T, svc *HeartbeatService) *HeartbeatService {
+	t.Helper()
+	store, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close heartbeat task store: %v", err)
+		}
+	})
+	return svc.WithTaskOwner(taskmanager.New(store, taskmanager.DefaultParallelLimits()), "shiro")
+}
+func newHeartbeatServiceWithTaskOwner(t *testing.T, worker WorkerAgent, sender NotificationSender, workspace string, interval int) *HeartbeatService {
+	t.Helper()
+	return withHeartbeatTestTaskOwner(t, NewHeartbeatService(worker, sender, workspace, interval))
+}
+func TestHeartbeatPersistsOwnerIdentityAndTerminalOutcome(t *testing.T) {
+	for _, mode := range []string{"success", "failure", "cancelled", "notification-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("check status"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := taskpersistence.NewJSONLStore(filepath.Join(dir, "tasks"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := store.Close(); err != nil {
+					t.Errorf("close heartbeat task store: %v", err)
+				}
+			})
+			owner := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+			worker := &mockWorkerAgent{response: "HEARTBEAT_OK"}
+			sender := &mockSender{}
+			want := domaintask.StatusSucceeded
+			if mode == "failure" {
+				worker.err = errors.New("worker failure")
+				want = domaintask.StatusFailed
+			}
+			if mode == "cancelled" {
+				worker.err = context.Canceled
+				want = domaintask.StatusCancelled
+			}
+			if mode == "notification-failure" {
+				worker.response = "notify"
+				sender.err = errors.New("notification failed")
+				want = domaintask.StatusFailed
+			}
+			worker.onExecute = func(ctx context.Context, input conversation.TurnInput) {
+				identity, identityErr := execution.IdentityFromContext(ctx)
+				if identityErr != nil {
+					t.Fatal(identityErr)
+				}
+				task, err := owner.Get(ctx, input.RootTaskID())
+				if err != nil || task.Status != domaintask.StatusRunning {
+					t.Fatalf("Task not durable before Worker: %+v %v", task, err)
+				}
+				run, err := owner.GetRun(ctx, identity.RunID)
+				if err != nil || run.TaskID != task.TaskID || run.Assignee != "shiro" || run.Status != domaintask.RunStatusRunning {
+					t.Fatalf("Run not durable before Worker: %+v %v", run, err)
+				}
+			}
+			err = NewHeartbeatService(worker, sender, dir, 30).WithTaskOwner(owner, "shiro").tick(context.Background())
+			if (err == nil) != (mode == "success") {
+				t.Fatalf("mode=%s err=%v", mode, err)
+			}
+			task, lookupErr := owner.Get(context.Background(), worker.lastInput.RootTaskID())
+			if lookupErr != nil || task.Status != want {
+				t.Fatalf("terminal Task=%+v err=%v", task, lookupErr)
+			}
+			runs, lookupErr := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+			if lookupErr != nil || len(runs) != 1 || runs[0].CompletedAt == nil || runs[0].Status == domaintask.RunStatusRunning {
+				t.Fatalf("terminal Runs=%+v err=%v", runs, lookupErr)
+			}
+		})
+	}
+}
+
+type failingHeartbeatTaskOwner struct {
+	TaskOwner
+	createErr, startErr, finishErr error
+}
+
+func (o failingHeartbeatTaskOwner) Create(ctx context.Context, task domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if o.createErr != nil {
+		return domaintask.Task{}, o.createErr
+	}
+	return o.TaskOwner.Create(ctx, task, shared)
+}
+func (o failingHeartbeatTaskOwner) StartRunWithReason(ctx context.Context, id modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
+	if o.startErr != nil {
+		return domaintask.Run{}, o.startErr
+	}
+	return o.TaskOwner.StartRunWithReason(ctx, id, reason)
+}
+func (o failingHeartbeatTaskOwner) Succeed(ctx context.Context, id modulecore.TaskID, summary string) (domaintask.Task, error) {
+	if o.finishErr != nil {
+		return domaintask.Task{}, o.finishErr
+	}
+	return o.TaskOwner.Succeed(ctx, id, summary)
+}
+func TestHeartbeatTaskOwnerFailuresRemainFailures(t *testing.T) {
+	for _, mode := range []string{"create", "start", "finish", "prebound"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("check"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := taskpersistence.NewJSONLStore(filepath.Join(dir, "tasks"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := store.Close(); err != nil {
+					t.Errorf("close heartbeat task store: %v", err)
+				}
+			})
+			manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+			failure := errors.New("owner failure")
+			owner := failingHeartbeatTaskOwner{TaskOwner: manager}
+			switch mode {
+			case "create":
+				owner.createErr = failure
+			case "start":
+				owner.startErr = failure
+			case "finish":
+				owner.finishErr = failure
+			}
+			worker := &mockWorkerAgent{response: "HEARTBEAT_OK"}
+			ctx := context.Background()
+			if mode == "prebound" {
+				ctx, err = execution.WithIdentity(ctx, modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = NewHeartbeatService(worker, &mockSender{}, dir, 30).WithTaskOwner(owner, "shiro").tick(ctx)
+			if err == nil || (mode != "prebound" && !errors.Is(err, failure)) {
+				t.Fatalf("lost owner error: %v", err)
+			}
+			if worker.called != (mode == "finish") {
+				t.Fatalf("unexpected Worker invocation for %s: %t", mode, worker.called)
+			}
+			if mode == "start" {
+				tasks, listErr := manager.List(context.Background(), domaintask.Filter{})
+				if listErr != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusFailed {
+					t.Fatalf("failed start left Task active: %+v %v", tasks, listErr)
+				}
+			}
+		})
 	}
 }

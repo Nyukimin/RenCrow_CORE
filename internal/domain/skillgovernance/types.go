@@ -119,20 +119,20 @@ type ContributionGateLog struct {
 
 type ExternalPRSubmitRecord struct {
 	ActionID            modulecore.ActionID `json:"action_id"`
-	ContributionEventID string    `json:"contribution_event_id"`
-	Repo                string    `json:"repo"`
-	TargetBranch        string    `json:"target_branch,omitempty"`
-	Title               string    `json:"title,omitempty"`
-	DiffPath            string    `json:"diff_path,omitempty"`
-	TestResult          string    `json:"test_result,omitempty"`
-	SubmitStatus        string    `json:"submit_status"`
-	PRURL               string    `json:"pr_url,omitempty"`
-	FailureReason       string    `json:"failure_reason,omitempty"`
-	ExternalPRCreated   bool      `json:"external_pr_created"`
-	PostSubmitVerified  bool      `json:"post_submit_verified"`
-	PostSubmitEvidence  string    `json:"post_submit_evidence,omitempty"`
-	PRAdapter           string    `json:"pr_adapter,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	ContributionEventID string              `json:"contribution_event_id"`
+	Repo                string              `json:"repo"`
+	TargetBranch        string              `json:"target_branch,omitempty"`
+	Title               string              `json:"title,omitempty"`
+	DiffPath            string              `json:"diff_path,omitempty"`
+	TestResult          string              `json:"test_result,omitempty"`
+	SubmitStatus        string              `json:"submit_status"`
+	PRURL               string              `json:"pr_url,omitempty"`
+	FailureReason       string              `json:"failure_reason,omitempty"`
+	ExternalPRCreated   bool                `json:"external_pr_created"`
+	PostSubmitVerified  bool                `json:"post_submit_verified"`
+	PostSubmitEvidence  string              `json:"post_submit_evidence,omitempty"`
+	PRAdapter           string              `json:"pr_adapter,omitempty"`
+	CreatedAt           time.Time           `json:"created_at"`
 }
 
 type CoderTranscriptEntry struct {

@@ -132,6 +132,8 @@ func TestTailscaleViewerOnlyGuardBlocksInvalidCMDInteractionProfiles(t *testing.
 		{name: "wrong method for profile", method: http.MethodPost, path: "/health", client: "RenCrow_CMD", profile: "cmd-diagnostics"},
 		{name: "non viewer arbitrary path", method: http.MethodGet, path: "/v1/not-allowlisted", client: "RenCrow_CMD", profile: "cmd-diagnostics"},
 		{name: "funnel diagnostics", method: http.MethodGet, path: "/health", client: "RenCrow_CMD", profile: "cmd-diagnostics", funnel: true},
+		{name: "identity graph outside CMD scope", method: http.MethodGet, path: "/viewer/identity-graph", client: "RenCrow_CMD", profile: "cmd-diagnostics"},
+		{name: "identity graph internet funnel", method: http.MethodGet, path: "/viewer/identity-graph", funnel: true},
 	}
 
 	for _, tt := range tests {

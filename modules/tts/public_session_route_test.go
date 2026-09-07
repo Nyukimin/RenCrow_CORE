@@ -6,7 +6,7 @@ func TestNewPublicSessionRoute(t *testing.T) {
 	got, ok := NewPublicSessionRoute(PublicSessionRouteRegistration{
 		InternalSessionID: " internal-tts ",
 		PublicSessionID:   " idle-session ",
-		ResponseID:        " idle-session:0001 ",
+		PublicPlaybackRef: " idle-session:0001 ",
 		MessageID:         " idle-session:msg:0001 ",
 		TurnIndex:         1,
 		Generation:        2,
@@ -14,7 +14,7 @@ func TestNewPublicSessionRoute(t *testing.T) {
 	if !ok {
 		t.Fatal("route should be accepted")
 	}
-	if got.PublicSessionID != "idle-session" || got.ResponseID != "idle-session:0001" || got.MessageID != "idle-session:msg:0001" {
+	if got.PublicSessionID != "idle-session" || got.PublicPlaybackRef != "idle-session:0001" || got.MessageID != "idle-session:msg:0001" {
 		t.Fatalf("route was not normalized: %+v", got)
 	}
 	if got.UtteranceID != "idle-session:msg:0001:utt:0000" || got.Generation != 2 || got.ChunkIndexes == nil {
@@ -35,7 +35,7 @@ func TestPublicSessionRouteMatchesTimeout(t *testing.T) {
 	route, ok := NewPublicSessionRoute(PublicSessionRouteRegistration{
 		InternalSessionID: "tts-1",
 		PublicSessionID:   "idle-1",
-		ResponseID:        "idle-1:0001",
+		PublicPlaybackRef: "idle-1:0001",
 		MessageID:         "idle-1:msg:0001",
 		TurnIndex:         1,
 	})

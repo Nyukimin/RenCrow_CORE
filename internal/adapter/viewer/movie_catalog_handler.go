@@ -127,18 +127,18 @@ type movieCatalogFetchCandidate struct {
 }
 
 type movieCatalogFetchResponse struct {
-	Available      bool   `json:"available"`
-	DBPath         string `json:"db_path"`
-	Status         string `json:"status"`
-	Kind           string `json:"kind,omitempty"`
-	Query          string `json:"query,omitempty"`
-	URL            string `json:"url,omitempty"`
-	JobID          string `json:"job_id,omitempty"`
-	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
-	ArtifactBytes  int64  `json:"artifact_bytes,omitempty"`
-	ImportedMovies int    `json:"imported_movies,omitempty"`
-	ImportedPeople int    `json:"imported_people,omitempty"`
-	ImportedEdges  int    `json:"imported_edges,omitempty"`
+	Available          bool   `json:"available"`
+	DBPath             string `json:"db_path"`
+	Status             string `json:"status"`
+	Kind               string `json:"kind,omitempty"`
+	Query              string `json:"query,omitempty"`
+	URL                string `json:"url,omitempty"`
+	ExternalCrawlJobID string `json:"job_id,omitempty"`
+	ArtifactSHA256     string `json:"artifact_sha256,omitempty"`
+	ArtifactBytes      int64  `json:"artifact_bytes,omitempty"`
+	ImportedMovies     int    `json:"imported_movies,omitempty"`
+	ImportedPeople     int    `json:"imported_people,omitempty"`
+	ImportedEdges      int    `json:"imported_edges,omitempty"`
 	// Deprecated compatibility fields. CORE no longer exposes a local Python
 	// command; sidecar metadata is returned through job_id/artifact fields.
 	Command    []string                     `json:"command,omitempty"`
@@ -324,16 +324,16 @@ func HandleMovieCatalogFetch(opts MovieCatalogOptions) http.HandlerFunc {
 			ArtifactDir:              filepath.Dir(dbPath),
 		})
 		resp := movieCatalogFetchResponse{
-			Available:      true,
-			DBPath:         dbPath,
-			Kind:           req.Kind,
-			URL:            targetURL,
-			Query:          crawlQuery,
-			Status:         "ok",
-			JobID:          crawlResult.JobID,
-			Stdout:         crawlResult.Output,
-			ArtifactSHA256: crawlResult.ArtifactSHA256,
-			ArtifactBytes:  crawlResult.ArtifactBytes,
+			Available:          true,
+			DBPath:             dbPath,
+			Kind:               req.Kind,
+			URL:                targetURL,
+			Query:              crawlQuery,
+			Status:             "ok",
+			ExternalCrawlJobID: crawlResult.ExternalCrawlJobID,
+			Stdout:             crawlResult.Output,
+			ArtifactSHA256:     crawlResult.ArtifactSHA256,
+			ArtifactBytes:      crawlResult.ArtifactBytes,
 		}
 		if runErr != nil {
 			resp.Status = "error"

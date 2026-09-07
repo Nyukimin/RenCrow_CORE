@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
@@ -148,4 +149,15 @@ func staticPromptHash(messages []llm.Message) string {
 		hash.Write([]byte{0})
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// RuntimeContextProvider is injected once before serving requests. It reads
+// current owner capabilities without mutating shared Agent configuration.
+type RuntimeContextProvider func(context.Context, string) string
+
+func currentRuntimeContext(ctx context.Context, provider RuntimeContextProvider, recipient, fallback string) string {
+	if provider != nil {
+		return strings.TrimSpace(provider(ctx, recipient))
+	}
+	return strings.TrimSpace(fallback)
 }

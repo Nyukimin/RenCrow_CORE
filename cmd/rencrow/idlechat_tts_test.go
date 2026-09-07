@@ -126,7 +126,7 @@ func TestEmitIdleChatTTSSkipsSynthesisWhenNoViewerClients(t *testing.T) {
 	if len(bridge.startReqs) != 0 || len(bridge.pushTexts) != 0 || len(bridge.endIDs) != 0 {
 		t.Fatalf("TTS bridge must remain untouched, got start=%d push=%d end=%d", len(bridge.startReqs), len(bridge.pushTexts), len(bridge.endIDs))
 	}
-	if got := snapshotIdleChatTTSPending(); got.PendingSessionCount != 0 || got.PendingResponseCount != 0 {
+	if got := snapshotIdleChatTTSPending(); got.PendingSessionCount != 0 || got.PendingPublicPlaybackCount != 0 {
 		t.Fatalf("pending should stay empty without Viewer clients: %+v", got)
 	}
 }
@@ -187,10 +187,10 @@ func TestIdleChatViewerDisconnectClearsPlaybackWaits(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("viewer disconnect should close pending TTS wait channel")
 	}
-	if got := snapshotIdleChatTTSPending(); got.PendingSessionCount != 0 || got.PendingResponseCount != 0 {
+	if got := snapshotIdleChatTTSPending(); got.PendingSessionCount != 0 || got.PendingPublicPlaybackCount != 0 {
 		t.Fatalf("pending should be cleared after viewer disconnect: %+v", got)
 	}
-	if got := resolveTTSPublicResponse("idle-disconnect-tts"); got != "" {
+	if got := resolveTTSPublicPlaybackRef("idle-disconnect-tts"); got != "" {
 		t.Fatalf("public session route should be cleared, got %q", got)
 	}
 }
@@ -273,8 +273,8 @@ func TestEmitIdleChatTTSCompletesNormallyOnPushFailure(t *testing.T) {
 	if len(bridge.endIDs) != 1 {
 		t.Fatalf("expected end session after push failure, got %d", len(bridge.endIDs))
 	}
-	if got := snapshotIdleChatTTSPending(); got.PendingResponseCount != 0 {
-		t.Fatalf("pending response count = %d, want 0 after log-only TTS failure", got.PendingResponseCount)
+	if got := snapshotIdleChatTTSPending(); got.PendingPublicPlaybackCount != 0 {
+		t.Fatalf("pending response count = %d, want 0 after log-only TTS failure", got.PendingPublicPlaybackCount)
 	}
 	select {
 	case <-lifecycle.Done:
@@ -305,14 +305,14 @@ func TestEmitIdleChatTTSSendsStorySimpleTTSEvent(t *testing.T) {
 	if len(bridge.startReqs) != 1 {
 		t.Fatalf("expected 1 start request, got %d", len(bridge.startReqs))
 	}
-	if got := bridge.startReqs[0].ResponseID; got != "story-simple-1:story:0001" {
+	if got := bridge.startReqs[0].PublicPlaybackRef; got != "story-simple-1:story:0001" {
 		t.Fatalf("unexpected response id: %q", got)
 	}
 	if len(bridge.pushTexts) != 1 || bridge.pushTexts[0] != "今夜の物語です。" {
 		t.Fatalf("unexpected pushed texts: %#v", bridge.pushTexts)
 	}
-	if got := snapshotIdleChatTTSPending(); got.PendingResponseCount != 1 {
-		t.Fatalf("pending response count = %d, want 1", got.PendingResponseCount)
+	if got := snapshotIdleChatTTSPending(); got.PendingPublicPlaybackCount != 1 {
+		t.Fatalf("pending response count = %d, want 1", got.PendingPublicPlaybackCount)
 	}
 	if !notifyIdleChatTTSPlaybackCompleted("story-simple-1:story:0001") {
 		t.Fatal("expected response id to be consumable by playback ACK")
@@ -330,36 +330,36 @@ func TestIdleChatTTSPendingSnapshotCountsOutstandingRoutes(t *testing.T) {
 	const (
 		publicSessionID   = "idle-snapshot"
 		internalSessionID = "idle-snapshot-tts"
-		responseID        = "idle-snapshot:0000"
+		publicPlaybackRef = "idle-snapshot:0000"
 	)
-	registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, responseID, "idle-snapshot:msg:0001", 1)
-	registerIdleChatTTSPending(internalSessionID, responseID)
+	registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, publicPlaybackRef, "idle-snapshot:msg:0001", 1)
+	registerIdleChatTTSPending(internalSessionID, publicPlaybackRef)
 	registerIdleChatTopicGate(publicSessionID, internalSessionID)
 
 	pending := snapshotIdleChatTTSPending()
-	if pending.PendingSessionCount != 1 || pending.PendingResponseCount != 1 || pending.TopicGateCount != 1 || pending.TopicRouteCount != 1 {
+	if pending.PendingSessionCount != 1 || pending.PendingPublicPlaybackCount != 1 || pending.TopicGateCount != 1 || pending.TopicRouteCount != 1 {
 		t.Fatalf("unexpected pending snapshot before ack: %+v", pending)
 	}
 	if len(pending.PendingSessionIDs) != 1 || pending.PendingSessionIDs[0] != internalSessionID {
 		t.Fatalf("unexpected pending session IDs before ack: %+v", pending.PendingSessionIDs)
 	}
-	if len(pending.PendingResponseIDs) != 1 || pending.PendingResponseIDs[0] != responseID {
-		t.Fatalf("unexpected pending response IDs before ack: %+v", pending.PendingResponseIDs)
+	if len(pending.PendingPublicPlaybackRefs) != 1 || pending.PendingPublicPlaybackRefs[0] != publicPlaybackRef {
+		t.Fatalf("unexpected pending response IDs before ack: %+v", pending.PendingPublicPlaybackRefs)
 	}
 	public := snapshotTTSPublicSessions()
 	if public.RouteCount != 1 {
 		t.Fatalf("unexpected public session snapshot before ack: %+v", public)
 	}
 
-	if !notifyIdleChatTTSPlaybackCompleted(responseID) {
+	if !notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef) {
 		t.Fatal("expected playback completion to match pending response")
 	}
 
 	pending = snapshotIdleChatTTSPending()
-	if pending.PendingSessionCount != 0 || pending.PendingResponseCount != 0 || pending.TopicGateCount != 0 || pending.TopicRouteCount != 0 {
+	if pending.PendingSessionCount != 0 || pending.PendingPublicPlaybackCount != 0 || pending.TopicGateCount != 0 || pending.TopicRouteCount != 0 {
 		t.Fatalf("unexpected pending snapshot after ack: %+v", pending)
 	}
-	if len(pending.PendingSessionIDs) != 0 || len(pending.PendingResponseIDs) != 0 {
+	if len(pending.PendingSessionIDs) != 0 || len(pending.PendingPublicPlaybackRefs) != 0 {
 		t.Fatalf("pending IDs should be empty after ack: %+v", pending)
 	}
 	public = snapshotTTSPublicSessions()
@@ -758,17 +758,17 @@ func TestEmitIdleChatTTSAsyncPrefetchesWithoutPlaybackCompletion(t *testing.T) {
 		t.Fatalf("expected queued speech to be synthesized without playback completion, got %d pushes", len(bridge.pushTexts))
 	}
 
-	var responseIDs []string
-	for _, responseID := range snapshotIdleChatTTSPending().PendingResponseIDs {
-		if strings.HasPrefix(responseID, "idle-prefetch-1:") {
-			responseIDs = append(responseIDs, responseID)
+	var publicPlaybackRefs []string
+	for _, publicPlaybackRef := range snapshotIdleChatTTSPending().PendingPublicPlaybackRefs {
+		if strings.HasPrefix(publicPlaybackRef, "idle-prefetch-1:") {
+			publicPlaybackRefs = append(publicPlaybackRefs, publicPlaybackRef)
 		}
 	}
-	if len(responseIDs) != 2 {
-		t.Fatalf("expected 2 pending playback responses, got %d", len(responseIDs))
+	if len(publicPlaybackRefs) != 2 {
+		t.Fatalf("expected 2 pending playback responses, got %d", len(publicPlaybackRefs))
 	}
-	for _, responseID := range responseIDs {
-		notifyIdleChatTTSPlaybackCompleted(responseID)
+	for _, publicPlaybackRef := range publicPlaybackRefs {
+		notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef)
 	}
 	if bridge.pushTexts[len(bridge.pushTexts)-2] != "先に合成する発話です。" ||
 		bridge.pushTexts[len(bridge.pushTexts)-1] != "再生完了を待たずに合成する発話です。" {

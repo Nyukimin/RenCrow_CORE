@@ -154,16 +154,18 @@ func TestVoiceChatBridgeTracker_InterruptsIdleChatDuringVoiceSession(t *testing.
 	tracker := newVoiceChatBridgeTracker(handler, idle)
 
 	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer"}`))
-	if idle.activities != 1 {
-		t.Fatalf("expected voice session start to notify idle activity, got %d", idle.activities)
+	activities, chatBusy := idle.snapshot()
+	if activities != 1 {
+		t.Fatalf("expected voice session start to notify idle activity, got %d", activities)
 	}
-	if got := idle.chatBusy; len(got) != 1 || got[0] != true {
-		t.Fatalf("expected chat busy to start on voice input, got %#v", got)
+	if len(chatBusy) != 1 || chatBusy[0] != true {
+		t.Fatalf("expected chat busy to start on voice input, got %#v", chatBusy)
 	}
 
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"おはよう"}`))
-	if got := idle.chatBusy; len(got) != 2 || got[1] != false {
-		t.Fatalf("expected chat busy to end after voice final, got %#v", got)
+	_, chatBusy = idle.snapshot()
+	if len(chatBusy) != 2 || chatBusy[1] != false {
+		t.Fatalf("expected chat busy to end after voice final, got %#v", chatBusy)
 	}
 }
 
@@ -174,8 +176,9 @@ func TestVoiceChatBridgeTracker_EndsIdleChatInterruptOnCancel(t *testing.T) {
 	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer"}`))
 	tracker.observeClientText([]byte(`{"type":"session.cancel","utterance_id":"utt-1"}`))
 
-	if got := idle.chatBusy; len(got) != 2 || got[0] != true || got[1] != false {
-		t.Fatalf("expected chat busy start/end on voice cancel, got %#v", got)
+	_, chatBusy := idle.snapshot()
+	if len(chatBusy) != 2 || chatBusy[0] != true || chatBusy[1] != false {
+		t.Fatalf("expected chat busy start/end on voice cancel, got %#v", chatBusy)
 	}
 }
 

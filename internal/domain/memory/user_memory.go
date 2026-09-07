@@ -34,24 +34,24 @@ const (
 )
 
 type UserMemory struct {
-	ID               string              `json:"id"`
-	Namespace        string              `json:"namespace"`
-	UserID           string              `json:"user_id"`
-	Type             string              `json:"type"`
-	Statement        string              `json:"statement"`
-	EvidenceEventIDs []string            `json:"evidence_event_ids"`
-	CreatedByEventID modulecore.EventID  `json:"created_by_event_id,omitempty"`
-	UpdatedByEventID modulecore.EventID  `json:"updated_by_event_id,omitempty"`
-	Confidence       float64             `json:"confidence"`
-	Sensitivity      string              `json:"sensitivity"`
-	State            string              `json:"state"`
-	Scope            string              `json:"scope"`
-	Active           bool                `json:"active"`
-	LifecycleStatus  string              `json:"lifecycle_status,omitempty"`
-	DecayScore       float64             `json:"decay_score,omitempty"`
-	SupersededBy     string              `json:"superseded_by,omitempty"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+	ID               string             `json:"id"`
+	Namespace        string             `json:"namespace"`
+	UserID           string             `json:"user_id"`
+	Type             string             `json:"type"`
+	Statement        string             `json:"statement"`
+	EvidenceEventIDs []string           `json:"evidence_event_ids"`
+	CreatedByEventID modulecore.EventID `json:"created_by_event_id,omitempty"`
+	UpdatedByEventID modulecore.EventID `json:"updated_by_event_id,omitempty"`
+	Confidence       float64            `json:"confidence"`
+	Sensitivity      string             `json:"sensitivity"`
+	State            string             `json:"state"`
+	Scope            string             `json:"scope"`
+	Active           bool               `json:"active"`
+	LifecycleStatus  string             `json:"lifecycle_status,omitempty"`
+	DecayScore       float64            `json:"decay_score,omitempty"`
+	SupersededBy     string             `json:"superseded_by,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 type CreateUserMemoryInput struct {

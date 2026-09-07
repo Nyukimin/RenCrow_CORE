@@ -142,7 +142,7 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	for index, ref := range request.BlockerResolutionRefs {
 		verified, verifyErr := s.verifyEvidence(ctx, EvidenceVerificationRequest{
 			Ref:                    ref,
-			BacklogItemID: string(blocked.BacklogItemID),
+			BacklogItemID:          string(blocked.BacklogItemID),
 			ImplementationUnitID:   freeze.BlockedUnitID,
 			ImplementationRevision: freeze.BlockedRevision,
 			TargetDeliveryState:    domainbacklog.DeliveryBlocked,

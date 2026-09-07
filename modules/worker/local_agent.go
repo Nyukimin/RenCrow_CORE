@@ -44,10 +44,3 @@ func FormatAgentUnavailableReason(prefix string, err error) string {
 	}
 	return msg + ": " + detail
 }
-
-func LocalCoderReplyTarget(from string) string {
-	if strings.EqualFold(strings.TrimSpace(from), "shiro") {
-		return "mio"
-	}
-	return strings.TrimSpace(from)
-}

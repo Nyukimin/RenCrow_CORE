@@ -118,17 +118,17 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 	}
 
 	publicSessionID := strings.TrimSpace(ev.SessionID)
-	responseID := nextTTSPublicResponseIDForMessage(publicSessionID, ev.MessageID)
+	publicPlaybackRef := nextTTSPublicPlaybackRefForMessage(publicSessionID, ev.MessageID)
 	plan, ok := moduletts.BuildIdleChatTTSPlan(moduletts.IdleChatTTSPlanInput{
-		PublicSessionID: publicSessionID,
-		ResponseID:      responseID,
-		MessageID:       ev.MessageID,
-		TurnIndex:       ev.TurnIndex,
-		Speaker:         ev.From,
-		SpeechText:      filtered,
-		DisplayText:     displayText,
-		TimeOfDay:       idleChatTimeOfDay(),
-		Now:             time.Now(),
+		PublicSessionID:   publicSessionID,
+		PublicPlaybackRef: publicPlaybackRef,
+		MessageID:         ev.MessageID,
+		TurnIndex:         ev.TurnIndex,
+		Speaker:           ev.From,
+		SpeechText:        filtered,
+		DisplayText:       displayText,
+		TimeOfDay:         idleChatTimeOfDay(),
+		Now:               time.Now(),
 	})
 	if !ok {
 		return false
@@ -145,23 +145,23 @@ func emitIdleChatTTSWithLifecycle(ctx context.Context, bridge orchestrator.TTSBr
 	})
 
 	expectPlaybackAck := true
-	registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
+	registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex)
 	registerIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	defer unregisterIdleChatTTSSynthesisLifecycle(plan.SessionID, lifecycle)
 	if expectPlaybackAck {
-		registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
+		registerIdleChatTTSPending(plan.SessionID, plan.PublicPlaybackRef)
 	} else {
-		log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.ResponseID)
+		log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.PublicPlaybackRef)
 	}
 	if err := bridge.StartSession(ctx, orchestrator.TTSSessionStart{
-		SessionID:        plan.SessionID,
-		ResponseID:       plan.ResponseID,
-		TraceID:          string(ev.TraceID),
-		CharacterID:      plan.CharacterID,
-		VoiceID:          plan.VoiceID,
-		SpeechMode:       plan.SpeechMode,
-		Event:            plan.Event,
-		ConversationMode: plan.ConversationMode,
+		SessionID:         plan.SessionID,
+		PublicPlaybackRef: plan.PublicPlaybackRef,
+		TraceID:           string(ev.TraceID),
+		CharacterID:       plan.CharacterID,
+		VoiceID:           plan.VoiceID,
+		SpeechMode:        plan.SpeechMode,
+		Event:             plan.Event,
+		ConversationMode:  plan.ConversationMode,
 		Context: moduletts.EmotionContext{
 			ConversationMode: plan.ConversationMode,
 			TimeOfDay:        plan.TimeOfDay,

@@ -19,6 +19,7 @@ type Routes struct {
 	AgentDetail       http.HandlerFunc
 	Tasks             http.HandlerFunc
 	TaskDetail        http.HandlerFunc
+	IdentityGraph     http.HandlerFunc
 	TaskNotifications http.HandlerFunc
 	Logs              http.HandlerFunc
 	PromptDebug       http.HandlerFunc
@@ -43,6 +44,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/agent/detail", routes.AgentDetail)
 	registerRoute(mux, "/viewer/tasks", routes.Tasks)
 	registerRoute(mux, "/viewer/task/detail", routes.TaskDetail)
+	registerRoute(mux, "/viewer/identity-graph", routes.IdentityGraph)
 	registerRoute(mux, "/viewer/task-notifications", routes.TaskNotifications)
 	registerRoute(mux, "/viewer/logs", routes.Logs)
 	registerRoute(mux, "/viewer/prompt-debug", routes.PromptDebug)

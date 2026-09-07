@@ -26,16 +26,16 @@ type RenCrowTTSBridgeConfig struct {
 	RequestTimeout     time.Duration
 	DownloadAudio      bool
 	Sink               AudioSink
-	OnChunkReady       func(sessionID, responseID, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
+	OnChunkReady       func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
 	OnSessionCompleted func(sessionID, traceID, characterID string)
 }
 
 type renCrowTTSSession struct {
-	characterID string
-	responseID  string
-	traceID     modulecore.TraceID
-	voiceID     string
-	nextChunk   int
+	characterID       string
+	publicPlaybackRef string
+	traceID           modulecore.TraceID
+	voiceID           string
+	nextChunk         int
 }
 
 const renCrowTTSMaxConcurrentSynthesis = 2
@@ -83,22 +83,22 @@ func NewRenCrowTTSBridge(cfg RenCrowTTSBridgeConfig) *RenCrowTTSBridge {
 
 func (b *RenCrowTTSBridge) StartSession(_ context.Context, req orchestrator.TTSSessionStart) error {
 	start, err := moduletts.BuildRenCrowSessionStart(moduletts.RenCrowSessionStartInput{
-		SessionID:      req.SessionID,
-		CharacterID:    req.CharacterID,
-		ResponseID:     req.ResponseID,
-		RequestedVoice: req.VoiceID,
-		DefaultVoice:   b.cfg.VoiceID,
+		SessionID:         req.SessionID,
+		CharacterID:       req.CharacterID,
+		PublicPlaybackRef: req.PublicPlaybackRef,
+		RequestedVoice:    req.VoiceID,
+		DefaultVoice:      b.cfg.VoiceID,
 	})
 	if err != nil {
 		return err
 	}
 	b.mu.Lock()
 	b.sessions[start.SessionID] = &renCrowTTSSession{
-		characterID: start.CharacterID,
-		responseID:  start.ResponseID,
-		traceID:     canonicalRenCrowTTSTraceID(req.TraceID),
-		voiceID:     start.VoiceID,
-		nextChunk:   0,
+		characterID:       start.CharacterID,
+		publicPlaybackRef: start.PublicPlaybackRef,
+		traceID:           canonicalRenCrowTTSTraceID(req.TraceID),
+		voiceID:           start.VoiceID,
+		nextChunk:         0,
 	}
 	b.mu.Unlock()
 	return nil
@@ -123,7 +123,7 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 
 	session, firstChunk := b.reserveSessionChunks(sessionID, len(plan))
 	characterID := session.characterID
-	responseID := session.responseID
+	publicPlaybackRef := session.publicPlaybackRef
 	voiceID := moduletts.ChooseNonEmpty(session.voiceID, b.cfg.VoiceID)
 	requests := make([]renCrowTTSPlanRequest, 0, len(plan))
 	for planIndex, item := range plan {
@@ -196,7 +196,7 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 			PauseAfter: chunkPauseForText(request.speechText),
 		}
 		if b.cfg.OnChunkReady != nil {
-			b.cfg.OnChunkReady(sessionID, responseID, string(session.traceID), ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
+			b.cfg.OnChunkReady(sessionID, publicPlaybackRef, string(session.traceID), ch.ChunkIndex, characterID, request.speechText, strings.TrimSpace(request.item.DisplayText), result.audioPath, ch.AudioURL)
 		}
 		if b.cfg.Sink != nil {
 			if err := b.cfg.Sink.SubmitChunk(ctx, sessionID, ch); err != nil {

@@ -1,9 +1,9 @@
 package backlog
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"errors"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"reflect"
 	"testing"
 	"time"
@@ -292,7 +292,7 @@ func TestServiceIntakeFixesLifecycleOwnerAndSeparatesModuleScope(t *testing.T) {
 	store := &memoryItemStore{}
 	svc := NewService(store, nil)
 	result, err := svc.Intake(context.Background(), IntakeRequest{
-		BacklogItemID: modulecore.BacklogItemID("module-scope"),
+		BacklogItemID:   modulecore.BacklogItemID("module-scope"),
 		Title:           "Module scope",
 		OwnerModule:     "RenCrow_STT",
 		TargetModules:   []string{"RenCrow_STT"},
@@ -554,6 +554,10 @@ func newLiveClosureRecoveryFixture(t *testing.T) (*Service, *recoveryDoneFailure
 
 func TestRecoverResumesLiveClosureWithoutLeaseBeforeQueue(t *testing.T) {
 	service, items, workstream := newLiveClosureRecoveryFixture(t)
+	before, found, err := workstream.FindClosureReceipt(context.Background(), "unit-recover-live:1:DONE")
+	if err != nil || !found || before.ActionID.Validate() != nil {
+		t.Fatalf("prepared closure must own a canonical action: %+v found=%v err=%v", before, found, err)
+	}
 	items.failDoneSave = false
 	if err := service.Recover(context.Background()); err != nil {
 		t.Fatalf("Recover must resume LIVE closure without lease: %v", err)
@@ -564,6 +568,10 @@ func TestRecoverResumesLiveClosureWithoutLeaseBeforeQueue(t *testing.T) {
 	closure, found, err := workstream.FindClosureReceipt(context.Background(), "unit-recover-live:1:DONE")
 	if err != nil || !found || closure.Status != domainworkstream.ClosureStatusCompleted {
 		t.Fatalf("recovered closure=%+v found=%v err=%v", closure, found, err)
+	}
+	doneStage, stageFound, stageErr := workstream.FindStageRunReceipt(context.Background(), "unit-recover-live:1:DONE")
+	if closure.ActionID != before.ActionID || stageErr != nil || !stageFound || doneStage.ActionID != before.ActionID {
+		t.Fatalf("recovery must preserve the prepared action %s: stage=%s closure=%s found=%v err=%v", before.ActionID, doneStage.ActionID, closure.ActionID, stageFound, stageErr)
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || found {
 		t.Fatalf("recovered closure retained lease found=%v err=%v", found, err)
@@ -613,7 +621,7 @@ func TestServiceIntakePreservesSchemaV2DesignCardAndRejectsUnknownSpecification(
 	store := &intakeDesignCardItemStore{}
 	service := NewService(store, nil)
 	request := IntakeRequest{
-		BacklogItemID: modulecore.BacklogItemID("design-card"),
+		BacklogItemID:  modulecore.BacklogItemID("design-card"),
 		FeatureID:      "atlas.design-card",
 		Kind:           "idea",
 		Title:          "Lossless Design Card",

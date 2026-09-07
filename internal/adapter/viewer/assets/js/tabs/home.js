@@ -1,5 +1,5 @@
 // Home / Daily Desk tab module.
-const DESK_INSTRUCTION_KEY = 'rencrow.viewer.instructions.v1';
+const DESK_INSTRUCTION_KEY = 'rencrow.viewer.instructions.v2';
 const DESK_REPORT_READ_KEY = 'rencrow.viewer.reportReads.v1';
 
 function deskJSONLoad(key, fallback) {
@@ -42,41 +42,41 @@ function deskOpenInstructions() {
 function deskAllReports() {
   const evidence = Array.isArray(state.evidence) ? state.evidence : [];
   const verification = Array.isArray(state.verificationReports) ? state.verificationReports : [];
-  const byJob = {};
+  const byTask = {};
   evidence.forEach((item) => {
-    const jobID = String(item.job_id || '');
-    if (!jobID) return;
-    byJob[jobID] = byJob[jobID] || {job_id: jobID};
-    byJob[jobID].evidence = item;
+    const taskID = String(item.task_id || '');
+    if (!taskID) return;
+    byTask[taskID] = byTask[taskID] || {task_id: taskID};
+    byTask[taskID].evidence = item;
   });
   verification.forEach((item) => {
-    const jobID = String(item.job_id || '');
-    if (!jobID) return;
-    byJob[jobID] = byJob[jobID] || {job_id: jobID};
-    byJob[jobID].verification = item;
+    const taskID = String(item.task_id || '');
+    if (!taskID) return;
+    byTask[taskID] = byTask[taskID] || {task_id: taskID};
+    byTask[taskID].verification = item;
   });
-  return Object.values(byJob).map(deskBuildReportView).sort((a, b) => (Date.parse(b.created_at || 0) || 0) - (Date.parse(a.created_at || 0) || 0));
+  return Object.values(byTask).map(deskBuildReportView).sort((a, b) => (Date.parse(b.created_at || 0) || 0) - (Date.parse(a.created_at || 0) || 0));
 }
 
 function deskBuildReportView(source) {
   const ev = source.evidence || {};
   const vr = source.verification || {};
-  const jobID = source.job_id || ev.job_id || vr.job_id || '';
+  const taskID = source.task_id || ev.task_id || vr.task_id || '';
   const status = deskReportStatus(ev, vr);
-  const title = ev.goal || vr.route || ('Job ' + jobID);
+  const title = ev.goal || vr.route || ('Task ' + taskID);
   const changed = Array.isArray(ev.steps) ? ev.steps.filter((s) => /file|diff|変更|生成|作成|追加|更新/i.test(String(s || ''))).slice(0, 6) : [];
   const verified = [];
   if (Array.isArray(ev.verification)) verified.push(...ev.verification.slice(-5));
   if (vr.status) verified.push('verification_status=' + vr.status + ' claims=' + String(vr.claim_count || 0));
   const failed = [];
-  if (ev.status === 'failed') failed.push(ev.error || ev.error_kind || 'job failed');
+  if (ev.status === 'failed') failed.push(ev.error || ev.error_kind || 'task failed');
   if (vr.status === 'unsupported' || vr.status === 'conflict') failed.push('verification ' + vr.status);
   const unconfirmed = [];
-  if (!ev.job_id) unconfirmed.push('execution evidence is not linked');
+  if (!ev.task_id) unconfirmed.push('execution evidence is not linked');
   if (vr.status === 'not_checked') unconfirmed.push('verification not checked');
   return {
-    report_id: 'rep_' + jobID,
-    job_id: jobID,
+    report_id: 'rep_' + taskID,
+    task_id: taskID,
     title,
     status,
     summary: deskReportSummary(ev, vr, title, status),
@@ -106,8 +106,8 @@ function deskReportSummary(ev, vr, title, status) {
 
 function deskEvidenceRefs(ev, vr) {
   const refs = [];
-  if (ev.job_id) refs.push({type: 'evidence', id: ev.job_id, path: '/viewer/evidence/detail?job_id=' + ev.job_id});
-  if (vr.job_id) refs.push({type: 'verification', id: vr.job_id, path: '/viewer/verification/detail?job_id=' + vr.job_id});
+  if (ev.task_id) refs.push({type: 'evidence', id: ev.task_id, path: '/viewer/evidence/detail?task_id=' + encodeURIComponent(ev.task_id)});
+  if (vr.task_id) refs.push({type: 'verification', id: vr.task_id, path: '/viewer/verification/detail?task_id=' + encodeURIComponent(vr.task_id)});
   return refs;
 }
 
@@ -118,8 +118,8 @@ function deskNextDecisions(status, vr) {
   return ['次の指示を作る'];
 }
 
-function deskRunningJobs() {
-  return Object.values(state.jobs || {}).filter((j) => !['done', 'idle'].includes(String(j.status || '').toLowerCase()));
+function deskRunningTasks() {
+  return Object.values(state.tasks || {}).filter((j) => !['done', 'idle'].includes(String(j.status || '').toLowerCase()));
 }
 
 function deskLatestConversation() {
@@ -135,7 +135,7 @@ function deskAgentList() {
 function deskStatusLabel() {
   const failed = (state.evidence || []).some((r) => r.status === 'failed') || (state.verificationReports || []).some((r) => r.status === 'unsupported' || r.status === 'conflict');
   if (failed) return {label: '要確認', cls: 'danger'};
-  if (deskRunningJobs().length > 0) return {label: '作業中', cls: 'warn'};
+  if (deskRunningTasks().length > 0) return {label: '作業中', cls: 'warn'};
   if (deskUnreadReports().length > 0) return {label: '報告あり', cls: 'warn'};
   return {label: '通常', cls: ''};
 }
@@ -159,7 +159,7 @@ function renderHomeDesk() {
   badge.className = 'desk-status-pill ' + status.cls;
   badge.textContent = status.label;
 
-  const running = deskRunningJobs();
+  const running = deskRunningTasks();
   const reports = deskUnreadReports();
   const instructions = deskOpenInstructions();
   statusCard.innerHTML =
@@ -167,7 +167,7 @@ function renderHomeDesk() {
     '<div class="desk-row"><span>状態</span><span class="desk-pill ' + status.cls + '">' + esc(status.label) + '</span></div>' +
     '<div class="desk-row"><span>最終更新</span><span>' + esc(fdt(new Date().toISOString())) + '</span></div>' +
     '<div class="desk-row"><span>Active Agents</span><span>' + esc(String(deskAgentList().filter((a) => a.item.state && a.item.state !== 'offline').length)) + '</span></div>' +
-    '<div class="desk-row"><span>進行中Job</span><span>' + esc(String(running.length)) + '</span></div>' +
+    '<div class="desk-row"><span>進行中Task</span><span>' + esc(String(running.length)) + '</span></div>' +
     '<div class="desk-row"><span>未読Report</span><span>' + esc(String(reports.length)) + '</span></div>' +
     '<div class="desk-row"><span>未完了Instruction</span><span>' + esc(String(instructions.length)) + '</span></div>' +
     (state.homeSendError ? '<div class="desk-row"><span>送信失敗</span><span class="desk-pill danger">' + esc(state.homeSendError) + '</span></div>' : '');
@@ -184,7 +184,7 @@ function renderHomeDesk() {
   )).join('') : '<div class="daily-desk-muted">進行中の作業はありません。</div>');
 
   reportCard.innerHTML = '<h3>未読レポート</h3>' + (reports.length ? reports.slice(0, 3).map((r) => (
-    '<div class="desk-item"><div>' + esc(short(r.title || '-', 90)) + '</div><div class="desk-code">' + esc(r.job_id || '-') + '</div><div class="desk-action-row"><span class="desk-pill">' + esc(r.status || '-') + '</span><button class="ctl-btn" onclick="switchTab(\'reports\')">Reportsで読む</button></div></div>'
+    '<div class="desk-item"><div>' + esc(short(r.title || '-', 90)) + '</div><div class="desk-code">' + esc(r.task_id || '-') + '</div><div class="desk-action-row"><span class="desk-pill">' + esc(r.status || '-') + '</span><button class="ctl-btn" onclick="switchTab(\'reports\')">Reportsで読む</button></div></div>'
   )).join('') : '<div class="daily-desk-muted">未読相当のレポートはありません。</div>');
 
   instructionCard.innerHTML = '<h3>未完了指示</h3>' + (instructions.length ? instructions.slice(0, 3).map((it) => (

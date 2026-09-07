@@ -50,7 +50,7 @@ func TestAtlasEvidenceVerifierEmbeddedSpecificationRejectsWrongMetadata(t *testi
 		Verified:   true,
 	}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
-		Ref: valid, ItemID: "item-spec", ImplementationUnitID: "unit-spec", ImplementationRevision: 1,
+		Ref: valid, BacklogItemID: "item-spec", ImplementationUnitID: "unit-spec", ImplementationRevision: 1,
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 	}
 	if ok, err := verifier.Verify(ctx, verificationRequest); err != nil || !ok {
@@ -106,7 +106,7 @@ func TestAtlasEvidenceVerifierExecutionReportRequiresExactSuccessfulFinishedRepo
 		Revision: sourceRevision, ObservedAt: finished.Format(time.RFC3339Nano), Passed: true, Verified: true,
 	}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
-		Ref: valid, ItemID: "item-execution", ImplementationUnitID: "unit-pass", ImplementationRevision: 2,
+		Ref: valid, BacklogItemID: "item-execution", ImplementationUnitID: "unit-pass", ImplementationRevision: 2,
 		TargetDeliveryState: stage,
 	}
 	if ok, err := verifier.Verify(context.Background(), verificationRequest); err != nil || !ok {
@@ -296,7 +296,7 @@ func atlasExecutionFixtureRequest(taskID modulecore.TaskID, stage, sourceRevisio
 			Stage: stage, Kind: "execution_report", Ref: "execution_report:" + taskID.String(),
 			Repository: domainbacklog.LifecycleOwnerModule, Revision: sourceRevision, SHA256: artifactHash,
 		},
-		ItemID: "item-execution", ImplementationUnitID: "unit-execution", ImplementationRevision: 7,
+		BacklogItemID: "item-execution", ImplementationUnitID: "unit-execution", ImplementationRevision: 7,
 		TargetDeliveryState: stage,
 	}
 }
@@ -351,7 +351,7 @@ func TestAtlasEvidenceVerifierDeploymentReceiptChecksOwnerAndTarget(t *testing.T
 	}
 	valid := domainbacklog.EvidenceRef{Stage: domainbacklog.DeliveryDeploy, Kind: "deploy_receipt", Ref: "receipt-core-1", Revision: strings.Repeat("a", 40), ObservedAt: finished.Format(time.RFC3339Nano), Passed: true, Verified: true}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
-		Ref: valid, ItemID: "item-deploy", ImplementationUnitID: "unit-deploy", ImplementationRevision: 3,
+		Ref: valid, BacklogItemID: "item-deploy", ImplementationUnitID: "unit-deploy", ImplementationRevision: 3,
 		TargetDeliveryState: domainbacklog.DeliveryDeploy,
 	}
 	if ok, err := verifier.Verify(context.Background(), verificationRequest); err != nil || !ok {
@@ -422,7 +422,7 @@ func TestAtlasEvidenceVerifierRestartReceiptRequiresExactRunningUnit(t *testing.
 		Stage: domainbacklog.DeliveryRestart, Kind: "deploy_receipt", Ref: "receipt-restart-good", Revision: revision,
 	}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
-		Ref: valid, ItemID: "item-restart", ImplementationUnitID: "unit-restart", ImplementationRevision: 5,
+		Ref: valid, BacklogItemID: "item-restart", ImplementationUnitID: "unit-restart", ImplementationRevision: 5,
 		TargetDeliveryState: domainbacklog.DeliveryRestart,
 	}
 	if ok, err := verifier.Verify(context.Background(), verificationRequest); err != nil || !ok {
@@ -479,7 +479,7 @@ func TestAtlasEvidenceVerifierRecordedBinaryHashIsCheckedWhenPresent(t *testing.
 	}
 	ref := domainbacklog.EvidenceRef{Stage: domainbacklog.DeliveryDeploy, Kind: "deployment_receipt", Ref: "receipt-hash-1", Revision: strings.Repeat("a", 40), SHA256: hex.EncodeToString(hash[:])}
 	verificationRequest := backlogapp.EvidenceVerificationRequest{
-		Ref: ref, ItemID: "item-hash", ImplementationUnitID: "unit-hash", ImplementationRevision: 4,
+		Ref: ref, BacklogItemID: "item-hash", ImplementationUnitID: "unit-hash", ImplementationRevision: 4,
 		TargetDeliveryState: domainbacklog.DeliveryDeploy,
 	}
 	if ok, err := verifier.Verify(context.Background(), verificationRequest); err != nil || !ok {
@@ -505,8 +505,8 @@ func TestAtlasEvidenceVerifierReadinessFixedLoopbackProbe(t *testing.T) {
 	defer server.Close()
 	verifier := newAtlasProbeFixtureVerifier(t, server.URL, revision)
 	request := backlogapp.EvidenceVerificationRequest{
-		Ref:    domainbacklog.EvidenceRef{Kind: "readiness", Ref: atlasReadinessEvidenceRef, Revision: revision, Verified: true},
-		ItemID: "item-ready", ImplementationUnitID: "unit-ready", ImplementationRevision: 2,
+		Ref:           domainbacklog.EvidenceRef{Kind: "readiness", Ref: atlasReadinessEvidenceRef, Revision: revision, Verified: true},
+		BacklogItemID: "item-ready", ImplementationUnitID: "unit-ready", ImplementationRevision: 2,
 		TargetDeliveryState: domainbacklog.DeliveryPostDeployVerify,
 	}
 	if ok, err := verifier.Verify(context.Background(), request); err != nil || !ok {
@@ -524,7 +524,7 @@ func TestAtlasEvidenceVerifierProductionSmokeRequiresReconstructedItem(t *testin
 		t.Fatal("smoke fixture specification is missing")
 	}
 	item := domainbacklog.Item{
-		SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "smoke-item", ImplementationUnit: "unit-smoke",
+		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "smoke-item", ImplementationUnit: "unit-smoke",
 		ImplementationRevision: 7, Title: "Smoke item", Purpose: "prove runtime ownership", Problem: "unproven runtime state", Idea: "probe the fixed owner route",
 		SourceRefs: []domainbacklog.SourceRef{{Type: "fixture", Locator: "atlas-smoke"}}, SpecificationRefs: []string{artifact.SpecID},
 	}
@@ -540,8 +540,8 @@ func TestAtlasEvidenceVerifierProductionSmokeRequiresReconstructedItem(t *testin
 	revision := strings.Repeat("b", 40)
 	verifier := newAtlasProbeFixtureVerifier(t, server.URL, revision)
 	request := backlogapp.EvidenceVerificationRequest{
-		Ref:    domainbacklog.EvidenceRef{Kind: "production_smoke", Ref: atlasSmokeEvidenceRef, Revision: revision, Verified: true},
-		ItemID: item.BacklogItemID, ImplementationUnitID: item.ImplementationUnit, ImplementationRevision: item.ImplementationRevision,
+		Ref:           domainbacklog.EvidenceRef{Kind: "production_smoke", Ref: atlasSmokeEvidenceRef, Revision: revision, Verified: true},
+		BacklogItemID: string(item.BacklogItemID), ImplementationUnitID: item.ImplementationUnit, ImplementationRevision: item.ImplementationRevision,
 		TargetDeliveryState: domainbacklog.DeliveryLiveVerified,
 	}
 	if ok, err := verifier.Verify(context.Background(), request); err != nil || !ok {
@@ -575,8 +575,8 @@ func TestAtlasEvidenceVerifierProbeRejectsRedirectAndNonLoopbackBase(t *testing.
 	defer server.Close()
 	verifier := newAtlasProbeFixtureVerifier(t, server.URL, revision)
 	request := backlogapp.EvidenceVerificationRequest{
-		Ref:    domainbacklog.EvidenceRef{Kind: "readiness", Ref: atlasReadinessEvidenceRef, Revision: revision},
-		ItemID: "item-ready", ImplementationUnitID: "unit-ready", ImplementationRevision: 1,
+		Ref:           domainbacklog.EvidenceRef{Kind: "readiness", Ref: atlasReadinessEvidenceRef, Revision: revision},
+		BacklogItemID: "item-ready", ImplementationUnitID: "unit-ready", ImplementationRevision: 1,
 		TargetDeliveryState: domainbacklog.DeliveryPostDeployVerify,
 	}
 	if ok, err := verifier.Verify(context.Background(), request); err == nil || ok {

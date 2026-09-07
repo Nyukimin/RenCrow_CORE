@@ -267,7 +267,7 @@ func TestBuildToolRuntimeRegistersDataWriteOnlyForWorkerAndRetainsRegistry(t *te
 		WorkspaceDir: t.TempDir(),
 		ToolHarness:  config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
 	}
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	runtime := buildToolRuntimeForTest(t, cfg)
 	if runtime.DataWriteRegistry == nil {
 		t.Fatal("toolRuntime must retain the data write registry")
 	}

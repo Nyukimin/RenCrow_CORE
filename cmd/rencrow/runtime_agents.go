@@ -30,53 +30,36 @@ type agentRuntime struct {
 // applyRuntimeAgentCapabilityContext runs after all owner routes are
 // registered so every production Agent receives the same executable snapshot
 // that data_capability.describe exposes.
-func applyRuntimeAgentCapabilityContext(cfg *config.Config, agents agentRuntime, capabilityContext string, coders ...*coderAdapter) {
-	if cfg == nil || cfg.Prompts == nil {
+func applyRuntimeAgentCapabilityContext(cfg *config.Config, agents agentRuntime, capabilityContext func(context.Context) string, coders ...*coderAdapter) {
+	if cfg == nil || cfg.Prompts == nil || capabilityContext == nil {
 		return
 	}
-	if cfg.Prompts.StableRuntimeContexts == nil {
-		cfg.Prompts.StableRuntimeContexts = map[string]string{}
-	}
-	names := []string{"mio", "shiro", "kuro", "midori"}
-	for _, coder := range []config.CoderConfig{cfg.Coder1, cfg.Coder2, cfg.Coder3, cfg.Coder4} {
-		if name := strings.ToLower(strings.TrimSpace(coder.Name)); name != "" {
-			names = append(names, name)
-		}
-	}
-	for _, name := range names {
-		if _, exists := cfg.Prompts.StableRuntimeContexts[name]; !exists {
-			cfg.Prompts.StableRuntimeContexts[name] = ""
-		}
-	}
-	appendRuntimeCapabilityContext(cfg.Prompts.StableRuntimeContexts, capabilityContext)
+	provider := runtimeAgentContextProvider(cfg.Prompts.StableRuntimeContexts, capabilityContext)
 	if agents.Mio != nil {
-		agents.Mio.WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts)
+		agents.Mio.WithRuntimeContextProvider(provider)
 	}
 	if agents.ShiroChat != nil {
-		agents.ShiroChat.WithStableRuntimeContexts(cfg.Prompts.StableRuntimeContexts)
+		agents.ShiroChat.WithRuntimeContextProvider(provider)
 	}
 	if agents.Shiro != nil {
-		agents.Shiro.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["shiro"])
+		agents.Shiro.WithRuntimeContextProvider(provider)
 	}
 	if agents.Heavy != nil {
-		agents.Heavy.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["kuro"])
+		agents.Heavy.WithRuntimeContextProvider(provider)
 	}
 	if agents.Wild != nil {
-		agents.Wild.WithStableRuntimeContext(cfg.Prompts.StableRuntimeContexts["midori"])
+		agents.Wild.WithRuntimeContextProvider(provider)
 	}
-	coderConfigs := []config.CoderConfig{cfg.Coder1, cfg.Coder2, cfg.Coder3, cfg.Coder4}
+	configs := []config.CoderConfig{cfg.Coder1, cfg.Coder2, cfg.Coder3, cfg.Coder4}
 	for index, coder := range coders {
-		if coder == nil {
+		if coder == nil || coder.domainCoder == nil {
 			continue
 		}
-		content := capabilityContext
-		if index < len(coderConfigs) {
-			name := strings.ToLower(strings.TrimSpace(coderConfigs[index].Name))
-			if stable := strings.TrimSpace(cfg.Prompts.StableRuntimeContexts[name]); stable != "" {
-				content = stable
-			}
+		name := "coder"
+		if index < len(configs) {
+			name = strings.ToLower(strings.TrimSpace(configs[index].Name))
 		}
-		coder.WithStableRuntimeContext(content)
+		coder.domainCoder.WithRuntimeContextProvider(func(ctx context.Context, _ string) string { return provider(ctx, name) })
 	}
 }
 

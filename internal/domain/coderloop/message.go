@@ -40,10 +40,21 @@ type PlanMessage struct {
 
 // PatchProposalMessage はパッチ案
 type PatchProposalMessage struct {
-	Type   MessageType `json:"type"`
-	Intent string      `json:"intent"`
-	Patch  string      `json:"patch"` // ParsePatch() が解析できる形式
-	Tests  []string    `json:"tests"`
+	Type     MessageType `json:"type"`
+	Intent   string      `json:"intent"`
+	Patch    string      `json:"patch"` // ParsePatch() が解析できる形式
+	Tests    []string    `json:"tests"`
+	TestHint *TestHint   `json:"test_hint,omitempty"` // owner test-impact への advisory hint。選択権は持たない
+}
+
+// TestHint は Coder が提示できる test-impact の advisory 情報です。
+// Owner CLI はこの情報で選択範囲を狭めません。
+type TestHint struct {
+	ChangedSurface       []string `json:"changed_surface,omitempty"`
+	ExpectedImpact       string   `json:"expected_impact,omitempty"`
+	RecommendedTestTier  string   `json:"recommended_tier,omitempty"`
+	RecommendedTestSteps []string `json:"recommended_steps,omitempty"`
+	Risk                 string   `json:"risk,omitempty"`
 }
 
 // TestRequestMessage はテスト実行依頼

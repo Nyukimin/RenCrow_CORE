@@ -225,7 +225,7 @@ func TestBuildToolRuntimeRegistersDataRecallOnlyForWorkerAndRetainsRegistry(t *t
 		WorkspaceDir: t.TempDir(),
 		ToolHarness:  config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
 	}
-	runtime := buildToolRuntime(cfg, nil, nil, nil)
+	runtime := buildToolRuntimeForTest(t, cfg)
 	if runtime.DataRecallRegistry == nil {
 		t.Fatal("toolRuntime must retain the data recall registry")
 	}

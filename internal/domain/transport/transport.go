@@ -7,6 +7,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -71,6 +72,8 @@ type ProposalPayload struct {
 
 // ResultPayload は実行結果のTransport用DTO
 type ResultPayload struct {
+	TestStatus    string                 `json:"test_status,omitempty"`
+	TestReceipt   string                 `json:"test_receipt,omitempty"`
 	Success       bool                   `json:"success"`
 	Summary       string                 `json:"summary"`
 	ExecutedCmds  int                    `json:"executed_cmds"`
@@ -81,6 +84,18 @@ type ResultPayload struct {
 	FailureReason string                 `json:"failure_reason,omitempty"`
 	Retryable     bool                   `json:"retryable,omitempty"`
 	FailedIndex   int                    `json:"failed_index,omitempty"`
+}
+
+// NewPatchResultPayload projects the execution owner's outcome without reclassifying it.
+// TestReceipt remains an owner reference, not a path to open on the receiving host.
+func NewPatchResultPayload(result patch.PatchExecutionResult) *ResultPayload {
+	return &ResultPayload{
+		Success: result.Success, Summary: result.Summary,
+		ExecutedCmds: result.ExecutedCmds, FailedCmds: result.FailedCmds,
+		GitCommit: result.GitCommit, FailureKind: result.FailureKind,
+		FailureReason: result.FailureReason, Retryable: result.Retryable,
+		FailedIndex: result.FailedIndex, TestStatus: result.TestStatus, TestReceipt: result.TestReceipt,
+	}
 }
 
 // CommandResultPayload はコマンド実行結果のTransport用DTO

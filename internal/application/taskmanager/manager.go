@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -18,6 +20,7 @@ var (
 )
 
 type Store interface {
+	WriterGeneration() (uint64, error)
 	SaveTask(context.Context, domaintask.Task) error
 	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListTasks(context.Context, domaintask.Filter) ([]domaintask.Task, error)
@@ -192,6 +195,14 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 	if !domaintask.ValidRunStartReason(reason) {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("invalid run start reason: %s", reason)
 	}
+	generation, err := m.store.WriterGeneration()
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("task writer ownership unavailable: %w", err)
+	}
+	if generation == 0 {
+		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("task writer generation is required")
+	}
+
 	task, err := m.store.GetTask(ctx, taskID)
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -245,12 +256,13 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	run := domaintask.Run{
-		RunID:       modulecore.NewRunID(),
-		TaskID:      taskID,
-		StartReason: reason,
-		Assignee:    started.Assignee,
-		Status:      domaintask.RunStatusRunning,
-		StartedAt:   m.now(),
+		WriterGeneration: generation,
+		RunID:            modulecore.NewRunID(),
+		TaskID:           taskID,
+		StartReason:      reason,
+		Assignee:         started.Assignee,
+		Status:           domaintask.RunStatusRunning,
+		StartedAt:        m.now(),
 	}
 	if err := m.store.SaveRun(ctx, run); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
@@ -417,6 +429,99 @@ func (m *Manager) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]
 
 func (m *Manager) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
 	return m.store.GetRun(ctx, runID)
+}
+
+// ValidateRunExecution admits an external effect only while the requested Run
+// is owned by the current writable task-store generation and its Task/Run
+// ownership still names the requested CORE Agent. The check is point-in-time;
+// callers must not treat it as a lifetime fence across external execution.
+func (m *Manager) ValidateRunExecution(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string) error {
+	if ctx == nil {
+		return errors.New("execution admission context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if m == nil {
+		return errors.New("task manager is nil")
+	}
+	if m.store == nil {
+		return errors.New("task manager store is unavailable")
+	}
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := runID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
+	}
+	if strings.TrimSpace(actorID) == "" {
+		return errors.New("actor_id is required")
+	}
+
+	generation, err := m.store.WriterGeneration()
+	if err != nil {
+		return fmt.Errorf("task writer ownership unavailable: %w", err)
+	}
+	if generation == 0 {
+		return fmt.Errorf("%w: task writer generation is required", ErrRunConflict)
+	}
+
+	task, err := m.store.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if err := task.Validate(); err != nil {
+		return fmt.Errorf("%w: task record is invalid: %v", ErrRunConflict, err)
+	}
+	run, err := m.store.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if err := run.Validate(); err != nil {
+		return fmt.Errorf("%w: run record is invalid: %v", ErrRunConflict, err)
+	}
+	if task.TaskID != taskID || run.RunID != runID || run.TaskID != taskID || run.TaskID != task.TaskID {
+		return fmt.Errorf("%w: task and run ownership do not match", ErrRunConflict)
+	}
+	if task.Status != domaintask.StatusRunning {
+		return fmt.Errorf("%w: task status is %s", ErrRunConflict, task.Status)
+	}
+	if run.Status != domaintask.RunStatusRunning || run.CompletedAt != nil {
+		return fmt.Errorf("%w: run is not active", ErrRunConflict)
+	}
+	if strings.TrimSpace(task.Assignee) == "" || strings.TrimSpace(run.Assignee) == "" || task.Assignee != run.Assignee || task.Assignee != actorID {
+		return fmt.Errorf("%w: task, run, and actor ownership do not match", ErrRunConflict)
+	}
+	if run.WriterGeneration == 0 || run.WriterGeneration != generation {
+		return fmt.Errorf("%w: run writer generation is stale", ErrRunConflict)
+	}
+
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID, Status: domaintask.RunStatusRunning})
+	if err != nil {
+		return err
+	}
+	active, err := activeRun(runs)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRunConflict, err)
+	}
+	if active == nil || active.RunID != runID {
+		return fmt.Errorf("%w: requested run is not the unique active run", ErrRunConflict)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	currentGeneration, err := m.store.WriterGeneration()
+	if err != nil {
+		return fmt.Errorf("task writer ownership unavailable: %w", err)
+	}
+	if currentGeneration == 0 || currentGeneration != generation || run.WriterGeneration != currentGeneration {
+		return fmt.Errorf("%w: task writer generation changed during admission", ErrRunConflict)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // InterruptRun closes exactly one issued Run without changing its Task. It is
@@ -596,6 +701,14 @@ func (m *Manager) reassignCurrentRun(ctx context.Context, taskID modulecore.Task
 	if len(runs) > 1 {
 		return fmt.Errorf("task has multiple active runs")
 	}
+	generation, err := m.store.WriterGeneration()
+	if err != nil {
+		return fmt.Errorf("task writer ownership unavailable: %w", err)
+	}
+	if generation == 0 {
+		return fmt.Errorf("task writer generation is required")
+	}
+
 	now := m.now()
 	closed, err := runs[0].Close(domaintask.RunStatusReassigned, now, "agent reassigned to "+assignee)
 	if err != nil {
@@ -605,11 +718,46 @@ func (m *Manager) reassignCurrentRun(ctx context.Context, taskID modulecore.Task
 		return err
 	}
 	return m.store.SaveRun(ctx, domaintask.Run{
-		RunID:       modulecore.NewRunID(),
-		TaskID:      taskID,
-		StartReason: domaintask.RunStartReasonAgentReassignment,
-		Assignee:    assignee,
-		Status:      domaintask.RunStatusRunning,
-		StartedAt:   now,
+		WriterGeneration: generation,
+		RunID:            modulecore.NewRunID(),
+		TaskID:           taskID,
+		StartReason:      domaintask.RunStartReasonAgentReassignment,
+		Assignee:         assignee,
+		Status:           domaintask.RunStatusRunning,
+		StartedAt:        now,
 	})
+}
+
+// Close releases the persistence owner's resources after all consumers stop.
+func (m *Manager) Close() error {
+	if m == nil {
+		return nil
+	}
+	if closer, ok := m.store.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+// ValidateExecutionContext is the shared admission boundary for runtime tools
+// and patch execution. It preserves the caller's identity and permissions.
+func (m *Manager) ValidateExecutionContext(ctx context.Context) (domainexecution.Identity, error) {
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return domainexecution.Identity{}, err
+	}
+	scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+	if !found {
+		return domainexecution.Identity{}, fmt.Errorf("task execution scope is required")
+	}
+	if err := scope.Validate(); err != nil {
+		return domainexecution.Identity{}, fmt.Errorf("task execution scope is invalid: %w", err)
+	}
+	if scope.ActorKind != domaintool.ActorKindAgent {
+		return domainexecution.Identity{}, fmt.Errorf("task execution requires an agent scope")
+	}
+	if err := m.ValidateRunExecution(ctx, identity.TaskID, identity.RunID, scope.ActorID); err != nil {
+		return domainexecution.Identity{}, err
+	}
+	return identity, nil
 }

@@ -15,9 +15,15 @@ import (
 	"time"
 
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const maxResponseBytes = 4 << 20
+
+const (
+	visionInvalidRequestIDCode = "VISION_INVALID_REQUEST_ID"
+	visionIdentityMismatchCode = "VISION_IDENTITY_MISMATCH"
+)
 
 type Client struct {
 	baseURL    string
@@ -57,6 +63,12 @@ func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 }
 
 func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeRequest) (domainvision.AnalyzeResult, error) {
+	if err := modulecore.RequestID(request.RequestID).Validate(); err != nil {
+		return domainvision.AnalyzeResult{}, &ServiceError{
+			Code:    visionInvalidRequestIDCode,
+			Message: "Vision request ID must be canonical",
+		}
+	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	fields := map[string]string{
@@ -101,9 +113,7 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 	}
 	httpRequest.Header.Set("Content-Type", writer.FormDataContentType())
 	httpRequest.Header.Set("Accept", "application/json")
-	if request.RequestID != "" {
-		httpRequest.Header.Set("X-Request-Id", request.RequestID)
-	}
+	httpRequest.Header.Set("X-Request-Id", request.RequestID)
 
 	response, err := c.httpClient.Do(httpRequest)
 	if err != nil {
@@ -127,6 +137,14 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 			StatusCode: response.StatusCode,
 			Code:       firstNonEmpty(result.ErrorCode, "VISION_REQUEST_FAILED"),
 			Message:    firstNonEmpty(result.Message, http.StatusText(response.StatusCode)),
+		}
+	}
+	echoedRequestID := modulecore.RequestID(result.RequestID)
+	if err := echoedRequestID.Validate(); err != nil || string(echoedRequestID) != request.RequestID {
+		return domainvision.AnalyzeResult{}, &ServiceError{
+			StatusCode: response.StatusCode,
+			Code:       visionIdentityMismatchCode,
+			Message:    "RenCrow_Vision response request identity did not match the request",
 		}
 	}
 	if strings.TrimSpace(result.Text) == "" {

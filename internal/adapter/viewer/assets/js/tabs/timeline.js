@@ -25,23 +25,23 @@ function buildViewerSendRequest(message) {
   return request;
 }
 
-const voiceDirectTimelineJobIDs = new Set();
+const voiceDirectTimelineTaskIDs = new Set();
 
-function rememberVoiceDirectTimelineJob(ev) {
-  const jobID = String(ev && ev.task_id || '').trim();
-  if (!jobID) return;
+function rememberVoiceDirectTimelineTask(ev) {
+  const taskID = String(ev && ev.task_id || '').trim();
+  if (!taskID) return;
   const content = String(ev && ev.content || '');
   if (!content.includes('voice_direct')) return;
-  voiceDirectTimelineJobIDs.add(jobID);
-  if (voiceDirectTimelineJobIDs.size > 80) {
-    const first = voiceDirectTimelineJobIDs.values().next().value;
-    if (first) voiceDirectTimelineJobIDs.delete(first);
+  voiceDirectTimelineTaskIDs.add(taskID);
+  if (voiceDirectTimelineTaskIDs.size > 80) {
+    const first = voiceDirectTimelineTaskIDs.values().next().value;
+    if (first) voiceDirectTimelineTaskIDs.delete(first);
   }
 }
 
 function isVoiceDirectTimelineResponse(ev) {
-  const jobID = String(ev && ev.task_id || '').trim();
-  return !!(jobID && voiceDirectTimelineJobIDs.has(jobID));
+  const taskID = String(ev && ev.task_id || '').trim();
+  return !!(taskID && voiceDirectTimelineTaskIDs.has(taskID));
 }
 
 function renderTrustedGeneratedImages(message) {
@@ -64,13 +64,12 @@ function renderTrustedGeneratedImages(message) {
 }
 
 function addMsgToTimeline(ev) {
-  if (ev.type === 'job.notification') { addJobNotificationToTimeline(ev); return; }
   if (ev.type === 'task.notification') { addTaskNotificationToTimeline(ev); return; }
   if (ev.type === 'agent.response') removeThinking(ev.task_id);
   if (ev.type === 'agent.thinking') { addThinking(ev); return; }
   if (ev.type === 'agent.start') { addThinkingStart(ev); return; }
   if (isCoordinationTraceEvent(ev)) { addCoordinationTraceToTimeline(ev); return; }
-  if (ev.type === 'routing.decision') rememberVoiceDirectTimelineJob(ev);
+  if (ev.type === 'routing.decision') rememberVoiceDirectTimelineTask(ev);
 
   if (!matchesFilters(ev)) return;
   if (ev.type === 'idlechat.summary') return;
@@ -143,35 +142,9 @@ function matchesCoordinationTraceFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltTask.value && !(ev.task_id || '').toLowerCase().includes(fltTask.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
-}
-
-function addJobNotificationToTimeline(ev) {
-  const em = document.getElementById('empty');
-  if (em) em.remove();
-  const fromName = String(ev.from || '').trim() || 'shiro';
-  const f = ag(fromName);
-  const route = String(ev.route || '').trim();
-  const status = String(ev.status || ev.category || '').trim();
-  const jobID = String(ev.task_id || '').trim();
-  const meta = [route, status, jobID].filter(Boolean).join(' / ');
-  const el = document.createElement('div');
-  el.className = 'msg assistant job-interrupt';
-  el.innerHTML =
-    '<div class="av" style="background:' + f.c + '18;color:' + f.c + '">' + f.e + '</div>' +
-    '<div class="mb"><div class="mh">' +
-      '<span class="an" style="color:' + f.c + '">' + f.l + '</span>' +
-      '<span class="dir">割り込み報告</span>' +
-      '<span class="tm">' + ftime(ev.timestamp) + '</span>' +
-    '</div><button class="cp" onclick="copyMsg(this)">Copy</button>' +
-    '<div class="coord-meta">' + esc(meta || 'job.notification') + '</div>' +
-    '<div class="mc">' + fmt(normalizeViewerDisplayText(ev.content || '')) + '</div></div>';
-  el.querySelector('.mc').dataset.raw = ev.content || '';
-  chat.appendChild(el);
-  trimTimelineNodes();
-  bump();
 }
 
 function addTaskNotificationToTimeline(ev) {

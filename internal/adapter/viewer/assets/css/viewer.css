@@ -449,8 +449,8 @@ tr.evi-selected td{background:rgba(34,211,238,.08)}
 
 .thinking .mc{background:rgba(244,114,182,.04);border-color:rgba(244,114,182,.12);color:var(--t2);font-style:italic}
 .coordination-trace .mc{background:rgba(15,23,42,.66);border-color:rgba(148,163,184,.26);color:var(--t2)}
-.job-interrupt .mc{background:rgba(8,32,44,.82);border-color:rgba(34,211,238,.42);box-shadow:0 10px 30px rgba(34,211,238,.08),inset 3px 0 0 rgba(34,211,238,.55)}
-.job-interrupt .dir{color:#67e8f9}
+.task-interrupt .mc{background:rgba(8,32,44,.82);border-color:rgba(34,211,238,.42);box-shadow:0 10px 30px rgba(34,211,238,.08),inset 3px 0 0 rgba(34,211,238,.55)}
+.task-interrupt .dir{color:#67e8f9}
 .coord-meta{font-size:10px;color:var(--t3);margin:0 0 4px 1px;line-height:1.4}
 .tts-current .mc{border-color:rgba(244,114,182,.4);box-shadow:0 8px 24px rgba(244,114,182,.08)}
 .tts-current.shiro .mc{border-color:rgba(34,211,238,.42);box-shadow:0 8px 24px rgba(34,211,238,.08)}

@@ -381,7 +381,7 @@ func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, generati
 				SessionID:      sessionID,
 				RemainingIndex: idx + 1,
 				RemainingCount: len(lifecycles),
-				ownerEpoch: generation,
+				ownerEpoch:     generation,
 			})
 			return
 		}

@@ -9,10 +9,10 @@ type PublicChunkResolution struct {
 	Assigned        bool
 }
 
-type PublicResponseResolution struct {
-	ResponseID         string
-	NextResponseNumber int
-	Advance            bool
+type PublicPlaybackRefResolution struct {
+	PublicPlaybackRef           string
+	NextPublicPlaybackRefNumber int
+	Advance                     bool
 }
 
 func ResolvePublicChunk(route *PublicSessionRoute, internalSessionID string, internalChunkIndex int, nextChunkNumber int) PublicChunkResolution {
@@ -38,42 +38,42 @@ func ResolvePublicChunk(route *PublicSessionRoute, internalSessionID string, int
 	}
 }
 
-func ResolveNextPublicResponseID(publicSessionID string, nextResponseNumber int) PublicResponseResolution {
+func ResolveNextPublicPlaybackRef(publicSessionID string, nextPublicPlaybackRefNumber int) PublicPlaybackRefResolution {
 	publicSessionID = strings.TrimSpace(publicSessionID)
 	if publicSessionID == "" {
-		return PublicResponseResolution{}
+		return PublicPlaybackRefResolution{}
 	}
-	if nextResponseNumber < 0 {
-		nextResponseNumber = 0
+	if nextPublicPlaybackRefNumber < 0 {
+		nextPublicPlaybackRefNumber = 0
 	}
-	return PublicResponseResolution{
-		ResponseID:         publicSessionID + ":" + FormatFixed4(nextResponseNumber),
-		NextResponseNumber: nextResponseNumber + 1,
-		Advance:            true,
+	return PublicPlaybackRefResolution{
+		PublicPlaybackRef:           publicSessionID + ":" + FormatFixed4(nextPublicPlaybackRefNumber),
+		NextPublicPlaybackRefNumber: nextPublicPlaybackRefNumber + 1,
+		Advance:                     true,
 	}
 }
 
-func ResolvePublicResponseIDForMessage(publicSessionID string, messageID string, nextResponseNumber int) PublicResponseResolution {
+func ResolvePublicPlaybackRefForMessage(publicSessionID string, messageID string, nextPublicPlaybackRefNumber int) PublicPlaybackRefResolution {
 	publicSessionID = strings.TrimSpace(publicSessionID)
 	messageID = strings.TrimSpace(messageID)
 	if publicSessionID == "" {
-		return PublicResponseResolution{}
+		return PublicPlaybackRefResolution{}
 	}
 	prefix := publicSessionID + ":"
 	if strings.HasPrefix(messageID, prefix) {
 		suffix := strings.TrimPrefix(messageID, prefix)
 		if strings.HasPrefix(suffix, "msg:") {
 			if n, ok := ParseFixed4(strings.TrimPrefix(suffix, "msg:")); ok {
-				return PublicResponseResolution{
-					ResponseID:         publicSessionID + ":" + FormatFixed4(n),
-					NextResponseNumber: n + 1,
-					Advance:            true,
+				return PublicPlaybackRefResolution{
+					PublicPlaybackRef:           publicSessionID + ":" + FormatFixed4(n),
+					NextPublicPlaybackRefNumber: n + 1,
+					Advance:                     true,
 				}
 			}
 		}
-		if _, ok := ParseTrailingResponseNumber(suffix); ok {
-			return PublicResponseResolution{ResponseID: messageID, NextResponseNumber: nextResponseNumber}
+		if _, ok := ParseTrailingPublicPlaybackNumber(suffix); ok {
+			return PublicPlaybackRefResolution{PublicPlaybackRef: messageID, NextPublicPlaybackRefNumber: nextPublicPlaybackRefNumber}
 		}
 	}
-	return ResolveNextPublicResponseID(publicSessionID, nextResponseNumber)
+	return ResolveNextPublicPlaybackRef(publicSessionID, nextPublicPlaybackRefNumber)
 }

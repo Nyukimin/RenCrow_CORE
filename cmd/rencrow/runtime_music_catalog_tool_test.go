@@ -45,8 +45,9 @@ func TestBuildToolRuntimeRegistersMusicAndLyricsForChatWorkerAndSnapshot(t *test
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.HobbyGraph = seedRuntimeMusicCatalog(t)
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
-	for name, runner := range map[string]domaintool.RunnerV2{"chat": runtime.ChatRunnerV2, "worker": runtime.WorkerRunnerV2} {
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+	for name, runner := range map[string]domaintool.RunnerV2{"chat": runtime.ChatRuntimeRunnerV2, "worker": runtime.WorkerRuntimeRunnerV2} {
 		metadata, err := runner.ListTools(context.Background())
 		if err != nil {
 			t.Fatal(err)
@@ -56,12 +57,12 @@ func TestBuildToolRuntimeRegistersMusicAndLyricsForChatWorkerAndSnapshot(t *test
 				t.Fatalf("%s missing from %s metadata", toolID, name)
 			}
 		}
-		response, err := runner.ExecuteV2(context.Background(), "lyrics_catalog.lookup", map[string]any{"song": "青い鳥", "artist": "歌手A", "information": "full_text"})
+		response, err := runner.ExecuteV2(executionCtx, "lyrics_catalog.lookup", map[string]any{"song": "青い鳥", "artist": "歌手A", "information": "full_text"})
 		if err != nil || response.IsError() {
 			t.Fatalf("%s lyrics execution response=%#v err=%v", name, response, err)
 		}
 	}
-	workerMetadata, _ := runtime.WorkerRunnerV2.ListTools(context.Background())
+	workerMetadata, _ := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	snapshot := capdomain.Normalize(buildRuntimeCapabilitySnapshotWithSkills(workerMetadata, nil, nil, nil))
 	for _, toolID := range []string{"music_catalog.lookup", "lyrics_catalog.lookup"} {
 		entry, ok := findRuntimeCapability(snapshot, capdomain.CapabilityKindTool, toolID)
@@ -93,7 +94,7 @@ func TestBuildToolRuntimeLeavesUnreadyMusicSchemaUnregistered(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.HobbyGraph = path
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
+	runtime := buildToolRuntimeWithCapabilities(nil, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)

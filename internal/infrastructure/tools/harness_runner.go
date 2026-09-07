@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"strings"
 	"time"
 
@@ -47,7 +48,10 @@ func (r *ToolHarnessRunner) ExecuteV2(ctx context.Context, toolName string, args
 	if r.inner == nil {
 		return nil, fmt.Errorf("inner runner is required")
 	}
-	mediated := r.mediate(toolName, args)
+	mediated, mediationErr := r.mediate(ctx, toolName, args)
+	if mediationErr != nil {
+		return classifyV1Error(mediationErr), nil
+	}
 	if r.mode == ToolHarnessModeStrict && mediated.Repaired() {
 		return tool.NewError(tool.ErrValidationFailed, "tool input requires repair under strict tool harness mode", mediated.Metadata()), nil
 	}
@@ -74,28 +78,36 @@ func (r *ToolHarnessRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata,
 	return r.inner.ListTools(ctx)
 }
 
-func (r *ToolHarnessRunner) mediate(toolName string, args map[string]any) toolharness.Result {
+func (r *ToolHarnessRunner) mediate(ctx context.Context, toolName string, args map[string]any) (toolharness.Result, error) {
 	if r.harness == nil {
-		return toolharness.Result{Input: args}
+		return toolharness.Result{Input: args}, nil
 	}
 	result := r.harness.Mediate(toolName, args)
-	r.record(toolName, args, result)
-	return result
+	return result, recordToolMediation(ctx, r.recorder, toolName, args, result)
 }
 
-func (r *ToolHarnessRunner) record(toolName string, args map[string]any, result toolharness.Result) {
-	if r.recorder == nil {
-		return
+func recordToolMediation(ctx context.Context, recorder toolharness.Recorder, toolName string, args map[string]any, result toolharness.Result) error {
+	if recorder == nil {
+		return nil
+	}
+	if ctx == nil {
+		return &tool.ToolError{Code: tool.ErrValidationFailed, Message: "Mediation request context is required"}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	now := time.Now().UTC()
 	event := toolharness.NewEvent(
-		fmt.Sprintf("evt_tool_%d", now.UnixNano()),
+		string(modulecore.NewEventID()),
 		toolName,
 		args,
 		result,
 		now,
 	)
-	_ = r.recorder.RecordToolMediationEvent(event)
+	if err := recorder.RecordToolMediationEvent(ctx, event); err != nil {
+		return &tool.ToolError{Code: tool.ErrInternalError, Message: "Tool mediation receipt persistence failed"}
+	}
+	return nil
 }
 
 func normalizeToolHarnessMode(mode string) string {

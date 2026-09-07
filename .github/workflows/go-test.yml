@@ -62,12 +62,15 @@ jobs:
           Pop-Location
       - name: Canonical coverage and isolation
         shell: pwsh
-        run: ./source/scripts/test-local.ps1 -SelfTest
+        run: |
+          python ./tools/scripts/sync-test-impact-runner.py --check ./source/scripts/test-local.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Generated owner adapter differs' }
+          ./source/scripts/test-local.ps1 -SelfTest
       - name: Shadow PR or Full regression
         shell: pwsh
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           $parameters = @{ Repository = (Join-Path $PWD 'source'); Base = $env:BASE_SHA; Head = $env:HEAD_SHA }

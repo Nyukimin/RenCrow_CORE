@@ -61,12 +61,12 @@ func HandleSchedulerWithExecutor(store SchedulerStore, executor schedulerapp.Exe
 
 func handleSchedulerPost(w http.ResponseWriter, r *http.Request, store SchedulerStore, executor schedulerapp.Executor) {
 	var req struct {
-		Action      string                  `json:"action"`
-		Schedule    domainscheduler.Schedule `json:"schedule"`
-		ScheduleID  string                  `json:"schedule_id"`
-		DisabledBy  string                  `json:"disabled_by"`
-		Trigger     string                  `json:"trigger"`
-		Limit       int                     `json:"limit"`
+		Action     string                   `json:"action"`
+		Schedule   domainscheduler.Schedule `json:"schedule"`
+		ScheduleID string                   `json:"schedule_id"`
+		DisabledBy string                   `json:"disabled_by"`
+		Trigger    string                   `json:"trigger"`
+		Limit      int                      `json:"limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid scheduler payload: "+err.Error(), http.StatusBadRequest)

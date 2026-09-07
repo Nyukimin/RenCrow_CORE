@@ -51,11 +51,11 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 	defer server.Close()
 
 	provider := NewGatewayProvider(GatewayProviderConfig{
-		BaseURL: server.URL,
+		BaseURL:   server.URL,
 		AuthToken: "owner-test-token",
-		VoiceID: "mio",
-		Speed:   1.2,
-		Timeout: time.Second,
+		VoiceID:   "mio",
+		Speed:     1.2,
+		Timeout:   time.Second,
 	})
 	out, err := provider.Synthesize(context.Background(), SynthesisInput{
 		Text:       "テストです。",

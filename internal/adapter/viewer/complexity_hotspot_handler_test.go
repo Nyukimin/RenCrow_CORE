@@ -803,7 +803,7 @@ func TestHandleComplexityHotspotCoderDiffGeneratesReviewOnlyArtifact(t *testing.
 	sandboxSink := &stubComplexitySandboxPromotionSink{}
 	diff := "diff --git a/internal/application/example.go b/internal/application/example.go\n--- a/internal/application/example.go\n+++ b/internal/application/example.go\n@@ -1 +1 @@\n-old\n+new"
 	generator := &stubComplexityCoderDiffGenerator{result: complexityapp.CoderDiffResult{
-		JobID:        "job_1",
+		TaskID:       modulecore.NewTaskID(),
 		Prompt:       "prompt",
 		RawResponse:  "```diff\n" + diff + "\n```",
 		ConcreteDiff: diff,
@@ -974,4 +974,16 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestComplexityCoderDiffRejectsLegacyAndMalformedIdentity(t *testing.T) {
+	for _, body := range []string{`{"hotspot_id":"hot_1","job_id":"job_1"}`, `{"hotspot_id":"hot_1","task_id":"job_1"}`, `{"hotspot_id":"hot_1"} {}`} {
+		store := &stubComplexityHotspotStore{}
+		generator := &stubComplexityCoderDiffGenerator{}
+		rec := httptest.NewRecorder()
+		HandleComplexityHotspotCoderDiff(store, generator, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/viewer/complexity-hotspots/coder-diffs", bytes.NewBufferString(body)))
+		if rec.Code != http.StatusBadRequest || len(generator.requests) != 0 || len(store.reports) != 0 {
+			t.Fatalf("invalid input not rejected before effects: %d %s", rec.Code, rec.Body)
+		}
+	}
 }

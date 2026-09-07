@@ -59,7 +59,7 @@ func TestRunOnceInvokesCrawlerForOneTarget(t *testing.T) {
 `), 0o644); err != nil {
 				return CrawlResult{}, err
 			}
-			return CrawlResult{JobID: "job-1", Output: "ok 1/1", ArtifactPath: artifact}, nil
+			return CrawlResult{ExternalCrawlJobID: "job-1", Output: "ok 1/1", ArtifactPath: artifact}, nil
 		}),
 	})
 
@@ -67,7 +67,7 @@ func TestRunOnceInvokesCrawlerForOneTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run once: %v", err)
 	}
-	if result.Status != "fetched" || result.Target.Kind != "movie" || result.JobID != "job-1" {
+	if result.Status != "fetched" || result.Target.Kind != "movie" || result.ExternalCrawlJobID != "job-1" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if result.ImportedMovies != 1 {

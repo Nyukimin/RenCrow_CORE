@@ -12,6 +12,7 @@ storage:
   databases:
     advisor: "${RENCROW_E2E_RUNTIME}/workspace/logs/advisor.db"
     revenue: "${RENCROW_E2E_RUNTIME}/workspace/revenue.db"
+    conversation_archive: "${RENCROW_E2E_RUNTIME}/workspace/memory_archive.db"
 
 worker:
   auto_commit: false

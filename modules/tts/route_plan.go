@@ -22,7 +22,7 @@ type RouteTTSContext struct {
 type RouteTTSPlanInput struct {
 	Route                 string
 	SessionID             string
-	ResponseID            string
+	PublicPlaybackRef     string
 	ChatCharacterID       string
 	Urgency               string
 	UserAttentionRequired bool
@@ -31,7 +31,7 @@ type RouteTTSPlanInput struct {
 
 type RouteTTSPlan struct {
 	SessionID             string
-	ResponseID            string
+	PublicPlaybackRef     string
 	CharacterID           string
 	VoiceID               string
 	VoiceProfile          string
@@ -45,8 +45,8 @@ type RouteTTSPlan struct {
 
 func BuildRouteTTSPlan(input RouteTTSPlanInput) (RouteTTSPlan, bool) {
 	sessionID := strings.TrimSpace(input.SessionID)
-	responseID := strings.TrimSpace(input.ResponseID)
-	if sessionID == "" || responseID == "" {
+	publicPlaybackRef := strings.TrimSpace(input.PublicPlaybackRef)
+	if sessionID == "" || publicPlaybackRef == "" {
 		return RouteTTSPlan{}, false
 	}
 	route := normalizeRouteName(input.Route)
@@ -62,7 +62,7 @@ func BuildRouteTTSPlan(input RouteTTSPlanInput) (RouteTTSPlan, bool) {
 	ctx := BuildRouteTTSContext(route, input.Urgency, input.UserAttentionRequired, input.Now)
 	return RouteTTSPlan{
 		SessionID:             sessionID,
-		ResponseID:            responseID,
+		PublicPlaybackRef:     publicPlaybackRef,
 		CharacterID:           speaker,
 		VoiceID:               voiceID,
 		VoiceProfile:          voiceProfile,

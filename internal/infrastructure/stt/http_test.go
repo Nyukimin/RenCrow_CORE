@@ -16,7 +16,6 @@ import (
 
 func TestHandler_FileTranscribesMultipartWAV(t *testing.T) {
 	h := NewHandler(MockProvider{Text: "ルミナ、今日の予定を確認して。"})
-	h.Now = func() time.Time { return time.Date(2026, 5, 6, 10, 0, 0, 0, time.UTC) }
 	req := multipartWAVRequest(t, "/stt/file", tinyWAV())
 	rec := httptest.NewRecorder()
 
@@ -29,7 +28,7 @@ func TestHandler_FileTranscribesMultipartWAV(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Text == "" || out.Provider != ProviderMock || out.EventID == "" {
+	if out.Text == "" || out.Provider != ProviderMock || out.EventID != "" {
 		t.Fatalf("unexpected result: %+v", out)
 	}
 }
@@ -51,8 +50,30 @@ func TestHandler_ChatInputReturnsVoiceUserInput(t *testing.T) {
 	if out["type"] != "user_input" || out["source"] != "local_stt" || out["input_type"] != "voice" {
 		t.Fatalf("unexpected chat-input envelope: %+v", out)
 	}
-	if out["text"] == "" || out["event_id"] == "" {
-		t.Fatalf("missing text/event_id: %+v", out)
+	if out["text"] == "" || out["event_id"] != "" {
+		t.Fatalf("unexpected empty provider event_id: %+v", out)
+	}
+}
+
+func TestHandler_PreservesProviderEventID(t *testing.T) {
+	h := NewHandler(fixedResultProvider{result: Result{
+		Text:    "provider event",
+		EventID: "provider-event-42",
+	}})
+	req := multipartWAVRequest(t, "/stt/chat-input", tinyWAV())
+	rec := httptest.NewRecorder()
+
+	h.ChatInput(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["event_id"] != "provider-event-42" {
+		t.Fatalf("provider event_id was changed: %+v", out)
 	}
 }
 
@@ -177,6 +198,20 @@ type blockingProvider struct {
 	release chan struct{}
 	mu      sync.Mutex
 	calls   int
+}
+
+type fixedResultProvider struct {
+	result Result
+}
+
+func (p fixedResultProvider) Name() string { return "fixed" }
+
+func (p fixedResultProvider) Health(context.Context) Health {
+	return Health{Status: "ok", Provider: p.Name(), Ready: true}
+}
+
+func (p fixedResultProvider) Transcribe(context.Context, []byte) (Result, error) {
+	return p.result, nil
 }
 
 func (p *blockingProvider) Name() string { return "blocking" }

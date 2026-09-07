@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -10,8 +11,14 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/testsupport/testimpact"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -27,7 +34,7 @@ func TestWorkerShellCommand_PrefersBashLoginShell(t *testing.T) {
 
 func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 	// テスト用ワークスペース作成
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		AutoCommit:           false,
@@ -40,8 +47,9 @@ func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 		ActionOnProtected:    "error",
 		ShowExecutionSummary: false,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 
 	// JSON形式のPatch
 	jsonPatch := `[
@@ -56,7 +64,7 @@ func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 	p := proposal.NewProposal("Test plan", jsonPatch, "Low risk", "Low cost")
 	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -85,7 +93,7 @@ func TestExecuteProposal_Success_JSONPatch(t *testing.T) {
 }
 
 func TestExecuteProposal_Success_MarkdownPatch(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		AutoCommit:        false,
@@ -96,8 +104,9 @@ func TestExecuteProposal_Success_MarkdownPatch(t *testing.T) {
 		ProtectedPatterns: []string{".env*"},
 		ActionOnProtected: "error",
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 
 	// Markdown形式のPatch
 	testFilePath := filepath.Join(tmpDir, "hello.go")
@@ -109,7 +118,7 @@ func TestExecuteProposal_Success_MarkdownPatch(t *testing.T) {
 	p := proposal.NewProposal("Test plan", markdownPatch, "Low risk", "Low cost")
 	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -131,7 +140,7 @@ func TestExecuteProposal_Success_MarkdownPatch(t *testing.T) {
 }
 
 func TestExecuteProposal_MarkdownPatchCreatesMissingFile(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		AutoCommit:        false,
@@ -142,8 +151,9 @@ func TestExecuteProposal_MarkdownPatchCreatesMissingFile(t *testing.T) {
 		ProtectedPatterns: []string{".env*"},
 		ActionOnProtected: "error",
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 
 	testFilePath := filepath.Join(tmpDir, "application", "vocabulary", "app_service_test.go")
 	markdownPatch := "```go:" + testFilePath + "\npackage main\n\nfunc main() {}\n```"
@@ -151,7 +161,7 @@ func TestExecuteProposal_MarkdownPatchCreatesMissingFile(t *testing.T) {
 	p := proposal.NewProposal("Create missing file from Markdown patch", markdownPatch, "Low risk", "Low cost")
 	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -172,14 +182,14 @@ func TestExecuteProposal_ParseError(t *testing.T) {
 		Workspace: t.TempDir(),
 	}
 
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 
 	// 不正なPatch
 	invalidPatch := "this is not valid JSON or Markdown"
 	p := proposal.NewProposal("Test", invalidPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	_, err := service.ExecuteProposal(context.Background(), taskID, p)
+	_, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err == nil {
 		t.Error("Expected parse error, but got nil")
 	}
@@ -191,14 +201,14 @@ func TestExecuteProposal_BlocksSelfServiceRestartBeforeAnyCommandRuns(t *testing
 		Workspace:      tmpDir,
 		CommandTimeout: 10,
 	}
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 	markerPath := filepath.Join(tmpDir, "ran.txt")
 	patchJSON := `[
 		{"type":"shell_command","action":"run","target":"echo should-not-run > ` + filepath.ToSlash(markerPath) + `"},
 		{"type":"shell_command","action":"run","target":"systemctl --user restart rencrow.service"}
 	]`
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), proposal.NewProposal("blocked", patchJSON, "", ""))
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), proposal.NewProposal("blocked", patchJSON, "", ""))
 	if err == nil {
 		t.Fatal("expected self lifecycle command to be blocked by policy")
 	}
@@ -215,13 +225,13 @@ func TestExecuteProposal_BlocksSelfInstallCommands(t *testing.T) {
 		Workspace:      t.TempDir(),
 		CommandTimeout: 10,
 	}
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 	patchJSON := `[
 		{"type":"shell_command","action":"run","target":"make install"},
 		{"type":"shell_command","action":"run","target":"cp build/rencrow-linux-amd64 ~/.local/bin/rencrow"}
 	]`
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), proposal.NewProposal("blocked", patchJSON, "", ""))
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), proposal.NewProposal("blocked", patchJSON, "", ""))
 	if err == nil {
 		t.Fatal("expected live binary install command to be blocked by policy")
 	}
@@ -231,7 +241,7 @@ func TestExecuteProposal_BlocksSelfInstallCommands(t *testing.T) {
 }
 
 func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	const missingCommand = "rencrow-test-command-that-must-not-exist"
 	if path, err := exec.LookPath(missingCommand); err == nil {
 		t.Fatalf("test requires a missing command, but found %q at %s", missingCommand, path)
@@ -241,11 +251,12 @@ func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
 		StopOnError:    true,
 		CommandTimeout: 10,
 	}
-	service := NewWorkerExecutionService(cfg)
+	configurePassedTestImpactHelper(t, &cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 	taskID := modulecore.NewTaskID()
 	p := proposal.NewProposal("retry test", `[{"type":"shell_command","action":"run","target":"`+missingCommand+`"}]`, "", "")
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -261,15 +272,16 @@ func TestExecuteProposal_ClassifiesMissingCommandAsRetryable(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Create(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:         tmpDir,
 		ProtectedPatterns: []string{},
 		ActionOnProtected: "error",
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	testFile := filepath.Join(tmpDir, "create_test.txt")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "Created"}]`
@@ -277,7 +289,7 @@ func TestExecuteFileEdit_Create(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -294,7 +306,7 @@ func TestExecuteFileEdit_Create(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Update(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	testFile := filepath.Join(tmpDir, "update_test.txt")
 
 	// 既存ファイル作成
@@ -304,14 +316,18 @@ func TestExecuteFileEdit_Update(t *testing.T) {
 		Workspace:         tmpDir,
 		ProtectedPatterns: []string{},
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + filepath.ToSlash(testFile) + `", "content": "Updated"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -327,12 +343,12 @@ func TestExecuteFileEdit_UpdateRequiresExistingTarget(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "missing.go")
 	cfg := config.WorkerConfig{Workspace: tmpDir}
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "update", "target": "` + filepath.ToSlash(testFile) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("update missing file", jsonPatch, "", "")
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), p)
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), p)
 	if err == nil {
 		t.Fatal("expected update of missing file to be rejected")
 	}
@@ -347,12 +363,12 @@ func TestExecuteFileEdit_UpdateRequiresExistingTarget(t *testing.T) {
 func TestExecuteFileEdit_RejectsPlaceholderTarget(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := config.WorkerConfig{Workspace: tmpDir}
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(filepath.Join(tmpDir, "path", "to", "chat_module.go")) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("placeholder file", jsonPatch, "", "")
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), p)
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), p)
 	if err == nil {
 		t.Fatal("expected placeholder target to be rejected")
 	}
@@ -365,12 +381,12 @@ func TestExecuteFileEdit_RejectsGoContentWithoutPackageDeclaration(t *testing.T)
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "internal", "new.go")
 	cfg := config.WorkerConfig{Workspace: tmpDir}
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "func main() {}\n"}]`
 	p := proposal.NewProposal("bad go file", jsonPatch, "", "")
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), p)
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), p)
 	if err == nil {
 		t.Fatal("expected Go content without package declaration to be rejected")
 	}
@@ -386,12 +402,12 @@ func TestExecuteFileEdit_RejectsRootGoFileCreation(t *testing.T) {
 	tmpDir := t.TempDir()
 	testFile := filepath.Join(tmpDir, "chat.go")
 	cfg := config.WorkerConfig{Workspace: tmpDir}
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "package main\n"}]`
 	p := proposal.NewProposal("root go file", jsonPatch, "", "")
 
-	_, err := service.ExecuteProposal(context.Background(), modulecore.NewTaskID(), p)
+	_, err := executeOwnedProposal(t, service, context.Background(), modulecore.NewTaskID(), p)
 	if err == nil {
 		t.Fatal("expected root Go file creation to be rejected")
 	}
@@ -404,7 +420,7 @@ func TestExecuteFileEdit_RejectsRootGoFileCreation(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Delete(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	testFile := filepath.Join(tmpDir, "delete_test.txt")
 
 	// 既存ファイル作成
@@ -413,14 +429,18 @@ func TestExecuteFileEdit_Delete(t *testing.T) {
 	cfg := config.WorkerConfig{
 		Workspace: tmpDir,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "delete", "target": "` + filepath.ToSlash(testFile) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -433,7 +453,7 @@ func TestExecuteFileEdit_Delete(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Append(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	testFile := filepath.Join(tmpDir, "append_test.txt")
 
 	// 既存ファイル作成
@@ -442,14 +462,18 @@ func TestExecuteFileEdit_Append(t *testing.T) {
 	cfg := config.WorkerConfig{
 		Workspace: tmpDir,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "append", "target": "` + filepath.ToSlash(testFile) + `", "content": "Line2\n"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -463,20 +487,24 @@ func TestExecuteFileEdit_Append(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Mkdir(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	newDir := filepath.Join(tmpDir, "newdir")
 
 	cfg := config.WorkerConfig{
 		Workspace: tmpDir,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "file_edit", "action": "mkdir", "target": "` + filepath.ToSlash(newDir) + `"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -489,20 +517,24 @@ func TestExecuteFileEdit_Mkdir(t *testing.T) {
 }
 
 func TestExecuteShellCommand_Success(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:      tmpDir,
 		CommandTimeout: 10,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{"type": "shell_command", "action": "run", "target": "echo 'test'"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -518,15 +550,16 @@ func TestExecuteShellCommand_Success(t *testing.T) {
 }
 
 func TestProtectedFile_Error(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:         tmpDir,
 		ProtectedPatterns: []string{".env*"},
 		ActionOnProtected: "error",
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	// 保護ファイルへの書き込み試行
 	envFile := filepath.Join(tmpDir, ".env")
@@ -534,7 +567,10 @@ func TestProtectedFile_Error(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	// 失敗すべき
 	if result.Success {
@@ -553,7 +589,7 @@ func TestWorkspaceRestriction_Error(t *testing.T) {
 		Workspace: tmpDir,
 	}
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	// workspace外への書き込み試行
 	outsideFile := "/tmp/outside.txt"
@@ -561,7 +597,7 @@ func TestWorkspaceRestriction_Error(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err == nil {
 		t.Fatal("expected outside workspace target to be rejected before execution")
 	}
@@ -574,7 +610,7 @@ func TestWorkspaceRestriction_Error(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Rename(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	oldFile := filepath.Join(tmpDir, "old.txt")
 	newFile := filepath.Join(tmpDir, "new.txt")
 
@@ -584,8 +620,9 @@ func TestExecuteFileEdit_Rename(t *testing.T) {
 	cfg := config.WorkerConfig{
 		Workspace: tmpDir,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{
 		"type": "file_edit",
@@ -596,7 +633,10 @@ func TestExecuteFileEdit_Rename(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -612,7 +652,7 @@ func TestExecuteFileEdit_Rename(t *testing.T) {
 }
 
 func TestExecuteFileEdit_Copy(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 	srcFile := filepath.Join(tmpDir, "source.txt")
 	destFile := filepath.Join(tmpDir, "dest.txt")
 
@@ -622,8 +662,9 @@ func TestExecuteFileEdit_Copy(t *testing.T) {
 	cfg := config.WorkerConfig{
 		Workspace: tmpDir,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{
 		"type": "file_edit",
@@ -634,7 +675,10 @@ func TestExecuteFileEdit_Copy(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -653,14 +697,15 @@ func TestExecuteFileEdit_Copy(t *testing.T) {
 }
 
 func TestExecuteShellCommand_WithEnv(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:      tmpDir,
 		CommandTimeout: 10,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[{
 		"type": "shell_command",
@@ -671,7 +716,10 @@ func TestExecuteShellCommand_WithEnv(t *testing.T) {
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	if !result.Success {
 		t.Error("Expected success")
@@ -688,15 +736,16 @@ func TestExecuteShellCommand_WithEnv(t *testing.T) {
 }
 
 func TestShowExecutionSummary(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:            tmpDir,
 		ShowExecutionSummary: true,
 		CommandTimeout:       10,
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := NewWorkerExecutionService(cfg)
+	service := newTestWorkerExecutionService(t, cfg)
 
 	jsonPatch := `[
 		{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(tmpDir) + `/test1.txt", "content": "A"},
@@ -706,7 +755,7 @@ func TestShowExecutionSummary(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 
 	// サマリが表示される（標準出力）
-	result, err := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -749,22 +798,26 @@ func TestShowExecutionSummaryUsesTaskIDLabel(t *testing.T) {
 }
 
 func TestProtectedFile_Skip(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:         tmpDir,
 		ProtectedPatterns: []string{".env*"},
 		ActionOnProtected: "skip", // skip mode
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	envFile := filepath.Join(tmpDir, ".env")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	// skipモードなので成功する（ただしファイルは作成されない）
 	if !result.Success {
@@ -778,22 +831,26 @@ func TestProtectedFile_Skip(t *testing.T) {
 }
 
 func TestProtectedFile_Log(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	cfg := config.WorkerConfig{
 		Workspace:         tmpDir,
 		ProtectedPatterns: []string{".env*"},
 		ActionOnProtected: "log", // log mode
 	}
+	configurePassedTestImpactHelper(t, &cfg)
 
-	service := &workerExecutionService{config: cfg}
+	service := newTestWorkerExecutionService(t, cfg)
 
 	envFile := filepath.Join(tmpDir, ".env")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(envFile) + `", "content": "SECRET=xxx"}]`
 	p := proposal.NewProposal("", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+	if err != nil {
+		t.Fatalf("ExecuteProposal failed: %v", err)
+	}
 
 	// logモードなので成功する（警告ログが出る）
 	if !result.Success {
@@ -807,7 +864,7 @@ func TestProtectedFile_Log(t *testing.T) {
 }
 
 func TestStopOnError_vs_ContinueOnError(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := prepareCanonicalWorkerWorkspace(t)
 
 	// StopOnError=trueのテスト
 	t.Run("StopOnError=true", func(t *testing.T) {
@@ -815,8 +872,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 			Workspace:   tmpDir,
 			StopOnError: true,
 		}
+		configurePassedTestImpactHelper(t, &cfg)
 
-		service := &workerExecutionService{config: cfg}
+		service := newTestWorkerExecutionService(t, cfg)
 
 		// 最初は成功、2番目は失敗、3番目は実行されないはず
 		file1 := filepath.Join(tmpDir, "file1.txt")
@@ -832,7 +890,10 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		p := proposal.NewProposal("", jsonPatch, "", "")
 		taskID := modulecore.NewTaskID()
 
-		result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+		result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+		if err != nil {
+			t.Fatalf("ExecuteProposal failed: %v", err)
+		}
 
 		if result.ExecutedCmds != 2 {
 			t.Errorf("Expected 2 executed commands (stopped on error), got %d", result.ExecutedCmds)
@@ -854,8 +915,9 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 			Workspace:   tmpDir,
 			StopOnError: false,
 		}
+		configurePassedTestImpactHelper(t, &cfg)
 
-		service := &workerExecutionService{config: cfg}
+		service := newTestWorkerExecutionService(t, cfg)
 
 		file3 := filepath.Join(tmpDir, "file3.txt")
 		file4 := filepath.Join(tmpDir, "file4.txt")
@@ -870,7 +932,10 @@ func TestStopOnError_vs_ContinueOnError(t *testing.T) {
 		p := proposal.NewProposal("", jsonPatch, "", "")
 		taskID := modulecore.NewTaskID()
 
-		result, _ := service.ExecuteProposal(context.Background(), taskID, p)
+		result, err := executeOwnedProposal(t, service, context.Background(), taskID, p)
+		if err != nil {
+			t.Fatalf("ExecuteProposal failed: %v", err)
+		}
 
 		if result.ExecutedCmds != 3 {
 			t.Errorf("Expected 3 executed commands (continue on error), got %d", result.ExecutedCmds)
@@ -904,6 +969,19 @@ func initGitRepo(t *testing.T, dir string) {
 			t.Fatalf("git init failed: %v, output: %s", err, string(out))
 		}
 	}
+}
+
+func prepareCanonicalWorkerWorkspace(t *testing.T) string {
+	t.Helper()
+	workspace := t.TempDir()
+	return testimpact.InitWorkspace(t, workspace)
+}
+
+func configurePassedTestImpactHelper(t *testing.T, cfg *config.WorkerConfig) {
+	t.Helper()
+	cfg.TestImpactBinary = os.Args[0]
+	cfg.TestImpactTimeoutSeconds = 30
+	t.Setenv(testimpact.HelperModeEnv, "passed")
 }
 
 func TestExecuteParallel_PhasedExecution(t *testing.T) {
@@ -1195,7 +1273,8 @@ func TestAutoCommitChanges_NothingToCommit(t *testing.T) {
 
 func TestExecuteProposal_WithAutoCommit(t *testing.T) {
 	tmpDir := t.TempDir()
-	initGitRepo(t, tmpDir)
+	testimpact.InitWorkspace(t, tmpDir)
+	t.Setenv(testimpact.HelperModeEnv, "passed")
 
 	// 初回コミット
 	initFile := filepath.Join(tmpDir, "init.txt")
@@ -1204,46 +1283,62 @@ func TestExecuteProposal_WithAutoCommit(t *testing.T) {
 	runGit(t, tmpDir, "commit", "-m", "initial commit")
 
 	cfg := config.WorkerConfig{
-		AutoCommit:          true,
-		CommitMessagePrefix: "[Worker]",
-		CommandTimeout:      10,
-		GitTimeout:          10,
-		StopOnError:         false,
-		Workspace:           tmpDir,
+		AutoCommit:               true,
+		CommitMessagePrefix:      "[Worker]",
+		CommandTimeout:           10,
+		GitTimeout:               10,
+		TestImpactBinary:         os.Args[0],
+		TestImpactTimeoutSeconds: 30,
+		StopOnError:              false,
+		Workspace:                tmpDir,
 	}
 
-	svc := NewWorkerExecutionService(cfg)
+	svc := newTestWorkerExecutionService(t, cfg)
 
 	testFile := filepath.Join(tmpDir, "autocommit_test.txt")
 	jsonPatch := `[{"type": "file_edit", "action": "create", "target": "` + filepath.ToSlash(testFile) + `", "content": "auto-committed"}]`
 	p := proposal.NewProposal("Test plan", jsonPatch, "Low", "Low")
 	taskID := modulecore.NewTaskID()
 
-	result, err := svc.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, svc, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
 
+	if !result.Success || result.TestStatus != "passed" || result.TestReceipt == "" {
+		t.Fatalf("expected passed owner test receipt before auto-commit, got %#v", result)
+	}
+	if _, err := os.Stat(result.TestReceipt); err != nil {
+		t.Fatalf("owner test receipt missing: %v", err)
+	}
 	if result.GitCommit == "" {
 		t.Error("Expected GitCommit hash when auto-commit is enabled")
+	}
+	trackedArtifacts := exec.Command("git", "ls-files", "--", "Tmp")
+	trackedArtifacts.Dir = tmpDir
+	if output, err := trackedArtifacts.CombinedOutput(); err != nil || strings.TrimSpace(string(output)) != "" {
+		t.Fatalf("auto-commit must not include test runtime artifacts: %v, %s", err, output)
 	}
 }
 
 func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 	tmpDir := t.TempDir()
-	initGitRepo(t, tmpDir)
+	testimpact.InitWorkspace(t, tmpDir)
+	t.Setenv(testimpact.HelperModeEnv, "passed")
 
 	cfg := config.WorkerConfig{
-		AutoCommit:        false,
-		ParallelExecution: true,
-		MaxParallelism:    4,
-		CommandTimeout:    10,
-		GitTimeout:        10,
-		StopOnError:       false,
-		Workspace:         tmpDir,
+		AutoCommit:               false,
+		ParallelExecution:        true,
+		MaxParallelism:           4,
+		CommandTimeout:           10,
+		GitTimeout:               10,
+		TestImpactBinary:         os.Args[0],
+		TestImpactTimeoutSeconds: 30,
+		StopOnError:              false,
+		Workspace:                tmpDir,
 	}
 
-	svc := NewWorkerExecutionService(cfg)
+	svc := newTestWorkerExecutionService(t, cfg)
 
 	file1 := filepath.Join(tmpDir, "par_mixed1.txt")
 	file2 := filepath.Join(tmpDir, "par_mixed2.txt")
@@ -1258,7 +1353,7 @@ func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 	p := proposal.NewProposal("Parallel mixed", jsonPatch, "", "")
 	taskID := modulecore.NewTaskID()
 
-	result, err := svc.ExecuteProposal(context.Background(), taskID, p)
+	result, err := executeOwnedProposal(t, svc, context.Background(), taskID, p)
 	if err != nil {
 		t.Fatalf("ExecuteProposal failed: %v", err)
 	}
@@ -1269,6 +1364,9 @@ func TestExecuteProposal_ParallelWithMixedTypes(t *testing.T) {
 	if result.FailedCmds != 0 {
 		t.Errorf("Expected 0 failed, got %d", result.FailedCmds)
 	}
+	if !result.Success || result.TestStatus != "passed" || result.TestReceipt == "" {
+		t.Fatalf("expected passed owner test receipt, got %#v", result)
+	}
 }
 
 // runGit はgitコマンドを実行するヘルパー
@@ -1278,5 +1376,219 @@ func runGit(t *testing.T, dir string, args ...string) {
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v, output: %s", args, err, string(out))
+	}
+}
+
+func TestWorkerProposalAdmissionRejectsMissingOwner(t *testing.T) {
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "missing-owner.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace))
+	p := workerProposalAdmissionPatch(t, target)
+
+	assertWorkerProposalAdmissionRejected(t, worker, context.Background(), modulecore.NewTaskID(), p, target, "owner is unavailable")
+}
+
+func TestWorkerProposalAdmissionRejectsDuplicateOwners(t *testing.T) {
+	manager, task, run, ctx := newWorkerProposalAdmissionFixture(t)
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "duplicate-owner.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager, nil)
+
+	assertWorkerProposalAdmissionRejected(t, worker, ctx, task.TaskID, workerProposalAdmissionPatch(t, target), target, "owner is unavailable")
+	_ = run
+}
+
+func TestWorkerProposalAdmissionRejectsMissingExecutionContext(t *testing.T) {
+	manager, task, _, _ := newWorkerProposalAdmissionFixture(t)
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "missing-context.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+
+	assertWorkerProposalAdmissionRejected(t, worker, context.Background(), task.TaskID, workerProposalAdmissionPatch(t, target), target, "admission denied")
+}
+
+func TestWorkerProposalAdmissionRejectsTaskMismatch(t *testing.T) {
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "wrong-task.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+
+	assertWorkerProposalAdmissionRejected(t, worker, ctx, modulecore.NewTaskID(), workerProposalAdmissionPatch(t, target), target, "task identity mismatch")
+	_ = task
+}
+
+func TestWorkerProposalAdmissionRejectsActorMismatch(t *testing.T) {
+	manager, task, run, _ := newWorkerProposalAdmissionFixture(t)
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "wrong-actor.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+	ctx := workerProposalAdmissionContext(t, task.TaskID, run.RunID, "mio")
+
+	assertWorkerProposalAdmissionRejected(t, worker, ctx, task.TaskID, workerProposalAdmissionPatch(t, target), target, "admission denied")
+}
+
+func TestWorkerProposalAdmissionRejectsTerminalTask(t *testing.T) {
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	if _, err := manager.Succeed(ctx, task.TaskID, "terminal fixture"); err != nil {
+		t.Fatalf("Succeed fixture task: %v", err)
+	}
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "terminal-task.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+
+	assertWorkerProposalAdmissionRejected(t, worker, ctx, task.TaskID, workerProposalAdmissionPatch(t, target), target, "admission denied")
+}
+
+func TestWorkerProposalAdmissionRejectsClosedOwner(t *testing.T) {
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	if err := manager.Close(); err != nil {
+		t.Fatalf("close task owner: %v", err)
+	}
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(workspace, "closed-owner.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+
+	assertWorkerProposalAdmissionRejected(t, worker, ctx, task.TaskID, workerProposalAdmissionPatch(t, target), target, "admission denied")
+}
+
+func TestWorkerProposalAdmissionWorkspaceOverrideRetainsOwnerGate(t *testing.T) {
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	if err := manager.Close(); err != nil {
+		t.Fatalf("close task owner: %v", err)
+	}
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	override := prepareCanonicalWorkerWorkspace(t)
+	target := filepath.Join(override, "workspace-override.txt")
+	worker := NewWorkerExecutionService(workerProposalAdmissionConfig(t, workspace), manager)
+
+	result, err := worker.ExecuteProposalInWorkspace(ctx, task.TaskID, workerProposalAdmissionPatch(t, target), override)
+	if err == nil || result != nil || !strings.Contains(err.Error(), "admission denied") {
+		t.Fatalf("workspace override must retain closed-owner admission: result=%#v err=%v", result, err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("workspace override must not apply a rejected proposal: %v", statErr)
+	}
+}
+
+func TestWorkerProposalAdmissionAllowsBoundOwner(t *testing.T) {
+	manager, task, _, ctx := newWorkerProposalAdmissionFixture(t)
+	workspace := prepareCanonicalWorkerWorkspace(t)
+	cfg := config.WorkerConfig{
+		Workspace:         workspace,
+		AutoCommit:        false,
+		CommandTimeout:    10,
+		GitTimeout:        10,
+		StopOnError:       true,
+		ProtectedPatterns: []string{".env*"},
+		ActionOnProtected: "error",
+	}
+	configurePassedTestImpactHelper(t, &cfg)
+	worker := NewWorkerExecutionService(cfg, manager)
+	target := filepath.Join(workspace, "admitted.txt")
+
+	result, err := worker.ExecuteProposal(ctx, task.TaskID, workerProposalAdmissionPatch(t, target))
+	if err != nil {
+		t.Fatalf("bound owner proposal execution failed: %v", err)
+	}
+	if result == nil || !result.Success || result.TestStatus != "passed" {
+		t.Fatalf("expected owner-admitted checked success, got %#v", result)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("admitted proposal did not create target: %v", err)
+	}
+}
+
+func TestWorkerProposalAdmissionRejectsNilService(t *testing.T) {
+	var worker *workerExecutionService
+	result, err := worker.ExecuteProposalInWorkspace(context.Background(), modulecore.NewTaskID(), nil, t.TempDir())
+	if err == nil || result != nil {
+		t.Fatalf("nil service must fail closed: result=%#v err=%v", result, err)
+	}
+}
+
+func newWorkerProposalAdmissionFixture(t *testing.T) (*taskmanager.Manager, domaintask.Task, domaintask.Run, context.Context) {
+	t.Helper()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create task store: %v", err)
+	}
+	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	task, err := manager.Create(context.Background(), domaintask.Task{
+		Title:    "worker proposal admission fixture",
+		Route:    domaintask.RouteGeneral,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create task fixture: %v", err)
+	}
+	run, err := manager.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatalf("start run fixture: %v", err)
+	}
+	return manager, task, run, workerProposalAdmissionContext(t, task.TaskID, run.RunID, "shiro")
+}
+
+func workerProposalAdmissionContext(t *testing.T, taskID modulecore.TaskID, runID modulecore.RunID, actorID string) context.Context {
+	t.Helper()
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatalf("bind execution identity: %v", err)
+	}
+	scope, err := domaintool.NewToolExecutionScope(
+		string(modulecore.NewRequestID()),
+		domaintool.ActorKindAgent,
+		actorID,
+		"",
+		[]string{domaintool.DataScopePublic},
+		domaintool.AuthenticationSourceAgentOrchestrator,
+	)
+	if err != nil {
+		t.Fatalf("create execution scope: %v", err)
+	}
+	return domaintool.WithToolExecutionScope(ctx, scope)
+}
+
+func workerProposalAdmissionPatch(t *testing.T, target string) *proposal.Proposal {
+	t.Helper()
+	patchJSON, err := json.Marshal([]map[string]string{{
+		"type":    "file_edit",
+		"action":  "create",
+		"target":  target,
+		"content": "admission fixture",
+	}})
+	if err != nil {
+		t.Fatalf("encode admission patch: %v", err)
+	}
+	return proposal.NewProposal("worker proposal admission", string(patchJSON), "", "")
+}
+
+func workerProposalAdmissionConfig(t *testing.T, workspace string) config.WorkerConfig {
+	t.Helper()
+	cfg := config.WorkerConfig{
+		Workspace:         workspace,
+		AutoCommit:        false,
+		CommandTimeout:    10,
+		GitTimeout:        10,
+		StopOnError:       true,
+		ProtectedPatterns: []string{".env*"},
+		ActionOnProtected: "error",
+	}
+	configurePassedTestImpactHelper(t, &cfg)
+	return cfg
+}
+
+func assertWorkerProposalAdmissionRejected(t *testing.T, worker *workerExecutionService, ctx context.Context, taskID modulecore.TaskID, p *proposal.Proposal, target, wantError string) {
+	t.Helper()
+	result, err := worker.ExecuteProposal(ctx, taskID, p)
+	if err == nil || result != nil || !strings.Contains(err.Error(), wantError) {
+		t.Fatalf("proposal must be rejected before execution: result=%#v err=%v", result, err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected proposal must not create target: %v", statErr)
 	}
 }

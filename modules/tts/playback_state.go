@@ -19,42 +19,42 @@ const (
 	PlaybackStateSnapshotFailedPrefix       = "tts playback snapshot failed: "
 )
 
-func BuildPendingPlaybackSnapshot(sessionIDs []string, responseIDs []string, topicGateCount int, topicRouteCount int) PendingPlaybackSnapshot {
+func BuildPendingPlaybackSnapshot(sessionIDs []string, publicPlaybackRefs []string, topicGateCount int, topicRouteCount int) PendingPlaybackSnapshot {
 	sessionIDs = append([]string(nil), sessionIDs...)
-	responseIDs = append([]string(nil), responseIDs...)
+	publicPlaybackRefs = append([]string(nil), publicPlaybackRefs...)
 	sort.Strings(sessionIDs)
-	sort.Strings(responseIDs)
+	sort.Strings(publicPlaybackRefs)
 	return PendingPlaybackSnapshot{
-		PendingSessionCount:  len(sessionIDs),
-		PendingResponseCount: len(responseIDs),
-		PendingSessionIDs:    sessionIDs,
-		PendingResponseIDs:   responseIDs,
-		TopicGateCount:       topicGateCount,
-		TopicRouteCount:      topicRouteCount,
+		PendingSessionCount:        len(sessionIDs),
+		PendingPublicPlaybackCount: len(publicPlaybackRefs),
+		PendingSessionIDs:          sessionIDs,
+		PendingPublicPlaybackRefs:  publicPlaybackRefs,
+		TopicGateCount:             topicGateCount,
+		TopicRouteCount:            topicRouteCount,
 	}
 }
 
-func BuildPublicPlaybackSnapshot(routeCount int, staleRouteCount int, nextChunkSessionCount int, nextResponseSessionCount int) PublicPlaybackSnapshot {
+func BuildPublicPlaybackSnapshot(routeCount int, staleRouteCount int, nextChunkSessionCount int, nextPublicPlaybackRefSessionCount int) PublicPlaybackSnapshot {
 	return PublicPlaybackSnapshot{
-		RouteCount:               nonNegative(routeCount),
-		StaleRouteCount:          nonNegative(staleRouteCount),
-		NextChunkSessionCount:    nonNegative(nextChunkSessionCount),
-		NextResponseSessionCount: nonNegative(nextResponseSessionCount),
+		RouteCount:                     nonNegative(routeCount),
+		StaleRouteCount:                nonNegative(staleRouteCount),
+		NextChunkSessionCount:          nonNegative(nextChunkSessionCount),
+		NextPublicPlaybackSessionCount: nonNegative(nextPublicPlaybackRefSessionCount),
 	}
 }
 
 func BuildPlaybackStateSnapshot(pending PendingPlaybackSnapshot, public PublicPlaybackSnapshot) PlaybackStateSnapshot {
 	return PlaybackStateSnapshot{
-		PendingSessionCount:      pending.PendingSessionCount,
-		PendingResponseCount:     pending.PendingResponseCount,
-		PendingSessionIDs:        append([]string(nil), pending.PendingSessionIDs...),
-		PendingResponseIDs:       append([]string(nil), pending.PendingResponseIDs...),
-		TopicGateCount:           pending.TopicGateCount,
-		TopicRouteCount:          pending.TopicRouteCount,
-		PublicRouteCount:         public.RouteCount,
-		PublicStaleRouteCount:    public.StaleRouteCount,
-		NextChunkSessionCount:    public.NextChunkSessionCount,
-		NextResponseSessionCount: public.NextResponseSessionCount,
+		PendingSessionCount:            pending.PendingSessionCount,
+		PendingPublicPlaybackCount:     pending.PendingPublicPlaybackCount,
+		PendingSessionIDs:              append([]string(nil), pending.PendingSessionIDs...),
+		PendingPublicPlaybackRefs:      append([]string(nil), pending.PendingPublicPlaybackRefs...),
+		TopicGateCount:                 pending.TopicGateCount,
+		TopicRouteCount:                pending.TopicRouteCount,
+		PublicRouteCount:               public.RouteCount,
+		PublicStaleRouteCount:          public.StaleRouteCount,
+		NextChunkSessionCount:          public.NextChunkSessionCount,
+		NextPublicPlaybackSessionCount: public.NextPublicPlaybackSessionCount,
 	}
 }
 
@@ -80,7 +80,7 @@ func BuildPlaybackStateReport(ctx context.Context, observer PlaybackStateObserve
 func BuildPlaybackStateHealthReport(snapshot PlaybackStateSnapshot) core.HealthReport {
 	status := core.HealthReady
 	detail := "playback state clear"
-	if snapshot.PendingSessionCount > 0 || snapshot.PendingResponseCount > 0 || snapshot.TopicGateCount > 0 {
+	if snapshot.PendingSessionCount > 0 || snapshot.PendingPublicPlaybackCount > 0 || snapshot.TopicGateCount > 0 {
 		status = core.HealthLive
 		detail = "playback pending state active"
 	}
@@ -90,9 +90,9 @@ func BuildPlaybackStateHealthReport(snapshot PlaybackStateSnapshot) core.HealthR
 		Ready:  true,
 		Detail: detail,
 		Metadata: map[string]any{
-			"pending_session_count":  snapshot.PendingSessionCount,
-			"pending_response_count": snapshot.PendingResponseCount,
-			"public_route_count":     snapshot.PublicRouteCount,
+			"pending_session_count":         snapshot.PendingSessionCount,
+			"pending_public_playback_count": snapshot.PendingPublicPlaybackCount,
+			"public_route_count":            snapshot.PublicRouteCount,
 		},
 	}
 }

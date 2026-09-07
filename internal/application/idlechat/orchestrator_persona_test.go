@@ -153,7 +153,7 @@ func TestIdleChatAppliesPersonaCanonicalResponse(t *testing.T) {
 		Keywords:    []string{"削除"},
 	}})
 	o.SetPersonaCanonicalResponses([]domainpersona.CanonicalResponseDefinition{{
-		ResponseKey:       "kuro_destructive_block",
+		ResponseKey:      "kuro_destructive_block",
 		CharacterID:      "kuro",
 		Category:         "danger",
 		Response:         "その操作は止めます。",

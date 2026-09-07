@@ -41,12 +41,3 @@ func TestFormatAgentUnavailableReason(t *testing.T) {
 		t.Fatalf("reason = %q, want %q", got, want)
 	}
 }
-
-func TestLocalCoderReplyTarget(t *testing.T) {
-	if got := LocalCoderReplyTarget("Shiro"); got != "mio" {
-		t.Fatalf("shiro reply target = %q", got)
-	}
-	if got := LocalCoderReplyTarget(" aka "); got != "aka" {
-		t.Fatalf("normal reply target = %q", got)
-	}
-}

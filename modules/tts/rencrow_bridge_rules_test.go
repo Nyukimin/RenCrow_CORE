@@ -25,16 +25,16 @@ func TestApplyRenCrowBridgeConfigDefaults(t *testing.T) {
 
 func TestBuildRenCrowSessionStart(t *testing.T) {
 	got, err := BuildRenCrowSessionStart(RenCrowSessionStartInput{
-		SessionID:      " s1 ",
-		CharacterID:    " mio ",
-		ResponseID:     " r1 ",
-		RequestedVoice: " ",
-		DefaultVoice:   " female_01 ",
+		SessionID:         " s1 ",
+		CharacterID:       " mio ",
+		PublicPlaybackRef: " r1 ",
+		RequestedVoice:    " ",
+		DefaultVoice:      " female_01 ",
 	})
 	if err != nil {
 		t.Fatalf("BuildRenCrowSessionStart() error = %v", err)
 	}
-	if got.SessionID != "s1" || got.CharacterID != "mio" || got.ResponseID != "r1" || got.VoiceID != "female_01" {
+	if got.SessionID != "s1" || got.CharacterID != "mio" || got.PublicPlaybackRef != "r1" || got.VoiceID != "female_01" {
 		t.Fatalf("session start = %+v", got)
 	}
 	if _, err := BuildRenCrowSessionStart(RenCrowSessionStartInput{SessionID: " "}); err == nil || err.Error() != "session_id is required" {

@@ -15,16 +15,16 @@ type recordingEmitter struct {
 }
 
 type recordedEvent struct {
-	Type                      string
-	From                      string
-	To                        string
-	Content                   string
-	Route                     string
-	TaskID                    string
-	SessionID                 string
-	Channel                   string
-	RecipientExternalAddress  string
-	MessageID                 string
+	Type                     string
+	From                     string
+	To                       string
+	Content                  string
+	Route                    string
+	TaskID                   string
+	SessionID                string
+	Channel                  string
+	RecipientExternalAddress string
+	MessageID                string
 }
 
 func (e *recordingEmitter) Emit(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress string) {
@@ -129,11 +129,11 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 		UtteranceID: "utt-missing-trace",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	})
 	if err == nil {
 		t.Fatal("expected missing publisher trace_id to fail closed")
@@ -152,11 +152,11 @@ func TestPublisherUsesRootTaskIDAndIndependentTraceID(t *testing.T) {
 		UtteranceID: "utt-trace-reuse",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	}
 	input := inputForResult(t, result)
 	published, err := (Publisher{
@@ -177,11 +177,11 @@ func TestPublisherPassesExplicitTraceIDToCorrelatedSessionLogs(t *testing.T) {
 		UtteranceID: "utt-correlated-trace",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	}
 	input := inputForResult(t, result)
 	published, err := (Publisher{
@@ -205,11 +205,11 @@ func TestPublisherUsesTurnInputIdentitiesAndBoundary(t *testing.T) {
 		UtteranceID: "utt-canonical-input",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	}
 	input := newPublisherInput(t, result.SessionID, result.Channel, "viewer-user", result.UserText)
 	emitter := &recordingEmitter{}
@@ -256,11 +256,11 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 		UtteranceID: "utt-boundary-reject",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	}
 	validInput := newPublisherInput(t, baseResult.SessionID, baseResult.Channel, "viewer-user", baseResult.UserText)
 	tests := []struct {
@@ -302,11 +302,11 @@ func TestPublisherUsesRootTaskIDWithoutRootTaskCollisionRejection(t *testing.T) 
 		UtteranceID: "utt-task-correlation",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "入力",
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	}
 	input := newPublisherInput(t, result.SessionID, result.Channel, "viewer-user", result.UserText)
 	emitter := &recordingEmitter{}
@@ -338,10 +338,10 @@ func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
 		UtteranceID: "utt-missing-user-text",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		Reply:       "応答",
-		RawFinal:    "応答",
-		Source:      "RenCrow_LLM llm.final",
+
+		Reply:    "応答",
+		RawFinal: "応答",
+		Source:   "RenCrow_LLM llm.final",
 	})
 	if err == nil {
 		t.Fatal("expected missing LLM user_text to fail closed")
@@ -367,12 +367,12 @@ func TestPublisherPublishesUserTextAndReplyOnly(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "Mioさんいますか",
-		Reply:       "はい、います。",
-		RawFinal:    `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
-		Source:      "RenCrow_LLM llm.final",
-		Timings:     Timings{StartedAt: time.Now()},
+
+		UserText: "Mioさんいますか",
+		Reply:    "はい、います。",
+		RawFinal: `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
+		Source:   "RenCrow_LLM llm.final",
+		Timings:  Timings{StartedAt: time.Now()},
 	})
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
@@ -402,12 +402,12 @@ func TestPublisherMarksVoiceInputAsVoiceChatSurface(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "入力",
-		Reply:       "はい。",
-		RawFinal:    "はい。",
-		Source:      "RenCrow_LLM llm.final",
-		Timings:     Timings{StartedAt: time.Now()},
+
+		UserText: "入力",
+		Reply:    "はい。",
+		RawFinal: "はい。",
+		Source:   "RenCrow_LLM llm.final",
+		Timings:  Timings{StartedAt: time.Now()},
 	})
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)
@@ -438,11 +438,11 @@ func TestPublisherDoesNotPublishRawJSONAsChatContent(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "れん",
-		Reply:       "応答",
-		RawFinal:    `{"user_text":"れん","reply":"応答"}`,
-		Source:      "RenCrow_LLM llm.final",
+
+		UserText: "れん",
+		Reply:    "応答",
+		RawFinal: `{"user_text":"れん","reply":"応答"}`,
+		Source:   "RenCrow_LLM llm.final",
 	})
 	if err != nil {
 		t.Fatalf("Publish failed: %v", err)

@@ -10,11 +10,55 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/testsupport/testimpact"
 )
+
+func TestMain(m *testing.M) {
+	testimpact.RunIfRequested()
+	os.Exit(m.Run())
+}
+
+func makeOrchestratorImpactWorkspace(t *testing.T) string {
+	t.Helper()
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "RenCrow_CORE")
+	testimpact.InitWorkspace(t, workspace)
+	t.Setenv("RENCROW_WORKSPACE_ROOT", parent)
+	return workspace
+}
+
+func newOrchestratorWorker(t *testing.T) (string, service.WorkerExecutionService, *taskmanager.Manager) {
+	t.Helper()
+	workspace := makeOrchestratorImpactWorkspace(t)
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	t.Cleanup(func() {
+		if err := owner.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	t.Setenv(testimpact.HelperModeEnv, "passed")
+	return workspace, service.NewWorkerExecutionService(config.WorkerConfig{
+		AutoCommit:               false,
+		StopOnError:              false,
+		Workspace:                workspace,
+		ProtectedPatterns:        []string{".env*"},
+		ActionOnProtected:        "error",
+		CommandTimeout:           10,
+		GitTimeout:               10,
+		TestImpactBinary:         os.Args[0],
+		TestImpactTimeoutSeconds: 30,
+	}, owner), owner
+}
 
 // mockCoderAgentWithProposal はProposal生成をサポートするCoderAgent
 type mockCoderAgentWithProposal struct {
@@ -49,19 +93,7 @@ func (m *mockCoderAgentWithProposal) GenerateProposal(ctx context.Context, t con
 
 func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *testing.T) {
 	// テスト用ワークスペース作成
-	tmpDir := t.TempDir()
-
-	// WorkerExecutionService初期化
-	workerConfig := config.WorkerConfig{
-		AutoCommit:        false,
-		StopOnError:       false,
-		Workspace:         tmpDir,
-		ProtectedPatterns: []string{".env*"},
-		ActionOnProtected: "error",
-		CommandTimeout:    10,
-		GitTimeout:        10,
-	}
-	workerService := service.NewWorkerExecutionService(workerConfig)
+	tmpDir, workerService, taskOwner := newOrchestratorWorker(t)
 
 	// Proposal生成（JSON形式のPatch）
 	jsonPatch := `[
@@ -92,7 +124,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *test
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -125,14 +157,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_JSONPatch(t *test
 }
 
 func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucceeds(t *testing.T) {
-	tmpDir := t.TempDir()
-	workerService := service.NewWorkerExecutionService(config.WorkerConfig{
-		AutoCommit:     false,
-		StopOnError:    false,
-		Workspace:      tmpDir,
-		CommandTimeout: 10,
-		GitTimeout:     10,
-	})
+	_, workerService, taskOwner := newOrchestratorWorker(t)
 
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
@@ -145,7 +170,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucc
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, coder2, nil, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "20260620-viewer-readonly",
@@ -167,14 +192,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE2_ReadOnlyDiagnosticNoChangeSucc
 }
 
 func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	workerService := service.NewWorkerExecutionService(config.WorkerConfig{
-		AutoCommit:     false,
-		StopOnError:    false,
-		Workspace:      tmpDir,
-		CommandTimeout: 10,
-		GitTimeout:     10,
-	})
+	tmpDir, workerService, taskOwner := newOrchestratorWorker(t)
 	jsonPatch := `[
 		{
 			"type": "file_edit",
@@ -194,10 +212,11 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailur
 	coder3 := &mockCoderAgentWithProposal{
 		proposalErrs: []error{errors.New(agent.ProposalFailureInvalidPatch + ": proposal patch is not runnable")},
 		proposals:    []*proposal.Proposal{nil, retryProposal},
+		proposal:     retryProposal,
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	resp, err := orchestrator.ProcessMessage(context.Background(), ProcessMessageRequest{
 		SessionID:   "20260620-viewer-retry",
@@ -220,19 +239,10 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_RetriesRetryableProposalFailur
 }
 
 func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_MarkdownPatch(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	workerConfig := config.WorkerConfig{
-		AutoCommit:     false,
-		StopOnError:    false,
-		Workspace:      tmpDir,
-		CommandTimeout: 10,
-		GitTimeout:     10,
-	}
-	workerService := service.NewWorkerExecutionService(workerConfig)
+	tmpDir, workerService, taskOwner := newOrchestratorWorker(t)
 
 	// Markdown形式のPatch
-	helloPath := tmpDir + "/hello.go"
+	helloPath := filepath.Join(tmpDir, "hello.go")
 	if err := os.WriteFile(helloPath, []byte("package main\n"), 0644); err != nil {
 		t.Fatalf("failed to create existing update target: %v", err)
 	}
@@ -256,7 +266,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_MarkdownPatch(t *
 	}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
 		SessionID:   "20260302-line-U123",
@@ -281,7 +291,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_WithProposal_MarkdownPatch(t *
 }
 
 func TestMessageOrchestrator_ProcessMessage_CODE3_InvalidProposal(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := makeOrchestratorImpactWorkspace(t)
 
 	workerConfig := config.WorkerConfig{
 		Workspace:      tmpDir,
@@ -351,16 +361,7 @@ func TestMessageOrchestrator_ProcessMessage_CODE3_NoCoder3Available(t *testing.T
 }
 
 func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	workerConfig := config.WorkerConfig{
-		AutoCommit:          false, // Git repo not initialized in test
-		CommitMessagePrefix: "[Test]",
-		Workspace:           tmpDir,
-		CommandTimeout:      10,
-		GitTimeout:          10,
-	}
-	workerService := service.NewWorkerExecutionService(workerConfig)
+	tmpDir, workerService, taskOwner := newOrchestratorWorker(t)
 
 	repo := newMockSessionRepository()
 	mio := &mockMioAgent{
@@ -374,7 +375,7 @@ func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
 	coder3 := &mockCoderAgentWithProposal{proposal: testProposal}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test",
@@ -400,15 +401,7 @@ func TestFormatExecutionResult_SuccessWithGitCommit(t *testing.T) {
 }
 
 func TestFormatExecutionResult_PartialFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	workerConfig := config.WorkerConfig{
-		StopOnError:    false, // 継続モード
-		Workspace:      tmpDir,
-		CommandTimeout: 10,
-		GitTimeout:     10,
-	}
-	workerService := service.NewWorkerExecutionService(workerConfig)
+	tmpDir, workerService, taskOwner := newOrchestratorWorker(t)
 
 	// 最初は成功、2番目は失敗するPatch
 	jsonPatch := `[
@@ -424,7 +417,7 @@ func TestFormatExecutionResult_PartialFailure(t *testing.T) {
 	coder3 := &mockCoderAgentWithProposal{proposal: testProposal}
 
 	orchestrator := NewMessageOrchestrator(repo, mio, shiro, nil, nil, coder3, nil, workerService)
-	attachCanonicalTestTaskOwner(t, orchestrator)
+	orchestrator.SetTaskLifecycleManager(taskOwner)
 
 	req := ProcessMessageRequest{
 		SessionID:   "test",

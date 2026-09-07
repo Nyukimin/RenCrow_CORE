@@ -3,6 +3,7 @@ package toolloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 
@@ -60,8 +61,12 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 	maxIter := cfg.maxIterations()
 	maxTokens := cfg.maxTokens()
 	failedCalls := make(map[string]struct{})
-	actionByToolName := make(map[string]modulecore.ActionID)
 	taskScoped := !cfg.TaskID.IsZero() && cfg.RunID != ""
+	if taskScoped {
+		if _, err := ensureLoopIdentity(ctx, cfg); err != nil {
+			return "", err
+		}
+	}
 
 	for i := 0; i < maxIter; i++ {
 		select {
@@ -103,18 +108,28 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 			execCtx := ctx
 			if taskScoped {
 				var bindErr error
-				execCtx, bindErr = bindToolActionAttempt(execCtx, cfg, actionByToolName, tc.Function.Name)
+				execCtx, bindErr = bindToolActionAttempt(execCtx, cfg, tc.Function.Name)
 				if bindErr != nil {
 					return "", bindErr
 				}
 			}
-			result, err := toolRunner.ExecuteV2(execCtx, tc.Function.Name, tc.Function.Arguments)
+			result, toolErr := toolRunner.ExecuteV2(execCtx, tc.Function.Name, tc.Function.Arguments)
+			if taskScoped {
+				actionID, attemptID, bound := domainexecution.BoundActionAttemptFromContext(execCtx)
+				if !bound {
+					completionErr := fmt.Errorf("bound tool action attempt is unavailable")
+					return "", errors.Join(toolErr, fmt.Errorf("complete tool attempt: %w", completionErr))
+				}
+				if completionErr := cfg.Actions.CompleteToolAttempt(execCtx, actionID, attemptID, result, toolErr); completionErr != nil {
+					return "", errors.Join(toolErr, fmt.Errorf("complete tool attempt: %w", completionErr))
+				}
+			}
 
 			var content string
 			failed := false
-			if err != nil {
-				log.Printf("[ToolLoop] tool error name=%s err=%v", tc.Function.Name, err)
-				content = fmt.Sprintf("Error: %v", err)
+			if toolErr != nil {
+				log.Printf("[ToolLoop] tool error name=%s err=%v", tc.Function.Name, toolErr)
+				content = fmt.Sprintf("Error: %v", toolErr)
 				failed = true
 			} else if result != nil && result.Error == nil {
 				log.Printf("[ToolLoop] tool complete name=%s", tc.Function.Name)
@@ -133,8 +148,8 @@ func Run(ctx context.Context, provider llm.ToolCallingProvider,
 			}
 
 			messages = append(messages, llm.ChatMessage{
-				Role:       "tool",
-				Content:    content,
+				Role:               "tool",
+				Content:            content,
 				ProviderToolCallID: tc.ID,
 			})
 		}
@@ -179,17 +194,10 @@ func validateLoopIdentity(cfg Config) error {
 	return nil
 }
 
-func bindToolActionAttempt(ctx context.Context, cfg Config, actionByToolName map[string]modulecore.ActionID, toolName string) (context.Context, error) {
+func bindToolActionAttempt(ctx context.Context, cfg Config, toolName string) (context.Context, error) {
 	execCtx, err := ensureLoopIdentity(ctx, cfg)
 	if err != nil {
 		return nil, err
-	}
-	if actionID, exists := actionByToolName[toolName]; exists {
-		_, attempt, err := cfg.Actions.StartAttempt(execCtx, actionID, domainaction.AttemptStartReasonRetry)
-		if err != nil {
-			return nil, fmt.Errorf("start tool action attempt: %w", err)
-		}
-		return domainexecution.WithBoundActionAttempt(execCtx, actionID, attempt.AttemptID)
 	}
 	action, attempt, err := cfg.Actions.CreateAction(execCtx, actionmanager.CreateInput{
 		TaskID: cfg.TaskID,
@@ -200,14 +208,16 @@ func bindToolActionAttempt(ctx context.Context, cfg Config, actionByToolName map
 	if err != nil {
 		return nil, fmt.Errorf("create tool action: %w", err)
 	}
-	actionByToolName[toolName] = action.ActionID
 	return domainexecution.WithBoundActionAttempt(execCtx, action.ActionID, attempt.AttemptID)
 }
 
 func ensureLoopIdentity(ctx context.Context, cfg Config) (context.Context, error) {
 	identity, err := domainexecution.IdentityFromContext(ctx)
 	if err != nil {
-		return domainexecution.WithIdentity(ctx, cfg.TaskID, cfg.RunID, "")
+		return nil, fmt.Errorf("enclosing execution identity is required: %w", err)
+	}
+	if err := identity.TraceID.Validate(); err != nil {
+		return nil, fmt.Errorf("enclosing execution trace identity is required: %w", err)
 	}
 	if identity.TaskID != cfg.TaskID || identity.RunID != cfg.RunID {
 		return nil, fmt.Errorf("execution identity mismatch: context task_id=%s run_id=%s config task_id=%s run_id=%s", identity.TaskID, identity.RunID, cfg.TaskID, cfg.RunID)

@@ -137,9 +137,12 @@ func TestDraftStateTransitions(t *testing.T) {
 }
 
 func TestBuildWebSocketEvents(t *testing.T) {
-	session := BuildSessionInfoEvent(" sid ", " http ")
-	if session["type"] != WebSocketEventTypeSessionInfo || session["session_id"] != "sid" || session["provider"] != "http" {
+	session := BuildSessionInfoEvent(" http ")
+	if session["type"] != WebSocketEventTypeSessionInfo || session["provider"] != "http" {
 		t.Fatalf("session event = %#v", session)
+	}
+	if _, ok := session["session_id"]; ok {
+		t.Fatalf("session event must not invent a conversation session: %#v", session)
 	}
 	ready := BuildReadyEvent()
 	if ready["type"] != WebSocketEventTypeReady || ready["sample_rate"] != WebSocketReadySampleRate {

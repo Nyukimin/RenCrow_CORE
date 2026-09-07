@@ -2,6 +2,32 @@
   "version": 2,
   "steps": [
     {
+      "name": "test-impact-runner-contract",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": [
+        "-m",
+        "unittest",
+        "scripts.test_impact_runner_test",
+        "-v"
+      ],
+      "testFiles": [
+        "scripts/test_impact_runner_test.py"
+      ],
+      "tier": "fast",
+      "alwaysRun": true,
+      "impact": {
+        "paths": [
+          "scripts/test-local*",
+          "scripts/test_impact_runner_test.py"
+        ],
+        "packages": [],
+        "globalPaths": []
+      },
+      "resourceLocks": [],
+      "timeoutSeconds": 90
+    },
+    {
       "name": "format",
       "workingDirectory": ".",
       "filePath": "pwsh",
@@ -458,7 +484,9 @@
       "platform": [
         "linux",
         "darwin"
-      ]
+      ],
+      "safetyGate": true,
+      "alwaysRun": true
     }
   ],
   "impact": {

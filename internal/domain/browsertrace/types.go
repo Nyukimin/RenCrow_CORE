@@ -76,14 +76,14 @@ type APIValidationIssue struct {
 type APICoverageReport struct {
 	ArtifactID            modulecore.ArtifactID   `json:"artifact_id"`
 	Kind                  modulecore.ArtifactKind `json:"artifact_kind"`
-	TaskID                modulecore.TaskID `json:"task_id"`
-	RunID                 modulecore.RunID  `json:"run_id"`
-	ActorID               string            `json:"actor_id"`
-	ObservedFlows         []string          `json:"observed_flows,omitempty"`
-	ObservedEndpoints     []string          `json:"observed_endpoints,omitempty"`
-	MissingFlows          []string          `json:"missing_flows,omitempty"`
-	RecommendedNextTraces []string          `json:"recommended_next_traces,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
+	TaskID                modulecore.TaskID       `json:"task_id"`
+	RunID                 modulecore.RunID        `json:"run_id"`
+	ActorID               string                  `json:"actor_id"`
+	ObservedFlows         []string                `json:"observed_flows,omitempty"`
+	ObservedEndpoints     []string                `json:"observed_endpoints,omitempty"`
+	MissingFlows          []string                `json:"missing_flows,omitempty"`
+	RecommendedNextTraces []string                `json:"recommended_next_traces,omitempty"`
+	CreatedAt             time.Time               `json:"created_at"`
 }
 
 type NetworkRequest struct {

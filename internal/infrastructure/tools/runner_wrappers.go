@@ -64,6 +64,9 @@ func classifyV1Error(err error) *tool.ToolResponse {
 func (r *ToolRunner) ToolDefinitions() []llm.ToolDefinition {
 	defs := make([]llm.ToolDefinition, 0, len(r.metadata))
 	for name, m := range r.metadata {
+		if r.unavailableMCPTool(m.ToolID) {
+			continue
+		}
 		if name == "subagent" {
 			continue // 再帰防止
 		}

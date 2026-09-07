@@ -297,32 +297,56 @@ func TestSuperAgentStatusRejectsDuplicateCurrentView(t *testing.T) {
 		},
 		{
 			name: "context pack missing summary",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-summary", taskID, runID, now); p.Summary = ""; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-missing-summary", taskID, runID, now)
+				p.Summary = ""
+				return p
+			}()}},
 			want: "missing summary",
 		},
 		{
 			name: "context pack negative tokens",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-negative-tokens", taskID, runID, now); p.TokenEstimate = -1; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-negative-tokens", taskID, runID, now)
+				p.TokenEstimate = -1
+				return p
+			}()}},
 			want: "token_estimate must be >= 0",
 		},
 		{
 			name: "context pack missing created at",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-created-at", taskID, runID, now); p.CreatedAt = time.Time{}; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-missing-created-at", taskID, runID, now)
+				p.CreatedAt = time.Time{}
+				return p
+			}()}},
 			want: "missing created_at",
 		},
 		{
 			name: "context pack missing task id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-missing-task-id", taskID, runID, now); p.TaskID = ""; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-missing-task-id", taskID, runID, now)
+				p.TaskID = ""
+				return p
+			}()}},
 			want: "missing task_id",
 		},
 		{
 			name: "context pack malformed task id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-malformed-task-id", taskID, runID, now); p.TaskID = "task_1"; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-malformed-task-id", taskID, runID, now)
+				p.TaskID = "task_1"
+				return p
+			}()}},
 			want: "invalid task_id",
 		},
 		{
 			name: "context pack malformed run id",
-			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack { p := canonicalClientTestContextPack(t, "ctx-malformed-run-id", taskID, runID, now); p.RunID = "run_1"; return p }()}},
+			resp: SuperAgentStatus{ContextPacks: []ContextPack{func() ContextPack {
+				p := canonicalClientTestContextPack(t, "ctx-malformed-run-id", taskID, runID, now)
+				p.RunID = "run_1"
+				return p
+			}()}},
 			want: "invalid run_id",
 		},
 		{
@@ -4772,19 +4796,39 @@ func TestCreateComplexityConcreteDiffRejectsMalformedResponse(t *testing.T) {
 
 func TestCreateComplexityCoderDiff(t *testing.T) {
 	now := time.Date(2026, 5, 20, 6, 5, 0, 0, time.UTC)
+	taskID := modulecore.TaskID(canonicalClientTestTaskID(t, "coder-diff-task"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/viewer/complexity-hotspots/coder-diffs" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
-		var req ComplexityCoderDiffRequest
+		var req map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.HotspotID != "hot_1" || req.JobID != "job_1" || req.SandboxID != "sandbox_1" {
+		if _, ok := req["job_id"]; ok {
+			t.Fatalf("payload contains legacy job_id: %#v", req)
+		}
+		var gotTaskID modulecore.TaskID
+		if raw, ok := req["task_id"]; !ok {
+			t.Fatal("payload missing task_id")
+		} else if err := json.Unmarshal(raw, &gotTaskID); err != nil {
+			t.Fatalf("decode task_id: %v", err)
+		}
+		if gotTaskID != taskID {
+			t.Fatalf("payload task_id=%q, want %q", gotTaskID, taskID)
+		}
+		var hotspotID, sandboxID string
+		if err := json.Unmarshal(req["hotspot_id"], &hotspotID); err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(req["sandbox_id"], &sandboxID); err != nil {
+			t.Fatal(err)
+		}
+		if hotspotID != "hot_1" || sandboxID != "sandbox_1" {
 			t.Fatalf("payload=%#v", req)
 		}
 		resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
-		resp.CoderResult = &ComplexityCoderDiffResult{JobID: "job_1", ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
+		resp.CoderResult = &ComplexityCoderDiffResult{TaskID: taskID, ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
 		resp.SandboxPromotion = &PromotionRequest{PromotionID: "promo_1", SandboxID: "sandbox_1", TargetPath: "internal/app.go", DiffPath: "sandbox/diff.patch", CreatedAt: now}
 		resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "additional verification is required"}
 		resp.SandboxGateLog = &PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review", CreatedAt: now}
@@ -4797,7 +4841,7 @@ func TestCreateComplexityCoderDiff(t *testing.T) {
 	}
 	resp, err := client.CreateComplexityCoderDiff(context.Background(), ComplexityCoderDiffRequest{
 		HotspotID:   "hot_1",
-		JobID:       "job_1",
+		TaskID:      taskID,
 		ArtifactID:  "art_1",
 		SandboxID:   "sandbox_1",
 		PromotionID: "promo_1",
@@ -4807,7 +4851,41 @@ func TestCreateComplexityCoderDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateComplexityCoderDiff() error = %v", err)
 	}
-	if resp.CoderResult == nil || resp.CoderResult.JobID != "job_1" || resp.SandboxDecision.Status != "needs_review" {
+	if resp.CoderResult == nil || resp.CoderResult.TaskID != taskID || resp.SandboxDecision.Status != "needs_review" {
+		t.Fatalf("response=%#v", resp)
+	}
+}
+
+func TestCreateComplexityCoderDiffAcceptsServerGeneratedTaskID(t *testing.T) {
+	serverTaskID := modulecore.TaskID(canonicalClientTestTaskID(t, "coder-diff-server-task"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := req["task_id"]; ok {
+			t.Fatalf("optional task_id was sent: %#v", req)
+		}
+		if _, ok := req["job_id"]; ok {
+			t.Fatalf("payload contains legacy job_id: %#v", req)
+		}
+		resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
+		resp.CoderResult = &ComplexityCoderDiffResult{TaskID: serverTaskID, ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.CreateComplexityCoderDiff(context.Background(), ComplexityCoderDiffRequest{
+		HotspotID:  "hot_1",
+		ArtifactID: "art_1",
+	})
+	if err != nil {
+		t.Fatalf("CreateComplexityCoderDiff() error = %v", err)
+	}
+	if resp.CoderResult == nil || resp.CoderResult.TaskID != serverTaskID {
 		t.Fatalf("response=%#v", resp)
 	}
 }
@@ -4830,10 +4908,22 @@ func TestCreateComplexityCoderDiffRejectsInvalidRequest(t *testing.T) {
 	if called {
 		t.Fatal("server was called for invalid request")
 	}
+	_, err = client.CreateComplexityCoderDiff(context.Background(), ComplexityCoderDiffRequest{
+		HotspotID: "hot_1",
+		TaskID:    modulecore.TaskID("task_1"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid task_id") {
+		t.Fatalf("CreateComplexityCoderDiff() error = %v, want invalid task_id", err)
+	}
+	if called {
+		t.Fatal("server was called for request with invalid task_id")
+	}
 }
 
 func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 	now := time.Date(2026, 5, 20, 6, 5, 0, 0, time.UTC)
+	taskID := modulecore.TaskID(canonicalClientTestTaskID(t, "coder-diff-task"))
+	otherTaskID := modulecore.TaskID(canonicalClientTestTaskID(t, "coder-diff-other-task"))
 	tests := []struct {
 		name   string
 		mutate func(*ComplexityDiffResponse)
@@ -4847,11 +4937,25 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 			want: "missing coder_result",
 		},
 		{
-			name: "job mismatch",
+			name: "missing task id",
 			mutate: func(resp *ComplexityDiffResponse) {
-				resp.CoderResult.JobID = "other_job"
+				resp.CoderResult.TaskID = ""
 			},
-			want: "job_id mismatch",
+			want: "missing task_id",
+		},
+		{
+			name: "malformed task id",
+			mutate: func(resp *ComplexityDiffResponse) {
+				resp.CoderResult.TaskID = "task_1"
+			},
+			want: "invalid task_id",
+		},
+		{
+			name: "task mismatch",
+			mutate: func(resp *ComplexityDiffResponse) {
+				resp.CoderResult.TaskID = otherTaskID
+			},
+			want: "task_id mismatch",
 		},
 		{
 			name: "sandbox gate mismatch",
@@ -4885,7 +4989,7 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
-			resp.CoderResult = &ComplexityCoderDiffResult{JobID: "job_1", ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
+			resp.CoderResult = &ComplexityCoderDiffResult{TaskID: taskID, ConcreteDiff: "diff --git a/internal/app.go b/internal/app.go\n"}
 			resp.SandboxPromotion = &PromotionRequest{PromotionID: "promo_1", SandboxID: "sandbox_1", TargetPath: "internal/app.go", DiffPath: "sandbox/diff.patch", CreatedAt: now}
 			resp.SandboxDecision = &PromotionGateDecision{Status: "needs_review", Reason: "additional verification is required"}
 			resp.SandboxGateLog = &PromotionGateLog{EventID: "evt_1", PromotionID: "promo_1", GateStatus: "needs_review", CreatedAt: now}
@@ -4903,7 +5007,7 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 			}
 			_, err = client.CreateComplexityCoderDiff(context.Background(), ComplexityCoderDiffRequest{
 				HotspotID:   "hot_1",
-				JobID:       "job_1",
+				TaskID:      taskID,
 				ArtifactID:  "art_1",
 				SandboxID:   "sandbox_1",
 				PromotionID: "promo_1",
@@ -4914,6 +5018,27 @@ func TestCreateComplexityCoderDiffRejectsMalformedResponse(t *testing.T) {
 				t.Fatalf("CreateComplexityCoderDiff() error = %v, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestCreateComplexityCoderDiffRejectsWrongTypeTaskID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := complexityDiffResponseFixture("hot_1", "scan_1", "art_1")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"hotspot":                resp.Hotspot,
+			"coder_result":           map[string]any{"task_id": 42, "concrete_diff": "diff --git a/internal/app.go b/internal/app.go\n"},
+			"concrete_diff_artifact": resp.ConcreteDiffArtifact,
+			"patch_applied":          false,
+		})
+	}))
+	defer server.Close()
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.CreateComplexityCoderDiff(context.Background(), ComplexityCoderDiffRequest{HotspotID: "hot_1"})
+	if err == nil || !strings.Contains(err.Error(), "decode response") {
+		t.Fatalf("CreateComplexityCoderDiff() error = %v, want wrong task_id type rejection", err)
 	}
 }
 
@@ -5169,7 +5294,7 @@ func TestCreateRevenueDailyRoutineReportRejectsMalformedResponse(t *testing.T) {
 			name: "report claims sent",
 			resp: RevenueDailyRoutineResponse{
 				Report: RevenueDailyRoutineReport{
-					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
+					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 					WorkstreamID:        "ws_revenue",
 					Date:                "2026-05-18",
 					Status:              "draft_report",
@@ -5247,7 +5372,7 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp, err := client.CreateRevenueChannelDraft(context.Background(), RevenueChannelDraft{
-		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 		Channel:             "email",
 		Subject:             "Draft",
 		Body:                "外部送信しない下書きです",
@@ -5297,7 +5422,7 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
 					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000099"),
-					Channel: "email",
+					Channel:    "email",
 				},
 			},
 			want: "artifact_id mismatch",
@@ -5318,7 +5443,7 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			name: "draft claims sent",
 			resp: RevenueChannelDraftResponse{
 				Draft: RevenueChannelDraft{
-					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
+					ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 					Channel:             "email",
 					ExternalSendApplied: true,
 				},
@@ -5352,9 +5477,9 @@ func TestCreateRevenueChannelDraftRejectsMalformedResponse(t *testing.T) {
 			}
 			_, err = client.CreateRevenueChannelDraft(context.Background(), RevenueChannelDraft{
 				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
-				Channel: "email",
-				Subject: "Draft",
-				Body:    "外部送信しない下書きです",
+				Channel:    "email",
+				Subject:    "Draft",
+				Body:       "外部送信しない下書きです",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("CreateRevenueChannelDraft() error = %v, want %q", err, tt.want)
@@ -5406,7 +5531,7 @@ func TestApplyRevenueExternalSend(t *testing.T) {
 	resp, err := client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
 		TaskID:     taskID,
 		RunID:      runID,
-		ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID: "dec_1",
 	})
 	if err != nil {
@@ -5473,7 +5598,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "state mismatch",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5492,7 +5617,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "blocked without failure reason",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5510,7 +5635,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "blocked with sent result",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5531,7 +5656,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "required channel adapter but record configured",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5552,7 +5677,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			name: "missing created at",
 			resp: RevenueExternalSendApplyResponse{
 				Record: RevenueExternalSendApplyRecord{
-					ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+					ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
 					ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 					DecisionID:          "dec_1",
 					Channel:             "email",
@@ -5584,7 +5709,7 @@ func TestApplyRevenueExternalSendRejectsMalformedAppliedResponse(t *testing.T) {
 			_, err = client.ApplyRevenueExternalSend(context.Background(), RevenueExternalSendApplyRequest{
 				TaskID:     modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000001"),
 				RunID:      modulecore.RunID("run_00000000-0000-5000-8000-000000000002"),
-				ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID: "dec_1",
 			})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -5610,20 +5735,20 @@ func TestRevenueStatus(t *testing.T) {
 				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
-				ArtifactID:  modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 				Date:      "2026-05-19",
 				Status:    "draft_report",
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 				Channel:   "email",
 				Body:      "下書き",
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-				ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+				ActionID:      modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+				ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID:    "dec_1",
 				Channel:       "email",
 				ApplyStatus:   "blocked",
@@ -5666,20 +5791,20 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 				CreatedAt:    now,
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
-				ArtifactID:  modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
 				Date:      "2026-05-19",
 				Status:    "draft_report",
 				CreatedAt: now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
-				ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
+				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
 				Channel:   "email",
 				Body:      "下書き",
 				CreatedAt: now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
-				ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-				ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+				ActionID:      modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+				ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 				DecisionID:    "dec_1",
 				Channel:       "email",
 				ApplyStatus:   "blocked",

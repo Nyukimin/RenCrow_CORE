@@ -17,17 +17,18 @@ const shiroMaxTokens = 4096
 
 // ShiroAgent は Worker（実行・道具係）を担当するエンティティ
 type ShiroAgent struct {
-	llmProvider          llm.LLMProvider
-	toolRunner           ToolRunner
-	mcpClient            MCPClient
-	systemPrompt         string
-	stableRuntimeContext string
-	subagentManager      SubagentManager // v1.0: ReActループ統合
-	advisorService       AdvisorService
-	agentPolicy          AgentPolicyService
-	persona              *AgentPersona // v4.2: Optional Agent Persona
-	lightMemory          *LightMemory  // Optional: short-term memory
-	conversation         conversation.ConversationEngine
+	llmProvider            llm.LLMProvider
+	toolRunner             ToolRunner
+	mcpClient              MCPClient
+	systemPrompt           string
+	runtimeContextProvider RuntimeContextProvider
+	stableRuntimeContext   string
+	subagentManager        SubagentManager // v1.0: ReActループ統合
+	advisorService         AdvisorService
+	agentPolicy            AgentPolicyService
+	persona                *AgentPersona // v4.2: Optional Agent Persona
+	lightMemory            *LightMemory  // Optional: short-term memory
+	conversation           conversation.ConversationEngine
 }
 
 // NewShiroAgent は新しいShiroAgentを作成
@@ -111,7 +112,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	}
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
-		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, s.stableRuntimeContext, dynamic, llm.Message{Role: "user", Content: t.MessageText()})})
+		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext), dynamic, llm.Message{Role: "user", Content: t.MessageText()})})
 		systemPrompt := renderSystemMessages(assembled.Messages)
 		result, err := s.runSubagentSafely(ctx, SubagentTask{
 			AgentName:    "shiro",
@@ -144,7 +145,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	if s.lightMemory != nil {
 		messages = append(messages, s.lightMemory.RecentMessages(t.SessionID())...)
 	}
-	messages = assemblePromptContext(characterPrompt, s.stableRuntimeContext, messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
+	messages = assemblePromptContext(characterPrompt, currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext), messages, userMessageWithAttachments(t.MessageText(), t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   shiroMaxTokens,
@@ -323,4 +324,9 @@ func (s *ShiroAgent) ExecuteTool(ctx context.Context, toolName string, args map[
 // ExecuteMCPTool はMCPツールを実行
 func (s *ShiroAgent) ExecuteMCPTool(ctx context.Context, serverName, toolName string, args map[string]interface{}) (string, error) {
 	return s.mcpClient.CallTool(ctx, serverName, toolName, args)
+}
+
+func (s *ShiroAgent) WithRuntimeContextProvider(provider RuntimeContextProvider) *ShiroAgent {
+	s.runtimeContextProvider = provider
+	return s
 }

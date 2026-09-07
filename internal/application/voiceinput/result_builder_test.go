@@ -11,9 +11,9 @@ func TestBuildFromLLMFinal_SplitsStructuredJSON(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		FinalText:   `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
-		StartedAt:   time.Now(),
+
+		FinalText: `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
+		StartedAt: time.Now(),
 	})
 	if err != nil {
 		t.Fatalf("BuildFromLLMFinal failed: %v", err)
@@ -28,10 +28,10 @@ func TestBuildFromLLMFinal_SplitsStructuredJSON(t *testing.T) {
 
 func TestBuildFromLLMFinal_UsesHintAfterRelaySplit(t *testing.T) {
 	result, err := BuildFromLLMFinal(BuildLLMRequest{
-		UtteranceID:  "utt-1",
-		SessionID:    "viewer",
-		Channel:      "viewer",
-		
+		UtteranceID: "utt-1",
+		SessionID:   "viewer",
+		Channel:     "viewer",
+
 		UserTextHint: "れんの発話",
 		FinalText:    "Mioの応答",
 	})
@@ -48,8 +48,8 @@ func TestBuildFromLLMFinal_RejectsUnstructuredFinalWithoutTranscript(t *testing.
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		FinalText:   "Mioの応答",
+
+		FinalText: "Mioの応答",
 	})
 	if err == nil {
 		t.Fatal("expected unstructured LLM final without transcript to be rejected")
@@ -61,8 +61,8 @@ func TestBuildFromLLMFinal_RejectsNoAudioMeta(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		FinalText:   "音声が提供されていないため、音声ファイルをアップロードしてください。",
+
+		FinalText: "音声が提供されていないため、音声ファイルをアップロードしてください。",
 	})
 	if err == nil {
 		t.Fatal("expected no-audio final to be rejected")
@@ -74,9 +74,9 @@ func TestBuildFromSTTFinal_RequiresUserAndReply(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		
-		UserText:    "こんにちは",
-		Reply:       "こんにちは。",
+
+		UserText: "こんにちは",
+		Reply:    "こんにちは。",
 	})
 	if err != nil {
 		t.Fatalf("BuildFromSTTFinal failed: %v", err)

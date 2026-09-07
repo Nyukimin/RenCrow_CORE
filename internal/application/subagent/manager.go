@@ -11,6 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -127,6 +128,20 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 	if task.Instruction == "" {
 		return agent.SubagentResult{}, fmt.Errorf("instruction is required")
 	}
+	if ctx == nil {
+		return agent.SubagentResult{}, fmt.Errorf("context is required")
+	}
+	runtimeCtx, hasRuntimeContext := ctx.Value(superAgentContextKey{}).(superAgentRuntimeContext)
+	if hasRuntimeContext {
+		if err := validateSuperAgentRuntimeContext(runtimeCtx); err != nil {
+			return agent.SubagentResult{}, err
+		}
+		boundCtx, err := domainexecution.WithIdentity(ctx, runtimeCtx.TaskID, runtimeCtx.RunID, runtimeCtx.TraceID)
+		if err != nil {
+			return agent.SubagentResult{}, err
+		}
+		ctx = boundCtx
+	}
 	log.Printf("[Subagent] start agent=%s instruction_len=%d", task.AgentName, len(task.Instruction))
 	record, recordCtx, err := m.newSuperAgentExecutionRecord(ctx)
 	if err != nil {
@@ -150,7 +165,7 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 
 	mergedDefs := m.mergeToolDefs(ctx)
 	loopCfg := m.loopConfig
-	if runtimeCtx, ok := ctx.Value(superAgentContextKey{}).(superAgentRuntimeContext); ok {
+	if hasRuntimeContext {
 		if !runtimeCtx.TaskID.IsZero() || runtimeCtx.RunID != "" {
 			loopCfg.TaskID = runtimeCtx.TaskID
 			loopCfg.RunID = runtimeCtx.RunID

@@ -28,6 +28,9 @@ const targetPaths = [
   '/viewer/recall/traces',
 ];
 
+const canonicalTraceIDPattern = /^trc_[0-9a-f]{8}-[0-9a-f]{4}-[57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const canonicalTurnIDPattern = /^turn_[0-9a-f]{8}-[0-9a-f]{4}-[57][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function targetPath(rawURL) {
   const pathname = new URL(rawURL).pathname;
   return targetPaths.includes(pathname) ? pathname : '';
@@ -41,6 +44,8 @@ async function seedEconomicRecords(runID) {
   let taskID = '';
   let reflectionID = '';
   let decisionID = '';
+  let traceID = '';
+  let turnID = '';
   try {
     for (let index = 0; index < recordCount; index += 1) {
       const suffix = index === recordCount - 1 ? `${runID}-${longSuffix}` : `${runID}-${index}`;
@@ -90,10 +95,22 @@ async function seedEconomicRecords(runID) {
       });
       assert.equal(reflection.status(), 201, `seed reflection failed: ${reflection.status()} ${await reflection.text()}`);
     }
+    if (scenario === 'populated') {
+      const traces = await api.get('/viewer/recall/traces?limit=20');
+      assert.equal(traces.status(), 200, `seed recall traces failed: ${traces.status()} ${await traces.text()}`);
+      const payload = await traces.json();
+      const items = payload && Array.isArray(payload.items) ? payload.items : null;
+      assert.ok(items, 'seed recall traces response must contain an items array');
+      assert.equal(items.length, 1, `expected exactly one seeded recall trace, got ${items.length}`);
+      traceID = String(items[0].TraceID || '');
+      turnID = String(items[0].TurnID || '');
+      assert.match(traceID, canonicalTraceIDPattern, 'seeded TraceID must be canonical');
+      assert.match(turnID, canonicalTurnIDPattern, 'seeded TurnID must be canonical');
+    }
   } finally {
     await api.dispose();
   }
-  return {opportunityID, taskID, reflectionID, decisionID, recordCount};
+  return {opportunityID, taskID, reflectionID, decisionID, traceID, turnID, recordCount};
 }
 
 async function verifyViewport(browser, viewport, fixture) {
@@ -125,7 +142,7 @@ async function verifyViewport(browser, viewport, fixture) {
       return summary?.getAttribute('aria-busy') === 'false' && summary.querySelectorAll('[data-to-be-block]').length === 5;
     }, null, {timeout: 15000});
 
-    const ui = await page.evaluate(({opportunityID, taskID, decisionID, width}) => {
+    const ui = await page.evaluate(({opportunityID, taskID, decisionID, traceID, turnID, width}) => {
       const summary = document.getElementById('toBeOpsSummary');
       const blocks = Array.from(summary.querySelectorAll('[data-to-be-block]'));
       const details = Array.from(summary.querySelectorAll('details'));
@@ -148,6 +165,7 @@ async function verifyViewport(browser, viewport, fixture) {
       });
       const economicText = summary.querySelector('[data-to-be-block="economic-objective"]')?.textContent || '';
       const policyText = summary.querySelector('[data-to-be-block="policy-decisions"]')?.textContent || '';
+      const traceText = summary.querySelector('[data-to-be-block="recent-trace"]')?.textContent || '';
       return {
         viewportWidth: width,
         titles: rects.map((item) => item.title),
@@ -165,7 +183,9 @@ async function verifyViewport(browser, viewport, fixture) {
         economicHasFixture: economicText.includes(opportunityID),
         policyHasFixture: policyText.includes(decisionID) && policyText.includes(opportunityID),
         advisorHasFixture: (summary.querySelector('[data-to-be-block="advisor-agent"]')?.textContent || '').includes('advisor-run-e2e'),
-        traceHasFixture: (summary.querySelector('[data-to-be-block="recent-trace"]')?.textContent || '').includes('response-e2e'),
+        traceHasTraceID: Boolean(traceID) && traceText.includes(traceID),
+        traceHasTurnID: Boolean(turnID) && traceText.includes(turnID),
+        traceHasFixture: Boolean(traceID && turnID) && traceText.includes(traceID) && traceText.includes(turnID),
         forbiddenTextVisible: /raw_output|prompt body|api[_-]?key|secret value/i.test(summary.textContent || ''),
       };
     }, {...fixture, width: viewport.width});
@@ -187,6 +207,8 @@ async function verifyViewport(browser, viewport, fixture) {
     assert.equal(ui.economicHasFixture, true, 'Economic Objective must show the real API fixture ID');
     assert.equal(ui.policyHasFixture, true, 'Policy Decisions must show the real API decision and target IDs');
     assert.equal(ui.advisorHasFixture, scenario === 'populated');
+    assert.equal(ui.traceHasTraceID, scenario === 'populated');
+    assert.equal(ui.traceHasTurnID, scenario === 'populated');
     assert.equal(ui.traceHasFixture, scenario === 'populated');
     assert.equal(ui.forbiddenTextVisible, false);
     assert.ok(ui.rects.every((item) => item.pointerEvents === 'auto'));

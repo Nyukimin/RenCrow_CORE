@@ -1,7 +1,11 @@
 package coderloop
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -34,10 +38,10 @@ func TestParseCoderMessageVariants(t *testing.T) {
 		},
 		{
 			name:    "patch proposal",
-			content: `{"type":"patch_proposal","intent":"fix","patch":"*** Begin Patch\n*** End Patch","tests":["go test ./..."]}`,
+			content: `{"type":"patch_proposal","intent":"fix","patch":"*** Begin Patch\n*** End Patch","tests":["go test ./..."],"test_hint":{"changed_surface":["internal/domain"],"expected_impact":"domain contract","recommended_tier":"related","recommended_steps":["go test ./internal/domain/..."],"risk":"medium"}}`,
 			assert: func(t *testing.T, msg *CoderMessage) {
 				t.Helper()
-				if msg.PatchProposal == nil || msg.PatchProposal.Intent != "fix" {
+				if msg.PatchProposal == nil || msg.PatchProposal.Intent != "fix" || msg.PatchProposal.TestHint == nil || msg.PatchProposal.TestHint.RecommendedTestTier != "related" {
 					t.Fatalf("patch proposal not parsed: %#v", msg)
 				}
 			},
@@ -85,6 +89,114 @@ func TestParseCoderMessageVariants(t *testing.T) {
 			}
 			tt.assert(t, msg)
 		})
+	}
+}
+
+func TestPatchProposalTestHintJSONContract(t *testing.T) {
+	proposal := PatchProposalMessage{
+		Type:   TypePatchProposal,
+		Intent: "contract",
+		Patch:  "[]",
+		TestHint: &TestHint{
+			ChangedSurface:       []string{"internal/domain"},
+			ExpectedImpact:       "domain contract",
+			RecommendedTestTier:  "related",
+			RecommendedTestSteps: []string{"go test ./internal/domain/..."},
+			Risk:                 "medium",
+		},
+	}
+
+	encoded, err := json.Marshal(proposal)
+	if err != nil {
+		t.Fatalf("marshal patch proposal: %v", err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatalf("decode patch proposal: %v", err)
+	}
+	var hint map[string]json.RawMessage
+	if err := json.Unmarshal(object["test_hint"], &hint); err != nil {
+		t.Fatalf("decode test_hint: %v", err)
+	}
+	for _, key := range []string{"changed_surface", "expected_impact", "recommended_tier", "recommended_steps", "risk"} {
+		if _, ok := hint[key]; !ok {
+			t.Fatalf("test_hint missing %q: %s", key, encoded)
+		}
+	}
+	if len(hint) != 5 {
+		t.Fatalf("test_hint contains unexpected fields: %#v", hint)
+	}
+
+	var roundTrip PatchProposalMessage
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatalf("unmarshal patch proposal: %v", err)
+	}
+	if roundTrip.TestHint == nil || roundTrip.TestHint.RecommendedTestTier != "related" || len(roundTrip.TestHint.RecommendedTestSteps) != 1 {
+		t.Fatalf("test_hint round trip mismatch: %#v", roundTrip.TestHint)
+	}
+
+	_, sourceFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate coderloop test source")
+	}
+	schemaPath := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "schemas", "agent_message.schema.json")
+	schemaBytes, err := os.ReadFile(schemaPath)
+	if err != nil {
+		t.Fatalf("read agent message schema: %v", err)
+	}
+	var schema struct {
+		OneOf []struct {
+			Title      string                     `json:"title"`
+			Properties map[string]json.RawMessage `json:"properties"`
+		} `json:"oneOf"`
+		Definitions map[string]json.RawMessage `json:"definitions"`
+	}
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		t.Fatalf("decode agent message schema: %v", err)
+	}
+	var patchProperties map[string]json.RawMessage
+	for _, variant := range schema.OneOf {
+		if variant.Title == "patch_proposal" {
+			patchProperties = variant.Properties
+			break
+		}
+	}
+	testHintSchema, ok := patchProperties["test_hint"]
+	if !ok {
+		t.Fatal("patch_proposal schema has no optional test_hint property")
+	}
+	var testHintRef struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(testHintSchema, &testHintRef); err != nil || testHintRef.Ref != "#/definitions/TestHint" {
+		t.Fatalf("patch_proposal test_hint ref = %q, want #/definitions/TestHint", testHintRef.Ref)
+	}
+	definitionRaw, ok := schema.Definitions["TestHint"]
+	if !ok {
+		t.Fatal("schema has no TestHint definition")
+	}
+	var definition struct {
+		Properties           map[string]json.RawMessage `json:"properties"`
+		AdditionalProperties *bool                      `json:"additionalProperties"`
+	}
+	if err := json.Unmarshal(definitionRaw, &definition); err != nil {
+		t.Fatalf("decode TestHint definition: %v", err)
+	}
+	if definition.AdditionalProperties == nil || *definition.AdditionalProperties {
+		t.Fatal("TestHint schema must set additionalProperties=false")
+	}
+	if len(definition.Properties) != len(hint) {
+		t.Fatalf("schema/type TestHint property count mismatch: schema=%d domain=%d", len(definition.Properties), len(hint))
+	}
+	for key := range hint {
+		if _, ok := definition.Properties[key]; !ok {
+			t.Fatalf("schema TestHint is missing serialized domain field %q", key)
+		}
+	}
+	for key := range definition.Properties {
+		if _, ok := hint[key]; !ok {
+			t.Fatalf("schema TestHint has field %q absent from serialized domain hint", key)
+		}
 	}
 }
 

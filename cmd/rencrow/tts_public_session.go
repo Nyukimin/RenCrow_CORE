@@ -4,15 +4,15 @@ import moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 
 var ttsPublicSessions = moduletts.NewPublicSessionStore()
 
-func registerTTSPublicSession(internalSessionID, publicSessionID, responseID string) {
-	registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, responseID, "", 0)
+func registerTTSPublicSession(internalSessionID, publicSessionID, publicPlaybackRef string) {
+	registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, publicPlaybackRef, "", 0)
 }
 
-func registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, responseID, messageID string, turnIndex int) {
+func registerTTSPublicSessionWithMessage(internalSessionID, publicSessionID, publicPlaybackRef, messageID string, turnIndex int) {
 	ttsPublicSessions.Register(moduletts.PublicSessionRouteRegistration{
 		InternalSessionID: internalSessionID,
 		PublicSessionID:   publicSessionID,
-		ResponseID:        responseID,
+		PublicPlaybackRef: publicPlaybackRef,
 		MessageID:         messageID,
 		TurnIndex:         turnIndex,
 	})
@@ -39,8 +39,8 @@ func resolveTTSPublicSession(internalSessionID string) string {
 	return ttsPublicSessions.ResolveSession(internalSessionID)
 }
 
-func resolveTTSPublicResponse(internalSessionID string) string {
-	return ttsPublicSessions.ResolveResponse(internalSessionID)
+func resolveTTSPublicPlaybackRef(internalSessionID string) string {
+	return ttsPublicSessions.ResolvePublicPlaybackRef(internalSessionID)
 }
 
 func resolveTTSPublicMessage(internalSessionID string) (string, int, string) {
@@ -55,24 +55,24 @@ func retireTTSPublicSession(internalSessionID string) {
 	ttsPublicSessions.Retire(internalSessionID)
 }
 
-func clearTTSPublicSessionByResponse(responseID string) {
-	ttsPublicSessions.ClearByResponse(responseID)
+func clearTTSPublicSessionByPlaybackRef(publicPlaybackRef string) {
+	ttsPublicSessions.ClearByPublicPlaybackRef(publicPlaybackRef)
 }
 
-func retireTTSPublicSessionByResponse(responseID string) {
-	ttsPublicSessions.RetireByResponse(responseID)
+func retireTTSPublicSessionByPlaybackRef(publicPlaybackRef string) {
+	ttsPublicSessions.RetireByPublicPlaybackRef(publicPlaybackRef)
 }
 
 func clearTTSPublicSequenceStateIfNoRoutes() {
 	ttsPublicSessions.ClearSequencesIfNoRoutes()
 }
 
-func nextTTSPublicResponseID(publicSessionID string) string {
-	return ttsPublicSessions.NextResponseID(publicSessionID)
+func nextTTSPublicPlaybackRef(publicSessionID string) string {
+	return ttsPublicSessions.NextPublicPlaybackRef(publicSessionID)
 }
 
-func nextTTSPublicResponseIDForMessage(publicSessionID, messageID string) string {
-	return ttsPublicSessions.NextResponseIDForMessage(publicSessionID, messageID)
+func nextTTSPublicPlaybackRefForMessage(publicSessionID, messageID string) string {
+	return ttsPublicSessions.NextPublicPlaybackRefForMessage(publicSessionID, messageID)
 }
 
 func isIdleChatPublicSession(sessionID string) bool {

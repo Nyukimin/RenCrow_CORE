@@ -44,11 +44,11 @@ func TestHTTPCrawlerDownloadsAndVerifiesArtifact(t *testing.T) {
 				t.Fatalf("unexpected crawler request: %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(crawlerResponsePayload{
-				JobID:          "job-1",
-				State:          "succeeded",
-				ArtifactURL:    "/artifact.jsonl",
-				ArtifactSHA256: sha256Hex(artifact),
-				ArtifactBytes:  int64(len(artifact)),
+				ExternalCrawlJobID: "job-1",
+				State:              "succeeded",
+				ArtifactURL:        "/artifact.jsonl",
+				ArtifactSHA256:     sha256Hex(artifact),
+				ArtifactBytes:      int64(len(artifact)),
 			})
 		case "/artifact.jsonl":
 			w.Header().Set("Content-Type", "application/x-ndjson")
@@ -70,7 +70,7 @@ func TestHTTPCrawlerDownloadsAndVerifiesArtifact(t *testing.T) {
 		t.Fatalf("crawl: %v", err)
 	}
 	defer os.Remove(result.ArtifactPath)
-	if result.JobID != "job-1" || result.ArtifactBytes != int64(len(artifact)) || result.ArtifactSHA256 != sha256Hex(artifact) {
+	if result.ExternalCrawlJobID != "job-1" || result.ArtifactBytes != int64(len(artifact)) || result.ArtifactSHA256 != sha256Hex(artifact) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	if !strings.HasPrefix(result.ArtifactPath, filepath.Clean(artifactDir)) {
@@ -91,11 +91,11 @@ func TestHTTPCrawlerSendsQueryWithoutSeedURL(t *testing.T) {
 				t.Fatalf("expected query-only crawler request, got %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(crawlerResponsePayload{
-				JobID:          "job-query",
-				State:          "succeeded",
-				ArtifactURL:    "/artifact.jsonl",
-				ArtifactSHA256: sha256Hex(artifact),
-				ArtifactBytes:  int64(len(artifact)),
+				ExternalCrawlJobID: "job-query",
+				State:              "succeeded",
+				ArtifactURL:        "/artifact.jsonl",
+				ArtifactSHA256:     sha256Hex(artifact),
+				ArtifactBytes:      int64(len(artifact)),
 			})
 		case "/artifact.jsonl":
 			_, _ = w.Write(artifact)
@@ -114,7 +114,7 @@ func TestHTTPCrawlerSendsQueryWithoutSeedURL(t *testing.T) {
 		t.Fatalf("crawl query: %v", err)
 	}
 	defer os.Remove(result.ArtifactPath)
-	if result.JobID != "job-query" {
+	if result.ExternalCrawlJobID != "job-query" {
 		t.Fatalf("unexpected query crawl result: %+v", result)
 	}
 }

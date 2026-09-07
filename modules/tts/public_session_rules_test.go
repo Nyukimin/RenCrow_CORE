@@ -26,12 +26,12 @@ func TestFormatAndParseFixed4(t *testing.T) {
 	}
 }
 
-func TestParseTrailingResponseNumber(t *testing.T) {
-	got, ok := ParseTrailingResponseNumber("idle-session:msg:0007")
+func TestParseTrailingPublicPlaybackNumber(t *testing.T) {
+	got, ok := ParseTrailingPublicPlaybackNumber("idle-session:msg:0007")
 	if !ok || got != 7 {
 		t.Fatalf("trailing response number = %d/%t, want 7/true", got, ok)
 	}
-	if _, ok := ParseTrailingResponseNumber("idle-session:msg:abc"); ok {
+	if _, ok := ParseTrailingPublicPlaybackNumber("idle-session:msg:abc"); ok {
 		t.Fatal("non-fixed4 suffix should not parse")
 	}
 }

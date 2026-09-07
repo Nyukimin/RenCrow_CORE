@@ -36,14 +36,16 @@ const (
 
 // Run is one non-hierarchical execution belonging to exactly one Task.
 type Run struct {
-	RunID       modulecore.RunID  `json:"run_id"`
-	TaskID      modulecore.TaskID `json:"task_id"`
-	StartReason RunStartReason    `json:"start_reason"`
-	Assignee    string            `json:"assignee,omitempty"`
-	Status      RunStatus         `json:"status"`
-	StartedAt   time.Time         `json:"started_at"`
-	CompletedAt *time.Time        `json:"completed_at,omitempty"`
-	Summary     string            `json:"summary,omitempty"`
+	// WriterGeneration is a store-local fencing value, not an identity. Zero marks historical unbound records.
+	WriterGeneration uint64            `json:"writer_generation,omitempty"`
+	RunID            modulecore.RunID  `json:"run_id"`
+	TaskID           modulecore.TaskID `json:"task_id"`
+	StartReason      RunStartReason    `json:"start_reason"`
+	Assignee         string            `json:"assignee,omitempty"`
+	Status           RunStatus         `json:"status"`
+	StartedAt        time.Time         `json:"started_at"`
+	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
+	Summary          string            `json:"summary,omitempty"`
 }
 
 // RunFilter selects persisted Run history. Results are returned chronologically.

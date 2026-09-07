@@ -219,7 +219,10 @@ func (r *ToolRunner) Execute(ctx context.Context, toolName string, args map[stri
 		return "", fmt.Errorf("unknown tool: %s: %w", toolName, ErrUnknownTool)
 	}
 
-	mediated := r.mediateToolInput(toolName, args)
+	mediated, mediationErr := r.mediateToolInput(ctx, toolName, args)
+	if mediationErr != nil {
+		return "", mediationErr
+	}
 	return toolFunc(ctx, mediated.Input)
 }
 
@@ -238,7 +241,10 @@ func (r *ToolRunner) ExecuteV2(ctx context.Context, toolName string, args map[st
 	if !exists {
 		return nil, fmt.Errorf("unknown tool: %s: %w", toolName, ErrUnknownTool)
 	}
-	mediated := r.mediateToolInput(toolName, args)
+	mediated, mediationErr := r.mediateToolInput(ctx, toolName, args)
+	if mediationErr != nil {
+		return classifyV1Error(mediationErr), nil
+	}
 	resp, err := v2Func(ctx, mediated.Input)
 	if err != nil || resp == nil || !mediated.Repaired() {
 		return resp, err
@@ -256,6 +262,9 @@ func (r *ToolRunner) ExecuteV2(ctx context.Context, toolName string, args map[st
 func (r *ToolRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata, error) {
 	metas := make([]tool.ToolMetadata, 0, len(r.metadata))
 	for _, m := range r.metadata {
+		if r.unavailableMCPTool(m.ToolID) {
+			continue
+		}
 		metas = append(metas, m)
 	}
 	return metas, nil
@@ -264,25 +273,10 @@ func (r *ToolRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata, error)
 // shellMetachars はコマンドチェーニングや注入に使われるシェルメタ文字列
 var shellMetachars = []string{";", "&&", "||", "|", "`", "$(", "\n"}
 
-func (r *ToolRunner) mediateToolInput(toolName string, args map[string]any) toolharness.Result {
+func (r *ToolRunner) mediateToolInput(ctx context.Context, toolName string, args map[string]any) (toolharness.Result, error) {
 	if r.harness == nil || r.config.DisableToolHarness {
-		return toolharness.Result{Input: args}
+		return toolharness.Result{Input: args}, nil
 	}
 	result := r.harness.Mediate(toolName, args)
-	r.recordToolMediation(toolName, args, result)
-	return result
-}
-
-func (r *ToolRunner) recordToolMediation(toolName string, args map[string]any, result toolharness.Result) {
-	if r.config.ToolHarnessRecorder == nil {
-		return
-	}
-	event := toolharness.NewEvent(
-		fmt.Sprintf("evt_tool_%d", time.Now().UTC().UnixNano()),
-		toolName,
-		args,
-		result,
-		time.Now().UTC(),
-	)
-	_ = r.config.ToolHarnessRecorder.RecordToolMediationEvent(event)
+	return result, recordToolMediation(ctx, r.config.ToolHarnessRecorder, toolName, args, result)
 }

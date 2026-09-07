@@ -55,9 +55,6 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 		"internal/application/orchestrator/message_orchestrator_persona.go:recordPersonaRuntimeObservation":    {},
 		"internal/application/skillgovernance/bootstrap_service.go:Record":                                     {},
 		"internal/application/skillgovernance/coder_evidence_service.go:saveCoderTranscriptEntries":            {},
-		"internal/infrastructure/stt/provider.go:NextEventID":                                                  {},
-		"internal/infrastructure/tools/harness_runner.go:record":                                               {},
-		"internal/infrastructure/tools/runner.go:recordToolMediation":                                          {},
 	}
 	observedLegacyGeneratorSites := make(map[string]struct{}, len(legacyGeneratorSites))
 	var violations []string
@@ -1644,7 +1641,6 @@ func TestStep19ViewerOTelGraphLegacyFieldsAreBanned(t *testing.T) {
 	}
 	canonicalArchitectureFail(t, "Step19 Viewer/OTel graph owners must not retain legacy identity fields or synthetic trace IDs", violations)
 }
-
 
 func TestStep20MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)

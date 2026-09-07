@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
@@ -142,12 +144,13 @@ func TestRegisteredGenericMCPWithoutObservedToolsIsUnavailable(t *testing.T) {
 	}
 }
 
-func TestAppendRuntimeCapabilityContextKeepsExistingContextText(t *testing.T) {
+func TestCapabilityProviderKeepsExistingContextText(t *testing.T) {
 	contexts := map[string]string{
 		"mio":   "mio contract",
 		"shiro": "shiro contract",
 	}
-	appendRuntimeCapabilityContext(contexts, `## Runtime Capability Snapshot
+	provider := runtimeAgentContextProvider(contexts, func(context.Context) string {
+		return `## Runtime Capability Snapshot
 この一覧は認識用であり、実行権限を付与しません。
 
 ### Tools
@@ -162,7 +165,9 @@ func TestAppendRuntimeCapabilityContextKeepsExistingContextText(t *testing.T) {
   理由: 無効
 
 ### MCP
-- 利用可能: serena.search`)
+- 利用可能: serena.search`
+	})
+	contexts = map[string]string{"mio": provider(context.Background(), "mio"), "shiro": provider(context.Background(), "shiro")}
 
 	if !strings.HasPrefix(contexts["mio"], "mio contract\n\n## Runtime Capability Snapshot") {
 		t.Fatalf("Mio context lost its existing contract: %q", contexts["mio"])
@@ -192,7 +197,7 @@ func TestRuntimeCapabilitySnapshotCoversEveryProductionWorkerMetadata(t *testing
 		Name:        "registered_runtime_tool",
 		Description: "起動時に登録されたruntime Tool",
 	}}}
-	runtime := buildToolRuntimeWithCapabilities(testCapabilityRuntimeConfig(t), nil, registry, nil, nil, nil)
+	runtime := buildToolRuntimeWithCapabilities(nil, testCapabilityRuntimeConfig(t), nil, registry, nil, nil, nil, testCanonicalMediationStore(t))
 	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("production Worker ListTools failed: %v", err)
@@ -223,8 +228,10 @@ func TestRuntimeCapabilitySnapshotSkillsMatchWorkerSkillReadCatalog(t *testing.T
 		{Name: "release-check", Description: "リリース確認", BodyText: "trusted release body"},
 	}
 	catalog := toolsinfra.NewSkillCatalog(loaded)
-	runtime := buildToolRuntimeWithCapabilities(testCapabilityRuntimeConfig(t), nil, nil, nil, catalog, nil)
-	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
+	cfg := testCapabilityRuntimeConfig(t)
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, catalog, nil, testCanonicalMediationStore(t))
+	metadata, err := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("production Worker ListTools failed: %v", err)
 	}
@@ -239,7 +246,7 @@ func TestRuntimeCapabilitySnapshotSkillsMatchWorkerSkillReadCatalog(t *testing.T
 		if err != nil || body != skill.BodyText {
 			t.Fatalf("discovered Skill %q has no matching startup catalog body: body=%q err=%v", skill.Name, body, err)
 		}
-		response, err := runtime.WorkerRunnerV2.ExecuteV2(context.Background(), "skill.read", map[string]any{"name": skill.Name})
+		response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, "skill.read", map[string]any{"name": skill.Name})
 		if err != nil || response == nil || response.IsError() || response.String() != skill.BodyText {
 			t.Fatalf("production Worker skill.read mismatch for %q: response=%#v err=%v", skill.Name, response, err)
 		}
@@ -255,9 +262,11 @@ func TestRuntimeCapabilitySnapshotSkillsMatchWorkerSkillReadCatalog(t *testing.T
 
 func TestRuntimeCapabilitySnapshotMirrorsEveryObservedMCPCatalogEntry(t *testing.T) {
 	client := &serenaRuntimeClientStub{toolNames: []string{"find.symbol", "replace_symbol"}, result: "ok"}
-	catalog := toolsinfra.NewMCPToolCatalog("serena", client, client.toolNames)
-	runtime := buildToolRuntimeWithCapabilities(testCapabilityRuntimeConfig(t), nil, nil, nil, nil, catalog)
-	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
+	catalog := toolsinfra.NewMCPToolCatalog("serena", client, runtimeMCPFixtureDefinitions(client.toolNames), client.ConnectionGeneration())
+	cfg := testCapabilityRuntimeConfig(t)
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, catalog, testCanonicalMediationStore(t))
+	metadata, err := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatalf("production Worker ListTools failed: %v", err)
 	}
@@ -278,7 +287,7 @@ func TestRuntimeCapabilitySnapshotMirrorsEveryObservedMCPCatalogEntry(t *testing
 		if !hasToolMetadata(metadata, item.ToolID) {
 			t.Fatalf("observed MCP catalog entry is missing from Worker metadata: %#v", item)
 		}
-		response, err := runtime.WorkerRunnerV2.ExecuteV2(context.Background(), item.ToolID, map[string]any{"probe": item.ToolID})
+		response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, item.ToolID, map[string]any{"probe": item.ToolID})
 		if err != nil || response == nil || response.IsError() || response.String() != "ok" {
 			t.Fatalf("production Worker MCP execution failed for %q: response=%#v err=%v", item.ToolID, response, err)
 		}
@@ -339,3 +348,33 @@ func (s *runtimeCapabilityToolRegistryStub) Get(_ context.Context, name string) 
 }
 
 func (s *runtimeCapabilityToolRegistryStub) Close() error { return nil }
+
+func TestCapabilityProviderWiringUsesCurrentStateAndCopiedContracts(t *testing.T) {
+	cfg := &config.Config{Prompts: &config.LoadedPrompts{StableRuntimeContexts: map[string]string{" Coder-One ": "base contract"}}, Coder1: config.CoderConfig{Name: "coder-one"}}
+	var captured []llm.Message
+	coder := &coderAdapter{domainCoder: agent.NewCoderAgent(llmProviderFunc(func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		captured = req.Messages
+		return llm.GenerateResponse{Content: "ok"}, nil
+	}), nil, nil, "persona")}
+	current := "available"
+	applyRuntimeAgentCapabilityContext(cfg, agentRuntime{}, func(context.Context) string { return current }, coder)
+	cfg.Prompts.StableRuntimeContexts["coder-one"] = "mutated after wiring"
+	for _, state := range []string{"available", "unavailable"} {
+		current = state
+		if _, err := coder.GenerateWithContext(context.Background(), nil); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, message := range captured {
+			if message.Type == llm.PromptContextStable {
+				found = true
+				if message.Content != "base contract\n\n"+state {
+					t.Fatalf("stale or mutable context: %q", message.Content)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("wired provider was not consumed")
+		}
+	}
+}

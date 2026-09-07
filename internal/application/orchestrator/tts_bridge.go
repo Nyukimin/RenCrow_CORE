@@ -9,7 +9,7 @@ import (
 // TTSSessionStart describes one TTS streaming session metadata.
 type TTSSessionStart struct {
 	SessionID             string
-	ResponseID            string
+	PublicPlaybackRef     string
 	TraceID               string
 	CharacterID           string
 	VoiceID               string

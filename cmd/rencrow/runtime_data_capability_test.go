@@ -231,7 +231,8 @@ func TestProductionRunnersAndSnapshotExposeDataCatalogAndGlossary(t *testing.T) 
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.Glossary = seedRuntimeGlossary(t, true)
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	if runtime.DataCapabilityCatalog == nil {
 		t.Fatal("tool runtime did not retain startup data capability catalog")
 	}
@@ -242,7 +243,7 @@ func TestProductionRunnersAndSnapshotExposeDataCatalogAndGlossary(t *testing.T) 
 	runners := []struct {
 		name   string
 		runner domaintool.RunnerV2
-	}{{"chat", runtime.ChatRunnerV2}, {"worker", runtime.WorkerRunnerV2}}
+	}{{"chat", runtime.ChatRuntimeRunnerV2}, {"worker", runtime.WorkerRuntimeRunnerV2}}
 	for _, item := range runners {
 		metadata, err := item.runner.ListTools(context.Background())
 		if err != nil {
@@ -253,14 +254,14 @@ func TestProductionRunnersAndSnapshotExposeDataCatalogAndGlossary(t *testing.T) 
 				t.Fatalf("%s missing %s", item.name, toolID)
 			}
 		}
-		if resp, err := item.runner.ExecuteV2(context.Background(), "data_capability.describe", map[string]any{"operation": "describe", "name": "glossary"}); err != nil || resp.IsError() {
+		if resp, err := item.runner.ExecuteV2(executionCtx, "data_capability.describe", map[string]any{"operation": "describe", "name": "glossary"}); err != nil || resp.IsError() {
 			t.Fatalf("%s catalog resp=%#v err=%v", item.name, resp, err)
 		}
-		if resp, err := item.runner.ExecuteV2(context.Background(), "glossary.lookup", map[string]any{"operation": "define_term", "term": "Go"}); err != nil || resp.IsError() {
+		if resp, err := item.runner.ExecuteV2(executionCtx, "glossary.lookup", map[string]any{"operation": "define_term", "term": "Go"}); err != nil || resp.IsError() {
 			t.Fatalf("%s glossary resp=%#v err=%v", item.name, resp, err)
 		}
 	}
-	metadata, _ := runtime.WorkerRunnerV2.ListTools(context.Background())
+	metadata, _ := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	snapshot := capdomain.Normalize(buildRuntimeCapabilitySnapshotWithSkills(metadata, nil, nil, nil))
 	for _, toolID := range []string{"data_capability.describe", "glossary.lookup"} {
 		entry, ok := findRuntimeCapability(snapshot, capdomain.CapabilityKindTool, toolID)

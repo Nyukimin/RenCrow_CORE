@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,6 +64,11 @@ func TestRunTasksCommandAcceptsCompactForCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
 	var stdout, stderr bytes.Buffer
 	code := runTasksCommand([]string{"create", "--title", "compact Task", "--json", "--compact"}, manager, &stdout, &stderr)
@@ -68,5 +77,38 @@ func TestRunTasksCommandAcceptsCompactForCreate(t *testing.T) {
 	}
 	if strings.Count(stdout.String(), "\n") != 1 || !strings.Contains(stdout.String(), `"task_id":"tsk_`) {
 		t.Fatalf("compact output=%q", stdout.String())
+	}
+}
+
+func TestLoadTaskManagerKeepsReadCommandsAvailableDuringWriterLease(t *testing.T) {
+	root := t.TempDir()
+	writer, err := taskpersistence.NewJSONLStore(defaultTaskStorePath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	data, err := json.Marshal(map[string]any{"workspace_dir": root, "server": map[string]any{"port": 8080}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{nil, {"LIST"}, {"--compact", "show"}, {"notifications"}} {
+		reader, err := loadTaskManager(configPath, args)
+		if err != nil {
+			t.Fatalf("read command %v blocked by writer: %v", args, err)
+		}
+		if err := reader.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := loadTaskManager(configPath, []string{"create"})
+	if manager != nil {
+		_ = manager.Close()
+	}
+	if !errors.Is(err, taskpersistence.ErrTaskWriterBusy) {
+		t.Fatalf("write command bypassed writer lease: %v", err)
 	}
 }

@@ -254,8 +254,8 @@ func TestValidatePolicyDecisionRecordRequiredFields(t *testing.T) {
 func TestValidateExternalSendApplyRecordUsesPolicyDecision(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
-		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -308,8 +308,8 @@ func TestValidateDeliveryRequiresStableTraceAndProtectsExternalCompletion(t *tes
 func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	validBlocked := ExternalSendApplyRecord{
-		ActionID:       modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:      modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:    modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:    "dec_1",
 		Channel:       "email",
 		ApplyStatus:   "blocked",
@@ -345,8 +345,8 @@ func TestValidateExternalSendApplyRecordRequiredFieldsAndStatuses(t *testing.T) 
 func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	record := ExternalSendApplyRecord{
-		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "sent",
@@ -377,8 +377,8 @@ func TestValidateExternalSendApplyRecordRequiresSentStateForSuccessfulSend(t *te
 
 func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
-		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -394,8 +394,8 @@ func TestValidateExternalSendApplyRecordRejectsVerificationWithoutSentStatus(t *
 
 func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *testing.T) {
 	record := ExternalSendApplyRecord{
-		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",
@@ -410,7 +410,7 @@ func TestValidateExternalSendApplyRecordRejectsSentResultWithoutSentStatus(t *te
 
 func TestBuildDailyRoutineReportIsDraftOnly(t *testing.T) {
 	report := BuildDailyRoutineReport(DailyRoutineInput{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:     modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		WorkstreamID:   "ws_revenue",
 		Date:           "2026-05-18",
 		Now:            time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
@@ -462,7 +462,7 @@ func TestBuildDailyRoutineReportDefaultsAndSuggestedActions(t *testing.T) {
 func TestBuildDailyRoutineReportCountsAnonymousPurchasesAndDefaultAction(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
 	report := BuildDailyRoutineReport(DailyRoutineInput{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:     modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
 		Date:           "2026-05-20",
 		Now:            now,
 		MarketResearch: []MarketResearchItem{{ItemID: "mkt_1"}},

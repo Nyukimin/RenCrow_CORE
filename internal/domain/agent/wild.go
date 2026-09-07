@@ -19,11 +19,12 @@ Answer naturally and concretely in the user's language.`
 
 // WildAgent は創作Wild用のLLM呼び出しを担当する。
 type WildAgent struct {
-	llmProvider          llm.LLMProvider
-	systemPrompt         string
-	stableRuntimeContext string
-	conversationEngine   conversation.ConversationEngine
-	imageGenerator       ImageGenerator
+	llmProvider            llm.LLMProvider
+	systemPrompt           string
+	runtimeContextProvider RuntimeContextProvider
+	stableRuntimeContext   string
+	conversationEngine     conversation.ConversationEngine
+	imageGenerator         ImageGenerator
 }
 
 type ImageGenerator interface {
@@ -113,7 +114,7 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		}
 		return response, nil
 	}
-	messages = assemblePromptContext(w.systemPrompt, w.stableRuntimeContext, messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	messages = assemblePromptContext(w.systemPrompt, currentRuntimeContext(ctx, w.runtimeContextProvider, "midori", w.stableRuntimeContext), messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	onToken := llm.StreamCallbackFromContext(ctx)
 	if onToken == nil {
 		onToken = func(string) {}
@@ -178,4 +179,9 @@ func stripWildCommand(message string) string {
 		return strings.TrimSpace(strings.TrimPrefix(trimmed, "/wild"))
 	}
 	return trimmed
+}
+
+func (w *WildAgent) WithRuntimeContextProvider(provider RuntimeContextProvider) *WildAgent {
+	w.runtimeContextProvider = provider
+	return w
 }

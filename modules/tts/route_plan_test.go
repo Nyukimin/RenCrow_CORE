@@ -7,10 +7,10 @@ import (
 
 func TestBuildRouteTTSPlanForOpsUsesShiroReportVoice(t *testing.T) {
 	got, ok := BuildRouteTTSPlan(RouteTTSPlanInput{
-		Route:      "OPS",
-		SessionID:  "tts-1",
-		ResponseID: "job-1",
-		Now:        time.Date(2026, 5, 30, 22, 0, 0, 0, time.UTC),
+		Route:             "OPS",
+		SessionID:         "tts-1",
+		PublicPlaybackRef: "job-1",
+		Now:               time.Date(2026, 5, 30, 22, 0, 0, 0, time.UTC),
 	})
 	if !ok {
 		t.Fatal("expected plan")
@@ -31,11 +31,11 @@ func TestBuildRouteTTSPlanForOpsUsesShiroReportVoice(t *testing.T) {
 
 func TestBuildRouteTTSPlanForChatUsesMioConversation(t *testing.T) {
 	got, ok := BuildRouteTTSPlan(RouteTTSPlanInput{
-		Route:      "CHAT",
-		SessionID:  "tts-1",
-		ResponseID: "job-1",
-		Urgency:    "high",
-		Now:        time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
+		Route:             "CHAT",
+		SessionID:         "tts-1",
+		PublicPlaybackRef: "job-1",
+		Urgency:           "high",
+		Now:               time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
 	})
 	if !ok {
 		t.Fatal("expected plan")
@@ -56,7 +56,7 @@ func TestBuildRouteTTSPlanForChatUsesMioConversation(t *testing.T) {
 
 func TestBuildRouteTTSPlanRejectsMissingRequiredFields(t *testing.T) {
 	tests := []RouteTTSPlanInput{
-		{ResponseID: "job-1"},
+		{PublicPlaybackRef: "job-1"},
 		{SessionID: "tts-1"},
 	}
 	for _, input := range tests {

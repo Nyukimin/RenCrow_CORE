@@ -11,8 +11,10 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -26,6 +28,7 @@ type mockProvider struct {
 	responses []llm.ChatResponse
 	callIndex int
 	lastReq   llm.ChatRequest
+	contexts  []context.Context
 }
 
 func (m *mockProvider) Generate(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
@@ -35,6 +38,7 @@ func (m *mockProvider) Generate(ctx context.Context, req llm.GenerateRequest) (l
 func (m *mockProvider) Name() string { return "mock" }
 
 func (m *mockProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
+	m.contexts = append(m.contexts, ctx)
 	m.lastReq = req
 	if m.callIndex >= len(m.responses) {
 		return llm.ChatResponse{}, fmt.Errorf("no more responses")
@@ -316,6 +320,211 @@ func TestRunSync_SuperAgentRecorderRejectsInvalidCanonicalRuntimeContextBeforeTo
 				t.Fatalf("invalid context must fail before ToolLoop: provider_calls=%d tool_calls=%d tasks=%#v events=%#v", provider.callIndex, len(runner.contexts), recorder.tasks, recorder.events)
 			}
 		})
+	}
+}
+
+func TestRunSyncBindsSuperAgentRuntimeIdentityThroughToolLoop(t *testing.T) {
+	for _, existing := range []struct {
+		name string
+		bind bool
+	}{
+		{name: "runtime-only"},
+		{name: "exact-existing", bind: true},
+	} {
+		for _, withRecorder := range []bool{false, true} {
+			existing, withRecorder := existing, withRecorder
+			t.Run(existing.name+"/recorder="+fmt.Sprint(withRecorder), func(t *testing.T) {
+				taskID := modulecore.NewTaskID()
+				runID := modulecore.NewRunID()
+				traceID := modulecore.NewTraceID()
+				causationEventID := modulecore.NewEventID()
+				base := context.Background()
+				if existing.bind {
+					var err error
+					base, err = domainexecution.WithIdentity(base, taskID, runID, traceID)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				ctx := WithSuperAgentRuntime(base, taskID, runID, "shiro", traceID, causationEventID, nil, nil, "return summary")
+
+				provider := &mockProvider{responses: superAgentToolLoopResponses()}
+				runner := &mockRunner{results: map[string]*tool.ToolResponse{"delegated_tool": tool.NewSuccess("tool result")}}
+				store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				actions := actionmanager.New(store)
+				var recorder *mockSuperAgentRecorder
+				opts := make([]ManagerOption, 0, 1)
+				if withRecorder {
+					recorder = &mockSuperAgentRecorder{}
+					opts = append(opts, WithSuperAgentRecorder(recorder))
+				}
+				mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 3, Actions: actions}, opts...)
+
+				result, err := mgr.RunSync(ctx, agent.SubagentTask{AgentName: "worker", Instruction: "delegate the search"})
+				if err != nil {
+					t.Fatalf("RunSync: %v", err)
+				}
+				if result.Output != "done" {
+					t.Fatalf("result output = %q", result.Output)
+				}
+				if len(provider.contexts) != 2 {
+					t.Fatalf("provider contexts = %d, want 2", len(provider.contexts))
+				}
+				for _, observed := range provider.contexts {
+					assertSuperAgentExecutionIdentity(t, observed, taskID, runID, traceID)
+				}
+				if len(runner.contexts) != 1 {
+					t.Fatalf("tool contexts = %d, want 1", len(runner.contexts))
+				}
+				assertSuperAgentExecutionIdentity(t, runner.contexts[0], taskID, runID, traceID)
+				stored, err := actions.ListActions(context.Background(), domainaction.Filter{TaskID: taskID, RunID: runID})
+				if err != nil {
+					t.Fatalf("ListActions: %v", err)
+				}
+				if len(stored) != 1 || stored[0].TaskID != taskID || stored[0].RunID != runID {
+					t.Fatalf("stored actions = %#v", stored)
+				}
+				if withRecorder {
+					if len(recorder.tasks) != 2 || len(recorder.events) != 2 {
+						t.Fatalf("recorder entries: tasks=%d events=%d", len(recorder.tasks), len(recorder.events))
+					}
+					for _, event := range recorder.events {
+						if event.TaskID != taskID || event.RunID != runID || event.TraceID != traceID {
+							t.Fatalf("recorder event identity = %#v", event)
+						}
+					}
+				} else if recorder != nil {
+					t.Fatal("recorder unexpectedly configured")
+				}
+			})
+		}
+	}
+}
+
+func TestRunSyncRejectsExistingExecutionIdentityMismatchBeforeSideEffects(t *testing.T) {
+	boundTaskID := modulecore.NewTaskID()
+	boundRunID := modulecore.NewRunID()
+	boundTraceID := modulecore.NewTraceID()
+	validCausationEventID := modulecore.NewEventID()
+	for _, tc := range []struct {
+		name  string
+		task  modulecore.TaskID
+		run   modulecore.RunID
+		trace modulecore.TraceID
+	}{
+		{name: "task", task: modulecore.NewTaskID(), run: boundRunID, trace: boundTraceID},
+		{name: "run", task: boundTaskID, run: modulecore.NewRunID(), trace: boundTraceID},
+		{name: "trace", task: boundTaskID, run: boundRunID, trace: modulecore.NewTraceID()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, err := domainexecution.WithIdentity(context.Background(), boundTaskID, boundRunID, boundTraceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := WithSuperAgentRuntime(base, tc.task, tc.run, "shiro", tc.trace, validCausationEventID, nil, nil, "return summary")
+			provider := &mockProvider{responses: superAgentToolLoopResponses()}
+			runner := &mockRunner{results: map[string]*tool.ToolResponse{"delegated_tool": tool.NewSuccess("must not run")}}
+			store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			actions := actionmanager.New(store)
+			recorder := &mockSuperAgentRecorder{}
+			mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 3, Actions: actions}, WithSuperAgentRecorder(recorder))
+
+			if _, err := mgr.RunSync(ctx, agent.SubagentTask{AgentName: "worker", Instruction: "must not run"}); err == nil {
+				t.Fatal("expected existing execution identity mismatch")
+			}
+			if provider.callIndex != 0 || len(provider.contexts) != 0 || len(runner.contexts) != 0 {
+				t.Fatalf("mismatch reached execution: provider_calls=%d provider_contexts=%d tool_calls=%d", provider.callIndex, len(provider.contexts), len(runner.contexts))
+			}
+			if len(recorder.tasks) != 0 || len(recorder.events) != 0 {
+				t.Fatalf("mismatch created recorder entries: tasks=%#v events=%#v", recorder.tasks, recorder.events)
+			}
+			stored, err := actions.ListActions(context.Background(), domainaction.Filter{TaskID: tc.task, RunID: tc.run})
+			if err != nil {
+				t.Fatalf("ListActions: %v", err)
+			}
+			if len(stored) != 0 {
+				t.Fatalf("mismatch created actions: %#v", stored)
+			}
+		})
+	}
+}
+
+func TestRunSyncRejectsInvalidSuperAgentRuntimeTraceWithoutRecorder(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	ctx := WithSuperAgentRuntime(context.Background(), taskID, runID, "shiro", "legacy-trace", modulecore.NewEventID(), nil, nil, "return summary")
+	provider := &mockProvider{responses: superAgentToolLoopResponses()}
+	runner := &mockRunner{results: map[string]*tool.ToolResponse{"delegated_tool": tool.NewSuccess("must not run")}}
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := actionmanager.New(store)
+	mgr := NewManager(provider, runner, nil, toolloop.Config{MaxIterations: 3, Actions: actions})
+
+	if _, err := mgr.RunSync(ctx, agent.SubagentTask{AgentName: "worker", Instruction: "must not run"}); err == nil {
+		t.Fatal("expected invalid runtime trace error")
+	}
+	if provider.callIndex != 0 || len(provider.contexts) != 0 || len(runner.contexts) != 0 {
+		t.Fatalf("invalid runtime trace reached execution: provider_calls=%d provider_contexts=%d tool_calls=%d", provider.callIndex, len(provider.contexts), len(runner.contexts))
+	}
+	stored, err := actions.ListActions(context.Background(), domainaction.Filter{TaskID: taskID, RunID: runID})
+	if err != nil {
+		t.Fatalf("ListActions: %v", err)
+	}
+	if len(stored) != 0 {
+		t.Fatalf("invalid runtime trace created actions: %#v", stored)
+	}
+}
+
+func TestRunSyncNilContextReturnsError(t *testing.T) {
+	provider := &mockProvider{responses: []llm.ChatResponse{{Message: llm.ChatMessage{Role: "assistant", Content: "must not run"}, FinishReason: "stop"}}}
+	mgr := NewManager(provider, &mockRunner{}, nil, toolloop.Config{MaxIterations: 1})
+	var runErr error
+	var panicValue any
+	func() {
+		defer func() {
+			panicValue = recover()
+		}()
+		_, runErr = mgr.RunSync(nil, agent.SubagentTask{AgentName: "worker", Instruction: "must not run"})
+	}()
+	if panicValue != nil {
+		t.Fatalf("RunSync panicked for nil context: %v", panicValue)
+	}
+	if runErr == nil {
+		t.Fatal("expected nil context error")
+	}
+	if provider.callIndex != 0 {
+		t.Fatalf("nil context reached provider: %d calls", provider.callIndex)
+	}
+}
+
+func superAgentToolLoopResponses() []llm.ChatResponse {
+	return []llm.ChatResponse{
+		{
+			Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{
+				{ID: "delegated-call", Function: llm.ToolCallFunction{Name: "delegated_tool", Arguments: map[string]any{}}},
+			}},
+			FinishReason: "tool_calls",
+		},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
+	}
+}
+
+func assertSuperAgentExecutionIdentity(t *testing.T, ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, traceID modulecore.TraceID) {
+	t.Helper()
+	got, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		t.Fatalf("IdentityFromContext: %v", err)
+	}
+	if got.TaskID != taskID || got.RunID != runID || got.TraceID != traceID {
+		t.Fatalf("execution identity = %#v, want task=%s run=%s trace=%s", got, taskID, runID, traceID)
 	}
 }
 

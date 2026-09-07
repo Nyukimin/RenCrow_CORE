@@ -203,3 +203,14 @@ func TestToolExecutionScopeCannotBeReadFromEmptyContext(t *testing.T) {
 		t.Fatal("empty context must not produce an authenticated scope")
 	}
 }
+
+func TestDeriveAgentToolExecutionScopeWithoutParentIsPublicOnly(t *testing.T) {
+	ctx, err := DeriveAgentToolExecutionScope(context.Background(), "request-independent", "mio", "agent", "chat", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, ok := ToolExecutionScopeFromContext(ctx)
+	if !ok || !reflect.DeepEqual(scope.AllowedDataScopes, []string{DataScopePublic}) || scope.AuthenticatedUserID != "" {
+		t.Fatalf("unscoped parent widened permissions: %#v", scope)
+	}
+}

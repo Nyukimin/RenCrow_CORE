@@ -40,32 +40,32 @@ type SynthesisOutput struct {
 }
 
 type PlaybackStateSnapshot struct {
-	PendingSessionCount      int      `json:"pending_session_count"`
-	PendingResponseCount     int      `json:"pending_response_count"`
-	PendingSessionIDs        []string `json:"pending_session_ids,omitempty"`
-	PendingResponseIDs       []string `json:"pending_response_ids,omitempty"`
-	TopicGateCount           int      `json:"topic_gate_count"`
-	TopicRouteCount          int      `json:"topic_route_count"`
-	PublicRouteCount         int      `json:"public_route_count"`
-	PublicStaleRouteCount    int      `json:"public_stale_route_count"`
-	NextChunkSessionCount    int      `json:"next_chunk_session_count"`
-	NextResponseSessionCount int      `json:"next_response_session_count"`
+	PendingSessionCount            int      `json:"pending_session_count"`
+	PendingPublicPlaybackCount     int      `json:"pending_public_playback_count"`
+	PendingSessionIDs              []string `json:"pending_session_ids,omitempty"`
+	PendingPublicPlaybackRefs      []string `json:"pending_public_playback_refs,omitempty"`
+	TopicGateCount                 int      `json:"topic_gate_count"`
+	TopicRouteCount                int      `json:"topic_route_count"`
+	PublicRouteCount               int      `json:"public_route_count"`
+	PublicStaleRouteCount          int      `json:"public_stale_route_count"`
+	NextChunkSessionCount          int      `json:"next_chunk_session_count"`
+	NextPublicPlaybackSessionCount int      `json:"next_public_playback_session_count"`
 }
 
 type PendingPlaybackSnapshot struct {
-	PendingSessionCount  int      `json:"pending_session_count"`
-	PendingResponseCount int      `json:"pending_response_count"`
-	PendingSessionIDs    []string `json:"pending_session_ids,omitempty"`
-	PendingResponseIDs   []string `json:"pending_response_ids,omitempty"`
-	TopicGateCount       int      `json:"topic_gate_count"`
-	TopicRouteCount      int      `json:"topic_route_count"`
+	PendingSessionCount        int      `json:"pending_session_count"`
+	PendingPublicPlaybackCount int      `json:"pending_public_playback_count"`
+	PendingSessionIDs          []string `json:"pending_session_ids,omitempty"`
+	PendingPublicPlaybackRefs  []string `json:"pending_public_playback_refs,omitempty"`
+	TopicGateCount             int      `json:"topic_gate_count"`
+	TopicRouteCount            int      `json:"topic_route_count"`
 }
 
 type PublicPlaybackSnapshot struct {
-	RouteCount               int `json:"route_count"`
-	StaleRouteCount          int `json:"stale_route_count"`
-	NextChunkSessionCount    int `json:"next_chunk_session_count"`
-	NextResponseSessionCount int `json:"next_response_session_count"`
+	RouteCount                     int `json:"route_count"`
+	StaleRouteCount                int `json:"stale_route_count"`
+	NextChunkSessionCount          int `json:"next_chunk_session_count"`
+	NextPublicPlaybackSessionCount int `json:"next_public_playback_session_count"`
 }
 
 type PlaybackStateObserver interface {

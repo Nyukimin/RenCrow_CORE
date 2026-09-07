@@ -8,12 +8,15 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	infraRouting "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -121,7 +124,22 @@ func (m *mockClassifier) Classify(ctx context.Context, input conversation.TurnIn
 
 // === Helper ===
 
-func buildOrchestrator(llmResp string, sessionRepo *mockSessionRepository) *orchestrator.MessageOrchestrator {
+func attachIntegrationTaskOwner(tb testing.TB, orch *orchestrator.MessageOrchestrator) *taskpersistence.JSONLStore {
+	tb.Helper()
+	store, err := taskpersistence.NewJSONLStore(tb.TempDir())
+	if err != nil {
+		tb.Fatalf("create integration task store: %v", err)
+	}
+	tb.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			tb.Errorf("close integration task store: %v", err)
+		}
+	})
+	orch.SetTaskLifecycleManager(taskmanager.New(store, taskmanager.DefaultParallelLimits()))
+	return store
+}
+
+func buildOrchestrator(tb testing.TB, llmResp string, sessionRepo *mockSessionRepository) (*orchestrator.MessageOrchestrator, *taskpersistence.JSONLStore) {
 	provider := &mockLLMProvider{
 		generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
 			return llm.GenerateResponse{Content: llmResp}, nil
@@ -132,7 +150,8 @@ func buildOrchestrator(llmResp string, sessionRepo *mockSessionRepository) *orch
 	mio := agent.NewMioAgent(provider, &mockClassifier{}, ruleDict, &mockToolRunner{}, &mockMCPClient{}, nil)
 	shiro := agent.NewShiroAgent(provider, &mockToolRunner{}, &mockMCPClient{}, "", nil)
 
-	return orchestrator.NewMessageOrchestrator(sessionRepo, mio, shiro, nil, nil, nil, nil, nil)
+	orch := orchestrator.NewMessageOrchestrator(sessionRepo, mio, shiro, nil, nil, nil, nil, nil)
+	return orch, attachIntegrationTaskOwner(tb, orch)
 }
 
 func defaultIntegrationReq(msg string) orchestrator.ProcessMessageRequest {
@@ -147,7 +166,7 @@ func defaultIntegrationReq(msg string) orchestrator.ProcessMessageRequest {
 
 func TestIntegration_ChatRoute_FullPath(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("こんにちは！お元気ですか？", repo)
+	orch, taskStore := buildOrchestrator(t, "こんにちは！お元気ですか？", repo)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("こんにちは"))
 	if err != nil {
@@ -159,11 +178,26 @@ func TestIntegration_ChatRoute_FullPath(t *testing.T) {
 	if resp.Response != "こんにちは！お元気ですか？" {
 		t.Errorf("response: want LLM output, got %q", resp.Response)
 	}
+	taskID := modulecore.TaskID(resp.TaskID)
+	savedTask, err := taskStore.GetTask(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("get saved chat task: %v", err)
+	}
+	runs, err := taskStore.ListRuns(context.Background(), domaintask.RunFilter{TaskID: savedTask.TaskID})
+	if err != nil {
+		t.Fatalf("list saved chat runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected one saved chat run, got %d", len(runs))
+	}
+	if runs[0].TaskID != savedTask.TaskID {
+		t.Fatalf("saved run task ownership: want %s, got %s", savedTask.TaskID, runs[0].TaskID)
+	}
 }
 
 func TestIntegration_ExplicitCode3Route_NoCoder(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("LLM response", repo) // no coder3 configured
+	orch, _ := buildOrchestrator(t, "LLM response", repo) // no coder3 configured
 
 	_, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("/code3 implement feature"))
 	if err == nil {
@@ -186,6 +220,7 @@ func TestIntegration_OPSRoute_RuleDictionary(t *testing.T) {
 	mio := agent.NewMioAgent(provider, &mockClassifier{}, ruleDict, &mockToolRunner{}, &mockMCPClient{}, nil)
 	shiro := agent.NewShiroAgent(provider, &mockToolRunner{}, &mockMCPClient{}, "", nil)
 	orch := orchestrator.NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachIntegrationTaskOwner(t, orch)
 
 	// "ls -la を実行" should match OPS rule
 	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("/ops ls -la を実行"))
@@ -199,7 +234,7 @@ func TestIntegration_OPSRoute_RuleDictionary(t *testing.T) {
 
 func TestIntegration_FallbackToChat(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("fallback response", repo)
+	orch, _ := buildOrchestrator(t, "fallback response", repo)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("天気はどうですか"))
 	if err != nil {
@@ -212,7 +247,7 @@ func TestIntegration_FallbackToChat(t *testing.T) {
 
 func TestIntegration_SessionCreatedOnFirstMessage(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("response", repo)
+	orch, _ := buildOrchestrator(t, "response", repo)
 
 	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("hello"))
 	if err != nil {
@@ -227,7 +262,7 @@ func TestIntegration_SessionCreatedOnFirstMessage(t *testing.T) {
 
 func TestIntegration_SessionReusedOnSubsequentMessages(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("response", repo)
+	orch, _ := buildOrchestrator(t, "response", repo)
 
 	first, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("first"))
 	if err != nil {
@@ -247,7 +282,7 @@ func TestIntegration_SessionReusedOnSubsequentMessages(t *testing.T) {
 
 func TestIntegration_MultipleMessagesGrowHistory(t *testing.T) {
 	repo := newMockSessionRepo()
-	orch := buildOrchestrator("response", repo)
+	orch, _ := buildOrchestrator(t, "response", repo)
 
 	var sessionID string
 	for i := 0; i < 3; i++ {
@@ -276,6 +311,7 @@ func TestIntegration_LLMFailure_PropagatesError(t *testing.T) {
 	mio := agent.NewMioAgent(provider, &mockClassifier{}, ruleDict, &mockToolRunner{}, &mockMCPClient{}, nil)
 	shiro := agent.NewShiroAgent(provider, &mockToolRunner{}, &mockMCPClient{}, "", nil)
 	orch := orchestrator.NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachIntegrationTaskOwner(t, orch)
 
 	_, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("hello"))
 	if err == nil {
@@ -311,6 +347,7 @@ func TestIntegration_WebSearchTriggered(t *testing.T) {
 	shiro := agent.NewShiroAgent(provider, toolRunner, &mockMCPClient{}, "", nil)
 	repo := newMockSessionRepo()
 	orch := orchestrator.NewMessageOrchestrator(repo, mio, shiro, nil, nil, nil, nil, nil)
+	attachIntegrationTaskOwner(t, orch)
 
 	// "検索して" は明示的な検索語 → needsWebSearch=true で発火する
 	resp, err := orch.ProcessMessage(context.Background(), defaultIntegrationReq("Go言語について検索して"))

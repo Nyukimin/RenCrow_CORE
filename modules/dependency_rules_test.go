@@ -844,7 +844,7 @@ func TestTTSSpeechPolicyCallersUseModuleContract(t *testing.T) {
 		}
 		if entry.IsDir() {
 			switch entry.Name() {
-			case ".git", "tmp", "vendor":
+			case ".git", "tmp", "Tmp", "vendor":
 				return filepath.SkipDir
 			default:
 				return nil

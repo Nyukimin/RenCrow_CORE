@@ -8,22 +8,22 @@ import (
 func TestBuildIdleChatTTSPlanBuildsSessionAndVoiceMetadata(t *testing.T) {
 	now := time.Unix(0, 12345)
 	got, ok := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
-		PublicSessionID: " idle-1 ",
-		ResponseID:      " idle-1:0001 ",
-		MessageID:       " idle-1:msg:0002 ",
-		TurnIndex:       2,
-		Speaker:         "shiro",
-		SpeechText:      " こんにちは。 ",
-		DisplayText:     " こんにちは。 ",
-		TimeOfDay:       "night",
-		Now:             now,
+		PublicSessionID:   " idle-1 ",
+		PublicPlaybackRef: " idle-1:0001 ",
+		MessageID:         " idle-1:msg:0002 ",
+		TurnIndex:         2,
+		Speaker:           "shiro",
+		SpeechText:        " こんにちは。 ",
+		DisplayText:       " こんにちは。 ",
+		TimeOfDay:         "night",
+		Now:               now,
 	})
 	if !ok {
 		t.Fatal("expected plan")
 	}
 	if got.SessionID != "idle-1-tts-12345-idle-1:0001" ||
 		got.PublicSessionID != "idle-1" ||
-		got.ResponseID != "idle-1:0001" ||
+		got.PublicPlaybackRef != "idle-1:0001" ||
 		got.MessageID != "idle-1:msg:0002" ||
 		got.TurnIndex != 2 {
 		t.Fatalf("unexpected ids: %+v", got)
@@ -42,11 +42,11 @@ func TestBuildIdleChatTTSPlanBuildsSessionAndVoiceMetadata(t *testing.T) {
 
 func TestBuildIdleChatTTSPlanDefaultsDisplayAndTimeOfDay(t *testing.T) {
 	got, ok := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
-		PublicSessionID: "idle-1",
-		ResponseID:      "idle-1:0000",
-		Speaker:         "mio",
-		SpeechText:      "本文です。",
-		Now:             time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
+		PublicSessionID:   "idle-1",
+		PublicPlaybackRef: "idle-1:0000",
+		Speaker:           "mio",
+		SpeechText:        "本文です。",
+		Now:               time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
 	})
 	if !ok {
 		t.Fatal("expected plan")
@@ -59,16 +59,16 @@ func TestBuildIdleChatTTSPlanDefaultsDisplayAndTimeOfDay(t *testing.T) {
 func TestBuildIdleChatTTSPlanDisambiguatesResponsesAtSameTimestamp(t *testing.T) {
 	now := time.Unix(0, 12345)
 	first, firstOK := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
-		PublicSessionID: "idle-1",
-		ResponseID:      "idle-1:0001",
-		SpeechText:      "一つ目",
-		Now:             now,
+		PublicSessionID:   "idle-1",
+		PublicPlaybackRef: "idle-1:0001",
+		SpeechText:        "一つ目",
+		Now:               now,
 	})
 	second, secondOK := BuildIdleChatTTSPlan(IdleChatTTSPlanInput{
-		PublicSessionID: "idle-1",
-		ResponseID:      "idle-1:0002",
-		SpeechText:      "二つ目",
-		Now:             now,
+		PublicSessionID:   "idle-1",
+		PublicPlaybackRef: "idle-1:0002",
+		SpeechText:        "二つ目",
+		Now:               now,
 	})
 	if !firstOK || !secondOK {
 		t.Fatal("expected both plans")
@@ -80,9 +80,9 @@ func TestBuildIdleChatTTSPlanDisambiguatesResponsesAtSameTimestamp(t *testing.T)
 
 func TestBuildIdleChatTTSPlanRejectsMissingRequiredFields(t *testing.T) {
 	tests := []IdleChatTTSPlanInput{
-		{ResponseID: "r", SpeechText: "text"},
+		{PublicPlaybackRef: "r", SpeechText: "text"},
 		{PublicSessionID: "s", SpeechText: "text"},
-		{PublicSessionID: "s", ResponseID: "r"},
+		{PublicSessionID: "s", PublicPlaybackRef: "r"},
 	}
 	for _, input := range tests {
 		if got, ok := BuildIdleChatTTSPlan(input); ok {

@@ -90,12 +90,12 @@ type SteeringItem struct {
 type HeartbeatSchedule struct {
 	ScheduleID   modulecore.ScheduleID `json:"schedule_id"`
 	WorkstreamID string                `json:"workstream_id"`
-	ScheduleText string    `json:"schedule_text"`
-	Task         string    `json:"task"`
-	Status       string    `json:"status"`
-	LastRunAt    time.Time `json:"last_run_at,omitempty"`
-	NextRunAt    time.Time `json:"next_run_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ScheduleText string                `json:"schedule_text"`
+	Task         string                `json:"task"`
+	Status       string                `json:"status"`
+	LastRunAt    time.Time             `json:"last_run_at,omitempty"`
+	NextRunAt    time.Time             `json:"next_run_at,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 // ImplementationLease is the persisted singleton lease used by Atlas. It is
@@ -164,22 +164,22 @@ var (
 
 // StageRunReceipt records one idempotent unit/revision/stage execution.
 type StageRunReceipt struct {
-	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
-	IdempotencyKey         string               `json:"idempotency_key"`
-	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
-	TransitionEventID      modulecore.EventID   `json:"transition_event_id,omitempty"`
-	UnitID                 string               `json:"unit_id"`
+	ReceiptID              modulecore.ReceiptID     `json:"receipt_id"`
+	IdempotencyKey         string                   `json:"idempotency_key"`
+	ActionID               modulecore.ActionID      `json:"action_id,omitempty"`
+	TransitionEventID      modulecore.EventID       `json:"transition_event_id,omitempty"`
+	UnitID                 string                   `json:"unit_id"`
 	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id,omitempty"`
-	ImplementationRevision int                  `json:"implementation_revision"`
-	TargetStage            string               `json:"target_stage"`
-	PayloadHash            string               `json:"payload_hash"`
-	Status                 string               `json:"status"`
-	DeliveryState          string               `json:"delivery_state,omitempty"`
-	ResultJSON             string               `json:"result_json,omitempty"`
-	ReasonCode             string               `json:"reason_code,omitempty"`
-	Error                  string               `json:"error,omitempty"`
-	CreatedAt              time.Time            `json:"created_at"`
-	CompletedAt            time.Time            `json:"completed_at,omitempty"`
+	ImplementationRevision int                      `json:"implementation_revision"`
+	TargetStage            string                   `json:"target_stage"`
+	PayloadHash            string                   `json:"payload_hash"`
+	Status                 string                   `json:"status"`
+	DeliveryState          string                   `json:"delivery_state,omitempty"`
+	ResultJSON             string                   `json:"result_json,omitempty"`
+	ReasonCode             string                   `json:"reason_code,omitempty"`
+	Error                  string                   `json:"error,omitempty"`
+	CreatedAt              time.Time                `json:"created_at"`
+	CompletedAt            time.Time                `json:"completed_at,omitempty"`
 }
 
 const (
@@ -191,24 +191,24 @@ const (
 // ClosureReceipt is the durable phase marker for LIVE_VERIFIED -> DONE.
 // Prepared receipts are intentionally replayable after a process restart.
 type ClosureReceipt struct {
-	ReceiptID              modulecore.ReceiptID `json:"receipt_id"`
-	IdempotencyKey         string               `json:"idempotency_key"`
-	ActionID               modulecore.ActionID  `json:"action_id,omitempty"`
-	TransitionEventID      modulecore.EventID   `json:"transition_event_id,omitempty"`
-	UnitID                 string               `json:"unit_id"`
+	ReceiptID              modulecore.ReceiptID     `json:"receipt_id"`
+	IdempotencyKey         string                   `json:"idempotency_key"`
+	ActionID               modulecore.ActionID      `json:"action_id,omitempty"`
+	TransitionEventID      modulecore.EventID       `json:"transition_event_id,omitempty"`
+	UnitID                 string                   `json:"unit_id"`
 	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id,omitempty"`
-	ImplementationRevision int                  `json:"implementation_revision"`
-	Phase                  string               `json:"phase"`
-	Status                 string    `json:"status"`
-	WorkstreamID           string    `json:"workstream_id,omitempty"`
-	GoalID                 string    `json:"goal_id,omitempty"`
-	ArtifactID             string    `json:"artifact_id,omitempty"`
-	LeaseName              string    `json:"lease_name,omitempty"`
-	LeaseReleased          bool      `json:"lease_released,omitempty"`
-	Error                  string    `json:"error,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at,omitempty"`
-	CompletedAt            time.Time `json:"completed_at,omitempty"`
+	ImplementationRevision int                      `json:"implementation_revision"`
+	Phase                  string                   `json:"phase"`
+	Status                 string                   `json:"status"`
+	WorkstreamID           string                   `json:"workstream_id,omitempty"`
+	GoalID                 string                   `json:"goal_id,omitempty"`
+	ArtifactID             string                   `json:"artifact_id,omitempty"`
+	LeaseName              string                   `json:"lease_name,omitempty"`
+	LeaseReleased          bool                     `json:"lease_released,omitempty"`
+	Error                  string                   `json:"error,omitempty"`
+	CreatedAt              time.Time                `json:"created_at"`
+	UpdatedAt              time.Time                `json:"updated_at,omitempty"`
+	CompletedAt            time.Time                `json:"completed_at,omitempty"`
 }
 
 const (

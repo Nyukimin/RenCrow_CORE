@@ -19,6 +19,11 @@ func TestTaskViewerRoutesExposeCanonicalTaskIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
 	value, err := manager.Create(context.Background(), domaintask.Task{Title: "viewer Task", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{CurrentPlan: "show it"})
 	if err != nil {
@@ -86,6 +91,11 @@ func TestTaskDetailIncludesCanonicalRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
 	task, err := manager.Create(ctx, domaintask.Task{Title: "viewer run history", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -166,6 +176,11 @@ func TestTaskDetailReturnsInternalServerErrorWhenRunHistoryFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
 	task, err := manager.Create(context.Background(), domaintask.Task{Title: "viewer run failure", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -184,6 +199,11 @@ func TestTaskDetailNormalizesNilRunHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
 	task, err := manager.Create(context.Background(), domaintask.Task{Title: "viewer empty run history", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
 	if err != nil {
@@ -209,6 +229,11 @@ func TestTaskDetailRejectsMalformedTaskIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close task store: %v", err)
+		}
+	})
 	recorder := httptest.NewRecorder()
 	HandleTaskDetail(store)(recorder, httptest.NewRequest(http.MethodGet, "/viewer/task/detail?task_id=job_old", nil))
 	if recorder.Code != http.StatusBadRequest {

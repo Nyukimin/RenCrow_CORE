@@ -40,7 +40,8 @@
         "type": { "const": "patch_proposal" },
         "intent": { "type": "string" },
         "patch": { "type": "string", "description": "JSON array or Markdown fenced blocks" },
-        "tests": { "type": "array", "items": { "type": "string" } }
+        "tests": { "type": "array", "items": { "type": "string" } },
+        "test_hint": { "$ref": "#/definitions/TestHint" }
       },
       "additionalProperties": false
     },
@@ -103,6 +104,18 @@
           "type": "string",
           "description": "実行するコマンド文字列"
         }
+      },
+      "additionalProperties": false
+    },
+    "TestHint": {
+      "description": "Coder advisory only; the owner test-impact resolver retains selection authority.",
+      "type": "object",
+      "properties": {
+        "changed_surface": { "type": "array", "items": { "type": "string" } },
+        "expected_impact": { "type": "string" },
+        "recommended_tier": { "type": "string", "enum": ["fast", "related", "heavy", "full"] },
+        "recommended_steps": { "type": "array", "items": { "type": "string" } },
+        "risk": { "type": "string" }
       },
       "additionalProperties": false
     }

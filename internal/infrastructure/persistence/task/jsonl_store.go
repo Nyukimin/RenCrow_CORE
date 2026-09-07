@@ -26,6 +26,10 @@ const (
 )
 
 type JSONLStore struct {
+	writerLock        *os.File
+	writerGeneration  uint64
+	closed            bool
+	readOnly          bool
 	mu                sync.RWMutex
 	root              string
 	statePath         string
@@ -34,12 +38,19 @@ type JSONLStore struct {
 	notificationsPath string
 }
 
-func NewJSONLStore(root string) (*JSONLStore, error) {
+func NewJSONLStore(root string) (*JSONLStore, error) { return openJSONLStore(root, false) }
+
+// NewJSONLReader opens the canonical files without acquiring write ownership.
+func NewJSONLReader(root string) (*JSONLStore, error) { return openJSONLStore(root, true) }
+
+func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("task store root is required")
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return nil, err
+	if !readOnly {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			return nil, err
+		}
 	}
 	for _, filename := range []string{"job_state.jsonl", "job_context.jsonl", "job_notifications.jsonl"} {
 		if _, err := os.Lstat(filepath.Join(root, filename)); err == nil {
@@ -53,6 +64,26 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		statePath: filepath.Join(root, stateFilename), runPath: filepath.Join(root, runFilename), contextPath: filepath.Join(root, contextFilename),
 		notificationsPath: filepath.Join(root, notificationsFilename),
 	}
+	store.readOnly = readOnly
+	if readOnly {
+		return store, nil
+	}
+	lock, err := acquireTaskWriter(root)
+	if err != nil {
+		return nil, err
+	}
+	store.writerLock = lock
+	success := false
+	defer func() {
+		if !success {
+			_ = store.Close()
+		}
+	}()
+	generation, err := advanceTaskWriterGeneration(lock)
+	if err != nil {
+		return nil, fmt.Errorf("advance task store writer generation: %w", err)
+	}
+	store.writerGeneration = generation
 	for _, path := range []string{store.statePath, store.runPath, store.contextPath, store.notificationsPath} {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -62,7 +93,35 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 			return nil, err
 		}
 	}
+	// A missing/truncated counter must not reuse any generation already bound to a Run.
+	runs, err := store.loadRuns(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	for _, run := range runs {
+		if run.WriterGeneration >= generation {
+			return nil, fmt.Errorf("writer generation does not advance persisted Run ownership")
+		}
+	}
+	success = true
 	return store, nil
+}
+
+// WriterGeneration returns the monotonically increasing generation held by a
+// live writable store. Readers and closed stores have no writer generation.
+func (s *JSONLStore) WriterGeneration() (uint64, error) {
+	if s == nil {
+		return 0, fmt.Errorf("task store is nil")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return 0, os.ErrClosed
+	}
+	if s.readOnly || s.writerLock == nil || s.writerGeneration == 0 {
+		return 0, fmt.Errorf("task store writer generation unavailable")
+	}
+	return s.writerGeneration, nil
 }
 
 func (s *JSONLStore) SaveTask(ctx context.Context, value domaintask.Task) error {
@@ -99,14 +158,21 @@ func (s *JSONLStore) SaveRun(ctx context.Context, value domaintask.Run) error {
 	if err := validateRunOwners(runs, tasks); err != nil {
 		return err
 	}
+	existingRun := false
+
 	for _, item := range runs {
 		if item.RunID == value.RunID {
+			existingRun = true
 			if err := validateRunUpdate(item, value); err != nil {
 				return err
 			}
 			break
 		}
 	}
+	if !existingRun && (value.WriterGeneration == 0 || value.WriterGeneration != s.writerGeneration) {
+		return fmt.Errorf("new run requires current writer generation")
+	}
+
 	if value.Status == domaintask.RunStatusRunning {
 		for _, item := range runs {
 			if item.TaskID == value.TaskID && item.Status == domaintask.RunStatusRunning && item.RunID != value.RunID {
@@ -371,7 +437,7 @@ func validateRunOwners(runs []domaintask.Run, tasks []domaintask.Task) error {
 }
 
 func validateRunUpdate(existing, next domaintask.Run) error {
-	if existing.TaskID != next.TaskID || existing.StartReason != next.StartReason || existing.Assignee != next.Assignee || !existing.StartedAt.Equal(next.StartedAt) {
+	if existing.WriterGeneration != next.WriterGeneration || existing.TaskID != next.TaskID || existing.StartReason != next.StartReason || existing.Assignee != next.Assignee || !existing.StartedAt.Equal(next.StartedAt) {
 		return fmt.Errorf("run identity and start fields are immutable")
 	}
 	if !domaintask.CanRunTransition(existing.Status, next.Status) {
@@ -402,6 +468,12 @@ func (s *JSONLStore) appendJSON(ctx context.Context, path string, value any) err
 }
 
 func (s *JSONLStore) appendJSONUnlocked(ctx context.Context, path string, value any) error {
+	if s.closed {
+		return os.ErrClosed
+	}
+	if s.readOnly || s.writerLock == nil {
+		return fmt.Errorf("task store is read-only")
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -453,4 +525,20 @@ func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// Close relinquishes this writer's OS lease. The persistent lock file is never removed.
+func (s *JSONLStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.writerLock == nil {
+		return nil
+	}
+	err := releaseTaskWriter(s.writerLock)
+	s.writerLock = nil
+	return err
 }

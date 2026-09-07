@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type BridgeRequest struct {
@@ -109,13 +112,7 @@ func HandleBridgeStatus(history func() []orchestrator.OrchestratorEvent, now fun
 	}
 }
 
-type eventStream interface {
-	History() []orchestrator.OrchestratorEvent
-	Subscribe() chan []byte
-	Unsubscribe(ch chan []byte)
-}
-
-func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
+func HandleBridgeEvents(stream viewer.EventStream) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -124,6 +121,11 @@ func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
 		sessionID := strings.TrimSpace(r.URL.Query().Get("session_id"))
 		if sessionID == "" {
 			http.Error(w, "session_id is required", http.StatusBadRequest)
+			return
+		}
+		lastSeen, err := parseLastEventID(r.Header.Get("Last-Event-ID"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		flusher, ok := w.(http.Flusher)
@@ -135,33 +137,52 @@ func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		lastSeen := parseLastEventID(r.Header.Get("Last-Event-ID"))
+		ch, history := stream.Subscribe()
+		defer stream.Unsubscribe(ch)
+		clearReplayDeadline := viewer.SetReplayWriteDeadline(w)
+		defer clearReplayDeadline()
 
-		for _, ev := range stream.History() {
-			if string(ev.SessionID) != sessionID {
-				continue
-			}
-			if ev.EventSeq > 0 && int64(ev.EventSeq) <= lastSeen {
-				continue
+		replayWrote := false
+		replayCursor, err := stream.Replay(r.Context(), lastSeen, history, func(ev orchestrator.OrchestratorEvent) error {
+			if string(ev.SessionID) != sessionID || viewer.IsTransientReplayEvent(ev) {
+				return nil
 			}
 			data, err := json.Marshal(ev)
 			if err != nil {
-				continue
+				return err
 			}
+			replayWrote = true
 			if ev.EventSeq > 0 {
-				fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
+				if _, err := fmt.Fprintf(w, "id: %d\n", ev.EventSeq); err != nil {
+					return err
+				}
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			if r.Context().Err() != nil {
+				return
+			}
+			log.Printf("[Chrome] bridge SSE replay failed: %v", err)
+			if !replayWrote {
+				http.Error(w, "event replay unavailable", http.StatusConflict)
+			}
+			return
 		}
 		flusher.Flush()
+		clearReplayDeadline()
 
-		ch := stream.Subscribe()
-		defer stream.Unsubscribe(ch)
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case data := <-ch:
+			case data, ok := <-ch:
+				if !ok {
+					return
+				}
 				var ev orchestrator.OrchestratorEvent
 				if err := json.Unmarshal(bytes.TrimSpace(data), &ev); err != nil {
 					continue
@@ -169,24 +190,31 @@ func HandleBridgeEvents(stream eventStream) http.HandlerFunc {
 				if string(ev.SessionID) != sessionID {
 					continue
 				}
-				if ev.EventSeq > 0 {
-					fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
+				if ev.EventSeq > 0 && ev.EventSeq <= replayCursor {
+					continue
 				}
-				fmt.Fprintf(w, "data: %s\n\n", data)
+				if ev.EventSeq > 0 {
+					if _, err := fmt.Fprintf(w, "id: %d\n", ev.EventSeq); err != nil {
+						return
+					}
+				}
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+					return
+				}
 				flusher.Flush()
 			}
 		}
 	}
 }
 
-func parseLastEventID(v string) int64 {
+func parseLastEventID(v string) (modulecore.EventSeq, error) {
 	v = strings.TrimSpace(v)
 	if v == "" {
-		return 0
+		return 0, nil
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
 	if err != nil || n < 0 {
-		return 0
+		return 0, fmt.Errorf("Last-Event-ID must be a non-negative EventSeq")
 	}
-	return n
+	return modulecore.EventSeq(n), nil
 }

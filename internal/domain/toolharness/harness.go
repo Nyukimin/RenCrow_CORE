@@ -1,6 +1,7 @@
 package toolharness
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,12 @@ const (
 
 type Event struct {
 	EventID          string            `json:"event_id"`
+	EventSeq         int64             `json:"event_seq,omitempty"`
+	TaskID           string            `json:"task_id,omitempty"`
+	RunID            string            `json:"run_id,omitempty"`
+	TraceID          string            `json:"trace_id,omitempty"`
+	ActorKind        string            `json:"actor_kind,omitempty"`
+	ActorID          string            `json:"actor_id,omitempty"`
 	ToolName         string            `json:"tool_name"`
 	RawInputHash     string            `json:"raw_input_hash"`
 	ValidationStatus ValidationStatus  `json:"validation_status"`
@@ -64,7 +71,7 @@ type Event struct {
 }
 
 type Recorder interface {
-	RecordToolMediationEvent(event Event) error
+	RecordToolMediationEvent(ctx context.Context, event Event) error
 }
 
 func New() *Harness {

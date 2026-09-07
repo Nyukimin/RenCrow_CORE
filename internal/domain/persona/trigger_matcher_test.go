@@ -60,7 +60,7 @@ func TestMatchTriggerUsesPriorityWhenConfidenceTies(t *testing.T) {
 
 func TestCanUseCanonicalResponseRespectsCooldownMaxAndContext(t *testing.T) {
 	policy := CanonicalResponsePolicy{
-		ResponseKey:       "kuro_destructive_block",
+		ResponseKey:      "kuro_destructive_block",
 		CooldownTurns:    3,
 		MaxPerSession:    2,
 		RequiredContexts: []string{"danger", "destructive"},

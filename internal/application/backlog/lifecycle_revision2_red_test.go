@@ -2,7 +2,10 @@ package backlog
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -14,7 +17,7 @@ import (
 func TestRevision2StageReplayIsIdempotent(t *testing.T) {
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		BacklogItemID: modulecore.BacklogItemID("revision2-replay"),
+		BacklogItemID:      modulecore.BacklogItemID("revision2-replay"),
 		ImplementationUnit: "unit-revision2-replay",
 		Title:              "stage replay",
 		ConceptState:       domainbacklog.ConceptAdopted,
@@ -233,7 +236,7 @@ func TestRevision2LiveVerifiedImmediatelyClosesToDone(t *testing.T) {
 	refs := revision2CumulativeEvidence()
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		BacklogItemID: modulecore.BacklogItemID("revision2-live-lease"),
+		BacklogItemID:      modulecore.BacklogItemID("revision2-live-lease"),
 		ImplementationUnit: "unit-revision2-live-lease",
 		WorkstreamID:       "ws-revision2-live-lease",
 		Title:              "live lease",
@@ -270,6 +273,15 @@ func TestRevision2LiveVerifiedImmediatelyClosesToDone(t *testing.T) {
 	if err != nil || !found || closure.Status != domainworkstream.ClosureStatusCompleted {
 		t.Fatalf("closure=%+v found=%v err=%v", closure, found, err)
 	}
+	if err := closure.ActionID.Validate(); err != nil {
+		t.Fatalf("closure action identity: %v", err)
+	}
+	for _, target := range []string{domainbacklog.DeliveryLiveVerified, domainbacklog.DeliveryDone} {
+		stage, found, err := workstream.FindStageRunReceipt(context.Background(), stageRunKey("unit-revision2-live-lease", 1, target))
+		if err != nil || !found || stage.ActionID != closure.ActionID {
+			t.Fatalf("%s and closure must share one action: stage=%+v closure=%+v found=%v err=%v", target, stage, closure, found, err)
+		}
+	}
 	projection, err := service.Projection(context.Background())
 	if err != nil || len(projection.Current) != 1 || projection.Current[0].BacklogItemID != "revision2-live-lease" {
 		t.Fatalf("Current projection=%+v err=%v", projection.Current, err)
@@ -289,7 +301,7 @@ func TestRevision2DoneRejectsLeaseReleaseFailure(t *testing.T) {
 	refs := revision2CumulativeEvidence()
 	store := &memoryItemStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		BacklogItemID: modulecore.BacklogItemID("revision2-done-release"),
+		BacklogItemID:      modulecore.BacklogItemID("revision2-done-release"),
 		ImplementationUnit: "unit-revision2-done-release",
 		Title:              "done release",
 		ConceptState:       domainbacklog.ConceptAdopted,
@@ -389,7 +401,7 @@ func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("done-no-unit"), Title: "done without lifecycle unit", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone},
 	}}
 	workstream := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{
-		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000010"), UnitID: "unit-exact", BacklogItemID: modulecore.BacklogItemID("done-exact"), ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
+		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000010"), IdempotencyKey: stageRunKey("unit-exact", 2, domainbacklog.DeliveryDone), ActionID: modulecore.NewActionID(), UnitID: "unit-exact", BacklogItemID: modulecore.BacklogItemID("done-exact"), ImplementationRevision: 2, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
 		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000011"), UnitID: "different-unit", BacklogItemID: modulecore.BacklogItemID("done-wrong-unit"), ImplementationRevision: 3, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
 		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000012"), UnitID: "unit-wrong-revision", BacklogItemID: modulecore.BacklogItemID("done-wrong-revision"), ImplementationRevision: 99, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone},
 		{ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000013"), UnitID: "unit-prepared", BacklogItemID: modulecore.BacklogItemID("done-prepared"), ImplementationRevision: 5, Status: domainworkstream.ClosureStatusPrepared, Phase: domainworkstream.ClosurePhasePrepared},
@@ -399,17 +411,17 @@ func TestRevision2CurrentProjectionContainsDoneOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(projection.Current) != 2 {
-		t.Fatalf("Current must expose only closure-complete v2 items plus records without lifecycle identity: %+v", projection.Current)
+	if len(projection.Current) != 1 {
+		t.Fatalf("Current must expose only closure-complete items with canonical lifecycle identity: %+v", projection.Current)
 	}
 	currentIDs := map[string]bool{}
 	for _, item := range projection.Current {
 		currentIDs[string(item.BacklogItemID)] = true
 	}
-	if !currentIDs["done-exact"] || !currentIDs["done-no-unit"] {
-		t.Fatalf("Current missing exact closure or record without lifecycle identity: %+v", projection.Current)
+	if !currentIDs["done-exact"] {
+		t.Fatalf("Current missing exact closure: %+v", projection.Current)
 	}
-	for _, excluded := range []string{"done-no-closure", "done-wrong-unit", "done-wrong-revision", "done-prepared"} {
+	for _, excluded := range []string{"done-no-unit", "done-no-closure", "done-wrong-unit", "done-wrong-revision", "done-prepared"} {
 		if currentIDs[excluded] {
 			t.Fatalf("Current included unproven DONE item %q: %+v", excluded, projection.Current)
 		}
@@ -562,4 +574,155 @@ type revision2OrderedWorkstreamStore struct {
 func (s *revision2OrderedWorkstreamStore) SaveStageRunReceipt(ctx context.Context, item domainworkstream.StageRunReceipt) error {
 	*s.events = append(*s.events, "receipt:"+item.Status)
 	return s.memoryWorkstreamStore.SaveStageRunReceipt(ctx, item)
+}
+
+func TestRevision2ClosureRejectsConflictingPersistedActions(t *testing.T) {
+	for _, variant := range []string{"stage-mismatch", "closure-mismatch", "invalid", "missing"} {
+		for _, entry := range []string{"revise", "resume", "complete"} {
+			t.Run(variant+"/"+entry, func(t *testing.T) {
+				ctx := context.Background()
+				action := modulecore.NewActionID()
+				doneAction, closureAction := action, action
+				switch variant {
+				case "stage-mismatch":
+					doneAction = modulecore.NewActionID()
+				case "closure-mismatch":
+					closureAction = modulecore.NewActionID()
+				case "invalid":
+					closureAction = "not-an-action"
+				case "missing":
+					closureAction = ""
+				}
+				live := domainbacklog.Item{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("action-conflict"), ImplementationUnit: "unit-action-conflict", ImplementationRevision: 1, WorkstreamID: "ws-action-conflict", Title: "conflict", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryLiveVerified}
+				done := live
+				done.DeliveryState = domainbacklog.DeliveryDone
+				raw, err := json.Marshal(done)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request := ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}
+				key := stageRunKey(live.ImplementationUnit, 1, domainbacklog.DeliveryDone)
+				ws := &memoryWorkstreamStore{
+					stageReceipts: []domainworkstream.StageRunReceipt{
+						{IdempotencyKey: stageRunKey(live.ImplementationUnit, 1, domainbacklog.DeliveryLiveVerified), ActionID: action, Status: domainworkstream.StageRunCompleted},
+						{IdempotencyKey: key, ActionID: doneAction, Status: domainworkstream.StageRunCompleted, PayloadHash: stagePayloadHash(request), ResultJSON: string(raw)},
+					},
+					closureReceipts: []domainworkstream.ClosureReceipt{{IdempotencyKey: key, ActionID: closureAction, Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared}},
+					lease:           &domainworkstream.ImplementationLease{LeaseName: domainbacklog.ImplementationLeaseName, HolderUnitID: live.ImplementationUnit},
+				}
+				before := *ws
+				before.stageReceipts = append([]domainworkstream.StageRunReceipt(nil), ws.stageReceipts...)
+				before.closureReceipts = append([]domainworkstream.ClosureReceipt(nil), ws.closureReceipts...)
+				items := &memoryItemStore{items: []domainbacklog.Item{live}}
+				sink := &developmentEventSinkStub{}
+				service := NewService(items, ws).WithDevelopmentEventSink(sink)
+				switch entry {
+				case "revise":
+					_, err = service.Revise(ctx, string(live.BacklogItemID), request)
+				case "resume":
+					_, err = service.completeLiveVerifiedClosure(ctx, live, request)
+				case "complete":
+					err = service.completeDone(ctx, live, done, request, key, stagePayloadHash(request))
+				}
+				if !errors.Is(err, ErrLifecycleConflict) {
+					t.Fatalf("expected action conflict, got %v", err)
+				}
+				if len(sink.events) != 0 {
+					t.Fatal("conflicting receipts must be rejected before emitting transition events")
+				}
+				if !reflect.DeepEqual(before, *ws) || !reflect.DeepEqual(items.items, []domainbacklog.Item{live}) {
+					t.Fatal("conflicting receipts must not mutate state, receipts, resources or lease")
+				}
+			})
+		}
+	}
+}
+
+func TestRevision2ProjectionRequiresConsistentClosureAction(t *testing.T) {
+	for _, variant := range []string{"valid", "mismatch", "invalid", "missing-action", "missing-unit", "missing-receipt"} {
+		t.Run(variant, func(t *testing.T) {
+			action := modulecore.NewActionID()
+			other := action
+			switch variant {
+			case "mismatch":
+				other = modulecore.NewActionID()
+			case "invalid":
+				other = "not-an-action"
+			case "missing-action":
+				other = ""
+			}
+			item := domainbacklog.Item{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: modulecore.BacklogItemID("projection-action"), ImplementationUnit: "unit-projection-action", ImplementationRevision: 1, Title: "projection", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryDone}
+			if variant == "missing-unit" {
+				item.ImplementationUnit = ""
+			}
+			key := stageRunKey("unit-projection-action", 1, domainbacklog.DeliveryDone)
+			ws := &memoryWorkstreamStore{
+				stageReceipts:   []domainworkstream.StageRunReceipt{{IdempotencyKey: key, UnitID: "unit-projection-action", ImplementationRevision: 1, TargetStage: domainbacklog.DeliveryDone, ActionID: action, Status: domainworkstream.StageRunCompleted}},
+				closureReceipts: []domainworkstream.ClosureReceipt{{IdempotencyKey: key, UnitID: "unit-projection-action", ImplementationRevision: 1, BacklogItemID: item.BacklogItemID, ActionID: other, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone}},
+			}
+			if variant == "missing-receipt" {
+				ws.stageReceipts = nil
+				ws.closureReceipts = nil
+			}
+			store := &memoryItemStore{items: []domainbacklog.Item{item}}
+			projection, err := NewService(store, ws).Projection(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(projection.Pipeline) != 1 {
+				t.Fatalf("item must remain discoverable: %+v", projection.Pipeline)
+			}
+			entry := projection.Pipeline[0]
+			if variant == "valid" {
+				if len(projection.Current) != 1 || entry.DeliveryState != domainbacklog.DeliveryDone {
+					t.Fatalf("valid closure missing: %+v", projection)
+				}
+			} else {
+				if len(projection.Current) != 0 || entry.DeliveryState != domainbacklog.DeliveryBlocked {
+					t.Fatalf("unproven completion must be blocked: %+v", projection)
+				}
+				visible := false
+				for _, stage := range entry.Stages {
+					if stage.Stage == domainbacklog.DeliveryDone {
+						visible = stage.Status == StageStatusBlocked && stage.Reason != ""
+					}
+				}
+				if !visible {
+					t.Fatalf("DONE must explain its blocked state: %+v", entry.Stages)
+				}
+			}
+			if !reflect.DeepEqual(store.items, []domainbacklog.Item{item}) {
+				t.Fatal("projection must not rewrite persisted state")
+			}
+		})
+	}
+}
+
+func TestRevision2ProjectionBindingCacheDoesNotReplaceItemValidation(t *testing.T) {
+	for _, invalidFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("invalid-first-%t", invalidFirst), func(t *testing.T) {
+			valid := domainbacklog.Item{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "cache-valid", ImplementationUnit: "cache-unit", ImplementationRevision: 1, DeliveryState: domainbacklog.DeliveryDone}
+			invalid := valid
+			invalid.BacklogItemID = "cache-invalid"
+			invalid.SchemaVersion = 3
+			invalid.UpdatedAt = "2026-09-07T01:00:00Z"
+			items := []domainbacklog.Item{valid, invalid}
+			if invalidFirst {
+				items = []domainbacklog.Item{invalid, valid}
+			}
+			action := modulecore.NewActionID()
+			key := stageRunKey("cache-unit", 1, domainbacklog.DeliveryDone)
+			ws := &memoryWorkstreamStore{closureReceipts: []domainworkstream.ClosureReceipt{{IdempotencyKey: key, UnitID: "cache-unit", ImplementationRevision: 1, BacklogItemID: valid.BacklogItemID, ActionID: action, Status: domainworkstream.ClosureStatusCompleted, Phase: domainworkstream.ClosurePhaseDone}}}
+			projection, err := NewService(&memoryItemStore{items: items}, ws).Projection(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(projection.Current) != 1 || projection.Current[0].BacklogItemID != valid.BacklogItemID {
+				t.Fatalf("per-item validity must survive shared binding cache: %+v", projection.Current)
+			}
+			if len(projection.Pipeline) != 1 || projection.Pipeline[0].DeliveryState != domainbacklog.DeliveryBlocked {
+				t.Fatalf("latest malformed item must remain blocked: %+v", projection.Pipeline)
+			}
+		})
+	}
 }

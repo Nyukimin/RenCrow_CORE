@@ -6,7 +6,7 @@ func TestResolvePublicChunkAssignsGlobalChunkNumber(t *testing.T) {
 	route, ok := NewPublicSessionRoute(PublicSessionRouteRegistration{
 		InternalSessionID: "idle-tts-a",
 		PublicSessionID:   "idle-1",
-		ResponseID:        "idle-1:0000",
+		PublicPlaybackRef: "idle-1:0000",
 	})
 	if !ok {
 		t.Fatal("route should be accepted")
@@ -29,17 +29,17 @@ func TestResolvePublicChunkPassesThroughWithoutRoute(t *testing.T) {
 	}
 }
 
-func TestResolvePublicResponseIDForMessage(t *testing.T) {
-	msg := ResolvePublicResponseIDForMessage("idle-align", "idle-align:msg:0007", 0)
-	if msg.ResponseID != "idle-align:0007" || msg.NextResponseNumber != 8 || !msg.Advance {
+func TestResolvePublicPlaybackRefForMessage(t *testing.T) {
+	msg := ResolvePublicPlaybackRefForMessage("idle-align", "idle-align:msg:0007", 0)
+	if msg.PublicPlaybackRef != "idle-align:0007" || msg.NextPublicPlaybackRefNumber != 8 || !msg.Advance {
 		t.Fatalf("message response resolution = %+v", msg)
 	}
-	domain := ResolvePublicResponseIDForMessage("forecast-align", "forecast-align:domain:0000", 2)
-	if domain.ResponseID != "forecast-align:domain:0000" || domain.NextResponseNumber != 2 || domain.Advance {
+	domain := ResolvePublicPlaybackRefForMessage("forecast-align", "forecast-align:domain:0000", 2)
+	if domain.PublicPlaybackRef != "forecast-align:domain:0000" || domain.NextPublicPlaybackRefNumber != 2 || domain.Advance {
 		t.Fatalf("domain response resolution = %+v", domain)
 	}
-	next := ResolvePublicResponseIDForMessage("idle-align", "idle-align:topic", 3)
-	if next.ResponseID != "idle-align:0003" || next.NextResponseNumber != 4 || !next.Advance {
+	next := ResolvePublicPlaybackRefForMessage("idle-align", "idle-align:topic", 3)
+	if next.PublicPlaybackRef != "idle-align:0003" || next.NextPublicPlaybackRefNumber != 4 || !next.Advance {
 		t.Fatalf("fallback response resolution = %+v", next)
 	}
 }

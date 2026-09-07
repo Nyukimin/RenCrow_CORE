@@ -2,6 +2,8 @@ package backlog
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -35,7 +37,7 @@ type PipelineStage struct {
 // closure state visible without asking the Viewer to reconstruct authority.
 type PipelineEntry struct {
 	UnitID                 string                                `json:"unit_id"`
-	BacklogItemID                 string                                `json:"backlog_item_id"`
+	BacklogItemID          string                                `json:"backlog_item_id"`
 	Title                  string                                `json:"title"`
 	OwnerModule            string                                `json:"owner_module,omitempty"`
 	ConceptState           string                                `json:"concept_state"`
@@ -258,9 +260,7 @@ func closurePhaseRank(phase string) int {
 func currentItemClosureCompleted(item domainbacklog.Item, closures []domainworkstream.ClosureReceipt) bool {
 	unitID := strings.TrimSpace(item.ImplementationUnit)
 	if item.SchemaVersion != domainbacklog.SchemaVersion2 || unitID == "" || item.ImplementationRevision < 1 {
-		// Records without the v2 lifecycle identity retain the legacy Current
-		// projection contract; they have no authoritative closure to match.
-		return true
+		return false
 	}
 
 	var latest domainworkstream.ClosureReceipt
@@ -464,6 +464,47 @@ func (s *Service) buildProjection(ctx context.Context) (Projection, error) {
 	if err != nil {
 		return Projection{}, err
 	}
+	type closureBindingCacheKey struct {
+		unitID   string
+		revision int
+	}
+	closureBindingReasons := make(map[closureBindingCacheKey]string)
+	closureBindingReason := func(item domainbacklog.Item) (string, error) {
+		unitID := strings.TrimSpace(item.ImplementationUnit)
+		if item.SchemaVersion != domainbacklog.SchemaVersion2 || unitID == "" || item.ImplementationRevision < 1 {
+			reason := fmt.Errorf("%w: terminal item is missing canonical lifecycle context (schema_version=2, implementation_unit, implementation_revision)", ErrLifecycleConflict).Error()
+			return reason, nil
+		}
+		// Only persisted binding is shared; lifecycle validity belongs to each item.
+		key := closureBindingCacheKey{unitID: unitID, revision: item.ImplementationRevision}
+		if reason, cached := closureBindingReasons[key]; cached {
+			return reason, nil
+		}
+		actionID, bindingErr := s.validateClosureActionBinding(ctx, unitID, item.ImplementationRevision)
+		if bindingErr != nil {
+			if errors.Is(bindingErr, ErrLifecycleConflict) {
+				reason := bindingErr.Error()
+				closureBindingReasons[key] = reason
+				return reason, nil
+			}
+			return "", bindingErr
+		}
+		if actionID == "" {
+			reason := fmt.Errorf("%w: terminal item has no persisted lifecycle action binding", ErrLifecycleConflict).Error()
+			closureBindingReasons[key] = reason
+			return reason, nil
+		}
+		closureBindingReasons[key] = ""
+		return "", nil
+	}
+	for _, item := range items {
+		if item.DeliveryState != domainbacklog.DeliveryDone && item.DeliveryState != domainbacklog.DeliveryLiveVerified {
+			continue
+		}
+		if _, bindingErr := closureBindingReason(item); bindingErr != nil {
+			return Projection{}, bindingErr
+		}
+	}
 
 	p := Projection{
 		Catalog: cloneMaps(s.catalog), Features: cloneMaps(s.features), Modules: projectModules(s.modules),
@@ -478,8 +519,14 @@ func (s *Service) buildProjection(ctx context.Context) (Projection, error) {
 		case domainbacklog.ConceptCandidate, domainbacklog.ConceptAdopted, domainbacklog.ConceptDeferred, domainbacklog.ConceptRejected:
 			p.Backlog = append(p.Backlog, item)
 		}
-		if item.DeliveryState == domainbacklog.DeliveryDone && currentItemClosureCompleted(item, closures) {
-			p.Current = append(p.Current, item)
+		if item.DeliveryState == domainbacklog.DeliveryDone {
+			bindingReason, bindingErr := closureBindingReason(item)
+			if bindingErr != nil {
+				return Projection{}, bindingErr
+			}
+			if bindingReason == "" && currentItemClosureCompleted(item, closures) {
+				p.Current = append(p.Current, item)
+			}
 		}
 		p.Evidence = append(p.Evidence, item.EvidenceRefs...)
 	}
@@ -526,6 +573,22 @@ func (s *Service) buildProjection(ctx context.Context) (Projection, error) {
 			}
 			return records
 		}(), activeLease)
+		if item.DeliveryState == domainbacklog.DeliveryDone || item.DeliveryState == domainbacklog.DeliveryLiveVerified {
+			bindingReason, bindingErr := closureBindingReason(item)
+			if bindingErr != nil {
+				return Projection{}, bindingErr
+			}
+			if bindingReason != "" {
+				entry.DeliveryState = domainbacklog.DeliveryBlocked
+				for index := range entry.Stages {
+					if entry.Stages[index].Stage == domainbacklog.DeliveryDone {
+						entry.Stages[index].Status = StageStatusBlocked
+						entry.Stages[index].Reason = bindingReason
+						break
+					}
+				}
+			}
+		}
 		p.Pipeline = append(p.Pipeline, entry)
 	}
 	return p, nil

@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -111,5 +115,95 @@ func TestTurnInputFromAgentMessageRejectsMissingOrMalformedProjection(t *testing
 	message.TurnInput = &projection
 	if _, err := turnInputFromAgentMessage(message); err == nil {
 		t.Fatal("malformed projection was accepted")
+	}
+}
+
+type projectingWorkerExecution struct {
+	result patch.PatchExecutionResult
+}
+
+func (p *projectingWorkerExecution) ExecuteObservation(_ context.Context, _ []service.ObservationAction) ([]service.ObservationActionResult, error) {
+	return nil, nil
+}
+
+func (p *projectingWorkerExecution) ExecuteProposal(_ context.Context, _ modulecore.TaskID, _ *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+	result := p.result
+	return &result, nil
+}
+
+func TestWorkerResultProjectionRemote(t *testing.T) {
+	for _, tc := range workerResultProjectionCasesRemote() {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := workerResultProjectionMessageRemote()
+			handler := &workerHandler{executionService: &projectingWorkerExecution{result: tc.result}}
+			got, err := handler.HandleMessage(context.Background(), msg)
+			if err != nil {
+				t.Fatalf("worker handler failed: %v", err)
+			}
+			assertWorkerResultProjectionRemote(t, msg, got, tc.result)
+		})
+	}
+}
+
+type workerResultProjectionCaseRemote struct {
+	name   string
+	result patch.PatchExecutionResult
+}
+
+func workerResultProjectionCasesRemote() []workerResultProjectionCaseRemote {
+	return []workerResultProjectionCaseRemote{
+		{
+			name: "passed",
+			result: patch.PatchExecutionResult{
+				Success: true, Summary: "passed summary", ExecutedCmds: 2, FailedCmds: 0,
+				GitCommit: "commit-passed", FailedIndex: -1, TestStatus: "passed", TestReceipt: "Tmp/test-results/passed.json",
+			},
+		},
+		{
+			name: "failed_zero_commands",
+			result: patch.PatchExecutionResult{
+				Success: false, Summary: "failed without commands", ExecutedCmds: 0, FailedCmds: 0,
+				FailureKind: "execution_failed", FailureReason: "owner reported failure", Retryable: true,
+				FailedIndex: -1, TestStatus: "failed", TestReceipt: "Tmp/test-results/failed-zero.json",
+			},
+		},
+		{
+			name: "blocked_zero_commands",
+			result: patch.PatchExecutionResult{
+				Success: false, Summary: "blocked before commands", ExecutedCmds: 0, FailedCmds: 0,
+				FailureKind: "test_impact_blocked", FailureReason: "canonical owner unavailable", Retryable: false,
+				FailedIndex: -1, TestStatus: "blocked", TestReceipt: "Tmp/test-results/blocked.json",
+			},
+		},
+		{
+			name: "command_failure",
+			result: patch.PatchExecutionResult{
+				Success: false, Summary: "command failed", ExecutedCmds: 2, FailedCmds: 1,
+				FailureKind: "command_failed", FailureReason: "shell exit", Retryable: true,
+				FailedIndex: 1, TestStatus: "not_run", TestReceipt: "Tmp/test-results/command-failure.json",
+			},
+		},
+	}
+}
+
+func workerResultProjectionMessageRemote() domaintransport.Message {
+	msg := domaintransport.NewMessage("mio", "shiro", string(modulecore.NewSessionID()), modulecore.NewTaskID(), "Execute coder proposal")
+	msg.Proposal = &domaintransport.ProposalPayload{Plan: "plan", Patch: "[]", Risk: "risk", CostHint: "cost"}
+	return msg
+}
+
+func assertWorkerResultProjectionRemote(t *testing.T, input, got domaintransport.Message, want patch.PatchExecutionResult) {
+	t.Helper()
+	if got.Type != domaintransport.MessageTypeResult {
+		t.Fatalf("response type=%q, want result", got.Type)
+	}
+	if got.From != input.To || got.To != input.From || got.SessionID != input.SessionID || got.TaskID != input.TaskID {
+		t.Fatalf("response address/identity changed: got from=%q to=%q session=%q task=%q, want from=%q to=%q session=%q task=%q", got.From, got.To, got.SessionID, got.TaskID, input.To, input.From, input.SessionID, input.TaskID)
+	}
+	if got.Result == nil {
+		t.Fatal("response result is nil")
+	}
+	if got.Result.Success != want.Success || got.Result.Summary != want.Summary || got.Result.ExecutedCmds != want.ExecutedCmds || got.Result.FailedCmds != want.FailedCmds || got.Result.GitCommit != want.GitCommit || got.Result.FailureKind != want.FailureKind || got.Result.FailureReason != want.FailureReason || got.Result.Retryable != want.Retryable || got.Result.FailedIndex != want.FailedIndex || got.Result.TestStatus != want.TestStatus || got.Result.TestReceipt != want.TestReceipt {
+		t.Fatalf("result projection=%#v, want success=%t summary=%q executed=%d failed=%d commit=%q kind=%q reason=%q retryable=%t index=%d status=%q receipt=%q", got.Result, want.Success, want.Summary, want.ExecutedCmds, want.FailedCmds, want.GitCommit, want.FailureKind, want.FailureReason, want.Retryable, want.FailedIndex, want.TestStatus, want.TestReceipt)
 	}
 }

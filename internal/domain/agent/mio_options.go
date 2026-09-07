@@ -93,3 +93,8 @@ func (m *MioAgent) WithViewerRecipientPrompts(prompts map[string]string) *MioAge
 	}
 	return m
 }
+
+func (m *MioAgent) WithRuntimeContextProvider(provider RuntimeContextProvider) *MioAgent {
+	m.runtimeContextProvider = provider
+	return m
+}

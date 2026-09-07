@@ -21,7 +21,6 @@ import (
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	durablestoreapp "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/heartbeat"
-	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
@@ -59,6 +58,7 @@ import (
 	schedulerpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/scheduler"
 	skillpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/skillgovernance"
 	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 	xbookmarkworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/xbookmarkworkflow"
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
@@ -97,7 +97,9 @@ type Dependencies struct {
 	viewerAgentDetail              http.HandlerFunc                            // viewer agent detail API
 	tasks                          http.HandlerFunc                            // canonical Task list API
 	taskDetail                     http.HandlerFunc                            // canonical Task detail API
+	identityGraph                  http.HandlerFunc                            // canonical identity graph projection
 	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
+	taskStore                      *taskpersistence.JSONLStore                 // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
@@ -407,6 +409,11 @@ func (d *Dependencies) Shutdown() {
 			log.Printf("Failed to close Canonical Event Store: %v", err)
 		}
 	}
+	if d.taskManager != nil {
+		if err := d.taskManager.Close(); err != nil {
+			log.Printf("Failed to close Task store: %v", err)
+		}
+	}
 	log.Println("Shutdown complete")
 }
 
@@ -429,6 +436,10 @@ func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Servi
 
 // buildDependencies は依存関係を構築
 func buildDependencies(cfg *config.Config) *Dependencies {
+	deps := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(deps, cfg.WorkspaceDir); err != nil {
+		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
+	}
 	runtimeToolRegistry := buildRuntimeToolRegistry(cfg)
 	nodeCaps := buildCapabilityRuntime(cfg, runtimeToolRegistry)
 	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore)
@@ -472,12 +483,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		log.Printf("Serena MCP unavailable (%s): %s", serenaRuntime.state, serenaRuntime.reason)
 	}
 	toolRuntime := buildToolRuntimeWithCapabilities(
+		deps.taskManager,
 		cfg,
 		llmRuntime.WorkerToolProvider,
 		runtimeToolRegistry,
 		aiWorkflowStore,
 		runtimeSkillCatalog,
 		serenaRuntime.catalog,
+		canonicalEventStore,
 	)
 	advisorRuntime, err := buildAdvisorRuntime(cfg, toolRuntime.WorkerRuntimeRunnerV2)
 	if err != nil {
@@ -490,15 +503,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// Conversation runtime may attach late-bound web_gather adapters to the
 	// production Worker runner. Build the Agent snapshot only after every
 	// runtime Tool has been registered so awareness and execution stay equal.
-	mcpObservations := append([]runtimeMCPObservation(nil), serenaRuntime.observations...)
-	mcpObservations = append(mcpObservations, observeGenericMCPClient(context.Background(), mcpClient)...)
-	runtimeCapabilityContext := runtimeCapabilityContextFromWorkerRunnerWithSkills(
-		context.Background(),
-		toolRuntime.WorkerRuntimeRunnerV2,
-		runtimeSkillMetadata,
-		runtimeSkillManifests,
-		mcpObservations,
-	)
 	agents := buildAgentRuntime(
 		cfg,
 		llmRuntime.Chat,
@@ -520,14 +524,15 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		advisorRuntime.Policy,
 	)
 	sessionRuntime := buildSessionRuntime(cfg)
-	workerExecutionService := service.NewWorkerExecutionService(cfg.Worker)
+	workerExecutionService := service.NewWorkerExecutionService(cfg.Worker, deps.taskManager)
 	log.Printf("WorkerExecutionService initialized (Workspace: %s, Parallel: %v)",
 		cfg.Worker.Workspace, cfg.Worker.ParallelExecution)
 	if serenaRuntime.client != nil {
-		workerExecutionService.SetMCPToolCaller(serenaRuntime.client)
+		workerExecutionService.SetMCPToolCaller(&workerMCPObservationCaller{runner: toolRuntime.WorkerRuntimeRunnerV2, catalog: serenaRuntime.catalog})
 	}
 
-	deps := &Dependencies{serenaMCPClient: serenaRuntime.client, canonicalEventStore: canonicalEventStore}
+	deps.serenaMCPClient = serenaRuntime.client
+	deps.canonicalEventStore = canonicalEventStore
 	dataRecallRegistry := toolRuntime.DataRecallRegistry
 	dataWriteRegistry := toolRuntime.DataWriteRegistry
 	if err := registerRuntimeDataRecallCanonicalEvents(dataRecallRegistry, canonicalEventStore); err != nil {
@@ -768,7 +773,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
-	var runtimeActionManager *actionmanager.Manager
+	runtimeActionManager := toolRuntime.ActionManager
+	if runtimeActionManager == nil && (cfg.SkillGovernance.IsEnabled() || cfg.Revenue.IsEnabled()) {
+		manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+		if err != nil {
+			log.Fatalf("Failed to initialize action manager: %v", err)
+		}
+		runtimeActionManager = manager
+	}
 	if cfg.SkillGovernance.IsEnabled() {
 		type skillGovernanceRuntimeStore interface {
 			viewer.SkillGovernanceStore
@@ -812,13 +824,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.skillContributionGate = viewer.HandleSkillGovernanceContributionGate(skillStore)
 		deps.skillChangeGate = viewer.HandleSkillGovernanceSkillChange(skillStore)
 		deps.skillChangeEval = viewer.HandleSkillGovernanceSkillChangeEval(skillStore)
-		if runtimeActionManager == nil {
-			manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
-			if err != nil {
-				log.Fatalf("Failed to initialize action manager: %v", err)
-			}
-			runtimeActionManager = manager
-		}
 		deps.skillExternalPRSubmit = viewer.HandleSkillGovernanceExternalPRSubmit(skillStore, runtimeActionManager)
 	}
 	if cfg.DCI.IsEnabled() {
@@ -1086,13 +1091,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		deps.revenuePolicyDecision = viewer.HandleRevenuePolicyDecision(revenueStore)
 		deps.revenueDailyRoutine = viewer.HandleRevenueDailyRoutineReportCreate(revenueStore)
 		deps.revenueChannelDraft = viewer.HandleRevenueChannelDraftCreate(revenueStore)
-		if runtimeActionManager == nil {
-			manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
-			if err != nil {
-				log.Fatalf("Failed to initialize action manager: %v", err)
-			}
-			runtimeActionManager = manager
-		}
 		deps.revenueExternalSendApply = viewer.HandleRevenueExternalSendApply(revenueStore, runtimeActionManager)
 		deps.revenueOpportunities = viewer.HandleRevenueOpportunities(revenueStore)
 		deps.revenueEconomicTasks = viewer.HandleRevenueEconomicTasks(revenueStore)
@@ -1367,10 +1365,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			deps.dreamConsolidationReview = viewer.HandleDreamConsolidationReview(knowledgeMemoryStore)
 		}
 	}
-	runtimeCapabilityContext = combineRuntimeCapabilityContexts(
-		runtimeCapabilityContext,
-		renderRuntimeDataRouteContext(dataRecallRegistry, dataWriteRegistry),
-	)
+	runtimeCapabilityContext := func(ctx context.Context) string {
+		observations := serenaRuntime.currentObservations()
+		observations = append(observations, observeGenericMCPClient(ctx, mcpClient)...)
+		return combineRuntimeCapabilityContexts(
+			runtimeCapabilityContextFromWorkerRunnerWithSkills(ctx, toolRuntime.WorkerRuntimeRunnerV2, runtimeSkillMetadata, runtimeSkillManifests, observations),
+			renderRuntimeDataRouteContext(dataRecallRegistry, dataWriteRegistry),
+		)
+	}
 	applyRuntimeAgentCapabilityContext(
 		cfg,
 		agents,
@@ -1634,7 +1636,7 @@ func buildPersonaRuntimeCanonicalResponsesWithOptions(characters map[string]doma
 			}
 			category := personaCategoryFromKey(key, opts.canonicalResponsePath)
 			definitions = append(definitions, domainpersona.CanonicalResponseDefinition{
-				ResponseKey:       characterID + ":" + key,
+				ResponseKey:      characterID + ":" + key,
 				CharacterID:      characterID,
 				Category:         category,
 				Response:         response,

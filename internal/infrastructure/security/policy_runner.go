@@ -2,6 +2,7 @@ package security
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,7 +51,7 @@ func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecu
 	}, nil
 }
 
-func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*tool.ToolResponse, error) {
+func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (response *tool.ToolResponse, runErr error) {
 	if !r.hasTool(ctx, toolName) {
 		return nil, fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -67,6 +68,9 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 	if boundActionID, boundAttemptID, ok := domainexecution.BoundActionAttemptFromContext(ctx); ok {
 		actionID = boundActionID
 		attemptID = boundAttemptID
+		if err := r.actions.ValidateToolAttempt(ctx, actionID, attemptID, identity.TaskID, identity.RunID, toolName); err != nil {
+			return nil, fmt.Errorf("validate bound tool attempt: %w", err)
+		}
 	} else {
 		createdAction, createdAttempt, err := r.actions.CreateAction(ctx, actionmanager.CreateInput{
 			TaskID: identity.TaskID,
@@ -79,6 +83,16 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 		}
 		actionID = createdAction.ActionID
 		attemptID = createdAttempt.AttemptID
+		defer func() {
+			if completionErr := r.actions.CompleteToolAttempt(ctx, actionID, attemptID, response, runErr); completionErr != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("complete tool attempt: %w", completionErr))
+			}
+		}()
+		boundCtx, bindErr := domainexecution.WithBoundActionAttempt(ctx, actionID, attemptID)
+		if bindErr != nil {
+			return nil, bindErr
+		}
+		ctx = boundCtx
 	}
 	action := domainexecution.Action{
 		TaskID:      identity.TaskID,
@@ -90,9 +104,15 @@ func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[
 		RequestedBy: r.requestedBy,
 		RequestedAt: time.Now().UTC(),
 	}
-	result, err := r.execService.RequestToolExecution(ctx, action)
-	if err != nil {
-		return nil, err
+	result, runErr := r.execService.RequestToolExecution(ctx, action)
+	if runErr != nil {
+		if result != nil {
+			return result.Response, runErr
+		}
+		return nil, runErr
+	}
+	if result == nil {
+		return nil, fmt.Errorf("execution service returned nil result")
 	}
 
 	switch result.Record.Status {

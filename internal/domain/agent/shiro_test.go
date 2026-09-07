@@ -181,7 +181,7 @@ func TestShiroAgentExecute(t *testing.T) {
 	if result != "Task executed successfully" {
 		t.Errorf("Expected 'Task executed successfully', got '%s'", result)
 	}
-	if observed.TaskID != testTask.RootTaskID() || observed.TraceID != string(upstreamTraceID) || observed.RequestID == string(testTask.RootTaskID()) || !strings.HasPrefix(observed.RequestID, "llmreq_") {
+	if observed.TaskID != testTask.RootTaskID() || observed.TraceID != string(upstreamTraceID) || string(observed.RequestID) == string(testTask.RootTaskID()) || observed.RequestID.Validate() != nil {
 		t.Fatalf("Shiro execution observation identity = %+v, want task root, explicit trace, independent request", observed)
 	}
 }

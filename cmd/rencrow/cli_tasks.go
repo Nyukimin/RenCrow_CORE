@@ -18,11 +18,12 @@ import (
 )
 
 func cmdTasks() {
-	manager, err := loadTaskManager(getConfigPath())
+	manager, err := loadTaskManager(getConfigPath(), os.Args[2:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize task manager: %v\n", err)
 		os.Exit(1)
 	}
+	defer manager.Close()
 	code := runTasksCommand(os.Args[2:], manager, os.Stdout, os.Stderr)
 	if code != 0 {
 		os.Exit(code)
@@ -426,12 +427,21 @@ func stringFlag(args []string, name string) string {
 	return ""
 }
 
-func loadTaskManager(configPath string) (*taskmanager.Manager, error) {
+func loadTaskManager(configPath string, args []string) (*taskmanager.Manager, error) {
 	cfg, err := config.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
-	store, err := taskpersistence.NewJSONLStore(defaultTaskStorePath(cfg.WorkspaceDir))
+	openStore := taskpersistence.NewJSONLStore
+	cleanArgs := removeTaskFlag(args, "--compact")
+	subcommand := "list"
+	if len(cleanArgs) > 0 {
+		subcommand = strings.ToLower(strings.TrimSpace(cleanArgs[0]))
+	}
+	if subcommand == "list" || subcommand == "show" || subcommand == "notifications" {
+		openStore = taskpersistence.NewJSONLReader
+	}
+	store, err := openStore(defaultTaskStorePath(cfg.WorkspaceDir))
 	if err != nil {
 		return nil, err
 	}

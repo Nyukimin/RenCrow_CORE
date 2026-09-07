@@ -1,10 +1,10 @@
 package backlog
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"encoding/json"
 	"errors"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +19,45 @@ type developmentEventSinkStub struct{ events []DevelopmentEvent }
 func (s *developmentEventSinkStub) AppendDevelopmentEvent(_ context.Context, event DevelopmentEvent) error {
 	s.events = append(s.events, event)
 	return nil
+}
+
+func TestEmitDevelopmentTransitionUsesRequestIDWithoutTraceID(t *testing.T) {
+	service, unitID := developmentServiceFixture(t)
+	sink := &developmentEventSinkStub{}
+	service.WithDevelopmentEventSink(sink)
+	requestID := "req-development-correlation"
+	item := domainbacklog.Item{
+		BacklogItemID:          modulecore.BacklogItemID("methodology"),
+		ImplementationUnit:     unitID,
+		ImplementationRevision: 1,
+	}
+	if err := service.emitDevelopmentTransition(context.Background(), "state_transition_requested", item, domainbacklog.DeliveryLiveVerified, requestID, ""); err != nil {
+		t.Fatalf("emitDevelopmentTransition error: %v", err)
+	}
+	if len(sink.events) != 1 {
+		t.Fatalf("events=%d, want 1", len(sink.events))
+	}
+	event := sink.events[0]
+	if event.Type != "state_transition_requested" || event.UnitID != unitID || event.ArtifactID == "" {
+		t.Fatalf("event=%+v", event)
+	}
+	if event.TraceID != "" {
+		t.Fatalf("trace_id=%q, want empty", event.TraceID)
+	}
+	if event.Fields["target_stage"] != domainbacklog.DeliveryLiveVerified || event.Fields["implementation_revision"] != 1 {
+		t.Fatalf("fields=%v", event.Fields)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(payload, &wire); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+	if got, _ := wire["request_id"].(string); got != requestID {
+		t.Fatalf("request_id=%q, want %q", got, requestID)
+	}
 }
 
 func TestDevelopmentProjectionFailsClosedWhenCompleteArtifactSetExceedsBound(t *testing.T) {

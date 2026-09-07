@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"strings"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -261,7 +262,12 @@ func buildRuntimeCapabilityContextWithToolFailureAndSkills(
 	mcpObservations []runtimeMCPObservation,
 	reason string,
 ) string {
-	snapshot := buildRuntimeCapabilitySnapshotWithSkills(nil, loadedSkills, skillManifests, mcpObservations)
+	observations := append([]runtimeMCPObservation(nil), mcpObservations...)
+	for i := range observations {
+		observations[i].Available = false
+		observations[i].Reason = reason
+	}
+	snapshot := buildRuntimeCapabilitySnapshotWithSkills(nil, loadedSkills, skillManifests, observations)
 	snapshot.Entries = append(snapshot.Entries, capdomain.RuntimeCapability{
 		Kind:   capdomain.CapabilityKindTool,
 		Status: capdomain.CapabilityStatusUnavailable,
@@ -296,7 +302,18 @@ func runtimeCapabilityContextFromWorkerRunnerWithSkills(
 	if err != nil {
 		return buildRuntimeCapabilityContextWithToolFailureAndSkills(loadedSkills, skillManifests, mcpObservations, "Worker Tool一覧を取得できません")
 	}
-	return buildRuntimeCapabilityContextWithSkills(metadata, loadedSkills, skillManifests, mcpObservations)
+	observations := append([]runtimeMCPObservation(nil), mcpObservations...)
+	available := make(map[string]bool, len(metadata))
+	for _, meta := range metadata {
+		available[meta.ToolID] = true
+	}
+	for i := range observations {
+		if name := observations[i].ExposedName; name != "" && !available[name] {
+			observations[i].Available = false
+			observations[i].Reason = "Observed MCP tool is unavailable in the current Worker catalog"
+		}
+	}
+	return buildRuntimeCapabilityContextWithSkills(metadata, loadedSkills, skillManifests, observations)
 }
 
 // observeGenericMCPClient collects only explicit generic MCP server/tool
@@ -354,25 +371,20 @@ func runtimeMCPObservationName(serverName, toolName string) string {
 	}
 }
 
-// appendRuntimeCapabilityContext keeps the character prompt untouched and
-// adds the snapshot as a separate stable section to every existing runtime
-// context entry.
-func appendRuntimeCapabilityContext(contexts map[string]string, capabilityContext string) {
-	capabilityContext = strings.TrimSpace(capabilityContext)
-	if capabilityContext == "" {
-		return
+// runtimeAgentContextProvider captures immutable contracts once and projects
+// current owner capabilities at prompt assembly, without shared map writes.
+func runtimeAgentContextProvider(contexts map[string]string, capabilityContext func(context.Context) string) agent.RuntimeContextProvider {
+	base := make(map[string]string, len(contexts))
+	for name, content := range contexts {
+		base[strings.ToLower(strings.TrimSpace(name))] = strings.TrimSpace(content)
 	}
-	for name, contextText := range contexts {
-		projectedContext := capabilityContext
-		if strings.EqualFold(strings.TrimSpace(name), "mio") {
-			projectedContext = summarizeRuntimeCapabilityContextForMio(capabilityContext)
+	return func(ctx context.Context, recipient string) string {
+		recipient = strings.ToLower(strings.TrimSpace(recipient))
+		current := capabilityContext(ctx)
+		if recipient == "mio" {
+			current = summarizeRuntimeCapabilityContextForMio(current)
 		}
-		contextText = strings.TrimSpace(contextText)
-		if contextText == "" {
-			contexts[name] = projectedContext
-			continue
-		}
-		contexts[name] = contextText + "\n\n" + projectedContext
+		return combineRuntimeCapabilityContexts(base[recipient], current)
 	}
 }
 

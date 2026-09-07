@@ -41,9 +41,11 @@ type TopicStockPlaybackSnapshot struct {
 	CanNext     bool                    `json:"can_next"`
 }
 
-func wordPlaybackID(runID modulecore.RunID) string     { return "word:" + strings.TrimSpace(string(runID)) }
-func forecastPlaybackID(runID modulecore.RunID) string { return "forecast:" + strings.TrimSpace(string(runID)) }
-func storyPlaybackID(id string) string    { return "story:" + strings.TrimSpace(id) }
+func wordPlaybackID(runID modulecore.RunID) string { return "word:" + strings.TrimSpace(string(runID)) }
+func forecastPlaybackID(runID modulecore.RunID) string {
+	return "forecast:" + strings.TrimSpace(string(runID))
+}
+func storyPlaybackID(id string) string { return "story:" + strings.TrimSpace(id) }
 
 func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPlaybackItem {
 	if o == nil {

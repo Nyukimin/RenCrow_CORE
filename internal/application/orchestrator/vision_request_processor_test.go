@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type visionAnalyzerStub struct {
@@ -35,7 +36,7 @@ type visionEvent struct {
 func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *testing.T) {
 	analyzer := &visionAnalyzerStub{result: domainvision.AnalyzeResult{
 		OK:        true,
-		RequestID: "trace-1",
+		RequestID: "req_00000000-0000-5000-8000-000000000001",
 		Provider:  "rencrow_vision",
 		Model:     "Wild",
 		Kind:      "image",
@@ -77,8 +78,14 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 		t.Fatalf("analyze calls = %d", len(analyzer.requests))
 	}
 	analyzeRequest := analyzer.requests[0]
-	if analyzeRequest.RequestID != "trace-1" || analyzeRequest.SessionID != "session-1" {
-		t.Fatalf("unexpected correlation: %+v", analyzeRequest)
+	if err := modulecore.RequestID(analyzeRequest.RequestID).Validate(); err != nil {
+		t.Fatalf("request ID is not canonical: %q: %v", analyzeRequest.RequestID, err)
+	}
+	if analyzeRequest.RequestID == request.TraceID {
+		t.Fatalf("request ID must be distinct from parent trace: %q", analyzeRequest.RequestID)
+	}
+	if analyzeRequest.SessionID != "session-1" {
+		t.Fatalf("unexpected session correlation: %+v", analyzeRequest)
 	}
 	if analyzeRequest.Prompt != request.UserMessage || analyzeRequest.MaxFrames != 8 {
 		t.Fatalf("unexpected analyze request: %+v", analyzeRequest)
@@ -98,6 +105,60 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 	}
 	if len(events) != 2 || events[0].eventType != "vision.request.started" || events[1].eventType != "vision.request.completed" {
 		t.Fatalf("unexpected events: %+v", events)
+	}
+}
+
+func TestVisionRequestProcessorAllocatesDistinctRequestIDsAndPreservesTrace(t *testing.T) {
+	analyzer := &visionAnalyzerStub{result: domainvision.AnalyzeResult{
+		OK: true, Kind: "image", Text: "解析結果",
+	}}
+	processor := newVisionRequestProcessor(analyzer, VisionOptions{
+		MaxImageBytes: 20 << 20,
+		MaxVideoBytes: 100 << 20,
+		MaxFrames:     8,
+	})
+	parentTraceID := string(modulecore.NewTraceID())
+	request := ProcessMessageRequest{
+		TraceID:     parentTraceID,
+		SessionID:   "session-1",
+		UserMessage: "この画像を確認して",
+		Attachments: []domainattachment.Attachment{
+			{Kind: domainattachment.KindImage, Filename: "one.png", Data: []byte("one")},
+			{Kind: domainattachment.KindImage, Filename: "two.png", Data: []byte("two")},
+		},
+	}
+
+	got, err := processor.Process(context.Background(), request, nil)
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if got.TraceID != request.TraceID {
+		t.Fatalf("returned trace ID changed: got=%q want=%q", got.TraceID, request.TraceID)
+	}
+	if request.TraceID != parentTraceID || request.UserMessage != "この画像を確認して" {
+		t.Fatalf("parent request was changed: %+v", request)
+	}
+	if len(request.Attachments) != 2 || string(request.Attachments[0].Data) != "one" || string(request.Attachments[1].Data) != "two" {
+		t.Fatalf("parent attachments were changed: %+v", request.Attachments)
+	}
+	if len(analyzer.requests) != 2 {
+		t.Fatalf("analyze calls = %d, want 2", len(analyzer.requests))
+	}
+	seen := make(map[string]struct{}, len(analyzer.requests))
+	for index, analyzed := range analyzer.requests {
+		if err := modulecore.RequestID(analyzed.RequestID).Validate(); err != nil {
+			t.Fatalf("request %d ID %q is not canonical: %v", index, analyzed.RequestID, err)
+		}
+		if analyzed.RequestID == request.TraceID {
+			t.Fatalf("request %d reused parent trace ID %q", index, analyzed.RequestID)
+		}
+		if _, exists := seen[analyzed.RequestID]; exists {
+			t.Fatalf("request ID %q was reused", analyzed.RequestID)
+		}
+		seen[analyzed.RequestID] = struct{}{}
+		if analyzed.SessionID != request.SessionID || analyzed.Prompt != request.UserMessage {
+			t.Fatalf("request %d lost parent correlation: %+v", index, analyzed)
+		}
 	}
 }
 

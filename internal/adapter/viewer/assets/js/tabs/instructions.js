@@ -20,7 +20,7 @@ function deskNormalizeInstruction(item) {
     updated_at: item.updated_at || now,
     due_hint: item.due_hint || null,
     timing_hint: item.timing_hint || 'today',
-    job_ids: Array.isArray(item.job_ids) ? item.job_ids : [],
+    task_ids: Array.isArray(item.task_ids) ? item.task_ids : [],
     route: item.route || '',
     last_summary: item.last_summary || '',
     blocked_reason: item.blocked_reason || null,
@@ -28,11 +28,53 @@ function deskNormalizeInstruction(item) {
   };
 }
 
+// Recovery-only snapshot: never merged into the current instruction queue.
+let deskArchivedInstructions = [];
+
+function deskInstructionArchiveView() {
+  deskArchivedInstructions = [];
+  let items;
+  try {
+    const raw = localStorage.getItem('rencrow.viewer.instructions.v1');
+    if (!raw) return '';
+    items = JSON.parse(raw);
+    if (!Array.isArray(items)) throw new Error('invalid archive');
+  } catch (_) {
+    return '<p role="status">旧形式の下書きを読み取れません。保存済みデータは変更していません。</p>';
+  }
+  if (!items.length) return '';
+  deskArchivedInstructions = items;
+  return '<section style="grid-column:1/-1"><details><summary>旧形式の下書き（' + esc(String(items.length)) + '件・原本保持）</summary>' +
+    '<p>本文を確認し、必要なら空の編集欄へ戻せます。旧ID・実行状態は引き継ぎません。内容を見直して通常の追加操作を行ってください。</p>' +
+    items.map((item, index) => {
+      const valid = item && typeof item === 'object' && typeof item.text === 'string';
+      return '<article class="instruction-card"><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' +
+        esc(valid ? item.text : '本文形式を読み取れません。') + '</pre>' +
+        '<details><summary>保存時の記録</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + esc(JSON.stringify(item, null, 2)) + '</pre></details>' +
+        (valid ? '<button class="ctl-btn" onclick="deskRecoverInstructionText(' + index + ')">本文を編集欄へ戻す</button>' : '') + '</article>';
+    }).join('') + '</details><p id="instructionRecoveryResult" role="status"></p></section>';
+}
+
+function deskRecoverInstructionText(index) {
+  const result = document.getElementById('instructionRecoveryResult');
+  const input = document.getElementById('instructionText');
+  const item = Number.isInteger(index) && index >= 0 ? deskArchivedInstructions[index] : null;
+  if (!result || !input || !item || typeof item.text !== 'string') return;
+  if (input.value) {
+    result.textContent = '編集中の本文があります。保存または整理してから復元してください。';
+    return;
+  }
+  input.value = item.text;
+  input.focus();
+  result.textContent = '本文を編集欄へ戻しました。まだ保存・実行していません。旧IDと実行状態は引き継いでいません。';
+}
+
 function renderInstructionsDesk() {
   const root = document.getElementById('instructionColumns');
   if (!root) return;
   const items = deskInstructions().map(deskNormalizeInstruction);
-  root.innerHTML = DESK_INSTRUCTION_STATUSES.map((status) => {
+  const notice = deskInstructionArchiveView();
+  root.innerHTML = notice + DESK_INSTRUCTION_STATUSES.map((status) => {
     const list = items.filter((it) => it.status === status);
     return '<section class="instruction-column">' +
       '<h3>' + esc(status) + ' <span class="daily-desk-muted">' + esc(String(list.length)) + '</span></h3>' +
@@ -42,12 +84,12 @@ function renderInstructionsDesk() {
 }
 
 function renderInstructionCard(item) {
-  const jobs = item.job_ids && item.job_ids.length ? item.job_ids.join(', ') : '-';
+  const tasks = item.task_ids && item.task_ids.length ? item.task_ids.join(', ') : '-';
   return '<article class="instruction-card ' + esc(item.status) + '" data-instruction-id="' + escAttr(item.instruction_id) + '">' +
     '<div class="daily-desk-body">' + esc(short(item.text || '-', 120)) + '</div>' +
     '<div class="desk-row"><span>priority</span><span class="desk-pill">' + esc(item.priority || '-') + '</span></div>' +
     '<div class="desk-row"><span>agent</span><span>' + esc(item.target_agent || '-') + '</span></div>' +
-    '<div class="desk-code">' + esc(jobs) + '</div>' +
+    '<div class="desk-code">' + esc(tasks) + '</div>' +
     '<div class="daily-desk-muted">' + esc(fdt(item.updated_at)) + '</div>' +
     '<div class="desk-action-row">' +
       '<button class="ctl-btn" onclick="deskInstructionStatus(\'' + escAttr(item.instruction_id) + '\', \'running\', event)">running</button>' +

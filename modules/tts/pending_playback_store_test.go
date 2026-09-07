@@ -5,12 +5,12 @@ import (
 	"time"
 )
 
-func TestPendingPlaybackStoreCompleteByResponseClosesWaitAndTopicGate(t *testing.T) {
+func TestPendingPlaybackStoreCompleteByPublicPlaybackRefClosesWaitAndTopicGate(t *testing.T) {
 	store := NewPendingPlaybackStore()
 	wait := store.Register("tts-1", "resp-1")
 	store.RegisterTopicGate("idle-1", "tts-1")
 
-	action := store.CompleteByResponse("resp-1")
+	action := store.CompleteByPublicPlaybackRef("resp-1")
 	if !action.Matched || action.ClearPublicBy != "resp-1" || !action.ClosePendingWait || !action.CloseTopicGate {
 		t.Fatalf("unexpected action: %+v", action)
 	}
@@ -54,7 +54,7 @@ func TestPendingPlaybackStoreClearAll(t *testing.T) {
 			t.Fatalf("%s wait should close", name)
 		}
 	}
-	if got := store.Snapshot(); got.PendingSessionCount != 0 || got.PendingResponseCount != 0 || got.TopicGateCount != 0 {
+	if got := store.Snapshot(); got.PendingSessionCount != 0 || got.PendingPublicPlaybackCount != 0 || got.TopicGateCount != 0 {
 		t.Fatalf("pending state should be empty: %+v", got)
 	}
 }

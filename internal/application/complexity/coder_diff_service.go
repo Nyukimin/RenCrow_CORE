@@ -20,15 +20,15 @@ type CoderDiffRequest struct {
 	Hotspot      domaincomplexity.Hotspot
 	Evidence     []domaincomplexity.HotspotEvidence
 	WorkstreamID string
-	JobID        string
+	TaskID       modulecore.TaskID
 	SystemPrompt string
 }
 
 type CoderDiffResult struct {
-	JobID        string `json:"job_id"`
-	Prompt       string `json:"prompt"`
-	RawResponse  string `json:"raw_response"`
-	ConcreteDiff string `json:"concrete_diff"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	Prompt       string            `json:"prompt"`
+	RawResponse  string            `json:"raw_response"`
+	ConcreteDiff string            `json:"concrete_diff"`
 }
 
 type CoderDiffService struct {
@@ -52,9 +52,12 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 		return CoderDiffResult{}, fmt.Errorf("hotspot is required")
 	}
 	prompt := BuildCoderDiffGenerationPrompt(req.Hotspot, req.Evidence)
-	jobID := strings.TrimSpace(req.JobID)
-	if jobID == "" {
-		jobID = modulecore.NewTaskID().String()
+	taskID := req.TaskID
+	if taskID.IsZero() {
+		taskID = modulecore.NewTaskID()
+	}
+	if err := taskID.Validate(); err != nil {
+		return CoderDiffResult{}, fmt.Errorf("invalid task_id: %w", err)
 	}
 	externalConversationID := strings.TrimSpace(req.WorkstreamID)
 	if externalConversationID == "" {
@@ -64,7 +67,7 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 	if err != nil {
 		return CoderDiffResult{}, fmt.Errorf("coder diff channel address: %w", err)
 	}
-	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), prompt, address)
+	input, err := conversation.NewTurnInput(taskID, prompt, address)
 	if err != nil {
 		return CoderDiffResult{}, fmt.Errorf("coder diff turn input: %w", err)
 	}
@@ -85,7 +88,7 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 		return CoderDiffResult{}, err
 	}
 	return CoderDiffResult{
-		JobID:        jobID,
+		TaskID:       taskID,
 		Prompt:       prompt,
 		RawResponse:  raw,
 		ConcreteDiff: diff,

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // registerRuntimeDataRecallToolRegistry exposes only bounded metadata and

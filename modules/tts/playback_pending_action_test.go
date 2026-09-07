@@ -4,7 +4,7 @@ import "testing"
 
 func TestBuildPendingPlaybackCompletionAction(t *testing.T) {
 	got := BuildPendingPlaybackCompletionAction(" response-1 ", " tts-1 ", " idle-1 ", true)
-	if !got.Matched || got.ResponseID != "response-1" || got.TTSSessionID != "tts-1" {
+	if !got.Matched || got.PublicPlaybackRef != "response-1" || got.TTSSessionID != "tts-1" {
 		t.Fatalf("unexpected completion action: %+v", got)
 	}
 	if !got.ClosePendingWait || !got.CloseTopicGate || got.ClearPublicBy != "response-1" {
@@ -17,7 +17,7 @@ func TestBuildPendingPlaybackCompletionActionUnmatched(t *testing.T) {
 	if got.Matched || got.ClosePendingWait || got.CloseTopicGate || got.ClearPublicBy != "" {
 		t.Fatalf("unmatched completion should not request cleanup: %+v", got)
 	}
-	if got.ResponseID != "response-1" || got.TTSSessionID != "" || got.TopicIdleSessionID != "" {
+	if got.PublicPlaybackRef != "response-1" || got.TTSSessionID != "" || got.TopicIdleSessionID != "" {
 		t.Fatalf("unmatched completion should only preserve requested response id: %+v", got)
 	}
 }

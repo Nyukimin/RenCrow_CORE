@@ -2,6 +2,8 @@ package heartbeat
 
 import (
 	"context"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"testing"
 	"time"
 
@@ -16,6 +18,7 @@ type revision2AtlasRunnerFake struct {
 	reviseCalls  []appbacklog.ReviseRequest
 	reviseItemID []string
 	reviseErr    error
+	reviseCtx    context.Context
 }
 
 func (f *revision2AtlasRunnerFake) AcquireRunnable(_ context.Context) (appbacklog.AcquireRunnableResult, error) {
@@ -23,7 +26,8 @@ func (f *revision2AtlasRunnerFake) AcquireRunnable(_ context.Context) (appbacklo
 	return f.result, nil
 }
 
-func (f *revision2AtlasRunnerFake) Revise(_ context.Context, itemID string, request appbacklog.ReviseRequest) (domainbacklog.Item, error) {
+func (f *revision2AtlasRunnerFake) Revise(ctx context.Context, itemID string, request appbacklog.ReviseRequest) (domainbacklog.Item, error) {
+	f.reviseCtx = ctx
 	f.reviseItemID = append(f.reviseItemID, itemID)
 	f.reviseCalls = append(f.reviseCalls, request)
 	return domainbacklog.Item{}, f.reviseErr
@@ -60,7 +64,7 @@ func (s *revision2HeartbeatLeaseStore) GetImplementationLease(_ context.Context,
 func TestRevision2RunnerAdvancesPastUnitStartedMarker(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "runner-next-stage",
+		BacklogItemID:      "runner-next-stage",
 		ImplementationUnit: "unit-runner-next-stage",
 		WorkstreamID:       "ws-runner-next-stage",
 		Title:              "next stage",
@@ -76,6 +80,7 @@ func TestRevision2RunnerAdvancesPastUnitStartedMarker(t *testing.T) {
 	service := NewHeartbeatService(worker, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithAtlasService(owner)
+	service = withHeartbeatTestTaskOwner(t, service)
 
 	report, err := service.RunBacklogRunner(context.Background(), time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC))
 	if err != nil {
@@ -92,7 +97,7 @@ func TestRevision2RunnerAdvancesPastUnitStartedMarker(t *testing.T) {
 func TestRevision2RunnerFailurePersistsDeliveryBlocked(t *testing.T) {
 	backlogStore := &memoryBacklogStore{items: []domainbacklog.Item{{
 		SchemaVersion:      domainbacklog.SchemaVersion2,
-		ItemID:             "runner-blocked-v2",
+		BacklogItemID:      "runner-blocked-v2",
 		ImplementationUnit: "unit-runner-blocked-v2",
 		WorkstreamID:       "ws-runner-blocked-v2",
 		Title:              "blocked v2",
@@ -103,9 +108,11 @@ func TestRevision2RunnerFailurePersistsDeliveryBlocked(t *testing.T) {
 	owner := &revision2AtlasRunnerFake{result: appbacklog.AcquireRunnableResult{
 		Item: backlogStore.items[0], Acquired: true,
 	}}
-	service := NewHeartbeatService(&mockWorkerAgent{err: context.Canceled}, &mockSender{}, t.TempDir(), 30).
+	worker := &mockWorkerAgent{err: context.Canceled}
+	service := NewHeartbeatService(worker, &mockSender{}, t.TempDir(), 30).
 		WithBacklogStore(backlogStore).
 		WithAtlasService(owner)
+	service = withHeartbeatTestTaskOwner(t, service)
 
 	if _, err := service.RunBacklogRunner(context.Background(), time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC)); err == nil {
 		t.Fatal("worker failure should be returned")
@@ -119,12 +126,25 @@ func TestRevision2RunnerFailurePersistsDeliveryBlocked(t *testing.T) {
 	if owner.reviseCalls[0].ExpectedRevision != 1 || owner.reviseItemID[0] != "runner-blocked-v2" || owner.reviseCalls[0].EvidenceRefs[0].Passed {
 		t.Fatalf("owner failure request must carry revision and non-success evidence: ids=%v calls=%+v", owner.reviseItemID, owner.reviseCalls)
 	}
+	workerIdentity, err := execution.IdentityFromContext(worker.lastCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	atlasIdentity, err := execution.IdentityFromContext(owner.reviseCtx)
+	if err != nil || atlasIdentity != workerIdentity {
+		t.Fatalf("Atlas lost Worker identity: worker=%+v atlas=%+v err=%v", workerIdentity, atlasIdentity, err)
+	}
+	scope, found := tool.ToolExecutionScopeFromContext(owner.reviseCtx)
+	if !found || scope.Validate() != nil || scope.ActorKind != tool.ActorKindAgent || scope.ActorID != "shiro" {
+		t.Fatalf("Atlas lost actual configured Agent scope: %+v", scope)
+	}
+
 }
 
 func TestRevision2BlockedUnitPreventsFollowingUnitSelection(t *testing.T) {
 	items := []domainbacklog.Item{
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "blocked-unit", Title: "blocked", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryBlocked},
-		{SchemaVersion: domainbacklog.SchemaVersion2, ItemID: "following-unit", Title: "following", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "blocked-unit", Title: "blocked", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryBlocked},
+		{SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: "following-unit", Title: "following", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued},
 	}
 	owner := &revision2AtlasRunnerFake{result: appbacklog.AcquireRunnableResult{Reason: domainworkstream.ErrQueueFrozen.Error()}}
 	backlogStore := &memoryBacklogStore{items: items}

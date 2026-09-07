@@ -111,6 +111,9 @@ func buildHeartbeatRuntime(
 		cfg.WorkspaceDir,
 		cfg.Heartbeat.Interval,
 	)
+	if deps.taskManager != nil {
+		heartbeatSvc.WithTaskOwner(deps.taskManager, "shiro")
+	}
 	heartbeatSvc.WithMemoryStore(memStore)
 	heartbeatSvc.WithEventListener(deps.eventRelay)
 	if xConfig := cfg.Heartbeat.XBookmarks; xConfig.Enabled {

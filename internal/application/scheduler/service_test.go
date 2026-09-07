@@ -46,6 +46,8 @@ type recordingExecutor struct {
 
 type deferredExecutor struct{}
 
+const executorUnavailableErrorText = "scheduler executor unavailable"
+
 func (deferredExecutor) ExecuteSchedule(context.Context, domainscheduler.Schedule) (string, error) {
 	return "GPU is busy", NewDeferredError(5*time.Minute, errors.New("gpu busy"))
 }
@@ -149,6 +151,39 @@ func TestServiceCreateDueRunAndDisableSchedule(t *testing.T) {
 	}
 	if disabled.Enabled || disabled.DisabledBy != "coder" {
 		t.Fatalf("disabled=%#v", disabled)
+	}
+}
+
+func TestServiceRunScheduleRecordsFailureWhenExecutorUnavailable(t *testing.T) {
+	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
+	scheduleID := modulecore.NewScheduleID()
+	store := &memoryStore{schedules: []domainscheduler.Schedule{{
+		ScheduleID: scheduleID,
+		Name:       "TTS pronunciation daily",
+		Schedule:   "every 24h",
+		Target:     "tts_pronunciation_check",
+		Enabled:    true,
+		CreatedAt:  now.Add(-time.Hour),
+		UpdatedAt:  now.Add(-time.Hour),
+		NextRunAt:  now,
+	}}}
+	svc := NewService(store, nil).WithNow(func() time.Time { return now })
+
+	log, err := svc.RunSchedule(context.Background(), string(scheduleID), "due")
+	if err != nil {
+		t.Fatalf("RunSchedule() error = %v", err)
+	}
+	if log.Status != "failed" || log.Error != executorUnavailableErrorText {
+		t.Fatalf("log = %+v", log)
+	}
+	if log.Summary != "scheduler run recorded without executor" {
+		t.Fatalf("summary = %q", log.Summary)
+	}
+	if len(store.logs) != 1 || store.logs[0].Status != "failed" {
+		t.Fatalf("persisted logs = %+v", store.logs)
+	}
+	if !store.schedules[0].LastRunAt.Equal(now) || !store.schedules[0].NextRunAt.Equal(now.Add(24*time.Hour)) {
+		t.Fatalf("schedule after unavailable run = %+v", store.schedules[0])
 	}
 }
 

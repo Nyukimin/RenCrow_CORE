@@ -22,33 +22,27 @@ func HandleAudioRouterSSE(h *EventHub) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 
-		ch := h.Subscribe()
+		ch, _ := h.Subscribe()
 		defer h.Unsubscribe(ch)
-		lastSeen := parseLastEventIDHeader(r.Header.Get("Last-Event-ID"))
-
-		for _, ev := range h.History() {
-			if ev.EventSeq > 0 && int64(ev.EventSeq) <= lastSeen {
-				continue
-			}
-			if isTransientReplayEvent(ev) {
-				continue
-			}
-			if !writeAudioRouterEvent(w, ev) {
-				continue
-			}
-		}
 		flusher.Flush()
 
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case data := <-ch:
+			case data, ok := <-ch:
+				if !ok {
+					return
+				}
 				var ev orchestrator.OrchestratorEvent
 				if err := json.Unmarshal(data, &ev); err != nil {
 					continue
 				}
-				if !writeAudioRouterEvent(w, ev) {
+				written, writeErr := writeAudioRouterEvent(w, ev)
+				if writeErr != nil {
+					return
+				}
+				if !written {
 					continue
 				}
 				flusher.Flush()
@@ -57,27 +51,33 @@ func HandleAudioRouterSSE(h *EventHub) http.HandlerFunc {
 	}
 }
 
-func writeAudioRouterEvent(w http.ResponseWriter, ev orchestrator.OrchestratorEvent) bool {
+func writeAudioRouterEvent(w http.ResponseWriter, ev orchestrator.OrchestratorEvent) (bool, error) {
 	if ev.Type != "tts.audio_chunk" || strings.TrimSpace(ev.Content) == "" {
-		return false
+		return false, nil
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
-		return false
+		return false, nil
 	}
 	characterID, _ := payload["character_id"].(string)
 	audioURL, _ := payload["audio_url"].(string)
 	audioPath, _ := payload["audio_path"].(string)
 	if strings.TrimSpace(characterID) == "" {
-		return false
+		return false, nil
 	}
 	if strings.TrimSpace(audioURL) == "" && strings.TrimSpace(audioPath) == "" {
-		return false
+		return false, nil
 	}
 	if ev.EventSeq > 0 {
-		fmt.Fprintf(w, "id: %d\n", ev.EventSeq)
+		if _, err := fmt.Fprintf(w, "id: %d\n", ev.EventSeq); err != nil {
+			return false, err
+		}
 	}
-	fmt.Fprint(w, "event: tts.audio_chunk\n")
-	fmt.Fprintf(w, "data: %s\n\n", ev.Content)
-	return true
+	if _, err := fmt.Fprint(w, "event: tts.audio_chunk\n"); err != nil {
+		return false, err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", ev.Content); err != nil {
+		return false, err
+	}
+	return true, nil
 }

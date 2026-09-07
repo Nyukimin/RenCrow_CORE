@@ -37,6 +37,7 @@ $repoPrefix = Get-DirectoryPrefix $repoRoot
 $localTempPrefix = Get-DirectoryPrefix (Join-Path $repoRoot "Tmp")
 $planPath = Join-Path $PSScriptRoot "test-local.plan.json"
 
+# BEGIN GENERATED test-impact:impact-entry
 # Impact selection is owned by RenCrow_Tools; this owner runner retains command
 # definitions, complete test registration checks, and isolated child environment.
 if (-not [string]::IsNullOrWhiteSpace($ExecutionPlan)) {
@@ -52,6 +53,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExecutionPlan)) {
 $testPlatform = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { "windows" }
     elseif ($PSVersionTable.ContainsKey("OS") -and $PSVersionTable.OS -match "Darwin") { "darwin" }
     else { "linux" }
+# END GENERATED test-impact:impact-entry
 
 
 function Assert-TestRuntimeLayout {
@@ -102,6 +104,15 @@ function Resolve-WorkingPath([string]$Candidate) {
 }
 
 function Resolve-TestExecutable([string]$Candidate) {
+# BEGIN GENERATED test-impact:runtime-executable
+    if ($Candidate -eq "pwsh") {
+        return (Get-Process -Id $PID).Path
+    }
+    if ($Candidate -eq "python" -and $null -eq (Get-Command python -CommandType Application -ErrorAction SilentlyContinue)) {
+        $python3 = Get-Command python3 -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -ne $python3) { return $python3.Source }
+    }
+# END GENERATED test-impact:runtime-executable
     if ($Candidate -eq "bash" -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
         $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
         if ($null -ne $bashCommand) {
@@ -190,10 +201,12 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
             }
         }
 
+# BEGIN GENERATED test-impact:platform-filter
         if ($planStep.PSObject.Properties.Name -contains "platform" -and @($planStep.platform).Count -gt 0 -and @($planStep.platform) -notcontains $testPlatform) {
             if ($Step -contains $name) { throw "Canonical test step '$name' is unavailable on $testPlatform." }
             continue
         }
+# END GENERATED test-impact:platform-filter
 
         if ($Step.Count -gt 0 -and $Step -notcontains $name) {
             continue
@@ -396,6 +409,18 @@ try {
             $stepPrevious[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
             [Environment]::SetEnvironmentVariable($name, $command.Environment[$name], "Process")
         }
+
+# BEGIN GENERATED test-impact:build-output
+        # Link output belongs to this invocation, never to the source worktree.
+        # The plan remains the command source; only the runtime output directory
+        # is supplied by the existing owner isolation boundary.
+        if ([IO.Path]::GetFileNameWithoutExtension($executable) -eq "go" -and $command.Arguments.Count -gt 0 -and $command.Arguments[0] -eq "build" -and $command.Arguments -notcontains "-o") {
+            $buildOutput = Join-Path $runRoot "build-output"
+            New-Item -ItemType Directory -Force -Path $buildOutput | Out-Null
+            $remainingArgs = @($command.Arguments | Select-Object -Skip 1)
+            $command.Arguments = @("build", "-o", ($buildOutput + [IO.Path]::DirectorySeparatorChar)) + $remainingArgs
+        }
+# END GENERATED test-impact:build-output
 
         Write-Host "[test-local] step: $($command.Name)"
         Write-Host "[test-local] command: $executable $($command.Arguments -join ' ')"

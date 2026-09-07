@@ -50,13 +50,13 @@ type BackfillTarget struct {
 }
 
 type BackfillResult struct {
-	Status         string
-	Target         BackfillTarget
-	Output         string
-	JobID          string
-	ImportedMovies int
-	ImportedPeople int
-	ImportedEdges  int
+	Status             string
+	Target             BackfillTarget
+	Output             string
+	ExternalCrawlJobID string
+	ImportedMovies     int
+	ImportedPeople     int
+	ImportedEdges      int
 }
 
 func NewBackfillService(opts BackfillOptions) *BackfillService {
@@ -172,7 +172,7 @@ func (s *BackfillService) RunOnce(ctx context.Context) (BackfillResult, error) {
 		}
 		return result, err
 	}
-	result.JobID = crawlResult.JobID
+	result.ExternalCrawlJobID = crawlResult.ExternalCrawlJobID
 	result.Output = strings.TrimSpace(crawlResult.Output)
 	if strings.TrimSpace(crawlResult.ArtifactPath) == "" {
 		return result, fmt.Errorf("%w: crawler returned no staged artifact", ErrCrawlerProtocol)

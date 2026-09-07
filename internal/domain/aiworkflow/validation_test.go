@@ -111,10 +111,10 @@ func TestValidateContextUsageRejectsPartialIdentity(t *testing.T) {
 func TestValidateContextUsageAcceptsCanonicalTaskRunPair(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 10, 0, 0, time.UTC)
 	if err := ValidateContextUsage(ContextUsage{
-		EventID: "ctx_1",
-		Agent:   "Coder",
-		TaskID:  modulecore.NewTaskID(),
-		RunID:   modulecore.NewRunID(),
+		EventID:   "ctx_1",
+		Agent:     "Coder",
+		TaskID:    modulecore.NewTaskID(),
+		RunID:     modulecore.NewRunID(),
 		CreatedAt: now,
 	}); err != nil {
 		t.Fatalf("ValidateContextUsage() error = %v", err)

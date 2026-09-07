@@ -34,11 +34,11 @@ var ErrKnowledgeMemoryRequestConflict = errors.New("knowledge memory request con
 // persistence boundary.
 type KnowledgeMemoryRequestReceipt struct {
 	ActionID    modulecore.ActionID `json:"action_id"`
-	UserID      string    `json:"user_id"`
-	ActorID     string    `json:"actor_id"`
-	PayloadHash string    `json:"payload_hash"`
-	ItemID      string    `json:"item_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	UserID      string              `json:"user_id"`
+	ActorID     string              `json:"actor_id"`
+	PayloadHash string              `json:"payload_hash"`
+	ItemID      string              `json:"item_id"`
+	CreatedAt   time.Time           `json:"created_at"`
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {

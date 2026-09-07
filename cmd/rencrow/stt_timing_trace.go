@@ -6,12 +6,9 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
 )
 
 type sttTimingTrace struct {
-	sessionID          string
 	mode               string
 	startedAt          time.Time
 	firstAudioAt       time.Time
@@ -22,7 +19,6 @@ type sttTimingTrace struct {
 }
 
 type sttTimingSnapshot struct {
-	SessionID          string
 	Mode               string
 	FirstAudioMS       string
 	FirstVoiceMS       string
@@ -34,7 +30,6 @@ type sttTimingSnapshot struct {
 func newSTTTimingTrace(mode string) *sttTimingTrace {
 	now := time.Now()
 	return &sttTimingTrace{
-		sessionID: sttinfra.NextEventID(now),
 		mode:      strings.TrimSpace(mode),
 		startedAt: now,
 	}
@@ -66,7 +61,6 @@ func (t *sttTimingTrace) markProvisional(at time.Time) {
 
 func (t *sttTimingTrace) snapshot(finalAt time.Time) sttTimingSnapshot {
 	return sttTimingSnapshot{
-		SessionID:          t.sessionID,
 		Mode:               t.mode,
 		FirstAudioMS:       sttTimingMillis(t.startedAt, t.firstAudioAt),
 		FirstVoiceMS:       sttTimingMillis(t.startedAt, t.firstVoiceAt),
@@ -84,8 +78,7 @@ func (t *sttTimingTrace) logFinal(source, reason, text string) {
 	t.finalAt = finalAt
 	snap := t.snapshot(finalAt)
 	log.Printf(
-		"[STT][timing] session=%s mode=%s source=%s reason=%s first_audio_ms=%s first_voice_ms=%s first_provisional_ms=%s silence_to_final_ms=%s total_ms=%s text_len=%d",
-		snap.SessionID,
+		"[STT][timing] mode=%s source=%s reason=%s first_audio_ms=%s first_voice_ms=%s first_provisional_ms=%s silence_to_final_ms=%s total_ms=%s text_len=%d",
 		snap.Mode,
 		strings.TrimSpace(source),
 		strings.TrimSpace(reason),

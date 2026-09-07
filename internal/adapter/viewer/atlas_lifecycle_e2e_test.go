@@ -126,7 +126,8 @@ func TestAtlasHTTPBackfillReconcilePreservesCompletedRevision(t *testing.T) {
 	now := time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
 	if err := runtime.workstream.SaveClosureReceipt(context.Background(), domainworkstream.ClosureReceipt{
 		ReceiptID: modulecore.ReceiptID("rcp_00000000-0000-5000-8000-000000000030"), IdempotencyKey: "atlas-lifecycle-v1:2:DONE",
-		UnitID: "atlas-lifecycle-v1", BacklogItemID: item.BacklogItemID, ImplementationRevision: 2,
+		ActionID: modulecore.NewActionID(),
+		UnitID:   "atlas-lifecycle-v1", BacklogItemID: item.BacklogItemID, ImplementationRevision: 2,
 		Phase: domainworkstream.ClosurePhaseDone, Status: domainworkstream.ClosureStatusCompleted,
 		LeaseReleased: true, CreatedAt: now, UpdatedAt: now, CompletedAt: now,
 	}); err != nil {

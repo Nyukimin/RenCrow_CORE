@@ -853,7 +853,6 @@ func TestHandleRevenueExternalSendApplyRejectsDecisionSubjectMismatch(t *testing
 	}
 }
 
-
 func testActionManager(t *testing.T) *actionmanager.Manager {
 	t.Helper()
 	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))

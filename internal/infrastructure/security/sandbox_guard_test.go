@@ -1,6 +1,7 @@
 package security
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -75,5 +76,71 @@ func TestSandboxGuard_ExtractNetworkHost(t *testing.T) {
 	host, ok = g.ExtractNetworkHost(map[string]any{"start_url": "https://example.com/path"})
 	if !ok || host != "example.com" {
 		t.Fatalf("expected host example.com, got ok=%v host=%q", ok, host)
+	}
+}
+
+func TestSandboxGuardPhysicalWorkspaceBoundary(t *testing.T) {
+	g := NewSandboxGuard()
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(workspace, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{filepath.Join(workspace, "escape"), filepath.Join(workspace, "escape", "new.txt")} {
+		if g.IsPathWithinWorkspace(target, workspace) {
+			t.Errorf("external symlink allowed: %s", target)
+		}
+	}
+	inside := filepath.Join(workspace, "real")
+	if err := os.Mkdir(inside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inside, filepath.Join(workspace, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if !g.IsPathWithinWorkspace(filepath.Join(workspace, "alias", "new.txt"), workspace) {
+		t.Fatal("internal alias rejected")
+	}
+	if err := os.Symlink(filepath.Join(outside, "missing"), filepath.Join(workspace, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if g.IsPathWithinWorkspace(filepath.Join(workspace, "dangling", "new.txt"), workspace) {
+		t.Fatal("dangling link allowed")
+	}
+	if !g.IsPathWithinWorkspace(filepath.Join(workspace, "..notes"), workspace) {
+		t.Fatal("ordinary dotdot-prefixed filename rejected")
+	}
+}
+
+func TestSandboxGuardProtectedAlias(t *testing.T) {
+	g := NewSandboxGuard()
+	workspace := t.TempDir()
+	secret := filepath.Join(workspace, ".env")
+	if err := os.WriteFile(secret, []byte("test fixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(workspace, "ordinary.txt")
+	if err := os.Symlink(secret, alias); err != nil {
+		t.Fatal(err)
+	}
+	if g.IsSafeSandboxWritePath(alias, workspace) {
+		t.Fatal("protected target accepted through alias")
+	}
+}
+
+func TestSandboxGuardInvalidPhysicalPaths(t *testing.T) {
+	g := NewSandboxGuard()
+	root := t.TempDir()
+	regular := filepath.Join(root, "file")
+	if err := os.WriteFile(regular, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", regular + string(filepath.Separator) + "child", root + string(filepath.Separator) + "missing" + string(filepath.Separator) + ".." + string(filepath.Separator) + "leaf"} {
+		if g.IsPathWithinWorkspace(path, root) {
+			t.Errorf("invalid path accepted: %q", path)
+		}
+	}
+	if g.IsPathWithinWorkspace(filepath.Join(root, "missing", "leaf"), filepath.Join(root, "missing")) {
+		t.Fatal("missing workspace accepted")
 	}
 }

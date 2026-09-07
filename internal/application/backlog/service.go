@@ -37,7 +37,7 @@ type ImplementationLeaseStore interface {
 }
 
 type IntakeRequest struct {
-	BacklogItemID      modulecore.BacklogItemID    `json:"backlog_item_id,omitempty"`
+	BacklogItemID      modulecore.BacklogItemID  `json:"backlog_item_id,omitempty"`
 	FeatureID          string                    `json:"feature_id,omitempty"`
 	Kind               string                    `json:"kind,omitempty"`
 	Title              string                    `json:"title"`
@@ -74,9 +74,9 @@ type ReviseRequest struct {
 }
 
 type IntakeResult struct {
-	Item          domainbacklog.Item     `json:"item"`
+	Item          domainbacklog.Item       `json:"item"`
 	BacklogItemID modulecore.BacklogItemID `json:"backlog_item_id"`
-	Duplicate     bool                   `json:"duplicate"`
+	Duplicate     bool                     `json:"duplicate"`
 }
 
 type AdoptionResult struct {
@@ -496,6 +496,11 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	if target == "" {
 		return domainbacklog.Item{}, errors.New("target delivery state is required")
 	}
+	if target == domainbacklog.DeliveryLiveVerified || target == domainbacklog.DeliveryDone {
+		if _, err := s.validateClosureActionBinding(ctx, unitID, revision); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
 	if err := s.emitDevelopmentTransition(ctx, "state_transition_requested", item, target, request.RequestID, ""); err != nil {
 		return domainbacklog.Item{}, err
 	}
@@ -533,7 +538,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, fmt.Errorf("decode stage receipt result: %w", err)
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if strings.TrimSpace(request.RequestID) == "" && existingReceipt.ActionID != "" {
+				if existingReceipt.ActionID != "" {
 					request.RequestID = string(existingReceipt.ActionID)
 				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
@@ -557,7 +562,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, err
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if strings.TrimSpace(request.RequestID) == "" && existingReceipt.ActionID != "" {
+				if existingReceipt.ActionID != "" {
 					request.RequestID = string(existingReceipt.ActionID)
 				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
@@ -570,7 +575,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 		if target != domainbacklog.DeliveryBlocked && target != domainbacklog.DeliveryRejected {
 			verified, verifyErr := s.verifyEvidence(ctx, EvidenceVerificationRequest{
 				Ref:                    ref,
-				BacklogItemID: string(item.BacklogItemID),
+				BacklogItemID:          string(item.BacklogItemID),
 				ImplementationUnitID:   unitID,
 				ImplementationRevision: revision,
 				TargetDeliveryState:    target,
@@ -613,7 +618,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 		preparedReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, existingReceipt.ActionID),
 			TransitionEventID: transitionEventID(existingReceipt.TransitionEventID),
-			UnitID: unitID, BacklogItemID: item.BacklogItemID, ImplementationRevision: revision,
+			UnitID:            unitID, BacklogItemID: item.BacklogItemID, ImplementationRevision: revision,
 			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: next.DeliveryState, ResultJSON: string(resultJSON), CreatedAt: s.now(),
 		}
@@ -622,6 +627,11 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	preparedReceipt.PayloadHash = payloadHash
 	preparedReceipt.DeliveryState = next.DeliveryState
 	preparedReceipt.ResultJSON = string(resultJSON)
+	// The first persisted stage owns the action for its automatic closure.
+	// Passing the unresolved caller correlation would allocate a new action
+	// independently for each subsequent receipt.
+	closureRequest := request
+	closureRequest.RequestID = string(preparedReceipt.ActionID)
 	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
 		return domainbacklog.Item{}, err
 	}
@@ -629,7 +639,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	var result domainbacklog.Item
 	switch next.DeliveryState {
 	case domainbacklog.DeliveryDone:
-		if err := s.completeDone(ctx, item, next, request, key, payloadHash); err != nil {
+		if err := s.completeDone(ctx, item, next, closureRequest, key, payloadHash); err != nil {
 			return domainbacklog.Item{}, err
 		}
 		result = next
@@ -671,7 +681,7 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 		return domainbacklog.Item{}, err
 	}
 	if next.DeliveryState == domainbacklog.DeliveryLiveVerified {
-		return s.completeLiveVerifiedClosure(ctx, result, request)
+		return s.completeLiveVerifiedClosure(ctx, result, closureRequest)
 	}
 	return result, nil
 }

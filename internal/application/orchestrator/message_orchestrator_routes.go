@@ -7,7 +7,6 @@ import (
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
-	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -75,7 +74,7 @@ func turnInputMetadata(input domainconversation.TurnInput) (sessionID, channel, 
 
 func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
+	ctx, err = bindRouteExecutionContext(ctx, input, route, taskID, runID)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +93,7 @@ func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input dom
 
 func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
+	ctx, err = bindRouteExecutionContext(ctx, input, route, taskID, runID)
 	if err != nil {
 		return "", err
 	}
@@ -180,12 +179,8 @@ func chatSpeakerForTurnInput(input domainconversation.TurnInput) string {
 func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
-	shiroCtx, err := domaintool.DeriveAgentToolExecutionScope(ctx, taskIDText, "shiro", "worker", "ops", true)
-	if err != nil {
-		return "", err
-	}
 	d.emit("agent.start", "mio", "shiro", "タスクを実行依頼", "OPS", taskIDText, sessionID, channel, chatID)
-	resp, err := d.shiro.Execute(shiroCtx, input)
+	resp, err := d.shiro.Execute(ctx, input)
 	if err == nil {
 		d.emit("agent.response", "shiro", "mio", resp, "OPS", taskIDText, sessionID, channel, chatID)
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, taskIDText, resp), "OPS", taskIDText, sessionID, channel, chatID)

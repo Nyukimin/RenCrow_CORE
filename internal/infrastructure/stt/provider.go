@@ -9,18 +9,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
-
-var eventSeq atomic.Uint64
-
-func NextEventID(now time.Time) string {
-	n := eventSeq.Add(1)
-	return fmt.Sprintf("evt_stt_%s_%06d", now.Format("20060102"), n)
-}
 
 func IsWAV(b []byte) bool {
 	return len(b) >= 44 && string(b[0:4]) == "RIFF" && string(b[8:12]) == "WAVE"

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -69,26 +69,26 @@ type RevenueExternalSendApplyRequest struct {
 }
 
 type RevenueDashboardSummary struct {
-	MarketResearchCount    int                         `json:"market_research_count"`
-	SNSPostCount           int                         `json:"sns_post_count"`
-	ProductCount           int                         `json:"product_count"`
-	CustomerVoiceCount     int                         `json:"customer_voice_count"`
-	UsableVoiceCount       int                         `json:"usable_voice_count"`
-	RevenueEventCount      int                         `json:"revenue_event_count"`
-	PurchaseCount          int                         `json:"purchase_count"`
-	PaidEventCount         int                         `json:"paid_event_count"`
-	PaidCustomerCount      int                         `json:"paid_customer_count"`
-	TotalRevenueAmount     int                         `json:"total_revenue_amount"`
-	BlockedDecisionCount   int                         `json:"blocked_decision_count"`
-	DailyReportCount       int                         `json:"daily_report_count"`
-	LatestDailyReportArtifactID  modulecore.ArtifactID `json:"latest_daily_report_artifact_id,omitempty"`
-	ChannelDraftCount            int                   `json:"channel_draft_count"`
-	LatestChannelDraftArtifactID modulecore.ArtifactID `json:"latest_channel_draft_artifact_id,omitempty"`
-	ExternalSendApplyCount int                         `json:"external_send_apply_count"`
-	KPITrend               []RevenueKPIDay             `json:"kpi_trend,omitempty"`
-	ProductSales           []RevenueProductSales       `json:"product_sales,omitempty"`
-	CustomerVoiceTypes     []RevenueCustomerVoiceCount `json:"customer_voice_types,omitempty"`
-	ExternalActionsApplied bool                        `json:"external_actions_applied"`
+	MarketResearchCount          int                         `json:"market_research_count"`
+	SNSPostCount                 int                         `json:"sns_post_count"`
+	ProductCount                 int                         `json:"product_count"`
+	CustomerVoiceCount           int                         `json:"customer_voice_count"`
+	UsableVoiceCount             int                         `json:"usable_voice_count"`
+	RevenueEventCount            int                         `json:"revenue_event_count"`
+	PurchaseCount                int                         `json:"purchase_count"`
+	PaidEventCount               int                         `json:"paid_event_count"`
+	PaidCustomerCount            int                         `json:"paid_customer_count"`
+	TotalRevenueAmount           int                         `json:"total_revenue_amount"`
+	BlockedDecisionCount         int                         `json:"blocked_decision_count"`
+	DailyReportCount             int                         `json:"daily_report_count"`
+	LatestDailyReportArtifactID  modulecore.ArtifactID       `json:"latest_daily_report_artifact_id,omitempty"`
+	ChannelDraftCount            int                         `json:"channel_draft_count"`
+	LatestChannelDraftArtifactID modulecore.ArtifactID       `json:"latest_channel_draft_artifact_id,omitempty"`
+	ExternalSendApplyCount       int                         `json:"external_send_apply_count"`
+	KPITrend                     []RevenueKPIDay             `json:"kpi_trend,omitempty"`
+	ProductSales                 []RevenueProductSales       `json:"product_sales,omitempty"`
+	CustomerVoiceTypes           []RevenueCustomerVoiceCount `json:"customer_voice_types,omitempty"`
+	ExternalActionsApplied       bool                        `json:"external_actions_applied"`
 }
 
 type RevenueEconomicObjectiveSettings struct {

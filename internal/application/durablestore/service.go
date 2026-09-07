@@ -27,7 +27,7 @@ type Implementer interface {
 }
 
 type Input struct {
-	ActionID modulecore.ActionID
+	ActionID                                 modulecore.ActionID
 	TraceID, RequestedBy, UserScope, Message string
 }
 
@@ -57,7 +57,7 @@ func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, 
 	classification := domain.Classify(req, s.manifests)
 	req.OwnerModule = classification.OwnerModule
 	req.DedupeKey = digest(strings.Join([]string{string(req.RequestedOutcome), req.OwnerModule, req.UserScope, normalizeDedupeText(in.Message), "contract:v1"}, "\x00"))
-	req.RequirementID = "sr-" + digest(string(req.ActionID)+"\x00"+req.DedupeKey)[:20]
+	req.RequirementID = "sr-" + digest(string(req.ActionID) + "\x00" + req.DedupeKey)[:20]
 	payloadHash := domain.HashStorageRequirement(req)
 	if s.store != nil {
 		if strings.TrimSpace(string(req.ActionID)) != "" {

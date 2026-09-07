@@ -3,20 +3,20 @@ package tts
 import "strings"
 
 type PublicSessionRoute struct {
-	PublicSessionID string
-	ResponseID      string
-	MessageID       string
-	TurnIndex       int
-	UtteranceID     string
-	Generation      uint64
-	TimedOut        bool
-	ChunkIndexes    map[int]int
+	PublicSessionID   string
+	PublicPlaybackRef string
+	MessageID         string
+	TurnIndex         int
+	UtteranceID       string
+	Generation        uint64
+	TimedOut          bool
+	ChunkIndexes      map[int]int
 }
 
 type PublicSessionRouteRegistration struct {
 	InternalSessionID string
 	PublicSessionID   string
-	ResponseID        string
+	PublicPlaybackRef string
 	MessageID         string
 	TurnIndex         int
 	Generation        uint64
@@ -29,18 +29,18 @@ func NewPublicSessionRoute(reg PublicSessionRouteRegistration) (PublicSessionRou
 		return PublicSessionRoute{}, false
 	}
 	messageID := strings.TrimSpace(reg.MessageID)
-	utteranceID := strings.TrimSpace(reg.ResponseID)
+	utteranceID := strings.TrimSpace(reg.PublicPlaybackRef)
 	if messageID != "" {
 		utteranceID = messageID + ":utt:0000"
 	}
 	return PublicSessionRoute{
-		PublicSessionID: publicSessionID,
-		ResponseID:      strings.TrimSpace(reg.ResponseID),
-		MessageID:       messageID,
-		TurnIndex:       reg.TurnIndex,
-		UtteranceID:     utteranceID,
-		Generation:      reg.Generation,
-		ChunkIndexes:    map[int]int{},
+		PublicSessionID:   publicSessionID,
+		PublicPlaybackRef: strings.TrimSpace(reg.PublicPlaybackRef),
+		MessageID:         messageID,
+		TurnIndex:         reg.TurnIndex,
+		UtteranceID:       utteranceID,
+		Generation:        reg.Generation,
+		ChunkIndexes:      map[int]int{},
 	}, true
 }
 
@@ -76,8 +76,8 @@ func (r PublicSessionRoute) PublicSessionOrFallback(internalSessionID string) st
 	return strings.TrimSpace(r.PublicSessionID)
 }
 
-func (r PublicSessionRoute) Response() string {
-	return strings.TrimSpace(r.ResponseID)
+func (r PublicSessionRoute) PublicPlaybackRefValue() string {
+	return strings.TrimSpace(r.PublicPlaybackRef)
 }
 
 func (r PublicSessionRoute) Message() (string, int, string) {

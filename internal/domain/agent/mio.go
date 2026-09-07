@@ -62,6 +62,7 @@ type MioAgent struct {
 	recentContext          func(context.Context, int) (string, error)
 	systemPrompt           string
 	viewerPrompts          map[string]string
+	runtimeContextProvider RuntimeContextProvider
 	stableRuntimeContexts  map[string]string
 	expressionHistoryMu    sync.RWMutex
 	expressionHistory      MioExpressionHistory
@@ -345,7 +346,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	currentUserMessage := userMessageWithAttachments(userMessage, t.Attachments())
 	messages = assemblePromptContext(
 		m.systemPromptForViewerRecipient(t.ViewerRecipient()),
-		m.stablePromptContext(t),
+		m.stablePromptContext(ctx, t),
 		messages,
 		currentUserMessage,
 	)

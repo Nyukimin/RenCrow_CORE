@@ -65,6 +65,44 @@ log:
 	}
 }
 
+func TestBrowserE2EConversationArchivesStayInRuntime(t *testing.T) {
+	t.Setenv("RENCROW_E2E_RUNTIME", t.TempDir())
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	t.Setenv("RENCROW_E2E_REPO", repoRoot)
+	t.Setenv("RENCROW_E2E_PORT", "18795")
+	runtimeRoot := filepath.Clean(os.Getenv("RENCROW_E2E_RUNTIME"))
+
+	withinRuntime := func(t *testing.T, field, value string) {
+		t.Helper()
+		if strings.TrimSpace(value) == "" {
+			t.Fatalf("%s is empty", field)
+		}
+		rel, err := filepath.Rel(runtimeRoot, filepath.Clean(value))
+		if err != nil {
+			t.Fatalf("%s relative to runtime root: %v", field, err)
+		}
+		if filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+			t.Fatalf("%s=%q escapes runtime root %q (relative path %q)", field, value, runtimeRoot, rel)
+		}
+	}
+
+	for _, fixture := range []string{"config.yaml", "config_populated.yaml"} {
+		t.Run(fixture, func(t *testing.T) {
+			cfg, err := LoadConfig(filepath.Join(repoRoot, "test", "e2e", "browser", fixture))
+			if err != nil {
+				t.Fatalf("LoadConfig(%s): %v", fixture, err)
+			}
+			withinRuntime(t, "storage.databases.conversation_archive", cfg.Storage.Databases.ConversationArchive)
+			if cfg.Storage.Databases.ConversationL1 != "" {
+				withinRuntime(t, "storage.databases.conversation_l1", cfg.Storage.Databases.ConversationL1)
+			}
+		})
+	}
+}
+
 func TestLoadConfigCatalogEndpointsAreCanonicalAndIgnoreLegacyEnvironment(t *testing.T) {
 	t.Setenv("RENCROW_GAMES_OBSERVER_URL", "http://env-games.invalid:1")
 	t.Setenv("RENCROW_MOVIE_CATALOG_CRAWLER_URL", "http://env-movie.invalid:2")
@@ -383,6 +421,10 @@ server:
 
 	if cfg.Worker.GitTimeout != 30 {
 		t.Errorf("Expected Worker GitTimeout 30, got %d", cfg.Worker.GitTimeout)
+	}
+
+	if cfg.Worker.TestImpactTimeoutSeconds != 3600 {
+		t.Errorf("Expected Worker TestImpactTimeoutSeconds 3600, got %d", cfg.Worker.TestImpactTimeoutSeconds)
 	}
 
 	if len(cfg.Worker.ProtectedPatterns) != 4 {

@@ -127,19 +127,19 @@ type DailyRoutineReport struct {
 	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
 	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
 	WorkstreamID        string                  `json:"workstream_id,omitempty"`
-	Date                string    `json:"date"`
-	Summary             string    `json:"summary,omitempty"`
-	MarketResearch      int       `json:"market_research_count"`
-	SNSPosts            int       `json:"sns_post_count"`
-	Products            int       `json:"product_count"`
-	CustomerVoices      int       `json:"customer_voice_count"`
-	RevenueEvents       int       `json:"revenue_event_count"`
-	PaidCustomers       int       `json:"paid_customer_count"`
-	BlockedDecisions    int       `json:"blocked_decision_count"`
-	SuggestedActions    []string  `json:"suggested_actions,omitempty"`
-	Status              string    `json:"status"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at"`
+	Date                string                  `json:"date"`
+	Summary             string                  `json:"summary,omitempty"`
+	MarketResearch      int                     `json:"market_research_count"`
+	SNSPosts            int                     `json:"sns_post_count"`
+	Products            int                     `json:"product_count"`
+	CustomerVoices      int                     `json:"customer_voice_count"`
+	RevenueEvents       int                     `json:"revenue_event_count"`
+	PaidCustomers       int                     `json:"paid_customer_count"`
+	BlockedDecisions    int                     `json:"blocked_decision_count"`
+	SuggestedActions    []string                `json:"suggested_actions,omitempty"`
+	Status              string                  `json:"status"`
+	ExternalSendApplied bool                    `json:"external_send_applied"`
+	CreatedAt           time.Time               `json:"created_at"`
 }
 
 type ChannelDraft struct {
@@ -152,26 +152,26 @@ type ChannelDraft struct {
 	Subject             string                  `json:"subject,omitempty"`
 	Body                string                  `json:"body"`
 	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at"`
+	ExternalSendApplied bool                    `json:"external_send_applied"`
+	CreatedAt           time.Time               `json:"created_at"`
 }
 
 type ExternalSendApplyRecord struct {
-	ActionID            modulecore.ActionID `json:"action_id"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	DeliveryID          string    `json:"delivery_id,omitempty"`
+	ActionID            modulecore.ActionID   `json:"action_id"`
+	TraceID             string                `json:"trace_id,omitempty"`
+	DeliveryID          string                `json:"delivery_id,omitempty"`
 	ArtifactID          modulecore.ArtifactID `json:"artifact_id"`
 	DecisionID          string                `json:"decision_id"`
-	Channel             string    `json:"channel"`
-	Destination         string    `json:"destination,omitempty"`
-	ChannelAdapter      string    `json:"channel_adapter,omitempty"`
-	ApplyStatus         string    `json:"apply_status"`
-	SendResult          string    `json:"send_result"`
-	FailureReason       string    `json:"failure_reason,omitempty"`
-	PostSendVerified    bool      `json:"post_send_verified"`
-	PostSendEvidence    string    `json:"post_send_evidence,omitempty"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at"`
+	Channel             string                `json:"channel"`
+	Destination         string                `json:"destination,omitempty"`
+	ChannelAdapter      string                `json:"channel_adapter,omitempty"`
+	ApplyStatus         string                `json:"apply_status"`
+	SendResult          string                `json:"send_result"`
+	FailureReason       string                `json:"failure_reason,omitempty"`
+	PostSendVerified    bool                  `json:"post_send_verified"`
+	PostSendEvidence    string                `json:"post_send_evidence,omitempty"`
+	ExternalSendApplied bool                  `json:"external_send_applied"`
+	CreatedAt           time.Time             `json:"created_at"`
 }
 
 type Delivery struct {

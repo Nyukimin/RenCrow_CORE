@@ -124,6 +124,7 @@ function loadAudioHarness(options = {}) {
   FakeAudio.playOutcomes = [...(options.playOutcomes || [])];
   FakeAudio.instances = [];
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const memoryJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/memory.js', 'utf8');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const idleJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/idlechat.js', 'utf8');
   const start = js.indexOf('const ttsPlayback = {');
@@ -131,7 +132,7 @@ function loadAudioHarness(options = {}) {
   assert.ok(start > 0, 'ttsPlayback block not found');
   assert.ok(end > start, 'audio handler block end not found');
   const audioBlock = js.slice(start, end);
-  const source = timelineJs + '\n' + idleJs + '\n' + audioBlock + `
+  const source = memoryJs + '\n' + timelineJs + '\n' + idleJs + '\n' + audioBlock + `
 	globalThis.__viewerAudioHarness = {
 	  state,
 	  ttsPlayback,
@@ -222,13 +223,6 @@ function loadAudioHarness(options = {}) {
     clearLipSyncSpeaking() {},
     setLipSyncSpeaking() {},
     scrollToBottom() {},
-    refreshMemorySnapshot() {},
-    refreshMemoryEvents() {},
-    refreshDomainGraphAssertions() {},
-    saveSourceRegistryEntry() {},
-    exportSourceRegistryYAML() {},
-    importSourceRegistryYAML() {},
-    refreshSourceRegistryStaging() {},
     refreshNewsPack() {},
     renderRoleSelector() {},
     renderSystem() {},
@@ -352,7 +346,8 @@ test('autoplay blocked idlechat audio sends failed playback ack without dropping
   const ack = fetchCalls.find((call) => call.url === '/viewer/tts/playback-ack');
   assert.ok(ack, 'autoplay block should still ack playback failure');
   const payload = JSON.parse(ack.init.body);
-  assert.equal(payload.response_id, 'idle-autoplay:0000');
+  assert.equal(payload.public_playback_ref, 'idle-autoplay:0000');
+  assert.equal(Object.hasOwn(payload, 'response_id'), false);
   assert.equal(payload.status, 'error');
   assert.match(payload.error, /blocked autoplay|did not interact/i);
   assert.equal(harness.ttsPlayback.queue.length, 1);
@@ -411,7 +406,7 @@ test('chat output interrupt stops current audio and drops stale chat chunks', as
     content: JSON.stringify({
       audio_url: '/audio/stale.wav',
       session_id: 'chat-interrupt-session',
-      response_id: 'chat-interrupt-response',
+      public_playback_ref: 'chat-interrupt-response',
       utterance_id: 'chat-interrupt-2',
       chunk_index: 2,
       character_id: 'mio',
@@ -424,7 +419,7 @@ test('chat output interrupt stops current audio and drops stale chat chunks', as
     content: JSON.stringify({
       audio_url: '/audio/stale-visible.wav',
       session_id: 'display-interrupt-session',
-      response_id: 'display-interrupt-response',
+      public_playback_ref: 'display-interrupt-response',
       utterance_id: 'display-interrupt-1',
       chunk_index: 1,
       character_id: 'mio',
@@ -661,7 +656,7 @@ test('idlechat tts from an older session is ignored after a new topic starts', (
     type: 'tts.audio_chunk',
     content: JSON.stringify({
       session_id: 'idle-old',
-      response_id: 'idle-old:0000',
+      public_playback_ref: 'idle-old:0000',
       utterance_id: 'idle-old:0000',
       chunk_index: 0,
       character_id: 'mio',
@@ -782,7 +777,7 @@ test('idlechat session completed without an observed chunk does not ack playback
 
   harness.chatAudioSync.handleEvent({
     type: 'tts.session_completed',
-    content: JSON.stringify({session_id: 'idle-missed', response_id: 'idle-missed:0000'}),
+    content: JSON.stringify({session_id: 'idle-missed', public_playback_ref: 'idle-missed:0000'}),
   });
   await Promise.resolve();
 
@@ -805,7 +800,7 @@ test('idlechat audio chunk claims active audio viewer before playback ack', asyn
     type: 'tts.audio_chunk',
     content: JSON.stringify({
       session_id: 'idle-claim',
-      response_id: 'idle-claim:0000',
+      public_playback_ref: 'idle-claim:0000',
       utterance_id: 'idle-claim:0000',
       chunk_index: 0,
       character_id: 'mio',
@@ -923,7 +918,7 @@ test('idlechat display-only tts sends error ack with error_code instead of fallb
     type: 'tts.audio_chunk',
     content: JSON.stringify({
       session_id: 'forecast-display-only',
-      response_id: 'forecast-display-only:0001',
+      public_playback_ref: 'forecast-display-only:0001',
       utterance_id: 'forecast-display-only:topic:0000:utt:0000',
       message_id: 'forecast-display-only:topic:0000',
       turn_index: 2,
@@ -938,7 +933,7 @@ test('idlechat display-only tts sends error ack with error_code instead of fallb
     type: 'tts.session_completed',
     content: JSON.stringify({
       session_id: 'forecast-display-only',
-      response_id: 'forecast-display-only:0001',
+      public_playback_ref: 'forecast-display-only:0001',
       utterance_id: 'forecast-display-only:topic:0000:utt:0000',
       message_id: 'forecast-display-only:topic:0000',
       turn_index: 2,
@@ -955,7 +950,7 @@ test('idlechat display-only tts sends error ack with error_code instead of fallb
   const ack = fetchCalls.find((call) => call.url === '/viewer/tts/playback-ack');
   assert.ok(ack, 'display-only idlechat TTS should ack as explicit playback error');
   const payload = JSON.parse(ack.init.body);
-  assert.equal(payload.response_id, 'forecast-display-only:0001');
+  assert.equal(payload.public_playback_ref, 'forecast-display-only:0001');
   assert.equal(payload.status, 'error');
   assert.equal(payload.error_code, 'TTS_AUDIO_MISSING');
   assert.match(payload.error, /missing idlechat audio url/i);
@@ -975,7 +970,7 @@ test('idlechat playback ack keeps utterance id when session completed arrives af
     type: 'tts.audio_chunk',
     content: JSON.stringify({
       session_id: 'idle-late-complete',
-      response_id: 'idle-late-complete:0000',
+      public_playback_ref: 'idle-late-complete:0000',
       utterance_id: 'idle-late-complete:msg:0001:utt:0000',
       message_id: 'idle-late-complete:msg:0001',
       turn_index: 1,
@@ -990,7 +985,7 @@ test('idlechat playback ack keeps utterance id when session completed arrives af
     type: 'tts.audio_chunk',
     content: JSON.stringify({
       session_id: 'idle-late-complete',
-      response_id: 'idle-late-complete:0001',
+      public_playback_ref: 'idle-late-complete:0001',
       utterance_id: 'idle-late-complete:msg:0002:utt:0000',
       message_id: 'idle-late-complete:msg:0002',
       turn_index: 2,
@@ -1011,7 +1006,7 @@ test('idlechat playback ack keeps utterance id when session completed arrives af
     type: 'tts.session_completed',
     content: JSON.stringify({
       session_id: 'idle-late-complete',
-      response_id: 'idle-late-complete:0000',
+      public_playback_ref: 'idle-late-complete:0000',
       utterance_id: 'idle-late-complete:msg:0001:utt:0000',
       message_id: 'idle-late-complete:msg:0001',
       turn_index: 1,

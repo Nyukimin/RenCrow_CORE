@@ -1,6 +1,7 @@
 package security
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
@@ -89,14 +90,15 @@ func TestPolicyEngine_Evaluate_BrowserRunNetworkAllowlist(t *testing.T) {
 }
 
 func TestPolicyEngine_Evaluate_SandboxWriteOnly(t *testing.T) {
+	root := t.TempDir()
 	engine := NewPolicyEngine(PolicyConfig{
-		SandboxRoot:      "/workspace/sandbox",
+		SandboxRoot:      root,
 		SandboxWriteOnly: true,
 	})
 
 	allow := execution.Action{
 		Tool:      "file_write",
-		Arguments: map[string]any{"path": "/workspace/sandbox/sbx_1/output.md", "content": "x"},
+		Arguments: map[string]any{"path": filepath.Join(root, "sbx_1", "output.md"), "content": "x"},
 	}
 	if d := engine.Evaluate(allow); d.Decision != execution.DecisionAllow {
 		t.Fatalf("expected sandbox write allow, got %s reason=%s", d.Decision, d.Reason)
@@ -104,7 +106,7 @@ func TestPolicyEngine_Evaluate_SandboxWriteOnly(t *testing.T) {
 
 	deny := execution.Action{
 		Tool:      "file_write",
-		Arguments: map[string]any{"path": "/workspace/docs/spec.md", "content": "x"},
+		Arguments: map[string]any{"path": filepath.Join(t.TempDir(), "spec.md"), "content": "x"},
 	}
 	d := engine.Evaluate(deny)
 	if d.Decision != execution.DecisionDeny {

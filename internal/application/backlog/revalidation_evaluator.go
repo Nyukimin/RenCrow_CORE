@@ -279,7 +279,7 @@ const (
 // to the LLM. Full item bodies, source bodies, evidence receipts and prior
 // review prose remain in CORE and are never copied into a model request.
 type revalidationEvidence struct {
-	BacklogItemID              string   `json:"backlog_item_id"`
+	BacklogItemID       string   `json:"backlog_item_id"`
 	Title               string   `json:"title"`
 	Purpose             string   `json:"purpose,omitempty"`
 	Problem             string   `json:"problem,omitempty"`

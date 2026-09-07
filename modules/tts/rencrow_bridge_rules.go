@@ -24,18 +24,18 @@ type RenCrowBridgeConfigDefaults struct {
 }
 
 type RenCrowSessionStartInput struct {
-	SessionID      string
-	CharacterID    string
-	ResponseID     string
-	RequestedVoice string
-	DefaultVoice   string
+	SessionID         string
+	CharacterID       string
+	PublicPlaybackRef string
+	RequestedVoice    string
+	DefaultVoice      string
 }
 
 type RenCrowSessionStart struct {
-	SessionID   string
-	CharacterID string
-	ResponseID  string
-	VoiceID     string
+	SessionID         string
+	CharacterID       string
+	PublicPlaybackRef string
+	VoiceID           string
 }
 
 func ApplyRenCrowBridgeConfigDefaults(input RenCrowBridgeConfigDefaultsInput) RenCrowBridgeConfigDefaults {
@@ -60,10 +60,10 @@ func BuildRenCrowSessionStart(input RenCrowSessionStartInput) (RenCrowSessionSta
 	}
 	voiceID := firstNonEmpty(input.RequestedVoice, input.DefaultVoice)
 	return RenCrowSessionStart{
-		SessionID:   sessionID,
-		CharacterID: strings.TrimSpace(input.CharacterID),
-		ResponseID:  strings.TrimSpace(input.ResponseID),
-		VoiceID:     voiceID,
+		SessionID:         sessionID,
+		CharacterID:       strings.TrimSpace(input.CharacterID),
+		PublicPlaybackRef: strings.TrimSpace(input.PublicPlaybackRef),
+		VoiceID:           voiceID,
 	}, nil
 }
 

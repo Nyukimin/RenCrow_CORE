@@ -17,8 +17,8 @@ import (
 
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var runtimeToolRegistryNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)

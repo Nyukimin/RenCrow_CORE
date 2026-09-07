@@ -39,13 +39,13 @@ type Hotspot struct {
 
 type HotspotEvidence struct {
 	EvidenceID modulecore.EvidenceID `json:"evidence_id"`
-	HotspotID  string    `json:"hotspot_id"`
-	FilePath   string    `json:"file_path"`
-	LineStart  int       `json:"line_start,omitempty"`
-	LineEnd    int       `json:"line_end,omitempty"`
-	Snippet    string    `json:"snippet,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	HotspotID  string                `json:"hotspot_id"`
+	FilePath   string                `json:"file_path"`
+	LineStart  int                   `json:"line_start,omitempty"`
+	LineEnd    int                   `json:"line_end,omitempty"`
+	Snippet    string                `json:"snippet,omitempty"`
+	Reason     string                `json:"reason,omitempty"`
+	CreatedAt  time.Time             `json:"created_at"`
 }
 
 type ScanResult struct {

@@ -39,18 +39,18 @@ func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req 
 	}
 	ttsSessionID := fmt.Sprintf("%s-%s", req.SessionID, taskID.String())
 	plan, ok := moduletts.BuildRouteTTSPlan(moduletts.RouteTTSPlanInput{
-		Route:           string(decision.Route),
-		SessionID:       ttsSessionID,
-		ResponseID:      taskID.String(),
-		ChatCharacterID: chatTTSCharacterForRequest(req, decision.Route),
-		Urgency:         "normal",
+		Route:             string(decision.Route),
+		SessionID:         ttsSessionID,
+		PublicPlaybackRef: taskID.String(),
+		ChatCharacterID:   chatTTSCharacterForRequest(req, decision.Route),
+		Urgency:           "normal",
 	})
 	if !ok {
 		return ""
 	}
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
-		ResponseID:            plan.ResponseID,
+		PublicPlaybackRef:     plan.PublicPlaybackRef,
 		TraceID:               req.TraceID,
 		CharacterID:           plan.CharacterID,
 		VoiceID:               plan.VoiceID,

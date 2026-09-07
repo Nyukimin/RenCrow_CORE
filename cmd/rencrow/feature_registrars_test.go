@@ -46,6 +46,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		viewerStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
+		identityGraph: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }),
 		viewerLogs: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusPartialContent)
 		}),
@@ -126,6 +127,7 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "viewer ops status", method: http.MethodGet, path: "/viewer/status", want: http.StatusOK},
 		{name: "viewer jobs retired", method: http.MethodGet, path: "/viewer/jobs", want: http.StatusNotFound},
 		{name: "viewer job detail retired", method: http.MethodGet, path: "/viewer/job/detail", want: http.StatusNotFound},
+		{name: "identity graph", method: http.MethodGet, path: "/viewer/identity-graph", want: http.StatusOK},
 		{name: "viewer logs", method: http.MethodGet, path: "/viewer/logs", want: http.StatusPartialContent},
 		{name: "viewer workstreams", method: http.MethodGet, path: "/viewer/workstreams", want: http.StatusCreated},
 		{name: "viewer revenue", method: http.MethodGet, path: "/viewer/revenue", want: http.StatusNoContent},

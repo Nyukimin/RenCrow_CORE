@@ -74,6 +74,11 @@ type LoopResult struct {
 	Partial      bool // 上限到達などで途中終了した場合 true
 }
 
+// coderLoopIncompleteError prevents outer retries after the loop exhausts its own budget.
+type coderLoopIncompleteError struct{ summary string }
+
+func (e *coderLoopIncompleteError) Error() string { return e.summary }
+
 // Execute はエージェントループを実行する
 func (e *CoderLoopExecutor) Execute(ctx context.Context, req CodeExecutionRequest) (CodeExecutionResponse, error) {
 	route := req.Input.Route()
@@ -81,6 +86,9 @@ func (e *CoderLoopExecutor) Execute(ctx context.Context, req CodeExecutionReques
 	e.emit("agent.start", e.agentName, "shiro", "CoderLoop 開始", req)
 
 	result, err := e.runLoop(ctx, req)
+	if err == nil && (result == nil || result.Partial) {
+		err = &coderLoopIncompleteError{summary: e.formatLoopResult(result)}
+	}
 	if err != nil {
 		report := "CoderLoop エラー: " + err.Error()
 		e.emit("agent.report", e.agentName, "shiro", formatAgentHandoffCompletionSpeech("shiro", e.agentName, report), req)
@@ -103,6 +111,8 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 
 	consecutiveFails := 0
 	var lastReport *coderloop.FinalReportMessage
+	pendingPatchFailure := false
+	pendingVerificationFailure := false
 
 	for turn := 1; turn <= e.maxTurns; turn++ {
 		log.Printf("[CoderLoop] turn=%d task=%s", turn, req.TaskID)
@@ -143,6 +153,32 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 
 		case coderloop.TypeFinalReport:
 			lastReport = msg.FinalReport
+			if pendingPatchFailure || pendingVerificationFailure {
+				consecutiveFails++
+				reason := "final_report is blocked until a successful verification completes"
+				if pendingPatchFailure {
+					reason = "final_report is blocked until a revised patch passes owner test-impact verification"
+				}
+				obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
+					coderloop.NewObservationActionResult(
+						"final_report",
+						"completion_gate",
+						"",
+						fmt.Errorf("%s", reason),
+					),
+				})
+				obsJSON := obs.ToJSON()
+				e.emit("worker.result", "worker", "coder_loop", truncate(obsJSON, 300), req)
+				messages = append(messages, llm.Message{Role: "user", Content: obsJSON})
+				if consecutiveFails >= defaultLoopMaxConsecFails {
+					return &LoopResult{
+						FinalReport: lastReport,
+						Summary:     fmt.Sprintf("連続エラー（%d回）のためループ中断", consecutiveFails),
+						Partial:     true,
+					}, nil
+				}
+				continue
+			}
 			log.Printf("[CoderLoop] final_report received task=%s turn=%d", req.TaskID, turn)
 			return &LoopResult{
 				FinalReport:  lastReport,
@@ -171,8 +207,11 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 			obs, execErr := e.executePatchProposal(ctx, turn, msg.PatchProposal, req)
 			if execErr != nil {
 				consecutiveFails++
+				pendingPatchFailure = true
 			} else {
 				consecutiveFails = 0
+				pendingPatchFailure = false
+				pendingVerificationFailure = false
 			}
 			messages = append(messages, llm.Message{Role: "user", Content: obs})
 
@@ -180,8 +219,10 @@ func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionReques
 			obs, err := e.executeObservations(ctx, turn, msg.TestRequest.Actions, req)
 			if err != nil {
 				consecutiveFails++
+				pendingVerificationFailure = true
 			} else {
 				consecutiveFails = 0
+				pendingVerificationFailure = false
 			}
 			messages = append(messages, llm.Message{Role: "user", Content: obs})
 
@@ -233,7 +274,15 @@ func (e *CoderLoopExecutor) executeObservations(
 	obs := coderloop.NewObservationResult(turn, results)
 	json := obs.ToJSON()
 	e.emit("worker.result", "worker", "coder_loop", truncate(json, 300), req)
-	return json, err
+	if err != nil {
+		return json, err
+	}
+	for _, result := range results {
+		if result.Status != "ok" {
+			return json, fmt.Errorf("observation action %q for %q failed: %s", result.Action, result.Target, result.Output)
+		}
+	}
+	return json, nil
 }
 
 // executePatchProposal はパッチ案を Worker に適用させて observation JSON を返す
@@ -257,20 +306,31 @@ func (e *CoderLoopExecutor) executePatchProposal(
 		})
 		return obs.ToJSON(), err
 	}
+	if result == nil {
+		err := fmt.Errorf("worker returned no patch execution result")
+		obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
+			coderloop.NewObservationActionResult("apply_patch", pp.Intent, "", err),
+		})
+		return obs.ToJSON(), err
+	}
 
-	statusStr := "ok"
 	if !result.Success {
-		statusStr = "error"
+		reason := result.FailureReason
+		if strings.TrimSpace(reason) == "" {
+			reason = result.Summary
+		}
+		if strings.TrimSpace(reason) == "" {
+			reason = "patch execution failed"
+		}
+		err := fmt.Errorf("patch execution failed: %s", reason)
+		obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
+			coderloop.NewObservationActionResult("apply_patch", pp.Intent, result.Summary, err),
+		})
+		return obs.ToJSON(), err
 	}
 	obs := coderloop.NewObservationResult(turn, []coderloop.ObservationActionResult{
-		coderloop.NewObservationActionResult("apply_patch", pp.Intent, result.Summary, func() error {
-			if result.Success {
-				return nil
-			}
-			return fmt.Errorf("patch execution failed: %s", result.FailureReason)
-		}()),
+		coderloop.NewObservationActionResult("apply_patch", pp.Intent, result.Summary, nil),
 	})
-	_ = statusStr
 	return obs.ToJSON(), nil
 }
 

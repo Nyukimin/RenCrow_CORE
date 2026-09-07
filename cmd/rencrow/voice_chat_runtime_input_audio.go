@@ -41,10 +41,10 @@ type voiceChatInputAudioSettings struct {
 }
 
 type voiceChatInputAudioSession struct {
-	utteranceID string
-	sessionID   string
-	channel     string
-	prompt      string
+	utteranceID  string
+	sessionID    string
+	channel      string
+	prompt       string
 	sampleRate   int
 	channels     int
 	startedAt    time.Time

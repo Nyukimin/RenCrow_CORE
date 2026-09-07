@@ -1,6 +1,7 @@
 package viewer
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -9,7 +10,7 @@ import (
 )
 
 type ToolHarnessEventLister interface {
-	ListRecent(limit int) ([]toolharness.Event, error)
+	ListRecent(ctx context.Context, limit int) ([]toolharness.Event, error)
 }
 
 func HandleToolHarnessRecent(store ToolHarnessEventLister) http.HandlerFunc {
@@ -31,7 +32,7 @@ func HandleToolHarnessRecent(store ToolHarnessEventLister) http.HandlerFunc {
 			}
 			limit = v
 		}
-		items, err := store.ListRecent(limit)
+		items, err := store.ListRecent(r.Context(), limit)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

@@ -61,20 +61,21 @@ func TestBuildToolRuntimeRegistersMovieCatalogForChatWorkerAndSnapshot(t *testin
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.MovieCatalog = seedRuntimeMovieCatalog(t)
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
-	chatMetadata, err := runtime.ChatRunnerV2.ListTools(context.Background())
+	owner, executionCtx := runtimeToolOwnerFixture(t, cfg.WorkspaceDir, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
+	chatMetadata, err := runtime.ChatRuntimeRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	workerMetadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
+	workerMetadata, err := runtime.WorkerRuntimeRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !hasToolMetadata(chatMetadata, "movie_catalog.lookup") || !hasToolMetadata(workerMetadata, "movie_catalog.lookup") {
 		t.Fatalf("Tool missing chat=%#v worker=%#v", chatMetadata, workerMetadata)
 	}
-	for name, runner := range map[string]domaintool.RunnerV2{"chat": runtime.ChatRunnerV2, "worker": runtime.WorkerRunnerV2} {
-		response, err := runner.ExecuteV2(context.Background(), "movie_catalog.lookup", map[string]any{"kind": "movie", "name": "Heat"})
+	for name, runner := range map[string]domaintool.RunnerV2{"chat": runtime.ChatRuntimeRunnerV2, "worker": runtime.WorkerRuntimeRunnerV2} {
+		response, err := runner.ExecuteV2(executionCtx, "movie_catalog.lookup", map[string]any{"kind": "movie", "name": "Heat"})
 		if err != nil || response == nil || response.IsError() {
 			t.Fatalf("%s production runner execution failed response=%#v err=%v", name, response, err)
 		}
@@ -89,7 +90,7 @@ func TestBuildToolRuntimeLeavesMissingMovieCatalogUnregistered(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.MovieCatalog = filepath.Join(t.TempDir(), "missing.sqlite")
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
+	runtime := buildToolRuntimeWithCapabilities(nil, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)

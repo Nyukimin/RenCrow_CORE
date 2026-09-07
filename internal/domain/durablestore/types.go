@@ -51,23 +51,23 @@ const (
 )
 
 type StorageRequirement struct {
-	RequirementID        string           `json:"requirement_id"`
-	DedupeKey            string           `json:"dedupe_key"`
+	RequirementID        string              `json:"requirement_id"`
+	DedupeKey            string              `json:"dedupe_key"`
 	ActionID             modulecore.ActionID `json:"action_id"`
-	TraceID              string           `json:"trace_id,omitempty"`
-	RequestedBy          string           `json:"requested_by"`
-	UserScope            string           `json:"user_scope,omitempty"`
-	RequestedOutcome     RequestedOutcome `json:"requested_outcome"`
-	FactsToStore         []string         `json:"facts_to_store"`
-	SourceSystems        []string         `json:"source_systems,omitempty"`
-	ReadPatterns         []string         `json:"read_patterns,omitempty"`
-	WritePatterns        []string         `json:"write_patterns,omitempty"`
-	RetentionExpectation string           `json:"retention_expectation,omitempty"`
-	VolumeExpectation    string           `json:"volume_expectation,omitempty"`
-	SensitivityHint      string           `json:"sensitivity_hint,omitempty"`
-	OwnerHint            string           `json:"owner_hint,omitempty"`
-	OwnerModule          string           `json:"owner_module,omitempty"`
-	Acceptance           []string         `json:"acceptance,omitempty"`
+	TraceID              string              `json:"trace_id,omitempty"`
+	RequestedBy          string              `json:"requested_by"`
+	UserScope            string              `json:"user_scope,omitempty"`
+	RequestedOutcome     RequestedOutcome    `json:"requested_outcome"`
+	FactsToStore         []string            `json:"facts_to_store"`
+	SourceSystems        []string            `json:"source_systems,omitempty"`
+	ReadPatterns         []string            `json:"read_patterns,omitempty"`
+	WritePatterns        []string            `json:"write_patterns,omitempty"`
+	RetentionExpectation string              `json:"retention_expectation,omitempty"`
+	VolumeExpectation    string              `json:"volume_expectation,omitempty"`
+	SensitivityHint      string              `json:"sensitivity_hint,omitempty"`
+	OwnerHint            string              `json:"owner_hint,omitempty"`
+	OwnerModule          string              `json:"owner_module,omitempty"`
+	Acceptance           []string            `json:"acceptance,omitempty"`
 }
 
 type StoreManifest struct {
@@ -143,10 +143,10 @@ func (e ActivationEvidence) Complete() bool {
 // action ID without exposing the workflow payload to the caller.
 type RequestReceipt struct {
 	ActionID      modulecore.ActionID `json:"action_id"`
-	UserScope     string    `json:"user_scope"`
-	PayloadHash   string    `json:"payload_hash"`
-	RequirementID string    `json:"requirement_id"`
-	CreatedAt     time.Time `json:"created_at"`
+	UserScope     string              `json:"user_scope"`
+	PayloadHash   string              `json:"payload_hash"`
+	RequirementID string              `json:"requirement_id"`
+	CreatedAt     time.Time           `json:"created_at"`
 }
 
 type WorkflowResult struct {

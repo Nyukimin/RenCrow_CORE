@@ -277,7 +277,7 @@ func TestBuildToolRuntimeRegistersCollectOnlyForWorkerWhenProviderConfigured(t *
 	cfg.PersonRelatedCatalog.ProviderURL = server.URL
 	cfg.Storage.Databases.MovieCatalog = seedRuntimeEligibleMovieCatalog(t)
 	cfg.Storage.Databases.HobbyGraph = seedRuntimeHobbyGraph(t)
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
+	runtime := buildToolRuntimeWithCapabilities(nil, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	chatMetadata, err := runtime.ChatRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -300,7 +300,7 @@ func TestBuildToolRuntimeLeavesCollectUnregisteredWhenProviderUnset(t *testing.T
 	cfg := &config.Config{WorkspaceDir: t.TempDir(), ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled}}
 	cfg.Storage.Databases.MovieCatalog = seedRuntimeEligibleMovieCatalog(t)
 	cfg.Storage.Databases.HobbyGraph = seedRuntimeHobbyGraph(t)
-	runtime := buildToolRuntimeWithCapabilities(cfg, nil, nil, nil, nil, nil)
+	runtime := buildToolRuntimeWithCapabilities(nil, cfg, nil, nil, nil, nil, nil, testCanonicalMediationStore(t))
 	metadata, err := runtime.WorkerRunnerV2.ListTools(context.Background())
 	if err != nil {
 		t.Fatal(err)

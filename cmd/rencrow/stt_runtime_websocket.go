@@ -113,7 +113,7 @@ func handleSTTWebSocketProvider(provider sttinfra.Provider) http.Handler {
 }
 
 func sendSTTSessionReady(conn *websocket.Conn, provider string) {
-	_ = sendSTTEvent(conn, modulestt.BuildSessionInfoEvent(sttinfra.NextEventID(time.Now()), provider))
+	_ = sendSTTEvent(conn, modulestt.BuildSessionInfoEvent(provider))
 	_ = sendSTTEvent(conn, modulestt.BuildReadyEvent())
 }
 

@@ -8,7 +8,6 @@ import (
 func TestSTTTimingTraceSnapshotMeasuresFirstAudioVoiceProvisionalAndFinalGaps(t *testing.T) {
 	start := time.Unix(100, 0)
 	trace := &sttTimingTrace{
-		sessionID:          "session-1",
 		mode:               "direct",
 		startedAt:          start,
 		firstAudioAt:       start.Add(120 * time.Millisecond),

@@ -3,21 +3,25 @@ package tools
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type contextBudgetRunnerStub struct {
-	resp *tool.ToolResponse
+	resp  *tool.ToolResponse
+	calls int
 }
 
 func (s *contextBudgetRunnerStub) ExecuteV2(context.Context, string, map[string]any) (*tool.ToolResponse, error) {
+	s.calls++
 	return s.resp, nil
 }
 
@@ -26,12 +30,15 @@ func (s *contextBudgetRunnerStub) ListTools(context.Context) ([]tool.ToolMetadat
 }
 
 type contextBudgetRecorderStub struct {
-	usages []domainai.ContextUsage
-	events []modulecore.EventEnvelope
-	err    error
+	usages    []domainai.ContextUsage
+	events    []modulecore.EventEnvelope
+	saveCtx   context.Context
+	appendCtx context.Context
+	err       error
 }
 
-func (s *contextBudgetRecorderStub) SaveContextUsage(_ context.Context, item domainai.ContextUsage) error {
+func (s *contextBudgetRecorderStub) SaveContextUsage(ctx context.Context, item domainai.ContextUsage) error {
+	s.saveCtx = ctx
 	if s.err != nil {
 		return s.err
 	}
@@ -39,7 +46,8 @@ func (s *contextBudgetRecorderStub) SaveContextUsage(_ context.Context, item dom
 	return nil
 }
 
-func (s *contextBudgetRecorderStub) Append(_ context.Context, item modulecore.EventEnvelope) error {
+func (s *contextBudgetRecorderStub) Append(ctx context.Context, item modulecore.EventEnvelope) error {
+	s.appendCtx = ctx
 	if s.err != nil {
 		return s.err
 	}
@@ -121,7 +129,7 @@ func TestContextBudgetRunnerWarnsAndPreservesToolResult(t *testing.T) {
 		},
 	})
 
-	resp, err := runner.ExecuteV2(context.Background(), "file_read", nil)
+	resp, err := runner.ExecuteV2(contextBudgetTestContext(t), "file_read", nil)
 	if err != nil {
 		t.Fatalf("ExecuteV2 returned err: %v", err)
 	}
@@ -163,11 +171,84 @@ func TestContextBudgetRunnerRecorderFailureStopsExecution(t *testing.T) {
 		},
 	})
 
-	_, err := runner.ExecuteV2(context.Background(), "file_read", nil)
+	_, err := runner.ExecuteV2(contextBudgetTestContext(t), "file_read", nil)
 	if err == nil {
 		t.Fatal("expected recorder failure")
 	}
 	if !strings.Contains(err.Error(), "tool context usage save failed") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func contextBudgetTestContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, err := execution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := tool.NewToolExecutionScope("budget-test", tool.ActorKindAgent, "shiro", "", []string{tool.DataScopePublic}, tool.AuthenticationSourceAgentOrchestrator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tool.WithToolExecutionScope(ctx, scope)
+}
+
+func TestContextBudgetRunnerPreservesExactOwnerLineage(t *testing.T) {
+	for _, size := range []int{340, 520} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			ctx := contextBudgetTestContext(t)
+			actionID, attemptID := modulecore.NewActionID(), modulecore.NewAttemptID()
+			ctx, err := execution.WithBoundActionAttempt(ctx, actionID, attemptID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, _ := execution.IdentityFromContext(ctx)
+			rec := &contextBudgetRecorderStub{}
+			runner := NewContextBudgetRunner(&contextBudgetRunnerStub{resp: tool.NewSuccess(strings.Repeat("a", size))}, ContextBudgetRunnerConfig{Agent: "Worker", Recorder: rec, Policy: domainai.ContextBudgetPolicy{MaxContextTokens: 100}})
+			if _, err := runner.ExecuteV2(ctx, "file_read", nil); err != nil {
+				t.Fatal(err)
+			}
+			if len(rec.usages) != 1 || len(rec.events) != 1 {
+				t.Fatalf("missing records: %#v", rec)
+			}
+			if rec.saveCtx != ctx || rec.appendCtx != ctx {
+				t.Fatal("persistence lost original request context")
+			}
+			usage, event := rec.usages[0], rec.events[0]
+			if usage.TaskID != identity.TaskID || usage.RunID != identity.RunID || event.TaskID != identity.TaskID || event.RunID != identity.RunID || event.TraceID != identity.TraceID || event.ActorKind != "agent" || event.ActorID != "shiro" || event.ActionID != actionID || event.AttemptID != attemptID || event.CausationEventID != "" {
+				t.Fatalf("lost owner lineage: %#v %#v", usage, event)
+			}
+			if err := modulecore.ValidateEventEnvelope(event); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestContextBudgetRunnerRejectsMissingLineageBeforeTool(t *testing.T) {
+	missingScope, err := execution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingTrace, err := execution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, _ := tool.ToolExecutionScopeFromContext(contextBudgetTestContext(t))
+	missingTrace = tool.WithToolExecutionScope(missingTrace, scope)
+	canceled, cancel := context.WithCancel(contextBudgetTestContext(t))
+	cancel()
+	for name, ctx := range map[string]context.Context{"nil": nil, "identity": context.Background(), "scope": missingScope, "trace": missingTrace, "canceled": canceled} {
+		t.Run(name, func(t *testing.T) {
+			inner := &contextBudgetRunnerStub{resp: tool.NewSuccess("result")}
+			rec := &contextBudgetRecorderStub{}
+			runner := NewContextBudgetRunner(inner, ContextBudgetRunnerConfig{Recorder: rec})
+			if _, err := runner.ExecuteV2(ctx, "file_read", nil); err == nil {
+				t.Fatal("missing lineage accepted")
+			}
+			if inner.calls != 0 || len(rec.usages) != 0 || len(rec.events) != 0 {
+				t.Fatalf("rejected request produced effects: %d %#v", inner.calls, rec)
+			}
+		})
 	}
 }

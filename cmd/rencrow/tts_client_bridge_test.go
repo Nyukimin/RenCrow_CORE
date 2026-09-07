@@ -77,7 +77,7 @@ func TestTTSPublicSessionRouteMarksOldIdleChatRoutesStaleOnReset(t *testing.T) {
 	if session != "idle-new" || chunk != 0 {
 		t.Fatalf("new route chunk = %s/%d, want idle-new/0", session, chunk)
 	}
-	if got := nextTTSPublicResponseID("idle-new"); got != "idle-new:0000" {
+	if got := nextTTSPublicPlaybackRef("idle-new"); got != "idle-new:0000" {
 		t.Fatalf("new response sequence after reset = %q, want idle-new:0000", got)
 	}
 }
@@ -100,30 +100,30 @@ func TestTTSPublicSessionRouteMarksTimedOutUtteranceStale(t *testing.T) {
 	}
 }
 
-func TestNextTTSPublicResponseIDForMessageAlignsIdleChatMessageNumber(t *testing.T) {
+func TestNextTTSPublicPlaybackRefForMessageAlignsIdleChatMessageNumber(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 
-	if got := nextTTSPublicResponseIDForMessage("idle-align", "idle-align:topic"); got != "idle-align:0000" {
+	if got := nextTTSPublicPlaybackRefForMessage("idle-align", "idle-align:topic"); got != "idle-align:0000" {
 		t.Fatalf("topic response id = %q, want idle-align:0000", got)
 	}
-	if got := nextTTSPublicResponseIDForMessage("idle-align", "idle-align:msg:0007"); got != "idle-align:0007" {
+	if got := nextTTSPublicPlaybackRefForMessage("idle-align", "idle-align:msg:0007"); got != "idle-align:0007" {
 		t.Fatalf("message response id = %q, want idle-align:0007", got)
 	}
-	if got := nextTTSPublicResponseID("idle-align"); got != "idle-align:0008" {
+	if got := nextTTSPublicPlaybackRef("idle-align"); got != "idle-align:0008" {
 		t.Fatalf("next response id = %q, want idle-align:0008", got)
 	}
 }
 
-func TestNextTTSPublicResponseIDForMessageKeepsForecastAnnouncementsOutOfMessageNumberSeries(t *testing.T) {
+func TestNextTTSPublicPlaybackRefForMessageKeepsForecastAnnouncementsOutOfMessageNumberSeries(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 
-	if got := nextTTSPublicResponseIDForMessage("forecast-align", "forecast-align:domain:0000"); got != "forecast-align:domain:0000" {
+	if got := nextTTSPublicPlaybackRefForMessage("forecast-align", "forecast-align:domain:0000"); got != "forecast-align:domain:0000" {
 		t.Fatalf("domain response id = %q, want forecast-align:domain:0000", got)
 	}
-	if got := nextTTSPublicResponseIDForMessage("forecast-align", "forecast-align:topic:0000"); got != "forecast-align:topic:0000" {
+	if got := nextTTSPublicPlaybackRefForMessage("forecast-align", "forecast-align:topic:0000"); got != "forecast-align:topic:0000" {
 		t.Fatalf("topic response id = %q, want forecast-align:topic:0000", got)
 	}
-	if got := nextTTSPublicResponseIDForMessage("forecast-align", "forecast-align:msg:0001"); got != "forecast-align:0001" {
+	if got := nextTTSPublicPlaybackRefForMessage("forecast-align", "forecast-align:msg:0001"); got != "forecast-align:0001" {
 		t.Fatalf("message response id = %q, want forecast-align:0001", got)
 	}
 }
@@ -156,10 +156,10 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 
 	registerTTSPublicSessionWithMessage("idle-canon-tts", "idle-canon", "idle-canon:0003", "idle-canon:msg:0003", 3)
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID:   "idle-canon-tts",
-		ResponseID:  "idle-canon:0003",
-		CharacterID: "mio",
-		VoiceID:     "mio",
+		SessionID:         "idle-canon-tts",
+		PublicPlaybackRef: "idle-canon:0003",
+		CharacterID:       "mio",
+		VoiceID:           "mio",
 	}); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestTTSClientBridgeIdleChatChunkPayloadIncludesCanonicalSpeechFields(t *tes
 	}
 }
 
-func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
+func TestTTSClientBridgeNormalSessionCompletionKeepsPublicPlaybackRef(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"gateway_service":"tts-gateway","audio_path":"/audio/chat.wav"}`)
@@ -213,7 +213,7 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 	}, nil, nil)
 
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID: "viewer-chat-1", ResponseID: taskID.String(), TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
+		SessionID: "viewer-chat-1", PublicPlaybackRef: taskID.String(), TraceID: string(traceID), CharacterID: "mio", VoiceID: "mio",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -239,8 +239,8 @@ func TestTTSClientBridgeNormalSessionCompletionKeepsResponseID(t *testing.T) {
 		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
 			t.Fatal(err)
 		}
-		if payload["response_id"] != taskID.String() {
-			t.Fatalf("completion response_id = %#v, want %s; payload=%#v", payload["response_id"], taskID, payload)
+		if payload["public_playback_ref"] != taskID.String() {
+			t.Fatalf("completion public_playback_ref = %#v, want %s; payload=%#v", payload["public_playback_ref"], taskID, payload)
 		}
 		if event.TraceID.Validate() != nil || string(event.TraceID) == event.TaskID.String() || event.TaskID != taskID {
 			t.Fatalf("completion correlation = task:%q trace:%q, want canonical distinct identities", event.TaskID, event.TraceID)
@@ -281,10 +281,10 @@ func TestTTSClientBridgeTopicPayloadIncludesBrightTopicPrefix(t *testing.T) {
 
 	registerTTSPublicSessionWithMessage("idle-topic-tts", "idle-topic", "idle-topic:0000", "idle-topic:topic", 0)
 	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
-		SessionID:   "idle-topic-tts",
-		ResponseID:  "idle-topic:0000",
-		CharacterID: "user",
-		VoiceID:     "mio",
+		SessionID:         "idle-topic-tts",
+		PublicPlaybackRef: "idle-topic:0000",
+		CharacterID:       "user",
+		VoiceID:           "mio",
 	}); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestTTSPlaybackAckClearsPublicSessionRoute(t *testing.T) {
 	if !notifyIdleChatTTSPlaybackCompleted("idle-ack:0000") {
 		t.Fatal("playback ack should match pending response")
 	}
-	if got := resolveTTSPublicResponse("idle-ack-tts"); got != "" {
+	if got := resolveTTSPublicPlaybackRef("idle-ack-tts"); got != "" {
 		t.Fatalf("public session route should be cleared after playback ack, got response %q", got)
 	}
 }
@@ -358,7 +358,7 @@ func TestClearTTSPublicSequenceStateIfNoRoutes(t *testing.T) {
 	resetTTSPublicSessionStateForTest()
 
 	registerTTSPublicSession("idle-seq-tts", "idle-seq", "idle-seq:0000")
-	if got := nextTTSPublicResponseID("idle-seq"); got != "idle-seq:0000" {
+	if got := nextTTSPublicPlaybackRef("idle-seq"); got != "idle-seq:0000" {
 		t.Fatalf("first response = %q", got)
 	}
 	if session, chunk := resolveTTSPublicChunk("idle-seq-tts", 0); session != "idle-seq" || chunk != 0 {
@@ -366,13 +366,13 @@ func TestClearTTSPublicSequenceStateIfNoRoutes(t *testing.T) {
 	}
 
 	clearTTSPublicSequenceStateIfNoRoutes()
-	if snapshot := snapshotTTSPublicSessions(); snapshot.NextChunkSessionCount != 1 || snapshot.NextResponseSessionCount != 1 {
+	if snapshot := snapshotTTSPublicSessions(); snapshot.NextChunkSessionCount != 1 || snapshot.NextPublicPlaybackSessionCount != 1 {
 		t.Fatalf("active route must keep sequence state, got %+v", snapshot)
 	}
 
 	clearTTSPublicSession("idle-seq-tts")
 	clearTTSPublicSequenceStateIfNoRoutes()
-	if snapshot := snapshotTTSPublicSessions(); snapshot.NextChunkSessionCount != 0 || snapshot.NextResponseSessionCount != 0 {
+	if snapshot := snapshotTTSPublicSessions(); snapshot.NextChunkSessionCount != 0 || snapshot.NextPublicPlaybackSessionCount != 0 {
 		t.Fatalf("sequence state should clear when no routes remain, got %+v", snapshot)
 	}
 }
@@ -479,10 +479,10 @@ func TestTTSPublicSessionRouteKeepsLogicalSessionAndGlobalChunkOrder(t *testing.
 	if session != "normal-session" || chunk != 7 {
 		t.Fatalf("unmapped chunk = %s/%d, want passthrough", session, chunk)
 	}
-	if got := nextTTSPublicResponseID("idle-1"); got != "idle-1:0000" {
+	if got := nextTTSPublicPlaybackRef("idle-1"); got != "idle-1:0000" {
 		t.Fatalf("first response id = %q", got)
 	}
-	if got := nextTTSPublicResponseID("idle-1"); got != "idle-1:0001" {
+	if got := nextTTSPublicPlaybackRef("idle-1"); got != "idle-1:0001" {
 		t.Fatalf("second response id = %q", got)
 	}
 }

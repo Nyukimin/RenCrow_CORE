@@ -3,12 +3,14 @@ package toolloop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -410,6 +412,10 @@ func TestRun_RejectsPartialIdentity(t *testing.T) {
 
 func TestRun_AcceptsEnclosingIdentity(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
 	if err != nil {
 		t.Fatal(err)
@@ -418,7 +424,7 @@ func TestRun_AcceptsEnclosingIdentity(t *testing.T) {
 	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
 		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
 	}}
-	if _, err := Run(context.Background(), provider, &mockRunnerV2{}, nil,
+	if _, err := Run(ctx, provider, &mockRunnerV2{}, nil,
 		[]llm.ChatMessage{{Role: "user", Content: "test"}},
 		Config{TaskID: taskID, RunID: runID, Actions: actions}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -434,8 +440,12 @@ func TestRun_RequiresActionsWhenIdentitySet(t *testing.T) {
 	}
 }
 
-func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
+func TestRun_CreatesDistinctActionsForSameToolNameCalls(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
 	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +470,7 @@ func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
 		{Message: llm.ChatMessage{Role: "assistant", Content: "done"}, FinishReason: "stop"},
 	}}
 
-	if _, err := Run(context.Background(), provider, spy, nil,
+	if _, err := Run(ctx, provider, spy, nil,
 		[]llm.ChatMessage{{Role: "user", Content: "search twice"}},
 		Config{TaskID: taskID, RunID: runID, Actions: actions}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -468,14 +478,50 @@ func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
 	if len(spy.observations) != 2 {
 		t.Fatalf("observations = %d, want 2", len(spy.observations))
 	}
-	if spy.observations[0].ActionID != spy.observations[1].ActionID {
-		t.Fatalf("ActionID changed: %s -> %s", spy.observations[0].ActionID, spy.observations[1].ActionID)
+	if spy.observations[0].ActionID == spy.observations[1].ActionID {
+		t.Fatalf("ActionID reused: %s", spy.observations[0].ActionID)
 	}
 	if spy.observations[0].AttemptID == spy.observations[1].AttemptID {
-		t.Fatalf("AttemptID must change on retry: %s", spy.observations[0].AttemptID)
+		t.Fatalf("AttemptID reused: %s", spy.observations[0].AttemptID)
 	}
 	if err := spy.observations[0].ActionID.Validate(); err != nil {
 		t.Fatalf("action id: %v", err)
+	}
+	actionsFound, err := actions.ListActions(ctx, domainaction.Filter{TaskID: taskID, RunID: runID})
+	if err != nil {
+		t.Fatalf("ListActions() error = %v", err)
+	}
+	if len(actionsFound) != 2 {
+		t.Fatalf("actions = %d, want 2", len(actionsFound))
+	}
+	for i, observation := range spy.observations {
+		if observation.ActionID == "" || observation.AttemptID == "" {
+			t.Fatalf("observation %d has incomplete binding: %#v", i, observation)
+		}
+		if action, err := actions.GetAction(ctx, observation.ActionID); err != nil {
+			t.Fatalf("GetAction(%s) error = %v", observation.ActionID, err)
+		} else if action.TaskID != taskID || action.RunID != runID {
+			t.Fatalf("action %s owner = task=%s run=%s, want task=%s run=%s", action.ActionID, action.TaskID, action.RunID, taskID, runID)
+		}
+		attempts, err := actions.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: observation.ActionID})
+		if err != nil {
+			t.Fatalf("ListAttempts(%s) error = %v", observation.ActionID, err)
+		}
+		if len(attempts) != 1 {
+			t.Fatalf("action %s attempts = %d, want one first attempt", observation.ActionID, len(attempts))
+		}
+		if attempts[0].AttemptID != observation.AttemptID || attempts[0].StartReason != domainaction.AttemptStartReasonFirst || attempts[0].Status != domainaction.AttemptStatusSucceeded {
+			t.Fatalf("action %s attempt = %#v, want bound first attempt %s", observation.ActionID, attempts[0], observation.AttemptID)
+		}
+	}
+	for _, observation := range spy.observations {
+		action, err := actions.GetAction(ctx, observation.ActionID)
+		if err != nil {
+			t.Fatalf("GetAction(%s) error = %v", observation.ActionID, err)
+		}
+		if action.Status != domainaction.StatusSucceeded || action.Summary != "tool succeeded" {
+			t.Fatalf("action %s status/summary = %s/%q, want succeeded/tool succeeded", action.ActionID, action.Status, action.Summary)
+		}
 	}
 
 	toolMessages := make([]llm.ChatMessage, 0, 2)
@@ -496,8 +542,121 @@ func TestRun_ReusesActionIDForSameToolNameWithNewAttemptID(t *testing.T) {
 	}
 }
 
+func TestRun_FailedToolResultTerminalizesActionAndAttempt(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := actionmanager.New(store)
+	spy := &actionAttemptSpyRunner{results: map[string]*tool.ToolResponse{
+		"web_search": tool.NewError(tool.ErrInternalError, "tool failed", nil),
+	}}
+	provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+		{Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+			ID: "provider-call-failed", Function: llm.ToolCallFunction{Name: "web_search", Arguments: map[string]any{"query": "failure"}},
+		}}}, FinishReason: "tool_calls"},
+		{Message: llm.ChatMessage{Role: "assistant", Content: "recovered"}, FinishReason: "stop"},
+	}}
+
+	result, err := Run(ctx, provider, spy, nil, []llm.ChatMessage{{Role: "user", Content: "search"}}, Config{
+		TaskID:  taskID,
+		RunID:   runID,
+		Actions: actions,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result != "recovered" || provider.callIndex != 2 {
+		t.Fatalf("result/provider calls = %q/%d, want recovered/2", result, provider.callIndex)
+	}
+	if len(spy.observations) != 1 {
+		t.Fatalf("observations = %d, want 1", len(spy.observations))
+	}
+	action, err := actions.GetAction(ctx, spy.observations[0].ActionID)
+	if err != nil {
+		t.Fatalf("GetAction() error = %v", err)
+	}
+	if action.Status != domainaction.StatusFailed || action.Summary != "tool failed" {
+		t.Fatalf("action status/summary = %s/%q, want failed/tool failed", action.Status, action.Summary)
+	}
+	attempts, err := actions.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: spy.observations[0].ActionID})
+	if err != nil {
+		t.Fatalf("ListAttempts() error = %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != domainaction.AttemptStatusFailed || attempts[0].Summary != "tool failed" {
+		t.Fatalf("attempts = %#v, want one failed/tool failed attempt", attempts)
+	}
+}
+
+func TestRun_ToolAttemptCompletionFailureStopsBeforeNextModel(t *testing.T) {
+	originalErr := errors.New("tool execution failed")
+	tests := []struct {
+		name       string
+		response   *tool.ToolResponse
+		toolErr    error
+		wantOrigin bool
+	}{
+		{name: "success response", response: tool.NewSuccess("result")},
+		{name: "tool error", response: tool.NewSuccess("ignored"), toolErr: originalErr, wantOrigin: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+			ctx, err := domainexecution.WithIdentity(context.Background(), taskID, runID, modulecore.NewTraceID())
+			if err != nil {
+				t.Fatal(err)
+			}
+			baseStore, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			saveErr := errors.New("completion save failed")
+			store := &failOnAttemptSaveStore{Store: baseStore, failAfter: 1, err: saveErr}
+			actions := actionmanager.New(store)
+			spy := &actionAttemptSpyRunner{
+				results:    map[string]*tool.ToolResponse{"web_search": tt.response},
+				toolErrors: map[string]error{"web_search": tt.toolErr},
+			}
+			provider := &mockToolCallingProvider{responses: []llm.ChatResponse{
+				{Message: llm.ChatMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{
+					ID: "provider-call-save-failure", Function: llm.ToolCallFunction{Name: "web_search", Arguments: map[string]any{"query": "save failure"}},
+				}}}, FinishReason: "tool_calls"},
+				{Message: llm.ChatMessage{Role: "assistant", Content: "must not reach"}, FinishReason: "stop"},
+			}}
+
+			_, runErr := Run(ctx, provider, spy, nil, []llm.ChatMessage{{Role: "user", Content: "search"}}, Config{
+				TaskID:  taskID,
+				RunID:   runID,
+				Actions: actions,
+			})
+			if runErr == nil {
+				t.Fatal("Run() unexpectedly continued after completion save failure")
+			}
+			if !errors.Is(runErr, saveErr) {
+				t.Fatalf("Run() error = %v, want completion save error", runErr)
+			}
+			if tt.wantOrigin && !errors.Is(runErr, originalErr) {
+				t.Fatalf("Run() error = %v, want original tool error", runErr)
+			}
+			if !strings.Contains(runErr.Error(), "complete tool attempt") {
+				t.Fatalf("Run() error = %v, want completion context", runErr)
+			}
+			if provider.callIndex != 1 {
+				t.Fatalf("provider calls = %d, want 1", provider.callIndex)
+			}
+		})
+	}
+}
+
 type actionAttemptSpyRunner struct {
 	results      map[string]*tool.ToolResponse
+	toolErrors   map[string]error
 	observations []domainexecution.BoundActionAttempt
 }
 
@@ -508,13 +667,34 @@ func (s *actionAttemptSpyRunner) ExecuteV2(ctx context.Context, toolName string,
 			AttemptID: attemptID,
 		})
 	}
-	if r, ok := s.results[toolName]; ok {
+	r, resultOK := s.results[toolName]
+	if toolErr, errOK := s.toolErrors[toolName]; errOK {
+		return r, toolErr
+	}
+	if resultOK {
 		return r, nil
 	}
 	return nil, fmt.Errorf("unknown tool: %s", toolName)
 }
 
-func (s *actionAttemptSpyRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) { return nil, nil }
+func (s *actionAttemptSpyRunner) ListTools(context.Context) ([]tool.ToolMetadata, error) {
+	return nil, nil
+}
+
+type failOnAttemptSaveStore struct {
+	actionmanager.Store
+	failAfter int
+	saves     int
+	err       error
+}
+
+func (s *failOnAttemptSaveStore) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
+	s.saves++
+	if s.saves > s.failAfter {
+		return s.err
+	}
+	return s.Store.SaveAttempt(ctx, value)
+}
 
 func TestRun_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -555,5 +735,34 @@ func TestRun_DefaultMaxIterations(t *testing.T) {
 	cfg3 := Config{MaxTokens: 1234}
 	if cfg3.maxTokens() != 1234 {
 		t.Errorf("maxTokens should be 1234, got %d", cfg3.maxTokens())
+	}
+}
+
+func TestRun_RejectsMissingOrMismatchedOwnerBeforeModel(t *testing.T) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	store, err := actionstore.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := actionmanager.New(store)
+	missingTrace, err := domainexecution.WithIdentity(context.Background(), taskID, runID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongOwner, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, ctx := range map[string]context.Context{"missing": context.Background(), "trace": missingTrace, "mismatch": wrongOwner} {
+		t.Run(name, func(t *testing.T) {
+			provider := &mockToolCallingProvider{responses: []llm.ChatResponse{{Message: llm.ChatMessage{Role: "assistant", Content: "done"}}}}
+			_, err := Run(ctx, provider, &mockRunnerV2{}, nil, nil, Config{TaskID: taskID, RunID: runID, Actions: actions})
+			if err == nil {
+				t.Fatal("unowned task loop accepted")
+			}
+			if len(provider.requests) != 0 {
+				t.Fatal("model called before owner admission")
+			}
+		})
 	}
 }

@@ -691,7 +691,7 @@ func TestMessageOrchestrator_AppliesPersonaCanonicalResponse(t *testing.T) {
 		Priority:    1,
 	}})
 	orch.SetPersonaCanonicalResponses([]domainpersona.CanonicalResponseDefinition{{
-		ResponseKey:       "kuro_destructive_block",
+		ResponseKey:      "kuro_destructive_block",
 		CharacterID:      "kuro",
 		Category:         "danger",
 		Response:         "その操作は止めます。",
@@ -733,7 +733,7 @@ func TestMessageOrchestrator_CanonicalResponseHonorsCooldown(t *testing.T) {
 		canonical: []domainpersona.CanonicalResponseLog{{
 			EventID:     "evt_recent",
 			CharacterID: "kuro",
-			ResponseKey:  "kuro_destructive_block",
+			ResponseKey: "kuro_destructive_block",
 			Used:        true,
 			CreatedAt:   time.Now().UTC(),
 		}},
@@ -748,7 +748,7 @@ func TestMessageOrchestrator_CanonicalResponseHonorsCooldown(t *testing.T) {
 		Priority:    1,
 	}})
 	orch.SetPersonaCanonicalResponses([]domainpersona.CanonicalResponseDefinition{{
-		ResponseKey:       "kuro_destructive_block",
+		ResponseKey:      "kuro_destructive_block",
 		CharacterID:      "kuro",
 		Category:         "danger",
 		Response:         "その操作は止めます。",

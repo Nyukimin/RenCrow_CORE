@@ -74,7 +74,7 @@
       <option value="progress">Progress</option>
       <option value="system">System</option>
       <option value="sessions">Sessions</option>
-      <option value="jobs">Jobs</option>
+      <option value="tasks">Tasks</option>
     </select>
     <button id="mobilePanelNext" class="mobile-panel-step" type="button" aria-label="次のパネル">&gt;</button>
   </div>
@@ -114,7 +114,7 @@
     <button class="tab-btn" data-tab="progress">Progress</button>
     <button class="tab-btn" data-tab="system">System</button>
     <button class="tab-btn" data-tab="sessions">Sessions</button>
-    <button class="tab-btn" data-tab="jobs">Jobs</button>
+    <button class="tab-btn" data-tab="tasks">Tasks</button>
   </nav>
   <main>
   <section id="panel-home" class="panel active">
@@ -673,7 +673,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Tool</th><th>Status</th><th>Repairs</th><th>Defaults</th><th>Input Hash</th></tr></thead>
+          <thead><tr><th>Time</th><th>Tool</th><th>Status</th><th>Repairs</th><th>Defaults</th><th>Input Hash</th><th>Event / Execution</th></tr></thead>
           <tbody id="toolHarnessBody"></tbody>
         </table>
       </div>
@@ -706,7 +706,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Time</th><th>Level</th><th>Type</th><th>Actor</th><th>Job</th><th>Route</th><th>Content</th></tr></thead>
+          <thead><tr><th>Time</th><th>Level</th><th>Type</th><th>Actor</th><th>Task</th><th>Route</th><th>Content</th></tr></thead>
           <tbody id="opsFeedBody"></tbody>
         </table>
       </div>
@@ -719,7 +719,7 @@
     <div class="grid" id="agentCards"></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Agent</th><th>State</th><th>Reason</th><th>Route</th><th>Last Event</th><th>Peer</th><th>Job</th><th>Updated</th><th>Preview</th></tr></thead>
+        <thead><tr><th>Agent</th><th>State</th><th>Reason</th><th>Route</th><th>Last Event</th><th>Peer</th><th>Task</th><th>Updated</th><th>Preview</th></tr></thead>
         <tbody id="overviewBody"></tbody>
       </table>
     </div>
@@ -759,12 +759,12 @@
     </div>
     <div class="grid" id="progressAgentCards"></div>
     <div class="progress-head" style="margin-top:10px">
-      <h3>Job Progress</h3>
-      <div class="progress-summary" id="progressJobSummary">-</div>
+      <h3>Task Progress</h3>
+      <div class="progress-summary" id="progressTaskSummary">-</div>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Job ID</th><th>Route</th><th>Phase</th><th>Owner</th><th>Retry</th><th>Failure</th><th>Status</th><th>Updated</th><th>Summary</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Task ID</th><th>Route</th><th>Phase</th><th>Owner</th><th>Retry</th><th>Failure</th><th>Status</th><th>Updated</th><th>Summary</th><th>Detail</th></tr></thead>
         <tbody id="progressBody"></tbody>
       </table>
     </div>
@@ -818,7 +818,7 @@
                 <option value="">route: all</option>
                 <option>CHAT</option><option>OPS</option><option>PLAN</option><option>ANALYZE</option><option>RESEARCH</option><option>CODE</option><option>CODE1</option><option>CODE2</option><option>CODE3</option><option>CODE4</option>
               </select>
-              <input id="fltJob" placeholder="job id contains...">
+              <input id="fltTask" placeholder="task id contains...">
               <input id="fltText" placeholder="content contains...">
             </div>
           </details>
@@ -871,7 +871,7 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Time</th><th>Type</th><th>From</th><th>To</th><th>Route</th><th>Job</th><th>Content</th><th>Copy</th></tr></thead>
+        <thead><tr><th>Time</th><th>Type</th><th>From</th><th>To</th><th>Route</th><th>Task</th><th>Content</th><th>Copy</th></tr></thead>
         <tbody id="systemBody"></tbody>
       </table>
     </div>
@@ -1055,7 +1055,7 @@
     </div>
     <div class="table-wrap" style="margin-bottom:12px">
       <table>
-        <thead><tr><th>Response</th><th>Role</th><th>Layer</th><th>Kind</th><th>Status</th><th>Section</th><th>Tokens</th><th>Warning</th><th>Reason</th><th>Summary</th><th>Source</th><th>Created</th></tr></thead>
+        <thead><tr><th>Trace</th><th>Role</th><th>Layer</th><th>Kind</th><th>Status</th><th>Section</th><th>Tokens</th><th>Warning</th><th>Reason</th><th>Summary</th><th>Source</th><th>Created</th></tr></thead>
         <tbody id="recallTraceBody"></tbody>
       </table>
     </div>
@@ -1277,7 +1277,7 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Response</th><th>Role</th><th>Matched Source</th><th>Used At</th></tr></thead>
+        <thead><tr><th>Trace</th><th>Role</th><th>Matched Source</th><th>Used At</th></tr></thead>
         <tbody id="newsUsageBody"></tbody>
       </table>
     </div>
@@ -1522,13 +1522,19 @@
     </div>
   </section>
 
-  <section id="panel-jobs" class="panel">
+  <section id="panel-tasks" class="panel">
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Job ID</th><th>Route</th><th>Status</th><th>From -> To</th><th>Started</th><th>Updated</th><th>Events</th><th>Preview</th></tr></thead>
-        <tbody id="jobsBody"></tbody>
+        <thead><tr><th>Task ID</th><th>Route</th><th>Status</th><th>From -> To</th><th>Started</th><th>Updated</th><th>Events</th><th>Preview</th></tr></thead>
+        <tbody id="tasksBody"></tbody>
       </table>
     </div>
+    <section class="card" aria-label="Identity graph">
+      <h3>Identity Graph</h3>
+      <p class="small">TaskのTraceを選ぶと、保存済みEvent・Task・Messageの関係を表示します。</p>
+      <div id="identityGraphStatus" class="small" role="status">Task行のGraphから選択してください。</div>
+      <div id="identityGraphBody"></div>
+    </section>
     <div class="filters" style="margin-top:10px">
       <select id="eviStatus">
         <option value="">evidence status: all</option>
@@ -1546,7 +1552,7 @@
     <div class="grid" id="evidenceSummaryCards" style="margin-bottom:10px"></div>
     <div class="table-wrap" style="margin-top:10px">
       <table>
-        <thead><tr><th>Evidence Ref</th><th>Job ID</th><th>Status</th><th>Error Kind</th><th>Latest Verify</th><th>Steps</th><th>Verify</th><th>Goal</th><th>Attempt</th><th>Repair</th><th>Finished</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Evidence Ref</th><th>Task ID</th><th>Status</th><th>Error Kind</th><th>Latest Verify</th><th>Steps</th><th>Verify</th><th>Goal</th><th>Attempt</th><th>Repair</th><th>Finished</th><th>Detail</th></tr></thead>
         <tbody id="evidenceBody"></tbody>
       </table>
     </div>
@@ -1662,7 +1668,7 @@
 <script src="/viewer/assets/js/tabs/timeline.js?v=20260805-midori-image-chat" defer></script>
 <script src="/viewer/assets/js/tabs/idlechat.js?v=20260805-idle-topic-playback" defer></script>
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
-<script src="/viewer/assets/js/tabs/jobs.js?v=20260510-tabs-jobs" defer></script>
+<script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>

@@ -1,8 +1,8 @@
 package backlog
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"testing"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -16,8 +16,8 @@ func TestMaturationAdoptRequiresPromoted(t *testing.T) {
 	service := NewService(store, &memoryWorkstreamStore{})
 	intake, err := service.Intake(context.Background(), IntakeRequest{
 		BacklogItemID: modulecore.BacklogItemID("maturation-red"),
-		Title:   "maturation gate",
-		Purpose: "verify before adoption",
+		Title:         "maturation gate",
+		Purpose:       "verify before adoption",
 		SourceRefs: []domainbacklog.SourceRef{{
 			Type: "test", Locator: "maturation-red",
 		}},

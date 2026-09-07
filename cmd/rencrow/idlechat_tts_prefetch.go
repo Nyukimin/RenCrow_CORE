@@ -25,7 +25,7 @@ type idleChatTTSPrefetchStream struct {
 	key               string
 	sessionID         string
 	internalSessionID string
-	responseID        string
+	publicPlaybackRef string
 	publicSessionID   string
 	messageID         string
 	speaker           string
@@ -179,18 +179,18 @@ func (m *idleChatTTSPrefetchManager) stream(sessionID, messageID string, ev idle
 		return stream
 	}
 	stream := &idleChatTTSPrefetchStream{
-		manager:         m,
-		bridge:          m.bridge,
-		key:             key,
-		queue:           make(chan string, 128),
-		speaker:         strings.TrimSpace(ev.From),
-		target:          strings.TrimSpace(ev.To),
-		sessionID:       strings.TrimSpace(ev.SessionID),
-		publicSessionID: strings.TrimSpace(ev.SessionID),
-		messageID:       strings.TrimSpace(ev.MessageID),
-		turnIndex:       ev.TurnIndex,
-		traceID:         string(ev.TraceID),
-		responseID:      nextTTSPublicResponseIDForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
+		manager:           m,
+		bridge:            m.bridge,
+		key:               key,
+		queue:             make(chan string, 128),
+		speaker:           strings.TrimSpace(ev.From),
+		target:            strings.TrimSpace(ev.To),
+		sessionID:         strings.TrimSpace(ev.SessionID),
+		publicSessionID:   strings.TrimSpace(ev.SessionID),
+		messageID:         strings.TrimSpace(ev.MessageID),
+		turnIndex:         ev.TurnIndex,
+		traceID:           string(ev.TraceID),
+		publicPlaybackRef: nextTTSPublicPlaybackRefForMessage(strings.TrimSpace(ev.SessionID), strings.TrimSpace(ev.MessageID)),
 	}
 	// Timeout ownership belongs to the orchestrator's Ready/Done waits. A
 	// prefetch stream may exist before its final utterance is known, so a second
@@ -341,22 +341,22 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 	started := s.started
 	speaker := s.speaker
 	turnIndex := s.turnIndex
-	responseID := s.responseID
+	publicPlaybackRef := s.publicPlaybackRef
 	publicSessionID := s.publicSessionID
 	voiceProfile := s.voiceProfile
 	s.mu.Unlock()
 
 	if !started {
 		plan, ok := moduletts.BuildIdleChatTTSPlan(moduletts.IdleChatTTSPlanInput{
-			PublicSessionID: publicSessionID,
-			ResponseID:      responseID,
-			MessageID:       s.messageID,
-			TurnIndex:       turnIndex,
-			Speaker:         speaker,
-			SpeechText:      filtered,
-			DisplayText:     text,
-			TimeOfDay:       idleChatTimeOfDay(),
-			Now:             time.Now(),
+			PublicSessionID:   publicSessionID,
+			PublicPlaybackRef: publicPlaybackRef,
+			MessageID:         s.messageID,
+			TurnIndex:         turnIndex,
+			Speaker:           speaker,
+			SpeechText:        filtered,
+			DisplayText:       text,
+			TimeOfDay:         idleChatTimeOfDay(),
+			Now:               time.Now(),
 		})
 		if !ok {
 			return
@@ -373,11 +373,11 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		})
 
 		expectPlaybackAck := true
-		registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.ResponseID, plan.MessageID, plan.TurnIndex)
+		registerTTSPublicSessionWithMessage(plan.SessionID, plan.PublicSessionID, plan.PublicPlaybackRef, plan.MessageID, plan.TurnIndex)
 		if expectPlaybackAck {
-			registerIdleChatTTSPending(plan.SessionID, plan.ResponseID)
+			registerIdleChatTTSPending(plan.SessionID, plan.PublicPlaybackRef)
 		} else {
-			log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.ResponseID)
+			log.Printf("[IdleChat] TTS playback wait skipped because no Viewer SSE clients are connected: session=%s response=%s", plan.SessionID, plan.PublicPlaybackRef)
 		}
 		s.mu.Lock()
 		s.internalSessionID = plan.SessionID
@@ -386,14 +386,14 @@ func (s *idleChatTTSPrefetchStream) pushChunk(text string) {
 		s.mu.Unlock()
 		registerIdleChatTTSSynthesisLifecycle(plan.SessionID, s.lifecycle)
 		if err := s.bridge.StartSession(s.ctx, orchestrator.TTSSessionStart{
-			SessionID:        plan.SessionID,
-			ResponseID:       plan.ResponseID,
-			TraceID:          s.traceID,
-			CharacterID:      plan.CharacterID,
-			VoiceID:          plan.VoiceID,
-			SpeechMode:       plan.SpeechMode,
-			Event:            plan.Event,
-			ConversationMode: plan.ConversationMode,
+			SessionID:         plan.SessionID,
+			PublicPlaybackRef: plan.PublicPlaybackRef,
+			TraceID:           s.traceID,
+			CharacterID:       plan.CharacterID,
+			VoiceID:           plan.VoiceID,
+			SpeechMode:        plan.SpeechMode,
+			Event:             plan.Event,
+			ConversationMode:  plan.ConversationMode,
 			Context: moduletts.EmotionContext{
 				ConversationMode: plan.ConversationMode,
 				TimeOfDay:        plan.TimeOfDay,

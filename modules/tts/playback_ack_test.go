@@ -15,17 +15,17 @@ func TestNormalizePlaybackAckTrimsExplicitError(t *testing.T) {
 
 func TestBuildPlaybackAckReceiptTrimsFieldsAndPreservesMatchState(t *testing.T) {
 	got := BuildPlaybackAckReceipt(PlaybackAckInput{
-		ResponseID:     " response-1 ",
-		SessionID:      " session-1 ",
-		UtteranceID:    " utterance-1 ",
-		ViewerClientID: " viewer-1 ",
-		Status:         " ended ",
+		PublicPlaybackRef: " response-1 ",
+		SessionID:         " session-1 ",
+		UtteranceID:       " utterance-1 ",
+		ViewerClientID:    " viewer-1 ",
+		Status:            " ended ",
 	}, true, true)
 
 	if !got.OK || !got.Matched || !got.ActiveAudio {
 		t.Fatalf("unexpected receipt flags: %+v", got)
 	}
-	if got.ResponseID != "response-1" ||
+	if got.PublicPlaybackRef != "response-1" ||
 		got.SessionID != "session-1" ||
 		got.UtteranceID != "utterance-1" ||
 		got.ViewerClientID != "viewer-1" ||

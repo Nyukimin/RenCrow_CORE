@@ -54,10 +54,10 @@ type promptReceipt struct {
 }
 
 type promptReceiptMessage struct {
-	Role       string                  `json:"role"`
-	Content    string                  `json:"content,omitempty"`
-	Parts      []promptReceiptPart     `json:"parts,omitempty"`
-	ToolCalls  []promptReceiptToolCall `json:"tool_calls,omitempty"`
+	Role               string                  `json:"role"`
+	Content            string                  `json:"content,omitempty"`
+	Parts              []promptReceiptPart     `json:"parts,omitempty"`
+	ToolCalls          []promptReceiptToolCall `json:"tool_calls,omitempty"`
 	ProviderToolCallID string                  `json:"provider_tool_call_id,omitempty"`
 }
 
@@ -181,9 +181,9 @@ func buildChatPromptReceipt(ctx context.Context, provider string, req domainllm.
 			})
 		}
 		messages = append(messages, promptReceiptMessage{
-			Role:       message.Role,
-			Content:    message.Content,
-			ToolCalls:  toolCalls,
+			Role:               message.Role,
+			Content:            message.Content,
+			ToolCalls:          toolCalls,
 			ProviderToolCallID: message.ProviderToolCallID,
 		})
 	}

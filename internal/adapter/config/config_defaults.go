@@ -180,11 +180,15 @@ func (c *Config) setDefaults() {
 	}
 
 	if c.Worker.CommandTimeout == 0 {
-		c.Worker.CommandTimeout = 300 // 5分
+		c.Worker.CommandTimeout = DefaultWorkerCommandTimeoutSeconds // 5分
 	}
 
 	if c.Worker.GitTimeout == 0 {
 		c.Worker.GitTimeout = 30 // 30秒
+	}
+
+	if c.Worker.TestImpactTimeoutSeconds <= 0 {
+		c.Worker.TestImpactTimeoutSeconds = DefaultTestImpactTimeoutSeconds // 1時間。resolve+runのaggregate timeout
 	}
 
 	if len(c.Worker.ProtectedPatterns) == 0 {

@@ -85,7 +85,7 @@ func (d *distributedRouteDispatcher) SetCanonicalEventRecorder(recorder Canonica
 
 func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
+	ctx, err = bindRouteExecutionContext(ctx, input, route, taskID, runID)
 	if err != nil {
 		return "", err
 	}
@@ -98,7 +98,7 @@ func (d *distributedRouteDispatcher) ExecuteTurnInput(ctx context.Context, input
 
 func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
 	var err error
-	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
+	ctx, err = bindRouteExecutionContext(ctx, input, route, taskID, runID)
 	if err != nil {
 		return "", err
 	}

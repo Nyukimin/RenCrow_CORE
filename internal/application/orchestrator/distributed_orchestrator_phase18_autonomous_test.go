@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -110,5 +111,14 @@ func TestPhase18DistributedAutonomousCoordinatorReturnsResultResponseOnError(t *
 	}
 	if resp != "途中結果" {
 		t.Fatalf("expected partial response to be returned, got %q", resp)
+	}
+}
+
+func TestDistributedWorkerTerminalClassificationPreservesWrappedDecision(t *testing.T) {
+	for _, reason := range []string{"proposal invalid", "provider unavailable", "command not found", "test failed"} {
+		err := fmt.Errorf("route failed: %w", &workerResultError{reason: reason})
+		if got := classifyExecutorFailure(err); got != "worker_result_failed" {
+			t.Fatalf("terminal decision reclassified for %q: %s", reason, got)
+		}
 	}
 }

@@ -139,6 +139,7 @@ func registerOpsRoutes(mux *http.ServeMux, cfg *config.Config, dependencies *Dep
 		AgentDetail:       dependencies.viewerAgentDetail,
 		Tasks:             dependencies.tasks,
 		TaskDetail:        dependencies.taskDetail,
+		IdentityGraph:     dependencies.identityGraph,
 		TaskNotifications: dependencies.taskNotifications,
 		Logs:              dependencies.viewerLogs,
 		PromptDebug:       dependencies.viewerPromptDebug,

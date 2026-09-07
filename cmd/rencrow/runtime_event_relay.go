@@ -11,11 +11,12 @@ import (
 )
 
 type idleAwareEventListener struct {
-	hub      *viewer.EventHub
-	monitor  *viewer.MonitorStore
-	archive  *viewer.CanonicalEventLog
-	mu       sync.RWMutex
-	idleChat *idlechat.IdleChatOrchestrator
+	hub           *viewer.EventHub
+	monitor       *viewer.MonitorStore
+	archive       *viewer.CanonicalEventLog
+	mu            sync.RWMutex
+	publicationMu sync.Mutex
+	idleChat      *idlechat.IdleChatOrchestrator
 }
 
 var errCanonicalEventArchiveRequired = errors.New("canonical event archive is required")
@@ -33,11 +34,21 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 
 	// Canonical persistence is the single publication gate. No projection or
 	// user-facing side effect may happen before this append succeeds.
+	l.publicationMu.Lock()
 	persisted, err := l.archive.AppendSequenced(ev)
 	if err != nil {
+		l.publicationMu.Unlock()
 		return err
 	}
 	ev = persisted
+
+	if l.monitor != nil {
+		l.monitor.OnEvent(ev)
+	}
+	if l.hub != nil {
+		l.hub.OnEvent(ev)
+	}
+	l.publicationMu.Unlock()
 
 	if shouldStopIdleChatByEvent(ev) {
 		l.mu.RLock()
@@ -46,12 +57,6 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 		if idle != nil {
 			idle.NotifyActivity()
 		}
-	}
-	if l.monitor != nil {
-		l.monitor.OnEvent(ev)
-	}
-	if l.hub != nil {
-		l.hub.OnEvent(ev)
 	}
 	return nil
 }

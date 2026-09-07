@@ -106,3 +106,37 @@ func TestHeavyAgentGenerateWithConversationEngine(t *testing.T) {
 		}
 	}
 }
+
+func TestHeavyRuntimeContextRefreshesEachRequest(t *testing.T) {
+	current := "available"
+	var request llm.GenerateRequest
+	provider := &mockLLMProvider{generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		request = req
+		return llm.GenerateResponse{Content: "answer"}, nil
+	}}
+	agent := NewHeavyAgent(provider, "persona").WithStableRuntimeContext("stale startup")
+	agent.WithRuntimeContextProvider(func(ctx context.Context, recipient string) string {
+		if recipient != "kuro" {
+			t.Fatal(recipient)
+		}
+		return current
+	})
+	for _, state := range []string{"available", "unavailable"} {
+		current = state
+		if _, err := agent.Generate(context.Background(), newAgentTurnInput(t, "question", "line", "U123")); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, message := range request.Messages {
+			if message.Type == llm.PromptContextStable {
+				if message.Content != state {
+					t.Fatalf("stale context %q", message.Content)
+				}
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("current runtime context absent")
+		}
+	}
+}

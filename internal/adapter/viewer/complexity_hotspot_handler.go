@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 
 	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
@@ -98,17 +101,17 @@ type ComplexityConcreteDiffRequest struct {
 }
 
 type ComplexityCoderDiffRequest struct {
-	HotspotID                 string `json:"hotspot_id"`
-	WorkstreamID              string `json:"workstream_id,omitempty"`
-	JobID                     string `json:"job_id,omitempty"`
-	ArtifactID                string `json:"artifact_id,omitempty"`
-	PromotionID               string `json:"promotion_id,omitempty"`
-	SandboxID                 string `json:"sandbox_id,omitempty"`
-	TargetPath                string `json:"target_path,omitempty"`
-	DiffPath                  string `json:"diff_path,omitempty"`
-	TestResultPath            string `json:"test_result_path,omitempty"`
-	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
-	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
+	HotspotID                 string            `json:"hotspot_id"`
+	WorkstreamID              string            `json:"workstream_id,omitempty"`
+	TaskID                    modulecore.TaskID `json:"task_id,omitempty"`
+	ArtifactID                string            `json:"artifact_id,omitempty"`
+	PromotionID               string            `json:"promotion_id,omitempty"`
+	SandboxID                 string            `json:"sandbox_id,omitempty"`
+	TargetPath                string            `json:"target_path,omitempty"`
+	DiffPath                  string            `json:"diff_path,omitempty"`
+	TestResultPath            string            `json:"test_result_path,omitempty"`
+	RollbackPlanPath          string            `json:"rollback_plan_path,omitempty"`
+	PostApplyVerificationPath string            `json:"post_apply_verification_path,omitempty"`
 }
 
 func HandleComplexityHotspotStatus(store ComplexityHotspotLister) http.HandlerFunc {
@@ -562,9 +565,23 @@ func HandleComplexityHotspotCoderDiffWithSandbox(store ComplexityHotspotStore, g
 			return
 		}
 		var req ComplexityCoderDiffRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
 			http.Error(w, "invalid complexity coder diff payload", http.StatusBadRequest)
 			return
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			http.Error(w, "invalid complexity coder diff payload", http.StatusBadRequest)
+			return
+		}
+		if !req.TaskID.IsZero() {
+			if err := req.TaskID.Validate(); err != nil {
+				http.Error(w, "invalid task_id", http.StatusBadRequest)
+				return
+			}
+		} else {
+			req.TaskID = modulecore.NewTaskID()
 		}
 		req.HotspotID = strings.TrimSpace(req.HotspotID)
 		if req.HotspotID == "" {
@@ -590,7 +607,7 @@ func HandleComplexityHotspotCoderDiffWithSandbox(store ComplexityHotspotStore, g
 			Hotspot:      hotspot,
 			Evidence:     findComplexityEvidenceForHotspot(r.Context(), store, hotspot.HotspotID),
 			WorkstreamID: strings.TrimSpace(req.WorkstreamID),
-			JobID:        strings.TrimSpace(req.JobID),
+			TaskID:       req.TaskID,
 		})
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(generationCtx.Err(), context.DeadlineExceeded) {
@@ -651,8 +668,8 @@ func saveComplexityCoderDiffFailure(ctx context.Context, store ComplexityHotspot
 }
 
 func buildComplexityCoderDiffFailureArtifact(req ComplexityCoderDiffRequest, hotspot domaincomplexity.Hotspot, reason string, now time.Time) domaincomplexity.ReportArtifact {
-	jobID := strings.TrimSpace(req.JobID)
-	idPart := jobID
+	taskID := req.TaskID.String()
+	idPart := taskID
 	if idPart == "" {
 		idPart = strings.TrimSpace(req.ArtifactID)
 	}
@@ -660,14 +677,14 @@ func buildComplexityCoderDiffFailureArtifact(req ComplexityCoderDiffRequest, hot
 		idPart = hotspot.HotspotID
 	}
 	artifactID := "art_complexity_coder_diff_failure_" + safeIDPart(idPart)
-	if jobID == "" && strings.TrimSpace(req.ArtifactID) == "" {
+	if taskID == "" && strings.TrimSpace(req.ArtifactID) == "" {
 		artifactID = fmt.Sprintf("%s_%d", artifactID, now.UnixNano())
 	}
 	content := strings.Join([]string{
 		"# Complexity Coder Diff Failure",
 		"",
 		"Hotspot ID: `" + hotspot.HotspotID + "`",
-		"Job ID: `" + nonEmptyOr(strings.TrimSpace(req.JobID), "(not provided)") + "`",
+		"Task ID: `" + nonEmptyOr(req.TaskID.String(), "(not provided)") + "`",
 		"Workstream ID: `" + nonEmptyOr(strings.TrimSpace(req.WorkstreamID), "(not provided)") + "`",
 		"Failure reason: `" + strings.TrimSpace(reason) + "`",
 		"",

@@ -54,15 +54,15 @@ type Record struct {
 	ActionID    modulecore.ActionID  `json:"action_id"`
 	AttemptID   modulecore.AttemptID `json:"attempt_id,omitempty"`
 	Tool        string               `json:"tool"`
-	RequestedBy string             `json:"requested_by"`
-	Arguments   map[string]any     `json:"arguments,omitempty"`
-	EventType   string             `json:"event_type,omitempty"` // security.decision|security.violation
-	Decision    Decision           `json:"decision"`
-	Status      Status             `json:"status"`
-	Reason      string             `json:"reason,omitempty"`
-	Error       string             `json:"error,omitempty"`
-	StartedAt   time.Time          `json:"started_at"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
+	RequestedBy string               `json:"requested_by"`
+	Arguments   map[string]any       `json:"arguments,omitempty"`
+	EventType   string               `json:"event_type,omitempty"` // security.decision|security.violation
+	Decision    Decision             `json:"decision"`
+	Status      Status               `json:"status"`
+	Reason      string               `json:"reason,omitempty"`
+	Error       string               `json:"error,omitempty"`
+	StartedAt   time.Time            `json:"started_at"`
+	FinishedAt  *time.Time           `json:"finished_at,omitempty"`
 }
 
 // Validate checks the canonical identity boundary before an action is evaluated or persisted.

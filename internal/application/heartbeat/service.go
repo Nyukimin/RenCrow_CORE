@@ -2,6 +2,7 @@ package heartbeat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -93,6 +94,8 @@ type IdleChatSequenceCheck struct {
 
 // HeartbeatService はHEARTBEAT.mdを定期的に読み込み、エージェントに処理させるサービス
 type HeartbeatService struct {
+	taskOwner           TaskOwner
+	workerActor         string
 	workerAgent         WorkerAgent
 	sender              NotificationSender
 	workspaceDir        string
@@ -143,21 +146,6 @@ func NewHeartbeatService(
 		stopCh:           make(chan struct{}),
 		done:             make(chan struct{}),
 	}
-}
-
-func newHeartbeatWorkerInput(message, channel, externalConversationID string) (conversation.TurnInput, error) {
-	address, err := conversation.NewChannelAddress(channel, externalConversationID)
-	if err != nil {
-		return conversation.TurnInput{}, fmt.Errorf("heartbeat channel address: %w", err)
-	}
-	input, err := conversation.NewTurnInput(modulecore.NewTaskID(), message, address)
-	if err != nil {
-		return conversation.TurnInput{}, fmt.Errorf("heartbeat turn input: %w", err)
-	}
-	return input.
-		WithSessionID(string(modulecore.NewSessionID())).
-		WithRoute(routing.RouteOPS).
-		WithForcedRoute(routing.RouteOPS), nil
 }
 
 // WithMemoryStore はメモリストアを設定する（オプション）
@@ -367,7 +355,7 @@ func (s *HeartbeatService) runIdleChatSequenceCheck(ctx context.Context, now tim
 }
 
 // tick は1回のHeartbeat処理を実行
-func (s *HeartbeatService) tick(ctx context.Context) error {
+func (s *HeartbeatService) tick(ctx context.Context) (resultErr error) {
 	if report, err := s.RunEconomicOpportunityDiscovery(ctx, time.Now().UTC()); err != nil {
 		log.Printf("[Heartbeat] economic opportunity discovery error: %v", err)
 		s.emitEvent("heartbeat.economic_objective.error", err.Error())
@@ -401,15 +389,17 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 	message := s.contextBuilder.BuildMessageWithTask(routing.RouteOPS.String(), "HEARTBEAT TASKS", heartbeatContent)
 
 	// タスクを作成してShiroに処理させる
-	input, err := newHeartbeatWorkerInput(message, "heartbeat", "heartbeat")
+	ctx, input, finish, err := s.beginWorker(ctx, message, "heartbeat", "heartbeat")
 	if err != nil {
 		s.logHeartbeat("ERROR", fmt.Sprintf("worker input failed: %v", err))
 		s.emitEvent("heartbeat.error", fmt.Sprintf("worker input failed: %v", err))
 		return fmt.Errorf("worker input construction failed: %w", err)
 	}
+	defer func() { resultErr = errors.Join(resultErr, finish(resultErr)) }()
+
 	taskID := input.RootTaskID()
 
-	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+	workerCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.tasks", Purpose: "process_heartbeat_file",
 	})
@@ -858,7 +848,7 @@ func atlasNextDeliveryStage(state string) string {
 	}
 }
 
-func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (BacklogRunnerReport, error) {
+func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (resultReport BacklogRunnerReport, resultErr error) {
 	result, err := s.atlasService.AcquireRunnable(ctx)
 	if err != nil {
 		report.Failed++
@@ -879,19 +869,27 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 		return report, nil
 	}
 
-	input, err := newHeartbeatWorkerInput(backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
+	ctx, input, finish, err := s.beginWorker(ctx, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
 	if err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
+	defer func() {
+		if finishErr := finish(resultErr); finishErr != nil {
+			resultErr = errors.Join(resultErr, finishErr)
+			resultReport.Failed++
+			resultReport.Started = 0
+		}
+	}()
+
 	taskID := input.RootTaskID()
 	requestID := modulecore.NewRequestID()
 	if err := s.emitEvent("backlog.runner.started", fmt.Sprintf("%s task_id=%s target=%s", item.BacklogItemID, taskID.String(), target)); err != nil {
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
-	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+	workerCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
@@ -909,7 +907,7 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 		if _, reviseErr := s.atlasService.Revise(ctx, string(item.BacklogItemID), request); reviseErr != nil {
 			report.Failed++
 			s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s owner BLOCKED revise failed: %v", item.BacklogItemID, taskID.String(), reviseErr))
-			return report, fmt.Errorf("%s; owner BLOCKED revise failed: %w", reason, reviseErr)
+			return report, errors.Join(err, fmt.Errorf("owner BLOCKED revise failed: %w", reviseErr))
 		}
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s task_id=%s err=%v", item.BacklogItemID, taskID.String(), err))
@@ -931,7 +929,7 @@ func backlogRunnerMessageForTarget(item domainbacklog.Item, target string) strin
 	return backlogRunnerMessage(item) + fmt.Sprintf("\nRunner target delivery_state: %s. The worker must report real evidence through the CORE owner API; do not claim success from this dispatch response.", target)
 }
 
-func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (BacklogRunnerReport, error) {
+func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (resultReport BacklogRunnerReport, resultErr error) {
 	active := backlogActiveItems(items)
 	report.Skipped = len(items)
 	if len(active) == 0 {
@@ -977,12 +975,20 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 	item.Implementation = appendBacklogImplementation(item.Implementation, startedNote)
 	item.Status = "implementing"
 	item.Implementer = "coder"
-	input, err := newHeartbeatWorkerInput(backlogRunnerMessage(item), "backlog-runner", "heartbeat")
+	ctx, input, finish, err := s.beginWorker(ctx, backlogRunnerMessage(item), "backlog-runner", "heartbeat")
 	if err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
 		return report, fmt.Errorf("backlog runner input construction failed: %w", err)
 	}
+	defer func() {
+		if finishErr := finish(resultErr); finishErr != nil {
+			resultErr = errors.Join(resultErr, finishErr)
+			resultReport.Failed++
+			resultReport.Started = 0
+		}
+	}()
+
 	if err := s.backlogStore.Save(ctx, item); err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to mark runner start for %s: %v", item.BacklogItemID, err))
@@ -994,7 +1000,7 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		report.Failed++
 		return report, fmt.Errorf("backlog runner start event publication failed: %w", err)
 	}
-	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+	workerCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
@@ -1049,7 +1055,7 @@ func (s *HeartbeatService) RunDueWorkstreamHeartbeats(ctx context.Context, now t
 	return report, nil
 }
 
-func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule domainworkstream.HeartbeatSchedule, now time.Time) error {
+func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule domainworkstream.HeartbeatSchedule, now time.Time) (resultErr error) {
 	if s.skills != nil {
 		if _, err := s.skills.Record(ctx, domainskill.TaskContext{
 			Text:         schedule.Task,
@@ -1075,12 +1081,14 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 			formatSteeringForPrompt(pendingSteering),
 		),
 	)
-	input, err := newHeartbeatWorkerInput(message, "workstream-heartbeat", "heartbeat")
+	ctx, input, finish, err := s.beginWorker(ctx, message, "workstream-heartbeat", "heartbeat")
 	if err != nil {
 		return fmt.Errorf("workstream heartbeat %s input construction failed: %w", schedule.ScheduleID, err)
 	}
+	defer func() { resultErr = errors.Join(resultErr, finish(resultErr)) }()
+
 	taskID := input.RootTaskID()
-	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
+	workerCtx := llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
 		TaskID: taskID, TraceID: string(input.TraceID()),
 		Initiator: "shiro", Caller: "heartbeat.workstream", Purpose: "draft_workstream_report",
 	})

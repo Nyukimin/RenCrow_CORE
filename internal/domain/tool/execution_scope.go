@@ -193,7 +193,8 @@ func cloneToolExecutionScope(scope ToolExecutionScope) ToolExecutionScope {
 }
 
 // DeriveAgentToolExecutionScope creates the trusted scope for a CORE Agent
-// handoff. A validated parent scope may contribute only its authenticated user
+// handoff. Without a parent, the Agent receives only public access.
+// A validated parent scope may contribute only its authenticated user
 // identity and public/user data scopes. Internal access is always decided by
 // the caller's explicit grantInternal flag, never inherited from the parent.
 func DeriveAgentToolExecutionScope(
@@ -223,6 +224,9 @@ func DeriveAgentToolExecutionScope(
 				}
 			}
 		}
+	} else {
+		// A trusted internal Agent ingress without a user scope starts public-only.
+		allowedDataScopes = append(allowedDataScopes, DataScopePublic)
 	}
 	if grantInternal && !containsExecutionScope(allowedDataScopes, DataScopeInternal) {
 		allowedDataScopes = append(allowedDataScopes, DataScopeInternal)

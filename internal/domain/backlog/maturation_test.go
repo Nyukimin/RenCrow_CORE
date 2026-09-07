@@ -1,8 +1,8 @@
 package backlog
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"errors"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"testing"
 )
 

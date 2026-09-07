@@ -9,11 +9,17 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func nextCoderRetryRequest(userMessage string, proposal *domaintransport.ProposalPayload, shiroResult domaintransport.Message, attempt int) (string, bool) {
+// workerResultError is terminal after the Worker retry decision has been made.
+// Outer repair loops must not reinterpret its text as permission to rerun effects.
+type workerResultError struct{ reason string }
+
+func (e *workerResultError) Error() string { return e.reason }
+
+func nextCoderRetryRequest(userMessage string, proposal *domaintransport.ProposalPayload, shiroResult domaintransport.Message, attempt, maxRetry int) (string, bool) {
 	if shiroResult.Result == nil || shiroResult.Result.Success || !shiroResult.Result.Retryable {
 		return "", false
 	}
-	if attempt >= distributedCoderRetryMax {
+	if attempt >= maxRetry {
 		return "", false
 	}
 	return buildCoderRetryInstruction(userMessage, proposal, shiroResult.Result.FailureKind, shiroResult.Result.FailureReason, attempt+1), true

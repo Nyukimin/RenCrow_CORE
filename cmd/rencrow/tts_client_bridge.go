@@ -33,7 +33,7 @@ func buildTTSClientBridge(
 		return nil
 	}
 	cmds := buildTTSCommandSpecs(cfg)
-	var sessionResponseIDs sync.Map
+	var sessionPublicPlaybackRefs sync.Map
 
 	sink := ttsinfra.AudioSink(ttsinfra.NewNoopAudioSink())
 	if len(cmds) == 0 {
@@ -42,32 +42,32 @@ func buildTTSClientBridge(
 		player := ttsinfra.NewCommandPlayer(cmds)
 		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, ""))
 	}
-	onChunkFn := func(sessionID, responseID, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
+	onChunkFn := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
 		if isStaleTTSPublicSession(sessionID) {
-			log.Printf("[TTS] dropping stale idlechat chunk session=%s response=%s chunk=%d", sessionID, responseID, chunkIndex)
+			log.Printf("[TTS] dropping stale idlechat chunk session=%s public_playback_ref=%s chunk=%d", sessionID, publicPlaybackRef, chunkIndex)
 			return
 		}
 		notifyIdleChatTTSSynthesisReady(sessionID)
 		publicSessionID, publicChunkIndex := resolveTTSPublicChunk(sessionID, chunkIndex)
-		if normalizedResponseID := strings.TrimSpace(responseID); normalizedResponseID != "" {
-			sessionResponseIDs.Store(sessionID, normalizedResponseID)
+		if normalizedPublicPlaybackRef := strings.TrimSpace(publicPlaybackRef); normalizedPublicPlaybackRef != "" {
+			sessionPublicPlaybackRefs.Store(sessionID, normalizedPublicPlaybackRef)
 		}
 		messageID, turnIndex, utteranceID := resolveTTSPublicMessage(sessionID)
 		if utteranceID == "" {
 			utteranceID = fmt.Sprintf("%s:%04d", publicSessionID, publicChunkIndex)
 		}
 		payload := moduletts.BuildAudioChunkEventPayload(moduletts.AudioChunkEventPayloadInput{
-			SessionID:   publicSessionID,
-			ResponseID:  responseID,
-			MessageID:   messageID,
-			TurnIndex:   turnIndex,
-			UtteranceID: utteranceID,
-			ChunkIndex:  publicChunkIndex,
-			CharacterID: characterID,
-			SpeechText:  text,
-			DisplayText: displayText,
-			AudioPath:   audioPath,
-			AudioURL:    audioURL,
+			SessionID:         publicSessionID,
+			PublicPlaybackRef: publicPlaybackRef,
+			MessageID:         messageID,
+			TurnIndex:         turnIndex,
+			UtteranceID:       utteranceID,
+			ChunkIndex:        publicChunkIndex,
+			CharacterID:       characterID,
+			SpeechText:        text,
+			DisplayText:       displayText,
+			AudioPath:         audioPath,
+			AudioURL:          audioURL,
 		})
 		if onChunkReady != nil {
 			onChunkReady(payload.SessionID, payload.CharacterID, payload.DisplayText)
@@ -84,7 +84,7 @@ func buildTTSClientBridge(
 		})
 		if metricErr == nil {
 			route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID))
+			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID))
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
@@ -92,7 +92,7 @@ func buildTTSClientBridge(
 			return
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
+		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
 		event.MessageID = modulecore.MessageID(payload.MessageID)
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
@@ -104,21 +104,21 @@ func buildTTSClientBridge(
 			return
 		}
 		publicSessionID := resolveTTSPublicSession(sessionID)
-		responseID := resolveTTSPublicResponse(sessionID)
-		if responseID == "" {
-			if remembered, ok := sessionResponseIDs.Load(sessionID); ok {
-				responseID = strings.TrimSpace(remembered.(string))
+		publicPlaybackRef := resolveTTSPublicPlaybackRef(sessionID)
+		if publicPlaybackRef == "" {
+			if remembered, ok := sessionPublicPlaybackRefs.Load(sessionID); ok {
+				publicPlaybackRef = strings.TrimSpace(remembered.(string))
 			}
 		}
-		sessionResponseIDs.Delete(sessionID)
+		sessionPublicPlaybackRefs.Delete(sessionID)
 		messageID, turnIndex, utteranceID := resolveTTSPublicMessage(sessionID)
 		payload := moduletts.BuildSessionCompletedEventPayload(moduletts.SessionCompletedEventPayloadInput{
-			SessionID:   publicSessionID,
-			ResponseID:  responseID,
-			MessageID:   messageID,
-			TurnIndex:   turnIndex,
-			UtteranceID: utteranceID,
-			CharacterID: characterID,
+			SessionID:         publicSessionID,
+			PublicPlaybackRef: publicPlaybackRef,
+			MessageID:         messageID,
+			TurnIndex:         turnIndex,
+			UtteranceID:       utteranceID,
+			CharacterID:       characterID,
 		})
 		if onChunk != nil {
 			payloadJSON, err := json.Marshal(payload)
@@ -126,7 +126,7 @@ func buildTTSClientBridge(
 				log.Printf("WARN: tts session completed payload marshal failed: %v", err)
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
+				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.PublicPlaybackRef), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
 				event.MessageID = modulecore.MessageID(payload.MessageID)
 				event.TurnIndex = payload.TurnIndex
 				onChunk(event)
@@ -154,11 +154,10 @@ func buildTTSClientBridge(
 	return bridge
 }
 
-// canonicalTaskIDText projects a response correlation into the canonical
-// Event TaskID only when the response itself is task-owned. IdleChat response
-// IDs are a separate public correlation and must remain in the event payload.
-func canonicalTaskIDText(responseID string) string {
-	taskID, err := modulecore.ParseTaskID(strings.TrimSpace(responseID))
+// canonicalTaskIDText preserves the TaskID text supplied by normal TTS callers.
+// Opaque IdleChat playback refs remain in the payload, outside Event TaskID.
+func canonicalTaskIDText(publicPlaybackRef string) string {
+	taskID, err := modulecore.ParseTaskID(strings.TrimSpace(publicPlaybackRef))
 	if err != nil {
 		return ""
 	}

@@ -38,7 +38,7 @@ func ParseFixed4(value string) (int, bool) {
 	return n, true
 }
 
-func ParseTrailingResponseNumber(value string) (int, bool) {
+func ParseTrailingPublicPlaybackNumber(value string) (int, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false

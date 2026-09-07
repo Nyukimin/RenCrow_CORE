@@ -6,35 +6,35 @@ import (
 )
 
 type PendingPlaybackStore struct {
-	mu         sync.Mutex
-	pending    map[string]chan struct{}
-	byResponse map[string]chan struct{}
-	topicGate  map[string]chan struct{}
-	topicByTTS map[string]string
+	mu                  sync.Mutex
+	pending             map[string]chan struct{}
+	byPublicPlaybackRef map[string]chan struct{}
+	topicGate           map[string]chan struct{}
+	topicByTTS          map[string]string
 }
 
 func NewPendingPlaybackStore() *PendingPlaybackStore {
 	return &PendingPlaybackStore{
-		pending:    map[string]chan struct{}{},
-		byResponse: map[string]chan struct{}{},
-		topicGate:  map[string]chan struct{}{},
-		topicByTTS: map[string]string{},
+		pending:             map[string]chan struct{}{},
+		byPublicPlaybackRef: map[string]chan struct{}{},
+		topicGate:           map[string]chan struct{}{},
+		topicByTTS:          map[string]string{},
 	}
 }
 
-func (s *PendingPlaybackStore) Register(ttsSessionID, responseID string) <-chan struct{} {
+func (s *PendingPlaybackStore) Register(ttsSessionID, publicPlaybackRef string) <-chan struct{} {
 	if s == nil {
 		ch := make(chan struct{})
 		close(ch)
 		return ch
 	}
 	ttsSessionID = strings.TrimSpace(ttsSessionID)
-	responseID = strings.TrimSpace(responseID)
+	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
 	ch := make(chan struct{})
 	s.mu.Lock()
 	s.pending[ttsSessionID] = ch
-	if responseID != "" {
-		s.byResponse[responseID] = ch
+	if publicPlaybackRef != "" {
+		s.byPublicPlaybackRef[publicPlaybackRef] = ch
 	}
 	s.mu.Unlock()
 	return ch
@@ -57,17 +57,17 @@ func (s *PendingPlaybackStore) RegisterTopicGate(idleSessionID, ttsSessionID str
 	s.mu.Unlock()
 }
 
-func (s *PendingPlaybackStore) CompleteByResponse(responseID string) PendingPlaybackCompletionAction {
+func (s *PendingPlaybackStore) CompleteByPublicPlaybackRef(publicPlaybackRef string) PendingPlaybackCompletionAction {
 	if s == nil {
-		return BuildPendingPlaybackCompletionAction(responseID, "", "", false)
+		return BuildPendingPlaybackCompletionAction(publicPlaybackRef, "", "", false)
 	}
-	responseID = strings.TrimSpace(responseID)
+	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
 	s.mu.Lock()
-	ch, ok := s.byResponse[responseID]
+	ch, ok := s.byPublicPlaybackRef[publicPlaybackRef]
 	var topicCh chan struct{}
-	action := BuildPendingPlaybackCompletionAction(responseID, "", "", false)
+	action := BuildPendingPlaybackCompletionAction(publicPlaybackRef, "", "", false)
 	if ok {
-		delete(s.byResponse, responseID)
+		delete(s.byPublicPlaybackRef, publicPlaybackRef)
 		for sessionID, sessionCh := range s.pending {
 			if sessionCh == ch {
 				delete(s.pending, sessionID)
@@ -78,7 +78,7 @@ func (s *PendingPlaybackStore) CompleteByResponse(responseID string) PendingPlay
 					topicCh = s.topicGate[idleSessionID]
 					delete(s.topicGate, idleSessionID)
 				}
-				action = BuildPendingPlaybackCompletionAction(responseID, sessionID, topicIdleSessionID, true)
+				action = BuildPendingPlaybackCompletionAction(publicPlaybackRef, sessionID, topicIdleSessionID, true)
 				break
 			}
 		}
@@ -100,9 +100,9 @@ func (s *PendingPlaybackStore) Clear(ttsSessionID string) PendingPlaybackClearAc
 	if pendingCh, ok := s.pending[ttsSessionID]; ok {
 		ch = pendingCh
 		delete(s.pending, ttsSessionID)
-		for responseID, responseCh := range s.byResponse {
+		for publicPlaybackRef, responseCh := range s.byPublicPlaybackRef {
 			if responseCh == pendingCh {
-				delete(s.byResponse, responseID)
+				delete(s.byPublicPlaybackRef, publicPlaybackRef)
 			}
 		}
 	}
@@ -135,9 +135,9 @@ func (s *PendingPlaybackStore) ClearByWait(target <-chan struct{}) PendingPlayba
 		if (<-chan struct{})(ch) == target {
 			delete(s.pending, sessionID)
 			targetCh = ch
-			for responseID, responseCh := range s.byResponse {
+			for publicPlaybackRef, responseCh := range s.byPublicPlaybackRef {
 				if responseCh == ch {
-					delete(s.byResponse, responseID)
+					delete(s.byPublicPlaybackRef, publicPlaybackRef)
 				}
 			}
 			topicIdleSessionID := ""
@@ -177,7 +177,7 @@ func (s *PendingPlaybackStore) ClearAll() []string {
 		topicGates = append(topicGates, ch)
 	}
 	s.pending = map[string]chan struct{}{}
-	s.byResponse = map[string]chan struct{}{}
+	s.byPublicPlaybackRef = map[string]chan struct{}{}
 	s.topicGate = map[string]chan struct{}{}
 	s.topicByTTS = map[string]string{}
 	s.mu.Unlock()
@@ -215,11 +215,11 @@ func (s *PendingPlaybackStore) Snapshot() PendingPlaybackSnapshot {
 	for sessionID := range s.pending {
 		sessionIDs = append(sessionIDs, sessionID)
 	}
-	responseIDs := make([]string, 0, len(s.byResponse))
-	for responseID := range s.byResponse {
-		responseIDs = append(responseIDs, responseID)
+	publicPlaybackRefs := make([]string, 0, len(s.byPublicPlaybackRef))
+	for publicPlaybackRef := range s.byPublicPlaybackRef {
+		publicPlaybackRefs = append(publicPlaybackRefs, publicPlaybackRef)
 	}
-	return BuildPendingPlaybackSnapshot(sessionIDs, responseIDs, len(s.topicGate), len(s.topicByTTS))
+	return BuildPendingPlaybackSnapshot(sessionIDs, publicPlaybackRefs, len(s.topicGate), len(s.topicByTTS))
 }
 
 func closePendingPlaybackChannels(closePending bool, pendingCh chan struct{}, closeTopic bool, topicCh chan struct{}) {

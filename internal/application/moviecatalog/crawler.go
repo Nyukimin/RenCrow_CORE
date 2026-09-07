@@ -55,14 +55,16 @@ type CrawlerCandidate struct {
 	URL   string `json:"url,omitempty"`
 }
 
+// CrawlResult carries the external crawler job reference, not a CORE TaskID.
+// The movie sidecar owns its job_id wire field and polling lifecycle.
 type CrawlResult struct {
-	JobID          string
-	Status         string
-	ArtifactURL    string
-	ArtifactPath   string
-	ArtifactSHA256 string
-	ArtifactBytes  int64
-	Output         string
+	ExternalCrawlJobID string
+	Status             string
+	ArtifactURL        string
+	ArtifactPath       string
+	ArtifactSHA256     string
+	ArtifactBytes      int64
+	Output             string
 }
 
 type Crawler interface {
@@ -118,17 +120,17 @@ type crawlerRequestPayload struct {
 }
 
 type crawlerResponsePayload struct {
-	JobID          string             `json:"job_id"`
-	State          string             `json:"state"`
-	Status         string             `json:"status"`
-	StatusURL      string             `json:"status_url"`
-	ArtifactURL    string             `json:"artifact_url"`
-	ArtifactSHA256 string             `json:"artifact_sha256"`
-	ArtifactBytes  int64              `json:"artifact_bytes"`
-	Output         string             `json:"output"`
-	ErrorCode      string             `json:"error_code"`
-	Message        string             `json:"message"`
-	Candidates     []CrawlerCandidate `json:"candidates,omitempty"`
+	ExternalCrawlJobID string             `json:"job_id"`
+	State              string             `json:"state"`
+	Status             string             `json:"status"`
+	StatusURL          string             `json:"status_url"`
+	ArtifactURL        string             `json:"artifact_url"`
+	ArtifactSHA256     string             `json:"artifact_sha256"`
+	ArtifactBytes      int64              `json:"artifact_bytes"`
+	Output             string             `json:"output"`
+	ErrorCode          string             `json:"error_code"`
+	Message            string             `json:"message"`
+	Candidates         []CrawlerCandidate `json:"candidates,omitempty"`
 }
 
 func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlResult, error) {
@@ -202,13 +204,13 @@ func (c *HTTPCrawler) Crawl(ctx context.Context, request CrawlerRequest) (CrawlR
 		return CrawlResult{}, fmt.Errorf("%w: artifact size mismatch (expected=%d actual=%d)", ErrCrawlerProtocol, result.ArtifactBytes, size)
 	}
 	return CrawlResult{
-		JobID:          result.JobID,
-		Status:         firstNonEmpty(result.Status, result.State, "succeeded"),
-		ArtifactURL:    result.ArtifactURL,
-		ArtifactPath:   artifactPath,
-		ArtifactSHA256: sum,
-		ArtifactBytes:  size,
-		Output:         strings.TrimSpace(result.Output),
+		ExternalCrawlJobID: result.ExternalCrawlJobID,
+		Status:             firstNonEmpty(result.Status, result.State, "succeeded"),
+		ArtifactURL:        result.ArtifactURL,
+		ArtifactPath:       artifactPath,
+		ArtifactSHA256:     sum,
+		ArtifactBytes:      size,
+		Output:             strings.TrimSpace(result.Output),
 	}, nil
 }
 

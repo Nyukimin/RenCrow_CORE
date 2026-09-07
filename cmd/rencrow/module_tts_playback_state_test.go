@@ -19,9 +19,9 @@ func (fakeTTSPlaybackObserver) Health(context.Context) core.HealthReport {
 
 func (fakeTTSPlaybackObserver) Snapshot(context.Context) (moduletts.PlaybackStateSnapshot, error) {
 	return moduletts.PlaybackStateSnapshot{
-		PendingSessionCount:  1,
-		PendingResponseCount: 1,
-		PublicRouteCount:     2,
+		PendingSessionCount:        1,
+		PendingPublicPlaybackCount: 1,
+		PublicRouteCount:           2,
 	}, nil
 }
 
@@ -57,7 +57,7 @@ func TestCollectTTSPlaybackStateSnapshot(t *testing.T) {
 	})
 
 	got := collectTTSPlaybackStateSnapshot()
-	if got.PendingSessionCount != 1 || got.PendingResponseCount != 1 {
+	if got.PendingSessionCount != 1 || got.PendingPublicPlaybackCount != 1 {
 		t.Fatalf("pending state was not captured: %+v", got)
 	}
 	if got.PublicRouteCount != 1 {

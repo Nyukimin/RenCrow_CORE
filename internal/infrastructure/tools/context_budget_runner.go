@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -56,12 +57,23 @@ func (r *ContextBudgetRunner) ExecuteV2(ctx context.Context, toolName string, ar
 	if r.inner == nil {
 		return nil, fmt.Errorf("inner runner is required")
 	}
+	var identity execution.Identity
+	var scope tool.ToolExecutionScope
+	if r.rec != nil {
+		var err error
+		identity, scope, err = contextBudgetExecutionIdentity(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
 	resp, err := r.inner.ExecuteV2(ctx, toolName, args)
 	if err != nil || resp == nil || resp.IsError() {
 		return resp, err
 	}
 	usage := domainai.ContextUsage{
 		EventID:       fmt.Sprintf("ctx_tool_%d", time.Now().UTC().UnixNano()),
+		TaskID:        identity.TaskID,
+		RunID:         identity.RunID,
 		Agent:         r.agent,
 		Model:         r.model,
 		ContextTokens: estimateToolResultTokens(resp),
@@ -72,7 +84,7 @@ func (r *ContextBudgetRunner) ExecuteV2(ctx context.Context, toolName string, ar
 	if evalErr != nil {
 		return nil, fmt.Errorf("tool context budget evaluation failed: %w", evalErr)
 	}
-	if err := r.recordContextBudget(ctx, usage, decision, toolName); err != nil {
+	if err := r.recordContextBudget(ctx, usage, decision, toolName, identity, scope); err != nil {
 		return nil, err
 	}
 	if decision.MaxContextTokens <= 0 {
@@ -124,7 +136,7 @@ func (r *ContextBudgetRunner) offloadToolResult(toolName string, eventID string,
 	}, nil
 }
 
-func (r *ContextBudgetRunner) recordContextBudget(ctx context.Context, usage domainai.ContextUsage, decision domainai.ContextBudgetDecision, toolName string) error {
+func (r *ContextBudgetRunner) recordContextBudget(ctx context.Context, usage domainai.ContextUsage, decision domainai.ContextBudgetDecision, toolName string, identity execution.Identity, scope tool.ToolExecutionScope) error {
 	if r.rec == nil {
 		return nil
 	}
@@ -141,10 +153,18 @@ func (r *ContextBudgetRunner) recordContextBudget(ctx context.Context, usage dom
 		return nil
 	}
 	now := time.Now().UTC()
-	event := modulecore.NewRootEventEnvelope("ai_workflow", eventType, now, map[string]any{
+	event := modulecore.NewEventEnvelope(identity.TraceID, "", nil, "ai_workflow", eventType, now, map[string]any{
 		"context_usage_record_id": usage.EventID, "agent_label": r.agent,
 		"command_name": toolName, "status": decision.Status, "summary": decision.Reason,
 	})
+	event.TaskID, event.RunID = identity.TaskID, identity.RunID
+	event.ActorKind, event.ActorID = string(scope.ActorKind), scope.ActorID
+	if actionID, attemptID, ok := execution.BoundActionAttemptFromContext(ctx); ok {
+		event.ActionID, event.AttemptID = actionID, attemptID
+	}
+	if err := modulecore.ValidateEventEnvelope(event); err != nil {
+		return fmt.Errorf("tool context budget event invalid: %w", err)
+	}
 	if err := r.rec.Append(ctx, event); err != nil {
 		return fmt.Errorf("tool context budget event save failed: %w", err)
 	}
@@ -196,4 +216,31 @@ func safeToolResultName(value string) string {
 		out = append(out, '_')
 	}
 	return string(out)
+}
+
+// contextBudgetExecutionIdentity never creates lineage at the recording boundary.
+func contextBudgetExecutionIdentity(ctx context.Context) (execution.Identity, tool.ToolExecutionScope, error) {
+	var scope tool.ToolExecutionScope
+	if ctx == nil {
+		return execution.Identity{}, scope, fmt.Errorf("tool context budget requires request context")
+	}
+	if err := ctx.Err(); err != nil {
+		return execution.Identity{}, scope, err
+	}
+	identity, err := execution.IdentityFromContext(ctx)
+	if err != nil {
+		return identity, scope, fmt.Errorf("tool context budget execution identity: %w", err)
+	}
+	if err := identity.TraceID.Validate(); err != nil {
+		return identity, scope, fmt.Errorf("tool context budget trace identity: %w", err)
+	}
+	var ok bool
+	scope, ok = tool.ToolExecutionScopeFromContext(ctx)
+	if !ok {
+		return identity, scope, fmt.Errorf("tool context budget requires tool execution scope")
+	}
+	if err := scope.Validate(); err != nil {
+		return identity, scope, fmt.Errorf("tool context budget scope: %w", err)
+	}
+	return identity, scope, nil
 }

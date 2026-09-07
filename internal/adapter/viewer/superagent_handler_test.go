@@ -156,6 +156,7 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 		Status:             "running",
 		StartedAt:          startedAt,
 		ResumePolicy:       "checkpoint",
+		CheckpointID:       modulecore.NewCheckpointID(),
 		CheckpointRevision: 3,
 		CheckpointSummary:  "step 2 committed",
 		NextAction:         "execute step 3",
@@ -225,14 +226,14 @@ func TestHandleSuperAgentRunPauseAndResume(t *testing.T) {
 			t.Fatalf("resume trace contains %s identity payload: %#v", field, store.events[1])
 		}
 	}
-	if len(store.queue) != 1 || store.queue[0].QueueItemID != "resume:"+string(taskID)+":"+string(runID)+":3" || store.queue[0].TaskID != taskID || store.queue[0].RunID != "" || store.queue[0].RunStartReason != domaintask.RunStartReasonCheckpointResume || store.queue[0].Status != "queued" || store.queue[0].CheckpointRevision != 3 {
+	if len(store.queue) != 1 || store.queue[0].QueueItemID.Validate() != nil || store.queue[0].IdempotencyKey != string(pausedRun.CheckpointID) || store.queue[0].CheckpointID != pausedRun.CheckpointID || store.queue[0].TaskID != taskID || store.queue[0].RunID != "" || store.queue[0].RunStartReason != domaintask.RunStartReasonCheckpointResume || store.queue[0].Status != "queued" || store.queue[0].CheckpointRevision != 3 {
 		t.Fatalf("resume queue=%#v", store.queue)
 	}
 	var resumeResponse map[string]any
 	if err := json.Unmarshal(resumeRec.Body.Bytes(), &resumeResponse); err != nil {
 		t.Fatal(err)
 	}
-	if resumeResponse["task_id"] != string(taskID) || resumeResponse["source_run_id"] != string(runID) || resumeResponse["run_id"] != "" || resumeResponse["status"] != "queued" || resumeResponse["queue_item_id"] != store.queue[0].QueueItemID || resumeResponse["queue_status"] != "queued" || resumeResponse["queue_item"] == nil {
+	if resumeResponse["task_id"] != string(taskID) || resumeResponse["source_run_id"] != string(runID) || resumeResponse["run_id"] != "" || resumeResponse["status"] != "queued" || resumeResponse["queue_item_id"] != string(store.queue[0].QueueItemID) || resumeResponse["queue_status"] != "queued" || resumeResponse["queue_item"] == nil {
 		t.Fatalf("resume response receipt=%#v", resumeResponse)
 	}
 	resumeTraceID := store.events[1].TraceID
@@ -262,7 +263,7 @@ func TestHandleSuperAgentRunResumeRequiresPausedProjection(t *testing.T) {
 			owner := newStubSuperAgentTaskOwner(taskID, startedAt)
 			run := domainsuperagent.AgentRun{
 				RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "work", Status: status, StartedAt: startedAt,
-				ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
+				ResumePolicy: "checkpoint", CheckpointID: modulecore.NewCheckpointID(), CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 			}
 			if status != "running" {
 				run.CompletedAt = startedAt.Add(time.Minute)
@@ -296,7 +297,7 @@ func TestHandleSuperAgentRunResumeRejectsMismatchedExistingIntentBeforeTaskResum
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	run := domainsuperagent.AgentRun{
 		RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "work", Status: "paused", StartedAt: startedAt,
-		CompletedAt: startedAt.Add(time.Minute), ResumePolicy: "checkpoint", CheckpointRevision: 2,
+		CompletedAt: startedAt.Add(time.Minute), ResumePolicy: "checkpoint", CheckpointID: modulecore.NewCheckpointID(), CheckpointRevision: 2,
 		CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 	}
 	owner := newStubSuperAgentTaskOwner(taskID, startedAt)
@@ -304,13 +305,13 @@ func TestHandleSuperAgentRunResumeRejectsMismatchedExistingIntentBeforeTaskResum
 	task.Status = domaintask.StatusWaiting
 	task.WaitingReason = "paused"
 	owner.tasks[taskID] = task
-	queueID := "resume:" + string(taskID) + ":" + string(runID) + ":2"
+	idempotencyKey := string(run.CheckpointID)
 	store := &stubSuperAgentStore{
 		runs: []domainsuperagent.AgentRun{run},
 		queue: []domainsuperagent.RunQueueItem{{
-			QueueItemID: queueID, TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume,
-			Goal: "work", Action: "resume", Status: "queued", CheckpointRevision: 2,
-			CheckpointSummary: "tampered", NextAction: "continue", IdempotencyKey: queueID, CreatedAt: startedAt,
+			QueueItemID: modulecore.NewQueueItemID(), TaskID: taskID, RunStartReason: domaintask.RunStartReasonCheckpointResume,
+			Goal: "work", Action: "resume", Status: "queued", CheckpointID: run.CheckpointID, CheckpointRevision: 2,
+			CheckpointSummary: "tampered", NextAction: "continue", IdempotencyKey: idempotencyKey, CreatedAt: startedAt,
 		}},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/superagent/runs/resume", bytes.NewReader([]byte(fmt.Sprintf(`{"run_id":%q}`, runID))))
@@ -374,7 +375,7 @@ func TestHandleSuperAgentRunStateOwnerFailureLeavesProjectionAndQueueUntouched(t
 	runID, taskID := modulecore.NewRunID(), modulecore.NewTaskID()
 	run := domainsuperagent.AgentRun{
 		RunID: runID, TaskID: taskID, ActorID: "mio", Goal: "durable work", Status: "running", StartedAt: startedAt,
-		ResumePolicy: "checkpoint", CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
+		ResumePolicy: "checkpoint", CheckpointID: modulecore.NewCheckpointID(), CheckpointRevision: 1, CheckpointSummary: "checkpoint", NextAction: "continue", LastCheckpointAt: startedAt,
 	}
 	controller := &stubSuperAgentRunController{}
 	owner := newStubSuperAgentTaskOwner(taskID, startedAt)

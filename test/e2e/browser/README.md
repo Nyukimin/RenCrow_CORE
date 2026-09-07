@@ -18,7 +18,7 @@ npm run test:e2e:viewer:to-be
 npm run test:e2e:viewer:to-be:firefox
 ```
 
-通常は `127.0.0.1:18791` から空きポートを探索する。先頭ポートが競合する場合は変更できる。
+標準ポートはunavailable用の`127.0.0.1:28791`とpopulated用の`127.0.0.1:28792`に固定する。競合時は所有者を確認して失敗し、自動で別ポートへ移動しない。明示的なテスト構成では次の変数で指定する。
 
 ```bash
 RENCROW_E2E_UNAVAILABLE_PORT=28791 RENCROW_E2E_POPULATED_PORT=28792 npm run test:e2e:viewer:to-be
@@ -43,11 +43,11 @@ RENCROW_E2E_UNAVAILABLE_PORT=28791 RENCROW_E2E_POPULATED_PORT=28792 npm run test
 
 - `127.0.0.1` の独立ポートだけで起動し、競合ポートは使用しない。
 - 既存の `rencrow.service` と `:18790` は停止・再起動しない。
-- HOME、workspace、session、Viewer log、Advisor、Revenue、L1 SQLiteは実行ごとの領域に置く。
+- HOME、workspace、session、Viewer log、Advisor、Revenue、L1／Archive SQLiteは実行ごとの領域に置く。Archiveは`conversation.enabled=false`でもL1起動に伴って開くため、両fixtureの`storage.databases.conversation_archive`を必ず専用runtime内へ指定する。
 - LLM、外部送信、Heartbeat、browser sidecarは無効にする。
 - populated構成のCodex profileは表示契約のため登録するが、commandは `false` で実行しない。
 - テスト終了時は、成功・失敗にかかわらずテストサーバーを停止する。
-- 成果物は `output/playwright/to-be-ops-live-e2e/<run-id>/` に保存する。
+- 成果物は`RENCROW_E2E_ARTIFACT_ROOT`、またはrepository-local `TMPDIR`配下の`playwright/to-be-ops-live-e2e/<run-id>/`に保存する。`test-local.ps1`経由で保持する場合は`-KeepRuntime`を指定する。
 
 ## 合格条件と証跡
 
@@ -61,3 +61,10 @@ RENCROW_E2E_UNAVAILABLE_PORT=28791 RENCROW_E2E_POPULATED_PORT=28792 npm run test
 
 隔離構成で無効にした既存optional panelのconsole errorは各reportへ記録するが、
 To-Be E2Eの合否には混ぜない。全Viewer console errorゼロは別の全画面QA対象である。
+
+## Failure Knowledge: Archiveの隔離漏れ
+
+- Failure / Problem: populated fixtureがArchive DBを未指定にし、テスト起動が標準の`/var/lib/rencrow/memory_archive.db`へ到達して失敗した。
+- Cause: `conversation.enabled=false`ならArchiveを開かないという古い前提が残っていた。
+- Lesson / Invariant: 起動条件がL1有効化へ変わっても、すべての開かれる会話DBを実行ごとの領域へ閉じる。
+- Enforcement / Tests: config loaderのfixture契約テストが両構成のArchive保存先を検査し、実ストアを使うpopulatedブラウザE2Eで起動と投影を確認する。

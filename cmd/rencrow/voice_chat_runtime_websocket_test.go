@@ -96,19 +96,37 @@ func validInputAudioVoiceDirectResponse(text string) orchestrator.ProcessMessage
 }
 
 type recordingVoiceChatIdleNotifier struct {
-	activities int
-	chatBusy   []bool
+	mu               sync.Mutex
+	activities       int
+	chatBusy         []bool
+	chatBusyDone     chan struct{}
+	chatBusyDoneOnce sync.Once
 }
 
 func (n *recordingVoiceChatIdleNotifier) NotifyActivity() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.activities++
 }
 
 func (n *recordingVoiceChatIdleNotifier) SetChatBusy(busy bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.chatBusy = append(n.chatBusy, busy)
+	if !busy && n.chatBusyDone != nil {
+		n.chatBusyDoneOnce.Do(func() { close(n.chatBusyDone) })
+	}
 }
 
 func (n *recordingVoiceChatIdleNotifier) SetWorkerBusy(bool) {
+}
+
+// snapshot synchronizes observations with the asynchronous voice bridge and
+// returns a copy so assertions never retain the notifier's backing slice.
+func (n *recordingVoiceChatIdleNotifier) snapshot() (int, []bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.activities, append([]bool(nil), n.chatBusy...)
 }
 
 func TestInferVoiceChatGatewayURLUsesCanonicalLLMGateway(t *testing.T) {
@@ -740,7 +758,8 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 	}))
 	defer llm.Close()
 
-	idle := &recordingVoiceChatIdleNotifier{}
+	idleDone := make(chan struct{})
+	idle := &recordingVoiceChatIdleNotifier{chatBusyDone: idleDone}
 	mux := http.NewServeMux()
 	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, idle))
 	bridge := httptest.NewServer(mux)
@@ -759,11 +778,12 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 	if err := websocket.Message.Receive(conn, &ready); err != nil {
 		t.Fatalf("receive ready: %v", err)
 	}
-	if idle.activities != 1 {
-		t.Fatalf("expected voice session start to notify idle activity, got %d", idle.activities)
+	activities, chatBusy := idle.snapshot()
+	if activities != 1 {
+		t.Fatalf("expected voice session start to notify idle activity, got %d", activities)
 	}
-	if got := idle.chatBusy; len(got) != 1 || got[0] != true {
-		t.Fatalf("expected chat busy to start on input_audio voice input, got %#v", got)
+	if len(chatBusy) != 1 || chatBusy[0] != true {
+		t.Fatalf("expected chat busy to start on input_audio voice input, got %#v", chatBusy)
 	}
 	if err := websocket.Message.Send(conn, pcm); err != nil {
 		t.Fatalf("send pcm: %v", err)
@@ -779,15 +799,15 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 	if err := websocket.Message.Receive(conn, &final); err != nil {
 		t.Fatalf("receive final: %v", err)
 	}
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for {
-		if got := idle.chatBusy; len(got) >= 2 && got[len(got)-1] == false {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expected chat busy to end after input_audio final, got %#v", idle.chatBusy)
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-idleDone:
+	case <-time.After(500 * time.Millisecond):
+		_, chatBusy = idle.snapshot()
+		t.Fatalf("expected chat busy to end after input_audio final, got %#v", chatBusy)
+	}
+	_, chatBusy = idle.snapshot()
+	if len(chatBusy) < 2 || chatBusy[len(chatBusy)-1] != false {
+		t.Fatalf("expected chat busy to end after input_audio final, got %#v", chatBusy)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -383,16 +384,26 @@ func skillReadMetadata() tool.ToolMetadata {
 }
 
 func mcpToolMetadata(entry MCPToolEntry) tool.ToolMetadata {
+	// CORE owns this classification for the configured Serena adapter. Discovery
+	// and remote naming alone cannot establish read-only behavior.
+	category := "mutation"
+	if strings.HasPrefix(entry.ToolID, "mcp.serena.") {
+		switch entry.RemoteName {
+		case "find_symbol", "find_referencing_symbols", "get_symbols_overview", "read_file", "search_for_pattern", "list_dir":
+			category = "query"
+		}
+	}
+	description := entry.Description
+	if strings.TrimSpace(description) == "" {
+		description = "Serena MCP tool: " + entry.RemoteName
+	}
 	return tool.ToolMetadata{
 		ToolID:      entry.ToolID,
 		Version:     "1.0.0",
-		Category:    "query",
+		Category:    category,
 		Origin:      tool.OriginCoreRuntime,
-		Description: "起動時に観測したSerena MCPツールをWorker Runner経由で呼び出す。",
-		Parameters: map[string]any{
-			"type":                 "object",
-			"additionalProperties": true,
-		},
+		Description: description,
+		Parameters:  entry.InputSchema,
 	}
 }
 

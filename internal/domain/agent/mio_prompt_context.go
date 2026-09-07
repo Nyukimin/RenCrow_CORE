@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"unicode"
@@ -120,12 +121,12 @@ func (m *MioAgent) runtimeMioPromptContext(t conversation.TurnInput) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func (m *MioAgent) stablePromptContext(t conversation.TurnInput) string {
+func (m *MioAgent) stablePromptContext(ctx context.Context, t conversation.TurnInput) string {
 	recipient := strings.ToLower(strings.TrimSpace(t.ViewerRecipient()))
 	if recipient == "" {
 		recipient = "mio"
 	}
-	return strings.TrimSpace(m.stableRuntimeContexts[recipient])
+	return currentRuntimeContext(ctx, m.runtimeContextProvider, recipient, m.stableRuntimeContexts[recipient])
 }
 
 func (m *MioAgent) rememberExpression(response string) {

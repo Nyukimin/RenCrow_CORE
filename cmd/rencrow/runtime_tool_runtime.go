@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"log"
 	"os"
 	"path/filepath"
@@ -9,9 +10,11 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/datacapability"
 	personrelatedcatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/personrelatedcatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/toolloop"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -20,10 +23,8 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	browseractorinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/browseractor"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
-	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
 	toolharnesspersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolharness"
-	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	securityinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -40,41 +41,23 @@ type toolRuntime struct {
 	PersonRelatedSummaryWorker    *runtimePersonRelatedSummaryWorker
 	PersonRelatedIdentityWorker   *runtimePersonRelatedIdentityWorker
 	SubagentMgr                   *subagent.Manager
-	ToolMediationRecorder         *toolharnesspersistence.JSONLRecorder
+	ActionManager                 *actionmanager.Manager
+	ToolMediationRecorder         *toolharnesspersistence.CanonicalRecorder
 	DataCapabilityCatalog         *runtimeDataCapabilityCatalog
 	DataRecallRegistry            *runtimeDataRecallRegistry
 	DataWriteRegistry             *runtimeDataWriteRegistry
 	KnowledgeMemoryToolStore      interface{ Close() error }
 }
 
-func buildToolRuntime(
-	cfg *config.Config,
-	workerToolProvider llm.ToolCallingProvider,
-	runtimeToolRegistry capdomain.ToolRegistry,
-	contextBudgetRecorder tools.ContextBudgetUsageRecorder,
-	skillCatalog ...*tools.SkillCatalog,
-) toolRuntime {
-	var workerSkillCatalog *tools.SkillCatalog
-	if len(skillCatalog) > 0 {
-		workerSkillCatalog = skillCatalog[0]
-	}
-	return buildToolRuntimeWithCapabilities(
-		cfg,
-		workerToolProvider,
-		runtimeToolRegistry,
-		contextBudgetRecorder,
-		workerSkillCatalog,
-		nil,
-	)
-}
-
 func buildToolRuntimeWithCapabilities(
+	taskOwner *taskmanager.Manager,
 	cfg *config.Config,
 	workerToolProvider llm.ToolCallingProvider,
 	runtimeToolRegistry capdomain.ToolRegistry,
 	contextBudgetRecorder tools.ContextBudgetUsageRecorder,
 	workerSkillCatalog *tools.SkillCatalog,
 	mcpToolCatalog *tools.MCPToolCatalog,
+	canonicalStore modulecore.EventStore,
 ) toolRuntime {
 	dataRecallRegistry := newRuntimeDataRecallRegistry()
 	dataWriteRegistry := newRuntimeDataWriteRegistry()
@@ -86,7 +69,10 @@ func buildToolRuntimeWithCapabilities(
 		filepath.Join(cfg.WorkspaceDir, "persona", "gin.md"),
 		filepath.Join(cfg.WorkspaceDir, "persona", "kin.md"),
 	}
-	toolMediationRecorder := buildToolMediationRecorder(cfg)
+	toolMediationRecorder, recorderErr := buildToolMediationRecorder(cfg, canonicalStore)
+	if recorderErr != nil {
+		log.Fatal("Required Tool Harness mediation recorder initialization failed")
+	}
 	movieCatalogPrepareCtx, cancelMovieCatalogPrepare := context.WithTimeout(context.Background(), 10*time.Second)
 	movieCatalogLookup, movieCatalogLookupErr := prepareRuntimeMovieCatalogLookup(
 		movieCatalogPrepareCtx, cfg.Storage.Databases.MovieCatalog,
@@ -314,11 +300,11 @@ func buildToolRuntimeWithCapabilities(
 
 	var actionManager *actionmanager.Manager
 	if cfg.Security.Enabled || cfg.Subagent.Enabled {
-		actionStore, err := actionpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "state", "actions"))
+		manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
 		if err != nil {
 			log.Fatalf("Failed to initialize action store: %v", err)
 		}
-		actionManager = actionmanager.New(actionStore)
+		actionManager = manager
 	}
 
 	if cfg.Security.Enabled {
@@ -385,6 +371,11 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("Tool context budget runner enabled (max_context_tokens=%d)", cfg.AIWorkflow.ContextBudgetTokens)
 	}
 
+	// Admission is the outermost execution boundary: rejected callers must not
+	// produce mediation facts or enter any effectful wrapper.
+	chatRunnerV2 = &taskExecutionRunner{owner: taskOwner, inner: chatRunnerV2}
+	workerRunnerV2 = &taskExecutionRunner{owner: taskOwner, inner: workerRunnerV2}
+
 	var subagentMgr *subagent.Manager
 	if cfg.Subagent.Enabled {
 		subagentProvider := resolveSubagentProvider(cfg, workerToolProvider)
@@ -429,6 +420,7 @@ func buildToolRuntimeWithCapabilities(
 		PersonRelatedSummaryWorker:    personRelatedSummaryWorker,
 		PersonRelatedIdentityWorker:   personRelatedIdentityWorker,
 		SubagentMgr:                   subagentMgr,
+		ActionManager:                 actionManager,
 		ToolMediationRecorder:         toolMediationRecorder,
 		DataCapabilityCatalog:         dataCapabilityCatalog,
 		DataRecallRegistry:            dataRecallRegistry,
@@ -447,19 +439,9 @@ func googleSearchValue(configValue, envName string) string {
 	return strings.TrimSpace(os.Getenv(envName))
 }
 
-func buildToolMediationRecorder(cfg *config.Config) *toolharnesspersistence.JSONLRecorder {
+func buildToolMediationRecorder(cfg *config.Config, canonicalStore modulecore.EventStore) (*toolharnesspersistence.CanonicalRecorder, error) {
 	if cfg == nil || !cfg.ToolHarness.IsEnabled() || !cfg.ToolHarness.ShouldRecordEvents() {
-		return nil
+		return nil, nil
 	}
-	path := cfg.ToolHarness.LogPath
-	if path == "" {
-		path = filepath.Join(cfg.WorkspaceDir, "logs", "tool_mediation.jsonl")
-	}
-	recorder, err := toolharnesspersistence.NewJSONLRecorder(path)
-	if err != nil {
-		log.Printf("Tool Harness mediation recorder disabled: %v", err)
-		return nil
-	}
-	log.Printf("Tool Harness mediation recorder initialized (%s)", path)
-	return recorder
+	return toolharnesspersistence.NewCanonicalRecorder(canonicalStore)
 }

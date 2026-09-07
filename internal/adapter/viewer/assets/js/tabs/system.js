@@ -18,7 +18,7 @@ function renderSystem() {
       from: ev.from || '',
       to: ev.to || '',
       route: ev.route || '',
-      job_id: ev.job_id || '',
+      task_id: ev.task_id || '',
       content: raw,
     }, null, 2);
     const tr = document.createElement('tr');
@@ -28,7 +28,7 @@ function renderSystem() {
       '<td>' + esc(agName(ev.from || '-')) + '</td>' +
       '<td>' + esc(agName(ev.to || '-')) + '</td>' +
       '<td>' + esc(ev.route || '-') + '</td>' +
-      '<td class="code">' + esc(ev.job_id || '-') + '</td>' +
+      '<td class="code">' + esc(ev.task_id || '-') + '</td>' +
       '<td><div class="sys-content" data-raw="' + esc(raw) + '">' + esc(raw || '-') + '</div></td>' +
       '<td><div class="sys-actions">' +
         '<button class="ctl-btn" onclick="copyTextPayload(this, ' + escAttr(JSON.stringify(raw)) + ')">Text</button>' +

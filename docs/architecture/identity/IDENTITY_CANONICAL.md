@@ -3301,3 +3301,522 @@ Step 03をcompleteとしない。
   `passed`／`failed`／`blocked` の status／exit code を fake service／typed route seam で検査する。
   unit test は実 service restart、deploy、artifact publication、Git、shell、または production
   Shiro route を実行しない。
+
+
+### Step 20 follow-up: Complexity Coder diff Task identity
+
+- Complexity Coder diffのrequest／resultはtyped `TaskID`とJSON `task_id`を使う。旧`JobID`／`job_id`をruntime互換入力として受理しない。
+- Viewer受付は任意の非空TaskIDをcanonical validatorで検証し、未指定時だけ新規TaskIDを生成する。service直接呼出しも同じ検証を行い、生成した`TurnInput.RootTaskID`と結果の`TaskID`を一致させる。Turn／Trace／Messageは別identityを維持する。
+- malformed／wrong-type ID、未知field、複数JSON valueはCoder実行・report保存より前に拒否する。失敗reportの相関表示もTask IDに統一する。既存のreview-only／patch未適用境界を維持する。
+- Failure: 旧JobIDをTaskID値で埋めた一方、Coder inputには別TaskIDを生成して結果相関を切断した。Invariant: request→Coder input→resultは同一TaskID。Enforcement: typed ID、受付validation、単一生成、旧JSON拒否。Tests: 指定／未指定の同一identity、wrong-type拒否、旧key拒否、review-onlyの回帰検査。
+- この修正のsource testはdurable Task作成、production Coder route、配備後E2E、Step20全体完了の証拠を代替しない。
+
+
+### Step 19 follow-up: Home / Reports Task projection
+
+- Home／ReportsはExecution EvidenceとVerification APIの`task_id`で同じTaskの結果を結合し、表示・copy text・detail queryにも同じ値を使う。旧`job_id` fallbackを追加しない。
+- Failure: APIが`task_id`へ移行済みでもHome側が旧keyでgroupingし、正しいレポートを一覧から落とした。Invariant: 同じTaskのEvidence／Verificationは一つの表示へ結合し、両detail linkは`task_id`を指定する。Enforcement / Tests: canonical-only API fixtureによる一覧件数、相関、表示、リンク、旧key非採用を既存Viewer Node suiteで検査する。
+- 本項はHome／ReportsのTask相関修正である。Viewer内部の別Job名称、Report projection key、Develop／Progress／System／Instructions、全Graph再構築、実runtimeの配備後E2Eは別途閉じる。
+
+
+### Step 19 follow-up: Develop Task correlation
+
+- Developは現在TaskのIDとEvidence／Verification／logの`task_id`を照合する。旧`job_id`をfallbackとして採用しない。Task未選択時はEvidence／Verificationなし、関連logなしとし、他Taskの結果を表示しない。
+- Failure / Problem: API移行後もDevelopが旧keyを読み、現在Taskの成果物・検証結果・logを失った。Cause: 表示側の相関key残存と、空ID時に全logを採用する条件。Lesson / Invariant: 相関はcanonical Task IDの一致を要し、未選択を全件表示として扱わない。
+- Enforcement / Tests: 既存Viewer Node suiteで異なるTask、旧keyだけのデータ、現在Task、空選択を混在させ、成果物・検証結果・直近8件logの選択と非混入を検査する。実ブラウザのdesktop／mobile幅でも独立した描画を確認する。
+- 本項はDevelopの表示相関に限定する。共有`state.jobs`の内部名称、Instructions保存／読出しの`job_ids`、配備後の認証済み実Actor routeと再起動後E2Eは未完了境界として残す。独立描画testはproduction E2Eの代替ではない。
+
+
+### Step 19 follow-up: Instructions canonical Task links
+
+- CORE Viewerのブラウザ下書きは`rencrow.viewer.instructions.v2`を保存正本とし、Developからの作成、正規化、状態編集、カード表示に`task_ids`を使用する。サーバーのTask作成・実行状態をこの下書きで代替しない。
+- v1領域は変更・削除せず保持する。存在時はInstructionsで旧下書きの残存と未移行を明示する。v1を通常の読出しfallback、dual write、ID別名として使用しない。旧IDのTask相関が証明されていないため、既存下書きの移行は未完了であり、本項だけで利用者データ移行を完了としない。
+- Failure / Problem / Cause: Developの旧`job_ids`書込みとInstructionsの旧key正規化が同じ名称を永続化した。Lesson / Invariant: 新規下書きの作成→保存→状態編集→再読込→表示で同じ`task_ids`を保持し、元の旧下書きを破壊しない。Enforcement / Tests: 既存Viewer Node suiteでこの往復、旧領域のbyte不変、旧key非採用を検査する。
+- Full regression（persistence変更）、既存下書き移行、配備後の実Actor／認証済み経路確認は未完了境界として残す。
+
+
+### Step 19 follow-up: Archived instruction text recovery
+
+- 旧ブラウザ下書きはInstructionsの原本閲覧面から本文・保存時記録を確認できる。明示操作で本文だけを空の編集欄へ戻し、通常の新規下書き作成へ進める。編集中本文を上書きせず、元領域を書換えず、旧ID・実行状態・Task相関を継承しない。
+- 原本読出しは復元画面に限定し、通常queueのfallback／dual readには使わない。表示時のsnapshotを操作対象とし、不正JSON／非配列／storage拒否時は失敗を表示してsnapshotを破棄する。本文・記録はHTML escapeし、本文が文字列でない行は復元対象にしない。
+- Failure / Problem: 保存領域切替後に旧下書きの存在通知だけを残し本文へ到達できなくした。Cause: 非破壊保存を利用可能性と取り違えた。Lesson / Invariant: 保持した利用者データには内容確認と安全な再利用経路が必要。Enforcement / Tests: 本文完全一致、原本byte不変、旧ID非継承、編集欄非上書き、不正入力、storage拒否、HTML escape、実ブラウザ操作を検査する。
+- 本文再利用は旧Task IDの移行ではない。旧Task対応の証明、production配備後検証とFull regressionは別の未完了境界として残す。
+
+
+### Step 19 follow-up: Progress Task event correlation
+
+- ProgressはEventのtop-level `task_id`で進捗を集計する。IDなしイベントと旧`job_id`だけのイベントは採用せず、canonical keyと旧keyのdual readを行わない。画面の見出し・ID列・Agentカード・件数はTask表記にする。
+- Failure / Problem: canonical EventをProgressが旧keyで読むため、現在Taskの進捗が欠落した。Cause: 入力契約移行と表示consumerの不一致。Lesson / Invariant: Task単位の状態・失敗・詳細イベントは同じcanonical IDから導出する。Enforcement / Tests: 成功Taskと失敗Taskを混在させた集計、旧key非採用、詳細Open／Hide、Task表示を既存Viewer Node suiteと独立ブラウザ操作で確認する。
+- 共有frontend stateの`jobID`／`progressOpenJobs`と関数名は内部投影名として今回維持する。これらの名称整理、phase／Actor帰属の全面改修、Systemタブ、Full regressionと配備後E2Eは未完了境界として残す。
+
+
+### Step 19 follow-up: System event Task display and copy
+
+- SystemタブのTask列とRowコピーJSONはEventのtop-level `task_id`を使用し、旧`job_id`を採用・出力しない。Taskなしのsystem eventは表示対象のまま、列は`-`、JSONは空`task_id`とする。Textコピーは原contentを維持する。
+- Failure / Problem: canonical EventのTask相関がSystem列とRowコピーから消失した。Cause: 描画とコピーpayloadの両consumerが旧keyを参照した。Lesson / Invariant: 同じEventの表示と外部へコピーするJSONは同一Task IDを保持する。Enforcement / Tests: canonical IDと矛盾する旧key、旧keyのみのEvent、Text／Row payload、既存filterをNode suiteとPC／mobile幅のブラウザ操作で検査する。
+- 本項はSystem表示・copyに限定する。全Viewer内部のJob名称整理、残るタブ、Full regressionとproduction配備後E2Eは別途確認する。
+
+
+### Step 19/20 follow-up: Shared Viewer identity cleanup
+
+- Viewerの共有投影は`state.tasks`、Agentの相関は`taskID`、Tasksタブは`panel-tasks`／`tabs/tasks.js`を使用する。Evidence選択、Progress詳細開閉、voice-direct相関、各タブ間の遷移、WebMCP snapshotの`task_count`／`running_task_count`も同じ概念へ揃え、旧名の別更新経路を残さない。
+- Task通知のingest／dedupe／Timeline描画は一系統とし、旧Job通知の関数・event branch・styleは削除する。Task通知styleをcanonical classに結び付ける。既存APIに追随していなかったRevenue／Skill PRのAction fixtureとEvidence／Coder／VoiceのTask fixtureを現契約へ修正した。
+- Failure / Problem: wire key移行だけでは内部投影・navigation・copy/snapshot・通知経路の旧概念が残存した。Cause: consumer全体の追跡不足。Lesson / Invariant: 同じTask情報のproducerと全consumerを同じ実装単位で切り替え、別名／旧経路を機械的に検出する。Enforcement / Tests: Viewer Node suiteにTask projection/navigation、retired identity source scan、asset実在、Task通知dedupe、WebMCP count契約を追加する。
+- 前項までに残件とした共有frontend Job名称、Tasksタブ見出し、System相関はこのsource単位で修正した。配備後／再起動後の実Actor・SSE／Graph全体の受入証跡をsource検査で代替しない。
+
+### Step 20 follow-up: External movie crawler reference
+
+- Movie Catalogのsidecar crawl参照はCORE内で`ExternalCrawlJobID`と明示する。値を生成するownerはTools映画crawl gatewayであり、CORE Task identityではない。COREのTaskID生成・検索・権限判断へ転用しない。
+- sidecar transportおよび既存movie fetch responseの`job_id`は、この外部crawl lifecycleのwire metadataとして保持する（既存公開契約は`docs/06_Public_API仕様.md`のMovie Catalog節）。CORE canonical IDの旧aliasとしてのJobIDとは区別する。外部IDをTaskIDへ文字列置換してcanonical化したことにしない。
+- Failure / Problem / Cause: 外部IDを単にJobIDと命名しCORE Taskの旧名称との判別を難しくした。Lesson / Invariant: 外部IDはownerと用途を名前で区別し、実際のupstream値を保持する。Enforcement / Tests: crawler／backfillテストの外部値round-trip、HTTP pollingとartifact hash検査を維持する。sidecar実配備・外部I/Oは未検証。
+
+#### Follow-up: atomic SSE subscription and typed client contract
+
+- EventHubの購読登録と履歴snapshot取得を同じlockで行う。Eventの履歴追加とlive enqueueも同じlockで行い、snapshot/live境界の二重送信・取りこぼしを防ぐ。ViewerとChrome bridgeはこの単一subscription契約を使用する。
+- audio routerはlive audio chunkだけを配信する。従来の履歴loopはtransient除外とaudio専用filterにより常に空だったため削除した。再生済み音声を再送しない境界を維持する。
+- Failure / Problem: Viewerのsubscribe後History取得は同じEventを二重送信し、ChromeのHistory取得後subscribeは境界Eventを取りこぼした。Cause: snapshot取得と購読登録の別操作。Lesson / Invariant: 履歴とlive streamの分割点はownerがatomicに確定する。Enforcement: EventHubの単一lockとsnapshotを返すSubscribe契約。Tests: 購読callbackでEventを同期発行する二重送信回帰、切断後client数、履歴cursor、transient音声除外、Chrome session filter。
+- Complexity Go clientはtyped TaskIDを送受信し、指定時のrequest/result一致、未指定時のserver生成ID、欠落・malformed・wrong-type結果拒否を検査する。clientで別TaskIDを生成しない。
+- deprecated test fixtureのItemID／ChatID／RequestID prefixと、Viewer audio harnessの実Memory module読込みを現行契約へ揃えた。旧IDをproductionで受理する互換経路は追加しない。
+- 上記はsource検証であり、race検査のtimeout、永続Event Storeからの容量外backfill、全Graph再構築、実Actor経路・再起動後検証、Full regressionは未完了境界として残す。
+
+#### Follow-up specification: bounded canonical identity graph projection
+
+- ownerはCORE Viewer。`GET /viewer/identity-graph?trace_id=<Canonical TraceID>`は既存Viewer認証・profile制約の内側で実行するread-only queryとする。未知query、空・不正TraceID、GET以外を拒否する。独立Graph Store、legacy lookup、LLM解釈は追加しない。
+- Event Storeの既存`ListByTraceID`で一つのTraceを最大1000 Eventまで取得する。超過・store失敗・閉じていないEvent参照・cycleは成功扱いにせず、bounded errorを返す。EventSeq順で安定出力し、`ValidateEventEnvelopeGraph`で正本関係を検証する。
+- response schemaは`rencrow.identity-graph.v1`。`trace_id`、`events`、`tasks`、`messages`と、各graphの明示的なedgeを返す。payload、本文、任意filesystem path、module root、raw error、secretを返さない。
+- Event nodeはEventID、EventSeq、event type、TraceID、TaskID、RunID、MessageID、SessionID、ThreadID、TurnIDと、正本に存在するActorKind／ActorIDだけを持つ。Event edgeはcausation／dependency。model、provider、From／To routing labelからActorを推測しない。
+- Task nodeはEventに紐づくTaskIDを起点とし、Task Storeのparent／dependency／supersedes参照を最大256 Taskまで辿る。TaskID、status、上記関係だけを投影し、本文・共有contextを複製しない。参照欠落、cycle、上限超過は明示的に拒否する。
+- Communication graphはMessageIDと、そのMessageを記録したEventIDの関係を表す。発話主体は該当Eventに記録されたActorだけを示し、未記録のrecipientやspeakerを補完しない。Message間の因果はEvent edgeを通して追跡する。
+- ViewerのTasks表示から観測済みTraceを選んでGraphを表示できるようにする。Taskの実行状態をGraphから更新しない。query失敗・未観測Traceは画面へ明示する。
+- CLI工程: 正本query、ID照合、graph構築、安定順序。Boundary工程: HTTP入力・認証・件数制限・secret-free DTO・失敗status。LLM工程は不要。
+- 受入証拠: 正本storeからの再構築、Event／Task参照とcycle検査、unrelated trace除外、秘密値非投影、再読込みの同一結果、認証済みViewerの実queryと再起動後の同一Graph。source testのみでは最後の運用条件を完了としない。
+
+#### Follow-up specification: durable SSE replay
+
+- reconnectの`Last-Event-ID`はEvent Store正本のEventSeqとして扱う。メモリ履歴容量を越えたEventをsilentに省略しない。
+- Event Storeはcomponent、after EventSeq、固定through EventSeq、page limitを受け、EventSeq昇順のpageと固定throughを返す。初回のみthroughを正本queryで確定し、後続pageは同じthroughを保持する。各pageは最大1000 Event、負cursor・不正bound・正本より先のcursorは拒否する。
+- Viewerの再送はCanonicalEventLogの既存projectionを使用する。購読登録後に固定範囲を再送し、live channelと重複するEventSeqは一度だけ送信する。transient audio等の既存再送禁止を維持する。
+- replayはrequest contextで中止可能とし、途中失敗時に未取得範囲を取得済みと報告しない。slow clientのlive queue overflowはsilent dropではなく切断して再接続による正本再送へ戻す。各consumerはchannel closeを終端として扱う。
+- CLI工程はindexed range queryと順序・重複制御、Boundary工程はcursor validation・page bound・context・エラーと切断。LLM工程は不要。source受入には保持容量外、restart後、再送/live境界、overflow回復、拒否・取消しを含める。実Viewer再接続は配備後に別途検証する。
+
+#### Follow-up specification: STT transport identity boundary
+
+- COREのSTT adapterが受け取るproviderの`event_id`は外部transport参照であり、正本EventIDとして採用しない。providerが返した値は保持し、不在時に日付・counter等からEventIDを補完しない。既存responseのoptional/empty key契約は維持する。
+- `/stt` WebSocketのready通知はproviderと接続準備状態を示す。会話ownerからSessionIDを受け取らない経路では`session_id`を出力しない。計測用logにも未保存のSessionIDを生成せず、既存durationとmodeを記録する。Sessionを要求する後続会話は既存CORE ingressで解決する。
+- Failure / Problem: STT transportのcounter IDを会話SessionIDにも転用し、wireと計測logに異なる偽Sessionを生成した。Cause: provider参照とCORE identityの混同。Lesson / Invariant: 正本に存在しないidentityを補完しない。Enforcement / Tests: 旧generatorとallowlistを削除し、外部参照の保持／不在、WebSocket通知のSessionID非生成、既存Gateway route、計測durationを検査する。
+- CLI工程はSTT応答と計測、Boundary工程は公開payloadとID非補完。LLM工程は不要。source検証と実音声経路の配備後検証を分ける。
+
+### Step 20 follow-up: Ops Recall Trace projection
+
+- MemoryのRecall一覧とNews Packの利用履歴も、同じRecallTraceの`TraceID`をTrace列へ表示する。項目0件の行を含め旧ResponseIDへfallbackしない。各画面の既存項目・列数・matching・警告表示を維持する。
+
+- OpsのRecent TraceはRecallTrace正本の`TraceID`と`TurnID`を表示し、件数をTracesとして示す。廃止済み`ResponseID`を読まず、Trace／Turn欠落を旧fieldへのfallbackで補わない。
+- 既存のRecall API、L1 owner、5カードの構成、安全なIDのみの投影を維持する。Recall本文、prompt、raw outputを表示へ追加しない。
+- Failure / Problem: L1のRecallTrace契約は移行済みでも、Opsの詳細とブラウザfixtureが旧ResponseIDを前提としていた。Cause: 保存側と表示consumerの同時切替が不足していた。Lesson / Invariant: UIは正本APIの識別子をそのまま投影し、テストは旧固定文字列ではなく実APIのTraceID／TurnIDと画面を照合する。Enforcement / Tests: 既存Viewer Node suiteでTrace／Turn表示と旧field非採用を検査し、populatedブラウザE2Eで実ストア→API→desktop／mobile表示を照合する。
+- 隔離Viewer E2Eは配備後の実ActorによるRecall検証の代替ではない。
+
+### Step 12 follow-up: Vision transport Request identity
+
+- CORE Vision processorは、サイズ等のローカル検証を通った各画像／動画のAnalyze通信ごとに、`modules/core.NewRequestID`で正本RequestIDを一度だけ生成する。一つの会話Traceに複数の添付があってもRequestIDは別々とし、TraceID・SessionID・TaskIDをRequestIDへ流用しない。
+- CORE Vision clientは送信前にRequestIDを検証し、不正値を`VISION_INVALID_REQUEST_ID`として通信前に拒否する。既存の`CORE -> RenCrow_Vision -> Wild`経路とmultipart仕様を維持し、headerの`X-Request-Id`とformの`request_id`へ同じ値を渡す。
+- 成功応答の`request_id`は送信した正本RequestIDとの完全一致を必須とする。欠落、不正形式、別要求のIDは`VISION_IDENTITY_MISMATCH`とし、解析本文を会話へ取り込まない。identity errorへ応答本文や未検証IDを埋め込まない。remote failureは既存typed errorとして返し、成功した解析結果に変換しない。
+- 親のTraceID・SessionIDと添付原本を保ち、解析後のテキストだけを既存Agent経路へ渡す。RequestIDから新しいTraceを生成しない。
+- Failure / Problem: 複数のVision通信へ同一TraceIDをRequestIDとして渡し、成功応答の相関を検査していなかった。Cause: 会話の因果識別子と一回の通信要求の識別子を兼用した。Lesson / Invariant: 通信ごとの独立IDと応答照合は決定的なCORE境界の責務とする。Enforcement / Tests: 複数添付のID一意性、親Trace保持、header/form一致、不正入力で通信0件、欠落／不正／別IDの成功応答拒否をprocessor／HTTP contract testで検査する。
+- 本項のsource testは実Actorによる配備後の画像解析、Action／Attempt／Response Eventの完全な連結、全Identity工程の完了を代替しない。
+
+### Step 12 follow-up: Subagent execution context binding
+
+- Subagent ManagerがCORE所有のSuperAgent runtime contextを受け取った場合、同じTaskID・RunID・TraceIDを既存のexecution contextへ接続してから開始記録、LLM呼出し、Tool実行へ進む。新しいIDを発行せず、TaskからTraceを導出しない。
+- 既にexecution contextがある場合は3つのIDの完全一致を要求する。欠損・不正なSuperAgent runtime identity、または既存execution contextとの不一致は開始記録と実行より前に拒否する。Recorderを無効にしてもこの境界は維持する。
+- SuperAgent runtime contextを使用しない独立したowner routeは、既存のToolLoop Config／execution context契約を維持する。本項は非会話routeで許容される任意Traceを無条件に必須化しない。
+- Failure / Problem: ManagerのSuperAgent記録用contextとTool実行用contextが別々で、前者だけを渡した場合にToolLoopがTraceなしのexecution identityを作った。Cause: Task／RunをConfigへコピーする一方、Trace接続を上流callerだけに依存した。Lesson / Invariant: Managerは受け取った正本runtime identityを実行境界へ一貫して接続し、競合時に上書きしない。Enforcement / Tests: 実ActionStoreとTool runnerを通した同一identity保持、Recorderの有無、Task／Run／Trace競合でprovider・Tool・開始記録が0件であることを検証する。
+- Source検証は配備後の実Actor Tool経路、全Event参照の連結、再起動後の運用確認を代替しない。
+
+### Step 15 follow-up: Scheduler execution outcome truth
+
+- Schedulerの発火結果`completed`は、対応するExecutorが処理を実行し成功を返した場合に限る。Executor未設定、またはExecutorがそのSchedule targetを処理できない場合は、共通の`ErrExecutorUnavailable`を失敗として扱い、RunLogの`status=failed`とerrorへ記録する。実行せず成功扱いにする経路を残さない。
+- Pronunciation用Executorは既定target以外を受理せず、inner Executor未設定も同じエラーを返す。既存の実行成功、実行失敗、GPU busy等の`DeferredError`と再実行間隔の契約は維持する。
+- Failure / Problem: Scheduler本体とPronunciation dispatchが、Executorなし／対象外を正常終了として記録した。Cause: 発火記録の保存と処理成功を同一視した。Lesson / Invariant: ID付きRunLogの存在は処理成功の根拠ではない。Enforcement / Tests: 未設定・対象外でcompletedを保存しないこと、対応targetは一度だけ委譲すること、既存failed/deferred/successの保存結果を検証する。
+- 本項はRunLogの結果表現の修正であり、既存の発火時TaskID／RunIDを正本TaskManagerへ接続する残件、配備後の実Actor経路、再起動／再試行の受入条件を完了扱いにしない。
+
+#### Step12 follow-up: TTS public playback reference
+
+- **Failure / Problem:** COREのTTS公開再生キーが`ResponseID` / `response_id`と呼ばれ、通信応答のCanonical `rsp_` identityと混同されていた。
+- **Cause:** 通常会話のTask文字列とIdleChatの`session:sequence`を、音声キューの相関参照として同じ名前で扱っていた。
+- **Lesson / Invariant:** 公開再生キーの名前は`PublicPlaybackRef`、Viewerのwire fieldは`public_playback_ref`とする。これはopaqueな再生相関参照であり、Canonical ResponseIDではない。値、順序、generation、timeout、再生完了時のpending解除を維持する。型付き`SynthesisRequest.ResponseID`と`ChunkRef.ResponseID`は通信契約として維持する。
+- **Enforcement:** COREの公開session生成、bridge callback、chunk/completion payload、Viewer音声queue、acknowledgement、再生状態snapshotを一つの変更単位で更新する。旧public `response_id`のfallbackは追加しない。Viewerの汎用Eventにある本来のResponseIDを置換しない。active audio Viewerによる既存の操作権限を保持する。
+- **Boundary:** 実際のCORE bridgeの`/api/tts` provider payloadはtext/voice_id/speed/pitchを送り、公開再生キーを送らない。この単位はGatewayのtransport request header、通信identity生成、Task/Actionの永続owner bindingを変更しない。履歴のTTSイベントは既存のlive-only replay policyを維持する。稼働中queueとViewer assetの切替、実音声、実Actorの受入は配備時に別途検証する。
+- **Tests:** 公開wire fieldの正確なechoと旧キー不受理、親Trace伝播、chunk順序、stale generation、timeout、中断、完了、active audio権限をGo/Viewer Nodeで検査する。正規音声経路と最終Full回帰が未検証の間は本programを完了にしない。
+
+#### Stage / Closure receipt action binding
+
+- **Failure / Problem:** 一回のLIVE_VERIFIEDからDONEへの自動終了処理が、Stage、DONE Stage、Closureごとに別ActionIDを生成していた。
+- **Cause:** 空またはopaqueなcaller RequestIDを各receipt生成箇所で独立してActionIDへ解決し、最初に永続化したActionを後続へ渡していなかった。
+- **Invariant / Enforcement:** 新規stageで一度決定したActionIDを後続closureへ渡す。再開時は同じstage keyの永続receiptにあるActionIDを再利用し、再試行callerの相関文字列で置換しない。DONEのprepared receiptからclosureを再開する場合も同じ規則を使う。既存store、idempotency key、payload hash、lease、終了順序を維持する。
+- **Tests:** LIVE_VERIFIED / DONE / ClosureのAction一致、prepared receiptからの再開と再試行、既存payload競合・終了処理の試験で保証する。過去に分裂したreceiptの移行、Revise入力の命名、DevelopmentEventのTraceIDとcaller相関の分離、配備後の実Actor検証は別の未完了境界として保持する。
+
+#### Persisted closure ActionID consistency gate
+
+- **Failure / Problem:** LIVE_VERIFIED Stage、DONE Stage、DONE Closureに異なるActionIDが保存されていても、再実行や復旧が成功扱いになり、resource更新やlease解放を継続できた。
+- **Cause:** 各receiptの状態とpayload hashだけを検査し、同じUnit・Revisionに属する終了処理のAction束縛を横断照合していなかった。
+- **Invariant / Enforcement:** 終了処理の入口では、既存owner storeから同一Unit・RevisionのLIVE_VERIFIED Stage、DONE Stage、DONE Closureを読む。存在する各receiptのActionIDは有効かつ同一でなければならない。欠落・不正・不一致は`ErrLifecycleConflict`、lookup失敗はそのerrorを返し、Event発行、状態変更、resource更新、lease解放に進まない。receiptがまだ存在しない場合だけ通常の新規処理へ進む。保存済みidentityを自動修復・置換しない。
+- **Tests:** 通常Revise、closure resume、completeDoneの各入口で、stage間不一致、closure不一致、不正値、空値を拒否し、storeとleaseが変更されないことを検査する。正常終了・復旧・関連storeの回帰試験を維持する。
+- **Remaining:** このgateは既存データの移行、過去のDONE projectionの是正、実Actorの配備後検証を代替しない。これらの証拠が揃うまでIdentity programは未完了である。
+
+#### Current / Pipeline closure evidence projection
+
+- **Failure / Problem:** 永続receiptのAction束縛が欠落・不整合でも、CurrentやPipelineがDONEを成功表示していた。lifecycle情報がないitemにも無条件のCurrent互換表示があった。
+- **Invariant / Enforcement:** DONE / LIVE_VERIFIEDの投影では、COREの同じclosure Action検査を再利用する。有効なUnit・Revisionと保存済みActionの証拠が必要である。不整合はCurrentから除外するがPipelineから隠さず、派生DeliveryStateとDONE stageをblockedにし、既存Reason欄へ根拠を表示する。storeのDeliveryStateやreceiptは書き換えない。identity conflict以外のlookup errorは投影全体のerrorとして返す。
+- **Ownership:** Action判定はBacklog serviceに一意に置き、Viewerへ再実装しない。投影中のUnit・Revision別結果は一回のrequest内でのみ再利用し、永続cacheや新しい正本を作らない。
+- **Tests:** 正常closureのCurrent表示、不一致・不正・Action欠落・Unit欠落・receipt欠落の除外と可視blocked理由、保存状態不変、Viewer既存rendererのblocked表示を検査する。稼働Viewer、実Actor、過去データの移行と最終Fullは別途確認する。
+
+#### Development event correlation and canonical persistence
+
+- **Failure / Problem:** transitionのcaller RequestIDをTraceIDに流し、開発recordとpayloadから合成した診断キーをMessageIDに入れていた。正規ID検査がこれを拒否し、event store未接続でも成功が返っていた。
+- **Invariant / Enforcement:** producerのcaller相関は`DevelopmentEvent.request_id`として保持する。開発record／診断referenceはevent contentに残し、MessageIDを名乗らない。sinkは既存execution contextのTaskID・RunID・TraceIDと、検証済みTool scopeのActorを引き継ぐ。Trace競合、Actor欠落、不正scopeは保存前に拒否する。execution contextがないイベントに実Actorを捏造しない。Trace未指定の場合のroot発行は既存canonical event ownerに一意に委ねる。store未接続と保存失敗はerrorで返す。
+- **Tests:** producerのRequestID分離、正規sinkへの保存、Trace保持と未指定root、execution identity継承、競合・不正Trace・Actor欠落・store障害を検査する。
+- **Remaining:** Atlas HTTP／Heartbeatの実行入口での完全なActor・Run束縛、Action／Attemptのevent envelopeへの接続、開発Artifactの正規owner化、過去event移行、配備後の実Actor／Viewer traceは未完了であり、この局所修正の試験を運用証拠にしない。
+
+#### Heartbeat Task / Run owner integration
+
+- **Failure / Problem:** HeartbeatがTaskIDを直接生成してWorkerへ渡し、Task／Run永続ownerを経由しないため、実行、失敗時Atlas記録、終了状態を同じ正本で追跡できなかった。
+- **Invariant:** Heartbeatからの各Worker実行は、既存TaskManagerのCreateとStartRunWithReasonで確定したTask／Runを使用する。owner未接続・発行失敗・返却identity不整合の場合はWorkerを呼ばない。実Actorはruntimeで接続したShiroと一致する認証済みscopeに限り、LLM観測文字列から推定しない。
+- **Execution boundary:** 新規Heartbeat処理に既存の異なるexecution identityを上書きしない。取得したcontextはWorker、失敗時Atlas Revise、後処理へ伝搬する。保存ownerはTaskManager一つとし、Heartbeatへ別Task／Runストアを新設しない。
+- **Terminal boundary:** Workerだけでなく同じ処理内のAtlas更新・通知・保存失敗も終了結果に反映する。成功、失敗、取消はownerの終端APIへ記録する。取消後の終端保存は時間を限定したcleanup contextで行い、保存失敗を成功に変換しない。
+- **Scope:** 三OS共通のGo APIを使用する。新しいLLM処理や直接backend経路を作らず、既存のShiroとmodule routeを維持する。HTTPのユーザー操作をAgent実行に偽装しない。
+- **Acceptance:** 永続Task／Run発行前のWorker実行禁止、ownerエラー伝播、同一context、終端状態、既存Heartbeat回帰を検証する。再起動時の中断処理回復、稼働実Actor／Viewer trace、最終Fullは別の必須終端証拠であり、ソース試験だけでは完了としない。
+
+#### Task / Run restart ownership prerequisite
+
+- **Failure / Problem:** Task JSONLはinstance内mutexしか持たず、runtimeとTask CLIが同じ保存先へ別々のManagerを開ける。RUNNINGやAssigneeだけでは前processの中断実行であることを証明できない。
+- **Invariant:** restart recoveryは、同じTask／Runの実行owner、排他権、旧generationの失効を正本Evidenceで確認してからowner APIで行う。Task status、title、Actor名、PIDだけを根拠に他の実行を終了・再開しない。過去recordにownerの証明がなければ新しいidentityを捏造せず未確認として残す。
+- **Required implementation:** Task保存ownerのprocess間writer排他、実行generation／lease束縛、Close／crash時の解放、CLI書込との排他、Viewer読取、三OS共通の失敗契約を一体として実装・検証する。その後にTaskManagerの同じTaskと新Runによる再開を接続する。別のTaskストアや独立recovery正本を追加しない。
+- **Status:** writer排他とRunへの数値generation保存は下記の通り実装済み。実行境界への接続、旧実行の停止証明、restart回復は未完了であり、Heartbeatの通常実行試験成功を再起動保証として扱わない。
+
+#### Canonical Task JSONL writer lease
+
+- **Enforcement:** Task JSONL writerは保存rootの永続`.writer.lock`をOS advisory lockで排他的に保持する。Linux／macOSはFlock、WindowsはLockFileExを使用し、競合は`ErrTaskWriterBusy`で即時拒否する。lock fileの存在やPIDを生死判定に使わず、lock fileを削除しない。Closeとprocess終了でOS排他権を解放する。
+- **Read boundary:** 読取専用handleは同じ正本fileを読み、writer権を取得しない。更新は拒否する。CLIのlist／show／notificationsはこの読取経路を使用する。CLIの変更操作はwriter権が必要であり、稼働writerと競合した場合に別pathや別storeへ迂回しない。
+- **Lifecycle:** TaskManagerのCloseは所有storeを閉じ、runtimeは利用側停止後にTaskManagerを閉じる。Close後のwriteは禁止する。再起動試験は旧writerのCloseまたは実process終了を挟む。
+- **Tests / Boundary:** 同時writer拒否、読取専用とClose後の更新拒否、Close後の再取得、子process強制終了後の再取得を検査する。OS lockは協調する新実装のwriter排他であり、旧binaryや独立した手動file編集まで停止させる証拠ではない。Task／Runのexecutor generation束縛、過去record移行、回復policy、配備後の実Actor検証は引き続き必須である。
+
+#### Run writer-generation binding
+
+- **Contract:** `writer_generation`はTask store内の単調増加する数値fenceであり、GenerationIDでもAgent identityでもない。OS writer排他の取得後に保存counterを追記で進め、同期書込みが成功してからwriterを公開する。末尾はbounded readで検査し、途中書込み・不連続値を拒否する。保存済みRunの最大世代以下をwriterとして公開しない。counter不正・overflowはfail closedとし、0へ戻さない。
+- **Run ownership:** TaskManagerは現在writerのgenerationを取得して新Runへ束縛する。保存・返却Runは同じ値を持ち、後から変更しない。新Runのgenerationは現在writerと一致しなければ保存しない。既存Runの0は歴史的な所有権未確認を表し、現在generationを後付けしない。
+- **Recovery boundary:** 新generationの取得は旧writerの排他権が失われた証拠であり、旧Actorの外部効果が全て停止した証拠ではない。external effectに至る実行境界でのfence検査・quiescence、checkpoint／再開policy、過去Runの扱いが確定するまで自動回復を完了扱いにしない。
+
+#### Task owner execution admission
+
+- **Problem / Cause:** 正規形式のTaskID／RunIDだけでは、そのRunが現在writerの下で同じAgentにより実行可能かを証明できない。保存済みRUNNINGも再起動を越えて残り得る。
+- **Invariant / Enforcement:** TaskManagerの`ValidateRunExecution`を照合の唯一のownerとする。Task／Runの正規性、同一Task、両方のRUNNING、未完了Run、呼出Actorと両方のAssigneeの厳密一致、唯一のactive Run、現在の非0 writer generationとの一致を要求する。読取失敗、writer終了、取消、歴史的generation 0は許可へ変換しない。照合は状態を書き換えず、新Task／RunやActorを発行しない。
+- **Tests:** 同一ownerの有効Runを許可し、Actor／Task／Run不一致、終端Run、閉じたwriter、新writerから見た古いRUNNINGを拒否する。明示的な再開で作られた新Runだけが現世代に一致することを検査する。
+- **Boundary:** これは検査時点のadmissionであり、検査後の状態遷移と外部効果を原子的に固定しない。Security設定に依存しない正規ツール実行境界への接続、実行中処理の停止／取消、外部ownerでの冪等性、配備後の実Actor検証は別の必須境界として残す。未接続の検査を実行経路の保護済み証拠にしない。
+
+#### Runtime Task owner initialization order
+
+- **Problem:** Task ownerをViewer登録の副作用として生成すると、それより先に構築されるTool runtimeへ同じownerを必須依存として渡せない。
+- **Invariant:** runtime起動時にTask storeとTaskManagerを一度だけ生成し、その後にTool、Agent、Viewerを構築する。空workspace、writer競合、重複初期化はerrorとし、別保存先へ迂回しない。Viewerは同じstoreを参照するだけでwriterを生成しない。終了時のCloseは既存TaskManager経路に一意に委ねる。
+- **Acceptance:** 初期化成功後にViewerが同じownerの保存結果を読むこと、再初期化がownerを置換しないこと、writer競合時に部分的なownerを公開しないことを検査する。これは実行admission接続の前提であり、接続前に外部効果が保護されたとは扱わない。
+
+#### Mandatory runtime tool admission
+
+- **Invariant:** productionのChat／Worker RunnerV2はSecurity設定にかかわらずTask owner admissionを通す。検証済みAgent scopeと既存execution Identityを要求し、現在writerの同一Task／Run／Assigneeだけを実行へ渡す。owner、scope、identityの欠落を補完・推定しない。
+- **Placement:** CompositeとPolicyRunnerの構築後、Harness／Budget／Subagentへの接続前に必須admissionを配置する。Registry fallbackを含むinner実行より前に拒否する。raw ToolRunnerは登録・設定専用であり、production実行consumerへ渡さない。ListToolsは実行ではないためidentityなしで参照可能とする。
+- **Acceptance:** 有効Runだけがinnerを一度呼ぶこと、不一致・取消・終端・旧世代・owner未接続ではinnerが呼ばれないこと、Security無効でも必須となることを検査する。これは実行開始時の照合であり、開始後のquiescence、外部効果の冪等性、配備実Actorの成功とは区別する。
+
+#### Orchestrator Agent scope handoff
+
+- **Invariant:** Message／Distributed dispatcherは既存`actualCoreActorForRoute`をAgent選択の正本として、同じ入口でTask／Run／TraceとAgent scopeを束縛する。保存Assigneeとの一致は必須runtime admissionが検査し、不一致時に保存内容やActorを修正して通さない。
+- **Request correlation:** 有効な親scopeがある場合はRequestIDを保持する。親scopeがない内部Agent入口では独立したRequestIDを発行し、TaskIDをRequestIDへ流用しない。
+- **Permissions:** 既存handoff helperで親scopeを検証し、public／user範囲と認証済みuserだけを引き継ぐ。親scopeがない場合の既定はpublicのみ。internal範囲は自動継承せず、既存OPSの明示grantだけを維持する。不正な親scopeは拒否し、正規化で救済しない。
+- **Acceptance:** routeとAgentの対応、既存execution identityの不変性、親RequestID保持、親なしの独立RequestID、権限の非拡大、両dispatcherへの接続を検査する。実Agent利用・配備後の全route成功は別の未確認境界として扱う。
+
+#### Distributed response correlation
+
+- **Problem:** TaskIDだけの応答照合では、別の送信先・受信先・Sessionの応答を同じTaskの成功として受け入れ得る。
+- **Invariant:** SSH／local mailbox共通の応答検査で、正規Messageと同一TaskIDに加え、応答From＝要求To、応答To＝要求From、同一SessionIDを要求する。照合前に応答をCentralMemoryへ記録せず、違反はerrorとして呼出側へ返す。
+- **Boundary:** From／Toはtransport addressの相関であり、認証済みActorの証明ではない。Run／Requestの転送、受信側の認証・policy・正本owner照合、再試行／再起動を越える応答の識別は別途必要であり、SessionをRunの代用にしない。
+- **Tests:** 正しい応答、送信元・宛先・Session不一致を共通経路で検証し、不一致応答が成功や受信記憶へ投影されないことを確認する。
+
+#### Worker proposal admission
+
+- **Problem:** Worker提案はToolRunnerを通らずpatch／commit／commandを実行できるため、共通入口で同じTask owner照合を必要とする。
+- **Invariant / Enforcement:** `TaskManager.ValidateExecutionContext`がexecution IdentityとAgent scopeを検証し、既存`ValidateRunExecution`へ委ねる。ToolRunnerとWorker proposalはこの同一ownerを使う。Proposalはparse、log、commit、commandの前にownerとargument TaskIDの厳密一致を要求する。workspace overrideもownerを保持する。owner未接続を独立storeや架空Runで補完しない。
+- **Tests:** 有効な保存Runの実行と、owner／context欠落、Task／Actor不一致、終端／閉じたwriterの副作用前拒否を検証する。既存patch試験も実Task ownerを使用する。
+- **Boundary:** 受信側の認証済みhandoff、未接続呼出元、observation経路、実行中quiescence、配備後の実Actor検証は残件であり、入口guard成功だけでは運用完了としない。
+
+#### Worker result projection
+
+- **Problem / Cause:** command失敗件数だけで応答Successを再計算すると、patch後の検証失敗やblockedが成功へ変わる。localと別process受信側の手書き変換も失敗情報を欠落させる。
+- **Invariant / Enforcement:** CORE実行サービスのPatchExecutionResultを正本とし、transport DTOの共通変換でSuccess、失敗理由、retry情報、TestStatus／TestReceiptを保持する。受信側は成功を再判定しない。TestReceiptはownerの参照であり、受信hostのfilesystemとして解釈・openしない。
+- **Acceptance:** FailedCmdsが0でもSuccess=falseを保持し、両受信経路とJSON round-tripで確認する。成功、command失敗、検証失敗、blockedを区別する。配備／実Actor検証は別途必要。
+
+#### Distributed Worker failure terminal propagation
+
+- **Problem / Cause:** Success=falseで再試行しないWorker結果がnil errorへ変わると、自然言語のcontract検証を通過しただけでTask／Runが成功する。
+- **Invariant:** proposal実行結果の欠落と、再試行不要またはretry budget終了後の失敗はtyped terminal errorへ変換する。既存の許可されたbounded retryを先に評価する。retry判定はcoordinatorの設定済み上限を引数で受け、別の固定上限を持たない。失敗理由は保存・報告し、成功完了の発話を発行しない。外側Autonomous executorはtyped errorを文字列から再分類してretryを復活させない。Task lifecycleの既存error経路で保存Task／Runをfailedにする。
+- **Acceptance:** 成功に見える本文でもowner失敗はfailed、成功は成功、許可済みretry後の成功は維持、非retryable結果の再実行は0、保存Task／Runの失敗を確認する。これはsource上の境界証明であり実Actor配備E2Eを代替しない。
+
+#### Local Worker execution context delivery
+
+- **Invariant:** CORE内のlocal配送は同じbounded FIFO inbound queueへMessageと元execution contextを一緒に保存する。local専用APIとし、SSH／wire Messageへcontextをserializeしない。応答待ちtimeoutはenqueue前に確定し、要求実行と応答待ちを同じ取消期限へ束縛する。
+- **Boundary:** Worker受信時は正規Message、宛先、TaskManagerのcontext admission、実Shiro scope、TaskIDと任意TurnInput TraceID一致を確認する。contextなしや取消済みの配送をBackgroundで救済せずerror応答にする。実行には受け取った同じcontextを渡す。message-only APIは応答と既存非実行consumer用でありWorker実行を許可しない。
+- **Acceptance:** 同一queueの順序と容量、contextの保持、enqueue前／後の取消、閉じたtransportの受信拒否、実Worker入口の拒否と正規ownerでの通過、sender timeoutの受信側伝播を検証する。transport Close後の実行中quiescence、remote認証handoff、実Actor配備E2Eは別途必要。
+
+#### Local Coder request ownership
+
+- **Invariant:** local Coderも同じLocalDelivery contextで提案を生成する。Coder自身をActorへ昇格させず、Task／Run／scopeはCORE所有Agentの値を保持する。Workerと共通のlocal admissionでMessage、宛先、owner、Task、任意Traceを検査し、欠落／取消／不一致はLLM呼出し前に拒否する。Worker固有のShiro制約はWorkerだけで維持する。
+- **Acceptance:** 有効要求のcontextがCoder adapterを通してproviderへ届き、無効要求ではproviderを呼ばない。実行中取消を伝播し、応答前にもownerを再照合し、取消やTask状態変更後の遅延結果を成功応答にしない。未認証wireからscopeを再構築しない。LLM出力は既存proposal parser/self-checkを通る。source試験と実LLM／Actor配備試験は区別する。
+
+#### Coder transport return address
+
+- **Failure / Cause:** local CoderだけがShiro宛返信をMioへ書き換えると、request.Fromとの厳密照合が失敗する。transport宛先と実Actorを混同した特殊routeが原因。
+- **Invariant / Enforcement:** coordinatorがMio mailboxで応答を待つCoder要求はFrom=mioとする。local／remoteの成功・error返信はrequest.FromをそのままToへ返す。ShiroのTask／Run／認証scopeは元contextに保持し、mailbox名からActorを再構築しない。localだけの宛先書換えhelperを削除し、既存response correlationを維持する。
+- **Tests / Acceptance:** coordinatorのFromとreceiveOn一致、Task／TurnInput保持、正逆宛先の厳密照合、実local queueとCoder handlerの成功／error返信を確認する。実LLM／Actor配備とshared mailboxの並行要求分離は別の未確認境界とする。
+
+#### Worker observation execution ownership
+
+- **Failure / Cause:** proposal入口だけにTask owner検査を置くと、CoderLoopのobservationから同じWorkerの外部操作を未束縛contextで呼べる。
+- **Invariant / Enforcement:** ExecuteObservationは同一TaskManagerのValidateExecutionContextで開始前に検査し、各actionへ同じcontextを渡す。nil owner／context、Task／Run／scope不一致、取消、終端Task、閉じたwriterを拒否する。action応答後もownerを検査し、失効後の結果をerrorへ変えて後続actionを実行しない。新しいTask／Runやscopeを観測入力から発行しない。
+- **Tests / Boundary:** MCP呼出し数と保存ownerを使い、入口拒否、context保持、実行中取消／Task終端後の結果拒否を検証する。観測commandの安全policy、canonical test selection、実行中quiescence、実Actor配備はこのidentity admissionとは別の保証であり、残件として維持する。
+
+#### CoderLoop terminal result
+
+- **Failure / Cause:** CoderLoopが連続失敗やturn上限をPartial結果として返しても、Executeがnil errorのhandled応答へ変換すると、外側が正常終了と誤認する。
+- **Invariant / Enforcement:** loop内部の許可されたbounded repairは維持する。外部へ返す時点のPartial／結果欠落はtyped terminal errorとし、Autonomous executorが本文から再試行可能エラーへ再分類しない。診断結果を保持し、Task lifecycle既存error経路でTask／Runをfailedにする。
+- **Acceptance:** 検証失敗、連続parse失敗、turn上限は成功にしない。修正後の検証成功は成功を維持する。保存Task／Runのfailedと外側の追加実行なしを確認する。実Actor配備証明は別途必要。
+
+#### MCP observation canonical runner
+
+- **Failure / Cause:** Worker観測にSerena clientを直接注入すると、Task入口検査があってもruntime Tool policy／harness／auditの正規routeを迂回する。
+- **Invariant / Enforcement:** 観測adapterは起動時MCP catalogの厳密なRemoteNameからToolIDを参照し、同じWorkerRuntimeRunnerV2へ元contextとargsを渡す。catalogにない名前やrunner欠落を拒否する。remote clientはcatalog背後のToolRunnerだけが呼ぶ。ToolResponse.Error、transport error、nil responseを成功文字列へ変換しない。
+- **Tests / Boundary:** catalogの衝突解消済みID、context、runner拒否時のremote未実行、実runtime runner経由の応答を確認する。Tool metadataによるread-only保証とshell観測policy、実Actor配備検証は別の残件とする。
+
+#### MCP observation read-only classification
+
+- **Failure / Cause:** tools/listに存在することだけでCategory=queryへ分類すると、更新toolも読み取り専用観測として実行できる。
+- **Invariant / Enforcement:** COREのSerena adapter metadataが、対応する既知の照会操作の厳密なremote名だけをqueryへ分類する。未知名、正規化による類似名、他namespaceはmutationを既定とする。tool名からのLLM推定やremoteの自己申告で昇格しない。観測adapterは正規runnerのmetadataに同じToolIDが一意に存在してCategory=queryの場合だけ呼び出す。一覧取得失敗・metadata欠落／重複はfail closedとする。
+- **Boundary / Tests:** 既知照会の成功と未知／更新／曖昧metadataの副作用前拒否を検証する。既知操作の意味はCORE adapterが管理し、対応serverの実装・version変更時には再検証する。引数のデータ範囲policy、shell操作、実Actor配備証跡は別途必要。
+
+#### Observation command syntax boundary
+
+- **Failure / Cause:** 許可prefixに続くshell構文をbashへ渡すと、追加command、置換、redirect等を実行できる。
+- **Invariant / Enforcement:** 観測commandは一つの実行fileとargvへ決定的に解析し、exec.CommandContextで直接実行する。shellを起動しない。単語境界でprogram／subcommandを完全一致検査する。空入力、閉じていないquote、shell制御記号、変数／command置換、redirect、非明示globを拒否する。単一／二重quoteで引数をまとめ、単一quote内部はliteralとして扱う。
+- **Boundary / Tests:** harmlessな構文例で旧prefix bypassの拒否、quoted argv、native実行を検証する。このsyntax保証は許可programの全optionが読み取り専用である保証ではない。find等の副作用option、git外部driver、引数データ範囲、canonical test selection、timeoutは別途閉じる。
+
+#### Find observation predicates
+
+- **Failure / Cause:** shellを除去してもfind自身の-exec／-delete等は外部効果を起こせる。program名の許可はoptionの許可ではない。
+- **Invariant / Enforcement:** find観測は読み取りpredicateのpositive grammarで検証する。実行、削除、prompt起動、output file、未知predicateを拒否し、引数を取るpredicateの次tokenは値として扱う。値欠落を拒否し、predicate開始後の余分なpath／tokenを許可しない。任意optionをdenylistへ追加して通す方式にはしない。
+- **Tests / Boundary:** 副作用predicateと未知optionの拒否、値位置にある同名文字列の許容、欠落値と正規の検索式を検証する。path範囲、OSごとのutility解決、実行時間／output bound、他program固有optionは別途必要。
+
+#### Git observation option boundary
+
+- **Failure / Cause:** Gitの照会subcommandにもoutput file、external diff／textconv、signature検証等の外部実行optionがある。repository configもpager／fsmonitor等を起動し得る。
+- **Invariant / Enforcement:** 観測Gitはsubcommandごとの明示的な照会optionのみ許可する。未知option、output指定、外部実行要求、custom formatを拒否する。--以後はpath引数として保持する。実行argvにはno-pager、no-optional-locks、core.fsmonitor=false、core.untrackedCache=false、log.showSignature=false、format.pretty=mediumを付け、diff形式を扱うsubcommandではno-ext-diff／no-textconv、grepではno-textconvを強制する。
+- **Tests / Boundary:** 拒否option、option値位置、path区切り、正規照会、環境にexternal diffがあってもbuiltin diffを使うことを検証する。repository／データ範囲、resource上限、他command、canonical test selection、実Actor配備は別途必要。
+
+#### Observation canonical verification
+
+- **Failure / Cause:** CoderLoopのtest_requestからgo test／build／vetを直接起動するとCanonical Test Plan、impact fallback、隔離、receipt照合を迂回する。
+- **Invariant / Enforcement:** これらの観測commandはWorkerの既存runTestImpactへ変換する。元Task identityを使い、現在worktreeからResolverが選択する。command引数は範囲を狭める権限を持たないhintであり、直接go実行へ渡さない。正規planのないworkspace、owner失敗、source不一致を成功にしない。
+- **Receipt / Coalescing:** 結果は既存ObservationActionResultへTestStatus／TestReceiptを任意fieldとして付ける。連続した検証hintを一つの検証要求へまとめ、各要求に同じreceiptを返す。他のactionを挟んだ場合や別batchでは再利用しない。LLMの「tests passed」をowner証跡として使わない。
+- **Tests / Boundary:** 既存Test Impact helperと保存Task ownerでpassed／failed／source不一致／canonical欠落、重複実行なしを確認する。実配備のResolverと全Canonical Step、実Actor利用は別途確認する。
+
+#### Observation action deadline and process ownership
+
+- **Failure / Cause:** 元requestに期限がない場合、観測command／MCPも無期限になる。deadline後の遅延成功や、子processがpipeを保持する場合もある。
+- **Invariant / Enforcement:** 非テスト観測は既存Worker CommandTimeoutの正の既定値を共有する。元Task／Run／scopeを保持した派生contextで実行し、より短い親期限を尊重する。action期限切れは遅延成功を拒否し、後続actionを止める。正規検証はTestImpact専用timeoutを維持する。
+- **Process / Output:** TestImpactと観測commandは同じWorker process起動・interrupt・猶予・tree killを使う。nil contextをBackgroundへ救済しない。stdout／stderrは各64KiBを上限に保持して超過を明記し、観測の既存2KiB投影は維持する。
+- **Boundary / Tests:** deadlineの保持、時間切れ後の結果拒否、後続未実行、既存process-tree試験、診断buffer上限を確認する。MCP backendのctx協調と実機quiescence、D-state等のOS停止不能状態、配備後receiptは別途確認する。
+
+#### Canonical workspace physical path guard
+
+- **Failure / Cause:** lexical相対pathだけの判定は、workspace内symlinkから外部fileへのアクセスを許す。protected fileへのaliasもbasename検査を迂回する。
+- **Invariant / Enforcement:** Security SandboxGuardでworkspaceと対象の実pathを比較する。未作成fileは最も近い既存ancestorを解決してから残りを結合する。dangling link、解決不能、明示的な親遡及componentは拒否する。単に..で始まる通常名は親遡及と区別する。sandbox保護名は入力名と解決先の両方へ適用する。
+- **Boundary / Tests:** 外部link、未作成leaf、dangling link、内部link、保護file alias、通常の..prefix名を検証する。これは事前判定であり、openまでの競合を防ぐdescriptor-based I/Oではない。観測path抽出・接続、TOCTOU対策、実Actor配備と他OS実行は別途必要。
+
+
+### Observation find workspace roots
+
+- Failure / Problem: read-only find predicates still accepted absolute outside or symlink-escaped starting points, exposing paths outside the configured Worker workspace.
+- Cause: the observation grammar constrained actions but did not bind its filesystem inputs to the owner workspace.
+- Lesson / Invariant: the same find grammar must identify starting points separately from literal predicate values. Missing starting points mean the configured workspace. Every explicit starting point must pass the canonical physical SandboxGuard before starting any process; parent traversal and unresolved workspace fail closed. Pattern values are not filesystem roots.
+- Enforcement: CORE Worker observation uses its configured workspace and the infrastructure security guard; no model-selected allowlist or alternate policy is introduced. CLI parses arguments; Boundary admits or rejects paths; no runtime LLM decision is required.
+- Tests: outside and mixed roots, parent traversal, external symlink, default and internal roots, and absolute-looking literal patterns.
+- Remaining: this is preflight, not descriptor-bound process filesystem isolation. Path replacement races, utility identity across OSes, Git and content-reading command/MCP data scopes, final Full and actual Actor/Viewer evidence remain open.
+
+
+### Observation file-reading operands
+
+- Failure / Problem: cat/head/tail/wc/grep could read arbitrary process-visible files, including grep pattern files, despite read-only command admission.
+- Cause: program names were allowed without parsing operand roles or binding paths to the owning Worker's workspace.
+- Lesson / Invariant: one positive argument grammar identifies file operands, pattern files, literal patterns and numeric options. Every input file must be a regular file admitted by the canonical physical workspace guard before any process starts. No inherited stdin, implicit input, follow mode, recursive traversal or indirect file-list input is admitted by this process route.
+- Enforcement: CORE parses standard bounded read options, including combined short flags and attached values. Unknown flags fail closed. grep -e is literal text; -f is a file subject to the same path check. Relative file names are relative to the configured workspace; parent components remain visible to the guard. CLI performs parsing; Boundary validates files; no runtime LLM authorization is introduced.
+- Tests: outside files for all five tools; mixed files; outside grep pattern files; symlink escapes; valid reads and literal patterns; unsupported implicit/recursive/indirect inputs.
+- Remaining: regular-file and workspace checks are preflight. Descriptor-bound I/O, races, in-workspace confidential-data policy, OS-equivalent utility identity, MCP and Git data scopes, final-source Full and live Actor/Viewer proof remain open. Recursive content search must acquire a confined implementation before admission is broadened.
+
+
+### Observation Git repository binding
+
+- Failure / Problem: inherited Git environment could redirect observations to another repository, and a workspace subdirectory implicitly exposed its parent repository.
+- Cause: command cwd was treated as proof of Git repository identity.
+- Lesson / Invariant: Git observation requires a repository marker at the configured workspace and Git's effective top-level directory must identify that same physical directory. Missing, nested, redirected or unresolved workspace is rejected before the requested observation.
+- Enforcement: the shared Worker command runner merges the process environment while removing Git-specific overrides for Git invocations. Global/system Git config is disabled for these read-only calls and terminal prompting is disabled. Local repository config remains in effect; an effective worktree outside the configured workspace is rejected. Canonical test-impact invocations preserve their existing environment and ownership route. CLI resolves repository identity; CORE Boundary compares directory identity; no runtime LLM authorization is added.
+- Tests: inherited GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE and injected config, configured child directory, repository-local core.worktree redirect, and normal Git observations.
+- Remaining: Git operand/pathspec and object scope, repository metadata trust and races, OS process identity, final Full, installed artifact and actual Actor/Viewer evidence remain separate obligations.
+
+
+### Git diff operand boundary
+
+- Failure / Problem: Git diff can implicitly compare filesystem paths outside the repository without an explicit --no-index option.
+- Cause: repository identity and an option allowlist do not constrain positional operands.
+- Invariant / Enforcement: the existing Git argument grammar returns normalized execution arguments and diff operand roles together. Operands after -- are paths. Before --, an operand may be a repository object/revision expression or a file path; the configured repository resolves revision expressions deterministically, while file operands pass the same canonical workspace path guard before diff runs. Option values are not classified as file paths. CLI parses/resolves; CORE Boundary admits file scope; no runtime LLM decision is involved.
+- Tests: identical outside files still fail admission both with and without --; in-repository revisions and paths remain usable; option text retains its role.
+- Remaining: object confidentiality and repository metadata trust, path replacement races, other Git subcommand data scopes, MCP, OS runtime proof, final Full and actual Actor/Viewer receipts remain open.
+
+
+### MCP transport response ownership
+
+- Failure / Problem: per-call goroutines concurrently scanned one Serena stdout stream and discarded responses for other request IDs. A canceled call left a scanner reader alive, able to consume later calls' responses. Pre-canceled calls still sent tool requests.
+- Cause: receive ownership followed the waiting call instead of the transport generation; concurrent writes also lacked framing serialization.
+- Invariant / Enforcement: each scanner generation has at most one reader and a pending request-ID map. Register before sending; serialize writes; dispatch only to the matching pending request; discard late canceled IDs without removing another request. Cancellation is checked before send and before accepting a response. EOF fails all pending requests. Stop closes the transport and resolves waiters; new startup owns a new receiver.
+- Classification: CLI serializes frames and dispatches IDs; Boundary rejects missing/expired context and unmatched late output; no runtime LLM identity inference is used.
+- Tests: pre-canceled no-send; canceled first request followed by second response before late first response; concurrent reversed response order; EOF and race detector.
+- Remaining: transport cancellation does not prove remote execution stopped. Blocking writes, remote cancellation/quiescence, MCP schema and argument data scope, workspace/project binding, final Full and actual Actor/Viewer evidence remain open.
+
+
+### MCP send context and failed-frame boundary
+
+- Failure / Problem: a request canceled while waiting for the send mutex, or while writing to an unread subprocess pipe, could outlive its deadline indefinitely.
+- Cause: mutex acquisition and pipe writes were not context-bound despite receive-side cancellation.
+- Invariant / Enforcement: a context-aware serialization gate admits one complete frame writer. Cancellation before admission returns without sending or disturbing the active writer. Cancellation during a write closes that transport generation's streams and fails its pending responses; partial/failed frames are not followed by another frame on the same receiver. Unrelated process environment and transport ownership are unchanged. CLI serializes frames; Boundary binds admission and failed-frame handling to context; no LLM decision is involved.
+- Tests: blocked active writer, canceled queued writer, context-driven pipe closure, retired receiver rejects subsequent calls, short-frame handling and race detector.
+- Remaining: stream closure proves local transport retirement, not remote tool/process quiescence. Concurrent restart/generation ownership, remote cancellation, MCP argument/workspace scope, final Full and deployed actual Actor evidence remain open.
+
+
+### MCP pending request and transport generation binding
+
+- Failure / Problem: a request could register with an old receiver, wait for the write gate, and then write its frame to a newly installed stdin. Its response would belong to a different receiver and the old request could affect the new process.
+- Cause: receive registration and send stream selection independently sampled mutable client state.
+- Invariant / Enforcement: every send carries the exact receiver generation selected before registration. After acquiring the write gate, CORE compares that receiver with the current transport under the stream lock and rejects stale/retired generations before writing. Startup stream installation retires the previous receiver and closes its streams before publishing the replacement. Cancellation acts only on captured streams.
+- Classification: CLI publishes one transport snapshot; Boundary binds send and receive ownership to that snapshot; no LLM-generated identity or guessed current request is used.
+- Tests: replace streams between registration and send; assert no old frame reaches new stdin; old waiters fail and replacement requests remain usable; race detector.
+- Remaining: source transport identity is not deployed process ownership proof. Remote process reaping/quiescence, actual restart requests, MCP schema/workspace/argument policy, Full and actual Actor/Viewer receipts remain open.
+
+
+### MCP owned subprocess retirement
+
+- Failure / Problem: Stop and failed initialization killed the owned child without waiting for process reaping; Stop ignored a child when started was false. A new startup could overwrite an unresolved process handle.
+- Cause: initialized readiness was conflated with process ownership, and Kill was treated as terminal process evidence.
+- Invariant / Enforcement: retain the exact exec.Cmd owned by this client through retirement. Close its transport, kill that child, and call Wait exactly once. Wait completion is observed through a retained channel with a bounded five-second stop deadline; a timeout remains unresolved and blocks replacement startup. Initialization failure uses the same retirement path. A successfully reaped direct child is distinct from descendant or remote work quiescence.
+- Classification: CLI retires and reaps the owned process; Boundary prevents replacement while terminal evidence is missing; no LLM process-name inference is used.
+- Tests: isolated native Go helper child, both initialized and pre-readiness ownership, repeated Stop, and race detector. Fixture results are source lifecycle evidence, not live Serena or Agent E2E.
+- Remaining: natural-exit supervision, descendant/remote operation quiescence, real service/listener/config and restart proof, MCP schema/workspace/argument policy, final Full and actual Actor/Viewer evidence remain open.
+
+
+### MCP known-failed startup state
+
+- Failure / Problem: after EOF or a canceled/failed frame retired the receiver, started remained true and a later Start returned success without a usable transport.
+- Cause: an initialization flag was treated as current transport evidence.
+- Invariant / Enforcement: idempotent startup success requires the owned child handle, installed streams and a nonterminal receiver. Known-failed or missing transport state retires through the existing owned-process path before attempting canonical startup again. Failure to resolve or initialize that same backend is reported; no substitute backend is selected.
+- Classification: CLI inspects recorded lifecycle state; Boundary rejects stale readiness and gates replacement on retirement. No runtime LLM decision is involved.
+- Tests: retired receiver, missing receiver and missing process owner cannot return success under started=true; isolated empty executable path prevents external process launch in these fixtures.
+- Remaining: this is recorded-state consistency, not a live ping or natural-exit monitor. Live process/readiness/restart evidence, MCP schema and data scope, final Full and actual Actor/Viewer receipts remain required.
+
+
+### MCP startup catalog connection binding
+
+- Failure / Problem: a catalog observed from one MCP connection retained only the client object; after internal reconnect the same catalog could invoke a different connection without rediscovery or Snapshot regeneration.
+- Cause: client object identity was mistaken for connection identity, contrary to the canonical onboarding contract.
+- Invariant / Enforcement: startup captures a nonzero connection generation and verifies it remains unchanged through tools/list. Catalog stores that observed generation. Every catalog call supplies it to the client, which checks it while selecting the receiver and then retains that exact receiver through registration/send. Missing or changed generation fails closed. Reconnection alone cannot promote old catalog evidence.
+- Classification: CLI records connection generation and discovery; Boundary binds catalog execution to it; no LLM inference of current capabilities is used.
+- Tests: catalog stale-generation execution reaches no remote call; startup discovery crossing a reconnect is unavailable; bound client call after stream replacement sends nothing.
+- Remaining: stale capability projection must be regenerated for the new connection; schema preservation/validation, workspace and argument data policy, Full and actual Actor/Viewer evidence remain required.
+
+
+### MCP observed argument definition preservation
+
+- Failure / Problem: tools/list decoded inputSchema but projected only names; Worker metadata replaced the observed contract with an arbitrary-properties object.
+- Cause: startup catalog had no place for the observed definition, splitting discovery from the model-visible argument contract.
+- Invariant / Enforcement: the same connection-bound discovery returns name, description and inputSchema. The canonical catalog owns deep-copied definitions; Worker metadata references copies of that observed schema. Missing object schemas, invalid JSON definitions and conflicting duplicate names are excluded, without inventing permissive replacement schemas. Identical duplicate observations may collapse deterministically. Remote descriptions/schemas do not establish read-only classification, Actor identity or access permission.
+- Classification: CLI decodes/copies JSON definitions; Boundary excludes malformed/ambiguous observations; LLM may use the exposed contract to propose arguments but cannot authorize execution.
+- Tests: schema survives transport-to-catalog-to-Worker projection; mutation of input/exported schema cannot modify catalog; conflicting or absent schema excluded.
+- Remaining: preservation and top-level shape checks are not full JSON Schema validation or data-scope authorization. Complete argument validation, workspace/project binding, final Full and actual Actor/Viewer receipts remain open.
+
+### MCP input schema execution boundary
+
+Observed `inputSchema` is compiled once inside the CORE catalog. Missing or uncompileable schemas are unavailable. Schema loading may use the observed document and bundled standard dialects only; remote URLs and filesystem references are refused. Local references remain supported. Execution validates a JSON-normalized private copy against the catalog-owned compiled schema and forwards that same copy only on success. Public metadata cannot weaken this boundary. Invalid arguments return `VALIDATION_FAILED` without remote execution or argument disclosure. JSON Schema validation does not grant filesystem scope, Actor identity, or policy authority. Final-source Full regression and actual Actor route evidence remain required.
+
+MCP transport retirement invalidates its current connection generation. Catalog discovery, Worker metadata, model tool definitions, and execution must reject a catalog from any retired or replaced generation. Reconnection requires a new observation; old schemas are never transferred automatically. Historical startup Snapshot text is not live availability evidence; the request-time context provider regenerates it at the Agent prompt boundary.
+
+### Request-time capability context
+
+CORE injects an immutable context provider during runtime assembly. Agent and Coder prompt assembly invokes it with the request context and recipient. It combines copied Agent contracts, current Worker metadata, generation-checked MCP observations and owner data-route contracts; it never edits Persona or shared prompt maps during requests. Tool-list failures produce unavailable capability evidence. Retired MCP definitions must not remain available in prompt snapshots. This awareness grants no execution authority; execution still revalidates the exact generation and policy.
+
+### Tool mediation receipt failure
+
+A configured mediation recorder is part of the execution boundary. V1, V2 and the policy-facing harness wrapper must persist the mediation record before executing the tool. Persistence failure returns a bounded structured error and prevents the effect in every harness mode, including log-only. No-recorder configuration retains its existing explicit behavior. Canonical Event ownership, Task/Run linkage and context-aware durable persistence remain separate acceptance requirements; this gate alone does not prove that lineage.
+
+When recording is configured, recorder initialization failure aborts runtime assembly; it cannot silently become a no-recorder configuration. Explicit disabled configuration remains distinct from initialization failure.
+
+### Tool admission precedes mediation facts
+
+The outermost Chat/Worker runtime Tool runner validates the current Task/Run owner and request scope before mediation, persistence, budget handling or Tool execution. Missing, stale or canceled execution identity must produce no mediation fact. Input repair still precedes the inner input policy check. This ordering reuses the Task owner admission gate; it does not mint a substitute identity or authorize a rejected request.
+
+### Mediation request-context contract
+
+Mediation recorder and Viewer recent-list APIs accept the original request context. Runtime must not replace it with a background context: canonical execution identity, scope, cancellation and deadline belong to the caller. A canceled request must not begin an append after admission or lock acquisition. Filesystem operations already in progress cannot be claimed canceled or rolled back. Canonical Event Store integration must consume this same context; adding it does not alone prove persisted Task/Run lineage.
+
+### Canonical mediation Event ownership
+
+CORE Tool Harness issues canonical EventID and appends `tool_input_mediated` under component `tool_harness` to the existing Canonical Event Store. The request execution identity supplies TaskID, RunID and TraceID; the trusted Tool scope supplies ActorKind/ActorID. Missing TraceID fails closed rather than starting a substitute trace. Bound Action/Attempt may be copied only when present. No causation edge is invented without a supplied canonical cause.
+
+Viewer recent-list reads the same canonical component ordered by EventSeq. Its displayed lineage is projected from envelope fields, not separately writable payload aliases. There is no JSONL dual write or fallback reader. Existing historical JSONL files are preserved as offline legacy evidence: they lack sufficient owner lineage to become canonical events. Their capture/hash and deployed legacy-consumer retirement remain cutover acceptance requirements. `tool_harness.log_path` is retained only as a legacy artifact location for that cutover; it is not a live record destination.
+
+### Tool context budget execution lineage
+
+CORE ContextBudgetRunnerの記録付き実行は、inner Toolを呼ぶ前に、active context、既存のTaskID／RunID／非空TraceID、認証済みToolExecutionScopeを検証する。不足時はTool実行・usage保存・event追加を行わず拒否する。ContextUsageのTaskID／RunIDには同じ実行contextを投影し、警告／超過EventEnvelopeはそのTraceID、TaskID、RunID、scope由来ActorKind／ActorIDを保持する。bound Action／Attemptがあれば引き継ぐ。Agentラベルやmodel、Execution RoleをActorへ変換しない。新しいroot Traceや推測したcausationを作らず、context usage recordのIDは参照payloadのままとしcausationへ転用しない。usage保存とevent追加の複数store間atomicityおよびoffload Artifact lineageは別途検証する未完境界である。
+
+### Task-scoped ToolLoop admission
+
+TaskID／RunIDを持つToolLoopは、modelを呼ぶ前に、既存execution contextのTaskID／RunIDがConfigと一致し、TraceIDが正規かつ非空であることを検証する。Configから欠けたcontextを補完せず、新しいTraceも生成しない。Subagentのowner入口が選択したcontextを保持し、Action／Attemptは同じTask／Runに束縛する。Taskを持たない明示的なunit simulationは従来の非Task経路を使えるが、production Task ownerの代用にはしない。
+
+### ToolLoop logical operation identity
+
+- Failure / Problem: Tool名だけをkeyとしてActionを再利用すると、別条件の検索や別の書込みが同じActionのRetryになり、成功した前回Attemptまで失敗へ書き換わる。
+- Invariant / Enforcement: ToolLoopが受け入れた各Tool呼出しは一つの論理操作として新しいActionとfirst AttemptをAction ownerへ要求する。Tool名、引数の一致、ProviderToolCallIDから既存ActionのRetryを推定しない。明示的に同じ論理操作を再試行するowner経路は既存StartAttemptを使い、同じActionIDと新しいAttemptIDを維持する。ToolLoopの同一失敗入力抑止は引き続き実行前に適用する。
+- Tests: 同名Toolの異なる呼出しは異なるActionへ束縛され、Task／Runは維持される。Action ownerの明示Retry試験は引き続き同じActionと別Attemptを要求する。Attempt終端記録と実Actor経路の証明は別途必要。
+
+### Runtime Action owner sharing
+
+- Failure / Problem / Cause: ToolとViewerが同じAction保存先へ別々のManager／Storeを生成すると、同一責務を複数instanceが所有し、Storeのinstance内lockを共有できない。
+- Lesson / Invariant / Enforcement: runtime assemblyはTool側のActionManagerをViewerの外部操作へ引き渡す。Tool側で未生成の場合だけ、Viewer consumerの有効化に応じて一度生成する。保存先の組立ては既存のnewRuntimeActionManagerに集約し、consumerが別Storeを開き直さない。
+- Tests: PolicyRunnerが作ったAction／Attemptを返却された共有Managerから読めることを検証する。これはprocess内のowner共有を保証する単位であり、複数processのwriter fencing、複数recordのatomicity、Attemptの正確な終端化、配備後の実Actor証跡は別途必要。
+
+### Exact Attempt completion
+
+- Failure / Problem / Cause: ActionIDだけでRunning Attemptを検索すると、古い実行の完了が新しいRetryを終端化できる。さらにAction状態の検証前にAttemptを保存すると、不正入力でも一部の状態が変わる。
+- Invariant / Enforcement: 完了入力はActionIDと実行したAttemptIDを必須とする。Actionがopenで、そのCurrentAttemptIDと入力AttemptIDが一致し、同じActionに属するactive Attemptであることをownerが検証する。AttemptとActionの遷移候補をともに検証してから保存し、stale／foreign／重複完了を拒否する。共有Manager内の作成・再試行・完了と読取りは同じ排他境界を使い、検査と更新の間に別の遷移を割り込ませない。
+- Tests / Boundary: stale Retry結果、別ActionのAttempt、不正状態、重複完了では保存内容が変わらず、正しい組は終端化できることを検証する。process内排他は複数JSONL recordのdurabilityや複数process fencingを保証せず、保存エラーは呼出し側へ返す。実際のTool完了からの接続、障害復旧、配備後の実Actor経路は別途必要。
+
+### Tool outcome terminal recording
+
+ToolLoopは各Tool実行後、次のmodel呼出しの前に、束縛済みのAction／Attemptへ実結果を記録する。結果分類はAction ownerのCompleteToolAttemptが所有する。非nilの成功responseかつerrorなしなら成功を記録し、同時期のcontext取消だけで観測済み成功を取消へ変えない。失敗は返されたtyped error、responseのtimeout code、context状態の順でtimeout／cancel／その他failureへ分類する。明示的な返却原因を周辺contextより優先する。nil responseもfailureである。
+
+取消後も開始済み操作の終端事実を保存するため、元のcontext valuesを保持し取消だけを切り離した5秒上限のcontextを使用する。このcontextは終端保存専用で、Tool再実行や新操作を認可しない。保存するsummaryは固定の結果分類とし、Tool出力本文を複製しない。終端保存に失敗した場合、ToolLoopは元の実行エラーと保存エラーを保持して停止し、後続modelを呼ばない。複数recordの障害原子性、PolicyRunner自身が発行したActionへの接続、実Actor経路は別途検証する。
+
+### Governed Tool completion ownership
+
+PolicyRunnerは自分が発行したAction／Attemptを同じCompleteToolAttemptで終端化する。発行した組は既存のexecution contextへ束縛してinner Toolへ渡し、Task／Run／Traceと認証scopeを保持する。上流が束縛したAttemptは上流が終端化し、PolicyRunnerは二重完了しない。policy拒否、実行失敗、監査記録失敗、終端保存失敗を成功扱いにしない。実行ServiceはGo errorの原因を保持し、記録失敗が同時に起きた場合は両方を返す。responseが得られていればerrorとともに保持し、timeout等の構造化原因を失わない。nil responseかつerrorなしは失敗とし、成功の監査記録を作らない。記録更新に失敗した場合、更新成功を装ったRecordを返さない。これらは通常のpolicy経路内で行い、効果の再実行や認証迂回を追加しない。
+
+### Bound Tool Attempt admission
+
+contextに形式上正しいIDが入っていることだけでは、実行を認可しない。PolicyRunnerは渡されたAction／AttemptをAction ownerへ照会し、保存済みの組が存在し、Actionがopen、AttemptがactiveかつCurrentAttemptIDと一致し、同じTask／Run、KindTool、対象Tool名に属することを監査追加・Tool実行より前に確認する。検査は状態を変更せず、不一致や保存先の障害は拒否として返す。現在Attemptの整合性判定は完了APIと同じowner実装を共有する。この検査は実行開始時点のadmissionであり、効果実行中の別process更新や障害復旧を保証するものではない。
+
+### Current Tool metadata admission
+
+- Failure / Problem / Cause: PolicyRunnerがTool一覧を独立した可変cacheとして保持すると、削除済みToolを受理し続け、動的登録の照会で並行書込みが競合する。
+- Lesson / Invariant / Enforcement: Tool一覧の正本はinner Runnerとする。PolicyRunnerは起動時の一覧検証を維持し、実行ごとに同じrequest contextで現在の一覧を照会する。対象Toolが存在しない場合や照会が失敗した場合はAction作成・監査追加・Tool実行より前に拒否し、照会errorの原因を保持する。別cacheやregistryを追加しない。
+- Tests / Boundary: 動的登録、登録削除、一覧取得障害、未知Toolの並行照会を検証する。一覧照会はadmission時点の観測であり、inner Runnerの実行時のgeneration検査や認証・policy判定を置換しない。

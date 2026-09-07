@@ -17,13 +17,13 @@ import (
 
 // PreparedTopic は事前生成済みのお題。
 type PreparedTopic struct {
-	Domain       ForecastDomain `json:"domain"`
-	Topic        string         `json:"topic"`
-	Seeds        []string       `json:"seeds"`
+	Domain      ForecastDomain    `json:"domain"`
+	Topic       string            `json:"topic"`
+	Seeds       []string          `json:"seeds"`
 	TaskID      modulecore.TaskID `json:"task_id"`
 	RunID       modulecore.RunID  `json:"run_id"`
-	InitiatedBy  string         `json:"initiated_by,omitempty"`
-	Created      time.Time      `json:"created"`
+	InitiatedBy string            `json:"initiated_by,omitempty"`
+	Created     time.Time         `json:"created"`
 }
 
 // forecastTopicStock はドメインごとのお題バッファ（ファイル永続化付き）。

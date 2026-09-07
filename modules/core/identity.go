@@ -11,26 +11,26 @@ import (
 // Canonical IDs are distinct string types. New runtime IDs contain UUIDv7;
 // deterministic migration IDs contain UUIDv5.
 type (
-	TraceID      string
-	EventID      string
-	SessionID    string
-	ThreadID     string
-	TurnID       string
-	MessageID    string
-	UtteranceID  string
-	WorkstreamID string
-	GoalID       string
-	TaskID       string
-	RunID        string
-	ActionID     string
-	AttemptID    string
-	RequestID    string
-	ResponseID   string
-	ArtifactID   string
-	EvidenceID   string
-	MemoryID     string
-	RelationID   string
-	ScheduleID   string
+	TraceID       string
+	EventID       string
+	SessionID     string
+	ThreadID      string
+	TurnID        string
+	MessageID     string
+	UtteranceID   string
+	WorkstreamID  string
+	GoalID        string
+	TaskID        string
+	RunID         string
+	ActionID      string
+	AttemptID     string
+	RequestID     string
+	ResponseID    string
+	ArtifactID    string
+	EvidenceID    string
+	MemoryID      string
+	RelationID    string
+	ScheduleID    string
 	QueueItemID   string
 	CheckpointID  string
 	ReceiptID     string
@@ -109,26 +109,26 @@ func (kind ArtifactKind) Validate() error {
 type CanonicalIDType string
 
 const (
-	CanonicalTraceID      CanonicalIDType = "TraceID"
-	CanonicalEventID      CanonicalIDType = "EventID"
-	CanonicalSessionID    CanonicalIDType = "SessionID"
-	CanonicalThreadID     CanonicalIDType = "ThreadID"
-	CanonicalTurnID       CanonicalIDType = "TurnID"
-	CanonicalMessageID    CanonicalIDType = "MessageID"
-	CanonicalUtteranceID  CanonicalIDType = "UtteranceID"
-	CanonicalWorkstreamID CanonicalIDType = "WorkstreamID"
-	CanonicalGoalID       CanonicalIDType = "GoalID"
-	CanonicalTaskID       CanonicalIDType = "TaskID"
-	CanonicalRunID        CanonicalIDType = "RunID"
-	CanonicalActionID     CanonicalIDType = "ActionID"
-	CanonicalAttemptID    CanonicalIDType = "AttemptID"
-	CanonicalRequestID    CanonicalIDType = "RequestID"
-	CanonicalResponseID   CanonicalIDType = "ResponseID"
-	CanonicalArtifactID   CanonicalIDType = "ArtifactID"
-	CanonicalEvidenceID   CanonicalIDType = "EvidenceID"
-	CanonicalMemoryID     CanonicalIDType = "MemoryID"
-	CanonicalRelationID   CanonicalIDType = "RelationID"
-	CanonicalScheduleID   CanonicalIDType = "ScheduleID"
+	CanonicalTraceID       CanonicalIDType = "TraceID"
+	CanonicalEventID       CanonicalIDType = "EventID"
+	CanonicalSessionID     CanonicalIDType = "SessionID"
+	CanonicalThreadID      CanonicalIDType = "ThreadID"
+	CanonicalTurnID        CanonicalIDType = "TurnID"
+	CanonicalMessageID     CanonicalIDType = "MessageID"
+	CanonicalUtteranceID   CanonicalIDType = "UtteranceID"
+	CanonicalWorkstreamID  CanonicalIDType = "WorkstreamID"
+	CanonicalGoalID        CanonicalIDType = "GoalID"
+	CanonicalTaskID        CanonicalIDType = "TaskID"
+	CanonicalRunID         CanonicalIDType = "RunID"
+	CanonicalActionID      CanonicalIDType = "ActionID"
+	CanonicalAttemptID     CanonicalIDType = "AttemptID"
+	CanonicalRequestID     CanonicalIDType = "RequestID"
+	CanonicalResponseID    CanonicalIDType = "ResponseID"
+	CanonicalArtifactID    CanonicalIDType = "ArtifactID"
+	CanonicalEvidenceID    CanonicalIDType = "EvidenceID"
+	CanonicalMemoryID      CanonicalIDType = "MemoryID"
+	CanonicalRelationID    CanonicalIDType = "RelationID"
+	CanonicalScheduleID    CanonicalIDType = "ScheduleID"
 	CanonicalQueueItemID   CanonicalIDType = "QueueItemID"
 	CanonicalCheckpointID  CanonicalIDType = "CheckpointID"
 	CanonicalReceiptID     CanonicalIDType = "ReceiptID"
@@ -266,30 +266,30 @@ func scanCanonicalID[T ~string](destination *T, source any, prefix string) error
 	return nil
 }
 
-func NewTraceID() TraceID           { return TraceID(mustNewCanonicalID(traceIDPrefix)) }
-func NewEventID() EventID           { return EventID(mustNewCanonicalID(eventIDPrefix)) }
-func NewSessionID() SessionID       { return SessionID(mustNewCanonicalID(sessionIDPrefix)) }
-func NewThreadID() ThreadID         { return ThreadID(mustNewCanonicalID(threadIDPrefix)) }
-func NewTurnID() TurnID             { return TurnID(mustNewCanonicalID(turnIDPrefix)) }
-func NewMessageID() MessageID       { return MessageID(mustNewCanonicalID(messageIDPrefix)) }
-func NewUtteranceID() UtteranceID   { return UtteranceID(mustNewCanonicalID(utteranceIDPrefix)) }
-func NewWorkstreamID() WorkstreamID { return WorkstreamID(mustNewCanonicalID(workstreamIDPrefix)) }
-func NewGoalID() GoalID             { return GoalID(mustNewCanonicalID(goalIDPrefix)) }
-func NewTaskID() TaskID             { return TaskID(mustNewCanonicalID(taskIDPrefix)) }
-func NewRunID() RunID               { return RunID(mustNewCanonicalID(runIDPrefix)) }
-func NewActionID() ActionID         { return ActionID(mustNewCanonicalID(actionIDPrefix)) }
-func NewAttemptID() AttemptID       { return AttemptID(mustNewCanonicalID(attemptIDPrefix)) }
-func NewRequestID() RequestID       { return RequestID(mustNewCanonicalID(requestIDPrefix)) }
-func NewResponseID() ResponseID     { return ResponseID(mustNewCanonicalID(responseIDPrefix)) }
-func NewArtifactID() ArtifactID     { return ArtifactID(mustNewCanonicalID(artifactIDPrefix)) }
-func NewEvidenceID() EvidenceID     { return EvidenceID(mustNewCanonicalID(evidenceIDPrefix)) }
-func NewMemoryID() MemoryID         { return MemoryID(mustNewCanonicalID(memoryIDPrefix)) }
-func NewRelationID() RelationID     { return RelationID(mustNewCanonicalID(relationIDPrefix)) }
-func NewScheduleID() ScheduleID     { return ScheduleID(mustNewCanonicalID(scheduleIDPrefix)) }
-func NewQueueItemID() QueueItemID   { return QueueItemID(mustNewCanonicalID(queueItemIDPrefix)) }
-func NewCheckpointID() CheckpointID { return CheckpointID(mustNewCanonicalID(checkpointIDPrefix)) }
-func NewReceiptID() ReceiptID             { return ReceiptID(mustNewCanonicalID(receiptIDPrefix)) }
-func NewBacklogItemID() BacklogItemID     { return BacklogItemID(mustNewCanonicalID(backlogItemIDPrefix)) }
+func NewTraceID() TraceID             { return TraceID(mustNewCanonicalID(traceIDPrefix)) }
+func NewEventID() EventID             { return EventID(mustNewCanonicalID(eventIDPrefix)) }
+func NewSessionID() SessionID         { return SessionID(mustNewCanonicalID(sessionIDPrefix)) }
+func NewThreadID() ThreadID           { return ThreadID(mustNewCanonicalID(threadIDPrefix)) }
+func NewTurnID() TurnID               { return TurnID(mustNewCanonicalID(turnIDPrefix)) }
+func NewMessageID() MessageID         { return MessageID(mustNewCanonicalID(messageIDPrefix)) }
+func NewUtteranceID() UtteranceID     { return UtteranceID(mustNewCanonicalID(utteranceIDPrefix)) }
+func NewWorkstreamID() WorkstreamID   { return WorkstreamID(mustNewCanonicalID(workstreamIDPrefix)) }
+func NewGoalID() GoalID               { return GoalID(mustNewCanonicalID(goalIDPrefix)) }
+func NewTaskID() TaskID               { return TaskID(mustNewCanonicalID(taskIDPrefix)) }
+func NewRunID() RunID                 { return RunID(mustNewCanonicalID(runIDPrefix)) }
+func NewActionID() ActionID           { return ActionID(mustNewCanonicalID(actionIDPrefix)) }
+func NewAttemptID() AttemptID         { return AttemptID(mustNewCanonicalID(attemptIDPrefix)) }
+func NewRequestID() RequestID         { return RequestID(mustNewCanonicalID(requestIDPrefix)) }
+func NewResponseID() ResponseID       { return ResponseID(mustNewCanonicalID(responseIDPrefix)) }
+func NewArtifactID() ArtifactID       { return ArtifactID(mustNewCanonicalID(artifactIDPrefix)) }
+func NewEvidenceID() EvidenceID       { return EvidenceID(mustNewCanonicalID(evidenceIDPrefix)) }
+func NewMemoryID() MemoryID           { return MemoryID(mustNewCanonicalID(memoryIDPrefix)) }
+func NewRelationID() RelationID       { return RelationID(mustNewCanonicalID(relationIDPrefix)) }
+func NewScheduleID() ScheduleID       { return ScheduleID(mustNewCanonicalID(scheduleIDPrefix)) }
+func NewQueueItemID() QueueItemID     { return QueueItemID(mustNewCanonicalID(queueItemIDPrefix)) }
+func NewCheckpointID() CheckpointID   { return CheckpointID(mustNewCanonicalID(checkpointIDPrefix)) }
+func NewReceiptID() ReceiptID         { return ReceiptID(mustNewCanonicalID(receiptIDPrefix)) }
+func NewBacklogItemID() BacklogItemID { return BacklogItemID(mustNewCanonicalID(backlogItemIDPrefix)) }
 
 // ParseTaskID validates a Task identity received at a module or transport
 // boundary. New identity generation remains owned solely by NewTaskID.

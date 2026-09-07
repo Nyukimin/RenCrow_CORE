@@ -16,7 +16,7 @@ function renderOverview() {
       '<div class="row"><span>Reason</span><span>' + esc(s.reason || '-') + '</span></div>' +
       '<div class="row"><span>Route</span><span>' + esc(s.route || '-') + '</span></div>' +
       '<div class="row"><span>Open</span><span>' + esc(String(Object.keys(state.openTasks[id] || {}).length)) + '</span></div>' +
-      '<div class="row"><span>Job</span><span class="code">' + esc(s.jobID || '-') + '</span></div>' +
+      '<div class="row"><span>Task</span><span class="code">' + esc(s.taskID || '-') + '</span></div>' +
       '<div class="row"><span>Updated</span><span>' + esc(ftime(s.updatedAt)) + '</span></div>';
     cards.appendChild(card);
 
@@ -28,7 +28,7 @@ function renderOverview() {
       '<td>' + esc(s.route || '-') + '</td>' +
       '<td>' + esc(s.lastEvent || '-') + '</td>' +
       '<td>' + esc(agName(s.peer || '-')) + '</td>' +
-      '<td class="code">' + esc(s.jobID || '-') + '</td>' +
+      '<td class="code">' + esc(s.taskID || '-') + '</td>' +
       '<td>' + esc(ftime(s.updatedAt)) + '</td>' +
       '<td>' + esc((s.preview || '-') + ' | open: ' + openTaskSummary(id)) + '</td>';
     body.appendChild(tr);

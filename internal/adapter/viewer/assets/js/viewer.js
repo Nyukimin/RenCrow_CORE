@@ -40,7 +40,6 @@ const PROGRESS_RECENT_EVENTS = 8;
 const PROGRESS_DONE_LIMIT = 10;
 const seenEventKeys = new Set();
 const seenEventQueue = [];
-const seenJobNotificationKeys = new Set();
 const seenTaskNotificationKeys = new Set();
 let taskNotificationPollInFlight = false;
 let investmentRefreshTimer = null;
@@ -95,6 +94,7 @@ function eventKey(ev) {
     ev.channel || '',
     structuredIDs.messageId,
     structuredIDs.responseId,
+    structuredIDs.publicPlaybackRef,
     structuredIDs.utteranceId,
     structuredIDs.turnIndex,
     structuredIDs.chunkIndex,
@@ -107,13 +107,15 @@ function eventStructuredIDParts(ev) {
   const parts = {
     messageId: String((ev && (ev.message_id || ev.messageId)) || ''),
     responseId: String((ev && (ev.response_id || ev.responseId)) || ''),
+    publicPlaybackRef: String((ev && ev.public_playback_ref) || ''),
     utteranceId: String((ev && (ev.utterance_id || ev.utteranceId)) || ''),
     turnIndex: String(ev && (ev.turn_index ?? ev.turnIndex ?? '')),
     chunkIndex: String(ev && (ev.chunk_index ?? ev.chunkIndex ?? '')),
   };
-  if (!ev || !ev.content || (parts.messageId && parts.responseId && parts.utteranceId)) return parts;
+  if (!ev || !ev.content) return parts;
   try {
     const payload = JSON.parse(ev.content || '{}');
+    parts.publicPlaybackRef = parts.publicPlaybackRef || String(payload.public_playback_ref || '');
     parts.messageId = parts.messageId || String(payload.message_id || payload.messageId || '');
     parts.responseId = parts.responseId || String(payload.response_id || payload.responseId || '');
     parts.utteranceId = parts.utteranceId || String(payload.utterance_id || payload.utteranceId || '');
@@ -144,7 +146,7 @@ const state = {
   viewerAttachmentError: '',
   viewerStatusFetchError: '',
   sessions: {},
-  jobs: {},
+  tasks: {},
   evidence: [],
   evidenceSummary: {status: {}, error_kind: {}},
   evidenceFetchError: '',
@@ -154,11 +156,11 @@ const state = {
   verificationFetchError: '',
   verificationSummaryFetchError: '',
   evidenceOrder: [],
-  selectedEvidenceJobID: '',
+  selectedEvidenceTaskID: '',
   selectedEvidenceItem: null,
   selectedEvidenceFocus: '',
   evidenceSortDesc: true,
-  pendingEvidenceJobID: '',
+  pendingEvidenceTaskID: '',
   memory: {
     snapshot: {memory: [], news: [], digests: [], knowledge: []},
     newsPackSnapshot: {news: [], digests: []},
@@ -237,7 +239,7 @@ const state = {
     episodeRequestToken: 0,
   },
   openTasks: {},
-  progressOpenJobs: {},
+  progressOpenTasks: {},
   ops: {
     persistedLogs: [],
     opsLogsFetchError: '',
@@ -346,7 +348,7 @@ const state = {
 	    hobbyGraphOverviewFetchError: '',
 	    runtimeBlockedRoutes: [],
     lastMioReport: null,
-    latestJobID: '',
+    latestTaskID: '',
     latestRoute: '',
     latestError: null,
     llmGateway: null,
@@ -378,7 +380,7 @@ AGENTS.forEach((id) => {
     route: '-',
     lastEvent: '-',
     peer: '-',
-    jobID: '-',
+    taskID: '-',
     sessionID: 'viewer',
     preview: '-',
     updatedAt: '',
@@ -411,7 +413,7 @@ const ttsPlayback = {
   currentSessionId: '',
   currentChunkIndex: -1,
   currentUtteranceId: '',
-  currentResponseId: '',
+  currentPublicPlaybackRef: '',
   currentMessageId: '',
   currentTurnIndex: -1,
   currentShown: false,
@@ -444,7 +446,7 @@ const centralTTSSpeech = {
   textEl: null,
   characterId: '',
   sessionId: '',
-  responseId: '',
+  publicPlaybackRef: '',
   bubbleKind: '',
   active: false,
   preRendered: false,
@@ -455,7 +457,7 @@ const idleTTSSpeech = {
   textEl: null,
   characterId: '',
   sessionId: '',
-  responseId: '',
+  publicPlaybackRef: '',
   bubbleKind: '',
   active: false,
   preRendered: false,
@@ -915,20 +917,20 @@ function isIdleChatSessionId(sessionId) {
   return sid.indexOf('idle-') === 0 || sid.indexOf('forecast-') === 0 || sid.indexOf('story-') === 0 || sid.indexOf('story-simple-') === 0;
 }
 
-function setCentralTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, responseId, messageId, turnIndex) {
+function setCentralTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex) {
   const target = isIdleChatSessionId(sessionId) ? 'idle' : 'central';
-  setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, responseId, messageId, turnIndex);
+  setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex);
 }
 
-function setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, responseId, messageId, turnIndex) {
+function setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex) {
   if (target === 'idle') {
-    renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, responseId, messageId, turnIndex);
+    renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex);
     return;
   }
-  renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, responseId);
+  renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef);
 }
 
-function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, responseId) {
+function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef) {
   const normalizedText = String(text || '').trim();
   if (!normalizedText) {
     resetTTSSpeechBubble(centralTTSSpeech);
@@ -939,7 +941,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
   const id = String(characterId || '').trim().toLowerCase();
   const sid = String(sessionId || '').trim();
   const normalizedChunkIndex = Number.isFinite(chunkIndex) ? chunkIndex : -1;
-  const rid = String(responseId || '').trim();
+  const rid = String(publicPlaybackRef || '').trim();
   const speech = centralTTSSpeech;
   const bubbleKind = ttsBubbleKind(speech, normalizedText, sid, normalizedChunkIndex, id);
   const f = ag(id || 'mio');
@@ -958,7 +960,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.textEl = el.querySelector('.mc');
     speech.characterId = id;
     speech.sessionId = sid;
-    speech.responseId = rid;
+    speech.publicPlaybackRef = rid;
     speech.bubbleKind = bubbleKind;
     speech.active = true;
     speech.preRendered = false;
@@ -971,7 +973,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.el.classList.add('tts-current');
     speech.el.classList.toggle('shiro', id === 'shiro');
     speech.sessionId = sid;
-    if (rid) speech.responseId = rid;
+    if (rid) speech.publicPlaybackRef = rid;
     speech.active = true;
   }
   if (speech.chunkKeys.has(key)) {
@@ -988,7 +990,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
   scrollToBottom();
 }
 
-function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, responseId, messageId, turnIndex) {
+function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex) {
   const normalizedText = String(text || '').trim();
   if (!normalizedText) {
     resetTTSSpeechBubble(idleTTSSpeech);
@@ -1000,7 +1002,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
   const id = String(characterId || '').trim().toLowerCase();
   const sid = String(sessionId || '').trim();
   const normalizedChunkIndex = Number.isFinite(chunkIndex) ? chunkIndex : -1;
-  const rid = String(responseId || '').trim();
+  const rid = String(publicPlaybackRef || '').trim();
   const speech = idleTTSSpeech;
   const bubbleKind = ttsBubbleKind(speech, normalizedText, sid, normalizedChunkIndex, id);
   const f = ag(id || 'mio');
@@ -1018,7 +1020,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
           turn_index: turnIndex,
         }, {
           reason: 'summary speech is already represented by idlechat.summary',
-          response_id: rid,
+          public_playback_ref: rid,
           utterance_id: String(utteranceId || '').trim(),
         });
       }
@@ -1036,7 +1038,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
         renderIdleTTSChunkError({
           characterId: id,
           sessionId: sid,
-          responseId: rid,
+          publicPlaybackRef: rid,
           utteranceId,
           messageId,
           turnIndex,
@@ -1049,7 +1051,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
         renderIdleTTSChunkError({
           characterId: id,
           sessionId: sid,
-          responseId: rid,
+          publicPlaybackRef: rid,
           utteranceId,
           messageId,
           turnIndex,
@@ -1081,7 +1083,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.textEl = el.querySelector('.mc');
     speech.characterId = id;
     speech.sessionId = sid;
-    speech.responseId = rid;
+    speech.publicPlaybackRef = rid;
     speech.bubbleKind = bubbleKind;
     speech.active = true;
     speech.preRendered = !!((rendered && rendered.el && !renderedWasPending) || (existing && !renderedWasPending));
@@ -1094,7 +1096,7 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.el.classList.add('tts-current');
     speech.el.classList.toggle('shiro', id === 'shiro');
     speech.sessionId = sid;
-    if (rid) speech.responseId = rid;
+    if (rid) speech.publicPlaybackRef = rid;
     speech.active = true;
   }
   if (speech.chunkKeys.has(key)) {
@@ -1121,11 +1123,11 @@ function resetTTSSpeechBubble(speech) {
   speech.active = false;
 }
 
-function shouldStartNewTTSBubble(speech, chunkIndex, key, responseId) {
+function shouldStartNewTTSBubble(speech, chunkIndex, key, publicPlaybackRef) {
   if (!speech.el) return true;
   if (!speech.textEl || !String(speech.textEl.textContent || '').trim()) return false;
   if (speech.chunkKeys.has(key)) return false;
-  if (responseId && speech.responseId && responseId !== speech.responseId) return true;
+  if (publicPlaybackRef && speech.publicPlaybackRef && publicPlaybackRef !== speech.publicPlaybackRef) return true;
   if (chunkIndex === 0) return true;
   if (!speech.active && chunkIndex < 1) return true;
   return false;
@@ -1215,7 +1217,7 @@ const panels = {
   investment: document.getElementById('panel-investment'),
   idlechat: document.getElementById('panel-idlechat'),
   sessions: document.getElementById('panel-sessions'),
-  jobs: document.getElementById('panel-jobs'),
+  tasks: document.getElementById('panel-tasks'),
 };
 
 function applyViewerTheme(theme) {
@@ -1240,7 +1242,7 @@ themeButtons.forEach((btn) => btn.addEventListener('click', () => applyViewerThe
 const fltType = document.getElementById('fltType');
 const fltAgent = document.getElementById('fltAgent');
 const fltRoute = document.getElementById('fltRoute');
-const fltJob = document.getElementById('fltJob');
+const fltTask = document.getElementById('fltTask');
 const fltText = document.getElementById('fltText');
 const sysPreset = document.getElementById('sysPreset');
 const sysType = document.getElementById('sysType');
@@ -1344,7 +1346,7 @@ function switchTab(tab) {
   if (tab === 'games' && typeof refreshGameBridgeData === 'function') {
     refreshGameBridgeData();
   }
-  if (tab === 'jobs') {
+  if (tab === 'tasks') {
     refreshVerification();
     refreshVerificationSummary();
   }
@@ -1384,7 +1386,7 @@ function matchesFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltTask.value && !(ev.task_id || '').toLowerCase().includes(fltTask.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
 }
@@ -1408,7 +1410,7 @@ function resetTimeline() {
   state.logs.forEach((ev) => addMsgToTimeline(ev));
 }
 [fltType, fltAgent, fltRoute].forEach((el) => el.addEventListener('change', resetTimeline));
-[fltJob, fltText].forEach((el) => el.addEventListener('input', resetTimeline));
+[fltTask, fltText].forEach((el) => el.addEventListener('input', resetTimeline));
 
 function matchesSystemFilters(ev) {
   if (!isSystemEvent(ev)) return false;
@@ -1529,7 +1531,7 @@ function recordLatencyMetric(kind, point, options = {}) {
     elapsedMS: Number.isFinite(elapsedMS) ? elapsedMS : NaN,
     detail: String(options.detail || '').trim(),
     route: String(options.route || '').trim(),
-    job: String(options.job || '').trim(),
+    task: String(options.task || '').trim(),
     session: String(options.session || '').trim(),
     source: String(options.source || 'viewer').trim(),
   };
@@ -1566,7 +1568,7 @@ function ingestLatencyMetricEvent(ev) {
     valueMS: Number(payload.since_ms !== undefined ? payload.since_ms : payload.elapsed_ms),
     detail: payload.detail || '',
     route: ev.route || '',
-    job: ev.task_id || '',
+    task: ev.task_id || '',
     session: ev.session_id || '',
     source: 'server',
   });
@@ -1576,7 +1578,7 @@ function ingestLatencyMetricEvent(ev) {
       valueMS: Math.max(0, nowLatencyMS() - emittedAt),
       detail: String(payload.kind || '-') + '/' + String(payload.point || '-'),
       route: ev.route || '',
-      job: ev.task_id || '',
+      task: ev.task_id || '',
       session: ev.session_id || '',
     });
   }
@@ -1588,7 +1590,7 @@ function noteViewerEventLatency(ev, receivedMS) {
     ingestLatencyMetricEvent(ev);
     return;
   }
-  const job = String(ev.task_id || '').trim();
+  const task = String(ev.task_id || '').trim();
   const eventType = String(ev.type || '').trim();
   if (eventType === 'message.received') {
     const key = 'sse-message:' + String(ev.seq || ev.timestamp || receivedMS);
@@ -1596,29 +1598,29 @@ function noteViewerEventLatency(ev, receivedMS) {
       atMS: receivedMS,
       detail: short(ev.content || '', 80),
       route: ev.route || '',
-      job,
+      task,
       session: ev.session_id || '',
     });
     return;
   }
   if (eventType === 'agent.thinking') {
-    const key = 'llm-thinking:' + (job || ev.session_id || 'unknown');
+    const key = 'llm-thinking:' + (task || ev.session_id || 'unknown');
     recordLatencyMetricOnce(key, 'llm', 'agent_thinking_received', {
       atMS: receivedMS,
       detail: short(ev.content || '', 80),
       route: ev.route || '',
-      job,
+      task,
       session: ev.session_id || '',
     });
     return;
   }
   if (eventType === 'agent.response') {
-    const key = 'llm-response:' + (job || ev.message_id || receivedMS);
+    const key = 'llm-response:' + (task || ev.message_id || receivedMS);
     recordLatencyMetricOnce(key, 'llm', 'agent_response_received', {
       atMS: receivedMS,
       detail: 'len=' + String(String(ev.content || '').length),
       route: ev.route || '',
-      job,
+      task,
       session: ev.session_id || '',
     });
     return;
@@ -1629,7 +1631,7 @@ function noteViewerEventLatency(ev, receivedMS) {
       atMS: receivedMS,
       detail: 'sse audio chunk',
       route: ev.route || '',
-      job,
+      task,
       session: ev.session_id || '',
     });
   }
@@ -1720,7 +1722,7 @@ function renderDebugPanels() {
   } else {
     thinkEl.innerHTML = thinkList.map((item) => (
       '<div class="debug-item">' +
-        '<div class="debug-meta">' + esc(item.time || '-') + ' · ' + esc(item.agent || '-') + ' · ' + esc(item.job || '-') + '</div>' +
+        '<div class="debug-meta">' + esc(item.time || '-') + ' · ' + esc(item.agent || '-') + ' · ' + esc(item.task || '-') + '</div>' +
         '<div>' + esc(item.text || '-') + '</div>' +
       '</div>'
     )).join('');
@@ -1785,7 +1787,7 @@ function matchesThinkingFilters(ev) {
   if (fltType.value && ev.type !== fltType.value) return false;
   if (fltAgent.value && id !== fltAgent.value && ev.from !== fltAgent.value && ev.to !== fltAgent.value) return false;
   if (fltRoute.value && (ev.route || '') !== fltRoute.value) return false;
-  if (fltJob.value && !(ev.task_id || '').toLowerCase().includes(fltJob.value.toLowerCase())) return false;
+  if (fltTask.value && !(ev.task_id || '').toLowerCase().includes(fltTask.value.toLowerCase())) return false;
   if (fltText.value && !(ev.content || '').toLowerCase().includes(fltText.value.toLowerCase())) return false;
   return true;
 }
@@ -2026,14 +2028,15 @@ function upsertSession(ev) {
   s.updatedAt = ev.timestamp;
 }
 
-function upsertJob(ev) {
+function upsertTask(ev) {
   const jid = ev.task_id || '-';
   if (jid === '-') return;
-  let j = state.jobs[jid];
+  let j = state.tasks[jid];
   if (!j) {
     j = {id: jid, route: '-', status: 'running', from: '-', to: '-', startedAt: ev.timestamp, updatedAt: ev.timestamp, events: 0, preview: ''};
-    state.jobs[jid] = j;
+    state.tasks[jid] = j;
   }
+  if (ev.trace_id) j.traceID = ev.trace_id;
   j.events++;
   j.updatedAt = ev.timestamp;
   if (ev.route) j.route = ev.route;
@@ -2071,7 +2074,7 @@ function applyMonitorStatusSnapshot(payload) {
       lastEvent: item.last_event || '-',
       preview: item.preview || '-',
       updatedAt: item.updated_at || '',
-      jobID: item.task_id || '-',
+      taskID: item.task_id || '-',
     });
   });
   renderOverview();
@@ -2084,7 +2087,7 @@ function addOpenTask(owner, ev) {
   const jid = ev.task_id || '';
   if (!jid) return;
   state.openTasks[owner][jid] = {
-    jobID: jid,
+    taskID: jid,
     route: ev.route || '-',
     text: short(ev.content || '-', 80),
     updatedAt: ev.timestamp || new Date().toISOString(),
@@ -2100,8 +2103,8 @@ function openTaskSummary(agentID) {
   const m = state.openTasks[agentID] || {};
   const list = Object.values(m).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   if (list.length === 0) return '-';
-  if (list.length === 1) return list[0].text || list[0].route || list[0].jobID;
-  return short((list[0].text || list[0].route || list[0].jobID) + ' / +' + String(list.length - 1), 90);
+  if (list.length === 1) return list[0].text || list[0].route || list[0].taskID;
+  return short((list[0].text || list[0].route || list[0].taskID) + ' / +' + String(list.length - 1), 90);
 }
 
 function updateAgents(ev) {
@@ -2110,11 +2113,11 @@ function updateAgents(ev) {
   const jid = ev.task_id || '-';
 
   if (ev.type === 'message.received') {
-    touchAgent('mio', {state: 'running', route, lastEvent: ev.type, peer: ev.from || '-', preview: short(ev.content, 80), updatedAt: ts, jobID: jid});
+    touchAgent('mio', {state: 'running', route, lastEvent: ev.type, peer: ev.from || '-', preview: short(ev.content, 80), updatedAt: ts, taskID: jid});
     return;
   }
   if (ev.type === 'routing.decision') {
-    touchAgent('mio', {state: 'running', reason: '', route, lastEvent: ev.type, peer: '-', preview: short(ev.content, 80), updatedAt: ts, jobID: jid});
+    touchAgent('mio', {state: 'running', reason: '', route, lastEvent: ev.type, peer: '-', preview: short(ev.content, 80), updatedAt: ts, taskID: jid});
     return;
   }
 
@@ -2136,7 +2139,7 @@ function updateAgents(ev) {
       peer: to || '-',
       preview: short(ev.content, 80),
       updatedAt: ts,
-      jobID: jid,
+      taskID: jid,
     });
 
     // Update character expression based on agent state
@@ -2168,7 +2171,7 @@ function updateAgents(ev) {
       peer: from || '-',
       preview: short(ev.content, 80),
       updatedAt: ts,
-      jobID: jid,
+      taskID: jid,
     });
   }
   if (ev.type === 'agent.response' && AGENTS.includes(from)) {
@@ -2183,7 +2186,7 @@ function updateAgents(ev) {
       peer: from || '-',
       preview: short(ev.content, 80),
       updatedAt: ts,
-      jobID: jid,
+      taskID: jid,
     });
   }
 }
@@ -2195,8 +2198,8 @@ function renderEvidence() {
   const fetchError = evidenceFetchErrorMessage();
   if (fetchError) {
     state.evidenceOrder = [];
-    if (state.selectedEvidenceJobID) {
-      state.selectedEvidenceJobID = '';
+    if (state.selectedEvidenceTaskID) {
+      state.selectedEvidenceTaskID = '';
       state.selectedEvidenceItem = null;
       syncEvidenceQuery('');
     }
@@ -2220,8 +2223,8 @@ function renderEvidence() {
     return state.evidenceSortDesc ? (tb - ta) : (ta - tb);
   });
   state.evidenceOrder = list.map((r) => String(r.task_id || '')).filter((id) => id !== '');
-  if (state.selectedEvidenceJobID && state.evidenceOrder.indexOf(state.selectedEvidenceJobID) < 0) {
-    state.selectedEvidenceJobID = '';
+  if (state.selectedEvidenceTaskID && state.evidenceOrder.indexOf(state.selectedEvidenceTaskID) < 0) {
+    state.selectedEvidenceTaskID = '';
     state.selectedEvidenceItem = null;
     syncEvidenceQuery('');
     const detail = document.getElementById('evidenceDetail');
@@ -2244,7 +2247,7 @@ function renderEvidence() {
     const verifyCount = isVerificationReport ? Number(r.claim_count || 0) : (Array.isArray(r.verification) ? r.verification.length : 0);
     const latestVerify = isVerificationReport ? latestVerificationReportLink(r.task_id || '', r.status) : latestVerificationLink(r.task_id || '', r.verification);
     const tr = document.createElement('tr');
-    if ((r.task_id || '') === (state.selectedEvidenceJobID || '')) tr.classList.add('evi-selected');
+    if ((r.task_id || '') === (state.selectedEvidenceTaskID || '')) tr.classList.add('evi-selected');
     tr.innerHTML =
       '<td class="code">' + esc((isVerificationReport ? 'verification_report:' : 'execution_report:') + (r.task_id || '-')) + '</td>' +
       '<td class="code">' + esc(r.task_id || '-') + '</td>' +
@@ -2270,10 +2273,10 @@ function renderEvidence() {
 
 function combinedEvidenceList() {
   const out = Array.isArray(state.evidence) ? state.evidence.slice() : [];
-  const seenJobs = new Set(out.map((r) => String(r.task_id || '')).filter((id) => id !== ''));
+  const seenTasks = new Set(out.map((r) => String(r.task_id || '')).filter((id) => id !== ''));
   (state.verificationReports || []).forEach((r) => {
-    const jobID = String(r.task_id || '');
-    if (!jobID || seenJobs.has(jobID)) return;
+    const taskID = String(r.task_id || '');
+    if (!taskID || seenTasks.has(taskID)) return;
     out.push(Object.assign({_kind: 'verification_report'}, r));
   });
   return out;
@@ -2347,7 +2350,7 @@ function refreshDerivedViews() {
   renderProgress();
   renderSystem();
   renderSessions();
-  renderJobs();
+  renderTasks();
   renderEvidence();
   renderMemorySnapshot();
   renderMemoryEvents();
@@ -2380,7 +2383,7 @@ function refreshOpsData() {
       state.ops.opsLogsFetchError = '';
       state.ops.persistedLogs = items;
       state.ops.lastMioReport = items.find((ev) => String(ev.from || '').toLowerCase() === 'mio' && String(ev.to || '').toLowerCase() === 'user') || null;
-      state.ops.latestJobID = items[0] ? (items[0].task_id || '') : '';
+      state.ops.latestTaskID = items[0] ? (items[0].task_id || '') : '';
       state.ops.latestRoute = items[0] ? (items[0].route || '') : '';
       state.ops.latestError = items.find((ev) => {
         const t = String(ev.type || '').toLowerCase();
@@ -2393,7 +2396,7 @@ function refreshOpsData() {
       state.ops.opsLogsFetchError = String(err && err.message ? err.message : err);
       state.ops.persistedLogs = [];
       state.ops.lastMioReport = null;
-      state.ops.latestJobID = '';
+      state.ops.latestTaskID = '';
       state.ops.latestRoute = '';
       state.ops.latestError = null;
       renderOps();
@@ -3006,16 +3009,16 @@ function refreshEvidence() {
       state.evidence = Array.isArray(data.items) ? data.items : [];
       renderEvidence();
       renderDeskViews();
-      if (state.pendingEvidenceJobID) {
-        const want = state.pendingEvidenceJobID;
+      if (state.pendingEvidenceTaskID) {
+        const want = state.pendingEvidenceTaskID;
         const found = state.evidence.some((r) => String(r.task_id || '') === want);
         if (found) {
-          state.pendingEvidenceJobID = '';
+          state.pendingEvidenceTaskID = '';
           openEvidence(want);
         } else {
           const detail = document.getElementById('evidenceDetail');
           if (detail) detail.innerHTML = '<span class="badge state-error">not found</span> task_id=' + esc(want);
-          state.pendingEvidenceJobID = '';
+          state.pendingEvidenceTaskID = '';
           if (state.evidenceOrder.length > 0) {
             showToast('task_id not found, switched to newest evidence', 'error');
             openEvidence(state.evidenceOrder[0]);
@@ -3026,7 +3029,7 @@ function refreshEvidence() {
     .catch((err) => {
       state.evidenceFetchError = String(err && err.message ? err.message : err);
       state.evidence = [];
-      state.pendingEvidenceJobID = '';
+      state.pendingEvidenceTaskID = '';
       state.selectedEvidenceItem = null;
       renderEvidence();
       renderDeskViews();
@@ -3113,15 +3116,15 @@ function refreshVerificationSummary() {
     });
 }
 
-function openEvidence(jobID) {
-  if (!jobID) return;
-  state.selectedEvidenceJobID = jobID;
-  syncEvidenceQuery(jobID);
+function openEvidence(taskID) {
+  if (!taskID) return;
+  state.selectedEvidenceTaskID = taskID;
+  syncEvidenceQuery(taskID);
   renderEvidence();
-  const hasVerificationOnly = (state.verificationReports || []).some((r) => String(r.task_id || '') === String(jobID)) &&
-    !(state.evidence || []).some((r) => String(r.task_id || '') === String(jobID));
+  const hasVerificationOnly = (state.verificationReports || []).some((r) => String(r.task_id || '') === String(taskID)) &&
+    !(state.evidence || []).some((r) => String(r.task_id || '') === String(taskID));
   const detailURL = hasVerificationOnly ? '/viewer/verification/detail?task_id=' : '/viewer/evidence/detail?task_id=';
-  fetch(detailURL + encodeURIComponent(jobID))
+  fetch(detailURL + encodeURIComponent(taskID))
     .then((r) => {
       if (!r.ok) {
         return r.text().then((text) => {
@@ -3148,9 +3151,9 @@ function openEvidence(jobID) {
       const el = document.getElementById('evidenceDetail');
       if (el) {
         const msg = String(err && err.message ? err.message : 'error');
-        el.innerHTML = '<span class="badge state-error">' + esc(msg) + '</span> task_id=' + esc(jobID);
+        el.innerHTML = '<span class="badge state-error">' + esc(msg) + '</span> task_id=' + esc(taskID);
       }
-      if (state.evidenceOrder.length > 0 && String(state.evidenceOrder[0]) !== String(jobID)) {
+      if (state.evidenceOrder.length > 0 && String(state.evidenceOrder[0]) !== String(taskID)) {
         showToast('evidence unavailable, switched to newest evidence', 'error');
         openEvidence(state.evidenceOrder[0]);
       }
@@ -3158,16 +3161,16 @@ function openEvidence(jobID) {
 }
 window.openEvidence = openEvidence;
 
-function openEvidenceWithFocus(jobID, focus, evt) {
+function openEvidenceWithFocus(taskID, focus, evt) {
   if (evt && typeof evt.stopPropagation === 'function') evt.stopPropagation();
   state.selectedEvidenceFocus = String(focus || '');
-  openEvidence(jobID);
+  openEvidence(taskID);
 }
 window.openEvidenceWithFocus = openEvidenceWithFocus;
 
 function updateEvidenceNav() {
   const order = state.evidenceOrder || [];
-  const cur = String(state.selectedEvidenceJobID || '');
+  const cur = String(state.selectedEvidenceTaskID || '');
   const idx = order.indexOf(cur);
   if (eviPos) {
     if (order.length === 0 || idx < 0) eviPos.textContent = '- / -';
@@ -3181,7 +3184,7 @@ function updateEvidenceNav() {
 
 function openEvidenceAdjacent(delta) {
   const order = state.evidenceOrder || [];
-  const cur = String(state.selectedEvidenceJobID || '');
+  const cur = String(state.selectedEvidenceTaskID || '');
   const idx = order.indexOf(cur);
   if (idx < 0) return;
   const next = idx + delta;
@@ -3245,7 +3248,7 @@ function renderEvidenceDetail(item) {
   const stepHTML = steps.length > 0 ? steps.map((s, i) => (String(i + 1) + '. ' + esc(s))).join('<br>') : '-';
   const verifyHTML = verification.length > 0 ? verification.map((v, i) => (String(i + 1) + '. ' + renderVerificationLine(v))).join('<br>') : '-';
   return '' +
-    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
+    '<div class="row"><span>Task ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
     '<div class="row"><span>Status</span><span class="badge ' + statusClass + '">' + esc(item.status || '-') + '</span></div>' +
     '<div class="row"><span>Error Kind</span><span class="badge ' + errorKindClass(item.error_kind || '') + '">' + esc(item.error_kind || '-') + '</span></div>' +
     '<div class="row"><span>Goal</span><span>' + esc(item.goal || '-') + '</span></div>' +
@@ -3287,7 +3290,7 @@ function renderVerificationReportDetail(item) {
   }).join('<br>') : '-';
   const questionHTML = questions.length > 0 ? questions.map((q, i) => String(i + 1) + '. ' + esc(q.query || '-')).join('<br>') : '-';
   return '' +
-    '<div class="row"><span>Job ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
+    '<div class="row"><span>Task ID</span><span class="code">' + esc(item.task_id || '-') + '</span></div>' +
     '<div class="row"><span>Status</span><span class="badge ' + stateClass(verificationStatusClass(status)) + '">' + esc(status) + '</span></div>' +
     '<div class="row"><span>Trigger</span><span class="badge state-thinking">' + esc(item.trigger_level || '-') + '</span></div>' +
     '<div class="row"><span>Route</span><span>' + esc(item.route || '-') + '</span></div>' +
@@ -3306,11 +3309,11 @@ function verificationStatusClass(status) {
   return 'offline';
 }
 
-function latestVerificationReportLink(jobID, status) {
+function latestVerificationReportLink(taskID, status) {
   const cls = stateClass(verificationStatusClass(status));
   const badge = '<span class="badge ' + cls + '">' + esc(status || '-') + '</span>';
-  if (!jobID) return badge;
-  return '<button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(jobID) + '\', \'verification\', event)">' + badge + '</button>';
+  if (!taskID) return badge;
+  return '<button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(taskID) + '\', \'verification\', event)">' + badge + '</button>';
 }
 
 function latestVerificationBadge(list) {
@@ -3323,10 +3326,10 @@ function latestVerificationBadge(list) {
   return '<span class="badge state-offline">note</span>';
 }
 
-function latestVerificationLink(jobID, list) {
+function latestVerificationLink(taskID, list) {
   const badge = latestVerificationBadge(list);
-  if (!jobID) return badge;
-  return '<button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(jobID) + '\', \'verification\', event)">' + badge + '</button>';
+  if (!taskID) return badge;
+  return '<button class="ctl-btn" onclick="openEvidenceWithFocus(\'' + esc(taskID) + '\', \'verification\', event)">' + badge + '</button>';
 }
 
 function latestVerificationLabel(list) {
@@ -3352,10 +3355,10 @@ function buildEvidenceSummary(item) {
   return parts.join(' | ');
 }
 
-function syncEvidenceQuery(jobID) {
+function syncEvidenceQuery(taskID) {
   if (!window.history || !window.history.replaceState) return;
   const u = new URL(window.location.href);
-  if (jobID) u.searchParams.set('task_id', String(jobID));
+  if (taskID) u.searchParams.set('task_id', String(taskID));
   else u.searchParams.delete('task_id');
   window.history.replaceState(null, '', u.toString());
 }
@@ -3383,7 +3386,7 @@ function shouldRefreshPromptLogsPanel() {
 }
 
 function shouldRefreshEvidencePanelDiagnostics() {
-  return shouldRefreshOptionalPanels() && activeViewerTab === 'jobs';
+  return shouldRefreshOptionalPanels() && activeViewerTab === 'tasks';
 }
 
 function refreshOptionalPanelData() {
@@ -3460,8 +3463,8 @@ function initEvidenceFromQuery() {
     const u = new URL(window.location.href);
     const q = (u.searchParams.get('task_id') || '').trim();
     if (q) {
-      state.pendingEvidenceJobID = q;
-      switchTab('jobs');
+      state.pendingEvidenceTaskID = q;
+      switchTab('tasks');
     }
   } catch (_) {}
 }
@@ -3568,7 +3571,7 @@ function refreshViewerStatus() {
           route: '-',
           lastEvent: 'viewer status fetch failed',
           peer: '-',
-          jobID: '-',
+          taskID: '-',
           preview: 'viewer status unavailable',
           updatedAt: new Date().toISOString(),
         });
@@ -3583,11 +3586,6 @@ function refreshViewerStatus() {
 function ingestEvent(ev) {
   handleViewerActiveControlEvent(ev);
   if (isStaleIdleChatEvent(ev)) return;
-  if (ev && ev.type === 'job.notification') {
-    const key = jobNotificationEventKey(ev);
-    if (key && seenJobNotificationKeys.has(key)) return;
-    if (key) rememberJobNotificationKey(key);
-  }
   if (ev && ev.type === 'task.notification') {
     const key = taskNotificationEventKey(ev);
     if (key && seenTaskNotificationKeys.has(key)) return;
@@ -3602,7 +3600,7 @@ function ingestEvent(ev) {
   state.logs.push(ev);
   if (state.logs.length > MAX_LOGS) state.logs.shift();
   upsertSession(ev);
-  upsertJob(ev);
+  upsertTask(ev);
   updateAgents(ev);
   addMsgToTimeline(ev);
   addIdleMsgToTimeline(ev);
@@ -3611,7 +3609,7 @@ function ingestEvent(ev) {
     pushDebugTrace('think', {
       time: ftime(ev.timestamp),
       agent: agName(ev.from || '-'),
-      job: ev.task_id || '-',
+      task: ev.task_id || '-',
       text: short(ev.content || '', 240),
     });
   }
@@ -3622,34 +3620,6 @@ function ingestEvent(ev) {
   derivedDirty = true;
   // Update Live2D emotion on messages
   if (typeof updateLive2DOnMessage === 'function') updateLive2DOnMessage(ev);
-}
-
-function rememberJobNotificationKey(key) {
-  seenJobNotificationKeys.add(key);
-  if (seenJobNotificationKeys.size > 300) {
-    const first = seenJobNotificationKeys.values().next().value;
-    if (first) seenJobNotificationKeys.delete(first);
-  }
-}
-
-function jobNotificationEventKey(ev) {
-  return [
-    ev.task_id || '',
-    ev.status || ev.category || '',
-    ev.level || '',
-    ev.timestamp || '',
-    ev.content || '',
-  ].join('|');
-}
-
-function jobNotificationKey(n) {
-  return [
-    n.task_id || '',
-    n.status || '',
-    n.level || '',
-    n.created_at || '',
-    n.summary || '',
-  ].join('|');
 }
 
 function normalizeNotificationAssignee(n) {
@@ -3663,7 +3633,7 @@ function normalizeNotificationAssignee(n) {
 }
 
 function formatNotificationContent(n) {
-  const title = String((n && n.title) || 'job').trim();
+  const title = String((n && n.title) || 'task').trim();
   const status = String((n && n.status) || '').trim();
   const summary = String((n && n.summary) || '').trim();
   const nextActions = Array.isArray(n && n.next_actions) ? n.next_actions.filter(Boolean) : [];
@@ -3672,29 +3642,6 @@ function formatNotificationContent(n) {
   if (summary) content += '\n' + summary;
   if (nextActions.length) content += '\nnext: ' + nextActions.join(' / ');
   return content;
-}
-
-function jobNotificationToEvent(n) {
-  const status = String((n && n.status) || '').trim();
-  return {
-    type: 'job.notification',
-    from: normalizeNotificationAssignee(n),
-    to: 'mio',
-    content: formatNotificationContent(n),
-    route: String((n && n.route) || '').trim(),
-    task_id: String((n && n.task_id) || '').trim(),
-    timestamp: String((n && n.created_at) || new Date().toISOString()),
-    category: status,
-    status,
-    level: String((n && n.level) || '').trim(),
-  };
-}
-
-function ingestJobNotification(n) {
-  const key = jobNotificationKey(n);
-  if (!key.trim() || seenJobNotificationKeys.has(key)) return;
-  rememberJobNotificationKey(key);
-  ingestEvent(jobNotificationToEvent(n));
 }
 
 function rememberTaskNotificationKey(key) {
@@ -3830,18 +3777,18 @@ function createChatAudioSync() {
   // - completedSessions is only an IdleChat session-level start gate for buffered audio.
   // - responseLifecycle is the response-level source of truth for the three independent TTS checkpoints:
   //   synthesis completed, browser WAV fetch completed, and playback ACK completed.
-  // - completedResponses / responsePlaybackCounts / responsePlaybackResults / seenAudioResponses form one response-level ACK lifecycle.
+  // - completedPublicPlaybacks / publicPlaybackCounts / publicPlaybackResults / seenAudioPublicPlaybacks form one response-level ACK lifecycle.
   // - seenUtterances and blockedAckKeys are chunk-level local dedupe guards for this tab only.
   const completedSessions = new Set();
-  const completedResponses = new Set();
-  const acknowledgedResponses = new Set();
-  const responsePlaybackCounts = new Map();
-  const responsePlaybackResults = new Map();
-  const seenAudioResponses = new Set();
+  const completedPublicPlaybacks = new Set();
+  const acknowledgedPublicPlaybacks = new Set();
+  const publicPlaybackCounts = new Map();
+  const publicPlaybackResults = new Map();
+  const seenAudioPublicPlaybacks = new Set();
   const seenUtterances = new Set();
   const blockedAckKeys = new Set();
   const interruptedChatSessions = new Set();
-  const interruptedChatResponses = new Set();
+  const interruptedChatPublicPlaybacks = new Set();
 
   const module = {
     state,
@@ -3886,7 +3833,7 @@ function createChatAudioSync() {
         return {
           eventType: 'session_completed',
           sessionId: String(payload.session_id || ev.session_id || '').trim(),
-          responseId: String(payload.response_id || '').trim(),
+          publicPlaybackRef: String(payload.public_playback_ref || '').trim(),
           utteranceId: String(payload.utterance_id || '').trim(),
           messageId: String(payload.message_id || '').trim(),
           turnIndex: Number.isFinite(Number(payload.turn_index)) ? Math.floor(Number(payload.turn_index)) : -1,
@@ -3896,7 +3843,7 @@ function createChatAudioSync() {
         return {
           eventType: 'session_completed',
           sessionId: String(ev.session_id || '').trim(),
-          responseId: '',
+          publicPlaybackRef: '',
         };
       }
     }
@@ -3918,7 +3865,7 @@ function createChatAudioSync() {
     const characterId = String(payload.character_id || payload.speaker || '').trim().toLowerCase();
     const text = String(payload.speech_text || payload.text || '').trim();
     const displayText = String(payload.display_text || payload.viewer_text || payload.text || '').trim();
-    const responseId = String(payload.response_id || '').trim();
+    const publicPlaybackRef = String(payload.public_playback_ref || '').trim();
     const messageId = String(payload.message_id || '').trim();
     const utteranceId = String(payload.utterance_id || '').trim() || (sessionId + ':' + String(chunkIndex));
     const errorCode = String(payload.error_code || '').trim();
@@ -3936,7 +3883,7 @@ function createChatAudioSync() {
       chunkIndex,
       text,
       displayText,
-      responseId,
+      publicPlaybackRef,
       utteranceId,
       messageId,
       turnIndex,
@@ -3983,7 +3930,7 @@ function createChatAudioSync() {
       chunkIndex: Number.isFinite(chunk && chunk.chunkIndex) ? chunk.chunkIndex : -1,
       text: String((chunk && chunk.text) || ''),
       displayText: String((chunk && (chunk.displayText || chunk.text)) || ''),
-      responseId: String((chunk && chunk.responseId) || ''),
+      publicPlaybackRef: String((chunk && chunk.publicPlaybackRef) || ''),
       utteranceId: String((chunk && chunk.utteranceId) || ''),
       messageId: String((chunk && chunk.messageId) || ''),
       turnIndex: Number.isFinite(chunk && chunk.turnIndex) ? chunk.turnIndex : -1,
@@ -4018,11 +3965,11 @@ function createChatAudioSync() {
     if (typeof recordLatencyMetric === 'function') {
       recordLatencyMetric('tts', 'audio_queue_enqueue', {
         detail: 'chunk=' + String(chunk.chunkIndex),
-        job: chunk.responseId,
+        task: chunk.publicPlaybackRef,
         session: chunk.sessionId,
       });
     }
-    incrementResponsePlaybackCount(chunk.responseId);
+    incrementPublicPlaybackCount(chunk.publicPlaybackRef);
     state.queue.push(chunk);
     sortQueue();
     preloadQueuedAudioInternal();
@@ -4030,8 +3977,8 @@ function createChatAudioSync() {
 
   function sortQueue() {
     state.queue.sort((a, b) => {
-      const aKey = `${a.sessionId}|${a.responseId}|${a.track}`;
-      const bKey = `${b.sessionId}|${b.responseId}|${b.track}`;
+      const aKey = `${a.sessionId}|${a.publicPlaybackRef}|${a.track}`;
+      const bKey = `${b.sessionId}|${b.publicPlaybackRef}|${b.track}`;
       if (aKey === bKey && a.chunkIndex >= 0 && b.chunkIndex >= 0 && a.chunkIndex !== b.chunkIndex) {
         return a.chunkIndex - b.chunkIndex;
       }
@@ -4039,80 +3986,80 @@ function createChatAudioSync() {
     });
   }
 
-  function markSessionCompleted(sessionOrChunk, responseId) {
+  function markSessionCompleted(sessionOrChunk, publicPlaybackRef) {
     const chunk = sessionOrChunk && typeof sessionOrChunk === 'object'
       ? normalizeChunk(sessionOrChunk)
-      : {sessionId: String(sessionOrChunk || '').trim(), responseId: String(responseId || '').trim()};
+      : {sessionId: String(sessionOrChunk || '').trim(), publicPlaybackRef: String(publicPlaybackRef || '').trim()};
     const sid = String(chunk.sessionId || '').trim();
     if (sid) completedSessions.add(sid);
-    const rid = String(chunk.responseId || '').trim();
+    const rid = String(chunk.publicPlaybackRef || '').trim();
     if (rid) {
-      completedResponses.add(rid);
-      if (seenAudioResponses.has(rid)) {
-        maybeAcknowledgeResponsePlayback(chunk, 'completed_after_playback');
+      completedPublicPlaybacks.add(rid);
+      if (seenAudioPublicPlaybacks.has(rid)) {
+        maybeAcknowledgePublicPlayback(chunk, 'completed_after_playback');
       }
     }
     playNextInternal();
   }
 
-  function incrementResponsePlaybackCount(responseId) {
-    const rid = String(responseId || '').trim();
+  function incrementPublicPlaybackCount(publicPlaybackRef) {
+    const rid = String(publicPlaybackRef || '').trim();
     if (!rid) return;
-    seenAudioResponses.add(rid);
-    responsePlaybackCounts.set(rid, (responsePlaybackCounts.get(rid) || 0) + 1);
+    seenAudioPublicPlaybacks.add(rid);
+    publicPlaybackCounts.set(rid, (publicPlaybackCounts.get(rid) || 0) + 1);
   }
 
-  function decrementResponsePlaybackCount(responseId) {
-    const rid = String(responseId || '').trim();
+  function decrementPublicPlaybackCount(publicPlaybackRef) {
+    const rid = String(publicPlaybackRef || '').trim();
     if (!rid) return;
-    const nextCount = Math.max(0, (responsePlaybackCounts.get(rid) || 0) - 1);
+    const nextCount = Math.max(0, (publicPlaybackCounts.get(rid) || 0) - 1);
     if (nextCount === 0) {
-      responsePlaybackCounts.delete(rid);
+      publicPlaybackCounts.delete(rid);
       return;
     }
-    responsePlaybackCounts.set(rid, nextCount);
+    publicPlaybackCounts.set(rid, nextCount);
   }
 
-  function recordResponsePlaybackResult(item, status, err) {
-    const responseId = String((item && item.responseId) || '').trim();
-    if (!responseId) return;
+  function recordPublicPlaybackResult(item, status, err) {
+    const publicPlaybackRef = String((item && item.publicPlaybackRef) || '').trim();
+    if (!publicPlaybackRef) return;
     const normalizedStatus = String(status || '').trim();
     if (!normalizedStatus || normalizedStatus === 'ended' || normalizedStatus === 'completed_after_playback') return;
-    if (responsePlaybackResults.has(responseId)) return;
-    responsePlaybackResults.set(responseId, {item, status: normalizedStatus, err: err || null});
+    if (publicPlaybackResults.has(publicPlaybackRef)) return;
+    publicPlaybackResults.set(publicPlaybackRef, {item, status: normalizedStatus, err: err || null});
   }
 
-  function maybeAcknowledgeResponsePlayback(item, status, err) {
-    const responseId = String((item && item.responseId) || '').trim();
-    if (!responseId) return;
-    if (!completedResponses.has(responseId)) return;
-    if ((responsePlaybackCounts.get(responseId) || 0) > 0) return;
-    if (acknowledgedResponses.has(responseId)) return;
-    acknowledgedResponses.add(responseId);
-    const recorded = responsePlaybackResults.get(responseId);
+  function maybeAcknowledgePublicPlayback(item, status, err) {
+    const publicPlaybackRef = String((item && item.publicPlaybackRef) || '').trim();
+    if (!publicPlaybackRef) return;
+    if (!completedPublicPlaybacks.has(publicPlaybackRef)) return;
+    if ((publicPlaybackCounts.get(publicPlaybackRef) || 0) > 0) return;
+    if (acknowledgedPublicPlaybacks.has(publicPlaybackRef)) return;
+    acknowledgedPublicPlaybacks.add(publicPlaybackRef);
+    const recorded = publicPlaybackResults.get(publicPlaybackRef);
     if (recorded) {
       postTTSPlaybackAck(recorded.item || item, recorded.status || status, recorded.err || err);
-      clearResponsePlaybackLifecycle(responseId);
+      clearPublicPlaybackLifecycle(publicPlaybackRef);
       return;
     }
     postTTSPlaybackAck(item, status, err);
-    clearResponsePlaybackLifecycle(responseId);
+    clearPublicPlaybackLifecycle(publicPlaybackRef);
   }
 
-  function clearResponsePlaybackLifecycle(responseId) {
-    const rid = String(responseId || '').trim();
+  function clearPublicPlaybackLifecycle(publicPlaybackRef) {
+    const rid = String(publicPlaybackRef || '').trim();
     if (!rid) return;
-    completedResponses.delete(rid);
-    responsePlaybackCounts.delete(rid);
-    responsePlaybackResults.delete(rid);
-    seenAudioResponses.delete(rid);
+    completedPublicPlaybacks.delete(rid);
+    publicPlaybackCounts.delete(rid);
+    publicPlaybackResults.delete(rid);
+    seenAudioPublicPlaybacks.delete(rid);
   }
 
   function postTTSPlaybackAck(item, status, err) {
     const normalizedStatus = normalizeTTSPlaybackAckStatus(status);
     const errorCode = ttsPlaybackAckErrorCode(item, normalizedStatus, err);
     const payload = {
-      response_id: String((item && item.responseId) || '').trim(),
+      public_playback_ref: String((item && item.publicPlaybackRef) || '').trim(),
       session_id: String((item && item.sessionId) || '').trim(),
       utterance_id: String((item && item.utteranceId) || '').trim(),
       message_id: String((item && item.messageId) || '').trim(),
@@ -4122,7 +4069,7 @@ function createChatAudioSync() {
       error_code: errorCode,
       error: err ? describeTTSAudioError(err) : '',
     };
-    if (!payload.response_id) return;
+    if (!payload.public_playback_ref) return;
     if (!isThisViewerActiveAudio()) return;
     if (typeof fetch !== 'function') return;
     fetch('/viewer/tts/playback-ack', {
@@ -4212,7 +4159,7 @@ function createChatAudioSync() {
     state.currentSessionId = '';
     state.currentChunkIndex = -1;
     state.currentUtteranceId = '';
-    state.currentResponseId = '';
+    state.currentPublicPlaybackRef = '';
     state.currentMessageId = '';
     state.currentTurnIndex = -1;
     state.currentShown = false;
@@ -4224,30 +4171,30 @@ function createChatAudioSync() {
   function rememberInterruptedChatOutput(item) {
     if (!item || isIdleChatPlaybackItem(item)) return;
     const sid = String(item.sessionId || '').trim();
-    const rid = String(item.responseId || '').trim();
+    const rid = String(item.publicPlaybackRef || '').trim();
     if (sid) interruptedChatSessions.add(sid);
     if (rid) {
-      interruptedChatResponses.add(rid);
-      clearResponsePlaybackLifecycle(rid);
-      acknowledgedResponses.add(rid);
+      interruptedChatPublicPlaybacks.add(rid);
+      clearPublicPlaybackLifecycle(rid);
+      acknowledgedPublicPlaybacks.add(rid);
     }
   }
 
   function isInterruptedChatOutput(item) {
     if (!item || isIdleChatPlaybackItem(item)) return false;
     const sid = String(item.sessionId || '').trim();
-    const rid = String(item.responseId || '').trim();
-    return Boolean((sid && interruptedChatSessions.has(sid)) || (rid && interruptedChatResponses.has(rid)));
+    const rid = String(item.publicPlaybackRef || '').trim();
+    return Boolean((sid && interruptedChatSessions.has(sid)) || (rid && interruptedChatPublicPlaybacks.has(rid)));
   }
 
   function resetChatInternal(reason) {
     const current = currentAudioItemInternal();
     const currentIsChat = state.currentSessionId && !isIdleChatSessionId(state.currentSessionId);
     if (currentIsChat) rememberInterruptedChatOutput(current);
-    if (centralTTSSpeech && (centralTTSSpeech.sessionId || centralTTSSpeech.responseId)) {
+    if (centralTTSSpeech && (centralTTSSpeech.sessionId || centralTTSSpeech.publicPlaybackRef)) {
       rememberInterruptedChatOutput({
         sessionId: centralTTSSpeech.sessionId,
-        responseId: centralTTSSpeech.responseId,
+        publicPlaybackRef: centralTTSSpeech.publicPlaybackRef,
       });
     }
     state.queue = state.queue.filter((item) => {
@@ -4307,7 +4254,7 @@ function createChatAudioSync() {
         sessionId: state.currentSessionId,
         chunkIndex: state.currentChunkIndex,
         utteranceId: state.currentUtteranceId,
-        responseId: state.currentResponseId,
+        publicPlaybackRef: state.currentPublicPlaybackRef,
         messageId: state.currentMessageId,
         turnIndex: state.currentTurnIndex,
       });
@@ -4398,7 +4345,7 @@ function createChatAudioSync() {
     if (typeof recordLatencyMetric === 'function') {
       recordLatencyMetric('tts', 'audio_play_start', {
         detail: 'chunk=' + String(state.currentChunkIndex),
-        job: state.currentResponseId,
+        task: state.currentPublicPlaybackRef,
         session: state.currentSessionId,
       });
     }
@@ -4411,7 +4358,7 @@ function createChatAudioSync() {
       sessionId: state.currentSessionId,
       chunkIndex: state.currentChunkIndex,
       utteranceId: state.currentUtteranceId,
-      responseId: state.currentResponseId,
+      publicPlaybackRef: state.currentPublicPlaybackRef,
       messageId: state.currentMessageId,
       turnIndex: state.currentTurnIndex,
     });
@@ -4429,7 +4376,7 @@ function createChatAudioSync() {
       String((item && item.sessionId) || ''),
       Number.isFinite(item && item.chunkIndex) ? item.chunkIndex : -1,
       String((item && item.utteranceId) || ''),
-      String((item && item.responseId) || ''),
+      String((item && item.publicPlaybackRef) || ''),
       String((item && item.messageId) || ''),
       Number.isFinite(item && item.turnIndex) ? item.turnIndex : -1
     );
@@ -4480,7 +4427,7 @@ function createChatAudioSync() {
     state.fallbackActive = true;
     if (idleChatFallback) {
       renderIdlePlaybackErrorInternal(next, next && next.errorCode ? next.errorCode : (next && next.displayOnly ? 'TTS_AUDIO_MISSING' : 'TTS_AUDIO_DISABLED'), next && next.error ? next.error : (next && next.displayOnly ? 'TTS audio chunk did not include a playable audio URL.' : 'IdleChat audio playback was disabled before this chunk could be spoken.'));
-      recordResponsePlaybackResult(next, 'error', fallbackErr);
+      recordPublicPlaybackResult(next, 'error', fallbackErr);
     } else {
       showFallbackChunkInternal(next);
     }
@@ -4488,8 +4435,8 @@ function createChatAudioSync() {
     state.fallbackTimer = setTimeout(function() {
       state.fallbackTimer = null;
       state.fallbackActive = false;
-      decrementResponsePlaybackCount(next.responseId);
-      maybeAcknowledgeResponsePlayback(next, 'error', fallbackErr || new Error('tts audio fallback is not a successful playback path'));
+      decrementPublicPlaybackCount(next.publicPlaybackRef);
+      maybeAcknowledgePublicPlayback(next, 'error', fallbackErr || new Error('tts audio fallback is not a successful playback path'));
       const nextHead = state.queue[0];
       if (state.blocked || (nextHead && nextHead.displayOnly)) {
         startTextFallbackInternal();
@@ -4513,14 +4460,14 @@ function createChatAudioSync() {
   }
 
   function scheduleBlockedAudioAckInternal(item, err) {
-    if (!item || !item.responseId) return;
+    if (!item || !item.publicPlaybackRef) return;
     const key = ttsChunkIdentityKey(item.sessionId, item.utteranceId, item.chunkIndex, item.seq);
     if (key && blockedAckKeys.has(key)) return;
     if (key) blockedAckKeys.add(key);
-    recordResponsePlaybackResult(item, 'error', err);
+    recordPublicPlaybackResult(item, 'error', err);
     setTimeout(function() {
-      decrementResponsePlaybackCount(item.responseId);
-      maybeAcknowledgeResponsePlayback(item, 'error', err);
+      decrementPublicPlaybackCount(item.publicPlaybackRef);
+      maybeAcknowledgePublicPlayback(item, 'error', err);
     }, ttsDisplayDelay(item));
   }
 
@@ -4532,7 +4479,7 @@ function createChatAudioSync() {
       sessionId: state.currentSessionId || String((fallback && fallback.sessionId) || ''),
       chunkIndex: state.currentChunkIndex >= 0 ? state.currentChunkIndex : (Number.isFinite(fallback && fallback.chunkIndex) ? fallback.chunkIndex : -1),
       utteranceId: state.currentUtteranceId || String((fallback && fallback.utteranceId) || ''),
-      responseId: state.currentResponseId || String((fallback && fallback.responseId) || ''),
+      publicPlaybackRef: state.currentPublicPlaybackRef || String((fallback && fallback.publicPlaybackRef) || ''),
       messageId: state.currentMessageId || String((fallback && fallback.messageId) || ''),
       turnIndex: state.currentTurnIndex >= 0 ? state.currentTurnIndex : (Number.isFinite(fallback && fallback.turnIndex) ? fallback.turnIndex : -1),
     };
@@ -4549,15 +4496,15 @@ function createChatAudioSync() {
       }
     }
     if (err) setTTSAudioError(err);
-    recordResponsePlaybackResult(item, 'error', err);
+    recordPublicPlaybackResult(item, 'error', err);
     updateAudioButton();
     if (state.fallbackTimer) clearTimeout(state.fallbackTimer);
     state.fallbackActive = true;
     state.fallbackTimer = setTimeout(function() {
       state.fallbackTimer = null;
       state.fallbackActive = false;
-      decrementResponsePlaybackCount(item.responseId);
-      maybeAcknowledgeResponsePlayback(item, 'error', err);
+      decrementPublicPlaybackCount(item.publicPlaybackRef);
+      maybeAcknowledgePublicPlayback(item, 'error', err);
       resetCurrentInternal();
       playNextInternal();
     }, ttsDisplayDelay(item));
@@ -4583,14 +4530,14 @@ function createChatAudioSync() {
     state.currentSessionId = '';
     state.currentChunkIndex = -1;
     state.currentUtteranceId = '';
-    state.currentResponseId = '';
+    state.currentPublicPlaybackRef = '';
     state.currentShown = false;
     state.blockedFallbackUtteranceId = '';
     setNowPlayingText('', '');
     clearTextInternal(finished.sessionId);
     const delay = ttsPlaybackTailGap(finished, state.queue[0]);
-    decrementResponsePlaybackCount(finished.responseId);
-    maybeAcknowledgeResponsePlayback(finished, 'ended');
+    decrementPublicPlaybackCount(finished.publicPlaybackRef);
+    maybeAcknowledgePublicPlayback(finished, 'ended');
     if (state.tailTimer) clearTimeout(state.tailTimer);
     state.tailActive = true;
     state.tailTimer = setTimeout(function() {
@@ -4633,7 +4580,7 @@ function createChatAudioSync() {
     state.currentSessionId = String((next && next.sessionId) || '');
     state.currentChunkIndex = Number.isFinite(next && next.chunkIndex) ? next.chunkIndex : -1;
     state.currentUtteranceId = String((next && next.utteranceId) || '');
-    state.currentResponseId = String((next && next.responseId) || '');
+    state.currentPublicPlaybackRef = String((next && next.publicPlaybackRef) || '');
     state.currentMessageId = String((next && next.messageId) || '');
     state.currentTurnIndex = Number.isFinite(next && next.turnIndex) ? next.turnIndex : -1;
     state.currentShown = false;
@@ -4842,7 +4789,7 @@ function startTTSTextFallback() {
   chatAudioSync.startTextFallback();
 }
 
-function enqueueTTSAudio(url, characterId, sessionId, track, chunkIndex, text, displayText, responseId, utteranceId) {
+function enqueueTTSAudio(url, characterId, sessionId, track, chunkIndex, text, displayText, publicPlaybackRef, utteranceId) {
   chatAudioSync.enqueueAudio({
     url: url,
     characterId: characterId || '',
@@ -4851,12 +4798,12 @@ function enqueueTTSAudio(url, characterId, sessionId, track, chunkIndex, text, d
     chunkIndex: Number.isFinite(chunkIndex) ? chunkIndex : -1,
     text: text || '',
     displayText: displayText || text || '',
-    responseId: responseId || '',
+    publicPlaybackRef: publicPlaybackRef || '',
     utteranceId: utteranceId || '',
   });
 }
 
-function enqueueTTSDisplayFallback(characterId, sessionId, track, chunkIndex, text, displayText, responseId, utteranceId) {
+function enqueueTTSDisplayFallback(characterId, sessionId, track, chunkIndex, text, displayText, publicPlaybackRef, utteranceId) {
   chatAudioSync.enqueueDisplayFallback({
     url: '',
     characterId: characterId || '',
@@ -4865,7 +4812,7 @@ function enqueueTTSDisplayFallback(characterId, sessionId, track, chunkIndex, te
     chunkIndex: Number.isFinite(chunkIndex) ? chunkIndex : -1,
     text: text || '',
     displayText: displayText || text || '',
-    responseId: responseId || '',
+    publicPlaybackRef: publicPlaybackRef || '',
     utteranceId: utteranceId || '',
   });
 }
@@ -5522,12 +5469,12 @@ function buildViewerStatusSnapshot() {
       preview: current.preview || '',
     };
   });
-  const jobs = Object.values(state.jobs || {});
+  const tasks = Object.values(state.tasks || {});
   return {
     generated_at: new Date().toISOString(),
     timeline_event_count: state.logs.length,
-    job_count: jobs.length,
-    running_job_count: jobs.filter((j) => String(j.status || '') !== 'done').length,
+    task_count: tasks.length,
+    running_task_count: tasks.filter((j) => String(j.status || '') !== 'done').length,
     agents: items,
   };
 }
@@ -5546,7 +5493,7 @@ function registerWebMCPTools() {
     modelContext.registerTool({
       name: 'viewer.get_status',
       title: 'Get Viewer Status',
-      description: 'Return RenCrow viewer status including agent states and running jobs.',
+      description: 'Return RenCrow viewer status including agent states and running tasks.',
       inputSchema: {
         type: 'object',
         properties: {},

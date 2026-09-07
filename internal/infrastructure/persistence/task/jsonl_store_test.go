@@ -1,10 +1,15 @@
 package task
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +22,11 @@ import (
 func TestJSONLStoreKeepsLatestCanonicalTaskState(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +68,11 @@ func TestJSONLStoreRejectsLegacyFilesAndUnknownAliases(t *testing.T) {
 
 	root = t.TempDir()
 	store, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +86,11 @@ func TestJSONLStoreRejectsLegacyFilesAndUnknownAliases(t *testing.T) {
 
 func TestJSONLStoreContextAndNotificationUseTaskID(t *testing.T) {
 	store, err := NewJSONLStore(t.TempDir())
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +119,11 @@ func TestJSONLStoreContextAndNotificationUseTaskID(t *testing.T) {
 func TestJSONLStoreRunHistoryReloadsByRunIDAndTaskID(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +132,7 @@ func TestJSONLStoreRunHistoryReloadsByRunIDAndTaskID(t *testing.T) {
 	if err := store.SaveTask(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
-	first := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
+	first := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
 	if err := store.SaveRun(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +143,20 @@ func TestJSONLStoreRunHistoryReloadsByRunIDAndTaskID(t *testing.T) {
 	if err := store.SaveRun(context.Background(), first); err != nil {
 		t.Fatal(err)
 	}
-	second := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonExplicitRerun, Status: domaintask.RunStatusRunning, StartedAt: now.Add(2 * time.Minute), Assignee: "Mio"}
+	second := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonExplicitRerun, Status: domaintask.RunStatusRunning, StartedAt: now.Add(2 * time.Minute), Assignee: "Mio"}
 	if err := store.SaveRun(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
 
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reloaded, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if reloaded != nil {
+			_ = reloaded.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +174,16 @@ func TestJSONLStoreRunHistoryReloadsByRunIDAndTaskID(t *testing.T) {
 
 func TestJSONLStoreRejectsInvalidRunOwnershipAndUnknownFields(t *testing.T) {
 	store, err := NewJSONLStore(t.TempDir())
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 9, 5, 7, 0, 0, 0, time.UTC)
-	missingTask := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: modulecore.NewTaskID(), StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
+	missingTask := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: modulecore.NewTaskID(), StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
 	if err := store.SaveRun(context.Background(), missingTask); err == nil {
 		t.Fatal("run for missing task was accepted")
 	}
@@ -187,6 +225,11 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := NewJSONLStore(t.TempDir())
+			t.Cleanup(func() {
+				if store != nil {
+					_ = store.Close()
+				}
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -196,7 +239,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 				t.Fatal(err)
 			}
 			otherTaskID := modulecore.NewTaskID()
-			base := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now, Assignee: "Mio"}
+			base := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now, Assignee: "Mio"}
 			mutated := test.mutate(base, otherTaskID, now)
 			if err := os.WriteFile(store.runPath, []byte(mustJSONLRun(t, base)+mustJSONLRun(t, mutated)), 0o644); err != nil {
 				t.Fatal(err)
@@ -209,6 +252,11 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 
 	t.Run("closed_terminal_rewrite", func(t *testing.T) {
 		store, err := NewJSONLStore(t.TempDir())
+		t.Cleanup(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +265,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 		if err := store.SaveTask(context.Background(), task); err != nil {
 			t.Fatal(err)
 		}
-		base := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
+		base := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
 		completedAt := now.Add(time.Minute)
 		closed := base
 		closed.Status = domaintask.RunStatusSucceeded
@@ -235,6 +283,11 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 
 	t.Run("two_active_runs", func(t *testing.T) {
 		store, err := NewJSONLStore(t.TempDir())
+		t.Cleanup(func() {
+			if store != nil {
+				_ = store.Close()
+			}
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,7 +296,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 		if err := store.SaveTask(context.Background(), task); err != nil {
 			t.Fatal(err)
 		}
-		first := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
+		first := domaintask.Run{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
 		second := first
 		second.RunID = modulecore.NewRunID()
 		if err := os.WriteFile(store.runPath, []byte(mustJSONLRun(t, first)+mustJSONLRun(t, second)), 0o644); err != nil {
@@ -258,6 +311,11 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 func TestJSONLStoreConcurrentFirstActiveRunHasSingleWinner(t *testing.T) {
 	root := t.TempDir()
 	store, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if store != nil {
+			_ = store.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,8 +325,8 @@ func TestJSONLStoreConcurrentFirstActiveRunHasSingleWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := []domaintask.Run{
-		{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now},
-		{RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonExplicitRerun, Status: domaintask.RunStatusRunning, StartedAt: now.Add(time.Second)},
+		{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now},
+		{WriterGeneration: 1, RunID: modulecore.NewRunID(), TaskID: task.TaskID, StartReason: domaintask.RunStartReasonExplicitRerun, Status: domaintask.RunStatusRunning, StartedAt: now.Add(time.Second)},
 	}
 	start := make(chan struct{})
 	results := make(chan error, len(runs))
@@ -293,7 +351,15 @@ func TestJSONLStoreConcurrentFirstActiveRunHasSingleWinner(t *testing.T) {
 	if accepted != 1 {
 		t.Fatalf("accepted concurrent active runs = %d, want 1", accepted)
 	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reloaded, err := NewJSONLStore(root)
+	t.Cleanup(func() {
+		if reloaded != nil {
+			_ = reloaded.Close()
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,4 +376,179 @@ func mustJSONLRun(t *testing.T, value domaintask.Run) string {
 		t.Fatal(err)
 	}
 	return string(encoded) + "\n"
+}
+
+func TestJSONLStoreRejectsConcurrentWriter(t *testing.T) {
+	root := t.TempDir()
+	first, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closer, ok := any(first).(interface{ Close() error }); ok {
+		t.Cleanup(func() { _ = closer.Close() })
+	}
+	second, err := NewJSONLStore(root)
+	if err == nil {
+		if closer, ok := any(second).(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		t.Fatal("second canonical Task writer accepted")
+	}
+}
+
+func TestJSONLStoreWriterCloseAndReadOnly(t *testing.T) {
+	root := t.TempDir()
+	writer, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Close() })
+	reader, err := NewJSONLReader(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if err := reader.appendJSON(context.Background(), reader.statePath, map[string]string{"bad": "write"}); err == nil {
+		t.Fatal("reader accepted write")
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.appendJSON(context.Background(), writer.statePath, map[string]string{"bad": "write"}); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("closed writer error=%v", err)
+	}
+	reopened, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, err := os.Stat(filepath.Join(root, ".writer.lock")); err != nil {
+		t.Fatal("lock inode must persist", err)
+	}
+}
+func TestJSONLStoreWriterCrashReleasesOwnership(t *testing.T) {
+	if root := os.Getenv("RENCROW_TASK_LOCK_CHILD_ROOT"); root != "" {
+		store, err := NewJSONLStore(root)
+		if err != nil {
+			fmt.Fprintln(os.Stdout, "error:", err)
+			os.Exit(2)
+		}
+		_ = store
+		fmt.Fprintln(os.Stdout, "ready")
+		var b [1]byte
+		_, _ = os.Stdin.Read(b[:])
+		runtime.KeepAlive(store)
+		os.Exit(0)
+	}
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestJSONLStoreWriterCrashReleasesOwnership$")
+	cmd.Env = append(os.Environ(), "RENCROW_TASK_LOCK_CHILD_ROOT="+root)
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	scanner := bufio.NewScanner(output)
+	if !scanner.Scan() || scanner.Text() != "ready" {
+		t.Fatalf("child readiness: %q %v", scanner.Text(), scanner.Err())
+	}
+	second, err := NewJSONLStore(root)
+	if second != nil {
+		_ = second.Close()
+	}
+	if !errors.Is(err, ErrTaskWriterBusy) {
+		t.Fatalf("live child writer accepted: %v", err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	recovered, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal("dead process retained lock", err)
+	}
+	defer recovered.Close()
+}
+
+func TestTaskWriterGenerationRejectsCorruptCounters(t *testing.T) {
+	for _, counter := range []string{"broken\n", "12", "1\n3\n", "18446744073709551615\n", strings.Repeat("1", 129) + "\n"} {
+		t.Run(counter[:min(len(counter), 15)], func(t *testing.T) {
+			root := t.TempDir()
+			lockPath := filepath.Join(root, ".writer.lock")
+			if err := os.WriteFile(lockPath, []byte(counter), 0600); err != nil {
+				t.Fatal(err)
+			}
+			store, err := NewJSONLStore(root)
+			if store != nil {
+				_ = store.Close()
+			}
+			if err == nil {
+				t.Fatal("corrupt counter accepted")
+			}
+			data, err := os.ReadFile(lockPath)
+			if err != nil || string(data) != counter {
+				t.Fatal("corrupt counter rewritten")
+			}
+		})
+	}
+}
+func TestRunWriterGenerationCannotBeChangedOrReused(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC()
+	task := domaintask.Task{Title: "owner", Assignee: "shiro", Route: domaintask.RouteOperations}
+	task.ApplyDefaults(now)
+	if err := store.SaveTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	generation, err := store.WriterGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: task.TaskID, WriterGeneration: generation, StartReason: domaintask.RunStartReasonFirst, Status: domaintask.RunStatusRunning, StartedAt: now}
+	missing := run
+	missing.WriterGeneration = 0
+	if err := store.SaveRun(context.Background(), missing); err == nil {
+		t.Fatal("new Run missing writer generation accepted")
+	}
+	foreign := run
+	foreign.WriterGeneration++
+	if err := store.SaveRun(context.Background(), foreign); err == nil {
+		t.Fatal("new Run with foreign writer generation accepted")
+	}
+	if err := store.SaveRun(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	changed := run
+	changed.WriterGeneration++
+	if err := store.SaveRun(context.Background(), changed); err == nil {
+		t.Fatal("existing generation rewritten")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".writer.lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewJSONLStore(root)
+	if reopened != nil {
+		_ = reopened.Close()
+	}
+	if err == nil {
+		t.Fatal("counter reset reused existing Run generation")
+	}
 }

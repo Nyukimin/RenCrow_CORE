@@ -15,10 +15,11 @@ Answer naturally and concretely in the user's language.`
 
 // HeavyAgent は深い分析・診断用のLLM呼び出しを担当する。
 type HeavyAgent struct {
-	llmProvider          llm.LLMProvider
-	systemPrompt         string
-	stableRuntimeContext string
-	conversationEngine   conversation.ConversationEngine
+	llmProvider            llm.LLMProvider
+	systemPrompt           string
+	runtimeContextProvider RuntimeContextProvider
+	stableRuntimeContext   string
+	conversationEngine     conversation.ConversationEngine
 }
 
 func NewHeavyAgent(llmProvider llm.LLMProvider, systemPrompt string) *HeavyAgent {
@@ -64,7 +65,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (st
 		}
 		return response, nil
 	}
-	messages = assemblePromptContext(h.systemPrompt, h.stableRuntimeContext, messages, userMessageWithAttachments(userMessage, t.Attachments()))
+	messages = assemblePromptContext(h.systemPrompt, currentRuntimeContext(ctx, h.runtimeContextProvider, "kuro", h.stableRuntimeContext), messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   2048,
@@ -93,4 +94,9 @@ func stripHeavyCommand(message string) string {
 		return strings.TrimSpace(strings.TrimPrefix(trimmed, "/heavy"))
 	}
 	return trimmed
+}
+
+func (h *HeavyAgent) WithRuntimeContextProvider(provider RuntimeContextProvider) *HeavyAgent {
+	h.runtimeContextProvider = provider
+	return h
 }

@@ -408,7 +408,7 @@ func (o *IdleChatOrchestrator) applyPersonaCanonicalResponse(speaker, sessionID,
 		return ""
 	}
 	policy := domainpersona.CanonicalResponsePolicy{
-		ResponseKey:       def.ResponseKey,
+		ResponseKey:      def.ResponseKey,
 		CooldownTurns:    def.CooldownTurns,
 		MaxPerSession:    def.MaxPerSession,
 		RequiredContexts: def.RequiredContexts,
@@ -421,7 +421,7 @@ func (o *IdleChatOrchestrator) applyPersonaCanonicalResponse(speaker, sessionID,
 	if err := recorder.SaveCanonicalResponseLog(o.ctx, domainpersona.CanonicalResponseLog{
 		EventID:     "evt_persona_idlechat_canonical_" + formatPersonaEventTime(now),
 		CharacterID: def.CharacterID,
-		ResponseKey:  def.ResponseKey,
+		ResponseKey: def.ResponseKey,
 		MessageID:   strings.TrimSpace(messageID),
 		Used:        true,
 		Rewritten:   false,

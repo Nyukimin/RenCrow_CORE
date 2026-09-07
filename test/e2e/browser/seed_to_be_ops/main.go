@@ -87,7 +87,7 @@ func main() {
 	}))
 	must(l1.SaveRecallTrace(ctx, domainconversation.RecallTrace{
 		TraceID: modulecore.NewTraceID(), TurnID: modulecore.NewTurnID(), RootTaskID: modulecore.NewTaskID(),
-		SessionID: "session-browser-e2e", Role: "mio", CreatedAt: now,
+		SessionID: string(modulecore.NewSessionID()), Role: "mio", CreatedAt: now,
 		Items: []domainconversation.RecallTraceItem{
 			{Layer: "L3", Kind: "knowledge_relation", SourceID: itemIDs[1], Status: "injected", Summary: "safe injected fixture"},
 			{Layer: "L3", Kind: "knowledge_relation", SourceID: itemIDs[2], Status: "rejected", Summary: "safe rejected fixture"},

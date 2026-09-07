@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -259,5 +260,134 @@ func TestLocalTransport_Concurrent(t *testing.T) {
 		// OK
 	case <-time.After(5 * time.Second):
 		t.Fatalf("Timeout: received only %d/%d messages", received, numSenders*numMessages)
+	}
+}
+
+func TestLocalDeliveryPreservesExecutionContextAndCancellation(t *testing.T) {
+	lt := NewLocalTransport()
+	defer lt.Close()
+
+	executionCtx, cancel := context.WithCancel(context.Background())
+	msg := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "execute")
+	if err := lt.PutInboundExecution(executionCtx, msg); err != nil {
+		t.Fatalf("PutInboundExecution failed: %v", err)
+	}
+	cancel()
+
+	delivery, err := lt.ReceiveDelivery(context.Background())
+	if err != nil {
+		t.Fatalf("ReceiveDelivery failed: %v", err)
+	}
+	if delivery.Message.Content != msg.Content || delivery.Message.TaskID != msg.TaskID {
+		t.Fatalf("delivery message=%#v, want %#v", delivery.Message, msg)
+	}
+	if delivery.Context != executionCtx {
+		t.Fatalf("delivery context=%p, want original context=%p", delivery.Context, executionCtx)
+	}
+	if !errors.Is(delivery.Context.Err(), context.Canceled) {
+		t.Fatalf("delivery context error=%v, want context.Canceled", delivery.Context.Err())
+	}
+}
+
+func TestLocalDeliveryPreservesFIFOAcrossLegacyAndExecutionMessages(t *testing.T) {
+	lt := NewLocalTransport()
+	defer lt.Close()
+
+	first := domaintransport.NewMessage("router", "shiro", "s1", modulecore.NewTaskID(), "legacy-first")
+	middleCtx := context.Background()
+	middle := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "execution-middle")
+	last := domaintransport.NewMessage("router", "shiro", "s1", modulecore.NewTaskID(), "legacy-last")
+	if err := lt.PutInboundMessage(first); err != nil {
+		t.Fatalf("PutInboundMessage(first) failed: %v", err)
+	}
+	if err := lt.PutInboundExecution(middleCtx, middle); err != nil {
+		t.Fatalf("PutInboundExecution(middle) failed: %v", err)
+	}
+	if err := lt.PutInboundMessage(last); err != nil {
+		t.Fatalf("PutInboundMessage(last) failed: %v", err)
+	}
+
+	want := []struct {
+		content string
+		ctx     context.Context
+	}{
+		{content: first.Content},
+		{content: middle.Content, ctx: middleCtx},
+		{content: last.Content},
+	}
+	for i, expected := range want {
+		delivery, err := lt.ReceiveDelivery(context.Background())
+		if err != nil {
+			t.Fatalf("ReceiveDelivery(%d) failed: %v", i, err)
+		}
+		if delivery.Message.Content != expected.content {
+			t.Fatalf("delivery(%d) content=%q, want %q", i, delivery.Message.Content, expected.content)
+		}
+		if delivery.Context != expected.ctx {
+			t.Fatalf("delivery(%d) context=%p, want %p", i, delivery.Context, expected.ctx)
+		}
+	}
+}
+
+func TestLocalDeliveryRejectsNilOrCanceledExecutionContext(t *testing.T) {
+	lt := NewLocalTransport()
+	defer lt.Close()
+
+	msg := domaintransport.NewMessage("mio", "shiro", "s1", modulecore.NewTaskID(), "execute")
+	if err := lt.PutInboundExecution(nil, msg); err == nil {
+		t.Fatal("PutInboundExecution accepted nil context")
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := lt.PutInboundExecution(canceledCtx, msg); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PutInboundExecution canceled error=%v, want context.Canceled", err)
+	}
+	if got := len(lt.inbound); got != 0 {
+		t.Fatalf("rejected executions left %d queued deliveries", got)
+	}
+}
+
+func TestLocalDeliveryClosedTransportRefusesQueuedDelivery(t *testing.T) {
+	lt := NewLocalTransport()
+	msg := domaintransport.NewMessage("router", "shiro", "s1", modulecore.NewTaskID(), "queued")
+	if err := lt.PutInboundMessage(msg); err != nil {
+		t.Fatalf("PutInboundMessage failed: %v", err)
+	}
+	if err := lt.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	if _, err := lt.ReceiveDelivery(context.Background()); err == nil {
+		t.Fatal("ReceiveDelivery accepted queued delivery after close")
+	}
+	if got := len(lt.inbound); got != 1 {
+		t.Fatalf("closed receive consumed queued delivery: len=%d, want 1", got)
+	}
+}
+
+func TestLocalDeliveryCanceledReceiverRefusesQueuedDelivery(t *testing.T) {
+	lt := NewLocalTransport()
+	defer lt.Close()
+
+	msg := domaintransport.NewMessage("router", "shiro", "s1", modulecore.NewTaskID(), "queued")
+	if err := lt.PutInboundMessage(msg); err != nil {
+		t.Fatalf("PutInboundMessage failed: %v", err)
+	}
+	receiveCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := lt.ReceiveDelivery(receiveCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ReceiveDelivery canceled error=%v, want context.Canceled", err)
+	}
+	if got := len(lt.inbound); got != 1 {
+		t.Fatalf("canceled receive consumed queued delivery: len=%d, want 1", got)
+	}
+	delivery, err := lt.ReceiveDelivery(context.Background())
+	if err != nil {
+		t.Fatalf("ReceiveDelivery after canceled receiver failed: %v", err)
+	}
+	if delivery.Message.Content != msg.Content {
+		t.Fatalf("recovered delivery content=%q, want %q", delivery.Message.Content, msg.Content)
 	}
 }

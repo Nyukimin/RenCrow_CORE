@@ -245,18 +245,27 @@ type QdrantBackupConfig struct {
 	BaseURL string `yaml:"base_url"`
 }
 
+// DefaultTestImpactTimeoutSeconds is the aggregate timeout for the owner
+// test-impact resolve and run route when no explicit value is configured.
+const DefaultTestImpactTimeoutSeconds = 3600
+
+// DefaultWorkerCommandTimeoutSeconds bounds one non-test Worker action.
+const DefaultWorkerCommandTimeoutSeconds = 300
+
 // WorkerConfig はWorker実行設定
 type WorkerConfig struct {
 	// === v3.0 既存フィールド ===
-	AutoCommit           bool     `yaml:"auto_commit"`
-	CommitMessagePrefix  string   `yaml:"commit_message_prefix"`
-	CommandTimeout       int      `yaml:"command_timeout"` // 秒
-	GitTimeout           int      `yaml:"git_timeout"`     // 秒
-	StopOnError          bool     `yaml:"stop_on_error"`
-	Workspace            string   `yaml:"workspace"`
-	ProtectedPatterns    []string `yaml:"protected_patterns"`
-	ActionOnProtected    string   `yaml:"action_on_protected"` // "error", "skip", "log"
-	ShowExecutionSummary bool     `yaml:"show_execution_summary"`
+	AutoCommit               bool     `yaml:"auto_commit"`
+	CommitMessagePrefix      string   `yaml:"commit_message_prefix"`
+	CommandTimeout           int      `yaml:"command_timeout"`                                                // 秒
+	GitTimeout               int      `yaml:"git_timeout"`                                                    // 秒
+	TestImpactBinary         string   `yaml:"test_impact_binary" json:"test_impact_binary"`                   // owner test-impact CLI（空値は既定コマンド）
+	TestImpactTimeoutSeconds int      `yaml:"test_impact_timeout_seconds" json:"test_impact_timeout_seconds"` // resolve+run aggregate timeout（既定3600秒）
+	StopOnError              bool     `yaml:"stop_on_error"`
+	Workspace                string   `yaml:"workspace"`
+	ProtectedPatterns        []string `yaml:"protected_patterns"`
+	ActionOnProtected        string   `yaml:"action_on_protected"` // "error", "skip", "log"
+	ShowExecutionSummary     bool     `yaml:"show_execution_summary"`
 
 	// === v4.0 追加フィールド ===
 	ParallelExecution bool `yaml:"parallel_execution"` // true で並列実行（デフォルト: false）
@@ -599,7 +608,7 @@ type ToolHarnessConfig struct {
 	Enabled      *bool  `yaml:"enabled"`
 	Mode         string `yaml:"mode"` // validate_then_repair|log_only|strict
 	RecordEvents *bool  `yaml:"record_events"`
-	LogPath      string `yaml:"log_path"`
+	LogPath      string `yaml:"log_path"` // Legacy artifact location only; live mediation uses Canonical Event Store.
 }
 
 func (c ToolHarnessConfig) IsEnabled() bool {

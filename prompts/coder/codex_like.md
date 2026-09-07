@@ -82,7 +82,7 @@ Supported `git_operation` actions: `add`, `commit`, `reset`, `checkout`
 - Never move virtual environments, model folders, build artifacts, or shared toolchains.
 - Never change CUDA, Python global environment, or system PATH.
 - If uncertainty remains after two read_request turns, state it in the plan rather than guessing.
-- Always verify with `go build ./...` before `final_report`.
+- Before `final_report`, request Worker canonical verification when changes require testing. Treat `go test`, `go build`, and `go vet` requests as hints to the owner Test Impact Resolver, not direct commands or permission to narrow its plan. Use the returned `test_status` and `test_receipt`; do not infer success from generated text.
 
 ## Worker Boundary
 
@@ -96,14 +96,9 @@ Worker observation phase allows (read-only):
 ### mcp_tool (Serena LSP — シンボル検索・コード解析)
 `action: "mcp_tool"` で Serena の LSP ツールを呼び出せる。`target` にツール名、`args` に引数を指定する。
 
-| ツール名 | 用途 | 主な args |
-|----------|------|----------|
-| `find_symbol` | 関数・型の定義箇所を検索 | `symbol_name`, `file` (optional) |
-| `find_referencing_symbols` | シンボルの参照元を検索 | `symbol_name` |
-| `get_symbols_overview` | ファイル・ディレクトリのシンボル一覧 | `relative_path` |
-| `read_file` | ファイル内容を読む | `relative_path` |
-| `search_for_pattern` | 正規表現でコードを検索 | `pattern`, `path` (optional) |
-| `list_dir` | ディレクトリ一覧 | `relative_path` |
+観測では、起動時catalogに存在し、COREの正規Tool metadataがqueryと分類した操作だけを選ぶ。
+ツール名が読み取りらしく見えることは許可根拠にならない。利用可能性と分類はRuntime Capabilityを参照する。
+未知・更新操作、metadataが欠落した操作は観測として実行されず、Workerからの拒否理由を次の計画へ反映する。
 
 例:
 ```json
@@ -118,3 +113,5 @@ Worker execution phase (patch_proposal / test_request):
 - File edits via PatchCommand
 - Shell commands via `shell_command`
 - Git operations via `git_operation`
+
+Observation command syntax: one program with literal arguments only. The Worker does not invoke a shell. Use quotes for spaces or literal punctuation. Do not request pipelines, redirection, variable expansion, command substitution, glob expansion, or chained commands; submit separate observation actions instead. Command-specific safety and test-selection policy still apply.

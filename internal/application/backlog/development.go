@@ -55,6 +55,7 @@ type DevelopmentEvent struct {
 	Type       string         `json:"type"`
 	UnitID     string         `json:"unit_id"`
 	ArtifactID string         `json:"artifact_id"`
+	RequestID  string         `json:"request_id,omitempty"`
 	TraceID    string         `json:"trace_id,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 	Fields     map[string]any `json:"fields,omitempty"`
@@ -74,7 +75,7 @@ func (s *Service) emitDevelopmentTransition(ctx context.Context, eventType strin
 	if strings.TrimSpace(reason) != "" {
 		fields["reason"] = methodology.RedactSecrets(reason)
 	}
-	return s.developmentEvents.AppendDevelopmentEvent(ctx, DevelopmentEvent{Type: eventType, UnitID: item.ImplementationUnit, ArtifactID: artifactID, TraceID: safeRequestID, CreatedAt: s.now(), Fields: fields})
+	return s.developmentEvents.AppendDevelopmentEvent(ctx, DevelopmentEvent{Type: eventType, UnitID: item.ImplementationUnit, ArtifactID: artifactID, RequestID: safeRequestID, CreatedAt: s.now(), Fields: fields})
 }
 
 type DevelopmentProjection struct {

@@ -7,8 +7,11 @@ import (
 	"strings"
 	"sync"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -637,6 +640,45 @@ func actualCoreActorForRoute(route routing.Route, viewerRecipient string) (strin
 	default:
 		return "", fmt.Errorf("unsupported orchestrator route %q", route)
 	}
+}
+
+// bindRouteExecutionContext binds the owner-selected Task/Run identity and
+// derives the exact Agent scope for one route. A trusted parent scope carries
+// its request and delegated public/user privileges forward; internal access is
+// granted only to the OPS route.
+func bindRouteExecutionContext(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID) (context.Context, error) {
+	actor, err := actualCoreActorForRoute(route, input.ViewerRecipient())
+	if err != nil {
+		return nil, fmt.Errorf("resolve route actor: %w", err)
+	}
+	ctx, err = domainexecution.WithIdentity(ctx, taskID, runID, input.TraceID())
+	if err != nil {
+		return nil, fmt.Errorf("bind route execution identity: %w", err)
+	}
+
+	var requestID string
+	if parent, found := domaintool.ToolExecutionScopeFromContext(ctx); found {
+		if err := parent.Validate(); err != nil {
+			return nil, fmt.Errorf("validate parent route scope: %w", err)
+		}
+		requestID = parent.RequestID
+	} else {
+		requestID = string(modulecore.NewRequestID())
+	}
+
+	role := "agent"
+	purpose := strings.ToLower(string(route))
+	grantInternal := false
+	if route == routing.RouteOPS {
+		role = "worker"
+		purpose = "ops"
+		grantInternal = true
+	}
+	bound, err := domaintool.DeriveAgentToolExecutionScope(ctx, requestID, actor, role, purpose, grantInternal)
+	if err != nil {
+		return nil, fmt.Errorf("bind route Agent scope: %w", err)
+	}
+	return bound, nil
 }
 
 func actualCoreActorForRequest(route routing.Route, req ProcessMessageRequest) (string, error) {

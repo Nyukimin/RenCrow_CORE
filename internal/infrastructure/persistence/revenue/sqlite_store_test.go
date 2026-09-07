@@ -1,9 +1,9 @@
 package revenue
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"context"
 	"fmt"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -174,8 +174,8 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
-		ActionID:             modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		ActionID:            modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		ArtifactID:          modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
 		DecisionID:          "dec_1",
 		Channel:             "email",
 		ApplyStatus:         "blocked",

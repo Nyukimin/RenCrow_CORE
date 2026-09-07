@@ -2,6 +2,7 @@ package complexity
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -38,17 +39,18 @@ func TestCoderDiffServiceGenerateConcreteDiffExtractsAndValidatesReviewOnlyDiff(
 @@ -1 +1 @@
 -old
 +new`
+	taskID := modulecore.NewTaskID()
 	coder := &stubCoderDiffGenerator{response: "```diff\n" + diff + "\n```"}
 	result, err := NewCoderDiffService(coder).GenerateConcreteDiff(context.Background(), CoderDiffRequest{
 		Hotspot:      hotspot,
 		Evidence:     []domaincomplexity.HotspotEvidence{{EvidenceID: modulecore.NewEvidenceID(), HotspotID: "hot_1", LineStart: 10, LineEnd: 12, Snippet: "for _, item := range items {\n\t_ = item\n}", Reason: "loop evidence"}},
 		WorkstreamID: "ws_1",
-		JobID:        "job_1",
+		TaskID:       taskID,
 	})
 	if err != nil {
 		t.Fatalf("GenerateConcreteDiff failed: %v", err)
 	}
-	if result.JobID != "job_1" || result.ConcreteDiff != diff {
+	if result.TaskID != taskID || result.ConcreteDiff != diff {
 		t.Fatalf("unexpected result=%#v", result)
 	}
 	if len(coder.requests) != 1 {
@@ -78,9 +80,10 @@ func TestCoderDiffServiceGenerateConcreteDiffExtractsAndValidatesReviewOnlyDiff(
 		}
 		seen[identity] = struct{}{}
 	}
-	if string(input.RootTaskID()) == result.JobID || string(input.TurnID()) == result.JobID || string(input.TraceID()) == result.JobID || string(input.UserMessageID()) == result.JobID || string(input.AgentMessageID()) == result.JobID {
-		t.Fatalf("job ID must remain independent from canonical input identities: input=%#v job_id=%q", input, result.JobID)
+	if input.RootTaskID() != result.TaskID {
+		t.Fatal("result must identify the coder input task")
 	}
+
 	if !strings.Contains(input.MessageText(), "Do not apply it") {
 		t.Fatalf("prompt missing review-only boundary:\n%s", input.MessageText())
 	}
@@ -131,5 +134,37 @@ func TestCoderDiffServiceRejectsCoderDiffOutsideHotspotFile(t *testing.T) {
 func TestExtractUnifiedDiffRejectsNonDiffOutput(t *testing.T) {
 	if _, err := ExtractUnifiedDiff("I cannot safely change this."); err == nil {
 		t.Fatal("expected non-diff output to be rejected")
+	}
+}
+
+func TestCoderDiffResultUsesCanonicalTaskIdentity(t *testing.T) {
+	coder := &stubCoderDiffGenerator{response: "diff --git a/example.go b/example.go\n--- a/example.go\n+++ b/example.go\n@@ -1 +1 @@\n-old\n+new"}
+	result, err := NewCoderDiffService(coder).GenerateConcreteDiff(context.Background(), CoderDiffRequest{Hotspot: domaincomplexity.Hotspot{HotspotID: "hot_1", FilePath: "example.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := fields["job_id"]; exists {
+		t.Fatal("legacy job_id exposed")
+	}
+	if fields["task_id"] != coder.requests[0].RootTaskID().String() {
+		t.Fatalf("result and coder task differ: %s", data)
+	}
+}
+
+func TestCoderDiffRejectsInvalidTaskBeforeGeneration(t *testing.T) {
+	for _, id := range []modulecore.TaskID{"job_1", modulecore.TaskID(modulecore.NewTraceID()), " "} {
+		coder := &stubCoderDiffGenerator{}
+		_, err := NewCoderDiffService(coder).GenerateConcreteDiff(context.Background(), CoderDiffRequest{TaskID: id, Hotspot: domaincomplexity.Hotspot{HotspotID: "hot_1", FilePath: "example.go"}})
+		if err == nil || len(coder.requests) != 0 {
+			t.Fatalf("invalid task accepted: %q", id)
+		}
 	}
 }

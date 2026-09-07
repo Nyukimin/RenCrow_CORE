@@ -100,21 +100,22 @@
   }
 
   function traceSummary(traces) {
-    const responses = arrayValue(field(traces, 'items', 'Items'));
+    const recentTraces = arrayValue(field(traces, 'items', 'Items'));
     const relationItems = [];
-    for (const trace of responses) {
+    for (const trace of recentTraces) {
       for (const item of arrayValue(field(trace, 'items', 'Items'))) {
         if (textValue(field(item, 'kind', 'Kind')).toLowerCase() !== 'knowledge_relation') continue;
         relationItems.push({trace, item});
       }
     }
-    return {responses, relationItems};
+    return {traces: recentTraces, relationItems};
   }
 
   function safeTraceDetails(summary) {
     return summary.relationItems.slice(0, 5).map(({trace, item}) => {
       return [
-        'response ' + textValue(field(trace, 'response_id', 'ResponseID'), '-'),
+        'trace ' + textValue(field(trace, 'trace_id', 'TraceID'), '-'),
+        'turn ' + textValue(field(trace, 'turn_id', 'TurnID'), '-'),
         'role ' + textValue(field(trace, 'role', 'Role'), '-'),
         textValue(field(item, 'kind', 'Kind'), 'knowledge_relation'),
         'source ' + textValue(field(item, 'source_id', 'SourceID'), '-'),
@@ -213,7 +214,7 @@
       {
         key: 'recent-trace', title: 'Recent Trace', status: traceStatus,
         metrics: [
-          metric('Responses', recentTrace.responses.length),
+          metric('Traces', recentTrace.traces.length),
           metric('Relation items', recentTrace.relationItems.length),
           metric('Injected', injectedCount),
           metric('Not injected', Math.max(0, recentTrace.relationItems.length - injectedCount)),

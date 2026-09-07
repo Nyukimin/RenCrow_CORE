@@ -29,7 +29,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 		}},
 		items: []domainsuperagent.RunQueueItem{
 			{
-				QueueItemID:        lowQueueID,
+				QueueItemID:    lowQueueID,
 				TaskID:         modulecore.NewTaskID(),
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "later",
@@ -39,7 +39,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 				CreatedAt:      now.Add(-2 * time.Minute),
 			},
 			{
-				QueueItemID:        highQueueID,
+				QueueItemID:    highQueueID,
 				TaskID:         taskID,
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "run this",
@@ -49,7 +49,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 				CreatedAt:      now.Add(-time.Minute),
 			},
 			{
-				QueueItemID:        futureQueueID,
+				QueueItemID:    futureQueueID,
 				TaskID:         modulecore.NewTaskID(),
 				RunStartReason: domaintask.RunStartReasonFirst,
 				Goal:           "not yet",
@@ -108,7 +108,7 @@ func TestRunQueueSchedulerRunOnceClaimsAndCompletesDueItem(t *testing.T) {
 func TestRunQueueSchedulerClaimNextReservesLeaseBeforeCanonicalRun(t *testing.T) {
 	now := time.Date(2026, 8, 23, 14, 0, 0, 0, time.UTC)
 	item := domainsuperagent.RunQueueItem{
-		QueueItemID:        "reserve-first",
+		QueueItemID:    "reserve-first",
 		TaskID:         modulecore.NewTaskID(),
 		RunStartReason: domaintask.RunStartReasonFirst,
 		RunID:          modulecore.NewRunID(),
@@ -141,7 +141,7 @@ func TestRunQueueSchedulerDoesNotProcessOrOverwriteAfterLeaseLostBeforeAttachmen
 	now := time.Date(2026, 8, 23, 14, 30, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	base := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueItemID:        "stale-attach",
+		QueueItemID:    "stale-attach",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "attach only while lease is current",
@@ -198,7 +198,7 @@ func TestRunQueueSchedulerCleansIssuedRunWhenAttachmentErrors(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	attachErr := errors.New("attachment write failed")
 	base := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueItemID:        "attach-error",
+		QueueItemID:    "attach-error",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "cleanup after attachment error",
@@ -242,7 +242,7 @@ func TestRunQueueSchedulerRunOnceMarksFailure(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	store := &recordingRunQueueStore{
 		items: []domainsuperagent.RunQueueItem{{
-			QueueItemID:        "q1",
+			QueueItemID:    "q1",
 			TaskID:         taskID,
 			RunStartReason: domaintask.RunStartReasonFirst,
 			Goal:           "run",
@@ -562,7 +562,7 @@ func TestRunQueueSchedulerCleansOwnerRunWhenPostStartValidationFails(t *testing.
 	now := time.Date(2026, 8, 23, 17, 30, 0, 0, time.UTC)
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueItemID:        "invalid-owner-run",
+		QueueItemID:    "invalid-owner-run",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "cleanup invalid owner metadata",
@@ -612,7 +612,7 @@ func TestRunQueueSchedulerReportsTaskMismatchWithoutGuessingCleanupOwner(t *test
 	now := time.Date(2026, 8, 23, 17, 45, 0, 0, time.UTC)
 	taskID, otherTaskID, runID := modulecore.NewTaskID(), modulecore.NewTaskID(), modulecore.NewRunID()
 	store := &recordingRunQueueStore{items: []domainsuperagent.RunQueueItem{{
-		QueueItemID:        "mismatched-owner-run",
+		QueueItemID:    "mismatched-owner-run",
 		TaskID:         taskID,
 		RunStartReason: domaintask.RunStartReasonFirst,
 		Goal:           "do not guess cleanup task",

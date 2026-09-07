@@ -462,13 +462,13 @@ type AIWorkflowStatus struct {
 
 type ProjectMemoryIndex struct {
 	MemoryID    modulecore.MemoryID `json:"memory_id"`
-	Repo        string    `json:"repo"`
-	FilePath    string    `json:"file_path"`
-	MemoryType  string    `json:"memory_type"`
-	Title       string    `json:"title,omitempty"`
-	Summary     string    `json:"summary,omitempty"`
-	ContentHash string    `json:"content_hash,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Repo        string              `json:"repo"`
+	FilePath    string              `json:"file_path"`
+	MemoryType  string              `json:"memory_type"`
+	Title       string              `json:"title,omitempty"`
+	Summary     string              `json:"summary,omitempty"`
+	ContentHash string              `json:"content_hash,omitempty"`
+	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
 type WorktreeRegistry struct {
@@ -970,14 +970,14 @@ type BrowserTraceAPIValidationIssue struct {
 type BrowserTraceAPICoverage struct {
 	ArtifactID            modulecore.ArtifactID   `json:"artifact_id"`
 	Kind                  modulecore.ArtifactKind `json:"artifact_kind"`
-	TaskID                modulecore.TaskID `json:"task_id"`
-	RunID                 modulecore.RunID  `json:"run_id"`
-	ActorID               string            `json:"actor_id"`
-	ObservedFlows         []string          `json:"observed_flows,omitempty"`
-	ObservedEndpoints     []string          `json:"observed_endpoints,omitempty"`
-	MissingFlows          []string          `json:"missing_flows,omitempty"`
-	RecommendedNextTraces []string          `json:"recommended_next_traces,omitempty"`
-	CreatedAt             time.Time         `json:"created_at"`
+	TaskID                modulecore.TaskID       `json:"task_id"`
+	RunID                 modulecore.RunID        `json:"run_id"`
+	ActorID               string                  `json:"actor_id"`
+	ObservedFlows         []string                `json:"observed_flows,omitempty"`
+	ObservedEndpoints     []string                `json:"observed_endpoints,omitempty"`
+	MissingFlows          []string                `json:"missing_flows,omitempty"`
+	RecommendedNextTraces []string                `json:"recommended_next_traces,omitempty"`
+	CreatedAt             time.Time               `json:"created_at"`
 }
 
 type BrowserTraceAPIArtifact struct {
@@ -1211,12 +1211,12 @@ type WorkstreamSteeringItem struct {
 type WorkstreamHeartbeat struct {
 	ScheduleID   modulecore.ScheduleID `json:"schedule_id"`
 	WorkstreamID string                `json:"workstream_id"`
-	ScheduleText string    `json:"schedule_text"`
-	Task         string    `json:"task"`
-	Status       string    `json:"status"`
-	LastRunAt    time.Time `json:"last_run_at,omitempty"`
-	NextRunAt    time.Time `json:"next_run_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ScheduleText string                `json:"schedule_text"`
+	Task         string                `json:"task"`
+	Status       string                `json:"status"`
+	LastRunAt    time.Time             `json:"last_run_at,omitempty"`
+	NextRunAt    time.Time             `json:"next_run_at,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type WorkstreamArtifactResponse struct {
@@ -1298,13 +1298,13 @@ type ComplexityHotspot struct {
 
 type ComplexityHotspotEvidence struct {
 	EvidenceID modulecore.EvidenceID `json:"evidence_id"`
-	HotspotID  string    `json:"hotspot_id"`
-	FilePath   string    `json:"file_path"`
-	LineStart  int       `json:"line_start,omitempty"`
-	LineEnd    int       `json:"line_end,omitempty"`
-	Snippet    string    `json:"snippet,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	HotspotID  string                `json:"hotspot_id"`
+	FilePath   string                `json:"file_path"`
+	LineStart  int                   `json:"line_start,omitempty"`
+	LineEnd    int                   `json:"line_end,omitempty"`
+	Snippet    string                `json:"snippet,omitempty"`
+	Reason     string                `json:"reason,omitempty"`
+	CreatedAt  time.Time             `json:"created_at"`
 }
 
 type ComplexityReportArtifact struct {
@@ -1333,24 +1333,24 @@ type ComplexityConcreteDiffRequest struct {
 }
 
 type ComplexityCoderDiffRequest struct {
-	HotspotID                 string `json:"hotspot_id"`
-	WorkstreamID              string `json:"workstream_id,omitempty"`
-	JobID                     string `json:"job_id,omitempty"`
-	ArtifactID                string `json:"artifact_id,omitempty"`
-	PromotionID               string `json:"promotion_id,omitempty"`
-	SandboxID                 string `json:"sandbox_id,omitempty"`
-	TargetPath                string `json:"target_path,omitempty"`
-	DiffPath                  string `json:"diff_path,omitempty"`
-	TestResultPath            string `json:"test_result_path,omitempty"`
-	RollbackPlanPath          string `json:"rollback_plan_path,omitempty"`
-	PostApplyVerificationPath string `json:"post_apply_verification_path,omitempty"`
+	HotspotID                 string            `json:"hotspot_id"`
+	WorkstreamID              string            `json:"workstream_id,omitempty"`
+	TaskID                    modulecore.TaskID `json:"task_id,omitempty"`
+	ArtifactID                string            `json:"artifact_id,omitempty"`
+	PromotionID               string            `json:"promotion_id,omitempty"`
+	SandboxID                 string            `json:"sandbox_id,omitempty"`
+	TargetPath                string            `json:"target_path,omitempty"`
+	DiffPath                  string            `json:"diff_path,omitempty"`
+	TestResultPath            string            `json:"test_result_path,omitempty"`
+	RollbackPlanPath          string            `json:"rollback_plan_path,omitempty"`
+	PostApplyVerificationPath string            `json:"post_apply_verification_path,omitempty"`
 }
 
 type ComplexityCoderDiffResult struct {
-	JobID        string `json:"job_id"`
-	Prompt       string `json:"prompt,omitempty"`
-	RawResponse  string `json:"raw_response,omitempty"`
-	ConcreteDiff string `json:"concrete_diff"`
+	TaskID       modulecore.TaskID `json:"task_id"`
+	Prompt       string            `json:"prompt,omitempty"`
+	RawResponse  string            `json:"raw_response,omitempty"`
+	ConcreteDiff string            `json:"concrete_diff"`
 }
 
 type ComplexityDiffResponse struct {
@@ -1535,19 +1535,19 @@ type RevenueDailyRoutineReport struct {
 	ArtifactID          modulecore.ArtifactID   `json:"artifact_id"`
 	Kind                modulecore.ArtifactKind `json:"artifact_kind"`
 	WorkstreamID        string                  `json:"workstream_id,omitempty"`
-	Date                string    `json:"date"`
-	Summary             string    `json:"summary,omitempty"`
-	MarketResearch      int       `json:"market_research_count"`
-	SNSPosts            int       `json:"sns_post_count"`
-	Products            int       `json:"product_count"`
-	CustomerVoices      int       `json:"customer_voice_count"`
-	RevenueEvents       int       `json:"revenue_event_count"`
-	PaidCustomers       int       `json:"paid_customer_count"`
-	BlockedDecisions    int       `json:"blocked_decision_count"`
-	SuggestedActions    []string  `json:"suggested_actions,omitempty"`
-	Status              string    `json:"status"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at"`
+	Date                string                  `json:"date"`
+	Summary             string                  `json:"summary,omitempty"`
+	MarketResearch      int                     `json:"market_research_count"`
+	SNSPosts            int                     `json:"sns_post_count"`
+	Products            int                     `json:"product_count"`
+	CustomerVoices      int                     `json:"customer_voice_count"`
+	RevenueEvents       int                     `json:"revenue_event_count"`
+	PaidCustomers       int                     `json:"paid_customer_count"`
+	BlockedDecisions    int                     `json:"blocked_decision_count"`
+	SuggestedActions    []string                `json:"suggested_actions,omitempty"`
+	Status              string                  `json:"status"`
+	ExternalSendApplied bool                    `json:"external_send_applied"`
+	CreatedAt           time.Time               `json:"created_at"`
 }
 
 type RevenueDailyRoutineResponse struct {
@@ -1565,8 +1565,8 @@ type RevenueChannelDraft struct {
 	Subject             string                  `json:"subject,omitempty"`
 	Body                string                  `json:"body"`
 	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at,omitempty"`
+	ExternalSendApplied bool                    `json:"external_send_applied"`
+	CreatedAt           time.Time               `json:"created_at,omitempty"`
 }
 
 type RevenueChannelDraftResponse struct {
@@ -1575,33 +1575,33 @@ type RevenueChannelDraftResponse struct {
 }
 
 type RevenueExternalSendApplyRequest struct {
-	TaskID         modulecore.TaskID `json:"task_id"`
-	RunID          modulecore.RunID  `json:"run_id"`
-	DeliveryID     string            `json:"delivery_id,omitempty"`
-	TraceID        string            `json:"trace_id,omitempty"`
-	OpportunityID  string            `json:"opportunity_id,omitempty"`
+	TaskID         modulecore.TaskID     `json:"task_id"`
+	RunID          modulecore.RunID      `json:"run_id"`
+	DeliveryID     string                `json:"delivery_id,omitempty"`
+	TraceID        string                `json:"trace_id,omitempty"`
+	OpportunityID  string                `json:"opportunity_id,omitempty"`
 	ArtifactID     modulecore.ArtifactID `json:"artifact_id"`
 	DecisionID     string                `json:"decision_id"`
-	Destination    string            `json:"destination,omitempty"`
-	ChannelAdapter string            `json:"channel_adapter,omitempty"`
+	Destination    string                `json:"destination,omitempty"`
+	ChannelAdapter string                `json:"channel_adapter,omitempty"`
 }
 
 type RevenueExternalSendApplyRecord struct {
-	ActionID            modulecore.ActionID `json:"action_id"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	DeliveryID          string    `json:"delivery_id,omitempty"`
+	ActionID            modulecore.ActionID   `json:"action_id"`
+	TraceID             string                `json:"trace_id,omitempty"`
+	DeliveryID          string                `json:"delivery_id,omitempty"`
 	ArtifactID          modulecore.ArtifactID `json:"artifact_id"`
 	DecisionID          string                `json:"decision_id"`
-	Channel             string    `json:"channel"`
-	Destination         string    `json:"destination,omitempty"`
-	ChannelAdapter      string    `json:"channel_adapter,omitempty"`
-	ApplyStatus         string    `json:"apply_status"`
-	SendResult          string    `json:"send_result"`
-	FailureReason       string    `json:"failure_reason,omitempty"`
-	PostSendVerified    bool      `json:"post_send_verified"`
-	PostSendEvidence    string    `json:"post_send_evidence,omitempty"`
-	ExternalSendApplied bool      `json:"external_send_applied"`
-	CreatedAt           time.Time `json:"created_at"`
+	Channel             string                `json:"channel"`
+	Destination         string                `json:"destination,omitempty"`
+	ChannelAdapter      string                `json:"channel_adapter,omitempty"`
+	ApplyStatus         string                `json:"apply_status"`
+	SendResult          string                `json:"send_result"`
+	FailureReason       string                `json:"failure_reason,omitempty"`
+	PostSendVerified    bool                  `json:"post_send_verified"`
+	PostSendEvidence    string                `json:"post_send_evidence,omitempty"`
+	ExternalSendApplied bool                  `json:"external_send_applied"`
+	CreatedAt           time.Time             `json:"created_at"`
 }
 
 type RevenueDelivery struct {
@@ -1644,20 +1644,20 @@ type SkillGovernanceExternalPRSubmitRequest struct {
 
 type SkillGovernanceExternalPRSubmitRecord struct {
 	ActionID            modulecore.ActionID `json:"action_id"`
-	ContributionEventID string    `json:"contribution_event_id"`
-	Repo                string    `json:"repo"`
-	TargetBranch        string    `json:"target_branch,omitempty"`
-	Title               string    `json:"title,omitempty"`
-	DiffPath            string    `json:"diff_path,omitempty"`
-	TestResult          string    `json:"test_result,omitempty"`
-	SubmitStatus        string    `json:"submit_status"`
-	PRURL               string    `json:"pr_url,omitempty"`
-	FailureReason       string    `json:"failure_reason,omitempty"`
-	ExternalPRCreated   bool      `json:"external_pr_created"`
-	PostSubmitVerified  bool      `json:"post_submit_verified"`
-	PostSubmitEvidence  string    `json:"post_submit_evidence,omitempty"`
-	PRAdapter           string    `json:"pr_adapter,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
+	ContributionEventID string              `json:"contribution_event_id"`
+	Repo                string              `json:"repo"`
+	TargetBranch        string              `json:"target_branch,omitempty"`
+	Title               string              `json:"title,omitempty"`
+	DiffPath            string              `json:"diff_path,omitempty"`
+	TestResult          string              `json:"test_result,omitempty"`
+	SubmitStatus        string              `json:"submit_status"`
+	PRURL               string              `json:"pr_url,omitempty"`
+	FailureReason       string              `json:"failure_reason,omitempty"`
+	ExternalPRCreated   bool                `json:"external_pr_created"`
+	PostSubmitVerified  bool                `json:"post_submit_verified"`
+	PostSubmitEvidence  string              `json:"post_submit_evidence,omitempty"`
+	PRAdapter           string              `json:"pr_adapter,omitempty"`
+	CreatedAt           time.Time           `json:"created_at"`
 }
 
 type SkillGovernanceExternalPRSubmitResponse struct {
@@ -3352,6 +3352,11 @@ func validateComplexityCoderDiffRequest(req ComplexityCoderDiffRequest) error {
 	if strings.TrimSpace(req.HotspotID) == "" {
 		return fmt.Errorf("complexity coder diff request missing hotspot_id")
 	}
+	if !req.TaskID.IsZero() {
+		if err := req.TaskID.Validate(); err != nil {
+			return fmt.Errorf("complexity coder diff request invalid task_id: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -3436,8 +3441,14 @@ func validateComplexityDiffResponse(resp ComplexityDiffResponse, req ComplexityC
 		if resp.CoderResult == nil {
 			return fmt.Errorf("complexity coder diff response missing coder_result")
 		}
-		if strings.TrimSpace(coderReq.JobID) != "" && strings.TrimSpace(resp.CoderResult.JobID) != strings.TrimSpace(coderReq.JobID) {
-			return fmt.Errorf("complexity coder diff response job_id mismatch")
+		if resp.CoderResult.TaskID.IsZero() {
+			return fmt.Errorf("complexity coder diff response missing task_id")
+		}
+		if err := resp.CoderResult.TaskID.Validate(); err != nil {
+			return fmt.Errorf("complexity coder diff response invalid task_id: %w", err)
+		}
+		if !coderReq.TaskID.IsZero() && resp.CoderResult.TaskID != coderReq.TaskID {
+			return fmt.Errorf("complexity coder diff response task_id mismatch")
 		}
 		if strings.TrimSpace(resp.CoderResult.ConcreteDiff) == "" {
 			return fmt.Errorf("complexity coder diff response missing concrete_diff")

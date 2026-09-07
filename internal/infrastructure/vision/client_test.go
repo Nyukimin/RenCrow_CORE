@@ -7,15 +7,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
-	var gotRequestID string
+	requestID := string(modulecore.NewRequestID())
+	var gotHeaderRequestID string
+	var gotFormRequestID string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/vision/analyze" {
 			http.Error(w, "wrong path", http.StatusNotFound)
@@ -25,7 +29,8 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		gotRequestID = r.Header.Get("X-Request-Id")
+		gotHeaderRequestID = r.Header.Get("X-Request-Id")
+		gotFormRequestID = r.FormValue("request_id")
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -45,7 +50,7 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"ok":true,"request_id":"trace-1","provider":"rencrow_vision","model":"Wild","kind":"image","summary":"要約","text":"解析結果","segments":[],"metadata":{"width":1}}`)
+		fmt.Fprintf(w, `{"ok":true,"request_id":%q,"provider":"rencrow_vision","model":"Wild","kind":"image","summary":"要約","text":"解析結果","segments":[],"metadata":{"width":1}}`, requestID)
 	}))
 	defer server.Close()
 
@@ -54,7 +59,7 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	result, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-		RequestID:   "trace-1",
+		RequestID:   requestID,
 		SessionID:   "session-1",
 		Prompt:      "説明して",
 		Kind:        "image",
@@ -67,19 +72,110 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
-	if gotRequestID != "trace-1" {
-		t.Fatalf("X-Request-Id = %q", gotRequestID)
+	if gotHeaderRequestID != requestID || gotFormRequestID != requestID {
+		t.Fatalf("request IDs: header=%q form=%q want=%q", gotHeaderRequestID, gotFormRequestID, requestID)
 	}
 	if !result.OK || result.Text != "解析結果" || result.Model != "Wild" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
+func TestClientAnalyzeRejectsInvalidRequestIDBeforeHTTP(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, time.Second)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	cases := []struct {
+		name string
+		id   string
+	}{
+		{name: "empty"},
+		{name: "malformed", id: "trace-secret-request-id"},
+		{name: "wrong-kind", id: string(modulecore.NewTraceID())},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
+				RequestID: tc.id,
+				Data:      []byte("image"),
+			})
+			var serviceErr *ServiceError
+			if !errorsAs(err, &serviceErr) {
+				t.Fatalf("error = %T %v, want ServiceError", err, err)
+			}
+			if serviceErr.Code != "VISION_INVALID_REQUEST_ID" {
+				t.Fatalf("error code = %q, want VISION_INVALID_REQUEST_ID", serviceErr.Code)
+			}
+			if tc.id != "" && strings.Contains(err.Error(), tc.id) {
+				t.Fatalf("invalid request ID leaked in error: %v", err)
+			}
+		})
+	}
+	if calls != 0 {
+		t.Fatalf("HTTP calls = %d, want 0", calls)
+	}
+}
+
+func TestClientAnalyzeRejectsUnmatchedSuccessfulResponseRequestID(t *testing.T) {
+	requestID := string(modulecore.NewRequestID())
+	cases := []struct {
+		name       string
+		responseID string
+	}{
+		{name: "missing"},
+		{name: "malformed", responseID: "trace-secret-response-id"},
+		{name: "other", responseID: string(modulecore.NewRequestID())},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if tc.responseID == "" {
+					fmt.Fprint(w, `{"ok":true,"provider":"rencrow_vision","model":"Wild","kind":"image","text":"解析結果"}`)
+					return
+				}
+				fmt.Fprintf(w, `{"ok":true,"request_id":%q,"provider":"rencrow_vision","model":"Wild","kind":"image","text":"解析結果"}`, tc.responseID)
+			}))
+			defer server.Close()
+
+			client, err := NewClient(server.URL, time.Second)
+			if err != nil {
+				t.Fatalf("NewClient: %v", err)
+			}
+			result, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
+				RequestID: requestID,
+				Data:      []byte("image"),
+			})
+			if !reflect.DeepEqual(result, domainvision.AnalyzeResult{}) {
+				t.Fatalf("result accepted despite identity mismatch: %+v", result)
+			}
+			var serviceErr *ServiceError
+			if !errorsAs(err, &serviceErr) {
+				t.Fatalf("error = %T %v, want ServiceError", err, err)
+			}
+			if serviceErr.Code != "VISION_IDENTITY_MISMATCH" {
+				t.Fatalf("error code = %q, want VISION_IDENTITY_MISMATCH", serviceErr.Code)
+			}
+			if strings.Contains(err.Error(), requestID) || (tc.responseID != "" && strings.Contains(err.Error(), tc.responseID)) || strings.Contains(err.Error(), "解析結果") {
+				t.Fatalf("request identity leaked in error: %v", err)
+			}
+		})
+	}
+}
+
 func TestClientAnalyzePreservesVisionErrorCode(t *testing.T) {
+	requestID := string(modulecore.NewRequestID())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnsupportedMediaType)
-		fmt.Fprint(w, `{"ok":false,"request_id":"trace-2","error_code":"VISION_UNSUPPORTED_MEDIA","message":"unsupported"}`)
+		fmt.Fprintf(w, `{"ok":false,"request_id":%q,"error_code":"VISION_UNSUPPORTED_MEDIA","message":"unsupported"}`, requestID)
 	}))
 	defer server.Close()
 
@@ -88,7 +184,7 @@ func TestClientAnalyzePreservesVisionErrorCode(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	_, err = client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-		RequestID: "trace-2",
+		RequestID: requestID,
 		Filename:  "bad.txt",
 		Data:      []byte("bad"),
 	})

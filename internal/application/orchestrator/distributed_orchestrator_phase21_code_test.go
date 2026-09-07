@@ -14,6 +14,7 @@ import (
 
 func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWithoutProposal(t *testing.T) {
 	var coderMsg domaintransport.Message
+	var coderReceiveOn string
 	var events []OrchestratorEvent
 	coordinator := newDistributedCodeExecutionCoordinator(
 		session.NewCentralMemory(),
@@ -26,7 +27,16 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 		func() int { return 0 },
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
 			coderMsg = msg
-			return domaintransport.Message{From: targetAgent, To: "shiro", Content: "coder result", Type: domaintransport.MessageTypeResult}, nil
+			coderReceiveOn = receiveOnAgent
+			if msg.From != receiveOnAgent {
+				t.Fatalf("coder request From=%q, want receive mailbox %q", msg.From, receiveOnAgent)
+			}
+			response := domaintransport.NewMessage(targetAgent, msg.From, msg.SessionID, msg.TaskID, "coder result")
+			response.Type = domaintransport.MessageTypeResult
+			if err := validateDistributedResponse(msg, response); err != nil {
+				t.Fatalf("strict coder response validation failed: %v", err)
+			}
+			return response, nil
 		},
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
 			if targetAgent != "shiro" {
@@ -57,6 +67,9 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 	}
 	if coderMsg.TaskID != taskID {
 		t.Fatalf("coder message task ID=%q, want %q", coderMsg.TaskID, taskID)
+	}
+	if coderMsg.From != "mio" || coderReceiveOn != "mio" {
+		t.Fatalf("coder request mailbox identity: from=%q receive_on=%q, want mio", coderMsg.From, coderReceiveOn)
 	}
 	gotInput, err := coderMsg.ReconstructTurnInput()
 	if err != nil {
@@ -122,7 +135,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 			if len(attempts) == 1 {
 				return domaintransport.Message{}, errors.New("command not found")
 			}
-			return domaintransport.Message{From: targetAgent, To: "shiro", Content: "coder result", Type: domaintransport.MessageTypeResult}, nil
+			return domaintransport.Message{From: targetAgent, To: msg.From, SessionID: msg.SessionID, TaskID: msg.TaskID, Content: "coder result", Type: domaintransport.MessageTypeResult}, nil
 		},
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message) (domaintransport.Message, error) {
 			return domaintransport.Message{From: "shiro", To: "mio", Content: "final result", Type: domaintransport.MessageTypeResult}, nil
@@ -158,7 +171,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 		func(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
 			return domaintransport.Message{
 				From:    targetAgent,
-				To:      "shiro",
+				To:      msg.From,
 				Content: "coder result",
 				Type:    domaintransport.MessageTypeResult,
 				Proposal: &domaintransport.ProposalPayload{
@@ -203,5 +216,39 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 	}
 	if !got.Success || got.ExecutionSummary == "" {
 		t.Fatalf("proposal evidence should include successful execution summary: %#v", got)
+	}
+}
+
+func TestPhase21DistributedWorkerTerminalBudgetAndMissingResult(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		result    *domaintransport.ResultPayload
+		wantError bool
+	}{
+		{"budget_exhausted", &domaintransport.ResultPayload{Success: false, Retryable: true, FailureReason: "owner failure"}, true},
+		{"missing_result", nil, true},
+		{"success", &domaintransport.ResultPayload{Success: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			c := newDistributedCodeExecutionCoordinator(session.NewCentralMemory(), func(string, string, string, string, string, string, string, string, string) {}, func(string, string, string, string, string, string, string, string) {}, func(routing.Route, string) string { return "coder3" }, func() map[string]interface{} { return nil }, func() int { return 0 },
+				func(context.Context, string, domaintransport.Message, string) (domaintransport.Message, error) {
+					return domaintransport.Message{Proposal: &domaintransport.ProposalPayload{Plan: "edit", Patch: "[]"}}, nil
+				},
+				func(context.Context, string, domaintransport.Message) (domaintransport.Message, error) {
+					calls++
+					return domaintransport.Message{Content: "complete", Result: tc.result}, nil
+				})
+			_, err := c.Execute(context.Background(), newOrchestratorTestTurnInput(t, "write code", "viewer", "user"), routing.RouteCODE3, modulecore.NewTaskID())
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error=%v wantError=%t", err, tc.wantError)
+			}
+			if tc.wantError && classifyExecutorFailure(err) != "worker_result_failed" {
+				t.Fatalf("terminal result not typed: %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("worker calls=%d", calls)
+			}
+		})
 	}
 }

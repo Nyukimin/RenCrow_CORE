@@ -1501,7 +1501,7 @@ function renderRecallTraces() {
     if (items.length === 0) {
       const tr = document.createElement('tr');
       tr.innerHTML =
-        '<td class="code">' + esc(trace.ResponseID || trace.response_id || '-') + '</td>' +
+        '<td class="code">' + esc(trace.TraceID || trace.trace_id || '-') + '</td>' +
         '<td>' + esc(trace.Role || trace.role || '-') + '</td>' +
         '<td colspan="9" class="small">No referenced recall items</td>' +
         '<td>' + esc(fdt(trace.CreatedAt || trace.created_at)) + '</td>';
@@ -1515,7 +1515,7 @@ function renderRecallTraces() {
       const tokenCount = item.TokenCount ?? item.token_count ?? '-';
       const tr = document.createElement('tr');
       tr.innerHTML =
-        '<td class="code">' + esc(trace.ResponseID || trace.response_id || '-') + '</td>' +
+        '<td class="code">' + esc(trace.TraceID || trace.trace_id || '-') + '</td>' +
         '<td>' + esc(trace.Role || trace.role || '-') + '</td>' +
         '<td>' + esc(item.Layer || item.layer || '-') + '</td>' +
         '<td>' + esc(item.Kind || item.kind || '-') + '</td>' +

@@ -75,11 +75,10 @@ const (
 	ProviderTimeoutStatusText = "stt provider timeout (retrying)"
 )
 
-func BuildSessionInfoEvent(sessionID string, provider string) map[string]any {
+func BuildSessionInfoEvent(provider string) map[string]any {
 	return map[string]any{
-		"type":       WebSocketEventTypeSessionInfo,
-		"session_id": strings.TrimSpace(sessionID),
-		"provider":   strings.TrimSpace(provider),
+		"type":     WebSocketEventTypeSessionInfo,
+		"provider": strings.TrimSpace(provider),
 	}
 }
 

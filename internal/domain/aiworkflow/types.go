@@ -8,13 +8,13 @@ import (
 
 type ProjectMemoryIndex struct {
 	MemoryID    modulecore.MemoryID `json:"memory_id"`
-	Repo        string    `json:"repo"`
-	FilePath    string    `json:"file_path"`
-	MemoryType  string    `json:"memory_type"`
-	Title       string    `json:"title,omitempty"`
-	Summary     string    `json:"summary,omitempty"`
-	ContentHash string    `json:"content_hash,omitempty"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Repo        string              `json:"repo"`
+	FilePath    string              `json:"file_path"`
+	MemoryType  string              `json:"memory_type"`
+	Title       string              `json:"title,omitempty"`
+	Summary     string              `json:"summary,omitempty"`
+	ContentHash string              `json:"content_hash,omitempty"`
+	UpdatedAt   time.Time           `json:"updated_at"`
 }
 
 type WorktreeRegistry struct {
@@ -45,16 +45,16 @@ type ContextUsage struct {
 	RunID           modulecore.RunID  `json:"run_id,omitempty"`
 	WorkstreamID    string            `json:"workstream_id,omitempty"`
 	CompactionID    string            `json:"compaction_id,omitempty"`
-	Agent           string    `json:"agent"`
-	Model           string    `json:"model,omitempty"`
-	InputTokens     int       `json:"input_tokens,omitempty"`
-	OutputTokens    int       `json:"output_tokens,omitempty"`
-	ContextTokens   int       `json:"context_tokens,omitempty"`
-	ToolCallCount   int       `json:"tool_call_count,omitempty"`
-	DCICallCount    int       `json:"dci_call_count,omitempty"`
-	RepairCount     int       `json:"repair_count,omitempty"`
-	LatencyMS       int       `json:"latency_ms,omitempty"`
-	EstimatedCost   float64   `json:"estimated_cost,omitempty"`
-	KVCacheEstimate float64   `json:"kv_cache_estimate,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	Agent           string            `json:"agent"`
+	Model           string            `json:"model,omitempty"`
+	InputTokens     int               `json:"input_tokens,omitempty"`
+	OutputTokens    int               `json:"output_tokens,omitempty"`
+	ContextTokens   int               `json:"context_tokens,omitempty"`
+	ToolCallCount   int               `json:"tool_call_count,omitempty"`
+	DCICallCount    int               `json:"dci_call_count,omitempty"`
+	RepairCount     int               `json:"repair_count,omitempty"`
+	LatencyMS       int               `json:"latency_ms,omitempty"`
+	EstimatedCost   float64           `json:"estimated_cost,omitempty"`
+	KVCacheEstimate float64           `json:"kv_cache_estimate,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
 }

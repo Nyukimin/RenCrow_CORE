@@ -672,3 +672,28 @@ func TestCoderAgentExtractProposal_WholeContentPatchFallback(t *testing.T) {
 		t.Fatalf("unexpected patch: %q", proposal.Patch())
 	}
 }
+
+func TestCoderCurrentSnapshotReplacesHistorySnapshot(t *testing.T) {
+	var captured []llm.Message
+	provider := &mockLLMProvider{generateFunc: func(ctx context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
+		captured = req.Messages
+		return llm.GenerateResponse{Content: "ok"}, nil
+	}}
+	coder := NewCoderAgent(provider, nil, nil, "persona").WithRuntimeContextProvider(func(context.Context, string) string { return "current unavailable" })
+	history := []llm.Message{{Role: "system", Content: "old available", Type: llm.PromptContextStable, Metadata: map[string]string{"runtime_context_kind": "capability_snapshot"}}, {Role: "user", Content: "question"}}
+	if _, err := coder.GenerateWithContext(context.Background(), history); err != nil {
+		t.Fatal(err)
+	}
+	found := 0
+	for _, message := range captured {
+		if message.Content == "old available" {
+			t.Fatal("obsolete snapshot survived")
+		}
+		if message.Content == "current unavailable" {
+			found++
+		}
+	}
+	if found != 1 || history[0].Content != "old available" {
+		t.Fatal("current snapshot missing or history mutated")
+	}
+}

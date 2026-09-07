@@ -128,6 +128,11 @@ func TestSTTWebSocketProviderE2E_SendsSessionReadyOnOpen(t *testing.T) {
 		if ev["type"] != wantType {
 			t.Fatalf("expected %s, got %+v", wantType, ev)
 		}
+		if wantType == "session_info" {
+			if _, ok := ev["session_id"]; ok {
+				t.Fatalf("session_info must not expose a synthetic conversation session: %+v", ev)
+			}
+		}
 	}
 }
 

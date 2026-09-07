@@ -21,7 +21,7 @@ import (
 // cannot choose a different implementation unit or revision by editing Ref.
 type EvidenceVerificationRequest struct {
 	Ref                    domainbacklog.EvidenceRef `json:"ref"`
-	BacklogItemID                 string                    `json:"backlog_item_id"`
+	BacklogItemID          string                    `json:"backlog_item_id"`
 	ImplementationUnitID   string                    `json:"implementation_unit_id"`
 	ImplementationRevision int                       `json:"implementation_revision"`
 	TargetDeliveryState    string                    `json:"target_delivery_state"`
@@ -227,6 +227,62 @@ func (s *Service) findClosureReceipt(ctx context.Context, key string) (domainwor
 	return store.FindClosureReceipt(ctx, key)
 }
 
+// validateClosureActionBinding verifies that every persisted receipt for the
+// unit/revision uses one valid action identity.  Receipts are owner state, so
+// callers must not repair or replace a conflicting binding here.
+func (s *Service) validateClosureActionBinding(ctx context.Context, unitID string, revision int) (modulecore.ActionID, error) {
+	type binding struct {
+		kind   string
+		key    string
+		action modulecore.ActionID
+	}
+
+	keys := []binding{
+		{kind: "LIVE_VERIFIED stage", key: stageRunKey(unitID, revision, domainbacklog.DeliveryLiveVerified)},
+		{kind: "DONE stage", key: stageRunKey(unitID, revision, domainbacklog.DeliveryDone)},
+		{kind: "DONE closure", key: stageRunKey(unitID, revision, domainbacklog.DeliveryDone)},
+	}
+	found := make([]binding, 0, len(keys))
+	for index := range keys {
+		entry := keys[index]
+		if index < 2 {
+			receipt, ok, err := s.findStageReceipt(ctx, entry.key)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				continue
+			}
+			entry.action = receipt.ActionID
+		} else {
+			receipt, ok, err := s.findClosureReceipt(ctx, entry.key)
+			if err != nil {
+				return "", err
+			}
+			if !ok {
+				continue
+			}
+			entry.action = receipt.ActionID
+		}
+		found = append(found, entry)
+	}
+	if len(found) == 0 {
+		return "", nil
+	}
+	for _, entry := range found {
+		if err := entry.action.Validate(); err != nil {
+			return "", fmt.Errorf("%w: %s %s has invalid action_id", ErrLifecycleConflict, entry.kind, entry.key)
+		}
+	}
+	actionID := found[0].action
+	for _, entry := range found[1:] {
+		if entry.action != actionID {
+			return "", fmt.Errorf("%w: persisted closure action_id mismatch for unit %q revision %d: %s=%q, %s=%q", ErrLifecycleConflict, strings.TrimSpace(unitID), revision, found[0].kind, actionID, entry.kind, entry.action)
+		}
+	}
+	return actionID, nil
+}
+
 func (s *Service) saveClosureReceipt(ctx context.Context, receipt domainworkstream.ClosureReceipt) error {
 	store, ok := s.workstream.(LifecycleStore)
 	if !ok {
@@ -256,6 +312,13 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 	if unitID == "" {
 		unitID = string(next.BacklogItemID)
 	}
+	actionID, err := s.validateClosureActionBinding(ctx, unitID, next.ImplementationRevision)
+	if err != nil {
+		return err
+	}
+	if actionID != "" {
+		request.RequestID = string(actionID)
+	}
 	receipt, found, err := s.findClosureReceipt(ctx, key)
 	if err != nil {
 		return err
@@ -265,7 +328,7 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 		receipt = domainworkstream.ClosureReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, ""),
 			TransitionEventID: transitionEventID(""),
-			UnitID: unitID, BacklogItemID: next.BacklogItemID, ImplementationRevision: next.ImplementationRevision,
+			UnitID:            unitID, BacklogItemID: next.BacklogItemID, ImplementationRevision: next.ImplementationRevision,
 			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
 			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(string(next.BacklogItemID)),
 			ArtifactID: "artifact_atlas_" + safeSegment(string(next.BacklogItemID)), LeaseName: domainbacklog.ImplementationLeaseName,
@@ -346,6 +409,13 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 	if unitID == "" {
 		unitID = string(live.BacklogItemID)
 	}
+	actionID, err := s.validateClosureActionBinding(ctx, unitID, live.ImplementationRevision)
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if actionID != "" {
+		request.RequestID = string(actionID)
+	}
 	doneRequest := request
 	doneRequest.TargetDeliveryState = domainbacklog.DeliveryDone
 	doneKey := stageRunKey(unitID, live.ImplementationRevision, domainbacklog.DeliveryDone)
@@ -394,6 +464,9 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 			doneReceipt.ResultJSON = string(resultJSON)
 		}
 	}
+	// Recovery may enter directly at DONE; its prepared receipt is the owner
+	// of the action subsequently recorded by completeDone.
+	doneRequest.RequestID = string(doneReceipt.ActionID)
 	if err := s.saveStageReceipt(ctx, doneReceipt); err != nil {
 		return domainbacklog.Item{}, err
 	}

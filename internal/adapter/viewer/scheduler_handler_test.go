@@ -3,6 +3,7 @@ package viewer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +72,15 @@ func TestHandleSchedulerCreateRunDisableAndList(t *testing.T) {
 	if len(store.logs) != 1 || store.logs[0].Trigger != "manual" {
 		t.Fatalf("logs=%#v", store.logs)
 	}
+	var response struct {
+		RunLog domainscheduler.RunLog `json:"run_log"`
+	}
+	if err := json.Unmarshal(run.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.RunLog.Status != "failed" || response.RunLog.Error == "" || store.logs[0].Status != "failed" {
+		t.Fatalf("unconfigured executor must surface failure: response=%+v stored=%+v", response.RunLog, store.logs[0])
+	}
 
 	disable := httptest.NewRecorder()
 	handler(disable, httptest.NewRequest(http.MethodPost, "/viewer/scheduler", bytes.NewBufferString(fmt.Sprintf(`{"action":"disable","schedule_id":%q,"disabled_by":"coder"}`, string(scheduleID)))))
@@ -86,7 +96,7 @@ func TestHandleSchedulerCreateRunDisableAndList(t *testing.T) {
 	if list.Code != http.StatusOK {
 		t.Fatalf("list status=%d body=%s", list.Code, list.Body.String())
 	}
-	for _, want := range []string{`"schedules"`, `"run_logs"`, string(scheduleID), `"manual"`} {
+	for _, want := range []string{`"schedules"`, `"run_logs"`, string(scheduleID), `"manual"`, `"status":"failed"`, `"error":"scheduler executor unavailable"`} {
 		if !strings.Contains(list.Body.String(), want) {
 			t.Fatalf("list body missing %s: %s", want, list.Body.String())
 		}

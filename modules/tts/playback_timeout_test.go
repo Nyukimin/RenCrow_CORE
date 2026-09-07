@@ -45,14 +45,14 @@ func TestPublicSessionStoreMarkTimeoutReturnsConsumption(t *testing.T) {
 	store.Register(PublicSessionRouteRegistration{
 		InternalSessionID: "tts-1",
 		PublicSessionID:   "idle-timeout",
-		ResponseID:        "idle-timeout:0000",
+		PublicPlaybackRef: "idle-timeout:0000",
 		MessageID:         "idle-timeout:msg:0001",
 		TurnIndex:         1,
 	})
 	store.Register(PublicSessionRouteRegistration{
 		InternalSessionID: "tts-2",
 		PublicSessionID:   "idle-timeout",
-		ResponseID:        "idle-timeout:0001",
+		PublicPlaybackRef: "idle-timeout:0001",
 		MessageID:         "idle-timeout:msg:0002",
 		TurnIndex:         2,
 	})

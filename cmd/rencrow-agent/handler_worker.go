@@ -52,13 +52,7 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 	// 結果をResultPayloadに変換
 	response := domaintransport.NewMessage(msg.To, msg.From, msg.SessionID, msg.TaskID, result.Summary)
 	response.Type = domaintransport.MessageTypeResult
-	response.Result = &domaintransport.ResultPayload{
-		Success:      result.FailedCmds == 0,
-		Summary:      result.Summary,
-		ExecutedCmds: result.ExecutedCmds,
-		FailedCmds:   result.FailedCmds,
-		GitCommit:    result.GitCommit,
-	}
+	response.Result = domaintransport.NewPatchResultPayload(*result)
 
 	return response, nil
 }

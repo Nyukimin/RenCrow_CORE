@@ -32,7 +32,6 @@ func TestProcessVoiceDirect_EmitsRoutingDecisionAndAgentResponse(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer-session",
 		Channel:     "viewer",
-		ChatID:      "viewer-user",
 		UserText:    "おはよう",
 		FinalText:   "おはよう",
 		StartedAt:   time.Now(),
@@ -102,7 +101,6 @@ func TestProcessVoiceDirect_SplitsStructuredFinalIntoUserAndReply(t *testing.T) 
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
 		FinalText:   `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
 	})
 	if err != nil {
@@ -140,7 +138,6 @@ func TestProcessVoiceDirect_EmitsLatencyMetrics(t *testing.T) {
 		UtteranceID:  "utt-1",
 		SessionID:    "viewer-session",
 		Channel:      "viewer",
-		ChatID:       "viewer-user",
 		UserText:     "おはよう",
 		FinalText:    "おはよう",
 		StartedAt:    startedAt,
@@ -197,7 +194,6 @@ func TestNotifyVoiceDirectFirstToken_EmitsMetricOnce(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer-session",
 		Channel:     "viewer",
-		ChatID:      "viewer-user",
 		StartedAt:   time.Now().Add(-100 * time.Millisecond),
 	}
 	taskID := modulecore.NewTaskID()

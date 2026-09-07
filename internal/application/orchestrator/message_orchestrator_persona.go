@@ -117,7 +117,7 @@ func (o *MessageOrchestrator) applyPersonaCanonicalResponse(ctx context.Context,
 	}
 	contexts := personaCanonicalContexts(req, match)
 	policy := domainpersona.CanonicalResponsePolicy{
-		ResponseKey:       def.ResponseKey,
+		ResponseKey:      def.ResponseKey,
 		CooldownTurns:    def.CooldownTurns,
 		MaxPerSession:    def.MaxPerSession,
 		RequiredContexts: def.RequiredContexts,
@@ -129,7 +129,7 @@ func (o *MessageOrchestrator) applyPersonaCanonicalResponse(ctx context.Context,
 	if err := o.personaRuntime.SaveCanonicalResponseLog(ctx, domainpersona.CanonicalResponseLog{
 		EventID:     fmt.Sprintf("evt_persona_canonical_%d", now.UnixNano()),
 		CharacterID: def.CharacterID,
-		ResponseKey:  def.ResponseKey,
+		ResponseKey: def.ResponseKey,
 		MessageID:   strings.TrimSpace(req.MessageID),
 		Used:        true,
 		Rewritten:   false,

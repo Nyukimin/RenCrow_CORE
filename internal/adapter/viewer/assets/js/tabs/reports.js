@@ -32,7 +32,7 @@ function renderReportCard(report) {
   const active = report.report_id === deskSelectedReportID ? ' active' : '';
   return '<article class="report-card' + active + unread + '" onclick="deskSelectReport(\'' + escAttr(report.report_id) + '\')">' +
     '<div class="desk-row"><strong>' + esc(short(report.title || '-', 88)) + '</strong><span class="desk-pill">' + esc(report.status || '-') + '</span></div>' +
-    '<div class="desk-code">' + esc(report.job_id || '-') + '</div>' +
+    '<div class="desk-code">' + esc(report.task_id || '-') + '</div>' +
     '<div class="daily-desk-muted">' + esc(fdt(report.created_at)) + '</div>' +
   '</article>';
 }
@@ -40,7 +40,7 @@ function renderReportCard(report) {
 function renderReportDetail(report) {
   return '<h3>' + esc(report.title || '-') + '</h3>' +
     '<div class="desk-row"><span>Status</span><span class="desk-pill">' + esc(report.status || '-') + '</span></div>' +
-    '<div class="desk-row"><span>Job ID</span><span class="desk-code">' + esc(report.job_id || '-') + '</span></div>' +
+    '<div class="desk-row"><span>Task ID</span><span class="desk-code">' + esc(report.task_id || '-') + '</span></div>' +
     '<h4>要約</h4><div class="daily-desk-body">' + esc(report.summary || '-') + '</div>' +
     renderReportSection('何を変更したか', report.changed) +
     renderReportSection('何を確認したか', report.verified) +
@@ -75,19 +75,19 @@ function deskSelectedReport() {
 function deskOpenReportRef(type, id) {
   if (!id) return;
   if (type === 'evidence' || type === 'verification') {
-    state.pendingEvidenceJobID = id;
-    switchTab('jobs');
+    state.pendingEvidenceTaskID = id;
+    switchTab('tasks');
     openEvidence(id);
     return;
   }
-  switchTab('jobs');
+  switchTab('tasks');
 }
 
 function deskReportSummaryText(report) {
   if (!report) return '';
   return [
     'report_id=' + report.report_id,
-    'job_id=' + report.job_id,
+    'task_id=' + report.task_id,
     'status=' + report.status,
     'summary=' + report.summary,
   ].join(' | ');

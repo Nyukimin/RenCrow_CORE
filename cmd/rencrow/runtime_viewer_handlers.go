@@ -7,13 +7,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	characterruntimeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/characterruntime"
-	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
-	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
 func buildViewerRuntimeHandlers(
@@ -123,6 +121,7 @@ func buildViewerRuntimeHandlers(
 			log.Fatalf("Failed to initialize Viewer Canonical Event projection: %v", err)
 		}
 		deps.eventLogStore = eventLogStore
+		hub.SetReplayReader(eventLogStore)
 		if deps.atlasService != nil {
 			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: eventLogStore})
 		}
@@ -151,17 +150,16 @@ func buildViewerRuntimeHandlers(
 		log.Printf("Viewer evidence API enabled: %s", reportPath)
 	}
 	deps.characterRuntime = avatarfeature.HandleCharacterRuntime(characterruntimeapp.NewService(), deps.eventRelay)
-	taskStorePath := defaultTaskStorePath(cfg.WorkspaceDir)
-	if taskStorePath == "" {
-		log.Printf("WARN: task API disabled: workspace_dir is empty")
-	} else if taskStore, err := taskpersistence.NewJSONLStore(taskStorePath); err != nil {
-		log.Printf("WARN: task API disabled: %v", err)
+	graphEvents, _ := deps.canonicalEventStore.(viewer.IdentityGraphEventReader)
+	deps.identityGraph = viewer.HandleIdentityGraph(graphEvents, nil)
+	if deps.taskStore == nil || deps.taskManager == nil {
+		log.Printf("WARN: task API disabled: canonical Task owner unavailable")
 	} else {
-		deps.taskManager = taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
-		deps.tasks = viewer.HandleTasks(taskStore)
-		deps.taskDetail = viewer.HandleTaskDetail(taskStore)
-		deps.taskNotifications = viewer.HandleTaskNotifications(taskStore)
-		log.Printf("Viewer task API and Orchestrator task lifecycle enabled: %s", taskStorePath)
+		deps.tasks = viewer.HandleTasks(deps.taskStore)
+		deps.taskDetail = viewer.HandleTaskDetail(deps.taskStore)
+		deps.identityGraph = viewer.HandleIdentityGraph(graphEvents, deps.taskStore)
+		deps.taskNotifications = viewer.HandleTaskNotifications(deps.taskStore)
+		log.Printf("Viewer task API and Orchestrator task lifecycle enabled")
 	}
 }
 

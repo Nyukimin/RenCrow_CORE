@@ -43,6 +43,7 @@ func TestMovieCatalogCrawlerURLComesFromConfigNotLegacyEnvironment(t *testing.T)
 
 func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T) {
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	queueItemID, checkpointID := modulecore.NewQueueItemID(), modulecore.NewCheckpointID()
 	processor := &captureSuperAgentRunQueueProcessor{
 		response: orchestrator.ProcessMessageResponse{
 			Route:  domainrouting.RouteCODE,
@@ -50,7 +51,8 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 		},
 	}
 	item := domainsuperagent.RunQueueItem{
-		QueueItemID:            " q-1 ",
+		QueueItemID:        queueItemID,
+		CheckpointID:       checkpointID,
 		TaskID:             taskID,
 		RunID:              runID,
 		WorkstreamID:       "ws-1",
@@ -70,7 +72,7 @@ func TestNewSuperAgentRunQueueProcessorSendsQueueItemToOrchestrator(t *testing.T
 		t.Fatalf("summary = %q, want task correlation", summary)
 	}
 	req := processor.request
-	if req.RootTaskID != taskID.String() || req.CanonicalRunID != runID || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != "q-1" || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
+	if req.RootTaskID != taskID.String() || req.CanonicalRunID != runID || req.TraceID != string(traceID) || req.SessionID != "ws-1" || req.Channel != "superagent" || req.ChatID != string(queueItemID) || req.ResumeCheckpointID != checkpointID || req.UserMessage != "continue the queued run" || req.ResumeCheckpointRevision != 4 || req.ResumeCheckpointSummary != "step three committed" || req.ResumeNextAction != "execute step four" {
 		t.Fatalf("request = %#v", req)
 	}
 }
@@ -79,8 +81,8 @@ func TestNewSuperAgentRunQueueProcessorRejectsMissingCanonicalTrace(t *testing.T
 	processor := &captureSuperAgentRunQueueProcessor{}
 	_, err := newSuperAgentRunQueueProcessor(processor, backgroundJobFailureReporter{}).ProcessRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
 		QueueItemID: "q-1",
-		Goal:    "run",
-		Action:  "resume",
+		Goal:        "run",
+		Action:      "resume",
 	}, "")
 	if err == nil || !strings.Contains(err.Error(), "trace_id") {
 		t.Fatalf("ProcessRunQueueItem() error = %v, want trace_id error", err)

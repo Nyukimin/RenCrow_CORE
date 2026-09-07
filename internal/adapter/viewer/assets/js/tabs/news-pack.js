@@ -225,7 +225,7 @@ function renderNewsPackPanel() {
       matches.forEach((match) => {
         const tr = document.createElement('tr');
         tr.innerHTML =
-          '<td class="code">' + esc(match.trace.ResponseID || match.trace.response_id || '-') + '</td>' +
+          '<td class="code">' + esc(match.trace.TraceID || match.trace.trace_id || '-') + '</td>' +
           '<td>' + esc(match.trace.Role || match.trace.role || '-') + '</td>' +
           '<td class="code">' + esc(short(match.source || '-', 120)) + '</td>' +
           '<td>' + esc(fdt(match.trace.CreatedAt || match.trace.created_at)) + '</td>';

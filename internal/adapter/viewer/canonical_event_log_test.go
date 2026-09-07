@@ -2,7 +2,9 @@ package viewer
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -44,6 +46,41 @@ func (s *canonicalEventLogStoreStub) ListByComponent(_ context.Context, componen
 		}
 	}
 	return items, nil
+}
+
+func (s *canonicalEventLogStoreStub) ReadComponentPage(ctx context.Context, componentID string, after, through modulecore.EventSeq, limit int) ([]modulecore.EventEnvelope, modulecore.EventSeq, error) {
+	if ctx == nil {
+		return nil, 0, fmt.Errorf("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if after < 0 || through < 0 || limit <= 0 {
+		return nil, 0, fmt.Errorf("invalid replay query")
+	}
+	var latest modulecore.EventSeq
+	for _, event := range s.events {
+		if event.ComponentID == componentID && event.EventSeq > latest {
+			latest = event.EventSeq
+		}
+	}
+	if through == 0 {
+		through = latest
+	}
+	if after > through || through > latest {
+		return nil, 0, fmt.Errorf("replay cursor outside window")
+	}
+	items := make([]modulecore.EventEnvelope, 0, limit)
+	for _, event := range s.events {
+		if event.ComponentID == componentID && event.EventSeq > after && event.EventSeq <= through {
+			items = append(items, event)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].EventSeq < items[j].EventSeq })
+	if len(items) > limit {
+		items = items[:limit]
+	}
+	return items, through, nil
 }
 
 func TestNewCanonicalEventLogRequiresEventStore(t *testing.T) {
@@ -356,5 +393,52 @@ func TestCanonicalEventLogQuerySkipsNonOrchestratorEventsFromStore(t *testing.T)
 	}
 	if len(items) != 0 {
 		t.Fatalf("Query() = %#v, want no non-orchestrator projections", items)
+	}
+}
+
+func TestCanonicalEventLogReplayPagePreservesWatermarkAndProjects(t *testing.T) {
+	store := &canonicalEventLogStoreStub{}
+	log, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	for _, content := range []string{"first", "second"} {
+		if err := log.Append(orchestrator.OrchestratorEvent{
+			EventID:   modulecore.NewEventID(),
+			Type:      "agent.response",
+			From:      "mio",
+			Content:   content,
+			Timestamp: "2026-08-29T12:00:00Z",
+		}); err != nil {
+			t.Fatalf("Append(%q) error = %v", content, err)
+		}
+	}
+	first, through, err := log.ReplayPage(context.Background(), 0, 0, 1)
+	if err != nil {
+		t.Fatalf("ReplayPage(first) error = %v", err)
+	}
+	if len(first) != 1 || first[0].Content != "first" || through != 2 {
+		t.Fatalf("first replay page = %#v through=%d, want first event and watermark 2", first, through)
+	}
+	second, sameThrough, err := log.ReplayPage(context.Background(), first[0].EventSeq, through, 1)
+	if err != nil {
+		t.Fatalf("ReplayPage(second) error = %v", err)
+	}
+	if len(second) != 1 || second[0].Content != "second" || sameThrough != through {
+		t.Fatalf("second replay page = %#v through=%d, want second event and watermark %d", second, sameThrough, through)
+	}
+}
+
+func TestCanonicalEventLogReplayPageRejectsInvalidProjection(t *testing.T) {
+	store := &canonicalEventLogStoreStub{}
+	log, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog() error = %v", err)
+	}
+	invalid := modulecore.NewRootEventEnvelope("orchestrator", "agent.response", time.Now().UTC(), nil)
+	invalid.EventSeq = 1
+	store.events = append(store.events, invalid)
+	if _, _, err := log.ReplayPage(context.Background(), 0, 0, 1); err == nil {
+		t.Fatal("ReplayPage() error = nil for invalid envelope projection")
 	}
 }

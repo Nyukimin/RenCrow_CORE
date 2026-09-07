@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -107,5 +109,75 @@ func TestToolHarnessRunner_LogOnlyModeDoesNotRepairExecutionInput(t *testing.T) 
 	}
 	if _, ok := resp.Metadata["tool_harness_status"]; ok {
 		t.Fatalf("log_only mode should not attach repaired metadata to executed raw input, got %#v", resp.Metadata)
+	}
+}
+
+type failedMediationRecorder struct{}
+
+func (failedMediationRecorder) RecordToolMediationEvent(context.Context, toolharness.Event) error {
+	return fmt.Errorf("private persistence detail")
+}
+
+func TestMediationFailurePreventsToolEffects(t *testing.T) {
+	for _, mode := range []string{ToolHarnessModeStrict, ToolHarnessModeLogOnly, ToolHarnessModeValidateThenRepair} {
+		t.Run(mode, func(t *testing.T) {
+			inner := &captureRunnerV2{}
+			runner := NewToolHarnessRunnerWithConfig(inner, ToolHarnessRunnerConfig{Mode: mode, Recorder: failedMediationRecorder{}})
+			response, err := runner.ExecuteV2(context.Background(), "unknown_fixture", map[string]any{"x": "input"})
+			if err != nil || response == nil || response.Error == nil || response.Error.Code != tool.ErrInternalError {
+				t.Fatalf("persistence failure hidden: %#v %v", response, err)
+			}
+			if inner.args != nil {
+				t.Fatal("tool executed without receipt")
+			}
+			if strings.Contains(response.Error.Message, "private") {
+				t.Fatal("persistence details leaked")
+			}
+		})
+	}
+	runner := NewToolRunner(ToolRunnerConfig{ToolHarnessRecorder: failedMediationRecorder{}})
+	called := false
+	runner.tools["fixture"] = func(context.Context, map[string]any) (string, error) { called = true; return "effect", nil }
+	runner.toolsV2["fixture"] = func(context.Context, map[string]any) (*tool.ToolResponse, error) {
+		called = true
+		return tool.NewSuccess("effect"), nil
+	}
+	if _, err := runner.Execute(context.Background(), "fixture", nil); err == nil {
+		t.Fatal("V1 discarded recorder failure")
+	}
+	response, err := runner.ExecuteV2(context.Background(), "fixture", nil)
+	if err != nil || response == nil || !response.IsError() {
+		t.Fatalf("V2 discarded recorder failure: %#v %v", response, err)
+	}
+	if called {
+		t.Fatal("base runner executed without receipt")
+	}
+}
+
+type contextMediationRecorder struct{ got context.Context }
+
+func (r *contextMediationRecorder) RecordToolMediationEvent(ctx context.Context, _ toolharness.Event) error {
+	r.got = ctx
+	return nil
+}
+func TestMediationRecorderReceivesExactContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	recorder := &contextMediationRecorder{}
+	runner := NewToolHarnessRunner(&captureRunnerV2{}, recorder)
+	if _, err := runner.ExecuteV2(ctx, "file_read", map[string]any{"path": "file"}); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.got != ctx {
+		t.Fatal("execution context replaced before recorder")
+	}
+	base := NewToolRunner(ToolRunnerConfig{ToolHarnessRecorder: recorder})
+	base.tools["fixture"] = func(context.Context, map[string]any) (string, error) { return "ok", nil }
+	recorder.got = nil
+	if _, err := base.Execute(ctx, "fixture", nil); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.got != ctx {
+		t.Fatal("V1 execution context replaced")
 	}
 }

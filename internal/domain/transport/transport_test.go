@@ -3,6 +3,8 @@ package transport
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
+	"reflect"
 	"testing"
 	"time"
 
@@ -321,5 +323,29 @@ func TestNewTurnInputMessageRejectsMalformedExecutionTaskID(t *testing.T) {
 		if _, err := NewTurnInputMessage("mio", "shiro", taskID, input); err == nil {
 			t.Fatalf("NewTurnInputMessage() accepted invalid execution TaskID %q", taskID)
 		}
+	}
+}
+
+func TestPatchResultPayloadPreservesOwnerOutcomeThroughJSON(t *testing.T) {
+	for _, status := range []string{"passed", "failed", "blocked", "not_run"} {
+		t.Run(status, func(t *testing.T) {
+			result := patch.PatchExecutionResult{Success: status == "passed", Summary: "owner summary", ExecutedCmds: 1, FailedCmds: 0, GitCommit: "owner commit", FailureKind: "test-impact", FailureReason: "owner reason", Retryable: false, FailedIndex: -1, TestStatus: status, TestReceipt: "Tmp/test-results/owner/receipt.json"}
+			got := NewPatchResultPayload(result)
+			want := &ResultPayload{Success: result.Success, Summary: result.Summary, ExecutedCmds: 1, FailedCmds: 0, GitCommit: result.GitCommit, FailureKind: result.FailureKind, FailureReason: result.FailureReason, Retryable: false, FailedIndex: -1, TestStatus: status, TestReceipt: result.TestReceipt}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("projection=%#v want=%#v", got, want)
+			}
+			data, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded ResultPayload
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(&decoded, want) {
+				t.Fatalf("round-trip=%#v want=%#v", decoded, want)
+			}
+		})
 	}
 }

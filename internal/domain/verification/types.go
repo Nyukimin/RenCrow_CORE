@@ -184,26 +184,26 @@ func (p VerificationPolicy) Normalized() VerificationPolicy {
 }
 
 type VerificationReport struct {
-	ArtifactID       modulecore.ArtifactID  `json:"artifact_id"`
+	ArtifactID       modulecore.ArtifactID   `json:"artifact_id"`
 	Kind             modulecore.ArtifactKind `json:"artifact_kind"`
-	TaskID           modulecore.TaskID      `json:"task_id"`
-	SessionID        string                 `json:"session_id"`
-	Route            string                 `json:"route"`
-	Status           VerificationStatus     `json:"status"`
-	TriggerLevel     TriggerLevel           `json:"trigger_level"`
-	ClaimCount       int                    `json:"claim_count"`
-	VerifiedCount    int                    `json:"verified_count"`
-	WeakCount        int                    `json:"weak_count"`
-	UnsupportedCount int                    `json:"unsupported_count"`
-	ConflictCount    int                    `json:"conflict_count"`
-	NotCheckedCount  int                    `json:"not_checked_count"`
-	Claims           []Claim                `json:"claims,omitempty"`
-	Questions        []VerificationQuestion `json:"questions,omitempty"`
-	Evidence         []EvidenceRef          `json:"evidence,omitempty"`
-	ErrorKind        ErrorKind              `json:"error_kind,omitempty"`
-	Error            string                 `json:"error,omitempty"`
-	SkipReason       string                 `json:"skip_reason,omitempty"`
-	CreatedAt        time.Time              `json:"created_at"`
+	TaskID           modulecore.TaskID       `json:"task_id"`
+	SessionID        string                  `json:"session_id"`
+	Route            string                  `json:"route"`
+	Status           VerificationStatus      `json:"status"`
+	TriggerLevel     TriggerLevel            `json:"trigger_level"`
+	ClaimCount       int                     `json:"claim_count"`
+	VerifiedCount    int                     `json:"verified_count"`
+	WeakCount        int                     `json:"weak_count"`
+	UnsupportedCount int                     `json:"unsupported_count"`
+	ConflictCount    int                     `json:"conflict_count"`
+	NotCheckedCount  int                     `json:"not_checked_count"`
+	Claims           []Claim                 `json:"claims,omitempty"`
+	Questions        []VerificationQuestion  `json:"questions,omitempty"`
+	Evidence         []EvidenceRef           `json:"evidence,omitempty"`
+	ErrorKind        ErrorKind               `json:"error_kind,omitempty"`
+	Error            string                  `json:"error,omitempty"`
+	SkipReason       string                  `json:"skip_reason,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
 }
 
 func (r VerificationReport) Validate() error {

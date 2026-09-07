@@ -14,11 +14,10 @@ import (
 
 type Handler struct {
 	Provider Provider
-	Now      func() time.Time
 }
 
 func NewHandler(provider Provider) *Handler {
-	return &Handler{Provider: provider, Now: time.Now}
+	return &Handler{Provider: provider}
 }
 
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
@@ -74,13 +73,6 @@ func (h *Handler) transcribeMultipart(ctx context.Context, r *http.Request) (Res
 	result, err := provider.Transcribe(ctx, wav)
 	result.ProcessingMS = time.Since(started).Milliseconds()
 	result.Provider = provider.Name()
-	if result.EventID == "" {
-		now := time.Now
-		if h.Now != nil {
-			now = h.Now
-		}
-		result.EventID = NextEventID(now())
-	}
 	if err != nil {
 		var sttErr *Error
 		if errors.As(err, &sttErr) {

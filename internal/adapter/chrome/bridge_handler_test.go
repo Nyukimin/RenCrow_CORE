@@ -102,9 +102,42 @@ type fakeEventStream struct {
 	ch      chan []byte
 }
 
-func (f *fakeEventStream) History() []orchestrator.OrchestratorEvent { return f.history }
-func (f *fakeEventStream) Subscribe() chan []byte                    { return f.ch }
-func (f *fakeEventStream) Unsubscribe(_ chan []byte)                 {}
+func (f *fakeEventStream) Subscribe() (chan []byte, []orchestrator.OrchestratorEvent) {
+	return f.ch, f.history
+}
+func (f *fakeEventStream) Unsubscribe(_ chan []byte) {}
+func (f *fakeEventStream) Replay(ctx context.Context, after modulecore.EventSeq, snapshot []orchestrator.OrchestratorEvent, emit func(orchestrator.OrchestratorEvent) error) (modulecore.EventSeq, error) {
+	if err := ctx.Err(); err != nil {
+		return after, err
+	}
+	cursor := after
+	for _, event := range snapshot {
+		if event.EventSeq > 0 && event.EventSeq <= after {
+			continue
+		}
+		if err := emit(event); err != nil {
+			return cursor, err
+		}
+		if event.EventSeq > cursor {
+			cursor = event.EventSeq
+		}
+	}
+	return cursor, nil
+}
+
+type bridgeCancelAfterFlushWriter struct {
+	*httptest.ResponseRecorder
+	cancelled bool
+	cancel    context.CancelFunc
+}
+
+func (w *bridgeCancelAfterFlushWriter) Flush() {
+	w.ResponseRecorder.Flush()
+	if !w.cancelled {
+		w.cancelled = true
+		w.cancel()
+	}
+}
 
 func TestHandleBridgeEvents_FiltersBySession(t *testing.T) {
 	src := &fakeEventStream{
@@ -118,9 +151,9 @@ func TestHandleBridgeEvents_FiltersBySession(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/chrome/bridge/events?session_id=sess-1", nil)
 	ctx, cancel := context.WithCancel(req.Context())
-	cancel() // history送信後に即終了させる
+	defer cancel()
 	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := &bridgeCancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
 	h(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -148,9 +181,9 @@ func TestHandleBridgeEvents_RespectsLastEventID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/chrome/bridge/events?session_id=sess-1", nil)
 	req.Header.Set("Last-Event-ID", "1")
 	ctx, cancel := context.WithCancel(req.Context())
-	cancel()
+	defer cancel()
 	req = req.WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := &bridgeCancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel}
 	h(rec, req)
 
 	body := rec.Body.String()
@@ -159,5 +192,21 @@ func TestHandleBridgeEvents_RespectsLastEventID(t *testing.T) {
 	}
 	if !strings.Contains(body, `"event_seq":2`) {
 		t.Fatalf("expected event_seq=2 to be replayed, got: %s", body)
+	}
+}
+
+func TestHandleBridgeEventsRejectsInvalidLastEventID(t *testing.T) {
+	src := &fakeEventStream{ch: make(chan []byte, 1)}
+	h := HandleBridgeEvents(src)
+	for _, value := range []string{"not-a-seq", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/chrome/bridge/events?session_id=sess-1", nil)
+			req.Header.Set("Last-Event-ID", value)
+			rec := httptest.NewRecorder()
+			h(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("Last-Event-ID %q status = %d, want 400", value, rec.Code)
+			}
+		})
 	}
 }

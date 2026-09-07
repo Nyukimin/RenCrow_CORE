@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -85,20 +86,23 @@ func (s *Service) RequestToolExecution(ctx context.Context, action domain.Action
 		if err != nil {
 			failed, uerr := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusFailed, err.Error())
 			if uerr != nil {
-				return nil, uerr
+				return &Result{Record: rec, Response: resp}, errors.Join(err, fmt.Errorf("update execution status: %w", uerr))
 			}
-			return &Result{Record: failed}, nil
+			return &Result{Record: failed, Response: resp}, err
 		}
-		if resp != nil && resp.Error != nil {
+		if resp == nil {
+			resp = tool.NewError(tool.ErrInternalError, "empty tool response", nil)
+		}
+		if resp.Error != nil {
 			failed, uerr := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusFailed, resp.Error.Message)
 			if uerr != nil {
-				return nil, uerr
+				return &Result{Record: rec, Response: resp}, errors.Join(resp.Error, fmt.Errorf("update execution status: %w", uerr))
 			}
 			return &Result{Record: failed, Response: resp}, nil
 		}
 		success, err := s.repo.UpdateStatus(ctx, action.TaskID, action.ActionID, domain.StatusSucceeded, "")
 		if err != nil {
-			return nil, err
+			return &Result{Record: rec, Response: resp}, fmt.Errorf("update execution status: %w", err)
 		}
 		return &Result{Record: success, Response: resp}, nil
 	}

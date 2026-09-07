@@ -18,28 +18,28 @@ const (
 )
 
 type WatchdogSnapshot struct {
-	ChatActive      bool      `json:"chat_active"`
-	ManualMode      bool      `json:"manual_mode"`
-	Disabled        bool      `json:"disabled"`
-	Mode            string    `json:"mode"`
-	SessionID       string    `json:"session_id"`
+	ChatActive      bool               `json:"chat_active"`
+	ManualMode      bool               `json:"manual_mode"`
+	Disabled        bool               `json:"disabled"`
+	Mode            string             `json:"mode"`
+	SessionID       string             `json:"session_id"`
 	TraceID         modulecore.TraceID `json:"trace_id,omitempty"`
 	RunID           modulecore.RunID   `json:"run_id,omitempty"`
-	Stage           string    `json:"stage"`
-	Detail          string    `json:"detail"`
-	From            string    `json:"from,omitempty"`
-	To              string    `json:"to,omitempty"`
-	MessageID       string    `json:"message_id,omitempty"`
-	TurnIndex       int       `json:"turn_index,omitempty"`
-	UpdatedAt       time.Time `json:"updated_at,omitempty"`
-	AgeSeconds      int64     `json:"age_seconds"`
-	CurrentTopic    string    `json:"current_topic,omitempty"`
-	NextTopicAt     time.Time `json:"next_topic_at,omitempty"`
-	LastActivity    time.Time `json:"last_activity,omitempty"`
-	ChatBusy        bool      `json:"chat_busy"`
-	WorkerBusy      bool      `json:"worker_busy"`
-	ExternalLLMBusy bool      `json:"external_llm_busy"`
-	RecoveryReady   bool      `json:"recovery_ready"`
+	Stage           string             `json:"stage"`
+	Detail          string             `json:"detail"`
+	From            string             `json:"from,omitempty"`
+	To              string             `json:"to,omitempty"`
+	MessageID       string             `json:"message_id,omitempty"`
+	TurnIndex       int                `json:"turn_index,omitempty"`
+	UpdatedAt       time.Time          `json:"updated_at,omitempty"`
+	AgeSeconds      int64              `json:"age_seconds"`
+	CurrentTopic    string             `json:"current_topic,omitempty"`
+	NextTopicAt     time.Time          `json:"next_topic_at,omitempty"`
+	LastActivity    time.Time          `json:"last_activity,omitempty"`
+	ChatBusy        bool               `json:"chat_busy"`
+	WorkerBusy      bool               `json:"worker_busy"`
+	ExternalLLMBusy bool               `json:"external_llm_busy"`
+	RecoveryReady   bool               `json:"recovery_ready"`
 }
 
 type WatchdogRecovery struct {

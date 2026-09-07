@@ -46,6 +46,15 @@ func validateDistributedResponse(request, result domaintransport.Message) error 
 	if result.TaskID != request.TaskID {
 		return fmt.Errorf("transport response task_id mismatch: got %s want %s", result.TaskID, request.TaskID)
 	}
+	if result.From != request.To {
+		return fmt.Errorf("transport response sender mismatch: got %s want %s", result.From, request.To)
+	}
+	if result.To != request.From {
+		return fmt.Errorf("transport response recipient mismatch: got %s want %s", result.To, request.From)
+	}
+	if result.SessionID != request.SessionID {
+		return fmt.Errorf("transport response session mismatch: got %s want %s", result.SessionID, request.SessionID)
+	}
 	return nil
 }
 
@@ -129,6 +138,9 @@ func (e *distributedTransportExecutor) executeToAgentViaSSH(ctx context.Context,
 }
 
 func (e *distributedTransportExecutor) ExecuteViaLocal(ctx context.Context, targetAgent string, msg domaintransport.Message, receiveOnAgent string) (domaintransport.Message, error) {
+	if ctx == nil {
+		return domaintransport.Message{}, fmt.Errorf("local execution context is required")
+	}
 	if err := msg.Validate(); err != nil {
 		return domaintransport.Message{}, fmt.Errorf("invalid transport message: %w", err)
 	}
@@ -136,14 +148,6 @@ func (e *distributedTransportExecutor) ExecuteViaLocal(ctx context.Context, targ
 	if !ok {
 		return domaintransport.Message{}, fmt.Errorf("agent '%s' not registered in router", targetAgent)
 	}
-	if err := agentTransport.PutInboundMessage(msg); err != nil {
-		e.emitProgress("mailbox.error", targetAgent, receiveOnAgent, err.Error(), msg)
-		return domaintransport.Message{}, fmt.Errorf("failed to send message to %s: %w", targetAgent, err)
-	}
-
-	log.Printf("[DistributedOrch] Sent task to %s via Local (task=%s type=%s receive_on=%s)", targetAgent, msg.TaskID, msg.Type, receiveOnAgent)
-	e.emitProgress("mailbox.waiting", receiveOnAgent, targetAgent, fmt.Sprintf("via=local timeout=%s", e.waitTimeout(targetAgent, msg)), msg)
-
 	receiveTransport, ok := e.router.GetAgent(receiveOnAgent)
 	if !ok {
 		receiveTransport, ok = e.router.GetAgent("mio")
@@ -156,6 +160,14 @@ func (e *distributedTransportExecutor) ExecuteViaLocal(ctx context.Context, targ
 	waitTimeout := e.waitTimeout(targetAgent, msg)
 	timeoutCtx, cancel := context.WithTimeout(ctx, waitTimeout)
 	defer cancel()
+	if err := agentTransport.PutInboundExecution(timeoutCtx, msg); err != nil {
+		e.emitProgress("mailbox.error", targetAgent, receiveOnAgent, err.Error(), msg)
+		return domaintransport.Message{}, fmt.Errorf("failed to send message to %s: %w", targetAgent, err)
+	}
+
+	log.Printf("[DistributedOrch] Sent task to %s via Local (task=%s type=%s receive_on=%s)", targetAgent, msg.TaskID, msg.Type, receiveOnAgent)
+	e.emitProgress("mailbox.waiting", receiveOnAgent, targetAgent, fmt.Sprintf("via=local timeout=%s", waitTimeout), msg)
+
 	log.Printf("[DistributedOrch] wait local response target=%s receive_on=%s timeout=%s task=%s", targetAgent, receiveOnAgent, waitTimeout, msg.TaskID)
 
 	result, err := receiveTransport.Receive(timeoutCtx)

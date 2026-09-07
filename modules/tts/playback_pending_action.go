@@ -4,7 +4,7 @@ import "strings"
 
 type PendingPlaybackCompletionAction struct {
 	Matched            bool   `json:"matched"`
-	ResponseID         string `json:"response_id,omitempty"`
+	PublicPlaybackRef  string `json:"public_playback_ref,omitempty"`
 	TTSSessionID       string `json:"tts_session_id,omitempty"`
 	TopicIdleSessionID string `json:"topic_idle_session_id,omitempty"`
 	ClosePendingWait   bool   `json:"close_pending_wait"`
@@ -21,21 +21,21 @@ type PendingPlaybackClearAction struct {
 	ClearPublicSession string `json:"clear_public_session,omitempty"`
 }
 
-func BuildPendingPlaybackCompletionAction(responseID string, ttsSessionID string, topicIdleSessionID string, matched bool) PendingPlaybackCompletionAction {
-	responseID = strings.TrimSpace(responseID)
+func BuildPendingPlaybackCompletionAction(publicPlaybackRef string, ttsSessionID string, topicIdleSessionID string, matched bool) PendingPlaybackCompletionAction {
+	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
 	ttsSessionID = strings.TrimSpace(ttsSessionID)
 	topicIdleSessionID = strings.TrimSpace(topicIdleSessionID)
 	if !matched {
-		return PendingPlaybackCompletionAction{ResponseID: responseID}
+		return PendingPlaybackCompletionAction{PublicPlaybackRef: publicPlaybackRef}
 	}
 	return PendingPlaybackCompletionAction{
 		Matched:            true,
-		ResponseID:         responseID,
+		PublicPlaybackRef:  publicPlaybackRef,
 		TTSSessionID:       ttsSessionID,
 		TopicIdleSessionID: topicIdleSessionID,
 		ClosePendingWait:   true,
 		CloseTopicGate:     topicIdleSessionID != "",
-		ClearPublicBy:      responseID,
+		ClearPublicBy:      publicPlaybackRef,
 	}
 }
 

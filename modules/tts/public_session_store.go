@@ -6,20 +6,20 @@ import (
 )
 
 type PublicSessionStore struct {
-	mu           sync.Mutex
-	routes       map[string]*PublicSessionRoute
-	stale        map[string]uint64
-	nextChunk    map[string]int
-	nextResponse map[string]int
-	generation   uint64
+	mu                    sync.Mutex
+	routes                map[string]*PublicSessionRoute
+	stale                 map[string]uint64
+	nextChunk             map[string]int
+	nextPublicPlaybackRef map[string]int
+	generation            uint64
 }
 
 func NewPublicSessionStore() *PublicSessionStore {
 	return &PublicSessionStore{
-		routes:       map[string]*PublicSessionRoute{},
-		stale:        map[string]uint64{},
-		nextChunk:    map[string]int{},
-		nextResponse: map[string]int{},
+		routes:                map[string]*PublicSessionRoute{},
+		stale:                 map[string]uint64{},
+		nextChunk:             map[string]int{},
+		nextPublicPlaybackRef: map[string]int{},
 	}
 }
 
@@ -32,7 +32,7 @@ func (s *PublicSessionStore) ResetAll() {
 	s.routes = map[string]*PublicSessionRoute{}
 	s.stale = map[string]uint64{}
 	s.nextChunk = map[string]int{}
-	s.nextResponse = map[string]int{}
+	s.nextPublicPlaybackRef = map[string]int{}
 	s.generation = 0
 }
 
@@ -66,7 +66,7 @@ func (s *PublicSessionStore) ResetForIdleChat() {
 	s.routes = map[string]*PublicSessionRoute{}
 	s.pruneStaleLocked()
 	s.nextChunk = map[string]int{}
-	s.nextResponse = map[string]int{}
+	s.nextPublicPlaybackRef = map[string]int{}
 }
 
 func (s *PublicSessionStore) IsStale(internalSessionID string) bool {
@@ -144,7 +144,7 @@ func (s *PublicSessionStore) ResolveSession(internalSessionID string) string {
 	return internalSessionID
 }
 
-func (s *PublicSessionStore) ResolveResponse(internalSessionID string) string {
+func (s *PublicSessionStore) ResolvePublicPlaybackRef(internalSessionID string) string {
 	if s == nil {
 		return ""
 	}
@@ -152,7 +152,7 @@ func (s *PublicSessionStore) ResolveResponse(internalSessionID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if route := s.routes[internalSessionID]; route != nil {
-		return route.Response()
+		return route.PublicPlaybackRefValue()
 	}
 	return ""
 }
@@ -200,17 +200,17 @@ func (s *PublicSessionStore) Retire(internalSessionID string) {
 	s.mu.Unlock()
 }
 
-func (s *PublicSessionStore) ClearByResponse(responseID string) {
+func (s *PublicSessionStore) ClearByPublicPlaybackRef(publicPlaybackRef string) {
 	if s == nil {
 		return
 	}
-	responseID = strings.TrimSpace(responseID)
-	if responseID == "" {
+	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
+	if publicPlaybackRef == "" {
 		return
 	}
 	s.mu.Lock()
 	for internalSessionID, route := range s.routes {
-		if route != nil && route.Response() == responseID {
+		if route != nil && route.PublicPlaybackRefValue() == publicPlaybackRef {
 			delete(s.routes, internalSessionID)
 			break
 		}
@@ -218,18 +218,18 @@ func (s *PublicSessionStore) ClearByResponse(responseID string) {
 	s.mu.Unlock()
 }
 
-// RetireByResponse removes a response route while retaining its stale marker.
-func (s *PublicSessionStore) RetireByResponse(responseID string) {
+// RetireByPublicPlaybackRef removes a response route while retaining its stale marker.
+func (s *PublicSessionStore) RetireByPublicPlaybackRef(publicPlaybackRef string) {
 	if s == nil {
 		return
 	}
-	responseID = strings.TrimSpace(responseID)
-	if responseID == "" {
+	publicPlaybackRef = strings.TrimSpace(publicPlaybackRef)
+	if publicPlaybackRef == "" {
 		return
 	}
 	s.mu.Lock()
 	for internalSessionID, route := range s.routes {
-		if route != nil && route.Response() == responseID {
+		if route != nil && route.PublicPlaybackRefValue() == publicPlaybackRef {
 			s.stale[internalSessionID] = s.generation
 			delete(s.routes, internalSessionID)
 			break
@@ -250,35 +250,35 @@ func (s *PublicSessionStore) ClearSequencesIfNoRoutes() {
 		}
 	}
 	s.nextChunk = map[string]int{}
-	s.nextResponse = map[string]int{}
+	s.nextPublicPlaybackRef = map[string]int{}
 }
 
-func (s *PublicSessionStore) NextResponseID(publicSessionID string) string {
+func (s *PublicSessionStore) NextPublicPlaybackRef(publicSessionID string) string {
 	if s == nil || strings.TrimSpace(publicSessionID) == "" {
 		return ""
 	}
 	publicSessionID = strings.TrimSpace(publicSessionID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	resolved := ResolveNextPublicResponseID(publicSessionID, s.nextResponse[publicSessionID])
+	resolved := ResolveNextPublicPlaybackRef(publicSessionID, s.nextPublicPlaybackRef[publicSessionID])
 	if resolved.Advance {
-		s.nextResponse[publicSessionID] = resolved.NextResponseNumber
+		s.nextPublicPlaybackRef[publicSessionID] = resolved.NextPublicPlaybackRefNumber
 	}
-	return resolved.ResponseID
+	return resolved.PublicPlaybackRef
 }
 
-func (s *PublicSessionStore) NextResponseIDForMessage(publicSessionID, messageID string) string {
+func (s *PublicSessionStore) NextPublicPlaybackRefForMessage(publicSessionID, messageID string) string {
 	if s == nil || strings.TrimSpace(publicSessionID) == "" {
 		return ""
 	}
 	publicSessionID = strings.TrimSpace(publicSessionID)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	resolved := ResolvePublicResponseIDForMessage(publicSessionID, messageID, s.nextResponse[publicSessionID])
-	if resolved.Advance && s.nextResponse[publicSessionID] < resolved.NextResponseNumber {
-		s.nextResponse[publicSessionID] = resolved.NextResponseNumber
+	resolved := ResolvePublicPlaybackRefForMessage(publicSessionID, messageID, s.nextPublicPlaybackRef[publicSessionID])
+	if resolved.Advance && s.nextPublicPlaybackRef[publicSessionID] < resolved.NextPublicPlaybackRefNumber {
+		s.nextPublicPlaybackRef[publicSessionID] = resolved.NextPublicPlaybackRefNumber
 	}
-	return resolved.ResponseID
+	return resolved.PublicPlaybackRef
 }
 
 func (s *PublicSessionStore) Snapshot() PublicPlaybackSnapshot {
@@ -296,7 +296,7 @@ func (s *PublicSessionStore) Snapshot() PublicPlaybackSnapshot {
 		}
 		currentRoutes++
 	}
-	return BuildPublicPlaybackSnapshot(currentRoutes, staleRoutes, len(s.nextChunk), len(s.nextResponse))
+	return BuildPublicPlaybackSnapshot(currentRoutes, staleRoutes, len(s.nextChunk), len(s.nextPublicPlaybackRef))
 }
 
 func (s *PublicSessionStore) pruneStaleLocked() {

@@ -145,7 +145,7 @@ func (c *distributedCodeExecutionCoordinator) Execute(ctx context.Context, input
 func (c *distributedCodeExecutionCoordinator) buildCoderMessage(coderAgent, requestText string, route routing.Route, input domainconversation.TurnInput, taskID modulecore.TaskID, attempt int) (domaintransport.Message, error) {
 	_, channel, chatID := turnInputMetadata(input)
 	coderInput := input.WithMessageText(requestText).WithRoute(route)
-	coderMsg, err := domaintransport.NewTurnInputMessage("shiro", coderAgent, taskID, coderInput)
+	coderMsg, err := domaintransport.NewTurnInputMessage("mio", coderAgent, taskID, coderInput)
 	if err != nil {
 		return domaintransport.Message{}, fmt.Errorf("build coder turn message: %w", err)
 	}
@@ -228,13 +228,33 @@ func (c *distributedCodeExecutionCoordinator) executeProposal(ctx context.Contex
 		return "", "", false, err
 	}
 	c.emit("agent.response", "shiro", "mio", shiroResult.Content, string(route), taskIDText, sessionID, channel, chatID)
-	c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", shiroResult.Content), string(route), taskIDText, sessionID, channel, chatID)
-	c.emitNote("shiro", "mio", fmt.Sprintf("%sの作業が終わりました。", displayAgentName(coderAgent)), string(route), taskIDText, sessionID, channel, chatID)
-	c.recordCoderProposalEvidence(ctx, input, route, taskID, coderAgent, coderResult.Proposal, shiroResult, nil)
-
-	if retryReq, ok := nextCoderRetryRequest(input.MessageText(), coderResult.Proposal, shiroResult, attempt); ok {
+	if retryReq, ok := nextCoderRetryRequest(input.MessageText(), coderResult.Proposal, shiroResult, attempt, c.coderRetryMax()); ok {
+		c.recordCoderProposalEvidence(ctx, input, route, taskID, coderAgent, coderResult.Proposal, shiroResult, nil)
 		return "", retryReq, true, nil
 	}
+	if shiroResult.Result == nil || !shiroResult.Result.Success {
+		reason := "worker execution result is missing"
+		if result := shiroResult.Result; result != nil {
+			reason = result.FailureReason
+			if reason == "" {
+				reason = result.Summary
+			}
+			if reason == "" {
+				reason = "worker reported unsuccessful execution"
+			}
+			if result.FailureKind != "" {
+				reason = result.FailureKind + ": " + reason
+			}
+		}
+		failure := &workerResultError{reason: reason}
+		c.recordCoderProposalEvidence(ctx, input, route, taskID, coderAgent, coderResult.Proposal, shiroResult, failure)
+		c.emit("agent.report", "shiro", "mio", "実行失敗: "+failure.Error(), string(route), taskIDText, sessionID, channel, chatID)
+		return "", "", false, failure
+	}
+	c.recordCoderProposalEvidence(ctx, input, route, taskID, coderAgent, coderResult.Proposal, shiroResult, nil)
+	c.emit("agent.report", "shiro", "mio", formatAgentHandoffCompletionSpeech("mio", "shiro", shiroResult.Content), string(route), taskIDText, sessionID, channel, chatID)
+	c.emitNote("shiro", "mio", fmt.Sprintf("%sの作業が終わりました。", displayAgentName(coderAgent)), string(route), taskIDText, sessionID, channel, chatID)
+
 	return shiroResult.Content, "", false, nil
 }
 

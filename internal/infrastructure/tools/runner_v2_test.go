@@ -368,7 +368,7 @@ type mockToolHarnessRecorder struct {
 	events []toolharness.Event
 }
 
-func (m *mockToolHarnessRecorder) RecordToolMediationEvent(event toolharness.Event) error {
+func (m *mockToolHarnessRecorder) RecordToolMediationEvent(_ context.Context, event toolharness.Event) error {
 	m.events = append(m.events, event)
 	return nil
 }

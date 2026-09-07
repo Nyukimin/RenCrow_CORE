@@ -1,4 +1,4 @@
-// Progress tab module: job progress derivation and rendering.
+// Progress tab module: canonical Task event derivation and rendering.
 function progressPhaseLabel(phase) {
   const p = String(phase || 'received');
   if (p === 'received') return 'received';
@@ -18,7 +18,7 @@ function progressPhaseLabel(phase) {
   return p;
 }
 
-function classifyJobPhase(ev, current) {
+function classifyTaskPhase(ev, current) {
   const from = String(ev.from || '').toLowerCase();
   const to = String(ev.to || '').toLowerCase();
   const content = String(ev.content || '');
@@ -59,12 +59,12 @@ function classifyJobPhase(ev, current) {
 }
 
 function deriveProgressData() {
-  const jobs = {};
+  const tasks = {};
   state.logs.forEach((ev) => {
-    const jid = String(ev.job_id || '');
+    const jid = String(ev.task_id || '');
     if (!jid) return;
-    const current = jobs[jid] || {
-      jobID: jid,
+    const current = tasks[jid] || {
+      taskID: jid,
       route: ev.route || '-',
       phase: 'received',
       owner: 'mio',
@@ -86,7 +86,7 @@ function deriveProgressData() {
     if (!current.startedAt) current.startedAt = ev.timestamp || '';
     if (ev.content) current.latestSummary = short(ev.content, 120);
 
-    const phased = classifyJobPhase(ev, current);
+    const phased = classifyTaskPhase(ev, current);
     current.phase = phased.phase;
     current.owner = phased.owner;
 
@@ -133,10 +133,10 @@ function deriveProgressData() {
       if (current.recentEvents.length > PROGRESS_RECENT_EVENTS) current.recentEvents.shift();
     }
 
-    jobs[jid] = current;
+    tasks[jid] = current;
   });
 
-  const list = Object.values(jobs).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  const list = Object.values(tasks).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   const running = list.filter((j) => j.status !== 'done');
   const done = list.filter((j) => j.status === 'done').slice(0, PROGRESS_DONE_LIMIT);
   const filtered = running.concat(done);
@@ -144,12 +144,12 @@ function deriveProgressData() {
   const agents = {};
   AGENTS.forEach((id) => {
     const base = state.agents[id] || {};
-    const related = filtered.filter((j) => j.owner === id || String(base.jobID || '') === String(j.jobID || '')).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+    const related = filtered.filter((j) => j.owner === id || String(base.taskID || '') === String(j.taskID || '')).sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     const top = related[0] || null;
     agents[id] = {
       id: id,
       state: base.state || 'offline',
-      jobID: top ? top.jobID : (base.jobID || '-'),
+      taskID: top ? top.taskID : (base.taskID || '-'),
       phase: top ? top.phase : '-',
       retryCount: top ? top.retryCount : 0,
       failureKind: top ? top.failureKind : '',
@@ -159,17 +159,17 @@ function deriveProgressData() {
     };
   });
 
-  return {jobs: filtered, agents: agents};
+  return {tasks: filtered, agents: agents};
 }
 
-function toggleProgressJob(jobID) {
-  state.progressOpenJobs[jobID] = !state.progressOpenJobs[jobID];
+function toggleProgressTask(taskID) {
+  state.progressOpenTasks[taskID] = !state.progressOpenTasks[taskID];
   renderProgress();
 }
-window.toggleProgressJob = toggleProgressJob;
+window.toggleProgressTask = toggleProgressTask;
 
-function renderProgressDetail(job) {
-  const items = Array.isArray(job.recentEvents) ? job.recentEvents.slice().reverse() : [];
+function renderProgressDetail(task) {
+  const items = Array.isArray(task.recentEvents) ? task.recentEvents.slice().reverse() : [];
   const logs = items.length === 0
     ? '<div class="progress-empty">No recent events</div>'
     : items.map((item) => (
@@ -180,10 +180,10 @@ function renderProgressDetail(job) {
     )).join('');
   return '' +
     '<div class="progress-detail">' +
-      '<div class="progress-section"><b>Chat Report</b><div style="margin-top:6px;line-height:1.5">' + esc(job.latestChatReport || '-') + '</div></div>' +
-      '<div class="progress-section"><b>Worker Note</b><div style="margin-top:6px;line-height:1.5">' + esc(job.latestWorkerNote || '-') + '</div></div>' +
-      '<div class="progress-section"><b>Coder Note</b><div style="margin-top:6px;line-height:1.5">' + esc(job.latestCoderNote || '-') + '</div></div>' +
-      '<div class="progress-section"><b>Failure</b><div style="margin-top:6px;line-height:1.5">' + esc(job.failureReason || '-') + '</div></div>' +
+      '<div class="progress-section"><b>Chat Report</b><div style="margin-top:6px;line-height:1.5">' + esc(task.latestChatReport || '-') + '</div></div>' +
+      '<div class="progress-section"><b>Worker Note</b><div style="margin-top:6px;line-height:1.5">' + esc(task.latestWorkerNote || '-') + '</div></div>' +
+      '<div class="progress-section"><b>Coder Note</b><div style="margin-top:6px;line-height:1.5">' + esc(task.latestCoderNote || '-') + '</div></div>' +
+      '<div class="progress-section"><b>Failure</b><div style="margin-top:6px;line-height:1.5">' + esc(task.failureReason || '-') + '</div></div>' +
       '<div class="progress-section"><b>Recent Events</b><div class="progress-log" style="margin-top:6px">' + logs + '</div></div>' +
     '</div>';
 }
@@ -193,8 +193,8 @@ function renderProgress() {
   const agentCards = document.getElementById('progressAgentCards');
   const body = document.getElementById('progressBody');
   const agentSummary = document.getElementById('progressAgentSummary');
-  const jobSummary = document.getElementById('progressJobSummary');
-  if (!agentCards || !body || !agentSummary || !jobSummary) return;
+  const taskSummary = document.getElementById('progressTaskSummary');
+  if (!agentCards || !body || !agentSummary || !taskSummary) return;
 
   agentCards.innerHTML = '';
   body.innerHTML = '';
@@ -202,7 +202,7 @@ function renderProgress() {
   const agentValues = Object.values(data.agents);
   const activeAgents = agentValues.filter((a) => a.state !== 'offline').length;
   agentSummary.textContent = 'active: ' + String(activeAgents) + ' / ' + String(agentValues.length);
-  jobSummary.textContent = 'showing: ' + String(data.jobs.length) + ' jobs';
+  taskSummary.textContent = 'showing: ' + String(data.tasks.length) + ' tasks';
 
   agentValues.forEach((a) => {
     const info = ag(a.id);
@@ -212,7 +212,7 @@ function renderProgress() {
       '<h4>' + info.e + ' ' + info.l + '</h4>' +
       '<div class="row"><span>State</span><span class="badge ' + stateClass(a.state) + '">' + esc(a.state) + '</span></div>' +
       '<div class="row"><span>Phase</span><span class="phase-badge">' + esc(progressPhaseLabel(a.phase)) + '</span></div>' +
-      '<div class="row"><span>Job</span><span class="code">' + esc(a.jobID || '-') + '</span></div>' +
+      '<div class="row"><span>Task</span><span class="code">' + esc(a.taskID || '-') + '</span></div>' +
       '<div class="row"><span>Retry</span><span>' + esc(String(a.retryCount || 0)) + '</span></div>' +
       '<div class="row"><span>Failure</span><span>' + esc(a.failureKind || '-') + '</span></div>' +
       '<div class="row"><span>Open</span><span>' + esc(String(a.openCount || 0)) + '</span></div>' +
@@ -221,19 +221,19 @@ function renderProgress() {
     agentCards.appendChild(card);
   });
 
-  if (data.jobs.length === 0) {
+  if (data.tasks.length === 0) {
     const tr = document.createElement('tr');
     tr.innerHTML = '<td colspan="10" class="small">No progress data yet</td>';
     body.appendChild(tr);
     return;
   }
 
-  data.jobs.forEach((j) => {
+  data.tasks.forEach((j) => {
     const st = j.status === 'error' ? 'error' : (j.status === 'done' ? 'idle' : 'running');
-    const open = !!state.progressOpenJobs[j.jobID];
+    const open = !!state.progressOpenTasks[j.taskID];
     const tr = document.createElement('tr');
     tr.innerHTML =
-      '<td class="code">' + esc(j.jobID) + '</td>' +
+      '<td class="code">' + esc(j.taskID) + '</td>' +
       '<td>' + esc(j.route || '-') + '</td>' +
       '<td><span class="phase-badge">' + esc(progressPhaseLabel(j.phase)) + '</span></td>' +
       '<td>' + esc(agName(j.owner || '-')) + '</td>' +
@@ -242,7 +242,7 @@ function renderProgress() {
       '<td><span class="badge ' + stateClass(st) + '">' + esc(j.status || '-') + '</span></td>' +
       '<td>' + esc(fdt(j.updatedAt)) + '</td>' +
       '<td>' + esc(short(j.latestSummary || '-', 120)) + '</td>' +
-      '<td><button class="ctl-btn" onclick="toggleProgressJob(\'' + esc(j.jobID) + '\')">' + (open ? 'Hide' : 'Open') + '</button></td>';
+      '<td><button class="ctl-btn" onclick="toggleProgressTask(\'' + esc(j.taskID) + '\')">' + (open ? 'Hide' : 'Open') + '</button></td>';
     body.appendChild(tr);
 
     if (open) {

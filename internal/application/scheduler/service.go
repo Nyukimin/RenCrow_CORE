@@ -16,6 +16,8 @@ type DeferredError struct {
 	cause      error
 }
 
+var ErrExecutorUnavailable = errors.New("scheduler executor unavailable")
+
 func NewDeferredError(retryAfter time.Duration, cause error) *DeferredError {
 	return &DeferredError{RetryAfter: retryAfter, cause: cause}
 }
@@ -153,7 +155,9 @@ func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger st
 			}
 		}
 	} else {
+		log.Status = "failed"
 		log.Summary = "scheduler run recorded without executor"
+		log.Error = ErrExecutorUnavailable.Error()
 	}
 	log.CompletedAt = s.now().UTC()
 	schedule.LastRunAt = log.StartedAt

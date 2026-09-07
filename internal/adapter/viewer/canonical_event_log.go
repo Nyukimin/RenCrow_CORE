@@ -24,6 +24,17 @@ type EventLogReader interface {
 	Query(context.Context, LogFilter) ([]orchestrator.OrchestratorEvent, error)
 }
 
+// EventReplayReader reads one fixed canonical sequence window for EventHub
+// reconnects. Implementations must return events in strictly ascending
+// EventSeq order and preserve the requested watermark after the first page.
+type EventReplayReader interface {
+	ReplayPage(context.Context, modulecore.EventSeq, modulecore.EventSeq, int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error)
+}
+
+type componentReplayReader interface {
+	ReadComponentPage(context.Context, string, modulecore.EventSeq, modulecore.EventSeq, int) ([]modulecore.EventEnvelope, modulecore.EventSeq, error)
+}
+
 // CanonicalEventLog projects orchestrator events through the canonical event
 // envelope store. It intentionally owns no filesystem or secondary log.
 type CanonicalEventLog struct {
@@ -32,6 +43,7 @@ type CanonicalEventLog struct {
 }
 
 var _ EventLogReader = (*CanonicalEventLog)(nil)
+var _ EventReplayReader = (*CanonicalEventLog)(nil)
 var _ interface {
 	Append(orchestrator.OrchestratorEvent) error
 } = (*CanonicalEventLog)(nil)
@@ -169,6 +181,52 @@ func (s *CanonicalEventLog) Query(ctx context.Context, filter LogFilter) ([]orch
 	return items, nil
 }
 
+// ReplayPage forwards the bounded canonical component query and projects every
+// returned envelope. Replay treats an invalid envelope as an error so a
+// reconnect cannot silently report a partial durable history.
+func (s *CanonicalEventLog) ReplayPage(ctx context.Context, after, through modulecore.EventSeq, limit int) ([]orchestrator.OrchestratorEvent, modulecore.EventSeq, error) {
+	if s == nil || s.store == nil {
+		return nil, 0, fmt.Errorf("canonical event store is required")
+	}
+	if ctx == nil {
+		return nil, 0, fmt.Errorf("event replay context is required")
+	}
+	if after < 0 || through < 0 || limit <= 0 || limit > canonicalEventLogReadLimit {
+		return nil, 0, fmt.Errorf("invalid event replay query")
+	}
+	reader, ok := s.store.(componentReplayReader)
+	if !ok {
+		return nil, 0, fmt.Errorf("canonical event store does not support durable replay")
+	}
+	envelopes, watermark, err := reader.ReadComponentPage(ctx, canonicalEventComponent, after, through, limit)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read canonical orchestrator replay page: %w", err)
+	}
+	if watermark < after || (through != 0 && watermark != through) {
+		return nil, 0, fmt.Errorf("canonical replay watermark %d does not bind requested window after=%d through=%d", watermark, after, through)
+	}
+	if len(envelopes) > limit {
+		return nil, 0, fmt.Errorf("canonical replay page exceeds limit %d", limit)
+	}
+	items := make([]orchestrator.OrchestratorEvent, 0, len(envelopes))
+	previous := after
+	for index, envelope := range envelopes {
+		if envelope.ComponentID != canonicalEventComponent {
+			return nil, 0, fmt.Errorf("canonical replay envelope %d has component %q", index, envelope.ComponentID)
+		}
+		if envelope.EventSeq <= previous || (watermark > 0 && envelope.EventSeq > watermark) {
+			return nil, 0, fmt.Errorf("canonical replay envelope %d has non-advancing event_seq %d", index, envelope.EventSeq)
+		}
+		event, err := projectOrchestratorEventStrict(envelope)
+		if err != nil {
+			return nil, 0, fmt.Errorf("project canonical replay envelope %d: %w", index, err)
+		}
+		items = append(items, event)
+		previous = envelope.EventSeq
+	}
+	return items, watermark, nil
+}
+
 func marshalOrchestratorEventPayload(event orchestrator.OrchestratorEvent) (map[string]any, error) {
 	encoded, err := json.Marshal(event)
 	if err != nil {
@@ -189,19 +247,24 @@ func orchestratorEventOccurredAt(raw string) time.Time {
 }
 
 func projectOrchestratorEvent(envelope modulecore.EventEnvelope) (orchestrator.OrchestratorEvent, bool) {
+	event, err := projectOrchestratorEventStrict(envelope)
+	return event, err == nil
+}
+
+func projectOrchestratorEventStrict(envelope modulecore.EventEnvelope) (orchestrator.OrchestratorEvent, error) {
 	if err := modulecore.ValidateEventEnvelope(envelope); err != nil {
-		return orchestrator.OrchestratorEvent{}, false
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event envelope is invalid: %w", err)
 	}
 	if envelope.Payload == nil {
-		return orchestrator.OrchestratorEvent{}, false
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event envelope payload is missing")
 	}
 	encoded, err := json.Marshal(envelope.Payload)
 	if err != nil {
-		return orchestrator.OrchestratorEvent{}, false
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event envelope payload is not serializable: %w", err)
 	}
 	var event orchestrator.OrchestratorEvent
 	if err := json.Unmarshal(encoded, &event); err != nil {
-		return orchestrator.OrchestratorEvent{}, false
+		return orchestrator.OrchestratorEvent{}, fmt.Errorf("event envelope payload is not an orchestrator event: %w", err)
 	}
 	// EventType is assigned in the canonical envelope and is therefore the
 	// authoritative type if a stored payload was edited independently.
@@ -210,9 +273,9 @@ func projectOrchestratorEvent(envelope modulecore.EventEnvelope) (orchestrator.O
 	}
 	event = authoritativeOrchestratorEvent(event, envelope)
 	if err := validateOrchestratorEventIdentities(event); err != nil {
-		return orchestrator.OrchestratorEvent{}, false
+		return orchestrator.OrchestratorEvent{}, err
 	}
-	return event, true
+	return event, nil
 }
 
 func authoritativeOrchestratorEvent(event orchestrator.OrchestratorEvent, envelope modulecore.EventEnvelope) orchestrator.OrchestratorEvent {

@@ -117,7 +117,7 @@ function renderRoleSelector() {
     '<h4>' + esc(roleTargetSummary(selected)) + '</h4>' +
     '<div class="row"><span>Model Alias</span><span>' + esc(selected.alias) + '</span></div>' +
     '<div class="row"><span>Route</span><span>' + esc(agent.route || '-') + '</span></div>' +
-    '<div class="row"><span>Job</span><span class="code">' + esc(agent.jobID || '-') + '</span></div>' +
+    '<div class="row"><span>Task</span><span class="code">' + esc(agent.taskID || '-') + '</span></div>' +
     '<div class="ops-sub">' + esc(selected.use) + '</div>';
 }
 
