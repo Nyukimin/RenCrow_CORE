@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
@@ -85,7 +86,7 @@ func (s *SQLiteStore) migrate() error {
 			payload TEXT NOT NULL
 		)`,
 		`CREATE TABLE IF NOT EXISTS heartbeat_schedule (
-			heartbeat_id TEXT PRIMARY KEY,
+			schedule_id TEXT PRIMARY KEY,
 			workstream_id TEXT,
 			created_at TEXT,
 			payload TEXT NOT NULL
@@ -134,7 +135,46 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
-	return nil
+	return s.migrateHeartbeatScheduleColumn()
+}
+
+func (s *SQLiteStore) migrateHeartbeatScheduleColumn() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	if _, err := s.db.Exec(`ALTER TABLE heartbeat_schedule RENAME COLUMN heartbeat_id TO schedule_id`); err != nil {
+		if !strings.Contains(strings.ToLower(err.Error()), "no such column") &&
+			!strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
+			_ = addColumnIfMissing(s.db, "heartbeat_schedule", "schedule_id", "TEXT")
+		}
+	}
+	return addColumnIfMissing(s.db, "heartbeat_schedule", "schedule_id", "TEXT")
+}
+
+func addColumnIfMissing(db *sql.DB, table string, column string, columnType string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, columnType))
+	return err
 }
 
 // AcquireImplementationLeaseIfUnfrozen performs the queue-freeze check and
@@ -524,7 +564,7 @@ func (s *SQLiteStore) SaveHeartbeatSchedule(ctx context.Context, item domainwork
 	if err := domainworkstream.ValidateHeartbeatSchedule(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "heartbeat_schedule", "heartbeat_id", item.HeartbeatID, "workstream_id", item.WorkstreamID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "heartbeat_schedule", "schedule_id", string(item.ScheduleID), "workstream_id", item.WorkstreamID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListHeartbeatSchedules(ctx context.Context, limit int) ([]domainworkstream.HeartbeatSchedule, error) {

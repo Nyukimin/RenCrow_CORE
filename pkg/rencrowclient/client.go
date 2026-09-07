@@ -1208,8 +1208,8 @@ type WorkstreamSteeringItem struct {
 }
 
 type WorkstreamHeartbeat struct {
-	HeartbeatID  string    `json:"heartbeat_id"`
-	WorkstreamID string    `json:"workstream_id"`
+	ScheduleID   modulecore.ScheduleID `json:"schedule_id"`
+	WorkstreamID string                `json:"workstream_id"`
 	ScheduleText string    `json:"schedule_text"`
 	Task         string    `json:"task"`
 	Status       string    `json:"status"`
@@ -6272,12 +6272,12 @@ func validateWorkstreamStatus(resp WorkstreamStatus) error {
 	}
 	heartbeats := map[string]struct{}{}
 	for _, item := range resp.Heartbeats {
-		id := strings.TrimSpace(item.HeartbeatID)
+		id := strings.TrimSpace(string(item.ScheduleID))
 		if id == "" {
-			return fmt.Errorf("workstream status heartbeats missing heartbeat_id")
+			return fmt.Errorf("workstream status heartbeats missing schedule_id")
 		}
 		if _, ok := heartbeats[id]; ok {
-			return fmt.Errorf("workstream status duplicate heartbeat heartbeat_id=%s", id)
+			return fmt.Errorf("workstream status duplicate heartbeat schedule_id=%s", id)
 		}
 		heartbeats[id] = struct{}{}
 		if strings.TrimSpace(item.WorkstreamID) == "" {

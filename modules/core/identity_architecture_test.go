@@ -1027,6 +1027,150 @@ func TestStep14MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestStep15SchedulerLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"JobID",
+		"job_id",
+		"HeartbeatID",
+		"heartbeat_id",
+		"schedrun_",
+	}
+	var violations []string
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step15schedulermigration") ||
+			strings.Contains(relative, "rencrow-step15-scheduler-migrate")
+	}
+	allowToken := func(relative string, lineNumber int, token string) bool {
+		if relative == "internal/infrastructure/persistence/workstream/sqlite_store.go" &&
+			token == "heartbeat_id" && strings.Contains(lineAt(repoRoot, relative, lineNumber), "RENAME COLUMN") {
+			return true
+		}
+		return false
+	}
+	checkContent := func(relative string, content []byte) {
+		if shouldSkip(relative) {
+			return
+		}
+		if strings.Contains(relative, "complexity") || strings.Contains(relative, "moviecatalog") ||
+			strings.Contains(relative, "movie_catalog") {
+			return
+		}
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if token == "JobID" && (strings.Contains(relative, "complexity") || strings.Contains(relative, "moviecatalog") || strings.Contains(relative, "movie_catalog")) {
+					continue
+				}
+				if canonicalSourceContainsToken(line, token) {
+					if allowToken(relative, lineNumber+1, token) {
+						continue
+					}
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-step15:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	walkDirectory := func(relative string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step15schedulermigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			checkContent(rel, mustReadFile(t, path))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step15 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/domain/scheduler",
+		"internal/application/scheduler",
+		"internal/infrastructure/persistence/scheduler",
+		"internal/domain/workstream",
+		"internal/application/heartbeat",
+		"internal/infrastructure/persistence/workstream",
+	} {
+		walkDirectory(relative)
+	}
+	for _, relative := range []string{
+		"internal/adapter/viewer/scheduler_handler.go",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	canonicalArchitectureFail(t, "Step15 owner packages must not retain legacy Scheduler/Heartbeat identity fields", violations)
+}
+
+
+func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	leftovers := []string{
+		filepath.Join(repoRoot, "cmd", "rencrow-step15-scheduler-migrate"),
+		filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "step15schedulermigration"),
+	}
+	var found []string
+	for _, path := range leftovers {
+		if _, err := os.Stat(path); err == nil {
+			found = append(found, path)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+	if len(found) != 0 {
+		t.Fatalf("Step15 migration source must be removed after cutover: %v", found)
+	}
+}
+
+func lineAt(repoRoot, relative string, lineNumber int) string {
+	content, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(relative)))
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(content), "\n")
+	if lineNumber <= 0 || lineNumber > len(lines) {
+		return ""
+	}
+	return lines[lineNumber-1]
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return content
+}
+
 func canonicalArchitectureStructBlock(repoRoot, relative, structName string) string {
 	path := filepath.Join(repoRoot, filepath.FromSlash(relative))
 	content, err := os.ReadFile(path)

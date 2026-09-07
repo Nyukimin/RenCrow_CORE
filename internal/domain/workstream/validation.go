@@ -113,8 +113,8 @@ func ValidateSteeringItem(item SteeringItem) error {
 }
 
 func ValidateHeartbeatSchedule(item HeartbeatSchedule) error {
-	if strings.TrimSpace(item.HeartbeatID) == "" {
-		return errors.New("heartbeat_id is required")
+	if err := item.ScheduleID.Validate(); err != nil {
+		return errors.New("schedule_id is required")
 	}
 	if strings.TrimSpace(item.WorkstreamID) == "" {
 		return errors.New("workstream_id is required")

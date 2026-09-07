@@ -8,27 +8,30 @@ import (
 	"time"
 )
 
-func ValidateJob(job Job) error {
-	if strings.TrimSpace(job.JobID) == "" {
-		return errors.New("job_id is required")
+func ValidateSchedule(schedule Schedule) error {
+	if schedule.ScheduleID == "" {
+		return errors.New("schedule_id is required")
 	}
-	if strings.TrimSpace(job.Name) == "" {
+	if err := schedule.ScheduleID.Validate(); err != nil {
+		return fmt.Errorf("schedule_id: %w", err)
+	}
+	if strings.TrimSpace(schedule.Name) == "" {
 		return errors.New("name is required")
 	}
-	if strings.TrimSpace(job.Schedule) == "" {
+	if strings.TrimSpace(schedule.Schedule) == "" {
 		return errors.New("schedule is required")
 	}
-	if job.Enabled {
-		if _, err := NextRunAfter(job.Schedule, time.Now().UTC().Add(-time.Second)); err != nil {
+	if schedule.Enabled {
+		if _, err := NextRunAfter(schedule.Schedule, time.Now().UTC().Add(-time.Second)); err != nil {
 			return err
 		}
-	} else if err := validateScheduleSyntax(job.Schedule); err != nil {
+	} else if err := validateScheduleSyntax(schedule.Schedule); err != nil {
 		return err
 	}
-	if job.CreatedAt.IsZero() {
+	if schedule.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
-	if job.UpdatedAt.IsZero() {
+	if schedule.UpdatedAt.IsZero() {
 		return errors.New("updated_at is required")
 	}
 	return nil
@@ -58,11 +61,26 @@ func validateScheduleSyntax(schedule string) error {
 }
 
 func ValidateRunLog(log RunLog) error {
-	if strings.TrimSpace(log.RunID) == "" {
+	if log.RunID == "" {
 		return errors.New("run_id is required")
 	}
-	if strings.TrimSpace(log.JobID) == "" {
-		return errors.New("job_id is required")
+	if err := log.RunID.Validate(); err != nil {
+		return fmt.Errorf("run_id: %w", err)
+	}
+	if log.ScheduleID == "" {
+		return errors.New("schedule_id is required")
+	}
+	if err := log.ScheduleID.Validate(); err != nil {
+		return fmt.Errorf("schedule_id: %w", err)
+	}
+	if log.TaskID.IsZero() {
+		return errors.New("task_id is required")
+	}
+	if err := log.TaskID.Validate(); err != nil {
+		return fmt.Errorf("task_id: %w", err)
+	}
+	if string(log.ScheduleID) == log.TaskID.String() || string(log.ScheduleID) == string(log.RunID) || log.TaskID.String() == string(log.RunID) {
+		return errors.New("schedule_id, task_id, and run_id must be distinct")
 	}
 	if strings.TrimSpace(log.Trigger) == "" {
 		return errors.New("trigger is required")

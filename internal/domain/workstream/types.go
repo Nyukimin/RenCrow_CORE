@@ -88,8 +88,8 @@ type SteeringItem struct {
 }
 
 type HeartbeatSchedule struct {
-	HeartbeatID  string    `json:"heartbeat_id"`
-	WorkstreamID string    `json:"workstream_id"`
+	ScheduleID   modulecore.ScheduleID `json:"schedule_id"`
+	WorkstreamID string                `json:"workstream_id"`
 	ScheduleText string    `json:"schedule_text"`
 	Task         string    `json:"task"`
 	Status       string    `json:"status"`

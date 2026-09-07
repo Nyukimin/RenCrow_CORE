@@ -360,7 +360,7 @@ func TestHandleWorkstreamSteeringCreate(t *testing.T) {
 func TestHandleWorkstreamHeartbeatCreate(t *testing.T) {
 	store := &stubWorkstreamLister{}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/workstreams/heartbeats", bytes.NewBufferString(`{
-		"heartbeat_id":"hb_1",
+		"schedule_id":"sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84",
 		"workstream_id":"ws_1",
 		"schedule_text":"daily 08:00",
 		"task":"draft report only"

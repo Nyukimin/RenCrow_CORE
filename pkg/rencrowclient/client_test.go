@@ -3427,7 +3427,7 @@ func TestWorkstreamStatus(t *testing.T) {
 			Artifacts:   []WorkstreamArtifact{{ArtifactID: "art_1", WorkstreamID: "ws_1", Type: "note", Status: "draft", CreatedAt: now}},
 			Annotations: []WorkstreamAnnotation{{AnnotationID: "ann_1", ArtifactID: "art_1", Comment: "review", Status: "open", CreatedAt: now}},
 			Steering:    []WorkstreamSteeringItem{{SteeringID: "steer_1", WorkstreamID: "ws_1", Instruction: "continue", Status: "pending", CreatedAt: now}},
-			Heartbeats:  []WorkstreamHeartbeat{{HeartbeatID: "hb_1", WorkstreamID: "ws_1", ScheduleText: "daily", Task: "draft_report", Status: "active", CreatedAt: now}},
+			Heartbeats:  []WorkstreamHeartbeat{{ScheduleID: modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"), WorkstreamID: "ws_1", ScheduleText: "daily", Task: "draft_report", Status: "active", CreatedAt: now}},
 			VaultUpdates: []WorkstreamVaultUpdate{{
 				UpdateID:     "upd_1",
 				WorkstreamID: "ws_1",
@@ -3463,7 +3463,7 @@ func TestWorkstreamStatusRejectsMalformedCurrentView(t *testing.T) {
 			Artifacts:   []WorkstreamArtifact{{ArtifactID: "art_1", WorkstreamID: "ws_1", Type: "note", Status: "draft", CreatedAt: now}},
 			Annotations: []WorkstreamAnnotation{{AnnotationID: "ann_1", ArtifactID: "art_1", Comment: "review", Status: "open", CreatedAt: now}},
 			Steering:    []WorkstreamSteeringItem{{SteeringID: "steer_1", WorkstreamID: "ws_1", Instruction: "continue", Status: "pending", CreatedAt: now}},
-			Heartbeats:  []WorkstreamHeartbeat{{HeartbeatID: "hb_1", WorkstreamID: "ws_1", ScheduleText: "daily", Task: "draft_report", Status: "active", CreatedAt: now}},
+			Heartbeats:  []WorkstreamHeartbeat{{ScheduleID: modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"), WorkstreamID: "ws_1", ScheduleText: "daily", Task: "draft_report", Status: "active", CreatedAt: now}},
 			VaultUpdates: []WorkstreamVaultUpdate{{
 				UpdateID:     "upd_1",
 				WorkstreamID: "ws_1",
@@ -3516,7 +3516,7 @@ func TestWorkstreamStatusRejectsMalformedCurrentView(t *testing.T) {
 		}, want: "heartbeat missing task"},
 		{name: "heartbeat missing created at", mutate: func(s *WorkstreamStatus) {
 			s.Heartbeats[0].CreatedAt = time.Time{}
-		}, want: "heartbeat hb_1 missing created_at"},
+		}, want: "heartbeat sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84 missing created_at"},
 		{name: "duplicate vault update", mutate: func(s *WorkstreamStatus) {
 			s.VaultUpdates = append(s.VaultUpdates, s.VaultUpdates[0])
 		}, want: "duplicate vault_update"},

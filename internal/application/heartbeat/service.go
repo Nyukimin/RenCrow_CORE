@@ -1026,10 +1026,10 @@ func (s *HeartbeatService) RunDueWorkstreamHeartbeats(ctx context.Context, now t
 	}
 	seen := map[string]struct{}{}
 	for _, schedule := range schedules {
-		if _, ok := seen[schedule.HeartbeatID]; ok {
+		if _, ok := seen[string(schedule.ScheduleID)]; ok {
 			continue
 		}
-		seen[schedule.HeartbeatID] = struct{}{}
+		seen[string(schedule.ScheduleID)] = struct{}{}
 		report.Checked++
 		if schedule.Status != domainworkstream.StatusActive || !heartbeatDue(schedule, now) {
 			report.Skipped++
@@ -1056,19 +1056,19 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 			Agent:        "Worker",
 			WorkstreamID: schedule.WorkstreamID,
 		}, []string{"core.workstream-heartbeat", "core.workstream"}); err != nil {
-			return fmt.Errorf("workstream heartbeat %s skill bootstrap failed: %w", schedule.HeartbeatID, err)
+			return fmt.Errorf("workstream heartbeat %s skill bootstrap failed: %w", schedule.ScheduleID, err)
 		}
 	}
 	pendingSteering, err := s.pendingSteeringForWorkstream(ctx, schedule.WorkstreamID)
 	if err != nil {
-		return fmt.Errorf("workstream heartbeat %s steering checkpoint failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s steering checkpoint failed: %w", schedule.ScheduleID, err)
 	}
 	message := s.contextBuilder.BuildMessageWithTask(
 		routing.RouteOPS.String(),
 		"WORKSTREAM HEARTBEAT DRAFT",
-		fmt.Sprintf("workstream_id: %s\nheartbeat_id: %s\nschedule: %s\ntask: %s\n\nsafe_checkpoint_steering:\n%s\n\n制約: draft report only。投稿、送信、販売、外部書き込みは行わない。",
+		fmt.Sprintf("workstream_id: %s\nschedule_id: %s\nschedule: %s\ntask: %s\n\nsafe_checkpoint_steering:\n%s\n\n制約: draft report only。投稿、送信、販売、外部書き込みは行わない。",
 			schedule.WorkstreamID,
-			schedule.HeartbeatID,
+			schedule.ScheduleID,
 			schedule.ScheduleText,
 			schedule.Task,
 			formatSteeringForPrompt(pendingSteering),
@@ -1076,7 +1076,7 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 	)
 	input, err := newHeartbeatWorkerInput(message, "workstream-heartbeat", "heartbeat")
 	if err != nil {
-		return fmt.Errorf("workstream heartbeat %s input construction failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s input construction failed: %w", schedule.ScheduleID, err)
 	}
 	taskID := input.RootTaskID()
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
@@ -1085,14 +1085,14 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 	})
 	response, err := s.workerAgent.Execute(workerCtx, input)
 	if err != nil {
-		return fmt.Errorf("workstream heartbeat %s worker failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s worker failed: %w", schedule.ScheduleID, err)
 	}
 	reportPath, err := s.writeWorkstreamHeartbeatReport(schedule, now, response)
 	if err != nil {
-		return fmt.Errorf("workstream heartbeat %s report failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s report failed: %w", schedule.ScheduleID, err)
 	}
 	update := domainworkstream.VaultUpdateLog{
-		UpdateID:     fmt.Sprintf("vul_%s_%d", schedule.HeartbeatID, now.UnixNano()),
+		UpdateID:     fmt.Sprintf("vul_%s_%d", schedule.ScheduleID, now.UnixNano()),
 		WorkstreamID: schedule.WorkstreamID,
 		FilePath:     reportPath,
 		UpdateType:   "heartbeat_draft_report",
@@ -1100,27 +1100,27 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 		CreatedAt:    now.UTC(),
 	}
 	if err := s.workstreamStore.SaveVaultUpdateLog(ctx, update); err != nil {
-		return fmt.Errorf("workstream heartbeat %s vault update log failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s vault update log failed: %w", schedule.ScheduleID, err)
 	}
 	if shouldRunRevenueDailyRoutine(schedule) {
 		if err := s.runRevenueDailyRoutine(ctx, schedule, now); err != nil {
-			return fmt.Errorf("workstream heartbeat %s revenue daily routine failed: %w", schedule.HeartbeatID, err)
+			return fmt.Errorf("workstream heartbeat %s revenue daily routine failed: %w", schedule.ScheduleID, err)
 		}
 	}
 	if err := s.markSteeringApplied(ctx, pendingSteering, now); err != nil {
-		return fmt.Errorf("workstream heartbeat %s steering apply failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s steering apply failed: %w", schedule.ScheduleID, err)
 	}
 	schedule.LastRunAt = now.UTC()
 	schedule.NextRunAt = nextHeartbeatRun(schedule, now)
 	if err := s.workstreamStore.SaveHeartbeatSchedule(ctx, schedule); err != nil {
-		return fmt.Errorf("workstream heartbeat %s schedule update failed: %w", schedule.HeartbeatID, err)
+		return fmt.Errorf("workstream heartbeat %s schedule update failed: %w", schedule.ScheduleID, err)
 	}
 	s.emitEvent("workstream.heartbeat.draft_report", reportPath)
 	return nil
 }
 
 func shouldRunRevenueDailyRoutine(schedule domainworkstream.HeartbeatSchedule) bool {
-	text := strings.ToLower(strings.Join([]string{schedule.HeartbeatID, schedule.WorkstreamID, schedule.Task}, "\n"))
+	text := strings.ToLower(strings.Join([]string{string(schedule.ScheduleID), schedule.WorkstreamID, schedule.Task}, "\n"))
 	keywords := []string{
 		"revenue",
 		"収益",
@@ -1211,11 +1211,11 @@ func (s *HeartbeatService) writeWorkstreamHeartbeatReport(schedule domainworkstr
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
-	name := fmt.Sprintf("%s-%s.md", safePathSegment(schedule.HeartbeatID), now.UTC().Format("20060102T150405Z"))
+	name := fmt.Sprintf("%s-%s.md", safePathSegment(string(schedule.ScheduleID)), now.UTC().Format("20060102T150405Z"))
 	path := filepath.Join(dir, name)
-	content := fmt.Sprintf("# Workstream Heartbeat Draft\n\n- workstream_id: %s\n- heartbeat_id: %s\n- schedule: %s\n- created_at: %s\n\n## Task\n\n%s\n\n## Draft Report\n\n%s\n",
+	content := fmt.Sprintf("# Workstream Heartbeat Draft\n\n- workstream_id: %s\n- schedule_id: %s\n- schedule: %s\n- created_at: %s\n\n## Task\n\n%s\n\n## Draft Report\n\n%s\n",
 		schedule.WorkstreamID,
-		schedule.HeartbeatID,
+		schedule.ScheduleID,
 		schedule.ScheduleText,
 		now.UTC().Format(time.RFC3339),
 		schedule.Task,

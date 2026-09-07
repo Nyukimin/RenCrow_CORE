@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateGoalRequiresSuccessCriteriaAndVerification(t *testing.T) {
@@ -167,9 +169,9 @@ func TestValidateHeartbeatScheduleRequiresDraftTaskContract(t *testing.T) {
 	now := time.Date(2026, 5, 20, 6, 50, 0, 0, time.UTC)
 	item := HeartbeatSchedule{}
 	if err := ValidateHeartbeatSchedule(item); err == nil {
-		t.Fatal("expected missing heartbeat_id to fail")
+		t.Fatal("expected missing schedule_id to fail")
 	}
-	item.HeartbeatID = "hb_1"
+	item.ScheduleID = modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84")
 	if err := ValidateHeartbeatSchedule(item); err == nil {
 		t.Fatal("expected missing workstream_id to fail")
 	}
@@ -296,7 +298,7 @@ func TestValidateWorkstreamRejectsMissingCreatedAt(t *testing.T) {
 			name: "heartbeat",
 			err:  "created_at",
 			run: func() error {
-				return ValidateHeartbeatSchedule(HeartbeatSchedule{HeartbeatID: "hb_1", WorkstreamID: "ws_1", ScheduleText: "daily 08:00", Task: "draft report only", Status: StatusActive})
+				return ValidateHeartbeatSchedule(HeartbeatSchedule{ScheduleID: modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"), WorkstreamID: "ws_1", ScheduleText: "daily 08:00", Task: "draft report only", Status: StatusActive})
 			},
 		},
 		{

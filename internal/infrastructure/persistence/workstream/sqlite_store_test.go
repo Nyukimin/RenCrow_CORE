@@ -292,7 +292,7 @@ func TestSQLiteStoreSavesAndListsWorkstreamRecords(t *testing.T) {
 		t.Fatalf("SaveSteeringItem() error = %v", err)
 	}
 	if err := store.SaveHeartbeatSchedule(context.Background(), domainworkstream.HeartbeatSchedule{
-		HeartbeatID:  "hb_1",
+		ScheduleID:   modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"),
 		WorkstreamID: "ws_1",
 		ScheduleText: "daily 08:00",
 		Task:         "確認",

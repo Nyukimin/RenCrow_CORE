@@ -20,9 +20,9 @@ func NewScheduledExecutor(service *Service) *ScheduledExecutor {
 	return &ScheduledExecutor{service: service}
 }
 
-func (e *ScheduledExecutor) ExecuteScheduledJob(ctx context.Context, job domainscheduler.Job) (string, error) {
-	if job.Target != ScheduledTarget {
-		return "", fmt.Errorf("unsupported scheduled target %q", job.Target)
+func (e *ScheduledExecutor) ExecuteSchedule(ctx context.Context, schedule domainscheduler.Schedule) (string, error) {
+	if schedule.Target != ScheduledTarget {
+		return "", fmt.Errorf("unsupported scheduled target %q", schedule.Target)
 	}
 	report, err := e.service.Run(ctx)
 	if err != nil {

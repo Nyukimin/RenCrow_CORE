@@ -10,8 +10,8 @@ import (
 )
 
 type JSONLStore struct {
-	jobPath string
-	runPath string
+	schedulePath string
+	runPath      string
 }
 
 func NewJSONLStore(root string) *JSONLStore {
@@ -19,20 +19,20 @@ func NewJSONLStore(root string) *JSONLStore {
 		root = "workspace/logs/scheduler"
 	}
 	return &JSONLStore{
-		jobPath: filepath.Join(root, "scheduler_job.jsonl"),
-		runPath: filepath.Join(root, "scheduler_run.jsonl"),
+		schedulePath: filepath.Join(root, "scheduler_schedule.jsonl"),
+		runPath:      filepath.Join(root, "scheduler_run.jsonl"),
 	}
 }
 
-func (s *JSONLStore) SaveJob(_ context.Context, job domainscheduler.Job) error {
-	if err := domainscheduler.ValidateJob(job); err != nil {
+func (s *JSONLStore) SaveSchedule(_ context.Context, schedule domainscheduler.Schedule) error {
+	if err := domainscheduler.ValidateSchedule(schedule); err != nil {
 		return err
 	}
-	return jsonlutil.Append(s.jobPath, job)
+	return jsonlutil.Append(s.schedulePath, schedule)
 }
 
-func (s *JSONLStore) ListJobs(_ context.Context, limit int) ([]domainscheduler.Job, error) {
-	return listLatestByKey(s.jobPath, limit, func(job domainscheduler.Job) string { return job.JobID })
+func (s *JSONLStore) ListSchedules(_ context.Context, limit int) ([]domainscheduler.Schedule, error) {
+	return listLatestByKey(s.schedulePath, limit, func(schedule domainscheduler.Schedule) string { return string(schedule.ScheduleID) })
 }
 
 func (s *JSONLStore) SaveRunLog(_ context.Context, log domainscheduler.RunLog) error {

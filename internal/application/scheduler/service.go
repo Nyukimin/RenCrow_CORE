@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type DeferredError struct {
@@ -21,7 +22,7 @@ func NewDeferredError(retryAfter time.Duration, cause error) *DeferredError {
 
 func (e *DeferredError) Error() string {
 	if e == nil || e.cause == nil {
-		return "scheduled job deferred"
+		return "scheduled schedule deferred"
 	}
 	return e.cause.Error()
 }
@@ -34,14 +35,14 @@ func (e *DeferredError) Unwrap() error {
 }
 
 type Store interface {
-	ListJobs(ctx context.Context, limit int) ([]domainscheduler.Job, error)
-	SaveJob(ctx context.Context, job domainscheduler.Job) error
+	ListSchedules(ctx context.Context, limit int) ([]domainscheduler.Schedule, error)
+	SaveSchedule(ctx context.Context, schedule domainscheduler.Schedule) error
 	SaveRunLog(ctx context.Context, log domainscheduler.RunLog) error
 	ListRunLogs(ctx context.Context, limit int) ([]domainscheduler.RunLog, error)
 }
 
 type Executor interface {
-	ExecuteScheduledJob(ctx context.Context, job domainscheduler.Job) (string, error)
+	ExecuteSchedule(ctx context.Context, schedule domainscheduler.Schedule) (string, error)
 }
 
 type Service struct {
@@ -61,79 +62,84 @@ func (s *Service) WithNow(now func() time.Time) *Service {
 	return s
 }
 
-func (s *Service) CreateJob(ctx context.Context, job domainscheduler.Job) (domainscheduler.Job, error) {
+func (s *Service) CreateSchedule(ctx context.Context, schedule domainscheduler.Schedule) (domainscheduler.Schedule, error) {
 	if s == nil || s.store == nil {
-		return domainscheduler.Job{}, fmt.Errorf("scheduler store unavailable")
+		return domainscheduler.Schedule{}, fmt.Errorf("scheduler store unavailable")
 	}
 	now := s.now().UTC()
-	if job.CreatedAt.IsZero() {
-		job.CreatedAt = now
+	if schedule.ScheduleID == "" {
+		schedule.ScheduleID = modulecore.NewScheduleID()
 	}
-	job.UpdatedAt = now
-	job.Enabled = true
-	next, err := domainscheduler.NextRunAfter(job.Schedule, now)
+	if schedule.CreatedAt.IsZero() {
+		schedule.CreatedAt = now
+	}
+	schedule.UpdatedAt = now
+	schedule.Enabled = true
+	next, err := domainscheduler.NextRunAfter(schedule.Schedule, now)
 	if err != nil {
-		return domainscheduler.Job{}, err
+		return domainscheduler.Schedule{}, err
 	}
-	job.NextRunAt = next
-	if err := s.store.SaveJob(ctx, job); err != nil {
-		return domainscheduler.Job{}, err
+	schedule.NextRunAt = next
+	if err := s.store.SaveSchedule(ctx, schedule); err != nil {
+		return domainscheduler.Schedule{}, err
 	}
-	return job, nil
+	return schedule, nil
 }
 
-func (s *Service) DueJobs(ctx context.Context, limit int) ([]domainscheduler.DueJob, error) {
+func (s *Service) DueSchedules(ctx context.Context, limit int) ([]domainscheduler.DueSchedule, error) {
 	if s == nil || s.store == nil {
 		return nil, fmt.Errorf("scheduler store unavailable")
 	}
-	jobs, err := s.store.ListJobs(ctx, limit)
+	schedules, err := s.store.ListSchedules(ctx, limit)
 	if err != nil {
 		return nil, err
 	}
 	now := s.now().UTC()
-	out := make([]domainscheduler.DueJob, 0)
-	for _, job := range jobs {
-		if !job.Enabled || job.NextRunAt.IsZero() || job.NextRunAt.After(now) {
+	out := make([]domainscheduler.DueSchedule, 0)
+	for _, schedule := range schedules {
+		if !schedule.Enabled || schedule.NextRunAt.IsZero() || schedule.NextRunAt.After(now) {
 			continue
 		}
-		out = append(out, domainscheduler.DueJob{Job: job, Scheduled: job.NextRunAt})
+		out = append(out, domainscheduler.DueSchedule{Schedule: schedule, Scheduled: schedule.NextRunAt})
 	}
 	return out, nil
 }
 
-func (s *Service) RunDueJob(ctx context.Context, jobID string) (domainscheduler.RunLog, bool, error) {
-	due, err := s.DueJobs(ctx, 1000)
+func (s *Service) RunDueSchedule(ctx context.Context, scheduleID string) (domainscheduler.RunLog, bool, error) {
+	due, err := s.DueSchedules(ctx, 1000)
 	if err != nil {
 		return domainscheduler.RunLog{}, false, err
 	}
+	wantID := strings.TrimSpace(scheduleID)
 	for _, item := range due {
-		if item.Job.JobID == strings.TrimSpace(jobID) {
-			log, err := s.RunJob(ctx, item.Job.JobID, "due")
+		if string(item.Schedule.ScheduleID) == wantID {
+			log, err := s.RunSchedule(ctx, wantID, "due")
 			return log, true, err
 		}
 	}
 	return domainscheduler.RunLog{}, false, nil
 }
 
-func (s *Service) RunJob(ctx context.Context, jobID string, trigger string) (domainscheduler.RunLog, error) {
+func (s *Service) RunSchedule(ctx context.Context, scheduleID string, trigger string) (domainscheduler.RunLog, error) {
 	if s == nil || s.store == nil {
 		return domainscheduler.RunLog{}, fmt.Errorf("scheduler store unavailable")
 	}
-	job, err := s.findJob(ctx, jobID)
+	schedule, err := s.findSchedule(ctx, scheduleID)
 	if err != nil {
 		return domainscheduler.RunLog{}, err
 	}
 	now := s.now().UTC()
 	log := domainscheduler.RunLog{
-		RunID:     "schedrun_" + job.JobID + "_" + now.Format("20060102150405.000000000"),
-		JobID:     job.JobID,
-		Trigger:   firstNonEmpty(trigger, "manual"),
-		Status:    "completed",
-		StartedAt: now,
+		RunID:      modulecore.NewRunID(),
+		ScheduleID: schedule.ScheduleID,
+		TaskID:     modulecore.NewTaskID(),
+		Trigger:    firstNonEmpty(trigger, "manual"),
+		Status:     "completed",
+		StartedAt:  now,
 	}
 	var deferredRetryAfter time.Duration
 	if s.executor != nil {
-		summary, execErr := s.executor.ExecuteScheduledJob(ctx, job)
+		summary, execErr := s.executor.ExecuteSchedule(ctx, schedule)
 		log.Summary = strings.TrimSpace(summary)
 		if execErr != nil {
 			var deferred *DeferredError
@@ -150,60 +156,60 @@ func (s *Service) RunJob(ctx context.Context, jobID string, trigger string) (dom
 		log.Summary = "scheduler run recorded without executor"
 	}
 	log.CompletedAt = s.now().UTC()
-	job.LastRunAt = log.StartedAt
+	schedule.LastRunAt = log.StartedAt
 	if log.Status == "deferred" && deferredRetryAfter > 0 {
-		job.NextRunAt = log.CompletedAt.Add(deferredRetryAfter)
-	} else if next, err := domainscheduler.NextRunAfter(job.Schedule, log.StartedAt); err == nil {
-		job.NextRunAt = next
+		schedule.NextRunAt = log.CompletedAt.Add(deferredRetryAfter)
+	} else if next, err := domainscheduler.NextRunAfter(schedule.Schedule, log.StartedAt); err == nil {
+		schedule.NextRunAt = next
 	} else {
-		job.Enabled = false
-		job.DisabledAt = log.CompletedAt
-		job.DisabledBy = "scheduler"
+		schedule.Enabled = false
+		schedule.DisabledAt = log.CompletedAt
+		schedule.DisabledBy = "scheduler"
 	}
-	job.UpdatedAt = log.CompletedAt
+	schedule.UpdatedAt = log.CompletedAt
 	if err := s.store.SaveRunLog(ctx, log); err != nil {
 		return domainscheduler.RunLog{}, err
 	}
-	if err := s.store.SaveJob(ctx, job); err != nil {
+	if err := s.store.SaveSchedule(ctx, schedule); err != nil {
 		return domainscheduler.RunLog{}, err
 	}
 	return log, nil
 }
 
-func (s *Service) DisableJob(ctx context.Context, jobID string, disabledBy string) (domainscheduler.Job, error) {
+func (s *Service) DisableSchedule(ctx context.Context, scheduleID string, disabledBy string) (domainscheduler.Schedule, error) {
 	if s == nil || s.store == nil {
-		return domainscheduler.Job{}, fmt.Errorf("scheduler store unavailable")
+		return domainscheduler.Schedule{}, fmt.Errorf("scheduler store unavailable")
 	}
-	job, err := s.findJob(ctx, jobID)
+	schedule, err := s.findSchedule(ctx, scheduleID)
 	if err != nil {
-		return domainscheduler.Job{}, err
+		return domainscheduler.Schedule{}, err
 	}
 	now := s.now().UTC()
-	job.Enabled = false
-	job.DisabledAt = now
-	job.DisabledBy = firstNonEmpty(disabledBy, "system")
-	job.UpdatedAt = now
-	if err := s.store.SaveJob(ctx, job); err != nil {
-		return domainscheduler.Job{}, err
+	schedule.Enabled = false
+	schedule.DisabledAt = now
+	schedule.DisabledBy = firstNonEmpty(disabledBy, "system")
+	schedule.UpdatedAt = now
+	if err := s.store.SaveSchedule(ctx, schedule); err != nil {
+		return domainscheduler.Schedule{}, err
 	}
-	return job, nil
+	return schedule, nil
 }
 
-func (s *Service) findJob(ctx context.Context, jobID string) (domainscheduler.Job, error) {
-	jobID = strings.TrimSpace(jobID)
-	if jobID == "" {
-		return domainscheduler.Job{}, fmt.Errorf("job_id is required")
+func (s *Service) findSchedule(ctx context.Context, scheduleID string) (domainscheduler.Schedule, error) {
+	scheduleID = strings.TrimSpace(scheduleID)
+	if scheduleID == "" {
+		return domainscheduler.Schedule{}, fmt.Errorf("schedule_id is required")
 	}
-	jobs, err := s.store.ListJobs(ctx, 1000)
+	schedules, err := s.store.ListSchedules(ctx, 1000)
 	if err != nil {
-		return domainscheduler.Job{}, err
+		return domainscheduler.Schedule{}, err
 	}
-	for _, job := range jobs {
-		if job.JobID == jobID {
-			return job, nil
+	for _, schedule := range schedules {
+		if string(schedule.ScheduleID) == scheduleID {
+			return schedule, nil
 		}
 	}
-	return domainscheduler.Job{}, fmt.Errorf("scheduler job not found: %s", jobID)
+	return domainscheduler.Schedule{}, fmt.Errorf("scheduler schedule not found: %s", scheduleID)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -3,29 +3,31 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type memoryStore struct {
-	jobs []domainscheduler.Job
-	logs []domainscheduler.RunLog
+	schedules []domainscheduler.Schedule
+	logs      []domainscheduler.RunLog
 }
 
-func (s *memoryStore) ListJobs(context.Context, int) ([]domainscheduler.Job, error) {
-	return append([]domainscheduler.Job(nil), s.jobs...), nil
+func (s *memoryStore) ListSchedules(context.Context, int) ([]domainscheduler.Schedule, error) {
+	return append([]domainscheduler.Schedule(nil), s.schedules...), nil
 }
 
-func (s *memoryStore) SaveJob(_ context.Context, job domainscheduler.Job) error {
-	for i := range s.jobs {
-		if s.jobs[i].JobID == job.JobID {
-			s.jobs[i] = job
+func (s *memoryStore) SaveSchedule(_ context.Context, schedule domainscheduler.Schedule) error {
+	for i := range s.schedules {
+		if s.schedules[i].ScheduleID == schedule.ScheduleID {
+			s.schedules[i] = schedule
 			return nil
 		}
 	}
-	s.jobs = append(s.jobs, job)
+	s.schedules = append(s.schedules, schedule)
 	return nil
 }
 
@@ -39,50 +41,59 @@ func (s *memoryStore) ListRunLogs(context.Context, int) ([]domainscheduler.RunLo
 }
 
 type recordingExecutor struct {
-	jobID string
+	scheduleID modulecore.ScheduleID
 }
 
 type deferredExecutor struct{}
 
-func (deferredExecutor) ExecuteScheduledJob(context.Context, domainscheduler.Job) (string, error) {
+func (deferredExecutor) ExecuteSchedule(context.Context, domainscheduler.Schedule) (string, error) {
 	return "GPU is busy", NewDeferredError(5*time.Minute, errors.New("gpu busy"))
 }
 
-func (e *recordingExecutor) ExecuteScheduledJob(_ context.Context, job domainscheduler.Job) (string, error) {
-	e.jobID = job.JobID
-	return "executed " + job.Name, nil
+func (e *recordingExecutor) ExecuteSchedule(_ context.Context, schedule domainscheduler.Schedule) (string, error) {
+	e.scheduleID = schedule.ScheduleID
+	return "executed " + schedule.Name, nil
 }
 
-func TestServiceDefersJobWithoutAdvancingToNextSchedule(t *testing.T) {
+func TestServiceDefersScheduleWithoutAdvancingToNextSchedule(t *testing.T) {
 	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
-	store := &memoryStore{jobs: []domainscheduler.Job{{
-		JobID: "tts_pronunciation_daily", Name: "TTS pronunciation daily",
+	scheduleID := modulecore.NewScheduleID()
+	store := &memoryStore{schedules: []domainscheduler.Schedule{{
+		ScheduleID: scheduleID, Name: "TTS pronunciation daily",
 		Schedule: "cron 30 19 * * *", Target: "tts_pronunciation_check", Enabled: true,
 		CreatedAt: now.Add(-24 * time.Hour), UpdatedAt: now.Add(-24 * time.Hour), NextRunAt: now,
 	}}}
 	svc := NewService(store, deferredExecutor{}).WithNow(func() time.Time { return now })
-	log, err := svc.RunJob(context.Background(), "tts_pronunciation_daily", "due")
+	log, err := svc.RunSchedule(context.Background(), string(scheduleID), "due")
 	if err != nil {
-		t.Fatalf("RunJob() error = %v", err)
+		t.Fatalf("RunSchedule() error = %v", err)
 	}
 	if log.Status != "deferred" || log.Error != "" {
 		t.Fatalf("log = %+v", log)
 	}
-	if want := now.Add(5 * time.Minute); !store.jobs[0].NextRunAt.Equal(want) {
-		t.Fatalf("NextRunAt=%v want=%v", store.jobs[0].NextRunAt, want)
+	if log.ScheduleID != scheduleID {
+		t.Fatalf("ScheduleID=%v want=%v", log.ScheduleID, scheduleID)
+	}
+	if log.TaskID.IsZero() || log.RunID == "" || strings.HasPrefix(string(log.RunID), "schedrun_") {
+		t.Fatalf("TaskID/RunID must be minted canonical IDs: log=%+v", log)
+	}
+	if want := now.Add(5 * time.Minute); !store.schedules[0].NextRunAt.Equal(want) {
+		t.Fatalf("NextRunAt=%v want=%v", store.schedules[0].NextRunAt, want)
 	}
 }
 
-func TestServiceRunsOnlyRequestedDueJob(t *testing.T) {
+func TestServiceRunsOnlyRequestedDueSchedule(t *testing.T) {
 	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
-	store := &memoryStore{jobs: []domainscheduler.Job{
-		{JobID: "tts_pronunciation_daily", Name: "TTS pronunciation daily", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
-		{JobID: "unrelated", Name: "Unrelated", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
+	targetID := modulecore.NewScheduleID()
+	otherID := modulecore.NewScheduleID()
+	store := &memoryStore{schedules: []domainscheduler.Schedule{
+		{ScheduleID: targetID, Name: "TTS pronunciation daily", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
+		{ScheduleID: otherID, Name: "Unrelated", Schedule: "every 24h", Enabled: true, CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now},
 	}}
 	executor := &recordingExecutor{}
 	svc := NewService(store, executor).WithNow(func() time.Time { return now })
-	log, ran, err := svc.RunDueJob(context.Background(), "tts_pronunciation_daily")
-	if err != nil || !ran || log.JobID != "tts_pronunciation_daily" || executor.jobID != "tts_pronunciation_daily" {
+	log, ran, err := svc.RunDueSchedule(context.Background(), string(targetID))
+	if err != nil || !ran || log.ScheduleID != targetID || executor.scheduleID != targetID {
 		t.Fatalf("log=%+v ran=%v executor=%+v err=%v", log, ran, executor, err)
 	}
 	if len(store.logs) != 1 {
@@ -90,49 +101,72 @@ func TestServiceRunsOnlyRequestedDueJob(t *testing.T) {
 	}
 }
 
-func TestServiceCreateDueRunAndDisableJob(t *testing.T) {
+func TestServiceCreateDueRunAndDisableSchedule(t *testing.T) {
 	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
 	store := &memoryStore{}
 	executor := &recordingExecutor{}
 	svc := NewService(store, executor).WithNow(func() time.Time { return now })
 	ctx := context.Background()
 
-	job, err := svc.CreateJob(ctx, domainscheduler.Job{
-		JobID:    "sched_backlog",
-		Name:     "Backlog heartbeat",
-		Schedule: "every 10m",
-		Target:   "backlog",
-		Prompt:   "process backlog",
+	scheduleID := modulecore.NewScheduleID()
+	schedule, err := svc.CreateSchedule(ctx, domainscheduler.Schedule{
+		ScheduleID: scheduleID,
+		Name:       "Backlog heartbeat",
+		Schedule:   "every 10m",
+		Target:     "backlog",
+		Prompt:     "process backlog",
 	})
 	if err != nil {
-		t.Fatalf("CreateJob() error = %v", err)
+		t.Fatalf("CreateSchedule() error = %v", err)
 	}
-	if !job.Enabled || !job.NextRunAt.Equal(now.Add(10*time.Minute)) {
-		t.Fatalf("job=%#v", job)
+	if !schedule.Enabled || !schedule.NextRunAt.Equal(now.Add(10*time.Minute)) {
+		t.Fatalf("schedule=%#v", schedule)
 	}
 
 	svc.WithNow(func() time.Time { return now.Add(11 * time.Minute) })
-	due, err := svc.DueJobs(ctx, 10)
-	if err != nil || len(due) != 1 || due[0].Job.JobID != "sched_backlog" {
+	due, err := svc.DueSchedules(ctx, 10)
+	if err != nil || len(due) != 1 || due[0].Schedule.ScheduleID != scheduleID {
 		t.Fatalf("due=%#v err=%v", due, err)
 	}
 
-	log, err := svc.RunJob(ctx, "sched_backlog", "manual")
+	log, err := svc.RunSchedule(ctx, string(scheduleID), "manual")
 	if err != nil {
-		t.Fatalf("RunJob() error = %v", err)
+		t.Fatalf("RunSchedule() error = %v", err)
 	}
-	if log.Status != "completed" || executor.jobID != "sched_backlog" || len(store.logs) != 1 {
+	if log.Status != "completed" || executor.scheduleID != scheduleID || len(store.logs) != 1 {
 		t.Fatalf("log=%#v executor=%#v logs=%#v", log, executor, store.logs)
 	}
-	if !store.jobs[0].LastRunAt.Equal(now.Add(11*time.Minute)) || !store.jobs[0].NextRunAt.Equal(now.Add(21*time.Minute)) {
-		t.Fatalf("job after run=%#v", store.jobs[0])
+	if log.TaskID.IsZero() || log.RunID == "" {
+		t.Fatalf("RunSchedule must mint TaskID and RunID: log=%+v", log)
+	}
+	if !store.schedules[0].LastRunAt.Equal(now.Add(11*time.Minute)) || !store.schedules[0].NextRunAt.Equal(now.Add(21*time.Minute)) {
+		t.Fatalf("schedule after run=%#v", store.schedules[0])
 	}
 
-	disabled, err := svc.DisableJob(ctx, "sched_backlog", "coder")
+	disabled, err := svc.DisableSchedule(ctx, string(scheduleID), "coder")
 	if err != nil {
-		t.Fatalf("DisableJob() error = %v", err)
+		t.Fatalf("DisableSchedule() error = %v", err)
 	}
 	if disabled.Enabled || disabled.DisabledBy != "coder" {
 		t.Fatalf("disabled=%#v", disabled)
+	}
+}
+
+func TestServiceCreateScheduleMintsScheduleIDWhenEmpty(t *testing.T) {
+	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
+	store := &memoryStore{}
+	svc := NewService(store, nil).WithNow(func() time.Time { return now })
+	schedule, err := svc.CreateSchedule(context.Background(), domainscheduler.Schedule{
+		Name:     "Auto ID",
+		Schedule: "every 1h",
+	})
+	if err != nil {
+		t.Fatalf("CreateSchedule() error = %v", err)
+	}
+	if schedule.ScheduleID == "" {
+		t.Fatal("expected ScheduleID to be minted")
+	}
+	if err := schedule.ScheduleID.Validate(); err != nil {
+		t.Fatalf("ScheduleID.Validate() error = %v", err)
 	}
 }

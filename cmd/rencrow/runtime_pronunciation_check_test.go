@@ -10,25 +10,35 @@ import (
 	schedulerpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/scheduler"
 )
 
-func TestEnsurePronunciationCheckJobRegistersSingleCORETask(t *testing.T) {
+func TestEnsurePronunciationCheckScheduleRegistersSingleCORETask(t *testing.T) {
 	store := schedulerpersistence.NewJSONLStore(t.TempDir())
 	service := schedulerapp.NewService(store, nil)
+	var firstID string
 	for range 2 {
-		if err := ensurePronunciationCheckJob(context.Background(), store, service, "every 24h"); err != nil {
-			t.Fatalf("ensurePronunciationCheckJob() error = %v", err)
+		scheduleID, err := ensurePronunciationCheckSchedule(context.Background(), store, service, "every 24h")
+		if err != nil {
+			t.Fatalf("ensurePronunciationCheckSchedule() error = %v", err)
+		}
+		if firstID == "" {
+			firstID = string(scheduleID)
+		} else if string(scheduleID) != firstID {
+			t.Fatalf("expected stable schedule_id, got %s then %s", firstID, scheduleID)
 		}
 	}
-	jobs, err := store.ListJobs(context.Background(), 10)
+	schedules, err := store.ListSchedules(context.Background(), 10)
 	if err != nil {
-		t.Fatalf("ListJobs() error = %v", err)
+		t.Fatalf("ListSchedules() error = %v", err)
 	}
-	if len(jobs) != 1 || jobs[0].JobID != pronunciationCheckJobID || jobs[0].Target != pronunciationapp.ScheduledTarget || !jobs[0].Enabled {
-		t.Fatalf("jobs = %+v", jobs)
+	if len(schedules) != 1 || schedules[0].Target != pronunciationapp.ScheduledTarget || !schedules[0].Enabled {
+		t.Fatalf("schedules = %+v", schedules)
+	}
+	if err := schedules[0].ScheduleID.Validate(); err != nil {
+		t.Fatalf("ScheduleID.Validate() error = %v", err)
 	}
 }
 
-func TestPronunciationSchedulerExecutorPreservesUnrelatedJobs(t *testing.T) {
-	summary, err := (pronunciationSchedulerExecutor{}).ExecuteScheduledJob(context.Background(), domainscheduler.Job{Target: "unrelated"})
+func TestPronunciationSchedulerExecutorPreservesUnrelatedSchedules(t *testing.T) {
+	summary, err := (pronunciationSchedulerExecutor{}).ExecuteSchedule(context.Background(), domainscheduler.Schedule{Target: "unrelated"})
 	if err != nil || summary != "scheduler run recorded without an executor" {
 		t.Fatalf("summary=%q err=%v", summary, err)
 	}

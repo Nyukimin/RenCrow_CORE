@@ -6,36 +6,39 @@ import (
 	"time"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestJSONLStorePersistsLatestJobsAndRunAudit(t *testing.T) {
+func TestJSONLStorePersistsLatestSchedulesAndRunAudit(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
 	ctx := context.Background()
 	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
-	job := domainscheduler.Job{
-		JobID:     "sched_backlog",
-		Name:      "Backlog heartbeat",
-		Schedule:  "every 15m",
-		Prompt:    "process backlog",
-		Target:    "backlog",
-		Enabled:   true,
-		CreatedAt: now,
-		UpdatedAt: now,
-		NextRunAt: now.Add(15 * time.Minute),
+	scheduleID := modulecore.NewScheduleID()
+	schedule := domainscheduler.Schedule{
+		ScheduleID: scheduleID,
+		Name:       "Backlog heartbeat",
+		Schedule:   "every 15m",
+		Prompt:     "process backlog",
+		Target:     "backlog",
+		Enabled:    true,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		NextRunAt:  now.Add(15 * time.Minute),
 	}
-	if err := store.SaveJob(ctx, job); err != nil {
-		t.Fatalf("SaveJob() error = %v", err)
+	if err := store.SaveSchedule(ctx, schedule); err != nil {
+		t.Fatalf("SaveSchedule() error = %v", err)
 	}
-	job.Enabled = false
-	job.UpdatedAt = now.Add(time.Minute)
-	job.DisabledAt = now.Add(time.Minute)
-	job.DisabledBy = "coder"
-	if err := store.SaveJob(ctx, job); err != nil {
-		t.Fatalf("SaveJob(disabled) error = %v", err)
+	schedule.Enabled = false
+	schedule.UpdatedAt = now.Add(time.Minute)
+	schedule.DisabledAt = now.Add(time.Minute)
+	schedule.DisabledBy = "coder"
+	if err := store.SaveSchedule(ctx, schedule); err != nil {
+		t.Fatalf("SaveSchedule(disabled) error = %v", err)
 	}
 	if err := store.SaveRunLog(ctx, domainscheduler.RunLog{
-		RunID:       "schedrun_1",
-		JobID:       job.JobID,
+		RunID:       modulecore.NewRunID(),
+		ScheduleID:  scheduleID,
+		TaskID:      modulecore.NewTaskID(),
 		Trigger:     "manual",
 		Status:      "completed",
 		StartedAt:   now,
@@ -44,12 +47,12 @@ func TestJSONLStorePersistsLatestJobsAndRunAudit(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SaveRunLog() error = %v", err)
 	}
-	jobs, err := store.ListJobs(ctx, 10)
-	if err != nil || len(jobs) != 1 || jobs[0].Enabled || jobs[0].DisabledBy != "coder" {
-		t.Fatalf("jobs=%#v err=%v", jobs, err)
+	schedules, err := store.ListSchedules(ctx, 10)
+	if err != nil || len(schedules) != 1 || schedules[0].Enabled || schedules[0].DisabledBy != "coder" {
+		t.Fatalf("schedules=%#v err=%v", schedules, err)
 	}
 	logs, err := store.ListRunLogs(ctx, 10)
-	if err != nil || len(logs) != 1 || logs[0].RunID != "schedrun_1" {
+	if err != nil || len(logs) != 1 || logs[0].ScheduleID != scheduleID {
 		t.Fatalf("logs=%#v err=%v", logs, err)
 	}
 }

@@ -22,9 +22,9 @@ func TestScheduledExecutorMapsGPUDeferralAndCompletesReport(t *testing.T) {
 		GPUMatch: "RTX 5060 Ti", MinFreeMB: 768, MaxUtilizationPercent: 10,
 		RetryAfter: 5 * time.Minute,
 	}))
-	job := domainscheduler.Job{Target: ScheduledTarget}
-	if _, err := executor.ExecuteScheduledJob(context.Background(), job); err == nil {
-		t.Fatal("ExecuteScheduledJob() returned nil error for busy GPU")
+	schedule := domainscheduler.Schedule{Target: ScheduledTarget}
+	if _, err := executor.ExecuteSchedule(context.Background(), schedule); err == nil {
+		t.Fatal("ExecuteSchedule() returned nil error for busy GPU")
 	}
 
 	idleProbe := &fakeGPUProbe{snapshots: []GPUSnapshot{{
@@ -33,7 +33,7 @@ func TestScheduledExecutorMapsGPUDeferralAndCompletesReport(t *testing.T) {
 	executor = NewScheduledExecutor(NewService(idleProbe, &fakeTool{}, Config{
 		GPUMatch: "RTX 5060 Ti", MinFreeMB: 768, MaxUtilizationPercent: 10, IdleSamples: 1,
 	}))
-	summary, err := executor.ExecuteScheduledJob(context.Background(), job)
+	summary, err := executor.ExecuteSchedule(context.Background(), schedule)
 	if err != nil || summary == "" {
 		t.Fatalf("summary=%q err=%v", summary, err)
 	}

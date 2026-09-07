@@ -1,0 +1,94 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step15-scheduler",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T04:55:00Z",
+  "input": {
+    "base_revision": "d2b05e0",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-15-scheduler",
+    "schedule_rule": "Scheduler definitions are Schedule entities addressed by typed ScheduleID sch_; scheduler.Job and JobID are forbidden in scheduler owners",
+    "heartbeat_rule": "Workstream HeartbeatSchedule primary identity is ScheduleID; HeartbeatID is forbidden",
+    "fire_rule": "Schedule fire mints distinct canonical TaskID and RunID; ScheduleID is never reused as TaskID or RunID and RunID is never derived by string concatenation from ScheduleID",
+    "completion_rule": "Scheduler domain JobID zero; Schedule definition and Task or Run execution ID sharing zero after cutover and migration source removal"
+  },
+  "included": [
+    {
+      "check_id": "s15_scheduler_schedule_id",
+      "guarantee": "domainscheduler Schedule uses typed ScheduleID with JSON schedule_id and zero Job JobID job_id in scheduler domain application persistence viewer handlers for scheduler",
+      "owner": "RenCrow_CORE scheduler",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Viewer scheduler and pronunciation schedule runtime",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s15_schedule_fire_task_run",
+      "guarantee": "Schedule fire and manual run create RunLog with ScheduleID plus newly minted TaskID and RunID that differ from ScheduleID and do not use schedrun_ concatenation",
+      "owner": "RenCrow_CORE scheduler application",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "scheduler run logs",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s15_heartbeat_schedule_id",
+      "guarantee": "HeartbeatSchedule uses ScheduleID with JSON schedule_id and zero HeartbeatID heartbeat_id in workstream domain persistence client and heartbeat application owners",
+      "owner": "RenCrow_CORE workstream heartbeat",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "workstream heartbeat schedules",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s15_historical_migration",
+      "guarantee": "offline one-shot CLI remaps scheduler JSONL job_id to schedule_id and run logs plus workstream heartbeat_schedule rows with dry-run apply agreement second-run noop and refuses live /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step15 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state",
+      "failure_action": "leave old binary and state active or rollback"
+    },
+    {
+      "check_id": "s15_architecture_zero",
+      "guarantee": "Step15 owners contain zero scheduler JobID HeartbeatID and schedrun_ derived RunID patterns after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step15 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s15_predeploy_verification",
+      "guarantee": "targeted owner tests vet build and diff checks pass against reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s15_runtime_route",
+      "guarantee": "installed artifact readiness scheduler and heartbeat projections agree before and after restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step15 ledger",
+      "failure_action": "rollback or keep Step15 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s15_complexity_movie_local_job_id",
+      "reason": "Complexity coder and moviecatalog JobID are domain-local execution labels not Scheduler Schedule definitions",
+      "consumer": "owner-local Identity cleanup if later declared",
+      "failure_action": "keep domain-local JobID outside Step15 zero claim"
+    },
+    {
+      "check_id": "s15_durable_task_store_projection",
+      "reason": "minting TaskID and RunID on Schedule fire closes ID sharing zero; wiring every fire into durable Task store Create is a follow-on IU if required beyond RunLog attribution",
+      "consumer": "scheduler to durable Task bridge IU if declared",
+      "failure_action": "keep RunLog TaskID RunID as fire attribution until bridge IU closes"
+    },
+    {
+      "check_id": "s15_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

@@ -68,7 +68,7 @@ func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
 		t.Fatalf("SaveSteeringItem failed: %v", err)
 	}
 	if err := store.SaveHeartbeatSchedule(ctx, domainworkstream.HeartbeatSchedule{
-		HeartbeatID:  "hb_1",
+		ScheduleID:   modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"),
 		WorkstreamID: "ws_1",
 		ScheduleText: "daily 08:00",
 		Task:         "draft report only",
@@ -109,7 +109,7 @@ func TestJSONLStoreSaveAndListWorkstreamRecords(t *testing.T) {
 		t.Fatalf("steering=%#v err=%v", steering, err)
 	}
 	heartbeats, err := store.ListHeartbeatSchedules(ctx, 10)
-	if err != nil || len(heartbeats) != 1 || heartbeats[0].HeartbeatID != "hb_1" {
+	if err != nil || len(heartbeats) != 1 || heartbeats[0].ScheduleID != modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84") {
 		t.Fatalf("heartbeats=%#v err=%v", heartbeats, err)
 	}
 	vaultUpdates, err := store.ListVaultUpdateLogs(ctx, 10)
@@ -450,7 +450,7 @@ func TestJSONLStoreRejectsInvalidArtifactAndSteering(t *testing.T) {
 		t.Fatal("expected invalid steering item to fail")
 	}
 	if err := store.SaveHeartbeatSchedule(ctx, domainworkstream.HeartbeatSchedule{
-		HeartbeatID: "hb_1",
+		ScheduleID: modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"),
 	}); err == nil {
 		t.Fatal("expected invalid heartbeat schedule to fail")
 	}

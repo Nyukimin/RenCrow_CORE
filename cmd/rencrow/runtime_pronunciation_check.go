@@ -12,19 +12,18 @@ import (
 	schedulerapp "github.com/Nyukimin/RenCrow_CORE/internal/application/scheduler"
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 	pronunciationtool "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/pronunciationtool"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
-
-const pronunciationCheckJobID = "tts_pronunciation_daily"
 
 type pronunciationSchedulerExecutor struct {
 	inner schedulerapp.Executor
 }
 
-func (e pronunciationSchedulerExecutor) ExecuteScheduledJob(ctx context.Context, job domainscheduler.Job) (string, error) {
-	if job.Target != pronunciationapp.ScheduledTarget {
+func (e pronunciationSchedulerExecutor) ExecuteSchedule(ctx context.Context, schedule domainscheduler.Schedule) (string, error) {
+	if schedule.Target != pronunciationapp.ScheduledTarget {
 		return "scheduler run recorded without an executor", nil
 	}
-	return e.inner.ExecuteScheduledJob(ctx, job)
+	return e.inner.ExecuteSchedule(ctx, schedule)
 }
 
 func buildPronunciationCheckRuntime(cfg *config.Config, deps *Dependencies) {
@@ -47,58 +46,63 @@ func buildPronunciationCheckRuntime(cfg *config.Config, deps *Dependencies) {
 	})
 	executor := pronunciationSchedulerExecutor{inner: pronunciationapp.NewScheduledExecutor(service)}
 	schedulerService := schedulerapp.NewService(deps.schedulerStore, executor)
-	if err := ensurePronunciationCheckJob(context.Background(), deps.schedulerStore, schedulerService, settings.Schedule); err != nil {
+	scheduleID, err := ensurePronunciationCheckSchedule(context.Background(), deps.schedulerStore, schedulerService, settings.Schedule)
+	if err != nil {
 		log.Printf("[PronunciationCheck] failed to register CORE task: %v", err)
 		return
 	}
 	deps.schedulerStatus = viewer.HandleSchedulerWithExecutor(deps.schedulerStore, executor)
 	ctx, cancel := context.WithCancel(context.Background())
 	deps.pronunciationCheckCancel = cancel
-	go runPronunciationCheckScheduler(ctx, schedulerService)
-	log.Printf("[PronunciationCheck] CORE task enabled (job_id=%s schedule=%s gpu=%s)", pronunciationCheckJobID, settings.Schedule, settings.GPUMatch)
+	go runPronunciationCheckScheduler(ctx, schedulerService, scheduleID)
+	log.Printf("[PronunciationCheck] CORE task enabled (schedule_id=%s schedule=%s gpu=%s)", scheduleID, settings.Schedule, settings.GPUMatch)
 }
 
-func ensurePronunciationCheckJob(ctx context.Context, store viewer.SchedulerStore, service *schedulerapp.Service, schedule string) error {
-	jobs, err := store.ListJobs(ctx, 1000)
+func ensurePronunciationCheckSchedule(ctx context.Context, store viewer.SchedulerStore, service *schedulerapp.Service, scheduleExpr string) (modulecore.ScheduleID, error) {
+	schedules, err := store.ListSchedules(ctx, 1000)
 	if err != nil {
-		return err
+		return "", err
 	}
-	for _, job := range jobs {
-		if job.JobID != pronunciationCheckJobID {
+	for _, schedule := range schedules {
+		if schedule.Target != pronunciationapp.ScheduledTarget {
 			continue
 		}
-		if job.Schedule == schedule && job.Target == pronunciationapp.ScheduledTarget {
-			return nil
+		if schedule.Schedule == scheduleExpr {
+			return schedule.ScheduleID, nil
 		}
-		job.Schedule = schedule
-		job.Target = pronunciationapp.ScheduledTarget
-		job.Name = "TTS pronunciation daily check"
-		job.Description = "Run one-sentence TTS pronunciation checks after the configured GPU becomes idle"
-		job.UpdatedAt = time.Now().UTC()
-		if job.Enabled {
-			next, nextErr := domainscheduler.NextRunAfter(schedule, job.UpdatedAt)
+		schedule.Schedule = scheduleExpr
+		schedule.Name = "TTS pronunciation daily check"
+		schedule.Description = "Run one-sentence TTS pronunciation checks after the configured GPU becomes idle"
+		schedule.UpdatedAt = time.Now().UTC()
+		if schedule.Enabled {
+			next, nextErr := domainscheduler.NextRunAfter(scheduleExpr, schedule.UpdatedAt)
 			if nextErr != nil {
-				return nextErr
+				return "", nextErr
 			}
-			job.NextRunAt = next
+			schedule.NextRunAt = next
 		}
-		return store.SaveJob(ctx, job)
+		if err := store.SaveSchedule(ctx, schedule); err != nil {
+			return "", err
+		}
+		return schedule.ScheduleID, nil
 	}
-	_, err = service.CreateJob(ctx, domainscheduler.Job{
-		JobID:       pronunciationCheckJobID,
+	created, err := service.CreateSchedule(ctx, domainscheduler.Schedule{
 		Name:        "TTS pronunciation daily check",
-		Schedule:    schedule,
+		Schedule:    scheduleExpr,
 		Target:      pronunciationapp.ScheduledTarget,
 		Description: "Run one-sentence TTS pronunciation checks after the configured GPU becomes idle",
 	})
-	return err
+	if err != nil {
+		return "", err
+	}
+	return created.ScheduleID, nil
 }
 
-func runPronunciationCheckScheduler(ctx context.Context, service *schedulerapp.Service) {
+func runPronunciationCheckScheduler(ctx context.Context, service *schedulerapp.Service, scheduleID modulecore.ScheduleID) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
-		if logEntry, ran, err := service.RunDueJob(ctx, pronunciationCheckJobID); err != nil {
+		if logEntry, ran, err := service.RunDueSchedule(ctx, string(scheduleID)); err != nil {
 			log.Printf("[PronunciationCheck] CORE task failed: %v", err)
 		} else if ran {
 			log.Printf("[PronunciationCheck] CORE task status=%s summary=%s", logEntry.Status, logEntry.Summary)

@@ -791,7 +791,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesDraftReportAndPendingVaultUpdate(t *te
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &memoryWorkstreamHeartbeatStore{
 		schedules: []domainworkstream.HeartbeatSchedule{{
-			HeartbeatID:  "hb_revenue_daily",
+			ScheduleID:   modulecore.ScheduleID("sch_8d9fcda5-4737-5aa7-8275-293d10aba58f"),
 			WorkstreamID: "ws_revenue",
 			ScheduleText: "daily 08:00",
 			Task:         "昨日の投稿反応を確認する",
@@ -849,7 +849,7 @@ func TestRunDueWorkstreamHeartbeatsCreatesRevenueDailyRoutineDraftReport(t *test
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	workstreamStore := &memoryWorkstreamHeartbeatStore{
 		schedules: []domainworkstream.HeartbeatSchedule{{
-			HeartbeatID:  "hb_revenue_daily",
+			ScheduleID:   modulecore.ScheduleID("sch_8d9fcda5-4737-5aa7-8275-293d10aba58f"),
 			WorkstreamID: "ws_revenue",
 			ScheduleText: "daily 08:00",
 			Task:         "収益化の日次ルーチンとして市場調査と顧客の声を確認する",
@@ -902,7 +902,7 @@ func TestRunDueWorkstreamHeartbeatsRecordsSkillBootstrap(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	workstreamStore := &memoryWorkstreamHeartbeatStore{
 		schedules: []domainworkstream.HeartbeatSchedule{{
-			HeartbeatID:  "hb_1",
+			ScheduleID:   modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"),
 			WorkstreamID: "ws_1",
 			ScheduleText: "daily 08:00",
 			Task:         "作業ログを確認する",
@@ -942,7 +942,7 @@ func TestRunDueWorkstreamHeartbeatsAppliesPendingSteeringAtSafeCheckpoint(t *tes
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
 	store := &memoryWorkstreamHeartbeatStore{
 		schedules: []domainworkstream.HeartbeatSchedule{{
-			HeartbeatID:  "hb_1",
+			ScheduleID:   modulecore.ScheduleID("sch_c0d4aec2-01bf-5cd4-9408-2ee31b178c84"),
 			WorkstreamID: "ws_1",
 			ScheduleText: "daily 08:00",
 			Task:         "作業ログを確認する",
@@ -994,7 +994,7 @@ func TestRunDueWorkstreamHeartbeatsSkipsInactiveOrFutureSchedules(t *testing.T) 
 	store := &memoryWorkstreamHeartbeatStore{
 		schedules: []domainworkstream.HeartbeatSchedule{
 			{
-				HeartbeatID:  "hb_paused",
+				ScheduleID:   modulecore.ScheduleID("sch_b9bd908d-fe51-5109-8877-58900d2d1cc8"),
 				WorkstreamID: "ws_1",
 				ScheduleText: "daily 08:00",
 				Task:         "paused",
@@ -1003,7 +1003,7 @@ func TestRunDueWorkstreamHeartbeatsSkipsInactiveOrFutureSchedules(t *testing.T) 
 				CreatedAt:    now,
 			},
 			{
-				HeartbeatID:  "hb_future",
+				ScheduleID:   modulecore.ScheduleID("sch_48d10f10-3842-51c5-8b6c-09c24c9ac913"),
 				WorkstreamID: "ws_1",
 				ScheduleText: "daily 08:00",
 				Task:         "future",
