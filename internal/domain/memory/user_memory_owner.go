@@ -3,6 +3,8 @@ package memory
 import (
 	"errors"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const UserMemoryOwnerPolicyRevision = "memory-owner/v1"
@@ -33,18 +35,20 @@ var (
 // Storage identity (user_id, namespace, source and metadata) is intentionally
 // not part of this type.
 type UserMemoryOwnerView struct {
-	ID               string    `json:"id"`
-	Type             string    `json:"type"`
-	Statement        string    `json:"statement"`
-	EvidenceEventIDs []string  `json:"evidence_event_ids,omitempty"`
-	Confidence       float64   `json:"confidence"`
-	Sensitivity      string    `json:"sensitivity"`
-	State            string    `json:"state"`
-	PersonaScope     string    `json:"persona_scope"`
-	Active           bool      `json:"active"`
-	SupersededBy     string    `json:"superseded_by,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID               string             `json:"id"`
+	Type             string             `json:"type"`
+	Statement        string             `json:"statement"`
+	EvidenceEventIDs []string           `json:"evidence_event_ids,omitempty"`
+	CreatedByEventID modulecore.EventID `json:"created_by_event_id,omitempty"`
+	UpdatedByEventID modulecore.EventID `json:"updated_by_event_id,omitempty"`
+	Confidence       float64            `json:"confidence"`
+	Sensitivity      string             `json:"sensitivity"`
+	State            string             `json:"state"`
+	PersonaScope     string             `json:"persona_scope"`
+	Active           bool               `json:"active"`
+	SupersededBy     string             `json:"superseded_by,omitempty"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 // UserMemoryOwnerReceipt closes one owner operation at the CORE boundary.
@@ -74,6 +78,8 @@ func UserMemoryOwnerViewFromMemory(item UserMemory) UserMemoryOwnerView {
 		Type:             item.Type,
 		Statement:        item.Statement,
 		EvidenceEventIDs: append([]string(nil), item.EvidenceEventIDs...),
+		CreatedByEventID: item.CreatedByEventID,
+		UpdatedByEventID: item.UpdatedByEventID,
 		Confidence:       item.Confidence,
 		Sensitivity:      item.Sensitivity,
 		State:            item.State,

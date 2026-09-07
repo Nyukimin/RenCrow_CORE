@@ -6,6 +6,7 @@ import (
 	"time"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestBuildReportMarkdownIncludesHotspotRiskAndEvidence(t *testing.T) {
@@ -37,7 +38,7 @@ func TestBuildReportMarkdownIncludesHotspotRiskAndEvidence(t *testing.T) {
 			CreatedAt:            now,
 		}},
 		Evidence: []domaincomplexity.HotspotEvidence{{
-			EvidenceID: "ev_1",
+			EvidenceID: modulecore.NewEvidenceID(),
 			HotspotID:  "hot_1",
 			FilePath:   "internal/app.go",
 			Snippet:    "items.map(item => users.find(...))",

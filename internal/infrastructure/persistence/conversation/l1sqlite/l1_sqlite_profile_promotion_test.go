@@ -11,6 +11,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func newProfilePromotionTestStore(t *testing.T) *L1SQLiteStore {
@@ -58,9 +59,21 @@ func TestProfilePromotionPersistsUserRawJobsAndCompletesAtomically(t *testing.T)
 	if len(memories[0].EvidenceEventIDs) != 1 || memories[0].EvidenceEventIDs[0] != batch.Messages[0].EventID {
 		t.Fatalf("evidence=%v", memories[0].EvidenceEventIDs)
 	}
+	if memories[0].CreatedByEventID != modulecore.EventID(batch.Messages[0].EventID) {
+		t.Fatalf("created_by_event_id=%q want %q", memories[0].CreatedByEventID, batch.Messages[0].EventID)
+	}
 	jobs, err := store.ListProfilePromotionJobs(ctx, 10)
 	if err != nil || len(jobs) != 1 || jobs[0].State != domainmemory.ProfilePromotionCompleted {
 		t.Fatalf("jobs=%#v err=%v", jobs, err)
+	}
+	if jobs[0].TaskID == "" || jobs[0].RunID == "" {
+		t.Fatalf("profile promotion job missing task/run attribution: %+v", jobs[0])
+	}
+	if err := jobs[0].TaskID.Validate(); err != nil {
+		t.Fatalf("task id invalid: %v", err)
+	}
+	if err := jobs[0].RunID.Validate(); err != nil {
+		t.Fatalf("run id invalid: %v", err)
 	}
 
 	// Deterministic candidate identity prevents duplicate candidates on replay.

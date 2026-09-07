@@ -184,7 +184,8 @@ func (p VerificationPolicy) Normalized() VerificationPolicy {
 }
 
 type VerificationReport struct {
-	ID               string                 `json:"id"`
+	ArtifactID       modulecore.ArtifactID  `json:"artifact_id"`
+	Kind             modulecore.ArtifactKind `json:"artifact_kind"`
 	TaskID           modulecore.TaskID      `json:"task_id"`
 	SessionID        string                 `json:"session_id"`
 	Route            string                 `json:"route"`
@@ -206,8 +207,14 @@ type VerificationReport struct {
 }
 
 func (r VerificationReport) Validate() error {
-	if strings.TrimSpace(r.ID) == "" {
-		return errors.New("verification report id is required")
+	if err := r.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("verification report artifact_id: %w", err)
+	}
+	if err := r.Kind.Validate(); err != nil {
+		return fmt.Errorf("verification report artifact_kind: %w", err)
+	}
+	if r.Kind != modulecore.ArtifactKindReport {
+		return fmt.Errorf("verification report artifact_kind must be %q", modulecore.ArtifactKindReport)
 	}
 	if err := r.TaskID.Validate(); err != nil {
 		return fmt.Errorf("verification report task_id: %w", err)

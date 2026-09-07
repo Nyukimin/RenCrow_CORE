@@ -86,7 +86,9 @@ const (
 )
 
 type ProfilePromotionJob struct {
-	EvidenceEventID string                `json:"evidence_event_id"`
+	EvidenceEventID modulecore.EventID    `json:"evidence_event_id"`
+	TaskID          modulecore.TaskID     `json:"task_id,omitempty"`
+	RunID           modulecore.RunID      `json:"run_id,omitempty"`
 	SessionID       string                `json:"session_id"`
 	ThreadID        modulecore.ThreadID   `json:"thread_id"`
 	ThreadSeq       modulecore.ThreadSeq  `json:"thread_seq"`
@@ -99,6 +101,21 @@ type ProfilePromotionJob struct {
 	LastError       string                `json:"last_error,omitempty"`
 	CreatedAt       time.Time             `json:"created_at"`
 	UpdatedAt       time.Time             `json:"updated_at"`
+}
+
+// ValidateProfilePromotionJobAttribution validates TaskID and RunID when present.
+func ValidateProfilePromotionJobAttribution(job ProfilePromotionJob) error {
+	if job.TaskID != "" {
+		if err := job.TaskID.Validate(); err != nil {
+			return fmt.Errorf("profile promotion task id is invalid: %w", err)
+		}
+	}
+	if job.RunID != "" {
+		if err := job.RunID.Validate(); err != nil {
+			return fmt.Errorf("profile promotion run id is invalid: %w", err)
+		}
+	}
+	return nil
 }
 
 // L1DBPoolStats is the cumulative sql.DB pool snapshot exposed with

@@ -130,7 +130,7 @@ func (s *SQLiteStore) SaveHotspotEvidence(ctx context.Context, item domaincomple
 	if err := domaincomplexity.ValidateHotspotEvidence(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "complexity_hotspot_evidence", "evidence_id", item.EvidenceID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "complexity_hotspot_evidence", "evidence_id", string(item.EvidenceID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListHotspotEvidence(ctx context.Context, limit int) ([]domaincomplexity.HotspotEvidence, error) {

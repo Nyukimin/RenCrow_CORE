@@ -1,6 +1,10 @@
 package complexity
 
-import "time"
+import (
+	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 type ScanEvent struct {
 	ScanID        string    `json:"scan_id"`
@@ -34,7 +38,7 @@ type Hotspot struct {
 }
 
 type HotspotEvidence struct {
-	EvidenceID string    `json:"evidence_id"`
+	EvidenceID modulecore.EvidenceID `json:"evidence_id"`
 	HotspotID  string    `json:"hotspot_id"`
 	FilePath   string    `json:"file_path"`
 	LineStart  int       `json:"line_start,omitempty"`

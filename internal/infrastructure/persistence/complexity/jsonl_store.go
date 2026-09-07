@@ -125,7 +125,7 @@ func (s *JSONLStore) ListHotspotEvidence(_ context.Context, limit int) ([]domain
 	}); err != nil {
 		return nil, err
 	}
-	return reverseUniqueLimit(items, limit, func(item domaincomplexity.HotspotEvidence) string { return item.EvidenceID }), nil
+	return reverseUniqueLimit(items, limit, func(item domaincomplexity.HotspotEvidence) string { return string(item.EvidenceID) }), nil
 }
 
 func (s *JSONLStore) SaveReportArtifact(_ context.Context, item domaincomplexity.ReportArtifact) error {

@@ -118,7 +118,7 @@ func writeCoderDiffEvidence(b *strings.Builder, hotspot domaincomplexity.Hotspot
 			b.WriteString("\n## Observed Evidence Snippets\n\n")
 			wroteHeader = true
 		}
-		fmt.Fprintf(b, "### Evidence `%s`\n\n", fallbackText(item.EvidenceID, "unknown"))
+		fmt.Fprintf(b, "### Evidence `%s`\n\n", fallbackText(string(item.EvidenceID), "unknown"))
 		if item.LineStart > 0 {
 			if item.LineEnd > item.LineStart {
 				fmt.Fprintf(b, "- Lines: %d-%d\n", item.LineStart, item.LineEnd)

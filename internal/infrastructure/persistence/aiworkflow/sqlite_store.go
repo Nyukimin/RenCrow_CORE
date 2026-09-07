@@ -49,7 +49,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS project_memory_index (
-			id TEXT PRIMARY KEY,
+			memory_id TEXT PRIMARY KEY,
 			repo TEXT,
 			file_path TEXT,
 			memory_type TEXT,
@@ -99,6 +99,9 @@ func (s *SQLiteStore) migrate() error {
 	if err := addColumnIfMissing(s.db, "ai_context_usage", "task_id", "TEXT"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(s.db, "project_memory_index", "memory_id", "TEXT"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -107,9 +110,9 @@ func (s *SQLiteStore) SaveProjectMemoryIndex(ctx context.Context, item domainai.
 		return err
 	}
 	return s.save(ctx, `INSERT OR REPLACE INTO project_memory_index (
-		id, repo, file_path, memory_type, updated_at, payload
+		memory_id, repo, file_path, memory_type, updated_at, payload
 	) VALUES (?, ?, ?, ?, ?, ?)`,
-		item.ID, item.Repo, item.FilePath, item.MemoryType, item.UpdatedAt.Format(timeFormatRFC3339Nano), item)
+		item.MemoryID, item.Repo, item.FilePath, item.MemoryType, item.UpdatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListProjectMemoryIndexes(ctx context.Context, limit int) ([]domainai.ProjectMemoryIndex, error) {

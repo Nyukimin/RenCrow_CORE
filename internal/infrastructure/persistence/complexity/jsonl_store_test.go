@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestJSONLStoreSavesAndListsComplexityRecords(t *testing.T) {
@@ -36,7 +37,7 @@ func TestJSONLStoreSavesAndListsComplexityRecords(t *testing.T) {
 		CreatedAt:           now,
 	}
 	evidence := domaincomplexity.HotspotEvidence{
-		EvidenceID: "ev_1",
+		EvidenceID: modulecore.NewEvidenceID(),
 		HotspotID:  "hot_1",
 		FilePath:   "src/app.go",
 		Snippet:    "for ...",

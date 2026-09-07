@@ -10,7 +10,7 @@ import (
 
 func TestValidateAIWorkflowRecords(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 10, 0, 0, time.UTC)
-	if err := ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
+	if err := ValidateProjectMemoryIndex(ProjectMemoryIndex{MemoryID: modulecore.NewMemoryID(), Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
 		t.Fatalf("ValidateProjectMemoryIndex() error = %v", err)
 	}
 	if err := ValidateWorktreeRegistry(WorktreeRegistry{WorktreeID: "wt_1", Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}); err != nil {
@@ -41,7 +41,7 @@ func TestValidateAIWorkflowRejectsMissingTimestamp(t *testing.T) {
 			name: "project memory",
 			err:  "updated_at",
 			run: func() error {
-				return ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project"})
+				return ValidateProjectMemoryIndex(ProjectMemoryIndex{MemoryID: modulecore.NewMemoryID(), Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project"})
 			},
 		},
 		{
@@ -128,10 +128,10 @@ func TestValidateAIWorkflowRejectsMissingRequiredFields(t *testing.T) {
 		err  error
 		want string
 	}{
-		{name: "project memory missing id", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "id"},
-		{name: "project memory missing repo", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "repo"},
-		{name: "project memory missing file path", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", MemoryType: "project", UpdatedAt: now}), want: "file_path"},
-		{name: "project memory missing type", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", UpdatedAt: now}), want: "memory_type"},
+		{name: "project memory missing id", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "memory_id"},
+		{name: "project memory missing repo", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{MemoryID: modulecore.NewMemoryID(), FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}), want: "repo"},
+		{name: "project memory missing file path", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{MemoryID: modulecore.NewMemoryID(), Repo: "repo", MemoryType: "project", UpdatedAt: now}), want: "file_path"},
+		{name: "project memory missing type", err: ValidateProjectMemoryIndex(ProjectMemoryIndex{MemoryID: modulecore.NewMemoryID(), Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", UpdatedAt: now}), want: "memory_type"},
 		{name: "worktree missing id", err: ValidateWorktreeRegistry(WorktreeRegistry{Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}), want: "worktree_id"},
 		{name: "worktree missing repo", err: ValidateWorktreeRegistry(WorktreeRegistry{WorktreeID: "wt_1", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}), want: "repo"},
 		{name: "worktree missing path", err: ValidateWorktreeRegistry(WorktreeRegistry{WorktreeID: "wt_1", Repo: "repo", Branch: "feature/a", Status: "active", CreatedAt: now}), want: "path"},

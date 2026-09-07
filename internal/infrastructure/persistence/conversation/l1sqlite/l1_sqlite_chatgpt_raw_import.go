@@ -1042,11 +1042,7 @@ func ensureChatGPTPromotionJobTx(ctx context.Context, tx *sql.Tx, ownerID string
 	err := tx.QueryRowContext(ctx, `SELECT session_id, thread_id, thread_seq, thread_kind, state FROM l1_profile_promotion_job WHERE evidence_event_id = ?`, item.EvidenceID).Scan(&existingSession, &existingThread, &existingSeq, &existingKind, &existingState)
 	if errors.Is(err, sql.ErrNoRows) {
 		createdAt := chatGPTRawOccurredAt(item)
-		completedInsert, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO l1_profile_promotion_job (
-	 evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
-	 lease_token, last_error, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)`, item.EvidenceID, string(sessionID), threadID, 1, modulecore.ThreadKindUserConversation, domainmemory.ProfilePromotionPending, createdAt, time.Now().UTC())
+		completedInsert, err := execInsertProfilePromotionJob(ctx, tx, true, item.EvidenceID, string(sessionID), threadID, 1, modulecore.ThreadKindUserConversation, domainmemory.ProfilePromotionPending, createdAt, time.Now().UTC())
 		if err != nil {
 			return false, fmt.Errorf("queue ChatGPT profile promotion: %w", err)
 		}

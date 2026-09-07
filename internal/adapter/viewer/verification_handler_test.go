@@ -134,7 +134,8 @@ func TestHandleVerificationUnavailableOptional(t *testing.T) {
 
 func testVerificationReport() domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_1",
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       modulecore.NewTaskID(),
 		SessionID:    "session-1",
 		Route:        "CHAT",

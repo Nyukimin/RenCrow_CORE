@@ -8,6 +8,7 @@ import (
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type stubCoderDiffGenerator struct {
@@ -40,7 +41,7 @@ func TestCoderDiffServiceGenerateConcreteDiffExtractsAndValidatesReviewOnlyDiff(
 	coder := &stubCoderDiffGenerator{response: "```diff\n" + diff + "\n```"}
 	result, err := NewCoderDiffService(coder).GenerateConcreteDiff(context.Background(), CoderDiffRequest{
 		Hotspot:      hotspot,
-		Evidence:     []domaincomplexity.HotspotEvidence{{EvidenceID: "ev_1", HotspotID: "hot_1", LineStart: 10, LineEnd: 12, Snippet: "for _, item := range items {\n\t_ = item\n}", Reason: "loop evidence"}},
+		Evidence:     []domaincomplexity.HotspotEvidence{{EvidenceID: modulecore.NewEvidenceID(), HotspotID: "hot_1", LineStart: 10, LineEnd: 12, Snippet: "for _, item := range items {\n\t_ = item\n}", Reason: "loop evidence"}},
 		WorkstreamID: "ws_1",
 		JobID:        "job_1",
 	})

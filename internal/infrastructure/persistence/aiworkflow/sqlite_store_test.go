@@ -22,7 +22,8 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	defer store.Close()
 	ctx := context.Background()
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	if err := store.SaveProjectMemoryIndex(ctx, domainai.ProjectMemoryIndex{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
+	memoryID := modulecore.NewMemoryID()
+	if err := store.SaveProjectMemoryIndex(ctx, domainai.ProjectMemoryIndex{MemoryID: memoryID, Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}); err != nil {
 		t.Fatalf("SaveProjectMemoryIndex() error = %v", err)
 	}
 	if err := store.SaveWorktreeRegistry(ctx, domainai.WorktreeRegistry{WorktreeID: "wt_1", Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}); err != nil {
@@ -35,7 +36,7 @@ func TestSQLiteStoreSaveAndListAIWorkflowRecords(t *testing.T) {
 	if err := store.SaveContextUsage(ctx, domainai.ContextUsage{EventID: "ctx_1", SessionID: "session_1", TaskID: taskID, RunID: runID, WorkstreamID: "ws_1", CompactionID: "compact_1", Agent: "Coder", InputTokens: 1, CreatedAt: now}); err != nil {
 		t.Fatalf("SaveContextUsage() error = %v", err)
 	}
-	if items, err := store.ListProjectMemoryIndexes(ctx, 10); err != nil || len(items) != 1 || items[0].ID != "mem_1" {
+	if items, err := store.ListProjectMemoryIndexes(ctx, 10); err != nil || len(items) != 1 || items[0].MemoryID != memoryID {
 		t.Fatalf("memories=%#v err=%v", items, err)
 	}
 	if items, err := store.ListWorktreeRegistries(ctx, 10); err != nil || len(items) != 1 || items[0].WorktreeID != "wt_1" {

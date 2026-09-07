@@ -13,6 +13,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const ownerMemorySourcePrefix = "operator:"
@@ -169,6 +170,7 @@ func (s *L1SQLiteStore) OwnerProposeUserMemory(ctx context.Context, requestID, o
 		"actor_id":           actorID,
 		"request_id":         requestID,
 	}
+	writeUserMemoryEventLinkMeta(candidateMeta, modulecore.EventID(evidenceID), "")
 	evidenceMetaJSON, err := marshalL1MetaJSON(evidenceMeta, "failed to marshal owner evidence meta")
 	if err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, err)
@@ -215,6 +217,7 @@ INSERT INTO l1_memory_event (
 		Type:             memoryType,
 		Statement:        statement,
 		EvidenceEventIDs: []string{evidenceID},
+		CreatedByEventID: modulecore.EventID(evidenceID),
 		Confidence:       0.5,
 		Sensitivity:      "normal",
 		State:            domainmemory.MemoryStateCandidate,
@@ -343,6 +346,21 @@ func (s *L1SQLiteStore) OwnerTransitionUserMemory(ctx context.Context, requestID
 		updatedMeta["supersede_reason"] = reason
 		updatedMeta["superseded_at"] = now.Format(time.RFC3339Nano)
 	}
+	auditEntry, err := appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
+		"memory_id":      id,
+		"request_id":     requestID,
+		"actor_id":       actorID,
+		"user_id":        ownerID,
+		"operation":      operation,
+		"previous_state": item.State,
+		"memory_state":   updatedState,
+		"replacement_id": replacementID,
+		"reason":         reason,
+	}, ownerMemorySourcePrefix+actorID)
+	if err != nil {
+		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, err)
+	}
+	writeUserMemoryEventLinkMeta(updatedMeta, "", auditEventID(auditEntry))
 	metaJSON, err := marshalL1MetaJSON(updatedMeta, "failed to marshal owner mutation meta")
 	if err != nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, err)
@@ -360,20 +378,6 @@ WHERE id = ? AND namespace = ?
 	updatedItem := l1EventToUserMemory(event)
 	if updatedItem == nil {
 		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, errors.New("owner mutation produced invalid user memory"))
-	}
-	_, err = appendL1EventLog(ctx, tx, eventType, event.Namespace, event.SessionID, event.ThreadID, event.ThreadSeq, event.ThreadKind, map[string]interface{}{
-		"memory_id":      id,
-		"request_id":     requestID,
-		"actor_id":       actorID,
-		"user_id":        ownerID,
-		"operation":      operation,
-		"previous_state": item.State,
-		"memory_state":   updatedState,
-		"replacement_id": replacementID,
-		"reason":         reason,
-	}, ownerMemorySourcePrefix+actorID)
-	if err != nil {
-		return domainmemory.UserMemoryOwnerResult{}, rollbackL1Tx(tx, err)
 	}
 	result := newOwnerMemoryResult(*updatedItem, requestID, operation, id, now, false)
 	if err := insertOwnerMemoryReceipt(ctx, tx, requestID, operation, ownerID, actorID, payloadHash, id, id, result); err != nil {

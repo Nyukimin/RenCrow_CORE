@@ -14,6 +14,7 @@ import (
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {
@@ -60,6 +61,7 @@ func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory
 		source = "viewer"
 	}
 	now := time.Now().UTC()
+	createdByEventID := userMemoryCreatedByEventID(input.EvidenceEventIDs)
 	meta := map[string]interface{}{
 		"type":               memoryType,
 		"user_id":            userID,
@@ -70,6 +72,7 @@ func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory
 		"scope":              scope,
 		"active":             true,
 	}
+	writeUserMemoryEventLinkMeta(meta, createdByEventID, "")
 	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal user memory meta")
 	if err != nil {
 		return nil, err
@@ -141,6 +144,7 @@ func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context
 		"actor_id":           actorID,
 		"request_id":         requestID,
 	}
+	writeUserMemoryEventLinkMeta(meta, userMemoryCreatedByEventID(normalized.EvidenceEventIDs), "")
 	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal user memory candidate meta")
 	if err != nil {
 		return nil, false, err
@@ -153,6 +157,7 @@ func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context
 		Type:             normalized.Type,
 		Statement:        normalized.Statement,
 		EvidenceEventIDs: append([]string(nil), normalized.EvidenceEventIDs...),
+		CreatedByEventID: userMemoryCreatedByEventID(normalized.EvidenceEventIDs),
 		Confidence:       normalized.Confidence,
 		Sensitivity:      normalized.Sensitivity,
 		State:            MemoryStateCandidate,
@@ -600,13 +605,15 @@ func (s *L1SQLiteStore) ForgetUserMemory(ctx context.Context, id string, reason 
 	meta["active"] = false
 	meta["forget_reason"] = strings.TrimSpace(reason)
 	meta["forgot_at"] = time.Now().UTC().Format(time.RFC3339)
-	if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
-		return nil, err
-	}
-	if _, err := s.AppendEvent(ctx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{
+	entry, err := s.AppendEvent(ctx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{
 		"memory_id": id,
 		"reason":    reason,
-	}, "memory"); err != nil {
+	}, "memory")
+	if err != nil {
+		return nil, err
+	}
+	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+	if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
 		return nil, err
 	}
 	ev.Meta = meta
@@ -639,14 +646,16 @@ func (s *L1SQLiteStore) SupersedeUserMemory(ctx context.Context, oldID string, n
 	meta["superseded_by"] = strings.TrimSpace(newID)
 	meta["supersede_reason"] = strings.TrimSpace(reason)
 	meta["superseded_at"] = time.Now().UTC().Format(time.RFC3339)
-	if err := s.updateMemoryMeta(ctx, oldID, meta); err != nil {
-		return nil, err
-	}
-	if _, err := s.AppendEvent(ctx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, old.ThreadSeq, old.ThreadKind, map[string]interface{}{
+	entry, err := s.AppendEvent(ctx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, old.ThreadSeq, old.ThreadKind, map[string]interface{}{
 		"memory_id":     oldID,
 		"superseded_by": strings.TrimSpace(newID),
 		"reason":        reason,
-	}, "memory"); err != nil {
+	}, "memory")
+	if err != nil {
+		return nil, err
+	}
+	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+	if err := s.updateMemoryMeta(ctx, oldID, meta); err != nil {
 		return nil, err
 	}
 	old.Meta = meta
@@ -708,6 +717,8 @@ func l1EventToUserMemory(ev L1MemoryEvent) *domainmemory.UserMemory {
 		Type:             memoryType,
 		Statement:        firstNonEmptyString(metaStringValue(ev.Meta, "statement"), ev.Message),
 		EvidenceEventIDs: metaStringSliceValue(ev.Meta, "evidence_event_ids"),
+		CreatedByEventID: modulecore.EventID(metaStringValue(ev.Meta, "created_by_event_id")),
+		UpdatedByEventID: modulecore.EventID(metaStringValue(ev.Meta, "updated_by_event_id")),
 		Confidence:       confidence,
 		Sensitivity:      firstNonEmptyString(metaStringValue(ev.Meta, "sensitivity"), "normal"),
 		State:            ev.MemoryState,
@@ -789,4 +800,30 @@ func firstNonEmptyString(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func userMemoryCreatedByEventID(evidenceIDs []string) modulecore.EventID {
+	if len(evidenceIDs) == 0 {
+		return ""
+	}
+	if id := strings.TrimSpace(evidenceIDs[0]); id != "" {
+		return modulecore.EventID(id)
+	}
+	return ""
+}
+
+func writeUserMemoryEventLinkMeta(meta map[string]interface{}, createdBy, updatedBy modulecore.EventID) {
+	if createdBy != "" {
+		meta["created_by_event_id"] = string(createdBy)
+	}
+	if updatedBy != "" {
+		meta["updated_by_event_id"] = string(updatedBy)
+	}
+}
+
+func auditEventID(entry *L1EventLogEntry) modulecore.EventID {
+	if entry == nil || strings.TrimSpace(entry.ID) == "" {
+		return ""
+	}
+	return modulecore.EventID(entry.ID)
 }

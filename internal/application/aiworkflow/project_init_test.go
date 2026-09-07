@@ -85,14 +85,14 @@ func TestProjectScannerPersistsOSIndependentIdentifiers(t *testing.T) {
 	}
 
 	for _, idx := range store.indexes {
-		if strings.Contains(idx.ID, "\\") {
-			t.Errorf("ProjectMemoryIndex.ID contains a backslash: %q", idx.ID)
+		if err := idx.MemoryID.Validate(); err != nil {
+			t.Errorf("ProjectMemoryIndex.MemoryID is invalid: %v", err)
+		}
+		if strings.Contains(string(idx.MemoryID), "\\") {
+			t.Errorf("ProjectMemoryIndex.MemoryID contains a backslash: %q", idx.MemoryID)
 		}
 		if strings.Contains(idx.FilePath, "\\") {
 			t.Errorf("ProjectMemoryIndex.FilePath contains a backslash: %q", idx.FilePath)
-		}
-		if want := "project_init:" + idx.FilePath; idx.ID != want {
-			t.Errorf("ID = %q, want %q", idx.ID, want)
 		}
 	}
 	for _, generated := range result.GeneratedFiles {

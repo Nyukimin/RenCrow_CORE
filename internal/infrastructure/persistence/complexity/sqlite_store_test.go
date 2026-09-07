@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestSQLiteStoreSavesAndListsComplexityRecords(t *testing.T) {
@@ -40,7 +41,7 @@ func TestSQLiteStoreSavesAndListsComplexityRecords(t *testing.T) {
 		CreatedAt:           now,
 	}
 	evidence := domaincomplexity.HotspotEvidence{
-		EvidenceID: "ev_1",
+		EvidenceID: modulecore.NewEvidenceID(),
 		HotspotID:  "hot_1",
 		FilePath:   "src/app.go",
 		Snippet:    "for ...",
@@ -76,7 +77,7 @@ func TestSQLiteStoreSavesAndListsComplexityRecords(t *testing.T) {
 		t.Fatalf("ListHotspots() = %#v, %v", hotspots, err)
 	}
 	evidenceItems, err := store.ListHotspotEvidence(context.Background(), 10)
-	if err != nil || len(evidenceItems) != 1 || evidenceItems[0].EvidenceID != "ev_1" {
+	if err != nil || len(evidenceItems) != 1 || evidenceItems[0].EvidenceID != evidence.EvidenceID {
 		t.Fatalf("ListHotspotEvidence() = %#v, %v", evidenceItems, err)
 	}
 	reports, err := store.ListReportArtifacts(context.Background(), 10)

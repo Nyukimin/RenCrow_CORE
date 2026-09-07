@@ -73,8 +73,7 @@ func TestJSONLReportStoreRejectsInvalidLookupAndLegacyRows(t *testing.T) {
 	if _, err := store.GetByTaskID(context.Background(), modulecore.TaskID(modulecore.NewMessageID())); err == nil {
 		t.Fatal("wrong canonical ID type was accepted")
 	}
-	legacyKey := "job" + "_" + "id"
-	legacy, err := json.Marshal(map[string]any{"id": "verify-old", legacyKey: "legacy-1", "session_id": "session-1", "status": "not_checked", "created_at": "2026-09-05T00:00:00Z"})
+	legacy, err := json.Marshal(map[string]any{"id": "verify-old", "session_id": "session-1", "status": "not_checked", "created_at": "2026-09-05T00:00:00Z"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +88,8 @@ func TestJSONLReportStoreRejectsInvalidLookupAndLegacyRows(t *testing.T) {
 
 func testReport(taskID modulecore.TaskID, status domainverification.VerificationStatus, createdAt time.Time) domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_" + string(taskID),
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       taskID,
 		SessionID:    "session-1",
 		Route:        "CHAT",

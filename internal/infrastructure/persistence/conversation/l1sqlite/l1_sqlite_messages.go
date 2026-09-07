@@ -3,6 +3,7 @@ package l1sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -97,12 +98,7 @@ ON CONFLICT(id) DO UPDATE SET
 		return rollbackL1Tx(tx, fmt.Errorf("failed to append l1 message event log: %w", err))
 	}
 	if msg.Speaker == domconv.SpeakerUser && memoryState == MemoryStateObserved && strings.HasPrefix(namespace, "conv:") {
-		if _, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
-	lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)
-	`, id, sessionID, threadID, threadSeq, threadKind, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
+		if _, err := execInsertProfilePromotionJob(ctx, tx, true, id, sessionID, threadID, threadSeq, threadKind, domainmemory.ProfilePromotionPending, createdAt, now); err != nil {
 			return rollbackL1Tx(tx, fmt.Errorf("failed to enqueue profile promotion job: %w", err))
 		}
 	}
@@ -156,12 +152,29 @@ WHERE id = ?
 	if affected == 0 {
 		return sql.ErrNoRows
 	}
-	if _, err := s.AppendEvent(ctx, "memory.state_updated", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
+	entry, err := s.AppendEvent(ctx, "memory.state_updated", namespace, sessionID, threadID, threadSeq, threadKind, map[string]interface{}{
 		"memory_id":      id,
 		"previous_state": previousState,
 		"memory_state":   memoryState,
-	}, "memory"); err != nil {
+	}, "memory")
+	if err != nil {
 		return fmt.Errorf("failed to append l1 memory state event log: %w", err)
+	}
+	if strings.HasPrefix(namespace, "user:") {
+		var metaJSON string
+		if err := s.db.QueryRowContext(ctx, `SELECT meta_json FROM l1_memory_event WHERE id = ?`, id).Scan(&metaJSON); err != nil {
+			return fmt.Errorf("failed to load user memory meta for event link update: %w", err)
+		}
+		meta := map[string]interface{}{}
+		if strings.TrimSpace(metaJSON) != "" {
+			if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
+				return fmt.Errorf("failed to decode user memory meta for event link update: %w", err)
+			}
+		}
+		writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+		if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
+			return fmt.Errorf("failed to persist user memory updated_by_event_id: %w", err)
+		}
 	}
 	return nil
 }

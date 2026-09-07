@@ -144,7 +144,8 @@ func TestVerificationPolicyNormalized(t *testing.T) {
 func TestVerificationReportValidate(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	report := VerificationReport{
-		ID:           "verify-1",
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       taskID,
 		SessionID:    "session-1",
 		Route:        "CHAT",
@@ -163,7 +164,7 @@ func TestVerificationReportValidate(t *testing.T) {
 
 func TestVerificationReportJSONUsesOnlyCanonicalTaskID(t *testing.T) {
 	report := VerificationReport{
-		ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1",
+		ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, TaskID: modulecore.NewTaskID(), SessionID: "session-1",
 		Status: StatusNotChecked, CreatedAt: time.Now().UTC(),
 	}
 	encoded, err := json.Marshal(report)
@@ -183,12 +184,14 @@ func TestVerificationReportValidateRejectsMissingFields(t *testing.T) {
 		item VerificationReport
 		want string
 	}{
-		{name: "missing id", item: VerificationReport{TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "report id"},
-		{name: "missing task", item: VerificationReport{ID: "verify-1", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
-		{name: "invalid task", item: VerificationReport{ID: "verify-1", TaskID: "not-canonical", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
-		{name: "missing session", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), Status: StatusNotChecked, CreatedAt: now}, want: "session_id"},
-		{name: "missing status", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1", CreatedAt: now}, want: "status"},
-		{name: "missing created", item: VerificationReport{ID: "verify-1", TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked}, want: "created_at"},
+		{name: "missing artifact id", item: VerificationReport{Kind: modulecore.ArtifactKindReport, TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "artifact_id"},
+		{name: "missing artifact kind", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "artifact_kind"},
+		{name: "invalid artifact kind", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindDraft, TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "artifact_kind must be"},
+		{name: "missing task", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
+		{name: "invalid task", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, TaskID: "not-canonical", SessionID: "session-1", Status: StatusNotChecked, CreatedAt: now}, want: "task_id"},
+		{name: "missing session", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, TaskID: modulecore.NewTaskID(), Status: StatusNotChecked, CreatedAt: now}, want: "session_id"},
+		{name: "missing status", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, TaskID: modulecore.NewTaskID(), SessionID: "session-1", CreatedAt: now}, want: "status"},
+		{name: "missing created", item: VerificationReport{ArtifactID: modulecore.NewArtifactID(), Kind: modulecore.ArtifactKindReport, TaskID: modulecore.NewTaskID(), SessionID: "session-1", Status: StatusNotChecked}, want: "created_at"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -202,7 +205,8 @@ func TestVerificationReportValidateRejectsMissingFields(t *testing.T) {
 
 func TestVerificationReportValidateNestedObjects(t *testing.T) {
 	report := VerificationReport{
-		ID:           "verify-1",
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       modulecore.NewTaskID(),
 		SessionID:    "session-1",
 		Route:        "CHAT",

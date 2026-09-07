@@ -2,12 +2,13 @@ package aiworkflow
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
 func ValidateProjectMemoryIndex(item ProjectMemoryIndex) error {
-	if strings.TrimSpace(item.ID) == "" {
-		return errors.New("id is required")
+	if err := item.MemoryID.Validate(); err != nil {
+		return fmt.Errorf("memory_id: %w", err)
 	}
 	if strings.TrimSpace(item.Repo) == "" {
 		return errors.New("repo is required")

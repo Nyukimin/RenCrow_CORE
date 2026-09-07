@@ -1473,6 +1473,7 @@ func TestAIWorkflowStatusAndContextBudget(t *testing.T) {
 
 func TestAIWorkflowStatusRejectsMalformedCurrentView(t *testing.T) {
 	now := time.Date(2026, 5, 20, 2, 55, 0, 0, time.UTC)
+	memoryID := modulecore.NewMemoryID()
 	tests := []struct {
 		name string
 		resp AIWorkflowStatus
@@ -1508,22 +1509,22 @@ func TestAIWorkflowStatusRejectsMalformedCurrentView(t *testing.T) {
 		{
 			name: "duplicate project memory",
 			resp: AIWorkflowStatus{ProjectMemoryIndexes: []ProjectMemoryIndex{
-				{ID: "pm_1", Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project", UpdatedAt: now},
-				{ID: "pm_1", Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project", UpdatedAt: now.Add(time.Second)},
+				{MemoryID: memoryID, Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project", UpdatedAt: now},
+				{MemoryID: memoryID, Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project", UpdatedAt: now.Add(time.Second)},
 			}},
 			want: "duplicate project_memory_index",
 		},
 		{
 			name: "missing project memory file path",
 			resp: AIWorkflowStatus{ProjectMemoryIndexes: []ProjectMemoryIndex{
-				{ID: "pm_1", Repo: "example/repo", MemoryType: "project", UpdatedAt: now},
+				{MemoryID: memoryID, Repo: "example/repo", MemoryType: "project", UpdatedAt: now},
 			}},
 			want: "project_memory_index missing file_path",
 		},
 		{
 			name: "missing project memory updated at",
 			resp: AIWorkflowStatus{ProjectMemoryIndexes: []ProjectMemoryIndex{
-				{ID: "pm_1", Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project"},
+				{MemoryID: memoryID, Repo: "example/repo", FilePath: ".ai/memory.md", MemoryType: "project"},
 			}},
 			want: "project_memory_index missing updated_at",
 		},
@@ -4445,6 +4446,7 @@ func TestComplexityStatus(t *testing.T) {
 
 func TestComplexityStatusRejectsMalformedCurrentView(t *testing.T) {
 	now := time.Date(2026, 5, 19, 16, 20, 0, 0, time.UTC)
+	evidenceID := modulecore.NewEvidenceID()
 	validScan := func() ComplexityScanEvent {
 		return ComplexityScanEvent{ScanID: "scan_1", Repo: "repo", Mode: "report_only", Status: "completed", CreatedAt: now, CompletedAt: now.Add(time.Minute)}
 	}
@@ -4452,7 +4454,7 @@ func TestComplexityStatusRejectsMalformedCurrentView(t *testing.T) {
 		return ComplexityHotspot{HotspotID: "hot_1", ScanID: "scan_1", FilePath: "internal/app.go", HotspotType: "nested_loop", RiskLevel: "medium", Summary: "summary", CreatedAt: now}
 	}
 	validEvidence := func() ComplexityHotspotEvidence {
-		return ComplexityHotspotEvidence{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", CreatedAt: now}
+		return ComplexityHotspotEvidence{EvidenceID: evidenceID, HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", CreatedAt: now}
 	}
 	validReport := func() ComplexityReportArtifact {
 		return ComplexityReportArtifact{ArtifactID: "art_1", ScanID: "scan_1", Type: "complexity_patch_proposal", Title: "title", Status: "pending_review", Content: "content", CreatedAt: now}
@@ -4530,24 +4532,24 @@ func TestComplexityStatusRejectsMalformedCurrentView(t *testing.T) {
 			name: "duplicate evidence",
 			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{
 				validEvidence(),
-				{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", CreatedAt: now.Add(time.Second)},
+				{EvidenceID: evidenceID, HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", CreatedAt: now.Add(time.Second)},
 			}},
 			want: "duplicate evidence",
 		},
 		{
 			name: "missing evidence reason",
-			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "internal/app.go", CreatedAt: now}}},
+			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: evidenceID, HotspotID: "hot_1", FilePath: "internal/app.go", CreatedAt: now}}},
 			want: "missing reason",
 		},
 		{
 			name: "evidence negative line",
-			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", LineStart: -1, CreatedAt: now}}},
+			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: evidenceID, HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop", LineStart: -1, CreatedAt: now}}},
 			want: "line range must be >= 0",
 		},
 		{
 			name: "evidence missing created at",
-			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop"}}},
-			want: "evidence ev_1 missing created_at",
+			resp: ComplexityStatus{Evidence: []ComplexityHotspotEvidence{{EvidenceID: evidenceID, HotspotID: "hot_1", FilePath: "internal/app.go", Reason: "loop inside nearby loop"}}},
+			want: "missing created_at",
 		},
 		{
 			name: "duplicate report",

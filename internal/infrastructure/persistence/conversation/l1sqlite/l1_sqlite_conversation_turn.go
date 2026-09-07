@@ -930,11 +930,7 @@ INSERT INTO l1_memory_event (
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO l1_profile_promotion_job (
-	evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
-	lease_token, last_error, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)`, userMessageID, request.SessionID, thread.ID, thread.Seq, thread.Kind, domainmemory.ProfilePromotionPending, now, now); err != nil {
+	if _, err := execInsertProfilePromotionJob(ctx, tx, false, userMessageID, request.SessionID, thread.ID, thread.Seq, thread.Kind, domainmemory.ProfilePromotionPending, now, now); err != nil {
 		return err
 	}
 	return nil

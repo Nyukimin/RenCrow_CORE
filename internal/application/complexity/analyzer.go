@@ -10,6 +10,7 @@ import (
 	"time"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ScanRequest struct {
@@ -215,7 +216,7 @@ func detectFileHotspots(scanID, filePath string, lines []string, now time.Time) 
 			CreatedAt:            now,
 		})
 		evidence = append(evidence, domaincomplexity.HotspotEvidence{
-			EvidenceID: fmt.Sprintf("%s_ev_%d", hotspotID, len(evidence)+1),
+			EvidenceID: modulecore.NewEvidenceID(),
 			HotspotID:  hotspotID,
 			FilePath:   filePath,
 			LineStart:  lineStart,

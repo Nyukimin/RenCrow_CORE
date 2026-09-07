@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateScanEventRequiresReportOnlyMode(t *testing.T) {
@@ -82,7 +84,7 @@ func TestValidateComplexityAcceptsCompleteRecords(t *testing.T) {
 		t.Fatalf("hotspot should validate: %v", err)
 	}
 	if err := ValidateHotspotEvidence(HotspotEvidence{
-		EvidenceID: "ev_1",
+		EvidenceID: modulecore.NewEvidenceID(),
 		HotspotID:  "hot_1",
 		FilePath:   "src/app.go",
 		LineStart:  10,
@@ -157,7 +159,7 @@ func TestValidateComplexityRejectsInvalidRangesAndScores(t *testing.T) {
 		{
 			name: "evidence line order",
 			err: ValidateHotspotEvidence(HotspotEvidence{
-				EvidenceID: "ev_1",
+				EvidenceID: modulecore.NewEvidenceID(),
 				HotspotID:  "hot_1",
 				FilePath:   "src/app.go",
 				LineStart:  20,
@@ -205,7 +207,7 @@ func TestValidateComplexityRejectsMissingCreatedAt(t *testing.T) {
 		{
 			name: "evidence",
 			err: ValidateHotspotEvidence(HotspotEvidence{
-				EvidenceID: "ev_1",
+				EvidenceID: modulecore.NewEvidenceID(),
 				HotspotID:  "hot_1",
 				FilePath:   "src/app.go",
 			}),
@@ -270,9 +272,9 @@ func TestValidateComplexityRejectsMissingRequiredFields(t *testing.T) {
 		{name: "hotspot missing risk", err: ValidateHotspot(Hotspot{HotspotID: "hot_1", ScanID: "scan_1", FilePath: "src/app.go", HotspotType: "large_function", EstimatedComplexity: "high", Summary: "large", CreatedAt: now}), want: "risk_level"},
 		{name: "hotspot negative line", err: ValidateHotspot(Hotspot{HotspotID: "hot_1", ScanID: "scan_1", FilePath: "src/app.go", LineStart: -1, HotspotType: "large_function", EstimatedComplexity: "high", RiskLevel: "medium", Summary: "large", CreatedAt: now}), want: "line range"},
 		{name: "hotspot missing summary", err: ValidateHotspot(Hotspot{HotspotID: "hot_1", ScanID: "scan_1", FilePath: "src/app.go", HotspotType: "large_function", EstimatedComplexity: "high", RiskLevel: "medium", CreatedAt: now}), want: "summary"},
-		{name: "evidence missing hotspot id", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: "ev_1", FilePath: "src/app.go", CreatedAt: now}), want: "hotspot_id"},
-		{name: "evidence missing path", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: "ev_1", HotspotID: "hot_1", CreatedAt: now}), want: "file_path"},
-		{name: "evidence negative line", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: "ev_1", HotspotID: "hot_1", FilePath: "src/app.go", LineEnd: -1, CreatedAt: now}), want: "line range"},
+		{name: "evidence missing hotspot id", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: modulecore.NewEvidenceID(), FilePath: "src/app.go", CreatedAt: now}), want: "hotspot_id"},
+		{name: "evidence missing path", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: modulecore.NewEvidenceID(), HotspotID: "hot_1", CreatedAt: now}), want: "file_path"},
+		{name: "evidence negative line", err: ValidateHotspotEvidence(HotspotEvidence{EvidenceID: modulecore.NewEvidenceID(), HotspotID: "hot_1", FilePath: "src/app.go", LineEnd: -1, CreatedAt: now}), want: "line range"},
 		{name: "report missing artifact id", err: ValidateReportArtifact(ReportArtifact{ScanID: "scan_1", Type: "complexity_hotspot_report", Title: "Complexity Hotspot Report", Status: "generated", Content: "report", CreatedAt: now}), want: "artifact_id"},
 		{name: "report missing scan id", err: ValidateReportArtifact(ReportArtifact{ArtifactID: "art_1", Type: "complexity_hotspot_report", Title: "Complexity Hotspot Report", Status: "generated", Content: "report", CreatedAt: now}), want: "scan_id"},
 		{name: "report missing type", err: ValidateReportArtifact(ReportArtifact{ArtifactID: "art_1", ScanID: "scan_1", Title: "Complexity Hotspot Report", Status: "generated", Content: "report", CreatedAt: now}), want: "artifact_type"},

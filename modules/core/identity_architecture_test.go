@@ -896,6 +896,169 @@ func TestStep13MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestStep14EvidenceMemoryLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	var violations []string
+	shouldSkip := func(relative string) bool {
+		return strings.Contains(relative, "step14evidencememorymigration") ||
+			strings.Contains(relative, "rencrow-step14-evidence-memory-migrate")
+	}
+	checkFileTokens := func(relative string, tokens []string) {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		if shouldSkip(relative) {
+			return
+		}
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range tokens {
+				if canonicalSourceContainsToken(line, token) {
+					violations = append(violations, fmt.Sprintf("%s:%d:legacy-step14:%s", relative, lineNumber+1, token))
+				}
+			}
+		}
+	}
+	walkDirectory := func(relative string, tokens []string) {
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		if _, err := os.Stat(root); os.IsNotExist(err) {
+			return
+		}
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				if entry.Name() == "step14evidencememorymigration" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if shouldSkip(rel) {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for lineNumber, line := range strings.Split(string(content), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+				for _, token := range tokens {
+					if canonicalSourceContainsToken(line, token) {
+						violations = append(violations, fmt.Sprintf("%s:%d:legacy-step14:%s", rel, lineNumber+1, token))
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step14 owner %s: %v", relative, err)
+		}
+	}
+
+	checkFileTokens("internal/domain/aiworkflow/types.go", []string{`json:"id"`, "\tID "})
+	checkFileTokens("internal/infrastructure/persistence/aiworkflow/sqlite_store.go", []string{" project_memory_index ", "\tid TEXT"})
+
+	if block := canonicalArchitectureStructBlock(repoRoot, "internal/domain/verification/types.go", "VerificationReport"); block != "" {
+		if strings.Contains(block, `json:"id"`) && !strings.Contains(block, `json:"artifact_id"`) {
+			violations = append(violations, "internal/domain/verification/types.go:VerificationReport retains json:\"id\" primary field")
+		}
+	}
+	if block := canonicalArchitectureStructBlock(repoRoot, "internal/domain/aiworkflow/types.go", "ProjectMemoryIndex"); block != "" {
+		if strings.Contains(block, `json:"id"`) || strings.Contains(block, "\tID ") {
+			violations = append(violations, "internal/domain/aiworkflow/types.go:ProjectMemoryIndex retains legacy ID field")
+		}
+	}
+
+	walkDirectory("internal/application/complexity", []string{"_ev_"})
+	walkDirectory("internal/domain/complexity", []string{"_ev_"})
+
+	profilePromotionPath := filepath.Join(repoRoot, "internal/domain/memory/profile_promotion.go")
+	profilePromotionContent, err := os.ReadFile(profilePromotionPath)
+	if err != nil {
+		t.Fatalf("read profile promotion types: %v", err)
+	}
+	profilePromotionSource := string(profilePromotionContent)
+	if !strings.Contains(profilePromotionSource, "type ProfilePromotionJob struct") {
+		violations = append(violations, "internal/domain/memory/profile_promotion.go:missing ProfilePromotionJob struct")
+	}
+	if !strings.Contains(profilePromotionSource, "TaskID") || !strings.Contains(profilePromotionSource, "RunID") {
+		violations = append(violations, "internal/domain/memory/profile_promotion.go:missing TaskID or RunID on ProfilePromotionJob")
+	}
+
+	canonicalArchitectureFail(t, "Step14 owner packages must not retain legacy Evidence/Memory identity fields", violations)
+}
+
+func TestStep14MigrationSourceIsRemovedAfterCutover(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	leftovers := []string{
+		filepath.Join(repoRoot, "cmd", "rencrow-step14-evidence-memory-migrate"),
+		filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "step14evidencememorymigration"),
+	}
+	var found []string
+	for _, path := range leftovers {
+		if _, err := os.Stat(path); err == nil {
+			found = append(found, path)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+	if len(found) != 0 {
+		t.Fatalf("Step14 migration source must be removed after cutover: %v", found)
+	}
+}
+
+func canonicalArchitectureStructBlock(repoRoot, relative, structName string) string {
+	path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(content), "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.Contains(line, "type "+structName+" struct") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	depth := 0
+	var block strings.Builder
+	for i := start; i < len(lines); i++ {
+		line := lines[i]
+		block.WriteString(line)
+		block.WriteByte('\n')
+		depth += strings.Count(line, "{")
+		depth -= strings.Count(line, "}")
+		if i > start && depth <= 0 {
+			break
+		}
+	}
+	return block.String()
+}
+
 func TestCanonicalOrchestratorTaskScopeHasNoLegacyJobContract(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	directories := []string{

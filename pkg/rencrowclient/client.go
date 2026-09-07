@@ -460,7 +460,7 @@ type AIWorkflowStatus struct {
 }
 
 type ProjectMemoryIndex struct {
-	ID          string    `json:"id"`
+	MemoryID    modulecore.MemoryID `json:"memory_id"`
 	Repo        string    `json:"repo"`
 	FilePath    string    `json:"file_path"`
 	MemoryType  string    `json:"memory_type"`
@@ -1296,7 +1296,7 @@ type ComplexityHotspot struct {
 }
 
 type ComplexityHotspotEvidence struct {
-	EvidenceID string    `json:"evidence_id"`
+	EvidenceID modulecore.EvidenceID `json:"evidence_id"`
 	HotspotID  string    `json:"hotspot_id"`
 	FilePath   string    `json:"file_path"`
 	LineStart  int       `json:"line_start,omitempty"`
@@ -3855,10 +3855,10 @@ func validateAIWorkflowStatus(resp AIWorkflowStatus) error {
 	}
 	seenMemory := map[string]struct{}{}
 	for _, item := range resp.ProjectMemoryIndexes {
-		id := strings.TrimSpace(item.ID)
-		if id == "" {
-			return fmt.Errorf("ai workflow status project_memory_index missing id")
+		if err := item.MemoryID.Validate(); err != nil {
+			return fmt.Errorf("ai workflow status project_memory_index missing memory_id: %w", err)
 		}
+		id := string(item.MemoryID)
 		if strings.TrimSpace(item.Repo) == "" {
 			return fmt.Errorf("ai workflow status project_memory_index missing repo")
 		}
@@ -3872,7 +3872,7 @@ func validateAIWorkflowStatus(resp AIWorkflowStatus) error {
 			return fmt.Errorf("ai workflow status project_memory_index missing updated_at")
 		}
 		if _, ok := seenMemory[id]; ok {
-			return fmt.Errorf("ai workflow status contains duplicate project_memory_index for id %q", id)
+			return fmt.Errorf("ai workflow status contains duplicate project_memory_index for memory_id %q", id)
 		}
 		seenMemory[id] = struct{}{}
 	}
@@ -5620,10 +5620,10 @@ func validateComplexityStatus(resp ComplexityStatus) error {
 	}
 	seenEvidence := map[string]struct{}{}
 	for _, evidence := range resp.Evidence {
-		evidenceID := strings.TrimSpace(evidence.EvidenceID)
-		if evidenceID == "" {
-			return fmt.Errorf("complexity status evidence missing evidence_id")
+		if err := evidence.EvidenceID.Validate(); err != nil {
+			return fmt.Errorf("complexity status evidence missing evidence_id: %w", err)
 		}
+		evidenceID := string(evidence.EvidenceID)
 		if strings.TrimSpace(evidence.HotspotID) == "" {
 			return fmt.Errorf("complexity status evidence missing hotspot_id")
 		}

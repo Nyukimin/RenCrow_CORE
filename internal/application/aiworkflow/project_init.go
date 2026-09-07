@@ -106,7 +106,7 @@ func (s *ProjectScanner) Run(ctx context.Context, opts ProjectInitOptions) (Proj
 		rel = filepath.ToSlash(rel)
 		generated = append(generated, rel)
 		idx := domainai.ProjectMemoryIndex{
-			ID:         "project_init:" + rel,
+			MemoryID:   modulecore.NewMemoryID(),
 			Repo:       repoName,
 			FilePath:   rel,
 			MemoryType: strings.TrimSuffix(name, filepath.Ext(name)),

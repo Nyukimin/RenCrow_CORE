@@ -46,7 +46,7 @@ func (s *JSONLStore) SaveProjectMemoryIndex(_ context.Context, item domainai.Pro
 
 func (s *JSONLStore) ListProjectMemoryIndexes(_ context.Context, limit int) ([]domainai.ProjectMemoryIndex, error) {
 	return listLatestJSONLByKey(s.projectMemoryPath, limit, func(item domainai.ProjectMemoryIndex) string {
-		return item.ID
+		return string(item.MemoryID)
 	})
 }
 

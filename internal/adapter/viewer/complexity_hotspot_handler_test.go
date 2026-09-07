@@ -223,7 +223,7 @@ func TestHandleComplexityHotspotScanStoresResult(t *testing.T) {
 			CreatedAt:           now,
 		}},
 		Evidence: []domaincomplexity.HotspotEvidence{{
-			EvidenceID: "ev_1",
+			EvidenceID: modulecore.NewEvidenceID(),
 			HotspotID:  "hot_1",
 			FilePath:   "src/app.go",
 			Snippet:    "for",
@@ -791,7 +791,7 @@ func TestHandleComplexityHotspotCoderDiffGeneratesReviewOnlyArtifact(t *testing.
 		RiskLevel:           "medium",
 		Summary:             "repeated lookup",
 	}}, evidence: []domaincomplexity.HotspotEvidence{{
-		EvidenceID: "ev_1",
+		EvidenceID: modulecore.NewEvidenceID(),
 		HotspotID:  "hot_1",
 		FilePath:   "internal/application/example.go",
 		LineStart:  1,
@@ -823,7 +823,7 @@ func TestHandleComplexityHotspotCoderDiffGeneratesReviewOnlyArtifact(t *testing.
 	if len(generator.requests) != 1 || generator.requests[0].Hotspot.HotspotID != "hot_1" {
 		t.Fatalf("generator requests=%#v", generator.requests)
 	}
-	if len(generator.requests[0].Evidence) != 1 || generator.requests[0].Evidence[0].EvidenceID != "ev_1" {
+	if len(generator.requests[0].Evidence) != 1 || generator.requests[0].Evidence[0].EvidenceID != store.evidence[0].EvidenceID {
 		t.Fatalf("generator evidence=%#v", generator.requests[0].Evidence)
 	}
 	if len(store.reports) != 1 || store.reports[0].Type != "complexity_concrete_diff_proposal" {

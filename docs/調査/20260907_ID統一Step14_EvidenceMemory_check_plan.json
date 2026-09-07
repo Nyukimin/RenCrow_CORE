@@ -1,0 +1,110 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step14-evidence-memory",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T03:40:00Z",
+  "input": {
+    "base_revision": "8a867f1",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-14-evidenceidとmemoryid",
+    "evidence_rule": "EvidenceID is an independent entity ID with evd_ prefix minted by NewEvidenceID or NewMigrationID; it is never derived from EventID hotspotID or other string concatenation",
+    "memory_rule": "Memory records carry MemoryID CreatedByEventID UpdatedByEventID and EvidenceEventIDs; ProfilePromotion binds TaskID RunID and EvidenceEventID",
+    "verification_rule": "VerificationReport primary identity is ArtifactID with ArtifactKind report",
+    "completion_rule": "EvidenceID string derivation zero; Evidence orphan zero for Step14 owners; Memory promotion carries Task Run and Event"
+  },
+  "included": [
+    {
+      "check_id": "s14_project_memory_id",
+      "guarantee": "AIWorkflow ProjectMemoryIndex primary identity is typed MemoryID with JSON memory_id and zero generic id field for that entity",
+      "owner": "RenCrow_CORE aiworkflow",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "Viewer AI workflow status",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s14_verification_artifact",
+      "guarantee": "VerificationReport uses ArtifactID with ArtifactKind report and zero generic report id string as primary identity",
+      "owner": "RenCrow_CORE verification",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "verification pipeline and persistence",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s14_complexity_evidence_mint",
+      "guarantee": "HotspotEvidence uses typed EvidenceID minted by NewEvidenceID with zero hotspot-derived sprintf evidence ids",
+      "owner": "RenCrow_CORE complexity",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "complexity scan results",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s14_user_memory_event_links",
+      "guarantee": "UserMemory exposes CreatedByEventID and UpdatedByEventID as typed EventID alongside EvidenceEventIDs",
+      "owner": "RenCrow_CORE memory conversation L1",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "recall and owner GUI",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s14_profile_promotion_task_run",
+      "guarantee": "ProfilePromotionJob carries TaskID RunID and typed EvidenceEventID so promotion is attributable to Task Run and Event",
+      "owner": "RenCrow_CORE memory profile promotion",
+      "execution_phase": "pre-commit cutover and post-deploy",
+      "result_consumer": "L1 profile promotion runtime",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s14_historical_migration",
+      "guarantee": "offline one-shot CLI remaps project_memory_index verification reports complexity evidence user_memory and profile_promotion_job fixtures with dry-run apply agreement second-run noop and refuses live /srv/rencrow during Luna work",
+      "owner": "RenCrow_CORE Step14 migration",
+      "execution_phase": "pre-cutover and cutover",
+      "result_consumer": "production identity state",
+      "failure_action": "leave old binary and state active or rollback"
+    },
+    {
+      "check_id": "s14_architecture_zero",
+      "guarantee": "Step14 owners contain zero EvidenceID string derivation patterns and zero VerificationReport generic id ProjectMemoryIndex.id ProfilePromotion without TaskID or RunID after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover cleanup",
+      "result_consumer": "Step14 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s14_predeploy_verification",
+      "guarantee": "targeted owner tests vet build and diff checks pass against reviewed source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s14_runtime_route",
+      "guarantee": "installed artifact readiness memory verification and evidence projections agree before and after restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step14 ledger",
+      "failure_action": "rollback or keep Step14 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s14_development_methodology_evidence_receipt",
+      "reason": "Atlas developmentmethodology EvidenceReceipt uses stage-scoped receipt keys that are not the Memory or DCI Evidence entity; remapping requires a separate Atlas ledger IU",
+      "consumer": "Atlas EvidenceReceipt Artifact or Evidence binding IU",
+      "failure_action": "keep methodology EvidenceID strings open without claiming global EvidenceID zero outside Step14 owners"
+    },
+    {
+      "check_id": "s14_relation_id",
+      "reason": "RelationID owner cutover is not required by Step14 completion text",
+      "consumer": "later Identity Relation step if declared",
+      "failure_action": "keep RelationID open"
+    },
+    {
+      "check_id": "s14_full_system_restorecheck",
+      "reason": "full restorecheck belongs after every Identity step closes",
+      "consumer": "final Identity all-clear",
+      "failure_action": "reopen the failed Identity ledger row"
+    }
+  ],
+  "replacement_receipts": []
+}

@@ -309,6 +309,7 @@ func (s *L1SQLiteStore) CompleteProfilePromotionBatch(
 			"evidence_event_ids": evidenceIDs, "confidence": confidence,
 			"sensitivity": sensitivity, "scope": scope, "active": true,
 		}
+		writeUserMemoryEventLinkMeta(meta, userMemoryCreatedByEventID(evidenceIDs), "")
 		metaJSON, err := json.Marshal(meta)
 		if err != nil {
 			return 0, rollbackL1Tx(tx, err)
@@ -580,7 +581,7 @@ func (s *L1SQLiteStore) ListProfilePromotionJobs(ctx context.Context, limit int)
 		limit = 50
 	}
 	rows, err := s.progressDB.QueryContext(ctx, `
-SELECT evidence_event_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
+SELECT evidence_event_id, task_id, run_id, session_id, thread_id, thread_seq, thread_kind, state, attempt_count,
 	lease_token, lease_expires_at, next_attempt_at, last_error, created_at, updated_at
 FROM l1_profile_promotion_job
 ORDER BY created_at DESC, evidence_event_id DESC
@@ -593,15 +594,27 @@ LIMIT ?
 	var result []domainmemory.ProfilePromotionJob
 	for rows.Next() {
 		var item domainmemory.ProfilePromotionJob
+		var evidenceEventID string
+		var taskIDRaw, runIDRaw string
 		var leaseExpiresAt, nextAttemptAt sql.NullTime
 		if err := rows.Scan(
-			&item.EvidenceEventID, &item.SessionID, &item.ThreadID, &item.ThreadSeq, &item.ThreadKind, &item.State, &item.AttemptCount,
+			&evidenceEventID, &taskIDRaw, &runIDRaw, &item.SessionID, &item.ThreadID, &item.ThreadSeq, &item.ThreadKind, &item.State, &item.AttemptCount,
 			&item.LeaseToken, &leaseExpiresAt, &nextAttemptAt, &item.LastError, &item.CreatedAt, &item.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
+		item.EvidenceEventID = modulecore.EventID(evidenceEventID)
+		if taskIDRaw != "" {
+			item.TaskID = modulecore.TaskID(taskIDRaw)
+		}
+		if runIDRaw != "" {
+			item.RunID = modulecore.RunID(runIDRaw)
+		}
 		if err := validateL1SessionThreadTuple(item.SessionID, item.ThreadID, item.ThreadSeq, item.ThreadKind); err != nil {
 			return nil, fmt.Errorf("invalid profile promotion job identity: %w", err)
+		}
+		if err := domainmemory.ValidateProfilePromotionJobAttribution(item); err != nil {
+			return nil, err
 		}
 		if leaseExpiresAt.Valid {
 			item.LeaseExpiresAt = leaseExpiresAt.Time
@@ -636,4 +649,17 @@ func compactProfilePromotionError(value string) string {
 		return value[:600]
 	}
 	return value
+}
+
+func execInsertProfilePromotionJob(ctx context.Context, execer l1SQLExecer, orIgnore bool, evidenceEventID, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, state string, createdAt, updatedAt time.Time) (sql.Result, error) {
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	prefix := "INSERT"
+	if orIgnore {
+		prefix = "INSERT OR IGNORE"
+	}
+	return execer.ExecContext(ctx, prefix+` INTO l1_profile_promotion_job (
+ evidence_event_id, session_id, thread_id, thread_seq, thread_kind, task_id, run_id,
+ state, attempt_count, lease_token, last_error, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, '', '', ?, ?)`,
+		evidenceEventID, sessionID, threadID, threadSeq, threadKind, taskID, runID, state, createdAt, updatedAt)
 }

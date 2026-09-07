@@ -170,6 +170,8 @@ CREATE TABLE IF NOT EXISTS l1_profile_promotion_job (
 	thread_id TEXT NOT NULL CHECK(length(thread_id) > 0),
 	thread_seq INTEGER NOT NULL CHECK(thread_seq > 0),
 	thread_kind TEXT NOT NULL CHECK(thread_kind IN ('user_conversation', 'agent_discussion', 'idlechat', 'document', 'system')),
+	task_id TEXT NOT NULL DEFAULT '',
+	run_id TEXT NOT NULL DEFAULT '',
 	state TEXT NOT NULL,
 	attempt_count INTEGER NOT NULL DEFAULT 0,
 	lease_token TEXT NOT NULL DEFAULT '',
@@ -624,6 +626,14 @@ CREATE INDEX IF NOT EXISTS idx_l1_raw_projection_progress
 	} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("failed to migrate recall trace owner fields: %w", err)
+		}
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE l1_profile_promotion_job ADD COLUMN task_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE l1_profile_promotion_job ADD COLUMN run_id TEXT NOT NULL DEFAULT ''`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			return fmt.Errorf("failed to migrate profile promotion job task/run ids: %w", err)
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_recall_trace_owner_created ON recall_trace(owner_id, created_at DESC)`); err != nil {

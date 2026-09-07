@@ -7,7 +7,7 @@ import (
 )
 
 type ProjectMemoryIndex struct {
-	ID          string    `json:"id"`
+	MemoryID    modulecore.MemoryID `json:"memory_id"`
 	Repo        string    `json:"repo"`
 	FilePath    string    `json:"file_path"`
 	MemoryType  string    `json:"memory_type"`

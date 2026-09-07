@@ -156,7 +156,8 @@ func (p *Pipeline) normalizeRequest(req Request) (Request, error) {
 
 func (p *Pipeline) newReport(req Request, level domainverification.TriggerLevel) domainverification.VerificationReport {
 	return domainverification.VerificationReport{
-		ID:           "verify_" + string(req.TaskID),
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       req.TaskID,
 		SessionID:    req.SessionID,
 		Route:        req.Route,

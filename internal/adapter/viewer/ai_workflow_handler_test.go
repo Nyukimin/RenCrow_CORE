@@ -128,7 +128,7 @@ func TestHandleAIWorkflowStatus(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	store := &stubAIWorkflowStore{
 		events:    []modulecore.EventEnvelope{modulecore.NewRootEventEnvelope("ai_workflow", "project_init.started", now, map[string]any{"status": "completed"})},
-		memories:  []domainai.ProjectMemoryIndex{{ID: "mem_1", Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}},
+		memories:  []domainai.ProjectMemoryIndex{{MemoryID: modulecore.NewMemoryID(), Repo: "repo", FilePath: ".ai/PROJECT_MEMORY.md", MemoryType: "project", UpdatedAt: now}},
 		worktrees: []domainai.WorktreeRegistry{{WorktreeID: "wt_1", Repo: "repo", Path: "../worktrees/repo-feature", Branch: "feature/a", Status: "active", CreatedAt: now}},
 		commands:  []domainai.CommandRegistry{{CommandName: "/review-architecture", FilePath: "commands/review-architecture.md", UpdatedAt: now}},
 		contexts:  []domainai.ContextUsage{{EventID: "ctx_1", TaskID: taskID, WorkstreamID: "ws_1", Agent: "Coder", ContextTokens: 120, CreatedAt: now}},

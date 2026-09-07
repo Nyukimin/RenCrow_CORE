@@ -785,8 +785,9 @@ func TestMessageOrchestrator_ProcessMessage_AttachesVerificationReport(t *testin
 	verifier := &mockResponseVerifier{result: appverification.Result{
 		Response: "これは2014年公開です。",
 		Report: domainverification.VerificationReport{
-			ID:           "verify_task",
-			TaskID:       "tsk_00000000-0000-5000-8000-000000000003",
+			ArtifactID:   modulecore.NewArtifactID(),
+			Kind:         modulecore.ArtifactKindReport,
+			TaskID:       modulecore.TaskID("tsk_00000000-0000-5000-8000-000000000003"),
 			SessionID:    "20260302-line-U123",
 			Route:        "CHAT",
 			Status:       domainverification.StatusWeaklySupported,

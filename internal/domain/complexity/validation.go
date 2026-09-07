@@ -74,8 +74,8 @@ func ValidateHotspot(item Hotspot) error {
 }
 
 func ValidateHotspotEvidence(item HotspotEvidence) error {
-	if strings.TrimSpace(item.EvidenceID) == "" {
-		return fmt.Errorf("evidence_id is required")
+	if err := item.EvidenceID.Validate(); err != nil {
+		return fmt.Errorf("evidence_id: %w", err)
 	}
 	if strings.TrimSpace(item.HotspotID) == "" {
 		return fmt.Errorf("hotspot_id is required")
