@@ -144,8 +144,8 @@ func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T
 
 	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-trace-topic-00"))
 
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), Generation: generation})
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "msg-1", TurnIndex: 1, Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), ownerEpoch: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "msg-1", TurnIndex: 1, ownerEpoch: generation})
 	o.emitStoryTTSPrefetch(canonicalIdleChatTestSessionID("idle-trace-topic-00"), generation, StoryEpisodeTurn{Speaker: "mio", MessageID: "msg-1", TurnIndex: 1, SpeechText: "確認です。"})
 
 	if len(timeline) != 2 || len(prefetch) != 1 {
@@ -162,14 +162,14 @@ func TestIdleChatSessionBindsTimelineAndPrefetchToOneCanonicalTrace(t *testing.T
 		t.Fatalf("session traces = topic:%q message:%q prefetch:%q, want one trace", timeline[0].TraceID, timeline[1].TraceID, prefetch[0].TraceID)
 	}
 	o.cancelIdleRunIfGeneration(generation)
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "late-msg", TurnIndex: 2, Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-00"), MessageID: "late-msg", TurnIndex: 2, ownerEpoch: generation})
 	if len(timeline) != 2 {
 		t.Fatalf("late timeline event was emitted after trace owner ended: timeline=%d", len(timeline))
 	}
 
 	o.Interrupt("test_complete")
 	secondGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-trace-topic-01"))
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-01"), Generation: secondGeneration})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-trace-topic-01"), ownerEpoch: secondGeneration})
 	if len(timeline) != 3 {
 		t.Fatalf("timeline=%d, want 3 after second session", len(timeline))
 	}
@@ -341,8 +341,8 @@ func TestIdleChatTimelineCopiesStableThreadTupleAndRejectsMismatch(t *testing.T)
 		return TTSLifecycle{}
 	})
 	generation := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-events"))
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation})
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.topic", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), ownerEpoch: generation})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), ownerEpoch: generation})
 	if len(timeline) != 2 {
 		t.Fatalf("timeline len = %d, want 2", len(timeline))
 	}
@@ -355,9 +355,9 @@ func TestIdleChatTimelineCopiesStableThreadTupleAndRejectsMismatch(t *testing.T)
 	}
 
 	for _, mismatched := range []TimelineEvent{
-		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadID: modulecore.NewThreadID()},
-		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadSeq: modulecore.ThreadSeq(2)},
-		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), Generation: generation, ThreadKind: modulecore.ThreadKindSystem},
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), ownerEpoch: generation, ThreadID: modulecore.NewThreadID()},
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), ownerEpoch: generation, ThreadSeq: modulecore.ThreadSeq(2)},
+		{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-events"), ownerEpoch: generation, ThreadKind: modulecore.ThreadKindSystem},
 	} {
 		o.emitTimelineEvent(mismatched)
 	}
@@ -374,11 +374,11 @@ func TestIdleChatRebindGetsNewThreadIdentityAndRejectsStaleThread(t *testing.T) 
 		return TTSLifecycle{}
 	})
 	firstGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-replay"))
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), Generation: firstGeneration})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), ownerEpoch: firstGeneration})
 	first := timeline[0]
 	o.Interrupt("replay")
 	secondGeneration := activateIdleChatTestSession(o, canonicalIdleChatTestSessionID("idle-thread-replay"))
-	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), Generation: secondGeneration})
+	o.emitTimelineEvent(TimelineEvent{Type: "idlechat.message", SessionID: canonicalIdleChatTestSessionID("idle-thread-replay"), ownerEpoch: secondGeneration})
 	if len(timeline) != 2 {
 		t.Fatalf("replay timeline len = %d, want 2", len(timeline))
 	}
@@ -392,7 +392,7 @@ func TestIdleChatRebindGetsNewThreadIdentityAndRejectsStaleThread(t *testing.T) 
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		SessionID:  canonicalIdleChatTestSessionID("idle-thread-replay"),
-		Generation: secondGeneration,
+		ownerEpoch: secondGeneration,
 		ThreadID:   first.ThreadID,
 		ThreadSeq:  first.ThreadSeq,
 		ThreadKind: first.ThreadKind,
@@ -477,7 +477,7 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 		To:         "shiro",
 		Content:    "最初の発話です。",
 		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
-		Generation: firstGeneration,
+		ownerEpoch: firstGeneration,
 	})
 	if len(timeline) != 1 {
 		t.Fatalf("first replay event count = %d, want 1", len(timeline))
@@ -498,7 +498,7 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 		To:         "shiro",
 		Content:    "再開した発話です。",
 		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
-		Generation: secondGeneration,
+		ownerEpoch: secondGeneration,
 	})
 	if second.Ready != nil || second.Done != nil {
 		t.Fatal("test emitter should not expose a TTS lifecycle")
@@ -514,7 +514,7 @@ func TestIdleChatPreparedReplayAfterInterruptClearsStaleSessionMarker(t *testing
 		Content:    "遅れて届いた最初の発話です。",
 		SessionID:  canonicalIdleChatTestSessionID("idle-replay"),
 		TraceID:    firstTrace,
-		Generation: firstGeneration,
+		ownerEpoch: firstGeneration,
 	})
 	if len(timeline) != 2 {
 		t.Fatalf("stale replay event was relabeled/emitted: event count=%d", len(timeline))
@@ -534,7 +534,7 @@ func TestIdleChatRejectsMalformedExplicitTraceBeforeEmission(t *testing.T) {
 		Content:    "不正なTraceは拒否されるべきです。",
 		SessionID:  canonicalIdleChatTestSessionID("idle-invalid-trace"),
 		TraceID:    modulecore.TraceID("not-a-trace"),
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	if emitted != 0 {
 		t.Fatalf("malformed explicit trace was emitted %d times", emitted)
@@ -552,7 +552,7 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 	o.emitTimelineEvent(TimelineEvent{
 		Type:       "idlechat.message",
 		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	if len(timeline) != 1 || timeline[0].TraceID.Validate() != nil {
 		t.Fatalf("empty explicit trace was not populated for owner: %+v", timeline)
@@ -562,7 +562,7 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 		Type:       "idlechat.message",
 		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
 		TraceID:    wrongTrace,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	if len(timeline) != 1 {
 		t.Fatalf("mismatched explicit trace was emitted: count=%d", len(timeline))
@@ -571,7 +571,7 @@ func TestIdleChatPopulatesOnlyEmptyTraceForValidatedGeneration(t *testing.T) {
 		Type:       "idlechat.message",
 		SessionID:  canonicalIdleChatTestSessionID("idle-explicit-trace"),
 		TraceID:    timeline[0].TraceID,
-		Generation: generation + 1,
+		ownerEpoch: generation + 1,
 	})
 	if len(timeline) != 1 {
 		t.Fatalf("stale generation with matching trace was emitted: count=%d", len(timeline))

@@ -24,7 +24,7 @@ function clearIdleLiveTimelineForTopic(ev) {
 	const key = idleTopicKey(ev);
 	if (!key || key === idleLiveTopicKey) return;
 	idleLiveTopicKey = key;
-	idleLiveActiveSessionId = String((ev && (ev.session_id || ev.chat_id)) || '').trim();
+	idleLiveActiveSessionId = String((ev && (ev.session_id)) || '').trim();
 	idlePendingMessages.clear();
 	resetTTSSpeechBubble(idleTTSSpeech);
 	if (typeof target.replaceChildren === 'function') target.replaceChildren();
@@ -35,7 +35,7 @@ function clearIdleLiveTimelineForTopic(ev) {
 }
 
 function idleTopicKey(ev) {
-  const sid = String((ev && (ev.session_id || ev.chat_id)) || '').trim();
+  const sid = String((ev && (ev.session_id)) || '').trim();
   const content = normalizeViewerDisplayText((ev && ev.content) || '').trim();
   return sid + '|' + content;
 }
@@ -47,7 +47,7 @@ function recordIdleLiveRendered(kind, ev, text) {
     kind,
     from: String((ev && ev.from) || ''),
     to: String((ev && ev.to) || ''),
-    session_id: String((ev && (ev.session_id || ev.chat_id)) || ''),
+    session_id: String((ev && (ev.session_id)) || ''),
     message_id: String((ev && (ev.message_id || ev.messageId)) || ''),
     turn_index: ev && (ev.turn_index ?? ev.turnIndex ?? ''),
     content: String(text || ''),
@@ -90,7 +90,7 @@ function idlePendingQueue(sessionId) {
 
 function queueIdleMessageForTTS(ev) {
   if (!ev || (ev.type !== 'idlechat.message' && ev.type !== 'idlechat.topic')) return;
-  const sid = String(ev.session_id || ev.chat_id || '').trim() || 'idlechat';
+  const sid = String(ev.session_id || '').trim() || 'idlechat';
   if (idleLiveIdentityConflict(ev)) return;
   if (isIdleTTSAudioDisabled()) {
     if (!isIdleSummarySpeechEvent(ev)) {
@@ -186,7 +186,7 @@ function pruneIdlePendingQueue(sessionId) {
 function addIdleMsgToTimeline(ev) {
 		if (!idleLiveRenderTarget() || !ev || (ev.type !== 'idlechat.message' && ev.type !== 'idlechat.topic')) return;
 		clearIdleLiveTimelineForTopic(ev);
-	const sid = String(ev.session_id || ev.chat_id || '').trim();
+	const sid = String(ev.session_id || '').trim();
 	if (!isIdleTopicEvent(ev) && idleLiveActiveSessionId && sid && sid !== idleLiveActiveSessionId) return;
 	queueIdleMessageForTTS(ev);
 }
@@ -198,7 +198,7 @@ function idleTranscriptSnapshotKey(sessionId, rows) {
     return [
       index,
       r.type || '',
-      r.session_id || r.chat_id || '',
+      r.session_id || '',
       r.message_id || r.messageId || '',
       r.response_id || r.responseId || '',
       r.utterance_id || r.utteranceId || '',
@@ -255,7 +255,7 @@ function appendIdleLiveMessageEvent(ev, options = {}) {
   el.querySelector('.mc').dataset.raw = ev.content || '';
 	  target.appendChild(el);
 	  sortIdleLiveMessageNodes(target);
-	  validateIdleLiveNodeSequence(target, String(ev.session_id || ev.chat_id || '').trim());
+	  validateIdleLiveNodeSequence(target, String(ev.session_id || '').trim());
 	  recordIdleLiveRendered(kind, ev, pending ? '' : displayContent);
   trimTimelineNodesFor(target, MAX_TIMELINE_NODES);
   target.scrollTop = target.scrollHeight;
@@ -282,7 +282,7 @@ function findIdleLiveMessageNode(ev) {
 	    return null;
 	  }
   if (turnIndex >= 0) {
-    const sid = String(ev.session_id || ev.chat_id || '').trim();
+    const sid = String(ev.session_id || '').trim();
     return nodes.find((node) => {
       if (!node || !node.dataset || String(node.dataset.turnIndex || '') !== String(turnIndex)) return false;
       if (!sid) return true;
@@ -298,7 +298,7 @@ function idleLiveIdentityConflict(ev) {
   if (!target || !ev) return false;
   const messageID = String(ev.message_id || ev.messageId || '').trim();
   const turnIndex = idleTurnIndex(ev);
-  const sid = String(ev.session_id || ev.chat_id || '').trim();
+  const sid = String(ev.session_id || '').trim();
   const nodes = Array.from(target.children || []);
   if (messageID) {
     const byMessage = nodes.find((node) => node && node.dataset && node.dataset.messageId === messageID);
@@ -377,7 +377,7 @@ function sortIdleLiveMessageNodes(target) {
 function idlePendingTTSErrorHTML(ev, errorCode, reason) {
   const meta = [
     ['error_code', errorCode || 'TTS_CHUNK_TIMEOUT'],
-    ['session_id', ev && (ev.session_id || ev.chat_id) || ''],
+    ['session_id', ev && (ev.session_id) || ''],
     ['response_id', ev && (ev.response_id || ev.responseId) || ''],
     ['utterance_id', ev && (ev.utterance_id || ev.utteranceId) || ''],
     ['message_id', ev && (ev.message_id || ev.messageId) || ''],
@@ -414,7 +414,7 @@ function renderIdlePendingTTSError(item, errorCode, reason) {
   recordIdleLiveRendered(isIdleTopicEvent(ev) ? 'topic_tts_error' : 'speech_tts_error', ev, JSON.stringify({
     error_code: errorCode || 'TTS_CHUNK_TIMEOUT',
     reason: reason || 'TTS chunk timeout',
-    session_id: ev.session_id || ev.chat_id || '',
+    session_id: ev.session_id || '',
     response_id: ev.response_id || ev.responseId || '',
     utterance_id: ev.utterance_id || ev.utteranceId || '',
     message_id: ev.message_id || ev.messageId || '',
@@ -709,7 +709,7 @@ function renderIdleWordTopicStock(stock) {
     const rows = topics.map((item, index) => {
       const seed = item && item.seed ? item.seed : {};
       const selected = [seed.genre_1, seed.genre_2].filter(Boolean).join(' × ');
-      const playbackID = 'word:' + String(item && item.generation_id || '');
+      const playbackID = 'word:' + String(item && item.run_id || '');
       const selectedClass = playbackID === state.idleChat.selectedTopicPlaybackID ? ' is-selected' : '';
       return '<button type="button" class="idle-stock-topic' + selectedClass + '" data-playback-id="' + esc(playbackID) + '">' +
         '<div class="idle-stock-topic-head"><span>' + esc(selected || ('お題 ' + String(index + 1))) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
@@ -767,7 +767,7 @@ function renderIdleTopicStocks() {
         ? '<details class="idle-stock-seeds"><summary>Seeds ' + esc(String(seeds.length)) + '</summary><ul>' +
           seeds.map((seed) => '<li>' + esc(String(seed || '-')) + '</li>').join('') + '</ul></details>'
         : '';
-      const playbackID = 'forecast:' + String(item && item.generation_id || '');
+      const playbackID = 'forecast:' + String(item && item.run_id || '');
       const selectedClass = playbackID === state.idleChat.selectedTopicPlaybackID ? ' is-selected' : '';
       return '<button type="button" class="idle-stock-topic' + selectedClass + '" data-playback-id="' + esc(playbackID) + '">' +
         '<div class="idle-stock-topic-head"><span>お題 ' + esc(String(index + 1)) + '</span><time>' + esc(fdt(item && item.created)) + '</time></div>' +
@@ -973,7 +973,7 @@ function renderIdleEpisodeDetail() {
     ['面白さの方向', contract.interest_direction || '-'],
     ['内容モード', contract.content_mode || '-'],
     ['成立条件', Array.isArray(contract.interest_contract) ? contract.interest_contract.join(' / ') : '-'],
-    ['生成ID', episode.generation_id || '-'],
+    ['生成ID', episode.run_id || '-'],
   ];
   const turnRows = turns.map((turn) => {
     const turnIndex = Number(turn && turn.turn_index || 0);

@@ -200,7 +200,7 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 			TurnIndex:  turn.TurnIndex,
 			Category:   TopicCategoryStory,
 			Strategy:   TopicStrategy("story"),
-			Generation: generation,
+			ownerEpoch: generation,
 		}
 		done := o.emitTimelineEvent(event)
 		o.waitForTTSReadyForEvent(event, done)
@@ -230,7 +230,7 @@ func (o *IdleChatOrchestrator) emitStoryTTSPrefetch(sessionID string, generation
 		To:         "user",
 		TurnIndex:  turn.TurnIndex,
 		Token:      turn.SpeechText,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 }
 

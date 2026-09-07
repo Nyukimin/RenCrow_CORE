@@ -11,7 +11,7 @@ func TestBuildFromLLMFinal_SplitsStructuredJSON(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		FinalText:   `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
 		StartedAt:   time.Now(),
 	})
@@ -31,7 +31,7 @@ func TestBuildFromLLMFinal_UsesHintAfterRelaySplit(t *testing.T) {
 		UtteranceID:  "utt-1",
 		SessionID:    "viewer",
 		Channel:      "viewer",
-		ChatID:       "default",
+		
 		UserTextHint: "れんの発話",
 		FinalText:    "Mioの応答",
 	})
@@ -48,7 +48,7 @@ func TestBuildFromLLMFinal_RejectsUnstructuredFinalWithoutTranscript(t *testing.
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		FinalText:   "Mioの応答",
 	})
 	if err == nil {
@@ -61,7 +61,7 @@ func TestBuildFromLLMFinal_RejectsNoAudioMeta(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		FinalText:   "音声が提供されていないため、音声ファイルをアップロードしてください。",
 	})
 	if err == nil {
@@ -74,7 +74,7 @@ func TestBuildFromSTTFinal_RequiresUserAndReply(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "こんにちは",
 		Reply:       "こんにちは。",
 	})

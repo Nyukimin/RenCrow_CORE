@@ -83,7 +83,8 @@ type IdleChatSequenceCheck struct {
 	Stage      string
 	Detail     string
 	SessionID  string
-	Generation uint64
+	RunID      string
+	TraceID    string
 	AgeSeconds int64
 	Action     string
 	Error      string
@@ -358,8 +359,8 @@ func (s *HeartbeatService) runIdleChatSequenceCheck(ctx context.Context, now tim
 		s.emitEvent("heartbeat.idlechat_sequence.error", report.Error)
 		return report
 	}
-	log.Printf("[Heartbeat] idlechat sequence check: status=%s active=%t recovered=%t stage=%s detail=%s session=%s age=%ds generation=%d action=%s",
-		report.Status, report.Active, report.Recovered, report.Stage, report.Detail, report.SessionID, report.AgeSeconds, report.Generation, report.Action)
+	log.Printf("[Heartbeat] idlechat sequence check: status=%s active=%t recovered=%t stage=%s detail=%s session=%s age=%ds run_id=%s trace_id=%s action=%s",
+		report.Status, report.Active, report.Recovered, report.Stage, report.Detail, report.SessionID, report.AgeSeconds, report.RunID, report.TraceID, report.Action)
 	s.emitEvent("heartbeat.idlechat_sequence."+status, fmt.Sprintf("active=%t recovered=%t stage=%s detail=%s session=%s age=%ds action=%s",
 		report.Active, report.Recovered, report.Stage, report.Detail, report.SessionID, report.AgeSeconds, report.Action))
 	return report

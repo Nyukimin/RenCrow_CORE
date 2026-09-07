@@ -11,7 +11,6 @@ type BuildLLMRequest struct {
 	UtteranceID  string
 	SessionID    string
 	Channel      string
-	ChatID       string
 	UserTextHint string
 	FinalText    string
 	StartedAt    time.Time
@@ -24,7 +23,6 @@ type BuildSTTRequest struct {
 	UtteranceID string
 	SessionID   string
 	Channel     string
-	ChatID      string
 	UserText    string
 	Reply       string
 	StartedAt   time.Time
@@ -53,7 +51,6 @@ func BuildFromLLMFinal(req BuildLLMRequest) (Result, error) {
 		UtteranceID: strings.TrimSpace(req.UtteranceID),
 		SessionID:   strings.TrimSpace(req.SessionID),
 		Channel:     strings.TrimSpace(req.Channel),
-		ChatID:      strings.TrimSpace(req.ChatID),
 		UserText:    strings.TrimSpace(userText),
 		Reply:       strings.TrimSpace(reply),
 		RawFinal:    raw,
@@ -77,7 +74,6 @@ func BuildFromSTTFinal(req BuildSTTRequest) (Result, error) {
 		UtteranceID: strings.TrimSpace(req.UtteranceID),
 		SessionID:   strings.TrimSpace(req.SessionID),
 		Channel:     strings.TrimSpace(req.Channel),
-		ChatID:      strings.TrimSpace(req.ChatID),
 		UserText:    strings.TrimSpace(req.UserText),
 		Reply:       strings.TrimSpace(req.Reply),
 		RawFinal:    strings.TrimSpace(req.UserText),

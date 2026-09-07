@@ -115,7 +115,7 @@ func (o *IdleChatOrchestrator) generateResponseWithRawForGeneration(speaker, tar
 				To:         target,
 				TurnIndex:  turn + 1,
 				Token:      token,
-				Generation: generation,
+				ownerEpoch: generation,
 			})
 		}
 	}

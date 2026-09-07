@@ -69,7 +69,8 @@ func (m idleChatSequenceMonitorAdapter) CheckIdleChatSequence(ctx context.Contex
 		Stage:      snapshot.Stage,
 		Detail:     snapshot.Detail,
 		SessionID:  snapshot.SessionID,
-		Generation: snapshot.Generation,
+		RunID:      string(snapshot.RunID),
+		TraceID:    string(snapshot.TraceID),
 		AgeSeconds: snapshot.AgeSeconds,
 		CheckedAt:  now.UTC(),
 	}
@@ -84,7 +85,8 @@ func (m idleChatSequenceMonitorAdapter) CheckIdleChatSequence(ctx context.Contex
 		report.Stage = recovery.Before.Stage
 		report.Detail = recovery.Before.Detail
 		report.SessionID = recovery.Before.SessionID
-		report.Generation = recovery.Before.Generation
+		report.RunID = string(recovery.Before.RunID)
+		report.TraceID = string(recovery.Before.TraceID)
 		report.AgeSeconds = recovery.Before.AgeSeconds
 		report.Action = recovery.Action + "_and_reset_tts_queue"
 	}

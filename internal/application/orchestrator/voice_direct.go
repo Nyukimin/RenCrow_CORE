@@ -23,7 +23,6 @@ type ProcessVoiceDirectRequest struct {
 	UtteranceID   string
 	SessionID     string
 	Channel       string
-	ChatID        string
 	ViewerSession string
 	Prompt        string
 	SampleRate    int
@@ -55,10 +54,9 @@ func (req ProcessVoiceDirectRequest) normalizedSessionID() string {
 	return "viewer"
 }
 
-func (req ProcessVoiceDirectRequest) normalizedChatID() string {
-	chatID := strings.TrimSpace(req.ChatID)
-	if chatID != "" {
-		return chatID
+func (req ProcessVoiceDirectRequest) recipientExternalAddress() string {
+	if sessionID := req.normalizedSessionID(); sessionID != "" {
+		return sessionID
 	}
 	return "viewer-user"
 }
@@ -94,12 +92,11 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 
 	sessionID := req.normalizedSessionID()
 	channel := req.normalizedChannel()
-	chatID := req.normalizedChatID()
+	recipientExternalAddress := req.recipientExternalAddress()
 	result, err := voiceinput.BuildFromLLMFinal(voiceinput.BuildLLMRequest{
 		UtteranceID:  req.UtteranceID,
 		SessionID:    sessionID,
 		Channel:      channel,
-		ChatID:       chatID,
 		UserTextHint: req.UserText,
 		FinalText:    req.FinalText,
 		StartedAt:    startedAt,
@@ -110,7 +107,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	address, err := conversation.NewChannelAddress(channel, chatID)
+	address, err := conversation.NewChannelAddress(channel, recipientExternalAddress)
 	if err != nil {
 		return ProcessMessageResponse{}, fmt.Errorf("build voice direct channel address: %w", err)
 	}
@@ -138,8 +135,8 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
 		Input:      input,
-		EmitMetric: func(kind, point string, startedAt time.Time, route, taskID, sessionID, channel, chatID, detail string) {
-			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, taskID, sessionID, channel, chatID, detail)
+		EmitMetric: func(kind, point string, startedAt time.Time, route, taskID, sessionID, channel, recipientExternalAddress, detail string) {
+			emitLatencyMetric(o.events.Emit, kind, point, startedAt, route, taskID, sessionID, channel, recipientExternalAddress, detail)
 		},
 	}.Publish(result)
 	if err != nil {
@@ -160,7 +157,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 			published.TaskID.String(),
 			sessionID,
 			channel,
-			chatID,
+			recipientExternalAddress,
 			req.UtteranceID,
 		)
 	}
@@ -187,7 +184,7 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 	}
 	sessionID := req.normalizedSessionID()
 	channel := req.normalizedChannel()
-	chatID := req.normalizedChatID()
+	recipientExternalAddress := req.recipientExternalAddress()
 	if taskID.IsZero() || req.RootTaskID.IsZero() || taskID != req.RootTaskID {
 		return
 	}
@@ -204,7 +201,7 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 		taskID.String(),
 		sessionID,
 		channel,
-		chatID,
+		recipientExternalAddress,
 		req.UtteranceID,
 	)
 	_ = ctx
@@ -214,7 +211,7 @@ func emitVoiceDirectPointLatency(
 	emit messageEventEmitter,
 	kind, point string,
 	startedAt, at time.Time,
-	route, taskID, sessionID, channel, chatID, detail string,
+	route, taskID, sessionID, channel, recipientExternalAddress, detail string,
 ) {
 	if emit == nil || startedAt.IsZero() || at.IsZero() {
 		return
@@ -231,5 +228,5 @@ func emitVoiceDirectPointLatency(
 	if err != nil {
 		content = []byte(fmt.Sprintf(`{"kind":%q,"point":%q,"at_unix_ms":%d}`, kind, point, at.UnixMilli()))
 	}
-	emit("metrics.latency", "metrics", "viewer", string(content), route, taskID, sessionID, channel, chatID)
+	emit("metrics.latency", "metrics", "viewer", string(content), route, taskID, sessionID, channel, recipientExternalAddress)
 }

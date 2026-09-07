@@ -1,79 +1,83 @@
-name: Go Test
+name: Canonical Test Plan
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '23 3 * * 1'
 
 permissions:
   contents: read
 
 jobs:
-  representative-tests:
-    name: Representative Go tests (Ubuntu)
-    runs-on: ubuntu-latest
+  canonical-tests:
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/playwright
+      GOCACHE: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/source/Tmp/test-runtime/_cache/go-mod
     steps:
-      - name: Preserve repository line endings
-        run: git config --global core.autocrlf false
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
         with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Module contracts
-        run: go test ./modules/...
-
-      - name: Composition, features, Viewer adapter
-        run: go test ./cmd/rencrow ./internal/application/moviecatalog ./internal/features/... ./internal/adapter/viewer ./modules/...
-
-  windows-build:
-    name: Go build and vet (Windows)
-    runs-on: windows-latest
-    steps:
-      - name: Preserve repository line endings
-        run: git config --global core.autocrlf false
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+          path: source
+          fetch-depth: 0
+      - uses: actions/checkout@v4
         with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Verify repository-local test runtime contract
+          repository: Nyukimin/RenCrow_Tools
+          path: tools
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare dependencies and owner selector
         shell: pwsh
-        run: ./scripts/test-local.ps1 -SelfTest
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
-
-  macos-build:
-    name: Go build and vet (macOS)
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+        run: |
+          $tempRoot = Join-Path $PWD 'source/Tmp/test-runtime/_bootstrap'
+          New-Item -ItemType Directory -Force $tempRoot | Out-Null
+          $env:TEMP = $tempRoot; $env:TMP = $tempRoot; $env:TMPDIR = $tempRoot; $env:GOTMPDIR = $tempRoot
+          Push-Location tools/tools/quality/test_impact
+          go build -o "$tempRoot/rencrow-test-impact${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/rencrow-test-impact
+          if ($LASTEXITCODE -ne 0) { throw 'Selector build failed' }
+          Pop-Location
+          "RENCROW_TEST_IMPACT_BIN=$tempRoot/rencrow-test-impact${{ runner.os == 'Windows' && '.exe' || '' }}" >> $env:GITHUB_ENV
+          Push-Location source
+          npm ci --cache Tmp/test-runtime/_cache/npm
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+          npx playwright install chromium firefox
+          if ($LASTEXITCODE -ne 0) { throw 'Browser installation failed' }
+          Pop-Location
+      - name: Canonical coverage and isolation
+        shell: pwsh
+        run: ./source/scripts/test-local.ps1 -SelfTest
+      - name: Shadow PR or Full regression
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          $parameters = @{ Repository = (Join-Path $PWD 'source'); Base = $env:BASE_SHA; Head = $env:HEAD_SHA }
+          if ($env:EVENT_NAME -ne 'pull_request') { $parameters.Full = $true }
+          ./tools/scripts/run-test-impact-ci.ps1 @parameters
+      - name: Keep receipts including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        run: go build ./...
-
-      - name: Vet
-        run: go vet ./...
+          name: canonical-tests-${{ matrix.os }}
+          path: |
+            source/Tmp/test-impact-ci/
+            source/Tmp/test-results/

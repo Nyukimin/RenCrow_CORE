@@ -103,7 +103,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			SessionID:  sessionID,
 			MessageID:  announceMessageID,
 			TurnIndex:  0,
-			Generation: generation,
+			ownerEpoch: generation,
 		}
 		ttsDone := o.emitTimelineEvent(announceEvent)
 		if ttsDone.Done != nil {
@@ -193,7 +193,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			TurnIndex:  0,
 			Category:   TopicCategoryForecast,
 			Strategy:   StrategyForecast,
-			Generation: generation,
+			ownerEpoch: generation,
 		}
 		ttsDone = o.emitTimelineEvent(topicEvent)
 		if ttsDone.Done != nil {
@@ -279,7 +279,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 				SessionID:  sessionID,
 				MessageID:  messageID,
 				TurnIndex:  turnIndex,
-				Generation: generation,
+				ownerEpoch: generation,
 			}
 			if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
 				log.Printf("[Forecast] message record rejected after owner change: session=%s generation=%d turn=%d", sessionID, generation, turnIndex)

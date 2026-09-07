@@ -63,7 +63,7 @@ func TestIdleChatRecordsPersonaTimelineObservation(t *testing.T) {
 		To:         "user",
 		Content:    "今日は疲れた時に効く話にしよう。",
 		SessionID:  canonicalIdleChatTestSessionID("idle-1"),
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 
 	if len(recorder.sessions) != 1 {
@@ -107,7 +107,7 @@ func TestIdleChatPersonaRecorderIgnoresTTSAudioChunks(t *testing.T) {
 		To:         "user",
 		Content:    "疲れた",
 		SessionID:  canonicalIdleChatTestSessionID("idle-tts"),
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 
 	if len(recorder.sessions) != 0 || len(recorder.observations) != 0 || len(recorder.triggers) != 0 {
@@ -127,7 +127,7 @@ func TestIdleChatCreatesPendingMetaUpdateCandidateFromTimelineEvent(t *testing.T
 		To:         "mio",
 		Content:    "私は映画の話題をアイデア源にする",
 		SessionID:  canonicalIdleChatTestSessionID("idle-meta"),
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 
 	if len(recorder.metaUpdates) != 1 {

@@ -5,7 +5,7 @@ import "strings"
 const (
 	EventChannelViewer = "viewer"
 	EventChannelIdle   = "idlechat"
-	EventChatIDViewer  = "viewer-user"
+	EventViewerPlaybackSession = "viewer-user"
 	DefaultTrack       = "default"
 )
 
@@ -59,8 +59,8 @@ type SessionCompletedEventPayload struct {
 }
 
 type PlaybackEventRoute struct {
-	Channel string
-	ChatID  string
+	Channel   string
+	SessionID string
 }
 
 func BuildAudioChunkEventPayload(input AudioChunkEventPayloadInput) AudioChunkEventPayload {
@@ -103,7 +103,7 @@ func BuildSessionCompletedEventPayload(input SessionCompletedEventPayloadInput) 
 func PlaybackEventRouteForSession(sessionID string) PlaybackEventRoute {
 	sessionID = strings.TrimSpace(sessionID)
 	if IsIdleChatPublicSession(sessionID) {
-		return PlaybackEventRoute{Channel: EventChannelIdle, ChatID: sessionID}
+		return PlaybackEventRoute{Channel: EventChannelIdle, SessionID: sessionID}
 	}
-	return PlaybackEventRoute{Channel: EventChannelViewer, ChatID: EventChatIDViewer}
+	return PlaybackEventRoute{Channel: EventChannelViewer, SessionID: EventViewerPlaybackSession}
 }

@@ -80,7 +80,7 @@ func (o *IdleChatOrchestrator) saveForecastSummary(sessionID string, domain Fore
 		SessionID:  sessionID,
 		MessageID:  messageID,
 		TurnIndex:  turnIndex,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	return summary
 }

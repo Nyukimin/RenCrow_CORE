@@ -15,33 +15,34 @@ type recordingEmitter struct {
 }
 
 type recordedEvent struct {
-	Type      string
-	From      string
-	To        string
-	Content   string
-	Route     string
-	TaskID    string
-	SessionID string
-	Channel   string
-	ChatID    string
-	MessageID string
+	Type                      string
+	From                      string
+	To                        string
+	Content                   string
+	Route                     string
+	TaskID                    string
+	SessionID                 string
+	Channel                   string
+	RecipientExternalAddress  string
+	MessageID                 string
 }
 
-func (e *recordingEmitter) Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+func (e *recordingEmitter) Emit(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress string) {
 	e.events = append(e.events, recordedEvent{
 		Type: eventType, From: from, To: to, Content: content, Route: route,
-		TaskID: taskID, SessionID: sessionID, Channel: channel, ChatID: chatID,
+		TaskID: taskID, SessionID: sessionID, Channel: channel,
+		RecipientExternalAddress: recipientExternalAddress,
 	})
 }
 
-func (e *recordingEmitter) EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID string) {
-	e.Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
+func (e *recordingEmitter) EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress, messageID string) {
+	e.Emit(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress)
 	e.events[len(e.events)-1].MessageID = messageID
 }
 
-func newPublisherInput(t *testing.T, sessionID, channel, chatID, messageText string) conversation.TurnInput {
+func newPublisherInput(t *testing.T, sessionID, channel, recipientExternalAddress, messageText string) conversation.TurnInput {
 	t.Helper()
-	address, err := conversation.NewChannelAddress(channel, chatID)
+	address, err := conversation.NewChannelAddress(channel, recipientExternalAddress)
 	if err != nil {
 		t.Fatalf("NewChannelAddress() error = %v", err)
 	}
@@ -57,7 +58,7 @@ func newPublisherInput(t *testing.T, sessionID, channel, chatID, messageText str
 
 func inputForResult(t *testing.T, result Result) conversation.TurnInput {
 	t.Helper()
-	return newPublisherInput(t, result.SessionID, result.Channel, result.ChatID, result.UserText)
+	return newPublisherInput(t, result.SessionID, result.Channel, "viewer-user", result.UserText)
 }
 
 type recordingTurnLogger struct {
@@ -128,7 +129,7 @@ func TestPublisherRejectsMissingTraceIDBeforeEmittingOrLogging(t *testing.T) {
 		UtteranceID: "utt-missing-trace",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
@@ -151,7 +152,7 @@ func TestPublisherUsesRootTaskIDAndIndependentTraceID(t *testing.T) {
 		UtteranceID: "utt-trace-reuse",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
@@ -176,7 +177,7 @@ func TestPublisherPassesExplicitTraceIDToCorrelatedSessionLogs(t *testing.T) {
 		UtteranceID: "utt-correlated-trace",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
@@ -204,13 +205,13 @@ func TestPublisherUsesTurnInputIdentitiesAndBoundary(t *testing.T) {
 		UtteranceID: "utt-canonical-input",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		ChatID:      "viewer-user",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
 		Source:      "RenCrow_LLM llm.final",
 	}
-	input := newPublisherInput(t, result.SessionID, result.Channel, result.ChatID, result.UserText)
+	input := newPublisherInput(t, result.SessionID, result.Channel, "viewer-user", result.UserText)
 	emitter := &recordingEmitter{}
 	logger := &recordingPublisherCorrelatedTurnLogger{}
 	published, err := (Publisher{
@@ -231,11 +232,11 @@ func TestPublisherUsesTurnInputIdentitiesAndBoundary(t *testing.T) {
 		t.Fatalf("expected three events, got %#v", emitter.events)
 	}
 	userEvent := emitter.events[0]
-	if userEvent.Type != "message.received" || userEvent.MessageID != string(input.UserMessageID()) || userEvent.TaskID != input.RootTaskID().String() || userEvent.SessionID != input.SessionID() || userEvent.Channel != input.ChannelAddress().ChannelType() || userEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
+	if userEvent.Type != "message.received" || userEvent.MessageID != string(input.UserMessageID()) || userEvent.TaskID != input.RootTaskID().String() || userEvent.SessionID != input.SessionID() || userEvent.Channel != input.ChannelAddress().ChannelType() || userEvent.RecipientExternalAddress != input.ChannelAddress().ExternalConversationID() {
 		t.Fatalf("user event identity/boundary = %#v, input=%#v", userEvent, input)
 	}
 	responseEvent := emitter.events[2]
-	if responseEvent.Type != "agent.response" || responseEvent.MessageID != string(input.AgentMessageID()) || responseEvent.Route != string(input.Route()) || responseEvent.TaskID != input.RootTaskID().String() || responseEvent.SessionID != input.SessionID() || responseEvent.Channel != input.ChannelAddress().ChannelType() || responseEvent.ChatID != input.ChannelAddress().ExternalConversationID() {
+	if responseEvent.Type != "agent.response" || responseEvent.MessageID != string(input.AgentMessageID()) || responseEvent.Route != string(input.Route()) || responseEvent.TaskID != input.RootTaskID().String() || responseEvent.SessionID != input.SessionID() || responseEvent.Channel != input.ChannelAddress().ChannelType() || responseEvent.RecipientExternalAddress != input.ChannelAddress().ExternalConversationID() {
 		t.Fatalf("response event identity/boundary = %#v, input=%#v", responseEvent, input)
 	}
 	if logger.userMessageID != string(input.UserMessageID()) || logger.userTraceID != string(input.TraceID()) || logger.userSessionID != input.SessionID() || logger.userChannel != input.ChannelAddress().ChannelType() {
@@ -255,13 +256,13 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 		UtteranceID: "utt-boundary-reject",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		ChatID:      "viewer-user",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
 		Source:      "RenCrow_LLM llm.final",
 	}
-	validInput := newPublisherInput(t, baseResult.SessionID, baseResult.Channel, baseResult.ChatID, baseResult.UserText)
+	validInput := newPublisherInput(t, baseResult.SessionID, baseResult.Channel, "viewer-user", baseResult.UserText)
 	tests := []struct {
 		name   string
 		input  conversation.TurnInput
@@ -271,7 +272,6 @@ func TestPublisherRejectsMissingMalformedAndBoundaryMismatchBeforeSideEffects(t 
 		{name: "user text mismatch", input: validInput, result: func() Result { r := baseResult; r.UserText = "別の入力"; return r }()},
 		{name: "session mismatch", input: validInput, result: func() Result { r := baseResult; r.SessionID = "session-2"; return r }()},
 		{name: "channel mismatch", input: validInput, result: func() Result { r := baseResult; r.Channel = "slack"; return r }()},
-		{name: "chat mismatch", input: validInput, result: func() Result { r := baseResult; r.ChatID = "other-user"; return r }()},
 		{name: "route mismatch", input: validInput.WithRoute(routing.RouteCODE1), result: baseResult},
 	}
 	for _, tc := range tests {
@@ -302,13 +302,13 @@ func TestPublisherUsesRootTaskIDWithoutRootTaskCollisionRejection(t *testing.T) 
 		UtteranceID: "utt-task-correlation",
 		SessionID:   "session-1",
 		Channel:     "viewer",
-		ChatID:      "viewer-user",
+		
 		UserText:    "入力",
 		Reply:       "応答",
 		RawFinal:    "応答",
 		Source:      "RenCrow_LLM llm.final",
 	}
-	input := newPublisherInput(t, result.SessionID, result.Channel, result.ChatID, result.UserText)
+	input := newPublisherInput(t, result.SessionID, result.Channel, "viewer-user", result.UserText)
 	emitter := &recordingEmitter{}
 	logger := &recordingPublisherCorrelatedTurnLogger{}
 	published, err := (Publisher{
@@ -338,7 +338,7 @@ func TestPublisherRejectsMissingUserTextBeforeEmittingOrLogging(t *testing.T) {
 		UtteranceID: "utt-missing-user-text",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		Reply:       "応答",
 		RawFinal:    "応答",
 		Source:      "RenCrow_LLM llm.final",
@@ -367,7 +367,7 @@ func TestPublisherPublishesUserTextAndReplyOnly(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "Mioさんいますか",
 		Reply:       "はい、います。",
 		RawFinal:    `{"user_text":"Mioさんいますか","reply":"はい、います。"}`,
@@ -402,7 +402,7 @@ func TestPublisherMarksVoiceInputAsVoiceChatSurface(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "入力",
 		Reply:       "はい。",
 		RawFinal:    "はい。",
@@ -438,7 +438,7 @@ func TestPublisherDoesNotPublishRawJSONAsChatContent(t *testing.T) {
 		UtteranceID: "utt-1",
 		SessionID:   "viewer",
 		Channel:     "viewer",
-		ChatID:      "default",
+		
 		UserText:    "れん",
 		Reply:       "応答",
 		RawFinal:    `{"user_text":"れん","reply":"応答"}`,

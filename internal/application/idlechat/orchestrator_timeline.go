@@ -21,25 +21,31 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle 
 			return TTSLifecycle{}
 		}
 	}
-	threadID, threadSeq, threadKind, ok := o.ownerThreadIdentityLocked(ev.SessionID, ev.Generation)
+	threadID, threadSeq, threadKind, ok := o.ownerThreadIdentityLocked(ev.SessionID, ev.ownerEpoch)
 	if !ok {
 		o.mu.Unlock()
-		log.Printf("[IdleChat] timeline event rejected without owner generation/thread: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		log.Printf("[IdleChat] timeline event rejected without owner generation/thread: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.ownerEpoch)
 		return TTSLifecycle{}
 	}
 	if (ev.ThreadID != "" && ev.ThreadID != threadID) ||
 		(ev.ThreadSeq != 0 && ev.ThreadSeq != threadSeq) ||
 		(ev.ThreadKind != "" && ev.ThreadKind != threadKind) {
 		o.mu.Unlock()
-		log.Printf("[IdleChat] timeline event rejected with mismatched thread tuple: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		log.Printf("[IdleChat] timeline event rejected with mismatched thread tuple: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.ownerEpoch)
 		return TTSLifecycle{}
 	}
 	if ev.TraceID == "" {
 		ev.TraceID = o.activeTraceID
 	} else if ev.TraceID.Validate() != nil || ev.TraceID != o.activeTraceID {
 		o.mu.Unlock()
-		log.Printf("[IdleChat] timeline event rejected with mismatched trace owner: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.Generation)
+		log.Printf("[IdleChat] timeline event rejected with mismatched trace owner: type=%s session=%s generation=%d", ev.Type, ev.SessionID, ev.ownerEpoch)
 		return TTSLifecycle{}
+	}
+	if ev.TaskID == "" {
+		ev.TaskID = o.activeTaskID
+	}
+	if ev.RunID == "" {
+		ev.RunID = o.activeRunID
 	}
 	ev.ThreadID = threadID
 	ev.ThreadSeq = threadSeq
@@ -56,13 +62,19 @@ func (o *IdleChatOrchestrator) emitTimelineEvent(ev TimelineEvent) TTSLifecycle 
 func (o *IdleChatOrchestrator) emitTTSPrefetchEvent(ev TTSPrefetchEvent) {
 	o.emitMu.Lock()
 	defer o.emitMu.Unlock()
-	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
+	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.ownerEpoch)
 	if !ok {
-		log.Printf("[IdleChat] TTS prefetch rejected without owner generation/trace: session=%s message_id=%s generation=%d", ev.SessionID, ev.MessageID, ev.Generation)
+		log.Printf("[IdleChat] TTS prefetch rejected without owner generation/trace: session=%s message_id=%s generation=%d", ev.SessionID, ev.MessageID, ev.ownerEpoch)
 		return
 	}
 	ev.TraceID = traceID
 	o.mu.Lock()
+	if ev.TaskID == "" {
+		ev.TaskID = o.activeTaskID
+	}
+	if ev.RunID == "" {
+		ev.RunID = o.activeRunID
+	}
 	emit := o.emitTTSPrefetch
 	o.mu.Unlock()
 	if emit != nil {
@@ -84,7 +96,7 @@ func (o *IdleChatOrchestrator) emitTopicToTimeline(sessionID, topic string, stra
 		TurnIndex:  0,
 		Category:   category,
 		Strategy:   strategy,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 }
 
@@ -118,7 +130,7 @@ func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, 
 		SessionID:  sessionID,
 		MessageID:  messageID,
 		TurnIndex:  turnIndex,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 }
 

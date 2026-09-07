@@ -117,7 +117,6 @@ func (t *voiceChatBridgeTracker) beginUtterance(ev map[string]any) {
 		UtteranceID:   stringField(ev, "utterance_id"),
 		SessionID:     voiceChatFirstNonEmpty(stringField(ev, "viewer_session_id"), stringField(ev, "session_id")),
 		Channel:       voiceChatFirstNonEmpty(stringField(ev, "channel"), "viewer"),
-		ChatID:        stringField(ev, "chat_id"),
 		ViewerSession: stringField(ev, "viewer_session_id"),
 		Prompt:        stringField(ev, "prompt"),
 		SampleRate:    intField(ev, "sample_rate"),

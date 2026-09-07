@@ -41,11 +41,10 @@ type voiceChatInputAudioSettings struct {
 }
 
 type voiceChatInputAudioSession struct {
-	utteranceID  string
-	sessionID    string
-	channel      string
-	chatID       string
-	prompt       string
+	utteranceID string
+	sessionID   string
+	channel     string
+	prompt      string
 	sampleRate   int
 	channels     int
 	startedAt    time.Time
@@ -207,7 +206,6 @@ func newVoiceChatInputAudioSession(ev map[string]any, defaultPrompt string) *voi
 		utteranceID: utteranceID,
 		sessionID:   sessionID,
 		channel:     voiceChatFirstNonEmpty(stringField(ev, "channel"), "viewer"),
-		chatID:      stringField(ev, "chat_id"),
 		prompt:      voiceChatFirstNonEmpty(stringField(ev, "prompt"), defaultPrompt, "音声の内容を理解し、日本語で短く自然に返答してください。"),
 		sampleRate:  sampleRate,
 		channels:    channels,
@@ -296,7 +294,6 @@ func processVoiceChatInputAudioFinal(handler voiceDirectFinalHandler, sess *voic
 		UtteranceID:  sess.utteranceID,
 		SessionID:    sess.sessionID,
 		Channel:      sess.channel,
-		ChatID:       sess.chatID,
 		Prompt:       sess.prompt,
 		SampleRate:   sess.sampleRate,
 		Channels:     sess.channels,

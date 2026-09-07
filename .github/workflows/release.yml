@@ -19,7 +19,11 @@ on:
         default: false
 
 jobs:
+  regression:
+    uses: ./.github/workflows/go-test.yml
+
   create-tag:
+    needs: regression
     name: Create Git Tag
     runs-on: ubuntu-latest
     permissions:

@@ -49,7 +49,7 @@ func TestVoiceChatBridgeTracker_FinalizesVoiceDirectOnLLMFinal(t *testing.T) {
 	handler := &recordingVoiceDirectHandler{}
 	tracker := newVoiceChatBridgeTracker(handler, nil)
 
-	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer","chat_id":"viewer-user","sample_rate":16000,"channels":1,"format":"pcm16le","model":"Chat"}`))
+	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer","session_id":"viewer-user","sample_rate":16000,"channels":1,"format":"pcm16le","model":"Chat"}`))
 	tracker.observeClientText([]byte(`{"type":"session.commit","utterance_id":"utt-1"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.delta","utterance_id":"utt-1","seq":1,"text":"お"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"おはよう"}`))
@@ -79,7 +79,7 @@ func TestVoiceChatBridgeTracker_UsesStructuredFinalUserTextHint(t *testing.T) {
 	handler := &recordingVoiceDirectHandler{}
 	tracker := newVoiceChatBridgeTracker(handler, nil)
 
-	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","viewer_session_id":"viewer","channel":"viewer","chat_id":"default"}`))
+	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","viewer_session_id":"viewer","channel":"viewer","session_id":"default"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.final","utterance_id":"utt-1","text":"はい、います。","user_text":"Mioさんいますか"}`))
 
 	finals, _, _ := handler.snapshot()
@@ -99,7 +99,7 @@ func TestVoiceChatBridgeTracker_DeltaIdleDoesNotFinalizeVoiceDirect(t *testing.T
 	tracker := newVoiceChatBridgeTracker(handler, nil)
 	tracker.deltaIdleFinalizeAfter = 10 * time.Millisecond
 
-	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer","chat_id":"viewer-user","sample_rate":16000,"channels":1,"format":"pcm16le"}`))
+	tracker.observeClientText([]byte(`{"type":"session.start","utterance_id":"utt-1","channel":"viewer","session_id":"viewer-user","sample_rate":16000,"channels":1,"format":"pcm16le"}`))
 	tracker.observeClientText([]byte(`{"type":"session.commit","utterance_id":"utt-1"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.delta","utterance_id":"utt-1","seq":1,"text":"お"}`))
 	tracker.observeGatewayText([]byte(`{"type":"llm.delta","utterance_id":"utt-1","seq":2,"text":"はよう"}`))

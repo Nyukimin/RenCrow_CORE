@@ -1,0 +1,79 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step17-voice-idlechat",
+  "phase": "design-frozen-v1",
+  "evaluated_at": "2026-09-07T10:00:00Z",
+  "input": {
+    "base_revision": "after-step16",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-17-voiceとidlechat",
+    "voice_rule": "Voice Input STT LLM TTS Playback Cancel share one TraceID; each hop uses Action Attempt Request Response where applicable; ChatID is forbidden on Voice and TTS playback routes",
+    "idlechat_rule": "IdleChat uses Session Thread Turn; generation ownership is RunID not GenerationID or generation JSON id; ChatID zero in IdleChat owners",
+    "completion_rule": "ChatID zero and GenerationID zero and generation-as-ID zero in Step17 Voice IdleChat TTS Viewer idlechat owners after cutover"
+  },
+  "included": [
+    {
+      "check_id": "s17_voice_chat_id",
+      "guarantee": "Voice direct voiceinput and voice_chat_runtime owners have zero ChatID chat_id as identity",
+      "owner": "RenCrow_CORE voice",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Voice runtime",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s17_tts_route_session",
+      "guarantee": "TTS PlaybackEventRoute uses SessionID not ChatID",
+      "owner": "RenCrow_CORE modules/tts",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "TTS SSE",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s17_idlechat_generation",
+      "guarantee": "IdleChat public wire and domain events do not expose GenerationID or generation_id as identity; ownership uses RunID TaskID TraceID",
+      "owner": "RenCrow_CORE idlechat",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "IdleChat Viewer",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s17_viewer_idlechat_voice",
+      "guarantee": "viewer idlechat.js and voice-related chat_id generation_id fallbacks removed for SessionID ResponseID",
+      "owner": "RenCrow_CORE Viewer assets",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Viewer",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s17_architecture_zero",
+      "guarantee": "Step17 owner packages ban ChatID GenerationID generation_id after cleanup",
+      "owner": "modules/core architecture tests",
+      "execution_phase": "pre-commit and post-cutover",
+      "result_consumer": "Step17 ledger",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s17_runtime_route",
+      "guarantee": "health ok after deploy of Step17 binary",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover",
+      "result_consumer": "Step17 ledger",
+      "failure_action": "rollback"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s17_general_chat_line_discord",
+      "reason": "message_orchestrator LINE Discord Slack ChatID are general channel adapters not Voice IdleChat Step17 owners",
+      "consumer": "Step19 Viewer or channel-local IU",
+      "failure_action": "keep outside Step17 zero claim"
+    },
+    {
+      "check_id": "s17_full_system_restorecheck",
+      "reason": "belongs after all Identity steps",
+      "consumer": "final all-clear",
+      "failure_action": "reopen ledger"
+    }
+  ],
+  "replacement_receipts": []
+}

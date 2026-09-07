@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -140,6 +141,8 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	}
 	o.activeTraceID = ""
 	o.activeTraceSessionID = ""
+	o.activeTaskID = ""
+	o.activeRunID = ""
 	o.runCancel = nil
 	o.runCtx = o.ctx
 	o.mu.Unlock()
@@ -170,12 +173,24 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 		o.runCancel()
 	}
 	o.activeGeneration++
+	o.activeTaskID = ""
+	o.activeRunID = ""
 	if o.activeThread != nil {
 		o.activeThread.Close()
 		o.activeThread = nil
 	}
 	o.activeTraceID = modulecore.NewTraceID()
 	o.activeTraceSessionID = ""
+	if o.runIssuer != nil {
+		runCtx := o.runCtx
+		if runCtx == nil {
+			runCtx = o.ctx
+		}
+		if taskID, runID, err := issueIdleChatRun(runCtx, o.runIssuer, "IdleChat conversation", "shiro", domaintask.RunStartReasonFirst, ""); err == nil {
+			o.activeTaskID = taskID
+			o.activeRunID = runID
+		}
+	}
 	o.runCtx, o.runCancel = context.WithCancel(o.ctx)
 	o.watchdogStage = "run_started"
 	o.watchdogDetail = ""

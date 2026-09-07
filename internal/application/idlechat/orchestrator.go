@@ -101,10 +101,12 @@ type TimelineEvent struct {
 	Category   TopicCategory
 	Strategy   TopicStrategy
 	TraceID    modulecore.TraceID
-	// Generation is the immutable IdleChat run owner captured by the caller.
+	TaskID     modulecore.TaskID
+	RunID      modulecore.RunID
+	// ownerEpoch is the immutable IdleChat run owner captured by the caller.
 	// SessionID alone is not sufficient because a prepared episode may be
 	// replayed with the same public session identifier after an interrupt.
-	Generation uint64
+	ownerEpoch uint64
 }
 
 // TTSLifecycle separates synthesis readiness from the terminal state of the
@@ -123,7 +125,9 @@ type TTSPrefetchEvent struct {
 	TurnIndex  int
 	Token      string
 	TraceID    modulecore.TraceID
-	Generation uint64
+	TaskID     modulecore.TaskID
+	RunID      modulecore.RunID
+	ownerEpoch uint64
 }
 
 type PersonaRuntimeRecorder interface {
@@ -215,6 +219,8 @@ type IdleChatOrchestrator struct {
 	topicThreadSeq            map[string]modulecore.ThreadSeq
 	activeTraceID             modulecore.TraceID
 	activeTraceSessionID      string
+	activeTaskID              modulecore.TaskID
+	activeRunID               modulecore.RunID
 	activeGeneration          uint64
 	interruptedSessions       map[string]struct{}
 	watchdogStage             string
@@ -260,10 +266,10 @@ type TTSTimeoutEvent struct {
 	RemainingIndex int
 	RemainingCount int
 	TraceID        modulecore.TraceID
-	// Generation is the immutable IdleChat run owner captured by the wait.
+	// ownerEpoch is the immutable IdleChat run owner captured by the wait.
 	// SessionID alone is not sufficient because an episode may be replayed
 	// with the same public session identifier after an interrupt.
-	Generation uint64
+	ownerEpoch uint64
 }
 
 type idleSessionPlan struct {

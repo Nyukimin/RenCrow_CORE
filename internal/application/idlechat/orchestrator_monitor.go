@@ -231,7 +231,7 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 			SessionID:  segmentID,
 			MessageID:  messageID,
 			TurnIndex:  turnIndex,
-			Generation: generation,
+			ownerEpoch: generation,
 		}
 		ttsDone := o.emitTimelineEvent(messageEvent)
 		if ttsDone.Done != nil {
@@ -349,7 +349,7 @@ func (o *IdleChatOrchestrator) waitForTTSReadyForEvent(ev TimelineEvent, lifecyc
 			MessageID:  ev.MessageID,
 			TurnIndex:  ev.TurnIndex,
 			TraceID:    ev.TraceID,
-			Generation: ev.Generation,
+			ownerEpoch: ev.ownerEpoch,
 		})
 	}
 }
@@ -381,7 +381,7 @@ func (o *IdleChatOrchestrator) waitForTTSSessionDrain(sessionID string, generati
 				SessionID:      sessionID,
 				RemainingIndex: idx + 1,
 				RemainingCount: len(lifecycles),
-				Generation:     generation,
+				ownerEpoch: generation,
 			})
 			return
 		}
@@ -395,7 +395,7 @@ func (o *IdleChatOrchestrator) reportTTSTimeoutEvent(ev TTSTimeoutEvent) {
 	}
 	o.emitMu.Lock()
 	defer o.emitMu.Unlock()
-	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.Generation)
+	traceID, ok := o.traceForSession(ev.SessionID, ev.TraceID, ev.ownerEpoch)
 	if !ok {
 		return
 	}

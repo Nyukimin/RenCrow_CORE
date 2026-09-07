@@ -68,9 +68,6 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	if result.Channel != address.ChannelType() {
 		return PublishResult{}, fmt.Errorf("voice publisher channel does not match input channel address")
 	}
-	if result.ChatID != address.ExternalConversationID() {
-		return PublishResult{}, fmt.Errorf("voice publisher chat_id does not match input channel address")
-	}
 	if p.Input.Route() != routing.RouteCHAT {
 		return PublishResult{}, fmt.Errorf("voice publisher input route must be CHAT")
 	}
@@ -96,14 +93,14 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	responseMessageID := string(p.Input.AgentMessageID())
 	sessionID := p.Input.SessionID()
 	channel := address.ChannelType()
-	chatID := address.ExternalConversationID()
+	recipientExternalAddress := address.ExternalConversationID()
 	route := string(p.Input.Route())
 	if p.Events != nil {
 		if result.UserText != "" {
-			p.emitMessage("message.received", "user", "mio", result.UserText, "", taskIDValue, sessionID, channel, chatID, userMessageID)
+			p.emitMessage("message.received", "user", "mio", result.UserText, "", taskIDValue, sessionID, channel, recipientExternalAddress, userMessageID)
 		}
 		if p.EmitMetric != nil {
-			p.EmitMetric("network", "server_received", result.Timings.StartedAt, "", taskIDValue, sessionID, channel, chatID, result.UtteranceID)
+			p.EmitMetric("network", "server_received", result.Timings.StartedAt, "", taskIDValue, sessionID, channel, recipientExternalAddress, result.UtteranceID)
 		}
 		p.Events.Emit(
 			"routing.decision",
@@ -119,16 +116,16 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 			taskIDValue,
 			sessionID,
 			channel,
-			chatID,
+			recipientExternalAddress,
 		)
 		if p.EmitMetric != nil {
 			detail := fmt.Sprintf("surface=%s source=%s", SurfaceVoiceChat, VoiceDirectEvidenceKey)
-			p.EmitMetric("llm", "route_decision", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, detail)
-			p.EmitMetric("llm", "dispatch_start", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, detail)
+			p.EmitMetric("llm", "route_decision", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, recipientExternalAddress, detail)
+			p.EmitMetric("llm", "dispatch_start", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, recipientExternalAddress, detail)
 		}
-		p.emitMessage("agent.response", "mio", "user", result.Reply, route, taskIDValue, sessionID, channel, chatID, responseMessageID)
+		p.emitMessage("agent.response", "mio", "user", result.Reply, route, taskIDValue, sessionID, channel, recipientExternalAddress, responseMessageID)
 		if p.EmitMetric != nil {
-			p.EmitMetric("llm", "response_complete", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, chatID, fmt.Sprintf("utterance_id=%s response_len=%d", result.UtteranceID, len(result.Reply)))
+			p.EmitMetric("llm", "response_complete", result.Timings.StartedAt, route, taskIDValue, sessionID, channel, recipientExternalAddress, fmt.Sprintf("utterance_id=%s response_len=%d", result.UtteranceID, len(result.Reply)))
 		}
 	}
 	if p.TurnLogger != nil {
@@ -147,10 +144,10 @@ func (p Publisher) Publish(result Result) (PublishResult, error) {
 	return PublishResult{Input: p.Input, TaskID: taskID, MessageID: responseMessageID, TraceID: traceID, Result: result}, nil
 }
 
-func (p Publisher) emitMessage(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID string) {
+func (p Publisher) emitMessage(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress, messageID string) {
 	if correlated, ok := p.Events.(CorrelatedEventEmitter); ok && messageID != "" {
-		correlated.EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, chatID, messageID)
+		correlated.EmitWithMessageID(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress, messageID)
 		return
 	}
-	p.Events.Emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
+	p.Events.Emit(eventType, from, to, content, route, taskID, sessionID, channel, recipientExternalAddress)
 }

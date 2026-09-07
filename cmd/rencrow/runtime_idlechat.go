@@ -153,10 +153,6 @@ func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEve
 	if viewerType == "idlechat.viewer" {
 		viewerType = "idlechat.message"
 	}
-	chatID := strings.TrimSpace(ev.SessionID)
-	if chatID == "" {
-		chatID = "idlechat"
-	}
 	viewerEvent := orchestrator.NewEventWithTraceID(
 		ev.TraceID,
 		viewerType,
@@ -164,11 +160,12 @@ func idleChatViewerEvent(ev idlechat.TimelineEvent) orchestrator.OrchestratorEve
 		ev.To,
 		ev.Content,
 		"IDLECHAT",
-		"",
+		string(ev.TaskID),
 		ev.SessionID,
 		"idlechat",
-		chatID,
+		"",
 	)
+	viewerEvent.RunID = ev.RunID
 	viewerEvent.RawContent = ev.RawContent
 	viewerEvent.MessageID = modulecore.MessageID(ev.MessageID)
 	viewerEvent.TurnIndex = ev.TurnIndex

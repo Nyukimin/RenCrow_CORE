@@ -18,7 +18,6 @@ type Result struct {
 	UtteranceID string
 	SessionID   string
 	Channel     string
-	ChatID      string
 	UserText    string
 	Reply       string
 	RawFinal    string
@@ -46,9 +45,6 @@ func (r Result) Validate() error {
 	}
 	if strings.TrimSpace(r.Channel) == "" {
 		return errors.New("voice input channel is required")
-	}
-	if strings.TrimSpace(r.ChatID) == "" {
-		return errors.New("voice input chat_id is required")
 	}
 	if strings.TrimSpace(r.Source) == "" {
 		return errors.New("voice input source is required")

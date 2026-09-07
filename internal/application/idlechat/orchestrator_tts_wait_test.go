@@ -68,7 +68,7 @@ func TestWaitForTTSReadyTimesOut(t *testing.T) {
 		MessageID:  "idle-timeout:msg:0001",
 		TurnIndex:  1,
 		TraceID:    traceID,
-		Generation: generation,
+		ownerEpoch: generation,
 	}, TTSLifecycle{Ready: blocked})
 
 	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
@@ -152,11 +152,11 @@ func TestIdleChatTTSTimeoutCarriesValidatedTraceAndGeneration(t *testing.T) {
 		MessageID:  "idle-timeout-trace:msg:0001",
 		TurnIndex:  1,
 		TraceID:    traceID,
-		Generation: generation,
+		ownerEpoch: generation,
 	}, TTSLifecycle{Ready: make(chan struct{})})
 
-	if timeoutEvent.TraceID != traceID || timeoutEvent.Generation != generation {
-		t.Fatalf("timeout identity = trace:%q generation:%d, want trace:%q generation:%d", timeoutEvent.TraceID, timeoutEvent.Generation, traceID, generation)
+	if timeoutEvent.TraceID != traceID || timeoutEvent.ownerEpoch != generation {
+		t.Fatalf("timeout identity = trace:%q generation:%d, want trace:%q generation:%d", timeoutEvent.TraceID, timeoutEvent.ownerEpoch, traceID, generation)
 	}
 }
 
@@ -170,9 +170,9 @@ func TestIdleChatTTSTimeoutReporterRejectsStaleOrMalformedOwnership(t *testing.T
 	o.SetTTSTimeoutReporter(func(TTSTimeoutEvent) { called++ })
 
 	for _, ev := range []TTSTimeoutEvent{
-		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.TraceID("not-a-trace"), Generation: generation},
-		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.NewTraceID(), Generation: generation},
-		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: traceID, Generation: generation + 1},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.TraceID("not-a-trace"), ownerEpoch: generation},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: modulecore.NewTraceID(), ownerEpoch: generation},
+		{Kind: "timeout", SessionID: canonicalIdleChatTestSessionID("idle-timeout-owner"), MessageID: "message", TraceID: traceID, ownerEpoch: generation + 1},
 	} {
 		o.reportTTSTimeoutEvent(ev)
 	}
@@ -197,7 +197,7 @@ func TestIdleChatTTSSessionDrainTimeoutCarriesOwnerTrace(t *testing.T) {
 
 	o.waitForTTSSessionDrain(canonicalIdleChatTestSessionID("idle-drain-trace"), generation, []TTSLifecycle{{Done: make(chan struct{})}})
 
-	if timeoutEvent.Kind != "session_audio_timeout" || timeoutEvent.TraceID != traceID || timeoutEvent.Generation != generation {
+	if timeoutEvent.Kind != "session_audio_timeout" || timeoutEvent.TraceID != traceID || timeoutEvent.ownerEpoch != generation {
 		t.Fatalf("session timeout identity = %+v, want trace:%q generation:%d", timeoutEvent, traceID, generation)
 	}
 }

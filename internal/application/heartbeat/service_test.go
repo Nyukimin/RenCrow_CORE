@@ -88,7 +88,8 @@ type heartbeatSequenceMonitorReport struct {
 	Stage      string
 	Detail     string
 	SessionID  string
-	Generation uint64
+	RunID      string
+	TraceID    string
 	AgeSeconds int64
 	Action     string
 }
@@ -102,7 +103,8 @@ func (m *fakeIdleChatSequenceMonitor) CheckIdleChatSequence(_ context.Context, n
 		Stage:      m.report.Stage,
 		Detail:     m.report.Detail,
 		SessionID:  m.report.SessionID,
-		Generation: m.report.Generation,
+		RunID:      m.report.RunID,
+		TraceID:    m.report.TraceID,
 		AgeSeconds: m.report.AgeSeconds,
 		Action:     m.report.Action,
 		CheckedAt:  now.UTC(),
@@ -259,7 +261,8 @@ func TestRunIdleChatSequenceCheckEmitsRecoveredEvent(t *testing.T) {
 			Stage:      "tts_wait",
 			Detail:     "Ren->Mio turn=2",
 			SessionID:  "idle-1-topic-00",
-			Generation: 7,
+			RunID:      "run-test-1",
+			TraceID:    "trc-test-1",
 			AgeSeconds: 180,
 			Action:     "interrupt_idlechat_and_clear_active_state_and_reset_tts_queue",
 		},

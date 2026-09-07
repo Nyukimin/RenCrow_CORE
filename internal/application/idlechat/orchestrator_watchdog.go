@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -21,7 +23,8 @@ type WatchdogSnapshot struct {
 	Disabled        bool      `json:"disabled"`
 	Mode            string    `json:"mode"`
 	SessionID       string    `json:"session_id"`
-	Generation      uint64    `json:"generation"`
+	TraceID         modulecore.TraceID `json:"trace_id,omitempty"`
+	RunID           modulecore.RunID   `json:"run_id,omitempty"`
 	Stage           string    `json:"stage"`
 	Detail          string    `json:"detail"`
 	From            string    `json:"from,omitempty"`
@@ -116,7 +119,8 @@ func (o *IdleChatOrchestrator) watchdogSnapshot(now time.Time) (WatchdogSnapshot
 		Disabled:        o.disabled,
 		Mode:            o.sessionMode,
 		SessionID:       o.activeSessionID,
-		Generation:      o.activeGeneration,
+		TraceID:         o.activeTraceID,
+		RunID:           o.activeRunID,
 		Stage:           o.watchdogStage,
 		Detail:          o.watchdogDetail,
 		From:            o.watchdogFrom,
@@ -170,8 +174,8 @@ func (o *IdleChatOrchestrator) RecoverIfStalled(now time.Time, threshold time.Du
 	if snapshot.Detail != "" {
 		reason = fmt.Sprintf("%s detail=%s", reason, snapshot.Detail)
 	}
-	log.Printf("[IdleChat] watchdog recovery triggered: reason=%s session=%s stage=%s age=%ds generation=%d",
-		reason, snapshot.SessionID, snapshot.Stage, snapshot.AgeSeconds, snapshot.Generation)
+	log.Printf("[IdleChat] watchdog recovery triggered: reason=%s session=%s stage=%s age=%ds run_id=%s trace_id=%s",
+		reason, snapshot.SessionID, snapshot.Stage, snapshot.AgeSeconds, snapshot.RunID, snapshot.TraceID)
 	o.Interrupt(reason)
 	return WatchdogRecovery{
 		Reason:     reason,

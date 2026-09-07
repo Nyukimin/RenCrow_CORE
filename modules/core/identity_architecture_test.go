@@ -1285,6 +1285,157 @@ func TestStep16MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	}
 }
 
+func TestStep17VoiceIdleChatLegacyFieldsAreBanned(t *testing.T) {
+	repoRoot := canonicalArchitectureRepoRoot(t)
+	legacyTokens := []string{
+		"ChatID",
+		"chat_id",
+		"GenerationID",
+		"generation_id",
+	}
+	allowToken := func(relative string, line string, token string) bool {
+		switch token {
+		case "ChatID", "chat_id":
+			return false
+		case "GenerationID", "generation_id":
+			if strings.Contains(relative, "topic_generator") ||
+				strings.Contains(relative, "TopicGeneration") ||
+				strings.Contains(line, "TopicGeneration") {
+				return true
+			}
+			if strings.Contains(line, "generation_attempts") ||
+				strings.Contains(line, "client_generation") ||
+				strings.Contains(line, "BuildGenerationPrompt") ||
+				strings.Contains(line, "generationCheckpoints") ||
+				strings.Contains(line, "GenerationCheckpoint") {
+				return true
+			}
+			if strings.Contains(line, "activeGeneration") ||
+				strings.Contains(line, "dailyEnrichmentGeneration") ||
+				strings.Contains(line, "recordIdleMessageForGeneration") ||
+				strings.Contains(line, "cancelIdleRunIfGeneration") ||
+				strings.Contains(line, "generateResponseWithRawForGeneration") ||
+				strings.Contains(line, "applyPersonaCanonicalResponseForGeneration") ||
+				strings.Contains(line, "recordGenerationErrorToTimeline") ||
+				strings.Contains(line, "isWordTopicGenerationError") ||
+				strings.Contains(line, "isForecastTopicGenerationError") ||
+				strings.Contains(line, "formatTopicGenerationContext") ||
+				strings.Contains(line, "countTopicGenerationRequests") ||
+				strings.Contains(line, "topicGenerationConfig") ||
+				strings.Contains(line, "TopicGenerationResult") ||
+				strings.Contains(line, "TopicGenerationConfig") ||
+				strings.Contains(line, "TopicGenerationPrompt") ||
+				strings.Contains(line, "TopicGenerationResume") ||
+				strings.Contains(line, "TopicGenerationProgress") ||
+				strings.Contains(line, "TopicGenerationDiagnostic") ||
+				strings.Contains(line, "ErrTopicGeneration") ||
+				strings.Contains(line, "watchdogDialogueGenerationStage") ||
+				strings.Contains(line, "forecastDialogueGenerationWatchdogTimeout") {
+				return true
+			}
+		}
+		return false
+	}
+	var violations []string
+	checkContent := func(relative string, content []byte) {
+		for lineNumber, line := range strings.Split(string(content), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			for _, token := range legacyTokens {
+				if !canonicalSourceContainsToken(line, token) {
+					continue
+				}
+				if allowToken(relative, line, token) {
+					continue
+				}
+				violations = append(violations, fmt.Sprintf("%s:%d:legacy-step17:%s", relative, lineNumber+1, token))
+			}
+		}
+	}
+	walkDirectory := func(relative string, extensions ...string) {
+		if len(extensions) == 0 {
+			extensions = []string{".go"}
+		}
+		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		info, err := os.Stat(root)
+		if os.IsNotExist(err) {
+			return
+		}
+		if err != nil {
+			t.Fatalf("stat Step17 owner %s: %v", relative, err)
+		}
+		if !info.IsDir() {
+			checkContent(relative, mustReadFile(t, root))
+			return
+		}
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			allowed := false
+			for _, ext := range extensions {
+				if strings.HasSuffix(path, ext) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			checkContent(filepath.ToSlash(rel), mustReadFile(t, path))
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step17 owner %s: %v", relative, err)
+		}
+	}
+	for _, relative := range []string{
+		"internal/application/voiceinput",
+		"internal/application/idlechat",
+	} {
+		walkDirectory(relative)
+	}
+	for _, relative := range []string{
+		"internal/application/orchestrator/voice_direct.go",
+		"modules/tts/event_payload.go",
+		"internal/adapter/viewer/assets/js/tabs/idlechat.js",
+		"cmd/rencrow/runtime_idlechat.go",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content)
+	}
+	cmdDir := filepath.Join(repoRoot, "cmd", "rencrow")
+	cmdEntries, err := os.ReadDir(cmdDir)
+	if err != nil {
+		t.Fatalf("read cmd/rencrow: %v", err)
+	}
+	for _, entry := range cmdEntries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "voice_chat_runtime_") || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		relative := filepath.ToSlash(filepath.Join("cmd", "rencrow", name))
+		checkContent(relative, mustReadFile(t, filepath.Join(cmdDir, name)))
+	}
+	canonicalArchitectureFail(t, "Step17 owner packages must not retain legacy Voice/IdleChat identity fields", violations)
+}
+
 func TestStep15MigrationSourceIsRemovedAfterCutover(t *testing.T) {
 	repoRoot := canonicalArchitectureRepoRoot(t)
 	leftovers := []string{

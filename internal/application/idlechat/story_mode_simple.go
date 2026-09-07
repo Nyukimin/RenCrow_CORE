@@ -361,7 +361,7 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID string, generation u
 		To:         "user",
 		Content:    paragraph,
 		SessionID:  sessionID,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	// TTS に文節単位で送る（Viewer には表示しない）
 	for _, sentence := range splitStorySentences(paragraph) {
@@ -385,7 +385,7 @@ func (o *IdleChatOrchestrator) emitStoryParagraph(sessionID string, generation u
 			SessionID:  sessionID,
 			MessageID:  messageID,
 			TurnIndex:  turnIndex,
-			Generation: generation,
+			ownerEpoch: generation,
 		}
 		ttsDone := o.emitTimelineEvent(ttsEvent)
 		o.waitForTTSReadyForEvent(ttsEvent, ttsDone)

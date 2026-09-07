@@ -84,7 +84,7 @@ func buildTTSClientBridge(
 		})
 		if metricErr == nil {
 			route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID))
+			onChunk(orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "metrics.latency", "metrics", "viewer", string(metricJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID))
 		}
 		payloadJSON, err := json.Marshal(payload)
 		if err != nil {
@@ -92,7 +92,7 @@ func buildTTSClientBridge(
 			return
 		}
 		route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID)
+		event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.audio_chunk", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
 		event.MessageID = modulecore.MessageID(payload.MessageID)
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
@@ -126,7 +126,7 @@ func buildTTSClientBridge(
 				log.Printf("WARN: tts session completed payload marshal failed: %v", err)
 			} else {
 				route := moduletts.PlaybackEventRouteForSession(payload.SessionID)
-				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.ChatID)
+				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(traceID), "tts.session_completed", "tts", "user", string(payloadJSON), "TTS", canonicalTaskIDText(payload.ResponseID), canonicalSessionIDText(payload.SessionID), route.Channel, route.SessionID)
 				event.MessageID = modulecore.MessageID(payload.MessageID)
 				event.TurnIndex = payload.TurnIndex
 				onChunk(event)

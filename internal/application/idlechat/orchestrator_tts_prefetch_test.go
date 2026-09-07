@@ -70,8 +70,8 @@ func TestGenerateResponseWithRawStreamsPrimaryTokensToPrefetchEmitter(t *testing
 		if got[i].TraceID.Validate() != nil {
 			t.Fatalf("event[%d] trace_id = %q, want canonical TraceID", i, got[i].TraceID)
 		}
-		if got[i].Generation != generation {
-			t.Fatalf("event[%d] generation = %d, want %d", i, got[i].Generation, generation)
+		if got[i].ownerEpoch != generation {
+			t.Fatalf("event[%d] generation = %d, want %d", i, got[i].ownerEpoch, generation)
 		}
 	}
 	if len(provider.requests) != 1 {

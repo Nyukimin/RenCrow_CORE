@@ -41,11 +41,11 @@ func TestBuildSessionCompletedEventPayloadTrimsIdentity(t *testing.T) {
 
 func TestPlaybackEventRouteForSession(t *testing.T) {
 	idle := PlaybackEventRouteForSession(" idle-123 ")
-	if idle.Channel != EventChannelIdle || idle.ChatID != "idle-123" {
+	if idle.Channel != EventChannelIdle || idle.SessionID != "idle-123" {
 		t.Fatalf("idle route = %+v", idle)
 	}
 	viewer := PlaybackEventRouteForSession("normal")
-	if viewer.Channel != EventChannelViewer || viewer.ChatID != EventChatIDViewer {
+	if viewer.Channel != EventChannelViewer || viewer.SessionID != EventViewerPlaybackSession {
 		t.Fatalf("viewer route = %+v", viewer)
 	}
 }

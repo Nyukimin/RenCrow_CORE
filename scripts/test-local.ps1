@@ -1,6 +1,7 @@
 param(
     [string]$WorkingDirectory = ".",
     [string[]]$Step = @(),
+    [string]$ExecutionPlan = "",
     [switch]$KeepRuntime,
     [switch]$SelfTest,
     [Parameter(Position = 0)]
@@ -35,6 +36,23 @@ function Get-DirectoryPrefix([string]$Path) {
 $repoPrefix = Get-DirectoryPrefix $repoRoot
 $localTempPrefix = Get-DirectoryPrefix (Join-Path $repoRoot "Tmp")
 $planPath = Join-Path $PSScriptRoot "test-local.plan.json"
+
+# Impact selection is owned by RenCrow_Tools; this owner runner retains command
+# definitions, complete test registration checks, and isolated child environment.
+if (-not [string]::IsNullOrWhiteSpace($ExecutionPlan)) {
+    if ($Step.Count -gt 0 -or $SelfTest -or -not [string]::IsNullOrWhiteSpace($FilePath)) {
+        throw "ExecutionPlan cannot be combined with Step, SelfTest, or FilePath."
+    }
+    $impactCommand = if ($env:RENCROW_TEST_IMPACT_BIN) { $env:RENCROW_TEST_IMPACT_BIN } else { "rencrow-test-impact" }
+    $hostExecutable = (Get-Process -Id $PID).Path
+    & $impactCommand run --repo $repoRoot --plan $planPath --execution-plan $ExecutionPlan --pwsh $hostExecutable
+    if ($LASTEXITCODE -ne 0) { throw "Test Impact execution failed with exit code $LASTEXITCODE" }
+    return
+}
+$testPlatform = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { "windows" }
+    elseif ($PSVersionTable.ContainsKey("OS") -and $PSVersionTable.OS -match "Darwin") { "darwin" }
+    else { "linux" }
+
 
 function Assert-TestRuntimeLayout {
     if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) {
@@ -145,7 +163,7 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
         throw "Canonical test plan does not exist: $planPath"
     }
     $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
-    if ($plan.version -ne 1) {
+    if ($plan.version -notin @(1, 2)) {
         throw "Unsupported canonical test plan version: $($plan.version)"
     }
     $allStepNames = @()
@@ -170,6 +188,11 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
                 }
                 $testFilePatterns += $pattern
             }
+        }
+
+        if ($planStep.PSObject.Properties.Name -contains "platform" -and @($planStep.platform).Count -gt 0 -and @($planStep.platform) -notcontains $testPlatform) {
+            if ($Step -contains $name) { throw "Canonical test step '$name' is unavailable on $testPlatform." }
+            continue
         }
 
         if ($Step.Count -gt 0 -and $Step -notcontains $name) {
@@ -215,6 +238,19 @@ if ([string]::IsNullOrWhiteSpace($FilePath)) {
         (Test-Path -LiteralPath (Join-Path $repoRoot $_) -PathType Leaf) -and
         (Test-IsTrackedTestFile $_)
     })
+    # A registered wildcard is not sufficient when node --test enumerates files.
+    # Check the whole plan even when -Step selects another suite.
+    foreach ($nodeStep in @($plan.steps)) {
+        if ($nodeStep.filePath -ne "node" -or $nodeStep.arguments -notcontains "--test") { continue }
+        if ($nodeStep.PSObject.Properties.Name -notcontains "testFiles") { continue }
+        $nodeArgs = @($nodeStep.arguments | Where-Object { -not $_.StartsWith("-") })
+        foreach ($candidate in $trackedTestFiles) {
+            $claimed = @($nodeStep.testFiles | Where-Object { Test-MatchesTestFilePattern $candidate $_ }).Count -gt 0
+            if (-not $claimed) { continue }
+            $executed = @($nodeArgs | Where-Object { Test-MatchesTestFilePattern $candidate $_ }).Count -gt 0
+            if (-not $executed) { throw "Canonical node step '$($nodeStep.name)' registers but does not execute: $candidate" }
+        }
+    }
     $uncoveredTestFiles = @($trackedTestFiles | Where-Object {
         $relativePath = $_
         -not ($testFilePatterns | Where-Object {

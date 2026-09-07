@@ -108,7 +108,7 @@ func (o *IdleChatOrchestrator) speakSummary(sessionID, summary string, generatio
 		SessionID:  sessionID,
 		MessageID:  messageID,
 		TurnIndex:  turnIndex,
-		Generation: generation,
+		ownerEpoch: generation,
 	}
 	ttsDone := o.emitTimelineEvent(spokenEvent)
 	log.Printf("[IdleChat] Mio reading summary: %s", truncate(spokenSummary, 80))
@@ -241,7 +241,7 @@ func (o *IdleChatOrchestrator) saveSummary(sessionID, topic string, strategy Top
 		SessionID:  sessionID,
 		MessageID:  messageID,
 		TurnIndex:  turnIndex,
-		Generation: generation,
+		ownerEpoch: generation,
 	})
 	return summary
 }
