@@ -2091,7 +2091,10 @@ func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 			}
 			cleanPath := filepath.Clean(path)
 			if cleanPath == filepath.Join(repoRoot, "internal", "application", "identitymigration") ||
-				cleanPath == filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "eventmigration") {
+				cleanPath == filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "eventmigration") ||
+				cleanPath == filepath.Join(repoRoot, "internal", "infrastructure", "persistence", "runmigration") {
+				// Offline-only imports are enforced separately below. Historical
+				// source names here must never become runtime lookup contracts.
 				return filepath.SkipDir
 			}
 			return nil
@@ -2129,6 +2132,50 @@ func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 	sort.Strings(violations)
 	if len(violations) != 0 {
 		t.Fatalf("legacy Event contract remains in runtime source: %v", violations)
+	}
+}
+
+func TestRunMigrationCannotBeImportedByRuntime(t *testing.T) {
+	var violations []string
+	err := canonicalWalkProductionGoFiles(canonicalArchitectureRepoRoot(t), func(relative string, _ *token.FileSet, parsed *ast.File) error {
+		violations = append(violations, canonicalRunMigrationImportViolations(relative, parsed)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(violations) != 0 {
+		t.Fatalf("offline Run migration imported outside owner CLI: %v", violations)
+	}
+}
+
+func canonicalRunMigrationImportViolations(relative string, parsed *ast.File) []string {
+	const migration = "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/runmigration"
+	if relative == "cmd/rencrow-run-migrate/main.go" || strings.HasPrefix(relative, "internal/infrastructure/persistence/runmigration/") {
+		return nil
+	}
+	var violations []string
+	for _, declaration := range parsed.Imports {
+		p, err := strconv.Unquote(declaration.Path.Value)
+		if err != nil || p == migration || strings.HasPrefix(p, migration+"/") {
+			violations = append(violations, relative+":"+declaration.Path.Value)
+		}
+	}
+	return violations
+}
+
+func TestRunMigrationImportGuardRejectsAllRuntimeAliases(t *testing.T) {
+	for _, alias := range []string{"", "other ", "_ ", ". "} {
+		parsed, err := parser.ParseFile(token.NewFileSet(), "fixture.go", "package fixture\nimport "+alias+`"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/runmigration"`, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := canonicalRunMigrationImportViolations("cmd/rencrow/runtime.go", parsed); len(got) != 1 {
+			t.Fatalf("runtime import admitted for alias %q: %v", alias, got)
+		}
+		if got := canonicalRunMigrationImportViolations("cmd/rencrow-run-migrate/main.go", parsed); len(got) != 0 {
+			t.Fatalf("offline CLI rejected: %v", got)
+		}
 	}
 }
 

@@ -1,6 +1,7 @@
 package idlechat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -762,11 +763,11 @@ func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, d
 		if err := checkpointStore.Put(checkpoint); err != nil {
 			return err
 		}
-		runID, err := resumeIdleChatRun(ctx, issuer, checkpoint.TaskID)
+		run, err := resumeIdleChatRun(ctx, issuer, &checkpoint, checkpointStore)
 		if err != nil {
 			return err
 		}
-		checkpoint.RunID = runID
+		checkpoint.RunID = run.RunID
 	}
 	if checkpoint.Result != nil {
 		checkpoint.Stage = "result"
@@ -863,11 +864,39 @@ func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, d
 func (o *IdleChatOrchestrator) generateForecastTopicForStock(domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
 	o.mu.Lock()
 	generator := o.forecastTopicGenerator
+	issuer := o.runIssuer
 	o.mu.Unlock()
 	if generator != nil {
-		return generator(domain)
+		ctx := o.topicProductionContext()
+		if checkpoint == nil {
+			return "", nil, newForecastTopicFailure("checkpoint", domain.Name, "", errors.New("forecast checkpoint is nil"))
+		}
+		run, err := inspectGenerationRun(ctx, issuer, checkpoint.TaskID, checkpoint.RunID)
+		if err != nil {
+			return "", nil, newForecastTopicFailure("run", domain.Name, "", err)
+		}
+		var topic string
+		var seeds []string
+		var failure *forecastTopicFailure
+		if err := executeIdleChatRunEffect(ctx, issuer, checkpoint.TaskID, checkpoint.RunID, run.Assignee, func(context.Context) error {
+			topic, seeds, failure = generator(domain)
+			return nil
+		}); err != nil {
+			return "", nil, newForecastTopicFailure("topic", domain.Name, "", err)
+		}
+		return topic, seeds, failure
 	}
-	return o.generateForecastTopicInlineForStock(o.topicProductionContext(), domain, checkpoint)
+	ctx := o.topicProductionContext()
+	if checkpoint == nil {
+		return "", nil, newForecastTopicFailure("checkpoint", domain.Name, "", errors.New("forecast checkpoint is nil"))
+	}
+	provider, providerLabel := o.forecastTopicLLMInfo()
+	run, err := inspectGenerationRun(ctx, issuer, checkpoint.TaskID, checkpoint.RunID)
+	if err != nil {
+		return "", nil, newForecastTopicFailure("run", domain.Name, providerLabel, err)
+	}
+	provider = newRunGuardedLLMProvider(issuer, checkpoint.TaskID, checkpoint.RunID, run.Assignee, provider)
+	return o.generateForecastTopicInlineForStock(ctx, domain, checkpoint, provider, providerLabel)
 }
 
 // popForecastTopic は公開済みストックからお題を取得する。不足補充はIdle／Heartbeat契機に分離する。

@@ -548,11 +548,11 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 				if err := checkpointStore.Put(checkpoint); err != nil {
 					return err
 				}
-				runID, err := resumeIdleChatRun(ctx, issuer, checkpoint.TaskID)
+				successor, err := resumeIdleChatRun(ctx, issuer, &checkpoint, checkpointStore)
 				if err != nil {
 					return err
 				}
-				checkpoint.RunID = runID
+				checkpoint.RunID = successor.RunID
 				if err := s.rebindStoryArtifactForResume(&checkpoint, previousCheckpoint, previousRunID); err != nil {
 					s.store.recordFailure("recovery", err)
 					return err
@@ -626,7 +626,7 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 		if checkpoint.StoryReview != nil {
 			review = *checkpoint.StoryReview
 		} else {
-			review, err = s.reviewArtifact(ctx, artifact)
+			review, err = s.reviewArtifact(ctx, artifact, checkpoint.TaskID, checkpoint.RunID)
 		}
 		if err != nil {
 			if ctx.Err() != nil {
@@ -772,7 +772,7 @@ func (s *StoryEpisodeService) generateArtifact(ctx context.Context, seed storyGe
 		return StoryEpisodeArtifact{}, err
 	}
 	prompt := s.generationPrompt(seed)
-	raw, err := s.generator.Generate(ctx, prompt)
+	raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, taskID, runID, s.generator, prompt)
 	if err != nil {
 		return StoryEpisodeArtifact{}, fmt.Errorf("CodexExe story generation: %w", err)
 	}
@@ -807,7 +807,7 @@ func (s *StoryEpisodeService) generateArtifact(ctx context.Context, seed storyGe
 	return artifact, nil
 }
 
-func (s *StoryEpisodeService) generateStoryTitle(ctx context.Context, artifact StoryEpisodeArtifact) (string, error) {
+func (s *StoryEpisodeService) generateStoryTitle(ctx context.Context, artifact StoryEpisodeArtifact, taskID modulecore.TaskID, runID modulecore.RunID) (string, error) {
 	payload, err := json.Marshal(artifact)
 	if err != nil {
 		return "", err
@@ -830,7 +830,7 @@ func (s *StoryEpisodeService) generateStoryTitle(ctx context.Context, artifact S
 
 対象作品:
 %s`, string(payload))
-	raw, err := s.generator.Generate(ctx, prompt)
+	raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, taskID, runID, s.generator, prompt)
 	if err != nil {
 		return "", fmt.Errorf("CodexExe story title generation: %w", err)
 	}
@@ -849,7 +849,7 @@ func (s *StoryEpisodeService) generateStoryTitle(ctx context.Context, artifact S
 	return title, nil
 }
 
-func (s *StoryEpisodeService) reviewArtifact(ctx context.Context, artifact StoryEpisodeArtifact) (StorySemanticReview, error) {
+func (s *StoryEpisodeService) reviewArtifact(ctx context.Context, artifact StoryEpisodeArtifact, taskID modulecore.TaskID, runID modulecore.RunID) (StorySemanticReview, error) {
 	payload, err := json.Marshal(artifact)
 	if err != nil {
 		return StorySemanticReview{}, err
@@ -861,7 +861,7 @@ func (s *StoryEpisodeService) reviewArtifact(ctx context.Context, artifact Story
 codeは title_violation, lexical_corruption, entity_relation_violation, continuity_violation, world_rule_violation, reading_violation, interest_contract_violation, story_performance_violation, quality_violation のいずれか。
 対象JSON:
 ` + string(payload)
-	raw, err := s.generator.Generate(ctx, prompt)
+	raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, taskID, runID, s.generator, prompt)
 	if err != nil {
 		return StorySemanticReview{}, fmt.Errorf("CodexExe semantic review: %w", err)
 	}

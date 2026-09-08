@@ -1,7 +1,10 @@
 package task
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -37,15 +40,16 @@ const (
 // Run is one non-hierarchical execution belonging to exactly one Task.
 type Run struct {
 	// WriterGeneration is a store-local fencing value, not an identity. Zero marks historical unbound records.
-	WriterGeneration uint64            `json:"writer_generation,omitempty"`
-	RunID            modulecore.RunID  `json:"run_id"`
-	TaskID           modulecore.TaskID `json:"task_id"`
-	StartReason      RunStartReason    `json:"start_reason"`
-	Assignee         string            `json:"assignee,omitempty"`
-	Status           RunStatus         `json:"status"`
-	StartedAt        time.Time         `json:"started_at"`
-	CompletedAt      *time.Time        `json:"completed_at,omitempty"`
-	Summary          string            `json:"summary,omitempty"`
+	WriterGeneration      uint64            `json:"writer_generation,omitempty"`
+	RunID                 modulecore.RunID  `json:"run_id"`
+	TaskID                modulecore.TaskID `json:"task_id"`
+	StartReason           RunStartReason    `json:"start_reason"`
+	Assignee              string            `json:"assignee,omitempty"`
+	Status                RunStatus         `json:"status"`
+	StartedAt             time.Time         `json:"started_at"`
+	CompletedAt           *time.Time        `json:"completed_at,omitempty"`
+	Summary               string            `json:"summary,omitempty"`
+	StartCheckpointSHA256 string            `json:"start_checkpoint_sha256,omitempty"`
 }
 
 // RunFilter selects persisted Run history. Results are returned chronologically.
@@ -79,6 +83,28 @@ func (r Run) Validate() error {
 	}
 	if r.CompletedAt != nil && r.CompletedAt.Before(r.StartedAt) {
 		return fmt.Errorf("completed_at must not precede started_at")
+	}
+	if err := ValidateStartCheckpointSHA256(r.StartCheckpointSHA256); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateStartCheckpointSHA256 validates the optional source checkpoint
+// evidence attached to a newly issued Run. It is evidence only: it is not a
+// Run identity or a predecessor relation.
+func ValidateStartCheckpointSHA256(value string) error {
+	if value == "" {
+		return nil
+	}
+	if len(value) != sha256.Size*2 {
+		return fmt.Errorf("start_checkpoint_sha256 must be lowercase hex SHA-256")
+	}
+	if value != strings.ToLower(value) {
+		return fmt.Errorf("start_checkpoint_sha256 must be lowercase hex SHA-256")
+	}
+	if _, err := hex.DecodeString(value); err != nil {
+		return fmt.Errorf("start_checkpoint_sha256 must be lowercase hex SHA-256: %w", err)
 	}
 	return nil
 }
@@ -126,6 +152,21 @@ func CanRunTransition(from, to RunStatus) bool {
 		return false
 	}
 	return to != RunStatusRunning
+}
+
+// CanStartRunFromCheckpoint reports whether a persisted predecessor may issue
+// the requested checkpoint-bound successor. The policy is shared by every
+// checkpoint consumer; the Task owner still performs the atomic CAS and actor
+// checks around this decision.
+func CanStartRunFromCheckpoint(status RunStatus, reason RunStartReason) bool {
+	switch reason {
+	case RunStartReasonCheckpointResume:
+		return status == RunStatusWaiting || status == RunStatusInterrupted
+	case RunStartReasonExplicitRerun:
+		return status == RunStatusSucceeded || status == RunStatusFailed || status == RunStatusCancelled
+	default:
+		return false
+	}
 }
 
 func (r Run) IsActive() bool {

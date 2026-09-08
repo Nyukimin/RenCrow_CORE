@@ -18,7 +18,7 @@ func TestProduceWordTopicWaitsWhenResumeCheckpointReconcileSaveFails(t *testing.
 	if err := fixture.checkpoints.Put(checkpoint); err != nil {
 		t.Fatalf("save resume intent: %v", err)
 	}
-	issued, err := fixture.owner.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonCheckpointResume)
+	issued, err := resumeIdleChatRun(context.Background(), fixture.owner, &checkpoint, fixture.checkpoints)
 	if err != nil {
 		t.Fatalf("issue resume successor: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestProduceForecastTopicWaitsWhenResumeCheckpointReconcileSaveFails(t *test
 	if err := fixture.checkpoints.Put(checkpoint); err != nil {
 		t.Fatalf("save resume intent: %v", err)
 	}
-	issued, err := fixture.owner.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonCheckpointResume)
+	issued, err := resumeIdleChatRun(context.Background(), fixture.owner, &checkpoint, fixture.checkpoints)
 	if err != nil {
 		t.Fatalf("issue resume successor: %v", err)
 	}

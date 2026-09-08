@@ -274,11 +274,21 @@ func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.Task
 }
 
 func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, domaintask.Run, error) {
+	return m.startWithReasonAndCheckpoint(ctx, taskID, reason, "")
+}
+
+// startWithReasonAndCheckpoint keeps the existing Run issuance path while
+// allowing a checkpoint-bound caller to attach immutable source evidence before
+// the first Run append. The empty digest preserves the legacy callers.
+func (m *Manager) startWithReasonAndCheckpoint(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Task, domaintask.Run, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
 	if !domaintask.ValidRunStartReason(reason) {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("invalid run start reason: %s", reason)
+	}
+	if err := domaintask.ValidateStartCheckpointSHA256(checkpointSHA256); err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	generation, err := m.store.WriterGeneration()
 	if err != nil {
@@ -341,13 +351,14 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	run := domaintask.Run{
-		WriterGeneration: generation,
-		RunID:            modulecore.NewRunID(),
-		TaskID:           taskID,
-		StartReason:      reason,
-		Assignee:         started.Assignee,
-		Status:           domaintask.RunStatusRunning,
-		StartedAt:        m.now(),
+		WriterGeneration:      generation,
+		RunID:                 modulecore.NewRunID(),
+		TaskID:                taskID,
+		StartReason:           reason,
+		Assignee:              started.Assignee,
+		Status:                domaintask.RunStatusRunning,
+		StartedAt:             m.now(),
+		StartCheckpointSHA256: checkpointSHA256,
 	}
 	if err := m.store.SaveRun(ctx, run); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err

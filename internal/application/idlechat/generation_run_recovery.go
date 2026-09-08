@@ -3,10 +3,11 @@ package idlechat
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // reconcileGenerationResume handles a crash between owner Run issuance and saving
@@ -23,40 +24,59 @@ func reconcileGenerationRerun(ctx context.Context, issuer idlechatRunIssuer, che
 }
 
 func reconcileGenerationSuccessor(ctx context.Context, issuer idlechatRunIssuer, checkpoint *GenerationCheckpoint, store *GenerationCheckpointStore, stage string, reason domaintask.RunStartReason) error {
-	if checkpoint == nil || checkpoint.Stage != stage {
-		return errors.New("generation successor requires matching persisted intent")
-	}
-	if store == nil || strings.TrimSpace(store.path) == "" {
-		return errors.New("generation successor requires persistent checkpoint store")
-	}
-	if err := store.LoadError(); err != nil {
+	persisted, digest, err := generationCheckpointIntent(ctx, checkpoint, store, stage)
+	if err != nil {
 		return err
 	}
-	persisted, found := store.Get(checkpoint.Key)
-	if !found || persisted.TaskID != checkpoint.TaskID || persisted.RunID != checkpoint.RunID || persisted.Stage != stage || persisted.Kind != checkpoint.Kind {
-		return errors.New("generation successor intent does not match checkpoint store")
-	}
-	if err := validateGenerationRunInputs(ctx, issuer, checkpoint.TaskID, checkpoint.RunID); err != nil {
-		return err
+	if checkpointSuccessorStage(reason) != stage {
+		return errors.New("generation successor does not match persisted intent")
 	}
 	owner, err := generationRunOwnerFromIssuer(issuer)
 	if err != nil {
 		return err
 	}
-	runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: checkpoint.TaskID})
+	runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: persisted.TaskID})
 	if err != nil {
 		return err
 	}
+	task, err := owner.Get(ctx, persisted.TaskID)
+	if err != nil {
+		return err
+	}
+	if task.TaskID != persisted.TaskID {
+		return errors.New("generation successor does not match persisted intent: task identity")
+	}
+	if err := task.Validate(); err != nil {
+		return fmt.Errorf("generation successor owner task is invalid: %w", err)
+	}
 	var previous, latest domaintask.Run
+	latestCount := 0
+	seen := make(map[modulecore.RunID]struct{}, len(runs))
 	for _, run := range runs {
-		if run.RunID == checkpoint.RunID {
+		if err := run.Validate(); err != nil {
+			return fmt.Errorf("generation successor owner Run is invalid: %w", err)
+		}
+		if run.TaskID != persisted.TaskID {
+			return errors.New("generation successor does not match persisted intent: Run task identity")
+		}
+		if _, exists := seen[run.RunID]; exists {
+			return fmt.Errorf("generation successor owner history has duplicate Run %s", run.RunID)
+		}
+		seen[run.RunID] = struct{}{}
+		if run.RunID == persisted.RunID {
 			previous = run
 		}
 		if latest.RunID == "" || run.StartedAt.After(latest.StartedAt) {
 			latest = run
+			latestCount = 1
+		} else if run.StartedAt.Equal(latest.StartedAt) {
+			latestCount++
 		}
 	}
-	if previous.RunID == "" || latest.RunID == "" {
+	if previous.RunID == "" || latest.RunID == "" || latestCount != 1 {
+		if latestCount > 1 {
+			return errors.New("generation resume successor is ambiguous")
+		}
 		return errors.New("generation resume owner history is missing")
 	}
 	for _, run := range runs {
@@ -65,30 +85,49 @@ func reconcileGenerationSuccessor(ctx context.Context, issuer idlechatRunIssuer,
 		}
 	}
 	if latest.RunID == previous.RunID {
-		_, err := inspectGenerationRun(ctx, issuer, checkpoint.TaskID, previous.RunID)
+		// A process may have persisted the successor-bound checkpoint before
+		// advancing its phase. The successor is now the checkpoint's selected
+		// Run, so this retry is an idempotent inspection rather than a second
+		// issuance. A still-unbound predecessor must remain resumable for the
+		// caller to issue through startGenerationSuccessor.
+		if previous.StartCheckpointSHA256 == "" && !domaintask.CanStartRunFromCheckpoint(previous.Status, reason) {
+			return errors.New("generation successor does not match persisted intent: predecessor status")
+		}
+		_, err := inspectGenerationRun(ctx, issuer, persisted.TaskID, previous.RunID)
 		return err
 	}
+	var successor domaintask.Run
 	successors := 0
 	for _, run := range runs {
 		if run.StartedAt.After(previous.StartedAt) {
 			successors++
+			successor = run
 		}
 	}
 	if successors != 1 {
 		return errors.New("generation resume successor is ambiguous")
 	}
-	latest, err = inspectGenerationRun(ctx, issuer, checkpoint.TaskID, latest.RunID)
+	if successor.RunID != latest.RunID {
+		return errors.New("generation resume successor is ambiguous")
+	}
+	if !domaintask.CanStartRunFromCheckpoint(previous.Status, reason) {
+		return fmt.Errorf("generation successor does not match persisted intent: predecessor status %s", previous.Status)
+	}
+	if task.Assignee == "" || previous.Assignee == "" || latest.Assignee == "" || task.Assignee != previous.Assignee || previous.Assignee != latest.Assignee {
+		return errors.New("generation successor does not match persisted intent: assignee")
+	}
+	if latest.StartReason != reason {
+		return errors.New("generation successor does not match persisted intent: start reason")
+	}
+	if latest.StartCheckpointSHA256 != digest {
+		return errors.New("generation successor does not match persisted intent: checkpoint digest")
+	}
+	if latest.Status != domaintask.RunStatusRunning && latest.Status != domaintask.RunStatusWaiting && latest.Status != domaintask.RunStatusInterrupted {
+		return errors.New("generation successor does not match persisted intent: successor status")
+	}
+	latest, err = inspectGenerationRun(ctx, issuer, persisted.TaskID, latest.RunID)
 	if err != nil {
 		return err
-	}
-	predecessorAllowed := previous.Status == domaintask.RunStatusWaiting || previous.Status == domaintask.RunStatusInterrupted
-	if reason == domaintask.RunStartReasonExplicitRerun {
-		predecessorAllowed = previous.Status == domaintask.RunStatusSucceeded || previous.Status == domaintask.RunStatusFailed || previous.Status == domaintask.RunStatusCancelled
-	}
-	if previous.TaskID != checkpoint.TaskID || previous.Assignee != latest.Assignee ||
-		latest.StartReason != reason || !predecessorAllowed ||
-		(latest.Status != domaintask.RunStatusRunning && latest.Status != domaintask.RunStatusWaiting && latest.Status != domaintask.RunStatusInterrupted) {
-		return errors.New("generation resume successor does not match persisted intent")
 	}
 	// Keep the verified successor in the caller's copy even if Put fails. The
 	// caller needs this exact identity to close that issued Run as Waiting; the

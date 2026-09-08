@@ -283,7 +283,7 @@ func validateRunOwners(runs []domaintask.Run, tasks []domaintask.Task) error {
 }
 
 func validateRunUpdate(existing, next domaintask.Run) error {
-	if existing.WriterGeneration != next.WriterGeneration || existing.TaskID != next.TaskID || existing.StartReason != next.StartReason || existing.Assignee != next.Assignee || !existing.StartedAt.Equal(next.StartedAt) {
+	if existing.WriterGeneration != next.WriterGeneration || existing.TaskID != next.TaskID || existing.StartReason != next.StartReason || existing.Assignee != next.Assignee || !existing.StartedAt.Equal(next.StartedAt) || existing.StartCheckpointSHA256 != next.StartCheckpointSHA256 {
 		return fmt.Errorf("run identity and start fields are immutable")
 	}
 	if !domaintask.CanRunTransition(existing.Status, next.Status) {

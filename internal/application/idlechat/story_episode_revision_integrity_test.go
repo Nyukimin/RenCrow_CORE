@@ -27,17 +27,21 @@ func newStoryRevisionIntegrityService(t *testing.T, stage, episodeID string) (*S
 	if source, ok = store.get(source.EpisodeID); !ok {
 		t.Fatal("source artifact was not stored")
 	}
-	successor, err := owner.StartRunWithReason(context.Background(), source.TaskID, domaintask.RunStartReasonExplicitRerun)
+	pending := cloneStoryEpisode(source)
+	pending.EpisodeID = episodeID
+	checkpointStore := NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "story.checkpoints.json"))
+	checkpoint := storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, "rerun_pending")
+	if err := checkpointStore.Put(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	successor, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := cloneStoryEpisode(source)
-	pending.EpisodeID = episodeID
 	pending.RunID = successor.RunID
 	pending.Revision++
-	checkpoint := storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, stage)
+	checkpoint = storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, stage)
 	checkpoint.StoryRevision.SourceRunID = source.RunID
-	checkpointStore := NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "story.checkpoints.json"))
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -146,16 +150,20 @@ func newStoryRevisionSourceMismatchService(t *testing.T) (*StoryEpisodeService, 
 	} else {
 		t.Fatal("alternate artifact was not stored")
 	}
-	runningRun, err := owner.StartRunWithReason(context.Background(), source.TaskID, domaintask.RunStartReasonExplicitRerun)
+	pending := cloneStoryEpisode(stored)
+	checkpointStore := NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "story.checkpoints.json"))
+	checkpoint := storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, "rerun_pending")
+	if err := checkpointStore.Put(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	runningRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending := cloneStoryEpisode(stored)
 	pending.RunID = runningRun.RunID
 	pending.Revision++
-	checkpoint := storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, "artifact")
+	checkpoint = storyRevisionCheckpointFor(pending, storyRevisionOperationTitle, storyRevisionPhaseInput, "artifact")
 	checkpoint.StoryRevision.SourceRunID = source.RunID
-	checkpointStore := NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "story.checkpoints.json"))
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}

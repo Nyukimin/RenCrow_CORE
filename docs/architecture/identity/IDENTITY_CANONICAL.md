@@ -2154,6 +2154,19 @@ Test:
 
 #### Task / Runの永続更新境界
 
+- IdleChatの保存済みcheckpointからの後継発行は`StartRunFromCheckpoint`へ期待する直前RunID、
+  exact assignee、開始理由、checkpointのSHA-256を渡す。同じTask owner transactionで直前Runが
+  一意な最新Runであることを照合し、競合時はTask／Runを一切更新しない。SHA-256は更新時刻を除く
+  保存済みcheckpoint全体の内容証拠であり、新しいIdentityやRun親子関係ではない。発行済みRunの
+  `start_checkpoint_sha256`は不変とし、後継ID保存失敗後の採用でも同じ内容証拠を要求する。
+  後継の開始時刻が直前Runの開始以前、または終了時刻より前なら同じtransactionをrollbackし、
+  時計を補正して履歴順を捏造しない。
+- `ExecuteRunEffect`は同期的な外部生成呼出しの間、Task ownerの同じ読取transaction内で
+  Task／Run／Actor／writer generationを照合し、呼出しが戻るまでRunの差替えと終端更新を排他する。
+  callback内からTask ownerを再呼出し、Run完了処理、切り離された非同期処理を行わない。
+  この排他は同じstoreのTask更新も待たせるため、呼出先は取消と期限を守る。process終了後に外部へ
+  残った処理の停止や、遠隔systemのexactly-onceを保証したとは扱わない。
+
 - Task作成とSharedRoleContext、実行開始時のTaskと新旧Run、担当変更時のTaskと新旧Run、
   終端時のTaskとRunとNotificationは、各操作を同じTask ownerの一つのtransactionとして確定する。
   状態の読取、並列数判定、更新の間も同じ排他境界を維持する。途中の保存失敗で一部だけを公開しない。
@@ -2192,6 +2205,35 @@ Gate 10:
   rollbackに必要な旧／新runtime、writer-stopped snapshot、固定Check Plan、dry-run／apply／deployment
   receiptを別filesystemのrecovery artifactとして保持する。architecture testはone-shot sourceの再混入、
   `ParentRunID`、`TraceRunID`、`GenerationID`、`SubagentID`、legacy JSON key、Task由来RunIDを拒否する。
+
+#### Step 10 offline cohort CLI
+
+`cmd/rencrow-run-migrate`はCORE所有の一時移行入口であり、live storeへ適用するruntime経路ではない。
+architecture testは移行packageのimportをこのCLIと移行package内部だけへ限定し、
+旧source名を扱うコードがruntimeの参照経路へ入ることを禁止する。
+`--inventory`で`rencrow.identity.run-migration/v1`のsnapshot時刻、全source fileのSHA-256、
+次のroleとsnapshot内相対pathを指定する。存在しないroleも空文字で明示し、対象外fileを混ぜない。
+`tasks / runs / contexts / notifications`はcanonical JSONL、`events / superagent / browser / knowledge`
+はowner SQLite、`word / forecast / checkpoints`はowner JSON、`story / dialogue`はowner JSONLとする。
+未対応の旧schemaや意味不明な帰属を自動推定せず`blocked`にする。
+
+`--mode dry-run --snapshot ... --output ...`は入力と変換結果のhash・件数だけをreceiptへ出し、
+指定出力先を公開しない。`--mode apply --dry-run-receipt ...`は同じ入力と出力hash・件数を再照合し、
+新しい出力directoryを一括公開する。既存出力がfile集合も内容も完全一致した場合だけ`noop`とし、
+異なる既存出力、symlink、hardlink、SQLite sidecar、未知field、重複JSON key、曖昧joinを拒否する。
+receiptは標準出力のJSONであり、本文やcredentialを含めない。
+
+入力は1file 256 MiB、合計1 GiB以内の専用snapshotとし、出力parentも専用にする。
+公開lockは同じ契約を使うpublisher間の排他であり、無関係なprocessによるdirectory差替えの
+防御保証ではない。非終端queue、後継Run未照合のcheckpoint、Event payload内の旧実行参照、
+owner validatorが要求するcheckpoint metadataの欠落は`blocked`とする。元dataのownerで
+由来を確定するか、型ごとの変換を追加してから再度dry-runし、推定値で通過させない。
+
+このoffline生成の`ready / applied / noop`はproduction cutoverの証拠ではない。writer停止、
+復旧artifact、production source一覧の完全性、配備後の実Actor・Viewer・再起動は別の必須検証である。
+sourceにRunningが残る場合はsnapshot時刻でInterruptedへ閉じ、Taskを機械的な再開待ちにする。
+traceやDream proposalだけから成功を推定しない。historical Luminaは終端済みAgentRunの帰属として
+保存・読取できるが、新しい実行Actorの登録や`ValidateActorID`の許可集合へ追加しない。
 
 ---
 

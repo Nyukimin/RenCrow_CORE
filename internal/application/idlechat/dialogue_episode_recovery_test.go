@@ -31,6 +31,15 @@ func (o *dialogueRecoveryOwner) StartRunWithReason(ctx context.Context, taskID m
 	return run, err
 }
 
+func (o *dialogueRecoveryOwner) StartRunFromCheckpoint(ctx context.Context, taskID modulecore.TaskID, expectedRunID modulecore.RunID, actorID string, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Run, error) {
+	o.startCalls++
+	run, err := o.Manager.StartRunFromCheckpoint(ctx, taskID, expectedRunID, actorID, reason, checkpointSHA256)
+	if err == nil && o.afterStart != nil {
+		o.afterStart(reason, run)
+	}
+	return run, err
+}
+
 func (o *dialogueRecoveryOwner) CompleteRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, status domaintask.Status, summary, waitingReason string) (domaintask.Task, error) {
 	if o.failCompleteOnce != nil {
 		err := o.failCompleteOnce
@@ -333,7 +342,7 @@ func TestDialogueEpisodeReconcilesSuccessorAfterCheckpointPutFailure(t *testing.
 	if err := checkpoints.Put(checkpoint); err != nil {
 		t.Fatalf("save pending checkpoint: %v", err)
 	}
-	successor, err := owner.Manager.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonCheckpointResume)
+	successor, err := resumeIdleChatRun(context.Background(), owner, &checkpoint, checkpoints)
 	if err != nil {
 		t.Fatalf("issue successor: %v", err)
 	}
@@ -362,7 +371,7 @@ func TestDialogueEpisodeReconcilesSuccessorAfterCheckpointPutFailure(t *testing.
 	if err != nil || artifact.EpisodeID == "" {
 		t.Fatalf("reconcile retry artifact=%+v err=%v", artifact, err)
 	}
-	if retryGenerator.calls != 0 || owner.startCalls != 2 {
+	if retryGenerator.calls != 0 || owner.startCalls != 3 {
 		t.Fatalf("reconcile retry generation=%d starts=%d", retryGenerator.calls, owner.startCalls)
 	}
 	if _, ok := reloaded.Get(key); ok {

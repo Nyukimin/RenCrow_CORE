@@ -668,3 +668,59 @@ func TestRunWriterGenerationCannotBeChangedOrReused(t *testing.T) {
 		t.Fatal("counter reset reused existing Run generation")
 	}
 }
+
+func TestJSONLStorePersistsAndFreezesStartCheckpointSHA256(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 8, 1, 2, 3, 0, time.UTC)
+	task := domaintask.Task{Title: "checkpoint digest", Assignee: "Mio", Route: domaintask.RouteGeneral}
+	task.ApplyDefaults(now)
+	if err := store.SaveTask(context.Background(), task); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	generation, err := store.WriterGeneration()
+	if err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	run := domaintask.Run{
+		WriterGeneration:      generation,
+		RunID:                 modulecore.NewRunID(),
+		TaskID:                task.TaskID,
+		StartReason:           domaintask.RunStartReasonCheckpointResume,
+		Assignee:              "Mio",
+		Status:                domaintask.RunStatusRunning,
+		StartedAt:             now,
+		StartCheckpointSHA256: digest,
+	}
+	if err := store.SaveRun(context.Background(), run); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	changed := run
+	changed.StartCheckpointSHA256 = "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+	if err := store.SaveRun(context.Background(), changed); err == nil {
+		_ = store.Close()
+		t.Fatal("checkpoint digest was rewritten")
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+	persisted, err := reloaded.GetRun(context.Background(), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.StartCheckpointSHA256 != digest {
+		t.Fatalf("reloaded checkpoint digest = %q, want %q", persisted.StartCheckpointSHA256, digest)
+	}
+}

@@ -15,8 +15,13 @@ func ValidateAgentRun(item AgentRun) error {
 	if err := item.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id is invalid: %w", err)
 	}
-	if err := ValidateActorID(item.ActorID); err != nil {
-		return err
+	// Lumina is a user-confirmed historical attribution, not a current runtime
+	// assignee. Only terminal history can retain it; execution admission still
+	// uses ValidateActorID without a historical exception.
+	if item.ActorID != "lumina" || !isAgentRunTerminalStatus(item.Status) {
+		if err := ValidateActorID(item.ActorID); err != nil {
+			return err
+		}
 	}
 	if item.Status == "" {
 		return fmt.Errorf("status is required")

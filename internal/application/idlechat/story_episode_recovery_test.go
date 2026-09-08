@@ -335,12 +335,16 @@ func TestStoryEpisodeSuccessorCheckpointHidesPreviousSavedRevision(t *testing.T)
 	if _, err := owner.CompleteRun(ctx, cp.TaskID, cp.RunID, "Shiro", domaintask.StatusWaiting, "paused", "retry saved episode"); err != nil {
 		t.Fatal(err)
 	}
-	runID, err := resumeIdleChatRun(ctx, owner, cp.TaskID)
+	cp.Stage = "resume_pending"
+	if err := checkpoints.Put(cp); err != nil {
+		t.Fatal(err)
+	}
+	issued, err := resumeIdleChatRun(ctx, owner, &cp, checkpoints)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cp.RunID = runID
-	cp.StoryArtifact.RunID = runID
+	cp.RunID = issued.RunID
+	cp.StoryArtifact.RunID = issued.RunID
 	cp.StoryArtifact.Revision++
 	if err := checkpoints.Put(cp); err != nil {
 		t.Fatal(err)

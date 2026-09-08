@@ -3,7 +3,7 @@
   "kind": "engineering_evidence_projection",
   "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
   "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
-  "updated_at": "2026-09-08T08:19:15.392626+00:00",
+  "updated_at": "2026-09-08T10:28:52.381642+00:00",
   "status": "implementation_open",
   "operational_wip": "R1",
   "policy": {
@@ -140,6 +140,30 @@
         "canonical Step10 migration and deployed artifact",
         "actual Agent Viewer and restart receipt",
         "old execution external effect fencing"
+      ]
+    },
+    "step10_migration_and_checkpoint_cas": {
+      "status": "receipt_bound_source_validation",
+      "scope": [
+        "offline hash-bound 13-role Task/Run migration",
+        "expected-predecessor checkpoint CAS with immutable digest",
+        "IdleChat synchronous generation leaf fencing"
+      ],
+      "plan": "Tmp/test-runtime/_identity-remediation/step10-migration-cas/check-plan.json",
+      "canonical_receipt": "Tmp/test-runtime/_identity-remediation/step10-migration-cas/full/receipt.json",
+      "acceptance": "Only a passed receipt matching the frozen source is evidence; this entry does not cache a result.",
+      "remaining": [
+        "production writer-stopped snapshot and actual historical schema compatibility",
+        "production cutover, recovery and deployed artifact",
+        "actual Agent Viewer and restart receipts",
+        "remote or detached effect fencing beyond synchronous in-process calls"
+      ],
+      "fail_closed_inputs": [
+        "active queue",
+        "unreconciled checkpoint successor",
+        "opaque legacy Event payload execution reference",
+        "missing owner-required checkpoint metadata",
+        "snapshot size exceeds declared bounds"
       ]
     }
   },

@@ -25,7 +25,7 @@ func TestGenerationResumePersistsArtifactRevisionWithSuccessorIdentity(t *testin
 	if err := store.Put(cp); err != nil {
 		t.Fatal(err)
 	}
-	newID, err := resumeIdleChatRun(ctx, owner, taskID)
+	newRun, err := resumeIdleChatRun(ctx, owner, &cp, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,7 +35,7 @@ func TestGenerationResumePersistsArtifactRevisionWithSuccessorIdentity(t *testin
 	// Simulate another crash immediately after the shared recovery write.
 	store = NewGenerationCheckpointStore(path)
 	reloaded, ok := store.Get(cp.Key)
-	if !ok || reloaded.RunID != newID || reloaded.StoryArtifact.RunID != newID || reloaded.StoryArtifact.Revision != 2 {
+	if !ok || reloaded.RunID != newRun.RunID || reloaded.StoryArtifact.RunID != newRun.RunID || reloaded.StoryArtifact.Revision != 2 {
 		t.Fatalf("recovered binding was not atomic: %+v", reloaded)
 	}
 	if err := reconcileGenerationResume(ctx, owner, &reloaded, store); err != nil {
@@ -62,7 +62,7 @@ func TestGenerationRerunPersistsExactSuccessor(t *testing.T) {
 	if err := store.Put(cp); err != nil {
 		t.Fatal(err)
 	}
-	successor, err := owner.StartRunWithReason(ctx, taskID, domaintask.RunStartReasonExplicitRerun)
+	successor, err := rerunIdleChatRun(ctx, owner, &cp, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestGenerationRerunSaveFailureRetainsVerifiedSuccessorForWaiting(t *testing
 	if err := store.Put(cp); err != nil {
 		t.Fatal(err)
 	}
-	successor, err := owner.StartRunWithReason(ctx, taskID, domaintask.RunStartReasonExplicitRerun)
+	successor, err := rerunIdleChatRun(ctx, owner, &cp, store)
 	if err != nil {
 		t.Fatal(err)
 	}

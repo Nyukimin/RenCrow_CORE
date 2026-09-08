@@ -283,10 +283,11 @@ func (s *StoryEpisodeService) reconcileStoryRevisionRunLocked(ctx context.Contex
 				if err := completeGenerationRun(ctx, s.runIssuer, checkpoint.TaskID, checkpoint.RunID, status, "story revision predecessor verified", ""); err != nil {
 					return err
 				}
-				_, successorID, err := issueIdleChatRun(ctx, s.runIssuer, "IdleChat story revision", predecessor.Assignee, domaintask.RunStartReasonExplicitRerun, checkpoint.TaskID)
+				successor, err := rerunIdleChatRun(ctx, s.runIssuer, checkpoint, checkpointStore)
 				if err != nil {
 					return err
 				}
+				successorID := successor.RunID
 				if err := reconcileGenerationRerun(ctx, s.runIssuer, checkpoint, checkpointStore); err != nil {
 					return s.finishStoryRevisionSuccessorOnError(ctx, *checkpoint, successorID, err)
 				}
@@ -331,10 +332,11 @@ func (s *StoryEpisodeService) reconcileStoryRevisionRunLocked(ctx context.Contex
 					}
 					return fmt.Errorf("story revision resume predecessor run %s is not waiting: %s", previous.RunID, previous.Status)
 				}
-				successorID, err := resumeIdleChatRun(ctx, s.runIssuer, checkpoint.TaskID)
+				successor, err := resumeIdleChatRun(ctx, s.runIssuer, checkpoint, checkpointStore)
 				if err != nil {
 					return err
 				}
+				successorID := successor.RunID
 				if err := reconcileGenerationResume(ctx, s.runIssuer, checkpoint, checkpointStore); err != nil {
 					return s.finishStoryRevisionSuccessorOnError(ctx, *checkpoint, successorID, err)
 				}
@@ -438,7 +440,7 @@ func (s *StoryEpisodeService) continueStoryRevisionLocked(ctx context.Context, c
 	}
 	if operation == storyRevisionOperationSuffix && phase == storyRevisionPhaseInput {
 		from := storyRepairFromTurn(artifact)
-		turns, err := s.generateStorySuffix(ctx, artifact)
+		turns, err := s.generateStorySuffix(ctx, artifact, checkpoint.TaskID, checkpoint.RunID)
 		if err != nil {
 			return s.storyRevisionFailure(ctx, *checkpoint, err, "story suffix repair interrupted", "retry from saved story revision phase")
 		}
@@ -452,7 +454,7 @@ func (s *StoryEpisodeService) continueStoryRevisionLocked(ctx context.Context, c
 	}
 	if phase == storyRevisionPhaseInput || phase == storyRevisionPhaseSuffix {
 		if operation != storyRevisionOperationSuffix || strings.TrimSpace(artifact.StoryTitle) == "" || storyValidationHasCode(artifact.Validation, "title_violation") {
-			title, err := s.generateStoryTitle(ctx, artifact)
+			title, err := s.generateStoryTitle(ctx, artifact, checkpoint.TaskID, checkpoint.RunID)
 			if err != nil {
 				return s.storyRevisionFailure(ctx, *checkpoint, err, "story revision title interrupted", "retry from saved story revision phase")
 			}
@@ -470,7 +472,7 @@ func (s *StoryEpisodeService) continueStoryRevisionLocked(ctx context.Context, c
 				return err
 			}
 		} else {
-			review, err := s.reviewArtifact(ctx, artifact)
+			review, err := s.reviewArtifact(ctx, artifact, checkpoint.TaskID, checkpoint.RunID)
 			if err != nil {
 				return s.storyRevisionFailure(ctx, *checkpoint, err, "story revision review interrupted", "retry from saved story revision phase")
 			}
@@ -529,7 +531,7 @@ func (s *StoryEpisodeService) finalizeStoryRevisionLocked(ctx context.Context, c
 	return nil
 }
 
-func (s *StoryEpisodeService) generateStorySuffix(ctx context.Context, artifact StoryEpisodeArtifact) ([]StoryEpisodeTurn, error) {
+func (s *StoryEpisodeService) generateStorySuffix(ctx context.Context, artifact StoryEpisodeArtifact, taskID modulecore.TaskID, runID modulecore.RunID) ([]StoryEpisodeTurn, error) {
 	from := storyRepairFromTurn(artifact)
 	prefixLength := from - 1
 	prefix := append([]StoryEpisodeTurn(nil), artifact.Turns[:prefixLength]...)
@@ -543,7 +545,7 @@ reader=%s、listener=%s、story_contractとstory_ledgerを維持し、検出erro
 JSON以外を付けず、{"turns":[...]}だけを返してください。各turnのmessage_idは省略してください。
 対象episode:
 %s`, from, from, artifact.Reader, artifact.Listener, string(payload))
-	raw, err := s.generator.Generate(ctx, prompt)
+	raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, taskID, runID, s.generator, prompt)
 	if err != nil {
 		return nil, fmt.Errorf("CodexExe suffix repair: %w", err)
 	}

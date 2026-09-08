@@ -333,7 +333,7 @@ func TestStoryRevisionRerunPendingAdoptsExistingNewRun(t *testing.T) {
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	newRun, err := owner.StartRunWithReason(context.Background(), artifact.TaskID, domaintask.RunStartReasonExplicitRerun)
+	newRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +483,7 @@ func TestStoryRevisionRerunPendingBoundRunSurvivesReload(t *testing.T) {
 	if err := checkpointStore.Put(checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	newRun, err := owner.StartRunWithReason(context.Background(), artifact.TaskID, domaintask.RunStartReasonExplicitRerun)
+	newRun, err := rerunIdleChatRun(context.Background(), owner, &checkpoint, checkpointStore)
 	if err != nil {
 		t.Fatal(err)
 	}

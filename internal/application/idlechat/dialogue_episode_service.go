@@ -14,6 +14,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"github.com/google/uuid"
 )
 
@@ -342,18 +343,18 @@ func (s *DialogueEpisodeService) resumeDialogueCheckpoint(ctx context.Context, k
 		if err := s.checkpoints.Put(checkpoint); err != nil {
 			return DialogueEpisodeArtifact{}, err
 		}
-		runID, err := resumeIdleChatRun(ctx, s.runIssuer, checkpoint.TaskID)
+		successor, err := resumeIdleChatRun(ctx, s.runIssuer, &checkpoint, s.checkpoints)
 		if err != nil {
 			return DialogueEpisodeArtifact{}, err
 		}
-		artifact.RunID = runID
+		artifact.RunID = successor.RunID
 		artifact.TaskID = checkpoint.TaskID
 		artifact.Revision++
 		artifact.UpdatedAt = time.Now().UTC()
-		checkpoint.RunID = runID
+		checkpoint.RunID = successor.RunID
 		if err := s.saveDialogueArtifactCheckpoint(&checkpoint, artifact); err != nil {
 			successor := checkpoint
-			successor.RunID = runID
+			successor.RunID = artifact.RunID
 			successor.DialogueArtifact = cloneDialogueEpisodePtr(artifact)
 			finishErr := finishGenerationRun(ctx, s.runIssuer, successor, domaintask.StatusWaiting, "dialogue resume checkpoint save failed", "retry from saved dialogue generation checkpoint")
 			return DialogueEpisodeArtifact{}, errors.Join(err, finishErr)
@@ -386,7 +387,7 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 	artifact := cloneDialogueEpisode(*checkpoint.DialogueArtifact)
 	if len(artifact.Turns) == 0 && artifact.ProductionStatus == DialogueProductionValidating &&
 		(checkpoint.Stage == "seed" || checkpoint.Stage == "artifact") {
-		raw, err := s.generator.Generate(ctx, s.generationPrompt(artifact.SessionID, artifact.TopicResult, artifact.ArcPlan, turnCount))
+		raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, checkpoint.TaskID, checkpoint.RunID, s.generator, s.generationPrompt(artifact.SessionID, artifact.TopicResult, artifact.ArcPlan, turnCount))
 		if err != nil {
 			return s.waitDialogueCheckpoint(ctx, checkpoint, fmt.Errorf("CodexExe dialogue generation: %w", err))
 		}
@@ -418,7 +419,7 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 			return s.waitDialogueCheckpoint(ctx, checkpoint, err)
 		}
 		var err error
-		artifact, err = s.repairSuffix(ctx, artifact)
+		artifact, err = s.repairSuffix(ctx, artifact, checkpoint.TaskID, checkpoint.RunID)
 		if err != nil {
 			return s.waitDialogueCheckpoint(ctx, checkpoint, err)
 		}
@@ -577,7 +578,7 @@ func validatePersistedDialogueArtifact(artifact DialogueEpisodeArtifact) error {
 	return nil
 }
 
-func (s *DialogueEpisodeService) repairSuffix(ctx context.Context, artifact DialogueEpisodeArtifact) (DialogueEpisodeArtifact, error) {
+func (s *DialogueEpisodeService) repairSuffix(ctx context.Context, artifact DialogueEpisodeArtifact, taskID modulecore.TaskID, runID modulecore.RunID) (DialogueEpisodeArtifact, error) {
 	from := artifact.Validation.FirstInvalidTurn
 	if from < 1 {
 		from = 1
@@ -595,7 +596,7 @@ MioとShiroのSystemPrompt、content_mode、arc_plan、発話順を維持して�
 JSON以外を付けず、{"turns":[{"speaker":"mio","display_text":"本文","speech_text":"読み上げ本文"}]}だけを返してください。message_idは省略してください。
 対象artifact:
 %s`, from, from, string(payload))
-	raw, err := s.generator.Generate(ctx, prompt)
+	raw, err := generateIdleChatCodexWithRun(ctx, s.runIssuer, taskID, runID, s.generator, prompt)
 	if err != nil {
 		return artifact, fmt.Errorf("CodexExe dialogue suffix repair: %w", err)
 	}

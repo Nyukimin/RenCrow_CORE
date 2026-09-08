@@ -28,6 +28,11 @@ func (o *forecastTopicRecoveryOwner) StartRunWithReason(ctx context.Context, tas
 	return o.Manager.StartRunWithReason(ctx, taskID, reason)
 }
 
+func (o *forecastTopicRecoveryOwner) StartRunFromCheckpoint(ctx context.Context, taskID modulecore.TaskID, expectedRunID modulecore.RunID, actorID string, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Run, error) {
+	o.startCalls++
+	return o.Manager.StartRunFromCheckpoint(ctx, taskID, expectedRunID, actorID, reason, checkpointSHA256)
+}
+
 func (o *forecastTopicRecoveryOwner) CompleteRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, status domaintask.Status, summary, waitingReason string) (domaintask.Task, error) {
 	o.completeCalls++
 	if o.failCompleteOnce != nil {

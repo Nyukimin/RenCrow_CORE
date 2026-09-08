@@ -316,11 +316,11 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 		if err := checkpointStore.Put(checkpoint); err != nil {
 			return err
 		}
-		runID, err := resumeIdleChatRun(ctx, o.runIssuer, checkpoint.TaskID)
+		run, err := resumeIdleChatRun(ctx, o.runIssuer, &checkpoint, checkpointStore)
 		if err != nil {
 			return err
 		}
-		checkpoint.RunID = runID
+		checkpoint.RunID = run.RunID
 	}
 	if checkpoint.Result != nil {
 		checkpoint.Stage = "result"
@@ -413,7 +413,12 @@ func (o *IdleChatOrchestrator) generateWordTopicWithCodexCheckpoint(checkpoint *
 		}
 	}
 	resume := TopicGenerationResumeState{Attempt: checkpoint.Attempt, Candidates: checkpoint.Candidates, Result: checkpoint.Result}
-	provider := newIdleChatCodexLLMProvider(generator)
+	issuer := o.runIssuer
+	run, err := inspectGenerationRun(o.topicProductionContext(), issuer, checkpoint.TaskID, checkpoint.RunID)
+	if err != nil {
+		return nil, err
+	}
+	provider := newIdleChatCodexLLMProvider(newRunGuardedIdleChatCodexGenerator(issuer, checkpoint.TaskID, checkpoint.RunID, run.Assignee, generator))
 	result, err := NewTopicGenerator(provider, config).GenerateInterestingTopicResumable(
 		o.topicProductionContext(), checkpoint.Category, checkpoint.Seed, checkpoint.Recent, resume,
 		func(state TopicGenerationResumeState) error {

@@ -19,7 +19,7 @@ type forecastTopicFailure struct {
 	Error     string
 }
 
-func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
+func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint, provider llm.LLMProvider, providerLabel string) (string, []string, *forecastTopicFailure) {
 	if checkpoint == nil {
 		return "", nil, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", errors.New("forecast checkpoint is nil"))
 	}
@@ -31,7 +31,7 @@ func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.C
 		keyword := strings.TrimSpace(checkpoint.ForecastKeyword)
 		if keyword == "" {
 			var failure *forecastTopicFailure
-			keyword, failure = o.extractForecastKeywordWithContext(ctx, domain, allHeadlines)
+			keyword, failure = o.extractForecastKeywordWithProvider(ctx, domain, allHeadlines, provider, providerLabel)
 			if failure != nil {
 				return "", allHeadlines, failure
 			}
@@ -48,7 +48,7 @@ func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.C
 			return "", checkpoint.ForecastSeeds, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", err)
 		}
 	}
-	topic, failure := o.generateForecastTopicWithCheckpoint(ctx, domain, checkpoint)
+	topic, failure := o.generateForecastTopicWithCheckpoint(ctx, domain, checkpoint, provider, providerLabel)
 	return topic, append([]string(nil), checkpoint.ForecastSeeds...), failure
 }
 
@@ -212,8 +212,7 @@ func (o *IdleChatOrchestrator) generateForecastTopic(domain ForecastDomain, seed
 	return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
 }
 
-func (o *IdleChatOrchestrator) generateForecastTopicWithCheckpoint(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, *forecastTopicFailure) {
-	provider, providerLabel := o.forecastTopicLLMInfo()
+func (o *IdleChatOrchestrator) generateForecastTopicWithCheckpoint(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint, provider llm.LLMProvider, providerLabel string) (string, *forecastTopicFailure) {
 	if provider == nil {
 		err := errors.New("forecast primary LLM provider unavailable")
 		return "", newForecastTopicFailure("topic", domain.Name, providerLabel, err)
@@ -270,6 +269,11 @@ func (o *IdleChatOrchestrator) extractForecastKeyword(domain ForecastDomain, hea
 }
 
 func (o *IdleChatOrchestrator) extractForecastKeywordWithContext(ctx context.Context, domain ForecastDomain, headlines []string) (string, *forecastTopicFailure) {
+	provider, providerLabel := o.forecastTopicLLMInfo()
+	return o.extractForecastKeywordWithProvider(ctx, domain, headlines, provider, providerLabel)
+}
+
+func (o *IdleChatOrchestrator) extractForecastKeywordWithProvider(ctx context.Context, domain ForecastDomain, headlines []string, provider llm.LLMProvider, providerLabel string) (string, *forecastTopicFailure) {
 	if len(headlines) == 0 {
 		err := errors.New("forecast keyword extraction has no seed headlines")
 		logForecastLLMError("keyword", domain.Name, "", err)
@@ -288,11 +292,11 @@ func (o *IdleChatOrchestrator) extractForecastKeywordWithContext(ctx context.Con
 		{Role: "system", Content: "あなたはニュース分析の専門家です。"},
 		{Role: "user", Content: prompt},
 	}
-	resp, providerLabel, err := o.generateForecastLLMWithContext(ctx, "keyword", domain.Name, llm.GenerateRequest{
+	resp, providerLabel, err := o.generateForecastLLMWithProvider(ctx, "keyword", domain.Name, llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   30,
 		Temperature: 0.5,
-	})
+	}, provider, providerLabel)
 	if err != nil {
 		return "", newForecastTopicFailure("keyword", domain.Name, providerLabel, err)
 	}
@@ -316,6 +320,10 @@ func (o *IdleChatOrchestrator) generateForecastLLM(phase, domainName string, req
 
 func (o *IdleChatOrchestrator) generateForecastLLMWithContext(ctx context.Context, phase, domainName string, req llm.GenerateRequest) (llm.GenerateResponse, string, error) {
 	provider, providerLabel := o.forecastTopicLLMInfo()
+	return o.generateForecastLLMWithProvider(ctx, phase, domainName, req, provider, providerLabel)
+}
+
+func (o *IdleChatOrchestrator) generateForecastLLMWithProvider(ctx context.Context, phase, domainName string, req llm.GenerateRequest, provider llm.LLMProvider, providerLabel string) (llm.GenerateResponse, string, error) {
 	if provider != nil {
 		requestCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
 			Initiator: "shiro", Caller: "idlechat.forecast_topic", Purpose: phase,

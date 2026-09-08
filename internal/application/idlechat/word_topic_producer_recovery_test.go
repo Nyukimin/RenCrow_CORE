@@ -37,6 +37,18 @@ func (o *wordTopicRecoveryOwner) StartRunWithReason(ctx context.Context, taskID 
 	return run, err
 }
 
+func (o *wordTopicRecoveryOwner) StartRunFromCheckpoint(ctx context.Context, taskID modulecore.TaskID, expectedRunID modulecore.RunID, actorID string, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Run, error) {
+	o.startCalls++
+	run, err := o.Manager.StartRunFromCheckpoint(ctx, taskID, expectedRunID, actorID, reason, checkpointSHA256)
+	if err == nil {
+		o.startReasons = append(o.startReasons, reason)
+		if o.afterStart != nil {
+			o.afterStart(run)
+		}
+	}
+	return run, err
+}
+
 func (o *wordTopicRecoveryOwner) CompleteRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, status domaintask.Status, summary, waitingReason string) (domaintask.Task, error) {
 	o.completeCalls++
 	if o.failCompleteOnce != nil {

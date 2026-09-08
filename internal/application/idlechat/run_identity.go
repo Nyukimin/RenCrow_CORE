@@ -76,20 +76,3 @@ func issueIdleChatRun(
 	}
 	return run.TaskID, run.RunID, nil
 }
-
-func resumeIdleChatRun(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID) (modulecore.RunID, error) {
-	if issuer == nil {
-		return "", errors.New("idlechat run issuer is not configured")
-	}
-	if err := taskID.Validate(); err != nil {
-		return "", err
-	}
-	run, err := issuer.StartRunWithReason(ctx, taskID, domaintask.RunStartReasonCheckpointResume)
-	if err != nil {
-		return "", err
-	}
-	if err := run.RunID.Validate(); err != nil {
-		return "", err
-	}
-	return run.RunID, nil
-}
