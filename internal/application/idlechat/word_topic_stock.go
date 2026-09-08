@@ -71,6 +71,7 @@ type wordTopicStock struct {
 	lastAttemptAt time.Time
 	lastSuccessAt time.Time
 	lastError     string
+	loadErr       error
 }
 
 func newWordTopicStock(path string) *wordTopicStock {
@@ -151,12 +152,14 @@ func (s *wordTopicStock) load() {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
+			s.loadErr = fmt.Errorf("stock_read_failed: %w", err)
 			s.lastError = fmt.Sprintf("stock_read_failed: %v", err)
 		}
 		return
 	}
 	var file wordTopicStockFile
 	if err := json.Unmarshal(data, &file); err != nil {
+		s.loadErr = fmt.Errorf("stock_parse_failed: %w", err)
 		s.lastError = fmt.Sprintf("stock_parse_failed: %v", err)
 		return
 	}
@@ -174,9 +177,12 @@ func (s *wordTopicStock) load() {
 	}
 }
 
-func (s *wordTopicStock) saveLocked() {
+func (s *wordTopicStock) saveLocked() error {
 	if s == nil || s.path == "" {
-		return
+		return nil
+	}
+	if s.loadErr != nil {
+		return s.loadErr
 	}
 	file := wordTopicStockFile{Stock: make(map[string][]WordPreparedTopic, len(wordTopicStockCategories))}
 	for _, category := range wordTopicStockCategories {
@@ -185,22 +191,25 @@ func (s *wordTopicStock) saveLocked() {
 	data, err := json.Marshal(file)
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_marshal_failed: %v", err)
-		return
+		return fmt.Errorf("stock_marshal_failed: %w", err)
 	}
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		s.lastError = fmt.Sprintf("stock_directory_failed: %v", err)
-		return
+		return fmt.Errorf("stock_directory_failed: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".word_topic_stock-*")
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_temp_failed: %v", err)
-		return
+		return fmt.Errorf("stock_temp_failed: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if err = tmp.Chmod(0o600); err == nil {
 		_, err = tmp.Write(data)
+	}
+	if err == nil {
+		err = tmp.Sync()
 	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
@@ -210,11 +219,12 @@ func (s *wordTopicStock) saveLocked() {
 	}
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_write_failed: %v", err)
-		return
+		return fmt.Errorf("stock_write_failed: %w", err)
 	}
 	if strings.HasPrefix(s.lastError, "stock_") {
 		s.lastError = ""
 	}
+	return nil
 }
 
 func (s *wordTopicStock) duplicateLocked(item WordPreparedTopic) bool {
@@ -232,43 +242,51 @@ func (s *wordTopicStock) duplicateLocked(item WordPreparedTopic) bool {
 	return false
 }
 
-func (s *wordTopicStock) push(raw WordPreparedTopic) bool {
+func (s *wordTopicStock) push(raw WordPreparedTopic) (bool, error) {
 	if s == nil {
-		return false
+		return false, nil
 	}
 	item, err := normalizeWordPreparedTopic(raw)
 	if err != nil {
-		return false
+		return false, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.stock[item.Category]) >= wordTopicStockCapacityPerCategory || s.duplicateLocked(item) {
-		return false
+		return false, nil
 	}
+	previous := append([]WordPreparedTopic(nil), s.stock[item.Category]...)
 	s.stock[item.Category] = append(s.stock[item.Category], item)
-	s.saveLocked()
-	return true
+	if err := s.saveLocked(); err != nil {
+		s.stock[item.Category] = previous
+		return false, err
+	}
+	return true, nil
 }
 
-func (s *wordTopicStock) pop(category TopicCategory) *WordPreparedTopic {
+func (s *wordTopicStock) pop(category TopicCategory) (*WordPreparedTopic, error) {
 	if s == nil || !isWordTopicCategory(category) {
-		return nil
+		return nil, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.stock[category]
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
+	previous := append([]WordPreparedTopic(nil), items...)
 	item := items[0]
 	s.stock[category] = append([]WordPreparedTopic(nil), items[1:]...)
-	s.saveLocked()
-	return &item
+	if err := s.saveLocked(); err != nil {
+		s.stock[category] = previous
+		return nil, err
+	}
+	return &item, nil
 }
 
-func (s *wordTopicStock) takeByRunID(runID modulecore.RunID) *WordPreparedTopic {
+func (s *wordTopicStock) takeByRunID(runID modulecore.RunID) (*WordPreparedTopic, error) {
 	if s == nil || runID == "" {
-		return nil
+		return nil, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,12 +296,16 @@ func (s *wordTopicStock) takeByRunID(runID modulecore.RunID) *WordPreparedTopic 
 			if item.RunID != runID {
 				continue
 			}
+			previous := append([]WordPreparedTopic(nil), items...)
 			s.stock[category] = append(append([]WordPreparedTopic(nil), items[:index]...), items[index+1:]...)
-			s.saveLocked()
-			return &item
+			if err := s.saveLocked(); err != nil {
+				s.stock[category] = previous
+				return nil, err
+			}
+			return &item, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *wordTopicStock) hasRunID(runID modulecore.RunID) bool {

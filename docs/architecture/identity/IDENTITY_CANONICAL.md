@@ -2169,6 +2169,9 @@ Test:
   current active Runとwriter generationを照合してからTask／Runを更新する。古いRunのcallback、
   別Task、別Actor、旧writerの完了を拒否し、新しいRunを巻き込まない。機械的なcheckpoint再試行は
   非空reason付きwaitingとしてRunを閉じ、再開時に新しいRunを発行する。人の判断待ちは作らない。
+- Word topic producerはstock保存エラーを成功として扱わず、同一lock内で保存前のメモリ状態へ戻して呼出元へ返す。消費の保存失敗でもtopicを返さず、生成へのfallbackで失敗を隠さない。保存は既存のtemp fileへwrite／Sync／close後にrenameする。これは三OSの電源断耐性や複数store間transactionの証明ではない。
+- Word topicの公開順はstock保存、正規Task ownerによるRun完了、checkpoint削除とする。checkpointが同じRunを指すstock itemは再生対象にしない。Run完了失敗では保存済みstockとcheckpointを保ち、完了後のcheckpoint削除失敗ではownerの`VerifyRunCompletion`が一つのread transaction内で最新Run・Task・Actor・状態を再確認してから削除する。完了済みの生成を再実行しない。
+- Word generationの失敗／取消は、保存されたcheckpointから機械的に再試行する理由付きwaitingでRunを閉じる。初回checkpoint自体を保存できなければfailedで閉じる。再開時は既存checkpointのstageに`resume_pending`を保存してから後継Runを発行する。後継IDの保存失敗後は、正規ownerの同一Task・同一assignee・checkpoint_resume履歴とこの意図を照合し、後継Runが一意の場合だけIDを回復して、未知の実行や終端成功を推定しない。
 - downstream queue／leaseのCAS失敗で発行済みRunを閉じる`InterruptRun`は、そのRunだけを終端化し、
   Taskを変更しない。Taskがrunningなら常にactive Runが存在する、という別の不変条件は導入しない。
 

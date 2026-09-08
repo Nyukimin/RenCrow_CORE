@@ -1,8 +1,10 @@
 package idlechat
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,21 +49,26 @@ func TestWordTopicStockPersistsAndRejectsCrossCategoryDuplicate(t *testing.T) {
 	taskID, runID := testIdleChatRunIdentityPair()
 	item := WordPreparedTopic{
 		Category: TopicCategorySingle,
-		Topic:    "生成AIを店頭端末に入れるとき誰が最後の判断を持つか",
+		Topic:    "生成AIと防災を店頭端末に入れるとき誰が最後の判断を持つか",
 		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "生成AI", Genre1Kind: topicWordKindStatic},
 		Axis:     "観察",
 		TaskID:   taskID,
 		RunID:    runID,
 		Created:  created,
 	}
-	if !stock.push(item) {
+	if added, err := stock.push(item); err != nil || !added {
+		if err != nil {
+			t.Fatalf("valid single topic push failed: %v", err)
+		}
 		t.Fatal("valid single topic was not added")
 	}
 	duplicate := item
 	duplicate.Category = TopicCategoryDouble
 	duplicate.Seed = TopicSeed{Category: TopicCategoryDouble, Genre1: "生成AI", Genre2: "防災"}
 	duplicate.Axis = "接続"
-	if stock.push(duplicate) {
+	if added, err := stock.push(duplicate); err != nil {
+		t.Fatalf("duplicate push returned error: %v", err)
+	} else if added {
 		t.Fatal("same topic must not be added across categories")
 	}
 
@@ -70,7 +77,10 @@ func TestWordTopicStockPersistsAndRejectsCrossCategoryDuplicate(t *testing.T) {
 	if snapshot.Total != 1 || snapshot.Categories[0].Count != 1 {
 		t.Fatalf("reloaded stock = %+v", snapshot)
 	}
-	got := reloaded.pop(TopicCategorySingle)
+	got, err := reloaded.pop(TopicCategorySingle)
+	if err != nil {
+		t.Fatalf("pop failed: %v", err)
+	}
 	if got == nil || got.Topic != item.Topic {
 		t.Fatalf("popped item = %+v", got)
 	}
@@ -91,14 +101,136 @@ func TestWordTopicStockRejectsReversedDoubleSeedPair(t *testing.T) {
 		RunID:    firstRunID,
 		Created:  time.Now().UTC(),
 	}
-	if !stock.push(first) {
+	if added, err := stock.push(first); err != nil || !added {
+		if err != nil {
+			t.Fatalf("first double topic push failed: %v", err)
+		}
 		t.Fatal("first double topic was not added")
 	}
 	second := first
 	second.Topic = "防災訓練と生成AIに共通する失敗から更新する設計"
 	second.Seed.Genre1, second.Seed.Genre2 = second.Seed.Genre2, second.Seed.Genre1
-	if stock.push(second) {
+	if added, err := stock.push(second); err != nil {
+		t.Fatalf("reversed double seed push returned error: %v", err)
+	} else if added {
 		t.Fatal("reversed double seed pair must not be a separate stock item")
+	}
+}
+
+func TestWordTopicStockPushPersistenceFailureKeepsMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stock-as-directory")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("create directory save path: %v", err)
+	}
+	taskID, runID := testIdleChatRunIdentityPair()
+	item := WordPreparedTopic{
+		Category: TopicCategorySingle,
+		Topic:    "保存失敗時も追加前の在庫を保持する",
+		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "保存"},
+		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
+	}
+	stock := newWordTopicStock("")
+	stock.path = path
+	if added, err := stock.push(item); err == nil || added {
+		t.Fatal("push must report a persistence failure")
+	}
+	if got := stock.total(); got != 0 {
+		t.Fatalf("stock after failed push = %d, want 0", got)
+	}
+}
+
+func TestWordTopicStockPopPersistenceFailureKeepsMemory(t *testing.T) {
+	stock := newWordTopicStock("")
+	taskID, runID := testIdleChatRunIdentityPair()
+	item := WordPreparedTopic{
+		Category: TopicCategorySingle,
+		Topic:    "取り出し保存失敗でも在庫を保持する",
+		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "取り出し"},
+		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
+	}
+	if added, err := stock.push(item); err != nil || !added {
+		if err != nil {
+			t.Fatalf("seed push failed: %v", err)
+		}
+		t.Fatal("failed to seed in-memory stock")
+	}
+	path := filepath.Join(t.TempDir(), "stock-as-directory")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("create directory save path: %v", err)
+	}
+	stock.path = path
+	got, err := stock.pop(TopicCategorySingle)
+	if err == nil || got != nil {
+		t.Fatalf("pop after failed persistence = %+v, want nil", got)
+	}
+	if got := stock.total(); got != 1 {
+		t.Fatalf("stock after failed pop = %d, want 1", got)
+	}
+}
+
+func TestWordTopicStockTakeByRunIDPersistenceFailureKeepsMemory(t *testing.T) {
+	stock := newWordTopicStock("")
+	taskID, runID := testIdleChatRunIdentityPair()
+	item := WordPreparedTopic{
+		Category: TopicCategorySingle,
+		Topic:    "Run単位の取り出し保存失敗でも在庫を保持する",
+		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "Run"},
+		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
+	}
+	if added, err := stock.push(item); err != nil || !added {
+		if err != nil {
+			t.Fatalf("seed push failed: %v", err)
+		}
+		t.Fatal("failed to seed in-memory stock")
+	}
+	path := filepath.Join(t.TempDir(), "stock-as-directory")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatalf("create directory save path: %v", err)
+	}
+	stock.path = path
+	got, err := stock.takeByRunID(runID)
+	if err == nil || got != nil {
+		t.Fatalf("takeByRunID after failed persistence = %+v, want nil", got)
+	}
+	if got := stock.total(); got != 1 {
+		t.Fatalf("stock after failed takeByRunID = %d, want 1", got)
+	}
+}
+
+func TestWordTopicStockDoesNotOverwriteUnreadableFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "word_topic_stock.json")
+	original := []byte("{not-json")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatalf("write malformed stock: %v", err)
+	}
+	taskID, runID := testIdleChatRunIdentityPair()
+	item := WordPreparedTopic{
+		Category: TopicCategorySingle,
+		Topic:    "不正な在庫ファイルを上書きしない",
+		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "在庫"},
+		Axis:     "観察",
+		TaskID:   taskID,
+		RunID:    runID,
+	}
+	stock := newWordTopicStock(path)
+	if added, err := stock.push(item); err == nil || added {
+		t.Fatalf("push against unreadable stock = added:%t err:%v, want failure", added, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read malformed stock after failed push: %v", err)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("malformed stock bytes changed from %q to %q", original, got)
+	}
+	if snapshot := stock.snapshot(); snapshot.Total != 0 || !strings.HasPrefix(snapshot.LastError, "stock_parse_failed:") {
+		t.Fatalf("snapshot after failed push = %+v", snapshot)
 	}
 }
 

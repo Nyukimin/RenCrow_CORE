@@ -54,6 +54,10 @@ func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPl
 	items := make([]TopicStockPlaybackItem, 0)
 	for _, category := range o.WordTopicStockSnapshot().Categories {
 		for _, prepared := range category.Topics {
+			pending, err := o.wordTopicPublicationPending(category.Name, prepared.RunID)
+			if err != nil || pending {
+				continue
+			}
 			copy := prepared
 			items = append(items, TopicStockPlaybackItem{
 				ID: wordPlaybackID(prepared.RunID), Stock: string(prepared.Category),
@@ -93,7 +97,20 @@ func (o *IdleChatOrchestrator) consumeTopicStockPlaybackItem(id string) (TopicSt
 	switch {
 	case strings.HasPrefix(id, "word:"):
 		if wordStock != nil {
-			if prepared := wordStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "word:"))); prepared != nil {
+			for _, category := range wordTopicStockCategories {
+				pending, err := o.wordTopicPublicationPending(category, modulecore.RunID(strings.TrimPrefix(id, "word:")))
+				if err != nil {
+					return TopicStockPlaybackItem{}, err
+				}
+				if pending {
+					return TopicStockPlaybackItem{}, errors.New("word topic publication is pending")
+				}
+			}
+			prepared, err := wordStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "word:")))
+			if err != nil {
+				return TopicStockPlaybackItem{}, err
+			}
+			if prepared != nil {
 				return TopicStockPlaybackItem{ID: id, Stock: string(prepared.Category), Label: wordTopicCategoryLabel(prepared.Category), Topic: prepared.Topic, word: prepared}, nil
 			}
 		}

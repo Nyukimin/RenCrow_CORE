@@ -12,11 +12,15 @@ func TestTopicStockPlaybackMovesForwardAndBackWithoutRestoringConsumedStock(t *t
 	wordStock := newWordTopicStock("")
 	wordRunID := modulecore.NewRunID()
 	wordTaskID := modulecore.NewTaskID()
-	if !wordStock.push(WordPreparedTopic{
+	added, pushErr := wordStock.push(WordPreparedTopic{
 		Category: TopicCategorySingle, Topic: "駅前の店で防災設備を選ぶ最後の判断者は誰か",
 		Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "防災"}, Axis: "観察",
 		TaskID: wordTaskID, RunID: wordRunID, Created: time.Now().UTC(),
-	}) {
+	})
+	if pushErr != nil {
+		t.Fatalf("word topic push failed: %v", pushErr)
+	}
+	if !added {
 		t.Fatal("word topic push failed")
 	}
 	forecastStock := newForecastTopicStock("")

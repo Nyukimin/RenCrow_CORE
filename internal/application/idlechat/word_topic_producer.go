@@ -9,6 +9,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 var errWordTopicCodexUnavailable = errors.New("word_topic_codex_unavailable")
@@ -157,14 +158,19 @@ func (o *IdleChatOrchestrator) bootstrapWordTopicStockAsync(stock *wordTopicStoc
 	}
 	go func() {
 		for _, category := range wordTopicStockCategories {
-			if stock.count(category) > 0 {
+			_, recovering := o.generationCheckpointStore().Get("word:" + string(category))
+			if stock.count(category) > 0 && !recovering {
 				continue
 			}
 			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 				log.Printf("[IdleChat] Word topic bootstrap deferred: category=%s", category)
 				return
 			}
-			if !stock.reserve(category, 1, "startup") {
+			target := 1
+			if recovering {
+				target = wordTopicStockCapacityPerCategory + 1
+			}
+			if !stock.reserve(category, target, "startup") {
 				o.endTopicProduction()
 				continue
 			}
@@ -185,7 +191,7 @@ func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdle(trigger string) bool {
 		o.endTopicProduction()
 		return false
 	}
-	category, ok := stock.reserveNext(wordTopicStockCapacityPerCategory, trigger)
+	category, ok := o.reserveWordTopicProduction(stock, trigger)
 	if !ok {
 		o.endTopicProduction()
 		return false
@@ -194,26 +200,89 @@ func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdle(trigger string) bool {
 	return true
 }
 
-func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, category TopicCategory, trigger string) {
-	defer o.endTopicProduction()
-	ctx := o.topicProductionContext()
-	checkpointKey := "word:" + string(category)
-	checkpointStore := o.generationCheckpointStore()
-	checkpoint, found := checkpointStore.Get(checkpointKey)
-	if found && checkpoint.Category != category {
-		_ = checkpointStore.Delete(checkpointKey)
-		found = false
-	}
-	if found {
-		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
-			_ = checkpointStore.Delete(checkpointKey)
-			found = false
+func (o *IdleChatOrchestrator) reserveWordTopicProduction(stock *wordTopicStock, trigger string) (TopicCategory, bool) {
+	for _, category := range wordTopicStockCategories {
+		if _, found := o.generationCheckpointStore().Get("word:" + string(category)); found {
+			// Recovery must run even when the pending result filled the last slot.
+			return category, stock.reserve(category, wordTopicStockCapacityPerCategory+1, trigger)
 		}
 	}
-	if found && stock.hasRunID(checkpoint.RunID) {
-		_ = checkpointStore.Delete(checkpointKey)
-		stock.done(category, nil)
+	return stock.reserveNext(wordTopicStockCapacityPerCategory, trigger)
+}
+
+func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, category TopicCategory, trigger string) {
+	defer o.endTopicProduction()
+	err := o.produceWordTopic(stock, category)
+	stock.done(category, err)
+	if err != nil {
+		logWordTopicStockFailure(category, trigger, err)
 		return
+	}
+	log.Printf("[IdleChat] Word topic stock refilled: category=%s trigger=%s count=%d", category, strings.TrimSpace(trigger), stock.count(category))
+}
+
+func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category TopicCategory) error {
+	ctx := o.topicProductionContext()
+	if ctx == nil {
+		return errors.New("word topic context is not configured")
+	}
+	if _, err := wordRunOwnerFromIssuer(o.runIssuer); err != nil {
+		return err
+	}
+	checkpointKey := "word:" + string(category)
+	checkpointStore := o.generationCheckpointStore()
+	if stock == nil || stock.path == "" || checkpointStore == nil || checkpointStore.path == "" {
+		return errors.New("word topic persistence is not configured")
+	}
+	if err := checkpointStore.LoadError(); err != nil {
+		return err
+	}
+	checkpoint, found := checkpointStore.Get(checkpointKey)
+	if found && checkpoint.Stage == "resume_pending" {
+		if err := o.reconcileWordResume(ctx, &checkpoint, checkpointStore); err != nil {
+			return err
+		}
+	}
+	if found {
+		if checkpoint.Category != category {
+			return errors.New("word topic checkpoint category mismatch")
+		}
+		run, err := inspectWordRun(ctx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID)
+		if err != nil {
+			return err
+		}
+		switch run.Status {
+		case domaintask.RunStatusSucceeded:
+			if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
+				return err
+			}
+			return checkpointStore.Delete(checkpointKey)
+		case domaintask.RunStatusFailed, domaintask.RunStatusCancelled:
+			status := domaintask.StatusFailed
+			if run.Status == domaintask.RunStatusCancelled {
+				status = domaintask.StatusCancelled
+			}
+			if err := o.finishWordRun(ctx, checkpoint, status, "word generation terminated", ""); err != nil {
+				return err
+			}
+			if _, err := stock.takeByRunID(checkpoint.RunID); err != nil {
+				return err
+			}
+			return checkpointStore.Delete(checkpointKey)
+		}
+		if stock.hasRunID(checkpoint.RunID) {
+			if run.Status == domaintask.RunStatusRunning {
+				if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
+					return err
+				}
+				return checkpointStore.Delete(checkpointKey)
+			}
+			// This result was never published: its checkpoint still gates playback.
+			// Resume its saved generation stages under the new owner-issued Run.
+			if _, err := stock.takeByRunID(checkpoint.RunID); err != nil {
+				return err
+			}
+		}
 	}
 	if !found {
 		strategy := StrategySingleGenre
@@ -222,79 +291,132 @@ func (o *IdleChatOrchestrator) fillWordTopicStock(stock *wordTopicStock, categor
 		}
 		seed, ok := o.buildTopicSeedForStrategy(strategy)
 		if !ok {
-			err := fmt.Errorf("word_topic_seed_unavailable: category=%s", category)
-			stock.done(category, err)
-			logWordTopicStockFailure(category, trigger, err)
-			return
+			return fmt.Errorf("word_topic_seed_unavailable: category=%s", category)
 		}
 		taskID, runID, err := issueIdleChatRun(ctx, o.runIssuer, "IdleChat word topic", "shiro", domaintask.RunStartReasonFirst, "")
 		if err != nil {
-			stock.done(category, err)
-			logWordTopicStockFailure(category, trigger, err)
-			return
+			return err
 		}
-		checkpoint = GenerationCheckpoint{
-			Key: checkpointKey, Kind: "word", TaskID: taskID, RunID: runID, Stage: "seed",
-			Category: category, Seed: seed,
-		}
-		if err := checkpointStore.Put(checkpoint); err != nil {
-			stock.done(category, err)
-			logWordTopicStockFailure(category, trigger, err)
-			return
-		}
+		checkpoint = GenerationCheckpoint{Key: checkpointKey, Kind: "word", TaskID: taskID, RunID: runID, Stage: "seed", Category: category, Seed: seed}
 	} else {
+		// Persist the resume intent before the owner can issue its successor.
+		// If saving that successor ID fails, the intent allows exact recovery.
+		checkpoint.Stage = "resume_pending"
+		if err := checkpointStore.Put(checkpoint); err != nil {
+			return err
+		}
 		runID, err := resumeIdleChatRun(ctx, o.runIssuer, checkpoint.TaskID)
 		if err != nil {
-			stock.done(category, err)
-			logWordTopicStockFailure(category, trigger, err)
-			return
+			return err
 		}
 		checkpoint.RunID = runID
-		if err := checkpointStore.Put(checkpoint); err != nil {
-			stock.done(category, err)
-			logWordTopicStockFailure(category, trigger, err)
-			return
+	}
+	if checkpoint.Result != nil {
+		checkpoint.Stage = "result"
+	} else if len(checkpoint.Candidates) > 0 {
+		checkpoint.Stage = "candidates"
+	} else {
+		checkpoint.Stage = "seed"
+	}
+	if err := checkpointStore.Put(checkpoint); err != nil {
+		status, reason := domaintask.StatusFailed, ""
+		if found {
+			status, reason = domaintask.StatusWaiting, "retry saving resumed generation checkpoint"
 		}
+		return errors.Join(err, o.finishWordRun(ctx, checkpoint, status, "word checkpoint save failed", reason))
 	}
 	result, err := o.generateWordTopicWithCodexCheckpoint(&checkpoint)
 	if err != nil {
-		stock.done(category, err)
-		logWordTopicStockFailure(category, trigger, err)
-		return
+		return errors.Join(err, o.finishWordRun(ctx, checkpoint, domaintask.StatusWaiting, "word generation interrupted", "retry from saved generation checkpoint"))
 	}
 	policy := ClassifyDialogueContentPolicy(*result)
 	item := WordPreparedTopic{
-		Category:           category,
-		Topic:              result.Topic,
-		Seed:               result.Seed,
-		Axis:               result.InterestingnessAxis,
-		OpeningHook:        result.OpeningHook,
-		Avoid:              result.Avoid,
-		Judge:              result.Judge,
-		ContentMode:        string(policy.Mode),
-		ContentModeReasons: append([]string(nil), policy.Reasons...),
-		TaskID:             checkpoint.TaskID,
-		RunID:              checkpoint.RunID,
-		InitiatedBy:        "shiro",
-		Created:            time.Now().UTC(),
+		Category: category, Topic: result.Topic, Seed: result.Seed, Axis: result.InterestingnessAxis,
+		OpeningHook: result.OpeningHook, Avoid: result.Avoid, Judge: result.Judge,
+		ContentMode: string(policy.Mode), ContentModeReasons: append([]string(nil), policy.Reasons...),
+		TaskID: checkpoint.TaskID, RunID: checkpoint.RunID, InitiatedBy: "shiro", Created: time.Now().UTC(),
 	}
-	if !stock.push(item) {
+	added, err := stock.push(item)
+	if err != nil {
+		return errors.Join(err, o.finishWordRun(ctx, checkpoint, domaintask.StatusWaiting, "word stock save failed", "retry from saved generation checkpoint"))
+	}
+	if !added && !stock.hasRunID(checkpoint.RunID) {
 		err := fmt.Errorf("topic_duplicate_or_full: category=%s", category)
-		if stock.hasRunID(checkpoint.RunID) {
-			_ = checkpointStore.Delete(checkpointKey)
-			stock.done(category, nil)
-			return
+		if completionErr := o.finishWordRun(ctx, checkpoint, domaintask.StatusFailed, "word topic duplicate or stock full", ""); completionErr != nil {
+			return errors.Join(err, completionErr)
 		}
-		_ = checkpointStore.Delete(checkpointKey)
-		stock.done(category, err)
-		logWordTopicStockFailure(category, trigger, err)
-		return
+		return errors.Join(err, checkpointStore.Delete(checkpointKey))
 	}
-	if err := checkpointStore.Delete(checkpointKey); err != nil {
-		log.Printf("[IdleChat] Word topic checkpoint cleanup deferred: category=%s error=%v", category, err)
+	if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
+		return err
 	}
-	stock.done(category, nil)
-	log.Printf("[IdleChat] Word topic stock refilled: category=%s trigger=%s count=%d", category, strings.TrimSpace(trigger), stock.count(category))
+	return checkpointStore.Delete(checkpointKey)
+}
+
+// reconcileWordResume handles a crash between owner Run issuance and saving
+// the successor ID. Only a persisted resume intent may adopt an exact
+// same-Task, same-assignee checkpoint-resume successor from the canonical owner.
+func (o *IdleChatOrchestrator) reconcileWordResume(ctx context.Context, checkpoint *GenerationCheckpoint, store *GenerationCheckpointStore) error {
+	owner, err := wordRunOwnerFromIssuer(o.runIssuer)
+	if err != nil {
+		return err
+	}
+	runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: checkpoint.TaskID})
+	if err != nil {
+		return err
+	}
+	var previous, latest domaintask.Run
+	for _, run := range runs {
+		if run.RunID == checkpoint.RunID {
+			previous = run
+		}
+		if latest.RunID == "" || run.StartedAt.After(latest.StartedAt) {
+			latest = run
+		}
+	}
+	if previous.RunID == "" || latest.RunID == "" {
+		return errors.New("word resume owner history is missing")
+	}
+	if latest.RunID == previous.RunID {
+		return nil
+	}
+	successors := 0
+	for _, run := range runs {
+		if run.StartedAt.After(previous.StartedAt) {
+			successors++
+		}
+	}
+	if successors != 1 {
+		return errors.New("word resume successor is ambiguous")
+	}
+	latest, err = inspectWordRun(ctx, o.runIssuer, checkpoint.TaskID, latest.RunID)
+	if err != nil {
+		return err
+	}
+	if previous.TaskID != checkpoint.TaskID || previous.Assignee != latest.Assignee ||
+		latest.StartReason != domaintask.RunStartReasonCheckpointResume ||
+		(previous.Status != domaintask.RunStatusWaiting && previous.Status != domaintask.RunStatusInterrupted) ||
+		(latest.Status != domaintask.RunStatusRunning && latest.Status != domaintask.RunStatusWaiting && latest.Status != domaintask.RunStatusInterrupted) {
+		return errors.New("word resume successor does not match persisted intent")
+	}
+	checkpoint.RunID = latest.RunID
+	return store.Put(*checkpoint)
+}
+
+func (o *IdleChatOrchestrator) finishWordRun(ctx context.Context, checkpoint GenerationCheckpoint, status domaintask.Status, summary, reason string) error {
+	// Cancellation interrupts generation, not the bounded recording of its outcome.
+	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	return completeWordRun(finalCtx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID, status, summary, reason)
+}
+
+func (o *IdleChatOrchestrator) wordTopicPublicationPending(category TopicCategory, runID modulecore.RunID) (bool, error) {
+	store := o.generationCheckpointStore()
+	if err := store.LoadError(); err != nil {
+		return true, err
+	}
+	checkpoint, found := store.Get("word:" + string(category))
+	return found && checkpoint.RunID == runID, nil
 }
 
 func (o *IdleChatOrchestrator) generateWordTopicWithCodexCheckpoint(checkpoint *GenerationCheckpoint) (*TopicGenerationResult, error) {
@@ -425,7 +547,25 @@ func (o *IdleChatOrchestrator) takeWordTopic(strategy TopicStrategy) (*TopicGene
 	stock := o.wordTopicStock
 	o.mu.Unlock()
 	if stock != nil {
-		if item := stock.pop(category); item != nil {
+		for _, entry := range stock.snapshot().Categories {
+			if entry.Name != category || len(entry.Topics) == 0 {
+				continue
+			}
+			runID := entry.Topics[0].RunID
+			pending, err := o.wordTopicPublicationPending(category, runID)
+			if err != nil {
+				return nil, err
+			}
+			if pending {
+				return nil, errors.New("word topic publication is pending")
+			}
+			item, err := stock.takeByRunID(runID)
+			if err != nil {
+				return nil, err
+			}
+			if item == nil {
+				return nil, errors.New("word topic was consumed concurrently")
+			}
 			result := wordTopicResultFromItem(*item)
 			return &result, nil
 		}

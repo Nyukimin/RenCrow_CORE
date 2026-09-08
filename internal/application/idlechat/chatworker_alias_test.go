@@ -79,14 +79,18 @@ func TestGenerateTopicFromChatConsumesWordStockWithoutWorkerProvider(t *testing.
 	})
 	stock := newWordTopicStock("")
 	taskID, runID := testIdleChatRunIdentityPair()
-	if !stock.push(WordPreparedTopic{
+	added, pushErr := stock.push(WordPreparedTopic{
 		Category: TopicCategorySingle,
 		Topic:    "郵便と古書店に残る、宛先不明の手紙の扱い方",
 		Seed:     TopicSeed{Category: TopicCategorySingle, Genre1: "郵便"},
 		Axis:     "観察",
 		TaskID:   taskID,
 		RunID:    runID,
-	}) {
+	})
+	if pushErr != nil {
+		t.Fatalf("failed to prepare word topic stock: %v", pushErr)
+	}
+	if !added {
 		t.Fatal("failed to prepare word topic stock")
 	}
 	orch.wordTopicStock = stock

@@ -3,7 +3,7 @@
   "kind": "engineering_evidence_projection",
   "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
   "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
-  "updated_at": "2026-09-08T04:14:41.411813+00:00",
+  "updated_at": "2026-09-08T07:00:36.562988+00:00",
   "status": "implementation_open",
   "operational_wip": "R1",
   "policy": {
@@ -79,6 +79,18 @@
         ],
         "scope": "Equivalent layout rejection with pre-descent ignored-directory pruning; prototype timing is not production acceptance. Final source validation uses procedure-full receipt.",
         "plan_check_id": "identity_test_runtime_layout"
+      },
+      {
+        "subcheck_id": "idlechat_word_recovery",
+        "plan_check_id": "identity_owner_atomicity_source",
+        "owner": "RenCrow_CORE",
+        "status": "receipt_authoritative",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/idlechat-stock/red-loaderr.log",
+          "Tmp/test-runtime/_identity-remediation/idlechat/check-plan.json",
+          "Tmp/test-runtime/_identity-remediation/idlechat/full/receipt.json"
+        ],
+        "scope": "Word stock error rollback and fail-closed load; exact Run completion then checkpoint cleanup; saved-result recovery and publication gating. Refer to frozen-source receipt for validation result. Forecast/Story/Dialogue, lifetime effect fence and deployed Actor acceptance remain open."
       }
     ],
     "canonical_full_receipt": "Tmp/test-runtime/_identity-remediation/full/receipt.json",
@@ -94,7 +106,8 @@
     "procedure_full_receipt": "Tmp/test-runtime/_identity-remediation/procedure-full/receipt.json",
     "procedure_full_result_authority": "Read the referenced frozen-source receipt; no cached full result in this source-bound ledger.",
     "procedure_check_plan": "Tmp/test-runtime/_identity-remediation/procedure-check-plan.json",
-    "procedure_check_plan_revision": "sha256:4fb556549f33567e110cd6e7bf5280d4b7ef98f3a372724aae3ceca6ce423b67"
+    "procedure_check_plan_revision": "sha256:4fb556549f33567e110cd6e7bf5280d4b7ef98f3a372724aae3ceca6ce423b67",
+    "idlechat_full_receipt": "Tmp/test-runtime/_identity-remediation/idlechat/full/receipt.json"
   },
   "runtime_evidence": {
     "revision": "6c50fb81f77198b8c30fc46cf1b6cd2fa97f81e2",
@@ -148,7 +161,7 @@
       "status": "in_progress",
       "severity": "high",
       "expected": "Atomic owner transactions; crash recovery; coherent reads; old Run effect admission rejected; in-flight result accurately recorded",
-      "actual": "Atomic owner source implementation and relevant tests passed; final Full pending. Live historical SuperAgent identity migration blocks recovery; lifetime effect fence remains open.",
+      "actual": "Atomic owner and exact completion checkpoints passed canonical Full and were pushed (2981ee7, 3c94c02). Word producer persistence/completion recovery is the current source unit; validation is recorded in its frozen-source receipt. Remaining producers, historical migration, lifetime effect fence and deployment remain open.",
       "reproduce_command": "go test ./internal/application/taskmanager ./internal/application/actionmanager ./internal/infrastructure/persistence/task ./internal/infrastructure/persistence/action ./internal/infrastructure/persistence/jsonlbatch -count=1 (canonical test runtime environment)",
       "terminal_evidence": [
         "identity_owner_atomicity_source",

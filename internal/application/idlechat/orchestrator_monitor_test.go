@@ -32,7 +32,7 @@ func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, se
 	t.Helper()
 	stock := newWordTopicStock("")
 	taskID, runID := testIdleChatRunIdentityPair()
-	if !stock.push(WordPreparedTopic{
+	added, pushErr := stock.push(WordPreparedTopic{
 		Category:    TopicCategorySingle,
 		Topic:       topic,
 		Seed:        TopicSeed{Category: TopicCategorySingle, Genre1: seedWord},
@@ -41,7 +41,11 @@ func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, se
 		Avoid:       "一般論だけで終わる",
 		TaskID:      taskID,
 		RunID:       runID,
-	}) {
+	})
+	if pushErr != nil {
+		t.Fatalf("failed to prepare word topic: %v", pushErr)
+	}
+	if !added {
 		t.Fatal("failed to prepare word topic")
 	}
 	o.wordTopicStock = stock

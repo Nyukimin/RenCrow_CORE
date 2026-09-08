@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
@@ -336,5 +337,222 @@ func TestManagerCompleteRunRejectsInvalidInputsWithoutWrites(t *testing.T) {
 				t.Fatalf("invalid completion changed Task: before=%#v after=%#v", before, after)
 			}
 		})
+	}
+}
+
+func TestManagerVerifyRunCompletionAcceptsExactTerminalWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+	if _, err := manager.CompleteRun(ctx, task.TaskID, run.RunID, "Mio", domaintask.StatusSucceeded, "finished", ""); err != nil {
+		t.Fatalf("CompleteRun: %v", err)
+	}
+
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRun, err := manager.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeNotifications, err := manager.Notifications(ctx, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.VerifyRunCompletion(ctx, task.TaskID, run.RunID, "Mio", domaintask.StatusSucceeded); err != nil {
+		t.Fatalf("VerifyRunCompletion: %v", err)
+	}
+	afterTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRun, err := manager.GetRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterNotifications, err := manager.Notifications(ctx, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRun, afterRun) || !reflect.DeepEqual(beforeRuns, afterRuns) || !reflect.DeepEqual(beforeNotifications, afterNotifications) {
+		t.Fatalf("terminal verification changed records: before task=%#v run=%#v runs=%#v notifications=%#v after task=%#v run=%#v runs=%#v notifications=%#v", beforeTask, beforeRun, beforeRuns, beforeNotifications, afterTask, afterRun, afterRuns, afterNotifications)
+	}
+}
+
+func TestManagerVerifyRunCompletionRejectsWrongActorAndStatusWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, run := newRunningExecutionTaskRun(t, manager, "Mio")
+	if _, err := manager.CompleteRun(ctx, task.TaskID, run.RunID, "Mio", domaintask.StatusSucceeded, "finished", ""); err != nil {
+		t.Fatalf("CompleteRun: %v", err)
+	}
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		actor  string
+		status domaintask.Status
+	}{
+		{name: "wrong_actor", actor: "Shiro", status: domaintask.StatusSucceeded},
+		{name: "wrong_status", actor: "Mio", status: domaintask.StatusFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := manager.VerifyRunCompletion(ctx, task.TaskID, run.RunID, test.actor, test.status); !errors.Is(err, ErrRunConflict) {
+				t.Fatalf("VerifyRunCompletion error = %v, want ErrRunConflict", err)
+			}
+			afterTask, err := manager.Get(ctx, task.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRuns, afterRuns) {
+				t.Fatalf("rejected verification changed records: before task=%#v runs=%#v after task=%#v runs=%#v", beforeTask, beforeRuns, afterTask, afterRuns)
+			}
+		})
+	}
+}
+
+func TestManagerVerifyRunCompletionRejectsStaleAndNewerRunsWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, oldRun := newRunningExecutionTaskRun(t, manager, "Mio")
+	newRun, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonCheckpointResume)
+	if err != nil {
+		t.Fatalf("checkpoint resume: %v", err)
+	}
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		runID  modulecore.RunID
+		status domaintask.Status
+	}{
+		{name: "stale_run", runID: oldRun.RunID, status: domaintask.StatusSucceeded},
+		{name: "newer_active_run", runID: newRun.RunID, status: domaintask.StatusSucceeded},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := manager.VerifyRunCompletion(ctx, task.TaskID, test.runID, "Mio", test.status); !errors.Is(err, ErrRunConflict) {
+				t.Fatalf("VerifyRunCompletion error = %v, want ErrRunConflict", err)
+			}
+			afterTask, err := manager.Get(ctx, task.TaskID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRuns, afterRuns) {
+				t.Fatalf("rejected verification changed records: before task=%#v runs=%#v after task=%#v runs=%#v", beforeTask, beforeRuns, afterTask, afterRuns)
+			}
+		})
+	}
+}
+
+func TestManagerVerifyRunCompletionRejectsOlderTerminalRunAndAcceptsLatestWithoutWrites(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	clock := time.Date(2026, 9, 8, 3, 0, 0, 0, time.UTC)
+	manager.now = func() time.Time {
+		clock = clock.Add(time.Second)
+		return clock
+	}
+	task, oldRun := newRunningExecutionTaskRun(t, manager, "Mio")
+	if _, err := manager.CompleteRun(ctx, task.TaskID, oldRun.RunID, "Mio", domaintask.StatusSucceeded, "first", ""); err != nil {
+		t.Fatalf("old Run completion: %v", err)
+	}
+	newRun, err := manager.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonExplicitRerun)
+	if err != nil {
+		t.Fatalf("explicit rerun: %v", err)
+	}
+	if _, err := manager.CompleteRun(ctx, task.TaskID, newRun.RunID, "Mio", domaintask.StatusSucceeded, "second", ""); err != nil {
+		t.Fatalf("new Run completion: %v", err)
+	}
+
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeNotifications, err := manager.Notifications(ctx, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.VerifyRunCompletion(ctx, task.TaskID, oldRun.RunID, "Mio", domaintask.StatusSucceeded); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("older terminal Run verification error = %v, want ErrRunConflict", err)
+	}
+	assertRunCompletionRecordsUnchanged(t, manager, ctx, task.TaskID, beforeTask, beforeRuns, beforeNotifications)
+
+	if err := manager.VerifyRunCompletion(ctx, task.TaskID, newRun.RunID, "Mio", domaintask.StatusSucceeded); err != nil {
+		t.Fatalf("latest terminal Run verification: %v", err)
+	}
+	assertRunCompletionRecordsUnchanged(t, manager, ctx, task.TaskID, beforeTask, beforeRuns, beforeNotifications)
+}
+
+func assertRunCompletionRecordsUnchanged(t *testing.T, manager *Manager, ctx context.Context, taskID modulecore.TaskID, beforeTask domaintask.Task, beforeRuns []domaintask.Run, beforeNotifications []domaintask.Notification) {
+	t.Helper()
+	afterTask, err := manager.Get(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterNotifications, err := manager.Notifications(ctx, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRuns, afterRuns) || !reflect.DeepEqual(beforeNotifications, afterNotifications) {
+		t.Fatalf("VerifyRunCompletion changed records: before task=%#v runs=%#v notifications=%#v after task=%#v runs=%#v notifications=%#v", beforeTask, beforeRuns, beforeNotifications, afterTask, afterRuns, afterNotifications)
 	}
 }

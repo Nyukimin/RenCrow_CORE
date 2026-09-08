@@ -10,11 +10,15 @@ func TestForecastGenerationRejectsTopicAlreadyInWordStock(t *testing.T) {
 	topic := "生活の記録をAIがどう変えるか"
 	wordTaskID, wordRunID := testIdleChatRunIdentityPair()
 	wordStock := newWordTopicStock("")
-	if !wordStock.push(WordPreparedTopic{
+	added, pushErr := wordStock.push(WordPreparedTopic{
 		Category: TopicCategorySingle, Topic: topic,
 		Seed: TopicSeed{Category: TopicCategorySingle, Genre1: "生活"}, Axis: "観察",
 		TaskID: wordTaskID, RunID: wordRunID,
-	}) {
+	})
+	if pushErr != nil {
+		t.Fatalf("failed to prepare word stock: %v", pushErr)
+	}
+	if !added {
 		t.Fatal("failed to prepare word stock")
 	}
 	generator := &queuedIdleChatCodexGenerator{responses: []string{
