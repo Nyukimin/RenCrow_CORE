@@ -87,13 +87,14 @@ func TestInitForecastTopicStockBootstrapsOneTopicPerDomainWhenEmpty(t *testing.T
 		nil,
 		"",
 	)
-	o.SetRunIssuer(newTestIdleChatRunIssuer())
+	o.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		calls.Add(1)
 		return domain.Name + "の初期お題", []string{"seed"}, nil
 	}
 	path := filepath.Join(t.TempDir(), "forecast_topic_stock.json")
+	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
 
 	o.InitForecastTopicStock(path)
 	waitForForecastStock(t, o, func(snapshot ForecastTopicStockSnapshot) bool {
@@ -130,7 +131,8 @@ func TestInitForecastTopicStockReusesPersistedStockWithoutBootstrap(t *testing.T
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	o.SetRunIssuer(newTestIdleChatRunIssuer())
+	o.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		calls.Add(1)
@@ -161,7 +163,8 @@ func TestRefillForecastTopicStockIfIdleAddsOneAndDefersWhenBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	o.SetRunIssuer(newTestIdleChatRunIssuer())
+	o.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
 	var calls atomic.Int32
 	o.forecastTopicGenerator = func(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
 		n := calls.Add(1)
@@ -201,7 +204,8 @@ func TestRefillForecastTopicStockIfIdleIsSingleFlightAcrossTriggers(t *testing.T
 		t.Fatal(err)
 	}
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
-	o.SetRunIssuer(newTestIdleChatRunIssuer())
+	o.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	o.SetGenerationCheckpointStore(NewGenerationCheckpointStore(filepath.Join(t.TempDir(), "generation_checkpoints.json")))
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var calls atomic.Int32

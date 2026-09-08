@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -21,10 +22,20 @@ type storyEpisodeStore struct {
 	target             int
 	episodes           map[string]StoryEpisodeArtifact
 	order              []string
+	loadErr            error
 	filling            bool
 	generationAttempts int
 	lastFailurePhase   string
 	lastError          string
+}
+
+func (s *storyEpisodeStore) loadError() error {
+	if s == nil {
+		return errors.New("story episode store is nil")
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.loadErr
 }
 
 func newStoryEpisodeStore(path string, target int) *storyEpisodeStore {
@@ -37,6 +48,7 @@ func newStoryEpisodeStore(path string, target int) *storyEpisodeStore {
 		episodes: make(map[string]StoryEpisodeArtifact),
 	}
 	if err := store.load(); err != nil {
+		store.loadErr = err
 		store.lastFailurePhase = "storage_load"
 		store.lastError = err.Error()
 	}
@@ -57,6 +69,31 @@ func (s *storyEpisodeStore) append(artifact StoryEpisodeArtifact) error {
 	if err := validateIdleChatRunIdentity(artifact.TaskID, artifact.RunID); err != nil {
 		return fmt.Errorf("story episode identity: %w", err)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return fmt.Errorf("story episode store unavailable: %w", s.loadErr)
+	}
+	if existing, ok := s.episodes[artifact.EpisodeID]; ok {
+		if existing.TaskID != artifact.TaskID || existing.RunID != artifact.RunID {
+			if artifact.Revision <= existing.Revision {
+				return fmt.Errorf("story episode %s identity conflicts with revision %d", artifact.EpisodeID, existing.Revision)
+			}
+		} else {
+			if artifact.Revision < existing.Revision {
+				return fmt.Errorf("story episode %s revision regressed from %d to %d", artifact.EpisodeID, existing.Revision, artifact.Revision)
+			}
+			if artifact.CreatedAt.IsZero() {
+				artifact.CreatedAt = existing.CreatedAt
+			}
+			if storyArtifactSameRevision(existing, artifact) {
+				return nil
+			}
+			if existing.Revision == artifact.Revision && !storyArtifactSameRevisionIgnoringPlayback(existing, artifact) {
+				return fmt.Errorf("story episode %s has conflicting revision %d", artifact.EpisodeID, artifact.Revision)
+			}
+		}
+	}
 	now := time.Now().UTC()
 	if artifact.CreatedAt.IsZero() {
 		artifact.CreatedAt = now
@@ -66,9 +103,6 @@ func (s *storyEpisodeStore) append(artifact StoryEpisodeArtifact) error {
 	if err != nil {
 		return fmt.Errorf("encode story episode: %w", err)
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create story episode storage directory: %w", err)
 	}
@@ -92,6 +126,10 @@ func (s *storyEpisodeStore) append(artifact StoryEpisodeArtifact) error {
 }
 
 func (s *storyEpisodeStore) snapshot() StoryEpisodeStockSnapshot {
+	return s.snapshotExcluding("", "")
+}
+
+func (s *storyEpisodeStore) snapshotExcluding(excludeRunID modulecore.RunID, excludeEpisodeID string) StoryEpisodeStockSnapshot {
 	if s == nil {
 		return StoryEpisodeStockSnapshot{}
 	}
@@ -105,9 +143,24 @@ func (s *storyEpisodeStore) snapshot() StoryEpisodeStockSnapshot {
 		LastFailurePhase:   s.lastFailurePhase,
 		LastError:          s.lastError,
 	}
+	if s.loadErr != nil {
+		snapshot.Enabled = false
+		snapshot.Ready = 0
+		snapshot.Missing = snapshot.Target
+		snapshot.NeedsRepair = 0
+		snapshot.Failed = 0
+		snapshot.UntitledReady = 0
+		snapshot.Episodes = nil
+		snapshot.LastFailurePhase = "storage_load"
+		snapshot.LastError = s.loadErr.Error()
+		return snapshot
+	}
 	for _, id := range s.order {
 		artifact, ok := s.episodes[id]
 		if !ok {
+			continue
+		}
+		if (excludeRunID != "" && artifact.RunID == excludeRunID) || (excludeEpisodeID != "" && artifact.EpisodeID == excludeEpisodeID) {
 			continue
 		}
 		snapshot.Episodes = append(snapshot.Episodes, cloneStoryEpisode(artifact))
@@ -132,11 +185,18 @@ func (s *storyEpisodeStore) snapshot() StoryEpisodeStockSnapshot {
 }
 
 func (s *storyEpisodeStore) nextReady() (StoryEpisodeArtifact, bool) {
+	return s.nextReadyExcluding("", "")
+}
+
+func (s *storyEpisodeStore) nextReadyExcluding(excludeRunID modulecore.RunID, excludeEpisodeID string) (StoryEpisodeArtifact, bool) {
 	if s == nil {
 		return StoryEpisodeArtifact{}, false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.loadErr != nil {
+		return StoryEpisodeArtifact{}, false
+	}
 	type candidate struct {
 		artifact StoryEpisodeArtifact
 		order    int
@@ -144,7 +204,7 @@ func (s *storyEpisodeStore) nextReady() (StoryEpisodeArtifact, bool) {
 	var candidates []candidate
 	for order, id := range s.order {
 		artifact, ok := s.episodes[id]
-		if !ok || artifact.ProductionStatus != StoryProductionReady || !artifact.Validation.Valid {
+		if !ok || (excludeRunID != "" && artifact.RunID == excludeRunID) || (excludeEpisodeID != "" && artifact.EpisodeID == excludeEpisodeID) || artifact.ProductionStatus != StoryProductionReady || !artifact.Validation.Valid {
 			continue
 		}
 		candidates = append(candidates, candidate{artifact: artifact, order: order})
@@ -180,22 +240,37 @@ func (s *storyEpisodeStore) get(episodeID string) (StoryEpisodeArtifact, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if s.loadErr != nil {
+		return StoryEpisodeArtifact{}, false
+	}
 	artifact, ok := s.episodes[strings.TrimSpace(episodeID)]
 	return cloneStoryEpisode(artifact), ok
 }
 
 func (s *storyEpisodeStore) hasRunID(runID modulecore.RunID) bool {
+	_, ok := s.artifactByRunID(runID)
+	return ok
+}
+
+func (s *storyEpisodeStore) artifactByRunID(runID modulecore.RunID) (StoryEpisodeArtifact, bool) {
 	if s == nil || runID == "" {
-		return false
+		return StoryEpisodeArtifact{}, false
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, artifact := range s.episodes {
+	if s.loadErr != nil {
+		return StoryEpisodeArtifact{}, false
+	}
+	for _, id := range s.order {
+		artifact, ok := s.episodes[id]
+		if !ok {
+			continue
+		}
 		if artifact.RunID == runID {
-			return true
+			return cloneStoryEpisode(artifact), true
 		}
 	}
-	return false
+	return StoryEpisodeArtifact{}, false
 }
 
 func (s *storyEpisodeStore) markPlayed(episodeID string, playedAt time.Time) error {
@@ -203,6 +278,11 @@ func (s *storyEpisodeStore) markPlayed(episodeID string, playedAt time.Time) err
 		return errors.New("story episode store is nil")
 	}
 	s.mu.RLock()
+	if s.loadErr != nil {
+		err := s.loadErr
+		s.mu.RUnlock()
+		return fmt.Errorf("story episode store unavailable: %w", err)
+	}
 	artifact, ok := s.episodes[strings.TrimSpace(episodeID)]
 	s.mu.RUnlock()
 	if !ok {
@@ -273,6 +353,9 @@ func (s *storyEpisodeStore) load() error {
 		if strings.TrimSpace(artifact.EpisodeID) == "" {
 			return fmt.Errorf("decode story episode storage line %d: episode_id is empty", line)
 		}
+		if existing, ok := s.episodes[artifact.EpisodeID]; ok && existing.Revision == artifact.Revision && !storyArtifactSameRevisionIgnoringPlayback(existing, artifact) {
+			return fmt.Errorf("decode story episode storage line %d: conflicting episode %s revision %d", line, artifact.EpisodeID, artifact.Revision)
+		}
 		s.putLocked(artifact)
 	}
 	if err := scanner.Err(); err != nil {
@@ -301,4 +384,49 @@ func cloneStoryEpisode(artifact StoryEpisodeArtifact) StoryEpisodeArtifact {
 		artifact.LastPlayedAt = &playedAt
 	}
 	return artifact
+}
+
+// storyArtifactSameRevision compares one persisted revision while ignoring the
+// append timestamp. It keeps retries idempotent and lets the loader reject
+// conflicting records for the same EpisodeID/revision.
+func storyArtifactSameRevision(left, right StoryEpisodeArtifact) bool {
+	left.UpdatedAt = time.Time{}
+	right.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(left, right)
+}
+
+func storyArtifactSameRevisionIgnoringPlayback(left, right StoryEpisodeArtifact) bool {
+	left.PlayCount = 0
+	right.PlayCount = 0
+	left.LastPlayedAt = nil
+	right.LastPlayedAt = nil
+	return storyArtifactSameRevision(left, right)
+}
+
+// storyArtifactMatchesCheckpoint compares the generated artifact payload with
+// its checkpoint. Validation, publication, playback, and timestamps are
+// derived after generation and therefore are intentionally excluded.
+func storyArtifactMatchesCheckpoint(stored, checkpoint StoryEpisodeArtifact) bool {
+	if stored.EpisodeID != checkpoint.EpisodeID || stored.Revision != checkpoint.Revision || stored.TaskID != checkpoint.TaskID || stored.RunID != checkpoint.RunID {
+		return false
+	}
+	stored.ProductionStatus = ""
+	checkpoint.ProductionStatus = ""
+	stored.Validation = StoryValidationResult{}
+	checkpoint.Validation = StoryValidationResult{}
+	stored.FixedPrefixLength = 0
+	checkpoint.FixedPrefixLength = 0
+	stored.RepairFromTurn = 0
+	checkpoint.RepairFromTurn = 0
+	stored.SuffixRegenerations = 0
+	checkpoint.SuffixRegenerations = 0
+	stored.PlayCount = 0
+	checkpoint.PlayCount = 0
+	stored.LastPlayedAt = nil
+	checkpoint.LastPlayedAt = nil
+	stored.CreatedAt = time.Time{}
+	checkpoint.CreatedAt = time.Time{}
+	stored.UpdatedAt = time.Time{}
+	checkpoint.UpdatedAt = time.Time{}
+	return reflect.DeepEqual(stored, checkpoint)
 }

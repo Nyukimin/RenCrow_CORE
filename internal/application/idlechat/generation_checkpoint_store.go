@@ -19,24 +19,25 @@ const generationCheckpointSchemaVersion = 1
 // background CodexExe job yield to foreground conversation and continue from
 // the last durable boundary without registering the same result twice.
 type GenerationCheckpoint struct {
-	Key             string                 `json:"key"`
-	Kind            string                 `json:"kind"`
-	TaskID          modulecore.TaskID      `json:"task_id"`
-	RunID           modulecore.RunID       `json:"run_id"`
-	Stage           string                 `json:"stage"`
-	Attempt         int                    `json:"attempt,omitempty"`
-	Category        TopicCategory          `json:"category,omitempty"`
-	Domain          ForecastDomain         `json:"domain,omitempty"`
-	Seed            TopicSeed              `json:"seed,omitempty"`
-	Recent          []RecentTopic          `json:"recent,omitempty"`
-	Candidates      []TopicCandidate       `json:"candidates,omitempty"`
-	Result          *TopicGenerationResult `json:"result,omitempty"`
-	ForecastSeeds   []string               `json:"forecast_seeds,omitempty"`
-	ForecastKeyword string                 `json:"forecast_keyword,omitempty"`
-	StorySeed       *storyGenerationSeed   `json:"story_seed,omitempty"`
-	StoryArtifact   *StoryEpisodeArtifact  `json:"story_artifact,omitempty"`
-	StoryReview     *StorySemanticReview   `json:"story_review,omitempty"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	Key              string                   `json:"key"`
+	Kind             string                   `json:"kind"`
+	TaskID           modulecore.TaskID        `json:"task_id"`
+	RunID            modulecore.RunID         `json:"run_id"`
+	Stage            string                   `json:"stage"`
+	Attempt          int                      `json:"attempt,omitempty"`
+	Category         TopicCategory            `json:"category,omitempty"`
+	Domain           ForecastDomain           `json:"domain,omitempty"`
+	Seed             TopicSeed                `json:"seed,omitempty"`
+	Recent           []RecentTopic            `json:"recent,omitempty"`
+	Candidates       []TopicCandidate         `json:"candidates,omitempty"`
+	Result           *TopicGenerationResult   `json:"result,omitempty"`
+	ForecastSeeds    []string                 `json:"forecast_seeds,omitempty"`
+	ForecastKeyword  string                   `json:"forecast_keyword,omitempty"`
+	StorySeed        *storyGenerationSeed     `json:"story_seed,omitempty"`
+	StoryArtifact    *StoryEpisodeArtifact    `json:"story_artifact,omitempty"`
+	DialogueArtifact *DialogueEpisodeArtifact `json:"dialogue_artifact,omitempty"`
+	StoryReview      *StorySemanticReview     `json:"story_review,omitempty"`
+	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
 type generationCheckpointFile struct {
@@ -220,6 +221,10 @@ func cloneGenerationCheckpoint(checkpoint GenerationCheckpoint) GenerationCheckp
 	if checkpoint.StoryArtifact != nil {
 		artifact := cloneStoryEpisode(*checkpoint.StoryArtifact)
 		checkpoint.StoryArtifact = &artifact
+	}
+	if checkpoint.DialogueArtifact != nil {
+		artifact := cloneDialogueEpisode(*checkpoint.DialogueArtifact)
+		checkpoint.DialogueArtifact = &artifact
 	}
 	if checkpoint.StoryReview != nil {
 		review := *checkpoint.StoryReview

@@ -36,6 +36,7 @@ type forecastTopicStock struct {
 	lastAttemptAt time.Time
 	lastSuccessAt time.Time
 	lastError     string
+	loadErr       error
 }
 
 // stockFile はファイル保存形式。
@@ -70,20 +71,21 @@ func newForecastTopicStock(path string) *forecastTopicStock {
 	s := &forecastTopicStock{
 		stock:   make(map[string][]PreparedTopic),
 		filling: make(map[string]bool),
-		path:    path,
+		path:    strings.TrimSpace(path),
 	}
 	s.load()
 	return s
 }
 
 func (s *forecastTopicStock) load() {
-	if s.path == "" {
+	if s == nil || s.path == "" {
 		log.Printf("[Forecast] Stock file path is empty, skipping load")
 		return
 	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
+			s.loadErr = fmt.Errorf("stock_read_failed: %w", err)
 			s.lastError = fmt.Sprintf("stock_read_failed: %v", err)
 			log.Printf("[Forecast] Stock file unreadable (%s): %v", s.path, err)
 		}
@@ -91,6 +93,7 @@ func (s *forecastTopicStock) load() {
 	}
 	var f stockFile
 	if err := json.Unmarshal(data, &f); err != nil {
+		s.loadErr = fmt.Errorf("stock_parse_failed: %w", err)
 		s.lastError = fmt.Sprintf("stock_parse_failed: %v", err)
 		log.Printf("[Forecast] Stock file parse error: %v", err)
 		return
@@ -139,7 +142,11 @@ func (s *forecastTopicStock) load() {
 	log.Printf("[Forecast] Stock loaded from file: %d topics across %d domains", total, len(f.Stock))
 	if discarded > 0 {
 		log.Printf("[Forecast] Stock validation discarded %d invalid, duplicate, overflow, or unknown records", discarded)
-		s.saveLocked()
+		if err := s.saveLocked(); err != nil {
+			s.loadErr = fmt.Errorf("stock_validation_cleanup_failed: %w", err)
+			s.lastError = s.loadErr.Error()
+			log.Printf("[Forecast] Stock validation cleanup failed: %v", err)
+		}
 	}
 }
 
@@ -152,33 +159,39 @@ func isForecastDomainName(name string) bool {
 	return false
 }
 
-func (s *forecastTopicStock) saveLocked() {
-	if s.path == "" {
-		return
+func (s *forecastTopicStock) saveLocked() error {
+	if s == nil || s.path == "" {
+		return nil
+	}
+	if s.loadErr != nil {
+		return s.loadErr
 	}
 	f := stockFile{Stock: s.stock}
 	data, err := json.Marshal(f)
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_marshal_failed: %v", err)
 		log.Printf("[Forecast] Stock file marshal error: %v", err)
-		return
+		return fmt.Errorf("stock_marshal_failed: %w", err)
 	}
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		s.lastError = fmt.Sprintf("stock_directory_failed: %v", err)
 		log.Printf("[Forecast] Stock directory create error: %v", err)
-		return
+		return fmt.Errorf("stock_directory_failed: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, ".forecast_topic_stock-*")
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_temp_failed: %v", err)
 		log.Printf("[Forecast] Stock temp file error: %v", err)
-		return
+		return fmt.Errorf("stock_temp_failed: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 	if err = tmp.Chmod(0o600); err == nil {
 		_, err = tmp.Write(data)
+	}
+	if syncErr := tmp.Sync(); err == nil {
+		err = syncErr
 	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
@@ -189,19 +202,26 @@ func (s *forecastTopicStock) saveLocked() {
 	if err != nil {
 		s.lastError = fmt.Sprintf("stock_write_failed: %v", err)
 		log.Printf("[Forecast] Stock file write error: %v", err)
+		return fmt.Errorf("stock_write_failed: %w", err)
 	} else if strings.HasPrefix(s.lastError, "stock_") {
 		s.lastError = ""
 	}
+	return nil
 }
 
 // pop はドメインのストックから1つ取得する。空なら nil。
-func (s *forecastTopicStock) pop(domain string) *PreparedTopic {
+
+func (s *forecastTopicStock) pop(domain string) (*PreparedTopic, error) {
+	if s == nil {
+		return nil, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	items := s.stock[domain]
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
+	previous := append([]PreparedTopic(nil), items...)
 	item := items[0]
 	usedKey := normalizeLoopText(item.Topic)
 	remaining := make([]PreparedTopic, 0, len(items)-1)
@@ -212,13 +232,16 @@ func (s *forecastTopicStock) pop(domain string) *PreparedTopic {
 		remaining = append(remaining, candidate)
 	}
 	s.stock[domain] = remaining
-	s.saveLocked()
-	return &item
+	if err := s.saveLocked(); err != nil {
+		s.stock[domain] = previous
+		return nil, err
+	}
+	return &item, nil
 }
 
-func (s *forecastTopicStock) takeByRunID(runID modulecore.RunID) *PreparedTopic {
+func (s *forecastTopicStock) takeByRunID(runID modulecore.RunID) (*PreparedTopic, error) {
 	if s == nil || runID == "" {
-		return nil
+		return nil, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -228,12 +251,16 @@ func (s *forecastTopicStock) takeByRunID(runID modulecore.RunID) *PreparedTopic 
 			if item.RunID != runID {
 				continue
 			}
+			previous := append([]PreparedTopic(nil), items...)
 			s.stock[domain.Name] = append(append([]PreparedTopic(nil), items[:index]...), items[index+1:]...)
-			s.saveLocked()
-			return &item
+			if err := s.saveLocked(); err != nil {
+				s.stock[domain.Name] = previous
+				return nil, err
+			}
+			return &item, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *forecastTopicStock) hasRunID(runID modulecore.RunID) bool {
@@ -252,34 +279,82 @@ func (s *forecastTopicStock) hasRunID(runID modulecore.RunID) bool {
 	return false
 }
 
+func (s *forecastTopicStock) hasExactCheckpointItem(checkpoint GenerationCheckpoint) bool {
+	if s == nil || checkpoint.Result == nil || checkpoint.RunID == "" || checkpoint.TaskID == "" {
+		return false
+	}
+	expectedTopic := strings.TrimSpace(checkpoint.Result.Topic)
+	if expectedTopic == "" || strings.TrimSpace(checkpoint.Domain.Name) == "" {
+		return false
+	}
+	expectedSeeds := append([]string(nil), checkpoint.ForecastSeeds...)
+	if len(expectedSeeds) == 0 {
+		expectedSeeds = append([]string(nil), checkpoint.Result.Seed.TrendKeywords...)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range s.stock[checkpoint.Domain.Name] {
+		if item.TaskID != checkpoint.TaskID || item.RunID != checkpoint.RunID || item.Domain.Name != checkpoint.Domain.Name {
+			continue
+		}
+		if strings.TrimSpace(item.Topic) != expectedTopic || !sameForecastStrings(item.Seeds, expectedSeeds) {
+			continue
+		}
+		if resultDomain := strings.TrimSpace(checkpoint.Result.Seed.ForecastDomain); resultDomain != "" && resultDomain != checkpoint.Domain.Name {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func sameForecastStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 // push はドメインのストックに追加する（上限 forecastTopicStockSize）。
-func (s *forecastTopicStock) push(domain string, item PreparedTopic) bool {
+func (s *forecastTopicStock) push(domain string, item PreparedTopic) (bool, error) {
+	if s == nil {
+		return false, nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if strings.TrimSpace(item.Topic) == "" {
-		return false
+		return false, errors.New("forecast topic is empty")
 	}
 	if strings.TrimSpace(item.InitiatedBy) == "" {
 		item.InitiatedBy = "shiro"
 	}
 	if err := validateIdleChatRunIdentity(item.TaskID, item.RunID); err != nil {
-		return false
+		return false, err
 	}
 	items := s.stock[domain]
 	itemKey := normalizeLoopText(item.Topic)
 	for _, domainItems := range s.stock {
 		for _, existing := range domainItems {
 			if itemKey != "" && normalizeLoopText(existing.Topic) == itemKey {
-				return false
+				return false, nil
 			}
 		}
 	}
 	if len(items) >= forecastTopicStockSize {
-		return false
+		return false, nil
 	}
+	previous := append([]PreparedTopic(nil), items...)
 	s.stock[domain] = append(items, item)
-	s.saveLocked()
-	return true
+	if err := s.saveLocked(); err != nil {
+		s.stock[domain] = previous
+		return false, err
+	}
+	return true, nil
 }
 
 // count はドメインのストック数を返す。
@@ -370,8 +445,17 @@ func (s *forecastTopicStock) anyFillingLocked() bool {
 }
 
 func (s *forecastTopicStock) snapshot() ForecastTopicStockSnapshot {
+	capacity := len(forecastDomains) * forecastTopicStockSize
+	if s == nil {
+		return ForecastTopicStockSnapshot{Capacity: capacity, Missing: capacity}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return ForecastTopicStockSnapshot{
+			Enabled: true, Capacity: capacity, Missing: capacity, LastError: s.lastError,
+		}
+	}
 	domains := make([]ForecastTopicStockDomainSnapshot, 0, len(forecastDomains))
 	for _, domain := range forecastDomains {
 		items := append([]PreparedTopic(nil), s.stock[domain.Name]...)
@@ -384,7 +468,6 @@ func (s *forecastTopicStock) snapshot() ForecastTopicStockSnapshot {
 		})
 	}
 	total := s.totalLocked()
-	capacity := len(forecastDomains) * forecastTopicStockSize
 	return ForecastTopicStockSnapshot{
 		Enabled:       true,
 		Total:         total,
@@ -409,7 +492,7 @@ func forecastSnapshotTime(value time.Time) *time.Time {
 
 // InitForecastTopicStock はお題ストックを初期化する。
 // path はストックの永続化ファイルパス。
-// 有効在庫が0件の場合だけ、各ドメイン1件を上限に逐次bootstrapする。
+// 有効在庫が0件の場合、または未完了チェックポイントがある場合に逐次bootstrapする。
 func (o *IdleChatOrchestrator) InitForecastTopicStock(path string) {
 	o.mu.Lock()
 	if o.topicStockBuf != nil {
@@ -420,7 +503,8 @@ func (o *IdleChatOrchestrator) InitForecastTopicStock(path string) {
 	stock := o.topicStockBuf
 	o.mu.Unlock()
 	log.Printf("[Forecast] Topic stock initialized (total=%d capacity=%d)", stock.total(), len(forecastDomains)*forecastTopicStockSize)
-	if stock.total() == 0 {
+	_, recovering := o.nextForecastCheckpointDomain()
+	if stock.total() == 0 || recovering {
 		o.bootstrapForecastTopicStockAsync(stock)
 	}
 }
@@ -440,13 +524,33 @@ func (o *IdleChatOrchestrator) ForecastTopicStockSnapshot() ForecastTopicStockSn
 }
 
 func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastTopicStock) {
-	go func() {
+	// Recover pending publications first. A nonempty restored stock does not
+	// become a request to bootstrap unrelated empty domains.
+	bootstrapMissing := stock.total() == 0
+	domains := make([]ForecastDomain, 0, len(forecastDomains))
+	for _, domain := range forecastDomains {
+		if o.forecastTopicCheckpointExists(domain) {
+			domains = append(domains, domain)
+		}
+	}
+	if bootstrapMissing {
 		for _, domain := range forecastDomains {
+			if !o.forecastTopicCheckpointExists(domain) {
+				domains = append(domains, domain)
+			}
+		}
+	}
+	go func() {
+		for _, domain := range domains {
 			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 				log.Printf("[Forecast] Startup bootstrap deferred because generation resources are busy")
 				return
 			}
-			if !stock.reserveDomain(domain.Name, 1, "startup") {
+			target := 1
+			if o.forecastTopicCheckpointExists(domain) {
+				target = forecastTopicStockSize + 1
+			}
+			if !stock.reserveDomain(domain.Name, target, "startup") {
 				o.endTopicProduction()
 				continue
 			}
@@ -468,13 +572,48 @@ func (o *IdleChatOrchestrator) RefillForecastTopicStockIfIdle(trigger string) bo
 		o.endTopicProduction()
 		return false
 	}
-	domain, ok := stock.reserveNextDomain(forecastTopicStockSize, trigger)
+	domain, ok := o.reserveForecastTopicProduction(stock, trigger)
 	if !ok {
 		o.endTopicProduction()
 		return false
 	}
 	go o.fillForecastTopicStock(stock, domain, trigger)
 	return true
+}
+
+func (o *IdleChatOrchestrator) reserveForecastTopicProduction(stock *forecastTopicStock, trigger string) (ForecastDomain, bool) {
+	if stock == nil {
+		return ForecastDomain{}, false
+	}
+	if checkpointDomain, recovering := o.nextForecastCheckpointDomain(); recovering {
+		if stock.reserveDomain(checkpointDomain.Name, forecastTopicStockSize+1, trigger) {
+			return checkpointDomain, true
+		}
+		return ForecastDomain{}, false
+	}
+	return stock.reserveNextDomain(forecastTopicStockSize, trigger)
+}
+
+func (o *IdleChatOrchestrator) forecastTopicCheckpointExists(domain ForecastDomain) bool {
+	store := o.generationCheckpointStore()
+	if store == nil || store.LoadError() != nil {
+		return false
+	}
+	_, found := store.Get("forecast:" + domain.Name)
+	return found
+}
+
+func (o *IdleChatOrchestrator) nextForecastCheckpointDomain() (ForecastDomain, bool) {
+	store := o.generationCheckpointStore()
+	if store == nil || store.LoadError() != nil {
+		return ForecastDomain{}, false
+	}
+	for _, domain := range forecastDomains {
+		if _, found := store.Get("forecast:" + domain.Name); found {
+			return domain, true
+		}
+	}
+	return ForecastDomain{}, false
 }
 
 func (o *IdleChatOrchestrator) forecastTopicRefillAvailable() bool {
@@ -488,82 +627,232 @@ func (o *IdleChatOrchestrator) forecastTopicRefillAvailable() bool {
 
 func (o *IdleChatOrchestrator) fillForecastTopicStock(stock *forecastTopicStock, domain ForecastDomain, trigger string) {
 	defer o.endTopicProduction()
-	ctx := o.topicProductionContext()
-	checkpointKey := "forecast:" + domain.Name
-	checkpointStore := o.generationCheckpointStore()
-	checkpoint, found := checkpointStore.Get(checkpointKey)
-	if found && checkpoint.Domain.Name != domain.Name {
-		_ = checkpointStore.Delete(checkpointKey)
-		found = false
+	err := o.produceForecastTopic(stock, domain)
+	if stock != nil {
+		stock.doneFilling(domain.Name, err)
 	}
-	if found {
-		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
-			_ = checkpointStore.Delete(checkpointKey)
-			found = false
-		}
-	}
-	if found && stock.hasRunID(checkpoint.RunID) {
-		_ = checkpointStore.Delete(checkpointKey)
-		stock.doneFilling(domain.Name, nil)
+	if err != nil {
+		log.Printf("[Forecast] Stock refill skipped: trigger=%s domain=%s error=%v", trigger, domain.Name, err)
 		return
 	}
-	if !found {
-		taskID, runID, err := issueIdleChatRun(ctx, o.runIssuer, "IdleChat forecast topic", "shiro", domaintask.RunStartReasonFirst, "")
+	log.Printf("[Forecast] Stock refilled: trigger=%s domain=%s count=%d", trigger, domain.Name, stock.count(domain.Name))
+}
+
+func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, domain ForecastDomain) error {
+	if o == nil {
+		return errors.New("forecast topic orchestrator is not configured")
+	}
+	ctx := o.topicProductionContext()
+	if ctx == nil {
+		return errors.New("forecast topic context is not configured")
+	}
+	o.mu.Lock()
+	issuer := o.runIssuer
+	checkpointStore := o.generationCheckpoints
+	o.mu.Unlock()
+	if _, err := generationRunOwnerFromIssuer(issuer); err != nil {
+		return err
+	}
+	if stock == nil || checkpointStore == nil {
+		return errors.New("forecast topic persistence is not configured")
+	}
+	stock.mu.Lock()
+	stockPath, stockLoadErr := stock.path, stock.loadErr
+	stock.mu.Unlock()
+	if stockPath == "" || checkpointStore.path == "" {
+		return errors.New("forecast topic persistence is not configured")
+	}
+	if stockLoadErr != nil {
+		return fmt.Errorf("forecast topic stock unavailable: %w", stockLoadErr)
+	}
+	if err := checkpointStore.LoadError(); err != nil {
+		return err
+	}
+
+	checkpointKey := "forecast:" + domain.Name
+	checkpoint, found := checkpointStore.Get(checkpointKey)
+	if found {
+		if checkpoint.Kind != "forecast" || checkpoint.Domain.Name != domain.Name {
+			return fmt.Errorf("forecast topic checkpoint domain mismatch: got %s, want %s", checkpoint.Domain.Name, domain.Name)
+		}
+		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+			return fmt.Errorf("forecast topic checkpoint identity: %w", err)
+		}
+		if checkpoint.Result != nil {
+			if checkpoint.Result.Category != "" && checkpoint.Result.Category != TopicCategoryForecast {
+				return fmt.Errorf("forecast topic checkpoint result category mismatch: got %s", checkpoint.Result.Category)
+			}
+			if resultDomain := strings.TrimSpace(checkpoint.Result.Seed.ForecastDomain); resultDomain != "" && resultDomain != domain.Name {
+				return fmt.Errorf("forecast topic checkpoint result domain mismatch: got %s, want %s", resultDomain, domain.Name)
+			}
+		}
+		if checkpoint.Stage == "resume_pending" {
+			if err := reconcileGenerationResume(ctx, issuer, &checkpoint, checkpointStore); err != nil {
+				return err
+			}
+		}
+		run, err := inspectGenerationRun(ctx, issuer, checkpoint.TaskID, checkpoint.RunID)
 		if err != nil {
-			stock.doneFilling(domain.Name, err)
-			return
+			return err
+		}
+		switch run.Status {
+		case domaintask.RunStatusSucceeded:
+			if !stock.hasExactCheckpointItem(checkpoint) {
+				return errors.New("forecast topic completion artifact is missing or mismatched")
+			}
+			if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", ""); err != nil {
+				return err
+			}
+			return checkpointStore.Delete(checkpointKey)
+		case domaintask.RunStatusFailed, domaintask.RunStatusCancelled:
+			if stock.hasRunID(checkpoint.RunID) && !stock.hasExactCheckpointItem(checkpoint) {
+				return errors.New("forecast topic completion artifact is mismatched")
+			}
+			status := domaintask.StatusFailed
+			if run.Status == domaintask.RunStatusCancelled {
+				status = domaintask.StatusCancelled
+			}
+			if err := finishGenerationRun(ctx, issuer, checkpoint, status, "forecast generation terminated", ""); err != nil {
+				return err
+			}
+			if _, err := stock.takeByRunID(checkpoint.RunID); err != nil {
+				return err
+			}
+			return checkpointStore.Delete(checkpointKey)
+		}
+		if stock.hasRunID(checkpoint.RunID) {
+			if !stock.hasExactCheckpointItem(checkpoint) {
+				return errors.New("forecast topic completion artifact is mismatched")
+			}
+			if run.Status == domaintask.RunStatusRunning {
+				if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", ""); err != nil {
+					return err
+				}
+				return checkpointStore.Delete(checkpointKey)
+			}
+			// This result was never published: its checkpoint still gates playback.
+			// Remove the unpublished item before resuming the saved generation.
+			if _, err := stock.takeByRunID(checkpoint.RunID); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !found {
+		taskID, runID, err := issueIdleChatRun(ctx, issuer, "IdleChat forecast topic", "shiro", domaintask.RunStartReasonFirst, "")
+		if err != nil {
+			return err
 		}
 		checkpoint = GenerationCheckpoint{
 			Key: checkpointKey, Kind: "forecast", TaskID: taskID, RunID: runID, Stage: "created",
 			Category: TopicCategoryForecast, Domain: domain,
 		}
 		if err := checkpointStore.Put(checkpoint); err != nil {
-			stock.doneFilling(domain.Name, err)
-			return
+			return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusFailed, "forecast checkpoint save failed", ""))
 		}
 	} else {
-		runID, err := resumeIdleChatRun(ctx, o.runIssuer, checkpoint.TaskID)
+		// Persist the resume intent before the owner can issue its successor.
+		// If saving that successor ID fails, the intent allows exact recovery.
+		checkpoint.Stage = "resume_pending"
+		if err := checkpointStore.Put(checkpoint); err != nil {
+			return err
+		}
+		runID, err := resumeIdleChatRun(ctx, issuer, checkpoint.TaskID)
 		if err != nil {
-			stock.doneFilling(domain.Name, err)
-			return
+			return err
 		}
 		checkpoint.RunID = runID
+	}
+	if checkpoint.Result != nil {
+		checkpoint.Stage = "result"
+	} else if len(checkpoint.Candidates) > 0 {
+		checkpoint.Stage = "candidates"
+	} else if len(checkpoint.ForecastSeeds) > 0 {
+		checkpoint.Stage = "seeds"
+	} else {
+		checkpoint.Stage = "created"
+	}
+	if found {
 		if err := checkpointStore.Put(checkpoint); err != nil {
-			stock.doneFilling(domain.Name, err)
-			return
+			return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast checkpoint save failed", "retry saving resumed generation checkpoint"))
 		}
 	}
-	topic, seeds, failure := o.generateForecastTopicForStock(domain, &checkpoint)
+
+	var topic string
+	var seeds []string
+	var failure *forecastTopicFailure
+	if checkpoint.Result != nil {
+		topic = checkpoint.Result.Topic
+		seeds = append([]string(nil), checkpoint.ForecastSeeds...)
+		if len(seeds) == 0 {
+			seeds = append([]string(nil), checkpoint.Result.Seed.TrendKeywords...)
+		}
+	} else {
+		topic, seeds, failure = o.generateForecastTopicForStock(domain, &checkpoint)
+	}
 	if failure != nil {
 		err := fmt.Errorf("%s: %s", failure.ErrorCode, failure.Error)
-		stock.doneFilling(domain.Name, err)
-		log.Printf("[Forecast] Stock refill skipped: trigger=%s domain=%s error_code=%s phase=%s provider=%s", trigger, domain.Name, failure.ErrorCode, failure.Phase, failure.Provider)
-		return
+		return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast generation interrupted", "retry from saved generation checkpoint"))
 	}
 	topic = strings.TrimSpace(topic)
 	if topic == "" {
 		err := errors.New("empty_topic: forecast topic generation returned empty topic")
-		stock.doneFilling(domain.Name, err)
-		log.Printf("[Forecast] Stock refill skipped: trigger=%s domain=%s error_code=empty_topic", trigger, domain.Name)
-		return
+		return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast generation produced no topic", "retry from saved generation checkpoint"))
 	}
-	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: topic, Seeds: seeds, TaskID: checkpoint.TaskID, RunID: checkpoint.RunID, InitiatedBy: "shiro", Created: time.Now().UTC()}) {
-		if stock.hasRunID(checkpoint.RunID) {
-			_ = checkpointStore.Delete(checkpointKey)
-			stock.doneFilling(domain.Name, nil)
-			return
+	checkpoint.ForecastSeeds = append([]string(nil), seeds...)
+	if checkpoint.Result == nil {
+		checkpoint.Result = &TopicGenerationResult{
+			Topic: topic, Category: TopicCategoryForecast, Strategy: string(StrategyForecast),
+			Seed: TopicSeed{
+				Category: TopicCategoryForecast, ForecastDomain: domain.Name,
+				ForecastHorizon: forecastHorizonForDomain(domain.Name), TrendKeywords: append([]string(nil), seeds...),
+			}, Provider: "CodexExe", Initiator: "shiro",
 		}
-		_ = checkpointStore.Delete(checkpointKey)
-		err := errors.New("duplicate_or_full: generated topic was not added")
-		stock.doneFilling(domain.Name, err)
-		log.Printf("[Forecast] Stock refill discarded: trigger=%s domain=%s reason=duplicate_or_full", trigger, domain.Name)
-		return
+	} else {
+		result := *checkpoint.Result
+		result.Topic = topic
+		if result.Category == "" {
+			result.Category = TopicCategoryForecast
+		}
+		if result.Strategy == "" {
+			result.Strategy = string(StrategyForecast)
+		}
+		if result.Seed.Category == "" {
+			result.Seed.Category = TopicCategoryForecast
+		}
+		result.Seed.ForecastDomain = domain.Name
+		if strings.TrimSpace(result.Seed.ForecastHorizon) == "" {
+			result.Seed.ForecastHorizon = forecastHorizonForDomain(domain.Name)
+		}
+		result.Seed.TrendKeywords = append([]string(nil), seeds...)
+		if strings.TrimSpace(result.Initiator) == "" {
+			result.Initiator = "shiro"
+		}
+		checkpoint.Result = &result
 	}
-	if err := checkpointStore.Delete(checkpointKey); err != nil {
-		log.Printf("[Forecast] Checkpoint cleanup deferred: domain=%s error=%v", domain.Name, err)
+	checkpoint.Stage = "result"
+	if err := checkpointStore.Put(checkpoint); err != nil {
+		return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast result checkpoint save failed", "retry saving forecast result checkpoint"))
 	}
-	stock.doneFilling(domain.Name, nil)
-	log.Printf("[Forecast] Stock refilled: trigger=%s domain=%s count=%d", trigger, domain.Name, stock.count(domain.Name))
+	item := PreparedTopic{
+		Domain: domain, Topic: topic, Seeds: append([]string(nil), seeds...), TaskID: checkpoint.TaskID,
+		RunID: checkpoint.RunID, InitiatedBy: "shiro", Created: time.Now().UTC(),
+	}
+	added, err := stock.push(domain.Name, item)
+	if err != nil {
+		return errors.Join(err, finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast stock save failed", "retry from saved generation checkpoint"))
+	}
+	if !added && !stock.hasRunID(checkpoint.RunID) {
+		err := fmt.Errorf("duplicate_or_full: generated topic was not added for domain %s", domain.Name)
+		if completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusFailed, "forecast topic duplicate or stock full", ""); completionErr != nil {
+			return errors.Join(err, completionErr)
+		}
+		return errors.Join(err, checkpointStore.Delete(checkpointKey))
+	}
+	if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", ""); err != nil {
+		return err
+	}
+	return checkpointStore.Delete(checkpointKey)
 }
 
 func (o *IdleChatOrchestrator) generateForecastTopicForStock(domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
@@ -576,39 +865,53 @@ func (o *IdleChatOrchestrator) generateForecastTopicForStock(domain ForecastDoma
 	return o.generateForecastTopicInlineForStock(o.topicProductionContext(), domain, checkpoint)
 }
 
-// popForecastTopic はストックからお題を取得する。不足補充はIdle／Heartbeat契機に分離する。
-// ストックが空で生成にも失敗した場合は、汎用お題ではなくエラーコード付きの明示エラーを返す。
-func (o *IdleChatOrchestrator) popForecastTopic(domain ForecastDomain) (string, []string) {
+// popForecastTopic は公開済みストックからお題を取得する。不足補充はIdle／Heartbeat契機に分離する。
+// ストックが空、未永続化、または公開前なら、インライン生成へ迂回せず明示エラーを返す。
+func (o *IdleChatOrchestrator) popForecastTopic(domain ForecastDomain) (string, []string, error) {
 	o.mu.Lock()
 	stock := o.topicStockBuf
 	o.mu.Unlock()
+	if stock == nil {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "stock_unavailable", errors.New("forecast topic stock is not configured"))
+	}
+	stock.mu.Lock()
+	loadErr := stock.loadErr
+	items := append([]PreparedTopic(nil), stock.stock[domain.Name]...)
+	stock.mu.Unlock()
+	if loadErr != nil {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "stock_unavailable", loadErr)
+	}
+	if len(items) == 0 {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "stock_empty", errors.New("forecast topic stock has no prepared topic"))
+	}
+	runID := items[0].RunID
+	pending, err := o.forecastTopicPublicationPending(domain.Name, runID)
+	if err != nil {
+		return "", nil, forecastTopicStockPlaybackError(domain, "publication", "checkpoint_unavailable", err)
+	}
+	if pending {
+		return "", nil, forecastTopicStockPlaybackError(domain, "publication", "publication_pending", errors.New("forecast topic publication is pending"))
+	}
+	item, err := stock.takeByRunID(runID)
+	if err != nil {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "stock_write_failed", err)
+	}
+	if item == nil {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "stock_concurrent_consume", errors.New("forecast topic was consumed concurrently"))
+	}
+	if strings.TrimSpace(item.Topic) == "" {
+		return "", nil, forecastTopicStockPlaybackError(domain, "stock", "empty_topic", errors.New("forecast topic stock contained an empty topic"))
+	}
+	topic := normalizeForecastDisplayTopic(domain, item.Topic)
+	log.Printf("[Forecast] Topic popped from stock: %s (remaining=%d)", domain.Name, stock.count(domain.Name))
+	return topic, item.Seeds, nil
+}
 
-	if stock != nil {
-		if item := stock.pop(domain.Name); item != nil {
-			topic := normalizeForecastDisplayTopic(domain, item.Topic)
-			if strings.TrimSpace(item.Topic) == "" {
-				log.Printf("[Forecast] Empty topic popped from stock: %s, discarding", domain.Name)
-			} else {
-				log.Printf("[Forecast] Topic popped from stock: %s (remaining=%d)", domain.Name, stock.count(domain.Name))
-				return topic, item.Seeds
-			}
-		}
+func forecastTopicStockPlaybackError(domain ForecastDomain, phase, code string, err error) error {
+	if err == nil {
+		err = errors.New("forecast topic stock playback failed")
 	}
-
-	// ストック空 → インライン生成。失敗時は汎用お題ではなく明示エラーを表示する。
-	log.Printf("[Forecast] Stock empty for %s, generating inline", domain.Name)
-	topic, seeds, failure := o.generateForecastTopicInline(domain)
-	if failure != nil {
-		return formatForecastTopicError(domain, failure), seeds
-	}
-	if strings.TrimSpace(topic) == "" {
-		failure = &forecastTopicFailure{
-			Phase:     "topic",
-			Domain:    strings.TrimSpace(domain.Name),
-			ErrorCode: "empty_topic",
-			Error:     "forecast topic generation returned empty topic",
-		}
-		return formatForecastTopicError(domain, failure), seeds
-	}
-	return normalizeForecastDisplayTopic(domain, topic), seeds
+	return errors.New(formatForecastTopicError(domain, &forecastTopicFailure{
+		Phase: phase, Domain: strings.TrimSpace(domain.Name), ErrorCode: code, Error: err.Error(),
+	}))
 }

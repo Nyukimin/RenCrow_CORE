@@ -111,17 +111,21 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		}
 		o.waitForTTSReadyForEvent(announceEvent, ttsDone)
 
-		// ドメイン特化トピック生成: ストックから取得（空ならインライン生成）
+		// Run完了済みのドメイン別ストックから取得する。
 		var displayTopic string
 		var seeds []string
+		var topicErr error
 		o.markWatchdogStage("topic_generation", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
 		if len(prepared) > 0 && prepared[0].Domain.Name == domain.Name && strings.TrimSpace(prepared[0].Topic) != "" {
 			displayTopic = strings.TrimSpace(prepared[0].Topic)
 			seeds = append([]string(nil), prepared[0].Seeds...)
 		} else {
-			displayTopic, seeds = o.popForecastTopic(domain)
+			displayTopic, seeds, topicErr = o.popForecastTopic(domain)
 		}
-		if isForecastTopicGenerationError(displayTopic) {
+		if topicErr != nil {
+			displayTopic = topicErr.Error()
+		}
+		if topicErr != nil || isForecastTopicGenerationError(displayTopic) {
 			o.recordGenerationErrorToTimeline("shiro", "mio", sessionID, displayTopic, totalTurns+1, generation)
 			log.Printf("[Forecast] Domain stopped before topic playback: session=%s domain=%s topic_error=%s", sessionID, domain.Name, displayTopic)
 			continue

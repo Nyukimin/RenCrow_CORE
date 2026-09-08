@@ -2,6 +2,7 @@ package idlechat
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -127,16 +128,16 @@ func TestForecastMarksBoundedDialogueGenerationStage(t *testing.T) {
 	domain := forecastDomains[0]
 	generator := &blockingForecastDialogueGenerator{started: make(chan struct{})}
 	config := DefaultDialogueInterestingnessConfig()
-	dialogueService := NewPersistentDialogueEpisodeService("", generator, map[string]string{
+	dialogueService := NewPersistentDialogueEpisodeService(filepath.Join(t.TempDir(), "dialogue.jsonl"), generator, map[string]string{
 		"mio":   "Mio canonical",
 		"shiro": "Shiro canonical",
 	}, config)
-	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer())
+	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.8, nil, "")
 	o.SetDialogueEpisodeService(dialogueService)
 	stock := newForecastTopicStock("")
 	forecastTaskID, forecastRunID := testIdleChatRunIdentityPair()
-	if !stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: "検証用の未来展望", TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC()}) {
+	if added, err := stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: "検証用の未来展望", TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC()}); err != nil || !added {
 		t.Fatal("failed to prepare forecast topic")
 	}
 	o.emitMu.Lock()

@@ -90,6 +90,7 @@ func buildIdleChatRuntime(
 		config.BuildIdleChatAgentPrompts(cfg.Prompts),
 		idleChatDialogueInterestingnessConfigFromRuntime(cfg.IdleChat.DialogueInterestingness),
 	)
+	dialogueService.SetGenerationCheckpointStore(generationCheckpoints)
 	dialogueService.SetMaxSuffixRegenerations(cfg.IdleChat.EpisodePreparation.MaxSuffixRegenerations)
 	idleChatOrch.SetDialogueEpisodeService(dialogueService)
 	if deps.taskManager != nil {

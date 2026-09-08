@@ -27,6 +27,7 @@ type StoryEpisodeService struct {
 	maxAttempts            int
 	maxSuffixRegenerations int
 	prepareMu              sync.Mutex
+	checkpointMu           sync.RWMutex
 	checkpoints            *GenerationCheckpointStore
 	runIssuer              idlechatRunIssuer
 }
@@ -35,9 +36,18 @@ func (s *StoryEpisodeService) SetGenerationCheckpointStore(store *GenerationChec
 	if s == nil {
 		return
 	}
-	s.prepareMu.Lock()
+	s.checkpointMu.Lock()
 	s.checkpoints = store
-	s.prepareMu.Unlock()
+	s.checkpointMu.Unlock()
+}
+
+func (s *StoryEpisodeService) generationCheckpointStore() *GenerationCheckpointStore {
+	if s == nil {
+		return nil
+	}
+	s.checkpointMu.RLock()
+	defer s.checkpointMu.RUnlock()
+	return s.checkpoints
 }
 
 func (s *StoryEpisodeService) SetRunIssuer(issuer idlechatRunIssuer) {
@@ -57,6 +67,8 @@ type storyGenerationSeed struct {
 	ReplacementForID   string
 	AvoidRecentSummary string
 }
+
+const storyGenerationCheckpointKey = "story:prepare"
 
 var storyTransformationAxes = []string{
 	"脇役を主人公にして、元の事件を別の利害から描く",
@@ -86,12 +98,17 @@ func NewStoryEpisodeService(store *storyEpisodeStore, generator StoryCodexGenera
 	if store != nil && store.target > 0 {
 		target = store.target
 	}
+	var checkpoints *GenerationCheckpointStore
+	if store != nil && strings.TrimSpace(store.path) != "" {
+		checkpoints = NewGenerationCheckpointStore(store.path + ".checkpoints.json")
+	}
 	return &StoryEpisodeService{
 		store:                  store,
 		generator:              generator,
 		personas:               clonedPersonas,
 		maxAttempts:            max(3, target),
 		maxSuffixRegenerations: 3,
+		checkpoints:            checkpoints,
 	}
 }
 
@@ -110,26 +127,55 @@ func (s *StoryEpisodeService) Snapshot() StoryEpisodeStockSnapshot {
 	if s == nil || s.store == nil {
 		return StoryEpisodeStockSnapshot{}
 	}
-	return s.store.snapshot()
+	runID, episodeID, err := s.pendingStoryPublication()
+	if err != nil {
+		return storyUnavailableSnapshot(s.store, "checkpoint", err)
+	}
+	return s.store.snapshotExcluding(runID, episodeID)
 }
 
 func (s *StoryEpisodeService) NextReady() (StoryEpisodeArtifact, bool) {
 	if s == nil || s.store == nil {
 		return StoryEpisodeArtifact{}, false
 	}
-	return s.store.nextReady()
+	runID, episodeID, err := s.pendingStoryPublication()
+	if err != nil {
+		return StoryEpisodeArtifact{}, false
+	}
+	return s.store.nextReadyExcluding(runID, episodeID)
 }
 
 func (s *StoryEpisodeService) Episode(episodeID string) (StoryEpisodeArtifact, bool) {
 	if s == nil || s.store == nil {
 		return StoryEpisodeArtifact{}, false
 	}
-	return s.store.get(episodeID)
+	// Read the publication gate before the artifact. Once cleanup removes the
+	// gate, the store already contains the completed successor revision.
+	runID, pendingEpisodeID, err := s.pendingStoryPublication()
+	if err != nil {
+		return StoryEpisodeArtifact{}, false
+	}
+	artifact, ok := s.store.get(episodeID)
+	if !ok || (runID != "" && artifact.RunID == runID) || (pendingEpisodeID != "" && artifact.EpisodeID == pendingEpisodeID) {
+		return StoryEpisodeArtifact{}, false
+	}
+	return artifact, true
 }
 
 func (s *StoryEpisodeService) MarkPlayed(episodeID string, at time.Time) error {
 	if s == nil || s.store == nil {
 		return errors.New("story episode service is not configured")
+	}
+	runID, pendingEpisodeID, err := s.pendingStoryPublication()
+	if err != nil {
+		return err
+	}
+	artifact, ok := s.store.get(episodeID)
+	if !ok {
+		return fmt.Errorf("story episode %q not found", episodeID)
+	}
+	if (runID != "" && artifact.RunID == runID) || (pendingEpisodeID != "" && artifact.EpisodeID == pendingEpisodeID) {
+		return errors.New("story episode publication is pending")
 	}
 	return s.store.markPlayed(episodeID, at)
 }
@@ -199,38 +245,316 @@ func (s *StoryEpisodeService) PrepareAdditional(ctx context.Context, count int) 
 	return titleErr
 }
 
+func (s *StoryEpisodeService) pendingStoryPublication() (modulecore.RunID, string, error) {
+	checkpointStore := s.generationCheckpointStore()
+	if checkpointStore == nil || strings.TrimSpace(checkpointStore.path) == "" {
+		return "", "", nil
+	}
+	if err := checkpointStore.LoadError(); err != nil {
+		return "", "", fmt.Errorf("story generation checkpoint store unavailable: %w", err)
+	}
+	checkpoint, found := checkpointStore.Get(storyGenerationCheckpointKey)
+	if !found {
+		return "", "", nil
+	}
+	if err := validateStoryGenerationCheckpoint(checkpoint); err != nil {
+		return "", "", err
+	}
+	episodeID := ""
+	if checkpoint.StoryArtifact != nil {
+		episodeID = checkpoint.StoryArtifact.EpisodeID
+	}
+	return checkpoint.RunID, episodeID, nil
+}
+
+func storyUnavailableSnapshot(store *storyEpisodeStore, phase string, err error) StoryEpisodeStockSnapshot {
+	snapshot := store.snapshot()
+	snapshot.Enabled = false
+	snapshot.Ready = 0
+	snapshot.Missing = snapshot.Target
+	snapshot.NeedsRepair = 0
+	snapshot.Failed = 0
+	snapshot.UntitledReady = 0
+	snapshot.Episodes = nil
+	snapshot.LastFailurePhase = strings.TrimSpace(phase)
+	if err != nil {
+		snapshot.LastError = err.Error()
+	}
+	return snapshot
+}
+
+func validateStoryGenerationCheckpoint(checkpoint GenerationCheckpoint) error {
+	if strings.TrimSpace(checkpoint.Key) != storyGenerationCheckpointKey {
+		return fmt.Errorf("story generation checkpoint key mismatch: %q", checkpoint.Key)
+	}
+	if strings.TrimSpace(checkpoint.Kind) != "story" {
+		return fmt.Errorf("story generation checkpoint kind mismatch: %q", checkpoint.Kind)
+	}
+	if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+		return fmt.Errorf("story generation checkpoint identity: %w", err)
+	}
+	switch strings.TrimSpace(checkpoint.Stage) {
+	case "seed", "artifact", "review", "resume_pending":
+	default:
+		return fmt.Errorf("story generation checkpoint stage is invalid: %q", checkpoint.Stage)
+	}
+	if checkpoint.StoryArtifact == nil && checkpoint.StorySeed == nil {
+		return errors.New("story generation checkpoint has no seed or artifact")
+	}
+	if checkpoint.StoryArtifact != nil {
+		if strings.TrimSpace(checkpoint.StoryArtifact.SchemaVersion) != StoryEpisodeSchemaVersion {
+			return fmt.Errorf("story generation checkpoint artifact schema mismatch: %q", checkpoint.StoryArtifact.SchemaVersion)
+		}
+		if strings.TrimSpace(checkpoint.StoryArtifact.EpisodeID) == "" || checkpoint.StoryArtifact.Revision < 1 {
+			return errors.New("story generation checkpoint artifact identity is invalid")
+		}
+		if strings.TrimSpace(checkpoint.StoryArtifact.EpisodeKind) != StoryEpisodeKind {
+			return fmt.Errorf("story generation checkpoint artifact kind mismatch: %q", checkpoint.StoryArtifact.EpisodeKind)
+		}
+		if checkpoint.StoryArtifact.TaskID != checkpoint.TaskID || checkpoint.StoryArtifact.RunID != checkpoint.RunID {
+			return errors.New("story generation checkpoint artifact identity mismatch")
+		}
+	}
+	if checkpoint.StoryReview != nil && checkpoint.StoryArtifact == nil {
+		return errors.New("story generation checkpoint review has no artifact")
+	}
+	return nil
+}
+
+func storyCheckpointStage(checkpoint GenerationCheckpoint) string {
+	if checkpoint.StoryArtifact != nil {
+		return "artifact"
+	}
+	return "seed"
+}
+
+func storyArtifactCompletionStatus(artifact StoryEpisodeArtifact) (domaintask.Status, error) {
+	switch artifact.ProductionStatus {
+	case StoryProductionReady:
+		if !artifact.Validation.Valid {
+			return "", errors.New("ready story artifact has invalid validation")
+		}
+		return domaintask.StatusSucceeded, nil
+	case StoryProductionNeedsRepair:
+		if artifact.Validation.Valid {
+			return "", errors.New("needs_repair story artifact has valid validation")
+		}
+		return domaintask.StatusFailed, nil
+	case StoryProductionFailed:
+		if artifact.Validation.Valid {
+			return "", errors.New("failed story artifact has valid validation")
+		}
+		return domaintask.StatusFailed, nil
+	default:
+		return "", fmt.Errorf("story artifact has unfinished production status %q", artifact.ProductionStatus)
+	}
+}
+
+func storyValidationMatches(left, right StoryValidationResult) bool {
+	if left.Valid != right.Valid || left.FirstInvalidTurn != right.FirstInvalidTurn || len(left.Errors) != len(right.Errors) {
+		return false
+	}
+	for index := range left.Errors {
+		if left.Errors[index] != right.Errors[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateSavedStoryArtifact(checkpoint GenerationCheckpoint, stored StoryEpisodeArtifact) error {
+	if checkpoint.StoryArtifact == nil || checkpoint.StoryReview == nil {
+		return errors.New("story completion artifact or review is missing from checkpoint")
+	}
+	if !storyArtifactMatchesCheckpoint(stored, *checkpoint.StoryArtifact) {
+		return fmt.Errorf("story completion artifact %s is mismatched", stored.EpisodeID)
+	}
+	expectedValidation := ValidateStoryEpisode(*checkpoint.StoryArtifact, *checkpoint.StoryReview)
+	if !storyValidationMatches(stored.Validation, expectedValidation) {
+		return fmt.Errorf("story completion artifact %s validation is mismatched", stored.EpisodeID)
+	}
+	if expectedValidation.Valid {
+		if stored.ProductionStatus != StoryProductionReady {
+			return fmt.Errorf("story completion artifact %s status is %q, want %q", stored.EpisodeID, stored.ProductionStatus, StoryProductionReady)
+		}
+	} else if stored.ProductionStatus != StoryProductionNeedsRepair && stored.ProductionStatus != StoryProductionFailed {
+		return fmt.Errorf("story completion artifact %s status is %q, want a durable failure", stored.EpisodeID, stored.ProductionStatus)
+	}
+	return nil
+}
+
+func (s *StoryEpisodeService) rebindStoryArtifactForResume(checkpoint *GenerationCheckpoint, previousCheckpoint GenerationCheckpoint, previousRunID modulecore.RunID) error {
+	if checkpoint == nil || previousCheckpoint.StoryArtifact == nil {
+		return nil
+	}
+	if saved, ok := s.store.artifactByRunID(previousRunID); ok {
+		if err := validateSavedStoryArtifact(previousCheckpoint, saved); err != nil {
+			return err
+		}
+		if saved.RunID != checkpoint.RunID {
+			saved.Revision++
+		}
+		saved.TaskID = checkpoint.TaskID
+		saved.RunID = checkpoint.RunID
+		saved.UpdatedAt = time.Now().UTC()
+		checkpoint.StoryArtifact = &saved
+		return nil
+	}
+	artifact := cloneStoryEpisode(*previousCheckpoint.StoryArtifact)
+	artifact.TaskID = checkpoint.TaskID
+	if artifact.RunID != checkpoint.RunID {
+		artifact.Revision++
+	}
+	artifact.RunID = checkpoint.RunID
+	checkpoint.StoryArtifact = &artifact
+	return nil
+}
+
 func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int) error {
 	if s == nil || s.store == nil || s.generator == nil {
 		return errors.New("story episode producer is not configured")
 	}
+	if ctx == nil {
+		return errors.New("story episode preparation context is nil")
+	}
 	s.prepareMu.Lock()
 	defer s.prepareMu.Unlock()
-	if s.store.snapshot().Ready >= desiredReady {
-		return nil
+	if strings.TrimSpace(s.store.path) == "" {
+		return errors.New("story episode persistence is not configured")
 	}
+	checkpointStore := s.generationCheckpointStore()
+	if checkpointStore == nil || strings.TrimSpace(checkpointStore.path) == "" {
+		return errors.New("story generation checkpoint persistence is not configured")
+	}
+	if err := checkpointStore.LoadError(); err != nil {
+		return fmt.Errorf("story generation checkpoint store unavailable: %w", err)
+	}
+	if err := s.store.loadError(); err != nil {
+		return fmt.Errorf("story episode store unavailable: %w", err)
+	}
+	issuer := s.runIssuer
 	s.store.setFilling(true)
 	defer s.store.setFilling(false)
 
 	replacementFor := ""
 	var lastErr error
-	attemptLimit := max(s.maxAttempts, desiredReady-s.store.snapshot().Ready)
-	for attempt := 0; attempt < attemptLimit && s.store.snapshot().Ready < desiredReady; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		checkpointKey := "story:prepare"
-		checkpoint, found := s.checkpoints.Get(checkpointKey)
-		if found && checkpoint.StoryArtifact != nil && s.store.hasRunID(checkpoint.StoryArtifact.RunID) {
-			_ = s.checkpoints.Delete(checkpointKey)
-			continue
-		}
+	attemptLimit := max(s.maxAttempts, max(desiredReady-s.store.snapshot().Ready, 1))
+	for attempt := 0; attempt < attemptLimit; attempt++ {
+		checkpoint, found := checkpointStore.Get(storyGenerationCheckpointKey)
 		if found {
-			if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
-				_ = s.checkpoints.Delete(checkpointKey)
-				found = false
+			if err := validateStoryGenerationCheckpoint(checkpoint); err != nil {
+				s.store.recordFailure("checkpoint", err)
+				return err
 			}
-		}
-		if !found {
+			if _, err := generationRunOwnerFromIssuer(issuer); err != nil {
+				s.store.recordFailure("run_owner", err)
+				return err
+			}
+
+			previousRunID := checkpoint.RunID
+			previousCheckpoint := cloneGenerationCheckpoint(checkpoint)
+			if checkpoint.StoryArtifact != nil {
+				if saved, ok := s.store.artifactByRunID(previousRunID); ok {
+					if err := validateSavedStoryArtifact(checkpoint, saved); err != nil {
+						s.store.recordFailure("recovery", err)
+						return err
+					}
+				}
+			}
+			if checkpoint.Stage == "resume_pending" {
+				if err := reconcileGenerationResume(ctx, issuer, &checkpoint, checkpointStore); err != nil {
+					s.store.recordFailure("recovery", err)
+					return err
+				}
+				if checkpoint.RunID != previousRunID {
+					if err := s.rebindStoryArtifactForResume(&checkpoint, previousCheckpoint, previousRunID); err != nil {
+						s.store.recordFailure("recovery", err)
+						return err
+					}
+					checkpoint.Stage = storyCheckpointStage(checkpoint)
+					if err := checkpointStore.Put(checkpoint); err != nil {
+						completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story checkpoint recovery save failed", "retry saving resumed story checkpoint")
+						return errors.Join(err, completionErr)
+					}
+				}
+			}
+
+			run, err := inspectGenerationRun(ctx, issuer, checkpoint.TaskID, checkpoint.RunID)
+			if err != nil {
+				s.store.recordFailure("run_inspection", err)
+				return err
+			}
+			if saved, ok := s.store.artifactByRunID(checkpoint.RunID); ok {
+				if err := validateSavedStoryArtifact(checkpoint, saved); err != nil {
+					s.store.recordFailure("recovery", err)
+					return err
+				}
+				if run.Status != domaintask.RunStatusWaiting && run.Status != domaintask.RunStatusInterrupted {
+					status, statusErr := storyArtifactCompletionStatus(saved)
+					if statusErr != nil {
+						s.store.recordFailure("completion", statusErr)
+						return statusErr
+					}
+					if err := finishGenerationRun(ctx, issuer, checkpoint, status, "story episode saved", ""); err != nil {
+						return err
+					}
+					if err := checkpointStore.Delete(storyGenerationCheckpointKey); err != nil {
+						return err
+					}
+					if status == domaintask.StatusFailed {
+						replacementFor = saved.EpisodeID
+						lastErr = fmt.Errorf("story episode %s needs repair", saved.EpisodeID)
+					} else {
+						replacementFor = ""
+						lastErr = nil
+					}
+					continue
+				}
+			}
+			if run.Status != domaintask.RunStatusRunning && run.Status != domaintask.RunStatusWaiting && run.Status != domaintask.RunStatusInterrupted {
+				err := fmt.Errorf("story checkpoint run %s is terminal without a persisted artifact", checkpoint.RunID)
+				s.store.recordFailure("recovery", err)
+				return err
+			}
+			if run.Status == domaintask.RunStatusWaiting || run.Status == domaintask.RunStatusInterrupted {
+				previousCheckpoint = cloneGenerationCheckpoint(checkpoint)
+				previousRunID = checkpoint.RunID
+				checkpoint.Stage = "resume_pending"
+				if err := checkpointStore.Put(checkpoint); err != nil {
+					return err
+				}
+				runID, err := resumeIdleChatRun(ctx, issuer, checkpoint.TaskID)
+				if err != nil {
+					return err
+				}
+				checkpoint.RunID = runID
+				if err := s.rebindStoryArtifactForResume(&checkpoint, previousCheckpoint, previousRunID); err != nil {
+					s.store.recordFailure("recovery", err)
+					return err
+				}
+				checkpoint.Stage = storyCheckpointStage(checkpoint)
+				if err := checkpointStore.Put(checkpoint); err != nil {
+					completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story checkpoint save failed", "retry saving resumed story checkpoint")
+					return errors.Join(err, completionErr)
+				}
+				run, err = inspectGenerationRun(ctx, issuer, checkpoint.TaskID, checkpoint.RunID)
+				if err != nil {
+					return err
+				}
+			}
+			if run.Status != domaintask.RunStatusRunning {
+				err := fmt.Errorf("story checkpoint run %s is not running after recovery: %s", checkpoint.RunID, run.Status)
+				s.store.recordFailure("recovery", err)
+				return err
+			}
+		} else {
+			if s.store.snapshot().Ready >= desiredReady {
+				return nil
+			}
+			if _, err := generationRunOwnerFromIssuer(issuer); err != nil {
+				s.store.recordFailure("run_owner", err)
+				return err
+			}
 			s.store.recordGenerationAttempt()
 			seed := s.seedForAttempt(attempt, replacementFor)
 			taskID, runID, err := issueIdleChatRun(ctx, s.runIssuer, "IdleChat story episode", "shiro", domaintask.RunStartReasonFirst, "")
@@ -238,19 +562,11 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 				return err
 			}
 			checkpoint = GenerationCheckpoint{
-				Key: checkpointKey, Kind: "story", TaskID: taskID, RunID: runID, Stage: "seed", StorySeed: &seed,
+				Key: storyGenerationCheckpointKey, Kind: "story", TaskID: taskID, RunID: runID, Stage: "seed", StorySeed: &seed,
 			}
-			if err := s.checkpoints.Put(checkpoint); err != nil {
-				return err
-			}
-		} else {
-			runID, err := resumeIdleChatRun(ctx, s.runIssuer, checkpoint.TaskID)
-			if err != nil {
-				return err
-			}
-			checkpoint.RunID = runID
-			if err := s.checkpoints.Put(checkpoint); err != nil {
-				return err
+			if err := checkpointStore.Put(checkpoint); err != nil {
+				completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusFailed, "story checkpoint save failed", "")
+				return errors.Join(err, completionErr)
 			}
 		}
 		var artifact StoryEpisodeArtifact
@@ -258,25 +574,26 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 			artifact = cloneStoryEpisode(*checkpoint.StoryArtifact)
 		} else {
 			if checkpoint.StorySeed == nil {
-				_ = s.checkpoints.Delete(checkpointKey)
-				lastErr = errors.New("story checkpoint seed is missing")
-				continue
+				err := errors.New("story checkpoint seed is missing")
+				s.store.recordFailure("checkpoint", err)
+				return err
 			}
 			var err error
 			artifact, err = s.generateArtifact(ctx, *checkpoint.StorySeed, checkpoint.TaskID, checkpoint.RunID)
 			if err != nil {
 				if ctx.Err() != nil {
-					return ctx.Err()
+					err = ctx.Err()
 				}
-				lastErr = err
 				s.store.recordFailure("generation", err)
 				log.Printf("[Story] generation attempt failed: attempt=%d/%d error=%v", attempt+1, attemptLimit, err)
-				continue
+				completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story generation interrupted", "retry from saved generation checkpoint")
+				return errors.Join(err, completionErr)
 			}
 			checkpoint.StoryArtifact = &artifact
 			checkpoint.Stage = "artifact"
-			if err := s.checkpoints.Put(checkpoint); err != nil {
-				return err
+			if err := checkpointStore.Put(checkpoint); err != nil {
+				completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story checkpoint save failed", "retry saving story artifact checkpoint")
+				return errors.Join(err, completionErr)
 			}
 		}
 		var review StorySemanticReview
@@ -288,17 +605,18 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return ctx.Err()
+				err = ctx.Err()
 			}
-			lastErr = err
 			s.store.recordFailure("semantic_review", err)
 			log.Printf("[Story] semantic review failed: episode=%s error=%v", artifact.EpisodeID, err)
-			review = StorySemanticReview{Valid: false, Errors: []StoryValidationError{{Code: "quality_violation", Field: "semantic_review", Evidence: err.Error()}}}
+			completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story semantic review interrupted", "retry from saved generation checkpoint")
+			return errors.Join(err, completionErr)
 		} else if checkpoint.StoryReview == nil {
 			checkpoint.StoryReview = &review
 			checkpoint.Stage = "review"
-			if err := s.checkpoints.Put(checkpoint); err != nil {
-				return err
+			if err := checkpointStore.Put(checkpoint); err != nil {
+				completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story checkpoint save failed", "retry saving story review checkpoint")
+				return errors.Join(err, completionErr)
 			}
 		}
 		artifact.Validation = ValidateStoryEpisode(artifact, review)
@@ -308,17 +626,26 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 			artifact.ProductionStatus = StoryProductionNeedsRepair
 		}
 		if err := s.store.append(artifact); err != nil {
-			lastErr = err
 			s.store.recordFailure("storage", err)
-			continue
-		}
-		if err := s.checkpoints.Delete(checkpointKey); err != nil {
-			log.Printf("[Story] checkpoint cleanup deferred: episode=%s error=%v", artifact.EpisodeID, err)
+			completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story episode save failed", "retry saving story episode")
+			return errors.Join(err, completionErr)
 		}
 		if artifact.Validation.Valid {
+			if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "story episode saved", ""); err != nil {
+				return err
+			}
+			if err := checkpointStore.Delete(storyGenerationCheckpointKey); err != nil {
+				return err
+			}
 			replacementFor = ""
 			s.store.recordFailure("", nil)
 		} else {
+			if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusFailed, "story episode saved for repair", ""); err != nil {
+				return err
+			}
+			if err := checkpointStore.Delete(storyGenerationCheckpointKey); err != nil {
+				return err
+			}
 			replacementFor = artifact.EpisodeID
 			lastErr = fmt.Errorf("story episode %s needs repair", artifact.EpisodeID)
 			s.store.recordFailure("validation", lastErr)
@@ -361,6 +688,7 @@ func (s *StoryEpisodeService) RepairNeedsRepair(ctx context.Context) error {
 			continue
 		}
 		if artifact.SuffixRegenerations >= s.maxSuffixRegenerations {
+			artifact.Revision++
 			artifact.ProductionStatus = StoryProductionFailed
 			if err := s.store.append(artifact); err != nil {
 				repairErr = err

@@ -10,48 +10,48 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// wordRunOwner is the canonical Task/Run owner used by word generation. The
+// generationRunOwner is the canonical Task/Run owner used by IdleChat generation. The
 // issuer remains a separate narrow interface so generation cannot issue a
 // completion through an unverified or projection-only implementation.
-type wordRunOwner interface {
+type generationRunOwner interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	VerifyRunCompletion(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status) error
 	CompleteRun(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status, string, string) (domaintask.Task, error)
 }
 
-func wordRunOwnerFromIssuer(issuer idlechatRunIssuer) (wordRunOwner, error) {
+func generationRunOwnerFromIssuer(issuer idlechatRunIssuer) (generationRunOwner, error) {
 	if issuer == nil {
 		return nil, errors.New("idlechat run issuer is not configured")
 	}
-	owner, ok := issuer.(wordRunOwner)
+	owner, ok := issuer.(generationRunOwner)
 	if !ok || owner == nil {
 		return nil, errors.New("idlechat run owner is not configured")
 	}
 	return owner, nil
 }
 
-func validateWordRunInputs(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID) error {
+func validateGenerationRunInputs(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID) error {
 	if ctx == nil {
-		return errors.New("word run lifecycle context is nil")
+		return errors.New("generation run lifecycle context is nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if _, err := wordRunOwnerFromIssuer(issuer); err != nil {
+	if _, err := generationRunOwnerFromIssuer(issuer); err != nil {
 		return err
 	}
 	return validateIdleChatRunIdentity(taskID, runID)
 }
 
-// inspectWordRun validates the exact canonical Task/Run pair before a word
+// inspectGenerationRun validates the exact canonical Task/Run pair before an IdleChat
 // producer can close the Run. The selected Run must be the unique latest
 // execution and no other execution may still be active.
-func inspectWordRun(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID) (domaintask.Run, error) {
-	if err := validateWordRunInputs(ctx, issuer, taskID, runID); err != nil {
+func inspectGenerationRun(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID) (domaintask.Run, error) {
+	if err := validateGenerationRunInputs(ctx, issuer, taskID, runID); err != nil {
 		return domaintask.Run{}, err
 	}
-	owner, err := wordRunOwnerFromIssuer(issuer)
+	owner, err := generationRunOwnerFromIssuer(issuer)
 	if err != nil {
 		return domaintask.Run{}, err
 	}
@@ -124,7 +124,7 @@ func inspectWordRun(ctx context.Context, issuer idlechatRunIssuer, taskID module
 	return selected, nil
 }
 
-func wordRunCompletionStatus(status domaintask.Status) (domaintask.RunStatus, bool) {
+func generationRunCompletionStatus(status domaintask.Status) (domaintask.RunStatus, bool) {
 	switch status {
 	case domaintask.StatusSucceeded:
 		return domaintask.RunStatusSucceeded, true
@@ -139,26 +139,26 @@ func wordRunCompletionStatus(status domaintask.Status) (domaintask.RunStatus, bo
 	}
 }
 
-// completeWordRun closes a verified active word Run through the canonical
+// completeGenerationRun closes a verified active generation Run through the canonical
 // owner. A terminal Run is checked again by the owner transaction so a retry
 // cannot make a point-in-time preflight decision after the state has changed.
-func completeWordRun(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID, status domaintask.Status, summary, reason string) error {
-	if err := validateWordRunInputs(ctx, issuer, taskID, runID); err != nil {
+func completeGenerationRun(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID, status domaintask.Status, summary, reason string) error {
+	if err := validateGenerationRunInputs(ctx, issuer, taskID, runID); err != nil {
 		return err
 	}
-	_, ok := wordRunCompletionStatus(status)
+	_, ok := generationRunCompletionStatus(status)
 	if !ok {
-		return fmt.Errorf("word run completion status is not accepted: %s", status)
+		return fmt.Errorf("generation run completion status is not accepted: %s", status)
 	}
 	if status == domaintask.StatusWaiting && strings.TrimSpace(reason) == "" {
 		return errors.New("waiting reason is required")
 	}
 
-	run, err := inspectWordRun(ctx, issuer, taskID, runID)
+	run, err := inspectGenerationRun(ctx, issuer, taskID, runID)
 	if err != nil {
 		return err
 	}
-	owner, err := wordRunOwnerFromIssuer(issuer)
+	owner, err := generationRunOwnerFromIssuer(issuer)
 	if err != nil {
 		return err
 	}

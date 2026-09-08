@@ -41,7 +41,7 @@ func TestWordGenerationRejectsTopicAlreadyInForecastStock(t *testing.T) {
 	topic := "生活の記録をAIがどう変えるか"
 	forecastTaskID, forecastRunID := testIdleChatRunIdentityPair()
 	forecastStock := newForecastTopicStock("")
-	if !forecastStock.push("AI技術", PreparedTopic{Domain: ForecastDomain{Name: "AI技術"}, Topic: topic, TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC()}) {
+	if added, err := forecastStock.push("AI技術", PreparedTopic{Domain: ForecastDomain{Name: "AI技術"}, Topic: topic, TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC()}); err != nil || !added {
 		t.Fatal("failed to prepare Forecast stock")
 	}
 	generator := &queuedIdleChatCodexGenerator{responses: []string{

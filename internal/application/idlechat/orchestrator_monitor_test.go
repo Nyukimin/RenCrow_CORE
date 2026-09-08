@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,8 +82,8 @@ func attachPreparedWordDialogue(t *testing.T, o *IdleChatOrchestrator, topic, se
 	generator := &queuedIdleChatCodexGenerator{responses: []string{string(payload)}}
 	config := DefaultDialogueInterestingnessConfig()
 	config.MaxTurnsPerTopic = turns
-	dialogueService := NewPersistentDialogueEpisodeService("", generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config)
-	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer())
+	dialogueService := NewPersistentDialogueEpisodeService(filepath.Join(t.TempDir(), "dialogue.jsonl"), generator, map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config)
+	dialogueService.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	o.SetDialogueInterestingnessConfig(config)
 	o.SetDialogueEpisodeService(dialogueService)
 	return generator

@@ -544,3 +544,28 @@ func TestProduceWordTopicRejectsAmbiguousResumeSuccessors(t *testing.T) {
 		t.Fatalf("ambiguous recovery changed checkpoint: %#v", got)
 	}
 }
+
+func TestProduceWordTopicRejectsCompletedRunWithoutSavedArtifact(t *testing.T) {
+	f := newWordTopicRecoveryFixture(t)
+	f.seedWaitingCheckpoint(t)
+	f.owner.afterComplete = func() { f.checkpoints.path = t.TempDir() }
+	if err := f.orchestrator.produceWordTopic(f.stock, TopicCategorySingle); err == nil {
+		t.Fatal("expected cleanup failure")
+	}
+	f.owner.afterComplete = nil
+	f.reloadPersistentState(t)
+	cp := requireWordTopicCheckpoint(t, f.checkpoints)
+	if _, err := f.stock.takeByRunID(cp.RunID); err != nil {
+		t.Fatal(err)
+	}
+	starts := f.owner.startCalls
+	if err := f.orchestrator.produceWordTopic(f.stock, TopicCategorySingle); err == nil {
+		t.Fatal("missing completed artifact accepted")
+	}
+	if _, ok := f.checkpoints.Get(cp.Key); !ok {
+		t.Fatal("missing artifact evidence was erased")
+	}
+	if f.owner.startCalls != starts || f.generator.calls != 0 {
+		t.Fatal("missing artifact caused regeneration")
+	}
+}

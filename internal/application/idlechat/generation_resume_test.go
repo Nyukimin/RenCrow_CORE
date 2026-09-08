@@ -153,7 +153,8 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	first := NewPersistentStoryEpisodeService(storePath, 1, firstGenerator, nil)
 	first.maxAttempts = 1
 	first.SetGenerationCheckpointStore(checkpoints)
-	first.SetRunIssuer(newTestIdleChatRunIssuer())
+	owner := newTestIdleChatRunIssuer(t)
+	first.SetRunIssuer(owner)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- first.PrepareToTarget(ctx) }()
@@ -176,7 +177,7 @@ func TestStoryPreparationResumesAtSemanticReview(t *testing.T) {
 	second := NewPersistentStoryEpisodeService(storePath, 1, secondGenerator, nil)
 	second.maxAttempts = 1
 	second.SetGenerationCheckpointStore(checkpoints)
-	second.SetRunIssuer(newTestIdleChatRunIssuer())
+	second.SetRunIssuer(owner)
 	if err := second.PrepareToTarget(context.Background()); err != nil {
 		t.Fatalf("resumed prepare: %v", err)
 	}

@@ -59,7 +59,7 @@ func TestStoryEpisodeServiceKeepsInvalidAndGeneratesReplacement(t *testing.T) {
 	service := NewStoryEpisodeService(store, generator, map[string]string{
 		"mio": "Mio character context", "shiro": "Shiro character context",
 	})
-	service.SetRunIssuer(newTestIdleChatRunIssuer())
+	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 
 	if err := service.PrepareToTarget(context.Background()); err != nil {
 		t.Fatalf("prepare: %v", err)
@@ -107,7 +107,7 @@ func TestStoryEpisodeServiceBackfillsReadyTitleWithoutChangingTurns(t *testing.T
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer())
+	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 
 	if err := service.BackfillReadyTitles(context.Background()); err != nil {
 		t.Fatalf("backfill title: %v", err)
@@ -155,7 +155,7 @@ func TestStoryEpisodeServiceRepairsOnlyTitleWithoutRegeneratingTurns(t *testing.
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer())
+	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 
 	if err := service.RepairNeedsRepair(context.Background()); err != nil {
 		t.Fatalf("repair title: %v", err)
@@ -186,7 +186,7 @@ func TestStoryEpisodeServiceRejectsUncertainReview(t *testing.T) {
 	generator := &queuedStoryCodexGenerator{responses: []string{string(artifactJSON), string(uncertainReview)}}
 	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer())
+	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 	service.maxAttempts = 1
 
 	err := service.PrepareToTarget(context.Background())
@@ -219,7 +219,7 @@ func TestStoryEpisodeServiceRepairsOnlySuffixAndKeepsPrefixIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer())
+	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
 
 	if err := service.RepairNeedsRepair(context.Background()); err != nil {
 		t.Fatalf("repair: %v", err)

@@ -67,6 +67,10 @@ func (o *IdleChatOrchestrator) availableTopicStockPlaybackItems() []TopicStockPl
 	}
 	for _, domain := range o.ForecastTopicStockSnapshot().Domains {
 		for _, prepared := range domain.Topics {
+			pending, err := o.forecastTopicPublicationPending(domain.Name, prepared.RunID)
+			if err != nil || pending {
+				continue
+			}
 			copy := prepared
 			items = append(items, TopicStockPlaybackItem{
 				ID: forecastPlaybackID(prepared.RunID), Stock: "forecast",
@@ -116,7 +120,21 @@ func (o *IdleChatOrchestrator) consumeTopicStockPlaybackItem(id string) (TopicSt
 		}
 	case strings.HasPrefix(id, "forecast:"):
 		if forecastStock != nil {
-			if prepared := forecastStock.takeByRunID(modulecore.RunID(strings.TrimPrefix(id, "forecast:"))); prepared != nil {
+			runID := modulecore.RunID(strings.TrimPrefix(id, "forecast:"))
+			for _, domain := range forecastDomains {
+				pending, err := o.forecastTopicPublicationPending(domain.Name, runID)
+				if err != nil {
+					return TopicStockPlaybackItem{}, err
+				}
+				if pending {
+					return TopicStockPlaybackItem{}, errors.New("forecast topic publication is pending")
+				}
+			}
+			prepared, err := forecastStock.takeByRunID(runID)
+			if err != nil {
+				return TopicStockPlaybackItem{}, err
+			}
+			if prepared != nil {
 				return TopicStockPlaybackItem{ID: id, Stock: "forecast", Label: prepared.Domain.Name, Topic: prepared.Topic, forecast: prepared}, nil
 			}
 		}
@@ -285,4 +303,13 @@ func (o *IdleChatOrchestrator) finishTopicStockPlayback(generation uint64) {
 	o.lastActivity = time.Now()
 	o.mu.Unlock()
 	o.cancelIdleRunIfGeneration(generation)
+}
+
+func (o *IdleChatOrchestrator) forecastTopicPublicationPending(domain string, runID modulecore.RunID) (bool, error) {
+	store := o.generationCheckpointStore()
+	if err := store.LoadError(); err != nil {
+		return true, err
+	}
+	cp, found := store.Get("forecast:" + domain)
+	return found && cp.RunID == runID, nil
 }

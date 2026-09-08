@@ -3,7 +3,7 @@
   "kind": "engineering_evidence_projection",
   "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
   "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
-  "updated_at": "2026-09-08T07:00:36.562988+00:00",
+  "updated_at": "2026-09-08T08:19:15.392626+00:00",
   "status": "implementation_open",
   "operational_wip": "R1",
   "policy": {
@@ -107,7 +107,24 @@
     "procedure_full_result_authority": "Read the referenced frozen-source receipt; no cached full result in this source-bound ledger.",
     "procedure_check_plan": "Tmp/test-runtime/_identity-remediation/procedure-check-plan.json",
     "procedure_check_plan_revision": "sha256:4fb556549f33567e110cd6e7bf5280d4b7ef98f3a372724aae3ceca6ce423b67",
-    "idlechat_full_receipt": "Tmp/test-runtime/_identity-remediation/idlechat/full/receipt.json"
+    "idlechat_full_receipt": "Tmp/test-runtime/_identity-remediation/idlechat/full/receipt.json",
+    "idlechat_remaining": {
+      "status": "receipt_bound_source_validation",
+      "scope": [
+        "Forecast stock generation",
+        "Story prepare generation",
+        "Dialogue preparation"
+      ],
+      "plan": "Tmp/test-runtime/_identity-remediation/idlechat-remaining/check-plan.json",
+      "canonical_receipt": "Tmp/test-runtime/_identity-remediation/idlechat-remaining/full/receipt.json",
+      "acceptance": "Receipt must pass with matching sourceHash; source success alone does not close runtime gates",
+      "remaining": [
+        "Story title backfill and standalone repair lifecycle",
+        "canonical Step10 migration and deployed artifact",
+        "actual Agent Viewer and restart receipt",
+        "old execution external effect fencing"
+      ]
+    }
   },
   "runtime_evidence": {
     "revision": "6c50fb81f77198b8c30fc46cf1b6cd2fa97f81e2",

@@ -19,26 +19,6 @@ type forecastTopicFailure struct {
 	Error     string
 }
 
-// generateForecastTopicInline は従来のインライン生成パイプライン。
-func (o *IdleChatOrchestrator) generateForecastTopicInline(domain ForecastDomain) (string, []string, *forecastTopicFailure) {
-	trendSeeds := fetchTrendSeeds(domain)
-	nhkSeeds := fetchDomainSeeds(domain, 10)
-	allHeadlines := rankForecastSeeds(domain, append(trendSeeds, nhkSeeds...))
-	keyword, failure := o.extractForecastKeyword(domain, allHeadlines)
-	if failure != nil {
-		log.Printf("[Forecast] %s: keyword_error error_code=%s trends=%d nhk=%d", domain.Name, failure.ErrorCode, len(trendSeeds), len(nhkSeeds))
-		return "", allHeadlines, failure
-	}
-	deepSeeds := fetchGoogleNewsSeeds(keyword, 5)
-	seeds := rankForecastSeeds(domain, append(allHeadlines, deepSeeds...))
-	log.Printf("[Forecast] %s: keyword=%q trends=%d nhk=%d google=%d", domain.Name, keyword, len(trendSeeds), len(nhkSeeds), len(deepSeeds))
-	topic, failure := o.generateForecastTopic(domain, seeds)
-	if failure != nil {
-		return "", seeds, failure
-	}
-	return topic, seeds, nil
-}
-
 func (o *IdleChatOrchestrator) generateForecastTopicInlineForStock(ctx context.Context, domain ForecastDomain, checkpoint *GenerationCheckpoint) (string, []string, *forecastTopicFailure) {
 	if checkpoint == nil {
 		return "", nil, newForecastTopicFailure("checkpoint", domain.Name, "CodexExe", errors.New("forecast checkpoint is nil"))

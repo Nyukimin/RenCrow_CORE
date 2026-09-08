@@ -187,12 +187,12 @@ func TestInspectWordRunRejectsIdentityAndShapeViolations(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			owner := &wordRunLifecycleOwnerFake{}
 			test.setup(owner)
-			_, err := inspectWordRun(context.Background(), owner, test.taskID, runID)
+			_, err := inspectGenerationRun(context.Background(), owner, test.taskID, runID)
 			if err == nil {
-				t.Fatal("inspectWordRun() succeeded for invalid identity/state")
+				t.Fatal("inspectGenerationRun() succeeded for invalid identity/state")
 			}
 			if !containsWordLifecycleError(err, test.want) {
-				t.Fatalf("inspectWordRun() error = %v, want substring %q", err, test.want)
+				t.Fatalf("inspectGenerationRun() error = %v, want substring %q", err, test.want)
 			}
 		})
 	}
@@ -229,9 +229,9 @@ func TestInspectWordRunRejectsAmbiguousLatestAndOtherActiveRun(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			owner := &wordRunLifecycleOwnerFake{task: wordLifecycleTask(taskID, domaintask.StatusRunning), runs: test.runs}
-			_, err := inspectWordRun(context.Background(), owner, taskID, runID)
+			_, err := inspectGenerationRun(context.Background(), owner, taskID, runID)
 			if err == nil || !containsWordLifecycleError(err, test.want) {
-				t.Fatalf("inspectWordRun() error = %v, want substring %q", err, test.want)
+				t.Fatalf("inspectGenerationRun() error = %v, want substring %q", err, test.want)
 			}
 		})
 	}
@@ -246,8 +246,8 @@ func TestCompleteWordRunUsesExactActiveIdentity(t *testing.T) {
 	}
 	ctx := context.WithValue(context.Background(), wordLifecycleContextKey{}, "caller")
 
-	if err := completeWordRun(ctx, owner, taskID, runID, domaintask.StatusSucceeded, "finished", ""); err != nil {
-		t.Fatalf("completeWordRun() error = %v", err)
+	if err := completeGenerationRun(ctx, owner, taskID, runID, domaintask.StatusSucceeded, "finished", ""); err != nil {
+		t.Fatalf("completeGenerationRun() error = %v", err)
 	}
 	if len(owner.completeCalls) != 1 {
 		t.Fatalf("CompleteRun calls = %d, want 1", len(owner.completeCalls))
@@ -269,8 +269,8 @@ func TestCompleteWordRunWaitingUsesWaitingStatusAndReason(t *testing.T) {
 		runs: []domaintask.Run{wordLifecycleRun(taskID, runID, domaintask.RunStatusRunning, time.Now().UTC())},
 	}
 
-	if err := completeWordRun(context.Background(), owner, taskID, runID, domaintask.StatusWaiting, "checkpoint", "awaiting dependency recovery"); err != nil {
-		t.Fatalf("completeWordRun() error = %v", err)
+	if err := completeGenerationRun(context.Background(), owner, taskID, runID, domaintask.StatusWaiting, "checkpoint", "awaiting dependency recovery"); err != nil {
+		t.Fatalf("completeGenerationRun() error = %v", err)
 	}
 	if len(owner.completeCalls) != 1 || owner.completeCalls[0].status != domaintask.StatusWaiting || owner.completeCalls[0].waitingReason != "awaiting dependency recovery" {
 		t.Fatalf("CompleteRun calls = %+v", owner.completeCalls)
@@ -287,8 +287,8 @@ func TestCompleteWordRunTerminalIsIdempotentWithoutOwnerWrite(t *testing.T) {
 	}
 	ctx := context.WithValue(context.Background(), wordLifecycleContextKey{}, "terminal-retry")
 
-	if err := completeWordRun(ctx, owner, taskID, runID, domaintask.StatusSucceeded, "different summary", ""); err != nil {
-		t.Fatalf("completeWordRun() terminal retry error = %v", err)
+	if err := completeGenerationRun(ctx, owner, taskID, runID, domaintask.StatusSucceeded, "different summary", ""); err != nil {
+		t.Fatalf("completeGenerationRun() terminal retry error = %v", err)
 	}
 	if len(owner.completeCalls) != 0 {
 		t.Fatalf("CompleteRun calls = %d, want 0", len(owner.completeCalls))
@@ -313,7 +313,7 @@ func TestCompleteWordRunRejectsDifferentTerminalStatusAndMissingWaitingReason(t 
 		runs:      []domaintask.Run{wordLifecycleRun(taskID, runID, domaintask.RunStatusFailed, time.Now().UTC())},
 		verifyErr: errors.New("terminal status mismatch"),
 	}
-	if err := completeWordRun(context.Background(), owner, taskID, runID, domaintask.StatusSucceeded, "", ""); err == nil || !containsWordLifecycleError(err, "status") {
+	if err := completeGenerationRun(context.Background(), owner, taskID, runID, domaintask.StatusSucceeded, "", ""); err == nil || !containsWordLifecycleError(err, "status") {
 		t.Fatalf("different terminal status error = %v", err)
 	}
 	if len(owner.completeCalls) != 0 {
@@ -327,7 +327,7 @@ func TestCompleteWordRunRejectsDifferentTerminalStatusAndMissingWaitingReason(t 
 		task: wordLifecycleTask(taskID, domaintask.StatusRunning),
 		runs: []domaintask.Run{wordLifecycleRun(taskID, runID, domaintask.RunStatusRunning, time.Now().UTC())},
 	}
-	if err := completeWordRun(context.Background(), activeOwner, taskID, runID, domaintask.StatusWaiting, "", " "); err == nil || !containsWordLifecycleError(err, "waiting reason") {
+	if err := completeGenerationRun(context.Background(), activeOwner, taskID, runID, domaintask.StatusWaiting, "", " "); err == nil || !containsWordLifecycleError(err, "waiting reason") {
 		t.Fatalf("missing waiting reason error = %v", err)
 	}
 	if len(activeOwner.completeCalls) != 0 {
@@ -345,8 +345,8 @@ func TestCompleteWordRunPropagatesOwnerError(t *testing.T) {
 		completeErr: wantErr,
 	}
 
-	if err := completeWordRun(context.Background(), owner, taskID, runID, domaintask.StatusFailed, "failed", ""); !errors.Is(err, wantErr) {
-		t.Fatalf("completeWordRun() error = %v, want %v", err, wantErr)
+	if err := completeGenerationRun(context.Background(), owner, taskID, runID, domaintask.StatusFailed, "failed", ""); !errors.Is(err, wantErr) {
+		t.Fatalf("completeGenerationRun() error = %v, want %v", err, wantErr)
 	}
 }
 

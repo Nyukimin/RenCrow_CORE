@@ -2,6 +2,7 @@ package idlechat
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -27,10 +28,10 @@ func TestTopicStockPlaybackMovesForwardAndBackWithoutRestoringConsumedStock(t *t
 	domain := forecastDomains[0]
 	forecastRunID := modulecore.NewRunID()
 	forecastTaskID := modulecore.NewTaskID()
-	if !forecastStock.push(domain.Name, PreparedTopic{
+	if added, err := forecastStock.push(domain.Name, PreparedTopic{
 		Domain: domain, Topic: "AIの普及で地域の窓口が2年後に担う相談の変化",
 		Seeds: []string{"窓口", "AI"}, TaskID: forecastTaskID, RunID: forecastRunID, Created: time.Now().UTC(),
-	}) {
+	}); err != nil || !added {
 		t.Fatal("forecast topic push failed")
 	}
 
@@ -73,5 +74,37 @@ func TestTopicStockPlaybackRejectsPreviousBeforeHistory(t *testing.T) {
 	_, err := orchestrator.selectTopicStockPlaybackItem(TopicStockPlaybackPrevious, "")
 	if !errors.Is(err, ErrTopicStockNoPrevious) {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestForecastPublicationWaitsForCheckpointCleanup(t *testing.T) {
+	dir := t.TempDir()
+	stock := newForecastTopicStock(filepath.Join(dir, "stock.json"))
+	taskID, runID := testIdleChatRunIdentityPair()
+	domain := forecastDomains[0]
+	if added, err := stock.push(domain.Name, PreparedTopic{Domain: domain, Topic: "saved forecast", TaskID: taskID, RunID: runID, Created: time.Now().UTC()}); err != nil || !added {
+		t.Fatalf("push: %v", err)
+	}
+	cp := NewGenerationCheckpointStore(filepath.Join(dir, "checkpoints.json"))
+	key := "forecast:" + domain.Name
+	if err := cp.Put(GenerationCheckpoint{Key: key, Kind: "forecast", TaskID: taskID, RunID: runID}); err != nil {
+		t.Fatal(err)
+	}
+	o := &IdleChatOrchestrator{topicStockBuf: stock}
+	o.SetGenerationCheckpointStore(cp)
+	if got := o.availableTopicStockPlaybackItems(); len(got) != 0 {
+		t.Fatal("pending forecast was listed")
+	}
+	if _, err := o.consumeTopicStockPlaybackItem(forecastPlaybackID(runID)); err == nil {
+		t.Fatal("pending forecast was consumed")
+	}
+	if stock.count(domain.Name) != 1 {
+		t.Fatal("pending artifact was removed")
+	}
+	if err := cp.Delete(key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := o.consumeTopicStockPlaybackItem(forecastPlaybackID(runID)); err != nil {
+		t.Fatal(err)
 	}
 }

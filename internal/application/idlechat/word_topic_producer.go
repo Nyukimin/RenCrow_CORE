@@ -226,7 +226,7 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 	if ctx == nil {
 		return errors.New("word topic context is not configured")
 	}
-	if _, err := wordRunOwnerFromIssuer(o.runIssuer); err != nil {
+	if _, err := generationRunOwnerFromIssuer(o.runIssuer); err != nil {
 		return err
 	}
 	checkpointKey := "word:" + string(category)
@@ -239,7 +239,7 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 	}
 	checkpoint, found := checkpointStore.Get(checkpointKey)
 	if found && checkpoint.Stage == "resume_pending" {
-		if err := o.reconcileWordResume(ctx, &checkpoint, checkpointStore); err != nil {
+		if err := reconcileGenerationResume(ctx, o.runIssuer, &checkpoint, checkpointStore); err != nil {
 			return err
 		}
 	}
@@ -247,12 +247,15 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 		if checkpoint.Category != category {
 			return errors.New("word topic checkpoint category mismatch")
 		}
-		run, err := inspectWordRun(ctx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID)
+		run, err := inspectGenerationRun(ctx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID)
 		if err != nil {
 			return err
 		}
 		switch run.Status {
 		case domaintask.RunStatusSucceeded:
+			if err := verifySavedWordTopic(stock, checkpoint); err != nil {
+				return err
+			}
 			if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
 				return err
 			}
@@ -271,6 +274,9 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 			return checkpointStore.Delete(checkpointKey)
 		}
 		if stock.hasRunID(checkpoint.RunID) {
+			if err := verifySavedWordTopic(stock, checkpoint); err != nil {
+				return err
+			}
 			if run.Status == domaintask.RunStatusRunning {
 				if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
 					return err
@@ -353,61 +359,8 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 	return checkpointStore.Delete(checkpointKey)
 }
 
-// reconcileWordResume handles a crash between owner Run issuance and saving
-// the successor ID. Only a persisted resume intent may adopt an exact
-// same-Task, same-assignee checkpoint-resume successor from the canonical owner.
-func (o *IdleChatOrchestrator) reconcileWordResume(ctx context.Context, checkpoint *GenerationCheckpoint, store *GenerationCheckpointStore) error {
-	owner, err := wordRunOwnerFromIssuer(o.runIssuer)
-	if err != nil {
-		return err
-	}
-	runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: checkpoint.TaskID})
-	if err != nil {
-		return err
-	}
-	var previous, latest domaintask.Run
-	for _, run := range runs {
-		if run.RunID == checkpoint.RunID {
-			previous = run
-		}
-		if latest.RunID == "" || run.StartedAt.After(latest.StartedAt) {
-			latest = run
-		}
-	}
-	if previous.RunID == "" || latest.RunID == "" {
-		return errors.New("word resume owner history is missing")
-	}
-	if latest.RunID == previous.RunID {
-		return nil
-	}
-	successors := 0
-	for _, run := range runs {
-		if run.StartedAt.After(previous.StartedAt) {
-			successors++
-		}
-	}
-	if successors != 1 {
-		return errors.New("word resume successor is ambiguous")
-	}
-	latest, err = inspectWordRun(ctx, o.runIssuer, checkpoint.TaskID, latest.RunID)
-	if err != nil {
-		return err
-	}
-	if previous.TaskID != checkpoint.TaskID || previous.Assignee != latest.Assignee ||
-		latest.StartReason != domaintask.RunStartReasonCheckpointResume ||
-		(previous.Status != domaintask.RunStatusWaiting && previous.Status != domaintask.RunStatusInterrupted) ||
-		(latest.Status != domaintask.RunStatusRunning && latest.Status != domaintask.RunStatusWaiting && latest.Status != domaintask.RunStatusInterrupted) {
-		return errors.New("word resume successor does not match persisted intent")
-	}
-	checkpoint.RunID = latest.RunID
-	return store.Put(*checkpoint)
-}
-
 func (o *IdleChatOrchestrator) finishWordRun(ctx context.Context, checkpoint GenerationCheckpoint, status domaintask.Status, summary, reason string) error {
-	// Cancellation interrupts generation, not the bounded recording of its outcome.
-	finalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	return completeWordRun(finalCtx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID, status, summary, reason)
+	return finishGenerationRun(ctx, o.runIssuer, checkpoint, status, summary, reason)
 }
 
 func (o *IdleChatOrchestrator) wordTopicPublicationPending(category TopicCategory, runID modulecore.RunID) (bool, error) {
@@ -587,4 +540,19 @@ func wordTopicGenerationError(strategy TopicStrategy, err error) string {
 
 func isWordTopicGenerationError(topic string) bool {
 	return strings.HasPrefix(strings.TrimSpace(topic), "WORD_TOPIC_GENERATION_FAILED ")
+}
+
+func verifySavedWordTopic(stock *wordTopicStock, checkpoint GenerationCheckpoint) error {
+	for _, category := range stock.snapshot().Categories {
+		for _, item := range category.Topics {
+			if item.RunID != checkpoint.RunID {
+				continue
+			}
+			if item.TaskID != checkpoint.TaskID || item.Category != checkpoint.Category || (checkpoint.Result != nil && item.Topic != checkpoint.Result.Topic) {
+				return errors.New("saved word topic does not match checkpoint")
+			}
+			return nil
+		}
+	}
+	return errors.New("completed word run has no saved topic")
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -93,42 +92,4 @@ func resumeIdleChatRun(ctx context.Context, issuer idlechatRunIssuer, taskID mod
 		return "", err
 	}
 	return run.RunID, nil
-}
-
-// testIdleChatRunIssuer satisfies idlechatRunIssuer for unit tests.
-type testIdleChatRunIssuer struct{}
-
-func newTestIdleChatRunIssuer() *testIdleChatRunIssuer {
-	return &testIdleChatRunIssuer{}
-}
-
-func testIdleChatRunIdentityPair() (modulecore.TaskID, modulecore.RunID) {
-	return modulecore.NewTaskID(), modulecore.NewRunID()
-}
-
-func (t *testIdleChatRunIssuer) Create(_ context.Context, draft domaintask.Task, _ domaintask.SharedRoleContext) (domaintask.Task, error) {
-	now := time.Now().UTC()
-	draft.ApplyDefaults(now)
-	if err := draft.Validate(); err != nil {
-		return domaintask.Task{}, err
-	}
-	return draft, nil
-}
-
-func (t *testIdleChatRunIssuer) StartRunWithReason(_ context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
-	if err := taskID.Validate(); err != nil {
-		return domaintask.Run{}, err
-	}
-	if !domaintask.ValidRunStartReason(reason) {
-		return domaintask.Run{}, fmt.Errorf("invalid run start reason: %s", reason)
-	}
-	now := time.Now().UTC()
-	return domaintask.Run{
-		RunID:       modulecore.NewRunID(),
-		TaskID:      taskID,
-		StartReason: reason,
-		Assignee:    "Shiro",
-		Status:      domaintask.RunStatusRunning,
-		StartedAt:   now,
-	}, nil
 }
