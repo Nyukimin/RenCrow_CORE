@@ -687,7 +687,12 @@ func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, d
 			}
 		}
 		if checkpoint.Stage == "resume_pending" {
+			previousRunID := checkpoint.RunID
 			if err := reconcileGenerationResume(ctx, issuer, &checkpoint, checkpointStore); err != nil {
+				if checkpoint.RunID != previousRunID {
+					completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast resume reconciliation failed", "retry from saved forecast generation checkpoint")
+					return errors.Join(err, completionErr)
+				}
 				return err
 			}
 		}

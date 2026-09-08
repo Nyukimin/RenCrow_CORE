@@ -124,6 +124,23 @@
         "actual Agent Viewer and restart receipt",
         "old execution external effect fencing"
       ]
+    },
+    "idlechat_story_revision": {
+      "status": "receipt_bound_source_validation",
+      "scope": [
+        "Story title backfill",
+        "Story title repair",
+        "Story suffix repair",
+        "Story repair exhaustion"
+      ],
+      "plan": "Tmp/test-runtime/_identity-remediation/story-revision/check-plan.json",
+      "canonical_receipt": "Tmp/test-runtime/_identity-remediation/story-revision/full/receipt.json",
+      "acceptance": "Receipt must pass with matching sourceHash; source success alone does not close runtime gates",
+      "remaining": [
+        "canonical Step10 migration and deployed artifact",
+        "actual Agent Viewer and restart receipt",
+        "old execution external effect fencing"
+      ]
     }
   },
   "runtime_evidence": {

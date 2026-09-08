@@ -75,6 +75,13 @@ func (s *storyEpisodeStore) append(artifact StoryEpisodeArtifact) error {
 		return fmt.Errorf("story episode store unavailable: %w", s.loadErr)
 	}
 	if existing, ok := s.episodes[artifact.EpisodeID]; ok {
+		if artifact.Revision > existing.Revision {
+			// Revision generation owns content, while markPlayed owns playback.
+			// A checkpoint may predate a playback update: retain the current
+			// counters under this same storage lock when publishing new content.
+			artifact.PlayCount = existing.PlayCount
+			artifact.LastPlayedAt = existing.LastPlayedAt
+		}
 		if existing.TaskID != artifact.TaskID || existing.RunID != artifact.RunID {
 			if artifact.Revision <= existing.Revision {
 				return fmt.Errorf("story episode %s identity conflicts with revision %d", artifact.EpisodeID, existing.Revision)

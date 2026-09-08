@@ -37,6 +37,7 @@ type GenerationCheckpoint struct {
 	StoryArtifact    *StoryEpisodeArtifact    `json:"story_artifact,omitempty"`
 	DialogueArtifact *DialogueEpisodeArtifact `json:"dialogue_artifact,omitempty"`
 	StoryReview      *StorySemanticReview     `json:"story_review,omitempty"`
+	StoryRevision    *storyRevisionCheckpoint `json:"story_revision,omitempty"`
 	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
@@ -230,6 +231,10 @@ func cloneGenerationCheckpoint(checkpoint GenerationCheckpoint) GenerationCheckp
 		review := *checkpoint.StoryReview
 		review.Errors = append([]StoryValidationError(nil), checkpoint.StoryReview.Errors...)
 		checkpoint.StoryReview = &review
+	}
+	if checkpoint.StoryRevision != nil {
+		revision := *checkpoint.StoryRevision
+		checkpoint.StoryRevision = &revision
 	}
 	return checkpoint
 }

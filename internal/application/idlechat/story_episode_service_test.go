@@ -6,11 +6,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	taskmanager "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type queuedStoryCodexGenerator struct {
 	responses []string
 	prompts   []string
+}
+
+func storyServiceArtifactWithTerminalRun(t *testing.T, artifact StoryEpisodeArtifact) (*taskmanager.Manager, StoryEpisodeArtifact) {
+	t.Helper()
+	owner := newTestIdleChatRunIssuer(t)
+	task, err := owner.Create(context.Background(), domaintask.Task{
+		Title: "story revision fixture", Route: domaintask.RouteGeneral, Assignee: "Shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := owner.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := domaintask.StatusSucceeded
+	if artifact.ProductionStatus == StoryProductionNeedsRepair || artifact.ProductionStatus == StoryProductionFailed {
+		status = domaintask.StatusFailed
+	}
+	if _, err := owner.CompleteRun(context.Background(), task.TaskID, run.RunID, "Shiro", status, "fixture predecessor", ""); err != nil {
+		t.Fatal(err)
+	}
+	artifact.TaskID = task.TaskID
+	artifact.RunID = run.RunID
+	return owner, artifact
 }
 
 func (f *queuedStoryCodexGenerator) Generate(_ context.Context, prompt string) (string, error) {
@@ -101,13 +129,14 @@ func TestStoryEpisodeServiceBackfillsReadyTitleWithoutChangingTurns(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner, artifact := storyServiceArtifactWithTerminalRun(t, artifact)
 	generator := &queuedStoryCodexGenerator{responses: []string{`{"story_title":"きびだんごは経費になりますか"}`}}
 	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
 	if err := store.append(artifact); err != nil {
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	service.SetRunIssuer(owner)
 
 	if err := service.BackfillReadyTitles(context.Background()); err != nil {
 		t.Fatalf("backfill title: %v", err)
@@ -150,12 +179,13 @@ func TestStoryEpisodeServiceRepairsOnlyTitleWithoutRegeneratingTurns(t *testing.
 		`{"story_title":"鬼ヶ島、ただいま棚卸し中"}`,
 		string(goodReview),
 	}}
+	owner, artifact := storyServiceArtifactWithTerminalRun(t, artifact)
 	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
 	if err := store.append(artifact); err != nil {
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	service.SetRunIssuer(owner)
 
 	if err := service.RepairNeedsRepair(context.Background()); err != nil {
 		t.Fatalf("repair title: %v", err)
@@ -214,12 +244,13 @@ func TestStoryEpisodeServiceRepairsOnlySuffixAndKeepsPrefixIDs(t *testing.T) {
 	}
 	goodReview, _ := json.Marshal(StorySemanticReview{Valid: true})
 	generator := &queuedStoryCodexGenerator{responses: []string{string(suffixJSON), string(goodReview)}}
+	owner, artifact := storyServiceArtifactWithTerminalRun(t, artifact)
 	store := newStoryEpisodeStore(filepath.Join(t.TempDir(), "story_episodes.jsonl"), 1)
 	if err := store.append(artifact); err != nil {
 		t.Fatal(err)
 	}
 	service := NewStoryEpisodeService(store, generator, nil)
-	service.SetRunIssuer(newTestIdleChatRunIssuer(t))
+	service.SetRunIssuer(owner)
 
 	if err := service.RepairNeedsRepair(context.Background()); err != nil {
 		t.Fatalf("repair: %v", err)

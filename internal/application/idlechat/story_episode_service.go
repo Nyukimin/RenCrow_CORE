@@ -186,10 +186,23 @@ func (s *StoryEpisodeService) BackfillReadyTitles(ctx context.Context) error {
 	if s == nil || s.store == nil || s.generator == nil {
 		return errors.New("story episode title producer is not configured")
 	}
+	if ctx == nil {
+		return errors.New("story title backfill context is nil")
+	}
 	s.prepareMu.Lock()
 	defer s.prepareMu.Unlock()
 	s.store.setFilling(true)
 	defer s.store.setFilling(false)
+	checkpointStore, err := s.storyRevisionCheckpointStore()
+	if err != nil {
+		return err
+	}
+	if err := s.recoverStoryRevisionLocked(ctx); err != nil {
+		return err
+	}
+	if s.hasNormalStoryCheckpoint(checkpointStore) {
+		return nil
+	}
 
 	var lastErr error
 	for _, artifact := range s.store.snapshot().Episodes {
@@ -199,21 +212,12 @@ func (s *StoryEpisodeService) BackfillReadyTitles(ctx context.Context) error {
 		if artifact.ProductionStatus != StoryProductionReady || !artifact.Validation.Valid || strings.TrimSpace(artifact.StoryTitle) != "" {
 			continue
 		}
-		title, err := s.generateStoryTitle(ctx, artifact)
-		if err != nil {
+		if err := s.beginOrRecoverStoryRevisionLocked(ctx, checkpointStore, storyRevisionOperationBackfill, artifact); err != nil {
 			lastErr = err
 			s.store.recordFailure("title_generation", err)
-			log.Printf("[Story] title backfill failed: episode=%s error=%v", artifact.EpisodeID, err)
-			continue
+			return lastErr
 		}
-		artifact.StoryTitle = title
-		artifact.Revision++
-		if err := s.store.append(artifact); err != nil {
-			lastErr = err
-			s.store.recordFailure("storage", err)
-			continue
-		}
-		log.Printf("[Story] title backfilled: episode=%s revision=%d title=%q", artifact.EpisodeID, artifact.Revision, artifact.StoryTitle)
+		log.Printf("[Story] title backfilled: episode=%s", artifact.EpisodeID)
 	}
 	return lastErr
 }
@@ -260,6 +264,11 @@ func (s *StoryEpisodeService) pendingStoryPublication() (modulecore.RunID, strin
 	if err := validateStoryGenerationCheckpoint(checkpoint); err != nil {
 		return "", "", err
 	}
+	if checkpoint.StoryRevision != nil {
+		if _, err := s.storyRevisionSourceArtifact(checkpoint); err != nil {
+			return "", "", err
+		}
+	}
 	episodeID := ""
 	if checkpoint.StoryArtifact != nil {
 		episodeID = checkpoint.StoryArtifact.EpisodeID
@@ -294,7 +303,7 @@ func validateStoryGenerationCheckpoint(checkpoint GenerationCheckpoint) error {
 		return fmt.Errorf("story generation checkpoint identity: %w", err)
 	}
 	switch strings.TrimSpace(checkpoint.Stage) {
-	case "seed", "artifact", "review", "resume_pending":
+	case "seed", "artifact", "review", "resume_pending", "rerun_pending":
 	default:
 		return fmt.Errorf("story generation checkpoint stage is invalid: %q", checkpoint.Stage)
 	}
@@ -317,6 +326,9 @@ func validateStoryGenerationCheckpoint(checkpoint GenerationCheckpoint) error {
 	}
 	if checkpoint.StoryReview != nil && checkpoint.StoryArtifact == nil {
 		return errors.New("story generation checkpoint review has no artifact")
+	}
+	if err := validateStoryRevisionCheckpoint(checkpoint); err != nil {
+		return err
 	}
 	return nil
 }
@@ -442,6 +454,15 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 	for attempt := 0; attempt < attemptLimit; attempt++ {
 		checkpoint, found := checkpointStore.Get(storyGenerationCheckpointKey)
 		if found {
+			if checkpoint.StoryRevision != nil {
+				if err := s.continueStoryRevisionLocked(ctx, checkpointStore, &checkpoint); err != nil {
+					return err
+				}
+				if _, stillPending := checkpointStore.Get(storyGenerationCheckpointKey); stillPending {
+					return errors.New("story revision remained pending after continuation")
+				}
+				continue
+			}
 			if err := validateStoryGenerationCheckpoint(checkpoint); err != nil {
 				s.store.recordFailure("checkpoint", err)
 				return err
@@ -464,6 +485,10 @@ func (s *StoryEpisodeService) prepareUntil(ctx context.Context, desiredReady int
 			if checkpoint.Stage == "resume_pending" {
 				if err := reconcileGenerationResume(ctx, issuer, &checkpoint, checkpointStore); err != nil {
 					s.store.recordFailure("recovery", err)
+					if checkpoint.RunID != previousRunID {
+						completionErr := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "story resume reconciliation failed", "retry from saved story generation checkpoint")
+						return errors.Join(err, completionErr)
+					}
 					return err
 				}
 				if checkpoint.RunID != previousRunID {
@@ -668,10 +693,23 @@ func (s *StoryEpisodeService) RepairNeedsRepair(ctx context.Context) error {
 	if s == nil || s.store == nil || s.generator == nil {
 		return errors.New("story episode producer is not configured")
 	}
+	if ctx == nil {
+		return errors.New("story repair context is nil")
+	}
 	s.prepareMu.Lock()
 	defer s.prepareMu.Unlock()
 	s.store.setFilling(true)
 	defer s.store.setFilling(false)
+	checkpointStore, err := s.storyRevisionCheckpointStore()
+	if err != nil {
+		return err
+	}
+	if err := s.recoverStoryRevisionLocked(ctx); err != nil {
+		return err
+	}
+	if s.hasNormalStoryCheckpoint(checkpointStore) {
+		return nil
+	}
 	var repairErr error
 	for _, artifact := range s.store.snapshot().Episodes {
 		if s.store.snapshot().Ready >= s.store.target {
@@ -681,125 +719,31 @@ func (s *StoryEpisodeService) RepairNeedsRepair(ctx context.Context) error {
 			continue
 		}
 		if storyValidationOnlyHasCode(artifact.Validation, "title_violation") {
-			if err := s.repairTitleOnly(ctx, artifact); err != nil {
-				repairErr = err
-				s.store.recordFailure("title_generation", err)
+			repairErr = s.beginOrRecoverStoryRevisionLocked(ctx, checkpointStore, storyRevisionOperationTitle, artifact)
+			if repairErr != nil {
+				s.store.recordFailure("title_repair", repairErr)
+				return repairErr
 			}
 			continue
 		}
 		if artifact.SuffixRegenerations >= s.maxSuffixRegenerations {
-			artifact.Revision++
-			artifact.ProductionStatus = StoryProductionFailed
-			if err := s.store.append(artifact); err != nil {
-				repairErr = err
+			repairErr = s.beginOrRecoverStoryRevisionLocked(ctx, checkpointStore, storyRevisionOperationExhausted, artifact)
+			if repairErr != nil {
+				s.store.recordFailure("suffix_exhausted", repairErr)
+				return repairErr
 			}
 			continue
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := s.repairSuffix(ctx, artifact); err != nil {
-			repairErr = err
-			s.store.recordFailure("suffix_repair", err)
+		repairErr = s.beginOrRecoverStoryRevisionLocked(ctx, checkpointStore, storyRevisionOperationSuffix, artifact)
+		if repairErr != nil {
+			s.store.recordFailure("suffix_repair", repairErr)
+			return repairErr
 		}
 	}
 	return repairErr
-}
-
-func (s *StoryEpisodeService) repairSuffix(ctx context.Context, artifact StoryEpisodeArtifact) error {
-	from := artifact.Validation.FirstInvalidTurn
-	if from < 1 || from > len(artifact.Turns) {
-		from = 1
-	}
-	prefixLength := from - 1
-	prefix := append([]StoryEpisodeTurn(nil), artifact.Turns[:prefixLength]...)
-	payload, err := json.Marshal(artifact)
-	if err != nil {
-		return err
-	}
-	prompt := fmt.Sprintf(`あなたはRenCrow IdleChat物語のsuffix修復担当です。
-turn %dより前は合格済みで変更禁止です。turn %d以降だけを、末尾まで作り直してください。
-reader=%s、listener=%s、story_contractとstory_ledgerを維持し、検出errorをすべて解消してください。
-JSON以外を付けず、{"turns":[...]}だけを返してください。各turnのmessage_idは省略してください。
-対象episode:
-%s`, from, from, artifact.Reader, artifact.Listener, string(payload))
-	raw, err := s.generator.Generate(ctx, prompt)
-	if err != nil {
-		return fmt.Errorf("CodexExe suffix repair: %w", err)
-	}
-	var suffix struct {
-		Turns []StoryEpisodeTurn `json:"turns"`
-	}
-	if err := decodeStoryJSON(raw, &suffix); err != nil {
-		return fmt.Errorf("decode CodexExe suffix repair: %w", err)
-	}
-	if len(suffix.Turns) == 0 {
-		return errors.New("CodexExe suffix repair returned no turns")
-	}
-	for i := range suffix.Turns {
-		suffix.Turns[i].TurnIndex = prefixLength + i + 1
-		suffix.Turns[i].MessageID = newIdleChatMessageID()
-		if suffix.Turns[i].UtteranceRole == StoryUtteranceNarration {
-			suffix.Turns[i].ReactsTo = 0
-		}
-	}
-	artifact.Turns = append(prefix, suffix.Turns...)
-	artifact.Revision++
-	artifact.FixedPrefixLength = prefixLength
-	artifact.RepairFromTurn = from
-	artifact.SuffixRegenerations++
-	if strings.TrimSpace(artifact.StoryTitle) == "" || storyValidationHasCode(artifact.Validation, "title_violation") {
-		title, err := s.generateStoryTitle(ctx, artifact)
-		if err != nil {
-			return err
-		}
-		artifact.StoryTitle = title
-	}
-	review, reviewErr := s.reviewArtifact(ctx, artifact)
-	if reviewErr != nil {
-		review = StorySemanticReview{Valid: false, Errors: []StoryValidationError{{Code: "quality_violation", Field: "semantic_review", Evidence: reviewErr.Error()}}}
-	}
-	artifact.Validation = ValidateStoryEpisode(artifact, review)
-	if artifact.Validation.Valid {
-		artifact.ProductionStatus = StoryProductionReady
-	} else if artifact.SuffixRegenerations >= s.maxSuffixRegenerations {
-		artifact.ProductionStatus = StoryProductionFailed
-	} else {
-		artifact.ProductionStatus = StoryProductionNeedsRepair
-	}
-	if err := s.store.append(artifact); err != nil {
-		return err
-	}
-	if !artifact.Validation.Valid {
-		return fmt.Errorf("story episode %s suffix remains invalid", artifact.EpisodeID)
-	}
-	return nil
-}
-
-func (s *StoryEpisodeService) repairTitleOnly(ctx context.Context, artifact StoryEpisodeArtifact) error {
-	title, err := s.generateStoryTitle(ctx, artifact)
-	if err != nil {
-		return err
-	}
-	artifact.StoryTitle = title
-	artifact.Revision++
-	review, reviewErr := s.reviewArtifact(ctx, artifact)
-	if reviewErr != nil {
-		review = StorySemanticReview{Valid: false, Errors: []StoryValidationError{{Code: "quality_violation", Field: "semantic_review", Evidence: reviewErr.Error()}}}
-	}
-	artifact.Validation = ValidateStoryEpisode(artifact, review)
-	if artifact.Validation.Valid {
-		artifact.ProductionStatus = StoryProductionReady
-	} else {
-		artifact.ProductionStatus = StoryProductionNeedsRepair
-	}
-	if err := s.store.append(artifact); err != nil {
-		return err
-	}
-	if !artifact.Validation.Valid {
-		return fmt.Errorf("story episode %s title repair remains invalid", artifact.EpisodeID)
-	}
-	return nil
 }
 
 func storyValidationHasCode(validation StoryValidationResult, code string) bool {

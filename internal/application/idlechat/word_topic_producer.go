@@ -239,7 +239,12 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 	}
 	checkpoint, found := checkpointStore.Get(checkpointKey)
 	if found && checkpoint.Stage == "resume_pending" {
+		previousRunID := checkpoint.RunID
 		if err := reconcileGenerationResume(ctx, o.runIssuer, &checkpoint, checkpointStore); err != nil {
+			if checkpoint.RunID != previousRunID {
+				completionErr := o.finishWordRun(ctx, checkpoint, domaintask.StatusWaiting, "word resume reconciliation failed", "retry from saved word generation checkpoint")
+				return errors.Join(err, completionErr)
+			}
 			return err
 		}
 	}
