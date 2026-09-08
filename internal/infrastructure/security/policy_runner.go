@@ -16,11 +16,10 @@ import (
 
 // PolicyRunner は RunnerV2 をポリシー適用付きでラップする
 type PolicyRunner struct {
-	inner        tool.RunnerV2
-	execService  *executionapp.Service
-	actions      *actionmanager.Manager
-	toolMetaByID map[string]tool.ToolMetadata
-	requestedBy  string
+	inner       tool.RunnerV2
+	execService *executionapp.Service
+	actions     *actionmanager.Manager
+	requestedBy string
 }
 
 func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecution.Repository, actions *actionmanager.Manager, requestedBy string) (*PolicyRunner, error) {
@@ -33,27 +32,21 @@ func NewPolicyRunner(inner tool.RunnerV2, engine *PolicyEngine, repo domainexecu
 	if actions == nil {
 		return nil, fmt.Errorf("action manager is required")
 	}
-	metas, err := inner.ListTools(context.Background())
-	if err != nil {
+	if _, err := inner.ListTools(context.Background()); err != nil {
 		return nil, fmt.Errorf("list tools: %w", err)
-	}
-	metaMap := make(map[string]tool.ToolMetadata, len(metas))
-	for _, m := range metas {
-		metaMap[m.ToolID] = m
 	}
 	svc := executionapp.NewService(engine, inner, repo)
 	return &PolicyRunner{
-		inner:        inner,
-		execService:  svc,
-		actions:      actions,
-		toolMetaByID: metaMap,
-		requestedBy:  requestedBy,
+		inner:       inner,
+		execService: svc,
+		actions:     actions,
+		requestedBy: requestedBy,
 	}, nil
 }
 
 func (r *PolicyRunner) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (response *tool.ToolResponse, runErr error) {
-	if !r.hasTool(ctx, toolName) {
-		return nil, fmt.Errorf("unknown tool: %s", toolName)
+	if err := r.requireCurrentTool(ctx, toolName); err != nil {
+		return nil, err
 	}
 
 	identity, err := domainexecution.IdentityFromContext(ctx)
@@ -130,17 +123,15 @@ func (r *PolicyRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata, erro
 	return r.inner.ListTools(ctx)
 }
 
-func (r *PolicyRunner) hasTool(ctx context.Context, toolName string) bool {
-	if _, exists := r.toolMetaByID[toolName]; exists {
-		return true
-	}
+func (r *PolicyRunner) requireCurrentTool(ctx context.Context, toolName string) error {
 	metas, err := r.inner.ListTools(ctx)
 	if err != nil {
-		return false
+		return fmt.Errorf("list tools: %w", err)
 	}
 	for _, m := range metas {
-		r.toolMetaByID[m.ToolID] = m
+		if m.ToolID == toolName {
+			return nil
+		}
 	}
-	_, exists := r.toolMetaByID[toolName]
-	return exists
+	return fmt.Errorf("unknown tool: %s", toolName)
 }

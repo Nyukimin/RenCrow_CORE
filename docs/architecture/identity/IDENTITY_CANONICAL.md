@@ -21,6 +21,10 @@
 **Step 04 evidence:** [`docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md`](../../調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md)
 **Step 05 evidence:** [`docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md`](../../調査/20260904_ID統一Step05_ThreadID_production_cutover.md)
 
+**Current implementation evidence:** [要求・Gate・対策の実施台帳](../../調査/identity-remediation-ledger.json)。
+本文中の過去follow-upは履歴として読み、現在の未達判定はこの台帳のsource／historical／runtime境界で確認する。
+台帳は進捗と証拠の投影であり、本仕様の要求や完了条件を上書きしない。
+
 ---
 
 ## 0. 最重要方針
@@ -2148,6 +2152,20 @@ Test:
   からmigration Taskを一件だけ生成し、曖昧join、duplicate、orphan、未知field、symlink、source driftを
   fail closedにする。dry-run／applyの入力、変換件数、出力hashを一致させ、second-runはno-opにする。
 
+#### Task / Runの永続更新境界
+
+- Task作成とSharedRoleContext、実行開始時のTaskと新旧Run、担当変更時のTaskと新旧Run、
+  終端時のTaskとRunとNotificationは、各操作を同じTask ownerの一つのtransactionとして確定する。
+  状態の読取、並列数判定、更新の間も同じ排他境界を維持する。途中の保存失敗で一部だけを公開しない。
+- 既存のJSONL streamを正本として維持し、append前のprepare、dataのsync、commitのsyncによって
+  複数streamの更新を回復可能にする。journalは回復用であり、独立更新できるTask正本ではない。
+  readerもtransaction lockを通り、未確定journalや破損を検出した場合は状態を返さず失敗する。
+  回復は正規writerだけが行い、対象外file、内部破損、根拠のない切詰めを拒否する。
+- writer generationの単調増加と生存中のwriter排他を維持する。admissionは一つのsnapshot上で
+  Task、Run、実Actor、writer generationを照合する。これだけで実行中の外部効果を停止したとは扱わない。
+- downstream queue／leaseのCAS失敗で発行済みRunを閉じる`InterruptRun`は、そのRunだけを終端化し、
+  Taskを変更しない。Taskがrunningなら常にactive Runが存在する、という別の不変条件は導入しない。
+
 Gate 10:
 
 - First run、resume、lease reacquire、Agent reassignment、checkpoint resume、明示rerun、全終端状態で、
@@ -2182,6 +2200,13 @@ Gate 10:
 をActionへ統一する。
 
 RetryはAttemptへ統一する。
+
+Action作成と初回Attempt、retry時の旧Attempt終端と新AttemptとCurrentAttemptID、完了時の
+AttemptとActionは、Action owner内の一つのtransactionとして確定する。current pairの照合と
+更新を同じ排他境界に含め、異なるManager／store instanceからの競合も拘束する。readerは一貫した
+snapshotを取得し、途中失敗や再起動で片方だけ確定したpairを正常値として返さない。物理JSONLの
+prepare／sync／commit／回復契約はTask / Runと共通だが、domainの判断と保存先は各ownerに残す。
+TaskとActionの別ownerをまたぐtransactionがあるとは扱わない。
 
 Test:
 

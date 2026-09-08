@@ -15,6 +15,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -31,6 +32,7 @@ type JSONLStore struct {
 	closed            bool
 	readOnly          bool
 	mu                sync.RWMutex
+	batch             *jsonlbatch.Store
 	root              string
 	statePath         string
 	runPath           string
@@ -47,6 +49,7 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("task store root is required")
 	}
+	root = filepath.Clean(root)
 	if !readOnly {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return nil, err
@@ -59,13 +62,14 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 			return nil, err
 		}
 	}
-	store := &JSONLStore{
-		root:      root,
-		statePath: filepath.Join(root, stateFilename), runPath: filepath.Join(root, runFilename), contextPath: filepath.Join(root, contextFilename),
-		notificationsPath: filepath.Join(root, notificationsFilename),
-	}
+	store := &JSONLStore{root: root, statePath: filepath.Join(root, stateFilename), runPath: filepath.Join(root, runFilename), contextPath: filepath.Join(root, contextFilename), notificationsPath: filepath.Join(root, notificationsFilename)}
 	store.readOnly = readOnly
 	if readOnly {
+		batch, err := jsonlbatch.OpenReader(root, taskBatchFilenames())
+		if err != nil {
+			return nil, err
+		}
+		store.batch = batch
 		return store, nil
 	}
 	lock, err := acquireTaskWriter(root)
@@ -79,20 +83,19 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 			_ = store.Close()
 		}
 	}()
+	batch, err := jsonlbatch.New(root, taskBatchFilenames())
+	if err != nil {
+		return nil, err
+	}
+	store.batch = batch
+	if err := batch.Recover(context.Background()); err != nil {
+		return nil, fmt.Errorf("recover task store batch: %w", err)
+	}
 	generation, err := advanceTaskWriterGeneration(lock)
 	if err != nil {
 		return nil, fmt.Errorf("advance task store writer generation: %w", err)
 	}
 	store.writerGeneration = generation
-	for _, path := range []string{store.statePath, store.runPath, store.contextPath, store.notificationsPath} {
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err != nil {
-			return nil, err
-		}
-		if err := file.Close(); err != nil {
-			return nil, err
-		}
-	}
 	// A missing/truncated counter must not reuse any generation already bound to a Run.
 	runs, err := store.loadRuns(context.Background())
 	if err != nil {
@@ -125,244 +128,87 @@ func (s *JSONLStore) WriterGeneration() (uint64, error) {
 }
 
 func (s *JSONLStore) SaveTask(ctx context.Context, value domaintask.Task) error {
-	if err := value.Validate(); err != nil {
-		return err
-	}
-	return s.appendJSON(ctx, s.statePath, value)
+	return s.Transaction(ctx, func(store domaintask.Store) error {
+		return store.SaveTask(ctx, value)
+	})
 }
 
 func (s *JSONLStore) SaveRun(ctx context.Context, value domaintask.Run) error {
-	if err := value.Validate(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tasks, err := s.loadTasks(ctx)
-	if err != nil {
-		return err
-	}
-	knownTask := false
-	for _, item := range tasks {
-		if item.TaskID == value.TaskID {
-			knownTask = true
-			break
-		}
-	}
-	if !knownTask {
-		return fmt.Errorf("run task is unavailable: %w", domaintask.ErrNotFound)
-	}
-	runs, err := s.loadRuns(ctx)
-	if err != nil {
-		return err
-	}
-	if err := validateRunOwners(runs, tasks); err != nil {
-		return err
-	}
-	existingRun := false
-
-	for _, item := range runs {
-		if item.RunID == value.RunID {
-			existingRun = true
-			if err := validateRunUpdate(item, value); err != nil {
-				return err
-			}
-			break
-		}
-	}
-	if !existingRun && (value.WriterGeneration == 0 || value.WriterGeneration != s.writerGeneration) {
-		return fmt.Errorf("new run requires current writer generation")
-	}
-
-	if value.Status == domaintask.RunStatusRunning {
-		for _, item := range runs {
-			if item.TaskID == value.TaskID && item.Status == domaintask.RunStatusRunning && item.RunID != value.RunID {
-				return fmt.Errorf("task already has active run %s", item.RunID)
-			}
-		}
-	}
-	return s.appendJSONUnlocked(ctx, s.runPath, value)
+	return s.Transaction(ctx, func(store domaintask.Store) error {
+		return store.SaveRun(ctx, value)
+	})
 }
 
 func (s *JSONLStore) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
-	if err := runID.Validate(); err != nil {
-		return domaintask.Run{}, err
-	}
-	s.mu.RLock()
-	items, err := s.loadRuns(ctx)
-	if err == nil {
-		tasks, taskErr := s.loadTasks(ctx)
-		if taskErr != nil {
-			err = taskErr
-		} else {
-			err = validateRunOwners(items, tasks)
-		}
-	}
-	s.mu.RUnlock()
-	if err != nil {
-		return domaintask.Run{}, err
-	}
-	for _, item := range items {
-		if item.RunID == runID {
-			return item, nil
-		}
-	}
-	return domaintask.Run{}, domaintask.ErrNotFound
+	var result domaintask.Run
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.GetRun(ctx, runID)
+		return err
+	})
+	return result, err
 }
 
 func (s *JSONLStore) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
-	if filter.TaskID != "" {
-		if err := filter.TaskID.Validate(); err != nil {
-			return nil, fmt.Errorf("task_id is invalid: %w", err)
-		}
-	}
-	if filter.Status != "" && !domaintask.ValidRunStatus(filter.Status) {
-		return nil, fmt.Errorf("invalid run status: %s", filter.Status)
-	}
-	s.mu.RLock()
-	items, err := s.loadRuns(ctx)
-	if err == nil {
-		tasks, taskErr := s.loadTasks(ctx)
-		if taskErr != nil {
-			err = taskErr
-		} else {
-			err = validateRunOwners(items, tasks)
-		}
-	}
-	s.mu.RUnlock()
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]domaintask.Run, 0, len(items))
-	for _, item := range items {
-		if filter.TaskID != "" && item.TaskID != filter.TaskID {
-			continue
-		}
-		if filter.Status != "" && item.Status != filter.Status {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	sort.SliceStable(filtered, func(i, j int) bool {
-		if filtered[i].StartedAt.Equal(filtered[j].StartedAt) {
-			return string(filtered[i].RunID) < string(filtered[j].RunID)
-		}
-		return filtered[i].StartedAt.Before(filtered[j].StartedAt)
+	var result []domaintask.Run
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.ListRuns(ctx, filter)
+		return err
 	})
-	if filter.Limit > 0 && len(filtered) > filter.Limit {
-		filtered = filtered[:filter.Limit]
-	}
-	return filtered, nil
+	return result, err
 }
 
 func (s *JSONLStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
-	if err := taskID.Validate(); err != nil {
-		return domaintask.Task{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items, err := s.loadTasks(ctx)
-	if err != nil {
-		return domaintask.Task{}, err
-	}
-	for _, item := range items {
-		if item.TaskID == taskID {
-			return item, nil
-		}
-	}
-	return domaintask.Task{}, domaintask.ErrNotFound
+	var result domaintask.Task
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.GetTask(ctx, taskID)
+		return err
+	})
+	return result, err
 }
 
 func (s *JSONLStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items, err := s.loadTasks(ctx)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]domaintask.Task, 0, len(items))
-	for _, item := range items {
-		if filter.Status != "" && item.Status != filter.Status {
-			continue
-		}
-		if filter.ModuleID != "" && item.ModuleID != filter.ModuleID {
-			continue
-		}
-		if filter.Assignee != "" && !strings.EqualFold(item.Assignee, filter.Assignee) {
-			continue
-		}
-		if filter.Route != "" && item.Route != filter.Route {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if filter.Limit > 0 && len(filtered) > filter.Limit {
-		filtered = filtered[:filter.Limit]
-	}
-	return filtered, nil
+	var result []domaintask.Task
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.ListTasks(ctx, filter)
+		return err
+	})
+	return result, err
 }
 
 func (s *JSONLStore) SaveContext(ctx context.Context, value domaintask.SharedRoleContext) error {
-	if err := value.TaskID.Validate(); err != nil {
-		return fmt.Errorf("task_id is invalid: %w", err)
-	}
-	if _, err := s.GetTask(ctx, value.TaskID); err != nil {
-		return err
-	}
-	return s.appendJSON(ctx, s.contextPath, value)
+	return s.Transaction(ctx, func(store domaintask.Store) error {
+		return store.SaveContext(ctx, value)
+	})
 }
 
 func (s *JSONLStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
-	if err := taskID.Validate(); err != nil {
-		return domaintask.SharedRoleContext{}, err
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items, err := readJSONLLines[domaintask.SharedRoleContext](ctx, s.contextPath)
-	if err != nil {
-		return domaintask.SharedRoleContext{}, err
-	}
-	for index := len(items) - 1; index >= 0; index-- {
-		if items[index].TaskID == taskID {
-			return items[index], nil
-		}
-	}
-	return domaintask.SharedRoleContext{}, domaintask.ErrNotFound
+	var result domaintask.SharedRoleContext
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.GetContext(ctx, taskID)
+		return err
+	})
+	return result, err
 }
 
 func (s *JSONLStore) SaveNotification(ctx context.Context, value domaintask.Notification) error {
-	if err := value.TaskID.Validate(); err != nil {
-		return fmt.Errorf("task_id is invalid: %w", err)
-	}
-	if strings.TrimSpace(value.Type) == "" {
-		return fmt.Errorf("notification type is required")
-	}
-	return s.appendJSON(ctx, s.notificationsPath, value)
+	return s.Transaction(ctx, func(store domaintask.Store) error {
+		return store.SaveNotification(ctx, value)
+	})
 }
 
 func (s *JSONLStore) ListNotifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	items, err := readJSONLLines[domaintask.Notification](ctx, s.notificationsPath)
-	if err != nil {
-		return nil, err
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
-			return string(items[i].TaskID) < string(items[j].TaskID)
-		}
-		return items[i].CreatedAt.After(items[j].CreatedAt)
+	var result []domaintask.Notification
+	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
+		var err error
+		result, err = store.ListNotifications(ctx, limit, interruptOnly)
+		return err
 	})
-	filtered := make([]domaintask.Notification, 0, len(items))
-	for _, item := range items {
-		if interruptOnly && !item.Interrupt {
-			continue
-		}
-		filtered = append(filtered, item)
-	}
-	if limit > 0 && len(filtered) > limit {
-		filtered = filtered[:limit]
-	}
-	return filtered, nil
+	return result, err
 }
 
 func (s *JSONLStore) loadTasks(ctx context.Context) ([]domaintask.Task, error) {
@@ -456,34 +302,6 @@ func sameRunTime(left, right *time.Time) bool {
 		return left == right
 	}
 	return left.Equal(*right)
-}
-
-func (s *JSONLStore) appendJSON(ctx context.Context, path string, value any) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.appendJSONUnlocked(ctx, path, value)
-}
-
-func (s *JSONLStore) appendJSONUnlocked(ctx context.Context, path string, value any) error {
-	if s.closed {
-		return os.ErrClosed
-	}
-	if s.readOnly || s.writerLock == nil {
-		return fmt.Errorf("task store is read-only")
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	encoder := json.NewEncoder(file)
-	return encoder.Encode(value)
 }
 
 func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {

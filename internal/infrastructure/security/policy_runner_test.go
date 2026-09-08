@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
@@ -43,6 +44,52 @@ func (f *fakeRunner) ExecuteV2(ctx context.Context, _ string, _ map[string]any) 
 
 func (f *fakeRunner) ListTools(_ context.Context) ([]tool.ToolMetadata, error) {
 	return f.metas, nil
+}
+
+type metadataRunner struct {
+	mu           sync.RWMutex
+	metas        []tool.ToolMetadata
+	listErr      error
+	listCalls    int
+	executeCalls int
+}
+
+func (r *metadataRunner) ExecuteV2(context.Context, string, map[string]any) (*tool.ToolResponse, error) {
+	r.mu.Lock()
+	r.executeCalls++
+	r.mu.Unlock()
+	return tool.NewSuccess("ok"), nil
+}
+
+func (r *metadataRunner) ListTools(ctx context.Context) ([]tool.ToolMetadata, error) {
+	if ctx == nil {
+		return nil, errors.New("metadata context is nil")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listCalls++
+	if r.listErr != nil {
+		return nil, r.listErr
+	}
+	return append([]tool.ToolMetadata(nil), r.metas...), nil
+}
+
+func (r *metadataRunner) setMetadata(metas []tool.ToolMetadata) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.metas = append([]tool.ToolMetadata(nil), metas...)
+}
+
+func (r *metadataRunner) setListError(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.listErr = err
+}
+
+func (r *metadataRunner) counts() (listCalls, executeCalls int) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.listCalls, r.executeCalls
 }
 
 func newTestPolicyRunner(t *testing.T, inner tool.RunnerV2, engine *PolicyEngine, repo domainexecution.Repository) *PolicyRunner {
@@ -145,6 +192,98 @@ func TestPolicyRunner_RefreshesToolMetadataAfterDynamicRegistration(t *testing.T
 	}
 	if resp.Error != nil {
 		t.Fatalf("unexpected tool error: %+v", resp.Error)
+	}
+}
+
+func TestPolicyRunnerRejectsRemovedToolFromCurrentMetadata(t *testing.T) {
+	inner := &metadataRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
+	runner, actions := newTestPolicyRunnerWithActions(t, inner, NewPolicyEngine(PolicyConfig{}), nil)
+	inner.setMetadata(nil)
+
+	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
+	if err != nil {
+		t.Fatalf("WithIdentity failed: %v", err)
+	}
+	if _, err := runner.ExecuteV2(ctx, "shell", map[string]any{}); err == nil || err.Error() != "unknown tool: shell" {
+		t.Fatalf("ExecuteV2 error = %v, want current metadata rejection", err)
+	}
+	if _, got := inner.counts(); got != 0 {
+		t.Fatalf("inner execute calls = %d, want zero", got)
+	}
+	owned, err := actions.ListActions(context.Background(), domainaction.Filter{})
+	if err != nil {
+		t.Fatalf("ListActions failed: %v", err)
+	}
+	if len(owned) != 0 {
+		t.Fatalf("actions after removed tool = %#v, want none", owned)
+	}
+}
+
+func TestPolicyRunnerPreservesCurrentMetadataListError(t *testing.T) {
+	listErr := errors.New("metadata unavailable")
+	inner := &metadataRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
+	runner, actions := newTestPolicyRunnerWithActions(t, inner, NewPolicyEngine(PolicyConfig{}), nil)
+	inner.setListError(listErr)
+
+	ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
+	if err != nil {
+		t.Fatalf("WithIdentity failed: %v", err)
+	}
+	if _, err := runner.ExecuteV2(ctx, "shell", map[string]any{}); !errors.Is(err, listErr) {
+		t.Fatalf("ExecuteV2 error = %v, want wrapped metadata error", err)
+	}
+	if _, got := inner.counts(); got != 0 {
+		t.Fatalf("inner execute calls = %d, want zero", got)
+	}
+	owned, err := actions.ListActions(context.Background(), domainaction.Filter{})
+	if err != nil {
+		t.Fatalf("ListActions failed: %v", err)
+	}
+	if len(owned) != 0 {
+		t.Fatalf("actions after metadata error = %#v, want none", owned)
+	}
+}
+
+func TestPolicyRunnerQueriesCurrentMetadataForParallelExecutions(t *testing.T) {
+	inner := &metadataRunner{metas: []tool.ToolMetadata{{ToolID: "shell"}}}
+	runner, _ := newTestPolicyRunnerWithActions(t, inner, NewPolicyEngine(PolicyConfig{}), nil)
+	const executions = 16
+	errs := make(chan error, executions)
+	var wg sync.WaitGroup
+	wg.Add(executions)
+	for i := 0; i < executions; i++ {
+		go func() {
+			defer wg.Done()
+			ctx, err := domainexecution.WithIdentity(context.Background(), modulecore.NewTaskID(), modulecore.NewRunID(), "")
+			if err != nil {
+				errs <- err
+				return
+			}
+			resp, err := runner.ExecuteV2(ctx, "shell", map[string]any{})
+			if err != nil {
+				errs <- err
+				return
+			}
+			if resp == nil || resp.Error != nil {
+				errs <- errors.New("parallel execution returned an invalid response")
+				return
+			}
+			errs <- nil
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("parallel ExecuteV2 failed: %v", err)
+		}
+	}
+	listCalls, executeCalls := inner.counts()
+	if listCalls != executions+1 {
+		t.Fatalf("ListTools calls = %d, want constructor plus each execution (%d)", listCalls, executions+1)
+	}
+	if executeCalls != executions {
+		t.Fatalf("inner execute calls = %d, want %d", executeCalls, executions)
 	}
 }
 
@@ -618,6 +757,176 @@ func newFailingActionStore() *failingActionStore {
 		actions:  make(map[modulecore.ActionID]domainaction.Action),
 		attempts: make(map[modulecore.AttemptID]domainaction.Attempt),
 	}
+}
+
+func (s *failingActionStore) Transaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	tx := &failingActionTx{
+		parent:   s,
+		actions:  clonePolicyActions(s.actions),
+		attempts: clonePolicyAttempts(s.attempts),
+	}
+	if err := callback(tx); err != nil {
+		return err
+	}
+	s.actions = tx.actions
+	s.attempts = tx.attempts
+	return nil
+}
+
+func (s *failingActionStore) ReadTransaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	if ctx == nil {
+		return errors.New("context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	tx := &failingActionTx{
+		parent:   s,
+		actions:  clonePolicyActions(s.actions),
+		attempts: clonePolicyAttempts(s.attempts),
+		readOnly: true,
+	}
+	return callback(&readOnlyFailingActionTx{failingActionTx: tx})
+}
+
+type failingActionTx struct {
+	parent   *failingActionStore
+	actions  map[modulecore.ActionID]domainaction.Action
+	attempts map[modulecore.AttemptID]domainaction.Attempt
+	readOnly bool
+}
+
+func (s *failingActionTx) Transaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	if s.readOnly {
+		return errors.New("action transaction is read-only")
+	}
+	return callback(s)
+}
+
+func (s *failingActionTx) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
+func (s *failingActionTx) SaveAction(ctx context.Context, action domainaction.Action) error {
+	if s.readOnly {
+		return errors.New("action transaction is read-only")
+	}
+	s.parent.saveActionCalls++
+	if s.parent.saveActionErr != nil {
+		return s.parent.saveActionErr
+	}
+	if err := action.Validate(); err != nil {
+		return err
+	}
+	s.actions[action.ActionID] = action
+	return nil
+}
+
+func (s *failingActionTx) GetAction(_ context.Context, actionID modulecore.ActionID) (domainaction.Action, error) {
+	action, ok := s.actions[actionID]
+	if !ok {
+		return domainaction.Action{}, domainaction.ErrNotFound
+	}
+	return action, nil
+}
+
+func (s *failingActionTx) ListActions(_ context.Context, filter domainaction.Filter) ([]domainaction.Action, error) {
+	result := make([]domainaction.Action, 0, len(s.actions))
+	for _, action := range s.actions {
+		if filter.TaskID != "" && action.TaskID != filter.TaskID {
+			continue
+		}
+		if filter.RunID != "" && action.RunID != filter.RunID {
+			continue
+		}
+		if filter.Status != "" && action.Status != filter.Status {
+			continue
+		}
+		result = append(result, action)
+	}
+	return result, nil
+}
+
+func (s *failingActionTx) SaveAttempt(ctx context.Context, attempt domainaction.Attempt) error {
+	if s.readOnly {
+		return errors.New("action transaction is read-only")
+	}
+	s.parent.saveAttemptCalls++
+	if s.parent.saveAttemptErr != nil && (s.parent.failAttemptAfter == 0 || s.parent.saveAttemptCalls > s.parent.failAttemptAfter) {
+		return s.parent.saveAttemptErr
+	}
+	if err := attempt.Validate(); err != nil {
+		return err
+	}
+	if _, ok := s.actions[attempt.ActionID]; !ok {
+		return domainaction.ErrNotFound
+	}
+	s.attempts[attempt.AttemptID] = attempt
+	return nil
+}
+
+func (s *failingActionTx) GetAttempt(_ context.Context, attemptID modulecore.AttemptID) (domainaction.Attempt, error) {
+	attempt, ok := s.attempts[attemptID]
+	if !ok {
+		return domainaction.Attempt{}, domainaction.ErrNotFound
+	}
+	return attempt, nil
+}
+
+func (s *failingActionTx) ListAttempts(_ context.Context, filter domainaction.AttemptFilter) ([]domainaction.Attempt, error) {
+	result := make([]domainaction.Attempt, 0, len(s.attempts))
+	for _, attempt := range s.attempts {
+		if filter.ActionID != "" && attempt.ActionID != filter.ActionID {
+			continue
+		}
+		if filter.Status != "" && attempt.Status != filter.Status {
+			continue
+		}
+		result = append(result, attempt)
+	}
+	return result, nil
+}
+
+type readOnlyFailingActionTx struct {
+	*failingActionTx
+}
+
+func (s *readOnlyFailingActionTx) SaveAction(context.Context, domainaction.Action) error {
+	return errors.New("action transaction is read-only")
+}
+
+func (s *readOnlyFailingActionTx) SaveAttempt(context.Context, domainaction.Attempt) error {
+	return errors.New("action transaction is read-only")
+}
+
+func (s *readOnlyFailingActionTx) Transaction(_ context.Context, _ func(actionmanager.Store) error) error {
+	return errors.New("action transaction is read-only")
+}
+
+func (s *readOnlyFailingActionTx) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
+func clonePolicyActions(values map[modulecore.ActionID]domainaction.Action) map[modulecore.ActionID]domainaction.Action {
+	result := make(map[modulecore.ActionID]domainaction.Action, len(values))
+	for id, value := range values {
+		result[id] = value
+	}
+	return result
+}
+
+func clonePolicyAttempts(values map[modulecore.AttemptID]domainaction.Attempt) map[modulecore.AttemptID]domainaction.Attempt {
+	result := make(map[modulecore.AttemptID]domainaction.Attempt, len(values))
+	for id, value := range values {
+		result[id] = value
+	}
+	return result
 }
 
 func (s *failingActionStore) SaveAction(_ context.Context, action domainaction.Action) error {

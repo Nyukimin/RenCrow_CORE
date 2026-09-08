@@ -19,14 +19,7 @@ var (
 )
 
 // Store is the persistence boundary owned by the Action owner.
-type Store interface {
-	SaveAction(context.Context, domainaction.Action) error
-	GetAction(context.Context, modulecore.ActionID) (domainaction.Action, error)
-	ListActions(context.Context, domainaction.Filter) ([]domainaction.Action, error)
-	SaveAttempt(context.Context, domainaction.Attempt) error
-	GetAttempt(context.Context, modulecore.AttemptID) (domainaction.Attempt, error)
-	ListAttempts(context.Context, domainaction.AttemptFilter) ([]domainaction.Attempt, error)
-}
+type Store = domainaction.Store
 
 // Manager is the sole runtime issuer of ActionID and AttemptID.
 type Manager struct {
@@ -92,13 +85,32 @@ func (m *Manager) CreateAction(ctx context.Context, input CreateInput) (domainac
 	if err := attempt.Validate(); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	if err := m.store.SaveAction(ctx, action); err != nil {
+	var savedAction domainaction.Action
+	var savedAttempt domainaction.Attempt
+	err := m.store.Transaction(ctx, func(tx Store) error {
+		if err := validateContext(ctx); err != nil {
+			return err
+		}
+		if err := action.Validate(); err != nil {
+			return err
+		}
+		if err := attempt.Validate(); err != nil {
+			return err
+		}
+		if err := tx.SaveAction(ctx, action); err != nil {
+			return err
+		}
+		if err := tx.SaveAttempt(ctx, attempt); err != nil {
+			return err
+		}
+		savedAction = action
+		savedAttempt = attempt
+		return nil
+	})
+	if err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	if err := m.store.SaveAttempt(ctx, attempt); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	return action, attempt, nil
+	return savedAction, savedAttempt, nil
 }
 
 // StartAttempt closes any active Attempt and issues a new AttemptID for the same ActionID.
@@ -120,39 +132,55 @@ func (m *Manager) StartAttempt(ctx context.Context, actionID modulecore.ActionID
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	action, err := m.store.GetAction(ctx, actionID)
+	var resultAction domainaction.Action
+	var resultAttempt domainaction.Attempt
+	err := m.store.Transaction(ctx, func(tx Store) error {
+		if err := validateContext(ctx); err != nil {
+			return err
+		}
+		action, err := tx.GetAction(ctx, actionID)
+		if err != nil {
+			return err
+		}
+		if err := action.Validate(); err != nil {
+			return err
+		}
+		if !action.IsOpen() {
+			return fmt.Errorf("action %s is closed", action.ActionID)
+		}
+		now := m.now()
+		if _, err := m.closeCurrentAttemptReturning(ctx, tx, actionID, domainaction.AttemptStatusFailed, now, "superseded by retry"); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		attempt := domainaction.Attempt{
+			AttemptID:   modulecore.NewAttemptID(),
+			ActionID:    actionID,
+			StartReason: reason,
+			Status:      domainaction.AttemptStatusRunning,
+			StartedAt:   now,
+		}
+		if err := attempt.Validate(); err != nil {
+			return err
+		}
+		action.CurrentAttemptID = attempt.AttemptID
+		action.UpdatedAt = now
+		if err := action.Validate(); err != nil {
+			return err
+		}
+		if err := tx.SaveAction(ctx, action); err != nil {
+			return err
+		}
+		if err := tx.SaveAttempt(ctx, attempt); err != nil {
+			return err
+		}
+		resultAction = action
+		resultAttempt = attempt
+		return nil
+	})
 	if err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	if !action.IsOpen() {
-		return domainaction.Action{}, domainaction.Attempt{}, fmt.Errorf("action %s is closed", action.ActionID)
-	}
-	now := m.now()
-	if err := m.closeCurrentAttempt(ctx, actionID, domainaction.AttemptStatusFailed, now, "superseded by retry"); err != nil && !errors.Is(err, ErrNotFound) {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	attempt := domainaction.Attempt{
-		AttemptID:   modulecore.NewAttemptID(),
-		ActionID:    actionID,
-		StartReason: reason,
-		Status:      domainaction.AttemptStatusRunning,
-		StartedAt:   now,
-	}
-	if err := attempt.Validate(); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	action.CurrentAttemptID = attempt.AttemptID
-	action.UpdatedAt = now
-	if err := action.Validate(); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	if err := m.store.SaveAction(ctx, action); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	if err := m.store.SaveAttempt(ctx, attempt); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	return action, attempt, nil
+	return resultAction, resultAttempt, nil
 }
 
 // CompleteAttempt terminates the current Attempt and optionally the Action.
@@ -171,35 +199,48 @@ func (m *Manager) CompleteAttempt(ctx context.Context, actionID modulecore.Actio
 	if err := validateContext(ctx); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	action, attempt, err := m.currentPairLocked(ctx, actionID, expectedAttemptID)
-	if err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	now := m.now()
-	closedAttempt, err := attempt.Close(attemptStatus, now, summary)
-	if err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	result := action
-	if actionStatus == "" || actionStatus == domainaction.StatusOpen {
-		action.UpdatedAt = now
-		result = action
-	} else {
-		result, err = action.Close(actionStatus, now, strings.TrimSpace(summary))
-		if err != nil {
-			return domainaction.Action{}, domainaction.Attempt{}, err
+	var resultAction domainaction.Action
+	var resultAttempt domainaction.Attempt
+	err := m.store.Transaction(ctx, func(tx Store) error {
+		if err := validateContext(ctx); err != nil {
+			return err
 		}
-	}
-	if err := result.Validate(); err != nil {
+		action, attempt, err := m.currentPair(tx, ctx, actionID, expectedAttemptID)
+		if err != nil {
+			return err
+		}
+		now := m.now()
+		closedAttempt, err := attempt.Close(attemptStatus, now, summary)
+		if err != nil {
+			return err
+		}
+		result := action
+		if actionStatus == "" || actionStatus == domainaction.StatusOpen {
+			action.UpdatedAt = now
+			result = action
+		} else {
+			result, err = action.Close(actionStatus, now, strings.TrimSpace(summary))
+			if err != nil {
+				return err
+			}
+		}
+		if err := result.Validate(); err != nil {
+			return err
+		}
+		if err := tx.SaveAttempt(ctx, closedAttempt); err != nil {
+			return err
+		}
+		if err := tx.SaveAction(ctx, result); err != nil {
+			return err
+		}
+		resultAction = result
+		resultAttempt = closedAttempt
+		return nil
+	})
+	if err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	if err := m.store.SaveAttempt(ctx, closedAttempt); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	if err := m.store.SaveAction(ctx, result); err != nil {
-		return domainaction.Action{}, domainaction.Attempt{}, err
-	}
-	return result, closedAttempt, nil
+	return resultAction, resultAttempt, nil
 }
 
 // ValidateToolAttempt verifies that an owner-provided bound pair is the active
@@ -225,29 +266,31 @@ func (m *Manager) ValidateToolAttempt(ctx context.Context, actionID modulecore.A
 	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if err := validateContext(ctx); err != nil {
-		return err
-	}
-	action, _, err := m.currentPairLocked(ctx, actionID, attemptID)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return fmt.Errorf("%w: bound action/attempt is unavailable: %v", ErrAttemptConflict, err)
+	return m.store.ReadTransaction(ctx, func(tx Store) error {
+		if err := validateContext(ctx); err != nil {
+			return err
 		}
-		return err
-	}
-	if action.TaskID != taskID {
-		return fmt.Errorf("%w: action %s belongs to task %s, want %s", ErrAttemptConflict, actionID, action.TaskID, taskID)
-	}
-	if action.RunID != runID {
-		return fmt.Errorf("%w: action %s belongs to run %s, want %s", ErrAttemptConflict, actionID, action.RunID, runID)
-	}
-	if action.Kind != domainaction.KindTool {
-		return fmt.Errorf("%w: action %s kind is %s, want %s", ErrAttemptConflict, actionID, action.Kind, domainaction.KindTool)
-	}
-	if domainaction.NormalizeName(action.Name) != toolName {
-		return fmt.Errorf("%w: action %s name is %q, want %q", ErrAttemptConflict, actionID, domainaction.NormalizeName(action.Name), toolName)
-	}
-	return nil
+		action, _, err := m.currentPair(tx, ctx, actionID, attemptID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("%w: bound action/attempt is unavailable: %v", ErrAttemptConflict, err)
+			}
+			return err
+		}
+		if action.TaskID != taskID {
+			return fmt.Errorf("%w: action %s belongs to task %s, want %s", ErrAttemptConflict, actionID, action.TaskID, taskID)
+		}
+		if action.RunID != runID {
+			return fmt.Errorf("%w: action %s belongs to run %s, want %s", ErrAttemptConflict, actionID, action.RunID, runID)
+		}
+		if action.Kind != domainaction.KindTool {
+			return fmt.Errorf("%w: action %s kind is %s, want %s", ErrAttemptConflict, actionID, action.Kind, domainaction.KindTool)
+		}
+		if domainaction.NormalizeName(action.Name) != toolName {
+			return fmt.Errorf("%w: action %s name is %q, want %q", ErrAttemptConflict, actionID, domainaction.NormalizeName(action.Name), toolName)
+		}
+		return nil
+	})
 }
 
 // CompleteToolAttempt maps one ToolRunner result to the terminal Action and Attempt state.
@@ -331,18 +374,17 @@ func validateContext(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// currentPairLocked reads and verifies the active current pair. The caller must
-// hold m.mu for reading or writing, so the store reads and checks are atomic with
-// respect to Manager lifecycle mutations.
-func (m *Manager) currentPairLocked(ctx context.Context, actionID modulecore.ActionID, expectedAttemptID modulecore.AttemptID) (domainaction.Action, domainaction.Attempt, error) {
-	action, err := m.store.GetAction(ctx, actionID)
+// currentPair reads and verifies the active current pair using the transaction
+// store supplied by the caller. The caller owns the transaction boundary.
+func (m *Manager) currentPair(tx Store, ctx context.Context, actionID modulecore.ActionID, expectedAttemptID modulecore.AttemptID) (domainaction.Action, domainaction.Attempt, error) {
+	action, err := tx.GetAction(ctx, actionID)
 	if err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
 	if err := action.Validate(); err != nil {
 		return domainaction.Action{}, domainaction.Attempt{}, err
 	}
-	attempt, err := m.store.GetAttempt(ctx, expectedAttemptID)
+	attempt, err := tx.GetAttempt(ctx, expectedAttemptID)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return domainaction.Action{}, domainaction.Attempt{}, fmt.Errorf("%w: expected attempt %s is unavailable: %v", ErrAttemptConflict, expectedAttemptID, err)
@@ -367,13 +409,8 @@ func (m *Manager) currentPairLocked(ctx context.Context, actionID modulecore.Act
 	return action, attempt, nil
 }
 
-func (m *Manager) closeCurrentAttempt(ctx context.Context, actionID modulecore.ActionID, status domainaction.AttemptStatus, completedAt time.Time, summary string) error {
-	_, err := m.closeCurrentAttemptReturning(ctx, actionID, status, completedAt, summary)
-	return err
-}
-
-func (m *Manager) closeCurrentAttemptReturning(ctx context.Context, actionID modulecore.ActionID, status domainaction.AttemptStatus, completedAt time.Time, summary string) (domainaction.Attempt, error) {
-	attempts, err := m.store.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: actionID, Status: domainaction.AttemptStatusRunning})
+func (m *Manager) closeCurrentAttemptReturning(ctx context.Context, tx Store, actionID modulecore.ActionID, status domainaction.AttemptStatus, completedAt time.Time, summary string) (domainaction.Attempt, error) {
+	attempts, err := tx.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: actionID, Status: domainaction.AttemptStatusRunning})
 	if err != nil {
 		return domainaction.Attempt{}, err
 	}
@@ -387,7 +424,7 @@ func (m *Manager) closeCurrentAttemptReturning(ctx context.Context, actionID mod
 	if err != nil {
 		return domainaction.Attempt{}, err
 	}
-	if err := m.store.SaveAttempt(ctx, closed); err != nil {
+	if err := tx.SaveAttempt(ctx, closed); err != nil {
 		return domainaction.Attempt{}, err
 	}
 	return closed, nil

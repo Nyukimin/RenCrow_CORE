@@ -19,19 +19,10 @@ var (
 	ErrRunConflict   = errors.New("run state conflict")
 )
 
-type Store interface {
-	WriterGeneration() (uint64, error)
-	SaveTask(context.Context, domaintask.Task) error
-	GetTask(context.Context, modulecore.TaskID) (domaintask.Task, error)
-	ListTasks(context.Context, domaintask.Filter) ([]domaintask.Task, error)
-	SaveRun(context.Context, domaintask.Run) error
-	GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
-	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
-	SaveContext(context.Context, domaintask.SharedRoleContext) error
-	GetContext(context.Context, modulecore.TaskID) (domaintask.SharedRoleContext, error)
-	SaveNotification(context.Context, domaintask.Notification) error
-	ListNotifications(context.Context, int, bool) ([]domaintask.Notification, error)
-}
+// Store is kept as an application-facing alias to the canonical domain store
+// contract. The domain owns the transaction callback type so persistence and
+// application layers share one interface without an import cycle.
+type Store = domaintask.Store
 
 type ParallelLimits struct {
 	Global            int
@@ -58,7 +49,52 @@ func New(store Store, limits ParallelLimits) *Manager {
 	return &Manager{store: store, limits: limits, now: func() time.Time { return time.Now().UTC() }}
 }
 
+func (m *Manager) transaction(ctx context.Context, fn func(*Manager) error) error {
+	if m == nil || m.store == nil {
+		return errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return errors.New("task transaction context is nil")
+	}
+	return m.store.Transaction(ctx, func(store Store) error {
+		if store == nil {
+			return errors.New("task transaction store is unavailable")
+		}
+		txManager := &Manager{store: store, limits: m.limits, now: m.now}
+		return fn(txManager)
+	})
+}
+
+func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) error {
+	if m == nil || m.store == nil {
+		return errors.New("task manager store is unavailable")
+	}
+	if ctx == nil {
+		return errors.New("task read transaction context is nil")
+	}
+	return m.store.ReadTransaction(ctx, func(store Store) error {
+		if store == nil {
+			return errors.New("task read transaction store is unavailable")
+		}
+		txManager := &Manager{store: store, limits: m.limits, now: m.now}
+		return fn(txManager)
+	})
+}
+
 func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	var created domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		created, err = txManager.createInTransaction(ctx, draft, shared)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return created, nil
+}
+
+func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -94,6 +130,19 @@ func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared doma
 
 // RecordRouting persists the orchestrator route and the event that produced it.
 func (m *Manager) RecordRouting(ctx context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {
+	var routed domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		routed, err = txManager.recordRoutingInTransaction(ctx, taskID, route, eventID)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return routed, nil
+}
+
+func (m *Manager) recordRoutingInTransaction(ctx context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
@@ -121,6 +170,19 @@ func (m *Manager) RecordRouting(ctx context.Context, taskID modulecore.TaskID, r
 
 // RecordAssignment persists the actual CORE Agent assignee and its event reference.
 func (m *Manager) RecordAssignment(ctx context.Context, taskID modulecore.TaskID, assignee string, eventID modulecore.EventID) (domaintask.Task, error) {
+	var assigned domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		assigned, err = txManager.recordAssignmentInTransaction(ctx, taskID, assignee, eventID)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return assigned, nil
+}
+
+func (m *Manager) recordAssignmentInTransaction(ctx context.Context, taskID modulecore.TaskID, assignee string, eventID modulecore.EventID) (domaintask.Task, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
@@ -158,34 +220,57 @@ func (m *Manager) Queue(ctx context.Context, taskID modulecore.TaskID) (domainta
 }
 
 func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
-	if err := taskID.Validate(); err != nil {
-		return domaintask.Task{}, fmt.Errorf("task_id is invalid: %w", err)
-	}
-	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+	var started domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		if err := taskID.Validate(); err != nil {
+			return fmt.Errorf("task_id is invalid: %w", err)
+		}
+		runs, err := txManager.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+		if err != nil {
+			return err
+		}
+		reason := domaintask.RunStartReasonFirst
+		if len(runs) > 0 {
+			reason = domaintask.RunStartReasonExplicitRerun
+		}
+		started, _, err = txManager.startWithReason(ctx, taskID, reason)
+		return err
+	})
 	if err != nil {
 		return domaintask.Task{}, err
 	}
-	reason := domaintask.RunStartReasonFirst
-	if len(runs) > 0 {
-		reason = domaintask.RunStartReasonExplicitRerun
-	}
-	started, _, err := m.startWithReason(ctx, taskID, reason)
-	return started, err
+	return started, nil
 }
 
 // StartWithReason starts a fresh Run for an existing Task using an explicit
 // canonical Step10 reason. The first reason is valid only before any Run exists.
 func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
-	started, _, err := m.startWithReason(ctx, taskID, reason)
-	return started, err
+	var started domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		started, _, err = txManager.startWithReason(ctx, taskID, reason)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return started, nil
 }
 
 // StartRunWithReason starts a fresh canonical Run and returns the exact Run
 // persisted for the Task. Callers that need to hand the newly issued Run to a
 // queue or orchestrator must use this method rather than listing runs again.
 func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
-	_, run, err := m.startWithReason(ctx, taskID, reason)
-	return run, err
+	var run domaintask.Run
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		_, run, err = txManager.startWithReason(ctx, taskID, reason)
+		return err
+	})
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	return run, nil
 }
 
 func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, domaintask.Run, error) {
@@ -316,6 +401,19 @@ func (m *Manager) Cancel(ctx context.Context, taskID modulecore.TaskID, summary 
 }
 
 func (m *Manager) Supersede(ctx context.Context, taskID modulecore.TaskID, replacement modulecore.TaskID) (domaintask.Task, error) {
+	var superseded domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		superseded, err = txManager.supersedeInTransaction(ctx, taskID, replacement)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return superseded, nil
+}
+
+func (m *Manager) supersedeInTransaction(ctx context.Context, taskID modulecore.TaskID, replacement modulecore.TaskID) (domaintask.Task, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -346,6 +444,19 @@ func (m *Manager) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, st
 }
 
 func (m *Manager) updateStatus(ctx context.Context, taskID modulecore.TaskID, status domaintask.Status, summary, waitingReason string, nextActions []string) (domaintask.Task, error) {
+	var updated domaintask.Task
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		updated, err = txManager.updateStatusInTransaction(ctx, taskID, status, summary, waitingReason, nextActions)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return updated, nil
+}
+
+func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID modulecore.TaskID, status domaintask.Status, summary, waitingReason string, nextActions []string) (domaintask.Task, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -397,37 +508,57 @@ func (m *Manager) updateStatus(ctx context.Context, taskID modulecore.TaskID, st
 }
 
 func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRoleContext) error {
-	if err := shared.TaskID.Validate(); err != nil {
-		return fmt.Errorf("task_id is invalid: %w", err)
-	}
-	if _, err := m.store.GetTask(ctx, shared.TaskID); err != nil {
-		return err
-	}
-	shared.UpdatedAt = m.now()
-	return m.store.SaveContext(ctx, shared)
+	return m.transaction(ctx, func(txManager *Manager) error {
+		if err := shared.TaskID.Validate(); err != nil {
+			return fmt.Errorf("task_id is invalid: %w", err)
+		}
+		if _, err := txManager.store.GetTask(ctx, shared.TaskID); err != nil {
+			return err
+		}
+		shared.UpdatedAt = txManager.now()
+		return txManager.store.SaveContext(ctx, shared)
+	})
 }
 
 func (m *Manager) List(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("task manager store is unavailable")
+	}
 	return m.store.ListTasks(ctx, filter)
 }
 
 func (m *Manager) Get(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if m == nil || m.store == nil {
+		return domaintask.Task{}, errors.New("task manager store is unavailable")
+	}
 	return m.store.GetTask(ctx, taskID)
 }
 
 func (m *Manager) Context(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
+	if m == nil || m.store == nil {
+		return domaintask.SharedRoleContext{}, errors.New("task manager store is unavailable")
+	}
 	return m.store.GetContext(ctx, taskID)
 }
 
 func (m *Manager) Notifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("task manager store is unavailable")
+	}
 	return m.store.ListNotifications(ctx, limit, interruptOnly)
 }
 
 func (m *Manager) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	if m == nil || m.store == nil {
+		return nil, errors.New("task manager store is unavailable")
+	}
 	return m.store.ListRuns(ctx, filter)
 }
 
 func (m *Manager) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
+	if m == nil || m.store == nil {
+		return domaintask.Run{}, errors.New("task manager store is unavailable")
+	}
 	return m.store.GetRun(ctx, runID)
 }
 
@@ -457,7 +588,12 @@ func (m *Manager) ValidateRunExecution(ctx context.Context, taskID modulecore.Ta
 	if strings.TrimSpace(actorID) == "" {
 		return errors.New("actor_id is required")
 	}
+	return m.readTransaction(ctx, func(txManager *Manager) error {
+		return txManager.validateRunExecutionInTransaction(ctx, taskID, runID, actorID)
+	})
+}
 
+func (m *Manager) validateRunExecutionInTransaction(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string) error {
 	generation, err := m.store.WriterGeneration()
 	if err != nil {
 		return fmt.Errorf("task writer ownership unavailable: %w", err)
@@ -528,6 +664,19 @@ func (m *Manager) ValidateRunExecution(ctx context.Context, taskID modulecore.Ta
 // used when a downstream lease/queue CAS loses the reservation after the Task
 // owner has already persisted a new canonical Run.
 func (m *Manager) InterruptRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, summary string) (domaintask.Run, error) {
+	var interrupted domaintask.Run
+	err := m.transaction(ctx, func(txManager *Manager) error {
+		var err error
+		interrupted, err = txManager.interruptRunInTransaction(ctx, taskID, runID, summary)
+		return err
+	})
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	return interrupted, nil
+}
+
+func (m *Manager) interruptRunInTransaction(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, summary string) (domaintask.Run, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
@@ -561,6 +710,17 @@ func (m *Manager) CanStart(ctx context.Context, candidate domaintask.Task) (bool
 	if err := candidate.Validate(); err != nil {
 		return false, "", err
 	}
+	var allowed bool
+	var reason string
+	err := m.readTransaction(ctx, func(txManager *Manager) error {
+		var err error
+		allowed, reason, err = txManager.canStartInTransaction(ctx, candidate)
+		return err
+	})
+	return allowed, reason, err
+}
+
+func (m *Manager) canStartInTransaction(ctx context.Context, candidate domaintask.Task) (bool, string, error) {
 	for _, dependencyID := range candidate.DependencyTaskIDs {
 		dependency, err := m.store.GetTask(ctx, dependencyID)
 		if err != nil {

@@ -1,0 +1,2289 @@
+{
+  "schema_version": 1,
+  "kind": "engineering_evidence_projection",
+  "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+  "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
+  "updated_at": "2026-09-08T03:25:56.110548+00:00",
+  "status": "implementation_open",
+  "operational_wip": "R1",
+  "policy": {
+    "completed": "All required gates have applicable passed receipts bound to accepted source/artifact/runtime.",
+    "historical_evidence": "Preserved as history; reuse needs scope and artifact compatibility confirmation.",
+    "unknown": "Evidence not reconciled, never proof of missing implementation.",
+    "progress": "Count accepted gates and routes, never source commits or packet counts."
+  },
+  "plan_ref": "Tmp/test-runtime/_identity-remediation/plan.json",
+  "plan_revision": "sha256:7f49a2068d44251f3bba3b9161912abe0a8f8899969ff20eea365185196eda26",
+  "historical_sources": [
+    "Tmp/test-runtime/_identity-continuation/ledger.json",
+    "Tmp/test-runtime/_identity-continuation/requirements-audit.json",
+    "Tmp/test-runtime/_identity-continuation/historical-deferred-coverage.json"
+  ],
+  "source_evidence": {
+    "receipt": "Tmp/test-runtime/_push-checkpoint/receipt.json",
+    "revision": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
+    "status": "historical_source_passed",
+    "scope": "235 Go packages, format/generated/vet/build; does not cover current edits or deployed Actor route",
+    "current_work": [
+      {
+        "check_id": "identity_owner_atomicity_source",
+        "owner": "RenCrow_CORE",
+        "status": "partial_source_verified",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/task-original-red/receipt.json",
+          "Tmp/test-runtime/_identity-remediation/action-original-red/receipt.json",
+          "Tmp/test-runtime/_identity-remediation/jsonlbatch/receipt.json",
+          "Tmp/test-runtime/_identity-remediation/task-storage-green.json",
+          "Tmp/test-runtime/_identity-remediation/task/tdd.jsonl",
+          "Tmp/test-runtime/_identity-remediation/action/green-finalize.log",
+          "Tmp/test-runtime/_identity-remediation/action/race-finalize.log"
+        ],
+        "scope": "Task/Action atomic rollback, lifecycle finalization and relevant race tests passed. Canonical Full planned; lifetime fence, migration/deploy/restart/actual Actor open."
+      },
+      {
+        "check_id": "identity_metadata_source",
+        "status": "related_tests_reported_passed",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/action/green-relevant.log",
+          "Tmp/test-runtime/_identity-remediation/action/race-relevant.log"
+        ],
+        "scope": "PolicyRunner metadata source fix; runtime Worker registry wiring hypothesis refuted, regression test added."
+      }
+    ],
+    "canonical_full_receipt": "Tmp/test-runtime/_identity-remediation/full/receipt.json",
+    "canonical_full_status": "pending"
+  },
+  "runtime_evidence": {
+    "revision": "6c50fb81f77198b8c30fc46cf1b6cd2fa97f81e2",
+    "modified": true,
+    "current_source_match": "unconfirmed",
+    "status": "historical_observation",
+    "preflight": "Tmp/test-runtime/_identity-remediation/task-live-preflight.json",
+    "open_boundaries": [
+      "Three historical running Task/Run pairs predate current service start; owner recovery and parallel capacity need restart acceptance.",
+      "Action/Attempt streams were empty during live preflight; current source deployment is not proven.",
+      "Confirmed live blocker: 316 historical SuperAgent rows lack TaskID; startup recovery fails and retained running Tasks exhaust global capacity. Historical identity migration precedes deployment acceptance."
+    ],
+    "recovery_preflight": "Tmp/test-runtime/_identity-remediation/recovery-projection-preflight.json",
+    "legacy_actor_provenance": "Tmp/test-runtime/_identity-remediation/legacy-agent-event-provenance.json"
+  },
+  "units": [
+    {
+      "defect_id": "R0",
+      "symptom": "要求と証拠の統合",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "ledger reconciliation",
+      "dependencies": [],
+      "status": "evidence_reconciled",
+      "severity": "required",
+      "expected": "21 requirements x 7 gates, unique phase-specific check IDs, preserved historical receipts, dependency and failure-action mapping; future active plans normalized by Tools owner CLI",
+      "actual": "21 requirements / 147 unique gate IDs validated; historical evidence reconciled for 9 Steps, with source/artifact scope and unresolved boundaries preserved. Current gates remain open until fresh acceptance.",
+      "reproduce_command": "Read ledger JSON; validate 21 unique requirements, 147 unique check IDs, required owner/consumer/phase/failure fields and receipt references; Tools rencrow-check-plan plan for current phase",
+      "terminal_evidence": [
+        "ledger structural validation",
+        "historical receipt applicability reconciliation",
+        "owner-normalized check plan"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R1",
+      "symptom": "Task/Run・Action/Attemptの耐障害性とfence",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "Task and Action owners",
+      "dependencies": [
+        "R0"
+      ],
+      "status": "in_progress",
+      "severity": "high",
+      "expected": "Atomic owner transactions; crash recovery; coherent reads; old Run effect admission rejected; in-flight result accurately recorded",
+      "actual": "Atomic owner source implementation and relevant tests passed; final Full pending. Live historical SuperAgent identity migration blocks recovery; lifetime effect fence remains open.",
+      "reproduce_command": "go test ./internal/application/taskmanager ./internal/application/actionmanager ./internal/infrastructure/persistence/task ./internal/infrastructure/persistence/action ./internal/infrastructure/persistence/jsonlbatch -count=1 (canonical test runtime environment)",
+      "terminal_evidence": [
+        "identity_owner_atomicity_source",
+        "identity_source_full",
+        "identity_owner_deploy",
+        "identity_owner_restart",
+        "identity_chat_runtime"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R2",
+      "symptom": "metadataと代表Chat/Tool経路",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "Chat -> Task -> Run -> Tool Action/Attempt -> Event -> Viewer",
+      "dependencies": [
+        "R1"
+      ],
+      "status": "pending",
+      "severity": "high",
+      "expected": "Removed/unavailable Tool rejected before action/effect; actual Actor Task/Run/Action/Attempt/Event/Viewer trace across restart",
+      "actual": "Metadata cache removed; local tests and race reported passed; source diff reviewed; deployment and actual Actor receipt pending",
+      "reproduce_command": "go test ./internal/infrastructure/security -count=1 (canonical test runtime environment); production Chat/Tool request from owner CLI after deploy plan",
+      "terminal_evidence": [
+        "identity_metadata_source",
+        "identity_chat_runtime",
+        "identity_owner_restart"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R3",
+      "symptom": "DCI・Scheduler owner接続",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "DCI/Scheduler -> canonical owners -> Viewer",
+      "dependencies": [
+        "R2"
+      ],
+      "status": "pending",
+      "severity": "required",
+      "expected": "Required identity gates and route receipts accepted",
+      "actual": "See linked audit and individual gate evidence",
+      "reproduce_command": "Pending owner-specific frozen plan; do not execute a guessed route",
+      "terminal_evidence": [
+        "source receipt",
+        "migration/integrity if applicable",
+        "deployed artifact identity",
+        "actual actor and viewer receipt",
+        "restart/recovery receipt",
+        "legacy deletion receipt"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R4",
+      "symptom": "Atlas識別子・参照移行",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "Atlas Workstream/Goal/Artifact -> Stage/Closure",
+      "dependencies": [
+        "R1",
+        "R3"
+      ],
+      "status": "pending",
+      "severity": "required",
+      "expected": "Required identity gates and route receipts accepted",
+      "actual": "See linked audit and individual gate evidence",
+      "reproduce_command": "Pending owner-specific frozen plan; do not execute a guessed route",
+      "terminal_evidence": [
+        "source receipt",
+        "migration/integrity if applicable",
+        "deployed artifact identity",
+        "actual actor and viewer receipt",
+        "restart/recovery receipt",
+        "legacy deletion receipt"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R5",
+      "symptom": "残る実行・通信・記憶・音声経路",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "transport Memory Verification Voice IdleChat Queue Checkpoint",
+      "dependencies": [
+        "R1",
+        "R3",
+        "R4"
+      ],
+      "status": "pending",
+      "severity": "required",
+      "expected": "Required identity gates and route receipts accepted",
+      "actual": "See linked audit and individual gate evidence",
+      "reproduce_command": "Pending owner-specific frozen plan; do not execute a guessed route",
+      "terminal_evidence": [
+        "source receipt",
+        "migration/integrity if applicable",
+        "deployed artifact identity",
+        "actual actor and viewer receipt",
+        "restart/recovery receipt",
+        "legacy deletion receipt"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R6",
+      "symptom": "Viewerと永続Graph/SSE横断受入",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "authenticated Viewer -> Event replay -> Graph",
+      "dependencies": [
+        "R2",
+        "R3",
+        "R4",
+        "R5"
+      ],
+      "status": "pending",
+      "severity": "required",
+      "expected": "Required identity gates and route receipts accepted",
+      "actual": "See linked audit and individual gate evidence",
+      "reproduce_command": "Pending owner-specific frozen plan; do not execute a guessed route",
+      "terminal_evidence": [
+        "source receipt",
+        "migration/integrity if applicable",
+        "deployed artifact identity",
+        "actual actor and viewer receipt",
+        "restart/recovery receipt",
+        "legacy deletion receipt"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    },
+    {
+      "defect_id": "R7",
+      "symptom": "全体legacy・Golden・restart/recovery",
+      "owner": "RenCrow_CORE",
+      "canonical_route": "all required identity owners and routes",
+      "dependencies": [
+        "R6"
+      ],
+      "status": "pending",
+      "severity": "required",
+      "expected": "Required identity gates and route receipts accepted",
+      "actual": "See linked audit and individual gate evidence",
+      "reproduce_command": "Pending owner-specific frozen plan; do not execute a guessed route",
+      "terminal_evidence": [
+        "source receipt",
+        "migration/integrity if applicable",
+        "deployed artifact identity",
+        "actual actor and viewer receipt",
+        "restart/recovery receipt",
+        "legacy deletion receipt"
+      ],
+      "failure_action": "Keep this unit open; diagnose failing boundary before retry"
+    }
+  ],
+  "requirements": [
+    {
+      "requirement_id": "S00",
+      "title": "Baseline固定",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s00_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "deferred",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "unconfirmed",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s00_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S00 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "deferred",
+            "reference": "docs/調査/20260829_221132_ID統一Step00_baseline.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 00: Baseline固定",
+      "remediation_units": [
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S01",
+      "title": "Canonical ID package",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s01_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s01_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S01 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 01: Canonical ID package",
+      "remediation_units": [
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S02",
+      "title": "Eventの意味を統一",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s02_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s02_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S02 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260830_100622_ID統一Step02_root_trace_repair.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 02: Eventの意味を統一",
+      "remediation_units": [
+        "R3",
+        "R6",
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S03",
+      "title": "DCIのEventID誤用を置換",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s03_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "partial",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s03_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S03 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "unconfirmed",
+            "reference": "docs/調査/20260831_124255_ID統一Step03_DCI_Action_Event分離.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 03: DCIのEventID誤用を置換",
+      "remediation_units": [
+        "R3"
+      ]
+    },
+    {
+      "requirement_id": "S04",
+      "title": "SessionID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s04_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s04_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S04 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260903_033211_ID統一Step04_SessionID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 04: SessionID",
+      "remediation_units": [
+        "R2",
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S05",
+      "title": "ThreadID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s05_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s05_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S05 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step05_ThreadID_production_cutover.md",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 05: ThreadID",
+      "remediation_units": [
+        "R2",
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S06",
+      "title": "TurnIDとMessageID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s06_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s06_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S06 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260904_ID統一Step06_TurnID_MessageID_check_plan.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 06: TurnIDとMessageID",
+      "remediation_units": [
+        "R2",
+        "R7"
+      ]
+    },
+    {
+      "requirement_id": "S07",
+      "title": "入力Value Objectの改名",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s07_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s07_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S07 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 07: 入力Value Objectの改名",
+      "remediation_units": [
+        "R2",
+        "R7"
+      ],
+      "historical_evidence": {
+        "receipt": "/srv/rencrow/backup/recovery/step07-turninput-20260905T031901Z/receipts/gate7-deployment.json",
+        "sha256": "467a34df865acd389f3f8458959b24a090224f36b4005da5392f3fab7e67fd08",
+        "source_revision": "856bca7fa0e9a21b24e88260d204921df327525c",
+        "status": "historical_passed_with_boundaries",
+        "scope": "Historical Gate7 source removal, build/vet, deployed Mio CHAT and owner reload only; earlier migration receipt retained separately.",
+        "current_applicability": "not accepted for current changed source"
+      }
+    },
+    {
+      "requirement_id": "S08",
+      "title": "JobをTaskへ完全置換",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s08_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        },
+        {
+          "check_id": "identity_s08_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S08 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null,
+          "historical_evidence": {
+            "status": "passed",
+            "reference": "docs/調査/20260905_ID統一Step08_Task_receipt.json",
+            "scope": "Historical bounded Step acceptance; deferred cross-owner/full-system obligations remain open."
+          }
+        }
+      ],
+      "canonical_section": "Step 08: JobをTaskへ完全置換",
+      "remediation_units": [
+        "R1",
+        "R2"
+      ]
+    },
+    {
+      "requirement_id": "S09",
+      "title": "OrchestratorをTask基準へ置換",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s09_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s09_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S09 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 09: OrchestratorをTask基準へ置換",
+      "remediation_units": [
+        "R1",
+        "R2"
+      ],
+      "historical_evidence": {
+        "receipt": "/srv/rencrow/backup/recovery/step09-task-20260905T083241Z/step09-deployment-receipt.json",
+        "sha256": "d3592148ccbe0372be819be8d16c82c6995b9be9bb1fce83ff605c3fc9a319be",
+        "source_revision": "6c8720a657a4d8581a898370a4d8e708dd7505c1",
+        "status": "historical_passed_with_boundaries",
+        "scope": "Historical Job-to-Task/EventSeq cutover and CHAT/OPS/RESEARCH/Viewer/restart; CODE semantic generation failed; full restorecheck deferred.",
+        "current_applicability": "not accepted for current changed source"
+      }
+    },
+    {
+      "requirement_id": "S10",
+      "title": "RunID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s10_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s10_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S10 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 10: RunID",
+      "remediation_units": [
+        "R1",
+        "R2",
+        "R3",
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S11",
+      "title": "ActionIDとAttemptID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s11_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s11_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S11 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 11: ActionIDとAttemptID",
+      "remediation_units": [
+        "R1",
+        "R2",
+        "R3",
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S12",
+      "title": "RequestID / ResponseID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s12_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s12_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S12 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 12: RequestID / ResponseID",
+      "remediation_units": [
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S13",
+      "title": "ArtifactID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s13_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s13_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S13 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 13: ArtifactID",
+      "remediation_units": [
+        "R4",
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S14",
+      "title": "EvidenceIDとMemoryID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s14_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s14_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S14 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 14: EvidenceIDとMemoryID",
+      "remediation_units": [
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S15",
+      "title": "Scheduler",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s15_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s15_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S15 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 15: Scheduler",
+      "remediation_units": [
+        "R3"
+      ]
+    },
+    {
+      "requirement_id": "S16",
+      "title": "QueueItemID / CheckpointID / ReceiptID",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s16_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s16_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S16 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 16: QueueItemID / CheckpointID / ReceiptID",
+      "remediation_units": [
+        "R4",
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S17",
+      "title": "VoiceとIdleChat",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s17_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s17_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S17 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 17: VoiceとIdleChat",
+      "remediation_units": [
+        "R5"
+      ]
+    },
+    {
+      "requirement_id": "S18",
+      "title": "Workstream / Atlas / Backlog",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s18_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s18_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S18 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 18: Workstream / Atlas / Backlog",
+      "remediation_units": [
+        "R4"
+      ]
+    },
+    {
+      "requirement_id": "S19",
+      "title": "Viewer / OTel / Graph",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s19_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s19_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S19 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 19: Viewer / OTel / Graph",
+      "remediation_units": [
+        "R6"
+      ]
+    },
+    {
+      "requirement_id": "S20",
+      "title": "全体Cleanup",
+      "owner": "RenCrow_CORE",
+      "canonical_ref": "docs/architecture/identity/IDENTITY_CANONICAL.md",
+      "gates": [
+        {
+          "check_id": "identity_s20_g1_compile_diagnostic",
+          "guarantee": "build",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g2_unit_diagnostic",
+          "guarantee": "owner behavioral tests",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g3_migration_deploy",
+          "guarantee": "owner migration and no-op receipt",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g4_referential_integrity_deploy",
+          "guarantee": "owner referential scan",
+          "owner": "RenCrow_CORE",
+          "phase": "deploy",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g5_integration_runtime",
+          "guarantee": "canonical authenticated actor route",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g6_runtime_connectivity_runtime",
+          "guarantee": "source artifact service viewer restart trace",
+          "owner": "RenCrow_CORE",
+          "phase": "runtime",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        },
+        {
+          "check_id": "identity_s20_g7_legacy_deletion_diagnostic",
+          "guarantee": "canonical owner legacy scan",
+          "owner": "RenCrow_CORE",
+          "phase": "diagnostic",
+          "consumer": "S20 acceptance",
+          "failure_action": "Keep gate open and diagnose",
+          "status": "unconfirmed",
+          "receipt": null
+        }
+      ],
+      "canonical_section": "Step 20: 全体Cleanup",
+      "remediation_units": [
+        "R7"
+      ]
+    }
+  ],
+  "implementation_notes": [
+    "Physical append/recovery protocol shared in jsonlbatch; Task and Action retain separate domain owners, streams, and aggregate validation.",
+    "WAL is append-only; long-term growth/compaction not implemented. Initial limited scan benchmark is not a long-term performance claim.",
+    "Native Windows/macOS power-loss acceptance not established by cross compilation."
+  ],
+  "engineering_classification": [
+    {
+      "stage": "Evidence extraction, test selection, tests, hashes, Git",
+      "class": "CLI",
+      "owner": "RenCrow_CORE / RenCrow_Tools test planner",
+      "input": "canonical spec, current source, fixed plan",
+      "output": "machine-readable plan and receipts",
+      "failure_status": "failed or blocked",
+      "evidence": "Tmp/test-runtime/_identity-remediation/plan.json"
+    },
+    {
+      "stage": "Root cause, transaction design, dependency ordering",
+      "class": "LLM",
+      "owner": "ASTRA engineering orchestrator",
+      "input": "source, reproductions, historical and live evidence",
+      "output": "bounded implementation decisions",
+      "failure_status": "unresolved design",
+      "evidence": "canonical transaction contract and remediation units",
+      "necessity": "Semantic interpretation of requirements and choice between valid designs; no runtime state decisions delegated to LLM."
+    },
+    {
+      "stage": "Transaction commit, recovery, policy, deployment and external effects",
+      "class": "Boundary",
+      "owner": "RenCrow_CORE owner APIs and standard deployment",
+      "input": "validated identity, owner state, fixed deployment plan",
+      "output": "committed or rejected state and receipts",
+      "failure_status": "error, blocked, or explicitly uncertain commit",
+      "evidence": "owner tests; deployment and actual Actor receipts remain required"
+    }
+  ]
+}

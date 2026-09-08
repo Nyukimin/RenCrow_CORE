@@ -976,6 +976,15 @@ func (s admissionRunStore) GetRun(ctx context.Context, id modulecore.RunID) (dom
 	return s.readRun(ctx, id)
 }
 
+// ReadTransaction keeps the injected GetRun boundary visible to the manager
+// while this test double is used as the transaction owner.
+func (s admissionRunStore) ReadTransaction(ctx context.Context, fn func(Store) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return fn(s)
+}
+
 func TestManagerValidateRunExecutionRejectsReadBoundaryFaults(t *testing.T) {
 	for _, name := range []string{"historical_zero", "wrong_returned_run", "read_failure", "writer_closed_during_read", "cancelled_during_read"} {
 		t.Run(name, func(t *testing.T) {
@@ -1020,5 +1029,226 @@ func TestManagerValidateRunExecutionRejectsReadBoundaryFaults(t *testing.T) {
 				t.Fatalf("conflict error lost: %v", err)
 			}
 		})
+	}
+}
+
+// faultTaskStore wraps each transaction view so Save failures remain visible
+// to Manager's transaction body. Embedding alone would promote Transaction
+// and hand the callback the underlying view, bypassing the injected boundary.
+type faultTaskStore struct {
+	Store
+	failOperation string
+	failErr       error
+}
+
+func (s *faultTaskStore) transactionView(store Store) Store {
+	return &faultTaskStore{Store: store, failOperation: s.failOperation, failErr: s.failErr}
+}
+
+func (s *faultTaskStore) Transaction(ctx context.Context, fn func(Store) error) error {
+	return s.Store.Transaction(ctx, func(store Store) error {
+		return fn(s.transactionView(store))
+	})
+}
+
+func (s *faultTaskStore) ReadTransaction(ctx context.Context, fn func(Store) error) error {
+	return s.Store.ReadTransaction(ctx, func(store Store) error {
+		return fn(s.transactionView(store))
+	})
+}
+
+func (s *faultTaskStore) injected(operation string) error {
+	if s.failOperation == operation {
+		return s.failErr
+	}
+	return nil
+}
+
+func (s *faultTaskStore) SaveTask(ctx context.Context, value domaintask.Task) error {
+	if err := s.injected("task"); err != nil {
+		return err
+	}
+	return s.Store.SaveTask(ctx, value)
+}
+
+func (s *faultTaskStore) SaveRun(ctx context.Context, value domaintask.Run) error {
+	if err := s.injected("run"); err != nil {
+		return err
+	}
+	return s.Store.SaveRun(ctx, value)
+}
+
+func (s *faultTaskStore) SaveContext(ctx context.Context, value domaintask.SharedRoleContext) error {
+	if err := s.injected("context"); err != nil {
+		return err
+	}
+	return s.Store.SaveContext(ctx, value)
+}
+
+func (s *faultTaskStore) SaveNotification(ctx context.Context, value domaintask.Notification) error {
+	if err := s.injected("notification"); err != nil {
+		return err
+	}
+	return s.Store.SaveNotification(ctx, value)
+}
+
+func TestManagerCreateRollsBackTaskWhenContextSaveFails(t *testing.T) {
+	base, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, base)
+	injected := errors.New("context append failed")
+	manager := New(&faultTaskStore{Store: base, failOperation: "context", failErr: injected}, DefaultParallelLimits())
+	draft := domaintask.Task{TaskID: modulecore.NewTaskID(), Title: "atomic create", Route: domaintask.RouteGeneral}
+	_, err = manager.Create(context.Background(), draft, domaintask.SharedRoleContext{})
+	if !errors.Is(err, injected) {
+		t.Fatalf("Create error = %v, want injected error", err)
+	}
+	if _, err := base.GetTask(context.Background(), draft.TaskID); !errors.Is(err, domaintask.ErrNotFound) {
+		t.Fatalf("Task remained after failed Create: %v", err)
+	}
+	if _, err := base.GetContext(context.Background(), draft.TaskID); !errors.Is(err, domaintask.ErrNotFound) {
+		t.Fatalf("Context remained after failed Create: %v", err)
+	}
+}
+
+func TestManagerStartRollsBackTaskWhenRunSaveFails(t *testing.T) {
+	base, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, base)
+	setup := New(base, DefaultParallelLimits())
+	task, err := setup.Create(context.Background(), domaintask.Task{Title: "atomic start", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeTask, err := base.GetTask(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := base.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("run append failed")
+	manager := New(&faultTaskStore{Store: base, failOperation: "run", failErr: injected}, DefaultParallelLimits())
+	if _, err := manager.Start(context.Background(), task.TaskID); !errors.Is(err, injected) {
+		t.Fatalf("Start error = %v, want injected error", err)
+	}
+	afterTask, err := base.GetTask(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := base.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterTask, beforeTask) || !reflect.DeepEqual(afterRuns, beforeRuns) {
+		t.Fatalf("failed Start changed records: before task=%#v runs=%#v after task=%#v runs=%#v", beforeTask, beforeRuns, afterTask, afterRuns)
+	}
+}
+
+func TestManagerTerminalUpdateRollsBackWhenNotificationSaveFails(t *testing.T) {
+	base, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, base)
+	setup := New(base, DefaultParallelLimits())
+	task, err := setup.Create(context.Background(), domaintask.Task{Title: "atomic terminal", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Start(context.Background(), task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	beforeTask, err := base.GetTask(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := base.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	injected := errors.New("notification append failed")
+	manager := New(&faultTaskStore{Store: base, failOperation: "notification", failErr: injected}, DefaultParallelLimits())
+	if _, err := manager.Succeed(context.Background(), task.TaskID, "done"); !errors.Is(err, injected) {
+		t.Fatalf("Succeed error = %v, want injected error", err)
+	}
+	afterTask, err := base.GetTask(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := base.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterNotifications, err := base.ListNotifications(context.Background(), 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterTask, beforeTask) || !reflect.DeepEqual(afterRuns, beforeRuns) || len(afterNotifications) != 0 {
+		t.Fatalf("failed terminal update changed records: before task=%#v runs=%#v after task=%#v runs=%#v notifications=%#v", beforeTask, beforeRuns, afterTask, afterRuns, afterNotifications)
+	}
+}
+
+func TestManagerConcurrentStartsHonorGlobalParallelLimit(t *testing.T) {
+	base, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, base)
+	limits := ParallelLimits{Global: 1, PerModule: 10, CodingTasks: 10, LongResearchTasks: 10, DestructiveTasks: 10}
+	setup := New(base, limits)
+	first, err := setup.Create(context.Background(), domaintask.Task{Title: "parallel first", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := setup.Create(context.Background(), domaintask.Task{Title: "parallel second", Route: domaintask.RouteGeneral}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managers := []*Manager{New(base, limits), New(base, limits)}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for index, task := range []domaintask.Task{first, second} {
+		manager := managers[index]
+		go func() {
+			<-start
+			_, err := manager.Start(context.Background(), task.TaskID)
+			errs <- err
+		}()
+	}
+	close(start)
+	var succeeded, limited int
+	for range 2 {
+		err := <-errs
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrParallelLimit):
+			limited++
+		default:
+			t.Fatalf("concurrent Start error = %v, want success or ErrParallelLimit", err)
+		}
+	}
+	if succeeded != 1 || limited != 1 {
+		t.Fatalf("concurrent Start outcomes = succeeded %d limited %d, want 1/1", succeeded, limited)
+	}
+	running, err := base.ListTasks(context.Background(), domaintask.Filter{Status: domaintask.StatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 1 {
+		t.Fatalf("running Tasks = %d, want 1: %#v", len(running), running)
+	}
+	runs, err := base.ListRuns(context.Background(), domaintask.RunFilter{Status: domaintask.RunStatusRunning})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].TaskID != running[0].TaskID {
+		t.Fatalf("running Runs = %#v for Tasks %#v, want one matching pair", runs, running)
 	}
 }

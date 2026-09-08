@@ -688,6 +688,37 @@ type failOnAttemptSaveStore struct {
 	err       error
 }
 
+func (s *failOnAttemptSaveStore) Transaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.Transaction(ctx, func(tx actionmanager.Store) error {
+		return callback(&failOnAttemptSaveTx{Store: tx, owner: s})
+	})
+}
+
+func (s *failOnAttemptSaveStore) ReadTransaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.ReadTransaction(ctx, callback)
+}
+
+type failOnAttemptSaveTx struct {
+	actionmanager.Store
+	owner *failOnAttemptSaveStore
+}
+
+func (s *failOnAttemptSaveTx) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
+	s.owner.saves++
+	if s.owner.saves > s.owner.failAfter {
+		return s.owner.err
+	}
+	return s.Store.SaveAttempt(ctx, value)
+}
+
+func (s *failOnAttemptSaveTx) Transaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
+func (s *failOnAttemptSaveTx) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
 func (s *failOnAttemptSaveStore) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
 	s.saves++
 	if s.saves > s.failAfter {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -113,6 +114,119 @@ func TestJSONLStoreContextAndNotificationUseTaskID(t *testing.T) {
 	items, err := store.ListNotifications(context.Background(), 10, false)
 	if err != nil || len(items) != 1 || items[0].TaskID != value.TaskID {
 		t.Fatalf("notifications = %#v err=%v", items, err)
+	}
+}
+
+func TestJSONLStoreTransactionOverlayCommitsAsOneBatch(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)
+	task := domaintask.Task{TaskID: modulecore.NewTaskID(), Title: "transaction overlay", Route: domaintask.RouteGeneral, Status: domaintask.StatusQueued, Priority: domaintask.PriorityNormal, InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked, CreatedAt: now, UpdatedAt: now}
+	contextValue := domaintask.SharedRoleContext{TaskID: task.TaskID, CurrentPlan: "same transaction", UpdatedAt: now}
+	err = store.Transaction(context.Background(), func(tx domaintask.Store) error {
+		if err := tx.SaveTask(context.Background(), task); err != nil {
+			return err
+		}
+		visible, err := tx.GetTask(context.Background(), task.TaskID)
+		if err != nil || visible.TaskID != task.TaskID {
+			return fmt.Errorf("pending Task was not visible: %#v %v", visible, err)
+		}
+		if err := tx.SaveContext(context.Background(), contextValue); err != nil {
+			return err
+		}
+		visibleContext, err := tx.GetContext(context.Background(), task.TaskID)
+		if err != nil || visibleContext.CurrentPlan != contextValue.CurrentPlan {
+			return fmt.Errorf("pending Context was not visible: %#v %v", visibleContext, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetTask(context.Background(), task.TaskID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.GetContext(context.Background(), task.TaskID); err != nil || got.CurrentPlan != contextValue.CurrentPlan {
+		t.Fatalf("committed Context = %#v err=%v", got, err)
+	}
+}
+
+func TestJSONLStoreTransactionCallbackFailureDiscardsPendingAppends(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	task := domaintask.Task{TaskID: modulecore.NewTaskID(), Title: "transaction rollback", Route: domaintask.RouteGeneral, Status: domaintask.StatusQueued, Priority: domaintask.PriorityNormal, InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	injected := errors.New("callback rejected")
+	err = store.Transaction(context.Background(), func(tx domaintask.Store) error {
+		if err := tx.SaveTask(context.Background(), task); err != nil {
+			return err
+		}
+		return injected
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("Transaction error = %v, want injected error", err)
+	}
+	if _, err := store.GetTask(context.Background(), task.TaskID); !errors.Is(err, domaintask.ErrNotFound) {
+		t.Fatalf("Task survived callback failure: %v", err)
+	}
+}
+
+func TestJSONLStoreNestedTransactionsAndLifetimeBoundaries(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	var outer, nested domaintask.Store
+	err = store.Transaction(ctx, func(tx domaintask.Store) error {
+		outer = tx
+		return tx.Transaction(ctx, func(inner domaintask.Store) error {
+			nested = inner
+			return tx.ReadTransaction(ctx, func(readOnly domaintask.Store) error {
+				if err := readOnly.SaveTask(ctx, domaintask.Task{}); !errors.Is(err, errReadOnlyTransaction) {
+					return fmt.Errorf("nested read transaction Save error = %v", err)
+				}
+				return nil
+			})
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outer == nil || nested == nil || outer != nested {
+		t.Fatalf("nested Transaction did not reuse transaction instance: outer=%T nested=%T", outer, nested)
+	}
+	if _, err := outer.GetTask(ctx, modulecore.NewTaskID()); !errors.Is(err, errTaskTransactionExpired) {
+		t.Fatalf("transaction view remained usable after callback: %v", err)
+	}
+}
+
+func TestJSONLStoreReaderRejectsPendingWALWithoutRecovery(t *testing.T) {
+	root := t.TempDir()
+	writer, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	walPath := filepath.Join(root, ".jsonlbatch.wal")
+	if err := os.WriteFile(walPath, []byte(`{"version":1,"kind":"prepare","tx_id":"pending-test","files":[]}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := NewJSONLReader(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if _, err := reader.ListTasks(context.Background(), domaintask.Filter{}); !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
+		t.Fatalf("reader pending WAL error = %v, want ErrRecoveryRequired", err)
 	}
 }
 
@@ -408,13 +522,15 @@ func TestJSONLStoreWriterCloseAndReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if err := reader.appendJSON(context.Background(), reader.statePath, map[string]string{"bad": "write"}); err == nil {
+	now := time.Now().UTC()
+	value := domaintask.Task{TaskID: modulecore.NewTaskID(), Title: "read-only", Route: domaintask.RouteGeneral, Status: domaintask.StatusQueued, Priority: domaintask.PriorityNormal, InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked, CreatedAt: now, UpdatedAt: now}
+	if err := reader.SaveTask(context.Background(), value); err == nil {
 		t.Fatal("reader accepted write")
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := writer.appendJSON(context.Background(), writer.statePath, map[string]string{"bad": "write"}); !errors.Is(err, os.ErrClosed) {
+	if err := writer.SaveTask(context.Background(), value); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("closed writer error=%v", err)
 	}
 	reopened, err := NewJSONLStore(root)

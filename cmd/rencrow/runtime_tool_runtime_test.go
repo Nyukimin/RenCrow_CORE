@@ -7,13 +7,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainkm "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgememory"
@@ -83,6 +86,100 @@ func TestBuildToolRuntimeSharesSecurityActionManagerWithPolicyRunner(t *testing.
 	attempt := attempts[0]
 	if attempt.AttemptID != action.CurrentAttemptID || attempt.ActionID != action.ActionID || attempt.StartReason != domainaction.AttemptStartReasonFirst {
 		t.Fatalf("unexpected attempt: %+v", attempt)
+	}
+}
+
+func TestBuildToolRuntimeSecurityPreservesRegisteredWorkerRoute(t *testing.T) {
+	// CompositeRunner executes registered .sh entries through a POSIX shell.
+	// Windows shell resolution is covered by internal/infrastructure/tools' OS-specific tests.
+	if runtime.GOOS == "windows" {
+		t.Skip("registered .sh execution requires POSIX shell; Windows resolution is tested separately")
+	}
+
+	workspace := t.TempDir()
+	const toolName = "registry_only_runtime_tool"
+	toolsDir := filepath.Join(workspace, "tools")
+	if err := os.MkdirAll(toolsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	scriptPath := filepath.Join(toolsDir, toolName+".sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nprintf 'registry-route-ok\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	registry := &runtimeCapabilityToolRegistryStub{entries: []capdomain.ToolEntry{{
+		Name:        toolName,
+		Description: "registry-only runtime tool",
+		SchemaJSON:  `{"type":"object","properties":{"input":{"type":"string"}}}`,
+		Platforms:   []string{"linux", "darwin"},
+	}}}
+	disabled := false
+	cfg := &config.Config{
+		WorkspaceDir: workspace,
+		Security: config.SecurityConfig{
+			Enabled:    true,
+			PolicyMode: "balanced",
+		},
+		ToolHarness: config.ToolHarnessConfig{Enabled: &disabled, RecordEvents: &disabled},
+	}
+	owner, executionCtx := runtimeToolOwnerFixture(t, workspace, "shiro")
+	runtime := buildToolRuntimeWithCapabilities(owner, cfg, nil, registry, nil, nil, nil, testCanonicalMediationStore(t))
+
+	metadata, err := runtime.WorkerRuntimeRunnerV2.ListTools(executionCtx)
+	if err != nil {
+		t.Fatalf("secured Worker ListTools failed: %v", err)
+	}
+	if !hasToolMetadata(metadata, toolName) {
+		t.Fatalf("registry-only tool is missing from secured Worker metadata: %#v", metadata)
+	}
+	rawMetadata, err := runtime.WorkerRunnerV2.ListTools(executionCtx)
+	if err != nil {
+		t.Fatalf("base Worker ListTools failed: %v", err)
+	}
+	if hasToolMetadata(rawMetadata, toolName) {
+		t.Fatalf("registry-only tool unexpectedly bypassed the runtime registry wrapper: %#v", rawMetadata)
+	}
+
+	response, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, toolName, map[string]any{"input": "first"})
+	if err != nil || response == nil || response.IsError() || response.String() != "registry-route-ok\n" {
+		t.Fatalf("secured registry route failed: response=%#v error=%v", response, err)
+	}
+	assertRuntimeToolActionTerminal(t, runtime.ActionManager, executionCtx, toolName, domainaction.StatusSucceeded, domainaction.AttemptStatusSucceeded)
+
+	if err := os.Remove(scriptPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.WorkerRuntimeRunnerV2.ExecuteV2(executionCtx, toolName, map[string]any{"input": "after-delete"}); err == nil {
+		t.Fatal("deleted registry script must be rejected")
+	}
+	assertRuntimeToolActionTerminal(t, runtime.ActionManager, executionCtx, toolName, domainaction.StatusFailed, domainaction.AttemptStatusFailed)
+}
+
+func assertRuntimeToolActionTerminal(t *testing.T, actions *actionmanager.Manager, ctx context.Context, toolName string, wantAction domainaction.Status, wantAttempt domainaction.AttemptStatus) {
+	t.Helper()
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := actions.ListActions(ctx, domainaction.Filter{TaskID: identity.TaskID, RunID: identity.RunID})
+	if err != nil {
+		t.Fatalf("list actions: %v", err)
+	}
+	var action domainaction.Action
+	for _, item := range items {
+		if item.Name == toolName && item.Status == wantAction {
+			action = item
+		}
+	}
+	if action.ActionID == "" {
+		t.Fatalf("no %s action for %q in %#v", wantAction, toolName, items)
+	}
+	attempts, err := actions.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: action.ActionID})
+	if err != nil {
+		t.Fatalf("list attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != wantAttempt || !domainaction.IsAttemptTerminal(attempts[0].Status) {
+		t.Fatalf("unexpected terminal attempt for %q: %#v", toolName, attempts)
 	}
 }
 

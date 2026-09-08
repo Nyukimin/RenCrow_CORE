@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -184,6 +185,41 @@ func TestCompleteAttemptRejectsRepeatWithoutMutation(t *testing.T) {
 	assertActionManagerStateUnchanged(t, manager, root, before)
 }
 
+func TestCompleteFailedOpenAttemptCanBeRetried(t *testing.T) {
+	t.Parallel()
+	manager, _, action, attempt := newActionManagerFixture(t)
+
+	ctx := context.Background()
+	completedAction, closedAttempt, err := manager.CompleteAttempt(
+		ctx,
+		action.ActionID,
+		attempt.AttemptID,
+		domainaction.AttemptStatusFailed,
+		domainaction.StatusOpen,
+		"retryable failure",
+	)
+	if err != nil {
+		t.Fatalf("CompleteAttempt() error = %v", err)
+	}
+	if completedAction.ActionID != action.ActionID || completedAction.Status != domainaction.StatusOpen {
+		t.Fatalf("completed action = %#v, want same open action", completedAction)
+	}
+	if closedAttempt.AttemptID != attempt.AttemptID || closedAttempt.Status != domainaction.AttemptStatusFailed {
+		t.Fatalf("closed attempt = %#v, want failed original attempt", closedAttempt)
+	}
+
+	reopenedAction, retryAttempt, err := manager.StartAttempt(ctx, action.ActionID, domainaction.AttemptStartReasonRetry)
+	if err != nil {
+		t.Fatalf("StartAttempt(retry) error = %v", err)
+	}
+	if reopenedAction.ActionID != action.ActionID || reopenedAction.Status != domainaction.StatusOpen || reopenedAction.CurrentAttemptID != retryAttempt.AttemptID {
+		t.Fatalf("reopened action = %#v, retry attempt = %#v", reopenedAction, retryAttempt)
+	}
+	if retryAttempt.AttemptID == attempt.AttemptID || retryAttempt.Status != domainaction.AttemptStatusRunning {
+		t.Fatalf("retry attempt = %#v, want new running attempt", retryAttempt)
+	}
+}
+
 func TestValidateToolAttemptRequiresOwnedCurrentActiveToolPair(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -356,6 +392,14 @@ type malformedPairStore struct {
 	actionmanager.Store
 	action  domainaction.Action
 	attempt domainaction.Attempt
+}
+
+func (s *malformedPairStore) Transaction(_ context.Context, _ func(actionmanager.Store) error) error {
+	return errors.New("transaction is not supported by malformed test store")
+}
+
+func (s *malformedPairStore) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
 }
 
 func (s *malformedPairStore) GetAction(context.Context, modulecore.ActionID) (domainaction.Action, error) {
@@ -567,11 +611,215 @@ func TestCompleteToolAttemptRejectsNilContext(t *testing.T) {
 	}
 }
 
+func TestCreateActionTransactionRollbackOnSecondSave(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "actions")
+	base, err := actionstore.NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	saveErr := errors.New("second save failed")
+	failing := &failSecondActionSaveStore{Store: base, failErr: saveErr}
+	manager := actionmanager.New(failing)
+	_, _, err = manager.CreateAction(context.Background(), actionmanager.CreateInput{
+		TaskID: modulecore.NewTaskID(),
+		RunID:  modulecore.NewRunID(),
+		Kind:   domainaction.KindTool,
+		Name:   "browser.click",
+	})
+	if !errors.Is(err, saveErr) {
+		t.Fatalf("CreateAction() error = %v, want %v", err, saveErr)
+	}
+
+	reopened, err := actionstore.NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	actions, err := reopened.ListActions(context.Background(), domainaction.Filter{})
+	if err != nil {
+		t.Fatalf("list actions after rollback: %v", err)
+	}
+	attempts, err := reopened.ListAttempts(context.Background(), domainaction.AttemptFilter{})
+	if err != nil {
+		t.Fatalf("list attempts after rollback: %v", err)
+	}
+	if len(actions) != 0 || len(attempts) != 0 {
+		t.Fatalf("failed transaction persisted actions=%d attempts=%d", len(actions), len(attempts))
+	}
+}
+
+func TestCreateActionStorageFailureLeavesActionStreamUnchanged(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "actions")
+	store, err := actionstore.NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	attemptPath := filepath.Join(root, "action_attempt.jsonl")
+	if err := os.Remove(attemptPath); err != nil {
+		t.Fatalf("remove attempt stream: %v", err)
+	}
+	if err := os.Mkdir(attemptPath, 0o700); err != nil {
+		t.Fatalf("replace attempt stream with directory: %v", err)
+	}
+	manager := actionmanager.New(store)
+	_, _, err = manager.CreateAction(context.Background(), actionmanager.CreateInput{
+		TaskID: modulecore.NewTaskID(),
+		RunID:  modulecore.NewRunID(),
+		Kind:   domainaction.KindTool,
+		Name:   "browser.click",
+	})
+	if err == nil {
+		t.Fatal("CreateAction() unexpectedly succeeded with invalid attempt stream")
+	}
+	actionData, err := os.ReadFile(filepath.Join(root, "action_state.jsonl"))
+	if err != nil {
+		t.Fatalf("read action stream: %v", err)
+	}
+	if len(actionData) != 0 {
+		t.Fatalf("partial commit: action stream contains %d bytes, want 0", len(actionData))
+	}
+}
+
+func TestCompleteAttemptAcrossManagersOnlyOneCommit(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join(t.TempDir(), "actions")
+	firstStore, err := actionstore.NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	firstManager := actionmanager.New(firstStore)
+	action, attempt, err := firstManager.CreateAction(context.Background(), actionmanager.CreateInput{
+		TaskID: modulecore.NewTaskID(),
+		RunID:  modulecore.NewRunID(),
+		Kind:   domainaction.KindTool,
+		Name:   "browser.click",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	secondStore, err := actionstore.NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("second store: %v", err)
+	}
+	secondManager := actionmanager.New(secondStore)
+
+	var wait sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, manager := range []*actionmanager.Manager{firstManager, secondManager} {
+		manager := manager
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			_, _, completeErr := manager.CompleteAttempt(
+				context.Background(),
+				action.ActionID,
+				attempt.AttemptID,
+				domainaction.AttemptStatusSucceeded,
+				domainaction.StatusSucceeded,
+				"done",
+			)
+			errs <- completeErr
+		}()
+	}
+	wait.Wait()
+	close(errs)
+
+	successes := 0
+	conflicts := 0
+	for completeErr := range errs {
+		if completeErr == nil {
+			successes++
+		} else if errors.Is(completeErr, actionmanager.ErrAttemptConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("unexpected completion error: %v", completeErr)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("completion results: successes=%d conflicts=%d, want one each", successes, conflicts)
+	}
+}
+
+type failSecondActionSaveStore struct {
+	actionmanager.Store
+	failErr error
+	saves   int
+}
+
+func (s *failSecondActionSaveStore) Transaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.Transaction(ctx, func(tx actionmanager.Store) error {
+		return callback(&failSecondActionSaveTx{Store: tx, owner: s})
+	})
+}
+
+func (s *failSecondActionSaveStore) ReadTransaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.ReadTransaction(ctx, callback)
+}
+
+type failSecondActionSaveTx struct {
+	actionmanager.Store
+	owner *failSecondActionSaveStore
+}
+
+func (s *failSecondActionSaveTx) SaveAction(ctx context.Context, value domainaction.Action) error {
+	return s.Store.SaveAction(ctx, value)
+}
+
+func (s *failSecondActionSaveTx) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
+	s.owner.saves++
+	if s.owner.saves == 1 {
+		return s.owner.failErr
+	}
+	return s.Store.SaveAttempt(ctx, value)
+}
+
+func (s *failSecondActionSaveTx) Transaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
+func (s *failSecondActionSaveTx) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
 type contextValueKey struct{}
 
 type contextObservingStore struct {
 	actionmanager.Store
 	values []string
+}
+
+func (s *contextObservingStore) Transaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.Transaction(ctx, func(tx actionmanager.Store) error {
+		return callback(&contextObservingTx{Store: tx, owner: s})
+	})
+}
+
+func (s *contextObservingStore) ReadTransaction(ctx context.Context, callback func(actionmanager.Store) error) error {
+	return s.Store.ReadTransaction(ctx, callback)
+}
+
+type contextObservingTx struct {
+	actionmanager.Store
+	owner *contextObservingStore
+}
+
+func (s *contextObservingTx) SaveAction(ctx context.Context, value domainaction.Action) error {
+	s.owner.recordContextValue(ctx)
+	return s.Store.SaveAction(ctx, value)
+}
+
+func (s *contextObservingTx) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
+	s.owner.recordContextValue(ctx)
+	return s.Store.SaveAttempt(ctx, value)
+}
+
+func (s *contextObservingTx) Transaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
+}
+
+func (s *contextObservingTx) ReadTransaction(_ context.Context, callback func(actionmanager.Store) error) error {
+	return callback(s)
 }
 
 func (s *contextObservingStore) SaveAction(ctx context.Context, value domainaction.Action) error {
