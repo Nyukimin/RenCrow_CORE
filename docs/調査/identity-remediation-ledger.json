@@ -3,7 +3,7 @@
   "kind": "engineering_evidence_projection",
   "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
   "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
-  "updated_at": "2026-09-08T03:46:38.443442+00:00",
+  "updated_at": "2026-09-08T04:14:41.411813+00:00",
   "status": "implementation_open",
   "operational_wip": "R1",
   "policy": {
@@ -68,6 +68,17 @@
           "Tmp/test-runtime/_identity-remediation/background-notification/receipt.json"
         ],
         "scope": "Create-only notification contract; referenced receipt records behavioral RED against old source and current GREEN/race. Actual Task owner fixture verifies queued Tasks, zero Runs and preserved Run admission capacity."
+      },
+      {
+        "subcheck_id": "test_runtime_layout_pruning",
+        "owner": "RenCrow_CORE",
+        "status": "receipt_authoritative",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/layout-probe/receipt.json",
+          "Tmp/test-runtime/_identity-remediation/layout-implementation/receipt.json"
+        ],
+        "scope": "Equivalent layout rejection with pre-descent ignored-directory pruning; prototype timing is not production acceptance. Final source validation uses procedure-full receipt.",
+        "plan_check_id": "identity_test_runtime_layout"
       }
     ],
     "canonical_full_receipt": "Tmp/test-runtime/_identity-remediation/full/receipt.json",
@@ -77,7 +88,13 @@
     "canonical_full_revision": "2981ee7",
     "canonical_full_scope": "All 20 canonical Linux checks passed for the frozen 26-file checkpoint. Later changes require impact-specific verification; no live deployment claim.",
     "lifecycle_full_receipt": "Tmp/test-runtime/_identity-remediation/lifecycle-full/receipt.json",
-    "lifecycle_full_result_authority": "Read the referenced frozen-source receipt; no cached result in this source-bound ledger."
+    "lifecycle_full_result_authority": "Read the referenced frozen-source receipt; no cached result in this source-bound ledger.",
+    "lifecycle_full_revision": "3c94c02",
+    "lifecycle_full_status": "passed",
+    "procedure_full_receipt": "Tmp/test-runtime/_identity-remediation/procedure-full/receipt.json",
+    "procedure_full_result_authority": "Read the referenced frozen-source receipt; no cached full result in this source-bound ledger.",
+    "procedure_check_plan": "Tmp/test-runtime/_identity-remediation/procedure-check-plan.json",
+    "procedure_check_plan_revision": "sha256:4fb556549f33567e110cd6e7bf5280d4b7ef98f3a372724aae3ceca6ce423b67"
   },
   "runtime_evidence": {
     "revision": "6c50fb81f77198b8c30fc46cf1b6cd2fa97f81e2",

@@ -2,6 +2,31 @@
   "version": 2,
   "steps": [
     {
+      "name": "test-runtime-layout",
+      "workingDirectory": ".",
+      "filePath": "pwsh",
+      "arguments": [
+        "-NoProfile",
+        "-File",
+        "scripts/runtime_layout_test.ps1"
+      ],
+      "testFiles": [
+        "scripts/runtime_layout_test.ps1"
+      ],
+      "tier": "fast",
+      "alwaysRun": true,
+      "impact": {
+        "paths": [
+          "scripts/test-local.ps1",
+          "scripts/runtime_layout_test.ps1"
+        ],
+        "packages": [],
+        "globalPaths": []
+      },
+      "resourceLocks": [],
+      "timeoutSeconds": 90
+    },
+    {
       "name": "test-impact-runner-contract",
       "workingDirectory": ".",
       "filePath": "python",

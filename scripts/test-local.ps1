@@ -65,14 +65,36 @@ function Assert-TestRuntimeLayout {
     # file below a normal-name runtime directory can become a package during
     # `go list ./...`. Never remove an unknown stale tree here: fail closed
     # and report the exact paths for an operator-owned cleanup decision.
-    $legacyGeneratedFiles = @(Get-ChildItem -LiteralPath $runtimeRoot -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object {
-        if ($_.Extension -ne ".go") {
-            return $false
+    $legacyGeneratedFiles = [Collections.Generic.List[object]]::new()
+    $pendingDirectories = [Collections.Generic.Stack[string]]::new()
+    $pendingDirectories.Push($runtimeRoot)
+    while ($pendingDirectories.Count -gt 0) {
+        $directory = $pendingDirectories.Pop()
+        $children = @(Get-ChildItem -LiteralPath $directory -Force -ErrorAction SilentlyContinue)
+        foreach ($child in $children) {
+            if ($child.PSIsContainer) {
+                if ($child.Name.StartsWith("_", [StringComparison]::Ordinal) -or $child.Name.StartsWith(".", [StringComparison]::Ordinal)) {
+                    continue
+                }
+                $isReparsePoint = (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+                if (-not $isReparsePoint -and $child.PSObject.Properties.Name -contains "LinkType") {
+                    $isReparsePoint = -not [string]::IsNullOrWhiteSpace([string]$child.LinkType)
+                }
+                if (-not $isReparsePoint) {
+                    $pendingDirectories.Push($child.FullName)
+                }
+                continue
+            }
+            if ($child.Extension -ne ".go") {
+                continue
+            }
+            $relative = $child.FullName.Substring($runtimeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+            $segments = $relative.Replace("\", "/").Split("/", [StringSplitOptions]::RemoveEmptyEntries)
+            if (-not ($segments | Where-Object { $_.StartsWith("_", [StringComparison]::Ordinal) -or $_.StartsWith(".", [StringComparison]::Ordinal) })) {
+                [void]$legacyGeneratedFiles.Add($child)
+            }
         }
-        $relative = $_.FullName.Substring($runtimeRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-        $segments = $relative.Replace("\", "/").Split("/", [StringSplitOptions]::RemoveEmptyEntries)
-        -not ($segments | Where-Object { $_.StartsWith("_", [StringComparison]::Ordinal) -or $_.StartsWith(".", [StringComparison]::Ordinal) })
-    })
+    }
     if ($legacyGeneratedFiles.Count -gt 0) {
         $reported = @($legacyGeneratedFiles | Select-Object -First 20 | ForEach-Object {
             $_.FullName.Substring($repoRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
@@ -140,6 +162,7 @@ function Test-IsTrackedTestFile([string]$RelativePath) {
         $fileName -match "_test\.py$" -or
         $fileName -match "^test_.*\.[cm]?js$" -or
         $fileName -match "(\.test|_test)\.[cm]?js$" -or
+        $fileName -match "_test\.ps1$" -or
         $fileName -match "_test\.sh$" -or
         $fileName -match "^test[-_].*\.sh$"
     )
