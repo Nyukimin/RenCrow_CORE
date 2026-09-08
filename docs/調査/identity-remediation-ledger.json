@@ -3,7 +3,7 @@
   "kind": "engineering_evidence_projection",
   "canonical_spec": "docs/architecture/identity/IDENTITY_CANONICAL.md",
   "baseline_source": "a2ca7001da4b158472a64ea1f78cae38a16f320e",
-  "updated_at": "2026-09-08T03:25:56.110548+00:00",
+  "updated_at": "2026-09-08T03:46:38.443442+00:00",
   "status": "implementation_open",
   "operational_wip": "R1",
   "policy": {
@@ -38,7 +38,7 @@
           "Tmp/test-runtime/_identity-remediation/action/green-finalize.log",
           "Tmp/test-runtime/_identity-remediation/action/race-finalize.log"
         ],
-        "scope": "Task/Action atomic rollback, lifecycle finalization and relevant race tests passed. Canonical Full planned; lifetime fence, migration/deploy/restart/actual Actor open."
+        "scope": "Task/Action atomic rollback, lifecycle finalization, relevant race tests and canonical Full passed. Lifetime fence, migration/deploy/restart/actual Actor remain open."
       },
       {
         "check_id": "identity_metadata_source",
@@ -48,10 +48,36 @@
           "Tmp/test-runtime/_identity-remediation/action/race-relevant.log"
         ],
         "scope": "PolicyRunner metadata source fix; runtime Worker registry wiring hypothesis refuted, regression test added."
+      },
+      {
+        "owner": "RenCrow_CORE",
+        "status": "related_tests_passed",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/run-completion/tdd.jsonl"
+        ],
+        "scope": "Exact Run/Actor/current writer completion CAS; stale callback rejection, waiting-resume and rollback verified. Producer wiring and lifetime external-effect fence remain open.",
+        "subcheck_id": "identity_run_completion_source",
+        "plan_check_id": "identity_owner_atomicity_source"
+      },
+      {
+        "subcheck_id": "background_notification_capacity",
+        "plan_check_id": "identity_owner_atomicity_source",
+        "owner": "RenCrow_CORE",
+        "status": "receipt_authoritative",
+        "evidence": [
+          "Tmp/test-runtime/_identity-remediation/background-notification/receipt.json"
+        ],
+        "scope": "Create-only notification contract; referenced receipt records behavioral RED against old source and current GREEN/race. Actual Task owner fixture verifies queued Tasks, zero Runs and preserved Run admission capacity."
       }
     ],
     "canonical_full_receipt": "Tmp/test-runtime/_identity-remediation/full/receipt.json",
-    "canonical_full_status": "pending"
+    "canonical_full_status": "passed",
+    "canonical_full_source_hash": "4061a9875bc29c11d9ffb47689c997c48467e37ce66eb979ac90f5a694aeb8ba",
+    "canonical_full_finished_at": "2026-09-08T03:44:35.632515522Z",
+    "canonical_full_revision": "2981ee7",
+    "canonical_full_scope": "All 20 canonical Linux checks passed for the frozen 26-file checkpoint. Later changes require impact-specific verification; no live deployment claim.",
+    "lifecycle_full_receipt": "Tmp/test-runtime/_identity-remediation/lifecycle-full/receipt.json",
+    "lifecycle_full_result_authority": "Read the referenced frozen-source receipt; no cached result in this source-bound ledger."
   },
   "runtime_evidence": {
     "revision": "6c50fb81f77198b8c30fc46cf1b6cd2fa97f81e2",
@@ -62,10 +88,18 @@
     "open_boundaries": [
       "Three historical running Task/Run pairs predate current service start; owner recovery and parallel capacity need restart acceptance.",
       "Action/Attempt streams were empty during live preflight; current source deployment is not proven.",
-      "Confirmed live blocker: 316 historical SuperAgent rows lack TaskID; startup recovery fails and retained running Tasks exhaust global capacity. Historical identity migration precedes deployment acceptance."
+      "Confirmed live blocker: 316 historical SuperAgent rows lack TaskID; startup recovery fails and retained running Tasks exhaust global capacity. Historical identity migration precedes deployment acceptance.",
+      "Source review confirms missing IdleChat Run finalization and premature Run creation for background failure notification; producer and actual executor boundaries must be corrected before live acceptance.",
+      "IdleChat stock persistence currently suppresses write errors. Producer wiring needs durable stock success, exact Run completion and checkpoint cleanup/recovery ordering; closing a Run alone is insufficient."
     ],
     "recovery_preflight": "Tmp/test-runtime/_identity-remediation/recovery-projection-preflight.json",
-    "legacy_actor_provenance": "Tmp/test-runtime/_identity-remediation/legacy-agent-event-provenance.json"
+    "legacy_actor_provenance": "Tmp/test-runtime/_identity-remediation/legacy-agent-event-provenance.json",
+    "user_provenance_constraint": {
+      "statement": "ChatGPTから取得した過去データの相手はすべてルミナ",
+      "scope": "Only provenance-confirmed ChatGPT imports",
+      "application": "Do not relabel CORE-generated run_lead records without import provenance",
+      "evidence": "Tmp/test-runtime/_identity-remediation/user-provenance-constraint.json"
+    }
   },
   "units": [
     {

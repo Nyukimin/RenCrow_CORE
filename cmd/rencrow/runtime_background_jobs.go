@@ -28,7 +28,6 @@ import (
 
 type backgroundFailureTaskOwner interface {
 	Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error)
-	StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error)
 }
 
 type backgroundJobFailureReporter struct {
@@ -64,7 +63,7 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 	job = normalizeBackgroundJobName(job)
 	errorText := compactBackgroundJobText(err.Error(), 600)
 	detail = compactBackgroundJobText(detail, 600)
-	taskID, runID := r.resolveFailureIdentity(job)
+	taskID := r.resolveFailureIdentity(job)
 	payload := map[string]string{
 		"job":            job,
 		"status":         "failed",
@@ -76,9 +75,6 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 	}
 	if !taskID.IsZero() {
 		payload["task_id"] = taskID.String()
-	}
-	if runID != "" {
-		payload["run_id"] = string(runID)
 	}
 	if detail != "" {
 		payload["detail"] = detail
@@ -94,9 +90,9 @@ func (r backgroundJobFailureReporter) failedWithTrace(traceID modulecore.TraceID
 	}
 }
 
-func (r backgroundJobFailureReporter) resolveFailureIdentity(job string) (modulecore.TaskID, modulecore.RunID) {
+func (r backgroundJobFailureReporter) resolveFailureIdentity(job string) modulecore.TaskID {
 	if r.owner == nil {
-		return "", ""
+		return ""
 	}
 	ctx := context.Background()
 	created, err := r.owner.Create(ctx, domaintask.Task{
@@ -106,14 +102,9 @@ func (r backgroundJobFailureReporter) resolveFailureIdentity(job string) (module
 	}, domaintask.SharedRoleContext{})
 	if err != nil {
 		log.Printf("[BackgroundJob] durable task creation failed job=%s: %v", job, err)
-		return "", ""
+		return ""
 	}
-	run, err := r.owner.StartRunWithReason(ctx, created.TaskID, domaintask.RunStartReasonFirst)
-	if err != nil {
-		log.Printf("[BackgroundJob] durable run start failed task=%s job=%s: %v", created.TaskID, job, err)
-		return created.TaskID, ""
-	}
-	return created.TaskID, run.RunID
+	return created.TaskID
 }
 
 func normalizeBackgroundJobName(job string) string {

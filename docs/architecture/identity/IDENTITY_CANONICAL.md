@@ -2163,6 +2163,12 @@ Test:
   回復は正規writerだけが行い、対象外file、内部破損、根拠のない切詰めを拒否する。
 - writer generationの単調増加と生存中のwriter排他を維持する。admissionは一つのsnapshot上で
   Task、Run、実Actor、writer generationを照合する。これだけで実行中の外部効果を停止したとは扱わない。
+- 障害通知で調査を依頼する段階ではqueued Taskだけを作成する。通知の送信者・宛先を実行Actorと
+  再解釈せず、実Actorの処理開始前にRunを発行しない。通知EventはTask-onlyとして保存する。
+- 非同期producerの完了は`CompleteRun`へ発行時のTaskID、RunID、actual assigneeを渡し、同じtransaction内で
+  current active Runとwriter generationを照合してからTask／Runを更新する。古いRunのcallback、
+  別Task、別Actor、旧writerの完了を拒否し、新しいRunを巻き込まない。機械的なcheckpoint再試行は
+  非空reason付きwaitingとしてRunを閉じ、再開時に新しいRunを発行する。人の判断待ちは作らない。
 - downstream queue／leaseのCAS失敗で発行済みRunを閉じる`InterruptRun`は、そのRunだけを終端化し、
   Taskを変更しない。Taskがrunningなら常にactive Runが存在する、という別の不変条件は導入しない。
 
