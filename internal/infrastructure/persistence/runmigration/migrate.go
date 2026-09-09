@@ -40,13 +40,14 @@ type Options struct {
 }
 
 type Receipt struct {
-	SchemaVersion   string            `json:"schema_version"`
-	Status          string            `json:"status"`
-	InventorySHA256 string            `json:"inventory_sha256"`
-	Inputs          map[string]string `json:"inputs"`
-	Outputs         map[string]string `json:"outputs"`
-	Counts          map[string]int    `json:"counts"`
-	ErrorCode       string            `json:"error_code,omitempty"`
+	SchemaVersion    string            `json:"schema_version"`
+	Status           string            `json:"status"`
+	QuarantineMarker string            `json:"quarantine_marker,omitempty"`
+	InventorySHA256  string            `json:"inventory_sha256"`
+	Inputs           map[string]string `json:"inputs"`
+	Outputs          map[string]string `json:"outputs"`
+	Counts           map[string]int    `json:"counts"`
+	ErrorCode        string            `json:"error_code,omitempty"`
 }
 
 func digest(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
@@ -65,8 +66,11 @@ func Run(ctx context.Context, o Options) (r Receipt, err error) {
 	if err = ctx.Err(); err != nil {
 		return r, err
 	}
-	if o.Mode != "dry-run" && o.Mode != "apply" {
-		return r, errors.New("mode must be dry-run or apply")
+	if o.Mode != "dry-run" && o.Mode != "apply" && o.Mode != "quarantine" && o.Mode != "quarantine-apply" {
+		return r, errors.New("mode must be dry-run, apply, quarantine, or quarantine-apply")
+	}
+	if o.Mode == "quarantine" || o.Mode == "quarantine-apply" {
+		r.QuarantineMarker = "retain_and_quarantine/v1"
 	}
 	if o.Inventory.SchemaVersion != Schema || o.Inventory.SnapshotAt.IsZero() {
 		return r, errors.New("invalid inventory header")
@@ -123,7 +127,7 @@ func Run(ctx context.Context, o Options) (r Receipt, err error) {
 	}
 	r.InventorySHA256 = digest(encoded)
 	r.Inputs = o.Inventory.Files
-	outputs, counts, e := buildCohort(ctx, o.Inventory, input)
+	outputs, counts, e := buildCohort(ctx, o.Inventory, input, o.Mode)
 	if e != nil {
 		return r, e
 	}
@@ -144,8 +148,18 @@ func Run(ctx context.Context, o Options) (r Receipt, err error) {
 		r.Status = "ready"
 		return r, nil
 	}
-	if o.Expected == nil || o.Expected.SchemaVersion != Schema || o.Expected.Status != "ready" || o.Expected.ErrorCode != "" {
+	if o.Mode == "quarantine" {
+		r.Status = "quarantined"
+		return r, nil
+	}
+	if o.Expected == nil || o.Expected.SchemaVersion != Schema || o.Expected.ErrorCode != "" {
+		return r, errors.New("apply requires a valid planning receipt")
+	}
+	if o.Mode == "apply" && (o.Expected.Status != "ready" || o.Expected.QuarantineMarker != "") {
 		return r, errors.New("apply requires a ready dry-run receipt")
+	}
+	if o.Mode == "quarantine-apply" && (o.Expected.Status != "quarantined" || o.Expected.QuarantineMarker != "retain_and_quarantine/v1" || o.Expected.Counts["quarantined_events"] == 0 || o.Expected.Counts["quarantined_task_ids"] == 0) {
+		return r, errors.New("quarantine apply requires an exact non-empty quarantine receipt")
 	}
 	expected := *o.Expected
 	actual := r

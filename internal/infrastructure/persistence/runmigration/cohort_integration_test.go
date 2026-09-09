@@ -211,7 +211,7 @@ func TestMigrationRejectsUnknownActorInUnreferencedCanonicalRun(t *testing.T) {
 	}
 	run.Assignee = "worker"
 	input[inv.Roles["runs"]] = marshalLine(run)
-	if _, _, err := buildCohort(context.Background(), inv, input); err == nil {
+	if _, _, err := buildCohort(context.Background(), inv, input, "dry-run"); err == nil {
 		t.Fatal("mechanism identity in unreferenced canonical Run accepted")
 	}
 }

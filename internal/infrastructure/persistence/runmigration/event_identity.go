@@ -9,6 +9,8 @@ import (
 	core "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+var errOrphanEventTask = errors.New("orphan Event Task")
+
 // Event identity is projected from the execution owner, never from a mechanism
 // label. In particular a child event belongs to the child's Run and Task.
 func (c *cohort) bindEventIdentity(e *core.EventEnvelope) error {
@@ -52,8 +54,28 @@ func (c *cohort) bindEventIdentity(e *core.EventEnvelope) error {
 			for _, key := range []string{"run_id", "run_reference"} {
 				if raw, exists := e.Payload[key]; exists {
 					value, ok := raw.(string)
-					if !ok || value == "" {
+					if !ok {
 						return errors.New("invalid Event execution reference")
+					}
+					if value == "" {
+						if key != "run_reference" || !strings.HasPrefix(e.EventType, "run_queue.") {
+							return errors.New("invalid Event execution reference")
+						}
+						queue, ok := e.Payload["queue_reference"].(string)
+						if !ok || queue == "" {
+							return errors.New("invalid Event execution reference")
+						}
+						id, err := core.NewMigrationID(core.CanonicalQueueItemID, "run_queue", "queue_item_id", queue)
+						if err != nil {
+							return err
+						}
+						value, err = c.provenQueueRun(id, value)
+						if err != nil || value == "" {
+							if err != nil {
+								return err
+							}
+							return errors.New("invalid Event execution reference")
+						}
 					}
 					if key == "run_reference" && strings.HasPrefix(e.EventType, "run_queue.") {
 						if queue, ok := e.Payload["queue_reference"].(string); ok && queue != "" {
@@ -116,7 +138,7 @@ func (c *cohort) bindEventIdentity(e *core.EventEnvelope) error {
 	}
 	if e.TaskID != "" {
 		if _, ok := c.tasks[e.TaskID]; !ok {
-			return errors.New("orphan Event Task")
+			return errOrphanEventTask
 		}
 	}
 	return nil

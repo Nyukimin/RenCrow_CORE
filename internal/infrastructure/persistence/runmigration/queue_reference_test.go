@@ -38,6 +38,72 @@ func TestMigrationLegacyQueueReferenceUsesExactTrace(t *testing.T) {
 	}
 }
 
+func TestMigrationLegacyQueueReferenceRestoresExplicitEmptyRunReference(t *testing.T) {
+	f := newFullCohortFixture(t)
+	queueID := addLegacyQueueReferenceFixture(t, &f, false)
+	path := filepath.Join(f.options.Snapshot, "events.sqlite")
+	db := openMigrationFixtureDB(t, path)
+	var eventID, raw string
+	if err := db.QueryRow(`SELECT event_id, envelope_json FROM event_envelope WHERE event_type = 'run_queue.claimed'`).Scan(&eventID, &raw); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["payload"], &payload); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	payload["run_reference"] = json.RawMessage(`""`)
+	encodedPayload, err := json.Marshal(payload)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	envelope["payload"] = encodedPayload
+	mutated, err := json.Marshal(envelope)
+	if err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER event_envelope_append_only_update`); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE event_envelope SET envelope_json = ? WHERE event_id = ?`, string(mutated), eventID); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	closeMigrationFixtureDB(t, db)
+	refreshFixtureHash(t, &f.options, "events.sqlite")
+
+	r, err := Run(context.Background(), f.options)
+	if err != nil || r.Status != "ready" {
+		t.Fatalf("empty run_reference receipt = %#v err=%v", r, err)
+	}
+	f.options.Mode, f.options.Expected = "apply", &r
+	if applied, err := Run(context.Background(), f.options); err != nil || applied.Status != "applied" {
+		t.Fatalf("empty run_reference apply = %#v err=%v", applied, err)
+	}
+	out := openMigrationFixtureDB(t, filepath.Join(f.options.Target, "superagent.sqlite"))
+	defer out.Close()
+	var queuePayload string
+	if err := out.QueryRow(`SELECT payload FROM run_queue WHERE queue_item_id = ?`, queueID).Scan(&queuePayload); err != nil {
+		t.Fatal(err)
+	}
+	var item super.RunQueueItem
+	if err := json.Unmarshal([]byte(queuePayload), &item); err != nil {
+		t.Fatal(err)
+	}
+	if item.RunID != f.runID || item.TaskID != f.taskID {
+		t.Fatalf("queue owner = %#v", item)
+	}
+}
+
 func TestMigrationLegacyQueueReferenceRejectsAmbiguousTrace(t *testing.T) {
 	f := newFullCohortFixture(t)
 	addLegacyQueueReferenceFixture(t, &f, true)

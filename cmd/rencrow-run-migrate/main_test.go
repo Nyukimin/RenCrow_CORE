@@ -85,3 +85,15 @@ func TestCommandHelpAndUnknownFlag(t *testing.T) {
 		t.Fatalf("unknown flag exit=%d", code)
 	}
 }
+
+func TestCommandRejectsReceiptForWrongMode(t *testing.T) {
+	root := t.TempDir()
+	receipt := filepath.Join(root, "receipt.json")
+	if err := os.WriteFile(receipt, []byte(`{"schema_version":"rencrow.identity.run-migration/v1","status":"quarantined"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--mode", "dry-run", "--quarantine-receipt", receipt}, &out, &stderr); code != 2 {
+		t.Fatalf("wrong-mode receipt exit=%d stderr=%s", code, stderr.String())
+	}
+}

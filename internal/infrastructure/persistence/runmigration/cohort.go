@@ -26,6 +26,7 @@ type cohort struct {
 	counts            map[string]int
 	queueReferences   map[string]string
 	legacyTraceEvents map[core.EventID]legacyTraceRow
+	quarantine        bool
 }
 
 func strictJSON(b []byte, v any) error {
@@ -96,8 +97,12 @@ func jsonLines(b []byte) [][]byte {
 }
 func marshalLine(v any) []byte { b, _ := json.Marshal(v); return append(b, '\n') }
 
-func buildCohort(ctx context.Context, inventory Inventory, input map[string][]byte) (map[string][]byte, map[string]int, error) {
-	c := &cohort{inventory: inventory, tasks: map[core.TaskID]domaintask.Task{}, runs: map[core.RunID]domaintask.Run{}, canonicalRuns: map[core.RunID]bool{}, bindings: map[string]core.RunID{}, rawRuns: map[string][]core.RunID{}, counts: map[string]int{}}
+func buildCohort(ctx context.Context, inventory Inventory, input map[string][]byte, mode string) (map[string][]byte, map[string]int, error) {
+	c := &cohort{inventory: inventory, tasks: map[core.TaskID]domaintask.Task{}, runs: map[core.RunID]domaintask.Run{}, canonicalRuns: map[core.RunID]bool{}, bindings: map[string]core.RunID{}, rawRuns: map[string][]core.RunID{}, counts: map[string]int{}, quarantine: mode == "quarantine" || mode == "quarantine-apply"}
+	if c.quarantine {
+		c.counts["quarantined_events"] = 0
+		c.counts["quarantined_task_ids"] = 0
+	}
 	data := func(role string) []byte { return input[inventory.Roles[role]] }
 	for _, line := range jsonLines(data("tasks")) {
 		var t domaintask.Task

@@ -618,6 +618,7 @@ func (c *cohort) transformEvents(ctx context.Context, d *databaseInput) ([]byte,
 	}
 	var events []core.EventEnvelope
 	var ids []core.EventID
+	quarantinedTasks := map[core.TaskID]struct{}{}
 	rawEnvelopes := map[core.EventID][]byte{}
 	for rows.Next() {
 		var id core.EventID
@@ -657,10 +658,16 @@ func (c *cohort) transformEvents(ctx context.Context, d *databaseInput) ([]byte,
 			return nil, e
 		}
 		if e = c.bindEventIdentity(&event); e != nil {
+			if c.quarantine && errors.Is(e, errOrphanEventTask) {
+				quarantinedTasks[event.TaskID] = struct{}{}
+				c.counts["quarantined_events"]++
+				continue
+			}
 			return nil, fmt.Errorf("Event %s identity: %w", id, e)
 		}
 		events = append(events, event)
 	}
+	c.counts["quarantined_task_ids"] = len(quarantinedTasks)
 	dependencyRows, e := d.db.QueryContext(ctx, "SELECT event_id,dependency_event_id,relation_type FROM event_dependency")
 	if e != nil {
 		return nil, e

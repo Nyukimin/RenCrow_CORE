@@ -2296,6 +2296,17 @@ Run終了時刻を変更しない。生成主体・Episode・Task・作成日時
 異なる既存出力、symlink、hardlink、SQLite sidecar、未知field、重複JSON key、曖昧joinを拒否する。
 receiptは標準出力のJSONであり、本文やcredentialを含めない。
 
+孤児Event Taskを含む既存snapshotを隔離付きで投影する場合だけ、`--mode quarantine`を使用できる。
+このmodeは入力snapshotのbytesを保持し、exactな`orphan Event Task`だけをcanonical output候補から除外し、
+除外Event数と一意なTask ID数をreceiptの`quarantined_events`／`quarantined_task_ids`へ記録する。
+receipt statusは`quarantined`、markerは`retain_and_quarantine/v1`とし、このphaseでは出力を公開しない。
+`--mode quarantine-apply --quarantine-receipt ...`は同じsnapshotから再計算した入力hash、出力hash、全件数、
+markerが完全一致し、隔離Event数とTask ID数がともにzeroでない場合だけfresh offline cohortを一括公開する。
+通常の`apply`はquarantine receiptを受理せず、`quarantine-apply`は通常の`ready` receiptを受理しない。
+Task／Run／Actorを生成せず、Task IDを空にせず、他のschema・identity・dependency errorは引き続き
+fail closedとする。production cutoverでこのcohortを採用する場合は、元snapshotとquarantine receiptを
+復旧artifactとして保持し、隔離markerと件数をcutover receiptへ束縛する。
+
 入力は1file 256 MiB、合計1 GiB以内の専用snapshotとし、出力parentも専用にする。
 公開lockは同じ契約を使うpublisher間の排他であり、無関係なprocessによるdirectory差替えの
 防御保証ではない。非終端queue、後継Run未照合のcheckpoint、Event payload内の旧実行参照、

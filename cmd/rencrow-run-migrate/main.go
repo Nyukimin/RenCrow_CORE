@@ -17,15 +17,20 @@ func main() { os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stder
 func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 	f := flag.NewFlagSet("rencrow-run-migrate", flag.ContinueOnError)
 	f.SetOutput(errOut)
-	mode := f.String("mode", "dry-run", "dry-run or apply (offline output only)")
+	mode := f.String("mode", "dry-run", "dry-run, apply, quarantine, or quarantine-apply (offline output only)")
 	snapshot := f.String("snapshot", "", "dedicated immutable snapshot directory")
 	target := f.String("output", "", "fresh offline cohort directory")
 	inventory := f.String("inventory", "", "strict source inventory JSON outside snapshot")
 	prior := f.String("dry-run-receipt", "", "ready receipt required by apply")
+	quarantinePrior := f.String("quarantine-receipt", "", "quarantined receipt required by quarantine-apply")
 	if e := f.Parse(args); e != nil {
 		return 2
 	}
 	if f.NArg() != 0 {
+		return 2
+	}
+	if (*prior != "" && *quarantinePrior != "") || (*prior != "" && *mode != "apply") || (*quarantinePrior != "" && *mode != "quarantine-apply") {
+		fmt.Fprintln(errOut, "receipt flag does not match mode")
 		return 2
 	}
 	var inv migration.Inventory
@@ -38,6 +43,14 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		var r migration.Receipt
 		if e := readJSON(*prior, &r); e != nil {
 			fmt.Fprintln(errOut, "invalid dry-run receipt")
+			return 2
+		}
+		o.Expected = &r
+	}
+	if *quarantinePrior != "" {
+		var r migration.Receipt
+		if e := readJSON(*quarantinePrior, &r); e != nil {
+			fmt.Fprintln(errOut, "invalid quarantine receipt")
 			return 2
 		}
 		o.Expected = &r
