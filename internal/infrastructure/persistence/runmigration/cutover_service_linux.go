@@ -50,10 +50,13 @@ func (s *linuxRunCutoverService) StopAndVerify(ctx context.Context, expectedRunt
 		!strings.Contains(state["ExecStart"], s.installedRuntime) {
 		return RunCutoverServiceEvidence{}, runCutoverFailure{"service_running"}
 	}
-	// A production cohort can take minutes to materialize. Accept the same fixed
-	// owner when the operator has already runtime-masked and stopped it, so the
-	// snapshot-to-cutover window never reopens a writer.
+	// A production cohort can take minutes to materialize. The operator may
+	// unmask, without starting, after capture so systemd exposes the fixed unit
+	// identity again. Re-mask that inactive owner without reopening the writer.
 	if state["ActiveState"] != "active" && positiveInt(state["MainPID"]) == 0 {
+		if _, maskErr := runCutoverCommandOutput(ctx, runCutoverSystemctl, "--user", "mask", "--runtime", runCutoverUnit); maskErr != nil {
+			return RunCutoverServiceEvidence{}, runCutoverFailure{"service_mask"}
+		}
 		evidence, stoppedErr := s.stoppedEvidence(ctx, expectedRuntimeSHA256)
 		if stoppedErr == nil && evidence.valid(expectedRuntimeSHA256) {
 			return evidence, nil

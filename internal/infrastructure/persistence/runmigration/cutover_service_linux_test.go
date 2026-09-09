@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,7 +79,7 @@ func TestLinuxRunCutoverServiceUsesFixedOwnerLifecycle(t *testing.T) {
 	}
 }
 
-func TestLinuxRunCutoverServiceAcceptsAlreadyRuntimeMaskedOwner(t *testing.T) {
+func TestLinuxRunCutoverServiceRemasksInactiveVerifiedOwner(t *testing.T) {
 	root := t.TempDir()
 	runtimePath := filepath.Join(root, "rencrow")
 	configPath := filepath.Join(root, "core.yaml")
@@ -103,6 +104,8 @@ func TestLinuxRunCutoverServiceAcceptsAlreadyRuntimeMaskedOwner(t *testing.T) {
 		switch args[1] {
 		case "show":
 			return "Id=rencrow.service\nLoadState=loaded\nActiveState=inactive\nMainPID=0\nExecStart=" + runtimePath + " run\n", nil
+		case "mask":
+			return "", nil
 		case "is-enabled":
 			return "masked-runtime\n", errors.New("masked-runtime")
 		default:
@@ -114,9 +117,12 @@ func TestLinuxRunCutoverServiceAcceptsAlreadyRuntimeMaskedOwner(t *testing.T) {
 	if err != nil || !evidence.valid(expected) {
 		t.Fatalf("stopped evidence = %#v err=%v", evidence, err)
 	}
+	if !slices.Contains(commands, runCutoverSystemctl+" --user mask --runtime rencrow.service") {
+		t.Fatalf("inactive owner was not remasked: %#v", commands)
+	}
 	for _, command := range commands {
-		if strings.Contains(command, " mask ") || strings.Contains(command, " stop ") {
-			t.Fatalf("already stopped owner was mutated: %s", command)
+		if strings.Contains(command, " stop ") {
+			t.Fatalf("inactive owner was stopped again: %s", command)
 		}
 	}
 }
