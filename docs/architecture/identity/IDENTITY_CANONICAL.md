@@ -2326,6 +2326,11 @@ manifest、旧／新13 fileのSHA-256、隔離markerと件数、service停止、
 本文、credential、個別IDを含めない。Windows／macOSで固定service ownerが未実装の場合はfail closedの
 `service_owner_unavailable`を返し、file操作を開始しない。
 
+cohort生成中もwriter停止を維持するproduction手順では、同じ固定serviceがruntime mask済み、inactive、
+MainPID zero、port 18790 listener zero、installed runtime／active config一致であることをowner CLIが
+再検証できた場合に限り、その停止状態を受理する。cohort生成のため旧runtimeを一度再開する手順は、
+startup writerによるactive driftを生むため使用しない。
+
 #### Step 10 Failure Knowledge: 稼働継続後の古いcohort cutover
 
 - **Failure / Problem:** writerを再開した後も以前のsnapshotから作ったcohortをproductionへ適用すると、

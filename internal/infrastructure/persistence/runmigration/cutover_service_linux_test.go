@@ -77,3 +77,46 @@ func TestLinuxRunCutoverServiceUsesFixedOwnerLifecycle(t *testing.T) {
 		t.Fatalf("commands = %#v", commands)
 	}
 }
+
+func TestLinuxRunCutoverServiceAcceptsAlreadyRuntimeMaskedOwner(t *testing.T) {
+	root := t.TempDir()
+	runtimePath := filepath.Join(root, "rencrow")
+	configPath := filepath.Join(root, "core.yaml")
+	if err := os.WriteFile(runtimePath, []byte("runtime"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("config"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, err := newRunCutoverService(runtimePath, configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCommand := runCutoverCommandOutput
+	t.Cleanup(func() { runCutoverCommandOutput = oldCommand })
+	var commands []string
+	runCutoverCommandOutput = func(_ context.Context, name string, args ...string) (string, error) {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		if name == runCutoverSS {
+			return "", nil
+		}
+		switch args[1] {
+		case "show":
+			return "Id=rencrow.service\nLoadState=loaded\nActiveState=inactive\nMainPID=0\nExecStart=" + runtimePath + " run\n", nil
+		case "is-enabled":
+			return "masked-runtime\n", errors.New("masked-runtime")
+		default:
+			return "", errors.New("unexpected mutation")
+		}
+	}
+	expected := digest([]byte("runtime"))
+	evidence, err := service.StopAndVerify(context.Background(), expected, configPath)
+	if err != nil || !evidence.valid(expected) {
+		t.Fatalf("stopped evidence = %#v err=%v", evidence, err)
+	}
+	for _, command := range commands {
+		if strings.Contains(command, " mask ") || strings.Contains(command, " stop ") {
+			t.Fatalf("already stopped owner was mutated: %s", command)
+		}
+	}
+}

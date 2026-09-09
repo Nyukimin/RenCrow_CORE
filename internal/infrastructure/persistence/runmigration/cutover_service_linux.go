@@ -46,8 +46,21 @@ func (s *linuxRunCutoverService) StopAndVerify(ctx context.Context, expectedRunt
 		return RunCutoverServiceEvidence{}, runCutoverFailure{"active_config"}
 	}
 	state, err := s.show(ctx)
-	if err != nil || state["Id"] != runCutoverUnit || state["LoadState"] != "loaded" || state["ActiveState"] != "active" ||
-		!strings.Contains(state["ExecStart"], s.installedRuntime) || positiveInt(state["MainPID"]) == 0 {
+	if err != nil || state["Id"] != runCutoverUnit || state["LoadState"] != "loaded" ||
+		!strings.Contains(state["ExecStart"], s.installedRuntime) {
+		return RunCutoverServiceEvidence{}, runCutoverFailure{"service_running"}
+	}
+	// A production cohort can take minutes to materialize. Accept the same fixed
+	// owner when the operator has already runtime-masked and stopped it, so the
+	// snapshot-to-cutover window never reopens a writer.
+	if state["ActiveState"] != "active" && positiveInt(state["MainPID"]) == 0 {
+		evidence, stoppedErr := s.stoppedEvidence(ctx, expectedRuntimeSHA256)
+		if stoppedErr == nil && evidence.valid(expectedRuntimeSHA256) {
+			return evidence, nil
+		}
+		return RunCutoverServiceEvidence{}, runCutoverFailure{"service_stopped"}
+	}
+	if state["ActiveState"] != "active" || positiveInt(state["MainPID"]) == 0 {
 		return RunCutoverServiceEvidence{}, runCutoverFailure{"service_running"}
 	}
 	if _, err := runCutoverCommandOutput(ctx, runCutoverSystemctl, "--user", "mask", "--runtime", runCutoverUnit); err != nil {
@@ -114,7 +127,8 @@ func (s *linuxRunCutoverService) stoppedEvidence(ctx context.Context, expected s
 		return RunCutoverServiceEvidence{}, err
 	}
 	maskedOutput, err := runCutoverCommandOutput(ctx, runCutoverSystemctl, "--user", "is-enabled", runCutoverUnit)
-	if err == nil || strings.TrimSpace(maskedOutput) != "masked" {
+	maskedState := strings.TrimSpace(maskedOutput)
+	if err == nil || (maskedState != "masked" && maskedState != "masked-runtime") {
 		return RunCutoverServiceEvidence{}, runCutoverFailure{"service_stopped"}
 	}
 	listeners, err := runCutoverCommandOutput(ctx, runCutoverSS, "-H", "-ltnp", "sport", "=", ":18790")
