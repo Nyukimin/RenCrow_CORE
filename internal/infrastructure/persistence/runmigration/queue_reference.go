@@ -92,14 +92,10 @@ func (c *cohort) restoreLegacyQueueReference(m map[string]json.RawMessage) error
 		return nil
 	}
 	reference := textField(m, "run_id")
-	if proven := c.queueReferences[textField(m, "queue_item_id")]; proven != "" {
-		// The former scheduler also stored its input job key in run_id, while
-		// the old LeadAgent recorder emitted run_lead_<that exact input>.
-		inputKey, legacyLead := strings.CutPrefix(proven, "run_lead_")
-		if reference != "" && reference != proven && (!legacyLead || inputKey != reference) {
-			return errors.New("queue execution reference conflicts with Trace")
-		}
-		reference = proven
+	var err error
+	reference, err = c.provenQueueRun(textField(m, "queue_item_id"), reference)
+	if err != nil {
+		return err
 	}
 	if reference == "" {
 		return errors.New("legacy queue has no proven execution reference")
@@ -112,4 +108,17 @@ func (c *cohort) restoreLegacyQueueReference(m map[string]json.RawMessage) error
 	// Use the canonical owner Run's declared reason, not the queue action label.
 	setField(m, "run_start_reason", run.StartReason)
 	return nil
+}
+
+func (c *cohort) provenQueueRun(queueID, reference string) (string, error) {
+	if proven := c.queueReferences[queueID]; proven != "" {
+		// The former scheduler also stored its input job key in run_id, while
+		// the old LeadAgent recorder emitted run_lead_<that exact input>.
+		inputKey, legacyLead := strings.CutPrefix(proven, "run_lead_")
+		if reference != "" && reference != proven && (!legacyLead || inputKey != reference) {
+			return "", errors.New("queue execution reference conflicts with Trace")
+		}
+		reference = proven
+	}
+	return reference, nil
 }

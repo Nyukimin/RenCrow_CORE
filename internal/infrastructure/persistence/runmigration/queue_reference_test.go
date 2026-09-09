@@ -49,13 +49,14 @@ func TestMigrationLegacyQueueReferenceRejectsAmbiguousTrace(t *testing.T) {
 func TestMigrationLegacyQueueReferenceIgnoresUnrelatedMultiRunTrace(t *testing.T) {
 	f := newFullCohortFixture(t)
 	addLegacyQueueReferenceFixture(t, &f, false)
+	_, successor := addCanonicalAgentRun(t, &f)
 	store, err := eventstore.NewSQLiteStore(filepath.Join(f.options.Snapshot, "events.sqlite"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	at := f.options.Inventory.SnapshotAt.Add(-time.Minute)
-	first := core.NewRootEventEnvelope("superagent", "lead_agent.started", at, map[string]any{"run_reference": "unrelated-first"})
-	next := core.NewRootEventEnvelope("superagent", "lead_agent.started", at, map[string]any{"run_reference": "unrelated-successor"})
+	first := core.NewRootEventEnvelope("superagent", "lead_agent.started", at, map[string]any{"run_reference": string(f.runID)})
+	next := core.NewRootEventEnvelope("superagent", "lead_agent.started", at, map[string]any{"run_reference": string(successor)})
 	next.TraceID = first.TraceID
 	if err = store.AppendBatch(context.Background(), []core.EventEnvelope{first, next}); err != nil {
 		t.Fatal(err)

@@ -2217,6 +2217,46 @@ architecture testは移行packageのimportをこのCLIと移行package内部だ�
 はowner SQLite、`word / forecast / checkpoints`はowner JSON、`story / dialogue`はowner JSONLとする。
 未対応の旧schemaや意味不明な帰属を自動推定せず`blocked`にする。
 
+Inventoryには、必要な履歴復元だけを明示する任意宣言を追加できる。`story_actors`は
+legacy Storyの`generation_id`から、検証済みの実CORE Agentへの帰属を一対一で宣言する。
+この宣言はlegacy Story generation rowだけで消費し、`reader`、`listener`、日付、親Task、本文、
+producerやmodelからActorを推測しない。各keyは実在するlegacy Story rowに一度以上一致しなければならず、
+欠落、未知Actor、競合、未使用key、既存canonical Story／Runの再割当は拒否する。Storyの出力schemaへ
+`initiated_by`を注入せず、receiptには消費したunique declaration数を記録する。
+
+`legacy_run_actors`は、既存Eventのtop-level旧`run_id`から検証済み実CORE Agentへの帰属を宣言する。
+この宣言を使えるのは同一旧LeadAgent Runの開始Eventとterminal Eventが完全なpairとして存在し、
+同じidentity、Agent、開始・完了時刻、終端状態を検証できる場合だけである。既存canonical Runの
+ownerを上書きせず、pair欠落、unknown、mismatch、duplicate、unused declarationはfail closedにする。
+`legacy_trace_source`は、`Files`でSHA-256を宣言したsnapshot内の相対path一つを指し、`Roles`の
+別名やrole pathの再利用を許さない。旧trace JSONLは既存Step 02 `ConvertLegacyEvents`で再変換し、
+`EventSeq`以外の全EventEnvelopeが一致することを確認してから受理する。旧子IDは保存された正確な
+`CreatedAt`とproducer形式からだけActorを復元し、complete child start／terminal pairとparent Taskを
+必須とする。子Eventは親ではなく子Task／Runへ帰属し、queue job keyは同じTraceにある既存の厳密な
+queue／execution証拠だけで解決する。
+
+既知のnon-production単発`ai_workflow/owner_route_e2e`記録の旧`run_id`は、Step 02のexact source
+mapping、Agent、同一created／completed日時、complete statusを全て確認できる場合だけ
+`audit_reference`へ束縛する。架空のRunを生成せず、条件不足はunknownとして拒否する。全ての
+unknown、mismatch、unused declarationを拒否し、receiptにはStory declaration、LeadAgent pair、
+child pair、照合したqueue reference、audit referenceの各件数を含める。これらの任意宣言もInventory
+JSONとhash、dry-run／apply／noopのreceipt比較へ含め、runtimeのlegacy lookupやdual writeを作らない。
+
+#### Step 10 Failure Knowledge: offline Inventoryの帰属Evidence不足
+
+- **Failure:** source testだけを通したまま実data conversionを可能と判断し、retired originalと
+  attribution不足を後段で発見した。
+- **Problem:** Story、旧LeadAgent Event、child Event、queue、audit記録の帰属が推定や別recordの
+  文字列に依存し、Canonical Run／Task／Actorの証拠鎖とreceipt件数が一致しなかった。
+- **Cause:** actual snapshotの完全性、旧trace再変換、開始／終端pair、childの正確な時刻、既存
+  canonical ownerをFull前にpreflightしなかった。
+- **Lesson / Invariant:** source snapshot、旧Event、Task／Run、実Actor、変換結果は同じhash-bound
+  planで結び、明示されたexact Evidence以外の帰属を作らない。retired originalはrollback Evidenceとして
+  保持し、runtimeへ旧lookupを戻さない。
+- **Enforcement / Tests:** Full前にInventory／Files hash、optional declarationのexact key set、
+  pair／parent／queue／audit条件、Step 02変換後Envelope一致、canonical owner非上書き、receipt countsを
+  preflightする。欠落・不一致・未使用は`blocked`とし、focused source testだけでreadyを宣言しない。
+
 旧CORE subagent ownerが生成した`sub_<Agent名>_<CreatedAtのUnixNano>`は、
 producer種別が`Subagent`、Agent名が現行CORE Agentの閉集合、ID全体と保存日時が厳密一致する
 場合だけ、欠落した子実行Actorの復元証拠にできる。これは旧producerの決定的な形式の解読であり、

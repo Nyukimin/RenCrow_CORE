@@ -16,8 +16,9 @@ type legacyIdleRevision struct {
 // Bind that historical execution once, after reading its production history.
 // Playback updates do not move execution completion; canonical Runs are never
 // reinterpreted from projections. Every original artifact row is still emitted.
-func (c *cohort) prepareIdleHistory(b []byte) error {
+func (c *cohort) prepareIdleHistory(role string, b []byte) error {
 	latest := map[string]legacyIdleRevision{}
+	consumedActors := map[string]bool{}
 	var order []string
 	for _, line := range jsonLines(b) {
 		var m map[string]json.RawMessage
@@ -31,7 +32,19 @@ func (c *cohort) prepareIdleHistory(b []byte) error {
 		if textField(m, "run_id") != "" {
 			return errors.New("multiple execution identity fields")
 		}
-		current := legacyIdleRevision{episode: textField(m, "episode_id"), actor: textField(m, "initiated_by"), task: textField(m, "task_id"), status: textField(m, "production_status"), created: timeField(m, "created_at"), updated: timeField(m, "updated_at")}
+		actor := textField(m, "initiated_by")
+		if role == "story" {
+			declared, ok := c.inventory.StoryActors[id]
+			if !ok {
+				return errors.New("legacy Story actor attribution missing")
+			}
+			if validateMigrationActor(declared) != nil {
+				return errors.New("unknown legacy Story actor")
+			}
+			actor = declared
+			consumedActors[id] = true
+		}
+		current := legacyIdleRevision{episode: textField(m, "episode_id"), actor: actor, task: textField(m, "task_id"), status: textField(m, "production_status"), created: timeField(m, "created_at"), updated: timeField(m, "updated_at")}
 		if err := json.Unmarshal(m["revision"], &current.revision); err != nil || current.revision < 1 {
 			return errors.New("invalid legacy IdleChat revision")
 		}
@@ -65,6 +78,14 @@ func (c *cohort) prepareIdleHistory(b []byte) error {
 		if _, err := c.bind("idlechat", "generation_id", id, row.task, row.actor, row.status, row.created, row.productionAt); err != nil {
 			return err
 		}
+	}
+	if role == "story" {
+		for id := range c.inventory.StoryActors {
+			if !consumedActors[id] {
+				return errors.New("unused legacy Story actor declaration")
+			}
+		}
+		c.counts["story_actor_declarations"] = len(consumedActors)
 	}
 	return nil
 }

@@ -132,7 +132,7 @@ func (c *cohort) readIdle(input map[string][]byte) (map[string][]byte, error) {
 		}
 		b := input[p]
 		if role == "story" || role == "dialogue" {
-			if e := c.prepareIdleHistory(b); e != nil {
+			if e := c.prepareIdleHistory(role, b); e != nil {
 				return nil, e
 			}
 			for _, line := range jsonLines(b) {
@@ -235,6 +235,9 @@ func (c *cohort) readIdle(input map[string][]byte) (map[string][]byte, error) {
 			c.counts["checkpoints"]++
 		}
 		out["checkpoints"] = marshalLine(file)
+	}
+	if len(c.inventory.StoryActors) != c.counts["story_actor_declarations"] {
+		return nil, errors.New("unused Story attribution without legacy Story source")
 	}
 	return out, nil
 }

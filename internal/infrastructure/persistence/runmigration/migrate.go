@@ -20,10 +20,13 @@ const Schema = "rencrow.identity.run-migration/v1"
 // Files maps relative snapshot paths to hashes; Roles maps fixed roles to paths.
 // SnapshotAt is evidence time, never the wall clock of a retry.
 type Inventory struct {
-	SchemaVersion string            `json:"schema_version"`
-	SnapshotAt    time.Time         `json:"snapshot_at"`
-	Files         map[string]string `json:"files"`
-	Roles         map[string]string `json:"roles"`
+	SchemaVersion     string            `json:"schema_version"`
+	SnapshotAt        time.Time         `json:"snapshot_at"`
+	Files             map[string]string `json:"files"`
+	Roles             map[string]string `json:"roles"`
+	StoryActors       map[string]string `json:"story_actors,omitempty"`
+	LegacyRunActors   map[string]string `json:"legacy_run_actors,omitempty"`
+	LegacyTraceSource string            `json:"legacy_trace_source,omitempty"`
 }
 
 var roles = []string{"tasks", "runs", "contexts", "notifications", "events", "superagent", "browser", "knowledge", "word", "forecast", "story", "dialogue", "checkpoints"}
@@ -86,6 +89,15 @@ func Run(ctx context.Context, o Options) (r Receipt, err error) {
 				return r, errors.New("role has no source hash")
 			}
 		}
+	}
+	if p := o.Inventory.LegacyTraceSource; p != "" {
+		if seen[p] {
+			return r, errors.New("legacy trace evidence aliases a source role")
+		}
+		if _, ok := o.Inventory.Files[p]; !ok {
+			return r, errors.New("legacy trace evidence has no source hash")
+		}
+		seen[p] = true
 	}
 	if len(seen) != len(o.Inventory.Files) {
 		return r, errors.New("unowned source file")

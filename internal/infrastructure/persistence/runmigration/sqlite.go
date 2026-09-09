@@ -651,33 +651,13 @@ func (c *cohort) transformEvents(ctx context.Context, d *databaseInput) ([]byte,
 		for _, dep := range original.DependencyEventIDs {
 			expectedDependencies[string(id)+"\x00"+string(dep)+"\x00dependency"] = true
 		}
-		b := rawEnvelopes[id]
-		var m map[string]json.RawMessage
-		if e = strictJSON(b, &m); e != nil {
-			_ = rows.Close()
-			return nil, e
-		}
-		if textField(m, "run_id") != "" || textField(m, "trace_run_id") != "" || textField(m, "generation_id") != "" {
-			if e = c.rewriteIdentity(m, ""); e != nil {
-				_ = rows.Close()
-				return nil, e
-			}
-		}
-		if taskValue := textField(m, "task_id"); taskValue != "" {
-			if _, ok := c.tasks[core.TaskID(taskValue)]; !ok {
-				return nil, errors.New("orphan Event Task")
-			}
-		}
-		for _, key := range []string{"run_id", "parent_run_id", "trace_run_id", "generation_id", "subagent_id"} {
-			if _, ok := original.Payload[key]; ok {
-				return nil, errors.New("legacy Event payload requires type-specific conversion")
-			}
-		}
-		raw, _ := json.Marshal(m)
 		var event core.EventEnvelope
-		if e = strictJSON(raw, &event); e != nil {
+		if e = strictJSON(rawEnvelopes[id], &event); e != nil {
 			_ = rows.Close()
 			return nil, e
+		}
+		if e = c.bindEventIdentity(&event); e != nil {
+			return nil, fmt.Errorf("Event %s identity: %w", id, e)
 		}
 		events = append(events, event)
 	}
