@@ -2307,6 +2307,36 @@ Task／Run／Actorを生成せず、Task IDを空にせず、他のschema・iden
 fail closedとする。production cutoverでこのcohortを採用する場合は、元snapshotとquarantine receiptを
 復旧artifactとして保持し、隔離markerと件数をcutover receiptへ束縛する。
 
+production file cutoverは同じowner CLIの`--mode cutover`だけが実行する。入力はpublished cohort、
+元snapshotとInventory、quarantine receiptとそのphysical SHA-256、active manifestとそのphysical
+SHA-256、fresh rollback directory、fresh durable cutover receipt、installed runtimeとそのSHA-256、
+active configである。active manifestは任意file pathを列挙せず、Task store directory、Event Store、
+ops store directory、Session store directoryの4 owner rootと、固定13 roleの停止前SHA-256だけを持つ。
+CLIは固定`rencrow.service`以外のservice名、任意command、任意listenerを受理しない。
+
+cutoverは、active 13 fileがInventoryの対応する13 source roleとbyte一致することを停止前に照合し、
+固定serviceをruntime owner・PID・port 18790と結び付けてmask／stopした後、同じactive bytesとSQLite
+sidecar zeroを再照合する。snapshot取得後または停止境界までに1 byteでも変化した場合は、置換前に
+旧serviceを復旧して`blocked`とする。成功経路は旧active 13 fileをfresh rollback directoryへdurableに
+保存し、各active fileと同じdirectoryへ新fileをstageしてから置換する。途中失敗は適用済みfileを逆順に
+全復元し、旧serviceを再開して`rolled_back`とする。復元または旧service再開を証明できない場合は
+`rollback_failed`とし、serviceを停止状態に保つ。全file適用成功時は`applied` receiptをdurableに保存し、
+次のruntime配備までserviceをmask／stop状態に維持する。receiptはInventory、quarantine receipt、active
+manifest、旧／新13 fileのSHA-256、隔離markerと件数、service停止、rollback／適用件数を束縛し、path、
+本文、credential、個別IDを含めない。Windows／macOSで固定service ownerが未実装の場合はfail closedの
+`service_owner_unavailable`を返し、file操作を開始しない。
+
+#### Step 10 Failure Knowledge: 稼働継続後の古いcohort cutover
+
+- **Failure / Problem:** writerを再開した後も以前のsnapshotから作ったcohortをproductionへ適用すると、
+  snapshot後に追加されたTask／Run／Event／IdleChat状態を失う。
+- **Cause:** cohort hashの一致だけを確認し、cutover直前のactive bytesと移行元snapshotを結合しなかった。
+- **Lesson / Invariant:** production cutoverは停止後のactive 13 fileがsnapshotの対応roleとbyte一致する場合だけ
+  実行できる。古いcohortを時刻推定や差分mergeで採用しない。
+- **Enforcement / Tests:** owner CLIは停止前後のactive hash、snapshot role bytes、SQLite sidecar zeroを
+  検査し、driftを置換前に拒否する。fixtureは停止後drift、途中置換失敗、全rollback、service復旧、
+  durable receipt書込み失敗、quarantine／active manifest tamperを検査する。
+
 入力は1file 256 MiB、合計1 GiB以内の専用snapshotとし、出力parentも専用にする。
 公開lockは同じ契約を使うpublisher間の排他であり、無関係なprocessによるdirectory差替えの
 防御保証ではない。非終端queue、後継Run未照合のcheckpoint、Event payload内の旧実行参照、

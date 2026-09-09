@@ -8,11 +8,51 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	migration "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/runmigration"
 )
+
+func TestCommandMapsExactCutoverOwnerInputs(t *testing.T) {
+	root := t.TempDir()
+	write := func(name string, value any) string {
+		t.Helper()
+		path := filepath.Join(root, name)
+		data, err := json.Marshal(value)
+		if err != nil || os.WriteFile(path, data, 0o600) != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+	inventory := write("inventory.json", migration.Inventory{SchemaVersion: migration.Schema})
+	plan := write("plan.json", migration.Receipt{SchemaVersion: migration.Schema, Status: "quarantined"})
+	active := write("active.json", migration.RunCutoverActiveManifest{SchemaVersion: migration.RunCutoverSchema})
+	old := cutoverOperation
+	defer func() { cutoverOperation = old }()
+	var got migration.CutoverOptions
+	cutoverOperation = func(_ context.Context, options migration.CutoverOptions) (migration.RunCutoverReceipt, error) {
+		got = options
+		return migration.RunCutoverReceipt{SchemaVersion: migration.RunCutoverSchema, Status: migration.RunCutoverApplied}, nil
+	}
+	args := []string{
+		"--mode", "cutover", "--snapshot", "snapshot", "--cohort", "cohort", "--inventory", inventory,
+		"--quarantine-receipt", plan, "--expected-quarantine-receipt-sha256", strings.Repeat("a", 64),
+		"--active-manifest", active, "--expected-active-manifest-sha256", strings.Repeat("b", 64),
+		"--rollback-dir", "rollback", "--cutover-receipt", "cutover.json", "--installed-runtime", "rencrow",
+		"--expected-runtime-sha256", strings.Repeat("c", 64), "--active-config", "core.yaml",
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), args, &stdout, &stderr); code != 0 {
+		t.Fatalf("cutover exit=%d stderr=%s", code, stderr.String())
+	}
+	if got.Cohort != "cohort" || got.Snapshot != "snapshot" || got.RollbackDir != "rollback" || got.CutoverReceipt != "cutover.json" ||
+		got.ExpectedPlanReceiptSHA256 != strings.Repeat("a", 64) || got.ExpectedActiveManifestSHA256 != strings.Repeat("b", 64) ||
+		got.ExpectedRuntimeSHA256 != strings.Repeat("c", 64) {
+		t.Fatalf("cutover mapping = %#v", got)
+	}
+}
 
 func TestCommandRejectsAmbiguousInventory(t *testing.T) {
 	for _, raw := range []string{`{"schema_version":"one","schema_version":"two"}`, `{"unknown":true}`, `{} {}`} {
@@ -95,5 +135,12 @@ func TestCommandRejectsReceiptForWrongMode(t *testing.T) {
 	var out, stderr bytes.Buffer
 	if code := run(context.Background(), []string{"--mode", "dry-run", "--quarantine-receipt", receipt}, &out, &stderr); code != 2 {
 		t.Fatalf("wrong-mode receipt exit=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestCommandRejectsCutoverOwnerFlagOutsideCutover(t *testing.T) {
+	var out, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--mode", "dry-run", "--rollback-dir", "private"}, &out, &stderr); code != 2 {
+		t.Fatalf("wrong-mode cutover flag exit=%d stderr=%s", code, stderr.String())
 	}
 }
