@@ -17,13 +17,14 @@ import (
 )
 
 type cohort struct {
-	inventory     Inventory
-	tasks         map[core.TaskID]domaintask.Task
-	runs          map[core.RunID]domaintask.Run
-	canonicalRuns map[core.RunID]bool
-	bindings      map[string]core.RunID
-	rawRuns       map[string][]core.RunID
-	counts        map[string]int
+	inventory       Inventory
+	tasks           map[core.TaskID]domaintask.Task
+	runs            map[core.RunID]domaintask.Run
+	canonicalRuns   map[core.RunID]bool
+	bindings        map[string]core.RunID
+	rawRuns         map[string][]core.RunID
+	counts          map[string]int
+	queueReferences map[string]string
 }
 
 func strictJSON(b []byte, v any) error {
@@ -161,6 +162,10 @@ func buildCohort(ctx context.Context, inventory Inventory, input map[string][]by
 		if e := c.discoverDatabase(ctx, db); e != nil {
 			return nil, nil, e
 		}
+	}
+	c.queueReferences, e = readLegacyQueueReferences(ctx, databases)
+	if e != nil {
+		return nil, nil, e
 	}
 	idle, e := c.readIdle(input)
 	if e != nil {

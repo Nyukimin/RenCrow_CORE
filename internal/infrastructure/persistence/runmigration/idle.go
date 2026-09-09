@@ -132,6 +132,9 @@ func (c *cohort) readIdle(input map[string][]byte) (map[string][]byte, error) {
 		}
 		b := input[p]
 		if role == "story" || role == "dialogue" {
+			if e := c.prepareIdleHistory(b); e != nil {
+				return nil, e
+			}
 			for _, line := range jsonLines(b) {
 				x, e := c.idleRecord(role, line)
 				if e != nil {

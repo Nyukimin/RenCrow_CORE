@@ -2217,6 +2217,39 @@ architecture testは移行packageのimportをこのCLIと移行package内部だ�
 はowner SQLite、`word / forecast / checkpoints`はowner JSON、`story / dialogue`はowner JSONLとする。
 未対応の旧schemaや意味不明な帰属を自動推定せず`blocked`にする。
 
+旧CORE subagent ownerが生成した`sub_<Agent名>_<CreatedAtのUnixNano>`は、
+producer種別が`Subagent`、Agent名が現行CORE Agentの閉集合、ID全体と保存日時が厳密一致する
+場合だけ、欠落した子実行Actorの復元証拠にできる。これは旧producerの決定的な形式の解読であり、
+親Actor、会話本文、ChatGPT archiveの月別帰属から子Actorを推測しない。
+この解読はoffline移行packageだけに置き、runtimeへ旧IDの解決経路を追加しない。
+
+旧AgentRunの保存済みcheckpointにIDだけがない場合は、revision、summary、next_action、
+last_checkpoint_atが完全であることを検証する。同じ元Runを明示参照するresume queueがある場合、
+revisionと再開内容の一致を要求し、既存CheckpointIDを共有する。参照が競合・不一致なら拒否する。
+参照queueがない場合だけ元Runとrevisionから移行用UUIDv5を決定的に生成し、既存IDは保持する。
+本文や時刻の補完、異なるTask間のCheckpointID共有、欠落Run参照の意味的joinを許可しない。
+同じTaskの後継Runが保存済みCheckpointIDを保持する正規resumeは妨げない。
+
+旧recovery owner（`43096d9`）がcheckpointのないrunning記録へ保存した、
+固定summary`restart resume blocked: durable checkpoint is unavailable`と終了日時ゼロを持つ
+旧LeadAgentの`blocked`は、実行完了ではなく再開不可の記録である。この既知の形だけは
+writer停止後の移行時点で`interrupted`へ閉じ、同時点をRunと詳細projectionの終了境界とする。
+過去の実際の終了時刻を復元したとは扱わない。元snapshotとsummaryを保持し、未知の理由、
+checkpoint情報との矛盾、現行canonical Runの不足日時へこの変換を広げない。
+
+SuperAgentのContextPackと旧子実行において、secondary Run参照columnだけがNULL／空で
+payloadに明示参照が残る場合は、payloadをcohort内のRunへ解決してindexを再構築する。
+primary keyの欠落、値のあるindexとの不一致、解決できないpayload参照は引き続き拒否する。
+旧queueの欠落Run参照は、Step16の`QueueItemID / run_queue / queue_item_id / 元QueueID`の
+決定的写像と、Eventの明示queue_referenceから同じTraceの一意なLeadAgent run_referenceを
+照合して復元する。旧schedulerの入力job keyは、同じTraceにある厳密な`run_lead_<入力>`の
+証拠がある場合だけ解読する。開始理由は解決先canonical Runの値を使い、actionや本文から推測しない。
+
+旧IdleChatのgeneration_idが修復revision間で共有されていた保存履歴は、全revisionを読んでから
+最後の生成revisionの状態と保存時刻でその歴史的Runを確定する。同一revisionの再保存・再生更新で
+Run終了時刻を変更しない。生成主体・Episode・Task・作成日時の変更、revisionや保存時刻の逆行、
+同一revisionの生成状態矛盾は拒否する。元履歴行は全件保持し、現行canonical Runを投影から変更しない。
+
 `--mode dry-run --snapshot ... --output ...`は入力と変換結果のhash・件数だけをreceiptへ出し、
 指定出力先を公開しない。`--mode apply --dry-run-receipt ...`は同じ入力と出力hash・件数を再照合し、
 新しい出力directoryを一括公開する。既存出力がfile集合も内容も完全一致した場合だけ`noop`とし、

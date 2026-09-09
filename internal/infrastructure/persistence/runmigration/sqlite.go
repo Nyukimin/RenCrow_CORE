@@ -266,6 +266,15 @@ func payloadRows(ctx context.Context, d *databaseInput, table string) ([]map[str
 				if scalar == nil || scalar == "" {
 					continue
 				}
+				// These secondary indexes were absent in legacy snapshots while
+				// the owner payload retained the explicit Run reference. Rebuild
+				// only an absent index; resolution against the cohort is still
+				// mandatory, and populated disagreements remain fatal.
+				if d.role == "superagent" && ((table == "context_pack" && col == "run_id") || (table == "subagent_task" && col == "parent_run_id")) {
+					if reference, ok := scalar.(string); ok && reference != "" {
+						continue
+					}
+				}
 			}
 			if indexed != scalar {
 				return nil, errors.New("source index and payload disagree")
@@ -293,6 +302,11 @@ func (c *cohort) discoverDatabase(ctx context.Context, d *databaseInput) error {
 		return e
 	}
 	for _, m := range rows {
+		if d.role == "superagent" {
+			if e := closeLegacyRecoveryBlock(m, c.inventory.SnapshotAt); e != nil {
+				return e
+			}
+		}
 		field := "run_id"
 		value := textField(m, field)
 		if value == "" && textField(m, "trace_run_id") != "" {
@@ -324,6 +338,9 @@ func (c *cohort) discoverDatabase(ctx context.Context, d *databaseInput) error {
 			legacy := textField(m, "subagent_id")
 			if legacy == "" {
 				continue
+			}
+			if e := restoreLegacyChildActor(m); e != nil {
+				return e
 			}
 			parent, e := c.resolve("superagent", "run_id", textField(m, "parent_run_id"))
 			if e != nil {
@@ -396,6 +413,10 @@ func (c *cohort) transformDatabase(ctx context.Context, d *databaseInput) ([]byt
 	if d.role == "events" {
 		return c.transformEvents(ctx, d)
 	}
+	checkpoints, err := c.prepareAgentRunCheckpoints(ctx, d)
+	if err != nil {
+		return nil, err
+	}
 	tables := make([]string, 0, len(d.tables))
 	for table := range d.tables {
 		tables = append(tables, table)
@@ -415,7 +436,21 @@ func (c *cohort) transformDatabase(ctx context.Context, d *databaseInput) ([]byt
 			if oldID == "" {
 				return nil, errors.New("projection primary identity missing")
 			}
+			if d.role == "superagent" && table == "agent_run" {
+				if e := closeLegacyRecoveryBlock(m, c.inventory.SnapshotAt); e != nil {
+					return nil, e
+				}
+				injectAgentRunCheckpoint(m, checkpoints, c)
+			}
+			if d.role == "superagent" && table == "run_queue" {
+				if e := c.restoreLegacyQueueReference(m); e != nil {
+					return nil, e
+				}
+			}
 			if legacy := textField(m, "subagent_id"); legacy != "" {
+				if e := restoreLegacyChildActor(m); e != nil {
+					return nil, e
+				}
 				r, e := c.resolve("superagent", "subagent_id", legacy)
 				if e != nil {
 					return nil, e
