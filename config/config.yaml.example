@@ -251,7 +251,9 @@ distributed:
       type: "local"
     coder3:
       type: "ssh"
-      remote_host: "192.168.1.100:22"
+      # remote_host は "<ホスト名またはIP>:<SSHポート>" 形式。<CODER3_SSH_HOST> は実環境の値に置き換える
+      # （環境変数から与える場合は "${CODER3_SSH_HOST}:22" のように書ける）
+      remote_host: "<CODER3_SSH_HOST>:22"
       remote_user: "rencrow"
       ssh_key_path: "~/.ssh/id_ed25519_rencrow"
       strict_host_key: true
