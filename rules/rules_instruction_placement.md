@@ -4,16 +4,17 @@
 
 RenCrow の AI エージェント向け指示を、常時読み込み、path 固有制約、再利用手順、隔離調査、機械的安全柵へ分離する。
 
-製品仕様は `docs/README.md` と、そこに列挙された10の仕様書だけを正本とする。AI向け指示は製品仕様を再定義せず、このファイルの配置基準に従う。
+製品仕様は `docs/README.md` と、そこに列挙された現行仕様を正本とする。AI向け指示は製品仕様を再定義せず、このファイルの配置基準に従う。
 
 ## 配置基準
 
 | 指示の種類 | 配置先 |
 | --- | --- |
-| module root、責務境界、常時必要な禁止事項 | `AGENTS.md` |
+| 全module共通の作業方針 | 配布されたEcoSystemの`AGENTS.md` |
+| COREの所有範囲と条件付き参照入口 | COREの`AGENTS.md` |
 | 特定 directory / file pattern だけの制約 | `rules/rules_path_scoped_constraints.md` または個別 rule |
 | runbook、検証手順、繰り返す作業 | `skills/core/*/SKILL.md` |
-| 大量ログ解析、広範囲仕様探索、依存棚卸し | subagent |
+| 大量ログ解析、仕様探索、依存棚卸し | owner CLIで絞る。委譲の要否は共通方針に従う |
 | 必ず止める危険操作 | hooks / permissions / Tool Harness |
 | 一時的な出力形式 | 依頼本文または一時 system prompt |
 
@@ -31,7 +32,7 @@ RenCrow の AI エージェント向け指示を、常時読み込み、path 固
 
 - `git reset --hard`
 - 未確認の `git checkout --`
-- workspace root `/home/nyukimi/RenCrow` での誤った build / test / git 操作
+- 対象Git repositoryを確認しない build / test / git 操作
 - official DB / confirmed memory / Source Registry へのpolicy・証跡なしの direct write
 - broad delete
 - external PR 作成、外部投稿、公開、課金、送信

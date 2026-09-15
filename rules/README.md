@@ -1,19 +1,11 @@
-# RenCrow_CORE Rules
+# RenCrow_CORE rules
 
-このdirectoryはRenCrow_CORE固有の作業制約と実装補足です。製品仕様の正本は
-`docs/README.md`から参照する現行仕様です。
+CORE固有の制約だけを所有する。全repository共通の作業方針は、global設定から参照するEcoSystemのAGENTS.mdが唯一の正本。共通Skillもこの境界を上書きしない。
 
-`rules/common/`は既存参照との互換性を保つCORE-local補足であり、RenCrow全module共通の
-正本ではありません。別moduleへcopyしません。全project共通の安全性、調査、設計、実装、
-test、報告、module分離はworkspace rootの`AGENTS.md`から参照する共通Skillを正本とします。
+- CORE作業の入口: [AGENTS.md](../AGENTS.md)
+- 作業条件から選ぶ詳細: [task-rules.md](task-rules.md)の該当節
+- 製品仕様: [docs/README.md](../docs/README.md)
+- 指示変更: [配置規定](rules_instruction_placement.md)
+- path固有制約: [対象path](rules_path_scoped_constraints.md)
 
-新しいruleは次の所有境界へ置きます。
-
-- 全project共通: 共通Skillの正本
-- RenCrow全体の製品contract: `docs/README.md`以下
-- COREの常時作業入口: `AGENTS.md`
-- CORE固有のpath／domain／Viewer制約: `rules/`
-- 再利用可能な手順: `skills/`
-
-既存`rules/common/`の物理移動は、参照元と適用範囲を測定し、挙動を変えないmigrationとして
-別途行います。単にdirectory名を整える目的では移動しません。
+既存の`rules/common/`はCORE-local補足の互換pathであり、全module共通の配布元ではない。該当するCORE作業からだけ読む。他moduleへ複製せず、共通方針と重なる定義は共通正本を継承する。新しい制約はCORE固有ならここ、全module共通ならEcoSystemへ置く。
