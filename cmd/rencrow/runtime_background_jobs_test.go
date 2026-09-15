@@ -386,13 +386,16 @@ func TestBackgroundJobFailureReporterIgnoresTypedNilListener(t *testing.T) {
 func TestStartMemoryLifecycleJobReportsFailure(t *testing.T) {
 	runner := &failingMemoryLifecycleRunner{err: errors.New("maintenance failed")}
 	listener := &captureBackgroundJobEventListener{}
-	stop := make(chan struct{})
-	defer close(stop)
-	startMemoryLifecycleJobRunner(runner, memoryLifecycleJobConfig{
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startMemoryLifecycleJobRunner(ctx, runner, memoryLifecycleJobConfig{
 		Interval: time.Hour,
 		Now:      func() time.Time { return time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC) },
 		Label:    "test",
-	}, stop, newBackgroundJobFailureReporter(listener, nil))
+	}, newBackgroundJobFailureReporter(listener, nil))
+	defer func() {
+		cancel()
+		<-done
+	}()
 	if !listener.EventCountReachesWithin(2, 500*time.Millisecond) {
 		t.Fatalf("events=%d, want failure notification events", len(listener.Events()))
 	}
@@ -485,13 +488,16 @@ func TestMemoryLifecycleJobConfigDefaultEnvIsNormal(t *testing.T) {
 
 func TestStartMemoryLifecycleJobWithConfigUsesConfiguredInterval(t *testing.T) {
 	runner := &countingMemoryLifecycleRunner{}
-	stop := make(chan struct{})
-	defer close(stop)
-	startMemoryLifecycleJobRunner(runner, memoryLifecycleJobConfig{
+	ctx, cancel := context.WithCancel(context.Background())
+	done := startMemoryLifecycleJobRunner(ctx, runner, memoryLifecycleJobConfig{
 		Interval: 10 * time.Millisecond,
 		Now:      func() time.Time { return time.Date(2026, 6, 19, 12, 0, 0, 0, time.UTC) },
 		Label:    "test",
-	}, stop, backgroundJobFailureReporter{})
+	}, backgroundJobFailureReporter{})
+	defer func() {
+		cancel()
+		<-done
+	}()
 	if !countReachesWithin(&runner.calls, 3, 500*time.Millisecond) {
 		t.Fatalf("maintenance calls=%d, want at least 3 using configured interval", runner.calls.Load())
 	}

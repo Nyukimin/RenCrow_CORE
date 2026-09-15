@@ -222,6 +222,9 @@ type IdleChatOrchestrator struct {
 	activeTaskID              modulecore.TaskID
 	activeRunID               modulecore.RunID
 	activeGeneration          uint64
+	conversationRunStarting   bool
+	conversationRunOutcome    *conversationRunOutcome
+	pendingConversationRun    *conversationRunFinalization
 	interruptedSessions       map[string]struct{}
 	watchdogStage             string
 	watchdogDetail            string
@@ -235,9 +238,14 @@ type IdleChatOrchestrator struct {
 	// emitMu serializes owner validation with the runtime callback. The lock
 	// order is emitMu -> mu; it prevents a stale callback from passing the
 	// generation check and emitting after Interrupt has ended the owner.
-	emitMu sync.Mutex
-	mu     sync.Mutex
-	wg     sync.WaitGroup
+	emitMu                    sync.Mutex
+	mu                        sync.Mutex
+	conversationRunStartMu    sync.Mutex
+	conversationRunFinalizeMu sync.Mutex
+	generationWorkMu          sync.Mutex
+	generationWorkClosed      bool
+	generationWorkWG          sync.WaitGroup
+	wg                        sync.WaitGroup
 }
 
 // SetNewsSourceConfig はIdleChatのお題に使うSNS取得先を設定する。

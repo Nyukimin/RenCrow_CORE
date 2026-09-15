@@ -156,7 +156,7 @@ func (o *IdleChatOrchestrator) bootstrapWordTopicStockAsync(stock *wordTopicStoc
 	if stock == nil {
 		return
 	}
-	go func() {
+	o.startGenerationWork(func() {
 		for _, category := range wordTopicStockCategories {
 			_, recovering := o.generationCheckpointStore().Get("word:" + string(category))
 			if stock.count(category) > 0 && !recovering {
@@ -176,7 +176,7 @@ func (o *IdleChatOrchestrator) bootstrapWordTopicStockAsync(stock *wordTopicStoc
 			}
 			o.fillWordTopicStock(stock, category, "startup")
 		}
-	}()
+	})
 }
 
 // RefillWordTopicStockIfIdle starts at most one single/double topic producer.
@@ -196,7 +196,13 @@ func (o *IdleChatOrchestrator) RefillWordTopicStockIfIdle(trigger string) bool {
 		o.endTopicProduction()
 		return false
 	}
-	go o.fillWordTopicStock(stock, category, trigger)
+	if !o.startGenerationWork(func() {
+		o.fillWordTopicStock(stock, category, trigger)
+	}) {
+		stock.done(category, context.Canceled)
+		o.endTopicProduction()
+		return false
+	}
 	return true
 }
 
@@ -238,6 +244,11 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 		return err
 	}
 	checkpoint, found := checkpointStore.Get(checkpointKey)
+	if found {
+		if err := validateWordCheckpoint(checkpoint, category); err != nil {
+			return err
+		}
+	}
 	if found && checkpoint.Stage == "resume_pending" {
 		previousRunID := checkpoint.RunID
 		if err := reconcileGenerationResume(ctx, o.runIssuer, &checkpoint, checkpointStore); err != nil {
@@ -249,9 +260,6 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 		}
 	}
 	if found {
-		if checkpoint.Category != category {
-			return errors.New("word topic checkpoint category mismatch")
-		}
 		run, err := inspectGenerationRun(ctx, o.runIssuer, checkpoint.TaskID, checkpoint.RunID)
 		if err != nil {
 			return err
@@ -278,15 +286,18 @@ func (o *IdleChatOrchestrator) produceWordTopic(stock *wordTopicStock, category 
 			}
 			return checkpointStore.Delete(checkpointKey)
 		}
+		if run.Status == domaintask.RunStatusRunning {
+			saved, err := o.finishRunningWordCheckpoint(ctx, stock, checkpoint)
+			if err != nil {
+				return err
+			}
+			if saved {
+				return checkpointStore.Delete(checkpointKey)
+			}
+		}
 		if stock.hasRunID(checkpoint.RunID) {
 			if err := verifySavedWordTopic(stock, checkpoint); err != nil {
 				return err
-			}
-			if run.Status == domaintask.RunStatusRunning {
-				if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
-					return err
-				}
-				return checkpointStore.Delete(checkpointKey)
 			}
 			// This result was never published: its checkpoint still gates playback.
 			// Resume its saved generation stages under the new owner-issued Run.

@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -19,26 +21,36 @@ const generationCheckpointSchemaVersion = 1
 // background CodexExe job yield to foreground conversation and continue from
 // the last durable boundary without registering the same result twice.
 type GenerationCheckpoint struct {
-	Key              string                   `json:"key"`
-	Kind             string                   `json:"kind"`
-	TaskID           modulecore.TaskID        `json:"task_id"`
-	RunID            modulecore.RunID         `json:"run_id"`
-	Stage            string                   `json:"stage"`
-	Attempt          int                      `json:"attempt,omitempty"`
-	Category         TopicCategory            `json:"category,omitempty"`
-	Domain           ForecastDomain           `json:"domain,omitempty"`
-	Seed             TopicSeed                `json:"seed,omitempty"`
-	Recent           []RecentTopic            `json:"recent,omitempty"`
-	Candidates       []TopicCandidate         `json:"candidates,omitempty"`
-	Result           *TopicGenerationResult   `json:"result,omitempty"`
-	ForecastSeeds    []string                 `json:"forecast_seeds,omitempty"`
-	ForecastKeyword  string                   `json:"forecast_keyword,omitempty"`
-	StorySeed        *storyGenerationSeed     `json:"story_seed,omitempty"`
-	StoryArtifact    *StoryEpisodeArtifact    `json:"story_artifact,omitempty"`
-	DialogueArtifact *DialogueEpisodeArtifact `json:"dialogue_artifact,omitempty"`
-	StoryReview      *StorySemanticReview     `json:"story_review,omitempty"`
-	StoryRevision    *storyRevisionCheckpoint `json:"story_revision,omitempty"`
-	UpdatedAt        time.Time                `json:"updated_at"`
+	Key               string                   `json:"key"`
+	Kind              string                   `json:"kind"`
+	TaskID            modulecore.TaskID        `json:"task_id"`
+	RunID             modulecore.RunID         `json:"run_id"`
+	Stage             string                   `json:"stage"`
+	Attempt           int                      `json:"attempt,omitempty"`
+	Category          TopicCategory            `json:"category,omitempty"`
+	Domain            ForecastDomain           `json:"domain,omitempty"`
+	Seed              TopicSeed                `json:"seed,omitempty"`
+	Recent            []RecentTopic            `json:"recent,omitempty"`
+	Candidates        []TopicCandidate         `json:"candidates,omitempty"`
+	Result            *TopicGenerationResult   `json:"result,omitempty"`
+	ForecastSeeds     []string                 `json:"forecast_seeds,omitempty"`
+	ForecastKeyword   string                   `json:"forecast_keyword,omitempty"`
+	StorySeed         *storyGenerationSeed     `json:"story_seed,omitempty"`
+	StoryArtifact     *StoryEpisodeArtifact    `json:"story_artifact,omitempty"`
+	DialogueArtifact  *DialogueEpisodeArtifact `json:"dialogue_artifact,omitempty"`
+	PendingCompletion *PendingCompletion       `json:"pending_completion,omitempty"`
+	StoryReview       *StorySemanticReview     `json:"story_review,omitempty"`
+	StoryRevision     *storyRevisionCheckpoint `json:"story_revision,omitempty"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+}
+
+// PendingCompletion is the durable completion intent for one exact checkpoint
+// Task/Run pair. The pair remains on GenerationCheckpoint so a retry cannot
+// infer a replacement identity from the checkpoint key.
+type PendingCompletion struct {
+	Status  domaintask.Status `json:"status"`
+	Summary string            `json:"summary,omitempty"`
+	Reason  string            `json:"reason,omitempty"`
 }
 
 type generationCheckpointFile struct {
@@ -79,6 +91,34 @@ func (s *GenerationCheckpointStore) Get(key string) (GenerationCheckpoint, bool)
 	defer s.mu.Unlock()
 	checkpoint, ok := s.checkpoints[strings.TrimSpace(key)]
 	return cloneGenerationCheckpoint(checkpoint), ok
+}
+
+// ListPending returns a detached, stable-key ordering of checkpoints carrying
+// a completion intent. Invalid intents are returned for the owner-boundary
+// validator to reject; this method does not silently discard recovery state.
+func (s *GenerationCheckpointStore) ListPending() []GenerationCheckpoint {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := make([]GenerationCheckpoint, 0)
+	for _, checkpoint := range s.checkpoints {
+		if checkpoint.PendingCompletion == nil {
+			continue
+		}
+		pending = append(pending, cloneGenerationCheckpoint(checkpoint))
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].Key != pending[j].Key {
+			return pending[i].Key < pending[j].Key
+		}
+		if pending[i].TaskID != pending[j].TaskID {
+			return pending[i].TaskID < pending[j].TaskID
+		}
+		return pending[i].RunID < pending[j].RunID
+	})
+	return pending
 }
 
 func (s *GenerationCheckpointStore) Put(checkpoint GenerationCheckpoint) error {
@@ -226,6 +266,10 @@ func cloneGenerationCheckpoint(checkpoint GenerationCheckpoint) GenerationCheckp
 	if checkpoint.DialogueArtifact != nil {
 		artifact := cloneDialogueEpisode(*checkpoint.DialogueArtifact)
 		checkpoint.DialogueArtifact = &artifact
+	}
+	if checkpoint.PendingCompletion != nil {
+		completion := *checkpoint.PendingCompletion
+		checkpoint.PendingCompletion = &completion
 	}
 	if checkpoint.StoryReview != nil {
 		review := *checkpoint.StoryReview

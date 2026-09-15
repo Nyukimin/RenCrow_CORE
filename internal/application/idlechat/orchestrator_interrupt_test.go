@@ -25,7 +25,10 @@ func activateIdleChatTestSession(o *IdleChatOrchestrator, sessionID string) uint
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.chatActive = true
-	generation := o.beginIdleRunLocked()
+	generation, err := o.beginIdleRunLocked()
+	if err != nil {
+		panic(err)
+	}
 	o.bindIdleSessionLocked(sessionID)
 	return generation
 }
@@ -55,7 +58,9 @@ func TestIdleChatInterruptResetsStateAndCancelsRunContext(t *testing.T) {
 	o.sessionMode = "idle"
 	o.currentTopic = "topic"
 	o.sessionContext = "context"
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.activeSessionID = "idle-test-topic-00"
 	o.mu.Unlock()
 
@@ -109,7 +114,9 @@ func TestIdleChatInterruptDiscardsStaleTimelineEvent(t *testing.T) {
 
 	o.mu.Lock()
 	o.chatActive = true
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.activeSessionID = "idle-stale-topic-00"
 	o.mu.Unlock()
 
@@ -182,7 +189,9 @@ func TestIdleChatBindCreatesCanonicalIdleThread(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	o.emitMu.Lock()
 	o.mu.Lock()
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	err := o.bindIdleSessionLocked(canonicalIdleChatTestSessionID("idle-thread-canonical"))
 	thread := o.activeThread
 	o.mu.Unlock()
@@ -215,7 +224,9 @@ func TestIdleChatBindRejectsInvalidSessionWithoutActiveThread(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	o.emitMu.Lock()
 	o.mu.Lock()
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	err := o.bindIdleSessionLocked(" ")
 	thread := o.activeThread
 	activeSession := o.activeSessionID
@@ -233,7 +244,9 @@ func TestIdleChatBindRejectsNoncanonicalSessionWithoutActiveThread(t *testing.T)
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 10, 0.7, nil, "")
 	o.emitMu.Lock()
 	o.mu.Lock()
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	err := o.bindIdleSessionLocked("idle-not-canonical")
 	thread := o.activeThread
 	activeSession := o.activeSessionID
@@ -260,6 +273,7 @@ func TestIdleChatRunStopsBeforeSideEffectsWhenThreadOpenFails(t *testing.T) {
 	}
 	o.mu.Lock()
 	o.topicStore.path = filepath.Join(t.TempDir(), "missing-parent", "idlechat_topics.jsonl")
+	o.chatActive = true
 	o.mu.Unlock()
 
 	if _, err := o.activateIdleSession(canonicalIdleChatTestSessionID("open-failure")); err == nil {

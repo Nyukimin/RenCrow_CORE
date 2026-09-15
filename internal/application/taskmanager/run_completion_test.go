@@ -160,6 +160,143 @@ func TestManagerCompleteRunRejectsOldRunAfterCheckpointResume(t *testing.T) {
 	}
 }
 
+func TestManagerCompleteRunRejectsLaterTerminalRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, active := newRunningExecutionTaskRun(t, manager, "Mio")
+
+	laterStarted := active.StartedAt.Add(time.Minute)
+	later := domaintask.Run{
+		WriterGeneration: active.WriterGeneration,
+		RunID:            modulecore.NewRunID(),
+		TaskID:           task.TaskID,
+		StartReason:      domaintask.RunStartReasonExplicitRerun,
+		Assignee:         active.Assignee,
+		Status:           domaintask.RunStatusSucceeded,
+		StartedAt:        laterStarted,
+		CompletedAt:      timePtr(laterStarted.Add(time.Second)),
+		Summary:          "later terminal history",
+	}
+	if err := store.TaskTransaction(ctx, task.TaskID, func(tx Store) error {
+		return tx.SaveRun(ctx, later)
+	}); err != nil {
+		t.Fatalf("append later terminal Run: %v", err)
+	}
+
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CompleteRun(ctx, task.TaskID, active.RunID, active.Assignee, domaintask.StatusSucceeded, "must reject", ""); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("CompleteRun error = %v, want ErrRunConflict", err)
+	}
+	afterTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRuns, afterRuns) {
+		t.Fatalf("rejected later completion changed records: before task=%#v runs=%#v after task=%#v runs=%#v", beforeTask, beforeRuns, afterTask, afterRuns)
+	}
+}
+
+func TestManagerCompleteRunRejectsAmbiguousLatestRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	task, active := newRunningExecutionTaskRun(t, manager, "Mio")
+	later := active.StartedAt
+	terminal := domaintask.Run{
+		WriterGeneration: active.WriterGeneration,
+		RunID:            modulecore.NewRunID(),
+		TaskID:           task.TaskID,
+		StartReason:      domaintask.RunStartReasonExplicitRerun,
+		Assignee:         active.Assignee,
+		Status:           domaintask.RunStatusSucceeded,
+		StartedAt:        later,
+		CompletedAt:      timePtr(later.Add(time.Second)),
+	}
+	if err := store.TaskTransaction(ctx, task.TaskID, func(tx Store) error {
+		return tx.SaveRun(ctx, terminal)
+	}); err != nil {
+		t.Fatalf("append ambiguous terminal Run: %v", err)
+	}
+	if _, err := manager.CompleteRun(ctx, task.TaskID, active.RunID, active.Assignee, domaintask.StatusSucceeded, "must reject", ""); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("CompleteRun error = %v, want ErrRunConflict", err)
+	}
+}
+
+type multipleActiveCompletionStore struct {
+	Store
+	additional domaintask.Run
+}
+
+func (s multipleActiveCompletionStore) TaskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(Store) error) error {
+	return s.Store.TaskTransaction(ctx, taskID, func(store Store) error {
+		return fn(multipleActiveCompletionStore{Store: store, additional: s.additional})
+	})
+}
+
+func (s multipleActiveCompletionStore) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	runs, err := s.Store.ListRuns(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if filter.TaskID != "" && s.additional.TaskID == filter.TaskID && (filter.Status == "" || filter.Status == s.additional.Status) {
+		runs = append(runs, s.additional)
+	}
+	return runs, nil
+}
+
+func TestManagerCompleteRunRejectsOtherActiveRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	setup := New(store, DefaultParallelLimits())
+	task, active := newRunningExecutionTaskRun(t, setup, "Mio")
+	other := active
+	other.RunID = modulecore.NewRunID()
+	other.StartedAt = active.StartedAt.Add(-time.Minute)
+	manager := New(multipleActiveCompletionStore{Store: store, additional: other}, DefaultParallelLimits())
+	if _, err := manager.CompleteRun(ctx, task.TaskID, active.RunID, active.Assignee, domaintask.StatusSucceeded, "must reject", ""); !errors.Is(err, ErrRunConflict) {
+		t.Fatalf("CompleteRun error = %v, want ErrRunConflict", err)
+	}
+	persistedTask, err := setup.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedRun, err := setup.GetRun(ctx, active.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedTask.Status != domaintask.StatusRunning || persistedRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("rejected other-active completion changed records: task=%#v run=%#v", persistedTask, persistedRun)
+	}
+}
+
+func timePtr(value time.Time) *time.Time {
+	return &value
+}
+
 type staleCompletionRunStore struct {
 	Store
 	run domaintask.Run
@@ -167,6 +304,12 @@ type staleCompletionRunStore struct {
 
 func (s staleCompletionRunStore) Transaction(ctx context.Context, fn func(Store) error) error {
 	return s.Store.Transaction(ctx, func(store Store) error {
+		return fn(staleCompletionRunStore{Store: store, run: s.run})
+	})
+}
+
+func (s staleCompletionRunStore) TaskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(Store) error) error {
+	return s.Store.TaskTransaction(ctx, taskID, func(store Store) error {
 		return fn(staleCompletionRunStore{Store: store, run: s.run})
 	})
 }

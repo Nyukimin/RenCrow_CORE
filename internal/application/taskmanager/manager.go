@@ -49,14 +49,20 @@ func New(store Store, limits ParallelLimits) *Manager {
 	return &Manager{store: store, limits: limits, now: func() time.Time { return time.Now().UTC() }}
 }
 
-func (m *Manager) transaction(ctx context.Context, fn func(*Manager) error) error {
+func (m *Manager) taskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(*Manager) error) error {
 	if m == nil || m.store == nil {
 		return errors.New("task manager store is unavailable")
 	}
 	if ctx == nil {
 		return errors.New("task transaction context is nil")
 	}
-	return m.store.Transaction(ctx, func(store Store) error {
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if fn == nil {
+		return errors.New("task transaction callback is nil")
+	}
+	return m.store.TaskTransaction(ctx, taskID, func(store Store) error {
 		if store == nil {
 			return errors.New("task transaction store is unavailable")
 		}
@@ -82,8 +88,11 @@ func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) 
 }
 
 func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+	if draft.TaskID == "" {
+		draft.TaskID = modulecore.NewTaskID()
+	}
 	var created domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, draft.TaskID, func(txManager *Manager) error {
 		var err error
 		created, err = txManager.createInTransaction(ctx, draft, shared)
 		return err
@@ -131,7 +140,7 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 // RecordRouting persists the orchestrator route and the event that produced it.
 func (m *Manager) RecordRouting(ctx context.Context, taskID modulecore.TaskID, route domaintask.Route, eventID modulecore.EventID) (domaintask.Task, error) {
 	var routed domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		routed, err = txManager.recordRoutingInTransaction(ctx, taskID, route, eventID)
 		return err
@@ -171,7 +180,7 @@ func (m *Manager) recordRoutingInTransaction(ctx context.Context, taskID modulec
 // RecordAssignment persists the actual CORE Agent assignee and its event reference.
 func (m *Manager) RecordAssignment(ctx context.Context, taskID modulecore.TaskID, assignee string, eventID modulecore.EventID) (domaintask.Task, error) {
 	var assigned domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		assigned, err = txManager.recordAssignmentInTransaction(ctx, taskID, assignee, eventID)
 		return err
@@ -221,7 +230,7 @@ func (m *Manager) Queue(ctx context.Context, taskID modulecore.TaskID) (domainta
 
 func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
 	var started domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		if err := taskID.Validate(); err != nil {
 			return fmt.Errorf("task_id is invalid: %w", err)
 		}
@@ -246,7 +255,7 @@ func (m *Manager) Start(ctx context.Context, taskID modulecore.TaskID) (domainta
 // canonical Step10 reason. The first reason is valid only before any Run exists.
 func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Task, error) {
 	var started domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		started, _, err = txManager.startWithReason(ctx, taskID, reason)
 		return err
@@ -262,7 +271,7 @@ func (m *Manager) StartWithReason(ctx context.Context, taskID modulecore.TaskID,
 // queue or orchestrator must use this method rather than listing runs again.
 func (m *Manager) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
 	var run domaintask.Run
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		_, run, err = txManager.startWithReason(ctx, taskID, reason)
 		return err
@@ -413,7 +422,7 @@ func (m *Manager) Cancel(ctx context.Context, taskID modulecore.TaskID, summary 
 
 func (m *Manager) Supersede(ctx context.Context, taskID modulecore.TaskID, replacement modulecore.TaskID) (domaintask.Task, error) {
 	var superseded domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		superseded, err = txManager.supersedeInTransaction(ctx, taskID, replacement)
 		return err
@@ -456,7 +465,7 @@ func (m *Manager) UpdateStatus(ctx context.Context, taskID modulecore.TaskID, st
 
 func (m *Manager) updateStatus(ctx context.Context, taskID modulecore.TaskID, status domaintask.Status, summary, waitingReason string, nextActions []string) (domaintask.Task, error) {
 	var updated domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		updated, err = txManager.updateStatusInTransaction(ctx, taskID, status, summary, waitingReason, nextActions)
 		return err
@@ -519,7 +528,7 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 }
 
 func (m *Manager) UpdateContext(ctx context.Context, shared domaintask.SharedRoleContext) error {
-	return m.transaction(ctx, func(txManager *Manager) error {
+	return m.taskTransaction(ctx, shared.TaskID, func(txManager *Manager) error {
 		if err := shared.TaskID.Validate(); err != nil {
 			return fmt.Errorf("task_id is invalid: %w", err)
 		}
@@ -676,7 +685,7 @@ func (m *Manager) validateRunExecutionInTransaction(ctx context.Context, taskID 
 // owner has already persisted a new canonical Run.
 func (m *Manager) InterruptRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, summary string) (domaintask.Run, error) {
 	var interrupted domaintask.Run
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		var err error
 		interrupted, err = txManager.interruptRunInTransaction(ctx, taskID, runID, summary)
 		return err

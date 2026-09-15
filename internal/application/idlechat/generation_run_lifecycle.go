@@ -15,6 +15,7 @@ import (
 // completion through an unverified or projection-only implementation.
 type generationRunOwner interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
+	GetRun(context.Context, modulecore.RunID) (domaintask.Run, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	VerifyRunCompletion(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status) error
 	CompleteRun(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status, string, string) (domaintask.Task, error)
@@ -29,6 +30,27 @@ func generationRunOwnerFromIssuer(issuer idlechatRunIssuer) (generationRunOwner,
 		return nil, errors.New("idlechat run owner is not configured")
 	}
 	return owner, nil
+}
+
+func loadGenerationCheckpointRun(ctx context.Context, issuer idlechatRunIssuer, checkpoint GenerationCheckpoint) (domaintask.Run, error) {
+	if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
+		return domaintask.Run{}, fmt.Errorf("generation checkpoint identity: %w", err)
+	}
+	owner, err := generationRunOwnerFromIssuer(issuer)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	run, err := owner.GetRun(ctx, checkpoint.RunID)
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if err := run.Validate(); err != nil {
+		return domaintask.Run{}, fmt.Errorf("generation checkpoint Run is invalid: %w", err)
+	}
+	if run.RunID != checkpoint.RunID || run.TaskID != checkpoint.TaskID {
+		return domaintask.Run{}, errors.New("generation checkpoint Run does not match exact Task/Run pair")
+	}
+	return run, nil
 }
 
 func validateGenerationRunInputs(ctx context.Context, issuer idlechatRunIssuer, taskID modulecore.TaskID, runID modulecore.RunID) error {
@@ -154,13 +176,22 @@ func completeGenerationRun(ctx context.Context, issuer idlechatRunIssuer, taskID
 		return errors.New("waiting reason is required")
 	}
 
-	run, err := inspectGenerationRun(ctx, issuer, taskID, runID)
-	if err != nil {
-		return err
-	}
 	owner, err := generationRunOwnerFromIssuer(issuer)
 	if err != nil {
 		return err
+	}
+	run, err := owner.GetRun(ctx, runID)
+	if err != nil {
+		return err
+	}
+	if err := run.Validate(); err != nil {
+		return fmt.Errorf("run record is invalid: %w", err)
+	}
+	if run.RunID != runID || run.TaskID != taskID {
+		return fmt.Errorf("task and run ownership do not match")
+	}
+	if strings.TrimSpace(run.Assignee) == "" {
+		return errors.New("generation run actor is required")
 	}
 
 	if run.Status != domaintask.RunStatusRunning {

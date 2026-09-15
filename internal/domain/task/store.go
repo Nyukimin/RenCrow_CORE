@@ -12,6 +12,15 @@ import (
 type Store interface {
 	WriterGeneration() (uint64, error)
 
+	// TaskTransaction serializes all writes for taskID with any admitted
+	// external effect for the same Task. The callback receives a transaction
+	// view and must not invoke external work.
+	TaskTransaction(context.Context, modulecore.TaskID, func(Store) error) error
+	// WithTaskExecutionFence admits one synchronous external leaf while the
+	// per-Task fence is held, but releases the global store transaction before
+	// invoking the callback.
+	WithTaskExecutionFence(context.Context, modulecore.TaskID, func() error) error
+
 	SaveTask(context.Context, Task) error
 	GetTask(context.Context, modulecore.TaskID) (Task, error)
 	ListTasks(context.Context, Filter) ([]Task, error)

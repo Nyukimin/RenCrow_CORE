@@ -274,6 +274,34 @@ func TestDialogueEpisodeRetriesCompletionWithoutStartingAnotherRun(t *testing.T)
 	}
 }
 
+func TestDialogueEpisodeCompletionFailureBlocksDifferentKeyBeforeProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dialogue_episodes.jsonl")
+	config := DefaultDialogueInterestingnessConfig()
+	config.MaxTurnsPerTopic = 2
+	owner := newDialogueRecoveryOwner(t)
+	owner.failCompleteOnce = errors.New("injected completion failure")
+	firstGenerator := &dialogueRecoveryGenerator{responses: []string{dialogueRecoveryResponse()}}
+	service := NewPersistentDialogueEpisodeService(path, firstGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
+	service.SetRunIssuer(owner)
+	if artifact, err := service.Prepare(context.Background(), "dialogue-pending-one", dialogueRecoveryInput(), 2); err == nil || artifact.EpisodeID != "" {
+		t.Fatalf("first dialogue artifact=%+v err=%v, want completion failure", artifact, err)
+	}
+
+	secondInput := dialogueRecoveryInput()
+	secondInput.Topic = "防災設備の点検記録を誰が最後に確定するか"
+	secondGenerator := &dialogueRecoveryGenerator{responses: []string{dialogueRecoveryResponse()}}
+	second := NewPersistentDialogueEpisodeService(path, secondGenerator, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
+	second.SetRunIssuer(owner)
+	owner.failCompleteOnce = errors.New("completion remains unavailable")
+	artifact, err := second.Prepare(context.Background(), "dialogue-pending-two", secondInput, 2)
+	if err == nil || artifact.EpisodeID != "" {
+		t.Fatalf("different-key admission artifact=%+v err=%v, want pending completion rejection", artifact, err)
+	}
+	if secondGenerator.calls != 0 {
+		t.Fatalf("different-key provider calls=%d, want zero while completion is pending", secondGenerator.calls)
+	}
+}
+
 func TestDialogueEpisodeCleanupFailureReloadsSavedResultWithoutGeneration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dialogue_episodes.jsonl")
 	config := DefaultDialogueInterestingnessConfig()

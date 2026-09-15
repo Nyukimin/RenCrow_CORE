@@ -3,6 +3,7 @@ package idlechat
 import (
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -250,6 +251,20 @@ func (o *IdleChatOrchestrator) StartTopicStockPlayback(action, requestedID strin
 		return o.TopicStockPlaybackSnapshot(), errors.New("idlechat requires at least 2 participants")
 	}
 
+	// Reserve the generation lease before selecting or consuming stock. Stop
+	// closes this gate first, so a stopped service cannot mutate playback state
+	// or create an owner Task while an admitted playback is being joined.
+	lease, admitted := o.acquireGenerationWork()
+	if !admitted {
+		return o.TopicStockPlaybackSnapshot(), errIdleChatGenerationWorkClosed
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			lease.release()
+		}
+	}()
+
 	item, err := o.selectTopicStockPlaybackItem(action, requestedID)
 	if err != nil {
 		return o.TopicStockPlaybackSnapshot(), err
@@ -265,10 +280,19 @@ func (o *IdleChatOrchestrator) StartTopicStockPlayback(action, requestedID strin
 	o.sessionMode = item.Stock
 	o.currentTopic = item.Topic
 	o.sessionContext = ""
-	generation := o.beginIdleRunLocked()
+	o.mu.Unlock()
+	generation, err := o.startIdleRun()
+	if err != nil {
+		o.resetIdleSessionState(generation)
+		return o.TopicStockPlaybackSnapshot(), fmt.Errorf("start topic stock conversation: %w", err)
+	}
+	o.mu.Lock()
 	o.lastActivity = time.Now()
 	o.mu.Unlock()
-	go o.runTopicStockPlayback(item, generation)
+	o.launchGenerationWork(lease, func() {
+		o.runTopicStockPlayback(item, generation)
+	})
+	transferred = true
 	return o.TopicStockPlaybackSnapshot(), nil
 }
 
@@ -302,7 +326,9 @@ func (o *IdleChatOrchestrator) finishTopicStockPlayback(generation uint64) {
 	}
 	o.lastActivity = time.Now()
 	o.mu.Unlock()
-	o.cancelIdleRunIfGeneration(generation)
+	if err := o.cancelIdleRunIfGeneration(generation); err != nil {
+		log.Printf("[IdleChat] topic stock conversation finalization failed: %v", err)
+	}
 }
 
 func (o *IdleChatOrchestrator) forecastTopicPublicationPending(domain string, runID modulecore.RunID) (bool, error) {

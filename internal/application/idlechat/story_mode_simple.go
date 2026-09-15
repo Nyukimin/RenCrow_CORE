@@ -73,13 +73,15 @@ var protagonistOptions = []string{
 // StartSimpleStoryMode は簡易版物語モードを手動起動する。
 func (o *IdleChatOrchestrator) StartSimpleStoryMode() error {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if len(o.participants) < 1 {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("idlechat requires at least 1 participant")
 	}
 	if o.chatActive {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("chat session already active")
 	}
 	o.disabled = false
@@ -87,8 +89,16 @@ func (o *IdleChatOrchestrator) StartSimpleStoryMode() error {
 	o.chatActive = true
 	o.sessionMode = "story-simple"
 	o.currentTopic = idleChatPendingTopic("story-simple")
-	o.beginIdleRunLocked()
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.startIdleRun()
+	if err != nil {
+		o.resetIdleSessionState(generation)
+		return fmt.Errorf("start simple story conversation: %w", err)
+	}
+	o.mu.Lock()
 	o.lastActivity = time.Now()
+	o.mu.Unlock()
 	log.Println("[SimpleStory] Simple story mode started")
 	return nil
 }
@@ -110,18 +120,20 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	o.mu.Lock()
 	o.chatActive = true
 	o.sessionMode = "story-simple"
-	generation := o.beginIdleRunLocked()
-	if err := o.bindIdleSessionLocked(sessionID); err != nil {
-		o.mu.Unlock()
-		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.activateIdleSession(sessionID)
+	if err != nil {
+		o.resetIdleSessionState(generation)
 		log.Printf("[SimpleStory] session start failed before generation: session=%s error=%v", sessionID, err)
 		return
 	}
-	o.mu.Unlock()
-	o.emitMu.Unlock()
 
+	playbackCompleted := false
 	defer func() {
+		if playbackCompleted {
+			o.markConversationRunSucceeded(generation, "simple story conversation completed")
+		}
 		o.emitMu.Lock()
 		o.mu.Lock()
 		if o.activeGeneration == generation {
@@ -133,7 +145,9 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 		o.lastActivity = time.Now()
 		o.mu.Unlock()
 		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
+		if err := o.cancelIdleRunIfGeneration(generation); err != nil {
+			log.Printf("[SimpleStory] conversation run finalization failed: session=%s error=%v", sessionID, err)
+		}
 	}()
 
 	// 昔話と主人公をランダム選択
@@ -169,6 +183,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	})
 	if err != nil {
 		log.Printf("[SimpleStory] generation failed: %v", err)
+		o.markConversationRunFailed(generation, "SimpleStory generation failed", err.Error())
 		o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "generation_error")
 		return
 	}
@@ -181,6 +196,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	raw := strings.TrimSpace(resp.Content)
 	if raw == "" {
 		log.Printf("[SimpleStory] empty response")
+		o.markConversationRunFailed(generation, "SimpleStory generation failed", "empty_response")
 		o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, "", "", transcript, startedAt, "invalid_response")
 		return
 	}
@@ -220,6 +236,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	transcript = append(transcript, "mio: "+closing)
 	o.emitStoryParagraph(sessionID, generation, closing, &storyUtteranceSeq)
 	o.saveSimpleStoryReview(sessionID, generation, storyTopic, tale.title, protagonist, titleLine, body, transcript, startedAt, "")
+	playbackCompleted = true
 
 	log.Printf("[SimpleStory] Session complete: %s × %s", tale.title, protagonist)
 }

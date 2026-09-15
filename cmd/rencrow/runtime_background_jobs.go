@@ -135,12 +135,19 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 	return content
 }
 
-func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener, owner backgroundFailureTaskOwner) {
+func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener, owner backgroundFailureTaskOwner) func() {
 	reporter := newBackgroundJobFailureReporter(listener, owner)
-	if runtime.L1Store != nil {
-		bootstrapDefaultNewsSources(runtime.L1Store, reporter)
-		startSourceRegistrySweeper(cfg, runtime.L1Store, reporter)
-		startMemoryLifecycleJob(runtime.L1Store, reporter)
+	if runtime.L1Store == nil {
+		return func() {}
+	}
+	bootstrapDefaultNewsSources(runtime.L1Store, reporter)
+	ctx, cancel := context.WithCancel(context.Background())
+	sourceDone := startSourceRegistrySweeper(ctx, cfg, runtime.L1Store, reporter)
+	memoryDone := startMemoryLifecycleJobRunner(ctx, runtime.L1Store, memoryLifecycleJobConfigFromEnv(time.Now), reporter)
+	return func() {
+		cancel()
+		<-sourceDone
+		<-memoryDone
 	}
 }
 
@@ -154,12 +161,26 @@ func bootstrapDefaultNewsSources(store newsbriefapp.DefaultSourceRegistry, repor
 	log.Printf("Default news sources ready: added=%d existing=%d", result.Added, result.Existing)
 }
 
-func startSourceRegistrySweeper(cfg *config.Config, store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
+func startSourceRegistrySweeper(ctx context.Context, cfg *config.Config, store interface {
+	sourcefetcher.RegistryStore
+	sourcefetcher.RegistrySourceLister
+}, reporter backgroundJobFailureReporter) <-chan struct{} {
+	done := make(chan struct{})
+	if store == nil {
+		close(done)
+		return done
+	}
 	sweep := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		now := time.Now().UTC()
 		opts := sourceRegistrySweepOptions(cfg)
-		result, err := sourcefetcher.SweepAllFeedSources(context.Background(), store, now, opts)
+		result, err := sourcefetcher.SweepAllFeedSources(ctx, store, now, opts)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("WARN: all-feed source registry sweep failed: %v", err)
 			reporter.Failed("source_registry_all_feed_sweep", err, "limit_per_source=10 minimum_trust_score=0.5")
 		} else if result.Sources > 0 || result.Staged > 0 || result.Failed > 0 {
@@ -167,8 +188,14 @@ func startSourceRegistrySweeper(cfg *config.Config, store *l1sqlite.L1SQLiteStor
 				result.Sources, result.Staged, result.Validated, result.PromotedNews, result.ArticleFetched, result.ArticleReused, result.ArticleDeferred, result.SkippedExisting, result.Failed)
 		}
 
-		dueResult, dueErr := sourcefetcher.SweepDueSources(context.Background(), store, now, opts)
+		if ctx.Err() != nil {
+			return
+		}
+		dueResult, dueErr := sourcefetcher.SweepDueSources(ctx, store, now, opts)
 		if dueErr != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("WARN: due source registry sweep failed: %v", dueErr)
 			reporter.Failed("source_registry_due_sweep", dueErr, "limit_per_source=10 minimum_trust_score=0.5")
 		} else if dueResult.Sources > 0 || dueResult.Staged > 0 || dueResult.Failed > 0 {
@@ -177,13 +204,23 @@ func startSourceRegistrySweeper(cfg *config.Config, store *l1sqlite.L1SQLiteStor
 		}
 	}
 	go func() {
+		defer close(done)
+		if ctx.Err() != nil {
+			return
+		}
 		sweep()
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			sweep()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
 		}
 	}()
+	return done
 }
 
 func sourceRegistrySweepOptions(cfg *config.Config) sourcefetcher.SweepOptions {
@@ -199,10 +236,6 @@ func sourceRegistrySweepOptions(cfg *config.Config) sourcefetcher.SweepOptions {
 		})
 	}
 	return opts
-}
-
-func startMemoryLifecycleJob(store *l1sqlite.L1SQLiteStore, reporter backgroundJobFailureReporter) {
-	startMemoryLifecycleJobWithConfig(store, memoryLifecycleJobConfigFromEnv(time.Now), reporter)
 }
 
 type memoryLifecycleJobConfig struct {
@@ -282,21 +315,15 @@ func memoryLifecycleDurationFromEnv(msKey string, secKey string) (time.Duration,
 	return 0, false
 }
 
-func startMemoryLifecycleJobWithConfig(store *l1sqlite.L1SQLiteStore, cfg memoryLifecycleJobConfig, reporter backgroundJobFailureReporter) {
-	startMemoryLifecycleJobRunner(store, cfg, nil, reporter)
-}
-
-func startMemoryLifecycleJobWithStop(store *l1sqlite.L1SQLiteStore, cfg memoryLifecycleJobConfig, stop <-chan struct{}, reporter backgroundJobFailureReporter) {
-	startMemoryLifecycleJobRunner(store, cfg, stop, reporter)
-}
-
 type memoryLifecycleMaintenanceRunner interface {
 	RunMemoryLifecycleMaintenance(ctx context.Context, opts l1sqlite.MemoryLifecycleOptions) (*l1sqlite.MemoryLifecycleResult, error)
 }
 
-func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg memoryLifecycleJobConfig, stop <-chan struct{}, reporter backgroundJobFailureReporter) {
+func startMemoryLifecycleJobRunner(ctx context.Context, store memoryLifecycleMaintenanceRunner, cfg memoryLifecycleJobConfig, reporter backgroundJobFailureReporter) <-chan struct{} {
+	done := make(chan struct{})
 	if store == nil {
-		return
+		close(done)
+		return done
 	}
 	if cfg.Interval <= 0 {
 		cfg.Interval = 24 * time.Hour
@@ -308,10 +335,16 @@ func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg m
 		log.Printf("Memory lifecycle job enabled: %s", cfg.Label)
 	}
 	run := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		opts := l1sqlite.DefaultMemoryLifecycleOptions()
 		opts.Now = cfg.Now()
-		result, err := store.RunMemoryLifecycleMaintenance(context.Background(), opts)
+		result, err := store.RunMemoryLifecycleMaintenance(ctx, opts)
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("WARN: memory lifecycle maintenance failed: %v", err)
 			reporter.Failed("memory_lifecycle", err, "label="+cfg.Label)
 			return
@@ -322,6 +355,10 @@ func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg m
 		}
 	}
 	go func() {
+		defer close(done)
+		if ctx.Err() != nil {
+			return
+		}
 		run()
 		ticker := time.NewTicker(cfg.Interval)
 		defer ticker.Stop()
@@ -329,11 +366,12 @@ func startMemoryLifecycleJobRunner(store memoryLifecycleMaintenanceRunner, cfg m
 			select {
 			case <-ticker.C:
 				run()
-			case <-stop:
+			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+	return done
 }
 
 func startDailyIntakeSweeper(rules knowledgememoryapp.DailyIntakeRuleStore, registry knowledgememoryapp.DailyIntakeRegistryStore, reporter backgroundJobFailureReporter) {

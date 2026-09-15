@@ -162,11 +162,51 @@ func TestManagerStartRunFromCheckpointRejectsTiedLatestRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.CompleteRun(ctx, task.TaskID, second.RunID, "Mio", domaintask.StatusSucceeded, "second", ""); err != nil {
+	secondTerminal := second
+	secondTerminal.Status = domaintask.RunStatusSucceeded
+	secondFinished := fixed.Add(time.Second)
+	secondTerminal.CompletedAt = &secondFinished
+	secondTerminal.Summary = "second"
+	if err := store.TaskTransaction(ctx, task.TaskID, func(tx Store) error {
+		if err := tx.SaveRun(ctx, secondTerminal); err != nil {
+			return err
+		}
+		terminalTask, err := tx.GetTask(ctx, task.TaskID)
+		if err != nil {
+			return err
+		}
+		terminalTask.Status = domaintask.StatusSucceeded
+		terminalTask.UpdatedAt = secondFinished
+		terminalTask.FinishedAt = &secondFinished
+		terminalTask.Summary = "second"
+		return tx.SaveTask(ctx, terminalTask)
+	}); err != nil {
+		t.Fatalf("close second Run and Task in one transaction: %v", err)
+	}
+	beforeTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
 		t.Fatal(err)
+	}
+	beforeRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beforeRuns) != 2 || beforeRuns[0].StartedAt != beforeRuns[1].StartedAt || beforeRuns[0].Status == domaintask.RunStatusRunning || beforeRuns[1].Status == domaintask.RunStatusRunning {
+		t.Fatalf("tied terminal fixture = task=%#v runs=%#v", beforeTask, beforeRuns)
 	}
 	if _, err := manager.StartRunFromCheckpoint(ctx, task.TaskID, second.RunID, "Mio", domaintask.RunStartReasonExplicitRerun, checkpointTestDigest); !errors.Is(err, ErrRunConflict) {
 		t.Fatalf("tied latest error = %v, want ErrRunConflict", err)
+	}
+	afterTask, err := manager.Get(ctx, task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRuns, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: task.TaskID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeTask, afterTask) || !reflect.DeepEqual(beforeRuns, afterRuns) {
+		t.Fatalf("tied latest rejection changed records: before task=%#v runs=%#v after task=%#v runs=%#v", beforeTask, beforeRuns, afterTask, afterRuns)
 	}
 }
 
@@ -377,5 +417,58 @@ func TestManagerExecuteRunEffectHoldsAdmissionFenceUntilCallbackReturnsReal(t *t
 	}
 	if err := <-supersedeDone; err != nil {
 		t.Fatalf("supersession after effect: %v", err)
+	}
+}
+
+func TestManagerExecuteRunEffectAllowsUnrelatedTaskCompletion(t *testing.T) {
+	ctx := context.Background()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	manager := New(store, DefaultParallelLimits())
+	taskA, runA := newRunningExecutionTaskRun(t, manager, "Mio")
+	taskB, _ := newRunningExecutionTaskRun(t, manager, "Mio")
+
+	effectStarted := make(chan struct{})
+	releaseEffect := make(chan struct{})
+	effectDone := make(chan error, 1)
+	go func() {
+		effectDone <- manager.ExecuteRunEffect(ctx, taskA.TaskID, runA.RunID, "Mio", func(context.Context) error {
+			close(effectStarted)
+			<-releaseEffect
+			return nil
+		})
+	}()
+	select {
+	case <-effectStarted:
+	case err := <-effectDone:
+		t.Fatalf("effect returned before callback started: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("effect callback did not start")
+	}
+
+	completionDone := make(chan error, 1)
+	go func() {
+		_, err := manager.Succeed(ctx, taskB.TaskID, "unrelated complete")
+		completionDone <- err
+	}()
+	select {
+	case err := <-completionDone:
+		if err != nil {
+			close(releaseEffect)
+			<-effectDone
+			t.Fatalf("unrelated Task completion failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		close(releaseEffect)
+		<-effectDone
+		t.Fatal("unrelated Task completion remained blocked by external effect")
+	}
+
+	close(releaseEffect)
+	if err := <-effectDone; err != nil {
+		t.Fatalf("ExecuteRunEffect: %v", err)
 	}
 }

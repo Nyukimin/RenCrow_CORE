@@ -292,6 +292,7 @@ type Dependencies struct {
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
 	conversationArchiveCloser      interface{ Close() error }                  // CORE-owned L2 archive and request receipts
 	conversationCloser             interface{ Close() error }                  // primary conversation manager or L1 store
+	conversationBackgroundStop     func()                                      // Conversation-owned source and memory background jobs
 	knowledgeMemoryToolStore       interface{ Close() error }                  // indexed Tool search store
 	knowledgeMemoryViewerStore     interface{ Close() error }                  // writable Viewer store, when configured
 	advisorScoreCancel             context.CancelFunc                          // Advisor daily score job
@@ -350,6 +351,15 @@ func (d *Dependencies) Shutdown() {
 	if d.heartbeatSvc != nil {
 		d.heartbeatSvc.Stop()
 	}
+	if d.idleChatOrch != nil {
+		if d.idleChatSurfacePresence != nil {
+			d.idleChatSurfacePresence.Close()
+		}
+		d.idleChatOrch.Stop()
+	}
+	if d.conversationBackgroundStop != nil {
+		d.conversationBackgroundStop()
+	}
 	if d.advisorCloser != nil {
 		if err := d.advisorCloser.Close(); err != nil {
 			log.Printf("Failed to close advisor store: %v", err)
@@ -379,12 +389,6 @@ func (d *Dependencies) Shutdown() {
 		if err := d.knowledgeMemoryViewerStore.Close(); err != nil {
 			log.Printf("Failed to close Knowledge Memory Viewer store: %v", err)
 		}
-	}
-	if d.idleChatOrch != nil {
-		if d.idleChatSurfacePresence != nil {
-			d.idleChatSurfacePresence.Close()
-		}
-		d.idleChatOrch.Stop()
 	}
 	for name, t := range d.sshTransports {
 		if err := t.Close(); err != nil {
@@ -769,7 +773,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 		)
 	}
-	startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.taskManager)
+	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.taskManager)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}

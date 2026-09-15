@@ -23,18 +23,19 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 	o.mu.Lock()
 	o.chatActive = true
 	o.sessionMode = "forecast"
-	generation := o.beginIdleRunLocked()
-	if err := o.bindIdleSessionLocked(sessionID); err != nil {
-		o.mu.Unlock()
-		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.activateIdleSession(sessionID)
+	if err != nil {
+		o.resetIdleSessionState(generation)
 		log.Printf("[Forecast] session start failed before dialogue: session=%s error=%v", sessionID, err)
 		return
 	}
-	o.mu.Unlock()
-	o.emitMu.Unlock()
 
-	totalTurns := o.runForecastSessionDomains(sessionID, generation, startedAt, sessionDomains)
+	totalTurns, completed := o.runForecastSessionDomains(sessionID, generation, startedAt, sessionDomains)
+	if completed && o.isIdleSessionActive(sessionID, generation) {
+		o.markConversationRunSucceeded(generation, fmt.Sprintf("Forecast conversation completed (%d turns)", totalTurns))
+	}
 
 	o.emitMu.Lock()
 	o.mu.Lock()
@@ -48,7 +49,9 @@ func (o *IdleChatOrchestrator) RunForecastSession() {
 	o.lastActivity = time.Now()
 	o.mu.Unlock()
 	o.emitMu.Unlock()
-	o.cancelIdleRunIfGeneration(generation)
+	if err := o.cancelIdleRunIfGeneration(generation); err != nil {
+		log.Printf("[Forecast] conversation run finalization failed: session=%s error=%v", sessionID, err)
+	}
 	log.Printf("[Forecast] Session %s completed (%d total turns)", sessionID, totalTurns)
 }
 
@@ -56,22 +59,26 @@ func (o *IdleChatOrchestrator) runForecastDomainSession(domain ForecastDomain, p
 	sessionID := string(modulecore.NewSessionID())
 	generation, err := o.activateIdleSession(sessionID)
 	if err != nil {
+		o.resetIdleSessionState(generation)
 		log.Printf("[Forecast] session start failed before dialogue: session=%s error=%v", sessionID, err)
 		return
 	}
 	startedAt := time.Now().In(jst)
-	totalTurns := o.runForecastSessionDomains(sessionID, generation, startedAt, []ForecastDomain{domain}, prepared...)
+	totalTurns, completed := o.runForecastSessionDomains(sessionID, generation, startedAt, []ForecastDomain{domain}, prepared...)
+	if completed && o.isIdleSessionActive(sessionID, generation) {
+		o.markConversationRunSucceeded(generation, fmt.Sprintf("Forecast conversation completed (%d turns)", totalTurns))
+	}
 	log.Printf("[Forecast] Session %s completed (%d total turns)", sessionID, totalTurns)
 }
 
-func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, generation uint64, startedAt time.Time, sessionDomains []ForecastDomain, prepared ...PreparedTopic) int {
+func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, generation uint64, startedAt time.Time, sessionDomains []ForecastDomain, prepared ...PreparedTopic) (int, bool) {
 	totalTurns := 0
 
 	for domainIdx, domain := range sessionDomains {
 		ttsDrain := make([]TTSLifecycle, 0, forecastTurnsPerDomain+3)
 		select {
 		case <-o.idleRunContext().Done():
-			return totalTurns
+			return totalTurns, false
 		default:
 		}
 
@@ -79,7 +86,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		if !o.chatActive {
 			o.mu.Unlock()
 			log.Printf("[Forecast] Session interrupted before domain %s", domain.Name)
-			return totalTurns
+			return totalTurns, false
 		}
 		o.mu.Unlock()
 
@@ -93,7 +100,8 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		announceMsg.Context = idleChatMessageContext(announceMessageID, 0)
 		if !o.recordIdleMessageForGeneration(generation, sessionID, announceMsg) {
 			log.Printf("[Forecast] announce record rejected without active owner: session=%s generation=%d", sessionID, generation)
-			return totalTurns
+			o.markConversationRunFailed(generation, "Forecast conversation failed", "announce_record_rejected")
+			return totalTurns, false
 		}
 		announceEvent := TimelineEvent{
 			Type:       "idlechat.message",
@@ -132,7 +140,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		}
 		if !o.isIdleSessionActive(sessionID, generation) {
 			log.Printf("[Forecast] Topic discarded after interrupt: session=%s domain=%s", sessionID, domain.Name)
-			return totalTurns
+			return totalTurns, false
 		}
 		o.markWatchdogStage("topic_ready", fmt.Sprintf("mode=forecast domain=%s", domain.Name), TimelineEvent{SessionID: sessionID})
 
@@ -185,7 +193,8 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		topicMsg.Context = idleChatMessageContext(topicMessageID, 0)
 		if !o.recordIdleMessageForGeneration(generation, sessionID, topicMsg) {
 			log.Printf("[Forecast] topic record rejected without active owner: session=%s generation=%d", sessionID, generation)
-			return totalTurns
+			o.markConversationRunFailed(generation, "Forecast conversation failed", "topic_record_rejected")
+			return totalTurns, false
 		}
 		topicEvent := TimelineEvent{
 			Type:       "idlechat.topic",
@@ -222,7 +231,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		for turn, preparedTurn := range dialogueEpisode.Turns {
 			select {
 			case <-o.idleRunContext().Done():
-				return totalTurns
+				return totalTurns, false
 			default:
 			}
 
@@ -287,6 +296,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 			}
 			if !o.recordIdleMessageForGeneration(generation, sessionID, msg) {
 				log.Printf("[Forecast] message record rejected after owner change: session=%s generation=%d turn=%d", sessionID, generation, turnIndex)
+				o.markConversationRunFailed(generation, "Forecast conversation failed", "message_record_rejected")
 				interrupted = true
 				loopReason = "interrupted"
 				break
@@ -322,7 +332,7 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		o.waitForTTSSessionDrain(sessionID, generation, ttsDrain)
 
 		if interrupted {
-			return totalTurns
+			return totalTurns, false
 		}
 
 		// ドメイン間ブレイク（最後のドメイン以外）
@@ -331,5 +341,5 @@ func (o *IdleChatOrchestrator) runForecastSessionDomains(sessionID string, gener
 		}
 	}
 
-	return totalTurns
+	return totalTurns, totalTurns > 0
 }

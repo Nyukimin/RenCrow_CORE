@@ -102,7 +102,9 @@ func TestRunChatSessionDoesNotSwitchTopicWithinSingleIdleSession(t *testing.T) {
 	dialogueGenerator := attachPreparedWordDialogue(t, o, "郵便と古書店に残る、宛先不明の手紙の扱い方", "郵便", 4)
 	o.mu.Lock()
 	o.chatActive = true
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.mu.Unlock()
 	defer o.cancelIdleRun()
 
@@ -134,7 +136,9 @@ func TestRunChatSessionPlaysValidatedEpisodeToTurnLimit(t *testing.T) {
 	attachPreparedWordDialogue(t, o, "映画館に残った鍵の使い道", "鍵", maxTurnsPerTopic)
 	o.mu.Lock()
 	o.chatActive = true
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.mu.Unlock()
 	defer o.cancelIdleRun()
 
@@ -164,7 +168,9 @@ func TestRunChatSessionRecordsGenerationErrorInConversationHistory(t *testing.T)
 	o := NewIdleChatOrchestrator(provider, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 2, 0.7, nil, "")
 	o.mu.Lock()
 	o.chatActive = true
-	o.beginIdleRunLocked()
+	if _, err := o.beginIdleRunLocked(); err != nil {
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.mu.Unlock()
 	defer o.cancelIdleRun()
 

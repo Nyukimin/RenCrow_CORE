@@ -23,15 +23,23 @@ func (o *IdleChatOrchestrator) monitorLoop() {
 		case <-o.ctx.Done():
 			return
 		case <-ticker.C:
+			if err := o.retryPendingTopicCompletions(); err != nil {
+				log.Printf("[IdleChat] topic generation completion retry failed during maintenance: %v", err)
+				continue
+			}
 			o.RefillWordTopicStockIfIdle("idle")
 			o.RefillForecastTopicStockIfIdle("idle")
 			o.RefillStoryEpisodesAsync("idle")
-			go o.checkAndStartChat()
+			o.startGenerationWork(o.checkAndStartChat)
 		}
 	}
 }
 
 func (o *IdleChatOrchestrator) checkAndStartChat() {
+	if err := o.finalizePendingConversationRun(); err != nil {
+		log.Printf("[IdleChat] pending conversation run finalization blocks new session: %v", err)
+		return
+	}
 	o.emitMu.Lock()
 	o.mu.Lock()
 	idleDuration := time.Since(o.lastActivity)
@@ -58,9 +66,14 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	o.chatActive = true
 	plan := o.nextIdleSessionPlanLocked()
 	o.sessionMode = plan.mode
-	generation := o.beginIdleRunLocked()
 	o.mu.Unlock()
 	o.emitMu.Unlock()
+	generation, err := o.startIdleRun()
+	if err != nil {
+		o.resetIdleSessionState(generation)
+		log.Printf("[IdleChat] session admission failed before side effects: %v", err)
+		return
+	}
 
 	log.Printf("[IdleChat] Idle for %v, starting %s session generation=%d", idleDuration.Round(time.Second), plan.mode, generation)
 	switch plan.mode {
@@ -87,7 +100,9 @@ func (o *IdleChatOrchestrator) checkAndStartChat() {
 	o.lastActivity = time.Now() // セッション終了でアイドル計測をリセット
 	o.mu.Unlock()
 	o.emitMu.Unlock()
-	o.cancelIdleRunIfGeneration(generation)
+	if err := o.cancelIdleRunIfGeneration(generation); err != nil {
+		log.Printf("[IdleChat] conversation run finalization failed after session: %v", err)
+	}
 }
 
 func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared ...TopicGenerationResult) {
@@ -286,6 +301,9 @@ func (o *IdleChatOrchestrator) runChatSession(strategy TopicStrategy, prepared .
 
 	log.Printf("[IdleChat] Session %s completed (%d turns)", sessionID, segmentTurns)
 	o.markWatchdogStage("session_completed", fmt.Sprintf("turns=%d", segmentTurns), TimelineEvent{SessionID: segmentID})
+	if !sessionInterrupted && segmentTurns > 0 && o.isIdleSessionActive(segmentID, generation) {
+		o.markConversationRunSucceeded(generation, "IdleChat conversation completed")
+	}
 }
 
 func (o *IdleChatOrchestrator) dialogueTopicResultLocked(topic string, strategy TopicStrategy) TopicGenerationResult {

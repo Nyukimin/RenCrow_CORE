@@ -31,9 +31,13 @@ type wordRunLifecycleOwnerFake struct {
 	task          domaintask.Task
 	runs          []domaintask.Run
 	getErr        error
+	getRunErr     error
 	listErr       error
 	completeErr   error
 	verifyErr     error
+	getCalls      int
+	getRunCalls   int
+	listCalls     int
 	completeCalls []wordRunCompletionCall
 	completeCtx   context.Context
 	verifyCalls   []wordRunVerificationCall
@@ -49,6 +53,7 @@ func (f *wordRunLifecycleOwnerFake) StartRunWithReason(_ context.Context, _ modu
 }
 
 func (f *wordRunLifecycleOwnerFake) Get(_ context.Context, _ modulecore.TaskID) (domaintask.Task, error) {
+	f.getCalls++
 	if f.getErr != nil {
 		return domaintask.Task{}, f.getErr
 	}
@@ -56,10 +61,24 @@ func (f *wordRunLifecycleOwnerFake) Get(_ context.Context, _ modulecore.TaskID) 
 }
 
 func (f *wordRunLifecycleOwnerFake) ListRuns(_ context.Context, _ domaintask.RunFilter) ([]domaintask.Run, error) {
+	f.listCalls++
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	return append([]domaintask.Run(nil), f.runs...), nil
+}
+
+func (f *wordRunLifecycleOwnerFake) GetRun(_ context.Context, runID modulecore.RunID) (domaintask.Run, error) {
+	f.getRunCalls++
+	if f.getRunErr != nil {
+		return domaintask.Run{}, f.getRunErr
+	}
+	for _, run := range f.runs {
+		if run.RunID == runID {
+			return run, nil
+		}
+	}
+	return domaintask.Run{}, errors.New("run not found")
 }
 
 func (f *wordRunLifecycleOwnerFake) VerifyRunCompletion(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, status domaintask.Status) error {
@@ -258,6 +277,24 @@ func TestCompleteWordRunUsesExactActiveIdentity(t *testing.T) {
 	}
 	if owner.completeCtx != ctx {
 		t.Fatal("completion context was not propagated")
+	}
+}
+
+func TestCompleteWordRunReadsOnlyExactRunBeforeOwnerCompletion(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	owner := &wordRunLifecycleOwnerFake{
+		task:    wordLifecycleTask(taskID, domaintask.StatusRunning),
+		runs:    []domaintask.Run{wordLifecycleRun(taskID, runID, domaintask.RunStatusRunning, time.Now().UTC())},
+		getErr:  errors.New("task preflight must not be called"),
+		listErr: errors.New("run history preflight must not be called"),
+	}
+
+	if err := completeGenerationRun(context.Background(), owner, taskID, runID, domaintask.StatusSucceeded, "finished", ""); err != nil {
+		t.Fatalf("completeGenerationRun() error = %v", err)
+	}
+	if owner.getRunCalls != 1 || owner.getCalls != 0 || owner.listCalls != 0 {
+		t.Fatalf("owner reads = get=%d getRun=%d list=%d, want exact GetRun only", owner.getCalls, owner.getRunCalls, owner.listCalls)
 	}
 }
 

@@ -38,8 +38,11 @@ func (m *Manager) CompleteRun(
 	}
 
 	var completed domaintask.Task
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		if err := txManager.validateRunExecutionInTransaction(ctx, taskID, runID, actorID); err != nil {
+			return err
+		}
+		if _, err := txManager.validateLatestRunInTransaction(ctx, taskID, runID); err != nil {
 			return err
 		}
 		var err error
@@ -90,6 +93,72 @@ func (m *Manager) VerifyRunCompletion(
 	})
 }
 
+// validateLatestRunInTransaction checks the complete folded Run history for a
+// Task. Callers use the returned Run only as the history-selected candidate;
+// the caller remains responsible for its status and actor-specific fences.
+func (m *Manager) validateLatestRunInTransaction(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID) (domaintask.Run, error) {
+	if ctx == nil {
+		return domaintask.Run{}, errors.New("latest run validation context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return domaintask.Run{}, err
+	}
+	if m == nil || m.store == nil {
+		return domaintask.Run{}, errors.New("task manager store is unavailable")
+	}
+	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+	if err != nil {
+		return domaintask.Run{}, err
+	}
+	if len(runs) == 0 {
+		return domaintask.Run{}, fmt.Errorf("%w: task has no persisted runs", ErrRunConflict)
+	}
+
+	seen := make(map[modulecore.RunID]struct{}, len(runs))
+	var selected domaintask.Run
+	found := false
+	for index := range runs {
+		candidate := runs[index]
+		if err := candidate.Validate(); err != nil {
+			return domaintask.Run{}, fmt.Errorf("%w: run record is invalid: %v", ErrRunConflict, err)
+		}
+		if candidate.TaskID != taskID {
+			return domaintask.Run{}, fmt.Errorf("%w: run %s belongs to task %s, want %s", ErrRunConflict, candidate.RunID, candidate.TaskID, taskID)
+		}
+		if _, exists := seen[candidate.RunID]; exists {
+			return domaintask.Run{}, fmt.Errorf("%w: duplicate run %s", ErrRunConflict, candidate.RunID)
+		}
+		seen[candidate.RunID] = struct{}{}
+		if candidate.RunID == runID {
+			selected = candidate
+			found = true
+		}
+	}
+	if !found {
+		return domaintask.Run{}, fmt.Errorf("%w: requested run is absent from task history", ErrRunConflict)
+	}
+
+	for index := range runs {
+		candidate := runs[index]
+		if candidate.RunID == selected.RunID {
+			continue
+		}
+		if candidate.StartedAt.Equal(selected.StartedAt) {
+			return domaintask.Run{}, fmt.Errorf("%w: latest run is ambiguous at started_at %s", ErrRunConflict, selected.StartedAt)
+		}
+		if candidate.StartedAt.After(selected.StartedAt) {
+			return domaintask.Run{}, fmt.Errorf("%w: requested run %s is not the latest run", ErrRunConflict, selected.RunID)
+		}
+		if candidate.Status == domaintask.RunStatusRunning {
+			return domaintask.Run{}, fmt.Errorf("%w: task has another active run %s", ErrRunConflict, candidate.RunID)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return domaintask.Run{}, err
+	}
+	return selected, nil
+}
+
 func (m *Manager) verifyRunCompletionInTransaction(
 	ctx context.Context,
 	taskID modulecore.TaskID,
@@ -129,56 +198,12 @@ func (m *Manager) verifyRunCompletionInTransaction(
 		return fmt.Errorf("%w: run status is %s, want %s", ErrRunConflict, run.Status, expectedRunStatus)
 	}
 
-	runs, err := m.store.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+	selected, err := m.validateLatestRunInTransaction(ctx, taskID, runID)
 	if err != nil {
 		return err
 	}
-	if len(runs) == 0 {
-		return fmt.Errorf("%w: task has no persisted runs", ErrRunConflict)
-	}
-
-	seen := make(map[modulecore.RunID]struct{}, len(runs))
-	var selected *domaintask.Run
-	for index := range runs {
-		candidate := &runs[index]
-		if err := candidate.Validate(); err != nil {
-			return fmt.Errorf("%w: run record is invalid: %v", ErrRunConflict, err)
-		}
-		if candidate.TaskID != taskID {
-			return fmt.Errorf("%w: run %s belongs to task %s, want %s", ErrRunConflict, candidate.RunID, candidate.TaskID, taskID)
-		}
-		if _, exists := seen[candidate.RunID]; exists {
-			return fmt.Errorf("%w: duplicate run %s", ErrRunConflict, candidate.RunID)
-		}
-		seen[candidate.RunID] = struct{}{}
-		if candidate.RunID == runID {
-			selected = candidate
-		}
-	}
-	if selected == nil {
-		return fmt.Errorf("%w: requested run is absent from task history", ErrRunConflict)
-	}
 	if selected.TaskID != run.TaskID || selected.Assignee != run.Assignee || selected.Status != run.Status || !selected.StartedAt.Equal(run.StartedAt) {
 		return fmt.Errorf("%w: requested run changed within task snapshot", ErrRunConflict)
-	}
-
-	for index := range runs {
-		candidate := &runs[index]
-		if candidate.RunID == selected.RunID {
-			continue
-		}
-		if candidate.StartedAt.Equal(selected.StartedAt) {
-			return fmt.Errorf("%w: latest run is ambiguous at started_at %s", ErrRunConflict, selected.StartedAt)
-		}
-		if candidate.StartedAt.After(selected.StartedAt) {
-			return fmt.Errorf("%w: requested run %s is not the latest run", ErrRunConflict, selected.RunID)
-		}
-		if candidate.Status == domaintask.RunStatusRunning {
-			return fmt.Errorf("%w: task has another active run %s", ErrRunConflict, candidate.RunID)
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 	return nil
 }

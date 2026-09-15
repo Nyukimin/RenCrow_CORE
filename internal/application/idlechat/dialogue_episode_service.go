@@ -29,6 +29,7 @@ type DialogueEpisodeService struct {
 	maxSuffixRegenerations int
 	runIssuer              idlechatRunIssuer
 	checkpoints            *GenerationCheckpointStore
+	pendingCompletions     map[string]GenerationCheckpoint
 	mu                     sync.Mutex
 }
 
@@ -71,6 +72,7 @@ func NewPersistentDialogueEpisodeService(path string, generator IdleChatCodexGen
 		config:                 normalizeDialogueInterestingnessConfig(config),
 		maxSuffixRegenerations: 3,
 		checkpoints:            checkpoints,
+		pendingCompletions:     make(map[string]GenerationCheckpoint),
 	}
 }
 
@@ -99,7 +101,7 @@ func (s *DialogueEpisodeService) SetGenerationCheckpointStore(store *GenerationC
 }
 
 func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, result TopicGenerationResult, turnCount int) (DialogueEpisodeArtifact, error) {
-	if s == nil || s.generator == nil {
+	if s == nil {
 		return DialogueEpisodeArtifact{}, errors.New("dialogue CodexExe producer is not configured")
 	}
 	if ctx == nil {
@@ -122,6 +124,12 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 	}
 	if err := checkpoints.LoadError(); err != nil {
 		return DialogueEpisodeArtifact{}, fmt.Errorf("dialogue checkpoint store unavailable: %w", err)
+	}
+	if err := s.flushPendingCompletionsLocked(ctx); err != nil {
+		return DialogueEpisodeArtifact{}, err
+	}
+	if s.generator == nil {
+		return DialogueEpisodeArtifact{}, errors.New("dialogue CodexExe producer is not configured")
 	}
 	if turnCount <= 0 {
 		turnCount = normalizeDialogueInterestingnessConfig(s.config).MaxTurnsPerTopic
@@ -155,9 +163,13 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 			Key: checkpointKey, Kind: "dialogue", TaskID: existing.TaskID, RunID: existing.RunID,
 			Stage: "ready", DialogueArtifact: cloneDialogueEpisodePtr(existing),
 		}
-		if err := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusSucceeded, "dialogue episode already saved", ""); err != nil {
+		if err := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusSucceeded, "dialogue episode already saved", ""); err != nil {
 			return DialogueEpisodeArtifact{}, err
 		}
+		if err := s.checkpoints.Delete(checkpointKey); err != nil {
+			return DialogueEpisodeArtifact{}, err
+		}
+		s.forgetPendingCompletion(checkpointKey)
 		return existing, nil
 	}
 
@@ -193,7 +205,7 @@ func (s *DialogueEpisodeService) Prepare(ctx context.Context, sessionID string, 
 		DialogueArtifact: cloneDialogueEpisodePtr(artifact),
 	}
 	if err := checkpoints.Put(checkpoint); err != nil {
-		finishErr := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusFailed, "dialogue seed checkpoint save failed", "")
+		finishErr := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusFailed, "dialogue seed checkpoint save failed", "")
 		return DialogueEpisodeArtifact{}, errors.Join(err, finishErr)
 	}
 	return s.continueDialogueCheckpoint(ctx, checkpointKey, checkpoint, turnCount, persisted)
@@ -327,7 +339,7 @@ func (s *DialogueEpisodeService) resumeDialogueCheckpoint(ctx context.Context, k
 			// The shared helper changes the ID only after exact successor
 			// verification. A changed ID on error means its checkpoint Put failed.
 			if checkpoint.RunID != previousRunID {
-				finishErr := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusWaiting, "dialogue resume checkpoint reconciliation failed", "retry from saved dialogue generation checkpoint")
+				finishErr := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusWaiting, "dialogue resume checkpoint reconciliation failed", "retry from saved dialogue generation checkpoint")
 				return DialogueEpisodeArtifact{}, errors.Join(err, finishErr)
 			}
 			return DialogueEpisodeArtifact{}, err
@@ -356,7 +368,7 @@ func (s *DialogueEpisodeService) resumeDialogueCheckpoint(ctx context.Context, k
 			successor := checkpoint
 			successor.RunID = artifact.RunID
 			successor.DialogueArtifact = cloneDialogueEpisodePtr(artifact)
-			finishErr := finishGenerationRun(ctx, s.runIssuer, successor, domaintask.StatusWaiting, "dialogue resume checkpoint save failed", "retry from saved dialogue generation checkpoint")
+			finishErr := s.finishDialogueGenerationRun(ctx, successor, domaintask.StatusWaiting, "dialogue resume checkpoint save failed", "retry from saved dialogue generation checkpoint")
 			return DialogueEpisodeArtifact{}, errors.Join(err, finishErr)
 		}
 		run, err = inspectGenerationRun(ctx, s.runIssuer, checkpoint.TaskID, checkpoint.RunID)
@@ -443,12 +455,13 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 			return s.waitDialogueCheckpoint(ctx, checkpoint, err)
 		}
 		failure := fmt.Errorf("dialogue episode %s failed validation at turn %d", artifact.EpisodeID, artifact.Validation.FirstInvalidTurn)
-		if err := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusFailed, "dialogue episode failed validation", failure.Error()); err != nil {
+		if err := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusFailed, "dialogue episode failed validation", failure.Error()); err != nil {
 			return DialogueEpisodeArtifact{}, errors.Join(failure, err)
 		}
 		if err := s.checkpoints.Delete(key); err != nil {
 			return DialogueEpisodeArtifact{}, errors.Join(failure, err)
 		}
+		s.forgetPendingCompletion(key)
 		return DialogueEpisodeArtifact{}, failure
 	}
 	artifact.ProductionStatus = DialogueProductionReady
@@ -461,12 +474,13 @@ func (s *DialogueEpisodeService) continueDialogueCheckpoint(ctx context.Context,
 	if err := s.append(artifact); err != nil {
 		return s.waitDialogueCheckpoint(ctx, checkpoint, err)
 	}
-	if err := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusSucceeded, "dialogue episode saved", ""); err != nil {
+	if err := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusSucceeded, "dialogue episode saved", ""); err != nil {
 		return DialogueEpisodeArtifact{}, err
 	}
 	if err := s.checkpoints.Delete(key); err != nil {
 		return DialogueEpisodeArtifact{}, err
 	}
+	s.forgetPendingCompletion(key)
 	return artifact, nil
 }
 
@@ -474,7 +488,7 @@ func (s *DialogueEpisodeService) waitDialogueCheckpoint(ctx context.Context, che
 	if cause == nil {
 		cause = errors.New("dialogue generation interrupted")
 	}
-	finishErr := finishGenerationRun(ctx, s.runIssuer, checkpoint, domaintask.StatusWaiting, "dialogue generation interrupted", "retry from saved dialogue generation checkpoint")
+	finishErr := s.finishDialogueGenerationRun(ctx, checkpoint, domaintask.StatusWaiting, "dialogue generation interrupted", "retry from saved dialogue generation checkpoint")
 	return DialogueEpisodeArtifact{}, errors.Join(cause, finishErr)
 }
 

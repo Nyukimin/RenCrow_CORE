@@ -113,6 +113,7 @@ func (o *IdleChatOrchestrator) recordGenerationErrorToTimeline(speaker, target, 
 	if reason == "" {
 		reason = "generation_error"
 	}
+	o.markConversationRunFailed(generation, "IdleChat conversation generation failed", reason)
 	content := fmt.Sprintf("生成エラー: %s の応答生成に失敗しました（%s）。", speaker, reason)
 	messageID := o.idleChatMessageID(sessionID, turnIndex)
 	msg := domaintransport.NewMessage(speaker, target, sessionID, "", content)

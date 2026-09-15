@@ -65,7 +65,7 @@ func (o *IdleChatOrchestrator) PrepareStoryEpisodeCountAsync(count int, reason s
 	if service == nil || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 		return
 	}
-	go func() {
+	if !o.startGenerationWork(func() {
 		defer o.endTopicProduction()
 		ctx := o.topicProductionContext()
 		if err := service.PrepareAdditional(ctx, count); err != nil {
@@ -74,7 +74,9 @@ func (o *IdleChatOrchestrator) PrepareStoryEpisodeCountAsync(count int, reason s
 		if err := service.RepairNeedsRepair(ctx); err != nil {
 			log.Printf("[Story] suffix repair after explicit prepare incomplete: reason=%s error=%v", strings.TrimSpace(reason), err)
 		}
-	}()
+	}) {
+		o.endTopicProduction()
+	}
 }
 
 func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
@@ -88,7 +90,7 @@ func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
 	if service == nil || (stock.Missing == 0 && stock.NeedsRepair == 0 && stock.UntitledReady == 0) || stock.Filling || !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 		return
 	}
-	go func() {
+	if !o.startGenerationWork(func() {
 		defer o.endTopicProduction()
 		ctx := o.topicProductionContext()
 		if stock.UntitledReady > 0 {
@@ -104,7 +106,9 @@ func (o *IdleChatOrchestrator) RefillStoryEpisodesAsync(reason string) {
 		if err := service.RepairNeedsRepair(ctx); err != nil {
 			log.Printf("[Story] suffix repair incomplete: reason=%s error=%v", strings.TrimSpace(reason), err)
 		}
-	}()
+	}) {
+		o.endTopicProduction()
+	}
 }
 
 // RunPreparedStorySession only plays a fully generated, validated ready item.
@@ -115,6 +119,10 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	o.mu.Unlock()
 	if service == nil {
 		log.Printf("[Story] prepared story service is not configured")
+		o.resetIdleSessionState(0)
+		if err := o.cancelIdleRun(); err != nil {
+			log.Printf("[Story] conversation run finalization failed without service: %v", err)
+		}
 		return
 	}
 	artifact, ok := StoryEpisodeArtifact{}, false
@@ -127,6 +135,10 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	if !ok {
 		log.Printf("[Story] no ready episode; refill requested")
 		o.RefillStoryEpisodesAsync("playback_empty")
+		o.resetIdleSessionState(0)
+		if err := o.cancelIdleRun(); err != nil {
+			log.Printf("[Story] conversation run finalization failed without ready episode: %v", err)
+		}
 		return
 	}
 
@@ -138,21 +150,22 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 		o.chatActive = true
 	}
 	o.sessionMode = "story"
-	generation := o.activeGeneration
-	if o.runCancel == nil {
-		generation = o.beginIdleRunLocked()
-	}
-	if err := o.bindIdleSessionLocked(sessionID); err != nil {
-		o.mu.Unlock()
-		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.activateIdleSession(sessionID)
+	if err != nil {
+		o.resetIdleSessionState(generation)
 		log.Printf("[Story] session start failed before playback: session=%s error=%v", sessionID, err)
 		return
 	}
+	o.mu.Lock()
 	o.currentTopic = storyEpisodeDisplayTitle(artifact)
 	o.mu.Unlock()
-	o.emitMu.Unlock()
+	playbackCompleted := false
 	defer func() {
+		if playbackCompleted {
+			o.markConversationRunSucceeded(generation, "prepared story playback completed")
+		}
 		o.emitMu.Lock()
 		o.mu.Lock()
 		if o.activeGeneration == generation {
@@ -164,7 +177,9 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 		o.lastActivity = time.Now()
 		o.mu.Unlock()
 		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
+		if err := o.cancelIdleRunIfGeneration(generation); err != nil {
+			log.Printf("[Story] conversation run finalization failed: session=%s error=%v", sessionID, err)
+		}
 	}()
 
 	transcript := make([]string, 0, len(artifact.Turns))
@@ -211,9 +226,12 @@ func (o *IdleChatOrchestrator) RunPreparedStorySession(prepared ...StoryEpisodeA
 	}
 	if err := service.MarkPlayed(artifact.EpisodeID, time.Now().UTC()); err != nil {
 		log.Printf("[Story] mark played failed: episode=%s error=%v", artifact.EpisodeID, err)
+		o.markConversationRunFailed(generation, "prepared story playback failed", err.Error())
+		return
 	}
 	o.savePreparedStoryReview(artifact, sessionID, generation, transcript, startedAt)
 	o.RefillStoryEpisodesAsync("played")
+	playbackCompleted = true
 }
 
 func (o *IdleChatOrchestrator) emitStoryTTSPrefetch(sessionID string, generation uint64, turn StoryEpisodeTurn) {

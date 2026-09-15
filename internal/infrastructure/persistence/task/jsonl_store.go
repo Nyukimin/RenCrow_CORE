@@ -32,6 +32,8 @@ type JSONLStore struct {
 	closed            bool
 	readOnly          bool
 	mu                sync.RWMutex
+	lifecycle         *taskStoreLifecycle
+	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
 	root              string
 	statePath         string
@@ -62,7 +64,15 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 			return nil, err
 		}
 	}
-	store := &JSONLStore{root: root, statePath: filepath.Join(root, stateFilename), runPath: filepath.Join(root, runFilename), contextPath: filepath.Join(root, contextFilename), notificationsPath: filepath.Join(root, notificationsFilename)}
+	store := &JSONLStore{
+		root:              root,
+		statePath:         filepath.Join(root, stateFilename),
+		runPath:           filepath.Join(root, runFilename),
+		contextPath:       filepath.Join(root, contextFilename),
+		notificationsPath: filepath.Join(root, notificationsFilename),
+		lifecycle:         newTaskStoreLifecycle(),
+		executionFence:    newTaskExecutionFence(),
+	}
 	store.readOnly = readOnly
 	if readOnly {
 		batch, err := jsonlbatch.OpenReader(root, taskBatchFilenames())
@@ -128,13 +138,13 @@ func (s *JSONLStore) WriterGeneration() (uint64, error) {
 }
 
 func (s *JSONLStore) SaveTask(ctx context.Context, value domaintask.Task) error {
-	return s.Transaction(ctx, func(store domaintask.Store) error {
+	return s.TaskTransaction(ctx, value.TaskID, func(store domaintask.Store) error {
 		return store.SaveTask(ctx, value)
 	})
 }
 
 func (s *JSONLStore) SaveRun(ctx context.Context, value domaintask.Run) error {
-	return s.Transaction(ctx, func(store domaintask.Store) error {
+	return s.TaskTransaction(ctx, value.TaskID, func(store domaintask.Store) error {
 		return store.SaveRun(ctx, value)
 	})
 }
@@ -180,7 +190,7 @@ func (s *JSONLStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([
 }
 
 func (s *JSONLStore) SaveContext(ctx context.Context, value domaintask.SharedRoleContext) error {
-	return s.Transaction(ctx, func(store domaintask.Store) error {
+	return s.TaskTransaction(ctx, value.TaskID, func(store domaintask.Store) error {
 		return store.SaveContext(ctx, value)
 	})
 }
@@ -196,7 +206,7 @@ func (s *JSONLStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (
 }
 
 func (s *JSONLStore) SaveNotification(ctx context.Context, value domaintask.Notification) error {
-	return s.Transaction(ctx, func(store domaintask.Store) error {
+	return s.TaskTransaction(ctx, value.TaskID, func(store domaintask.Store) error {
 		return store.SaveNotification(ctx, value)
 	})
 }
@@ -216,6 +226,10 @@ func (s *JSONLStore) loadTasks(ctx context.Context) ([]domaintask.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	return foldTaskRecords(items)
+}
+
+func foldTaskRecords(items []domaintask.Task) ([]domaintask.Task, error) {
 	latest := make(map[modulecore.TaskID]domaintask.Task, len(items))
 	for _, item := range items {
 		if err := item.Validate(); err != nil {
@@ -241,32 +255,69 @@ func (s *JSONLStore) loadRuns(ctx context.Context) ([]domaintask.Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	latest := make(map[modulecore.RunID]domaintask.Run, len(items))
-	activeByTask := make(map[modulecore.TaskID]modulecore.RunID)
-	for index, item := range items {
-		if err := item.Validate(); err != nil {
-			return nil, fmt.Errorf("run record %d is invalid: %w", index, err)
-		}
-		if previous, ok := latest[item.RunID]; ok {
-			if err := validateRunUpdate(previous, item); err != nil {
-				return nil, fmt.Errorf("run record %d update is invalid: %w", index, err)
-			}
-		}
-		if item.Status == domaintask.RunStatusRunning {
-			if activeID, ok := activeByTask[item.TaskID]; ok && activeID != item.RunID {
-				return nil, fmt.Errorf("task %s has multiple active runs", item.TaskID)
-			}
-			activeByTask[item.TaskID] = item.RunID
-		} else if activeID, ok := activeByTask[item.TaskID]; ok && activeID == item.RunID {
-			delete(activeByTask, item.TaskID)
-		}
-		latest[item.RunID] = item
+	return foldRunRecords(items, 0)
+}
+
+type runRecordFold struct {
+	latest       map[modulecore.RunID]domaintask.Run
+	activeByTask map[modulecore.TaskID]modulecore.RunID
+}
+
+func newRunRecordFold(capacity int) *runRecordFold {
+	return &runRecordFold{
+		latest:       make(map[modulecore.RunID]domaintask.Run, capacity),
+		activeByTask: make(map[modulecore.TaskID]modulecore.RunID),
 	}
-	result := make([]domaintask.Run, 0, len(latest))
-	for _, item := range latest {
+}
+
+func newRunRecordFoldFromLatest(items []domaintask.Run) *runRecordFold {
+	fold := newRunRecordFold(len(items))
+	for _, item := range items {
+		fold.latest[item.RunID] = item
+		if item.Status == domaintask.RunStatusRunning {
+			fold.activeByTask[item.TaskID] = item.RunID
+		}
+	}
+	return fold
+}
+
+func (f *runRecordFold) apply(recordIndex int, item domaintask.Run) error {
+	if err := item.Validate(); err != nil {
+		return fmt.Errorf("run record %d is invalid: %w", recordIndex, err)
+	}
+	if previous, ok := f.latest[item.RunID]; ok {
+		if err := validateRunUpdate(previous, item); err != nil {
+			return fmt.Errorf("run record %d update is invalid: %w", recordIndex, err)
+		}
+	}
+	if item.Status == domaintask.RunStatusRunning {
+		if activeID, ok := f.activeByTask[item.TaskID]; ok && activeID != item.RunID {
+			return fmt.Errorf("task %s has multiple active runs", item.TaskID)
+		}
+		f.activeByTask[item.TaskID] = item.RunID
+	} else if activeID, ok := f.activeByTask[item.TaskID]; ok && activeID == item.RunID {
+		delete(f.activeByTask, item.TaskID)
+	}
+	f.latest[item.RunID] = item
+	return nil
+}
+
+func (f *runRecordFold) records() []domaintask.Run {
+	result := make([]domaintask.Run, 0, len(f.latest))
+	for _, item := range f.latest {
 		result = append(result, item)
 	}
-	return result, nil
+	return result
+}
+
+func foldRunRecords(items []domaintask.Run, recordOffset int) ([]domaintask.Run, error) {
+	fold := newRunRecordFold(len(items))
+	for index, item := range items {
+		if err := fold.apply(recordOffset+index, item); err != nil {
+			return nil, err
+		}
+	}
+	return fold.records(), nil
 }
 
 func validateRunOwners(runs []domaintask.Run, tasks []domaintask.Task) error {
@@ -347,16 +398,32 @@ func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
 
 // Close relinquishes this writer's OS lease. The persistent lock file is never removed.
 func (s *JSONLStore) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.lifecycle != nil && !s.lifecycle.beginClose() {
+		return nil
+	}
+	if s.lifecycle != nil {
+		s.lifecycle.wait()
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
+		if s.lifecycle != nil {
+			s.lifecycle.finishClose()
+		}
 		return nil
 	}
 	s.closed = true
-	if s.writerLock == nil {
-		return nil
+	var err error
+	if s.writerLock != nil {
+		err = releaseTaskWriter(s.writerLock)
+		s.writerLock = nil
 	}
-	err := releaseTaskWriter(s.writerLock)
-	s.writerLock = nil
+	s.mu.Unlock()
+	if s.lifecycle != nil {
+		s.lifecycle.finishClose()
+	}
 	return err
 }

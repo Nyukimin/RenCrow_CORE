@@ -1051,6 +1051,16 @@ func (s *faultTaskStore) Transaction(ctx context.Context, fn func(Store) error) 
 	})
 }
 
+func (s *faultTaskStore) TaskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(Store) error) error {
+	return s.Store.TaskTransaction(ctx, taskID, func(store Store) error {
+		return fn(s.transactionView(store))
+	})
+}
+
+func (s *faultTaskStore) WithTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
+	return s.Store.WithTaskExecutionFence(ctx, taskID, fn)
+}
+
 func (s *faultTaskStore) ReadTransaction(ctx context.Context, fn func(Store) error) error {
 	return s.Store.ReadTransaction(ctx, func(store Store) error {
 		return fn(s.transactionView(store))

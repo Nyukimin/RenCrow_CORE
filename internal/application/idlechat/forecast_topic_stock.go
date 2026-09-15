@@ -541,7 +541,7 @@ func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastT
 			}
 		}
 	}
-	go func() {
+	o.startGenerationWork(func() {
 		for _, domain := range domains {
 			if !o.forecastTopicRefillAvailable() || !o.tryBeginTopicProduction() {
 				log.Printf("[Forecast] Startup bootstrap deferred because generation resources are busy")
@@ -557,7 +557,7 @@ func (o *IdleChatOrchestrator) bootstrapForecastTopicStockAsync(stock *forecastT
 			}
 			o.fillForecastTopicStock(stock, domain, "startup")
 		}
-	}()
+	})
 }
 
 // RefillForecastTopicStockIfIdle starts at most one missing topic generation.
@@ -578,7 +578,13 @@ func (o *IdleChatOrchestrator) RefillForecastTopicStockIfIdle(trigger string) bo
 		o.endTopicProduction()
 		return false
 	}
-	go o.fillForecastTopicStock(stock, domain, trigger)
+	if !o.startGenerationWork(func() {
+		o.fillForecastTopicStock(stock, domain, trigger)
+	}) {
+		stock.doneFilling(domain.Name, context.Canceled)
+		o.endTopicProduction()
+		return false
+	}
 	return true
 }
 
@@ -673,19 +679,8 @@ func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, d
 	checkpointKey := "forecast:" + domain.Name
 	checkpoint, found := checkpointStore.Get(checkpointKey)
 	if found {
-		if checkpoint.Kind != "forecast" || checkpoint.Domain.Name != domain.Name {
-			return fmt.Errorf("forecast topic checkpoint domain mismatch: got %s, want %s", checkpoint.Domain.Name, domain.Name)
-		}
-		if err := validateIdleChatRunIdentity(checkpoint.TaskID, checkpoint.RunID); err != nil {
-			return fmt.Errorf("forecast topic checkpoint identity: %w", err)
-		}
-		if checkpoint.Result != nil {
-			if checkpoint.Result.Category != "" && checkpoint.Result.Category != TopicCategoryForecast {
-				return fmt.Errorf("forecast topic checkpoint result category mismatch: got %s", checkpoint.Result.Category)
-			}
-			if resultDomain := strings.TrimSpace(checkpoint.Result.Seed.ForecastDomain); resultDomain != "" && resultDomain != domain.Name {
-				return fmt.Errorf("forecast topic checkpoint result domain mismatch: got %s, want %s", resultDomain, domain.Name)
-			}
+		if err := validateForecastCheckpoint(checkpoint, domain); err != nil {
+			return err
 		}
 		if checkpoint.Stage == "resume_pending" {
 			previousRunID := checkpoint.RunID
@@ -726,15 +721,18 @@ func (o *IdleChatOrchestrator) produceForecastTopic(stock *forecastTopicStock, d
 			}
 			return checkpointStore.Delete(checkpointKey)
 		}
+		if run.Status == domaintask.RunStatusRunning {
+			saved, err := o.finishRunningForecastCheckpoint(ctx, stock, checkpoint)
+			if err != nil {
+				return err
+			}
+			if saved {
+				return checkpointStore.Delete(checkpointKey)
+			}
+		}
 		if stock.hasRunID(checkpoint.RunID) {
 			if !stock.hasExactCheckpointItem(checkpoint) {
 				return errors.New("forecast topic completion artifact is mismatched")
-			}
-			if run.Status == domaintask.RunStatusRunning {
-				if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", ""); err != nil {
-					return err
-				}
-				return checkpointStore.Delete(checkpointKey)
 			}
 			// This result was never published: its checkpoint still gates playback.
 			// Remove the unpublished item before resuming the saved generation.

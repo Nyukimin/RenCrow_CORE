@@ -2,6 +2,7 @@ package idlechat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -15,6 +16,9 @@ import (
 )
 
 func (o *IdleChatOrchestrator) Start() {
+	if err := o.finalizePendingConversationRun(); err != nil {
+		log.Printf("[IdleChat] conversation run finalization retry during start failed: %v", err)
+	}
 	o.mu.Lock()
 	newsSourceConfig := o.newsSourceConfig
 	newsSourceConfig.RedditCommunities = append([]string(nil), newsSourceConfig.RedditCommunities...)
@@ -51,10 +55,31 @@ func (o *IdleChatOrchestrator) SetIntervalSeconds(seconds int) {
 // Stop はIdleChatを停止
 
 func (o *IdleChatOrchestrator) Stop() {
+	o.closeGenerationWorkAdmission()
 	o.cancel()
+	// Stop must wait for an in-flight owner admission to reconcile its exact
+	// Task/Run pair before the Task owner is closed by runtime shutdown.
+	o.conversationRunStartMu.Lock()
 	o.cancelTopicProduction("stop")
-	o.cancelIdleRun()
+	if err := o.cancelIdleRun(); err != nil {
+		log.Printf("[IdleChat] conversation run finalization failed during stop: %v", err)
+	}
+	o.conversationRunStartMu.Unlock()
 	o.wg.Wait()
+	o.waitGenerationWork()
+	o.mu.Lock()
+	dialogueService := o.dialogueEpisodeService
+	o.mu.Unlock()
+	cleanupCtx, cancel := o.conversationRunCleanupContext()
+	if err := o.finalizePendingTopicRuns(cleanupCtx); err != nil {
+		log.Printf("[IdleChat] topic generation completion retry failed during stop: %v", err)
+	}
+	if dialogueService != nil && cleanupCtx.Err() == nil {
+		if err := dialogueService.FinalizePendingRuns(cleanupCtx); err != nil {
+			log.Printf("[IdleChat] dialogue generation completion retry failed during stop: %v", err)
+		}
+	}
+	cancel()
 	log.Println("[IdleChat] Stopped")
 }
 
@@ -105,11 +130,14 @@ func (o *IdleChatOrchestrator) Interrupt(reason string) {
 func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	o.cancelTopicProduction(reason)
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
 	cancel := o.runCancel
 	onInterrupt := o.onInterrupt
 	dailyEnrichmentJob := o.dailyEnrichmentJob
+	finalizeCancel, shouldFinalize, finalizeErr := o.prepareConversationRunStopLocked(0, domaintask.StatusCancelled, "IdleChat conversation interrupted", reason)
+	if cancel == nil {
+		cancel = finalizeCancel
+	}
 	if o.manualMode || o.chatActive {
 		log.Printf("[IdleChat] Interrupted: reason=%s generation=%d session=%s", strings.TrimSpace(reason), o.activeGeneration, o.activeSessionID)
 	}
@@ -141,11 +169,8 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	}
 	o.activeTraceID = ""
 	o.activeTraceSessionID = ""
-	o.activeTaskID = ""
-	o.activeRunID = ""
-	o.runCancel = nil
-	o.runCtx = o.ctx
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
@@ -154,6 +179,13 @@ func (o *IdleChatOrchestrator) interruptLockedWithReason(reason string) {
 	}
 	if dailyEnrichmentJob != nil {
 		dailyEnrichmentJob.cancelBatch()
+	}
+	if finalizeErr != nil {
+		log.Printf("[IdleChat] conversation run finalization preparation failed: %v", finalizeErr)
+	} else if shouldFinalize {
+		if err := o.finalizePendingConversationRun(); err != nil {
+			log.Printf("[IdleChat] conversation run finalization failed after interrupt: %v", err)
+		}
 	}
 }
 
@@ -164,34 +196,33 @@ func (o *IdleChatOrchestrator) stopAndDisable(reason string) {
 	o.interruptLockedWithReason(reason)
 }
 
-func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
+func (o *IdleChatOrchestrator) beginIdleRunLocked() (uint64, error) {
 	// Every conversation path eventually begins here. Foreground dialogue owns
 	// CodexExe priority, so background Stock generation yields immediately and
 	// keeps its durable checkpoint for the next idle refill.
-	o.cancelTopicProduction("conversation_start")
-	if o.runCancel != nil {
-		o.runCancel()
+	if o.pendingConversationRun != nil {
+		return 0, errIdleChatConversationRunPending
 	}
+	if o.conversationRunStarting {
+		return 0, errIdleChatConversationRunStarting
+	}
+	if o.runCancel != nil {
+		return 0, errors.New("idlechat conversation run is already active")
+	}
+	if o.activeTaskID != "" || o.activeRunID != "" {
+		return 0, errors.New("idlechat conversation run owner is not finalized")
+	}
+	o.cancelTopicProduction("conversation_start")
 	o.activeGeneration++
-	o.activeTaskID = ""
-	o.activeRunID = ""
 	if o.activeThread != nil {
 		o.activeThread.Close()
 		o.activeThread = nil
 	}
 	o.activeTraceID = modulecore.NewTraceID()
 	o.activeTraceSessionID = ""
-	if o.runIssuer != nil {
-		runCtx := o.runCtx
-		if runCtx == nil {
-			runCtx = o.ctx
-		}
-		if taskID, runID, err := issueIdleChatRun(runCtx, o.runIssuer, "IdleChat conversation", "shiro", domaintask.RunStartReasonFirst, ""); err == nil {
-			o.activeTaskID = taskID
-			o.activeRunID = runID
-		}
-	}
 	o.runCtx, o.runCancel = context.WithCancel(o.ctx)
+	o.conversationRunOutcome = nil
+	o.conversationRunStarting = o.runIssuer != nil
 	o.watchdogStage = "run_started"
 	o.watchdogDetail = ""
 	o.watchdogFrom = ""
@@ -200,49 +231,43 @@ func (o *IdleChatOrchestrator) beginIdleRunLocked() uint64 {
 	o.watchdogTurnIndex = 0
 	o.watchdogUpdatedAt = time.Now().UTC()
 	o.watchdogStageDeadlineAt = time.Time{}
-	return o.activeGeneration
+	return o.activeGeneration, nil
 }
 
-func (o *IdleChatOrchestrator) cancelIdleRun() {
+func (o *IdleChatOrchestrator) cancelIdleRun() error {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	cancel := o.runCancel
-	o.runCancel = nil
-	o.runCtx = o.ctx
-	if o.activeThread != nil {
-		o.activeThread.Close()
-		o.activeThread = nil
-	}
-	o.activeTraceID = ""
-	o.activeTraceSessionID = ""
+	cancel, shouldFinalize, err := o.prepareConversationRunStopLocked(0, domaintask.StatusCancelled, "IdleChat conversation cancelled", "conversation cleanup")
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	if err != nil || !shouldFinalize {
+		if err != nil {
+			return err
+		}
+		return o.finalizePendingConversationRun()
+	}
+	return o.finalizePendingConversationRun()
 }
 
-func (o *IdleChatOrchestrator) cancelIdleRunIfGeneration(generation uint64) {
+func (o *IdleChatOrchestrator) cancelIdleRunIfGeneration(generation uint64) error {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	if generation != 0 && o.activeGeneration != generation {
-		o.mu.Unlock()
-		return
-	}
-	cancel := o.runCancel
-	o.runCancel = nil
-	o.runCtx = o.ctx
-	if o.activeThread != nil {
-		o.activeThread.Close()
-		o.activeThread = nil
-	}
-	o.activeTraceID = ""
-	o.activeTraceSessionID = ""
+	cancel, shouldFinalize, err := o.prepareConversationRunStopLocked(generation, domaintask.StatusCancelled, "IdleChat conversation cancelled", "conversation cleanup")
 	o.mu.Unlock()
+	o.emitMu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
+	if err != nil {
+		return err
+	}
+	if !shouldFinalize {
+		return nil
+	}
+	return o.finalizePendingConversationRun()
 }
 
 func (o *IdleChatOrchestrator) idleRunContext() context.Context {
@@ -255,17 +280,26 @@ func (o *IdleChatOrchestrator) idleRunContext() context.Context {
 }
 
 func (o *IdleChatOrchestrator) activateIdleSession(sessionID string) (uint64, error) {
+	generation, err := o.startIdleRun()
+	if err != nil {
+		return generation, err
+	}
 	o.emitMu.Lock()
 	o.mu.Lock()
-	if o.runCancel == nil {
-		o.beginIdleRunLocked()
+	if generation == 0 || o.activeGeneration != generation || o.conversationRunStarting {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		return generation, errIdleChatConversationRunInvalidated
 	}
-	generation := o.activeGeneration
 	if err := o.bindIdleSessionLocked(sessionID); err != nil {
 		o.mu.Unlock()
 		o.emitMu.Unlock()
-		o.cancelIdleRunIfGeneration(generation)
-		return generation, fmt.Errorf("bind idlechat session: %w", err)
+		bindErr := fmt.Errorf("bind idlechat session: %w", err)
+		o.markConversationRunFailed(generation, "IdleChat session setup failed", bindErr.Error())
+		if finalizeErr := o.cancelIdleRunIfGeneration(generation); finalizeErr != nil {
+			bindErr = errors.Join(bindErr, finalizeErr)
+		}
+		return generation, bindErr
 	}
 	o.mu.Unlock()
 	o.emitMu.Unlock()
@@ -624,13 +658,15 @@ func (o *IdleChatOrchestrator) StartManualMode() error {
 
 func (o *IdleChatOrchestrator) StartForecastMode() error {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if len(o.participants) < 2 {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("idlechat requires at least 2 participants")
 	}
 	if o.chatActive {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("chat session already active")
 	}
 	o.disabled = false
@@ -639,8 +675,16 @@ func (o *IdleChatOrchestrator) StartForecastMode() error {
 	o.sessionMode = "forecast"
 	o.currentTopic = idleChatPendingTopic("forecast")
 	o.sessionContext = ""
-	o.beginIdleRunLocked()
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.startIdleRun()
+	if err != nil {
+		o.resetIdleSessionState(generation)
+		return fmt.Errorf("start forecast conversation: %w", err)
+	}
+	o.mu.Lock()
 	o.lastActivity = time.Now()
+	o.mu.Unlock()
 	log.Println("[Forecast] Forecast mode started")
 	return nil
 }
@@ -649,13 +693,15 @@ func (o *IdleChatOrchestrator) StartForecastMode() error {
 
 func (o *IdleChatOrchestrator) StartStoryMode() error {
 	o.emitMu.Lock()
-	defer o.emitMu.Unlock()
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if len(o.participants) < 2 {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("idlechat requires at least 2 participants")
 	}
 	if o.chatActive {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
 		return fmt.Errorf("chat session already active")
 	}
 	o.disabled = false
@@ -664,8 +710,16 @@ func (o *IdleChatOrchestrator) StartStoryMode() error {
 	o.sessionMode = "story"
 	o.currentTopic = idleChatPendingTopic("story")
 	o.sessionContext = ""
-	o.beginIdleRunLocked()
+	o.mu.Unlock()
+	o.emitMu.Unlock()
+	generation, err := o.startIdleRun()
+	if err != nil {
+		o.resetIdleSessionState(generation)
+		return fmt.Errorf("start story conversation: %w", err)
+	}
+	o.mu.Lock()
 	o.lastActivity = time.Now()
+	o.mu.Unlock()
 	log.Println("[Story] Story mode started")
 	return nil
 }

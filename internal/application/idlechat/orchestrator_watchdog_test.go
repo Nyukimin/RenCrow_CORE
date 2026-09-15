@@ -145,7 +145,12 @@ func TestForecastMarksBoundedDialogueGenerationStage(t *testing.T) {
 	o.topicStockBuf = stock
 	o.chatActive = true
 	o.sessionMode = "forecast"
-	generation := o.beginIdleRunLocked()
+	generation, err := o.beginIdleRunLocked()
+	if err != nil {
+		o.mu.Unlock()
+		o.emitMu.Unlock()
+		t.Fatalf("begin idle run: %v", err)
+	}
 	o.bindIdleSessionLocked(canonicalIdleChatTestSessionID("forecast-watchdog-test"))
 	o.mu.Unlock()
 	o.emitMu.Unlock()

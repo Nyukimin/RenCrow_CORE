@@ -50,7 +50,7 @@ func (m *Manager) StartRunFromCheckpoint(
 	}
 
 	var issued domaintask.Run
-	err := m.transaction(ctx, func(txManager *Manager) error {
+	err := m.taskTransaction(ctx, taskID, func(txManager *Manager) error {
 		predecessor, err := validateCheckpointPredecessor(ctx, txManager, taskID, expectedRunID, actorID, reason)
 		if err != nil {
 			return err
@@ -166,10 +166,11 @@ func validateCheckpointSuccessorTimestamp(predecessor, successor domaintask.Run)
 }
 
 // ExecuteRunEffect admits one synchronous external leaf effect while the
-// task-store read transaction remains open. The callback must honor ctx, stay
-// synchronous, and must not call the Task owner, complete the Run, or launch
-// detached work. This fences Task-store supersession until the callback
-// returns; a process crash or a remote effect cannot be cancelled by this API.
+// per-Task store fence remains held. The short validation read transaction is
+// released before the callback starts, so unrelated Tasks can commit. The
+// callback must honor ctx, stay synchronous, and must not call the Task owner,
+// complete the Run, or launch detached work. A process crash or a remote
+// effect cannot be cancelled by this API.
 func (m *Manager) ExecuteRunEffect(
 	ctx context.Context,
 	taskID modulecore.TaskID,
@@ -201,10 +202,18 @@ func (m *Manager) ExecuteRunEffect(
 	if effect == nil {
 		return errors.New("execution effect callback is required")
 	}
-	return m.readTransaction(ctx, func(txManager *Manager) error {
-		if err := txManager.validateRunExecutionInTransaction(ctx, taskID, runID, actorID); err != nil {
+	return m.store.WithTaskExecutionFence(ctx, taskID, func() error {
+		if err := m.readTransaction(ctx, func(txManager *Manager) error {
+			return txManager.validateRunExecutionInTransaction(ctx, taskID, runID, actorID)
+		}); err != nil {
 			return err
 		}
-		return effect(ctx)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := effect(ctx); err != nil {
+			return err
+		}
+		return ctx.Err()
 	})
 }
