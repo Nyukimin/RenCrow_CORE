@@ -190,6 +190,82 @@ func TestStopJoinsAdmittedDialogueGenerationBeforeTaskOwnerClose(t *testing.T) {
 	}
 }
 
+func TestStopManualModeJoinsAdmittedDialogueGenerationAndClosesRun(t *testing.T) {
+	generator := newDelayedGenerationWorkGenerator()
+	owner := newTestIdleChatRunIssuer(t)
+	config := DefaultDialogueInterestingnessConfig()
+	config.MaxTurnsPerTopic = 1
+	dialogueService := NewPersistentDialogueEpisodeService(
+		filepath.Join(t.TempDir(), "dialogue_episodes.jsonl"), generator,
+		map[string]string{"mio": "Mio canonical", "shiro": "Shiro canonical"}, config,
+	)
+	dialogueService.SetRunIssuer(owner)
+	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 60, 1, 0.7, nil, "")
+	o.SetRunIssuer(owner)
+	o.SetDialogueInterestingnessConfig(config)
+	o.SetDialogueEpisodeService(dialogueService)
+	o.mu.Lock()
+	o.chatActive = true
+	o.manualMode = true
+	o.sessionMode = "idle"
+	o.mu.Unlock()
+	t.Cleanup(generator.releaseWork)
+
+	prepared := TopicGenerationResult{
+		Topic:               "停止要求後に生成中のRunを残さない",
+		Category:            TopicCategorySingle,
+		Strategy:            string(StrategySingleGenre),
+		InterestingnessAxis: "観察",
+		Seed:                TopicSeed{Category: TopicCategorySingle, Genre1: "停止"},
+		Initiator:           "shiro",
+	}
+	if !o.startGenerationWork(func() {
+		o.runChatSession(StrategySingleGenre, prepared)
+	}) {
+		t.Fatal("dialogue generation was not admitted")
+	}
+	waitForGenerationWorkSignal(t, generator.started, "dialogue generation start")
+
+	stopDone := make(chan struct{})
+	go func() {
+		o.StopManualMode()
+		close(stopDone)
+	}()
+	waitForGenerationWorkSignal(t, generator.canceled, "dialogue generation cancellation")
+	select {
+	case <-stopDone:
+		t.Fatal("StopManualMode returned while admitted dialogue generation was still blocked")
+	default:
+	}
+	generator.releaseWork()
+	waitForGenerationWorkSignal(t, stopDone, "manual stop completion")
+
+	tasks, err := owner.List(context.Background(), domaintask.Filter{Limit: 100})
+	if err != nil {
+		t.Fatalf("list dialogue tasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("tasks = %d, want conversation and dialogue tasks", len(tasks))
+	}
+	for _, task := range tasks {
+		if task.Status == domaintask.StatusRunning {
+			t.Fatalf("task remained running after StopManualMode: %#v", task)
+		}
+		runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{TaskID: task.TaskID})
+		if err != nil {
+			t.Fatalf("list runs for %s: %v", task.TaskID, err)
+		}
+		if len(runs) != 1 || runs[0].Status == domaintask.RunStatusRunning {
+			t.Fatalf("runs for %s after StopManualMode = %#v, want one non-running Run", task.TaskID, runs)
+		}
+	}
+	lease, ok := o.acquireGenerationWork()
+	if !ok {
+		t.Fatal("manual stop did not reopen generation admission for a later explicit start")
+	}
+	lease.release()
+}
+
 func TestStopClosesGenerationAdmissionAndJoinsBeforeReturning(t *testing.T) {
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 60, 1, 0.7, nil, "")
 	started := make(chan struct{})

@@ -74,6 +74,17 @@ func (o *IdleChatOrchestrator) closeGenerationWorkAdmission() {
 	o.generationWorkMu.Unlock()
 }
 
+func (o *IdleChatOrchestrator) reopenGenerationWorkAdmission() {
+	if o == nil || o.ctx == nil || o.ctx.Err() != nil {
+		return
+	}
+	o.generationWorkMu.Lock()
+	defer o.generationWorkMu.Unlock()
+	if o.ctx.Err() == nil {
+		o.generationWorkClosed = false
+	}
+}
+
 func (o *IdleChatOrchestrator) waitGenerationWork() {
 	if o == nil {
 		return

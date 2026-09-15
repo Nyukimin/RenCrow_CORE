@@ -67,10 +67,16 @@ func (o *IdleChatOrchestrator) Stop() {
 	o.conversationRunStartMu.Unlock()
 	o.wg.Wait()
 	o.waitGenerationWork()
+	o.finalizePendingGenerationRunsDuringStop()
+	log.Println("[IdleChat] Stopped")
+}
+
+func (o *IdleChatOrchestrator) finalizePendingGenerationRunsDuringStop() {
 	o.mu.Lock()
 	dialogueService := o.dialogueEpisodeService
 	o.mu.Unlock()
 	cleanupCtx, cancel := o.conversationRunCleanupContext()
+	defer cancel()
 	if err := o.finalizePendingTopicRuns(cleanupCtx); err != nil {
 		log.Printf("[IdleChat] topic generation completion retry failed during stop: %v", err)
 	}
@@ -79,8 +85,6 @@ func (o *IdleChatOrchestrator) Stop() {
 			log.Printf("[IdleChat] dialogue generation completion retry failed during stop: %v", err)
 		}
 	}
-	cancel()
-	log.Println("[IdleChat] Stopped")
 }
 
 // NotifyActivity はタスク到着を通知（雑談セッションを中断）
@@ -120,7 +124,11 @@ func (o *IdleChatOrchestrator) SetExternalLLMBusyFunc(fn func() bool) {
 // StartManualMode starts idle chat mode immediately.
 
 func (o *IdleChatOrchestrator) StopManualMode() {
+	o.closeGenerationWorkAdmission()
 	o.stopAndDisable("manual_stop")
+	o.waitGenerationWork()
+	o.finalizePendingGenerationRunsDuringStop()
+	o.reopenGenerationWorkAdmission()
 }
 
 func (o *IdleChatOrchestrator) Interrupt(reason string) {

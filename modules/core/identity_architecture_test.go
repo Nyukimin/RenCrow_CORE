@@ -402,8 +402,8 @@ func TestCanonicalTaskMigrationSourceIsRemovedAfterCutover(t *testing.T) {
 		}
 	}
 	for _, relative := range []string{
-		filepath.Join("cmd", "rencrow-step10-run-migrate"),
-		filepath.Join("internal", "infrastructure", "persistence", "step10runmigration"),
+		filepath.Join("cmd", "rencrow-run-migrate"),
+		filepath.Join("internal", "infrastructure", "persistence", "runmigration"),
 	} {
 		if _, err := os.Stat(filepath.Join(repoRoot, relative)); err == nil || !os.IsNotExist(err) {
 			t.Fatalf("Step 10 migration source remains after production cutover: %s", relative)
@@ -434,8 +434,8 @@ func TestStep10RunIdentityLegacyFieldsAreBanned(t *testing.T) {
 		}
 	}
 	shouldSkipStep10Path := func(relative string) bool {
-		return strings.Contains(relative, "step10runmigration") ||
-			strings.Contains(relative, "rencrow-step10-run-migrate")
+		return strings.Contains(relative, "runmigration") ||
+			strings.Contains(relative, "rencrow-run-migrate")
 	}
 	walkDirectory := func(relative string) {
 		root := filepath.Join(repoRoot, filepath.FromSlash(relative))
@@ -447,7 +447,7 @@ func TestStep10RunIdentityLegacyFieldsAreBanned(t *testing.T) {
 				return walkErr
 			}
 			if entry.IsDir() {
-				if entry.Name() == "step10runmigration" {
+				if entry.Name() == "runmigration" {
 					return filepath.SkipDir
 				}
 				return nil
