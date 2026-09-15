@@ -2,7 +2,7 @@
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step12-request-response",
   "phase": "post-restart-partial",
-  "evaluated_at": "2026-09-15T22:02:00Z",
+  "evaluated_at": "2026-09-15T22:06:00Z",
   "outcome": {
     "status": "partial",
     "source_revision": "32ba5643b7cff85be31e35ca1c38ebb61fc8b6b5",
@@ -21,6 +21,7 @@
     ],
     "open": [
       "TTS post-deploy synthesis E2E is blocked because configured tts-gateway health returns HTTP 503 and target irodori is unavailable",
+      "Win11-HP01 owner inspection found no 7880 listener and Scheduled Task RenCrow-IrodoriTTS-RTX5060Ti explicitly Disabled; GPU 0 had 15534 MiB of 16311 MiB in use with only 517 MiB free while other managed AI workloads were running, so forcing the FP32 preload target would violate owner and resource boundaries",
       "authenticated Viewer chat reaches orchestration but fails before LLM transport on the pre-existing context_pack.run_id NOT NULL constraint"
     ]
   },
@@ -147,6 +148,10 @@
     {
       "kind": "restart_integrity",
       "result": "31 latest Requests and 30 latest Responses reloaded; selected receipt survived; zero orphan IDs and zero terminal sent Requests; one active sent Request remained attached to an active Action"
+    },
+    {
+      "kind": "tts_runtime_blocker",
+      "result": "canonical tts-gateway returned HTTP 503; Win11-HP01 had no port 7880 listener, RenCrow-IrodoriTTS-RTX5060Ti was Disabled with LastTaskResult 267014, and GPU 0 free memory was 517 MiB; no alternate target, port, or unrelated workload termination was used"
     }
   ]
 }
