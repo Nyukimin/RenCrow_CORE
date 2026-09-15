@@ -81,23 +81,34 @@ type sourceRegistryXBookmarkTagDTO struct {
 }
 
 type sourceRegistryXBookmarkReferenceDTO struct {
-	Kind            string `json:"kind"`
-	URL             string `json:"url,omitempty"`
-	ResolvedURL     string `json:"resolved_url,omitempty"`
-	StatusURL       string `json:"status_url,omitempty"`
-	CaptureStatus   string `json:"capture_status,omitempty"`
-	DisplayText     string `json:"display_text,omitempty"`
-	PreviewText     string `json:"preview_text,omitempty"`
-	PageTitle       string `json:"page_title,omitempty"`
-	PageDescription string `json:"page_description,omitempty"`
-	BodyText        string `json:"body_text,omitempty"`
-	BodyCharCount   int    `json:"body_char_count,omitempty"`
-	BodyTruncated   bool   `json:"body_truncated,omitempty"`
-	FetchedAt       string `json:"fetched_at,omitempty"`
-	FetchError      string `json:"fetch_error,omitempty"`
-	Text            string `json:"text,omitempty"`
-	AuthorName      string `json:"author_name,omitempty"`
-	AuthorUsername  string `json:"author_username,omitempty"`
+	Kind            string                                 `json:"kind"`
+	URL             string                                 `json:"url,omitempty"`
+	ResolvedURL     string                                 `json:"resolved_url,omitempty"`
+	StatusURL       string                                 `json:"status_url,omitempty"`
+	CaptureStatus   string                                 `json:"capture_status,omitempty"`
+	DisplayText     string                                 `json:"display_text,omitempty"`
+	PreviewText     string                                 `json:"preview_text,omitempty"`
+	PageTitle       string                                 `json:"page_title,omitempty"`
+	PageDescription string                                 `json:"page_description,omitempty"`
+	BodyText        string                                 `json:"body_text,omitempty"`
+	BodyCharCount   int                                    `json:"body_char_count,omitempty"`
+	BodyTruncated   bool                                   `json:"body_truncated,omitempty"`
+	FetchedAt       string                                 `json:"fetched_at,omitempty"`
+	FetchError      string                                 `json:"fetch_error,omitempty"`
+	Summary         *sourceRegistryXBookmarkLinkSummaryDTO `json:"summary,omitempty"`
+	Text            string                                 `json:"text,omitempty"`
+	AuthorName      string                                 `json:"author_name,omitempty"`
+	AuthorUsername  string                                 `json:"author_username,omitempty"`
+}
+
+type sourceRegistryXBookmarkLinkSummaryDTO struct {
+	Status      string `json:"status"`
+	Text        string `json:"text,omitempty"`
+	BodySHA256  string `json:"body_sha256,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	GeneratedAt string `json:"generated_at,omitempty"`
+	Chunks      int    `json:"chunks,omitempty"`
+	ErrorCode   string `json:"error_code,omitempty"`
 }
 
 type sourceRegistryXBookmarkMediaDTO struct {

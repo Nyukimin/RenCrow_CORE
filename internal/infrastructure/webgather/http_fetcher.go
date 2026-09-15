@@ -34,6 +34,13 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, policy moduleweb
 	}
 	copied := *client
 	copied.Timeout = policy.RequestTimeout
+	// Production public fetches pin validated DNS addresses at connection time.
+	// A preflight hostname check alone permits DNS rebinding into private hosts.
+	if f.client == nil && !policy.AllowLocalhost {
+		transport := publicHTTPTransport()
+		defer transport.CloseIdleConnections()
+		copied.Transport = transport
+	}
 	requestURL := rawURL
 	if isNHKNewsArticleURL(rawURL) {
 		jar, err := cookiejar.New(nil)
@@ -43,12 +50,15 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, rawURL string, policy moduleweb
 		copied.Jar = jar
 		requestURL = nhkArticleAuthorizationURL(rawURL)
 	}
+	if _, err := modulewebgather.NormalizeURL(requestURL, policy.AllowLocalhost); err != nil {
+		return modulewebgather.FetchArtifact{}, err
+	}
 	copied.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= policy.MaxRedirects {
 			return fmt.Errorf("stopped after %d redirects", policy.MaxRedirects)
 		}
-		if !policy.AllowLocalhost && modulewebgather.IsPrivateHost(req.URL.Hostname()) {
-			return modulewebgather.NewError(modulewebgather.ErrBlockedByPolicy, "redirect to private or localhost URL is blocked")
+		if _, err := modulewebgather.NormalizeURL(req.URL.String(), policy.AllowLocalhost); err != nil {
+			return err
 		}
 		redirects = append(redirects, req.URL.String())
 		return nil

@@ -84,7 +84,7 @@ func (s *SQLiteStore) EnsureOwnerRouteSchema(ctx context.Context) error {
 		return fmt.Errorf("begin knowledge memory owner schema transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, stmt := range []string{
+	statements := []string{
 		`CREATE TABLE IF NOT EXISTS knowledge_memory_request_receipts (
 			action_id TEXT PRIMARY KEY,
 			user_id TEXT NOT NULL,
@@ -95,7 +95,9 @@ func (s *SQLiteStore) EnsureOwnerRouteSchema(ctx context.Context) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_knowledge_memory_request_receipts_user_created
 			ON knowledge_memory_request_receipts(user_id, created_at DESC)`,
-	} {
+	}
+	statements = append(statements, newsKnowledgeReceiptSchemaStatements()...)
+	for _, stmt := range statements {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("ensure knowledge memory owner schema: %w", err)
 		}
@@ -199,6 +201,7 @@ func (s *SQLiteStore) migrate() error {
 			updated_at TEXT NOT NULL
 		)`,
 	}
+	stmts = append(stmts, newsKnowledgeReceiptSchemaStatements()...)
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err

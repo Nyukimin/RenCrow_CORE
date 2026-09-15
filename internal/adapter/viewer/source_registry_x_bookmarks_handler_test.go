@@ -2,12 +2,16 @@ package viewer
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
@@ -18,6 +22,8 @@ func TestHandleSourceRegistry_XBookmarksIsReadOnlyAndExposesClassification(t *te
 		t.Fatalf("NewL1SQLiteStore failed: %v", err)
 	}
 	defer store.Close()
+	articleBody := strings.Repeat("外部リンク本文", 40)
+	bodyHash := sha256.Sum256([]byte(articleBody))
 	staged, err := store.SaveStagingItem(ctx, l1sqlite.L1StagingItem{
 		Kind:         l1sqlite.L1StagingKindExternalFetch,
 		Namespace:    "kb:general",
@@ -39,8 +45,9 @@ func TestHandleSourceRegistry_XBookmarksIsReadOnlyAndExposesClassification(t *te
 			"references": []map[string]interface{}{{
 				"kind": "external_url", "url": "https://example.com/source", "resolved_url": "https://example.com/article",
 				"capture_status": "content_fetched", "page_title": "取得済み記事", "page_description": "記事の説明",
-				"body_text": "外部リンク本文", "body_char_count": 8, "body_truncated": false,
+				"body_text": articleBody, "body_char_count": len([]rune(articleBody)), "body_truncated": false,
 				"fetched_at": "2026-08-05T02:00:00Z", "fetch_error": "",
+				"summary": map[string]interface{}{"status": "ready", "text": "記事から生成した日本語サマリ", "body_sha256": hex.EncodeToString(bodyHash[:]), "revision": knowledgeapp.ExternalLinkSummaryRevision, "chunks": 2, "private_internal": "must-not-leak", "provenance": "core.external-link-summary/v1", "evidence_quotes": []string{"外部リンク本文"}},
 			}},
 		},
 	})
@@ -76,12 +83,25 @@ func TestHandleSourceRegistry_XBookmarksIsReadOnlyAndExposesClassification(t *te
 		t.Fatalf("media projection missing: %+v", item)
 	}
 	reference := item.References[0]
-	if reference.Kind != "external_url" || reference.PageTitle != "取得済み記事" || reference.BodyText != "外部リンク本文" || reference.ResolvedURL != "https://example.com/article" {
+	if reference.Kind != "external_url" || reference.PageTitle != "取得済み記事" || reference.BodyText != articleBody || reference.ResolvedURL != "https://example.com/article" {
 		t.Fatalf("unexpected reference projection: %+v", reference)
+	}
+	if !strings.Contains(rec.Body.String(), "記事から生成した日本語サマリ") || strings.Contains(rec.Body.String(), "must-not-leak") {
+		t.Fatal("reference summary must expose its public fields without leaking internal metadata")
 	}
 	remaining, err := store.RecentStagingItems(ctx, l1sqlite.L1StagingStatusPending, 10)
 	if err != nil || len(remaining) != 1 || remaining[0].ID != staged.ID {
 		t.Fatalf("read-only request changed pending staging: items=%+v err=%v", remaining, err)
+	}
+}
+
+func TestXBookmarkLinkSummaryHidesStaleSourceAndInternalMetadata(t *testing.T) {
+	got := xBookmarkLinkSummaryDTO(map[string]interface{}{
+		"body_text": "更新された記事本文",
+		"summary":   map[string]interface{}{"status": "ready", "text": "古い要約", "body_sha256": "old"},
+	})
+	if got == nil || got.Status != "blocked" || got.ErrorCode != "source_changed" || got.Text != "" {
+		t.Fatal("stale summary must not be presented as a summary of the current body")
 	}
 }
 
@@ -96,5 +116,17 @@ func TestHandleSourceRegistry_XBookmarksRejectsInvalidPagination(t *testing.T) {
 	HandleSourceRegistry(store)(rec, httptest.NewRequest(http.MethodGet, "/viewer/source-registry?action=x-bookmarks&limit=500", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestXBookmarkLinkSummaryRejectsUnverifiedSummaryWithMatchingBodyHash(t *testing.T) {
+	body := strings.Repeat("本文", 120)
+	digest := sha256.Sum256([]byte(body))
+	for _, provenance := range []string{"", "core.external-link-summary/v1"} {
+		reference := map[string]interface{}{"kind": "external_url", "url": "https://example.com/article", "capture_status": "content_fetched", "body_text": body, "summary": map[string]interface{}{"status": "ready", "text": "未検証の要約", "body_sha256": hex.EncodeToString(digest[:]), "revision": knowledgeapp.ExternalLinkSummaryRevision, "provenance": provenance, "evidence_quotes": []string{"本文に存在しない引用"}}}
+		got := xBookmarkLinkSummaryDTO(reference)
+		if got == nil || got.Status != "blocked" || got.ErrorCode != "unverified_summary" || got.Text != "" {
+			t.Fatal("unverified summary with matching hash was exposed")
+		}
 	}
 }

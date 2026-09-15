@@ -25,6 +25,7 @@ type xBookmarkHeartbeatRunner struct {
 	process    xBookmarkCollectionProcess
 	store      knowledgeapp.StagingStore
 	outputRoot string
+	summarizer *knowledgeapp.ExternalLinkSummarizer
 }
 
 type xBookmarkCLIProcess struct {
@@ -32,8 +33,12 @@ type xBookmarkCLIProcess struct {
 	maxScrolls int
 }
 
-func newXBookmarkHeartbeatRunner(process xBookmarkCollectionProcess, store knowledgeapp.StagingStore, outputRoot string) heartbeat.XBookmarkCollector {
-	return &xBookmarkHeartbeatRunner{process: process, store: store, outputRoot: outputRoot}
+func newXBookmarkHeartbeatRunner(process xBookmarkCollectionProcess, store knowledgeapp.StagingStore, outputRoot string, summarizers ...*knowledgeapp.ExternalLinkSummarizer) heartbeat.XBookmarkCollector {
+	runner := &xBookmarkHeartbeatRunner{process: process, store: store, outputRoot: outputRoot}
+	if len(summarizers) > 0 {
+		runner.summarizer = summarizers[0]
+	}
+	return runner
 }
 
 func newXBookmarkCLIProcess(command string, maxScrolls int) xBookmarkCollectionProcess {
@@ -93,7 +98,7 @@ func (r *xBookmarkHeartbeatRunner) Collect(ctx context.Context) (heartbeat.XBook
 		return heartbeat.XBookmarkCollectionReport{}, fmt.Errorf("open x bookmark CORE artifact: %w", err)
 	}
 	defer coreFile.Close()
-	result, err := knowledgeapp.ImportKnowledgeCoreJSONL(ctx, r.store, coreFile, knowledgeapp.ImportOptions{})
+	result, err := knowledgeapp.ImportKnowledgeCoreJSONL(ctx, r.store, coreFile, knowledgeapp.ImportOptions{LinkSummarizer: r.summarizer})
 	if err != nil {
 		return heartbeat.XBookmarkCollectionReport{}, fmt.Errorf("import x bookmark CORE artifact: %w", err)
 	}
@@ -101,6 +106,10 @@ func (r *xBookmarkHeartbeatRunner) Collect(ctx context.Context) (heartbeat.XBook
 		Collected:       report.CollectedCount,
 		Imported:        result.Imported,
 		ExternalFetched: report.ExternalFetchSucceeded,
+		Summarized:      result.LinkSummaries.Ready,
+		SummaryBlocked:  result.LinkSummaries.Blocked,
+		SummaryFailed:   result.LinkSummaries.Failed,
+		SummaryReused:   result.LinkSummaries.Reused,
 	}, nil
 }
 

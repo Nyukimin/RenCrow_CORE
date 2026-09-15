@@ -45,11 +45,6 @@ func (s *SQLiteStore) saveCreativeKnowledgeItem(ctx context.Context, item domain
 	return s.saveKnowledgeItemWithProjection(ctx, creativeKnowledgeRecordType, item.ItemID, item.CreatedAt.Format(timeFormatRFC3339Nano), item, projection)
 }
 
-func (s *SQLiteStore) saveNewsKnowledgeItem(ctx context.Context, item domainkm.NewsKnowledgeItem) error {
-	projection := newsSearchProjection(item)
-	return s.saveKnowledgeItemWithProjection(ctx, newsKnowledgeRecordType, item.ItemID, item.CreatedAt.Format(timeFormatRFC3339Nano), item, projection)
-}
-
 func (s *SQLiteStore) saveKnowledgeItemWithProjection(ctx context.Context, recordType, recordID, createdAt string, item any, projection *safeSearchProjection) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("knowledge memory sqlite store is closed")
@@ -63,6 +58,13 @@ func (s *SQLiteStore) saveKnowledgeItemWithProjection(ctx context.Context, recor
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := saveKnowledgeItemWithProjectionTx(ctx, tx, recordType, recordID, createdAt, payload, projection); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func saveKnowledgeItemWithProjectionTx(ctx context.Context, tx *sql.Tx, recordType, recordID, createdAt, payload string, projection *safeSearchProjection) error {
 	if _, err := tx.ExecContext(ctx, `INSERT OR REPLACE INTO `+recordType+` (item_id, created_at, payload) VALUES (?, ?, ?)`, recordID, createdAt, payload); err != nil {
 		return err
 	}
@@ -74,7 +76,7 @@ func (s *SQLiteStore) saveKnowledgeItemWithProjection(ctx context.Context, recor
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func marshalKnowledgeItem(item any) (string, error) {

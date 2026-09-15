@@ -53,8 +53,11 @@ type AtlasDevelopmentService interface {
 // NewAtlasHandler serves both the read-only Debug Viewer projection and the
 // authenticated owner mutation surface. GET intentionally remains compatible
 // with the existing local Debug Viewer; every POST is bearer/profile gated.
-func NewAtlasHandler(service AtlasOwnerService, userID string, token []byte) http.HandlerFunc {
+func NewAtlasHandler(service AtlasOwnerService, userID string, token []byte, gmail ...AtlasGmailReader) http.HandlerFunc {
 	h := &atlasHandler{service: service, userID: strings.TrimSpace(userID), token: append([]byte(nil), token...)}
+	if len(gmail) > 0 {
+		h.gmail = gmail[0]
+	}
 	return h.ServeHTTP
 }
 
@@ -66,9 +69,14 @@ type atlasHandler struct {
 	service AtlasOwnerService
 	userID  string
 	token   []byte
+	gmail   AtlasGmailReader
 }
 
 func (h *atlasHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSuffix(r.URL.Path, "/") == atlasReadRoot+"/gmail" {
+		h.readGmail(w, r)
+		return
+	}
 	if !memoryOwnerDirectLocalRequest(r) && r.Method != http.MethodGet {
 		writeAtlasError(w, http.StatusNotFound, "not_found")
 		return

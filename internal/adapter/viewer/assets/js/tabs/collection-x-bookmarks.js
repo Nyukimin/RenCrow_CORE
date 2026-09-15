@@ -84,7 +84,7 @@ function xBookmarkAuthor(item) {
 
 function xBookmarkReferenceStatus(reference) {
   const labels = {
-    content_fetched: '本文取得済み', legacy_vault_reference: '本文未取得', url_only: '本文未取得',
+    content_fetched: '本文抽出済み', content_partial: '本文の一部を取得', legacy_vault_reference: '本文未取得', url_only: '本文未取得',
     not_attempted: '未取得', fetch_failed: '取得失敗', blocked_private_network: '安全制約で取得不可',
     fetch_skipped_limit: '取得待ち', quoted_post: '引用投稿',
   };
@@ -116,8 +116,35 @@ function xBookmarkReferenceCard(reference, index) {
   return '<article class="collection-x-bookmark-reference">' +
     '<div class="collection-x-bookmark-reference-head"><span>参照 ' + Number(index + 1) + '</span><span>' + xBookmarkEscape(xBookmarkReferenceStatus(reference)) + '</span></div>' +
     '<h5>' + titleHTML + '</h5>' +
-    (description ? '<p class="collection-x-bookmark-reference-description">' + xBookmarkEscape(description) + '</p>' : '') +
+    (description ? '<p class="collection-x-bookmark-reference-description"><strong>サイトの説明文</strong><br>' + xBookmarkEscape(description) + '</p>' : '') +
+    xBookmarkReferenceSummary(reference) +
+    '<p class="collection-x-bookmark-reference-description">取得本文 ' + Number(reference.body_char_count || Array.from(body).length) + '文字' + (reference.body_truncated ? '・保存上限により途中まで' : '') + '</p>' +
     bodyHTML + '</article>';
+}
+
+function xBookmarkReferenceSummary(reference) {
+  if (!reference || reference.kind !== 'external_url') return '';
+  const summary = reference && reference.summary;
+  if (summary && summary.status === 'ready' && summary.text) {
+    return '<section class="collection-x-bookmark-reference-summary"><h6>サマリ</h6><pre>' + xBookmarkEscape(summary.text) + '</pre>' +
+      '<small>生成 ' + xBookmarkEscape(xBookmarkDateTime(summary.generated_at)) + '・本文 ' + Number(summary.chunks || 1) + '区分から作成</small></section>';
+  }
+  const reasons = {
+    insufficient_body: '本文の取得量が不足しています', empty_body: '本文を取得できていません',
+    body_truncated: '本文が途中までのため要約していません', content_partial: '本文が途中までのため要約していません',
+    provider_unavailable: '要約処理を利用できません', provider_error: '要約の生成に失敗しました',
+    invalid_response: '要約の形式検証に失敗しました', invalid_evidence: '要約の根拠を本文で確認できませんでした',
+    source_changed: '本文が更新されたため要約の再作成が必要です',
+    unverified_summary: '本文に基づくサマリの検証が必要です',
+    body_too_short: '本文の取得量が不足しています', body_missing: '本文を取得できていません',
+    capture_not_fetched: '記事本文を取得できていません', capture_error: '本文の取得に失敗しています',
+    body_char_count_mismatch: '本文の文字数が一致しないため確認が必要です',
+    body_too_large: '要約できる本文量の上限を超えています', url_missing: '出典URLがありません',
+    timeout: '要約処理が時間切れになりました', context_canceled: '要約処理が中断されました',
+  };
+  const reason = summary && summary.status === 'error' ? 'サマリ生成失敗' : (summary && summary.status === 'blocked' ? 'サマリ未作成（本文取得を確認）' : 'サマリ未作成');
+  const detail = summary && reasons[summary.error_code];
+  return '<p class="collection-x-bookmark-reference-empty"><strong>' + reason + '</strong>' + (detail ? '：' + detail : '') + '</p>';
 }
 
 function xBookmarkReferences(item) {

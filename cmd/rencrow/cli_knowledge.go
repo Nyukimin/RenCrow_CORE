@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
 	knowledgerelationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgerelation"
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
@@ -24,7 +25,16 @@ func cmdKnowledge() {
 		os.Exit(1)
 	}
 	defer store.Close()
-	code := runKnowledgeCommand(os.Args[2:], store, os.Stdout, os.Stderr)
+	var summarizer *knowledgeapp.ExternalLinkSummarizer
+	if hasFlag(os.Args[2:], "--summarize-links") {
+		cfg, loadErr := config.LoadConfig(configPath)
+		if loadErr != nil || strings.TrimSpace(cfg.LocalAgentOps.UserID) == "" {
+			fmt.Fprintln(os.Stderr, "link summarization requires a valid CORE config and local owner identity")
+			os.Exit(1)
+		}
+		summarizer = knowledgeapp.NewExternalLinkSummarizer(buildPrimaryLLMProviders(cfg, nil).Worker, cfg.LocalAgentOps.UserID)
+	}
+	code := runKnowledgeCommand(os.Args[2:], store, os.Stdout, os.Stderr, summarizer)
 	if code != 0 {
 		os.Exit(code)
 	}
@@ -39,18 +49,20 @@ type knowledgeCLIStore interface {
 }
 
 type knowledgeImportOptions struct {
-	InputPath string
-	JSON      bool
-	Reviewed  bool
-	Promote   bool
+	InputPath      string
+	JSON           bool
+	Reviewed       bool
+	Promote        bool
+	SummarizeLinks bool
 }
 
 type knowledgeImportReport struct {
-	Imported  int                         `json:"imported"`
-	Validated int                         `json:"validated"`
-	Promoted  int                         `json:"promoted"`
-	Rejected  int                         `json:"rejected"`
-	Items     []knowledgeImportReportItem `json:"items"`
+	Imported      int                            `json:"imported"`
+	Validated     int                            `json:"validated"`
+	Promoted      int                            `json:"promoted"`
+	Rejected      int                            `json:"rejected"`
+	Items         []knowledgeImportReportItem    `json:"items"`
+	LinkSummaries knowledgeapp.LinkSummaryCounts `json:"link_summaries"`
 }
 
 type knowledgeImportReportItem struct {
@@ -67,7 +79,7 @@ type knowledgeImportReportIssue struct {
 	Message string `json:"message"`
 }
 
-func runKnowledgeCommand(args []string, store knowledgeCLIStore, out io.Writer, errOut io.Writer) int {
+func runKnowledgeCommand(args []string, store knowledgeCLIStore, out io.Writer, errOut io.Writer, summarizers ...*knowledgeapp.ExternalLinkSummarizer) int {
 	subcmd := ""
 	if len(args) > 0 {
 		subcmd = strings.ToLower(strings.TrimSpace(args[0]))
@@ -90,23 +102,39 @@ func runKnowledgeCommand(args []string, store knowledgeCLIStore, out io.Writer, 
 			fmt.Fprintln(errOut, "--promote requires --reviewed")
 			return 1
 		}
+		importOptions := knowledgeapp.ImportOptions{}
+		if options.SummarizeLinks {
+			if len(summarizers) == 0 || summarizers[0] == nil {
+				fmt.Fprintln(errOut, "link summarization provider is not configured")
+				return 1
+			}
+			importOptions.LinkSummarizer = summarizers[0]
+		}
 		f, err := os.Open(options.InputPath)
 		if err != nil {
 			fmt.Fprintf(errOut, "failed to open knowledge jsonl: %v\n", err)
 			return 1
 		}
 		defer f.Close()
-		result, err := knowledgeapp.ImportKnowledgeCoreJSONL(context.Background(), store, f, knowledgeapp.ImportOptions{})
+		result, err := knowledgeapp.ImportKnowledgeCoreJSONL(context.Background(), store, f, importOptions)
 		if err != nil {
 			fmt.Fprintf(errOut, "failed to import knowledge jsonl: %v\n", err)
 			return 1
 		}
 		report, failed := reviewKnowledgeImport(context.Background(), store, result, options)
+		report.LinkSummaries = result.LinkSummaries
 		if options.JSON {
 			writeJSONCLI(out, report, false)
 		} else {
 			fmt.Fprintf(out, "knowledge core import: imported=%d validated=%d promoted=%d rejected=%d\n",
 				report.Imported, report.Validated, report.Promoted, report.Rejected)
+			if options.SummarizeLinks {
+				fmt.Fprintf(out, "link summaries: ready=%d blocked=%d failed=%d reused=%d\n", report.LinkSummaries.Ready, report.LinkSummaries.Blocked, report.LinkSummaries.Failed, report.LinkSummaries.Reused)
+			}
+		}
+		if report.LinkSummaries.Failed > 0 {
+			fmt.Fprintf(errOut, "link summarization failed: failed=%d; source records were retained\n", report.LinkSummaries.Failed)
+			return 1
 		}
 		if failed {
 			fmt.Fprintf(errOut, "knowledge review failed: rejected=%d\n", report.Rejected)
@@ -152,6 +180,8 @@ func parseKnowledgeImportOptions(args []string) (knowledgeImportOptions, error) 
 			options.Reviewed = true
 		case "--promote":
 			options.Promote = true
+		case "--summarize-links":
+			options.SummarizeLinks = true
 		default:
 			if strings.HasPrefix(arg, "--") {
 				return options, fmt.Errorf("unknown knowledge import option: %s", arg)
@@ -169,7 +199,7 @@ func parseKnowledgeImportOptions(args []string) (knowledgeImportOptions, error) 
 }
 
 func knowledgeImportUsage() string {
-	return "usage: rencrow knowledge import-core-jsonl <path> [--reviewed] [--promote] [--json]"
+	return "usage: rencrow knowledge import-core-jsonl <path> [--summarize-links] [--reviewed] [--promote] [--json]"
 }
 
 func reviewKnowledgeImport(ctx context.Context, store knowledgeCLIStore, result knowledgeapp.ImportResult, options knowledgeImportOptions) (knowledgeImportReport, bool) {

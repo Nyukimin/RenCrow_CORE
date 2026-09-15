@@ -269,6 +269,8 @@ a { color: inherit; }
 .collection-x-bookmark-reference-body summary { color: var(--bookmark-accent); cursor: pointer; font-size: 11px; }
 .collection-x-bookmark-reference-body[open] summary { margin-bottom: 7px; }
 .collection-x-bookmark-reference-body pre { max-height: 440px; }
+.collection-x-bookmark-reference-summary h6 { color: var(--bookmark-accent); font-size: 13px; margin: 6px 0; }
+.collection-x-bookmark-reference-summary small { color: var(--bookmark-muted); font-size: 10px; }
 
 .collection-item-details { border-top: 1px solid var(--bookmark-border); padding-top: 8px; }
 .collection-item-details summary { color: var(--bookmark-accent); cursor: pointer; font-size: 12px; font-weight: 650; }

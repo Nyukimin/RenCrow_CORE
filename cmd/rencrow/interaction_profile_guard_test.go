@@ -548,3 +548,99 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestCmdControlKnowledgeNewsRoutesAreExactPostOnly(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := withInteractionProfileGuard(next)
+
+	tests := []struct {
+		name    string
+		client  string
+		profile string
+		method  string
+		path    string
+		want    int
+	}{
+		{
+			name:    "cmd control can review knowledge news",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/review",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "cmd control can create knowledge news",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/news-knowledge",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "diagnostics cannot review knowledge news",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/review",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "diagnostics cannot create knowledge news",
+			client:  "RenCrow_CMD",
+			profile: "cmd-diagnostics",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/news-knowledge",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd control cannot read knowledge news review",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodGet,
+			path:    "/viewer/knowledge-memory/review",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd control cannot read knowledge news create",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodGet,
+			path:    "/viewer/knowledge-memory/news-knowledge",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd control cannot use an expanded knowledge review route",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/review/extra",
+			want:    http.StatusForbidden,
+		},
+		{
+			name:    "cmd control cannot use an expanded knowledge news route",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/knowledge-memory/news-knowledge/extra",
+			want:    http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", tt.client)
+			req.Header.Set(interactionProfileHeader, tt.profile)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}

@@ -228,6 +228,10 @@ func allSchemaObjectsPresent(objects map[string]struct{}, names []string) bool {
 
 func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt, string, error) {
 	coverage := CoverageReceipt{State: KnowledgeMemoryCoverageIndexing, CursorState: KnowledgeMemoryCoverageIndexing}
+	newsReceiptsReady, err := s.newsKnowledgeReceiptSchemaPresent(ctx)
+	if err != nil {
+		return coverage, KnowledgeMemoryIntegrityFailed, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT record_type, eligible_count, indexed_count, state
 		FROM knowledge_memory_index_cursor WHERE record_type IN (?, ?)`, creativeKnowledgeRecordType, newsKnowledgeRecordType)
 	if err != nil {
@@ -295,16 +299,32 @@ func (s *SQLiteStore) readPromotionReceipt(ctx context.Context) (CoverageReceipt
 	if manifest.Coverage.State != KnowledgeMemoryCoverageReady || manifest.Coverage.EligibleCount != coverage.EligibleCount || manifest.Coverage.IndexedCount != coverage.IndexedCount {
 		return coverage, KnowledgeMemoryIntegrityFailed, nil
 	}
-	currentCount, currentHash, err := s.domainManifest(ctx)
+	currentCount, currentHash, err := s.domainManifestWithNewsReceiptSchema(ctx, newsReceiptsReady)
 	if err != nil {
 		return coverage, KnowledgeMemoryIntegrityFailed, err
 	}
 	if manifest.SourceCount != manifest.ImportedCount || manifest.ImportedCount != currentCount || manifest.SourceHash != manifest.ImportedHash || manifest.ImportedHash != currentHash {
 		return coverage, KnowledgeMemoryIntegrityFailed, nil
 	}
+	if newsReceiptsReady {
+		overlaysOK, err := s.verifyNewsKnowledgeReceiptOverlays(ctx)
+		if err != nil {
+			return coverage, KnowledgeMemoryIntegrityFailed, err
+		}
+		if !overlaysOK {
+			return coverage, KnowledgeMemoryIntegrityFailed, nil
+		}
+	}
 	for _, recordType := range searchableKnowledgeRecordTypes {
 		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ?`, recordType).Scan(&count); err != nil {
+		query := `SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ?`
+		if recordType == newsKnowledgeRecordType && newsReceiptsReady {
+			query += ` AND NOT EXISTS (
+				SELECT 1 FROM knowledge_memory_news_receipts
+				WHERE knowledge_memory_news_receipts.item_id = knowledge_memory_search_documents.record_id
+			)`
+		}
+		if err := s.db.QueryRowContext(ctx, query, recordType).Scan(&count); err != nil {
 			return coverage, KnowledgeMemoryIntegrityFailed, err
 		}
 		cursor := cursors[recordType]
@@ -433,6 +453,14 @@ type promotionRecord struct {
 }
 
 func (s *SQLiteStore) domainManifest(ctx context.Context) (int, string, error) {
+	newsReceiptsReady, err := s.newsKnowledgeReceiptSchemaPresent(ctx)
+	if err != nil {
+		return 0, "", err
+	}
+	return s.domainManifestWithNewsReceiptSchema(ctx, newsReceiptsReady)
+}
+
+func (s *SQLiteStore) domainManifestWithNewsReceiptSchema(ctx context.Context, newsReceiptsReady bool) (int, string, error) {
 	accumulator := newManifestAccumulator()
 	for _, table := range []struct {
 		recordType string
@@ -459,6 +487,18 @@ func (s *SQLiteStore) domainManifest(ctx context.Context) (int, string, error) {
 					WHERE knowledge_memory_request_receipts.item_id = creative_knowledge.item_id
 				)
 				ORDER BY creative_knowledge.item_id`
+		} else if table.recordType == newsKnowledgeRecordType && newsReceiptsReady {
+			// Receipt-bound News rows are private owner overlays. They are checked
+			// independently by verifyNewsKnowledgeReceiptOverlays and must not
+			// change the imported source manifest.
+			query = `SELECT news_knowledge.item_id, news_knowledge.payload
+				FROM news_knowledge
+				WHERE NOT EXISTS (
+					SELECT 1
+					FROM knowledge_memory_news_receipts
+					WHERE knowledge_memory_news_receipts.item_id = news_knowledge.item_id
+				)
+				ORDER BY news_knowledge.item_id`
 		}
 		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
@@ -746,6 +786,14 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 		return false, 0, nil
 	}
 	table := recordType
+	newsReceiptsReady := false
+	if recordType == newsKnowledgeRecordType {
+		var err error
+		newsReceiptsReady, err = s.newsKnowledgeReceiptSchemaPresent(ctx)
+		if err != nil {
+			return false, 0, err
+		}
+	}
 	var lastID string
 	var cursorState string
 	var indexedCount int
@@ -763,7 +811,15 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 	if cursorState == KnowledgeMemoryCoverageReady {
 		return true, 0, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT item_id, payload FROM `+table+` WHERE item_id > ? ORDER BY item_id LIMIT ?`, lastID, batchSize)
+	query := `SELECT item_id, payload FROM ` + table + ` WHERE item_id > ?`
+	if recordType == newsKnowledgeRecordType && newsReceiptsReady {
+		query += ` AND NOT EXISTS (
+			SELECT 1 FROM knowledge_memory_news_receipts
+			WHERE knowledge_memory_news_receipts.item_id = news_knowledge.item_id
+		)`
+	}
+	query += ` ORDER BY item_id LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query, lastID, batchSize)
 	if err != nil {
 		return false, 0, err
 	}
@@ -783,7 +839,14 @@ func (s *SQLiteStore) backfillRecordTypeBatch(ctx context.Context, recordType st
 	_ = rows.Close()
 	if len(batch) == 0 {
 		var count int
-		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ?`, recordType).Scan(&count); err != nil {
+		countQuery := `SELECT COUNT(*) FROM knowledge_memory_search_documents WHERE record_type = ?`
+		if recordType == newsKnowledgeRecordType && newsReceiptsReady {
+			countQuery += ` AND NOT EXISTS (
+				SELECT 1 FROM knowledge_memory_news_receipts
+				WHERE knowledge_memory_news_receipts.item_id = knowledge_memory_search_documents.record_id
+			)`
+		}
+		if err := s.db.QueryRowContext(ctx, countQuery, recordType).Scan(&count); err != nil {
 			return false, 0, err
 		}
 		if _, err := s.db.ExecContext(ctx, `UPDATE knowledge_memory_index_cursor SET last_record_id = '', eligible_count = ?, indexed_count = ?, state = ?, updated_at = ? WHERE record_type = ?`, count, count, KnowledgeMemoryCoverageReady, nowUTCString(), recordType); err != nil {

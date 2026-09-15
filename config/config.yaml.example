@@ -362,6 +362,16 @@ heartbeat:
   interval: 30            # チェック間隔（分）、最小5分
   channel: "line"         # 通知先: line / telegram / discord / slack
   chat_id: "${RENCROW_HEARTBEAT_CHAT_ID}"  # 各チャネルの送信先ID
+  gmail:
+    enabled: false       # local_agent_ops.enabled と owner user_id が必要
+    account: "owner@gmail.com"
+    command: "rencrow-gmail" # RenCrow_Tools 所有のnative Go CLI
+    credentials_file: "/absolute/path/to/google-desktop-client.json"
+    token_file: "/absolute/path/to/gmail-token.json"
+    interval_minutes: 30
+    timeout_minutes: 20
+    max_results: 20      # 1〜100件、1回に1page、続きは次回
+    run_on_start: true
   x_bookmarks:
     enabled: false        # optional Node/Playwright sidecar。true時だけ定期収集
     interval_minutes: 360 # 60〜10080分（既定6時間）

@@ -480,6 +480,83 @@ function knowledgeMemoryID(type, item) {
   return item.id || item.ID || '';
 }
 
+function knowledgeMemoryOwnerState() {
+  if (typeof state === 'undefined' || !state.memory) return null;
+  return state.memory;
+}
+
+function knowledgeMemoryOwnerToken() {
+  const memory = knowledgeMemoryOwnerState();
+  return memory ? String(memory.knowledgeMemoryOwnerToken || '') : '';
+}
+
+function knowledgeMemoryOwnerGeneration() {
+  const memory = knowledgeMemoryOwnerState();
+  const generation = Number(memory && memory.knowledgeMemoryOwnerGeneration);
+  return Number.isFinite(generation) ? generation : 0;
+}
+
+function knowledgeMemoryOwnerRequestHeaders(method) {
+  const token = knowledgeMemoryOwnerToken();
+  if (!token) return {};
+  return {
+    Authorization: 'Bearer ' + token,
+    'X-RenCrow-Client': 'RenCrow_CMD',
+    'X-RenCrow-Interaction-Profile': method === 'GET' ? 'cmd-diagnostics' : 'cmd-control',
+  };
+}
+
+function knowledgeMemoryOwnerRequestCurrent(generation, token) {
+  return generation === knowledgeMemoryOwnerGeneration() && token === knowledgeMemoryOwnerToken();
+}
+
+function knowledgeMemoryNewsIsPublic(item) {
+  if (!item) return false;
+  const userID = String(item.user_id || item.UserID || '').trim();
+  const visibility = String(item.visibility || item.Visibility || '').trim().toLowerCase();
+  return !userID && (visibility === '' || visibility === 'public');
+}
+
+function knowledgeMemoryNewsIsPrivate(item) {
+  return Boolean(item && String(item.user_id || item.UserID || '').trim());
+}
+
+function knowledgeMemoryPublicOnly(data) {
+  const result = data && typeof data === 'object' ? {...data} : {};
+  if (Array.isArray(result.news_knowledge)) {
+    result.news_knowledge = result.news_knowledge.filter(knowledgeMemoryNewsIsPublic);
+  }
+  return result;
+}
+
+function knowledgeMemoryClearPrivateNews() {
+  const memory = knowledgeMemoryOwnerState();
+  if (!memory) return;
+  memory.knowledgeMemory = knowledgeMemoryPublicOnly(memory.knowledgeMemory);
+  if (memory.knowledgeMemoryDetail && knowledgeMemoryNewsIsPrivate(memory.knowledgeMemoryDetail.item)) {
+    memory.knowledgeMemoryDetail = null;
+  }
+  memory.knowledgeMemoryReviewResult = null;
+}
+
+function knowledgeMemoryOwnerStatus(message) {
+  const el = document.getElementById('knowledgeMemoryOwnerStatus');
+  if (el) el.textContent = String(message || '');
+}
+
+function knowledgeMemoryOwnerSetToken(value) {
+  const memory = knowledgeMemoryOwnerState();
+  if (!memory) return;
+  const next = String(value || '').trim();
+  if (next === knowledgeMemoryOwnerToken()) return;
+  memory.knowledgeMemoryOwnerToken = next;
+  memory.knowledgeMemoryOwnerGeneration = knowledgeMemoryOwnerGeneration() + 1;
+  knowledgeMemoryClearPrivateNews();
+  memory.knowledgeMemoryFetchError = '';
+  knowledgeMemoryOwnerStatus(next ? '本人の範囲をページメモリに設定。更新すると本人のニュースを読み込みます。' : '公開範囲。本人のニュースは非表示です。');
+  renderKnowledgeMemoryLedger();
+}
+
 function knowledgeMemoryTitle(type, item) {
   if (!item) return '-';
   return item.title || item.Title || item.topic || item.Topic || item.summary || item.Summary ||
@@ -488,7 +565,7 @@ function knowledgeMemoryTitle(type, item) {
 
 function knowledgeMemorySource(item) {
   if (!item) return '-';
-  return item.source_url || item.SourceURL || item.source_id || item.SourceID || item.user_id || item.UserID || item.namespace || item.Namespace || '-';
+  return item.source_url || item.SourceURL || item.url || item.URL || item.source || item.Source || item.source_id || item.SourceID || item.user_id || item.UserID || item.namespace || item.Namespace || '-';
 }
 
 function knowledgeMemoryStatus(type, item) {
@@ -533,6 +610,44 @@ function knowledgeMemoryCompressedText(item) {
 function knowledgeMemoryOriginalText(item) {
   if (!item) return '';
   return item.original_text || item.OriginalText || item.raw_text || item.RawText || item.body || item.Body || '';
+}
+
+function knowledgeMemoryNewsEvidence(item) {
+  if (!item) return '-';
+  const value = (keys) => {
+    for (const key of keys) {
+      if (item[key] !== undefined && item[key] !== null && String(item[key]).trim()) return String(item[key]);
+    }
+    return '-';
+  };
+  return [
+    '出典=' + value(['source', 'Source']),
+    '話題=' + value(['topic', 'Topic']),
+    '対象日=' + value(['event_date', 'EventDate']),
+    'URL=' + value(['url', 'URL']),
+    '要約=' + value(['summary', 'Summary']),
+    '状態=' + value(['status', 'Status']),
+    '公開範囲=' + value(['visibility', 'Visibility']),
+  ].join('\n');
+}
+
+function knowledgeMemoryDecisionConsequences(type, item) {
+  if (type === 'news_knowledge') {
+    const scope = knowledgeMemoryNewsIsPrivate(item) ? '本人のニュース：認証済みの本人だけが読み取り・変更できます。' : '公開ニュース：公開範囲の一覧で参照できます。';
+    return [
+      '確認：候補をreviewed（確認済み）として保存し、知識で参照できます。',
+      '採用：adopted（採用）の判断を保存し、所有者の経路が許可する場合に昇格（promote）します。',
+      '却下：rejected（却下）として保存し、未処理の候補から外します。',
+      '保留：現在状態と保存行を変更しません。この操作は通信しません。',
+      '範囲：' + scope,
+    ].join('\n');
+  }
+  return [
+    '確認：項目を採用済みまたは確認済み（adopted/reviewed）として保存します。',
+    '採用：adopted（採用）の判断を保存し、昇格（promote）を要求します。',
+    '却下：rejected（却下）として保存します。',
+    '保留：現在状態と保存行を変更しません。この操作は通信しません。',
+  ].join('\n');
 }
 
 function knowledgeMemoryFlags(type, item) {
@@ -667,6 +782,7 @@ function knowledgeMemoryReviewActions(type, id, status) {
     '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;adopted&quot;,false)">Review</button>',
     '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;adopted&quot;,true)">Promote</button>',
     '<button class="ctl-btn" onclick="reviewKnowledgeMemoryItem(&quot;' + payload + '&quot;,&quot;rejected&quot;,false)">Reject</button>',
+    '<button class="ctl-btn" onclick="deferKnowledgeMemoryItem(&quot;' + payload + '&quot;)">保留</button>',
   ].join(' ');
 }
 
@@ -788,6 +904,9 @@ function renderKnowledgeMemoryDetail() {
   const relatedText = related.length ? related.map((staging) => String(staging.id || staging.ID || '-') + ' / ' + String(staging.validation_status || staging.ValidationStatus || '-')).join('\n') : '-';
   const reviewComparison = renderKnowledgeMemoryReviewComparison(detail.detail_type || '', item, related);
   const reviewResult = state.memory.knowledgeMemoryReviewResult || null;
+  const newsEvidence = detail.detail_type === 'news_knowledge' ?
+    '<div class="card"><h4>出典と検証材料</h4><pre style="white-space:pre-wrap;max-height:220px;overflow:auto">' + esc(knowledgeMemoryNewsEvidence(item)) + '</pre></div>' : '';
+  const decisionConsequences = knowledgeMemoryDecisionConsequences(detail.detail_type || '', item);
   el.innerHTML =
     '<div><span class="badge">detail</span> ' +
     '<span class="code">' + esc(detail.detail_type || '-') + ':' + esc(detail.id || '-') + '</span></div>' +
@@ -795,6 +914,8 @@ function renderKnowledgeMemoryDetail() {
       '<div class="card"><h4>Original / Protected</h4><div class="small">protected=' + esc(String(Boolean(item.protected || item.Protected))) + '</div><pre style="white-space:pre-wrap;max-height:160px;overflow:auto">' + esc(original || '-') + '</pre></div>' +
       '<div class="card"><h4>Compressed / Summary</h4><pre style="white-space:pre-wrap;max-height:160px;overflow:auto">' + esc(compressed || '-') + '</pre></div>' +
       '<div class="card"><h4>Warning / Review</h4><div class="small">warnings=' + esc(String(warnings)) + '</div><div class="small">review_status=' + esc(review || '-') + '</div></div>' +
+      newsEvidence +
+      '<div class="card"><h4>操作による変化</h4><pre style="white-space:pre-wrap;max-height:220px;overflow:auto">' + esc(decisionConsequences) + '</pre></div>' +
       '<div class="card"><h4>Review / Promote Comparison</h4><pre style="white-space:pre-wrap;max-height:180px;overflow:auto">' + esc(reviewComparison) + '</pre></div>' +
       '<div class="card"><h4>Review Result</h4><pre style="white-space:pre-wrap;max-height:180px;overflow:auto">' + esc(reviewResult ? JSON.stringify(reviewResult, null, 2) : '-') + '</pre></div>' +
       '<div class="card"><h4>Related Source Registry Staging</h4><pre style="white-space:pre-wrap;max-height:160px;overflow:auto">' + esc(relatedText) + '</pre></div>' +
@@ -802,37 +923,65 @@ function renderKnowledgeMemoryDetail() {
     '<pre style="white-space:pre-wrap;max-height:220px;overflow:auto">' + esc(JSON.stringify(item, null, 2)) + '</pre>';
 }
 
-function reviewKnowledgeMemoryItem(encodedPayload, reviewStatus, promote) {
-  let payload;
+function knowledgeMemoryReviewPayload(encodedPayload) {
   try {
-    payload = JSON.parse(decodeURIComponent(encodedPayload || '{}'));
+    return JSON.parse(decodeURIComponent(encodedPayload || '{}'));
   } catch (err) {
     state.memory.knowledgeMemoryReviewResult = {status: 'failed', error: 'invalid knowledge memory review payload'};
     renderKnowledgeMemoryDetail();
-    return;
+    return null;
   }
+}
+
+function deferKnowledgeMemoryItem(encodedPayload) {
+  const payload = knowledgeMemoryReviewPayload(encodedPayload);
+  if (!payload) return;
+  state.memory.knowledgeMemoryReviewResult = {
+    status: 'deferred',
+    detail_type: payload.detail_type || '',
+    id: payload.id || '',
+    mutation: 'none',
+    message: '保留しました。通信は行わず、保存済みの知識項目は変更していません。',
+  };
+  renderKnowledgeMemoryDetail();
+}
+
+function reviewKnowledgeMemoryItem(encodedPayload, reviewStatus, promote) {
+  const payload = knowledgeMemoryReviewPayload(encodedPayload);
+  if (!payload) return;
   payload.review_status = reviewStatus;
   payload.promote = Boolean(promote);
   payload.reviewed_by = 'viewer';
+  const requestGeneration = knowledgeMemoryOwnerGeneration();
+  const requestToken = knowledgeMemoryOwnerToken();
+  const headers = knowledgeMemoryOwnerRequestHeaders('POST');
+  headers['Content-Type'] = 'application/json';
   fetch('/viewer/knowledge-memory/review', {
     method: 'POST',
-    headers: {'Content-Type': 'application/json'},
+    headers,
     body: JSON.stringify(payload),
   })
     .then((r) => r.json().then((data) => ({ok: r.ok, status: r.status, data})).catch(() => ({ok: r.ok, status: r.status, data: {}})))
     .then(({ok, status, data}) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
       state.memory.knowledgeMemoryReviewResult = ok ? data : {status: 'failed', http_status: status, response: data};
       refreshKnowledgeMemoryLedger();
       if (payload.detail_type && payload.id) fetchMemoryKnowledgeDetail(payload.detail_type, payload.id);
     })
     .catch((err) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
+      if (requestToken) knowledgeMemoryClearPrivateNews();
       state.memory.knowledgeMemoryReviewResult = {status: 'failed', error: String(err && err.message ? err.message : err)};
       renderKnowledgeMemoryDetail();
     });
 }
 
 function refreshKnowledgeMemoryLedger() {
-  fetch('/viewer/knowledge-memory?limit=20')
+  const requestGeneration = knowledgeMemoryOwnerGeneration();
+  const requestToken = knowledgeMemoryOwnerToken();
+  const headers = knowledgeMemoryOwnerRequestHeaders('GET');
+  knowledgeMemoryOwnerStatus(requestToken ? '本人の知識を読み込み中…' : '公開の知識を読み込み中…');
+  fetch('/viewer/knowledge-memory?limit=20', {cache: 'no-store', headers})
     .then((r) => {
       if (!r.ok) {
         return r.text().then((text) => {
@@ -842,11 +991,14 @@ function refreshKnowledgeMemoryLedger() {
       return r.json();
     })
     .then((data) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
       state.memory.knowledgeMemoryFetchError = '';
-      state.memory.knowledgeMemory = data || {};
+      state.memory.knowledgeMemory = requestToken ? (data || {}) : knowledgeMemoryPublicOnly(data);
+      knowledgeMemoryOwnerStatus(requestToken ? '本人の範囲を有効化。本人のニュースはこのページだけに表示します。' : '公開範囲。本人のニュースは非表示です。');
       renderKnowledgeMemoryLedger();
     })
     .catch((err) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
       const message = String(err && err.message ? err.message : err);
       state.memory.knowledgeMemoryFetchError = message;
       state.memory.knowledgeMemory = {
@@ -858,6 +1010,8 @@ function refreshKnowledgeMemoryLedger() {
         dream_runs: [],
       };
       state.memory.knowledgeMemoryDetail = {error: message};
+      knowledgeMemoryClearPrivateNews();
+      knowledgeMemoryOwnerStatus('知識を読めないため本人のニュースを消去しました。');
       renderKnowledgeMemoryLedger();
       console.error(err);
     });
@@ -865,12 +1019,30 @@ function refreshKnowledgeMemoryLedger() {
 
 const knowledgeMemoryRefreshBtn = document.getElementById('knowledgeMemoryRefreshBtn');
 if (knowledgeMemoryRefreshBtn) knowledgeMemoryRefreshBtn.addEventListener('click', refreshKnowledgeMemoryLedger);
+const knowledgeMemoryOwnerTokenInput = document.getElementById('knowledgeMemoryOwnerTokenInput');
+const knowledgeMemoryOwnerLoadBtn = document.getElementById('knowledgeMemoryOwnerLoadBtn');
+const knowledgeMemoryOwnerClearBtn = document.getElementById('knowledgeMemoryOwnerClearBtn');
+if (knowledgeMemoryOwnerTokenInput) knowledgeMemoryOwnerTokenInput.addEventListener('input', () => {
+  if (knowledgeMemoryOwnerToken()) knowledgeMemoryOwnerSetToken('');
+  knowledgeMemoryOwnerStatus('認証情報はページメモリだけに保持します。本人のニュースを表示してください。');
+});
+if (knowledgeMemoryOwnerLoadBtn) knowledgeMemoryOwnerLoadBtn.addEventListener('click', () => {
+  knowledgeMemoryOwnerSetToken(knowledgeMemoryOwnerTokenInput ? knowledgeMemoryOwnerTokenInput.value : '');
+  refreshKnowledgeMemoryLedger();
+});
+if (knowledgeMemoryOwnerClearBtn) knowledgeMemoryOwnerClearBtn.addEventListener('click', () => {
+  if (knowledgeMemoryOwnerTokenInput) knowledgeMemoryOwnerTokenInput.value = '';
+  knowledgeMemoryOwnerSetToken('');
+  refreshKnowledgeMemoryLedger();
+});
 
 function fetchMemoryKnowledgeDetail(detailType, id) {
   const type = String(detailType || '').trim();
   const detailID = String(id || '').trim();
   if (!type || !detailID) return;
-  fetch('/viewer/knowledge-memory?detail_type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(detailID) + '&limit=100')
+  const requestGeneration = knowledgeMemoryOwnerGeneration();
+  const requestToken = knowledgeMemoryOwnerToken();
+  fetch('/viewer/knowledge-memory?detail_type=' + encodeURIComponent(type) + '&id=' + encodeURIComponent(detailID) + '&limit=100', {cache: 'no-store', headers: knowledgeMemoryOwnerRequestHeaders('GET')})
     .then((r) => {
       if (!r.ok) {
         return r.text().then((text) => {
@@ -880,10 +1052,18 @@ function fetchMemoryKnowledgeDetail(detailType, id) {
       return r.json();
     })
     .then((data) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
+      if (!requestToken && data && data.item && type === 'news_knowledge' && !knowledgeMemoryNewsIsPublic(data.item)) {
+        state.memory.knowledgeMemoryDetail = {error: 'Knowledge memory detail unavailable', detail_type: type, id: detailID};
+        renderKnowledgeMemoryDetail();
+        return;
+      }
       state.memory.knowledgeMemoryDetail = data;
       renderKnowledgeMemoryDetail();
     })
     .catch((err) => {
+      if (!knowledgeMemoryOwnerRequestCurrent(requestGeneration, requestToken)) return;
+      if (requestToken) knowledgeMemoryClearPrivateNews();
       state.memory.knowledgeMemoryDetail = {error: String(err && err.message ? err.message : err), detail_type: type, id: detailID};
       renderKnowledgeMemoryDetail();
       console.error(err);

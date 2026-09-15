@@ -15,13 +15,19 @@ type StagingStore interface {
 	SaveStagingItem(ctx context.Context, item l1sqlite.L1StagingItem) (*l1sqlite.L1StagingItem, error)
 }
 
+type stagingItemLookup interface {
+	FindStagingItemByNamespaceEventID(ctx context.Context, namespace, eventID string) (l1sqlite.L1StagingItem, bool, error)
+}
+
 type ImportOptions struct {
-	Now func() time.Time
+	Now            func() time.Time
+	LinkSummarizer *ExternalLinkSummarizer
 }
 
 type ImportResult struct {
-	Imported int
-	Items    []ImportedItem
+	Imported      int
+	Items         []ImportedItem
+	LinkSummaries LinkSummaryCounts `json:"link_summaries"`
 }
 
 type ImportedItem struct {
@@ -48,6 +54,9 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 	if store == nil {
 		return ImportResult{}, fmt.Errorf("knowledge staging store is required")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	now := time.Now().UTC()
 	if opts.Now != nil {
 		now = opts.Now().UTC()
@@ -55,9 +64,17 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	var result ImportResult
+	var lookup stagingItemLookup
+	if opts.LinkSummarizer != nil {
+		lookup, _ = store.(stagingItemLookup)
+	}
+	linkSummaryCache := map[string]map[string]interface{}{}
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
@@ -73,6 +90,40 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 		item, err := stagingItemFromCoreRecord(rec, full, now)
 		if err != nil {
 			return result, fmt.Errorf("invalid knowledge core record at line %d: %w", lineNo, err)
+		}
+		stripIncomingExternalLinkSummaries(&item)
+		var existing *l1sqlite.L1StagingItem
+		if lookup != nil {
+			foundItem, found, lookupErr := lookup.FindStagingItemByNamespaceEventID(ctx, item.Namespace, item.EventID)
+			if lookupErr != nil {
+				return result, fmt.Errorf("failed to lookup existing knowledge core staging at line %d: %w", lineNo, lookupErr)
+			}
+			if found {
+				existing = &foundItem
+				preserveExistingStagingState(&item, foundItem)
+				if opts.LinkSummarizer != nil {
+					preserveExistingExternalCaptures(&item, foundItem)
+				}
+			}
+		}
+		if opts.LinkSummarizer != nil {
+			counts, summaryErr := opts.LinkSummarizer.applyExternalLinkSummaries(ctx, &item, existing, now, linkSummaryCache)
+			result.LinkSummaries.Ready += counts.Ready
+			result.LinkSummaries.Blocked += counts.Blocked
+			result.LinkSummaries.Failed += counts.Failed
+			result.LinkSummaries.Reused += counts.Reused
+			if existing != nil {
+				mergeExistingStagingMetadata(&item, *existing)
+			}
+			if summaryErr != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return result, ctxErr
+				}
+				if _, saveErr := store.SaveStagingItem(ctx, item); saveErr != nil {
+					return result, fmt.Errorf("failed to save knowledge core staging at line %d: %w", lineNo, saveErr)
+				}
+				return result, summaryErr
+			}
 		}
 		saved, err := store.SaveStagingItem(ctx, item)
 		if err != nil {
@@ -93,6 +144,88 @@ func ImportKnowledgeCoreJSONL(ctx context.Context, store StagingStore, r io.Read
 		return result, fmt.Errorf("failed to read knowledge core jsonl: %w", err)
 	}
 	return result, nil
+}
+
+func preserveExistingStagingState(item *l1sqlite.L1StagingItem, existing l1sqlite.L1StagingItem) {
+	if item == nil {
+		return
+	}
+	if existing.ID != "" {
+		item.ID = existing.ID
+	}
+	if existing.ValidationStatus != "" {
+		item.ValidationStatus = existing.ValidationStatus
+	}
+}
+
+func mergeExistingStagingMetadata(item *l1sqlite.L1StagingItem, existing l1sqlite.L1StagingItem) {
+	if item == nil || existing.Meta == nil {
+		return
+	}
+	merged := cloneExternalLinkMap(existing.Meta)
+	for key, value := range item.Meta {
+		merged[key] = value
+	}
+	if oldReferences, ok := externalLinkReferenceMaps(existing.Meta["references"]); ok {
+		if newReferences, present := externalLinkReferenceMaps(item.Meta["references"]); present {
+			merged["references"] = externalLinkReferenceValues(mergeExternalLinkReferences(oldReferences, newReferences))
+		} else {
+			merged["references"] = externalLinkReferenceValues(oldReferences)
+		}
+	}
+	item.Meta = merged
+}
+
+func mergeExternalLinkReferences(existing, incoming []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(existing)+len(incoming))
+	used := make([]bool, len(existing))
+	for _, current := range incoming {
+		merged := cloneExternalLinkMap(current)
+		key := externalLinkReferenceKey(current)
+		if key != "" {
+			for index, previous := range existing {
+				if used[index] || externalLinkReferenceKey(previous) != key {
+					continue
+				}
+				merged = mergeExternalLinkReference(previous, merged)
+				used[index] = true
+				break
+			}
+		}
+		result = append(result, merged)
+	}
+	for index, previous := range existing {
+		if !used[index] {
+			result = append(result, cloneExternalLinkMap(previous))
+		}
+	}
+	return result
+}
+
+func externalLinkReferenceKey(reference map[string]interface{}) string {
+	kind := strings.TrimSpace(externalLinkString(reference, "kind"))
+	if kind == "x_post" {
+		identifier := strings.TrimSpace(externalLinkString(reference, "tweet_id"))
+		if identifier == "" {
+			identifier = strings.TrimSpace(externalLinkString(reference, "status_url"))
+		}
+		if identifier == "" {
+			return ""
+		}
+		return kind + "\x00" + identifier
+	}
+	if kind == "external_url" {
+		url := strings.TrimSpace(externalLinkString(reference, "url"))
+		if url == "" {
+			return ""
+		}
+		return kind + "\x00" + url
+	}
+	url := strings.TrimSpace(externalLinkString(reference, "url"))
+	if kind == "" && url == "" {
+		return ""
+	}
+	return kind + "\x00" + url
 }
 
 func stagingItemFromCoreRecord(rec coreRecord, full map[string]interface{}, now time.Time) (l1sqlite.L1StagingItem, error) {

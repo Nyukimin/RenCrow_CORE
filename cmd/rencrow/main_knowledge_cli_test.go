@@ -79,6 +79,17 @@ func TestRunKnowledgeCommandImportCoreJSONLDefaultsToPendingStaging(t *testing.T
 	}
 }
 
+func TestRunKnowledgeCommandSummaryFlagRequiresConfiguredProvider(t *testing.T) {
+	options, err := parseKnowledgeImportOptions([]string{"input.jsonl", "--summarize-links", "--json"})
+	if err != nil || !options.SummarizeLinks {
+		t.Fatalf("summary option: %+v %v", options, err)
+	}
+	var out, errOut bytes.Buffer
+	if code := runKnowledgeCommand([]string{"import-core-jsonl", "not-opened.jsonl", "--summarize-links"}, nil, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "provider is not configured") {
+		t.Fatal("explicit summary import must fail before opening input or writing data when no provider was supplied")
+	}
+}
+
 func TestRunKnowledgeCommandImportCoreJSONLReviewedPromotesToJSONLDomain(t *testing.T) {
 	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
 	if err != nil {

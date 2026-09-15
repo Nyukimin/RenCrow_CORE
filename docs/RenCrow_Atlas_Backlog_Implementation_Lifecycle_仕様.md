@@ -845,6 +845,10 @@ Source本文とRenCrow側の評価を分離する。
 
 完全一致は新Itemを作らず既存ItemへSourceRefを追加する。
 
+Intakeの再送は生成済みの安定IDで既存Itemを参照し、利用者による題名・本文・状態の変更を保持する。
+異なるID間の機械的な完全一致は、出典のlocator／content hashと空白・大文字小文字を正規化した題名で判定する。
+同じ記事を引用する別題の仕様案は別Itemとして保持する。出典の共有だけでは同じ仕様とは判定しない。
+
 意味的に近いだけの場合は自動mergeせず、related itemとして記録する。
 
 ---
@@ -1114,3 +1118,112 @@ migrationはappend-onlyかつ冪等とし、別DBを作らない。
 rollbackは新artifact／projectionの読取りを無効化して既存Atlas lifecycleへ戻せることを要求する。Unit stateや
 既存Evidenceを削除・書換えない。再起動時はplan-scoped ledgerと既存Lease／Queue Freezeを照合し、不一致、
 unknown status、malformed receiptはfail closedで`blocked`にする。
+
+
+## 17. Gmailからの定期取り込み
+
+### 17.1 ownerと選択規則
+
+Gmail transport／Google OAuthはRenCrow_Toolsのnative Go `rencrow-gmail`、
+件名による振り分け、意味評価、Atlas状態、receipt、定期実行はCOREが所有する。
+CodexのGmail接続とは独立し、`heartbeat.gmail.account`で指定したGoogle accountを
+profile APIで照合してからメールを読む。scopeは`gmail.readonly`。
+送信、既読化、削除、ラベル変更は行わない。
+
+Gmailは一つの入力からAtlas候補とprivate Knowledgeを生成するcross-destination intakeであるため、
+オーケストレーション、意味評価、準備済みreceipt、保存先の振り分けは
+`internal/application/gmailintake`が所有する。Atlasのlifecycleと状態遷移は
+`internal/application/backlog`が所有し、Gmail intakeは公開された`Service.List`、`Service.Intake`、
+`Service.Candidate`だけを呼び出す。Gmail固有の型、validator、receipt storeをAtlas packageへ戻さない。
+
+| 入力 | 工程 | 区分 | 出力・失敗 |
+| --- | --- | --- | --- |
+| 対象account、固定query、page token | 取得、MIME変換、hash検証 | CLI（Tools／CORE） | 有界JSON、取得失敗はerror |
+| 件名にRenCrowとBacklogの両方を含むメール（大文字小文字不問） | 原文をIntakeしてCandidateへ進める | CLI／Boundary（CORE） | CANDIDATE、保存失敗はerror |
+| 件名にAI・政治デイリーブリーフを含むメール | 全話題の抽出、根拠解釈、RenCrow価値判断、仕様化 | LLM（CORE Shiro、既存Worker route） | Atlas／Knowledgeの話題別結果、skipped／blocked |
+| 抽出URLと取得本文 | メール内URL一致、public宛先、取得成功、引用一致、schema検証 | Boundary（CORE） | URL自体の不正はblocked、取得不能な話題は未検証Knowledge候補 |
+| 検証済み提案／話題別Knowledge | 既存Atlas Intakeまたは既存Knowledge owner、dedupe、receipt保存 | Boundary（CORE） | 登録先ID、Task／Run／Trace、話題別status／reason |
+
+件名にRenCrowとBacklogの両方を含むメールは直接仕様メールとして扱う。日次ブリーフ文字列と重なる場合もこの直接登録条件を優先する。
+RenCrowだけ、Backlogだけを件名に含むメールは直接登録の対象外とする。本文の語句ではこの条件を満たさない。
+日次ブリーフは番号付き話題を全件保持し、AI、政治、その他へ分類する。政治話題、その他の話題、採用しないAI話題は既存Knowledge ownerのprivate itemへ送る。
+番号付き本文は連番1..N（N<=20）として話題抽出の入力を話題ごとに分離し、最初の1番見出しのdelimiterを同じ文書の見出し形式として使う。別delimiterの埋込み順序リストは話題本文とURLへ保持し、同じ見出し形式の欠落、重複、並べ替え、別話題への再割当、上限超過はfail closedとする。
+AI抽出と価値判断は意味判断が必須でありLLMを使う。
+取得・認証・状態変更・保存・再実行制御はLLMへ渡さない。
+メール／取得記事は信頼しない入力であり、本文中の命令やコードを実行しない。
+
+直接仕様メールは本文を保存するが、登録時点で採用・実装を開始しない。
+AI提案は一次出典の取得と引用の照合、明示したverification_status=verified、RenCrowへの関係、仕様、受入条件を必要とする。
+出典の主張確認を性能benchmarkや実機検証の成功と呼ばず、未実施の実験は仕様の受入条件として残す。
+取得可能な出典URLがない、根拠が不足、または話題の出典が検証不能な場合は、その話題だけをverification_status=unverifiedのKnowledge candidateとして保持する。
+一つの話題の取得失敗、評価JSON／引用照合の失敗、評価入力上限超過、またはAtlas関連性snapshotの欠落で他の話題を捨てず、その話題をverification_status=unverifiedのKnowledge candidateとして保持する。失敗URLと話題別reasonをreceiptへ残す。provider／contextなど全体依存の一時失敗はmail全体を再試行し、LLMが任意のowner、仕様path、権限、実行状態を設定することはできない。
+
+Failure / Problem: 日次メールの話題1本文に含まれる`1) 2) 3)`の埋込みリストをトップレベルの`1. 2. ...`見出しとして誤認し、連番検査前の入力構築でメール全体をblockedにした。Causeはdelimiterだけを区別せず行頭の番号を収集していたことであり、Lessonは最初の1番見出しのdelimiterを文書形式として固定し、別delimiterを本文へ戻すこと。Invariantは話題本文とURLを削除せず全件保持し、同じ文書形式の欠落・重複・順序違反だけをfail closedにすること。Enforcementは`parseGmailDailyNumberedSections`のdelimiter別候補化と連番検査で行う。Testsは埋込み`1) 2) 3)`を含む10話題、同形式の欠落・重複・順序違反、話題別URL coverageで検証する。
+
+### 17.2 定期実行、認証、再起動
+
+`heartbeat.enabled`と`local_agent_ops.enabled`、設定済みowner user_idが有効な場合にだけ、
+`heartbeat.gmail.enabled`を有効化できる。既定は無効、周期30分、1page20件、全体timeout20分。
+CORE Heartbeatはownerが発行するTask／RunとShiroのagent_orchestrator scopeを束縛し、
+指定ownerのuser data scopeで実行する。LLMはこのAgent処理に使う実装機構である。
+実行中の重複起動を抑止し、停止時は子process／LLM／取得をcancelしてTask終端まで待つ。
+
+Google desktop OAuth client JSONとtoken JSONは別々の絶対pathで指定する。
+`rencrow-gmail authorize --account owner@gmail.com --credentials-file <絶対path> --token-file <絶対path>`
+が表示するURLをブラウザで開き、Google同意画面を操作する。認証にはPKCE／state／loopback callbackを使う。
+secretはリポジトリ、引数値、メール本文、共有logへ出力しない。JSON内容をChatへ貼り付けない。
+設定例は`config/config.yaml.example`、Tools側の手順は
+[collector README](../../RenCrow_Tools/tools/mail/gmail/README.md)を参照する。
+
+COREのreceipt正本は`<workspace>/logs/gmail-intake/`。
+account／message IDをキーに、原文、判定理由、準備済み登録要求、登録先ID、Agent／Task／Run／Traceを保存する。
+再開時は最新のTask／Run／Traceを記録し、初回のidentityはorigin欄に保持する。
+秘密ファイルとreceiptはowner権限で保存し、symlinkや不正形式を拒否する。
+Unixは秘密ファイル0600・receipt root0700、Windowsは現在userとOS管理主体（SYSTEM／Administrators）だけに許可するDACLを使う。
+Toolsの認証秘密とCOREのreceiptは独立した配布・障害境界を持つため、OS権限adapterを各owner内に置く。
+receiptの意味・identity・hashの検証はCORE applicationの一箇所を正本とし、storageはそれを呼ぶ。
+直接仕様の準備済み要求は、件名と本文が保存済みメール原文に一致することを再開時にも検証する。
+completeには準備済み要求と登録先IDが必要であり、空の完了記録で未登録メールを処理済みにしない。
+AI提案の判定理由は準備時から完了後まで保持し、Viewerから参照できるようにする。
+意味評価結果とAtlas／Knowledgeの準備済み要求を外部書込みより先に保存し、部分書込み後は同じ要求から再開する。
+Knowledgeのレビュー済みitemはverification_status=verified、取得hash、capture時刻、原文に一致する引用を持ち、未検証itemはcandidateと明示する。
+長い取得本文はXの既存外部リンク要約契約（`docs/02_機能仕様.md`）と同じCORE owner summarizerへ渡す。取得本文全体のhash／capture時刻と原文一致引用を保持し、本文上限超過は取得不能として明示する。旧48KiBの集約切捨ては行わない。
+現行PolicyRevisionは`gmail-daily-routing-v4`とする。complete、準備済み要求または登録先IDを持つreceipt、現行policyのskipped／blockedは再評価しない。ただし出力のない日次／直接仕様のskipped／blocked receiptで、既存のlegacy値（空、`gmail-daily-routing-v1`、`gmail-daily-routing-v2`）または`gmail-daily-routing-v3`のものは、定期実行一回につき最新100件から最大1件だけ現行PolicyRevisionで再評価できる。未知または将来のrevisionは再評価しない。再評価は保存済み原文を同じ`processMessage`経路で処理し、成功／失敗ともpage cursorを保存しない。provider、context、writerなどの一時依存失敗はterminal receiptを作らずpage cursorを進めない。
+privateなNews Knowledgeは既存Knowledge ownerのDB、immutableなimport manifestとは独立して検証するsource receipt overlay、owner-filteredなSQL search projectionだけへ保存する。generic stagingやglobal registryへprivate入力の複製を作らず、同じownerのreview／replayでは既存itemの編集を保持したままreceiptとprojectionを再検証する。
+全messageが終端になってから次pageへ進み、末尾で先頭へ戻る。古いcursorによる取得失敗は
+次回の先頭走査へ戻すが、既存receiptとAtlasのdedupeを維持する。
+
+### 17.3 Viewerと受入証拠
+
+AtlasのBacklog画面にGmail処理結果を表示する。
+`GET /viewer/atlas/gmail`は既存owner bearer／client profile／direct-local認証を必須とし、
+直近20件の原文、現在状態、理由、登録先、Task／Runを返す。内部の再開用要求は返さず、cacheを禁止する。
+登録されたAtlas候補の仕様／原文／出典は既存Atlas itemに保存され、既存候補の判断GUIから参照・採用・保留・却下する。政治、その他、採用しないAIのKnowledge itemとcandidateは既存の認証済みKnowledge review surfaceから原文URL、検証status／reason、引用、hash、capture時刻を参照する。
+Gmail取込専用の採用routeや返答待ちworkflowは追加しない。
+
+受入は、対象Google accountの実メール→正規collector→CORE Shiro Task／Run→
+話題別の既存Atlas候補またはprivate Knowledge item→Viewer／Knowledge surfaceでの原文・根拠・receipt参照→再起動後の重複なしまでを必要とする。
+synthetic mail、HTTP fixture、mock LLMのtestはsource契約検査であり実Gmail／実Agent E2Eを代替しない。
+OAuth未設定、未配備、実メール未実施はそのまま未確認として記録する。
+
+Failure Knowledge: メールに含まれるURLをhostname文字列だけで検査するとDNS rebindingで
+private networkへ到達し得る。CORE web-gatherのpublic HTTP transportでDNS解決結果を検査し、
+検査済みIPへ接続を固定する。redirectも同じ境界を通し、privateなIPが混在する回答は拒否する。
+`public_transport_test.go`とGmail evaluatorの引用／URL検査でこのInvariantを検証する。
+private Newsをgeneric staging／global registryへ流すと、owner filter前のsource projectionからprivate本文が漏れる。原因はprivate入力へ汎用stagingを適用することにある。private入力はKnowledge owner DBとowner-filtered SQL projectionだけを正本経路とし、writerと同一ownerのViewer review／replay検査で強制する。
+
+Failure: AtlasとKnowledgeを同じGmail入力から扱う処理をAtlas packageへ置くと、保存先の責務と型のownerが混在する。
+Problem: cross-destination intakeの変更がAtlas lifecycleと同期し、legacy Gmail型がAtlas正本へ戻る余地を作る。
+Cause: Gmailの取得・評価・receipt・保存先振り分けをAtlas lifecycleの一部として扱うこと。
+Lesson: 入力を束ねるownerと、各保存先のlifecycle ownerを分離し、既存公開APIだけで接続する。
+Invariant: Gmail固有の型と保存制御は`internal/application/gmailintake`／`internal/infrastructure/gmailintake`に限定し、Atlas状態は`internal/application/backlog`だけが変更する。
+Enforcement: package移動後のimport graph、公開`Service` API呼出し、旧`backlog/gmail_*.go`不在を検査する。
+Tests: `internal/application/gmailintake`、`internal/infrastructure/gmailintake`の既存テストと、Atlas JSONL回帰、Step18 legacy-field gateで検証する。
+
+Failure: 長い取得本文の要約結果と取得証拠のhash表現が異なると、正しい外部記事でも日次メール全体がblockedになった。
+Problem: COREの`ExternalBodySummary.BodySHA256`は64文字hex、web-gatherの`ContentHash`は`sha256:`接頭辞付きであり、片側だけを正規化して比較していた。
+Cause: LLM要約の意味結果と、取得本文のhash／引用／URL契約を同じ文字列表現だと仮定し、境界で両方を検証しなかった。
+Lesson: LLMは要約と意味判断だけを返し、CORE Boundaryが両hashを既存validatorで正規化してからmalformed／不一致を拒否する。保存する取得証拠hashの表現は変更しない。
+Invariant: 同一UTF-8本文のbare／`sha256:`付きhashは同値として受け入れ、形式不正または本文不一致は証拠不適合としてfail closedする。provider応答、hash、引用、状態変更、receipt保存をLLMの自己申告で完了扱いにしない。
+Enforcement: `summarizeGmailEvidence`が`summary.BodySHA256`と`evidence.ContentHash`の双方へ`normalizedSHA256`を適用し、比較後にのみ要約本文を評価する。`gmailPolicyRevision`更新時は、出力のない旧terminal receiptを一回一件だけ同じCORE処理経路で再評価し、cursorを保持する。
+Tests: `internal/application/gmailintake`の長文`SummarizeBody`統合テスト、bare／接頭辞付きhash同値、malformed／不一致拒否、旧blocked／skippedの最大1件再評価、prepared／complete除外、再評価失敗時のreceipt／cursor保持で検証する。fake providerはLLM契約のfixtureであり、実LLM実行の証拠とはしない。

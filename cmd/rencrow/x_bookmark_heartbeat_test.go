@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
@@ -17,6 +19,32 @@ type fakeXBookmarkCollectionProcess struct {
 	report      map[string]any
 	err         error
 	outputDir   string
+}
+
+func TestXBookmarkHeartbeatRecordsSummaryFailureWithoutLosingBody(t *testing.T) {
+	store, err := l1sqlite.NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	body := strings.Repeat("外部記事の保存すべき本文です。", 30)
+	process := &fakeXBookmarkCollectionProcess{
+		coreRecords: []map[string]any{{"domain": "general", "id": "x:summary", "raw_text": "投稿の原文", "source_id": "x:bookmarks_browser", "meta": map[string]any{"collection": "x_bookmark", "references": []map[string]any{{"kind": "external_url", "url": "https://example.com/article", "capture_status": "content_fetched", "body_text": body}}}}},
+		report:      map[string]any{"status": "completed", "collected_count": 1, "external_fetch_succeeded": 1},
+	}
+	runner := newXBookmarkHeartbeatRunner(process, store, filepath.Join(t.TempDir(), "exports"), knowledgeapp.NewExternalLinkSummarizer(nil, "shiro"))
+	if _, err := runner.Collect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	items, err := store.RecentStagingItems(context.Background(), l1sqlite.L1StagingStatusPending, 10)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items=%d err=%v", len(items), err)
+	}
+	refs := items[0].Meta["references"].([]interface{})
+	ref := refs[0].(map[string]interface{})
+	if ref["body_text"] != body || ref["summary"] == nil || items[0].RawText != "投稿の原文" {
+		t.Fatal("heartbeat must persist summary state and preserve both original bodies")
+	}
 }
 
 func (p *fakeXBookmarkCollectionProcess) Collect(_ context.Context, outputDir string) error {

@@ -20,9 +20,11 @@ import (
 	complexityapp "github.com/Nyukimin/RenCrow_CORE/internal/application/complexity"
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	durablestoreapp "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
+	gmailapp "github.com/Nyukimin/RenCrow_CORE/internal/application/gmailintake"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/heartbeat"
 	historyrepairapp "github.com/Nyukimin/RenCrow_CORE/internal/application/historyrepair"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
+	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
 	knowledgememoryapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgememory"
 	newsbriefapp "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
@@ -44,6 +46,7 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
+	gmailinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/gmailintake"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	browsertracepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/browsertrace"
@@ -153,6 +156,7 @@ type Dependencies struct {
 	viewerRecallTraces             http.HandlerFunc                            // viewer recall trace API
 	viewerSourceRegistry           http.HandlerFunc                            // viewer source registry API
 	viewerXBookmarkWorkflow        http.HandlerFunc                            // explicit X Bookmark utilization workflows
+	xBookmarkLinkSummarizer        *knowledgeapp.ExternalLinkSummarizer        // external article summaries
 	viewerDomainGraphAssertions    http.HandlerFunc                            // viewer domain graph assertion API
 	viewerMovieDomainGraphSync     http.HandlerFunc                            // viewer movie domain graph sync API
 	viewerHobbyDomainGraphSync     http.HandlerFunc                            // viewer hobby domain graph sync API
@@ -287,6 +291,7 @@ type Dependencies struct {
 	dailyNewsBriefReader           domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
+	gmailIntake                    *gmailapp.GmailIntake                       // scheduled Gmail source intake
 	advisorCloser                  interface{ Close() error }                  // advisor SQLite store, when configured
 	durableStoreWorkflow           orchestrator.DurableStoreWorkflow           // Chat起点の永続Store判定
 	durableStoreCloser             interface{ Close() error }                  // workflow decision SQLite store
@@ -720,6 +725,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.dataCapabilityCatalog = toolRuntime.DataCapabilityCatalog
 	deps.backlogStore = viewer.NewBacklogStore(filepath.Join(cfg.WorkspaceDir, "logs", "backlog.jsonl"))
 	workflowResults := xbookmarkworkflowpersistence.NewJSONLStore(filepath.Join(cfg.WorkspaceDir, "logs", "x_bookmark_workflows.jsonl"))
+	deps.xBookmarkLinkSummarizer = knowledgeapp.NewExternalLinkSummarizer(llmRuntime.Worker, "shiro")
 	if conversationRuntime.L1Store == nil {
 		deps.viewerXBookmarkWorkflow = viewer.HandleXBookmarkWorkflow(nil)
 	} else {
@@ -1061,7 +1067,20 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			atlasToken = token
 		}
 	}
-	deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken)
+	if cfg.Heartbeat.Gmail.Enabled && deps.atlasService != nil && len(atlasToken) > 0 {
+		deps.gmailIntake = gmailapp.NewGmailIntake(
+			cfg.Heartbeat.Gmail.Account, cfg.LocalAgentOps.UserID,
+			gmailCLICollector{config: cfg.Heartbeat.Gmail},
+			gmailapp.NewGmailBriefEvaluator(llmRuntime.Worker, conversationRuntime.WebGatherFetcher),
+			gmailinfra.NewGmailReceiptStore(filepath.Join(cfg.WorkspaceDir, "logs", "gmail-intake")),
+			deps.atlasService,
+		)
+	}
+	if deps.gmailIntake != nil {
+		deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken, deps.gmailIntake)
+	} else {
+		deps.atlasHandler = viewer.NewAtlasHandler(deps.atlasService, cfg.LocalAgentOps.UserID, atlasToken)
+	}
 	if cfg.Revenue.IsEnabled() {
 		var revenueStore viewer.RevenueStore
 		if cfg.Revenue.Storage == "sqlite" {
@@ -1350,16 +1369,21 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		}
 		if knowledgeMemoryStore != nil {
 			knowledgeMemoryStore = knowledgememorypersistence.WithL1Connection(knowledgeMemoryStore, conversationRuntime.L1Store)
+			if deps.gmailIntake != nil {
+				if writer, ok := knowledgeMemoryStore.(gmailapp.GmailKnowledgeWriter); ok {
+					deps.gmailIntake.WithKnowledgeWriter(writer)
+				}
+			}
 			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
 				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager))
 			}
-			deps.knowledgeMemoryStatus = viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore)
+			deps.knowledgeMemoryStatus = viewer.WithKnowledgeMemoryNewsOwnerAccess(viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore), cfg.LocalAgentOps.UserID, atlasToken)
 			deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
 			deps.creativeKnowledgeCreate = viewer.HandleCreativeKnowledgeCreate(knowledgeMemoryStore)
-			deps.newsKnowledgeCreate = viewer.HandleNewsKnowledgeCreate(knowledgeMemoryStore)
+			deps.newsKnowledgeCreate = viewer.WithKnowledgeMemoryNewsOwnerAccess(viewer.HandleNewsKnowledgeCreate(knowledgeMemoryStore), cfg.LocalAgentOps.UserID, atlasToken)
 			deps.dailyIntakeRuleCreate = viewer.HandleDailyIntakeRuleCreate(knowledgeMemoryStore)
 			deps.temporalMemoryCreate = viewer.HandleTemporalMemoryMarkerCreate(knowledgeMemoryStore)
-			deps.knowledgeMemoryReview = viewer.HandleKnowledgeMemoryReview(knowledgeMemoryStore)
+			deps.knowledgeMemoryReview = viewer.WithKnowledgeMemoryNewsOwnerAccess(viewer.HandleKnowledgeMemoryReview(knowledgeMemoryStore), cfg.LocalAgentOps.UserID, atlasToken)
 			var dreamRunVerifier viewer.BrowserTraceRunVerifier
 			if deps.taskManager != nil {
 				dreamRunVerifier = viewer.NewBrowserTraceRunVerifier(deps.taskManager)

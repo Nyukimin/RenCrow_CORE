@@ -516,6 +516,24 @@ type HeartbeatConfig struct {
 	Channel    string                   `yaml:"channel"`  // 通知先チャネル（line, telegram, discord, slack）
 	ChatID     string                   `yaml:"chat_id"`  // 通知先ID（LINE user ID / Telegram chat ID / Discord channel ID / Slack channel ID）
 	XBookmarks XBookmarkHeartbeatConfig `yaml:"x_bookmarks"`
+	Gmail      GmailHeartbeatConfig     `yaml:"gmail"`
+}
+
+// Gmail credentials are local secret files, never configuration values or LLM input.
+type GmailHeartbeatConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	Account         string `yaml:"account"`
+	Command         string `yaml:"command"`
+	CredentialsFile string `yaml:"credentials_file"`
+	TokenFile       string `yaml:"token_file"`
+	IntervalMinutes int    `yaml:"interval_minutes"`
+	TimeoutMinutes  int    `yaml:"timeout_minutes"`
+	MaxResults      int    `yaml:"max_results"`
+	RunOnStart      *bool  `yaml:"run_on_start"`
+}
+
+func (c GmailHeartbeatConfig) RunOnStartEnabled() bool {
+	return c.RunOnStart == nil || *c.RunOnStart
 }
 
 type XBookmarkHeartbeatConfig struct {

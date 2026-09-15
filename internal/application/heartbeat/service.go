@@ -94,36 +94,39 @@ type IdleChatSequenceCheck struct {
 
 // HeartbeatService はHEARTBEAT.mdを定期的に読み込み、エージェントに処理させるサービス
 type HeartbeatService struct {
-	taskOwner           TaskOwner
-	workerActor         string
-	workerAgent         WorkerAgent
-	sender              NotificationSender
-	workspaceDir        string
-	contextBuilder      *ctxbuilder.Builder
-	listener            orchestrator.EventListener
-	workstreamStore     WorkstreamHeartbeatStore
-	backlogStore        BacklogStore
-	atlasService        AtlasRunnerService
-	revenueStore        RevenueDailyRoutineStore
-	revenueRoutine      *revenueapp.DailyRoutineService
-	economicDiscovery   *EconomicObjectiveDiscoveryService
-	skills              *skillbootstrap.BootstrapService
-	idleChatMonitor     IdleChatSequenceMonitor
-	interval            time.Duration
-	idleChatInterval    time.Duration
-	xBookmarkCollector  XBookmarkCollector
-	xBookmarkInterval   time.Duration
-	xBookmarkTimeout    time.Duration
-	xBookmarkRunOnStart bool
-	xBookmarkMu         sync.Mutex
-	xBookmarkRunning    bool
-	xBookmarkCancel     context.CancelFunc
-	xBookmarkWG         sync.WaitGroup
-	stopCh              chan struct{}
-	done                chan struct{}
-	mu                  sync.Mutex
-	running             bool
-	lastMaturationSweep time.Time
+	taskOwner                TaskOwner
+	workerActor              string
+	workerAgent              WorkerAgent
+	sender                   NotificationSender
+	workspaceDir             string
+	contextBuilder           *ctxbuilder.Builder
+	listener                 orchestrator.EventListener
+	workstreamStore          WorkstreamHeartbeatStore
+	backlogStore             BacklogStore
+	atlasService             AtlasRunnerService
+	revenueStore             RevenueDailyRoutineStore
+	revenueRoutine           *revenueapp.DailyRoutineService
+	economicDiscovery        *EconomicObjectiveDiscoveryService
+	skills                   *skillbootstrap.BootstrapService
+	idleChatMonitor          IdleChatSequenceMonitor
+	interval                 time.Duration
+	idleChatInterval         time.Duration
+	xBookmarkCollector       XBookmarkCollector
+	gmail                    *gmailCollection
+	xBookmarkInterval        time.Duration
+	xBookmarkTimeout         time.Duration
+	xBookmarkRunOnStart      bool
+	xBookmarkMu              sync.Mutex
+	xBookmarkRunning         bool
+	xBookmarkCancel          context.CancelFunc
+	xBookmarkWG              sync.WaitGroup
+	collectionWorkerSlotOnce sync.Once
+	collectionWorkerSlot     chan struct{}
+	stopCh                   chan struct{}
+	done                     chan struct{}
+	mu                       sync.Mutex
+	running                  bool
+	lastMaturationSweep      time.Time
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成
@@ -247,6 +250,15 @@ func (s *HeartbeatService) loop() {
 	idleChatTicker := time.NewTicker(s.idleChatInterval)
 	defer idleChatTicker.Stop()
 	var xBookmarkTicker *time.Ticker
+	var gmailTick <-chan time.Time
+	if s.gmail != nil {
+		gmailTicker := time.NewTicker(s.gmail.interval)
+		gmailTick = gmailTicker.C
+		defer gmailTicker.Stop()
+		if s.gmail.runOnStart {
+			s.startGmailIntake()
+		}
+	}
 	var xBookmarkTick <-chan time.Time
 	if s.xBookmarkCollector != nil {
 		xBookmarkTicker = time.NewTicker(s.xBookmarkInterval)
@@ -261,8 +273,13 @@ func (s *HeartbeatService) loop() {
 	for {
 		select {
 		case <-s.stopCh:
-			s.stopXBookmarkCollection()
+			s.cancelGmailIntake()
+			s.cancelXBookmarkCollection()
+			s.waitForGmailIntake()
+			s.waitForXBookmarkCollection()
 			return
+		case <-gmailTick:
+			s.startGmailIntake()
 		case <-xBookmarkTick:
 			s.startXBookmarkCollection()
 		case <-idleChatTicker.C:

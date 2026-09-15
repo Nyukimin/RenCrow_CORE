@@ -352,6 +352,9 @@ func (c *Config) Validate() error {
 	if c.EconomicObjective.HeartbeatDiscoveryEnabled && !c.EconomicObjective.DraftOnlyEnabled() {
 		return fmt.Errorf("economic_objective.heartbeat_discovery_enabled requires draft_only=true")
 	}
+	if err := c.validateGmailHeartbeat(); err != nil {
+		return err
+	}
 	if c.Heartbeat.XBookmarks.Enabled {
 		x := c.Heartbeat.XBookmarks
 		if !c.Heartbeat.Enabled {

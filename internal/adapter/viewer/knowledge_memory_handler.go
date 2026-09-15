@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -67,7 +68,12 @@ func HandleKnowledgeMemoryStatus(store KnowledgeMemoryLister) http.HandlerFunc {
 		}
 		personal, _ := store.ListPersonalArchiveEntries(r.Context(), limit)
 		creative, _ := store.ListCreativeKnowledgeItems(r.Context(), limit)
-		news, _ := store.ListNewsKnowledgeItems(r.Context(), limit)
+		news, err := store.ListNewsKnowledgeItems(r.Context(), limit)
+		if err != nil {
+			http.Error(w, "knowledge memory news unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		news = filterKnowledgeMemoryNews(r.Context(), news)
 		intake, _ := store.ListDailyIntakeRules(r.Context(), limit)
 		temporal, _ := store.ListTemporalMemoryMarkers(r.Context(), limit)
 		dream, _ := store.ListDreamConsolidationRuns(r.Context(), limit)
@@ -130,18 +136,34 @@ func reviewKnowledgeMemoryItem(ctx context.Context, store KnowledgeMemoryStore, 
 	if targetStatus == "" {
 		return nil, fmt.Errorf("unsupported knowledge memory review type")
 	}
+	reviewedBy := strings.TrimSpace(req.ReviewedBy)
+	reviewReceipt := map[string]any{}
+	if detailType == "news_knowledge" {
+		if item, ok := current.(domainkm.NewsKnowledgeItem); ok && strings.TrimSpace(item.UserID) != "" {
+			access := knowledgeMemoryNewsOwnerAccessFromContext(ctx)
+			if access.authenticated && access.userID == strings.TrimSpace(item.UserID) {
+				requestID, ok := memoryOwnerRequestID(ctx)
+				if !ok {
+					return nil, fmt.Errorf("knowledge memory owner request scope unavailable")
+				}
+				reviewedBy = access.userID
+				reviewReceipt["actor_id"] = access.userID
+				reviewReceipt["request_id"] = requestID
+			}
+		}
+	}
 	target, err := saveKnowledgeMemoryReviewTarget(ctx, store, detailType, current, targetStatus)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
+	result := map[string]any{
 		"status":        "reviewed",
 		"detail_type":   detailType,
 		"id":            id,
 		"review_status": reviewStatus,
 		"promoted":      req.Promote,
 		"auto_promote":  false,
-		"reviewed_by":   strings.TrimSpace(req.ReviewedBy),
+		"reviewed_by":   reviewedBy,
 		"comparison": map[string]any{
 			"current_status": knowledgeMemoryStatusValue(current),
 			"target_status":  targetStatus,
@@ -149,7 +171,11 @@ func reviewKnowledgeMemoryItem(ctx context.Context, store KnowledgeMemoryStore, 
 			"target_item":    target,
 			"formal_target":  knowledgeMemoryFormalTarget(detailType, targetStatus),
 		},
-	}, nil
+	}
+	for key, value := range reviewReceipt {
+		result[key] = value
+	}
+	return result, nil
 }
 
 func targetKnowledgeMemoryStatus(reviewStatus string, promote bool, detailType string) string {
@@ -274,7 +300,7 @@ func findKnowledgeMemoryDetail(ctx context.Context, store KnowledgeMemoryLister,
 			return nil, false, err
 		}
 		for _, item := range items {
-			if item.ItemID == id {
+			if item.ItemID == id && knowledgeMemoryNewsVisible(ctx, item) {
 				return item, true, nil
 			}
 		}
@@ -348,6 +374,9 @@ func HandleNewsKnowledgeCreate(store KnowledgeMemoryStore) http.HandlerFunc {
 		}
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
+		}
+		if err := validateKnowledgeMemoryNewsWriteScope(ctx, &item); err != nil {
+			return err
 		}
 		return store.SaveNewsKnowledgeItem(ctx, item)
 	})
@@ -555,7 +584,11 @@ func saveKnowledgeMemoryItem(store KnowledgeMemoryStore, name string, save func(
 			return
 		}
 		if err := save(r.Context(), store, json.NewDecoder(r.Body)); err != nil {
-			http.Error(w, "invalid "+name+" payload: "+err.Error(), http.StatusBadRequest)
+			status := http.StatusBadRequest
+			if errors.Is(err, errKnowledgeMemoryNewsOwnerScope) {
+				status = http.StatusForbidden
+			}
+			http.Error(w, "invalid "+name+" payload: "+err.Error(), status)
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{"status": "created"})

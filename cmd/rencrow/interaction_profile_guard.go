@@ -182,6 +182,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return true
 	case "/viewer/repair/run", "/v1/atlas/intake",
 		"/viewer/source-registry",
+		"/viewer/knowledge-memory/review",
+		"/viewer/knowledge-memory/news-knowledge",
 		"/viewer/memory/profile-promotions/retry",
 		"/viewer/trade/policy/evaluate",
 		"/viewer/trade/risk-preview",

@@ -244,7 +244,7 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 		return IntakeResult{}, errors.New("title is required")
 	}
 	specificationRefs := append([]string(nil), request.SpecificationRefs...)
-	if err := validateSpecificationRefs(specificationRefs); err != nil {
+	if err := ValidateSpecificationRefs(specificationRefs); err != nil {
 		return IntakeResult{}, err
 	}
 	refs := append([]domainbacklog.SourceRef(nil), request.SourceRefs...)
@@ -271,7 +271,22 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 	for _, ref := range refs {
 		keys[ref.DedupeKey()] = struct{}{}
 	}
+	id := modulecore.BacklogItemID(strings.TrimSpace(string(request.BacklogItemID)))
+	if id == "" {
+		id = modulecore.BacklogItemID(domainbacklog.NewDeterministicID(refs, request.Title))
+	}
+	normalizedTitle := strings.ToLower(strings.Join(strings.Fields(request.Title), " "))
 	for _, existing := range items {
+		// A replay retains its stable identity even when the owner has since
+		// edited the title or advanced the lifecycle.
+		if existing.BacklogItemID == id {
+			return IntakeResult{Item: existing, BacklogItemID: existing.BacklogItemID, Duplicate: true}, nil
+		}
+		// An article can support multiple distinct proposals. Shared evidence
+		// alone is not an exact proposal match.
+		if strings.ToLower(strings.Join(strings.Fields(existing.Title), " ")) != normalizedTitle {
+			continue
+		}
 		for _, ref := range existing.SourceRefs {
 			if _, ok := keys[ref.DedupeKey()]; ok && ref.DedupeKey() != "\x00\x00" {
 				return IntakeResult{Item: existing, BacklogItemID: existing.BacklogItemID, Duplicate: true}, nil
@@ -279,13 +294,9 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 		}
 	}
 	now := s.now()
-	id := modulecore.BacklogItemID(strings.TrimSpace(string(request.BacklogItemID)))
-	if id == "" {
-		id = modulecore.BacklogItemID(domainbacklog.NewDeterministicID(refs, request.Title))
-	}
 	item := domainbacklog.Item{
 		SchemaVersion: domainbacklog.SchemaVersion2, BacklogItemID: id, FeatureID: request.FeatureID,
-		Kind: request.Kind, Title: strings.TrimSpace(request.Title), Body: strings.TrimSpace(request.Body),
+		Kind: request.Kind, Title: strings.TrimSpace(request.Title), Body: request.Body,
 		Purpose: strings.TrimSpace(request.Purpose), Problem: request.Problem, Idea: request.Idea, Background: request.Background,
 		ExpectedEffect: append([]string(nil), request.ExpectedEffect...), RelationRefs: append([]string(nil), request.RelationRefs...),
 		TargetModules:   append([]string(nil), request.TargetModules...),
@@ -305,7 +316,9 @@ func (s *Service) Intake(ctx context.Context, request IntakeRequest) (IntakeResu
 	return IntakeResult{Item: item, BacklogItemID: item.BacklogItemID}, nil
 }
 
-func validateSpecificationRefs(specificationRefs []string) error {
+// ValidateSpecificationRefs checks that every requested reference names an
+// embedded Atlas specification before an intake request can create state.
+func ValidateSpecificationRefs(specificationRefs []string) error {
 	if len(specificationRefs) == 0 {
 		return nil
 	}

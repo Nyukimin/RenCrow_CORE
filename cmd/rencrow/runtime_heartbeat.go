@@ -116,6 +116,10 @@ func buildHeartbeatRuntime(
 	}
 	heartbeatSvc.WithMemoryStore(memStore)
 	heartbeatSvc.WithEventListener(deps.eventRelay)
+	if g := cfg.Heartbeat.Gmail; g.Enabled && deps.gmailIntake != nil {
+		heartbeatSvc.WithGmailIntake(deps.gmailIntake, cfg.LocalAgentOps.UserID, time.Duration(g.IntervalMinutes)*time.Minute, time.Duration(g.TimeoutMinutes)*time.Minute, g.RunOnStartEnabled())
+		log.Printf("[Heartbeat] Gmail intake enabled (interval: %dm)", g.IntervalMinutes)
+	}
 	if xConfig := cfg.Heartbeat.XBookmarks; xConfig.Enabled {
 		if l1Store == nil {
 			log.Printf("[Heartbeat] X Bookmark collection unavailable: Conversation L1 staging store is not configured")
@@ -125,6 +129,7 @@ func buildHeartbeatRuntime(
 					newXBookmarkCLIProcess(xConfig.Command, xConfig.MaxScrollsValue()),
 					l1Store,
 					xConfig.OutputRoot,
+					deps.xBookmarkLinkSummarizer,
 				),
 				time.Duration(xConfig.IntervalMinutes)*time.Minute,
 				time.Duration(xConfig.TimeoutMinutes)*time.Minute,

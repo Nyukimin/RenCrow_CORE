@@ -25,6 +25,9 @@ func NormalizeURL(raw string, allowLocalhost bool) (string, error) {
 	if u.Host == "" {
 		return "", NewError(ErrInvalidURL, "url host is required")
 	}
+	if u.User != nil {
+		return "", NewError(ErrBlockedByPolicy, "URL credentials are not permitted")
+	}
 	host := strings.Trim(strings.ToLower(u.Hostname()), "[]")
 	if host == "" {
 		return "", NewError(ErrInvalidURL, "url host is required")

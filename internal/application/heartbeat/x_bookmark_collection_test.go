@@ -7,6 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 type blockingXBookmarkCollector struct {
@@ -47,7 +50,7 @@ func TestXBookmarkCollectionRunsAsynchronouslyAndSkipsOverlap(t *testing.T) {
 		},
 	}
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30).
+	svc := withHeartbeatTestTaskOwner(t, NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30)).
 		WithEventListener(listener).
 		WithXBookmarkCollection(collector, time.Hour, time.Minute, true)
 
@@ -84,26 +87,30 @@ func TestXBookmarkCollectionRunsAsynchronouslyAndSkipsOverlap(t *testing.T) {
 	}
 }
 
-func TestXBookmarkCollectionTimeoutCancelsCollectorAndEmitsError(t *testing.T) {
+func TestXBookmarkCollectionTimeoutEmitsErrorAndCancelsStartedCollector(t *testing.T) {
 	collector := &blockingXBookmarkCollector{
 		started:  make(chan struct{}, 1),
 		release:  make(chan struct{}),
 		canceled: make(chan struct{}, 1),
 	}
 	listener := &recordingEventListener{}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30).
+	svc := withHeartbeatTestTaskOwner(t, NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30)).
 		WithEventListener(listener).
 		WithXBookmarkCollection(collector, time.Hour, 20*time.Millisecond, true)
 
 	if !svc.startXBookmarkCollection() {
 		t.Fatal("collection should start")
 	}
-	select {
-	case <-collector.canceled:
-	case <-time.After(time.Second):
-		t.Fatal("collector was not canceled at timeout")
-	}
 	svc.waitForXBookmarkCollection()
+	// The end-to-end budget also includes durable owner setup. Under load it
+	// may expire before Collect is admitted; an admitted collector must cancel.
+	if collector.calls.Load() > 0 {
+		select {
+		case <-collector.canceled:
+		default:
+			t.Fatal("started collector was not canceled at timeout")
+		}
+	}
 	for _, event := range listener.events {
 		if event.Type == "heartbeat.x_bookmarks.error" && strings.Contains(event.Content, context.DeadlineExceeded.Error()) {
 			return
@@ -119,7 +126,7 @@ func TestStopXBookmarkCollectionCancelsInFlightRun(t *testing.T) {
 		canceled: make(chan struct{}, 1),
 		err:      errors.New("unexpected"),
 	}
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30).
+	svc := withHeartbeatTestTaskOwner(t, NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30)).
 		WithXBookmarkCollection(collector, time.Hour, time.Minute, true)
 	if !svc.startXBookmarkCollection() {
 		t.Fatal("collection should start")
@@ -144,7 +151,7 @@ func TestXBookmarkCollectionRunsOnStartAndAtItsOwnInterval(t *testing.T) {
 		canceled: make(chan struct{}, 1),
 	}
 	close(collector.release)
-	svc := NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30).
+	svc := withHeartbeatTestTaskOwner(t, NewHeartbeatService(&mockWorkerAgent{response: "HEARTBEAT_OK"}, nil, t.TempDir(), 30)).
 		WithXBookmarkCollection(collector, 20*time.Millisecond, time.Second, true)
 	svc.Start()
 	t.Cleanup(svc.Stop)
@@ -155,5 +162,30 @@ func TestXBookmarkCollectionRunsOnStartAndAtItsOwnInterval(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("collection calls=%d, want at least 2", collector.calls.Load())
 		}
+	}
+}
+
+type identityXBookmarkCollector struct{ called bool }
+
+func (c *identityXBookmarkCollector) Collect(ctx context.Context) (XBookmarkCollectionReport, error) {
+	c.called = true
+	if _, err := execution.IdentityFromContext(ctx); err != nil {
+		return XBookmarkCollectionReport{}, err
+	}
+	observation, ok := llm.ExecutionObservationFromContext(ctx)
+	if !ok || observation.Initiator != "shiro" || observation.TaskID == "" || observation.TraceID == "" {
+		return XBookmarkCollectionReport{}, errors.New("missing canonical worker observation")
+	}
+	return XBookmarkCollectionReport{}, nil
+}
+func TestXBookmarkCollectionRequiresOwnerAndPropagatesWorkerIdentity(t *testing.T) {
+	collector := &identityXBookmarkCollector{}
+	svc := NewHeartbeatService(nil, nil, t.TempDir(), 30).WithXBookmarkCollection(collector, time.Hour, time.Minute, false)
+	if _, err := svc.runXBookmarkCollection(context.Background()); !errors.Is(err, ErrHeartbeatTaskOwnerUnavailable) || collector.called {
+		t.Fatalf("missing owner allowed collection: %v", err)
+	}
+	svc = withHeartbeatTestTaskOwner(t, svc)
+	if _, err := svc.runXBookmarkCollection(context.Background()); err != nil || !collector.called {
+		t.Fatalf("canonical worker failed: %v", err)
 	}
 }

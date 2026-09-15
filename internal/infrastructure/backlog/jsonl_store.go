@@ -234,7 +234,8 @@ func NormalizeForSave(item domainbacklog.Item, now time.Time) domainbacklog.Item
 	if item.Title == "" {
 		item.Title = "untitled"
 	}
-	item.Body = strings.TrimSpace(item.Body)
+	// Body may contain an original specification with significant indentation.
+	// Preserve it through both save and read projections.
 	item.Source = strings.TrimSpace(item.Source)
 	item.Owner = strings.TrimSpace(item.Owner)
 	item.OwnerModule = strings.TrimSpace(item.OwnerModule)

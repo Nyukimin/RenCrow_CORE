@@ -1084,6 +1084,13 @@
       <h3>Knowledge Memory Database</h3>
       <div class="sub">knowledge_memory.db のPersonal originals / sources / intake rules / dream consolidationだけを表示します。</div>
     </div>
+    <div class="filters" style="margin-bottom:8px" aria-label="ニュース所有者の表示範囲">
+      <label for="knowledgeMemoryOwnerTokenInput">Gmailニュースの本人認証</label>
+      <input id="knowledgeMemoryOwnerTokenInput" type="password" autocomplete="new-password" placeholder="認証情報（このページのメモリだけ）" aria-describedby="knowledgeMemoryOwnerStatus">
+      <button id="knowledgeMemoryOwnerLoadBtn" class="ctl-btn" type="button">本人のニュースを表示</button>
+      <button id="knowledgeMemoryOwnerClearBtn" class="ctl-btn" type="button">個人情報の表示を消去</button>
+      <span id="knowledgeMemoryOwnerStatus" class="ops-sub" aria-live="polite">公開範囲。本人のニュースは非表示です。</span>
+    </div>
     <div class="grid database-viewer-summary">
       <div class="card"><h4>Personal Archive</h4><div id="knowledgePersonalCount" class="ops-big">0</div><div class="ops-sub">protected originals</div></div>
       <div class="card"><h4>Knowledge Sources</h4><div id="knowledgeSourceCount" class="ops-big">0</div><div class="ops-sub">creative / news / intake</div></div>

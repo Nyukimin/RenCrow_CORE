@@ -15,6 +15,8 @@ let atlasOwnerReceipt = null;
 let atlasOwnerError = '';
 let atlasDevelopment = null;
 let atlasDevelopmentError = '';
+let atlasGmailReceipts = [];
+let atlasGmailError = '';
 
 function atlasEmptyItemDetailState(requestID = 0) {
   return {
@@ -423,7 +425,71 @@ function atlasReceiptMarkup() {
 function atlasRenderOwnerCredentials() {
   return '<section class="atlas-owner-card"><div class="atlas-subsection-head"><h4>Authenticated owner operation</h4><span>token is kept in memory only</span></div>' +
     '<label class="atlas-owner-field"><span>CORE owner token</span><input type="password" autocomplete="off" data-atlas-owner-token value="' + atlasEscapeAttr(atlasOwnerToken) + '" placeholder="Bearer token"></label>' +
-    atlasReceiptMarkup() + '</section>';
+    atlasReceiptMarkup() + atlasRenderGmailReceipts() + '</section>';
+}
+
+function atlasRenderGmailReceipts() {
+  const rows = atlasGmailReceipts.map((receipt) => {
+    const mail = receipt.message || {};
+    const ids = atlasList(receipt.backlog_item_ids);
+    const knowledgeIDs = atlasList(receipt.knowledge_item_ids);
+    const knowledgeLinks = knowledgeIDs.map((value) => {
+      const id = String(value || '').trim();
+      if (!id) return '';
+      const encodedID = encodeURIComponent(id).replace(/'/g, '%27');
+      return '<button type="button" class="atlas-detail-trigger" onclick="atlasOpenGmailKnowledge(decodeURIComponent(&quot;' + encodedID + '&quot;))">' + atlasEscape(id) + '</button>';
+    }).filter(Boolean).join(' ') || '-';
+    const topicOutcomes = atlasList(receipt.topic_outcomes);
+    const topicOutcomeText = topicOutcomes.map((outcome) => [
+      atlasField(outcome, ['topic', 'Topic'], '-'),
+      atlasField(outcome, ['status', 'Status'], '-'),
+      atlasField(outcome, ['reason', 'Reason'], '-'),
+    ].map((value) => atlasEscape(value)).join(' / ')).filter(Boolean).join('<br>') || '-';
+    return '<details class="atlas-subsection"><summary>' + atlasBadge(receipt.status) + ' ' + atlasEscape(mail.subject) + '</summary>' +
+      '<p>' + atlasEscape(receipt.reason) + '</p><dl class="atlas-detail-grid">' +
+      atlasDetailMarkup('取込日時', receipt.updated_at) + atlasDetailMarkup('Backlog', ids.join(', ')) +
+      '<div class="atlas-detail-field"><dt>Knowledge項目</dt><dd>' + knowledgeLinks + '</dd></div>' +
+      '<div class="atlas-detail-field"><dt>話題結果</dt><dd>' + topicOutcomeText + '</dd></div>' +
+      atlasDetailMarkup('メール出典', [receipt.account, mail.id].join(' / ')) + atlasDetailMarkup('送信者', mail.from) +
+      atlasDetailMarkup('Task / Run', [receipt.task_id, receipt.run_id].join(' / ')) + '</dl>' +
+      ids.map((id) => atlasDetailTrigger({item_id:id})).join('') +
+      '<details><summary>メール原文</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">' + atlasEscape(mail.text) + '</pre></details></details>';
+  }).join('');
+  return '<section id="atlasGmailReceiptsSection" class="atlas-subsection"><div class="atlas-subsection-head"><h4>Gmail取り込み</h4><button type="button" data-atlas-gmail-refresh>取り込み結果を表示</button></div>' +
+    '<p>仕様メールは候補へ登録。AIブリーフは出典検証と仕様化を通過した内容を登録します。採用・保留・却下は候補の詳細から行えます。</p>' +
+    (atlasGmailError ? '<p role="status">' + atlasEscape(atlasGmailError) + '</p>' : '<p>直近の処理結果 ' + String(atlasGmailReceipts.length) + ' 件</p>') + rows + '</section>';
+}
+
+function atlasClearLinkedKnowledgeScope(token) {
+  if (!token || typeof knowledgeMemoryOwnerToken !== 'function' || typeof knowledgeMemoryOwnerSetToken !== 'function') return;
+  if (knowledgeMemoryOwnerToken() === token) knowledgeMemoryOwnerSetToken('');
+}
+
+function atlasOpenGmailKnowledge(itemID) {
+  const id = String(itemID || '').trim();
+  if (!id) return;
+  if (typeof knowledgeMemoryOwnerSetToken === 'function') knowledgeMemoryOwnerSetToken(atlasOwnerToken);
+  if (typeof switchTab === 'function') switchTab('knowledge-memory');
+  if (typeof fetchMemoryKnowledgeDetail === 'function') fetchMemoryKnowledgeDetail('news_knowledge', id);
+}
+
+async function atlasRefreshGmailReceipts() {
+  atlasGmailReceipts = [];
+  atlasGmailError = '';
+  if (!atlasOwnerToken.trim()) { atlasGmailError = '上のowner認証を入力してください。'; atlasRender(); return; }
+  const requestToken = atlasOwnerToken;
+  try {
+    const response = await fetch('/viewer/atlas/gmail', {cache:'no-store', headers:{...atlasOwnerHeaders(), 'X-RenCrow-Interaction-Profile':'cmd-diagnostics'}});
+    if (!response.ok) throw new Error(response.status === 503 ? 'Gmail取り込みが無効、または記録を読み込めません。' : '認証または読み込みに失敗しました（' + String(response.status) + '）。');
+    const payload = await response.json();
+    if (requestToken === atlasOwnerToken) atlasGmailReceipts = atlasList(payload.receipts);
+  } catch (error) {
+    if (requestToken === atlasOwnerToken) {
+      atlasGmailError = String(error.message || error);
+      atlasClearLinkedKnowledgeScope(requestToken);
+    }
+  }
+  atlasRender();
 }
 
 function atlasRenderIntakeForm() {
@@ -638,7 +704,28 @@ function atlasBindOwnerControls(root) {
   root.querySelectorAll('[data-atlas-owner-token]').forEach((input) => {
     if (input.dataset.bound === '1') return;
     input.dataset.bound = '1';
-    input.addEventListener('input', () => { atlasOwnerToken = String(input.value || ''); });
+    input.addEventListener('input', () => {
+      const previousToken = atlasOwnerToken;
+      atlasOwnerToken = String(input.value || '');
+      atlasGmailReceipts = [];
+      atlasGmailError = '';
+      if (previousToken !== atlasOwnerToken) atlasClearLinkedKnowledgeScope(previousToken);
+      const section = root.querySelector('#atlasGmailReceiptsSection');
+      if (section) {
+        section.outerHTML = atlasRenderGmailReceipts();
+        const replacement = root.querySelector('#atlasGmailReceiptsSection');
+        const refresh = replacement && replacement.querySelector('[data-atlas-gmail-refresh]');
+        if (refresh) {
+          refresh.dataset.bound = '1';
+          refresh.addEventListener('click', atlasRefreshGmailReceipts);
+        }
+      }
+    });
+  });
+  root.querySelectorAll('[data-atlas-gmail-refresh]').forEach((button) => {
+    if (button.dataset.bound === '1') return;
+    button.dataset.bound = '1';
+    button.addEventListener('click', atlasRefreshGmailReceipts);
   });
   root.querySelectorAll('[data-atlas-owner-action]').forEach((button) => {
     if (button.dataset.bound === '1') return;
@@ -774,9 +861,9 @@ function atlasRenderBacklog(view) {
     atlasRenderFilter('Owner', 'owner', atlasFilterValues(allItems, ['owner', 'owner_module', 'module', 'maintainer'])) +
     '</div>';
   if (!allItems.length) {
-    view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>技術熟成領域</h3></div><span class="atlas-source-note">pending 0 / total 0</span></div>' + atlasRenderOwnerCredentials() + atlasRenderIntakeForm() + atlasRenderMaturationMetrics() + filterBar + atlasEmpty('Backlog is empty', 'No Atlas backlog items are available.');
+    view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>技術熟成領域</h3></div><span class="atlas-source-note">pending 0 / total 0</span></div>' + atlasRenderOwnerCredentials() + atlasRenderIntakeForm() + atlasRenderMaturationMetrics() + filterBar + atlasEmpty('Backlog is empty', 'No Atlas backlog items are available.') + atlasRenderItemDetail('backlog');
     atlasBindBacklogFilters(view);
-    atlasBindOwnerControls(view);
+    atlasBindItemDetailControls(view);
     return;
   }
   view.innerHTML = '<div class="atlas-view-heading"><div><span class="atlas-kicker">BACKLOG</span><h3>技術熟成領域</h3><p>登録は採用ではありません。7日経過後もRenCrowの再検証結果と理由を確認して判断します。</p></div><span class="atlas-source-note">pending ' + String(pending) + ' / total ' + String(allItems.length) + ' / filtered ' + String(filtered.length) + '</span></div>' + atlasRenderOwnerCredentials() + atlasRenderIntakeForm() + atlasRenderMaturationMetrics() + filterBar +

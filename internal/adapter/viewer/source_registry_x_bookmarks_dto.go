@@ -1,10 +1,13 @@
 package viewer
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
+	knowledgeapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 )
 
@@ -104,12 +107,39 @@ func xBookmarkReferenceDTOs(raw interface{}) []sourceRegistryXBookmarkReferenceD
 			BodyTruncated:   xBookmarkMapBool(reference, "body_truncated"),
 			FetchedAt:       xBookmarkMapString(reference, "fetched_at"),
 			FetchError:      xBookmarkMapString(reference, "fetch_error"),
+			Summary:         xBookmarkLinkSummaryDTO(reference),
 			Text:            xBookmarkMapString(reference, "text"),
 			AuthorName:      xBookmarkMapString(author, "name"),
 			AuthorUsername:  xBookmarkMapString(author, "username"),
 		})
 	}
 	return result
+}
+
+func xBookmarkLinkSummaryDTO(reference map[string]interface{}) *sourceRegistryXBookmarkLinkSummaryDTO {
+	summary, ok := reference["summary"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	if xBookmarkMapString(summary, "status") == "ready" {
+		body, _ := reference["body_text"].(string)
+		digest := sha256.Sum256([]byte(body))
+		if body == "" || xBookmarkMapString(summary, "body_sha256") != hex.EncodeToString(digest[:]) {
+			return &sourceRegistryXBookmarkLinkSummaryDTO{Status: "blocked", ErrorCode: "source_changed"}
+		}
+		if !knowledgeapp.ValidExternalLinkSummary(reference) {
+			return &sourceRegistryXBookmarkLinkSummaryDTO{Status: "blocked", ErrorCode: "unverified_summary"}
+		}
+	}
+	return &sourceRegistryXBookmarkLinkSummaryDTO{
+		Status:      xBookmarkMapString(summary, "status"),
+		Text:        xBookmarkMapString(summary, "text"),
+		BodySHA256:  xBookmarkMapString(summary, "body_sha256"),
+		Revision:    xBookmarkMapString(summary, "revision"),
+		GeneratedAt: xBookmarkMapString(summary, "generated_at"),
+		Chunks:      xBookmarkMapInt(summary, "chunks"),
+		ErrorCode:   xBookmarkMapString(summary, "error_code"),
+	}
 }
 
 func xBookmarkTime(value time.Time) string {

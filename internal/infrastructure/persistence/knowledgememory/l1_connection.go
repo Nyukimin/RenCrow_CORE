@@ -194,6 +194,21 @@ func (s *L1ConnectedStore) SaveNewsKnowledgeItem(ctx context.Context, item domai
 	if err := s.base.SaveNewsKnowledgeItem(ctx, item); err != nil {
 		return err
 	}
+	return s.stageNewsKnowledgeItem(ctx, item)
+}
+
+func (s *L1ConnectedStore) SaveNewsKnowledgeItemWithReceipt(ctx context.Context, item domainkm.NewsKnowledgeItem, sourceKey string, actorID string) (bool, error) {
+	writer, ok := s.base.(NewsKnowledgeReceiptWriter)
+	if !ok {
+		return false, fmt.Errorf("knowledge memory base store does not support news receipts")
+	}
+	return writer.SaveNewsKnowledgeItemWithReceipt(ctx, item, sourceKey, actorID)
+}
+
+func (s *L1ConnectedStore) stageNewsKnowledgeItem(ctx context.Context, item domainkm.NewsKnowledgeItem) error {
+	if strings.TrimSpace(item.UserID) != "" {
+		return nil
+	}
 	raw := strings.Join(nonEmptyStrings([]string{
 		item.Topic,
 		item.Summary,
@@ -205,13 +220,14 @@ func (s *L1ConnectedStore) SaveNewsKnowledgeItem(ctx context.Context, item domai
 			return err
 		}
 	}
-	return s.stage(ctx, l1sqlite.L1StagingKindExternalFetch, "kb:news", item.ItemID, "news_knowledge", item.URL, raw, item.Summary, []string{item.Topic, item.Source}, map[string]interface{}{
+	meta := map[string]interface{}{
 		"knowledge_memory_type": "news_knowledge",
 		"durable":               item.Durable,
 		"event_date":            item.EventDate,
 		"review_required":       true,
 		"auto_promote":          false,
-	})
+	}
+	return s.stage(ctx, l1sqlite.L1StagingKindExternalFetch, "kb:news", item.ItemID, "news_knowledge", item.URL, raw, item.Summary, []string{item.Topic, item.Source}, meta)
 }
 
 func (s *L1ConnectedStore) ListNewsKnowledgeItems(ctx context.Context, limit int) ([]domainkm.NewsKnowledgeItem, error) {

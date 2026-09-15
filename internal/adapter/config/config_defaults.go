@@ -260,6 +260,18 @@ func (c *Config) setDefaults() {
 	}
 
 	// Heartbeat デフォルト
+	if c.Heartbeat.Gmail.Command == "" {
+		c.Heartbeat.Gmail.Command = "rencrow-gmail"
+	}
+	if c.Heartbeat.Gmail.IntervalMinutes == 0 {
+		c.Heartbeat.Gmail.IntervalMinutes = 30
+	}
+	if c.Heartbeat.Gmail.TimeoutMinutes == 0 {
+		c.Heartbeat.Gmail.TimeoutMinutes = 20
+	}
+	if c.Heartbeat.Gmail.MaxResults == 0 {
+		c.Heartbeat.Gmail.MaxResults = 20
+	}
 	if c.Heartbeat.Interval == 0 {
 		c.Heartbeat.Interval = 30
 	}

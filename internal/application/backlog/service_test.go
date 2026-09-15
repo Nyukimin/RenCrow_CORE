@@ -288,6 +288,41 @@ func TestServiceIntakeDeduplicatesExactSource(t *testing.T) {
 	}
 }
 
+func TestServiceIntakeKeepsDistinctProposalsFromSharedEvidence(t *testing.T) {
+	store := &memoryItemStore{}
+	svc := NewService(store, nil)
+	refs := []domainbacklog.SourceRef{{Type: "web", Locator: "https://example.test/paper", ContentHash: "abc"}}
+	first, err := svc.Intake(context.Background(), IntakeRequest{Title: "Streaming support", SourceRefs: refs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.Intake(context.Background(), IntakeRequest{Title: "Memory compression", SourceRefs: refs})
+	if err != nil || second.Duplicate || first.BacklogItemID == second.BacklogItemID || len(store.items) != 2 {
+		t.Fatalf("distinct proposals collapsed: first=%+v second=%+v err=%v", first, second, err)
+	}
+	duplicate, err := svc.Intake(context.Background(), IntakeRequest{Title: " STREAMING   Support ", SourceRefs: refs})
+	if err != nil || !duplicate.Duplicate || duplicate.BacklogItemID != first.BacklogItemID {
+		t.Fatalf("normalized title replay: result=%+v err=%v", duplicate, err)
+	}
+}
+
+func TestServiceIntakeReplayPreservesEditedCandidate(t *testing.T) {
+	store := &memoryItemStore{}
+	svc := NewService(store, nil)
+	request := IntakeRequest{Title: "Original title", Body: "original body", SourceRefs: []domainbacklog.SourceRef{{Type: "web", Locator: "https://example.test/paper", ContentHash: "abc"}}}
+	first, err := svc.Intake(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.items[0].Title = "Owner edited title"
+	store.items[0].Body = "owner edited body"
+	store.items[0].ConceptState = domainbacklog.ConceptRejected
+	replayed, err := svc.Intake(context.Background(), request)
+	if err != nil || !replayed.Duplicate || replayed.BacklogItemID != first.BacklogItemID || replayed.Item.Title != "Owner edited title" || replayed.Item.Body != "owner edited body" || replayed.Item.ConceptState != domainbacklog.ConceptRejected {
+		t.Fatalf("replay overwrote owner work: result=%+v err=%v", replayed, err)
+	}
+}
+
 func TestServiceIntakeFixesLifecycleOwnerAndSeparatesModuleScope(t *testing.T) {
 	store := &memoryItemStore{}
 	svc := NewService(store, nil)

@@ -51,6 +51,9 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/idlechat/collection` | 日次収集の入力cache、次回04:00 JST、取得元、利用toolの読み取り専用snapshot。ユーザー向けニュース取得のAPIではない |
 | `POST /viewer/idlechat/start`, `POST /viewer/idlechat/stop` | IdleChatの開始・停止。認可されたwrite clientだけが利用する |
 | `POST /viewer/surface-presence` | PORTAL Chat／IdleChat画面の期限付き在席を通知し、COREが排他的な有効modeを決定する |
+| `GET /viewer/knowledge-memory` | Knowledge Memoryのbounded projection。`detail_type=news_knowledge&id=...`でNewsの一件詳細も返す |
+| `POST /viewer/knowledge-memory/news-knowledge` | source-backed News Knowledgeの作成。private itemはowner scopeに限定する |
+| `POST /viewer/knowledge-memory/review` | Knowledge Memoryの明示レビュー。private Newsの状態変更は同一ownerへ限定する |
 | `GET /viewer/tasks`, `GET /viewer/task/detail?task_id=...`, `GET /viewer/task-notifications` | durable Task の一覧、詳細／共有context、割り込み通知。Task identity は canonical `task_id` のみ |
 | `/viewer/logs?task_id=...`, `/viewer/logs?event_id=...` | Canonical Task／EventIDで逆参照できるOrchestrator log。旧`/viewer/jobs`系は存在しない |
 | `/viewer/backlog`, `/viewer/scheduler` | 継続作業の照会・操作 |
@@ -1281,6 +1284,12 @@ queryは`major`、`minor`、`review=needs_review|classified`、`q`、`limit`、`
 `fetched_at`、`fetch_error`、X投稿参照用の`text`とauthor表示名・usernameを持ちます。credential、物理LLM route、
 分類に不要な内部metaは返しません。
 
+外部記事の生成サマリは各referenceの`summary`として、`status`、`text`、`body_sha256`、
+`revision`、`generated_at`、`chunks`、安全な`error_code`を公開します。サイトの
+`page_description`とは別の情報です。本文ハッシュと一致しないreadyサマリはサマリ本文を返さず
+`status=blocked / error_code=source_changed`として投影します。CORE生成由来・本文品質・引用根拠の検証が通らない場合は`unverified_summary`となり、元記事本文は引き続き読めます。GETによる生成・再生成は行いません。
+処理契約は[機能仕様の外部記事の本文とサマリ](02_機能仕様.md#外部記事の本文とサマリ)を参照します。
+
 ## Interaction client共通意味論
 
 PORTAL、CMD、ASSISTANTは、COREとのInteractionで次の意味論を共有します。
@@ -1310,7 +1319,7 @@ capabilityで制限します。
 | `RenCrow_CMD` | `cmd-chat` | Chat送信、event購読、CORE経由のWAV文字起こし |
 | `RenCrow_CMD` | `cmd-idlechat` | IdleChat status／event／start／stop |
 | `RenCrow_CMD` | `cmd-diagnostics` | 診断・状態取得の読み取り専用 |
-| `RenCrow_CMD` | `cmd-control` | process制御、repair実行、ProfilePromotion retry |
+| `RenCrow_CMD` | `cmd-control` | process制御、repair実行、Knowledge News owner write、ProfilePromotion retry |
 | `RenCrow_ASSISTANT` | `assistant-core` | COREへのChat送信とevent購読 |
 
 `cmd-diagnostics`と`cmd-control`は、CMDが実装本体を持たずCORE Public API経由で
@@ -1350,10 +1359,33 @@ HTTPアクセスを伴う操作を公開するとCOREが任意URL取得の踏み
 ```text
 POST /viewer/repair/run
 POST /viewer/source-registry
+POST /viewer/knowledge-memory/review
+POST /viewer/knowledge-memory/news-knowledge
 POST /viewer/memory/profile-promotions/retry
 POST /viewer/capabilities/apply
 GET  /viewer/capabilities/apply/{request_id}
 ```
+
+### Knowledge Newsのowner境界
+
+`GET /viewer/knowledge-memory`はKnowledge Memoryの一覧、`detail_type=news_knowledge`と
+`id`を付けたGETはNews一件の詳細を返します。Authorization headerがないrequestはpublic scopeとして
+扱い、`UserID`が空でpublic-compatibleなNewsだけを返します。Authorizationを付ける場合は、認証済み
+ownerの直接loopback request、設定済みBearer token、`X-RenCrow-Client: RenCrow_CMD`、
+`X-RenCrow-Interaction-Profile: cmd-diagnostics`をすべて満たす必要があります。成功したowner scopeは
+public Newsとそのownerのprivate Newsだけを返し、別ownerのrowを返しません。認証付きrequestのresponseは
+`Cache-Control: no-store`です。remote、token不一致、profile不一致、owner scope未設定はfail closedで、
+private Newsをpublicへfallbackしません。
+
+`POST /viewer/knowledge-memory/news-knowledge`はNews Knowledge作成のcanonical routeです。public itemは
+public-compatibleな`UserID`／`visibility`だけを受け付け、private itemは認証済みownerのscopeとbodyの
+`UserID`が一致する場合だけ受理します。`POST /viewer/knowledge-memory/review`は
+`detail_type=news_knowledge`、`id`、`review_status`（`adopted`または`rejected`）を受け取り、private
+Newsの対象と状態変更を同一ownerに束縛します。private Newsのresponseに含まれる`reviewed_by`、`actor_id`、
+`request_id`はserver-sideの認証owner／request scopeから決まり、bodyのcaller指定値で別ownerを偽装できません。
+private Newsの作成とレビューの認証付きPOSTは`X-RenCrow-Client: RenCrow_CMD`と
+`X-RenCrow-Interaction-Profile: cmd-control`を要求し、上記2 path以外やGET／別profileはinteraction
+allowlistで403になります。
 
 COREは既知clientのprofile欠落、client/profile不一致、profile外method/pathを403で拒否します。
 profile headerは認証credentialではなく、既存のendpoint allowlist、TLS、network境界、
@@ -1478,6 +1510,8 @@ path segmentとしてURL encodeします。
   correlation ID付きのInteraction outputとして元のdeliveryへ戻せるようにする。
 
 ## Atlas owner API
+
+Gmail取り込みのowner専用参照は`GET /viewer/atlas/gmail`。直近20件のreceiptを返し、direct-local、owner bearer、既存cmd-diagnostics client profileを必須とします。`Cache-Control: no-store`。内部の再開用要求と任意filesystem pathは公開しません。選択規則と運用契約は[Atlas仕様17節](RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md#17-gmailからの定期取り込み)が正本です。
 
 読み取りprojectionは`GET /viewer/atlas`、`/viewer/atlas/items`、`/viewer/atlas/items/{id}`、
 `/viewer/atlas/radar`、`/viewer/atlas/backlog`、`/viewer/atlas/queue`、`/viewer/atlas/active`、
