@@ -37,6 +37,7 @@ import (
 	skillapp "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
@@ -106,6 +107,7 @@ type Dependencies struct {
 	taskStore                      *taskpersistence.JSONLStore                 // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
+	transportManager               *transportmanager.Manager                   // shared canonical Request Response receipt owner
 	playbackRecorder               *playbackActionRecorder                     // canonical actual-playback receipt owner
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
@@ -457,12 +459,23 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
 	}
 	deps.actionManager = runtimeActionManager
+	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager)
+	if err != nil {
+		log.Fatalf("Failed to initialize canonical transport receipt owner: %v", err)
+	}
 	recoveredActionRuns, err := recoverActionRunsAfterRestart(context.Background(), runtimeActionManager, deps.taskManager)
 	if err != nil {
 		log.Fatalf("Failed to recover terminal Action runs after restart: %v", err)
 	}
 	if recoveredActionRuns > 0 {
 		log.Printf("Recovered %d terminal Action run(s) after process restart", recoveredActionRuns)
+	}
+	recoveredTransportRequests, err := deps.transportManager.RecoverAfterRestart(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to recover stale transport requests after restart: %v", err)
+	}
+	if recoveredTransportRequests > 0 {
+		log.Printf("Recovered %d stale transport request(s) after process restart", recoveredTransportRequests)
 	}
 	deps.playbackRecorder, err = newPlaybackActionRecorder(runtimeActionManager, deps.taskManager, "mio")
 	if err != nil {
@@ -476,7 +489,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	aiWorkflowStore := composeRuntimeAIWorkflowStore(buildAIWorkflowStateStore(cfg), canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
-	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager)
+	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager, deps.transportManager)
 	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
 	ruleDictionary := routing.NewRuleDictionary()
 	skillLoader := domaincontext.NewSkillsLoader("")
@@ -1464,7 +1477,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			}
 		},
 	)
-	ttsBridge, err = newActionTTSBridge(ttsBridge, runtimeActionManager, deps.taskManager, "mio")
+	ttsBridge, err = newActionTTSBridge(ttsBridge, runtimeActionManager, deps.taskManager, deps.transportManager, "mio")
 	if err != nil {
 		log.Fatalf("Failed to connect TTS bridge to execution owners: %v", err)
 	}

@@ -24,6 +24,7 @@ type GenerateOutput struct {
 	Content      string
 	TokensUsed   int
 	FinishReason string
+	RequestID    core.RequestID
 	ResponseID   core.ResponseID
 }
 
@@ -45,6 +46,7 @@ func BuildGenerateResponse(output GenerateOutput) GenerateResponse {
 		Content:      output.Content,
 		TokensUsed:   output.TokensUsed,
 		FinishReason: output.FinishReason,
+		RequestID:    output.RequestID,
 		ResponseID:   output.ResponseID,
 	}
 }

@@ -134,14 +134,14 @@ func normalizeTracePath(value string) string {
 func PairRequestsResponses(requests []domaintrace.NetworkRequest, responses []domaintrace.NetworkResponse) []domaintrace.Exchange {
 	byID := map[string]domaintrace.NetworkResponse{}
 	for _, resp := range responses {
-		if strings.TrimSpace(resp.RequestID) == "" {
+		if strings.TrimSpace(resp.ExternalRef) == "" {
 			continue
 		}
-		byID[resp.RequestID] = resp
+		byID[resp.ExternalRef] = resp
 	}
 	var out []domaintrace.Exchange
 	for _, req := range requests {
-		resp := byID[req.RequestID]
+		resp := byID[req.ExternalRef]
 		out = append(out, domaintrace.Exchange{Request: req, Response: resp})
 	}
 	return out
@@ -350,13 +350,13 @@ func readRequests(filePath string) ([]domaintrace.NetworkRequest, error) {
 	var out []domaintrace.NetworkRequest
 	err := readJSONLMaps(filePath, func(m map[string]any) error {
 		req := domaintrace.NetworkRequest{
-			RequestID: firstNestedString(m, "request_id", "requestId", "id", "params.requestId"),
-			Method:    strings.ToUpper(firstNestedString(m, "method", "params.request.method")),
-			URL:       firstNestedString(m, "url", "params.request.url"),
-			Headers:   extractStringMap(firstNestedMap(m, "headers", "params.request.headers")),
+			ExternalRef: firstNestedString(m, "request_id", "requestId", "id", "params.requestId"),
+			Method:      strings.ToUpper(firstNestedString(m, "method", "params.request.method")),
+			URL:         firstNestedString(m, "url", "params.request.url"),
+			Headers:     extractStringMap(firstNestedMap(m, "headers", "params.request.headers")),
 		}
-		if req.RequestID == "" {
-			req.RequestID = shortHash(req.Method + "|" + req.URL)
+		if req.ExternalRef == "" {
+			req.ExternalRef = shortHash(req.Method + "|" + req.URL)
 		}
 		if req.Method != "" && req.URL != "" {
 			out = append(out, req)
@@ -370,12 +370,12 @@ func readResponses(filePath string) ([]domaintrace.NetworkResponse, error) {
 	var out []domaintrace.NetworkResponse
 	err := readJSONLMaps(filePath, func(m map[string]any) error {
 		resp := domaintrace.NetworkResponse{
-			RequestID: firstNestedString(m, "request_id", "requestId", "id", "params.requestId"),
-			URL:       firstNestedString(m, "url", "params.response.url"),
-			Status:    firstNestedInt(m, "status", "params.response.status"),
-			Body:      firstNestedString(m, "body", "response.body", "params.response.body"),
+			ExternalRef: firstNestedString(m, "request_id", "requestId", "id", "params.requestId"),
+			URL:         firstNestedString(m, "url", "params.response.url"),
+			Status:      firstNestedInt(m, "status", "params.response.status"),
+			Body:        firstNestedString(m, "body", "response.body", "params.response.body"),
 		}
-		if resp.RequestID != "" {
+		if resp.ExternalRef != "" {
 			out = append(out, resp)
 		}
 		return nil

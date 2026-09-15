@@ -63,14 +63,6 @@ func SpeechPitch(emotion *EmotionState) (float64, bool) {
 	return emotion.Prosody.Pitch, true
 }
 
-func BuildRequestIDHeader(sessionID string, chunkIndex int) string {
-	prefix := SanitizeAudioPrefix(sessionID)
-	if prefix == "" {
-		prefix = "ttsreq"
-	}
-	return fmt.Sprintf("%s-%04d", prefix, chunkIndex)
-}
-
 func SanitizeAudioPrefix(prefix string) string {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {

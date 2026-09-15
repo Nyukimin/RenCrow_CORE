@@ -8,18 +8,21 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type actionProvider struct {
-	inner   llm.LLMProvider
-	actions *actionmanager.Manager
-	tasks   *taskmanager.Manager
-	actorID string
+	inner     llm.LLMProvider
+	actions   *actionmanager.Manager
+	tasks     *taskmanager.Manager
+	transport *transportmanager.Manager
+	actorID   string
 }
 
 type actionToolCallingProvider struct {
@@ -30,24 +33,24 @@ type actionToolCallingProvider struct {
 // WithActionOwner records every physical provider call through the canonical
 // Action/Attempt owner while preserving whether the provider supports tools.
 func WithActionOwner(inner llm.LLMProvider, actions *actionmanager.Manager) (llm.LLMProvider, error) {
-	return withActionExecutionOwners(inner, actions, nil, "")
+	return withActionExecutionOwners(inner, actions, nil, nil, "")
 }
 
-func WithActionExecutionOwners(inner llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager, actorID string) (llm.LLMProvider, error) {
-	if tasks == nil || strings.TrimSpace(actorID) == "" {
-		return nil, errors.New("LLM Task owner and actor_id are required")
+func WithActionExecutionOwners(inner llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager, actorID string) (llm.LLMProvider, error) {
+	if tasks == nil || transport == nil || strings.TrimSpace(actorID) == "" {
+		return nil, errors.New("LLM Task transport owners and actor_id are required")
 	}
-	return withActionExecutionOwners(inner, actions, tasks, strings.TrimSpace(actorID))
+	return withActionExecutionOwners(inner, actions, tasks, transport, strings.TrimSpace(actorID))
 }
 
-func withActionExecutionOwners(inner llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager, actorID string) (llm.LLMProvider, error) {
+func withActionExecutionOwners(inner llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager, actorID string) (llm.LLMProvider, error) {
 	if inner == nil {
 		return nil, errors.New("LLM provider is required")
 	}
 	if actions == nil {
 		return nil, errors.New("LLM Action owner is required")
 	}
-	base := &actionProvider{inner: inner, actions: actions, tasks: tasks, actorID: actorID}
+	base := &actionProvider{inner: inner, actions: actions, tasks: tasks, transport: transport, actorID: actorID}
 	if toolInner, ok := inner.(llm.ToolCallingProvider); ok {
 		return &actionToolCallingProvider{actionProvider: base, toolInner: toolInner}, nil
 	}
@@ -122,6 +125,12 @@ func (p *actionProvider) begin(ctx context.Context, operation string) (context.C
 	ownedCtx, err := domainexecution.WithChildBoundActionAttempt(ctx, action.ActionID, attempt.AttemptID)
 	if err != nil {
 		return nil, nil, err
+	}
+	if p.transport != nil {
+		ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, p.transport)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	finish := func(callErr error) error {
 		attemptStatus := domainaction.AttemptStatusSucceeded

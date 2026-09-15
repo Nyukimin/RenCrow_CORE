@@ -23,34 +23,36 @@ const (
 	promptReceiptMaxSentenceRunes = 240
 )
 
-// PromptReceiptProvider records a bounded, prompt-free receipt immediately
-// before the LLM provider is called. It never persists the prompt body.
+// PromptReceiptProvider records a bounded, prompt-free receipt after the LLM
+// transport returns so it can project the canonical Request/Response IDs.
+// It never persists the prompt body.
 type PromptReceiptProvider struct {
 	inner domainllm.LLMProvider
 	name  string
 }
 
 type promptReceipt struct {
-	SchemaVersion            int               `json:"schema_version"`
-	CreatedAt                string            `json:"created_at"`
-	Kind                     string            `json:"kind"`
-	Provider                 string            `json:"provider"`
-	RequestID                string            `json:"request_id,omitempty"`
-	TraceID                  string            `json:"trace_id,omitempty"`
-	TaskID                   modulecore.TaskID `json:"task_id,omitempty"`
-	SessionID                string            `json:"session_id,omitempty"`
-	Initiator                string            `json:"initiator,omitempty"`
-	Caller                   string            `json:"caller,omitempty"`
-	Purpose                  string            `json:"purpose,omitempty"`
-	PromptHash               string            `json:"prompt_sha256"`
-	SystemPromptHash         string            `json:"system_prompt_sha256"`
-	PromptCharacters         int               `json:"prompt_characters"`
-	SystemPromptCharacters   int               `json:"system_prompt_characters"`
-	MessageCount             int               `json:"message_count"`
-	SectionCounts            map[string]int    `json:"section_counts"`
-	LatestPromptSentence     string            `json:"latest_prompt_sentence,omitempty"`
-	LatestPromptSentenceRole string            `json:"latest_prompt_sentence_role,omitempty"`
-	RedactionApplied         bool              `json:"redaction_applied"`
+	SchemaVersion            int                   `json:"schema_version"`
+	CreatedAt                string                `json:"created_at"`
+	Kind                     string                `json:"kind"`
+	Provider                 string                `json:"provider"`
+	RequestID                modulecore.RequestID  `json:"request_id,omitempty"`
+	ResponseID               modulecore.ResponseID `json:"response_id,omitempty"`
+	TraceID                  string                `json:"trace_id,omitempty"`
+	TaskID                   modulecore.TaskID     `json:"task_id,omitempty"`
+	SessionID                string                `json:"session_id,omitempty"`
+	Initiator                string                `json:"initiator,omitempty"`
+	Caller                   string                `json:"caller,omitempty"`
+	Purpose                  string                `json:"purpose,omitempty"`
+	PromptHash               string                `json:"prompt_sha256"`
+	SystemPromptHash         string                `json:"system_prompt_sha256"`
+	PromptCharacters         int                   `json:"prompt_characters"`
+	SystemPromptCharacters   int                   `json:"system_prompt_characters"`
+	MessageCount             int                   `json:"message_count"`
+	SectionCounts            map[string]int        `json:"section_counts"`
+	LatestPromptSentence     string                `json:"latest_prompt_sentence,omitempty"`
+	LatestPromptSentenceRole string                `json:"latest_prompt_sentence_role,omitempty"`
+	RedactionApplied         bool                  `json:"redaction_applied"`
 }
 
 type promptReceiptMessage struct {
@@ -101,8 +103,12 @@ func NewPromptReceiptProvider(inner domainllm.LLMProvider, name string) *PromptR
 }
 
 func (p *PromptReceiptProvider) Generate(ctx context.Context, req domainllm.GenerateRequest) (domainllm.GenerateResponse, error) {
-	p.writeReceipt(buildGeneratePromptReceipt(ctx, p.Name(), req))
-	return p.inner.Generate(ctx, req)
+	receipt := buildGeneratePromptReceipt(ctx, p.Name(), req)
+	response, err := p.inner.Generate(ctx, req)
+	receipt.RequestID = response.RequestID
+	receipt.ResponseID = response.ResponseID
+	p.writeReceipt(receipt)
+	return response, err
 }
 
 func (p *PromptReceiptProvider) Name() string {
@@ -120,8 +126,12 @@ func (p *PromptReceiptProvider) Chat(ctx context.Context, req domainllm.ChatRequ
 	if !ok {
 		return domainllm.ChatResponse{}, fmt.Errorf("inner provider does not support Chat")
 	}
-	p.writeReceipt(buildChatPromptReceipt(ctx, p.Name(), req))
-	return tcp.Chat(ctx, req)
+	receipt := buildChatPromptReceipt(ctx, p.Name(), req)
+	response, err := tcp.Chat(ctx, req)
+	receipt.RequestID = response.RequestID
+	receipt.ResponseID = response.ResponseID
+	p.writeReceipt(receipt)
+	return response, err
 }
 
 func (p *PromptReceiptProvider) writeReceipt(receipt promptReceipt) {
@@ -251,7 +261,6 @@ func buildPromptReceipt(ctx context.Context, provider, kind string, messages []p
 		receipt.RedactionApplied = receipt.LatestPromptSentence != sentence
 	}
 	if observation, ok := domainllm.ExecutionObservationFromContext(ctx); ok {
-		receipt.RequestID = string(observation.RequestID)
 		receipt.TraceID = observation.TraceID
 		receipt.TaskID = observation.TaskID
 		receipt.SessionID = observation.SessionID

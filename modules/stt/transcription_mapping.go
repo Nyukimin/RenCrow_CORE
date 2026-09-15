@@ -6,9 +6,10 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func BuildTranscriptionResult(req TranscriptionRequest, output TranscriptionOutput) TranscriptionResult {
+func BuildTranscriptionResult(output TranscriptionOutput) TranscriptionResult {
 	return TranscriptionResult{
-		RequestID:    req.RequestID,
+		RequestID:    output.RequestID,
+		ResponseID:   output.ResponseID,
 		Text:         output.Text,
 		Language:     output.Language,
 		Duration:     SecondsToDuration(output.DurationSec),

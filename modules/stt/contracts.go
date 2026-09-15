@@ -18,7 +18,6 @@ const (
 
 type TranscriptionRequest struct {
 	SessionID core.SessionID `json:"session_id,omitempty"`
-	RequestID core.RequestID `json:"request_id,omitempty"`
 	Audio     []byte         `json:"-"`
 	Format    AudioFormat    `json:"format,omitempty"`
 	Language  string         `json:"language,omitempty"`
@@ -32,14 +31,15 @@ type Segment struct {
 }
 
 type TranscriptionResult struct {
-	RequestID    core.RequestID `json:"request_id,omitempty"`
-	Text         string         `json:"text"`
-	Language     string         `json:"language,omitempty"`
-	Duration     time.Duration  `json:"duration,omitempty"`
-	Segments     []Segment      `json:"segments,omitempty"`
-	Provider     string         `json:"provider,omitempty"`
-	Model        string         `json:"model,omitempty"`
-	ProcessingMS int64          `json:"processing_ms,omitempty"`
+	RequestID    core.RequestID  `json:"request_id,omitempty"`
+	ResponseID   core.ResponseID `json:"response_id,omitempty"`
+	Text         string          `json:"text"`
+	Language     string          `json:"language,omitempty"`
+	Duration     time.Duration   `json:"duration,omitempty"`
+	Segments     []Segment       `json:"segments,omitempty"`
+	Provider     string          `json:"provider,omitempty"`
+	Model        string          `json:"model,omitempty"`
+	ProcessingMS int64           `json:"processing_ms,omitempty"`
 }
 
 type SegmentOutput struct {
@@ -49,6 +49,8 @@ type SegmentOutput struct {
 }
 
 type TranscriptionOutput struct {
+	RequestID    core.RequestID
+	ResponseID   core.ResponseID
 	Text         string
 	Language     string
 	DurationSec  float64

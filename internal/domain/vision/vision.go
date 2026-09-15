@@ -1,10 +1,14 @@
 package vision
 
-import "context"
+import (
+	"context"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 // AnalyzeRequest is CORE's module-level request to RenCrow_Vision.
 type AnalyzeRequest struct {
-	RequestID   string
+	RequestID   modulecore.RequestID
 	SessionID   string
 	Prompt      string
 	Kind        string
@@ -24,17 +28,18 @@ type Segment struct {
 
 // AnalyzeResult is the normalized response owned by RenCrow_Vision.
 type AnalyzeResult struct {
-	OK        bool           `json:"ok"`
-	RequestID string         `json:"request_id"`
-	Provider  string         `json:"provider"`
-	Model     string         `json:"model"`
-	Kind      string         `json:"kind"`
-	Summary   string         `json:"summary"`
-	Text      string         `json:"text"`
-	Segments  []Segment      `json:"segments"`
-	Metadata  map[string]any `json:"metadata"`
-	ErrorCode string         `json:"error_code,omitempty"`
-	Message   string         `json:"message,omitempty"`
+	OK         bool                  `json:"ok"`
+	RequestID  modulecore.RequestID  `json:"request_id"`
+	ResponseID modulecore.ResponseID `json:"response_id,omitempty"`
+	Provider   string                `json:"provider"`
+	Model      string                `json:"model"`
+	Kind       string                `json:"kind"`
+	Summary    string                `json:"summary"`
+	Text       string                `json:"text"`
+	Segments   []Segment             `json:"segments"`
+	Metadata   map[string]any        `json:"metadata"`
+	ErrorCode  string                `json:"error_code,omitempty"`
+	Message    string                `json:"message,omitempty"`
 }
 
 type ReadyState struct {

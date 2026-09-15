@@ -12,8 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/providers/rencrowllm"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulevoicechat "github.com/Nyukimin/RenCrow_CORE/modules/voicechat"
@@ -53,7 +57,13 @@ type voiceChatInputAudioSession struct {
 	pcm          bytes.Buffer
 }
 
-func handleVoiceChatInputAudioBridge(gatewayURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) http.Handler {
+type voiceChatExecutionOwners struct {
+	actions   *actionmanager.Manager
+	tasks     *taskmanager.Manager
+	transport *transportmanager.Manager
+}
+
+func handleVoiceChatInputAudioBridge(gatewayURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, owners voiceChatExecutionOwners) http.Handler {
 	return websocket.Handler(func(conn *websocket.Conn) {
 		defer conn.Close()
 		viewerClientID := voiceChatViewerClientID(conn)
@@ -63,13 +73,13 @@ func handleVoiceChatInputAudioBridge(gatewayURL string, settings voiceChatInputA
 			return
 		}
 		log.Printf("[voice-chat] viewer connected viewer_client_id=%s input_audio_base=%s", viewerClientID, baseURL)
-		if err := serveVoiceChatInputAudio(conn, baseURL, settings, voiceDirect, idleNotifier, viewerClientID); err != nil {
+		if err := serveVoiceChatInputAudio(conn, baseURL, settings, voiceDirect, idleNotifier, viewerClientID, owners); err != nil {
 			log.Printf("[voice-chat] input_audio bridge closed viewer_client_id=%s err=%v", viewerClientID, err)
 		}
 	})
 }
 
-func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, viewerClientID string) error {
+func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voiceChatInputAudioSettings, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, viewerClientID string, owners voiceChatExecutionOwners) error {
 	var sess *voiceChatInputAudioSession
 	chatBusy := false
 	clearChatBusy := func() {
@@ -117,7 +127,7 @@ func serveVoiceChatInputAudio(conn *websocket.Conn, baseURL string, settings voi
 					sess.utteranceID = utteranceID
 				}
 				sess.commitAt = time.Now()
-				text, err := postVoiceChatInputAudio(context.Background(), baseURL, settings, sess)
+				text, err := postVoiceChatInputAudio(context.Background(), baseURL, settings, sess, owners)
 				if err != nil {
 					_ = sendVoiceChatError(conn, modulevoicechat.ErrorLLMInferenceFailed, err.Error())
 					sess = nil
@@ -213,7 +223,7 @@ func newVoiceChatInputAudioSession(ev map[string]any, defaultPrompt string) *voi
 	}
 }
 
-func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voiceChatInputAudioSettings, sess *voiceChatInputAudioSession) (string, error) {
+func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voiceChatInputAudioSettings, sess *voiceChatInputAudioSession, owners voiceChatExecutionOwners) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("voice chat session is nil")
 	}
@@ -257,7 +267,14 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 	if settings.Stream {
 		request.OnToken = func(string) {}
 	}
-	provider := rencrowllm.NewGatewayProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
+	var provider llm.LLMProvider = rencrowllm.NewGatewayProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
+	if owners.actions != nil && owners.tasks != nil && owners.transport != nil {
+		wrapped, wrapErr := llmmiddleware.WithActionExecutionOwners(provider, owners.actions, owners.tasks, owners.transport, "mio")
+		if wrapErr != nil {
+			return "", fmt.Errorf("connect input_audio provider to execution owners: %w", wrapErr)
+		}
+		provider = wrapped
+	}
 	resp, err := provider.Generate(ctx, request)
 	if err != nil {
 		return "", fmt.Errorf("RenCrow LLM input_audio failed: %w", err)

@@ -1,0 +1,104 @@
+{
+  "schema_version": "rencrow.check_plan.v1",
+  "purpose": "identity-step12-request-response",
+  "phase": "source-red",
+  "evaluated_at": "2026-09-15T19:22:28Z",
+  "input": {
+    "base_revision": "2f67d83",
+    "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-12-requestid--responseid",
+    "request_rule": "one transport send mints exactly one canonical RequestID immediately before I/O; retry mints a different RequestID and never derives it from Task Session Trace Action Attempt chunk or provider IDs",
+    "response_rule": "each accepted transport response receives exactly one canonical ResponseID linked to its RequestID; a terminal failure before any response retains RequestID and has no ResponseID",
+    "provider_rule": "provider-owned identifiers are stored only as ExternalRef or ProviderToolCallID and are never accepted as ActionID AttemptID RequestID or ResponseID",
+    "lineage_rule": "transport receipts retain the existing TaskID RunID ActionID AttemptID and optional TraceID without minting or replacing execution identity"
+  },
+  "included": [
+    {
+      "check_id": "s12_transport_owner",
+      "guarantee": "one CORE transport receipt owner validates and persists Request and Response lineage under the existing Action Attempt without a second Action owner",
+      "owner": "RenCrow_CORE transport boundary",
+      "execution_phase": "pre-commit and post-restart",
+      "result_consumer": "LLM STT TTS Vision Tool provider adapters and identity audit",
+      "failure_action": "return to design or rollback"
+    },
+    {
+      "check_id": "s12_llm_transport",
+      "guarantee": "each RenCrow_LLM HTTP call mints a fresh RequestID at send time; streaming and non-streaming responses carry a linked ResponseID; no-response failure carries no fabricated ResponseID; ExecutionObservation does not own or reuse transport RequestID",
+      "owner": "RenCrow_CORE LLM adapter",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "LLM Action Attempt receipts and prompt diagnostics",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_tts_transport",
+      "guarantee": "each TTS retry sends a different canonical RequestID, validates the echoed request identity, assigns a linked ResponseID to every received response, and removes session-chunk derived request IDs",
+      "owner": "RenCrow_CORE TTS adapter",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Voice Action Attempt receipts and playback",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_stt_transport",
+      "guarantee": "each STT provider call uses one canonical RequestID and a successful provider response has a distinct linked ResponseID while MessageID remains transcription content identity",
+      "owner": "RenCrow_CORE STT adapter",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Voice input Action Attempt receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_vision_transport",
+      "guarantee": "each attachment call preserves the already unique validated RequestID and assigns a linked ResponseID without replacing the parent Trace Session or Task identity",
+      "owner": "RenCrow_CORE Vision adapter",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "multimodal conversation and Vision receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_provider_external_ids",
+      "guarantee": "domain ToolCallID is zero; provider wire tool_call_id maps only to ProviderToolCallID; browser and provider IDs are explicit external references and never canonical execution identities",
+      "owner": "RenCrow_CORE provider adapters",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "ToolLoop browser trace and identity audit",
+      "failure_action": "return to implementation"
+    },
+    {
+      "check_id": "s12_attempt_multi_request",
+      "guarantee": "one existing Attempt can own multiple ordered Request receipts, provider retry changes RequestID only, and terminal Action Attempt status remains owned by Step 11 Action owner",
+      "owner": "RenCrow_CORE Action and transport owners",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "retry recovery and runtime receipt audit",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
+      "check_id": "s12_predeploy_gates",
+      "guarantee": "focused transport tests full Go regression vet build architecture zero scans migration referential checks and reviewed diff pass against the exact source",
+      "owner": "RenCrow_CORE",
+      "execution_phase": "pre-deploy",
+      "result_consumer": "deploy owner",
+      "failure_action": "do not install or restart"
+    },
+    {
+      "check_id": "s12_runtime_e2e",
+      "guarantee": "installed clean artifact uses the canonical runtime routes and an authenticated real Actor produces Attempt to multiple Request to terminal Response receipts that remain referentially valid after service restart",
+      "owner": "RenCrow_CORE runtime",
+      "execution_phase": "cutover and post-restart",
+      "result_consumer": "Step 12 ledger",
+      "failure_action": "rollback or keep Step 12 open"
+    }
+  ],
+  "excluded": [],
+  "deferred": [
+    {
+      "check_id": "s12_artifact_ids",
+      "reason": "Report Draft ContextPack and internal Image IDs are Step 13",
+      "consumer": "Step 13 cutover",
+      "failure_action": "keep Step 13 open"
+    },
+    {
+      "check_id": "s12_schedule_queue_ids",
+      "reason": "Schedule and Queue identities are Steps 17 and 18",
+      "consumer": "Steps 17 and 18",
+      "failure_action": "keep later steps open"
+    }
+  ],
+  "replacement_receipts": []
+}

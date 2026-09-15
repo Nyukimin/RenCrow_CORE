@@ -130,8 +130,10 @@ func cmdRun() {
 	registerLocalPprofRoutes(mux)
 
 	// Live Viewer
-	sttRuntime := buildSTTRuntime(cfg, dependencies.taskManager, dependencies.actionManager)
-	voiceChatRuntime := buildVoiceChatRuntime(cfg, dependencies.voiceDirectHandler, dependencies.idleChatOrch)
+	sttRuntime := buildSTTRuntime(cfg, dependencies.taskManager, dependencies.actionManager, dependencies.transportManager)
+	voiceChatRuntime := buildVoiceChatRuntime(cfg, dependencies.voiceDirectHandler, dependencies.idleChatOrch, voiceChatExecutionOwners{
+		actions: dependencies.actionManager, tasks: dependencies.taskManager, transport: dependencies.transportManager,
+	})
 	debugSystemOpts := sttRuntime.DebugOptions
 	debugSystemOpts.RuntimeReadiness = buildRuntimeDependencyReadiness(cfg, dependencies)
 	debugSystemOpts.RedisHealthCheck = dependencies.redisHealthCheck

@@ -807,6 +807,58 @@ func TestStep12RequestResponseLegacyFieldsAreBanned(t *testing.T) {
 		walkDirectory(relative, personaTokens, shouldSkipResponseIDPath, nil)
 	}
 
+	for _, check := range []struct {
+		relative string
+		tokens   []string
+	}{
+		{relative: "internal/domain/llm/execution_observation.go", tokens: []string{"RequestID", "request_id"}},
+		{relative: "internal/domain/browsertrace/types.go", tokens: []string{"RequestID", "request_id"}},
+		{relative: "modules/tts/provider_payload.go", tokens: []string{"BuildRequestIDHeader"}},
+		{relative: "internal/infrastructure/tts/rencrow_tts_params.go", tokens: []string{"buildRequestIDHeader"}},
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(check.relative))
+		content, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatalf("read Step12 focused owner %s: %v", check.relative, err)
+		}
+		checkContent(check.relative, content, check.tokens, nil)
+	}
+	for _, contract := range []struct {
+		relative string
+		typeName string
+		field    string
+	}{
+		{relative: "modules/stt/contracts.go", typeName: "TranscriptionRequest", field: "RequestID"},
+		{relative: "modules/tts/contracts.go", typeName: "SynthesisRequest", field: "ResponseID"},
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(contract.relative))
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse Step12 transport contract %s: %v", contract.relative, err)
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			typeSpec, ok := node.(*ast.TypeSpec)
+			if !ok || typeSpec.Name.Name != contract.typeName {
+				return true
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok {
+				return false
+			}
+			for _, field := range structType.Fields.List {
+				for _, name := range field.Names {
+					if name.Name == contract.field {
+						violations = append(violations, fmt.Sprintf("%s:legacy-step12:%s.%s", contract.relative, contract.typeName, contract.field))
+					}
+				}
+			}
+			return false
+		})
+	}
+
 	canonicalArchitectureFail(t, "Step12 owner packages must not retain legacy Request/Response identity fields", violations)
 }
 

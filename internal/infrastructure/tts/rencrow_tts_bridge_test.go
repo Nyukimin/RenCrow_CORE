@@ -3,6 +3,7 @@ package tts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
@@ -445,7 +447,68 @@ func TestCT_SY_003_RequestIDHeaderPropagation(t *testing.T) {
 	}
 }
 
-func TestRenCrowTTSBridge_RequestIDFallbackPrefix(t *testing.T) {
+func TestRenCrowTTSBridge_RetryMintsOneCanonicalRequestPerTransportCall(t *testing.T) {
+	owner := &ttsTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var headers []modulecore.RequestID
+	calls := 0
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: "http://tts.local"})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		requestID := modulecore.RequestID(r.Header.Get("X-RenCrow-TTS-Request-Id"))
+		headers = append(headers, requestID)
+		calls++
+		if calls == 1 {
+			return nil, errors.New("dial tcp: connection refused")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","request_id":"` +
+				string(requestID) + `","audio_path":"/audio/irodori/retry"}`)),
+		}, nil
+	})}
+
+	if err := bridge.PushText(ctx, "retry-session", "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(headers) != 2 || headers[0] == headers[1] || headers[0].Validate() != nil || headers[1].Validate() != nil {
+		t.Fatalf("transport request headers=%v", headers)
+	}
+	if len(owner.requests) != 2 || len(owner.failed) != 1 || len(owner.responses) != 1 {
+		t.Fatalf("receipt calls: requests=%d failed=%d responses=%d", len(owner.requests), len(owner.failed), len(owner.responses))
+	}
+	if owner.failed[0] != headers[0] || owner.responses[0].RequestID != headers[1] || owner.responses[0].ResponseID == "" {
+		t.Fatalf("receipt linkage: failed=%v responses=%#v", owner.failed, owner.responses)
+	}
+}
+
+type ttsTransportReceiptOwner struct {
+	requests  []domaintransport.Request
+	failed    []modulecore.RequestID
+	responses []domaintransport.Response
+}
+
+func (o *ttsTransportReceiptOwner) BeginRequest(_ context.Context, operation string) (domaintransport.Request, error) {
+	request := domaintransport.Request{RequestID: modulecore.NewRequestID(), Operation: operation}
+	o.requests = append(o.requests, request)
+	return request, nil
+}
+
+func (o *ttsTransportReceiptOwner) CompleteResponse(_ context.Context, requestID modulecore.RequestID, externalRef string) (domaintransport.Response, error) {
+	response := domaintransport.Response{ResponseID: modulecore.NewResponseID(), RequestID: requestID, ExternalRef: externalRef}
+	o.responses = append(o.responses, response)
+	return response, nil
+}
+
+func (o *ttsTransportReceiptOwner) FailWithoutResponse(_ context.Context, requestID modulecore.RequestID, _ string) error {
+	o.failed = append(o.failed, requestID)
+	return nil
+}
+
+func TestRenCrowTTSBridge_RequestIDIsCanonicalAndIndependentOfSession(t *testing.T) {
 	var gotHeader string
 
 	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{
@@ -463,8 +526,8 @@ func TestRenCrowTTSBridge_RequestIDFallbackPrefix(t *testing.T) {
 	if err := bridge.PushText(context.Background(), "***", "test", nil); err != nil {
 		t.Fatalf("push text failed: %v", err)
 	}
-	if !strings.HasPrefix(gotHeader, "ttsreq-") {
-		t.Fatalf("expected fallback prefix in request id header, got %q", gotHeader)
+	if err := modulecore.RequestID(gotHeader).Validate(); err != nil {
+		t.Fatalf("request id header is not canonical: %q: %v", gotHeader, err)
 	}
 }
 

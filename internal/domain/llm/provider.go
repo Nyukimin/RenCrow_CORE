@@ -1,6 +1,10 @@
 package llm
 
-import "context"
+import (
+	"context"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
 
 // Message はLLMメッセージを表す
 type Message struct {
@@ -79,6 +83,8 @@ type GenerateResponse struct {
 	TokensUsed      int
 	TokensPerSecond float64
 	FinishReason    string
+	RequestID       modulecore.RequestID
+	ResponseID      modulecore.ResponseID
 }
 
 // LLMProvider はLLMプロバイダーの抽象化
@@ -147,6 +153,8 @@ type ChatResponse struct {
 	Message      ChatMessage
 	Done         bool
 	FinishReason string // "stop" or "tool_calls"
+	RequestID    modulecore.RequestID
+	ResponseID   modulecore.ResponseID
 }
 
 // ToolCallingProvider はtool calling対応のLLMプロバイダー

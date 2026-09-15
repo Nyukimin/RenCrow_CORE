@@ -10,7 +10,6 @@ import (
 
 type SynthesisRequest struct {
 	SessionID   core.SessionID   `json:"session_id,omitempty"`
-	ResponseID  core.ResponseID  `json:"response_id,omitempty"`
 	UtteranceID core.UtteranceID `json:"utterance_id,omitempty"`
 	CharacterID string           `json:"character_id,omitempty"`
 	VoiceID     string           `json:"voice_id,omitempty"`
@@ -30,10 +29,14 @@ type AudioChunk struct {
 }
 
 type SynthesisResult struct {
-	Chunks []AudioChunk `json:"chunks"`
+	RequestID  core.RequestID  `json:"request_id,omitempty"`
+	ResponseID core.ResponseID `json:"response_id,omitempty"`
+	Chunks     []AudioChunk    `json:"chunks"`
 }
 
 type SynthesisOutput struct {
+	RequestID  core.RequestID
+	ResponseID core.ResponseID
 	AudioPath  string
 	AudioURL   string
 	DurationMS int64

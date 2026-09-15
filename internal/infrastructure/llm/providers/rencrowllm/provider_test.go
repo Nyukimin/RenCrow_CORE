@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -48,9 +49,7 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second).
 		WithRenCrowExecution("shiro", "worker", "worker")
 	taskID := modulecore.NewTaskID()
-	requestID := modulecore.NewRequestID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
-		RequestID: requestID,
 		TraceID:   "trace-1",
 		TaskID:    taskID,
 		SessionID: "session-1",
@@ -69,7 +68,6 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		"agent_id":        "shiro",
 		"execution_role":  "worker",
 		"execution_alias": "worker",
-		"request_id":      string(requestID),
 		"trace_id":        "trace-1",
 		"task_id":         string(taskID),
 		"session_id":      "session-1",
@@ -81,9 +79,129 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
 	}
+	transportRequestID, _ := metadata["request_id"].(string)
+	if err := modulecore.RequestID(transportRequestID).Validate(); err != nil {
+		t.Fatalf("rencrow.request_id=%q is not a canonical transport ID: %v", transportRequestID, err)
+	}
 	if _, ok := metadata["job_id"]; ok {
 		t.Fatalf("rencrow metadata contains retired job_id: %#v", metadata)
 	}
+}
+
+func TestGatewayProviderGenerateOwnsCanonicalTransportRequestAndResponse(t *testing.T) {
+	owner := &llmTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header string
+	var metadataRequestID string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header = r.Header.Get("X-RenCrow-Request-ID")
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		metadata, _ := payload["rencrow"].(map[string]any)
+		metadataRequestID, _ = metadata["request_id"].(string)
+		w.Header().Set("X-Provider-Request-ID", "provider-request-1")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+
+	response, err := provider.Generate(ctx, llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owner.requests) != 1 || len(owner.responses) != 1 || len(owner.failed) != 0 {
+		t.Fatalf("receipt calls: requests=%d responses=%d failed=%d", len(owner.requests), len(owner.responses), len(owner.failed))
+	}
+	requestID := owner.requests[0].RequestID
+	if header != string(requestID) || metadataRequestID != string(requestID) {
+		t.Fatalf("request identity header=%q metadata=%q receipt=%q", header, metadataRequestID, requestID)
+	}
+	if response.RequestID != requestID || response.ResponseID != owner.responses[0].ResponseID {
+		t.Fatalf("response identity=%#v receipt=%#v", response, owner.responses[0])
+	}
+	if owner.responses[0].ExternalRef != "provider-request-1" {
+		t.Fatalf("provider external ref=%q", owner.responses[0].ExternalRef)
+	}
+}
+
+func TestGatewayProviderStreamingResponseKeepsTransportIdentity(t *testing.T) {
+	owner := &llmTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeToolChatSSE(w, `{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+
+	response, err := provider.Generate(ctx, llm.GenerateRequest{
+		Messages: []llm.Message{{Role: "user", Content: "run"}},
+		OnToken:  func(string) {},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owner.requests) != 1 || len(owner.responses) != 1 ||
+		response.RequestID != owner.requests[0].RequestID ||
+		response.ResponseID != owner.responses[0].ResponseID {
+		t.Fatalf("stream transport identity response=%#v requests=%#v responses=%#v", response, owner.requests, owner.responses)
+	}
+}
+
+func TestGatewayProviderNoResponseFailurePersistsRequestWithoutResponse(t *testing.T) {
+	owner := &llmTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := NewGatewayProviderWithOptions("", "worker", "http://llm.invalid", time.Second)
+	provider.client = &http.Client{Transport: llmRoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("dial failed")
+	})}
+
+	if _, err := provider.Generate(ctx, llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}}); err == nil {
+		t.Fatal("no-response failure was accepted")
+	}
+	if len(owner.requests) != 1 || len(owner.failed) != 1 || len(owner.responses) != 0 ||
+		owner.failed[0] != owner.requests[0].RequestID {
+		t.Fatalf("no-response receipts requests=%#v failed=%#v responses=%#v", owner.requests, owner.failed, owner.responses)
+	}
+}
+
+type llmRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f llmRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type llmTransportReceiptOwner struct {
+	requests  []domaintransport.Request
+	responses []domaintransport.Response
+	failed    []modulecore.RequestID
+}
+
+func (o *llmTransportReceiptOwner) BeginRequest(_ context.Context, operation string) (domaintransport.Request, error) {
+	request := domaintransport.Request{RequestID: modulecore.NewRequestID(), Operation: operation}
+	o.requests = append(o.requests, request)
+	return request, nil
+}
+
+func (o *llmTransportReceiptOwner) CompleteResponse(_ context.Context, requestID modulecore.RequestID, externalRef string) (domaintransport.Response, error) {
+	response := domaintransport.Response{ResponseID: modulecore.NewResponseID(), RequestID: requestID, ExternalRef: externalRef}
+	o.responses = append(o.responses, response)
+	return response, nil
+}
+
+func (o *llmTransportReceiptOwner) FailWithoutResponse(_ context.Context, requestID modulecore.RequestID, _ string) error {
+	o.failed = append(o.failed, requestID)
+	return nil
 }
 
 func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
@@ -97,9 +215,7 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 	defer server.Close()
 
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
-	requestID := modulecore.NewRequestID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
-		RequestID: requestID,
 		Initiator: "shiro",
 		Caller:    "heartbeat.backlog",
 		Purpose:   "process_backlog_item",
@@ -112,14 +228,16 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 
 	metadata, _ := payload["rencrow"].(map[string]any)
 	for key, want := range map[string]string{
-		"request_id": string(requestID),
-		"initiator":  "shiro",
-		"caller":     "heartbeat.backlog",
-		"purpose":    "process_backlog_item",
+		"initiator": "shiro",
+		"caller":    "heartbeat.backlog",
+		"purpose":   "process_backlog_item",
 	} {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
+	}
+	if err := modulecore.RequestID(metadata["request_id"].(string)).Validate(); err != nil {
+		t.Fatalf("rencrow.request_id is not canonical: %v", err)
 	}
 }
 

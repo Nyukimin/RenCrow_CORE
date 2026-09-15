@@ -71,7 +71,7 @@ func buildHealthService(cfg *config.Config) *healthapp.HealthService {
 		checks = append(checks, infrahealth.NewGatewayAliasCheck("gateway_"+agentID, baseURL, agentID, apiKey, timeout))
 	}
 	if cfg.Vision.Enabled {
-		analyzer, _, err := buildVisionRuntime(cfg)
+		analyzer, _, err := buildVisionClient(cfg)
 		if err != nil {
 			checks = append(checks, infrahealth.NewVisionCheck(nil))
 		} else {

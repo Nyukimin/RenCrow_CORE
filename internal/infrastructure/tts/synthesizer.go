@@ -2,6 +2,8 @@ package tts
 
 import (
 	"context"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type EmotionState struct {
@@ -27,11 +29,13 @@ type SynthesisInput struct {
 }
 
 type SynthesisOutput struct {
-	Provider      string `json:"provider"`
-	VoiceID       string `json:"voice_id,omitempty"`
-	AudioFilePath string `json:"audio_file_path"`
-	AudioURL      string `json:"audio_url,omitempty"`
-	DurationMS    int    `json:"audio_duration_ms,omitempty"`
+	RequestID     modulecore.RequestID  `json:"request_id,omitempty"`
+	ResponseID    modulecore.ResponseID `json:"response_id,omitempty"`
+	Provider      string                `json:"provider"`
+	VoiceID       string                `json:"voice_id,omitempty"`
+	AudioFilePath string                `json:"audio_file_path"`
+	AudioURL      string                `json:"audio_url,omitempty"`
+	DurationMS    int                   `json:"audio_duration_ms,omitempty"`
 }
 
 type Provider interface {

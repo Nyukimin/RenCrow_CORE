@@ -169,7 +169,6 @@ func (s *HeartbeatService) beginWorker(
 		return failBeforeWorker(fmt.Errorf("heartbeat execution identity: %w", err))
 	}
 	workerCtx = llm.WithExecutionObservation(workerCtx, llm.ExecutionObservation{
-		RequestID: modulecore.RequestID(scope.RequestID),
 		TaskID:    created.TaskID,
 		TraceID:   string(input.TraceID()),
 		SessionID: input.SessionID(),

@@ -8,25 +8,30 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type actionTestProvider struct {
-	err       error
-	actionID  modulecore.ActionID
-	attemptID modulecore.AttemptID
+	err          error
+	actionID     modulecore.ActionID
+	attemptID    modulecore.AttemptID
+	receiptBound bool
 }
 
 func (p *actionTestProvider) Name() string { return "test-provider" }
 
 func (p *actionTestProvider) Generate(ctx context.Context, _ llm.GenerateRequest) (llm.GenerateResponse, error) {
 	p.actionID, p.attemptID, _ = domainexecution.BoundActionAttemptFromContext(ctx)
+	_, p.receiptBound = domaintransport.ReceiptOwnerFromContext(ctx)
 	return llm.GenerateResponse{Content: "ok"}, p.err
 }
 
@@ -113,14 +118,22 @@ func TestActionProviderCreatesTaskRunForBackgroundLLMCall(t *testing.T) {
 		}
 	})
 	tasks := taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
+	transportStore, err := transportpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "transport"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := transportmanager.New(transportStore, actions)
 	inner := &actionTestProvider{}
-	wrapped, err := WithActionExecutionOwners(inner, actions, tasks, "mio")
+	wrapped, err := WithActionExecutionOwners(inner, actions, tasks, transport, "mio")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	if _, err := wrapped.Generate(context.Background(), llm.GenerateRequest{}); err != nil {
 		t.Fatal(err)
+	}
+	if !inner.receiptBound {
+		t.Fatal("LLM transport receipt owner was not bound to provider context")
 	}
 	stored, err := actions.ListActions(context.Background(), domainaction.Filter{})
 	if err != nil || len(stored) != 1 {

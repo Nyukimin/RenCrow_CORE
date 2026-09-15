@@ -171,9 +171,6 @@ func assertDailyNewsObservation(t *testing.T, got domainllm.ExecutionObservation
 	if got.TaskID != wantTaskID || got.TraceID != root.TraceID || got.SessionID != root.SessionID {
 		t.Fatalf("daily news observation = %+v, want task=%s trace=%s session=%s", got, wantTaskID, root.TraceID, root.SessionID)
 	}
-	if got.RequestID == "" || got.RequestID != root.RequestID {
-		t.Fatalf("daily news request ID changed: root=%q got=%q", root.RequestID, got.RequestID)
-	}
 }
 
 func assertDailyNewsContextDeadline(t *testing.T, root context.Context, contexts ...context.Context) {

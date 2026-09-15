@@ -61,7 +61,10 @@ func (a *TTSProviderAdapter) Synthesize(ctx context.Context, req moduletts.Synth
 		return moduletts.SynthesisResult{}, err
 	}
 	return moduletts.BuildSynthesisResult(req, moduletts.SynthesisOutput{
+		RequestID:  out.RequestID,
+		ResponseID: out.ResponseID,
 		AudioPath:  out.AudioFilePath,
+		AudioURL:   out.AudioURL,
 		DurationMS: int64(out.DurationMS),
 	}), nil
 }

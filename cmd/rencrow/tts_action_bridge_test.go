@@ -9,22 +9,27 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type actionTTSBridgeStub struct {
-	pushErr error
+	pushErr      error
+	receiptBound bool
 }
 
 func (s *actionTTSBridgeStub) StartSession(context.Context, orchestrator.TTSSessionStart) error {
 	return nil
 }
 
-func (s *actionTTSBridgeStub) PushText(context.Context, string, string, *moduletts.EmotionState) error {
+func (s *actionTTSBridgeStub) PushText(ctx context.Context, _ string, _ string, _ *moduletts.EmotionState) error {
+	_, s.receiptBound = domaintransport.ReceiptOwnerFromContext(ctx)
 	return s.pushErr
 }
 
@@ -34,7 +39,8 @@ func (s *actionTTSBridgeStub) EndSession(context.Context, string) error {
 
 func TestActionTTSBridgeCompletesSessionTaskRunActionAttempt(t *testing.T) {
 	tasks, actions := newTTSActionTestOwners(t)
-	bridge, err := newActionTTSBridge(&actionTTSBridgeStub{}, actions, tasks, "mio")
+	inner := &actionTTSBridgeStub{}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +49,9 @@ func TestActionTTSBridgeCompletesSessionTaskRunActionAttempt(t *testing.T) {
 	}
 	if err := bridge.PushText(context.Background(), "tts-session-1", "こんにちは", nil); err != nil {
 		t.Fatal(err)
+	}
+	if !inner.receiptBound {
+		t.Fatal("TTS transport receipt owner was not bound to synthesis context")
 	}
 	if err := bridge.EndSession(context.Background(), "tts-session-1"); err != nil {
 		t.Fatal(err)
@@ -53,7 +62,7 @@ func TestActionTTSBridgeCompletesSessionTaskRunActionAttempt(t *testing.T) {
 func TestActionTTSBridgeClosesFailureDuringPush(t *testing.T) {
 	tasks, actions := newTTSActionTestOwners(t)
 	sentinel := errors.New("TTS gateway unavailable")
-	bridge, err := newActionTTSBridge(&actionTTSBridgeStub{pushErr: sentinel}, actions, tasks, "mio")
+	bridge, err := newActionTTSBridge(&actionTTSBridgeStub{pushErr: sentinel}, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +73,15 @@ func TestActionTTSBridgeClosesFailureDuringPush(t *testing.T) {
 		t.Fatalf("PushText error=%v", err)
 	}
 	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusFailed, domainaction.AttemptStatusFailed, domaintask.StatusFailed)
+}
+
+func newTTSTransportTestOwner(t *testing.T, actions *actionmanager.Manager) *transportmanager.Manager {
+	t.Helper()
+	store, err := transportpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "transport"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return transportmanager.New(store, actions)
 }
 
 func newTTSActionTestOwners(t *testing.T) (*taskmanager.Manager, *actionmanager.Manager) {

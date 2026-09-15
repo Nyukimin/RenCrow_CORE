@@ -7,10 +7,13 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
 )
 
 func TestActionProviderCreatesAndCompletesStandaloneSTTExecution(t *testing.T) {
@@ -29,7 +32,12 @@ func TestActionProviderCreatesAndCompletesStandaloneSTTExecution(t *testing.T) {
 	}
 	tasks := taskmanager.New(taskStore, taskmanager.DefaultParallelLimits())
 	actions := actionmanager.New(actionStore)
-	provider, err := NewActionProvider(MockProvider{Text: "こんにちは"}, actions, tasks, "mio")
+	transportStore, err := transportpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "transport"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := &receiptAwareSTTProvider{MockProvider: MockProvider{Text: "こんにちは"}}
+	provider, err := NewActionProvider(inner, actions, tasks, transportmanager.New(transportStore, actions), "mio")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +48,9 @@ func TestActionProviderCreatesAndCompletesStandaloneSTTExecution(t *testing.T) {
 	result, err := provider.Transcribe(context.Background(), wav)
 	if err != nil || result.Text != "こんにちは" {
 		t.Fatalf("Transcribe result=%#v err=%v", result, err)
+	}
+	if !inner.receiptBound {
+		t.Fatal("STT transport receipt owner was not bound to provider context")
 	}
 	storedActions, err := actions.ListActions(context.Background(), domainaction.Filter{})
 	if err != nil || len(storedActions) != 1 {
@@ -64,4 +75,14 @@ func TestActionProviderCreatesAndCompletesStandaloneSTTExecution(t *testing.T) {
 	if task.Status != domaintask.StatusSucceeded || run.Status != domaintask.RunStatusSucceeded {
 		t.Fatalf("STT Task/Run lifecycle task=%#v run=%#v", task, run)
 	}
+}
+
+type receiptAwareSTTProvider struct {
+	MockProvider
+	receiptBound bool
+}
+
+func (p *receiptAwareSTTProvider) Transcribe(ctx context.Context, wav []byte) (Result, error) {
+	_, p.receiptBound = domaintransport.ReceiptOwnerFromContext(ctx)
+	return p.MockProvider.Transcribe(ctx, wav)
 }

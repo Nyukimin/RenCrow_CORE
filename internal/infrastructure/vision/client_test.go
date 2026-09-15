@@ -59,7 +59,7 @@ func TestClientAnalyzeUsesVisionMultipartContract(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	result, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-		RequestID:   requestID,
+		RequestID:   modulecore.RequestID(requestID),
 		SessionID:   "session-1",
 		Prompt:      "説明して",
 		Kind:        "image",
@@ -103,7 +103,7 @@ func TestClientAnalyzeRejectsInvalidRequestIDBeforeHTTP(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-				RequestID: tc.id,
+				RequestID: modulecore.RequestID(tc.id),
 				Data:      []byte("image"),
 			})
 			var serviceErr *ServiceError
@@ -150,7 +150,7 @@ func TestClientAnalyzeRejectsUnmatchedSuccessfulResponseRequestID(t *testing.T) 
 				t.Fatalf("NewClient: %v", err)
 			}
 			result, err := client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-				RequestID: requestID,
+				RequestID: modulecore.RequestID(requestID),
 				Data:      []byte("image"),
 			})
 			if !reflect.DeepEqual(result, domainvision.AnalyzeResult{}) {
@@ -184,7 +184,7 @@ func TestClientAnalyzePreservesVisionErrorCode(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 	_, err = client.Analyze(context.Background(), domainvision.AnalyzeRequest{
-		RequestID: requestID,
+		RequestID: modulecore.RequestID(requestID),
 		Filename:  "bad.txt",
 		Data:      []byte("bad"),
 	})

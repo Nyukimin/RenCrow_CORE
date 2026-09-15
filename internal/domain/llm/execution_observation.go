@@ -12,7 +12,6 @@ type executionObservationContextKey struct{}
 // ExecutionObservation is prompt-free metadata that identifies why CORE is
 // using an LLM. Existing correlation IDs remain authoritative.
 type ExecutionObservation struct {
-	RequestID modulecore.RequestID
 	TraceID   string
 	TaskID    modulecore.TaskID
 	SessionID string
@@ -22,8 +21,8 @@ type ExecutionObservation struct {
 }
 
 // WithExecutionObservation attaches one normalized observation to ctx. When a
-// background operation has no existing correlation ID, one request ID is
-// generated here and then reused for the lifetime of the returned context.
+// Transport RequestID is deliberately not part of this operation-level
+// observation; each provider call owns a fresh RequestID.
 func WithExecutionObservation(ctx context.Context, observation ExecutionObservation) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
@@ -38,9 +37,6 @@ func WithExecutionObservationDefaults(ctx context.Context, defaults ExecutionObs
 	current, ok := ExecutionObservationFromContext(ctx)
 	if !ok {
 		return WithExecutionObservation(ctx, defaults)
-	}
-	if current.RequestID == "" {
-		current.RequestID = defaults.RequestID
 	}
 	if current.TraceID == "" {
 		current.TraceID = defaults.TraceID
@@ -73,19 +69,12 @@ func ExecutionObservationFromContext(ctx context.Context) (ExecutionObservation,
 }
 
 func normalizeExecutionObservation(observation ExecutionObservation) ExecutionObservation {
-	observation.RequestID = modulecore.RequestID(strings.TrimSpace(string(observation.RequestID)))
 	observation.TraceID = strings.TrimSpace(observation.TraceID)
 	observation.TaskID = normalizeObservationTaskID(observation.TaskID)
 	observation.SessionID = strings.TrimSpace(observation.SessionID)
 	observation.Initiator = strings.TrimSpace(observation.Initiator)
 	observation.Caller = strings.TrimSpace(observation.Caller)
 	observation.Purpose = strings.TrimSpace(observation.Purpose)
-	if observation.RequestID == "" {
-		observation.RequestID = modulecore.NewRequestID()
-	} else if err := observation.RequestID.Validate(); err != nil {
-		// Non-canonical legacy values are not transport RequestIDs; replace.
-		observation.RequestID = modulecore.NewRequestID()
-	}
 	return observation
 }
 

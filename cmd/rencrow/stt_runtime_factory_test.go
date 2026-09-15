@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,8 +15,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
+	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
 	"golang.org/x/net/websocket"
 )
 
@@ -75,10 +79,17 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	actions := actionmanager.New(actionStore)
+	transportStore, err := transportpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "transport"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transports := transportmanager.New(transportStore, actions)
 	runtime := buildSTTRuntime(
 		cfg,
 		taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()),
-		actionmanager.New(actionStore),
+		actions,
+		transports,
 	)
 
 	mux := http.NewServeMux()
@@ -121,6 +132,17 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 		}
 		select {
 		case <-requestSeen:
+			requests, err := transports.ListRequests(context.Background(), domaintransport.RequestFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			responses, err := transports.ListResponses(context.Background(), domaintransport.ResponseFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(requests) != 1 || len(responses) != 1 || responses[0].RequestID != requests[0].RequestID {
+				t.Fatalf("STT transport receipts requests=%#v responses=%#v", requests, responses)
+			}
 			return
 		default:
 			t.Fatal("RenCrow_STT HTTP transcription contract was not called")

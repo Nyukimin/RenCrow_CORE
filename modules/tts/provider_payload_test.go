@@ -65,12 +65,3 @@ func TestBuildSynthesisPayloadUsesExplicitSpeedOverride(t *testing.T) {
 		t.Fatalf("BuildSynthesisPayload() = %#v", got)
 	}
 }
-
-func TestBuildRequestIDHeaderSanitizesPrefix(t *testing.T) {
-	if got := BuildRequestIDHeader(" idle/日本語_01 ", 3); got != "idle_01-0003" {
-		t.Fatalf("BuildRequestIDHeader() = %q", got)
-	}
-	if got := BuildRequestIDHeader(" 日本語 ", 2); got != "ttsreq-0002" {
-		t.Fatalf("BuildRequestIDHeader() fallback = %q", got)
-	}
-}

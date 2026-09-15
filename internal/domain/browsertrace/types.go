@@ -87,17 +87,17 @@ type APICoverageReport struct {
 }
 
 type NetworkRequest struct {
-	RequestID string            `json:"request_id"`
-	Method    string            `json:"method"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers,omitempty"`
+	ExternalRef string            `json:"external_ref"`
+	Method      string            `json:"method"`
+	URL         string            `json:"url"`
+	Headers     map[string]string `json:"headers,omitempty"`
 }
 
 type NetworkResponse struct {
-	RequestID string `json:"request_id"`
-	URL       string `json:"url,omitempty"`
-	Status    int    `json:"status,omitempty"`
-	Body      string `json:"body,omitempty"`
+	ExternalRef string `json:"external_ref"`
+	URL         string `json:"url,omitempty"`
+	Status      int    `json:"status,omitempty"`
+	Body        string `json:"body,omitempty"`
 }
 
 type Exchange struct {

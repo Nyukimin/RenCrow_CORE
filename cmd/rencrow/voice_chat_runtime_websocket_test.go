@@ -472,7 +472,7 @@ func TestVoiceChatInputAudioBridgeE2E_PostsWAVAndReturnsFinal(t *testing.T) {
 		TopP:        float64Ptr(0.9),
 		TopK:        intPtr(40),
 		MinP:        float64Ptr(0.0),
-	}, voiceDirect, nil))
+	}, voiceDirect, nil, voiceChatExecutionOwners{}))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -555,7 +555,7 @@ func TestVoiceChatInputAudioBridge_FinalizesBeforePublishingLLMEvents(t *testing
 	defer llm.Close()
 
 	mux := http.NewServeMux()
-	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil))
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil, voiceChatExecutionOwners{}))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 
@@ -705,7 +705,7 @@ func TestVoiceChatInputAudioBridge_FailsClosedWhenVoiceResultCannotBePublished(t
 			defer llm.Close()
 
 			mux := http.NewServeMux()
-			registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil))
+			registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, nil, voiceChatExecutionOwners{}))
 			bridge := httptest.NewServer(mux)
 			defer bridge.Close()
 
@@ -761,7 +761,7 @@ func TestVoiceChatInputAudioBridge_InterruptsIdleChatDuringVoiceSession(t *testi
 	idleDone := make(chan struct{})
 	idle := &recordingVoiceChatIdleNotifier{chatBusyDone: idleDone}
 	mux := http.NewServeMux()
-	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, idle))
+	registerVoiceChatRoutes(mux, handleVoiceChatInputAudioBridge("ws"+strings.TrimPrefix(llm.URL, "http")+"/v1/chat/audio/sessions", voiceChatInputAudioSettings{}, voiceDirect, idle, voiceChatExecutionOwners{}))
 	bridge := httptest.NewServer(mux)
 	defer bridge.Close()
 

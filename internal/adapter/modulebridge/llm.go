@@ -57,6 +57,8 @@ func (a *LLMProviderAdapter) Generate(ctx context.Context, req modulellm.Generat
 		Content:      resp.Content,
 		TokensUsed:   resp.TokensUsed,
 		FinishReason: resp.FinishReason,
+		RequestID:    resp.RequestID,
+		ResponseID:   resp.ResponseID,
 	}), nil
 }
 

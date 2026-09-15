@@ -91,7 +91,7 @@ func (p *visionRequestProcessor) Process(
 		}
 
 		emitVisionEvent(emit, "vision.request.started", visionEventContent(*item, "", ""), request)
-		requestID := string(modulecore.NewRequestID())
+		requestID := modulecore.NewRequestID()
 		result, err := p.analyzer.Analyze(ctx, domainvision.AnalyzeRequest{
 			RequestID:   requestID,
 			SessionID:   request.SessionID,

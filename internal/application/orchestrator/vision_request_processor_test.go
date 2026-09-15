@@ -81,7 +81,7 @@ func TestVisionRequestProcessorReplacesRawVisualMediaWithNormalizedContext(t *te
 	if err := modulecore.RequestID(analyzeRequest.RequestID).Validate(); err != nil {
 		t.Fatalf("request ID is not canonical: %q: %v", analyzeRequest.RequestID, err)
 	}
-	if analyzeRequest.RequestID == request.TraceID {
+	if string(analyzeRequest.RequestID) == request.TraceID {
 		t.Fatalf("request ID must be distinct from parent trace: %q", analyzeRequest.RequestID)
 	}
 	if analyzeRequest.SessionID != "session-1" {
@@ -149,13 +149,13 @@ func TestVisionRequestProcessorAllocatesDistinctRequestIDsAndPreservesTrace(t *t
 		if err := modulecore.RequestID(analyzed.RequestID).Validate(); err != nil {
 			t.Fatalf("request %d ID %q is not canonical: %v", index, analyzed.RequestID, err)
 		}
-		if analyzed.RequestID == request.TraceID {
+		if string(analyzed.RequestID) == request.TraceID {
 			t.Fatalf("request %d reused parent trace ID %q", index, analyzed.RequestID)
 		}
-		if _, exists := seen[analyzed.RequestID]; exists {
+		if _, exists := seen[string(analyzed.RequestID)]; exists {
 			t.Fatalf("request ID %q was reused", analyzed.RequestID)
 		}
-		seen[analyzed.RequestID] = struct{}{}
+		seen[string(analyzed.RequestID)] = struct{}{}
 		if analyzed.SessionID != request.SessionID || analyzed.Prompt != request.UserMessage {
 			t.Fatalf("request %d lost parent correlation: %+v", index, analyzed)
 		}

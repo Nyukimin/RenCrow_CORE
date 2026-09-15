@@ -32,7 +32,7 @@ func buildOrchestratorRuntime(
 	verificationRuntime verificationRuntime,
 ) {
 	newsCollector := appnewsbrief.NewToolCollectorWithProvider(agents.WorkerTools, configuredNewsSearchProvider(cfg))
-	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg)
+	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg, deps.taskManager, deps.actionManager, deps.transportManager)
 	if err != nil {
 		log.Fatalf("Failed to configure RenCrow_Vision: %v", err)
 	}

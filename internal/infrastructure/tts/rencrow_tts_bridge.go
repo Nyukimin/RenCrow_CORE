@@ -214,7 +214,7 @@ func (b *RenCrowTTSBridge) synthesizePlanRequest(ctx context.Context, sessionID 
 	result := renCrowTTSPlanResult{request: request}
 	startedAt := time.Now()
 	log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d", sessionID, request.chunkIndex, request.planIndex+1, planLength, moduletts.SpeechTextRuneCount(request.speechText))
-	body, err := b.postSynthesisWithRetry(ctx, request.requestBody, sessionID, request.chunkIndex)
+	transportResult, err := b.postSynthesisWithRetry(ctx, request.requestBody)
 	if err != nil {
 		log.Printf("[TTS] synthesis request failed: session=%s chunk=%d elapsed_ms=%d error=%v", sessionID, request.chunkIndex, time.Since(startedAt).Milliseconds(), err)
 		result.err = err
@@ -222,7 +222,7 @@ func (b *RenCrowTTSBridge) synthesizePlanRequest(ctx context.Context, sessionID 
 	}
 	log.Printf("[TTS] synthesis request done: session=%s chunk=%d elapsed_ms=%d", sessionID, request.chunkIndex, time.Since(startedAt).Milliseconds())
 
-	out, err := decodeGatewaySynthesisResponse(body)
+	out, err := decodeGatewaySynthesisResponse(transportResult.body)
 	if err != nil {
 		result.err = err
 		return result

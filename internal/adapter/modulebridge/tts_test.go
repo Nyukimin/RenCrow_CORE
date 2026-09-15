@@ -21,6 +21,8 @@ func (p *fakeInternalTTSProvider) Name() string {
 func (p *fakeInternalTTSProvider) Synthesize(_ context.Context, req internaltts.SynthesisInput) (internaltts.SynthesisOutput, error) {
 	p.req = req
 	return internaltts.SynthesisOutput{
+		RequestID:     core.NewRequestID(),
+		ResponseID:    core.NewResponseID(),
 		Provider:      "fake-tts",
 		VoiceID:       req.VoiceProfile.VoiceID,
 		AudioFilePath: "/tmp/audio.wav",
@@ -34,7 +36,6 @@ func TestTTSProviderAdapterSynthesize(t *testing.T) {
 
 	got, err := adapter.Synthesize(context.Background(), moduletts.SynthesisRequest{
 		SessionID:   core.SessionID("s1"),
-		ResponseID:  core.ResponseID("r1"),
 		UtteranceID: core.UtteranceID("u1"),
 		CharacterID: "mio",
 		VoiceID:     "female_01",
@@ -61,7 +62,8 @@ func TestTTSProviderAdapterSynthesize(t *testing.T) {
 		t.Fatalf("expected 1 audio chunk, got %+v", got.Chunks)
 	}
 	chunk := got.Chunks[0]
-	if chunk.Ref.SessionID != "s1" || chunk.Ref.ResponseID != "r1" || chunk.Ref.UtteranceID != "u1" {
+	if got.RequestID.Validate() != nil || got.ResponseID.Validate() != nil ||
+		chunk.Ref.SessionID != "s1" || chunk.Ref.ResponseID != got.ResponseID || chunk.Ref.UtteranceID != "u1" {
 		t.Fatalf("chunk ref was not mapped: %+v", chunk.Ref)
 	}
 	if chunk.AudioPath != "/tmp/audio.wav" || chunk.Duration != 1500*time.Millisecond {

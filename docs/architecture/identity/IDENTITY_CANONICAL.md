@@ -3649,6 +3649,20 @@ Step 03をcompleteとしない。
 - Failure / Problem: 複数のVision通信へ同一TraceIDをRequestIDとして渡し、成功応答の相関を検査していなかった。Cause: 会話の因果識別子と一回の通信要求の識別子を兼用した。Lesson / Invariant: 通信ごとの独立IDと応答照合は決定的なCORE境界の責務とする。Enforcement / Tests: 複数添付のID一意性、親Trace保持、header/form一致、不正入力で通信0件、欠落／不正／別IDの成功応答拒否をprocessor／HTTP contract testで検査する。
 - 本項のsource testは実Actorによる配備後の画像解析、Action／Attempt／Response Eventの完全な連結、全Identity工程の完了を代替しない。
 
+### Step 12 reconstruction: canonical transport receipt owner
+
+- `internal/application/transportmanager`をRequestID／ResponseID発行とreceipt遷移の唯一のCORE ownerとする。永続正本は`state/transport/transport_request.jsonl`と`transport_response.jsonl`であり、Action正本を複製せずTaskID／RunID／ActionID／AttemptID／TraceIDを参照する。
+- transport adapterは実I/O直前に`sent` Requestを保存し、応答受信時に同じRequestIDへResponseIDを一度だけ結ぶ。応答を受信しない終端失敗はRequestを`failed`にし、ResponseIDを生成しない。LLM streamも一つのHTTP responseとして扱う。
+- 一つのAttemptはsequence順に複数Requestを所有できる。TTS retryはretryごとに新しいRequestIDを発行し、SessionID／chunk index由来の旧header値を再利用しない。ActionID／AttemptIDの終了は引き続きAction ownerだけが行う。
+- LLMの`ExecutionObservation`とprompt生成前receiptはtransport RequestIDを発行しない。Gateway adapterが発行したRequestID／ResponseIDだけをProvider結果とprompt diagnosticへ投影する。Provider header等の外部IDは`ExternalRef`、wire上の`tool_call_id`は`ProviderToolCallID`としてのみ保持する。
+- STTはcallerのRequestIDを受け取らず、Gateway adapterがRequestID／ResponseIDを発行する。Visionは添付ごとにprocessorが発行した正規RequestIDをtransport ownerが検証して採用し、echo一致後の結果へResponseIDを付与する。LLM、STT、TTS、Visionのproduction wrapperは既存Task／Run上のAction／Attemptをcontextへ束縛してからtransport ownerを接続する。
+- Browser traceのCDP `requestId`はCanonical RequestIDではないため、domainでは`ExternalRef`として扱う。raw inputのprovider wire keyは読めるが、正規IDへ昇格しない。
+- restart時は先にAction ownerが中断Action／Attemptを終端化し、その後transport ownerが対応する`sent` RequestだけをResponseなしの`failed`へ遷移する。参照Action／Attempt欠落時はfail closedとし、別identityを生成しない。
+- **Failure / Problem:** operation-level LLM観測が一つのRequestIDを複数Provider callへ再利用し、TTS retryもSessionIDとchunk indexから同じheader値を再生成していた。STT／Visionの成功応答にはCanonical ResponseIDがなかった。
+- **Cause:** 実行理由、公開再生相関、Provider外部相関、一回のtransport通信を同じRequest／Response名で扱い、送受信receiptのownerがなかった。
+- **Lesson / Invariant:** RequestIDは一回の送信、ResponseIDは実際に受信した対応応答だけを表す。実行identityやProvider IDから導出せず、Action／Attempt参照をreceipt保存前にowner APIで検証する。
+- **Enforcement / Tests:** multi-request Attempt、retryごとのID一意性、stream、no-response failure、外部ID隔離、Action lineage拒否、JSONL再open、restart回復、旧LLM observation／TTS helper／Browser RequestID／ToolCallID zero scanを検査する。配備後の実Provider、認証済Voice／Vision、再起動後の実receipt検査が完了するまでStep 12を完了扱いにしない。
+
 ### Step 12 follow-up: Subagent execution context binding
 
 - Subagent ManagerがCORE所有のSuperAgent runtime contextを受け取った場合、同じTaskID・RunID・TraceIDを既存のexecution contextへ接続してから開始記録、LLM呼出し、Tool実行へ進む。新しいIDを発行せず、TaskからTraceを導出しない。

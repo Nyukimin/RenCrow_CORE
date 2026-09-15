@@ -8,31 +8,34 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type ActionProvider struct {
-	inner   Provider
-	actions *actionmanager.Manager
-	tasks   *taskmanager.Manager
-	actorID string
+	inner     Provider
+	actions   *actionmanager.Manager
+	tasks     *taskmanager.Manager
+	transport *transportmanager.Manager
+	actorID   string
 }
 
-func NewActionProvider(inner Provider, actions *actionmanager.Manager, tasks *taskmanager.Manager, actorID string) (*ActionProvider, error) {
+func NewActionProvider(inner Provider, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager, actorID string) (*ActionProvider, error) {
 	if inner == nil {
 		return nil, errors.New("STT provider is required")
 	}
-	if actions == nil || tasks == nil {
+	if actions == nil || tasks == nil || transport == nil {
 		return nil, errors.New("STT execution owners are required")
 	}
 	actorID = strings.TrimSpace(actorID)
 	if actorID == "" {
 		return nil, errors.New("STT actor_id is required")
 	}
-	return &ActionProvider{inner: inner, actions: actions, tasks: tasks, actorID: actorID}, nil
+	return &ActionProvider{inner: inner, actions: actions, tasks: tasks, transport: transport, actorID: actorID}, nil
 }
 
 func (p *ActionProvider) Name() string {
@@ -58,6 +61,10 @@ func (p *ActionProvider) Transcribe(ctx context.Context, wav []byte) (result Res
 		return Result{}, fmt.Errorf("create STT action: %w", err)
 	}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
+	if err != nil {
+		return Result{}, err
+	}
+	ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, p.transport)
 	if err != nil {
 		return Result{}, err
 	}

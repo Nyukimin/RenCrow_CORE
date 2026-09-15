@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 )
 
 func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T) {
@@ -30,6 +32,7 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"gateway_service": "tts-gateway",
+				"request_id":      r.Header.Get("X-RenCrow-TTS-Request-Id"),
 				"voice_id":        "mio",
 				"target_id":       "target-a",
 				"audio_path":      "/audio/target-a/token",
@@ -57,7 +60,12 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 		Speed:     1.2,
 		Timeout:   time.Second,
 	})
-	out, err := provider.Synthesize(context.Background(), SynthesisInput{
+	owner := &ttsTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := provider.Synthesize(ctx, SynthesisInput{
 		Text:       "テストです。",
 		OutputDir:  t.TempDir(),
 		FilePrefix: "gateway-test",
@@ -70,6 +78,9 @@ func TestGatewayProviderSynthesizesAndDownloadsThroughGatewayRelay(t *testing.T)
 	}
 	if synthesisCalls != 1 || audioCalls != 1 {
 		t.Fatalf("calls synthesis=%d audio=%d", synthesisCalls, audioCalls)
+	}
+	if len(owner.requests) != 2 || len(owner.responses) != 2 || owner.requests[0].RequestID == owner.requests[1].RequestID {
+		t.Fatalf("multi-request Attempt receipts requests=%#v responses=%#v", owner.requests, owner.responses)
 	}
 	if out.Provider != "tts-gateway" || out.VoiceID != "mio" {
 		t.Fatalf("output = %+v", out)

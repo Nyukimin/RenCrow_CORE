@@ -10,18 +10,21 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type actionTTSBridge struct {
-	inner   orchestrator.TTSBridge
-	actions *actionmanager.Manager
-	tasks   *taskmanager.Manager
-	actorID string
+	inner     orchestrator.TTSBridge
+	actions   *actionmanager.Manager
+	tasks     *taskmanager.Manager
+	transport *transportmanager.Manager
+	actorID   string
 
 	mu       sync.Mutex
 	sessions map[string]ttsActionSession
@@ -39,11 +42,11 @@ type ttsActionSession struct {
 	ownsRun  bool
 }
 
-func newActionTTSBridge(inner orchestrator.TTSBridge, actions *actionmanager.Manager, tasks *taskmanager.Manager, actorID string) (orchestrator.TTSBridge, error) {
+func newActionTTSBridge(inner orchestrator.TTSBridge, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager, actorID string) (orchestrator.TTSBridge, error) {
 	if inner == nil {
 		return nil, nil
 	}
-	if actions == nil || tasks == nil {
+	if actions == nil || tasks == nil || transport == nil {
 		return nil, errors.New("TTS execution owners are required")
 	}
 	actorID = strings.TrimSpace(actorID)
@@ -51,11 +54,12 @@ func newActionTTSBridge(inner orchestrator.TTSBridge, actions *actionmanager.Man
 		return nil, errors.New("TTS actor_id is required")
 	}
 	base := &actionTTSBridge{
-		inner:    inner,
-		actions:  actions,
-		tasks:    tasks,
-		actorID:  actorID,
-		sessions: make(map[string]ttsActionSession),
+		inner:     inner,
+		actions:   actions,
+		tasks:     tasks,
+		transport: transport,
+		actorID:   actorID,
+		sessions:  make(map[string]ttsActionSession),
 	}
 	if display, ok := inner.(orchestrator.TTSDisplayBridge); ok {
 		return &actionTTSDisplayBridge{actionTTSBridge: base, displayInner: display}, nil
@@ -82,6 +86,10 @@ func (b *actionTTSBridge) StartSession(ctx context.Context, req orchestrator.TTS
 		return fmt.Errorf("create TTS action: %w", err)
 	}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
+	if err != nil {
+		return err
+	}
+	ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, b.transport)
 	if err != nil {
 		return err
 	}
@@ -169,6 +177,9 @@ func (b *actionTTSBridge) sessionContext(ctx context.Context, sessionID string) 
 		}
 	}
 	ownedCtx, err := domainexecution.WithChildBoundActionAttempt(ownedCtx, session.action.ActionID, session.attempt.AttemptID)
+	if err == nil {
+		ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, b.transport)
+	}
 	return session, ownedCtx, err
 }
 

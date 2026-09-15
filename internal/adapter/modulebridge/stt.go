@@ -47,7 +47,9 @@ func (a *STTProviderAdapter) Transcribe(ctx context.Context, req modulestt.Trans
 	if err != nil {
 		return modulestt.TranscriptionResult{}, err
 	}
-	return modulestt.BuildTranscriptionResult(req, modulestt.TranscriptionOutput{
+	return modulestt.BuildTranscriptionResult(modulestt.TranscriptionOutput{
+		RequestID:    result.RequestID,
+		ResponseID:   result.ResponseID,
 		Text:         result.Text,
 		Language:     result.Language,
 		DurationSec:  result.Duration,

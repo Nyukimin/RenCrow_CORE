@@ -293,6 +293,38 @@ func (m *Manager) ValidateToolAttempt(ctx context.Context, actionID modulecore.A
 	})
 }
 
+// ValidateAttemptLineage verifies that one active Action Attempt belongs to
+// the supplied Task Run. Transport owners use this before minting RequestID.
+func (m *Manager) ValidateAttemptLineage(ctx context.Context, actionID modulecore.ActionID, attemptID modulecore.AttemptID, taskID modulecore.TaskID, runID modulecore.RunID) error {
+	if err := validateContext(ctx); err != nil {
+		return err
+	}
+	if err := actionID.Validate(); err != nil {
+		return fmt.Errorf("action_id is invalid: %w", err)
+	}
+	if err := attemptID.Validate(); err != nil {
+		return fmt.Errorf("attempt_id is invalid: %w", err)
+	}
+	if err := taskID.Validate(); err != nil {
+		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if err := runID.Validate(); err != nil {
+		return fmt.Errorf("run_id is invalid: %w", err)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.store.ReadTransaction(ctx, func(tx Store) error {
+		action, _, err := m.currentPair(tx, ctx, actionID, attemptID)
+		if err != nil {
+			return err
+		}
+		if action.TaskID != taskID || action.RunID != runID {
+			return fmt.Errorf("%w: transport lineage does not match Action Task Run", ErrAttemptConflict)
+		}
+		return nil
+	})
+}
+
 // CompleteToolAttempt maps one ToolRunner result to the terminal Action and Attempt state.
 func (m *Manager) CompleteToolAttempt(ctx context.Context, actionID modulecore.ActionID, attemptID modulecore.AttemptID, response *tool.ToolResponse, toolErr error) error {
 	if ctx == nil {

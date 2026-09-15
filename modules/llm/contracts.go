@@ -52,6 +52,7 @@ type GenerateResponse struct {
 	Content      string          `json:"content"`
 	TokensUsed   int             `json:"tokens_used,omitempty"`
 	FinishReason string          `json:"finish_reason,omitempty"`
+	RequestID    core.RequestID  `json:"request_id,omitempty"`
 	ResponseID   core.ResponseID `json:"response_id,omitempty"`
 }
 

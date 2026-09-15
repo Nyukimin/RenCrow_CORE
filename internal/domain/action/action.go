@@ -20,6 +20,7 @@ const (
 	KindDCI              Kind = "dci"
 	KindSTT              Kind = "stt"
 	KindTTS              Kind = "tts"
+	KindVision           Kind = "vision"
 	KindPlayback         Kind = "playback"
 	KindPatchApply       Kind = "patch_apply"
 	KindExternalSend     Kind = "external_send"
@@ -107,7 +108,7 @@ func (a Action) Validate() error {
 
 func ValidKind(kind Kind) bool {
 	switch kind {
-	case KindTool, KindLLM, KindDCI, KindSTT, KindTTS, KindPlayback,
+	case KindTool, KindLLM, KindDCI, KindSTT, KindTTS, KindVision, KindPlayback,
 		KindPatchApply, KindExternalSend, KindExternalPRSubmit,
 		KindVerification, KindMemoryPromotion, KindPolicyMediation:
 		return true

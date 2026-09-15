@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -63,7 +64,7 @@ func NewClient(baseURL string, timeout time.Duration) (*Client, error) {
 }
 
 func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeRequest) (domainvision.AnalyzeResult, error) {
-	if err := modulecore.RequestID(request.RequestID).Validate(); err != nil {
+	if err := request.RequestID.Validate(); err != nil {
 		return domainvision.AnalyzeResult{}, &ServiceError{
 			Code:    visionInvalidRequestIDCode,
 			Message: "Vision request ID must be canonical",
@@ -74,7 +75,7 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 	fields := map[string]string{
 		"prompt":        request.Prompt,
 		"kind":          request.Kind,
-		"request_id":    request.RequestID,
+		"request_id":    string(request.RequestID),
 		"session_id":    request.SessionID,
 		"language":      request.Language,
 		"max_frames":    strconv.Itoa(request.MaxFrames),
@@ -113,13 +114,36 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 	}
 	httpRequest.Header.Set("Content-Type", writer.FormDataContentType())
 	httpRequest.Header.Set("Accept", "application/json")
-	httpRequest.Header.Set("X-Request-Id", request.RequestID)
+	httpRequest.Header.Set("X-Request-Id", string(request.RequestID))
 
+	owner, owned := domaintransport.ReceiptOwnerFromContext(ctx)
+	if owned {
+		assigned, ok := owner.(domaintransport.AssignedRequestReceiptOwner)
+		if !ok {
+			return domainvision.AnalyzeResult{}, fmt.Errorf("Vision transport owner cannot persist assigned RequestID")
+		}
+		if _, err := assigned.BeginAssignedRequest(ctx, "vision.analyze", request.RequestID); err != nil {
+			return domainvision.AnalyzeResult{}, fmt.Errorf("begin Vision transport request: %w", err)
+		}
+	}
 	response, err := c.httpClient.Do(httpRequest)
 	if err != nil {
+		if owned {
+			if receiptErr := owner.FailWithoutResponse(context.WithoutCancel(ctx), request.RequestID, err.Error()); receiptErr != nil {
+				return domainvision.AnalyzeResult{}, fmt.Errorf("vision request failed: %w; persist transport failure: %v", err, receiptErr)
+			}
+		}
 		return domainvision.AnalyzeResult{}, fmt.Errorf("vision request failed: %w", err)
 	}
 	defer response.Body.Close()
+	responseID := modulecore.NewResponseID()
+	if owned {
+		receipt, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), request.RequestID, visionProviderExternalRef(response))
+		if receiptErr != nil {
+			return domainvision.AnalyzeResult{}, fmt.Errorf("persist Vision transport response: %w", receiptErr)
+		}
+		responseID = receipt.ResponseID
+	}
 	payload, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes+1))
 	if err != nil {
 		return domainvision.AnalyzeResult{}, fmt.Errorf("read vision response: %w", err)
@@ -139,8 +163,8 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 			Message:    firstNonEmpty(result.Message, http.StatusText(response.StatusCode)),
 		}
 	}
-	echoedRequestID := modulecore.RequestID(result.RequestID)
-	if err := echoedRequestID.Validate(); err != nil || string(echoedRequestID) != request.RequestID {
+	echoedRequestID := result.RequestID
+	if err := echoedRequestID.Validate(); err != nil || echoedRequestID != request.RequestID {
 		return domainvision.AnalyzeResult{}, &ServiceError{
 			StatusCode: response.StatusCode,
 			Code:       visionIdentityMismatchCode,
@@ -154,7 +178,17 @@ func (c *Client) Analyze(ctx context.Context, request domainvision.AnalyzeReques
 			Message:    "RenCrow_Vision returned an empty result",
 		}
 	}
+	result.ResponseID = responseID
 	return result, nil
+}
+
+func visionProviderExternalRef(response *http.Response) string {
+	for _, key := range []string{"X-Provider-Request-ID", "X-Request-ID", "Request-ID"} {
+		if value := strings.TrimSpace(response.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *Client) Health(ctx context.Context) (domainvision.HealthReport, error) {

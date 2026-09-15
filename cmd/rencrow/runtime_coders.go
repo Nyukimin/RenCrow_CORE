@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -132,7 +135,7 @@ func coderOutputBySlotName(name string, coder1, coder2, coder3, coder4 **coderAd
 }
 
 // setupCoders は Config から Coder1-4 を初期化（v4.1 Agent Persona 対応）
-func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder2, coder3, coder4 *coderAdapter) {
+func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager) (coder1, coder2, coder3, coder4 *coderAdapter) {
 	// Shared LightMemory instances (セッション単位で共有)
 	var globalLightMemory *agent.LightMemory
 
@@ -171,6 +174,7 @@ func setupCoders(cfg *config.Config, busyTracker *llmBusyTracker) (coder1, coder
 			continue
 		}
 		provider = trackLLMProvider(strings.ToLower(plan.Name), provider, busyTracker)
+		provider = requireActionOwnedLLMProvider(strings.ToLower(plan.Name), provider, actions, tasks, transport)
 
 		// CoderAgent 作成
 		domainCoder := agent.NewCoderAgent(provider, nil, nil, cfg.Prompts.CoderProposal)

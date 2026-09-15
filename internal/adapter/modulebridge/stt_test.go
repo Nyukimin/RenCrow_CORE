@@ -31,6 +31,8 @@ func (p *fakeInternalSTTProvider) Health(context.Context) internalstt.Health {
 func (p *fakeInternalSTTProvider) Transcribe(_ context.Context, wav []byte) (internalstt.Result, error) {
 	p.audio = wav
 	return internalstt.Result{
+		RequestID:    core.NewRequestID(),
+		ResponseID:   core.NewResponseID(),
 		Text:         "こんにちは",
 		Language:     "ja",
 		Duration:     1.25,
@@ -53,9 +55,8 @@ func TestSTTProviderAdapterTranscribe(t *testing.T) {
 	}
 
 	got, err := adapter.Transcribe(context.Background(), modulestt.TranscriptionRequest{
-		RequestID: core.RequestID("req1"),
-		Audio:     []byte("wav"),
-		Format:    modulestt.AudioFormatWAV,
+		Audio:  []byte("wav"),
+		Format: modulestt.AudioFormatWAV,
 	})
 	if err != nil {
 		t.Fatalf("Transcribe returned error: %v", err)
@@ -63,7 +64,7 @@ func TestSTTProviderAdapterTranscribe(t *testing.T) {
 	if string(provider.audio) != "wav" {
 		t.Fatalf("audio was not forwarded: %q", string(provider.audio))
 	}
-	if got.RequestID != "req1" || got.Text != "こんにちは" || got.Language != "ja" {
+	if got.RequestID.Validate() != nil || got.ResponseID.Validate() != nil || got.Text != "こんにちは" || got.Language != "ja" {
 		t.Fatalf("result fields were not mapped: %+v", got)
 	}
 	if got.Duration != 1250*time.Millisecond {

@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
@@ -27,10 +28,10 @@ type sttRuntime struct {
 	Module         modulestt.Provider
 }
 
-func buildSTTRuntime(cfg *config.Config, tasks *taskmanager.Manager, actions *actionmanager.Manager) sttRuntime {
+func buildSTTRuntime(cfg *config.Config, tasks *taskmanager.Manager, actions *actionmanager.Manager, transport *transportmanager.Manager) sttRuntime {
 	provider := buildSTTProvider(cfg)
 	if provider != nil {
-		ownedProvider, err := sttinfra.NewActionProvider(provider, actions, tasks, "mio")
+		ownedProvider, err := sttinfra.NewActionProvider(provider, actions, tasks, transport, "mio")
 		if err != nil {
 			log.Fatalf("Failed to connect STT provider to execution owners: %v", err)
 		}

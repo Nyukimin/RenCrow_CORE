@@ -17,7 +17,7 @@ type voiceChatRuntime struct {
 	WSHandler  http.Handler
 }
 
-func buildVoiceChatRuntime(cfg *config.Config, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier) voiceChatRuntime {
+func buildVoiceChatRuntime(cfg *config.Config, voiceDirect voiceDirectFinalHandler, idleNotifier orchestrator.IdleNotifier, owners voiceChatExecutionOwners) voiceChatRuntime {
 	enabled := voiceChatEnabledFromEnv()
 	gatewayURL := inferVoiceChatGatewayURL(cfg)
 	inputMode := voiceInputModeFromEnv()
@@ -26,7 +26,7 @@ func buildVoiceChatRuntime(cfg *config.Config, voiceDirect voiceDirectFinalHandl
 		Enabled:    plan.Enabled,
 		GatewayURL: plan.GatewayURL,
 		InputMode:  plan.InputMode,
-		WSHandler:  resolveVoiceChatWebSocketHandler(plan, voiceChatInputAudioSettingsFromConfig(cfg), voiceDirect, idleNotifier),
+		WSHandler:  resolveVoiceChatWebSocketHandler(plan, voiceChatInputAudioSettingsFromConfig(cfg), voiceDirect, idleNotifier, owners),
 	}
 }
 

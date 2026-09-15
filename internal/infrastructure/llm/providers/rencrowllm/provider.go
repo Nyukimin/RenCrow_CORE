@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const defaultBaseURL = "http://127.0.0.1:8090"
@@ -148,18 +150,29 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 		gatewayReq["temperature"] = req.Temperature
 	}
 
+	requestID, receiptOwner, err := beginLLMTransport(ctx, gatewayReq, "llm.generate")
+	if err != nil {
+		return llm.GenerateResponse{}, err
+	}
 	reqBody, err := json.Marshal(gatewayReq)
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.GenerateResponse{}, receiptErr
+		}
 		return llm.GenerateResponse{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	// HTTPリクエスト作成
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.GenerateResponse{}, receiptErr
+		}
 		return llm.GenerateResponse{}, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-RenCrow-Request-ID", string(requestID))
 	if p.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
@@ -167,9 +180,16 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	// リクエスト実行
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.GenerateResponse{}, receiptErr
+		}
 		return llm.GenerateResponse{}, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
+	responseID, err := completeLLMTransport(ctx, receiptOwner, requestID, providerExternalRef(resp))
+	if err != nil {
+		return llm.GenerateResponse{}, err
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -177,7 +197,10 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	}
 
 	if streaming {
-		return p.readChatCompletionsStream(resp.Body, req.OnToken)
+		result, err := p.readChatCompletionsStream(resp.Body, req.OnToken)
+		result.RequestID = requestID
+		result.ResponseID = responseID
+		return result, err
 	}
 
 	// レスポンスパース
@@ -213,6 +236,8 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 		Content:      content,
 		TokensUsed:   gatewayResp.Usage.TotalTokens,
 		FinishReason: finishReason,
+		RequestID:    requestID,
+		ResponseID:   responseID,
 	}, nil
 }
 
@@ -295,32 +320,105 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 		gatewayReq["temperature"] = req.Temperature
 	}
 
+	requestID, receiptOwner, err := beginLLMTransport(ctx, gatewayReq, "llm.chat")
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
 	reqBody, err := json.Marshal(gatewayReq)
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.ChatResponse{}, receiptErr
+		}
 		return llm.ChatResponse{}, fmt.Errorf("failed to marshal chat request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/chat/completions", bytes.NewReader(reqBody))
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.ChatResponse{}, receiptErr
+		}
 		return llm.ChatResponse{}, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-RenCrow-Request-ID", string(requestID))
 	if p.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
+		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
+			return llm.ChatResponse{}, receiptErr
+		}
 		return llm.ChatResponse{}, fmt.Errorf("failed to execute chat request: %w", err)
 	}
 	defer resp.Body.Close()
+	responseID, err := completeLLMTransport(ctx, receiptOwner, requestID, providerExternalRef(resp))
+	if err != nil {
+		return llm.ChatResponse{}, err
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return llm.ChatResponse{}, fmt.Errorf("gateway chat API error: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	return readToolChatCompletionsStream(resp.Body)
+	result, err := readToolChatCompletionsStream(resp.Body)
+	result.RequestID = requestID
+	result.ResponseID = responseID
+	return result, err
+}
+
+func beginLLMTransport(ctx context.Context, payload map[string]interface{}, operation string) (modulecore.RequestID, domaintransport.ReceiptOwner, error) {
+	owner, owned := domaintransport.ReceiptOwnerFromContext(ctx)
+	requestID := modulecore.NewRequestID()
+	if owned {
+		request, err := owner.BeginRequest(ctx, operation)
+		if err != nil {
+			return "", nil, fmt.Errorf("begin %s transport request: %w", operation, err)
+		}
+		requestID = request.RequestID
+	}
+	metadata, _ := payload["rencrow"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+		payload["rencrow"] = metadata
+	}
+	metadata["request_id"] = string(requestID)
+	return requestID, owner, nil
+}
+
+func completeLLMTransport(ctx context.Context, owner domaintransport.ReceiptOwner, requestID modulecore.RequestID, externalRef string) (modulecore.ResponseID, error) {
+	if owner == nil {
+		return modulecore.NewResponseID(), nil
+	}
+	response, err := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, externalRef)
+	if err != nil {
+		return "", fmt.Errorf("persist LLM transport response: %w", err)
+	}
+	return response.ResponseID, nil
+}
+
+func failLLMTransport(ctx context.Context, owner domaintransport.ReceiptOwner, requestID modulecore.RequestID, cause error) error {
+	if owner == nil {
+		return nil
+	}
+	if err := owner.FailWithoutResponse(context.WithoutCancel(ctx), requestID, cause.Error()); err != nil {
+		return fmt.Errorf("persist LLM transport failure: %w", err)
+	}
+	return nil
+}
+
+func providerExternalRef(response *http.Response) string {
+	if response == nil {
+		return ""
+	}
+	for _, key := range []string{"X-Provider-Request-ID", "X-Request-ID", "Request-ID"} {
+		if value := strings.TrimSpace(response.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func addReasoningEffort(payload map[string]interface{}, effort llm.ReasoningEffort) error {
@@ -354,7 +452,6 @@ func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, paylo
 		Purpose:   "unattributed",
 	})
 	observation, _ := llm.ExecutionObservationFromContext(observationCtx)
-	addNonEmptyMetadata(metadata, "request_id", string(observation.RequestID))
 	addNonEmptyMetadata(metadata, "trace_id", observation.TraceID)
 	addNonEmptyMetadata(metadata, "task_id", string(observation.TaskID))
 	addNonEmptyMetadata(metadata, "session_id", observation.SessionID)

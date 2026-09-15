@@ -17,7 +17,7 @@ func TestBuildVisionRuntimeUsesOnlyRenCrowVisionEndpoint(t *testing.T) {
 			MaxFrames:     8,
 		},
 	}
-	analyzer, options, err := buildVisionRuntime(cfg)
+	analyzer, options, err := buildVisionClient(cfg)
 	if err != nil {
 		t.Fatalf("buildVisionRuntime: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestBuildVisionRuntimeKeepsDisabledVisionUnavailable(t *testing.T) {
 		MaxVideoBytes: 100 << 20,
 		MaxFrames:     8,
 	}}
-	analyzer, _, err := buildVisionRuntime(cfg)
+	analyzer, _, err := buildVisionClient(cfg)
 	if err != nil {
 		t.Fatalf("buildVisionRuntime: %v", err)
 	}

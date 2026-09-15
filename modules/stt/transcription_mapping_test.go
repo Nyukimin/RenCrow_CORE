@@ -8,7 +8,10 @@ import (
 )
 
 func TestBuildTranscriptionResult(t *testing.T) {
-	got := BuildTranscriptionResult(TranscriptionRequest{RequestID: "req1"}, TranscriptionOutput{
+	requestID, responseID := core.NewRequestID(), core.NewResponseID()
+	got := BuildTranscriptionResult(TranscriptionOutput{
+		RequestID:   requestID,
+		ResponseID:  responseID,
 		Text:        "こんにちは",
 		Language:    "ja",
 		DurationSec: 1.25,
@@ -20,7 +23,7 @@ func TestBuildTranscriptionResult(t *testing.T) {
 		ProcessingMS: 345,
 	})
 
-	if got.RequestID != "req1" || got.Text != "こんにちは" || got.Language != "ja" {
+	if got.RequestID != requestID || got.ResponseID != responseID || got.Text != "こんにちは" || got.Language != "ja" {
 		t.Fatalf("result fields were not mapped: %+v", got)
 	}
 	if got.Duration != 1250*time.Millisecond {

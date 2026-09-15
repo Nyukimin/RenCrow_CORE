@@ -142,7 +142,6 @@ func importSummaryRecord(t *testing.T, ctx context.Context, store StagingStore, 
 }
 
 func TestSummarizeBodyReturnsBoundedResultAndKnowledgeObservation(t *testing.T) {
-	requestID := modulecore.NewRequestID()
 	taskID := modulecore.NewTaskID()
 	traceID := "trace_summary_body"
 	sessionID := "session_summary_body"
@@ -160,7 +159,6 @@ func TestSummarizeBodyReturnsBoundedResultAndKnowledgeObservation(t *testing.T) 
 		return llm.GenerateResponse{Content: `{"summary":"本文の要点","evidence_ids":[1]}`}, nil
 	}}
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
-		RequestID: requestID,
 		TraceID:   traceID,
 		TaskID:    taskID,
 		SessionID: sessionID,
@@ -180,7 +178,7 @@ func TestSummarizeBodyReturnsBoundedResultAndKnowledgeObservation(t *testing.T) 
 	if got.BodySHA256 != externalLinkBodySHAForText(body) || got.Chunks != 1 {
 		t.Fatalf("unexpected summary identity: %+v", got)
 	}
-	if !observedOK || observed.RequestID != requestID || observed.TraceID != traceID || observed.TaskID != taskID || observed.SessionID != sessionID {
+	if !observedOK || observed.TraceID != traceID || observed.TaskID != taskID || observed.SessionID != sessionID {
 		t.Fatalf("canonical observation identity was not preserved: ok=%t observation=%+v", observedOK, observed)
 	}
 	if observed.Initiator != "shiro" || observed.Caller != ExternalBodySummaryCaller || observed.Purpose != ExternalLinkSummaryPurpose {

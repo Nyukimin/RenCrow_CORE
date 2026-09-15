@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	"github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
@@ -104,11 +105,11 @@ func (p *GatewayProvider) Synthesize(ctx context.Context, in SynthesisInput) (Sy
 	if err != nil {
 		return SynthesisOutput{}, fmt.Errorf("marshal RenCrow_TTS Gateway request: %w", err)
 	}
-	body, err := p.bridge.postSynthesisWithRetry(ctx, reqBody, in.FilePrefix, 0)
+	transportResult, err := p.bridge.postSynthesisWithRetry(ctx, reqBody)
 	if err != nil {
 		return SynthesisOutput{}, err
 	}
-	out, err := decodeGatewaySynthesisResponse(body)
+	out, err := decodeGatewaySynthesisResponse(transportResult.body)
 	if err != nil {
 		return SynthesisOutput{}, err
 	}
@@ -117,6 +118,8 @@ func (p *GatewayProvider) Synthesize(ctx context.Context, in SynthesisInput) (Sy
 		return SynthesisOutput{}, err
 	}
 	return SynthesisOutput{
+		RequestID:     transportResult.requestID,
+		ResponseID:    transportResult.responseID,
 		Provider:      gatewayServiceID,
 		VoiceID:       out.VoiceID,
 		AudioFilePath: audioFile,
@@ -133,12 +136,32 @@ func downloadGatewayAudio(ctx context.Context, client *http.Client, baseURL, aud
 	if err != nil {
 		return "", "", fmt.Errorf("build RenCrow_TTS Gateway audio request: %w", err)
 	}
+	owner, owned := domaintransport.ReceiptOwnerFromContext(ctx)
+	requestID := core.NewRequestID()
+	if owned {
+		request, err := owner.BeginRequest(ctx, "tts.audio_download")
+		if err != nil {
+			return "", "", fmt.Errorf("begin TTS audio transport request: %w", err)
+		}
+		requestID = request.RequestID
+	}
 	req.Header.Set("Accept", "audio/wav")
+	req.Header.Set("X-RenCrow-Request-ID", string(requestID))
 	resp, err := client.Do(req)
 	if err != nil {
+		if owned {
+			if receiptErr := owner.FailWithoutResponse(context.WithoutCancel(ctx), requestID, err.Error()); receiptErr != nil {
+				return "", "", fmt.Errorf("download RenCrow_TTS Gateway audio: %w; persist transport failure: %v", err, receiptErr)
+			}
+		}
 		return "", "", fmt.Errorf("download RenCrow_TTS Gateway audio: %w", err)
 	}
 	defer resp.Body.Close()
+	if owned {
+		if _, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, ttsHTTPExternalRef(resp)); receiptErr != nil {
+			return "", "", fmt.Errorf("persist TTS audio transport response: %w", receiptErr)
+		}
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return "", "", fmt.Errorf("RenCrow_TTS Gateway audio status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -148,6 +171,15 @@ func downloadGatewayAudio(ctx context.Context, client *http.Client, baseURL, aud
 		return "", "", err
 	}
 	return audioFile, audioURL, nil
+}
+
+func ttsHTTPExternalRef(response *http.Response) string {
+	for _, key := range []string{"X-Provider-Request-ID", "X-Request-ID", "Request-ID", "ETag"} {
+		if value := strings.TrimSpace(response.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func gatewayHealthURL(base string) string {

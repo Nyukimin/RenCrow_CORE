@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
@@ -98,12 +100,35 @@ func (p GatewayProvider) Transcribe(ctx context.Context, wav []byte) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
+	owner, owned := domaintransport.ReceiptOwnerFromContext(ctx)
+	requestID := modulecore.NewRequestID()
+	if owned {
+		request, err := owner.BeginRequest(ctx, "stt.transcribe")
+		if err != nil {
+			return Result{}, fmt.Errorf("begin STT transport request: %w", err)
+		}
+		requestID = request.RequestID
+	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("X-RenCrow-Request-ID", string(requestID))
 	resp, err := (&http.Client{Timeout: timeout}).Do(req)
 	if err != nil {
+		if owned {
+			if receiptErr := owner.FailWithoutResponse(context.WithoutCancel(ctx), requestID, err.Error()); receiptErr != nil {
+				return Result{}, fmt.Errorf("provider request failed: %w; persist transport failure: %v", err, receiptErr)
+			}
+		}
 		return Result{}, NewError(ErrorProviderFailure, "provider request failed", err)
 	}
 	defer resp.Body.Close()
+	responseID := modulecore.NewResponseID()
+	if owned {
+		response, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, sttProviderExternalRef(resp))
+		if receiptErr != nil {
+			return Result{}, fmt.Errorf("persist STT transport response: %w", receiptErr)
+		}
+		responseID = response.ResponseID
+	}
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Result{}, NewError(ErrorProviderFailure, fmt.Sprintf("provider status=%d", resp.StatusCode), fmt.Errorf("%s", strings.TrimSpace(string(respBody))))
@@ -119,7 +144,18 @@ func (p GatewayProvider) Transcribe(ctx context.Context, wav []byte) (Result, er
 		out.ErrorCode = ErrorNoSpeechDetected
 		out.Message = "音声が検出されませんでした。"
 	}
+	out.RequestID = requestID
+	out.ResponseID = responseID
 	return out, nil
+}
+
+func sttProviderExternalRef(response *http.Response) string {
+	for _, key := range []string{"X-Provider-Request-ID", "X-Request-ID", "Request-ID"} {
+		if value := strings.TrimSpace(response.Header.Get(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func NewProvider(cfg Config) Provider {

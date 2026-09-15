@@ -8,11 +8,13 @@ import (
 
 func BuildSynthesisResult(req SynthesisRequest, output SynthesisOutput) SynthesisResult {
 	return SynthesisResult{
+		RequestID:  output.RequestID,
+		ResponseID: output.ResponseID,
 		Chunks: []AudioChunk{
 			{
 				Ref: core.ChunkRef{
 					SessionID:   req.SessionID,
-					ResponseID:  req.ResponseID,
+					ResponseID:  output.ResponseID,
 					UtteranceID: req.UtteranceID,
 					MessageID:   "",
 				},

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
@@ -58,16 +59,18 @@ type Segment struct {
 }
 
 type Result struct {
-	Text         string    `json:"text"`
-	Language     string    `json:"language"`
-	Duration     float64   `json:"duration"`
-	Segments     []Segment `json:"segments"`
-	Provider     string    `json:"provider,omitempty"`
-	Model        string    `json:"model,omitempty"`
-	EventID      string    `json:"event_id,omitempty"`
-	ErrorCode    string    `json:"error_code,omitempty"`
-	Message      string    `json:"message,omitempty"`
-	ProcessingMS int64     `json:"processing_ms,omitempty"`
+	RequestID    modulecore.RequestID  `json:"request_id,omitempty"`
+	ResponseID   modulecore.ResponseID `json:"response_id,omitempty"`
+	Text         string                `json:"text"`
+	Language     string                `json:"language"`
+	Duration     float64               `json:"duration"`
+	Segments     []Segment             `json:"segments"`
+	Provider     string                `json:"provider,omitempty"`
+	Model        string                `json:"model,omitempty"`
+	EventID      string                `json:"event_id,omitempty"`
+	ErrorCode    string                `json:"error_code,omitempty"`
+	Message      string                `json:"message,omitempty"`
+	ProcessingMS int64                 `json:"processing_ms,omitempty"`
 }
 
 type Health struct {

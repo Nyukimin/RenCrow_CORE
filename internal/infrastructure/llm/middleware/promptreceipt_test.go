@@ -16,7 +16,7 @@ import (
 type promptReceiptStubProvider struct{}
 
 func (p promptReceiptStubProvider) Generate(context.Context, domainllm.GenerateRequest) (domainllm.GenerateResponse, error) {
-	return domainllm.GenerateResponse{Content: "ok", FinishReason: "stop"}, nil
+	return domainllm.GenerateResponse{Content: "ok", FinishReason: "stop", RequestID: modulecore.NewRequestID(), ResponseID: modulecore.NewResponseID()}, nil
 }
 
 func (p promptReceiptStubProvider) Name() string { return "stub" }
@@ -26,6 +26,8 @@ func (p promptReceiptStubProvider) Chat(context.Context, domainllm.ChatRequest) 
 		Message:      domainllm.ChatMessage{Role: "assistant", Content: "ok"},
 		Done:         true,
 		FinishReason: "stop",
+		RequestID:    modulecore.NewRequestID(),
+		ResponseID:   modulecore.NewResponseID(),
 	}, nil
 }
 
@@ -37,12 +39,11 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 
 	provider := NewPromptReceiptProvider(promptReceiptStubProvider{}, "chat")
 	taskID := modulecore.NewTaskID()
-	requestID := modulecore.NewRequestID()
 	ctx := domainllm.WithExecutionObservation(context.Background(), domainllm.ExecutionObservation{
-		RequestID: requestID, TraceID: "trace-1", TaskID: taskID, SessionID: "session-1",
+		TraceID: "trace-1", TaskID: taskID, SessionID: "session-1",
 		Initiator: "mio", Caller: "agent.mio", Purpose: "chat",
 	})
-	_, err := provider.Generate(ctx, domainllm.GenerateRequest{
+	response, err := provider.Generate(ctx, domainllm.GenerateRequest{
 		Messages: []domainllm.Message{
 			{Role: "system", Content: "固定人格。最後の指示 token=do-not-store@example.com。"},
 			{Role: "user", Content: "これはユーザー入力なので保存しない。"},
@@ -64,8 +65,11 @@ func TestPromptReceiptProviderStoresBoundedSystemTailAndMetadataOnly(t *testing.
 	if receipt.SchemaVersion != 1 || receipt.Kind != "generate" || receipt.Provider != "chat" {
 		t.Fatalf("receipt identity = %+v", receipt)
 	}
-	if receipt.RequestID != string(requestID) || receipt.TraceID != "trace-1" || receipt.TaskID != taskID {
+	if receipt.TraceID != "trace-1" || receipt.TaskID != taskID {
 		t.Fatalf("receipt correlation = %+v", receipt)
+	}
+	if receipt.RequestID != response.RequestID || receipt.ResponseID != response.ResponseID {
+		t.Fatalf("prompt receipt did not project actual transport identity: receipt=%+v response=%+v", receipt, response)
 	}
 	if strings.Contains(string(data), "job_id") {
 		t.Fatalf("receipt contains retired job_id field: %s", data)

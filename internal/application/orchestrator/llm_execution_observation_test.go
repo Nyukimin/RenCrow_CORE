@@ -34,14 +34,10 @@ func TestOrchestrationLLMObservationRetargetPreservesCorrelation(t *testing.T) {
 	if rootObservation.TaskID != rootTaskID || childObservation.TaskID != childTaskID {
 		t.Fatalf("task attribution = root=%s child=%s", rootObservation.TaskID, childObservation.TaskID)
 	}
-	if rootObservation.RequestID == "" || childObservation.RequestID != rootObservation.RequestID {
-		t.Fatalf("request attribution changed: root=%q child=%q", rootObservation.RequestID, childObservation.RequestID)
-	}
 	if childObservation.TraceID != string(traceID) || childObservation.SessionID != "session-observation" || childObservation.Caller != "orchestrator.test" || childObservation.Initiator != "mio" || childObservation.Purpose != "route_and_execute" {
 		t.Fatalf("child observation lost correlation: %+v", childObservation)
 	}
 	ctx = domainllm.WithExecutionObservationDefaults(ctx, domainllm.ExecutionObservation{
-		RequestID: "downstream-request",
 		TraceID:   string(modulecore.NewTraceID()),
 		TaskID:    modulecore.NewTaskID(),
 		SessionID: "downstream-session",
@@ -49,7 +45,7 @@ func TestOrchestrationLLMObservationRetargetPreservesCorrelation(t *testing.T) {
 		Purpose:   "downstream",
 	})
 	protectedObservation, ok := domainllm.ExecutionObservationFromContext(ctx)
-	if !ok || protectedObservation.RequestID != childObservation.RequestID || protectedObservation.TaskID != childTaskID || protectedObservation.TraceID != childObservation.TraceID || protectedObservation.SessionID != childObservation.SessionID || protectedObservation.Caller != childObservation.Caller || protectedObservation.Purpose != childObservation.Purpose {
+	if !ok || protectedObservation.TaskID != childTaskID || protectedObservation.TraceID != childObservation.TraceID || protectedObservation.SessionID != childObservation.SessionID || protectedObservation.Caller != childObservation.Caller || protectedObservation.Purpose != childObservation.Purpose {
 		t.Fatalf("downstream defaults overwrote orchestration attribution: %+v", protectedObservation)
 	}
 	if got := ctx.Value(observationTestContextKey{}); got != "preserve" {
@@ -97,9 +93,6 @@ func TestMessageOrchestratorPropagatesRootThenChildLLMObservation(t *testing.T) 
 	}
 	assertOrchestrationObservation(t, routeObservation, rootTaskID, traceID, resp.SessionID, "orchestrator.message")
 	assertOrchestrationObservation(t, executionObservation, modulecore.TaskID(resp.TaskID), traceID, resp.SessionID, "orchestrator.message")
-	if executionObservation.RequestID != routeObservation.RequestID {
-		t.Fatalf("request ID was regenerated across activation: route=%q execution=%q", routeObservation.RequestID, executionObservation.RequestID)
-	}
 	if executionObservation.TaskID == rootTaskID {
 		t.Fatalf("OPS execution must use child task: %+v", executionObservation)
 	}
@@ -162,9 +155,6 @@ func TestDistributedOrchestratorPropagatesRootThenChildLLMObservation(t *testing
 	}
 	assertOrchestrationObservation(t, mio.routeObservation, rootTaskID, traceID, resp.SessionID, "orchestrator.distributed")
 	assertOrchestrationObservation(t, executionObservation, modulecore.TaskID(resp.TaskID), traceID, resp.SessionID, "orchestrator.distributed")
-	if executionObservation.RequestID != mio.routeObservation.RequestID {
-		t.Fatalf("request ID was regenerated across activation: route=%q execution=%q", mio.routeObservation.RequestID, executionObservation.RequestID)
-	}
 	if executionObservation.TaskID == rootTaskID {
 		t.Fatalf("OPS execution must use child task: %+v", executionObservation)
 	}
@@ -174,9 +164,6 @@ func assertOrchestrationObservation(t *testing.T, observation domainllm.Executio
 	t.Helper()
 	if observation.TaskID != taskID || observation.TraceID != string(traceID) || observation.SessionID != sessionID {
 		t.Fatalf("observation correlation = %+v, want task=%s trace=%s session=%s", observation, taskID, traceID, sessionID)
-	}
-	if observation.RequestID == "" || string(observation.RequestID) == string(taskID) || string(observation.RequestID) == observation.TraceID || string(observation.RequestID) == observation.SessionID {
-		t.Fatalf("request ID is not independent: %+v", observation)
 	}
 	if observation.Initiator != "mio" || observation.Caller != caller || observation.Purpose != "route_and_execute" {
 		t.Fatalf("observation attribution = %+v", observation)
