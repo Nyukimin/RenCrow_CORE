@@ -104,8 +104,9 @@ type NodeHardwareProfile struct {
 type GPUProfile struct {
     Name               string
     VRAMGB             float64
-    AvailableVRAMGB    float64
+    AvailableVRAMGB    *float64
     MemoryBandwidthGBs float64
+    Count              int
 }
 
 type ModelFitAssessment struct {
@@ -177,7 +178,9 @@ unsupported         推定不能
 
 ## Pointer fieldの扱い
 
-`BestQuant`、`EstimatedTPS`、`MeasuredTPS`、`PrefillTPS`、`TTFTMs`、`DiskSizeGB`はpointerとする。
+`BestQuant`、`EstimatedTPS`、`MeasuredTPS`、`PrefillTPS`、`TTFTMs`、`DiskSizeGB`、`GPUProfile.AvailableVRAMGB`はpointerとする。
+
+`GPUProfile.AvailableVRAMGB`のnilはllmfitがそのGPU entryの空きVRAMを返さない（不明）ことを表し、`&0`（実測ゼロ）と区別する。Viewerはnilのとき空きVRAMの数値を出さない。
 
 llmfitが値を返さない場合はnilを保持する。ゼロ値（`0`、`""`）と未取得を混同しない。
 

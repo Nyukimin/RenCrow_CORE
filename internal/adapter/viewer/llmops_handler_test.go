@@ -54,7 +54,7 @@ func llmOpsTestProfile() *domainllmops.NodeHardwareProfile {
 	return &domainllmops.NodeHardwareProfile{
 		NodeID: "node-a", NodeName: "gpu-box", OS: "linux", CPUName: "Ryzen", CPUCores: 16,
 		TotalRAMGB: 64, AvailableRAMGB: 40, HasGPU: true, GPUCount: 1,
-		GPUs:          []domainllmops.GPUProfile{{Name: "RX 6800", VRAMGB: 16, AvailableVRAMGB: 15, MemoryBandwidthGBs: 512, Count: 1}},
+		GPUs:          []domainllmops.GPUProfile{{Name: "RX 6800", VRAMGB: 16, AvailableVRAMGB: ptrFloat(15), MemoryBandwidthGBs: 512, Count: 1}},
 		UnifiedMemory: false, Backend: "vulkan", Source: domainllmops.SourceLLMFit,
 	}
 }
@@ -169,6 +169,43 @@ func TestHandleLLMOpsNodesProjectsOnlineOfflineStaleAndDisabled(t *testing.T) {
 	}
 	if disabled := nodes[3].(map[string]any); disabled["status"] != "disabled" {
 		t.Fatalf("disabled=%v", disabled)
+	}
+}
+
+func TestHandleLLMOpsNodesEmitsNullForUnknownAvailableVRAM(t *testing.T) {
+	// llmfit groups identical cards (count=4) and reports gpu_available_gb null;
+	// the view must keep the count and emit null, never 0, for the unknown value.
+	grouped := llmOpsTestProfile()
+	grouped.GPUCount = 4
+	grouped.GPUs = []domainllmops.GPUProfile{{Name: "RX 6800", VRAMGB: 15.98, MemoryBandwidthGBs: 512, Count: 4}}
+	reportedZero := llmOpsTestProfile()
+	reportedZero.GPUs[0].AvailableVRAMGB = ptrFloat(0)
+	svc := &stubLLMOpsService{nodes: []llmopsapp.NodeSnapshot{
+		{NodeID: "node-a", Status: llmopsapp.StatusOnline, Profile: grouped, CollectedAt: ptrTime(llmOpsTestNow())},
+		{NodeID: "node-b", Status: llmopsapp.StatusOnline, Profile: reportedZero, CollectedAt: ptrTime(llmOpsTestNow())},
+	}}
+	rec := httptest.NewRecorder()
+	HandleLLMOpsNodes(LLMOpsHandlerOptions{Service: svc, Now: llmOpsTestNow})(rec, httptest.NewRequest(http.MethodGet, "/viewer/llm-ops/nodes", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"available_vram_gb":null`) {
+		t.Fatalf("unknown free VRAM must serialize as JSON null, body=%s", rec.Body.String())
+	}
+	nodes := decodeLLMOpsBody(t, rec)["nodes"].([]any)
+	unknown := nodes[0].(map[string]any)["gpus"].([]any)[0].(map[string]any)
+	if v, ok := unknown["available_vram_gb"]; !ok || v != nil {
+		t.Fatalf("available_vram_gb must be present and null when unknown, got %v (present=%v)", v, ok)
+	}
+	if unknown["count"] != float64(4) || unknown["vram_gb"] != 15.98 || unknown["name"] != "RX 6800" {
+		t.Fatalf("grouped gpu must keep count and per-card vram: %v", unknown)
+	}
+	if nodes[0].(map[string]any)["gpu_count"] != float64(4) {
+		t.Fatalf("gpu_count must stay 4: %v", nodes[0])
+	}
+	zero := nodes[1].(map[string]any)["gpus"].([]any)[0].(map[string]any)
+	if zero["available_vram_gb"] != float64(0) {
+		t.Fatalf("a reported 0 must stay 0 (known), not null: %v", zero)
 	}
 }
 
@@ -438,3 +475,5 @@ func TestHandleLLMOpsRefreshEmptyCollections(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+func ptrFloat(v float64) *float64 { return &v }

@@ -13,6 +13,8 @@ import (
 
 type fakeClock struct{ t time.Time }
 
+func ptrFloat(v float64) *float64 { return &v }
+
 func newFakeClock() *fakeClock {
 	return &fakeClock{t: time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)}
 }
@@ -24,7 +26,7 @@ func (c *fakeClock) At(d time.Duration) time.Time { return c.t.Add(d) }
 func testProfile(name string) *domainllmops.NodeHardwareProfile {
 	return &domainllmops.NodeHardwareProfile{
 		NodeName: name, OS: "linux", CPUName: "cpu", CPUCores: 8, TotalRAMGB: 64, AvailableRAMGB: 32,
-		HasGPU: true, GPUCount: 1, GPUs: []domainllmops.GPUProfile{{Name: "gpu", VRAMGB: 16, AvailableVRAMGB: 15}},
+		HasGPU: true, GPUCount: 1, GPUs: []domainllmops.GPUProfile{{Name: "gpu", VRAMGB: 16, AvailableVRAMGB: ptrFloat(15)}},
 		Backend: "vulkan", Source: domainllmops.SourceLLMFit,
 	}
 }

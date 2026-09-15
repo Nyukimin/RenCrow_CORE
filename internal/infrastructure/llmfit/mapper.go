@@ -11,8 +11,8 @@ import (
 //
 // Null / missing handling:
 //   - pointer DTO fields (best_quant, estimated_tps, measured_tps, prefill_tps,
-//     ttft_ms, disk_size_gb, license): JSON null or absent -> nil / "";
-//     a reported 0 -> &0.
+//     ttft_ms, disk_size_gb, license, gpu_available_gb): JSON null or absent
+//     -> nil / ""; a reported 0 -> &0.
 //   - scalar DTO fields: absent -> zero value, kept as-is.
 //   - gpus[]: elements without a name and without vram are dropped; when no
 //     usable element remains, one GPUProfile is assembled from the gpu_*
@@ -101,11 +101,12 @@ func mapGPUs(sys systemDTO) []domainllmops.GPUProfile {
 		}
 	}
 	// llmfit has no per-GPU free-memory field. system.gpu_available_gb is a
-	// node-wide value, so it is attributed to the GPU only when the node has
-	// exactly one GPU; with several GPUs the split is unknown and stays 0
-	// (RenCrow does not guess a distribution).
-	if len(gpus) == 1 && gpus[0].Count == 1 && sys.GPUAvailableGB != nil {
-		gpus[0].AvailableVRAMGB = *sys.GPUAvailableGB
+	// node-wide value (null when llmfit cannot read it), so it is attributed
+	// to the GPU only when the node has exactly one GPU; with several GPUs the
+	// split is unknown and stays nil (RenCrow does not guess a distribution).
+	// A reported 0 is kept as &0 so "unknown" and "no free memory" differ.
+	if len(gpus) == 1 && gpus[0].Count == 1 {
+		gpus[0].AvailableVRAMGB = copyFloatPtr(sys.GPUAvailableGB)
 	}
 	return gpus
 }

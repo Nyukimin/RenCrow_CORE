@@ -34,12 +34,15 @@ type NodeHardwareProfile struct {
 
 // GPUProfile describes one GPU kind attached to a node. Count is the number
 // of identical devices llmfit groups under this entry (llmfit reports gpus[]
-// per kind with a count). AvailableVRAMGB is 0 when llmfit does not report a
-// per-GPU free value (it only reports a node-wide gpu_available_gb).
+// per kind with a count), so the VRAM of the whole group is VRAMGB*Count.
+// AvailableVRAMGB is nil when llmfit does not report a free value for this
+// entry (it only reports a node-wide gpu_available_gb, which is itself null
+// when unreadable); a reported 0 is kept as &0 so "unknown" and "no free
+// memory" stay distinct.
 type GPUProfile struct {
 	Name               string
 	VRAMGB             float64
-	AvailableVRAMGB    float64
+	AvailableVRAMGB    *float64
 	MemoryBandwidthGBs float64
 	Count              int
 }

@@ -1,6 +1,7 @@
 package llmfit
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +34,24 @@ const systemFixtureMultiGPU = `{
   "unified_memory":false,"backend":"vulkan","future_field":{"nested":true},
   "gpus":[{"backend":"vulkan","count":1,"memory_bandwidth_gbps":512,"name":"RX 6800","unified_memory":false,"vram_gb":16,"unknown":1},
           {"backend":"vulkan","count":2,"memory_bandwidth_gbps":null,"name":"RX 6800 XT","unified_memory":false,"vram_gb":16.0}]}}`
+
+// systemFixtureGroupedGPUs mirrors a node with four identical cards: llmfit
+// groups them into one gpus[] element with count=4 and reports no free VRAM.
+const systemFixtureGroupedGPUs = `{
+ "node":{"name":"unknown-node","os":"linux"},
+ "system":{"total_ram_gb":62.7,"available_ram_gb":55.1,"cpu_cores":16,"cpu_name":"Ryzen 9",
+  "has_gpu":true,"gpu_vram_gb":15.98,"gpu_available_gb":null,"gpu_name":"Radeon RX 6800/6800 XT / 6900 XT","gpu_count":4,
+  "unified_memory":false,"backend":"Vulkan",
+  "gpus":[{"backend":"Vulkan","count":4,"memory_bandwidth_gbps":512,"name":"Radeon RX 6800/6800 XT / 6900 XT","unified_memory":false,"vram_gb":15.98}]}}`
+
+// systemFixtureZeroAvailable reports a single GPU whose free VRAM is exactly 0.
+// A reported zero must stay distinct from "not reported" (null).
+const systemFixtureZeroAvailable = `{
+ "node":{"name":"busy","os":"linux"},
+ "system":{"total_ram_gb":32,"available_ram_gb":10,"cpu_cores":8,"cpu_name":"x",
+  "has_gpu":true,"gpu_vram_gb":24,"gpu_available_gb":0,"gpu_name":"RTX 3090","gpu_count":1,
+  "unified_memory":false,"backend":"cuda",
+  "gpus":[{"backend":"cuda","count":1,"memory_bandwidth_gbps":936,"name":"RTX 3090","unified_memory":false,"vram_gb":24}]}}`
 
 const systemFixtureScalarFallback = `{
  "node":{"name":"unknown-node","os":"macos"},
@@ -110,8 +129,8 @@ func TestDecodeRealSystemFixture(t *testing.T) {
 	if gpu.MemoryBandwidthGBs != 0 {
 		t.Fatalf("null memory_bandwidth_gbps must map to 0, got %v", gpu.MemoryBandwidthGBs)
 	}
-	if gpu.AvailableVRAMGB != 0 {
-		t.Fatalf("null gpu_available_gb must leave AvailableVRAMGB at 0, got %v", gpu.AvailableVRAMGB)
+	if gpu.AvailableVRAMGB != nil {
+		t.Fatalf("null gpu_available_gb must map to nil (unknown), got %v", *gpu.AvailableVRAMGB)
 	}
 	if !profile.CollectedAt.Equal(at) || profile.Source != domainllmops.SourceLLMFit {
 		t.Fatalf("collected_at/source mismatch: %+v", profile)
@@ -164,9 +183,48 @@ func TestMapSystemMultiGPU(t *testing.T) {
 		t.Fatalf("gpu_count must not be below the described total (1+2), got %d", profile.GPUCount)
 	}
 	for _, gpu := range profile.GPUs {
-		if gpu.AvailableVRAMGB != 0 {
+		if gpu.AvailableVRAMGB != nil {
 			t.Fatalf("node-wide gpu_available_gb must not be attributed to one of several GPUs: %+v", gpu)
 		}
+	}
+}
+
+func TestMapSystemKeepsGroupedGPUCountAndUnknownAvailableVRAM(t *testing.T) {
+	resp, err := decodeSystem(strings.NewReader(systemFixtureGroupedGPUs))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	profile := mapSystem("quad", resp, time.Now())
+	if len(profile.GPUs) != 1 {
+		t.Fatalf("four identical cards must stay one grouped entry, got %d: %+v", len(profile.GPUs), profile.GPUs)
+	}
+	gpu := profile.GPUs[0]
+	if gpu.Name != "Radeon RX 6800/6800 XT / 6900 XT" || gpu.Count != 4 || gpu.VRAMGB != 15.98 || gpu.MemoryBandwidthGBs != 512 {
+		t.Fatalf("grouped entry must keep count=4 and per-card vram: %+v", gpu)
+	}
+	if profile.GPUCount != 4 {
+		t.Fatalf("gpu_count=%d want 4", profile.GPUCount)
+	}
+	if total := gpu.VRAMGB * float64(gpu.Count); math.Abs(total-63.92) > 1e-9 {
+		t.Fatalf("total VRAM must be reconstructible as vram_gb*count (63.92), got %v", total)
+	}
+	if gpu.AvailableVRAMGB != nil {
+		t.Fatalf("null gpu_available_gb must map to nil (unknown), not %v", *gpu.AvailableVRAMGB)
+	}
+}
+
+func TestMapSystemKeepsReportedZeroAvailableVRAM(t *testing.T) {
+	resp, err := decodeSystem(strings.NewReader(systemFixtureZeroAvailable))
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	profile := mapSystem("busy", resp, time.Now())
+	if len(profile.GPUs) != 1 {
+		t.Fatalf("gpus=%d want 1: %+v", len(profile.GPUs), profile.GPUs)
+	}
+	gpu := profile.GPUs[0]
+	if gpu.AvailableVRAMGB == nil || *gpu.AvailableVRAMGB != 0 {
+		t.Fatalf("a reported gpu_available_gb of 0 must map to &0 (known zero), got %v", gpu.AvailableVRAMGB)
 	}
 }
 
@@ -182,8 +240,12 @@ func TestMapSystemFallsBackToScalarGPUFields(t *testing.T) {
 	if len(profile.GPUs) != 1 || profile.GPUCount != 1 {
 		t.Fatalf("expected one fallback GPU: %+v", profile)
 	}
-	if profile.GPUs[0] != (domainllmops.GPUProfile{Name: "Apple M2 GPU", VRAMGB: 32, AvailableVRAMGB: 20, Count: 1}) {
-		t.Fatalf("fallback gpu mismatch (single GPU gets node-wide gpu_available_gb): %+v", profile.GPUs[0])
+	gpu := profile.GPUs[0]
+	if gpu.Name != "Apple M2 GPU" || gpu.VRAMGB != 32 || gpu.Count != 1 || gpu.MemoryBandwidthGBs != 0 {
+		t.Fatalf("fallback gpu mismatch: %+v", gpu)
+	}
+	if gpu.AvailableVRAMGB == nil || *gpu.AvailableVRAMGB != 20 {
+		t.Fatalf("single GPU gets node-wide gpu_available_gb: %+v", gpu)
 	}
 }
 
@@ -193,8 +255,11 @@ func TestMapSystemUnknownGPUShapeFallsBackWithoutError(t *testing.T) {
 		t.Fatalf("decode must tolerate unknown gpus element shapes: %v", err)
 	}
 	profile := mapSystem("odd", resp, time.Now())
-	if len(profile.GPUs) != 1 || profile.GPUs[0].Name != "RTX 3060" || profile.GPUs[0].VRAMGB != 12 || profile.GPUs[0].AvailableVRAMGB != 11 {
+	if len(profile.GPUs) != 1 || profile.GPUs[0].Name != "RTX 3060" || profile.GPUs[0].VRAMGB != 12 {
 		t.Fatalf("expected scalar fallback GPU: %+v", profile.GPUs)
+	}
+	if free := profile.GPUs[0].AvailableVRAMGB; free == nil || *free != 11 {
+		t.Fatalf("single fallback GPU gets node-wide gpu_available_gb: %+v", profile.GPUs[0])
 	}
 }
 

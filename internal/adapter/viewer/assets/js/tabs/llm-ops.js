@@ -140,12 +140,23 @@
     return best;
   }
 
-  function sumOrNull(values) {
-    let total = null;
+  // llmfit groups identical cards into one gpus[] element carrying a count;
+  // a missing or invalid count means one device.
+  function gpuDeviceCount(gpu) {
+    const count = numberOrNull(objectValue(gpu).count);
+    return count !== null && count >= 1 ? Math.round(count) : 1;
+  }
+
+  // Sums values only when every value is known. One unknown (null) member
+  // makes the total unknown: a partial sum must not pose as a node total, and
+  // an empty list has no total.
+  function sumIfAllKnown(values) {
+    if (!values.length) return null;
+    let total = 0;
     for (const value of values) {
       const number = numberOrNull(value);
-      if (number === null) continue;
-      total = (total === null ? 0 : total) + number;
+      if (number === null) return null;
+      total += number;
     }
     return total;
   }
@@ -157,21 +168,29 @@
     const gpus = arrayValue(source.gpus).map(objectValue);
     const gpuCount = numberOrNull(source.gpu_count);
     const hasGpu = source.has_gpu === true || gpus.length > 0 || (gpuCount !== null && gpuCount > 0);
-    const gpuNames = gpus.map((gpu) => textValue(gpu.name)).filter(Boolean);
+    const gpuNameCounts = new Map();
+    gpus.forEach((gpu) => {
+      const name = textValue(gpu.name);
+      if (name) gpuNameCounts.set(name, (gpuNameCounts.get(name) || 0) + gpuDeviceCount(gpu));
+    });
     let gpuText = 'none';
     if (hasGpu) {
-      if (gpuNames.length) {
-        const counts = new Map();
-        gpuNames.forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
-        gpuText = Array.from(counts, ([name, count]) => (count > 1 ? count + 'x ' : '') + name).join(', ');
+      if (gpuNameCounts.size) {
+        gpuText = Array.from(gpuNameCounts, ([name, count]) => (count > 1 ? count + 'x ' : '') + name).join(', ');
       } else {
         gpuText = String(gpuCount || gpus.length || 1) + ' GPU';
       }
     }
-    const vramTotal = sumOrNull(gpus.map((gpu) => gpu.vram_gb));
-    const vramAvailable = sumOrNull(gpus.map((gpu) => gpu.available_vram_gb));
+    // vram_gb is per device, so a grouped entry contributes vram_gb * count.
+    const vramTotal = sumIfAllKnown(gpus.map((gpu) => {
+      const perDevice = numberOrNull(gpu.vram_gb);
+      return perDevice === null ? null : perDevice * gpuDeviceCount(gpu);
+    }));
+    // available_vram_gb is null when llmfit could not read free memory; the
+    // card says so instead of showing a number (never "0.0 GB free").
+    const vramAvailable = sumIfAllKnown(gpus.map((gpu) => gpu.available_vram_gb));
     let vramText = formatLlmOpsGb(vramTotal);
-    if (vramAvailable !== null) vramText += ' (' + formatLlmOpsGb(vramAvailable) + ' free)';
+    if (vramTotal !== null) vramText += vramAvailable !== null ? ' (' + formatLlmOpsGb(vramAvailable) + ' free)' : ' (free unknown)';
     if (source.unified_memory === true) vramText += ' unified';
     const ramTotal = numberOrNull(source.total_ram_gb);
     const ramAvailable = numberOrNull(source.available_ram_gb);

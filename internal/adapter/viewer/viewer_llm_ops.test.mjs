@@ -91,6 +91,72 @@ test('LLM Ops node card carries GPU / VRAM / RAM / Backend / Last Updated', () =
   assert.doesNotMatch(html, /null|undefined/);
 });
 
+test('LLM Ops node card multiplies gpus[].count into the GPU label and VRAM total', () => {
+  const {buildLlmOpsNodeCard} = llmOps();
+  // llmfit groups identical cards into one gpus[] element carrying a count.
+  const grouped = buildLlmOpsNodeCard({
+    node_id: 'quad', status: 'online', has_gpu: true, gpu_count: 4, unified_memory: false,
+    gpus: [{name: 'Radeon RX 6800/6800 XT / 6900 XT', vram_gb: 15.98, available_vram_gb: null, memory_bandwidth_gbs: 512, count: 4}],
+  });
+  assert.equal(grouped.gpu, '4x Radeon RX 6800/6800 XT / 6900 XT');
+  assert.equal(grouped.vram, '63.9 GB (free unknown)');
+
+  // Heterogeneous cards arrive as separate elements with count 1 each.
+  const pair = buildLlmOpsNodeCard({
+    node_id: 'pair', status: 'online', has_gpu: true, gpu_count: 2, unified_memory: false,
+    gpus: [
+      {name: 'NVIDIA GeForce RTX 4060 Ti', vram_gb: 16, available_vram_gb: null, memory_bandwidth_gbs: 288, count: 1},
+      {name: 'NVIDIA GeForce RTX 5060 Ti', vram_gb: 15.93, available_vram_gb: null, memory_bandwidth_gbs: 448, count: 1},
+    ],
+  });
+  assert.equal(pair.gpu, 'NVIDIA GeForce RTX 4060 Ti, NVIDIA GeForce RTX 5060 Ti');
+  assert.equal(pair.vram, '31.9 GB (free unknown)');
+
+  // Unified memory with a known free value keeps the existing text.
+  const unified = buildLlmOpsNodeCard({
+    node_id: 'uma', status: 'online', has_gpu: true, gpu_count: 1, unified_memory: true,
+    gpus: [{name: 'Apple M5 Max', vram_gb: 128, available_vram_gb: 107.52, memory_bandwidth_gbs: 614, count: 1}],
+  });
+  assert.equal(unified.gpu, 'Apple M5 Max');
+  assert.equal(unified.vram, '128 GB (108 GB free) unified');
+
+  // A missing count still means one device per element.
+  assert.equal(buildLlmOpsNodeCard(sampleNode).gpu, '2x Sample GPU');
+  assert.equal(buildLlmOpsNodeCard(sampleNode).vram, '48.0 GB (42.0 GB free)');
+});
+
+test('LLM Ops node card never renders unknown free VRAM as 0.0 GB free', () => {
+  const {buildLlmOpsNodeCard, renderLlmOpsNodeCardsHTML} = llmOps();
+  const unknown = buildLlmOpsNodeCard({
+    node_id: 'n-unknown', status: 'online', has_gpu: true, gpu_count: 1, unified_memory: true,
+    gpus: [{name: 'Integrated GPU', vram_gb: 7.67, available_vram_gb: null, memory_bandwidth_gbs: 0, count: 1}],
+  });
+  assert.equal(unknown.vram, '7.7 GB (free unknown) unified');
+
+  const reportedZero = buildLlmOpsNodeCard({
+    node_id: 'n-zero', status: 'online', has_gpu: true, gpu_count: 1,
+    gpus: [{name: 'Busy GPU', vram_gb: 24, available_vram_gb: 0, count: 1}],
+  });
+  assert.equal(reportedZero.vram, '24.0 GB (0.0 GB free)', 'a reported zero stays distinct from unknown');
+
+  const partial = buildLlmOpsNodeCard({
+    node_id: 'n-partial', status: 'online', has_gpu: true, gpu_count: 2,
+    gpus: [
+      {name: 'GPU A', vram_gb: 24, available_vram_gb: 20, count: 1},
+      {name: 'GPU B', vram_gb: 24, available_vram_gb: null, count: 1},
+    ],
+  });
+  assert.equal(partial.vram, '48.0 GB (free unknown)', 'a partial free sum must not pose as the node total');
+
+  const noGpu = buildLlmOpsNodeCard({node_id: 'n-none', status: 'online', has_gpu: false, gpus: []});
+  assert.equal(noGpu.vram, '-', 'no GPU means no VRAM line at all, not "free unknown"');
+
+  const html = renderLlmOpsNodeCardsHTML([unknown, partial, noGpu]);
+  assert.doesNotMatch(html, /0\.0 GB free/);
+  assert.doesNotMatch(html, /20\.0 GB free/);
+  assert.match(html, /free unknown/);
+});
+
 test('LLM Ops fit row shows "-" for null best_quant and separates Estimated from Measured', () => {
   const {buildLlmOpsFitRow, renderLlmOpsFitRowsHTML, formatLlmOpsTps} = llmOps();
   const noTps = buildLlmOpsFitRow(sampleModel({

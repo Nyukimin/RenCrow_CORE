@@ -42,11 +42,11 @@ const (
 // rename them.
 
 type llmOpsGPUView struct {
-	Name               string  `json:"name"`
-	VRAMGB             float64 `json:"vram_gb"`
-	AvailableVRAMGB    float64 `json:"available_vram_gb"` // 0 when llmfit reports no per-GPU free value
-	MemoryBandwidthGBs float64 `json:"memory_bandwidth_gbs"`
-	Count              int     `json:"count"` // identical devices grouped under this entry
+	Name               string   `json:"name"`
+	VRAMGB             float64  `json:"vram_gb"`
+	AvailableVRAMGB    *float64 `json:"available_vram_gb"` // null when llmfit reports no free value; a reported 0 stays 0
+	MemoryBandwidthGBs float64  `json:"memory_bandwidth_gbs"`
+	Count              int      `json:"count"` // identical devices grouped under this entry
 }
 
 type llmOpsNodeView struct {
