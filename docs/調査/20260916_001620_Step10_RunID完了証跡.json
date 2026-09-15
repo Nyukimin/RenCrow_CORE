@@ -1,0 +1,102 @@
+{
+  "schema_version": "rencrow.identity.step10-close-receipt.v1",
+  "created_at": "2026-09-16T00:16:20+09:00",
+  "status": "passed",
+  "purpose": "identity-step10-close",
+  "source": {
+    "branch": "identity/03-dci",
+    "restart_recovery_revision": "ee4b62dc215b5b028000f7aacba5f1d2cf835d9d",
+    "active_stop_and_cleanup_revision": "ad19962fa2706c56babfe3dc4eadbf40e1c48a3f",
+    "worktree_clean_at_build": true
+  },
+  "red": [
+    {
+      "test": "TestManagerRecoverRunAfterProcessRestartClosesExactStaleRun",
+      "failure": "RecoverRunAfterProcessRestart was undefined before the owner boundary was implemented"
+    },
+    {
+      "test": "TestStopManualModeJoinsAdmittedDialogueGenerationAndClosesRun",
+      "failure": "manual stop left the active Dialogue Task and Run in running state"
+    },
+    {
+      "test": "TestCanonicalTaskMigrationSourceIsRemovedAfterCutover",
+      "failure": "the architecture guard checked retired path names and did not reject the actual one-shot migration source"
+    }
+  ],
+  "gates": {
+    "compile": {
+      "status": "passed",
+      "commands": [
+        "go vet ./...",
+        "go build ./..."
+      ]
+    },
+    "unit": {
+      "status": "passed",
+      "commands": [
+        "go test ./... -count=1",
+        "go test -race ./internal/application/idlechat ./internal/application/taskmanager -count=1"
+      ]
+    },
+    "migration": {
+      "status": "passed",
+      "applied_receipt": "/srv/rencrow/backup/recovery/step10-run-20260906T125132Z/step10-deployment-receipt.json",
+      "converted_count": 18389,
+      "migration_task_count": 208,
+      "preserved_canonical_count": 17797,
+      "reapplied": false,
+      "reason": "the production cohort was already applied; the fixed specification forbids speculative reapplication"
+    },
+    "referential_integrity": {
+      "status": "passed",
+      "task_count": 18013,
+      "run_count": 6476,
+      "orphan_runs": 0,
+      "multi_owner_run_ids": 0,
+      "invalid_task_ids": 0,
+      "invalid_run_ids": 0,
+      "running_runs_after_stop": 0,
+      "superagent_agent_run_rows": 316,
+      "superagent_missing_task_id_rows": 0,
+      "superagent_legacy_identity_rows": 0
+    },
+    "integration": {
+      "status": "passed",
+      "restart_recovered_run_id": "run_01a0a57d-3af4-7c25-8db5-5777d6a245d5",
+      "active_dialogue_task_id": "tsk_01a0a5a2-5878-7956-a0c4-eaa976f38b00",
+      "active_dialogue_run_id": "run_01a0a5a2-5f73-7771-ade8-de72a6f6803d",
+      "active_dialogue_terminal_status": "waiting",
+      "active_dialogue_stop_duration_ms": 7746,
+      "viewer_task_detail_verified": true
+    },
+    "runtime_connectivity": {
+      "status": "passed",
+      "artifact_sha256": "74879976e45373428a087f328ea9ae4c4636d6878d08d030cd7fdd822f12ef55",
+      "artifact_vcs_revision": "ad19962fa2706c56babfe3dc4eadbf40e1c48a3f",
+      "artifact_vcs_modified": false,
+      "main_pid": 162816,
+      "nrestarts": 0,
+      "listener": "*:18790",
+      "readiness": "ready"
+    },
+    "legacy_deletion": {
+      "status": "passed",
+      "one_shot_source_removed": true,
+      "recovery_archive": "/srv/rencrow/backup/recovery/step10-run-20260906T125132Z/runtime-new/rencrow-run-migrate-source-73d2317.tar.gz",
+      "recovery_archive_sha256": "2f40078e62717a304e1909f8c0f1bfe795ac3df084b87a05fe01550f12c1582e",
+      "active_task_idlechat_legacy_keys": 0,
+      "browser_trace_legacy_schema_columns": 0,
+      "browser_trace_legacy_payload_rows": 0,
+      "new_event_legacy_identity_rows": 0
+    }
+  },
+  "evidence": {
+    "recovery_root": "/srv/rencrow/backup/recovery/step10-close-20260915T145917Z",
+    "raw_logs_sha256": "/srv/rencrow/backup/recovery/step10-close-20260915T145917Z/logs.sha256",
+    "check_plan": "docs/調査/20260905_ID統一Step10_RunID_check_plan.json"
+  },
+  "environment_boundaries": {
+    "chrome_devtools_mcp": "unavailable: Chrome binary /opt/google/chrome/chrome is absent; not used as passing evidence because Step 10 changed no Viewer UI source",
+    "serena_mcp": "unavailable: the dynamic namespace was not provided in this session"
+  }
+}
