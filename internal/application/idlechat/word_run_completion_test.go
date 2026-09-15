@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	taskmanager "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -248,6 +250,49 @@ func TestWordCompletionStopClosesRunningPairsAfterGenerationJoin(t *testing.T) {
 		if !ok || persisted.RunID != pair.run.RunID || persisted.TaskID != pair.task.TaskID || persisted.Stage != pair.checkpoint.Stage {
 			t.Fatalf("%s checkpoint after Stop=%+v ok=%t, want retained exact pair", pair.checkpoint.Category, persisted, ok)
 		}
+	}
+}
+
+func TestWordCompletionRecoversStaleRunAfterProcessRestart(t *testing.T) {
+	fixture := newWordTopicRecoveryFixture(t)
+	task, staleRun, checkpoint := seedRunningWordCompletionCheckpointForCategory(t, fixture, TopicCategoryDouble)
+	if err := fixture.owner.Manager.Close(); err != nil {
+		t.Fatalf("close predecessor writer: %v", err)
+	}
+
+	restartedStore, err := taskpersistence.NewJSONLStore(fixture.taskRoot)
+	if err != nil {
+		t.Fatalf("open restarted writer: %v", err)
+	}
+	restartedManager := taskmanager.New(restartedStore, taskmanager.DefaultParallelLimits())
+	restartedOwner := &wordTopicRecoveryOwner{Manager: restartedManager}
+	fixture.orchestrator.SetRunIssuer(restartedOwner)
+	t.Cleanup(func() {
+		if err := restartedManager.Close(); err != nil {
+			t.Errorf("close restarted writer: %v", err)
+		}
+	})
+
+	if err := fixture.orchestrator.finalizePendingWordRuns(context.Background()); err != nil {
+		t.Fatalf("finalize stale word Run after restart: %v", err)
+	}
+	closed, err := restartedOwner.GetRun(context.Background(), staleRun.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != domaintask.RunStatusWaiting {
+		t.Fatalf("stale Run status = %s, want waiting", closed.Status)
+	}
+	persisted, ok := fixture.checkpoints.Get(checkpoint.Key)
+	if !ok || persisted.TaskID != task.TaskID || persisted.RunID != staleRun.RunID || persisted.Stage != checkpoint.Stage {
+		t.Fatalf("recovered checkpoint = %+v ok=%t", persisted, ok)
+	}
+	updatedTask, err := restartedOwner.Get(context.Background(), task.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedTask.Status != domaintask.StatusWaiting {
+		t.Fatalf("recovered Task status = %s, want waiting", updatedTask.Status)
 	}
 }
 

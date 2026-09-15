@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	taskmanager "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
 func TestProduceForecastTopicClosesRunningCheckpointBeforeResume(t *testing.T) {
@@ -154,6 +156,41 @@ func TestForecastCompletionClosesRunningWithoutPublishedResultAsWaiting(t *testi
 	persisted, ok := fixture.checkpoints.Get(checkpoint.Key)
 	if !ok || persisted.TaskID != checkpoint.TaskID || persisted.RunID != checkpoint.RunID || persisted.Stage != checkpoint.Stage {
 		t.Fatalf("retained forecast checkpoint=%+v ok=%t, want exact waiting pair", persisted, ok)
+	}
+}
+
+func TestForecastCompletionRecoversStaleRunAfterProcessRestart(t *testing.T) {
+	fixture := newForecastTopicRecoveryFixture(t)
+	task, staleRun, checkpoint := seedRunningForecastCompletionCheckpoint(t, fixture, nil)
+	checkpoint.Stage = "seeds"
+	if err := fixture.checkpoints.Put(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.owner.Manager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedStore, err := taskpersistence.NewJSONLStore(fixture.taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedManager := taskmanager.New(restartedStore, taskmanager.DefaultParallelLimits())
+	fixture.orchestrator.SetRunIssuer(&forecastTopicRecoveryOwner{Manager: restartedManager})
+	t.Cleanup(func() {
+		if err := restartedManager.Close(); err != nil {
+			t.Errorf("close restarted writer: %v", err)
+		}
+	})
+
+	if err := fixture.orchestrator.finalizePendingForecastRuns(context.Background()); err != nil {
+		t.Fatalf("finalize stale Forecast Run: %v", err)
+	}
+	closed, err := restartedManager.GetRun(context.Background(), staleRun.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != domaintask.RunStatusWaiting || closed.TaskID != task.TaskID {
+		t.Fatalf("recovered Forecast Run = %+v, want exact waiting pair", closed)
 	}
 }
 

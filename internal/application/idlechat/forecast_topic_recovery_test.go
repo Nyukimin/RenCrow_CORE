@@ -48,6 +48,7 @@ type forecastTopicRecoveryFixture struct {
 	orchestrator   *IdleChatOrchestrator
 	stock          *forecastTopicStock
 	checkpoints    *GenerationCheckpointStore
+	taskRoot       string
 	stockPath      string
 	checkpointPath string
 	generator      *savedForecastTopicGenerator
@@ -57,7 +58,8 @@ type forecastTopicRecoveryFixture struct {
 func newForecastTopicRecoveryFixture(t *testing.T) *forecastTopicRecoveryFixture {
 	t.Helper()
 	root := t.TempDir()
-	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(root, "tasks"))
+	taskRoot := filepath.Join(root, "tasks")
+	taskStore, err := taskpersistence.NewJSONLStore(taskRoot)
 	if err != nil {
 		t.Fatalf("open task store: %v", err)
 	}
@@ -85,7 +87,7 @@ func newForecastTopicRecoveryFixture(t *testing.T) *forecastTopicRecoveryFixture
 	})
 	return &forecastTopicRecoveryFixture{
 		owner: owner, orchestrator: orchestrator, stock: stock, checkpoints: checkpoints,
-		stockPath: stockPath, checkpointPath: checkpointPath, generator: generator, domain: forecastDomains[0],
+		taskRoot: taskRoot, stockPath: stockPath, checkpointPath: checkpointPath, generator: generator, domain: forecastDomains[0],
 	}
 }
 

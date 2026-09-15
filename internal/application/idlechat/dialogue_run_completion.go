@@ -112,7 +112,21 @@ func (s *DialogueEpisodeService) finishDialogueGenerationRun(ctx context.Context
 	} else {
 		intentErr = s.checkpoints.Put(checkpoint)
 	}
-	completionErr := finishGenerationRun(ctx, s.runIssuer, checkpoint, status, pending.Summary, pending.Reason)
+	recovered, recoveryErr := recoverGenerationRunCompletionAfterProcessRestart(
+		ctx,
+		s.runIssuer,
+		checkpoint,
+		status,
+		pending.Summary,
+		pending.Reason,
+	)
+	if recoveryErr != nil {
+		return errors.Join(intentErr, recoveryErr)
+	}
+	var completionErr error
+	if !recovered {
+		completionErr = finishGenerationRun(ctx, s.runIssuer, checkpoint, status, pending.Summary, pending.Reason)
+	}
 	if completionErr != nil {
 		return errors.Join(intentErr, completionErr)
 	}

@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	taskmanager "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -137,6 +139,84 @@ func TestDialogueCompletionIntentReloadFinalizesExactRunWithoutProvider(t *testi
 	}
 	if task.Status != domaintask.StatusWaiting {
 		t.Fatalf("task after reload finalization=%s, want waiting", task.Status)
+	}
+}
+
+func TestDialogueCompletionRecoversStaleRunAfterProcessRestart(t *testing.T) {
+	root := t.TempDir()
+	taskRoot := filepath.Join(root, "tasks")
+	firstStore, err := taskpersistence.NewJSONLStore(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstManager := taskmanager.New(firstStore, taskmanager.DefaultParallelLimits())
+	firstOwner := &dialogueRecoveryOwner{Manager: firstManager}
+	task, err := firstOwner.Create(context.Background(), domaintask.Task{
+		Title: "IdleChat dialogue restart recovery", Route: domaintask.RouteGeneral, Assignee: "Shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleRun, err := firstOwner.StartRunWithReason(context.Background(), task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config := DefaultDialogueInterestingnessConfig()
+	config.MaxTurnsPerTopic = 2
+	result := dialogueRecoveryInput()
+	plan := NewDialogueDirector(config).BuildArcPlan(result)
+	plan.TurnPlans = buildDialogueTurnPlans(2, dialogueCategorySpec(plan.Category))
+	result.Category = plan.Category
+	artifact := DialogueEpisodeArtifact{
+		SchemaVersion: DialogueEpisodeSchemaVersion, EpisodeID: "dialogue-restart-recovery",
+		TaskID: task.TaskID, RunID: staleRun.RunID, Revision: 1,
+		SessionID: "dialogue-restart-recovery-session", InitiatedBy: "shiro",
+		TopicResult: result, ArcPlan: plan, Participants: []string{"mio", "shiro"},
+		ProductionStatus: DialogueProductionValidating,
+		Validation:       DialogueEpisodeValidation{Valid: false, FirstInvalidTurn: 1},
+	}
+	pending := PendingCompletion{Status: domaintask.StatusWaiting, Summary: "dialogue interrupted", Reason: "retry from checkpoint"}
+	checkpoint := GenerationCheckpoint{
+		Key: dialogueCheckpointKey(artifact.SessionID, result, 2), Kind: "dialogue",
+		TaskID: task.TaskID, RunID: staleRun.RunID, Stage: "seed",
+		DialogueArtifact: cloneDialogueEpisodePtr(artifact), PendingCompletion: &pending,
+	}
+	checkpoints := NewGenerationCheckpointStore(filepath.Join(root, "dialogue.checkpoints.json"))
+	if err := checkpoints.Put(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := firstManager.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	restartedStore, err := taskpersistence.NewJSONLStore(taskRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedManager := taskmanager.New(restartedStore, taskmanager.DefaultParallelLimits())
+	t.Cleanup(func() {
+		if err := restartedManager.Close(); err != nil {
+			t.Errorf("close restarted writer: %v", err)
+		}
+	})
+	service := NewPersistentDialogueEpisodeService(filepath.Join(root, "dialogue.jsonl"), &dialogueRecoveryGenerator{err: errors.New("provider must not run")}, map[string]string{"mio": "Mio", "shiro": "Shiro"}, config)
+	service.SetGenerationCheckpointStore(checkpoints)
+	service.SetRunIssuer(&dialogueRecoveryOwner{Manager: restartedManager})
+
+	if err := service.FinalizePendingRuns(context.Background()); err != nil {
+		t.Fatalf("finalize stale Dialogue Run: %v", err)
+	}
+	closed, err := restartedManager.GetRun(context.Background(), staleRun.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != domaintask.RunStatusWaiting || closed.TaskID != task.TaskID {
+		t.Fatalf("recovered Dialogue Run = %+v, want exact waiting pair", closed)
+	}
+	cleared, ok := checkpoints.Get(checkpoint.Key)
+	if !ok || cleared.PendingCompletion != nil {
+		t.Fatalf("Dialogue completion intent was not cleared: %+v ok=%t", cleared, ok)
 	}
 }
 

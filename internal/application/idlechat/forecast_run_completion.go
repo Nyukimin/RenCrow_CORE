@@ -77,10 +77,24 @@ func (o *IdleChatOrchestrator) finishRunningForecastCheckpoint(ctx context.Conte
 		if !stock.hasExactCheckpointItem(checkpoint) {
 			return false, errors.New("forecast topic completion artifact is mismatched")
 		}
+		recovered, err := recoverGenerationRunCompletionAfterProcessRestart(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", "")
+		if err != nil {
+			return false, err
+		}
+		if recovered {
+			return true, nil
+		}
 		if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusSucceeded, "forecast topic saved", ""); err != nil {
 			return false, err
 		}
 		return true, nil
+	}
+	recovered, err := recoverGenerationRunCompletionAfterProcessRestart(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast generation interrupted", "retry from saved generation checkpoint")
+	if err != nil {
+		return false, err
+	}
+	if recovered {
+		return false, nil
 	}
 	if err := finishGenerationRun(ctx, issuer, checkpoint, domaintask.StatusWaiting, "forecast generation interrupted", "retry from saved generation checkpoint"); err != nil {
 		return false, err

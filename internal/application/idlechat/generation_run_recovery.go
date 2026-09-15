@@ -10,6 +10,48 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+type generationProcessRestartRunIssuer interface {
+	RecoverRunAfterProcessRestart(context.Context, modulecore.TaskID, modulecore.RunID, string, domaintask.Status, string, string) (domaintask.Task, bool, error)
+}
+
+// recoverGenerationRunCompletionAfterProcessRestart asks the Task owner to
+// close an active Run from an older writer lease without issuing a successor.
+// It is used only by completion maintenance in a fresh process, which has no
+// admitted generation work from the previous lease.
+func recoverGenerationRunCompletionAfterProcessRestart(
+	ctx context.Context,
+	issuer idlechatRunIssuer,
+	checkpoint GenerationCheckpoint,
+	status domaintask.Status,
+	summary string,
+	reason string,
+) (bool, error) {
+	run, err := loadGenerationCheckpointRun(ctx, issuer, checkpoint)
+	if err != nil {
+		return false, err
+	}
+	if run.Status != domaintask.RunStatusRunning {
+		return false, nil
+	}
+	recoverer, ok := issuer.(generationProcessRestartRunIssuer)
+	if !ok || recoverer == nil {
+		return false, nil
+	}
+	_, recovered, err := recoverer.RecoverRunAfterProcessRestart(
+		ctx,
+		checkpoint.TaskID,
+		checkpoint.RunID,
+		run.Assignee,
+		status,
+		summary,
+		reason,
+	)
+	if err != nil {
+		return false, err
+	}
+	return recovered, nil
+}
+
 // reconcileGenerationResume handles a crash between owner Run issuance and saving
 // the successor ID. Only a persisted resume intent may adopt an exact
 // same-Task, same-assignee checkpoint-resume successor from the canonical owner.

@@ -68,6 +68,7 @@ type wordTopicRecoveryFixture struct {
 	orchestrator   *IdleChatOrchestrator
 	stock          *wordTopicStock
 	checkpoints    *GenerationCheckpointStore
+	taskRoot       string
 	stockPath      string
 	checkpointPath string
 	generator      *savedWordTopicGenerator
@@ -76,7 +77,8 @@ type wordTopicRecoveryFixture struct {
 func newWordTopicRecoveryFixture(t *testing.T) *wordTopicRecoveryFixture {
 	t.Helper()
 	root := t.TempDir()
-	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(root, "tasks"))
+	taskRoot := filepath.Join(root, "tasks")
+	taskStore, err := taskpersistence.NewJSONLStore(taskRoot)
 	if err != nil {
 		t.Fatalf("open task store: %v", err)
 	}
@@ -104,7 +106,7 @@ func newWordTopicRecoveryFixture(t *testing.T) *wordTopicRecoveryFixture {
 	})
 	return &wordTopicRecoveryFixture{
 		owner: owner, orchestrator: orchestrator, stock: stock, checkpoints: checkpoints,
-		stockPath: stockPath, checkpointPath: checkpointPath, generator: generator,
+		taskRoot: taskRoot, stockPath: stockPath, checkpointPath: checkpointPath, generator: generator,
 	}
 }
 

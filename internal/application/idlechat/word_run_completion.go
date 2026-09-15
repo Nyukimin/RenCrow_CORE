@@ -30,10 +30,24 @@ func (o *IdleChatOrchestrator) finishRunningWordCheckpoint(ctx context.Context, 
 		if err := verifySavedWordTopic(stock, checkpoint); err != nil {
 			return false, err
 		}
+		recovered, err := recoverGenerationRunCompletionAfterProcessRestart(ctx, o.runIssuer, checkpoint, domaintask.StatusSucceeded, "word topic saved", "")
+		if err != nil {
+			return false, err
+		}
+		if recovered {
+			return true, nil
+		}
 		if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusSucceeded, "word topic saved", ""); err != nil {
 			return false, err
 		}
 		return true, nil
+	}
+	recovered, err := recoverGenerationRunCompletionAfterProcessRestart(ctx, o.runIssuer, checkpoint, domaintask.StatusWaiting, "word generation interrupted", "retry from saved generation checkpoint")
+	if err != nil {
+		return false, err
+	}
+	if recovered {
+		return false, nil
 	}
 	if err := o.finishWordRun(ctx, checkpoint, domaintask.StatusWaiting, "word generation interrupted", "retry from saved generation checkpoint"); err != nil {
 		return false, err
