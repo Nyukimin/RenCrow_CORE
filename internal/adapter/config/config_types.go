@@ -45,7 +45,7 @@ type Config struct {
 	LocalAgentOps LocalAgentOpsConfig `yaml:"local_agent_ops"`
 
 	// === LLM Ops / Hardware Capability (llmfit observation) ===
-	LLMOps LLMOpsConfig `yaml:"llm_ops"`
+	LLMCapability LLMCapabilityConfig `yaml:"llm_capability"`
 
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
@@ -843,8 +843,8 @@ func (c KnowledgeMemoryConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
 }
 
-// LLMOpsConfig groups LLM Ops / Hardware Capability observation settings.
-type LLMOpsConfig struct {
+// LLMCapabilityConfig groups LLM Ops / Hardware Capability observation settings.
+type LLMCapabilityConfig struct {
 	LLMFit LLMFitConfig `yaml:"llmfit"`
 }
 

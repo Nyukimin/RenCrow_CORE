@@ -817,13 +817,13 @@ func (c *Config) setDefaults() {
 		c.Coder4.LightMemory.MaxTurns = 3
 	}
 
-	c.setLLMOpsDefaults()
+	c.setLLMCapabilityDefaults()
 }
 
-// setLLMOpsDefaults applies the feature-spec refresh intervals for llmfit
+// setLLMCapabilityDefaults applies the feature-spec refresh intervals for llmfit
 // observation and normalizes node entries.
-func (c *Config) setLLMOpsDefaults() {
-	fit := &c.LLMOps.LLMFit
+func (c *Config) setLLMCapabilityDefaults() {
+	fit := &c.LLMCapability.LLMFit
 	fit.SystemTTL = strings.TrimSpace(fit.SystemTTL)
 	fit.ModelsTTL = strings.TrimSpace(fit.ModelsTTL)
 	fit.HealthTTL = strings.TrimSpace(fit.HealthTTL)

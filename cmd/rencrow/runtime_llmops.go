@@ -15,7 +15,7 @@ const llmOpsCLIExecutable = "llmfit"
 
 // buildLLMOpsHandlers wires the LLM Ops (llmfit observation) viewer handlers.
 // The service is always constructed so the viewer never sees 503 for a
-// configured CORE; when llm_ops.llmfit.enabled is false every node reports
+// configured CORE; when llm_capability.llmfit.enabled is false every node reports
 // "disabled" and no llmfit call is made.
 func buildLLMOpsHandlers(cfg *config.Config, deps *Dependencies) {
 	if cfg == nil || deps == nil {
@@ -29,11 +29,11 @@ func buildLLMOpsHandlers(cfg *config.Config, deps *Dependencies) {
 	deps.llmOpsRefresh = viewer.HandleLLMOpsRefresh(opts)
 }
 
-// newLLMOpsCapabilityService builds providers from llm_ops.llmfit.nodes.
+// newLLMOpsCapabilityService builds providers from llm_capability.llmfit.nodes.
 // Config validation already rejected unknown modes and missing endpoints;
 // anything unexpected here is logged and skipped rather than failing startup.
 func newLLMOpsCapabilityService(cfg *config.Config) *llmopsapp.CapabilityService {
-	fit := cfg.LLMOps.LLMFit
+	fit := cfg.LLMCapability.LLMFit
 	timeout := llmOpsDuration(fit.RequestTimeout, 5*time.Second)
 	nodes := make([]llmopsapp.Node, 0, len(fit.Nodes))
 	for _, node := range fit.Nodes {

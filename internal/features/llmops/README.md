@@ -18,7 +18,7 @@ read-only observation of llmfit (HTTP `GET /health`, `/api/v1/system`, `/api/v1/
 
 ## Persistence
 
-in-memory TTL cache only (system 5m, models 15m, health 30s by default; configured in `llm_ops.llmfit`). No files or databases
+in-memory TTL cache only (system 5m, models 15m, health 30s by default; configured in `llm_capability.llmfit`). No files or databases
 
 ## Logs
 

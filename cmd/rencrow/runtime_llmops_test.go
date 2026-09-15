@@ -14,13 +14,13 @@ import (
 
 func TestNewLLMOpsCapabilityServiceBuildsProvidersPerNode(t *testing.T) {
 	cfg := &config.Config{}
-	cfg.LLMOps.LLMFit.Nodes = []config.LLMFitNodeConfig{
+	cfg.LLMCapability.LLMFit.Nodes = []config.LLMFitNodeConfig{
 		{ID: "node-a", Mode: "http", Endpoint: "http://127.0.0.1:1"},
 		{ID: "local", Mode: "cli"},
 		{ID: "broken", Mode: "ssh"},
 	}
-	cfg.LLMOps.LLMFit.RequestTimeout = "1s"
-	cfg.LLMOps.LLMFit.TopLimit = 7
+	cfg.LLMCapability.LLMFit.RequestTimeout = "1s"
+	cfg.LLMCapability.LLMFit.TopLimit = 7
 
 	svc := newLLMOpsCapabilityService(cfg)
 	ids := svc.NodeIDs()
@@ -32,8 +32,8 @@ func TestNewLLMOpsCapabilityServiceBuildsProvidersPerNode(t *testing.T) {
 func TestNewLLMOpsCapabilityServiceHonorsDisabledFlag(t *testing.T) {
 	disabled := false
 	cfg := &config.Config{}
-	cfg.LLMOps.LLMFit.Enabled = &disabled
-	cfg.LLMOps.LLMFit.Nodes = []config.LLMFitNodeConfig{{ID: "node-a", Mode: "http", Endpoint: "http://127.0.0.1:1"}}
+	cfg.LLMCapability.LLMFit.Enabled = &disabled
+	cfg.LLMCapability.LLMFit.Nodes = []config.LLMFitNodeConfig{{ID: "node-a", Mode: "http", Endpoint: "http://127.0.0.1:1"}}
 
 	svc := newLLMOpsCapabilityService(cfg)
 	snaps := svc.Nodes(context.Background())

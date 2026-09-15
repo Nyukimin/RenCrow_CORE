@@ -432,7 +432,9 @@ local_agent_ops:
 # loads models, or runs benchmarks. llmfit downtime only degrades the Ops screen
 # (OFFLINE / STALE); it never stops Chat, Shiro, Coder, LLM Runtime, or Tools.
 # nodes may be empty: the Ops screen then lists no nodes without raising an error.
-llm_ops:
+# The retired "llm_ops" key (RenCrow_LLM management daemon settings) is a different
+# item and is not parsed by CORE; it is unrelated to this section.
+llm_capability:
   llmfit:
     enabled: true
     system_ttl: 5m        # hardware profile cache TTL

@@ -305,7 +305,7 @@ partial response     必須fieldが欠けた要素だけ除外し、除外件数
 設定例:
 
 ```yaml
-llm_ops:
+llm_capability:
   llmfit:
     enabled: true
     system_ttl: 5m
@@ -373,7 +373,7 @@ GET  /viewer/llm-ops/model/matrix?model_id={model_id}        1Modelの全Node適
 POST /viewer/llm-ops/refresh                                 cache強制更新
 ```
 
-`node/models`の任意query: `limit`（1..200、省略時は`llm_ops.llmfit.top_limit`）、`use_case`、`runtime`、`min_fit`、`max_context`。値は4章の許可値へ検証し、許可値以外は400を返してProviderへ渡さない。
+`node/models`の任意query: `limit`（1..200、省略時は`llm_capability.llmfit.top_limit`）、`use_case`、`runtime`、`min_fit`、`max_context`。値は4章の許可値へ検証し、許可値以外は400を返してProviderへ渡さない。
 
 `POST refresh`は再取得のみを行う。llmfitの設定変更、model load、Benchmark実行を行わない。
 
@@ -387,7 +387,7 @@ POST /viewer/llm-ops/refresh                                 cache強制更新
 
 `node_id`省略時は全Nodeを対象とする。応答は`{"generated_at","refreshed":[...],"failed":{node_id: reason}}`。
 
-応答には各Nodeの`status`（`online` / `offline` / `stale` / `disabled`）と`collected_at`（RFC3339またはnull）を必ず含める。`disabled`は`llm_ops.llmfit.enabled: false`のときの値で、Providerを呼ばない。
+応答には各Nodeの`status`（`online` / `offline` / `stale` / `disabled`）と`collected_at`（RFC3339またはnull）を必ず含める。`disabled`は`llm_capability.llmfit.enabled: false`のときの値で、Providerを呼ばない。
 
 error形式は既存Viewer APIと同じ（`http.Error`によるplain text）。`node_id`／`model_id`未指定は400、Node不明は404、method不一致は405、service未配線は503。一覧はnil sliceを`[]`へ正規化して返す。response field名の正本は`../06_Public_API仕様.md`の「LLM Ops Viewer API」。
 
