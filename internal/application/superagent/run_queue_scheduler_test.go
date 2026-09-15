@@ -811,6 +811,15 @@ func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 	if err != nil || queued != 1 || blocked != 1 {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
+	if len(owner.getCalls) != 0 {
+		t.Fatalf("restart recovery used per-task Get %d time(s); want one List of canonical Tasks", len(owner.getCalls))
+	}
+	if owner.listCalls != 1 {
+		t.Fatalf("restart recovery List calls=%d, want 1", owner.listCalls)
+	}
+	if owner.listRunCalls != 2 {
+		t.Fatalf("restart recovery ListRuns calls=%d, want 1 full list plus 1 blocked-task re-list", owner.listRunCalls)
+	}
 	resumable := store.itemByCheckpoint(resumableCheckpointID)
 	if len(store.items) != 3 || resumable.TaskID != resumableTaskID || resumable.RunID != "" || resumable.RunStartReason != domaintask.RunStartReasonProcessRestartResume || resumable.IdempotencyKey != string(resumableCheckpointID) || resumable.CheckpointSummary != "step four committed" || resumable.NextAction != "step five" || store.item(finishedQueueItemID).Status != "claimed" {
 		t.Fatalf("recovery queue=%#v", store.items)
@@ -1003,6 +1012,8 @@ type recordingTaskOwner struct {
 	runs           map[modulecore.TaskID][]domaintask.Run
 	getErr         error
 	getCalls       []modulecore.TaskID
+	listCalls      int
+	listRunCalls   int
 	blockErr       error
 	blockCalls     []taskOwnerBlockCall
 	failErr        error
@@ -1031,8 +1042,28 @@ func (o *recordingTaskOwner) Get(_ context.Context, taskID modulecore.TaskID) (d
 	return domaintask.Task{TaskID: taskID, Status: domaintask.StatusRunning}, nil
 }
 
+func (o *recordingTaskOwner) List(_ context.Context, _ domaintask.Filter) ([]domaintask.Task, error) {
+	o.listCalls++
+	if o.getErr != nil {
+		return nil, o.getErr
+	}
+	result := make([]domaintask.Task, 0, len(o.tasks))
+	for _, task := range o.tasks {
+		result = append(result, task)
+	}
+	return result, nil
+}
+
 func (o *recordingTaskOwner) ListRuns(_ context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
-	return append([]domaintask.Run(nil), o.runs[filter.TaskID]...), nil
+	o.listRunCalls++
+	if filter.TaskID != "" {
+		return append([]domaintask.Run(nil), o.runs[filter.TaskID]...), nil
+	}
+	result := make([]domaintask.Run, 0)
+	for _, runs := range o.runs {
+		result = append(result, runs...)
+	}
+	return result, nil
 }
 
 func (o *recordingTaskOwner) Block(_ context.Context, taskID modulecore.TaskID, reason string) (domaintask.Task, error) {

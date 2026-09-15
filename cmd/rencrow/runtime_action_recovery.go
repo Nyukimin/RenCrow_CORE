@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.Manager, tasks *taskmanager.Manager) (int, error) {
@@ -18,6 +19,14 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 	storedActions, err := actions.ListActions(ctx, domainaction.Filter{})
 	if err != nil {
 		return 0, err
+	}
+	allRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		return 0, fmt.Errorf("list canonical runs for Action restart recovery: %w", err)
+	}
+	runByID := make(map[modulecore.RunID]domaintask.Run, len(allRuns))
+	for _, run := range allRuns {
+		runByID[run.RunID] = run
 	}
 	recovered := 0
 	for _, action := range storedActions {
@@ -44,9 +53,9 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 			}
 			actionStatus = domainaction.StatusCancelled
 		}
-		run, err := tasks.GetRun(ctx, action.RunID)
-		if err != nil {
-			return recovered, fmt.Errorf("load run %s for terminal Action %s: %w", action.RunID, action.ActionID, err)
+		run, ok := runByID[action.RunID]
+		if !ok {
+			return recovered, fmt.Errorf("load run %s for terminal Action %s: %w", action.RunID, action.ActionID, domaintask.ErrNotFound)
 		}
 		if run.Status != domaintask.RunStatusRunning {
 			continue

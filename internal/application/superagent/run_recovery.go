@@ -24,6 +24,7 @@ type InterruptedRunRecoveryStore interface {
 // AgentRun or queue receipt.
 type InterruptedRunRecoveryTaskOwner interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
+	List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	Block(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 }
@@ -65,6 +66,26 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		}
 	}
 
+	tasks, err := owner.List(ctx, domaintask.Filter{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("list canonical tasks for interrupted run recovery: %w", err)
+	}
+	taskByID := make(map[modulecore.TaskID]domaintask.Task, len(tasks))
+	for _, task := range tasks {
+		if err := task.TaskID.Validate(); err != nil {
+			return 0, 0, fmt.Errorf("canonical task list contains invalid task_id: %w", err)
+		}
+		taskByID[task.TaskID] = task
+	}
+	allRuns, err := owner.ListRuns(ctx, domaintask.RunFilter{})
+	if err != nil {
+		return 0, 0, fmt.Errorf("list canonical runs for interrupted run recovery: %w", err)
+	}
+	runsByTask := make(map[modulecore.TaskID][]domaintask.Run, len(allRuns))
+	for _, run := range allRuns {
+		runsByTask[run.TaskID] = append(runsByTask[run.TaskID], run)
+	}
+
 	// Resolve every projection and its exact canonical Task+Run before making
 	// any projection or queue mutation. This gives missing/mismatched identity
 	// a fail-closed boundary instead of partially repairing earlier rows.
@@ -83,18 +104,14 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		}
 		seen[identity] = struct{}{}
 
-		task, err := owner.Get(ctx, projection.TaskID)
-		if err != nil {
-			return 0, 0, fmt.Errorf("get canonical task %s for interrupted run recovery: %w", projection.TaskID, err)
+		task, ok := taskByID[projection.TaskID]
+		if !ok {
+			return 0, 0, fmt.Errorf("get canonical task %s for interrupted run recovery: %w", projection.TaskID, domaintask.ErrNotFound)
 		}
 		if task.TaskID != projection.TaskID {
 			return 0, 0, fmt.Errorf("canonical task identity mismatch: got %s, want %s", task.TaskID, projection.TaskID)
 		}
-		runs, err := owner.ListRuns(ctx, domaintask.RunFilter{TaskID: projection.TaskID})
-		if err != nil {
-			return 0, 0, fmt.Errorf("list canonical runs for task %s during interrupted run recovery: %w", projection.TaskID, err)
-		}
-		canonicalRun, err := exactInterruptedRun(runs, projection.TaskID, projection.RunID)
+		canonicalRun, err := exactInterruptedRun(runsByTask[projection.TaskID], projection.TaskID, projection.RunID)
 		if err != nil {
 			return 0, 0, err
 		}
