@@ -2,7 +2,7 @@
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step12-request-response",
   "phase": "post-restart-partial",
-  "evaluated_at": "2026-09-15T22:06:00Z",
+  "evaluated_at": "2026-09-15T22:37:00Z",
   "outcome": {
     "status": "partial",
     "source_revision": "32ba5643b7cff85be31e35ca1c38ebb61fc8b6b5",
@@ -20,8 +20,8 @@
       "Step 12 legacy architecture zero scans"
     ],
     "open": [
-      "TTS post-deploy synthesis E2E is blocked because configured tts-gateway health returns HTTP 503 and target irodori is unavailable",
-      "Win11-HP01 owner inspection found no 7880 listener and Scheduled Task RenCrow-IrodoriTTS-RTX5060Ti explicitly Disabled; GPU 0 had 15534 MiB of 16311 MiB in use with only 517 MiB free while other managed AI workloads were running, so forcing the FP32 preload target would violate owner and resource boundaries",
+      "TTS post-deploy synthesis E2E through CORE Action/Attempt receipts remains unclosed: IdleChat/Voice cannot keep Gemma4 and Irodori on the same RTX 5060 Ti at once, so canonical CORE TTS receipts were not persisted",
+      "real TTS Gateway synthesis succeeded after approved GPU swap, but echoed request_id is provider-owned tts_* while CORE sends canonical req_* in X-RenCrow-TTS-Request-Id and client_request_id is null, so CORE identity mismatch would reject the response",
       "authenticated Viewer chat reaches orchestration but fails before LLM transport on the pre-existing context_pack.run_id NOT NULL constraint"
     ]
   },
@@ -152,6 +152,18 @@
     {
       "kind": "tts_runtime_blocker",
       "result": "canonical tts-gateway returned HTTP 503; Win11-HP01 had no port 7880 listener, RenCrow-IrodoriTTS-RTX5060Ti was Disabled with LastTaskResult 267014, and GPU 0 free memory was 517 MiB; no alternate target, port, or unrelated workload termination was used"
+    },
+    {
+      "kind": "tts_gpu_swap_probe",
+      "result": "user-approved temporary swap stopped Gemma4 via ops/stop.ps1, started RenCrow-IrodoriTTS-RTX5060Ti, and restored original state afterward: Gemma4 Running/ready on :18084, Irodori Disabled with 7880 absent, CORE /health/ready true, IdleChat disabled"
+    },
+    {
+      "kind": "tts_gateway_direct_probe",
+      "result": "POST /api/tts with owner token and X-RenCrow-TTS-Request-Id returned HTTP 200 and WAV audio_path; echoed request_id was tts_20260916_073105_223997 and tts_20260916_073121_537072, not the canonical req_* header value, and client_request_id was null"
+    },
+    {
+      "kind": "tts_idlechat_route_probe",
+      "result": "cmd-idlechat start plus portal-idlechat playback reached topic_ready but stalled before TTS because Gemma4 was stopped for Irodori; journal showed topic_generation_failed TARGET_UNAVAILABLE/context canceled and heartbeat_idlechat_sequence_stall; no tts.* transport receipts were written"
     }
   ]
 }
