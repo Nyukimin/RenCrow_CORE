@@ -84,23 +84,38 @@ func (b *RenCrowTTSBridge) postSynthesisWithRetry(ctx context.Context, reqBody [
 
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 		resp.Body.Close()
-		externalRef := gatewayResponseRequestID(body)
+		echoedRequestID, providerRef := gatewayResponseIDs(body)
 		responseID := modulecore.NewResponseID()
+		if readErr != nil {
+			if owned {
+				if receiptErr := owner.FailWithoutResponse(context.WithoutCancel(ctx), requestID, readErr.Error()); receiptErr != nil {
+					return synthesisTransportResult{}, fmt.Errorf("read /synthesis response: %w; persist transport failure: %v", readErr, receiptErr)
+				}
+			}
+			return synthesisTransportResult{}, fmt.Errorf("read /synthesis response: %w", readErr)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if owned && echoedRequestID != string(requestID) {
+				if receiptErr := owner.FailWithoutResponse(context.WithoutCancel(ctx), requestID, "TTS transport identity mismatch"); receiptErr != nil {
+					return synthesisTransportResult{}, fmt.Errorf("TTS transport identity mismatch; persist transport failure: %v", receiptErr)
+				}
+				return synthesisTransportResult{}, fmt.Errorf("TTS transport identity mismatch")
+			}
+			if owned {
+				responseReceipt, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, providerRef)
+				if receiptErr != nil {
+					return synthesisTransportResult{}, fmt.Errorf("persist TTS transport response: %w", receiptErr)
+				}
+				responseID = responseReceipt.ResponseID
+			}
+			return synthesisTransportResult{body: body, requestID: requestID, responseID: responseID}, nil
+		}
 		if owned {
-			responseReceipt, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, externalRef)
+			responseReceipt, receiptErr := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, firstNonEmpty(providerRef, echoedRequestID))
 			if receiptErr != nil {
 				return synthesisTransportResult{}, fmt.Errorf("persist TTS transport response: %w", receiptErr)
 			}
 			responseID = responseReceipt.ResponseID
-		}
-		if readErr != nil {
-			return synthesisTransportResult{}, fmt.Errorf("read /synthesis response: %w", readErr)
-		}
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if owned && externalRef != string(requestID) {
-				return synthesisTransportResult{}, fmt.Errorf("TTS transport identity mismatch")
-			}
-			return synthesisTransportResult{body: body, requestID: requestID, responseID: responseID}, nil
 		}
 
 		code, message := parseSynthesisError(body)
@@ -117,14 +132,33 @@ func (b *RenCrowTTSBridge) postSynthesisWithRetry(ctx context.Context, reqBody [
 	}
 }
 
-func gatewayResponseRequestID(body []byte) string {
+func gatewayResponseIDs(body []byte) (echoedRequestID, providerRef string) {
 	var response struct {
-		RequestID string `json:"request_id"`
+		RequestID         string `json:"request_id"`
+		TargetRequestID   string `json:"target_request_id"`
+		ProviderRequestID string `json:"provider_request_id"`
 	}
 	if json.Unmarshal(body, &response) != nil {
-		return ""
+		return "", ""
 	}
-	return strings.TrimSpace(response.RequestID)
+	echoedRequestID = strings.TrimSpace(response.RequestID)
+	providerRef = strings.TrimSpace(response.TargetRequestID)
+	if providerRef == "" {
+		providerRef = strings.TrimSpace(response.ProviderRequestID)
+	}
+	if providerRef == echoedRequestID {
+		providerRef = ""
+	}
+	return echoedRequestID, providerRef
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func shouldRetryTransportError(err error, attempt int) bool {

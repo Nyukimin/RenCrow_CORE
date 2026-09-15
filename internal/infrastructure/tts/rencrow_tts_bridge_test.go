@@ -485,6 +485,52 @@ func TestRenCrowTTSBridge_RetryMintsOneCanonicalRequestPerTransportCall(t *testi
 	}
 }
 
+func TestRenCrowTTSBridge_OwnedSuccessStoresProviderRequestAsExternalRef(t *testing.T) {
+	owner := &ttsTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: "http://tts.local"})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		requestID := r.Header.Get("X-RenCrow-TTS-Request-Id")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","request_id":"` +
+				requestID + `","target_request_id":"tts_20260916_073105_223997","audio_path":"/audio/irodori/ok"}`)),
+		}, nil
+	})}
+	if err := bridge.PushText(ctx, "owned-session", "test", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(owner.responses) != 1 || owner.responses[0].ExternalRef != "tts_20260916_073105_223997" {
+		t.Fatalf("responses=%#v", owner.responses)
+	}
+}
+
+func TestRenCrowTTSBridge_OwnedSuccessRejectsProviderOwnedRequestIDEcho(t *testing.T) {
+	owner := &ttsTransportReceiptOwner{}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: "http://tts.local"})
+	bridge.client = &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","request_id":"tts_20260916_073105_223997","audio_path":"/audio/irodori/ng"}`)),
+		}, nil
+	})}
+	if err := bridge.PushText(ctx, "mismatch-session", "test", nil); err == nil || !strings.Contains(err.Error(), "TTS transport identity mismatch") {
+		t.Fatalf("error=%v", err)
+	}
+	if len(owner.responses) != 0 || len(owner.failed) != 1 {
+		t.Fatalf("receipts responses=%d failed=%d", len(owner.responses), len(owner.failed))
+	}
+}
+
 type ttsTransportReceiptOwner struct {
 	requests  []domaintransport.Request
 	failed    []modulecore.RequestID
