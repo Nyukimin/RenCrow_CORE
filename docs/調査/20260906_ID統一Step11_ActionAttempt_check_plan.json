@@ -1,8 +1,8 @@
 {
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step11-action-attempt",
-  "phase": "design-frozen-v1",
-  "evaluated_at": "2026-09-06T23:32:00Z",
+  "phase": "source-runtime-close-v3",
+  "evaluated_at": "2026-09-15T19:18:00Z",
   "input": {
     "base_revision": "d17ea5f0a679d6f43af50b3fff90c8fad3c2a0e2",
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-11-actionidとattemptid",
@@ -46,6 +46,14 @@
       "failure_action": "return to implementation or rollback"
     },
     {
+      "check_id": "s11_action_kind_routes",
+      "guarantee": "Tool DCI LLM STT TTS Playback PatchApply ExternalSend ExternalPRSubmit Verification and MemoryPromotion production routes create and terminalize canonical Actions and Attempts through the Action owner; Playback success is recorded only for the active authenticated Viewer audio owner",
+      "owner": "RenCrow_CORE Action owner and runtime composition",
+      "execution_phase": "pre-commit and post-deploy",
+      "result_consumer": "Voice Atlas Memory Sandbox Revenue SkillGovernance and runtime receipts",
+      "failure_action": "return to implementation or rollback"
+    },
+    {
       "check_id": "s11_historical_migration",
       "guarantee": "one offline owner CLI consumes writer-stopped fixtures and atomically remaps ApplyID SubmitID and legacy execution action keys to ActionID AttemptID with exact counts checksums dry-run apply agreement and second-run no-op without touching live /srv/rencrow during Luna work",
       "owner": "RenCrow_CORE Step11 migration",
@@ -79,7 +87,7 @@
     },
     {
       "check_id": "s11_runtime_route",
-      "guarantee": "installed artifact active config user service PID listeners readiness canonical route Action retry Attempt Events Viewer receipt and ActionID invariance agree before and after restart",
+      "guarantee": "installed artifact active config user service PID listeners readiness canonical route Tool success retry timeout cancel side-effect failure on one Task Run Voice STT TTS Playback MemoryPromotion and PatchApply receipts Action retry Attempt Events Viewer receipt and ActionID invariance agree before and after restart",
       "owner": "RenCrow_CORE runtime and rencrow user service",
       "execution_phase": "cutover and post-restart",
       "result_consumer": "Step11 ledger",
@@ -107,5 +115,36 @@
       "failure_action": "reopen the failed Identity ledger row"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [
+    {
+      "receipt_id": "step11-final-source-gates",
+      "result": "passed",
+      "evidence": "go test ./..., go vet ./..., go build ./..., and edited-scope IDE lint all passed against the reviewed Step 11 source"
+    },
+    {
+      "receipt_id": "step11-runtime-artifact",
+      "result": "passed",
+      "evidence": "installed hash 02d2d3cd3d4b9a34f7302de9a2b7a1e05c476c38351128ca88daa87a53216d34; version 7ee3a431-step11-worktree7; rencrow.service PID 405970; restart count 0; fixed port 18790 health ok with all configured dependency checks"
+    },
+    {
+      "receipt_id": "step11-authenticated-dci-e2e",
+      "result": "passed",
+      "evidence": "authenticated user ren delegated execution to CORE Agent shiro; Task tsk_01a0a66d-4876-77ad-b130-1871b22ae1ce, Run run_01a0a66d-5522-7855-a566-95eca831fea6, DCI Action act_01a0a66d-5720-77e3-986a-450f2762d6d9, Attempt att_01a0a66d-5720-77f8-9a48-6a8252899e68, and inner read_file step all succeeded"
+    },
+    {
+      "receipt_id": "step11-post-restart-persistence",
+      "result": "passed",
+      "evidence": "after final service restart the exact Task, Run, Action, and Attempt remained succeeded; owner ren and assignee shiro remained unchanged; no execution identity or agent-scope rejection appeared after restart"
+    },
+    {
+      "receipt_id": "step11-stale-completion-recovery",
+      "result": "passed",
+      "evidence": "runtime RED exposed Action-terminal Task-running orphans under the live large Task store; completion now waits for durable Task/Run closure and startup recovery closes exact stale terminal or interrupted Action runs; final restart required no Action run recovery"
+    },
+    {
+      "receipt_id": "step11-adjacent-backup-timeout",
+      "result": "excluded",
+      "evidence": "scheduled storage backup completed its mask and restore lifecycle but its five-minute CORE readiness window expired because current CORE startup takes about thirteen minutes; CORE subsequently reached health ok and this operational timeout is not part of the Step 11 identity commit"
+    }
+  ]
 }
