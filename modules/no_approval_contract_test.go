@@ -120,10 +120,12 @@ func TestCanonicalPolicyRequiresReconsiderationAfterRejection(t *testing.T) {
 func TestCodexAndRenCrowAuthorityBoundariesStaySeparated(t *testing.T) {
 	root := repositoryRoot(t)
 	assertFileContainsAll(t, filepath.Join(root, "AGENTS.md"), []string{
-		"Codex User Authorization",
-		"ユーザーの明示指示",
-		"RenCrow No-Human-Gate",
-		"人の判断待ちを作らない",
+		"[統一ルール](../AGENTS.md)",
+	})
+	assertFileContainsAll(t, filepath.Join(filepath.Dir(root), "AGENTS.md"), []string{
+		"変更scopeはユーザーの指示に基づく",
+		"利用者判断とNo-Human-Gate",
+		"人の返答で解除するstatus",
 	})
 }
 

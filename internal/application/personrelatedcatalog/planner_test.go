@@ -147,7 +147,7 @@ func TestApplySummaryPatchExactIDsAndLimits(t *testing.T) {
 		SourceRecordID:      "jp:drama-1",
 		CanonicalURL:        "https://example.test/jp/drama-1",
 		EvidenceURL:         "https://example.test/jp/drama-1/evidence",
-		RetrievedAt:         "2026-08-12T00:00:00Z",
+		RetrievedAt:         time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := ApplySummaryPatch(ctx, hobbyDB, []SummaryPatch{patch}); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -138,8 +139,14 @@ func TestImportAndLookupProjectsJapaneseSummaryAndCoverage(t *testing.T) {
 	if err := EnsureSchema(ctx, movieDB, hobbyDB); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
+	freshRetrievedAt := time.Now().UTC().Format(time.RFC3339)
 	artifact := []byte(strings.Replace(
-		string(validArtifact(t)),
+		strings.Replace(
+			string(validArtifact(t)),
+			`"retrieved_at":"2026-08-12T00:00:00Z"`,
+			`"retrieved_at":"`+freshRetrievedAt+`"`,
+			1,
+		),
 		`"description_translation_state":"not_attempted"`,
 		`"description_original":"日本語の概要","description_language":"ja","description_ja":"日本語の概要","description_translation_state":"not_required"`,
 		1,
