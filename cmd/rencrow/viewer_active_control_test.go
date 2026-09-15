@@ -78,6 +78,7 @@ func TestViewerActiveControl_HeartbeatKeepsOwnerFresh(t *testing.T) {
 
 func TestTTSPlaybackAckOnlyReleasesActiveAudioViewer(t *testing.T) {
 	resetActiveViewerControlForTest()
+	playbackRecorder := newTestPlaybackActionRecorder(t)
 	ch := registerIdleChatTTSPending("idle-active-tts", "response-active-1")
 	activeViewerControl.Claim("audio", "pc-viewer")
 
@@ -89,7 +90,7 @@ func TestTTSPlaybackAckOnlyReleasesActiveAudioViewer(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/viewer/tts/playback-ack", bytes.NewReader(reqBody))
-	handleTTSPlaybackAck()(rec, req)
+	handleTTSPlaybackAck(playbackRecorder)(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("inactive ack should be accepted as an observation, got HTTP %d", rec.Code)
 	}
@@ -103,7 +104,7 @@ func TestTTSPlaybackAckOnlyReleasesActiveAudioViewer(t *testing.T) {
 	reqBody = []byte(`{"public_playback_ref":"response-active-1","session_id":"idle-active-tts","viewer_client_id":"pc-viewer","status":"ended"}`)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/viewer/tts/playback-ack", bytes.NewReader(reqBody))
-	handleTTSPlaybackAck()(rec, req)
+	handleTTSPlaybackAck(playbackRecorder)(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("active ack got HTTP %d", rec.Code)
 	}
@@ -126,6 +127,7 @@ func TestTTSPlaybackAckOnlyReleasesActiveAudioViewer(t *testing.T) {
 
 func TestTTSPlaybackErrorAckDoesNotReleaseWhenNoActiveAudioViewer(t *testing.T) {
 	resetActiveViewerControlForTest()
+	playbackRecorder := newTestPlaybackActionRecorder(t)
 	ch := registerIdleChatTTSPending("idle-error-tts", "response-error-1")
 
 	reqBody, _ := json.Marshal(ttsPlaybackAckRequest{
@@ -138,7 +140,7 @@ func TestTTSPlaybackErrorAckDoesNotReleaseWhenNoActiveAudioViewer(t *testing.T) 
 	})
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/viewer/tts/playback-ack", bytes.NewReader(reqBody))
-	handleTTSPlaybackAck()(rec, req)
+	handleTTSPlaybackAck(playbackRecorder)(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("error ack got HTTP %d", rec.Code)
 	}
@@ -152,6 +154,7 @@ func TestTTSPlaybackErrorAckDoesNotReleaseWhenNoActiveAudioViewer(t *testing.T) 
 
 func TestTTSPlaybackAckRejectsLegacyResponseIDWithoutReleasingPending(t *testing.T) {
 	resetActiveViewerControlForTest()
+	playbackRecorder := newTestPlaybackActionRecorder(t)
 	clearAllIdleChatTTSPending()
 	t.Cleanup(func() {
 		clearAllIdleChatTTSPending()
@@ -162,7 +165,7 @@ func TestTTSPlaybackAckRejectsLegacyResponseIDWithoutReleasingPending(t *testing
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/viewer/tts/playback-ack", bytes.NewBufferString(`{"response_id":"legacy-response-1","session_id":"idle-legacy-tts","viewer_client_id":"pc-viewer","status":"ended"}`))
-	handleTTSPlaybackAck()(rec, req)
+	handleTTSPlaybackAck(playbackRecorder)(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("legacy response_id should be rejected, got HTTP %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -171,6 +174,16 @@ func TestTTSPlaybackAckRejectsLegacyResponseIDWithoutReleasingPending(t *testing
 		t.Fatal("legacy response_id must not release pending playback")
 	default:
 	}
+}
+
+func newTestPlaybackActionRecorder(t *testing.T) *playbackActionRecorder {
+	t.Helper()
+	tasks, actions := newTTSActionTestOwners(t)
+	recorder, err := newPlaybackActionRecorder(actions, tasks, "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recorder
 }
 
 func TestViewerActiveClaimHandlerBroadcastsControlEvent(t *testing.T) {

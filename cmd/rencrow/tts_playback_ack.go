@@ -13,13 +13,14 @@ type ttsPlaybackAckRequest struct {
 	PublicPlaybackRef string `json:"public_playback_ref"`
 	SessionID         string `json:"session_id"`
 	UtteranceID       string `json:"utterance_id"`
+	ChunkIndex        int    `json:"chunk_index,omitempty"`
 	ViewerClientID    string `json:"viewer_client_id,omitempty"`
 	Status            string `json:"status"`
 	ErrorCode         string `json:"error_code,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
-func handleTTSPlaybackAck() http.HandlerFunc {
+func handleTTSPlaybackAck(recorder *playbackActionRecorder) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -38,6 +39,16 @@ func handleTTSPlaybackAck() http.HandlerFunc {
 		}
 		viewerClientID := strings.TrimSpace(req.ViewerClientID)
 		activeAudio := activeViewerControl.IsActiveAudio(viewerClientID)
+		if activeAudio {
+			if recorder == nil {
+				http.Error(w, "playback Action owner is unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if err := recorder.Record(r.Context(), req); err != nil {
+				http.Error(w, "record playback receipt: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
 		ok := false
 		if moduletts.ShouldConsumePendingForPlaybackAck(activeAudio) {
 			ok = notifyIdleChatTTSPlaybackCompleted(publicPlaybackRef)

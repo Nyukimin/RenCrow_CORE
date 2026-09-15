@@ -1,11 +1,14 @@
 package main
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	sttfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/stt"
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
@@ -24,8 +27,15 @@ type sttRuntime struct {
 	Module         modulestt.Provider
 }
 
-func buildSTTRuntime(cfg *config.Config) sttRuntime {
+func buildSTTRuntime(cfg *config.Config, tasks *taskmanager.Manager, actions *actionmanager.Manager) sttRuntime {
 	provider := buildSTTProvider(cfg)
+	if provider != nil {
+		ownedProvider, err := sttinfra.NewActionProvider(provider, actions, tasks, "mio")
+		if err != nil {
+			log.Fatalf("Failed to connect STT provider to execution owners: %v", err)
+		}
+		provider = ownedProvider
+	}
 	gatewayHTTPURL := inferSTTGatewayHTTPURLFromConfig(cfg)
 	return sttRuntime{
 		Provider:       provider,

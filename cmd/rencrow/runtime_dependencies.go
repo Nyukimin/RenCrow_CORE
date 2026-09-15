@@ -13,6 +13,7 @@ import (
 	configpolicy "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/policybundle"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
 	artifactcleanupapp "github.com/Nyukimin/RenCrow_CORE/internal/application/artifactcleanup"
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
@@ -104,6 +105,8 @@ type Dependencies struct {
 	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
 	taskStore                      *taskpersistence.JSONLStore                 // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
+	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
+	playbackRecorder               *playbackActionRecorder                     // canonical actual-playback receipt owner
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
@@ -449,6 +452,22 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err := initializeRuntimeTaskOwner(deps, cfg.WorkspaceDir); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
 	}
+	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
+	}
+	deps.actionManager = runtimeActionManager
+	recoveredActionRuns, err := recoverActionRunsAfterRestart(context.Background(), runtimeActionManager, deps.taskManager)
+	if err != nil {
+		log.Fatalf("Failed to recover terminal Action runs after restart: %v", err)
+	}
+	if recoveredActionRuns > 0 {
+		log.Printf("Recovered %d terminal Action run(s) after process restart", recoveredActionRuns)
+	}
+	deps.playbackRecorder, err = newPlaybackActionRecorder(runtimeActionManager, deps.taskManager, "mio")
+	if err != nil {
+		log.Fatalf("Failed to initialize Playback receipt owner: %v", err)
+	}
 	runtimeToolRegistry := buildRuntimeToolRegistry(cfg)
 	nodeCaps := buildCapabilityRuntime(cfg, runtimeToolRegistry)
 	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore)
@@ -457,7 +476,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	aiWorkflowStore := composeRuntimeAIWorkflowStore(buildAIWorkflowStateStore(cfg), canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
-	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker)
+	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager)
 	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
 	ruleDictionary := routing.NewRuleDictionary()
 	skillLoader := domaincontext.NewSkillsLoader("")
@@ -771,8 +790,17 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
 	)
 	if conversationRuntime.ProfilePromotion != nil {
-		deps.memoryPromotionCancel = startMemoryPromotionWorker(
+		memoryPromotionRunner, err := newActionMemoryPromotionRunner(
 			conversationRuntime.ProfilePromotion,
+			runtimeActionManager,
+			deps.taskManager,
+			"midori",
+		)
+		if err != nil {
+			log.Fatalf("Failed to connect Memory Promotion to execution owners: %v", err)
+		}
+		deps.memoryPromotionCancel = startMemoryPromotionWorker(
+			memoryPromotionRunner,
 			llmBusyTracker,
 			time.Duration(cfg.Conversation.ProfilePromotionIdleGraceSeconds)*time.Second,
 			time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds)*time.Second,
@@ -783,13 +811,8 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
-	runtimeActionManager := toolRuntime.ActionManager
-	if runtimeActionManager == nil && (cfg.SkillGovernance.IsEnabled() || cfg.Revenue.IsEnabled()) {
-		manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
-		if err != nil {
-			log.Fatalf("Failed to initialize action manager: %v", err)
-		}
-		runtimeActionManager = manager
+	if toolRuntime.ActionManager != nil {
+		runtimeActionManager = toolRuntime.ActionManager
 	}
 	if cfg.SkillGovernance.IsEnabled() {
 		type skillGovernanceRuntimeStore interface {
@@ -882,10 +905,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			allowlist = append(allowlist, os.ExpandEnv(src.PathDir))
 		}
 
+		const dciExecutorID = "shiro"
 		dciExplorer := dciapp.NewExplorer(dciapp.Config{
 			Enabled:           cfg.DCI.IsEnabled(),
 			ActorKind:         "agent",
-			ActorID:           "shiro",
+			ActorID:           dciExecutorID,
 			Allowlist:         allowlist,
 			DenylistPatterns:  cfg.DCI.CorpusDenylist,
 			ExplicitKeywords:  cfg.DCI.ExplicitKeywords,
@@ -896,13 +920,17 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			MaxEvidence:       cfg.DCI.MaxEvidence,
 			MaxSnippetChars:   cfg.DCI.MaxSnippetChars,
 		}, dciStore, dciOptions...)
-		if err := registerRuntimeDataWriteDCI(dataWriteRegistry, dciStore, dciExplorer); err != nil {
+		dciOwnedSearcher, err := dciapp.NewOwnedSearcher(dciExplorer, runtimeActionManager)
+		if err != nil {
+			log.Fatalf("Failed to initialize DCI Action owner: %v", err)
+		}
+		if err := registerRuntimeDataWriteDCI(dataWriteRegistry, dciStore, dciOwnedSearcher); err != nil {
 			log.Fatalf("Failed to register DCI data write: %v", err)
 		}
 		if err := registerRuntimeDataRecallDCISearchResult(dataRecallRegistry, dciStore); err != nil {
 			log.Fatalf("Failed to register DCI exact search result data recall: %v", err)
 		}
-		deps.dciSearcher = dciExplorer
+		deps.dciSearcher = dciOwnedSearcher
 		var dciOwnerToken []byte
 		if cfg.LocalAgentOps.Enabled {
 			if token, err := readAgentOpsToken(cfg.LocalAgentOps.AuthTokenFile); err != nil {
@@ -911,7 +939,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 				dciOwnerToken = token
 			}
 		}
-		deps.dciSearch = viewer.NewDCISearchHandler(dciExplorer, cfg.LocalAgentOps.UserID, dciOwnerToken)
+		deps.dciSearch = viewer.NewDCISearchHandler(dciOwnedSearcher, deps.taskManager, cfg.LocalAgentOps.UserID, dciExecutorID, dciOwnerToken)
 	}
 	type sandboxRuntimeStore interface {
 		viewer.SandboxLister
@@ -951,7 +979,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		promotionDiffPreviewer = sandboxapp.NewPromotionDiffApplier(
 			filepath.Join(cfg.WorkspaceDir, cfg.Sandbox.Root),
 			cfg.Sandbox.Promotion.ApplyRoot,
-		)
+		).WithExecutionOwners(runtimeActionManager, deps.taskManager, "shiro")
 		deps.sandboxPromotionPreview = viewer.HandleSandboxPromotionDiffPreview(promotionDiffPreviewer)
 		var promotionDiffApplier *sandboxapp.PromotionDiffApplier
 		if cfg.Sandbox.Promotion.ApplyRoot != "" {
@@ -1003,7 +1031,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// Atlas shares the established Backlog JSONL and Workstream store. No
 	// lifecycle state is initialized when either owner store is unavailable;
 	// reads still expose an empty/legacy-safe projection and writes fail closed.
-	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore)
+	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore).WithExecutionOwners(runtimeActionManager, deps.taskManager, "shiro")
 	if llmRuntime.Worker != nil {
 		deps.atlasService.WithRevalidationEvaluator(backlogapp.NewLLMRevalidationEvaluator(llmRuntime.Worker, "shiro"))
 		log.Printf("Atlas maturation revalidation evaluator enabled via RenCrow_LLM Worker")
@@ -1436,6 +1464,10 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			}
 		},
 	)
+	ttsBridge, err = newActionTTSBridge(ttsBridge, runtimeActionManager, deps.taskManager, "mio")
+	if err != nil {
+		log.Fatalf("Failed to connect TTS bridge to execution owners: %v", err)
+	}
 
 	// NI-003: ToolRegistry エラーを SSE でユーザーに通知する
 	if toolRuntime.SubagentMgr != nil && deps.eventRelay != nil {

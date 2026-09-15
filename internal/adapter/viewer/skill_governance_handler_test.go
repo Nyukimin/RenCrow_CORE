@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -604,8 +605,9 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 		"pr_adapter":"github"
 	}`))
 	rec := httptest.NewRecorder()
+	actions := testActionManager(t)
 
-	HandleSkillGovernanceExternalPRSubmit(store, testActionManager(t)).ServeHTTP(rec, req)
+	HandleSkillGovernanceExternalPRSubmit(store, actions).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -629,6 +631,20 @@ func TestHandleSkillGovernanceExternalPRSubmitSavesBlockedAudit(t *testing.T) {
 	}
 	if body.Record.ActionID.Validate() != nil || body.ExternalPRCreated {
 		t.Fatalf("body=%#v", body)
+	}
+	action, err := actions.GetAction(context.Background(), record.ActionID)
+	if err != nil {
+		t.Fatalf("get external PR action: %v", err)
+	}
+	if action.Status != domainaction.StatusFailed {
+		t.Fatalf("external PR action status=%s, want %s", action.Status, domainaction.StatusFailed)
+	}
+	attempts, err := actions.ListAttempts(context.Background(), domainaction.AttemptFilter{ActionID: action.ActionID})
+	if err != nil {
+		t.Fatalf("list external PR attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != domainaction.AttemptStatusFailed {
+		t.Fatalf("external PR attempts=%#v, want one failed attempt", attempts)
 	}
 }
 

@@ -101,6 +101,13 @@ func newTestExplorer(cfg Config, store TraceStore, opts ...Option) *Explorer {
 	return NewExplorer(cfg, store, append([]Option{WithEventAppender(&recordingEventAppender{})}, opts...)...)
 }
 
+// Search keeps low-level Explorer tests focused on corpus behavior. Production
+// callers use OwnedSearcher so ActionID and AttemptID always come from the
+// canonical Action owner.
+func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchResult, error) {
+	return e.SearchWithIdentity(ctx, query, modulecore.NewTraceID(), modulecore.NewActionID(), e.cfg.ActorKind, e.cfg.ActorID, "")
+}
+
 func (s *memoryTraceStore) SaveSearchTrace(ctx context.Context, trace domaindci.SearchTrace) error {
 	s.traces = append(s.traces, trace)
 	deadline, hasDeadline := ctx.Deadline()

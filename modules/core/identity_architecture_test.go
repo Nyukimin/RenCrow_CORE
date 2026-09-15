@@ -644,6 +644,44 @@ func TestStep11ActionIdentityLegacyFieldsAreBanned(t *testing.T) {
 		}
 		checkContent(relative, content)
 	}
+	for _, rootRelative := range []string{"cmd", "internal"} {
+		root := filepath.Join(repoRoot, rootRelative)
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				if filepath.ToSlash(relative) == "internal/application/actionmanager" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			for lineNumber, line := range strings.Split(string(content), "\n") {
+				if strings.Contains(line, "modulecore.NewActionID()") {
+					relative, err := filepath.Rel(repoRoot, path)
+					if err != nil {
+						return err
+					}
+					violations = append(violations, fmt.Sprintf("%s:%d:action-id-minted-outside-owner", filepath.ToSlash(relative), lineNumber+1))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scan Step11 ActionID mint scope %s: %v", rootRelative, err)
+		}
+	}
 	canonicalArchitectureFail(t, "Step11 owner packages must not retain ApplyID SubmitID nextActionID or legacy JSON keys", violations)
 }
 

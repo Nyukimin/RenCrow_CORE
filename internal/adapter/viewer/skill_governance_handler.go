@@ -292,7 +292,7 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore, actions *
 			http.Error(w, "passed contribution gate is required before external PR submit", http.StatusConflict)
 			return
 		}
-		createdAction, _, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
+		createdAction, createdAttempt, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
 			TaskID: req.TaskID,
 			RunID:  req.RunID,
 			Kind:   domainaction.KindExternalPRSubmit,
@@ -317,11 +317,23 @@ func HandleSkillGovernanceExternalPRSubmit(store SkillGovernanceStore, actions *
 			TestResult:          req.TestResult,
 		}, now)
 		if err != nil {
+			if _, _, closeErr := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, err.Error()); closeErr != nil {
+				http.Error(w, "failed to close external PR action", http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := store.SaveExternalPRSubmitRecord(r.Context(), record); err != nil {
+			if _, _, closeErr := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, err.Error()); closeErr != nil {
+				http.Error(w, "failed to close external PR action", http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, "failed to save external PR submit record", http.StatusInternalServerError)
+			return
+		}
+		if _, _, err := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, record.FailureReason); err != nil {
+			http.Error(w, "failed to close external PR action", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{

@@ -753,7 +753,7 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 		if traceID == "" {
 			traceID = string(modulecore.NewTraceID())
 		}
-		createdAction, _, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
+		createdAction, createdAttempt, err := actions.CreateAction(r.Context(), actionmanager.CreateInput{
 			TaskID: req.TaskID,
 			RunID:  req.RunID,
 			Kind:   domainaction.KindExternalSend,
@@ -783,6 +783,10 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 		}
 		delivery, err = revenueapp.NewEconomicService(store, time.Now).RecordDelivery(r.Context(), delivery)
 		if err != nil {
+			if _, _, closeErr := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, err.Error()); closeErr != nil {
+				http.Error(w, "failed to close external send action", http.StatusInternalServerError)
+				return
+			}
 			if err == revenueapp.ErrOpportunityNotFound {
 				http.Error(w, err.Error(), http.StatusNotFound)
 				return
@@ -807,7 +811,15 @@ func HandleRevenueExternalSendApply(store RevenueStore, actions *actionmanager.M
 			CreatedAt:           now,
 		}
 		if err := store.SaveExternalSendApplyRecord(r.Context(), record); err != nil {
+			if _, _, closeErr := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, err.Error()); closeErr != nil {
+				http.Error(w, "failed to close external send action", http.StatusInternalServerError)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, _, err := actions.CompleteAttempt(r.Context(), createdAction.ActionID, createdAttempt.AttemptID, domainaction.AttemptStatusFailed, domainaction.StatusFailed, record.FailureReason); err != nil {
+			http.Error(w, "failed to close external send action", http.StatusInternalServerError)
 			return
 		}
 		writeJSON(w, http.StatusAccepted, map[string]any{

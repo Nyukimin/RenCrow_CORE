@@ -312,7 +312,7 @@ func newAtlasLifecycleHTTPRuntime(t *testing.T) *atlasLifecycleHTTPRuntime {
 	items := backlogpersistence.NewJSONLStore(filepath.Join(root, "backlog.jsonl"))
 	verifier := &atlasStrictHTTPVerifier{expected: map[string]atlasVerifierExpectation{}}
 	workstream := workstreampersistence.NewJSONLStore(workstreamRoot)
-	service := appbacklog.NewService(items, workstream).WithEvidenceVerifier(verifier)
+	service := withAtlasTestExecutionOwners(t, appbacklog.NewService(items, workstream).WithEvidenceVerifier(verifier))
 	token := "atlas-http-owner-token-012345678901234567890123"
 	server := httptest.NewServer(NewAtlasHandler(service, "ren", []byte(token)))
 	runtime := &atlasLifecycleHTTPRuntime{

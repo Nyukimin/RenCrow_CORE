@@ -93,7 +93,7 @@ func TestOwnerRouteWriteRecallE2E(t *testing.T) {
 			Now: func() time.Time { return time.Date(2026, 8, 14, 7, 0, 0, 0, time.UTC) },
 		}, store, dciapp.WithEventAppender(events))
 		writeRegistry := newRuntimeDataWriteRegistry()
-		if err := registerRuntimeDataWriteDCI(writeRegistry, store, explorer); err != nil {
+		if err := registerRuntimeDataWriteDCI(writeRegistry, store, newDCIAdapterOwnedSearcher(t, explorer)); err != nil {
 			t.Fatalf("register DCI write: %v", err)
 		}
 		recallRegistry := newRuntimeDataRecallRegistry()

@@ -389,7 +389,7 @@ func TestServiceRecoverFindsLeaseHolderByImplementationUnit(t *testing.T) {
 	if adopted.Lease.HolderUnitID == string(adopted.Item.BacklogItemID) {
 		t.Fatalf("test must cover distinct item and unit IDs: %+v", adopted)
 	}
-	if err := svc.Recover(context.Background()); err != nil {
+	if err := svc.Recover(backlogActionContext(t)); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := svc.Projection(context.Background())
@@ -454,7 +454,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 		t.Fatalf("seed blocked lease acquired=%v err=%v", acquired, err)
 	}
 
-	if _, err := service.Revise(context.Background(), "recover-blocked", ReviseRequest{
+	if _, err := service.Revise(backlogActionContext(t), "recover-blocked", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliveryBlocked,
 		EvidenceRefs:        []domainbacklog.EvidenceRef{{Stage: domainbacklog.DeliveryBlocked, Kind: "worker_failure", Ref: "worker-failure-recover"}},
 		Reason:              "worker_failure",
@@ -472,7 +472,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 		t.Fatalf("failed freeze write must retain lease found=%v err=%v", found, err)
 	}
 
-	if err := service.Recover(context.Background()); err == nil {
+	if err := service.Recover(backlogActionContext(t)); err == nil {
 		t.Fatal("recovery must fail closed while freeze persistence remains unavailable")
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || !found {
@@ -480,7 +480,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 	}
 
 	workstream.failFreezeSave = false
-	if err := service.Recover(context.Background()); err != nil {
+	if err := service.Recover(backlogActionContext(t)); err != nil {
 		t.Fatalf("recovery after store restoration: %v", err)
 	}
 	freeze, found, err := workstream.GetQueueFreeze(context.Background(), "atlas-freeze:unit-recover-blocked:1")
@@ -490,7 +490,7 @@ func TestRecoverPersistsBlockedFreezeBeforeReleasingLease(t *testing.T) {
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || found {
 		t.Fatalf("lease must release only after freeze persistence found=%v err=%v", found, err)
 	}
-	result, err := service.AcquireRunnable(context.Background())
+	result, err := service.AcquireRunnable(backlogActionContext(t))
 	if err != nil || result.Acquired || result.Reason != domainworkstream.ErrQueueFrozen.Error() || result.Item.BacklogItemID != "" {
 		t.Fatalf("recovered queue must remain frozen result=%+v err=%v", result, err)
 	}
@@ -523,14 +523,14 @@ func TestRecoverBlockedExistingFreezeRetainsAttemptedStageEvidence(t *testing.T)
 		t.Fatal(err)
 	}
 	service := NewService(items, workstream).WithClock(func() time.Time { return now })
-	if err := service.Recover(context.Background()); err == nil {
+	if err := service.Recover(backlogActionContext(t)); err == nil {
 		t.Fatal("release failure must be returned")
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || !found {
 		t.Fatalf("release failure must retain lease found=%v err=%v", found, err)
 	}
 	workstream.releaseErr = nil
-	if err := service.Recover(context.Background()); err != nil {
+	if err := service.Recover(backlogActionContext(t)); err != nil {
 		t.Fatalf("recovery with existing attempted-stage freeze: %v", err)
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || found {
@@ -578,7 +578,7 @@ func newLiveClosureRecoveryFixture(t *testing.T) (*Service, *recoveryDoneFailure
 	live := items.items[0]
 	done := live
 	done.DeliveryState = domainbacklog.DeliveryDone
-	if err := service.completeDone(context.Background(), live, done, ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}, stageRunKey(live.ImplementationUnit, 1, domainbacklog.DeliveryDone), ""); err == nil {
+	if err := service.completeDone(backlogActionContext(t), live, done, ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}, stageRunKey(live.ImplementationUnit, 1, domainbacklog.DeliveryDone), ""); err == nil {
 		t.Fatal("simulated DONE persistence failure must surface")
 	}
 	if _, found, err := workstream.GetImplementationLease(context.Background(), domainbacklog.ImplementationLeaseName); err != nil || found {
@@ -594,7 +594,7 @@ func TestRecoverResumesLiveClosureWithoutLeaseBeforeQueue(t *testing.T) {
 		t.Fatalf("prepared closure must own a canonical action: %+v found=%v err=%v", before, found, err)
 	}
 	items.failDoneSave = false
-	if err := service.Recover(context.Background()); err != nil {
+	if err := service.Recover(backlogActionContext(t)); err != nil {
 		t.Fatalf("Recover must resume LIVE closure without lease: %v", err)
 	}
 	if items.items[0].DeliveryState != domainbacklog.DeliveryDone {
@@ -619,7 +619,7 @@ func TestRecoverResumesLiveClosureWithoutLeaseBeforeQueue(t *testing.T) {
 func TestAcquireRunnableResumesLiveClosureBeforeSelectingQueue(t *testing.T) {
 	service, items, workstream := newLiveClosureRecoveryFixture(t)
 	items.failDoneSave = false
-	result, err := service.AcquireRunnable(context.Background())
+	result, err := service.AcquireRunnable(backlogActionContext(t))
 	if err != nil || result.Item.BacklogItemID != "recover-live" || result.Item.DeliveryState != domainbacklog.DeliveryDone || result.Reason != "LIVE_VERIFIED closure resumed" {
 		t.Fatalf("AcquireRunnable closure recovery result=%+v err=%v", result, err)
 	}

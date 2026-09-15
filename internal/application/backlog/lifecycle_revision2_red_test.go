@@ -34,11 +34,11 @@ func TestRevision2StageReplayIsIdempotent(t *testing.T) {
 		}},
 	}
 
-	first, err := service.Revise(context.Background(), "revision2-replay", request)
+	first, err := service.Revise(backlogActionContext(t), "revision2-replay", request)
 	if err != nil {
 		t.Fatalf("first stage execution: %v", err)
 	}
-	second, err := service.Revise(context.Background(), "revision2-replay", request)
+	second, err := service.Revise(backlogActionContext(t), "revision2-replay", request)
 	if err != nil {
 		t.Fatalf("same unit+revision+target replay must return the original receipt, got %v", err)
 	}
@@ -53,7 +53,7 @@ func TestRevision2StageReplayIsIdempotent(t *testing.T) {
 	// A later stage must not change the result returned by replaying the
 	// original idempotency key.
 	store.items[0].DeliveryState = domainbacklog.DeliveryTDDRed
-	replayed, err := service.Revise(context.Background(), "revision2-replay", request)
+	replayed, err := service.Revise(backlogActionContext(t), "revision2-replay", request)
 	if err != nil || replayed.DeliveryState != domainbacklog.DeliverySpec {
 		t.Fatalf("replay must return original stage result, item=%+v err=%v", replayed, err)
 	}
@@ -76,7 +76,7 @@ func TestRevision2StageHashIgnoresCallerVerificationMetadata(t *testing.T) {
 			VerifiedAt: "forged-at", Verifier: "caller",
 		}},
 	}
-	first, err := service.Revise(context.Background(), "revision2-hash-claims", firstRequest)
+	first, err := service.Revise(backlogActionContext(t), "revision2-hash-claims", firstRequest)
 	if err != nil {
 		t.Fatalf("first stage execution: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestRevision2StageHashIgnoresCallerVerificationMetadata(t *testing.T) {
 			Stage: domainbacklog.DeliverySpec, Kind: "spec", Ref: "receipt/spec/hash-claims", Passed: true,
 		}},
 	}
-	second, err := service.Revise(context.Background(), "revision2-hash-claims", replayRequest)
+	second, err := service.Revise(backlogActionContext(t), "revision2-hash-claims", replayRequest)
 	if err != nil {
 		t.Fatalf("replay without caller verification metadata must be idempotent: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestRevision2EvidenceVerificationUsesAuthoritativeContextAndClearsClaims(t 
 	}}}
 	verifier := &captureEvidenceVerifier{ok: true}
 	service := NewService(store, &memoryWorkstreamStore{}).WithEvidenceVerifier(verifier)
-	result, err := service.Revise(context.Background(), "context-item", ReviseRequest{
+	result, err := service.Revise(backlogActionContext(t), "context-item", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 		EvidenceRefs: []domainbacklog.EvidenceRef{{
 			Kind: "spec", Ref: "spec-context", Passed: true, Verified: true,
@@ -141,7 +141,7 @@ func TestRevision2EvidenceStageMismatchFailsBeforeVerifier(t *testing.T) {
 	}}}
 	verifier := &captureEvidenceVerifier{ok: true}
 	service := NewService(store, &memoryWorkstreamStore{}).WithEvidenceVerifier(verifier)
-	_, err := service.Revise(context.Background(), "stage-bound-item", ReviseRequest{
+	_, err := service.Revise(backlogActionContext(t), "stage-bound-item", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 		EvidenceRefs:        []domainbacklog.EvidenceRef{{Stage: domainbacklog.DeliveryTDDRed, Kind: "spec", Ref: "wrong-stage"}},
 	})
@@ -198,7 +198,7 @@ func TestRevision2ReviseFailsClosedWithoutLifecycleStore(t *testing.T) {
 		Title: "no lifecycle", ConceptState: domainbacklog.ConceptAdopted, DeliveryState: domainbacklog.DeliveryQueued,
 	}}}
 	service := NewService(store, nil).WithEvidenceVerifier(revision2Verifier{})
-	_, err := service.Revise(context.Background(), "revision2-no-lifecycle", ReviseRequest{
+	_, err := service.Revise(backlogActionContext(t), "revision2-no-lifecycle", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 		EvidenceRefs:        []domainbacklog.EvidenceRef{{Kind: "spec", Ref: "spec-1", Passed: true}},
 	})
@@ -215,7 +215,7 @@ func TestRevision2StageReceiptPreparedBeforeItemMutation(t *testing.T) {
 	}, events: &events}
 	workstream := &revision2OrderedWorkstreamStore{events: &events}
 	service := NewService(store, workstream).WithEvidenceVerifier(revision2Verifier{})
-	if _, err := service.Revise(context.Background(), "revision2-order", ReviseRequest{
+	if _, err := service.Revise(backlogActionContext(t), "revision2-order", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 		EvidenceRefs:        []domainbacklog.EvidenceRef{{Kind: "spec", Ref: "spec-order", Passed: true}},
 	}); err != nil {
@@ -256,7 +256,7 @@ func TestRevision2LiveVerifiedImmediatelyClosesToDone(t *testing.T) {
 	}
 	service := NewService(store, workstream).WithEvidenceVerifier(revision2Verifier{})
 
-	result, err := service.Revise(context.Background(), "revision2-live-lease", ReviseRequest{
+	result, err := service.Revise(backlogActionContext(t), "revision2-live-lease", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliveryLiveVerified,
 		EvidenceRefs:        refs,
 	})
@@ -311,7 +311,7 @@ func TestRevision2DoneRejectsLeaseReleaseFailure(t *testing.T) {
 	workstream := &revision2ReleaseFailureStore{releaseErr: errors.New("lease release failed")}
 	service := NewService(store, workstream).WithEvidenceVerifier(revision2Verifier{})
 
-	if _, err := service.Revise(context.Background(), "revision2-done-release", ReviseRequest{
+	if _, err := service.Revise(backlogActionContext(t), "revision2-done-release", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliveryDone,
 		EvidenceRefs:        refs,
 	}); err == nil {
@@ -334,7 +334,7 @@ func TestRevision2RecoverLiveWithoutClosureReceiptCompletesDone(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(store, ws)
-	if err := service.Recover(context.Background()); err != nil {
+	if err := service.Recover(backlogActionContext(t)); err != nil {
 		t.Fatalf("Recover() failed: %v", err)
 	}
 	if store.items[0].DeliveryState != domainbacklog.DeliveryDone {
@@ -484,7 +484,7 @@ func TestRevision2AcquireRunnableReturnsNoneWhileQueueFrozen(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := NewService(items, ws)
-	result, err := service.AcquireRunnable(context.Background())
+	result, err := service.AcquireRunnable(backlogActionContext(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,17 +504,17 @@ func TestRevision2AcquireRunnableResumesExistingLeaseHolder(t *testing.T) {
 	}}}
 	ws := &memoryWorkstreamStore{}
 	service := NewService(items, ws).WithEvidenceVerifier(revision2Verifier{})
-	first, err := service.AcquireRunnable(context.Background())
+	first, err := service.AcquireRunnable(backlogActionContext(t))
 	if err != nil || !first.Acquired || first.Item.ImplementationUnit != "unit-resume" {
 		t.Fatalf("initial acquire=%+v err=%v", first, err)
 	}
-	if _, err := service.Revise(context.Background(), "resume-item", ReviseRequest{
+	if _, err := service.Revise(backlogActionContext(t), "resume-item", ReviseRequest{
 		TargetDeliveryState: domainbacklog.DeliverySpec,
 		EvidenceRefs:        []domainbacklog.EvidenceRef{{Stage: domainbacklog.DeliverySpec, Kind: "spec", Ref: "spec-resume"}},
 	}); err != nil {
 		t.Fatalf("stage continuation=%v", err)
 	}
-	second, err := service.AcquireRunnable(context.Background())
+	second, err := service.AcquireRunnable(backlogActionContext(t))
 	if err != nil || !second.Acquired || second.Item.ImplementationUnit != first.Item.ImplementationUnit || second.Item.DeliveryState != domainbacklog.DeliverySpec || second.Lease.HolderUnitID != first.Lease.HolderUnitID {
 		t.Fatalf("resumed acquire=%+v err=%v", second, err)
 	}
@@ -580,7 +580,7 @@ func TestRevision2ClosureRejectsConflictingPersistedActions(t *testing.T) {
 	for _, variant := range []string{"stage-mismatch", "closure-mismatch", "invalid", "missing"} {
 		for _, entry := range []string{"revise", "resume", "complete"} {
 			t.Run(variant+"/"+entry, func(t *testing.T) {
-				ctx := context.Background()
+				ctx := backlogActionContext(t)
 				action := modulecore.NewActionID()
 				doneAction, closureAction := action, action
 				switch variant {

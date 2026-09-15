@@ -6,22 +6,49 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	appbacklog "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func withAtlasTestExecutionOwners(t *testing.T, service *appbacklog.Service) *appbacklog.Service {
+	t.Helper()
+	actionStore, err := actionpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatalf("create Atlas Action store: %v", err)
+	}
+	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatalf("create Atlas Task store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := taskStore.Close(); err != nil {
+			t.Errorf("close Atlas Task store: %v", err)
+		}
+	})
+	return service.WithExecutionOwners(
+		actionmanager.New(actionStore),
+		taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()),
+		"shiro",
+	)
+}
+
 func TestAtlasOwnerHTTPFlowReachesLiveVerifiedWithEvidence(t *testing.T) {
 	items := &atlasHTTPItemStore{}
 	workstream := workstreampersistence.NewJSONLStore(t.TempDir())
-	service := appbacklog.NewService(items, workstream).WithEvidenceVerifier(atlasHTTPVerifier{})
+	service := withAtlasTestExecutionOwners(t, appbacklog.NewService(items, workstream).WithEvidenceVerifier(atlasHTTPVerifier{}))
 	token := []byte("atlas-owner-token-012345678901234567890123")
 	handler := NewAtlasHandler(service, "ren", token)
 

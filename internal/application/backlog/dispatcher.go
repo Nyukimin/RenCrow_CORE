@@ -187,7 +187,17 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 // AcquireRunnable first resumes the existing implementation lease holder.
 // Only when no lease exists does it select a dependency-eligible queued item.
 // Queue freezes are a normal no-item result, not a fallback to another item.
-func (s *Service) AcquireRunnable(ctx context.Context) (AcquireRunnableResult, error) {
+func (s *Service) AcquireRunnable(ctx context.Context) (result AcquireRunnableResult, resultErr error) {
+	ownedCtx, finish, err := s.beginAction(ctx, "atlas_acquire_runnable")
+	if err != nil {
+		return AcquireRunnableResult{}, err
+	}
+	result, resultErr = s.acquireRunnable(ownedCtx)
+	resultErr = finishAction(resultErr, finish)
+	return result, resultErr
+}
+
+func (s *Service) acquireRunnable(ctx context.Context) (AcquireRunnableResult, error) {
 	if _, frozen, err := s.ActiveQueueFreeze(ctx); err != nil {
 		return AcquireRunnableResult{}, err
 	} else if frozen {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -178,22 +179,21 @@ func queueFreezeID(unitID string, revision int) string {
 	return fmt.Sprintf("atlas-freeze:%s:%d", strings.TrimSpace(unitID), revision)
 }
 
-// receiptActionID binds a stage or closure receipt to the caller action.
-// Replay reuses the persisted ActionID; first execution accepts a valid
-// act_* request_id or mints a fresh ActionID.
-func receiptActionID(request ReviseRequest, existing modulecore.ActionID) modulecore.ActionID {
+// receiptActionID binds a stage or closure receipt to the Action owner pair
+// already attached to the execution context. A replay reuses the persisted
+// ActionID and never treats a transport RequestID as an Action identity.
+func receiptActionID(ctx context.Context, existing modulecore.ActionID) (modulecore.ActionID, error) {
 	if existing != "" {
-		return existing
+		if err := existing.Validate(); err != nil {
+			return "", fmt.Errorf("existing action_id is invalid: %w", err)
+		}
+		return existing, nil
 	}
-	raw := strings.TrimSpace(request.RequestID)
-	if raw == "" {
-		return modulecore.NewActionID()
+	actionID, _, ok := domainexecution.BoundActionAttemptFromContext(ctx)
+	if !ok {
+		return "", errors.New("canonical Action/Attempt context is required")
 	}
-	id := modulecore.ActionID(raw)
-	if err := id.Validate(); err != nil {
-		return modulecore.NewActionID()
-	}
-	return id
+	return actionID, nil
 }
 
 func transitionEventID(existing modulecore.EventID) modulecore.EventID {
@@ -316,17 +316,18 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 	if err != nil {
 		return err
 	}
-	if actionID != "" {
-		request.RequestID = string(actionID)
-	}
 	receipt, found, err := s.findClosureReceipt(ctx, key)
 	if err != nil {
 		return err
 	}
 	now := s.now()
 	if !found {
+		operationActionID, actionErr := receiptActionID(ctx, actionID)
+		if actionErr != nil {
+			return actionErr
+		}
 		receipt = domainworkstream.ClosureReceipt{
-			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, ""),
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: operationActionID,
 			TransitionEventID: transitionEventID(""),
 			UnitID:            unitID, BacklogItemID: next.BacklogItemID, ImplementationRevision: next.ImplementationRevision,
 			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
@@ -413,9 +414,6 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
-	if actionID != "" {
-		request.RequestID = string(actionID)
-	}
 	doneRequest := request
 	doneRequest.TargetDeliveryState = domainbacklog.DeliveryDone
 	doneKey := stageRunKey(unitID, live.ImplementationRevision, domainbacklog.DeliveryDone)
@@ -445,9 +443,13 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 		if marshalErr != nil {
 			return domainbacklog.Item{}, marshalErr
 		}
+		operationActionID, actionErr := receiptActionID(ctx, actionID)
+		if actionErr != nil {
+			return domainbacklog.Item{}, actionErr
+		}
 		doneReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: doneKey,
-			ActionID: receiptActionID(doneRequest, doneReceipt.ActionID), TransitionEventID: transitionEventID(""),
+			ActionID: operationActionID, TransitionEventID: transitionEventID(""),
 			UnitID: unitID, BacklogItemID: live.BacklogItemID,
 			ImplementationRevision: live.ImplementationRevision, TargetStage: domainbacklog.DeliveryDone,
 			PayloadHash: donePayloadHash, Status: domainworkstream.StageRunPrepared,
@@ -466,7 +468,6 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 	}
 	// Recovery may enter directly at DONE; its prepared receipt is the owner
 	// of the action subsequently recorded by completeDone.
-	doneRequest.RequestID = string(doneReceipt.ActionID)
 	if err := s.saveStageReceipt(ctx, doneReceipt); err != nil {
 		return domainbacklog.Item{}, err
 	}

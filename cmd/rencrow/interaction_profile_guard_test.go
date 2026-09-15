@@ -244,6 +244,14 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:    http.StatusForbidden,
 		},
 		{
+			name:    "cmd control can run authenticated DCI search",
+			client:  "RenCrow_CMD",
+			profile: "cmd-control",
+			method:  http.MethodPost,
+			path:    "/viewer/dci/search",
+			want:    http.StatusNoContent,
+		},
+		{
 			name:    "cmd control can evaluate trade policy without execution",
 			client:  "RenCrow_CMD",
 			profile: "cmd-control",

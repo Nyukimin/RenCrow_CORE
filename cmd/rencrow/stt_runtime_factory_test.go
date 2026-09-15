@@ -6,11 +6,16 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	"golang.org/x/net/websocket"
 )
 
@@ -57,7 +62,24 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 	cfg.STT.GatewayBaseURL = gateway.URL
 	cfg.STT.TimeoutMS = 5000
 	cfg.STT.BusyPolicy = "queue_latest"
-	runtime := buildSTTRuntime(cfg)
+	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := taskStore.Close(); err != nil {
+			t.Errorf("close Task store: %v", err)
+		}
+	})
+	actionStore, err := actionpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := buildSTTRuntime(
+		cfg,
+		taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()),
+		actionmanager.New(actionStore),
+	)
 
 	mux := http.NewServeMux()
 	registerSTTRuntimeRoutes(mux, runtime)

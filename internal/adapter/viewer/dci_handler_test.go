@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -81,6 +84,8 @@ type stubDCISearcher struct {
 	query       string
 	traceID     modulecore.TraceID
 	actionID    modulecore.ActionID
+	taskID      modulecore.TaskID
+	runID       modulecore.RunID
 	actorKind   string
 	actorID     string
 	idempotency string
@@ -88,9 +93,13 @@ type stubDCISearcher struct {
 	err         error
 }
 
-func (s *stubDCISearcher) SearchWithIdentity(_ context.Context, query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
+func (s *stubDCISearcher) SearchAs(_ context.Context, query string, taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
 	s.calls++
 	s.query = query
+	s.taskID = taskID
+	s.runID = runID
+	traceID := modulecore.NewTraceID()
+	actionID := modulecore.NewActionID()
 	s.traceID = traceID
 	s.actionID = actionID
 	s.actorKind = actorKind
@@ -103,6 +112,20 @@ func (s *stubDCISearcher) SearchWithIdentity(_ context.Context, query string, tr
 		s.result = validDCIViewerSearchResult(query, traceID, actionID, actorKind, actorID, idempotencyKey)
 	}
 	return s.result, nil
+}
+
+func newDCIViewerTaskManager(t *testing.T) *taskmanager.Manager {
+	t.Helper()
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("create DCI task store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close DCI task store: %v", err)
+		}
+	})
+	return taskmanager.New(store, taskmanager.DefaultParallelLimits())
 }
 
 func validDCIViewerSearchResult(query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) domaindci.SearchResult {
@@ -163,8 +186,9 @@ func TestNewDCISearchHandlerAuthenticatesAndUsesCanonicalIdentity(t *testing.T) 
 	searcher := &stubDCISearcher{}
 	req := ownerDCIRequest(`{"query":" DCI "}`)
 	rec := httptest.NewRecorder()
+	tasks := newDCIViewerTaskManager(t)
 
-	NewDCISearchHandler(searcher, "ren", []byte("owner-token")).ServeHTTP(rec, req)
+	NewDCISearchHandler(searcher, tasks, "ren", "shiro", []byte("owner-token")).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
@@ -181,15 +205,31 @@ func TestNewDCISearchHandlerAuthenticatesAndUsesCanonicalIdentity(t *testing.T) 
 	if searcher.idempotency == string(searcher.traceID) || searcher.idempotency == string(searcher.actionID) {
 		t.Fatal("idempotency key must be separate from canonical IDs")
 	}
-	var result domaindci.SearchResult
-	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+	var response struct {
+		domaindci.SearchResult
+		TaskID modulecore.TaskID `json:"task_id"`
+		RunID  modulecore.RunID  `json:"run_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+	result := response.SearchResult
 	if err := domaindci.ValidateSearchResult(result); err != nil {
 		t.Fatalf("result validation: %v", err)
 	}
 	if result.Trace.TraceID != searcher.traceID || result.Trace.ActionID != searcher.actionID || result.Pack.ActionID != searcher.actionID || result.Trace.ActorKind != "user" || result.Trace.ActorID != "ren" {
 		t.Fatalf("result identity = %#v", result)
+	}
+	task, err := tasks.Get(context.Background(), response.TaskID)
+	if err != nil {
+		t.Fatalf("get DCI task: %v", err)
+	}
+	run, err := tasks.GetRun(context.Background(), response.RunID)
+	if err != nil {
+		t.Fatalf("get DCI run: %v", err)
+	}
+	if task.Status != domaintask.StatusSucceeded || run.Status != domaintask.RunStatusSucceeded || run.TaskID != task.TaskID || searcher.taskID != task.TaskID || searcher.runID != run.RunID {
+		t.Fatalf("DCI lifecycle mismatch: task=%#v run=%#v searcher=%#v", task, run, searcher)
 	}
 	if strings.Contains(rec.Body.String(), `"EventID"`) || strings.Contains(rec.Body.String(), `"Actor"`) {
 		t.Fatalf("response contains legacy PascalCase DCI fields: %s", rec.Body.String())
@@ -262,7 +302,7 @@ func TestNewDCISearchHandlerRejectsOwnerBoundaryViolations(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			searcher := &stubDCISearcher{}
 			rec := httptest.NewRecorder()
-			NewDCISearchHandler(searcher, tt.userID, tt.token).ServeHTTP(rec, tt.request())
+			NewDCISearchHandler(searcher, newDCIViewerTaskManager(t), tt.userID, "shiro", tt.token).ServeHTTP(rec, tt.request())
 			if rec.Code != tt.want {
 				t.Fatalf("status = %d body=%s, want %d", rec.Code, rec.Body.String(), tt.want)
 			}
@@ -284,7 +324,7 @@ func TestNewDCISearchHandlerRejectsMismatchedCanonicalResult(t *testing.T) {
 	req := ownerDCIRequest(`{"query":"DCI"}`)
 	rec := httptest.NewRecorder()
 
-	NewDCISearchHandler(searcher, "ren", []byte("owner-token")).ServeHTTP(rec, req)
+	NewDCISearchHandler(searcher, newDCIViewerTaskManager(t), "ren", "shiro", []byte("owner-token")).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError || searcher.calls != 1 {
 		t.Fatalf("status=%d calls=%d body=%s", rec.Code, searcher.calls, rec.Body.String())

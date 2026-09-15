@@ -172,7 +172,8 @@ func cmdControlInteractionAllowed(method, path string) bool {
 		return true
 	}
 	switch path {
-	case "/viewer/memory/lifecycle/plan", "/viewer/memory/lifecycle/run":
+	case "/viewer/memory/lifecycle/plan", "/viewer/memory/lifecycle/run",
+		"/viewer/dci/search":
 		return true
 	case "/viewer/memory/user/archive":
 		return true

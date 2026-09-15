@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
 	eventpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -32,8 +34,9 @@ func TestRuntimeDataWriteDCIOwnerE2EThroughWorkerAndSQLite(t *testing.T) {
 		MaxFilesRead: 2,
 		Now:          func() time.Time { return time.Date(2026, 8, 14, 5, 0, 0, 0, time.UTC) },
 	}, store, dciapp.WithEventAppender(events))
+	ownedSearcher := newDCIAdapterOwnedSearcher(t, explorer)
 	writeRegistry := newRuntimeDataWriteRegistry()
-	if err := registerRuntimeDataWriteDCI(writeRegistry, store, explorer); err != nil {
+	if err := registerRuntimeDataWriteDCI(writeRegistry, store, ownedSearcher); err != nil {
 		t.Fatalf("register dci write: %v", err)
 	}
 	routes := writeRegistry.Snapshot()
@@ -120,7 +123,7 @@ func TestRuntimeDataWriteDCIRejectsForbiddenPayloadFields(t *testing.T) {
 	store, events := newDCIAdapterStores(t)
 	explorer := dciapp.NewExplorer(dciapp.Config{Enabled: true, Allowlist: []string{t.TempDir()}, ActorKind: "agent", ActorID: "shiro"}, store, dciapp.WithEventAppender(events))
 	registry := newRuntimeDataWriteRegistry()
-	if err := registerRuntimeDataWriteDCI(registry, store, explorer); err != nil {
+	if err := registerRuntimeDataWriteDCI(registry, store, newDCIAdapterOwnedSearcher(t, explorer)); err != nil {
 		t.Fatal(err)
 	}
 	worker := toolsinfra.NewToolRunner(toolsinfra.ToolRunnerConfig{OperationalDataWrite: registry, DisableToolHarness: true})
@@ -140,6 +143,19 @@ func TestRuntimeDataWriteDCIRejectsForbiddenPayloadFields(t *testing.T) {
 	}
 }
 
+func newDCIAdapterOwnedSearcher(t *testing.T, explorer *dciapp.Explorer) *dciapp.OwnedSearcher {
+	t.Helper()
+	store, err := actionpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "actions"))
+	if err != nil {
+		t.Fatalf("create DCI Action store: %v", err)
+	}
+	searcher, err := dciapp.NewOwnedSearcher(explorer, actionmanager.New(store))
+	if err != nil {
+		t.Fatalf("create DCI owned searcher: %v", err)
+	}
+	return searcher
+}
+
 type dciAdapterFindStore struct {
 	result  domaindci.SearchResult
 	found   bool
@@ -156,8 +172,8 @@ func (s *dciAdapterFindStore) FindSearchResultByIdempotencyKey(_ context.Context
 
 type dciAdapterSearcherFunc func(context.Context, string, modulecore.TraceID, modulecore.ActionID, string, string, string) (domaindci.SearchResult, error)
 
-func (f dciAdapterSearcherFunc) SearchWithIdentity(ctx context.Context, query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
-	return f(ctx, query, traceID, actionID, actorKind, actorID, idempotencyKey)
+func (f dciAdapterSearcherFunc) SearchAs(ctx context.Context, query string, _ modulecore.TaskID, _ modulecore.RunID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
+	return f(ctx, query, modulecore.NewTraceID(), modulecore.NewActionID(), actorKind, actorID, idempotencyKey)
 }
 
 func TestRuntimeDataWriteDCIRejectsMalformedOwnerResult(t *testing.T) {
@@ -180,10 +196,12 @@ func TestRuntimeDataWriteDCIRejectsMalformedOwnerResult(t *testing.T) {
 	}
 }
 
-func TestRuntimeDataWriteDCIRejectsMismatchedTraceID(t *testing.T) {
+func TestRuntimeDataWriteDCIRejectsMismatchedActionPair(t *testing.T) {
 	store := &dciAdapterFindStore{}
-	searcher := dciAdapterSearcherFunc(func(_ context.Context, query string, _ modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
-		return validDCIAdapterResult(query, modulecore.NewTraceID(), actionID, actorKind, actorID, idempotencyKey), nil
+	searcher := dciAdapterSearcherFunc(func(_ context.Context, query string, traceID modulecore.TraceID, actionID modulecore.ActionID, actorKind, actorID, idempotencyKey string) (domaindci.SearchResult, error) {
+		result := validDCIAdapterResult(query, traceID, actionID, actorKind, actorID, idempotencyKey)
+		result.Pack.ActionID = modulecore.NewActionID()
+		return result, nil
 	})
 	registry := newRuntimeDataWriteRegistry()
 	if err := registerRuntimeDataWriteDCI(registry, store, searcher); err != nil {
@@ -194,7 +212,7 @@ func TestRuntimeDataWriteDCIRejectsMismatchedTraceID(t *testing.T) {
 		"store": "dci", "operation": "search", "payload": map[string]any{"query": "query"},
 	})
 	if err != nil || response == nil || !response.IsError() {
-		t.Fatalf("trace mismatch response=%#v err=%v", response, err)
+		t.Fatalf("action pair mismatch response=%#v err=%v", response, err)
 	}
 }
 

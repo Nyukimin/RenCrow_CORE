@@ -5,6 +5,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
@@ -25,7 +27,7 @@ type llmRuntimeProviders struct {
 	ModuleProviders    map[string]modulellm.Provider
 }
 
-func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder, busyTracker *llmBusyTracker) llmRuntimeProviders {
+func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder, busyTracker *llmBusyTracker, actions *actionmanager.Manager, tasks *taskmanager.Manager) llmRuntimeProviders {
 	primaryProviders := buildPrimaryLLMProviders(cfg, contextBudgetRecorder)
 	primaryProviders = primaryLLMProviders{
 		Chat:       trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
@@ -33,6 +35,13 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		ChatWorker: trackLLMProvider("chatworker", primaryProviders.ChatWorker, busyTracker),
 		Heavy:      trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
 		Wild:       trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
+	}
+	primaryProviders = primaryLLMProviders{
+		Chat:       requireActionOwnedLLMProvider("chat", primaryProviders.Chat, actions, tasks),
+		Worker:     requireActionOwnedLLMProvider("worker", primaryProviders.Worker, actions, tasks),
+		ChatWorker: requireActionOwnedLLMProvider("chatworker", primaryProviders.ChatWorker, actions, tasks),
+		Heavy:      requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks),
+		Wild:       requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks),
 	}
 	workerToolProvider, ok := primaryProviders.Worker.(llm.ToolCallingProvider)
 	if !ok {
@@ -54,6 +63,14 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Coder4:             coder4Adapter,
 		ModuleProviders:    wrapModuleLLMProvidersWithHealthChecks(cfg, moduleProviders),
 	}
+}
+
+func requireActionOwnedLLMProvider(role string, provider llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager) llm.LLMProvider {
+	wrapped, err := llmmiddleware.WithActionExecutionOwners(provider, actions, tasks, "mio")
+	if err != nil {
+		log.Fatalf("Failed to connect %s LLM provider to Action owner: %v", role, err)
+	}
+	return wrapped
 }
 
 func selectChatConversationProvider(chatWorkerProvider, chatProvider llm.LLMProvider) llm.LLMProvider {

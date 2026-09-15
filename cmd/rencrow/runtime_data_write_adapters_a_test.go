@@ -4,10 +4,12 @@ import (
 	"context"
 	"testing"
 
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	revenuepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/revenue"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRuntimeDataWriteOwnerAdaptersE2EThroughWorkerAndRecall(t *testing.T) {
@@ -174,7 +176,12 @@ func runtimeDataWriteOwnerContext(t *testing.T, requestID string, userScope bool
 	if err := scope.Validate(); err != nil {
 		t.Fatalf("owner scope: %v", err)
 	}
-	return domaintool.WithToolExecutionScope(context.Background(), scope)
+	ctx := domaintool.WithToolExecutionScope(context.Background(), scope)
+	ctx, err := domainexecution.WithIdentity(ctx, modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatalf("bind execution identity: %v", err)
+	}
+	return ctx
 }
 
 func runtimeDataWriteOwnerClonePayload(payload map[string]any) map[string]any {

@@ -3,13 +3,20 @@ package sandbox
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type PromotionDiffApplyResult struct {
@@ -59,18 +66,30 @@ type PromotionDiffRowPreview struct {
 type PromotionDiffApplier struct {
 	sandboxRoot string
 	applyRoot   string
+	actions     *actionmanager.Manager
+	tasks       *taskmanager.Manager
+	actorID     string
 }
 
 func NewPromotionDiffApplier(sandboxRoot string, applyRoot string) *PromotionDiffApplier {
 	return &PromotionDiffApplier{sandboxRoot: sandboxRoot, applyRoot: applyRoot}
 }
 
-func (a *PromotionDiffApplier) ApplyPromotionDiff(_ context.Context, req domainsandbox.PromotionApplyRequest) (PromotionDiffApplyResult, error) {
-	return a.applyPromotionDiff(req, false)
+func (a *PromotionDiffApplier) WithExecutionOwners(actions *actionmanager.Manager, tasks *taskmanager.Manager, actorID string) *PromotionDiffApplier {
+	if a != nil {
+		a.actions = actions
+		a.tasks = tasks
+		a.actorID = strings.TrimSpace(actorID)
+	}
+	return a
 }
 
-func (a *PromotionDiffApplier) RollbackPromotionDiff(_ context.Context, req domainsandbox.PromotionApplyRequest) (PromotionDiffApplyResult, error) {
-	return a.applyPromotionDiff(req, true)
+func (a *PromotionDiffApplier) ApplyPromotionDiff(ctx context.Context, req domainsandbox.PromotionApplyRequest) (PromotionDiffApplyResult, error) {
+	return a.executePatchAction(ctx, req, false)
+}
+
+func (a *PromotionDiffApplier) RollbackPromotionDiff(ctx context.Context, req domainsandbox.PromotionApplyRequest) (PromotionDiffApplyResult, error) {
+	return a.executePatchAction(ctx, req, true)
 }
 
 func (a *PromotionDiffApplier) PreviewPromotionDiff(_ context.Context, req domainsandbox.PromotionRequest) (PromotionDiffPreviewResult, error) {
@@ -125,6 +144,79 @@ func (a *PromotionDiffApplier) PreviewPromotionDiff(_ context.Context, req domai
 		result.Status = "blocked"
 	}
 	return result, nil
+}
+
+func (a *PromotionDiffApplier) executePatchAction(ctx context.Context, req domainsandbox.PromotionApplyRequest, rollback bool) (PromotionDiffApplyResult, error) {
+	if a == nil {
+		return PromotionDiffApplyResult{}, errors.New("Patch apply owner is required")
+	}
+	if a.actions == nil || a.tasks == nil || a.actorID == "" {
+		return a.applyPromotionDiff(req, rollback)
+	}
+	ownedCtx := ctx
+	identity, identityErr := domainexecution.IdentityFromContext(ctx)
+	ownsRun := identityErr != nil
+	if ownsRun {
+		task, err := a.tasks.Create(ctx, domaintask.Task{
+			Title:    "Sandbox patch apply",
+			Route:    domaintask.RouteCode,
+			OwnerID:  a.actorID,
+			Assignee: a.actorID,
+			ReadOnly: false,
+		}, domaintask.SharedRoleContext{CurrentPlan: "apply policy-approved sandbox promotion patch"})
+		if err != nil {
+			return PromotionDiffApplyResult{}, err
+		}
+		run, err := a.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+		if err != nil {
+			return PromotionDiffApplyResult{}, err
+		}
+		identity = domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
+		ownedCtx, err = domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
+		if err != nil {
+			return PromotionDiffApplyResult{}, err
+		}
+	}
+	name := "sandbox_patch_apply"
+	if rollback {
+		name = "sandbox_patch_rollback"
+	}
+	action, attempt, err := a.actions.CreateAction(ownedCtx, actionmanager.CreateInput{
+		TaskID: identity.TaskID,
+		RunID:  identity.RunID,
+		Kind:   domainaction.KindPatchApply,
+		Name:   name,
+	})
+	if err != nil {
+		return PromotionDiffApplyResult{}, err
+	}
+	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
+	if err != nil {
+		return PromotionDiffApplyResult{}, err
+	}
+	result, operationErr := a.applyPromotionDiff(req, rollback)
+	completionErr := a.completePatchAction(ownedCtx, identity, ownsRun, action, attempt, operationErr)
+	return result, completionErr
+}
+
+func (a *PromotionDiffApplier) completePatchAction(ctx context.Context, identity domainexecution.Identity, ownsRun bool, action domainaction.Action, attempt domainaction.Attempt, operationErr error) error {
+	attemptStatus := domainaction.AttemptStatusSucceeded
+	actionStatus := domainaction.StatusSucceeded
+	taskStatus := domaintask.StatusSucceeded
+	summary := "Patch apply completed"
+	if operationErr != nil {
+		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusFailed, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
+	}
+	completionCtx := context.WithoutCancel(ctx)
+	if _, _, err := a.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
+		return errors.Join(operationErr, err)
+	}
+	if ownsRun {
+		if _, err := a.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, a.actorID, taskStatus, summary, ""); err != nil {
+			return errors.Join(operationErr, err)
+		}
+	}
+	return operationErr
 }
 
 func (a *PromotionDiffApplier) applyPromotionDiff(req domainsandbox.PromotionApplyRequest, rollback bool) (PromotionDiffApplyResult, error) {

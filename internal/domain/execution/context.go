@@ -102,6 +102,26 @@ func WithBoundActionAttempt(ctx context.Context, actionID modulecore.ActionID, a
 	return context.WithValue(ctx, boundActionAttemptContextKey{}, bound), nil
 }
 
+// WithChildBoundActionAttempt overlays a child operation pair while preserving
+// the parent context's cancellation, execution identity, authentication, and
+// policy scope. Only an owner adapter that has already persisted the child
+// Action/Attempt may use this function.
+func WithChildBoundActionAttempt(ctx context.Context, actionID modulecore.ActionID, attemptID modulecore.AttemptID) (context.Context, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("context is required")
+	}
+	if err := actionID.Validate(); err != nil {
+		return nil, fmt.Errorf("action_id: %w", err)
+	}
+	if err := attemptID.Validate(); err != nil {
+		return nil, fmt.Errorf("attempt_id: %w", err)
+	}
+	return context.WithValue(ctx, boundActionAttemptContextKey{}, BoundActionAttempt{
+		ActionID:  actionID,
+		AttemptID: attemptID,
+	}), nil
+}
+
 // BoundActionAttemptFromContext returns a bound ActionID and AttemptID when present.
 func BoundActionAttemptFromContext(ctx context.Context) (modulecore.ActionID, modulecore.AttemptID, bool) {
 	if ctx == nil {

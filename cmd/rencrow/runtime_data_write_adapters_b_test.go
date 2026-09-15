@@ -7,11 +7,13 @@ import (
 	"time"
 
 	domainadvisor "github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	advisorpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/advisor"
 	skillpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/skillgovernance"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRuntimeDataWriteAdvisorAndSkillGovernanceOwnerAdaptersE2E(t *testing.T) {
@@ -220,7 +222,12 @@ func runtimeDataWriteBContext(t *testing.T, requestID string) context.Context {
 	if err := scope.Validate(); err != nil {
 		t.Fatalf("internal scope: %v", err)
 	}
-	return domaintool.WithToolExecutionScope(context.Background(), scope)
+	ctx := domaintool.WithToolExecutionScope(context.Background(), scope)
+	ctx, err := domainexecution.WithIdentity(ctx, modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatalf("bind execution identity: %v", err)
+	}
+	return ctx
 }
 
 func runtimeDataWriteBClonePayload(payload map[string]any) map[string]any {

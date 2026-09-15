@@ -169,10 +169,6 @@ func newDCIRecoveryContext(parent context.Context) (context.Context, context.Can
 	return context.WithTimeout(context.WithoutCancel(parent), dciRecoveryTimeout)
 }
 
-func (e *Explorer) Search(ctx context.Context, query string) (domaindci.SearchResult, error) {
-	return e.SearchWithIdentity(ctx, query, modulecore.NewTraceID(), modulecore.NewActionID(), e.cfg.ActorKind, e.cfg.ActorID, "")
-}
-
 // SearchWithIdentity performs one DCI search with the trusted owner identity
 // supplied by the caller. Canonical IDs and actor identity are never inferred
 // from model payloads inside the search itself.

@@ -8,6 +8,7 @@ import (
 
 	dciapp "github.com/Nyukimin/RenCrow_CORE/internal/application/dci"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -17,7 +18,7 @@ type runtimeDCISearchStore interface {
 }
 
 type runtimeDCISearcher interface {
-	SearchWithIdentity(context.Context, string, modulecore.TraceID, modulecore.ActionID, string, string, string) (domaindci.SearchResult, error)
+	SearchAs(context.Context, string, modulecore.TaskID, modulecore.RunID, string, string, string) (domaindci.SearchResult, error)
 }
 
 type runtimeDCISearchWritePayload struct {
@@ -78,13 +79,15 @@ func (w *runtimeDCISearchWriter) write(ctx context.Context, request tools.DataWr
 		}, nil
 	}
 
-	traceID := modulecore.NewTraceID()
-	actionID := modulecore.NewActionID()
-	result, err := w.searcher.SearchWithIdentity(ctx, payload.Query, traceID, actionID, actorKind, actorID, idempotencyKey)
+	identity, err := domainexecution.IdentityFromContext(ctx)
+	if err != nil {
+		return runtimeDataWriteOwnerResult{}, fmt.Errorf("dci execution identity: %w", err)
+	}
+	result, err := w.searcher.SearchAs(ctx, payload.Query, identity.TaskID, identity.RunID, actorKind, actorID, idempotencyKey)
 	if err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
-	if err := validateRuntimeDCISearchResult(result, payload.Query, traceID, actionID, actorKind, actorID, idempotencyKey); err != nil {
+	if err := validateRuntimeDCISearchResult(result, payload.Query, result.Trace.TraceID, result.Trace.ActionID, actorKind, actorID, idempotencyKey); err != nil {
 		return runtimeDataWriteOwnerResult{}, err
 	}
 	return runtimeDataWriteOwnerResult{
@@ -127,4 +130,4 @@ func validateRuntimeDCISearchResult(result domaindci.SearchResult, query string,
 	return nil
 }
 
-var _ runtimeDCISearcher = (*dciapp.Explorer)(nil)
+var _ runtimeDCISearcher = (*dciapp.OwnedSearcher)(nil)

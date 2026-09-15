@@ -32,10 +32,10 @@ func TestAtlasDevelopmentMethodologyHTTPLifecycleReachesLiveVerified(t *testing.
 	items := &atlasHTTPItemStore{}
 	workstreamRoot := t.TempDir()
 	workstream := workstreampersistence.NewJSONLStore(workstreamRoot)
-	service := appbacklog.NewService(items, workstream).
+	service := withAtlasTestExecutionOwners(t, appbacklog.NewService(items, workstream).
 		WithClock(func() time.Time { return now }).
 		WithEvidenceVerifier(atlasHTTPVerifier{}).
-		WithRevalidationEvaluator(methodologyPromoteEvaluator{})
+		WithRevalidationEvaluator(methodologyPromoteEvaluator{}))
 	token := atlasOwnerHTTPToken
 	handler := NewAtlasHandler(service, "ren", []byte(token))
 
@@ -290,10 +290,10 @@ func TestAtlasDevelopmentMethodologyHTTPLifecycleReachesLiveVerified(t *testing.
 	// Recreate the owner service and JSONL store to prove that resume is driven
 	// by the persisted plan-scoped ledger, not process memory.
 	workstream = workstreampersistence.NewJSONLStore(workstreamRoot)
-	service = appbacklog.NewService(items, workstream).
+	service = withAtlasTestExecutionOwners(t, appbacklog.NewService(items, workstream).
 		WithClock(func() time.Time { return now }).
 		WithEvidenceVerifier(atlasHTTPVerifier{}).
-		WithRevalidationEvaluator(methodologyPromoteEvaluator{})
+		WithRevalidationEvaluator(methodologyPromoteEvaluator{}))
 	handler = NewAtlasHandler(service, "ren", []byte(token))
 	resumed, err := service.Development(t.Context(), unitID)
 	if err != nil || resumed.Ledger == nil || resumed.Ledger.CurrentState != string(methodology.TaskRefactored) || resumed.Ledger.PlanID != planID {

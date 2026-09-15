@@ -11,8 +11,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -26,7 +29,7 @@ type DCITraceContextLister interface {
 }
 
 type DCISearcher interface {
-	SearchWithIdentity(context.Context, string, modulecore.TraceID, modulecore.ActionID, string, string, string) (domaindci.SearchResult, error)
+	SearchAs(context.Context, string, modulecore.TaskID, modulecore.RunID, string, string, string) (domaindci.SearchResult, error)
 }
 
 func HandleDCIRecent(store any) http.HandlerFunc {
@@ -71,18 +74,22 @@ func HandleDCIRecent(store any) http.HandlerFunc {
 
 // NewDCISearchHandler serves the one authenticated, direct-local-only DCI write
 // surface. Recent traces remain a separate public read-only projection.
-func NewDCISearchHandler(searcher DCISearcher, userID string, token []byte) http.HandlerFunc {
+func NewDCISearchHandler(searcher DCISearcher, tasks *taskmanager.Manager, userID string, executorID string, token []byte) http.HandlerFunc {
 	return (&dciSearchHandler{
-		searcher: searcher,
-		userID:   strings.TrimSpace(userID),
-		token:    append([]byte(nil), token...),
+		searcher:   searcher,
+		tasks:      tasks,
+		userID:     strings.TrimSpace(userID),
+		executorID: strings.TrimSpace(executorID),
+		token:      append([]byte(nil), token...),
 	}).ServeHTTP
 }
 
 type dciSearchHandler struct {
-	searcher DCISearcher
-	userID   string
-	token    []byte
+	searcher   DCISearcher
+	tasks      *taskmanager.Manager
+	userID     string
+	executorID string
+	token      []byte
 }
 
 func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +102,7 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if h.userID == "" || len(h.token) == 0 {
+	if h.userID == "" || h.executorID == "" || len(h.token) == 0 {
 		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "scope_unavailable")
 		return
 	}
@@ -109,6 +116,10 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.searcher == nil {
 		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "dci_unavailable")
+		return
+	}
+	if h.tasks == nil {
+		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "task_owner_unavailable")
 		return
 	}
 	if r.URL == nil || r.URL.RawQuery != "" {
@@ -140,18 +151,56 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "scope_unavailable")
 		return
 	}
-	traceID := modulecore.NewTraceID()
-	actionID := modulecore.NewActionID()
-	result, err := h.searcher.SearchWithIdentity(ctx, query, traceID, actionID, string(scope.ActorKind), scope.ActorID, scope.RequestID)
+	task, err := h.tasks.Create(ctx, domaintask.Task{
+		Title:    "DCI search",
+		Route:    domaintask.RouteResearch,
+		OwnerID:  h.userID,
+		Assignee: h.executorID,
+		ReadOnly: true,
+	}, domaintask.SharedRoleContext{
+		UserIntent:  query,
+		CurrentPlan: "execute authenticated DCI search",
+	})
 	if err != nil {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_task_create_failed")
+		return
+	}
+	run, err := h.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_run_start_failed")
+		return
+	}
+	result, err := h.searcher.SearchAs(ctx, query, task.TaskID, run.RunID, string(scope.ActorKind), scope.ActorID, scope.RequestID)
+	if err != nil {
+		h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusFailed, err.Error())
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_search_failed")
 		return
 	}
-	if err := validateDCIViewerSearchResult(result, query, traceID, actionID, scope); err != nil {
+	if err := validateDCIViewerSearchResult(result, query, result.Trace.TraceID, result.Trace.ActionID, scope); err != nil {
+		h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusFailed, err.Error())
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_search_failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	if err := h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusSucceeded, "dci search completed"); err != nil {
+		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_run_complete_failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		domaindci.SearchResult
+		TaskID modulecore.TaskID `json:"task_id"`
+		RunID  modulecore.RunID  `json:"run_id"`
+	}{
+		SearchResult: result,
+		TaskID:       task.TaskID,
+		RunID:        run.RunID,
+	})
+}
+
+func (h *dciSearchHandler) completeDCIRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, status domaintask.Status, summary string) error {
+	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_, err := h.tasks.CompleteRun(completionCtx, taskID, runID, h.executorID, status, summary, "")
+	return err
 }
 
 func decodeDCISearchQuery(w http.ResponseWriter, r *http.Request) (string, error) {

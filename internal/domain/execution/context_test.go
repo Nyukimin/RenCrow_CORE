@@ -109,3 +109,34 @@ func TestBoundActionAttemptContextRebindIsIdempotentOnlyForExactPair(t *testing.
 		t.Fatal("different action id replaced an existing bound pair")
 	}
 }
+
+func TestChildBoundActionAttemptOverlaysPairAndPreservesExecutionIdentity(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	traceID := modulecore.NewTraceID()
+	ctx, err := WithIdentity(context.Background(), taskID, runID, traceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err = WithBoundActionAttempt(ctx, modulecore.NewActionID(), modulecore.NewAttemptID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	childActionID := modulecore.NewActionID()
+	childAttemptID := modulecore.NewAttemptID()
+	child, err := WithChildBoundActionAttempt(ctx, childActionID, childAttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotActionID, gotAttemptID, ok := BoundActionAttemptFromContext(child)
+	if !ok || gotActionID != childActionID || gotAttemptID != childAttemptID {
+		t.Fatalf("child pair=%s/%s ok=%v", gotActionID, gotAttemptID, ok)
+	}
+	identity, err := IdentityFromContext(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.TaskID != taskID || identity.RunID != runID || identity.TraceID != traceID {
+		t.Fatalf("execution identity changed: %#v", identity)
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	featurebacklog "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
@@ -111,6 +113,9 @@ type Service struct {
 	clock             func() time.Time
 	verifier          EvidenceVerifier
 	evaluator         RevalidationEvaluator
+	actions           *actionmanager.Manager
+	tasks             *taskmanager.Manager
+	actionActorID     string
 	developmentEvents DevelopmentEventSink
 	developmentMu     sync.Mutex
 
@@ -482,7 +487,17 @@ func safeSegment(value string) string {
 	return b.String()
 }
 
-func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) (domainbacklog.Item, error) {
+func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) (result domainbacklog.Item, resultErr error) {
+	ownedCtx, finish, err := s.beginAction(ctx, "atlas_revise")
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	result, resultErr = s.revise(ownedCtx, id, request)
+	resultErr = finishAction(resultErr, finish)
+	return result, resultErr
+}
+
+func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) (domainbacklog.Item, error) {
 	// Never mutate the caller's slice while replacing claims with the owner
 	// verifier result; callers may replay the exact request value.
 	request.EvidenceRefs = append([]domainbacklog.EvidenceRef(nil), request.EvidenceRefs...)
@@ -551,9 +566,6 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, fmt.Errorf("decode stage receipt result: %w", err)
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if existingReceipt.ActionID != "" {
-					request.RequestID = string(existingReceipt.ActionID)
-				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
 			}
 			return original, nil
@@ -575,9 +587,6 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 				return domainbacklog.Item{}, err
 			}
 			if target == domainbacklog.DeliveryLiveVerified && original.DeliveryState == domainbacklog.DeliveryLiveVerified {
-				if existingReceipt.ActionID != "" {
-					request.RequestID = string(existingReceipt.ActionID)
-				}
 				return s.completeLiveVerifiedClosure(ctx, original, request)
 			}
 			return original, nil
@@ -628,8 +637,12 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	}
 	preparedReceipt := existingReceipt
 	if !receiptFound {
+		operationActionID, actionErr := receiptActionID(ctx, "")
+		if actionErr != nil {
+			return domainbacklog.Item{}, actionErr
+		}
 		preparedReceipt = domainworkstream.StageRunReceipt{
-			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: receiptActionID(request, existingReceipt.ActionID),
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: operationActionID,
 			TransitionEventID: transitionEventID(existingReceipt.TransitionEventID),
 			UnitID:            unitID, BacklogItemID: item.BacklogItemID, ImplementationRevision: revision,
 			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
@@ -644,7 +657,6 @@ func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) 
 	// Passing the unresolved caller correlation would allocate a new action
 	// independently for each subsequent receipt.
 	closureRequest := request
-	closureRequest.RequestID = string(preparedReceipt.ActionID)
 	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
 		return domainbacklog.Item{}, err
 	}
@@ -943,15 +955,7 @@ func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item dom
 	if revision < 1 {
 		revision = 1
 	}
-	key := stageRunKey(unitID, revision, domainbacklog.DeliveryDone)
-	closure, found, lookupErr := s.findClosureReceipt(ctx, key)
-	if lookupErr != nil {
-		return domainbacklog.Item{}, true, lookupErr
-	}
 	request := ReviseRequest{TargetDeliveryState: domainbacklog.DeliveryDone}
-	if found {
-		request.RequestID = string(closure.ActionID)
-	}
 	done, closeErr := s.completeLiveVerifiedClosure(ctx, item, request)
 	return done, true, closeErr
 }
@@ -959,6 +963,14 @@ func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item dom
 // Recover removes terminal/orphaned durable leases. It intentionally does not
 // start work; heartbeat may only observe the resulting active projection.
 func (s *Service) Recover(ctx context.Context) error {
+	ownedCtx, finish, err := s.beginAction(ctx, "atlas_recover")
+	if err != nil {
+		return err
+	}
+	return finishAction(s.recover(ownedCtx), finish)
+}
+
+func (s *Service) recover(ctx context.Context) error {
 	lease, ok, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
 	if err != nil || !ok {
 		if err != nil {

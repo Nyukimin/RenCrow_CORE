@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
-	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
-
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	actionstore "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -759,8 +759,9 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 			"channel_adapter":"slack"
 	}`))
 	rec := httptest.NewRecorder()
+	actions := testActionManager(t)
 
-	HandleRevenueExternalSendApply(store, testActionManager(t)).ServeHTTP(rec, req)
+	HandleRevenueExternalSendApply(store, actions).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -796,6 +797,20 @@ func TestHandleRevenueExternalSendApplyRecordsBlockedAuditWhenAdapterUnavailable
 	}
 	if body.Record.ActionID.Validate() != nil || body.ExternalActionsApplied || body.PostSendVerified || body.FailureReason == "" {
 		t.Fatalf("unexpected response: %#v", body)
+	}
+	action, err := actions.GetAction(context.Background(), record.ActionID)
+	if err != nil {
+		t.Fatalf("get external send action: %v", err)
+	}
+	if action.Status != domainaction.StatusFailed {
+		t.Fatalf("external send action status=%s, want %s", action.Status, domainaction.StatusFailed)
+	}
+	attempts, err := actions.ListAttempts(context.Background(), domainaction.AttemptFilter{ActionID: action.ActionID})
+	if err != nil {
+		t.Fatalf("list external send attempts: %v", err)
+	}
+	if len(attempts) != 1 || attempts[0].Status != domainaction.AttemptStatusFailed {
+		t.Fatalf("external send attempts=%#v, want one failed attempt", attempts)
 	}
 }
 
