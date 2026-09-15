@@ -1,8 +1,29 @@
 {
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step12-request-response",
-  "phase": "source-red",
-  "evaluated_at": "2026-09-15T19:22:28Z",
+  "phase": "post-restart-partial",
+  "evaluated_at": "2026-09-15T22:02:00Z",
+  "outcome": {
+    "status": "partial",
+    "source_revision": "32ba5643b7cff85be31e35ca1c38ebb61fc8b6b5",
+    "deployed_binary_sha256": "888b4872dbe455ef1f242c8f8796240a4d9fe77ac0bdb2186e659b9e320897d7",
+    "passed": [
+      "focused Request Response Action Attempt and restart recovery tests",
+      "go test ./cmd/... ./internal/... ./modules/... -count=1",
+      "go vet for all affected packages",
+      "clean vcs.modified=false build and deployment",
+      "LLM managed-Agent Task Run Action Attempt Request Response E2E",
+      "STT real Gateway Request Response E2E",
+      "Vision real Viewer attachment Request Response E2E",
+      "controlled CORE restart and persisted receipt re-read",
+      "canonical ID format orphan response and terminal-sent consistency audit",
+      "Step 12 legacy architecture zero scans"
+    ],
+    "open": [
+      "TTS post-deploy synthesis E2E is blocked because configured tts-gateway health returns HTTP 503 and target irodori is unavailable",
+      "authenticated Viewer chat reaches orchestration but fails before LLM transport on the pre-existing context_pack.run_id NOT NULL constraint"
+    ]
+  },
   "input": {
     "base_revision": "2f67d83",
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-12-requestid--responseid",
@@ -100,5 +121,32 @@
       "failure_action": "keep later steps open"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [
+    {
+      "kind": "llm_runtime",
+      "request_id": "req_01a0a6ea-c2c2-7600-a2fd-7f9f43d8928c",
+      "response_id": "rsp_01a0a6ea-f041-705b-aa2d-3a0d5114b0f0",
+      "task_id": "tsk_01a0a6ea-b69d-710f-b354-a50f1dea5705",
+      "run_id": "run_01a0a6ea-bef1-7168-8e50-85bbebc9ce70",
+      "action_id": "act_01a0a6ea-c0f3-7e09-aa4c-0a3db27bd7f3",
+      "attempt_id": "att_01a0a6ea-c0f3-7e12-a557-d2eba97abae8",
+      "result": "responded and all owners succeeded"
+    },
+    {
+      "kind": "stt_runtime",
+      "request_id": "req_01a0a707-71a7-7b27-bcbb-e413833f35d4",
+      "response_id": "rsp_01a0a707-74d7-7746-a4da-2c0221f80a20",
+      "result": "responded; silence produced NO_SPEECH_DETECTED without transport failure"
+    },
+    {
+      "kind": "vision_runtime",
+      "request_id": "req_01a0a707-be8a-7047-821b-b56a66319f1e",
+      "response_id": "rsp_01a0a707-fb09-7554-9eeb-c70ea1a871cb",
+      "result": "responded and Vision Action Attempt succeeded"
+    },
+    {
+      "kind": "restart_integrity",
+      "result": "31 latest Requests and 30 latest Responses reloaded; selected receipt survived; zero orphan IDs and zero terminal sent Requests; one active sent Request remained attached to an active Action"
+    }
+  ]
 }
