@@ -1,0 +1,31 @@
+{
+ "providers": {
+  "llamacpp": {
+   "found": true,
+   "path": "llama-server"
+  }
+ },
+ "system": {
+  "available_ram_gb": 3.78,
+  "backend": "SYCL",
+  "cpu_cores": 4,
+  "cpu_name": "Intel(R) Core(TM) i5-2520M CPU @ 2.50GHz",
+  "gpu_available_gb": null,
+  "gpu_count": 1,
+  "gpu_name": "Intel 2nd Generation Core Processor Family Integrated Graphics Controller (integrated)",
+  "gpu_vram_gb": 7.67,
+  "gpus": [
+   {
+    "backend": "SYCL",
+    "count": 1,
+    "memory_bandwidth_gbps": null,
+    "name": "Intel 2nd Generation Core Processor Family Integrated Graphics Controller (integrated)",
+    "unified_memory": true,
+    "vram_gb": 7.67
+   }
+  ],
+  "has_gpu": true,
+  "total_ram_gb": 7.67,
+  "unified_memory": true
+ }
+}

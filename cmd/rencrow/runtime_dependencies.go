@@ -120,6 +120,11 @@ type Dependencies struct {
 	packageValidation              http.HandlerFunc                            // viewer package/update validation API
 	characterRuntime               http.HandlerFunc                            // viewer six-character conversation runtime API
 	extensionHealth                http.HandlerFunc                            // viewer plugin / extension health API
+	llmOpsNodes                    http.HandlerFunc                            // LLM Ops node overview (llmfit observation)
+	llmOpsNode                     http.HandlerFunc                            // LLM Ops node hardware profile
+	llmOpsNodeModels               http.HandlerFunc                            // LLM Ops node model fit listing
+	llmOpsModelMatrix              http.HandlerFunc                            // LLM Ops model x node fit matrix
+	llmOpsRefresh                  http.HandlerFunc                            // LLM Ops manual refresh (re-read only)
 	otelExport                     http.HandlerFunc                            // viewer OpenTelemetry export API
 	artifactCleanup                http.HandlerFunc                            // viewer stale artifact cleanup API
 	repairRunner                   viewer.RepairJobRunner                      // viewer repair job runner
@@ -1451,6 +1456,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)
+	buildLLMOpsHandlers(cfg, deps)
 
 	log.Println("Dependency injection complete")
 	return deps

@@ -44,6 +44,9 @@ type Config struct {
 	// === Local authenticated Agent OPS ingress ===
 	LocalAgentOps LocalAgentOpsConfig `yaml:"local_agent_ops"`
 
+	// === LLM Ops / Hardware Capability (llmfit observation) ===
+	LLMOps LLMOpsConfig `yaml:"llm_ops"`
+
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
 
@@ -838,4 +841,35 @@ func (c PersonRelatedCatalogIdentityMappingConfig) IsEnabled() bool {
 
 func (c KnowledgeMemoryConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+// LLMOpsConfig groups LLM Ops / Hardware Capability observation settings.
+type LLMOpsConfig struct {
+	LLMFit LLMFitConfig `yaml:"llmfit"`
+}
+
+// LLMFitConfig configures the llmfit observation source (feature spec
+// "LLM Ops / Hardware Capability"). TTL and timeout values are Go duration
+// strings ("5m", "30s"). Nodes may be empty: the Ops screen then lists no
+// nodes without raising an error.
+type LLMFitConfig struct {
+	Enabled        *bool              `yaml:"enabled"`         // default true
+	SystemTTL      string             `yaml:"system_ttl"`      // hardware profile cache TTL (default 5m)
+	ModelsTTL      string             `yaml:"models_ttl"`      // model fit cache TTL (default 15m)
+	HealthTTL      string             `yaml:"health_ttl"`      // health check cache TTL (default 30s)
+	RequestTimeout string             `yaml:"request_timeout"` // per llmfit request / command timeout (default 5s)
+	TopLimit       int                `yaml:"top_limit"`       // default number of models per node (default 20)
+	Nodes          []LLMFitNodeConfig `yaml:"nodes"`
+}
+
+// IsEnabled reports whether llmfit observation is enabled (default true).
+func (c LLMFitConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// LLMFitNodeConfig identifies one observed LLM node.
+type LLMFitNodeConfig struct {
+	ID       string `yaml:"id"`       // unique node id shown in the viewer
+	Mode     string `yaml:"mode"`     // http | cli
+	Endpoint string `yaml:"endpoint"` // llmfit serve base URL; required for http, must be empty for cli
 }

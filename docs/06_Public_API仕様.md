@@ -1495,3 +1495,47 @@ Freezeの読み取りは`GET /viewer/atlas/queue-freezes`、解除は固定の
 `--freeze-id --request-id --expected-freeze-revision --replacement-unit-id --supersedes-unit-id`と、
 blocker Evidence group（stage/kind/ref、任意のrepository/revision/sha256/observed-at）を要求します。
 ID、revision、Evidence、replacement、atomicity、receiptの意味はCOREだけが決定します。
+
+## LLM Ops Viewer API
+
+機能契約は[機能仕様のLLM Ops / Hardware Capability](02_機能仕様.md#llm-ops--hardware-capabilityllmfit統合)を
+正本とし、実装配置・Adapter契約・テスト計画は
+[llmfit Ops統合 実装仕様](調査/RenCrow_llmfit_Ops統合_実装仕様.md)に従います。本節のbackend（read API、
+llmfit Adapter、Cache、Manual Refresh）はPhase 1として実装済みで、Ops画面を含む実装状況は
+[実装状況・ロードマップ](08_実装状況・ロードマップ.md)で確認します。
+
+Debug Viewer専用のread APIです。既存のDebug、Ops、Repair、LLM管理APIと同じ扱いとし、
+[PORTAL公開境界](#portal公開境界)と[ASSISTANT連携境界](#assistant連携境界)に従って
+PORTALとASSISTANTからは遮断します。
+
+既存Viewer Routerは`{id}` path patternを使わず、`/viewer/agent/detail?agent_id=`のようにquery parameterで
+対象を指定します。本APIも同じ流儀です。
+
+```text
+GET  /viewer/llm-ops/nodes
+GET  /viewer/llm-ops/node?node_id={node_id}
+GET  /viewer/llm-ops/node/models?node_id={node_id}[&limit=&use_case=&runtime=&min_fit=&max_context=]
+GET  /viewer/llm-ops/model/matrix?model_id={model_id}
+POST /viewer/llm-ops/refresh
+```
+
+| endpoint | 内容 |
+| --- | --- |
+| `GET /viewer/llm-ops/nodes` | 管理対象ノードの一覧（Node Overview）。`nodes[]`に各ノードのHardware Profileと`status`を返す |
+| `GET /viewer/llm-ops/node?node_id=` | 1ノードのHardware Profile（CPU／RAM／GPU／VRAM／Backend／Status）。`node_id`未指定は400、不明は404 |
+| `GET /viewer/llm-ops/node/models?node_id=` | 1ノードのModel Fit Assessment一覧。任意query: `limit`（1..200、省略時は`llm_ops.llmfit.top_limit`）、`use_case`（general／coding／reasoning／chat／multimodal／embedding）、`runtime`（any／mlx／llamacpp／vllm／bitnetcpp）、`min_fit`（perfect／good／marginal／too_tight）、`max_context`（正の整数）。許可値以外は400 |
+| `GET /viewer/llm-ops/model/matrix?model_id=` | 1モデル×全ノードのFit Matrix。ノードが当該モデルを報告しない場合は`fit_level: "unknown"` |
+| `POST /viewer/llm-ops/refresh` | llmfitからの再取得（Manual Refresh）。body省略で全ノード、`{"node_id": "..."}`で1ノード。`refreshed[]`と`failed{node_id: reason}`を返す |
+
+共通契約:
+
+- 各ノードの`status`は`online`（最新取得成功）／`stale`（直近値を保持し、最新取得またはhealth checkが失敗）／
+  `offline`（保持値なし）／`disabled`（`llm_ops.llmfit.enabled: false`）。`collected_at`はRFC3339またはnull、
+  `error`は失敗理由（成功時は空文字）、`source`は`llmfit`固定。
+- 一覧は常に配列で返し、空でも`[]`（nullにしない）。GET以外（refreshはPOST以外）は405、
+  serviceが配線されていない場合は503。
+- responseはllmfit固有JSONではなくRenCrow Domain Modelの投影で、`scores`（quality／speed／fit／context）、
+  `context`（`native`／`usable`／`evaluated`）、`performance`（`estimated_tps`／`measured_tps`／`prefill_tps`／
+  `ttft_ms`。未取得はnull、`0`と区別）、`estimate_confidence`を別fieldで返す。
+- `POST /viewer/llm-ops/refresh`は再取得だけを行い、llmfitの設定変更、モデルロード、Benchmark実行を
+  行いません。失敗ノードは直前のcacheを保持し、以後の応答で`stale`として返します。

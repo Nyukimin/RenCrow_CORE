@@ -6,6 +6,7 @@
 <title>RenCrow Live</title>
 <link rel="stylesheet" href="/viewer/assets/css/viewer.css?v=20260805-idle-topic-playback-midori-image-chat-memory-db-accordion-db-capability-catalog-atlas">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/ops.css?v=20260806-prompt-logs-panel">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/llm-ops.css?v=20260915-llm-ops-tab">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
@@ -68,6 +69,7 @@
       <option value="idlechat">IdleChat</option>
       <option value="prompt-logs">Character Latest Prompt</option>
       <option value="ops">Ops</option>
+      <option value="llm-ops">LLM Ops</option>
       <option value="games">Games</option>
       <option value="overview">Overview</option>
       <option value="roles">Roles</option>
@@ -108,6 +110,7 @@
     <button class="tab-btn" data-tab="idlechat">IdleChat</button>
     <button class="tab-btn" data-tab="prompt-logs">Character Latest Prompt</button>
     <button class="tab-btn" data-tab="ops">Ops</button>
+    <button class="tab-btn" data-tab="llm-ops">LLM Ops</button>
     <button class="tab-btn" data-tab="games">Games</button>
     <button class="tab-btn" data-tab="overview">Overview</button>
     <button class="tab-btn" data-tab="roles">Roles</button>
@@ -710,6 +713,58 @@
       </div>
         </div>
       </details>
+    </div>
+  </section>
+
+  <section id="panel-llm-ops" class="panel llm-ops-panel">
+    <div class="llm-ops-cockpit">
+      <header class="llm-ops-head">
+        <div class="llm-ops-head-main">
+          <div class="llm-ops-kicker">LLM Ops / Hardware Capability</div>
+          <h2 class="llm-ops-title">Hardware / Model Fit</h2>
+          <p class="llm-ops-copy">llmfit の観測結果を表示します。Estimated と Measured は必ず分離し、推定の信頼度を併記します。Phase 1 は表示・比較のみで、自動ルーティングや自動配置は行いません。</p>
+        </div>
+        <div class="llm-ops-actions">
+          <button id="llmOpsRefreshBtn" class="llm-ops-refresh-btn" type="button" aria-busy="false">Manual Refresh</button>
+          <span id="llmOpsRefreshNote" class="llm-ops-refresh-note" aria-live="polite"></span>
+        </div>
+      </header>
+      <div id="llmOpsSummary" class="llm-ops-summary" aria-live="polite" aria-busy="false">
+        <article class="llm-ops-summary-block status-unavailable" data-llm-ops-loading="true">
+          <div class="llm-ops-summary-label">llmfit</div>
+          <div class="llm-ops-summary-value">loading</div>
+          <div class="llm-ops-summary-detail">Hardware and Model Fit observations are loading.</div>
+        </article>
+      </div>
+      <section class="llm-ops-section" aria-labelledby="llmOpsNodesTitle">
+        <div class="llm-ops-section-title">
+          <span id="llmOpsNodesTitle">Node Overview</span>
+          <small>Name / Status / GPU / VRAM / RAM / Backend / Last Updated</small>
+        </div>
+        <div id="llmOpsNodeCards" class="llm-ops-node-grid" aria-busy="false"></div>
+      </section>
+      <section class="llm-ops-section" aria-labelledby="llmOpsFitTitle">
+        <div class="llm-ops-section-title">
+          <span id="llmOpsFitTitle">Model Fit</span>
+          <small>Model x Node / Usable Context / Estimated と Measured を分離 / Confidence</small>
+        </div>
+        <div id="llmOpsDetail" class="llm-ops-detail" aria-live="polite" hidden></div>
+        <div class="llm-ops-table-block">
+          <table class="debug-table llm-ops-fit-table" aria-label="Top model fits">
+            <thead><tr><th>Model</th><th>Node</th><th>Fit</th><th>Quant</th><th>Runtime</th><th>Usable Context</th><th>Estimated TPS</th><th>Measured TPS</th><th>Confidence</th></tr></thead>
+            <tbody id="llmOpsTopFitBody"><tr><td colspan="9" class="llm-ops-empty-cell">Top fits are loading.</td></tr></tbody>
+          </table>
+        </div>
+        <details class="llm-ops-details" id="llmOpsFitDetails">
+          <summary><span>Model Fit Table (all rows)</span><span id="llmOpsFitCount" class="llm-ops-details-count">-</span></summary>
+          <div class="llm-ops-details-body">
+            <table class="debug-table llm-ops-fit-table" aria-label="All model fits">
+              <thead><tr><th>Model</th><th>Node</th><th>Fit</th><th>Quant</th><th>Runtime</th><th>Usable Context</th><th>Estimated TPS</th><th>Measured TPS</th><th>Confidence</th></tr></thead>
+              <tbody id="llmOpsFitBody"><tr><td colspan="9" class="llm-ops-empty-cell">Model fit rows are loading.</td></tr></tbody>
+            </table>
+          </div>
+        </details>
+      </section>
     </div>
   </section>
 
@@ -1641,6 +1696,7 @@
 <script src="/viewer/assets/js/tabs/prompt-logs.js?v=20260806-prompt-logs-panel" defer></script>
 <script src="/viewer/assets/js/tabs/ops.js?v=20260806-prompt-logs-panel" defer></script>
 <script src="/viewer/assets/js/tabs/to-be-ops.js?v=20260714-to-be-summary" defer></script>
+<script src="/viewer/assets/js/tabs/llm-ops.js?v=20260915-llm-ops-tab" defer></script>
 <script src="/viewer/assets/js/tabs/home.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/develop.js?v=20260517-desk-regenerated" defer></script>
 <script src="/viewer/assets/js/tabs/instructions.js?v=20260517-desk-regenerated" defer></script>

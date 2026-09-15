@@ -927,6 +927,72 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateLLMOpsConfig(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+var llmOpsNodeIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// validateLLMOpsConfig checks llm_ops.llmfit. Values are validated only when
+// set; setDefaults fills the rest. Node ids are restricted to a safe character
+// set because they are used as cache key segments and viewer query values.
+func (c *Config) validateLLMOpsConfig() error {
+	fit := c.LLMOps.LLMFit
+	durations := []struct {
+		name  string
+		value string
+	}{
+		{"system_ttl", fit.SystemTTL},
+		{"models_ttl", fit.ModelsTTL},
+		{"health_ttl", fit.HealthTTL},
+		{"request_timeout", fit.RequestTimeout},
+	}
+	for _, d := range durations {
+		if strings.TrimSpace(d.value) == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(strings.TrimSpace(d.value))
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("llm_ops.llmfit.%s must be a positive duration", d.name)
+		}
+	}
+	if fit.TopLimit != 0 && (fit.TopLimit < 1 || fit.TopLimit > 200) {
+		return fmt.Errorf("llm_ops.llmfit.top_limit must be between 1 and 200")
+	}
+	seen := map[string]struct{}{}
+	for i, node := range fit.Nodes {
+		id := strings.TrimSpace(node.ID)
+		if id == "" {
+			return fmt.Errorf("llm_ops.llmfit.nodes[%d].id is required", i)
+		}
+		if !llmOpsNodeIDPattern.MatchString(id) {
+			return fmt.Errorf("llm_ops.llmfit.nodes[%d].id must match [A-Za-z0-9_.-]", i)
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("llm_ops.llmfit.nodes[%d].id %q is duplicated", i, id)
+		}
+		seen[id] = struct{}{}
+		endpoint := strings.TrimSpace(node.Endpoint)
+		switch strings.ToLower(strings.TrimSpace(node.Mode)) {
+		case "http":
+			if endpoint == "" {
+				return fmt.Errorf("llm_ops.llmfit.nodes[%d].endpoint is required when mode=http", i)
+			}
+			parsed, err := url.Parse(endpoint)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+				return fmt.Errorf("llm_ops.llmfit.nodes[%d].endpoint must be an http(s) URL", i)
+			}
+		case "cli":
+			if endpoint != "" {
+				return fmt.Errorf("llm_ops.llmfit.nodes[%d].endpoint must be empty when mode=cli", i)
+			}
+		default:
+			return fmt.Errorf("llm_ops.llmfit.nodes[%d].mode must be http or cli", i)
+		}
+	}
 	return nil
 }
 

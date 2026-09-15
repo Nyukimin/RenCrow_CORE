@@ -100,6 +100,12 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		chromeBridgeStatus: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusCreated)
 		}),
+		llmOpsNodes: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+		llmOpsRefresh: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusAccepted)
+		}),
 	}
 	cfg := &config.Config{WorkspaceDir: t.TempDir()}
 
@@ -157,6 +163,9 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 		{name: "ai workflow status", method: http.MethodGet, path: "/viewer/ai-workflow", want: http.StatusAlreadyReported},
 		{name: "entry", method: http.MethodGet, path: "/entry", want: http.StatusAccepted},
 		{name: "chrome bridge status", method: http.MethodGet, path: "/chrome/bridge/status", want: http.StatusCreated},
+		{name: "llm ops nodes", method: http.MethodGet, path: "/viewer/llm-ops/nodes", want: http.StatusOK},
+		{name: "llm ops refresh", method: http.MethodPost, path: "/viewer/llm-ops/refresh", want: http.StatusAccepted},
+		{name: "llm ops node models unwired", method: http.MethodGet, path: "/viewer/llm-ops/node/models", want: http.StatusNotFound},
 	}
 
 	for _, tt := range tests {

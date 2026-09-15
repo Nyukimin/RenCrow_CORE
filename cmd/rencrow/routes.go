@@ -24,6 +24,7 @@ import (
 	idlechatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/idlechat"
 	imagefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/image"
 	knowledgefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/knowledge"
+	llmopsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/llmops"
 	memoryfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/memory"
 	opsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/ops"
 	reportsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/reports"
@@ -429,5 +430,20 @@ func registerHealthRoutes(mux *http.ServeMux, dependencies *Dependencies, cfg *c
 	healthHandler := dependencies.buildHealthHandler(cfg)
 	corefeature.RegisterRoutes(mux, corefeature.Dependencies{Routes: corefeature.Routes{
 		Live: healthHandler.HandleLive, Health: healthHandler.HandleHealth, Ready: healthHandler.HandleReady,
+	}})
+}
+
+// registerLLMOpsRoutes registers the LLM Ops (llmfit observation) viewer read
+// APIs. Handlers are built by buildLLMOpsHandlers; nil handlers are skipped.
+func registerLLMOpsRoutes(mux *http.ServeMux, dependencies *Dependencies) {
+	if dependencies == nil {
+		return
+	}
+	llmopsfeature.RegisterRoutes(mux, llmopsfeature.Dependencies{Routes: llmopsfeature.Routes{
+		Nodes:       dependencies.llmOpsNodes,
+		Node:        dependencies.llmOpsNode,
+		NodeModels:  dependencies.llmOpsNodeModels,
+		ModelMatrix: dependencies.llmOpsModelMatrix,
+		Refresh:     dependencies.llmOpsRefresh,
 	}})
 }
