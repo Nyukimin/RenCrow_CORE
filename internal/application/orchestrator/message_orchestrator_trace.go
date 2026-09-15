@@ -23,7 +23,7 @@ func formatMioToShiroInstruction(t task.Task, route routing.Route) string {
 	return formatAgentHandoffSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.TaskID().String()),
 		t.UserMessage(),
 	)
 }
@@ -32,7 +32,7 @@ func formatShiroReadbackToMio(t task.Task, route routing.Route) string {
 	return formatAgentHandoffReadbackSpeech(
 		"mio",
 		"shiro",
-		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.JobID().String()),
+		fmt.Sprintf("route=%s job=%s の実行", route.String(), t.TaskID().String()),
 		t.UserMessage(),
 	)
 }

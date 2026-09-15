@@ -38,7 +38,7 @@ func TestMioAgentChatUsesPreparedDailyNewsBriefWithoutSearch(t *testing.T) {
 		Items:            []domainnews.Item{{ID: "news-1", Title: "準備済み記事", Source: "公式RSS", Summary: "要約"}},
 	}
 
-	response, err := mio.Chat(WithDailyNewsBrief(context.Background(), brief), task.NewTask(task.NewJobID(), "今朝のニュースを教えて", "viewer", "viewer"))
+	response, err := mio.Chat(WithDailyNewsBrief(context.Background(), brief), task.NewTask(task.NewTaskID(), "今朝のニュースを教えて", "viewer", "viewer"))
 	if err != nil || response != "prepared answer" {
 		t.Fatalf("Chat response = %q, err=%v", response, err)
 	}
@@ -63,7 +63,7 @@ func TestMioAgentChatDoesNotCollectMissingDailyNews(t *testing.T) {
 		},
 	}
 	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, toolRunner, &mockMCPClient{}, nil)
-	_, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "今朝のニュースを教えて", "viewer", "viewer"))
+	_, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "今朝のニュースを教えて", "viewer", "viewer"))
 	if err != nil {
 		t.Fatalf("Chat returned error: %v", err)
 	}

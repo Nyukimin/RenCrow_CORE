@@ -8,11 +8,11 @@ import (
 )
 
 func TestNewTask(t *testing.T) {
-	jobID := NewJobID()
-	task := NewTask(jobID, "Hello", "line", "U123")
+	taskID := NewTaskID()
+	task := NewTask(taskID, "Hello", "line", "U123")
 
-	if task.JobID() != jobID {
-		t.Errorf("Expected JobID %s, got %s", jobID.String(), task.JobID().String())
+	if task.TaskID() != taskID {
+		t.Errorf("Expected TaskID %s, got %s", taskID.String(), task.TaskID().String())
 	}
 
 	if task.UserMessage() != "Hello" {
@@ -33,8 +33,8 @@ func TestNewTask(t *testing.T) {
 }
 
 func TestTaskWithForcedRoute(t *testing.T) {
-	jobID := NewJobID()
-	task := NewTask(jobID, "Test", "line", "U123")
+	taskID := NewTaskID()
+	task := NewTask(taskID, "Test", "line", "U123")
 
 	taskWithRoute := task.WithForcedRoute(routing.RouteCODE3)
 
@@ -53,8 +53,8 @@ func TestTaskWithForcedRoute(t *testing.T) {
 }
 
 func TestTaskWithRoute(t *testing.T) {
-	jobID := NewJobID()
-	task := NewTask(jobID, "Test", "line", "U123")
+	taskID := NewTaskID()
+	task := NewTask(taskID, "Test", "line", "U123")
 
 	taskWithRoute := task.WithRoute(routing.RouteCHAT)
 
@@ -69,8 +69,8 @@ func TestTaskWithRoute(t *testing.T) {
 }
 
 func TestTaskWithUserMessageAndAttachmentsAreImmutable(t *testing.T) {
-	jobID := NewJobID()
-	task := NewTask(jobID, "old", "viewer", "chat-1")
+	taskID := NewTaskID()
+	task := NewTask(taskID, "old", "viewer", "chat-1")
 	attachments := []attachment.Attachment{{ID: "att-1", Filename: "memo.txt"}}
 
 	updated := task.WithUserMessage("new").WithAttachments(attachments)
@@ -94,7 +94,7 @@ func TestTaskWithUserMessageAndAttachmentsAreImmutable(t *testing.T) {
 }
 
 func TestTaskWithViewerRecipientIsImmutable(t *testing.T) {
-	original := NewTask(NewJobID(), "hello", "viewer", "viewer-user")
+	original := NewTask(NewTaskID(), "hello", "viewer", "viewer-user")
 	updated := original.WithViewerRecipient("kuro")
 
 	if original.ViewerRecipient() != "" {

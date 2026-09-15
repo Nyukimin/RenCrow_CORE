@@ -14,13 +14,13 @@ func TestPhase23DistributedAttributionGuardPreservesTaskMetadata(t *testing.T) {
 	memory := session.NewCentralMemory()
 	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "sess-1", "job-0", "前の発言"))
 	guard := newDistributedAttributionGuard(memory)
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	original := task.NewTask(jobID, "続き", "line", "U123").
 		WithForcedRoute(routing.RoutePLAN).
 		WithRoute(routing.RoutePLAN)
 
 	got := guard.Apply(original, "mio", "sess-1")
-	if got.JobID() != jobID || got.Channel() != "line" || got.ChatID() != "U123" {
+	if got.TaskID() != jobID || got.Channel() != "line" || got.ChatID() != "U123" {
 		t.Fatalf("task metadata changed: %#v", got)
 	}
 	if !got.HasForcedRoute() || got.ForcedRoute() != routing.RoutePLAN || got.Route() != routing.RoutePLAN {
@@ -36,12 +36,12 @@ func TestPhase23DistributedAttributionGuardSkipsCodeRouteAndExistingGuard(t *tes
 	memory.RecordMessage(domaintransport.NewMessage("mio", "user", "sess-1", "job-0", "前の発言"))
 	guard := newDistributedAttributionGuard(memory)
 
-	codeTask := task.NewTask(task.NewJobID(), "実装して", "line", "U123").WithRoute(routing.RouteCODE)
+	codeTask := task.NewTask(task.NewTaskID(), "実装して", "line", "U123").WithRoute(routing.RouteCODE)
 	if got := guard.Apply(codeTask, "coder1", "sess-1"); got.UserMessage() != "実装して" {
 		t.Fatalf("CODE route should not be guarded: %q", got.UserMessage())
 	}
 
-	alreadyGuarded := task.NewTask(task.NewJobID(), "【発言帰属ガード】\n既存", "line", "U123")
+	alreadyGuarded := task.NewTask(task.NewTaskID(), "【発言帰属ガード】\n既存", "line", "U123")
 	if got := guard.Apply(alreadyGuarded, "mio", "sess-1"); got.UserMessage() != alreadyGuarded.UserMessage() {
 		t.Fatalf("existing guard should not be duplicated: %q", got.UserMessage())
 	}

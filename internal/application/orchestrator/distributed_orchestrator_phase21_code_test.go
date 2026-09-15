@@ -35,7 +35,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorAddsCoderConfigAndFinishesWit
 		},
 	)
 
-	resp, err := coordinator.Execute(context.Background(), task.NewTask(task.NewJobID(), "code please", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
+	resp, err := coordinator.Execute(context.Background(), task.NewTask(task.NewTaskID(), "code please", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorReturnsNoCoderMapped(t *testi
 		nil,
 	)
 
-	_, err := coordinator.Execute(context.Background(), task.NewTask(task.NewJobID(), "code please", "line", "U123"), routing.RouteCODE, "sess-1", "job-1")
+	_, err := coordinator.Execute(context.Background(), task.NewTask(task.NewTaskID(), "code please", "line", "U123"), routing.RouteCODE, "sess-1", "job-1")
 	if err == nil || err.Error() != "no coder mapped for route CODE" {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRetriesCoderMailboxFailure(t 
 		},
 	)
 
-	resp, err := coordinator.Execute(context.Background(), task.NewTask(task.NewJobID(), "code please", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
+	resp, err := coordinator.Execute(context.Background(), task.NewTask(task.NewTaskID(), "code please", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
 	if err != nil {
 		t.Fatalf("Execute failed after retry: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestPhase21DistributedCodeExecutionCoordinatorRecordsCoderProposalEvidence(
 	)
 	coordinator.SetCoderProposalEvidenceRecorder(evidence)
 
-	_, err := coordinator.Execute(context.Background(), task.NewTask(task.NewJobID(), "Skillを更新して", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
+	_, err := coordinator.Execute(context.Background(), task.NewTask(task.NewTaskID(), "Skillを更新して", "line", "U123"), routing.RouteCODE3, "sess-1", "job-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}

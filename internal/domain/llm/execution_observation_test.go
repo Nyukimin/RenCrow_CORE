@@ -4,12 +4,15 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestWithExecutionObservationReusesExistingCorrelationID(t *testing.T) {
+	taskID := task.NewTaskID()
 	ctx := WithExecutionObservation(context.Background(), ExecutionObservation{
 		TraceID:   "trace-1",
-		JobID:     "job-1",
+		TaskID:    taskID,
 		SessionID: "session-1",
 		Initiator: "shiro",
 		Caller:    "idlechat.daily_source_brief",
@@ -22,6 +25,9 @@ func TestWithExecutionObservationReusesExistingCorrelationID(t *testing.T) {
 	}
 	if got.RequestID != "trace-1" {
 		t.Fatalf("request_id=%q want trace-1", got.RequestID)
+	}
+	if got.TaskID != taskID {
+		t.Fatalf("task_id=%q want %q", got.TaskID, taskID)
 	}
 	if got.Initiator != "shiro" || got.Caller != "idlechat.daily_source_brief" || got.Purpose != "translate_article" {
 		t.Fatalf("unexpected observation: %+v", got)
@@ -56,5 +62,16 @@ func TestWithExecutionObservationDefaultsPreservesUpstreamAttribution(t *testing
 	got, ok := ExecutionObservationFromContext(ctx)
 	if !ok || got.RequestID != "job-1" || got.Initiator != "shiro" || got.Caller != "heartbeat.backlog" || got.Purpose != "process_backlog_item" {
 		t.Fatalf("unexpected merged observation: %+v ok=%v", got, ok)
+	}
+}
+
+func TestExecutionObservationPreservesInvalidTaskIDForBoundaryRejection(t *testing.T) {
+	invalid := task.TaskID("job-legacy")
+	got, ok := ExecutionObservationFromContext(WithExecutionObservation(context.Background(), ExecutionObservation{TaskID: invalid}))
+	if !ok || got.TaskID != invalid {
+		t.Fatalf("invalid task_id was rewritten or observation missing: %+v ok=%v", got, ok)
+	}
+	if err := got.Validate(); err == nil {
+		t.Fatal("invalid TaskID passed observation validation")
 	}
 }

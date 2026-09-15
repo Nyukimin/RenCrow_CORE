@@ -212,7 +212,7 @@ func TestMessageOrchestrator_RouteChainContract_ChatCommandBypassesRouteDecision
 	orch.SetEventListener(rec)
 
 	req := defaultReq()
-	req.JobID = "viewer-command-job"
+	req.JobID = task.NewTaskID().String()
 	resp, err := orch.ProcessMessage(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
@@ -406,7 +406,7 @@ type recordingWorkerExecutionService struct {
 	result *patch.PatchExecutionResult
 }
 
-func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
+func (w *recordingWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error) {
 	w.calls++
 	if w.err != nil {
 		return nil, w.err

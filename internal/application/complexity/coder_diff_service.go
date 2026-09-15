@@ -52,14 +52,13 @@ func (s *CoderDiffService) GenerateConcreteDiff(ctx context.Context, req CoderDi
 	}
 	prompt := BuildCoderDiffGenerationPrompt(req.Hotspot, req.Evidence)
 	jobID := strings.TrimSpace(req.JobID)
-	var jid task.JobID
+	// Complexity job_id is the service's own review artifact correlation. The
+	// generated Task keeps its separate canonical TaskID lifecycle.
+	taskID := task.NewTaskID()
 	if jobID == "" {
-		jid = task.NewJobID()
-		jobID = jid.String()
-	} else {
-		jid = task.JobIDFromString(jobID)
+		jobID = taskID.String()
 	}
-	t := task.NewTask(jid, prompt, "viewer", strings.TrimSpace(req.WorkstreamID)).WithRoute(routing.RouteCODE)
+	t := task.NewTask(taskID, prompt, "viewer", strings.TrimSpace(req.WorkstreamID)).WithRoute(routing.RouteCODE)
 	systemPrompt := strings.TrimSpace(req.SystemPrompt)
 	if systemPrompt == "" {
 		systemPrompt = defaultCoderDiffSystemPrompt

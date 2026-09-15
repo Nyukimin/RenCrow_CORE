@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 type recordedCorrelatedTurn struct {
@@ -51,11 +52,12 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	)
 	events := &recordingEventListener{}
 	turns := &recordingCorrelatedTurnLogger{}
+	taskID := task.NewTaskID().String()
 	orch.SetEventListener(events)
 	orch.SetSessionTurnLogger(turns)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		JobID:       "job-fixed",
+		JobID:       taskID,
 		MessageID:   "msg_ingress_fixed",
 		TraceID:     "discarded-non-root-trace",
 		SessionID:   "session-1",
@@ -66,7 +68,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if err != nil {
 		t.Fatalf("ProcessMessage failed: %v", err)
 	}
-	if resp.TraceID != "job-fixed" || resp.MessageID == "" {
+	if resp.TraceID != taskID || resp.MessageID == "" {
 		t.Fatalf("response identity = %+v", resp)
 	}
 
@@ -76,7 +78,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 		t.Fatalf("missing conversation events: %#v", events.events)
 	}
 	if events.events[receivedIndex].MessageID != "msg_ingress_fixed" ||
-		events.events[receivedIndex].TraceID != "job-fixed" {
+		events.events[receivedIndex].TraceID != taskID {
 		t.Fatalf("ingress event identity drifted: %+v", events.events[receivedIndex])
 	}
 	if events.events[responseIndex].MessageID != resp.MessageID ||
@@ -87,7 +89,7 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 	if len(turns.turns) != 2 {
 		t.Fatalf("session turns = %#v", turns.turns)
 	}
-	if turns.turns[0].messageID != "msg_ingress_fixed" || turns.turns[0].traceID != "job-fixed" {
+	if turns.turns[0].messageID != "msg_ingress_fixed" || turns.turns[0].traceID != taskID {
 		t.Fatalf("user session log identity drifted: %+v", turns.turns[0])
 	}
 	if turns.turns[1].messageID != resp.MessageID || turns.turns[1].traceID != resp.TraceID ||

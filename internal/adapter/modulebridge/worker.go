@@ -42,7 +42,7 @@ func (a *WorkerExecutorAdapter) Execute(ctx context.Context, action moduleworker
 	if err != nil {
 		return moduleworker.BuildActionErrorResult(action, err, startedAt, time.Now().UTC()), err
 	}
-	jobID, err := task.ParseJobID(string(action.JobID))
+	jobID, err := task.ParseTaskID(string(action.JobID))
 	if err != nil {
 		return moduleworker.BuildFailedResult(action.JobID, "", err.Error(), startedAt, time.Now().UTC()), err
 	}

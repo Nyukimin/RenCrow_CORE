@@ -2,8 +2,10 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/google/uuid"
 )
 
@@ -14,7 +16,7 @@ type executionObservationContextKey struct{}
 type ExecutionObservation struct {
 	RequestID string
 	TraceID   string
-	JobID     string
+	TaskID    task.TaskID
 	SessionID string
 	Initiator string
 	Caller    string
@@ -45,8 +47,8 @@ func WithExecutionObservationDefaults(ctx context.Context, defaults ExecutionObs
 	if current.TraceID == "" {
 		current.TraceID = defaults.TraceID
 	}
-	if current.JobID == "" {
-		current.JobID = defaults.JobID
+	if current.TaskID == "" {
+		current.TaskID = defaults.TaskID
 	}
 	if current.SessionID == "" {
 		current.SessionID = defaults.SessionID
@@ -72,16 +74,27 @@ func ExecutionObservationFromContext(ctx context.Context) (ExecutionObservation,
 	return observation, ok
 }
 
+// Validate checks the canonical TaskID when an observation carries one.
+// Empty TaskID is valid for background work that is not tied to a Task.
+func (observation ExecutionObservation) Validate() error {
+	if observation.TaskID == "" {
+		return nil
+	}
+	if err := observation.TaskID.Validate(); err != nil {
+		return fmt.Errorf("execution observation task_id: %w", err)
+	}
+	return nil
+}
+
 func normalizeExecutionObservation(observation ExecutionObservation) ExecutionObservation {
 	observation.RequestID = strings.TrimSpace(observation.RequestID)
 	observation.TraceID = strings.TrimSpace(observation.TraceID)
-	observation.JobID = strings.TrimSpace(observation.JobID)
 	observation.SessionID = strings.TrimSpace(observation.SessionID)
 	observation.Initiator = strings.TrimSpace(observation.Initiator)
 	observation.Caller = strings.TrimSpace(observation.Caller)
 	observation.Purpose = strings.TrimSpace(observation.Purpose)
 	if observation.RequestID == "" {
-		observation.RequestID = firstNonEmptyObservationID(observation.TraceID, observation.JobID, observation.SessionID)
+		observation.RequestID = firstNonEmptyObservationID(observation.TraceID, observation.TaskID.String(), observation.SessionID)
 	}
 	if observation.RequestID == "" {
 		observation.RequestID = newLLMRequestID()

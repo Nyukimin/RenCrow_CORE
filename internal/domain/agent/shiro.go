@@ -83,9 +83,10 @@ func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAg
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
 func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
-	jobID := t.JobID().String()
+	taskID := t.TaskID()
+	jobID := taskID.String()
 	ctx = llm.WithExecutionObservationDefaults(ctx, llm.ExecutionObservation{
-		RequestID: jobID, TraceID: jobID, JobID: jobID,
+		RequestID: jobID, TraceID: jobID, TaskID: taskID,
 		Initiator: "shiro", Caller: "agent.shiro", Purpose: "execute_ops_task",
 	})
 	characterPrompt := s.systemPrompt
@@ -162,7 +163,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t task.Task) (string, error) {
 	}
 
 	if s.conversation != nil {
-		if err := commitConversationTurn(ctx, s.conversation, t.JobID().String(), t.ChatID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
+		if err := commitConversationTurn(ctx, s.conversation, t.TaskID().String(), t.ChatID(), t.UserMessage(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
 			return resp.Content, err
 		}
 	}
@@ -214,8 +215,8 @@ func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t task.Task) (
 
 func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexWorkPath, t task.Task) (string, bool, error) {
 	result, err := s.advisorService.RequestAdvice(ctx, advisor.AdviceRequest{
-		ID:               t.JobID().String(),
-		TaskID:           t.JobID().String(),
+		ID:               t.TaskID().String(),
+		TaskID:           t.TaskID().String(),
 		RequestedByAgent: "shiro",
 		AdvisorID:        advisor.AdvisorCodex,
 		Purpose:          "codex_work_path:" + string(path.Domain),
@@ -236,7 +237,7 @@ func (s *ShiroAgent) requestCodexAdvice(ctx context.Context, path routing.CodexW
 		record := advisor.AdvisorAdoptionRecord{
 			AdoptionID:     "advisor-adoption:" + result.RunID + ":shiro",
 			RunID:          result.RunID,
-			TaskID:         t.JobID().String(),
+			TaskID:         t.TaskID().String(),
 			AdvisorID:      result.AdvisorID,
 			AdoptedByAgent: "shiro",
 			Adopted:        true,

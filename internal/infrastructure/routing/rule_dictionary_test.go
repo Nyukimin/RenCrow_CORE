@@ -24,7 +24,7 @@ func TestRuleDictionary_Match_AllConfiguredKeywords(t *testing.T) {
 		for _, keyword := range rule.keywords {
 			seen++
 			t.Run(string(rule.route)+"/"+keyword, func(t *testing.T) {
-				testTask := task.NewTask(task.NewJobID(), "前置き "+keyword+" 後置き", "line", "U123")
+				testTask := task.NewTask(task.NewTaskID(), "前置き "+keyword+" 後置き", "line", "U123")
 
 				route, confidence, matched := dict.Match(testTask)
 				if !matched {
@@ -47,7 +47,7 @@ func TestRuleDictionary_Match_AllConfiguredKeywords(t *testing.T) {
 func TestRuleDictionary_Match_NoMatch(t *testing.T) {
 	dict := NewRuleDictionary()
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "普通の会話メッセージ", "line", "U123")
 
 	route, confidence, matched := dict.Match(testTask)
@@ -68,7 +68,7 @@ func TestRuleDictionary_Match_NoMatch(t *testing.T) {
 func TestRuleDictionary_Match_ObviousGreetingAsChat(t *testing.T) {
 	dict := NewRuleDictionary()
 
-	route, confidence, matched := dict.Match(task.NewTask(task.NewJobID(), "おはようございます", "viewer", "viewer-user"))
+	route, confidence, matched := dict.Match(task.NewTask(task.NewTaskID(), "おはようございます", "viewer", "viewer-user"))
 	if !matched || route != routing.RouteCHAT || confidence < 0.9 {
 		t.Fatalf("greeting match = (%s, %.2f, %t), want CHAT with high confidence", route, confidence, matched)
 	}
@@ -77,7 +77,7 @@ func TestRuleDictionary_Match_ObviousGreetingAsChat(t *testing.T) {
 func TestRuleDictionary_DoesNotHideActionBehindGreeting(t *testing.T) {
 	dict := NewRuleDictionary()
 
-	route, _, matched := dict.Match(task.NewTask(task.NewJobID(), "おはよう、COREを再起動して", "viewer", "viewer-user"))
+	route, _, matched := dict.Match(task.NewTask(task.NewTaskID(), "おはよう、COREを再起動して", "viewer", "viewer-user"))
 	if !matched || route != routing.RouteOPS {
 		t.Fatalf("compound greeting route = %s matched=%t, want OPS", route, matched)
 	}
@@ -96,7 +96,7 @@ func TestRuleDictionary_Match_HighConfidenceConversationAsChat(t *testing.T) {
 
 	for _, message := range tests {
 		t.Run(message, func(t *testing.T) {
-			route, confidence, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user"))
+			route, confidence, matched := dict.Match(task.NewTask(task.NewTaskID(), message, "viewer", "viewer-user"))
 			if !matched || route != routing.RouteCHAT || confidence < 0.9 {
 				t.Fatalf("conversation match = (%s, %.2f, %t), want CHAT with high confidence", route, confidence, matched)
 			}
@@ -114,7 +114,7 @@ func TestRuleDictionary_HighConfidenceConversationDoesNotHideAmbiguousWork(t *te
 		"COREの状態を答えて",
 	} {
 		t.Run(message, func(t *testing.T) {
-			if route, _, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user")); matched && route == routing.RouteCHAT {
+			if route, _, matched := dict.Match(task.NewTask(task.NewTaskID(), message, "viewer", "viewer-user")); matched && route == routing.RouteCHAT {
 				t.Fatalf("ambiguous work %q was hidden by CHAT fast path", message)
 			}
 		})
@@ -144,7 +144,7 @@ func TestRuleDictionary_Match_CreativeWorkUsesWild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testTask := task.NewTask(task.NewJobID(), tt.message, "line", "U123")
+			testTask := task.NewTask(task.NewTaskID(), tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
 			if !matched {
@@ -227,7 +227,7 @@ func TestRuleDictionary_Match_CodeKeywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobID := task.NewJobID()
+			jobID := task.NewTaskID()
 			testTask := task.NewTask(jobID, tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
@@ -272,7 +272,7 @@ func TestRuleDictionary_ReportiveSyntaxDoesNotBecomeWorkRequest(t *testing.T) {
 
 	for _, message := range reportiveMessages {
 		t.Run(message, func(t *testing.T) {
-			route, _, matched := dict.Match(task.NewTask(task.NewJobID(), message, "viewer", "viewer-user"))
+			route, _, matched := dict.Match(task.NewTask(task.NewTaskID(), message, "viewer", "viewer-user"))
 			if matched {
 				t.Fatalf("reportive message route = %s matched=true, want no rule match", route)
 			}
@@ -301,7 +301,7 @@ func TestRuleDictionary_ReportiveSyntaxPreservesCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.message, func(t *testing.T) {
-			route, _, matched := dict.Match(task.NewTask(task.NewJobID(), tt.message, "viewer", "viewer-user"))
+			route, _, matched := dict.Match(task.NewTask(task.NewTaskID(), tt.message, "viewer", "viewer-user"))
 			if !matched || route != tt.route {
 				t.Fatalf("command route = %s matched=%t, want %s", route, matched, tt.route)
 			}
@@ -389,7 +389,7 @@ func TestRuleDictionary_Match_WildKeywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			testTask := task.NewTask(task.NewJobID(), tt.message, "line", "U123")
+			testTask := task.NewTask(task.NewTaskID(), tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
 
@@ -429,7 +429,7 @@ func TestRuleDictionary_Match_PlanKeywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobID := task.NewJobID()
+			jobID := task.NewTaskID()
 			testTask := task.NewTask(jobID, tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
@@ -472,7 +472,7 @@ func TestRuleDictionary_Match_AnalyzeKeywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobID := task.NewJobID()
+			jobID := task.NewTaskID()
 			testTask := task.NewTask(jobID, tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
@@ -515,7 +515,7 @@ func TestRuleDictionary_Match_OpsKeywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobID := task.NewJobID()
+			jobID := task.NewTaskID()
 			testTask := task.NewTask(jobID, tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
@@ -541,7 +541,7 @@ func TestRuleDictionary_Match_ResearchKeywords(t *testing.T) {
 	// 「調べて」「検索して」はChatのWeb検索で即答するためルール辞書から除外
 	// → マッチしない（ルータがCHATにフォールバックする）
 	t.Run("調べて_はルール辞書でマッチしない", func(t *testing.T) {
-		jobID := task.NewJobID()
+		jobID := task.NewTaskID()
 		testTask := task.NewTask(jobID, "この技術について調べて", "line", "U123")
 		_, _, matched := dict.Match(testTask)
 		if matched {
@@ -550,7 +550,7 @@ func TestRuleDictionary_Match_ResearchKeywords(t *testing.T) {
 	})
 
 	t.Run("検索して_はルール辞書でマッチしない", func(t *testing.T) {
-		jobID := task.NewJobID()
+		jobID := task.NewTaskID()
 		testTask := task.NewTask(jobID, "最新の情報を検索して", "line", "U123")
 		_, _, matched := dict.Match(testTask)
 		if matched {
@@ -560,7 +560,7 @@ func TestRuleDictionary_Match_ResearchKeywords(t *testing.T) {
 
 	// 「リサーチして」は深い調査タスクとしてRESEARCHにルーティング
 	t.Run("リサーチして_はRESEARCHにマッチする", func(t *testing.T) {
-		jobID := task.NewJobID()
+		jobID := task.NewTaskID()
 		testTask := task.NewTask(jobID, "競合をリサーチして", "line", "U123")
 		route, confidence, matched := dict.Match(testTask)
 		if !matched {
@@ -610,7 +610,7 @@ func TestRuleDictionary_Match_Code3Keywords(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			jobID := task.NewJobID()
+			jobID := task.NewTaskID()
 			testTask := task.NewTask(jobID, tt.message, "line", "U123")
 
 			route, confidence, matched := dict.Match(testTask)
@@ -633,7 +633,7 @@ func TestRuleDictionary_Match_Code3Keywords(t *testing.T) {
 func TestRuleDictionary_Match_MultipleKeywords(t *testing.T) {
 	dict := NewRuleDictionary()
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	// 複数のキーワードが含まれる場合、最初にマッチしたものを返す
 	testTask := task.NewTask(jobID, "このコードを分析して実装して", "line", "U123")
 

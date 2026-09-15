@@ -39,7 +39,7 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 		return "", nil
 	})
 
-	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewJobID(), "hello", "line", "U123"), routing.RouteCHAT, "sess-1", "")
+	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewTaskID(), "hello", "line", "U123"), routing.RouteCHAT, "sess-1", "")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPhase19DistributedRouteDispatcherNonCHATUsesAutonomousExecutor(t *testi
 		return "ops ok", nil
 	})
 
-	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewJobID(), "run", "line", "U123"), routing.RouteOPS, "sess-1", "tts-1")
+	resp, err := dispatcher.ExecuteTask(context.Background(), task.NewTask(task.NewTaskID(), "run", "line", "U123"), routing.RouteOPS, "sess-1", "tts-1")
 	if err != nil {
 		t.Fatalf("ExecuteTask failed: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "TTSの接続を確認して", "viewer", "viewer-user")
+	tk := task.NewTask(task.NewTaskID(), "TTSの接続を確認して", "viewer", "viewer-user")
 	if _, err := dispatcher.ExecuteDirect(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1"); err != nil {
 		t.Fatalf("ExecuteDirect failed: %v", err)
 	}

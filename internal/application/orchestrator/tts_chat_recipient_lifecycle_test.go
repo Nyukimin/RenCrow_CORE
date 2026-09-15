@@ -19,7 +19,7 @@ func TestMessageTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 				Channel:   "viewer",
 				ChatID:    "viewer-user",
 				To:        characterID,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"), "tts-chat")
+			}, task.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"), "tts-chat")
 
 			if len(bridge.startReqs) != 1 {
 				t.Fatalf("TTS start request count = %d, want 1", len(bridge.startReqs))
@@ -43,7 +43,7 @@ func TestDistributedTTSLifecycleChatUsesViewerRecipientVoice(t *testing.T) {
 				Channel:   "viewer",
 				ChatID:    "viewer-user",
 				To:        characterID,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"))
+			}, task.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 1, "chat"))
 
 			if ttsSessionID == "" || len(bridge.startReqs) != 1 {
 				t.Fatalf("expected one started TTS session, session=%q starts=%d", ttsSessionID, len(bridge.startReqs))

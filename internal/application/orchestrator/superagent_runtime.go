@@ -11,7 +11,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.JobID, route routing.Route) (time.Time, error) {
+func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.TaskID, route routing.Route) (time.Time, error) {
 	startedAt := time.Now().UTC()
 	if recorder == nil {
 		return startedAt, nil
@@ -61,7 +61,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	return startedAt, nil
 }
 
-func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.JobID, route routing.Route, startedAt time.Time, status string, summary string) error {
+func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, jobID task.TaskID, route routing.Route, startedAt time.Time, status string, summary string) error {
 	if recorder == nil {
 		return nil
 	}
@@ -114,15 +114,15 @@ func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt
 	return 1, fmt.Sprintf("request accepted; route=%s", route), "dispatch task with the same job_id", fallbackAt
 }
 
-func leadAgentRunID(jobID task.JobID) string {
+func leadAgentRunID(jobID task.TaskID) string {
 	return "run_lead_" + jobID.String()
 }
 
-func leadAgentTraceEventID(status string, jobID task.JobID, at time.Time) string {
+func leadAgentTraceEventID(status string, jobID task.TaskID, at time.Time) string {
 	return fmt.Sprintf("evt_lead_%s_%s_%d", status, jobID.String(), at.UnixNano())
 }
 
-func leadAgentContextPackID(jobID task.JobID) string {
+func leadAgentContextPackID(jobID task.TaskID) string {
 	return "ctx_lead_" + jobID.String()
 }
 

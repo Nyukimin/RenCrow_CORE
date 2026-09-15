@@ -24,11 +24,11 @@ func (h *recordingVoiceDirectHandler) ProcessVoiceDirect(_ context.Context, req 
 	return orchestrator.ProcessMessageResponse{
 		Response: req.FinalText,
 		Route:    routing.RouteCHAT,
-		JobID:    task.NewJobID().String(),
+		JobID:    task.NewTaskID().String(),
 	}, nil
 }
 
-func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+func (h *recordingVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.TaskID, time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.tokenCalls++

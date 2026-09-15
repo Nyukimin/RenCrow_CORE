@@ -75,7 +75,7 @@ func TestPhase17DistributedSessionLifecycleSaveCompletedTaskAddsTaskBeforeSave(t
 	repo := &phase17SessionRepo{}
 	lifecycle := newDistributedSessionLifecycle(repo)
 	sess := session.NewSession("sess-1", "line", "U123")
-	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "hello", "line", "U123")
 
 	if err := lifecycle.SaveCompletedTask(context.Background(), sess, tk); err != nil {
 		t.Fatalf("SaveCompletedTask failed: %v", err)
@@ -92,7 +92,7 @@ func TestPhase17DistributedSessionLifecycleSaveErrorReturnsErrorAfterTaskAdded(t
 	repo := &phase17SessionRepo{saveErr: errors.New("save failed")}
 	lifecycle := newDistributedSessionLifecycle(repo)
 	sess := session.NewSession("sess-1", "line", "U123")
-	tk := task.NewTask(task.NewJobID(), "hello", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "hello", "line", "U123")
 
 	err := lifecycle.SaveCompletedTask(context.Background(), sess, tk)
 	if err == nil {

@@ -22,9 +22,9 @@ type coderHandler struct {
 }
 
 func (h *coderHandler) HandleMessage(ctx context.Context, msg domaintransport.Message) (domaintransport.Message, error) {
-	jobID, err := task.ParseJobID(msg.JobID)
+	jobID, err := task.ParseTaskID(msg.JobID)
 	if err != nil {
-		jobID = task.NewJobID()
+		return domaintransport.Message{}, fmt.Errorf("invalid task ID: %w", err)
 	}
 
 	t := task.NewTask(jobID, msg.Content, "standalone", "agent")

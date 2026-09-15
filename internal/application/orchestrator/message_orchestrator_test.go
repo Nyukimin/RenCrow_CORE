@@ -307,7 +307,7 @@ func (m *mockHeavyAgent) Generate(ctx context.Context, t task.Task) (string, err
 // mockWorkerExecutionService はテスト用のWorkerExecutionService
 type mockWorkerExecutionService struct{}
 
-func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.JobID, p interface{}) (interface{}, error) {
+func (m *mockWorkerExecutionService) ExecuteProposal(ctx context.Context, jobID task.TaskID, p interface{}) (interface{}, error) {
 	return nil, nil
 }
 

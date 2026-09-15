@@ -21,7 +21,7 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
 	ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision)
@@ -56,7 +56,7 @@ func TestPhase16DistributedTTSLifecycleStartFailureClearsSession(t *testing.T) {
 		Channel:     "line",
 		ChatID:      "U123",
 		UserMessage: "実行して",
-	}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
+	}, task.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.9, "chat"))
 
 	if ttsSessionID != "" {
 		t.Fatalf("expected empty TTS session after start failure, got %s", ttsSessionID)
@@ -84,7 +84,7 @@ func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
 			ttsSessionID := lifecycle.StartSessionForRoute(context.Background(), ProcessMessageRequest{
 				SessionID: "viewer", Channel: "viewer", ChatID: "viewer-user", UserMessage: "おはようございます",
 				OperationSource: "RenCrow_CMD", AudioOutput: tt.intent,
-			}, task.NewJobID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
+			}, task.NewTaskID(), routing.NewDecision(routing.RouteCHAT, 0.98, "chat"))
 
 			if (ttsSessionID == "") != tt.wantEmpty {
 				t.Fatalf("ttsSessionID=%q wantEmpty=%t", ttsSessionID, tt.wantEmpty)

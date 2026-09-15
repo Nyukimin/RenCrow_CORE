@@ -38,7 +38,7 @@ func (s *phase8RecordingReportStore) Save(_ context.Context, report domainexecut
 
 func TestPhase8MessageResponseAssemblerContracts(t *testing.T) {
 	assembler := messageResponseAssembler{}
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	decision := routing.NewDecision(routing.RoutePLAN, 0.82, "plan")
 
 	resp := assembler.Build("計画しました", decision, jobID)
@@ -128,7 +128,7 @@ func TestPhase8AutonomousExecutionCoordinatorUsesUpdatedReportStore(t *testing.T
 	)
 	coordinator.SetReportStore(reporter)
 
-	tk := task.NewTask(task.NewJobID(), "買い物の計画を作ってください", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "買い物の計画を作ってください", "line", "U123")
 	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, "sess-1", "line", "U123", "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)

@@ -106,7 +106,7 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatalf("response JSON: %v", err)
 	}
-	wantKeys := map[string]bool{"request_id": true, "job_id": true, "agent_id": true, "role": true, "route": true, "output": true}
+	wantKeys := map[string]bool{"request_id": true, "task_id": true, "agent_id": true, "role": true, "route": true, "output": true}
 	if len(response) != len(wantKeys) {
 		t.Fatalf("response keys=%v", response)
 	}
@@ -121,14 +121,14 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if executor.calls != 1 || executor.task.UserMessage() != "状態を確認して" || executor.task.Channel() != "agent_ops" || executor.task.ChatID() != "agent-ops" || executor.task.Route() != routing.RouteOPS {
 		t.Fatalf("task=%#v calls=%d", executor.task, executor.calls)
 	}
-	if response["job_id"] != executor.task.JobID().String() {
-		t.Fatalf("job_id=%v task=%s", response["job_id"], executor.task.JobID())
+	if response["task_id"] != executor.task.TaskID().String() {
+		t.Fatalf("task_id=%v task=%s", response["task_id"], executor.task.TaskID())
 	}
 	scope, ok := domaintool.ToolExecutionScopeFromContext(executor.ctx)
 	if !ok {
 		t.Fatal("executor did not receive a trusted scope")
 	}
-	if scope.RequestID != requestID || scope.RequestID == executor.task.JobID().String() || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
+	if scope.RequestID != requestID || scope.RequestID == executor.task.TaskID().String() || scope.ActorKind != domaintool.ActorKindAgent || scope.ActorID != "shiro" || scope.AuthenticatedUserID != "ren" || scope.AuthenticationSource != domaintool.AuthenticationSourceAgentOrchestrator || scope.AgentRole != "worker" || scope.Purpose != "ops" {
 		t.Fatalf("derived scope=%#v", scope)
 	}
 	if !scope.Allows(domaintool.DataScopePublic) || !scope.Allows(domaintool.DataScopeUser) || !scope.Allows(domaintool.DataScopeInternal) {
@@ -155,23 +155,23 @@ func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testin
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 			t.Fatalf("attempt %d response: %v", i, err)
 		}
-		if response.RequestID != requestID || response.JobID == "" {
+		if response.RequestID != requestID || response.TaskID == "" {
 			t.Fatalf("attempt %d response=%+v", i, response)
 		}
 	}
 	if len(executor.ctxs) != 2 || len(executor.tasks) != 2 {
 		t.Fatalf("captured executions=%d/%d", len(executor.ctxs), len(executor.tasks))
 	}
-	if executor.tasks[0].JobID().String() == executor.tasks[1].JobID().String() {
-		t.Fatalf("repeated requests reused job ID=%q", executor.tasks[0].JobID())
+	if executor.tasks[0].TaskID().String() == executor.tasks[1].TaskID().String() {
+		t.Fatalf("repeated requests reused job ID=%q", executor.tasks[0].TaskID())
 	}
 	for i, ctx := range executor.ctxs {
 		scope, ok := domaintool.ToolExecutionScopeFromContext(ctx)
 		if !ok {
 			t.Fatalf("attempt %d missing scope", i)
 		}
-		if scope.RequestID != requestID || scope.RequestID == executor.tasks[i].JobID().String() {
-			t.Fatalf("attempt %d scope=%#v task_job=%q", i, scope, executor.tasks[i].JobID())
+		if scope.RequestID != requestID || scope.RequestID == executor.tasks[i].TaskID().String() {
+			t.Fatalf("attempt %d scope=%#v task_job=%q", i, scope, executor.tasks[i].TaskID())
 		}
 	}
 }

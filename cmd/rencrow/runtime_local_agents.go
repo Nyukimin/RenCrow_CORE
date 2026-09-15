@@ -112,7 +112,7 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 	log.Printf("[LocalWorker] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d has_proposal=%t", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content), msg.Proposal != nil)
 	if msg.Proposal != nil && workerExecution != nil {
 		p := proposal.Reconstruct(msg.Proposal.Plan, msg.Proposal.Patch, msg.Proposal.Risk, msg.Proposal.CostHint)
-		jobID, err := task.ParseJobID(msg.JobID)
+		jobID, err := task.ParseTaskID(msg.JobID)
 		if err != nil {
 			log.Printf("[LocalWorker] invalid job id agent=%s job=%s err=%v", agentName, msg.JobID, err)
 			return newLocalAgentError(agentName, msg, fmt.Sprintf("invalid job ID: %v", err))
@@ -140,9 +140,10 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 		return resp
 	}
 
-	jobID, err := task.ParseJobID(msg.JobID)
+	jobID, err := task.ParseTaskID(msg.JobID)
 	if err != nil {
-		jobID = task.NewJobID()
+		log.Printf("[LocalWorker] invalid task id agent=%s task=%s err=%v", agentName, msg.JobID, err)
+		return newLocalAgentError(agentName, msg, fmt.Sprintf("invalid task ID: %v", err))
 	}
 	t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID)
 	log.Printf("[LocalWorker] shiro execute start agent=%s job=%s", agentName, msg.JobID)
@@ -161,7 +162,7 @@ func handleLocalWorkerMessage(agentName string, msg domaintransport.Message, shi
 	return resp
 }
 
-func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, jobID task.JobID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
+func executeLocalWorkerProposal(ctx context.Context, workerExecution service.WorkerExecutionService, jobID task.TaskID, p *proposal.Proposal, msg domaintransport.Message) (*patch.PatchExecutionResult, error) {
 	if root := localMessageContextString(msg, "module_root"); root != "" {
 		if worker, ok := workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
 			log.Printf("[LocalWorker] proposal workspace override job=%s module_root=%s", msg.JobID, root)
@@ -199,9 +200,11 @@ func (d *Dependencies) startLocalCoderAgent(agentName string, lt *transport.Loca
 			}
 			log.Printf("[LocalCoder] recv agent=%s from=%s to=%s type=%s job=%s content_len=%d", agentName, msg.From, msg.To, msg.Type, msg.JobID, len(msg.Content))
 			d.emitLocalAgentNote(agentName, msg.From, "依頼を受領しました。", msg)
-			jobID, parseErr := task.ParseJobID(msg.JobID)
+			jobID, parseErr := task.ParseTaskID(msg.JobID)
 			if parseErr != nil {
-				jobID = task.NewJobID()
+				d.emitLocalAgentNote(agentName, msg.From, "task_id が不正なため処理を拒否しました。", msg)
+				d.deliverLocalAgentResponse(newLocalAgentError(agentName, msg, fmt.Sprintf("invalid task ID: %v", parseErr)))
+				continue
 			}
 			t := task.NewTask(jobID, msg.Content, "distributed", msg.SessionID)
 			log.Printf("[LocalCoder] proposal start agent=%s job=%s", agentName, msg.JobID)

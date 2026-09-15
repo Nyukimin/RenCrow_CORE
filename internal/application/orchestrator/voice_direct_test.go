@@ -173,7 +173,7 @@ func TestNotifyVoiceDirectFirstToken_EmitsMetricOnce(t *testing.T) {
 		ChatID:      "viewer-user",
 		StartedAt:   time.Now().Add(-100 * time.Millisecond),
 	}
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	firstAt := req.StartedAt.Add(50 * time.Millisecond)
 	orch.NotifyVoiceDirectFirstToken(context.Background(), req, jobID, firstAt)
 

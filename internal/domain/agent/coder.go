@@ -100,7 +100,7 @@ func (c *CoderAgent) WithStableRuntimeContext(content string) *CoderAgent {
 
 // GenerateProposal はplan/patchを生成
 func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*proposal.Proposal, error) {
-	log.Printf("[CoderAgent] proposal generate start provider=%s job=%s prompt_len=%d", c.llmProvider.Name(), t.JobID().String(), len(t.UserMessage()))
+	log.Printf("[CoderAgent] proposal generate start provider=%s job=%s prompt_len=%d", c.llmProvider.Name(), t.TaskID().String(), len(t.UserMessage()))
 
 	// システムプロンプトの構築（v4.1: Agent Persona 対応）
 	systemPrompt := c.proposalPrompt
@@ -121,25 +121,25 @@ func (c *CoderAgent) GenerateProposal(ctx context.Context, t task.Task) (*propos
 
 	resp, err := c.llmProvider.Generate(ctx, req)
 	if err != nil {
-		log.Printf("[CoderAgent] proposal generate error provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal generate error provider=%s job=%s err=%v", c.llmProvider.Name(), t.TaskID().String(), err)
 		return nil, err
 	}
-	log.Printf("[CoderAgent] proposal generate response provider=%s job=%s content_len=%d finish=%s", c.llmProvider.Name(), t.JobID().String(), len(resp.Content), resp.FinishReason)
+	log.Printf("[CoderAgent] proposal generate response provider=%s job=%s content_len=%d finish=%s", c.llmProvider.Name(), t.TaskID().String(), len(resp.Content), resp.FinishReason)
 
 	// レスポンスからProposalを抽出
 	p, err := c.extractProposal(resp.Content)
 	if err != nil {
-		log.Printf("[CoderAgent] proposal extract failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal extract failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.TaskID().String(), err)
 		return nil, err
 	}
 	if err := c.selfCheckProposal(p); err != nil {
-		log.Printf("[CoderAgent] proposal self-check failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.JobID().String(), err)
+		log.Printf("[CoderAgent] proposal self-check failed provider=%s job=%s err=%v", c.llmProvider.Name(), t.TaskID().String(), err)
 		return nil, err
 	}
 	if c.lightMemory != nil {
 		c.lightMemory.Record(t.ChatID(), t.UserMessage(), resp.Content)
 	}
-	log.Printf("[CoderAgent] proposal extract complete provider=%s job=%s plan_len=%d patch_len=%d", c.llmProvider.Name(), t.JobID().String(), len(p.Plan()), len(p.Patch()))
+	log.Printf("[CoderAgent] proposal extract complete provider=%s job=%s plan_len=%d patch_len=%d", c.llmProvider.Name(), t.TaskID().String(), len(p.Plan()), len(p.Patch()))
 	return p, nil
 }
 

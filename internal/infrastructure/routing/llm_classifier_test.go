@@ -40,7 +40,7 @@ func TestLLMClassifier_Classify_DisablesThinkingAndBoundsOutput(t *testing.T) {
 	}
 	classifier := NewLLMClassifier(provider, "test prompt")
 
-	if _, err := classifier.Classify(context.Background(), task.NewTask(task.NewJobID(), "こんにちは", "line", "U123")); err != nil {
+	if _, err := classifier.Classify(context.Background(), task.NewTask(task.NewTaskID(), "こんにちは", "line", "U123")); err != nil {
 		t.Fatalf("Classify failed: %v", err)
 	}
 	if captured.MaxTokens != 8 {
@@ -87,7 +87,7 @@ func TestLLMClassifier_Classify_AllRoutes(t *testing.T) {
 		t.Run(tt.response, func(t *testing.T) {
 			classifier := NewLLMClassifier(&mockLLMProvider{response: tt.response}, "test prompt")
 
-			decision, err := classifier.Classify(context.Background(), task.NewTask(task.NewJobID(), "test", "line", "U123"))
+			decision, err := classifier.Classify(context.Background(), task.NewTask(task.NewTaskID(), "test", "line", "U123"))
 			if err != nil {
 				t.Fatalf("Classify failed: %v", err)
 			}
@@ -127,7 +127,7 @@ func TestLLMClassifier_Classify_CHAT(t *testing.T) {
 	mock := &mockLLMProvider{response: "CHAT"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "こんにちは、調子はどう？", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -158,7 +158,7 @@ func TestLLMClassifier_Classify_CODE(t *testing.T) {
 	mock := &mockLLMProvider{response: "CODE"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "新しい機能を追加したい", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -175,7 +175,7 @@ func TestLLMClassifier_Classify_PLAN(t *testing.T) {
 	mock := &mockLLMProvider{response: "PLAN"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "この機能の実装アプローチを考えたい", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -192,7 +192,7 @@ func TestLLMClassifier_Classify_ANALYZE(t *testing.T) {
 	mock := &mockLLMProvider{response: "ANALYZE"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "このエラーの原因を特定したい", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -209,7 +209,7 @@ func TestLLMClassifier_Classify_OPS(t *testing.T) {
 	mock := &mockLLMProvider{response: "OPS"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "ログを確認したい", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -226,7 +226,7 @@ func TestLLMClassifier_Classify_RESEARCH(t *testing.T) {
 	mock := &mockLLMProvider{response: "RESEARCH"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "Goのベストプラクティスを知りたい", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -244,7 +244,7 @@ func TestLLMClassifier_Classify_InvalidRoute(t *testing.T) {
 	mock := &mockLLMProvider{response: "INVALID_ROUTE"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "テストメッセージ", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -271,7 +271,7 @@ func TestLLMClassifier_Classify_CODE1(t *testing.T) {
 	mock := &mockLLMProvider{response: "CODE1"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "仕様を設計して", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -288,7 +288,7 @@ func TestLLMClassifier_Classify_CODE2(t *testing.T) {
 	mock := &mockLLMProvider{response: "CODE2"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "コードを実装して", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -305,7 +305,7 @@ func TestLLMClassifier_Classify_CODE3(t *testing.T) {
 	mock := &mockLLMProvider{response: "CODE3"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "高品質なコードレビューをして", "line", "U123")
 
 	decision, err := classifier.Classify(context.Background(), testTask)
@@ -323,7 +323,7 @@ func TestLLMClassifier_Classify_LLMError(t *testing.T) {
 	mock := &mockLLMProvider{err: fmt.Errorf("LLM error")}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "テストメッセージ", "line", "U123")
 
 	_, err := classifier.Classify(context.Background(), testTask)
@@ -336,7 +336,7 @@ func TestLLMClassifier_Classify_MultilineMessage(t *testing.T) {
 	mock := &mockLLMProvider{response: "CODE"}
 	classifier := NewLLMClassifier(mock, "test prompt")
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	multilineMessage := `このファイルに以下の機能を追加して：
 1. ユーザー認証
 2. ログイン機能

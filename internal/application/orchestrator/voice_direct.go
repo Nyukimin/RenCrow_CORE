@@ -115,7 +115,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 		Events:     o.events,
 		TurnLogger: o.sessionTurnLogger,
 		NewJobID: func() string {
-			return task.NewJobID().String()
+			return task.NewTaskID().String()
 		},
 		NewMessageID: func() string {
 			return string(modulecore.NewMessageID())
@@ -127,9 +127,9 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	jobID, _ := task.ParseJobID(published.JobID)
+	jobID, _ := task.ParseTaskID(published.JobID)
 	if jobID.IsZero() {
-		jobID = task.NewJobID()
+		jobID = task.NewTaskID()
 	}
 
 	if !req.FirstTokenAt.IsZero() {
@@ -157,7 +157,7 @@ func (o *MessageOrchestrator) ProcessVoiceDirect(ctx context.Context, req Proces
 }
 
 // NotifyVoiceDirectFirstToken は bridge が初回 llm.delta を転送したタイミングで呼ぶ。
-func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, jobID task.JobID, firstTokenAt time.Time) {
+func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, req ProcessVoiceDirectRequest, jobID task.TaskID, firstTokenAt time.Time) {
 	if o == nil || firstTokenAt.IsZero() {
 		return
 	}
@@ -169,7 +169,7 @@ func (o *MessageOrchestrator) NotifyVoiceDirectFirstToken(ctx context.Context, r
 	channel := req.normalizedChannel()
 	chatID := req.normalizedChatID()
 	if jobID.IsZero() {
-		jobID = task.NewJobID()
+		jobID = task.NewTaskID()
 	}
 	emitVoiceDirectPointLatency(
 		o.events.Emit,

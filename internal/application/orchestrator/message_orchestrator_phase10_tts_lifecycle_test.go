@@ -22,7 +22,7 @@ func TestPhase10TTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		ChatID:      "U123",
 		UserMessage: "実行して",
 	}
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	decision := routing.NewDecision(routing.RouteOPS, 0.9, "ops")
 
 	lifecycle.StartSessionForRoute(context.Background(), req, jobID, decision, "tts-1")

@@ -18,9 +18,9 @@ func TestRouteDecisionPinsSelectedMidoriChatForImageGeneration(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	input := task.NewTask(task.NewJobID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
+	input := task.NewTask(task.NewTaskID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, input.JobID())
+	decision, err := coordinator.Decide(context.Background(), input, req, input.TaskID())
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -42,9 +42,9 @@ func TestRouteDecisionKeepsExplicitWildCommandAboveMidoriSelection(t *testing.T)
 		UserMessage: "/wild 青い海と白い灯台の画像を生成して",
 		To:          "midori",
 	}
-	input := task.NewTask(task.NewJobID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
+	input := task.NewTask(task.NewTaskID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, input.JobID())
+	decision, err := coordinator.Decide(context.Background(), input, req, input.TaskID())
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -63,9 +63,9 @@ func TestRouteDecisionKeepsAutomaticRoutingForDefaultMio(t *testing.T) {
 		UserMessage: "青い海と白い灯台の画像を生成して",
 		To:          "mio",
 	}
-	input := task.NewTask(task.NewJobID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
+	input := task.NewTask(task.NewTaskID(), req.UserMessage, req.Channel, req.ChatID).WithViewerRecipient(req.To)
 
-	decision, err := coordinator.Decide(context.Background(), input, req, input.JobID())
+	decision, err := coordinator.Decide(context.Background(), input, req, input.TaskID())
 	if err != nil {
 		t.Fatalf("Decide() error = %v", err)
 	}
@@ -105,9 +105,9 @@ func TestRouteDecisionDoesNotPinOutsideDirectViewerMidoriChat(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			mio := &mockMioAgent{decision: routing.NewDecision(routing.RouteWILD, 0.99, "automatic route")}
 			coordinator := newRouteDecisionCoordinator(mio, func(string, string, string, string, string, string, string, string, string) {})
-			input := task.NewTask(task.NewJobID(), test.req.UserMessage, test.req.Channel, "viewer-user").WithViewerRecipient(test.req.To)
+			input := task.NewTask(task.NewTaskID(), test.req.UserMessage, test.req.Channel, "viewer-user").WithViewerRecipient(test.req.To)
 
-			decision, err := coordinator.Decide(context.Background(), input, test.req, input.JobID())
+			decision, err := coordinator.Decide(context.Background(), input, test.req, input.TaskID())
 			if err != nil {
 				t.Fatalf("Decide() error = %v", err)
 			}

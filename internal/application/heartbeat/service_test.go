@@ -541,7 +541,7 @@ func TestRunBacklogRunnerStartsActiveItemOnce(t *testing.T) {
 		t.Fatalf("runner did not send code2 backlog prompt: %q", agent.lastMsg)
 	}
 	observation, ok := llm.ExecutionObservationFromContext(agent.lastCtx)
-	if !ok || observation.Caller != "heartbeat.backlog" || observation.Purpose != "process_backlog_item" || observation.JobID == "" || observation.RequestID != observation.JobID {
+	if !ok || observation.Caller != "heartbeat.backlog" || observation.Purpose != "process_backlog_item" || observation.TaskID == "" || observation.RequestID != observation.TaskID.String() {
 		t.Fatalf("unexpected backlog LLM observation: %+v ok=%v", observation, ok)
 	}
 	if len(backlogStore.saved) != 1 || !strings.Contains(backlogStore.saved[0].Implementation, backlogRunnerStartedMarker) {

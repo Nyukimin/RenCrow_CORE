@@ -37,7 +37,7 @@ func (w *workerExecutionService) executeGitOperation(
 // autoCommitChanges はGit auto-commitを実行
 func (w *workerExecutionService) autoCommitChanges(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID task.TaskID,
 	message string,
 ) (string, error) {
 	timeout := time.Duration(w.config.GitTimeout) * time.Second

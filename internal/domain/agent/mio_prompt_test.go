@@ -27,7 +27,7 @@ func TestMioAgentChatInjectsRuntimePromptContext(t *testing.T) {
 			Closings:    []string{"ここまで確認できます"},
 		})
 
-	request := task.NewTask(task.NewJobID(), "実行結果を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS)
+	request := task.NewTask(task.NewTaskID(), "実行結果を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS)
 	if _, err := mio.Chat(context.Background(), request); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -79,7 +79,7 @@ func TestMioAgentChatRemembersExpressionHistoryForNextTurn(t *testing.T) {
 	}}
 	mio := NewMioAgent(provider, nil, nil, nil, nil, nil).WithSystemPrompt("persona")
 	for i, message := range []string{"最初の相談", "次の相談"} {
-		if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), message, "viewer", "chat-1")); err != nil {
+		if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), message, "viewer", "chat-1")); err != nil {
 			t.Fatalf("turn %d Chat() error = %v", i+1, err)
 		}
 	}
@@ -108,10 +108,10 @@ func TestMioToneTracksConversationRisk(t *testing.T) {
 		task task.Task
 		want string
 	}{
-		{name: "normal chat", task: task.NewTask(task.NewJobID(), "設計を相談したい", "viewer", "chat-1"), want: "MEDIUM"},
-		{name: "ops", task: task.NewTask(task.NewJobID(), "再起動を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS), want: "LOW"},
-		{name: "security", task: task.NewTask(task.NewJobID(), "認証情報の扱いを相談したい", "viewer", "chat-1"), want: "LOW"},
-		{name: "idle", task: task.NewTask(task.NewJobID(), "最近気になること", "idlechat", "idle-1"), want: "HIGH"},
+		{name: "normal chat", task: task.NewTask(task.NewTaskID(), "設計を相談したい", "viewer", "chat-1"), want: "MEDIUM"},
+		{name: "ops", task: task.NewTask(task.NewTaskID(), "再起動を確認して", "viewer", "chat-1").WithRoute(routing.RouteOPS), want: "LOW"},
+		{name: "security", task: task.NewTask(task.NewTaskID(), "認証情報の扱いを相談したい", "viewer", "chat-1"), want: "LOW"},
+		{name: "idle", task: task.NewTask(task.NewTaskID(), "最近気になること", "idlechat", "idle-1"), want: "HIGH"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -134,7 +134,7 @@ func TestMioRuntimeContextIsNotInjectedForAnotherViewerRecipient(t *testing.T) {
 	mio := NewMioAgent(provider, nil, nil, nil, nil, nil).
 		WithSystemPrompt("Mio fixed persona").
 		WithViewerRecipientPrompts(map[string]string{"shiro": "Shiro fixed persona"})
-	request := task.NewTask(task.NewJobID(), "確認して", "viewer", "chat-1").WithViewerRecipient("shiro")
+	request := task.NewTask(task.NewTaskID(), "確認して", "viewer", "chat-1").WithViewerRecipient("shiro")
 	if _, err := mio.Chat(context.Background(), request); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}

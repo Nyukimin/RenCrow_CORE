@@ -65,7 +65,7 @@ type agentOpsRequest struct {
 
 type agentOpsResponse struct {
 	RequestID string `json:"request_id"`
-	JobID     string `json:"job_id"`
+	TaskID    string `json:"task_id"`
 	AgentID   string `json:"agent_id"`
 	Role      string `json:"role"`
 	Route     string `json:"route"`
@@ -216,7 +216,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parentContext := domaintool.WithToolExecutionScope(r.Context(), parentScope)
-	jobID := task.NewJobID()
+	taskID := task.NewTaskID()
 	shiroContext, err := domaintool.DeriveAgentToolExecutionScope(
 		parentContext,
 		requestID,
@@ -229,7 +229,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
 		return
 	}
-	opsTask := task.NewTask(jobID, message, agentOpsTaskChannel, agentOpsTaskChatID).WithRoute(routing.RouteOPS)
+	opsTask := task.NewTask(taskID, message, agentOpsTaskChannel, agentOpsTaskChatID).WithRoute(routing.RouteOPS)
 	releaseWorkerBusy := h.acquireWorkerBusyLease()
 	defer releaseWorkerBusy()
 	output, err := h.executor.Execute(shiroContext, opsTask)
@@ -240,7 +240,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	writeJSONStatus(w, http.StatusOK, agentOpsResponse{
 		RequestID: requestID,
-		JobID:     jobID.String(),
+		TaskID:    taskID.String(),
 		AgentID:   "shiro",
 		Role:      "worker",
 		Route:     routing.RouteOPS.String(),

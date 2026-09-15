@@ -33,7 +33,7 @@ func (l *distributedTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
 }
 
-func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, jobID task.JobID, decision routing.Decision) string {
+func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, jobID task.TaskID, decision routing.Decision) string {
 	if l.ttsBridge == nil || !ttsAllowedForRequest(req) {
 		return ""
 	}

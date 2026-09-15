@@ -33,7 +33,7 @@ func TestPhase18DistributedAutonomousCoordinatorUsesUpdatedReportStore(t *testin
 	)
 	coordinator.SetReportStore(reporter)
 
-	tk := task.NewTask(task.NewJobID(), "買い物の計画を作ってください", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "買い物の計画を作ってください", "line", "U123")
 	resp, err := coordinator.Execute(context.Background(), tk, routing.RoutePLAN, "sess-1", "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
@@ -70,7 +70,7 @@ func TestPhase18DistributedAutonomousCoordinatorAddsRetryMessageOnlyAfterFirstAt
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "実行してください", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "実行してください", "line", "U123")
 	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1")
 	if err != nil {
 		t.Fatalf("Execute failed after retry: %v", err)
@@ -99,7 +99,7 @@ func TestPhase18DistributedAutonomousCoordinatorReturnsResultResponseOnError(t *
 		},
 	)
 
-	tk := task.NewTask(task.NewJobID(), "実行してください", "line", "U123")
+	tk := task.NewTask(task.NewTaskID(), "実行してください", "line", "U123")
 	resp, err := coordinator.Execute(context.Background(), tk, routing.RouteOPS, "sess-1", "tts-1")
 	if err == nil {
 		t.Fatal("expected executor error")

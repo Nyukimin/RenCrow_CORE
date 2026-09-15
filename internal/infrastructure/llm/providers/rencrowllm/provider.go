@@ -127,7 +127,9 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	p.addThinkingBridgeFields(gatewayReq, streaming)
 	p.addProviderOptions(gatewayReq, req.ProviderOptions)
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadata(req))
+	if err := p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadata(req)); err != nil {
+		return llm.GenerateResponse{}, err
+	}
 	if err := addResponseFormat(gatewayReq, req.ResponseFormat); err != nil {
 		return llm.GenerateResponse{}, err
 	}
@@ -273,7 +275,9 @@ func (p *GatewayProvider) Chat(ctx context.Context, req llm.ChatRequest) (llm.Ch
 		return llm.ChatResponse{}, err
 	}
 	p.addModelContextOption(gatewayReq)
-	p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadataFromChat(req))
+	if err := p.addRenCrowExecutionMetadata(ctx, gatewayReq, promptContextBlockMetadataFromChat(req)); err != nil {
+		return llm.ChatResponse{}, err
+	}
 	if req.MaxTokens > 0 {
 		gatewayReq["max_tokens"] = req.MaxTokens
 	}
@@ -343,7 +347,7 @@ func addReasoningEffort(payload map[string]interface{}, effort llm.ReasoningEffo
 	}
 }
 
-func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}, blocks []map[string]any) {
+func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, payload map[string]interface{}, blocks []map[string]any) error {
 	metadata := map[string]any{}
 	addNonEmptyMetadata(metadata, "agent_id", p.agentID)
 	addNonEmptyMetadata(metadata, "execution_role", p.executionRole)
@@ -354,9 +358,12 @@ func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, paylo
 		Purpose:   "unattributed",
 	})
 	observation, _ := llm.ExecutionObservationFromContext(observationCtx)
+	if err := observation.Validate(); err != nil {
+		return err
+	}
 	addNonEmptyMetadata(metadata, "request_id", observation.RequestID)
 	addNonEmptyMetadata(metadata, "trace_id", observation.TraceID)
-	addNonEmptyMetadata(metadata, "job_id", observation.JobID)
+	addNonEmptyMetadata(metadata, "task_id", observation.TaskID.String())
 	addNonEmptyMetadata(metadata, "session_id", observation.SessionID)
 	addNonEmptyMetadata(metadata, "initiator", observation.Initiator)
 	addNonEmptyMetadata(metadata, "caller", observation.Caller)
@@ -365,9 +372,10 @@ func (p *GatewayProvider) addRenCrowExecutionMetadata(ctx context.Context, paylo
 		metadata["prompt_context_blocks"] = blocks
 	}
 	if len(metadata) == 0 {
-		return
+		return nil
 	}
 	payload["rencrow"] = metadata
+	return nil
 }
 
 func promptContextBlockMetadataFromChat(request llm.ChatRequest) []map[string]any {

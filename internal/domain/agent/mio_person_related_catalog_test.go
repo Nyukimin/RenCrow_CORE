@@ -68,7 +68,7 @@ func TestMioPersonRelatedCatalogIntentRoutesToChatBeforeGenericWildRules(t *test
 		&mockMCPClient{},
 		nil,
 	)
-	decision, err := mio.DecideAction(context.Background(), task.NewTask(task.NewJobID(), "東野圭吾の小説を教えて", "viewer", "user"))
+	decision, err := mio.DecideAction(context.Background(), task.NewTask(task.NewTaskID(), "東野圭吾の小説を教えて", "viewer", "user"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestMioPersonRelatedCatalogExecutesOnceAndInjectsIndexedContext(t *testing.
 		return llm.GenerateResponse{Content: "結果だよ。"}, nil
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司のドラマ", "viewer", "user")); err != nil {
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "役所広司のドラマ", "viewer", "user")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 || movieCalls != 0 || webCalls != 0 {
@@ -291,7 +291,7 @@ func TestMioPersonRelatedCatalogEmptyLookupCollectsThroughWorkerAndRequeries(t *
 	}}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, chatRunner, &mockMCPClient{}, nil).
 		WithPersonRelatedCatalogCollector(workerRunner)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司のドラマ", "viewer", "user")); err != nil {
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "役所広司のドラマ", "viewer", "user")); err != nil {
 		t.Fatal(err)
 	}
 	if lookupCalls != 2 || workerCalls != 1 || chatCollectCalls != 0 {
@@ -332,7 +332,7 @@ func TestMioPersonRelatedCatalogPreservesMovieParserFirst(t *testing.T) {
 		},
 	}
 	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司の出演映画", "viewer", "user")); err != nil {
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "役所広司の出演映画", "viewer", "user")); err != nil {
 		t.Fatal(err)
 	}
 	if relatedCalls != 0 || movieCalls != 1 || webCalls != 0 {
@@ -372,7 +372,7 @@ func TestMioPersonRelatedCatalogUnavailableOrErrorSuppressesWeb(t *testing.T) {
 				return llm.GenerateResponse{Content: "今は照会できないよ。"}, nil
 			}}
 			mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "役所広司のドラマを検索して", "viewer", "user")); err != nil {
+			if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "役所広司のドラマを検索して", "viewer", "user")); err != nil {
 				t.Fatal(err)
 			}
 			if webCalls != 0 {
@@ -403,7 +403,7 @@ func TestMioPersonRelatedCatalogGenericQuestionDoesNotUseTool(t *testing.T) {
 		},
 	}
 	mio := NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, runner, &mockMCPClient{}, nil)
-	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewJobID(), "俳優のドラマについて教えて", "viewer", "user")); err != nil {
+	if _, err := mio.Chat(context.Background(), task.NewTask(task.NewTaskID(), "俳優のドラマについて教えて", "viewer", "user")); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {

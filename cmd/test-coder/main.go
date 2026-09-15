@@ -54,7 +54,7 @@ func main() {
 	coder := agent.NewCoderAgent(provider, nil, nil, cfg.Prompts.CoderProposal)
 
 	// Task作成
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	t := task.NewTask(jobID, taskDescription, "cli", "test-user")
 
 	fmt.Printf("🤖 Coder: %s\n", coderName)

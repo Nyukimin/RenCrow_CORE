@@ -97,7 +97,7 @@ func (o *MessageOrchestrator) handleDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	t task.Task,
-	jobID task.JobID,
+	jobID task.TaskID,
 	ttsSessionID string,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
@@ -111,7 +111,7 @@ func (o *DistributedOrchestrator) handleDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	t task.Task,
-	jobID task.JobID,
+	jobID task.TaskID,
 ) (ProcessMessageResponse, bool, error) {
 	if !isDailyNewsBriefRequest(req.UserMessage) {
 		return ProcessMessageResponse{}, false, nil
@@ -124,7 +124,7 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	t task.Task,
-	jobID task.JobID,
+	jobID task.TaskID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
 	shiroChat MioAgent,
@@ -170,7 +170,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	t task.Task,
-	jobID task.JobID,
+	jobID task.TaskID,
 	reader domainnews.DailyNewsBriefReader,
 	collector domainnews.DailyNewsBriefCollector,
 	shiroChat MioAgent,
@@ -201,7 +201,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 		shiroChat,
 		o.events.Emit,
 		o.sessions.SaveCompletedTask,
-		func(response string, decision routing.Decision, jid task.JobID) ProcessMessageResponse {
+		func(response string, decision routing.Decision, jid task.TaskID) ProcessMessageResponse {
 			return ProcessMessageResponse{
 				Response:   response,
 				Route:      decision.Route,
@@ -219,7 +219,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 
 type dailyNewsBriefEventEmitter func(eventType, from, to, content, route, jobID, sessionID, channel, chatID string)
 type dailyNewsBriefTaskSaver func(context.Context, *session.Session, task.Task) error
-type dailyNewsBriefResponseBuilder func(string, routing.Decision, task.JobID) ProcessMessageResponse
+type dailyNewsBriefResponseBuilder func(string, routing.Decision, task.TaskID) ProcessMessageResponse
 
 func readDailyNewsBrief(ctx context.Context, reader domainnews.DailyNewsBriefReader, now time.Time) (domainnews.DailyNewsBrief, error) {
 	if reader == nil {
@@ -233,7 +233,7 @@ func respondWithDailyNewsBrief(
 	req ProcessMessageRequest,
 	sess *session.Session,
 	t task.Task,
-	jobID task.JobID,
+	jobID task.TaskID,
 	now time.Time,
 	brief domainnews.DailyNewsBrief,
 	readerErr error,
@@ -320,13 +320,13 @@ func responseAgentOrSystem(agent string) string {
 	return agent
 }
 
-func emitDailyNewsFallbackHandoff(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID task.JobID) {
+func emitDailyNewsFallbackHandoff(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID task.TaskID) {
 	route := string(routing.RouteCHAT)
 	emit("agent.progress", "mio", "shiro", "Shiro、今日の朝刊データがまだ届いていないみたい。ニュース収集Workerで調べてきて。", route, jobID.String(), req.SessionID, req.Channel, req.ChatID)
 	emit("agent.progress", "shiro", "mio", "Mio、了解。検索源を確認して、候補記事の本文取得と重複確認まで進めます。", route, jobID.String(), req.SessionID, req.Channel, req.ChatID)
 }
 
-func emitDailyNewsFallbackProgress(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID task.JobID, content string) {
+func emitDailyNewsFallbackProgress(emit dailyNewsBriefEventEmitter, req ProcessMessageRequest, jobID task.TaskID, content string) {
 	emit("agent.progress", "shiro", "mio", content, string(routing.RouteCHAT), jobID.String(), req.SessionID, req.Channel, req.ChatID)
 }
 

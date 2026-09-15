@@ -38,7 +38,7 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 	)
 
 	// JobID をパース
-	jobID, err := task.ParseJobID(msg.JobID)
+	jobID, err := task.ParseTaskID(msg.JobID)
 	if err != nil {
 		return domaintransport.Message{}, fmt.Errorf("invalid job ID: %w", err)
 	}
@@ -68,9 +68,9 @@ func (h *workerHandler) executeProposal(ctx context.Context, msg domaintransport
 
 // executeTask はShiroAgentでタスクを実行
 func (h *workerHandler) executeTask(ctx context.Context, msg domaintransport.Message) (domaintransport.Message, error) {
-	jobID, err := task.ParseJobID(msg.JobID)
+	jobID, err := task.ParseTaskID(msg.JobID)
 	if err != nil {
-		jobID = task.NewJobID()
+		return domaintransport.Message{}, fmt.Errorf("invalid task ID: %w", err)
 	}
 
 	t := task.NewTask(jobID, msg.Content, "standalone", "agent")

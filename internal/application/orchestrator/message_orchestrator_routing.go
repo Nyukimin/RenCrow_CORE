@@ -32,7 +32,7 @@ func (c *routeDecisionCoordinator) SetWorkflowEventRecorder(recorder WorkflowEve
 	c.workflowEvents = recorder
 }
 
-func (c *routeDecisionCoordinator) Decide(ctx context.Context, t task.Task, req ProcessMessageRequest, jobID task.JobID) (routing.Decision, error) {
+func (c *routeDecisionCoordinator) Decide(ctx context.Context, t task.Task, req ProcessMessageRequest, jobID task.TaskID) (routing.Decision, error) {
 	decision, err := c.mio.DecideAction(ctx, t)
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
@@ -82,7 +82,7 @@ func preserveOriginalUserMessage(req *ProcessMessageRequest) {
 	}
 }
 
-func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID task.JobID) routing.Decision {
+func (c *routeDecisionCoordinator) applyHeavyWorkerPolicy(ctx context.Context, decision routing.Decision, req ProcessMessageRequest, jobID task.TaskID) routing.Decision {
 	if !canHeavyPolicyElevate(decision.Route) {
 		return decision
 	}

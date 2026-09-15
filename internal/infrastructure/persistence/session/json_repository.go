@@ -38,7 +38,10 @@ type sessionDTO struct {
 
 // taskDTO はJSONシリアライズ用のDTO
 type taskDTO struct {
-	JobID       string `json:"job_id"`
+	TaskID string `json:"task_id"`
+	// LegacyJobID is read-only migration input. It is never populated by
+	// toDTO, so newly written sessions contain task_id only.
+	LegacyJobID string `json:"job_id,omitempty"`
 	UserMessage string `json:"user_message"`
 	Channel     string `json:"channel"`
 	ChatID      string `json:"chat_id"`
@@ -48,7 +51,10 @@ type taskDTO struct {
 
 // Save はセッションを保存
 func (r *JSONSessionRepository) Save(ctx context.Context, sess *session.Session) error {
-	dto := r.toDTO(sess)
+	dto, err := r.toDTO(sess)
+	if err != nil {
+		return fmt.Errorf("failed to prepare session: %w", err)
+	}
 
 	data, err := json.MarshalIndent(dto, "", "  ")
 	if err != nil {
@@ -80,7 +86,11 @@ func (r *JSONSessionRepository) Load(ctx context.Context, id string) (*session.S
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
 
-	return r.fromDTO(&dto), nil
+	loaded, err := r.fromDTO(&dto)
+	if err != nil {
+		return nil, fmt.Errorf("failed to restore session: %w", err)
+	}
+	return loaded, nil
 }
 
 // Exists はセッションが存在するか確認
@@ -114,11 +124,14 @@ func (r *JSONSessionRepository) getFilePath(id string) string {
 }
 
 // toDTO はSessionをDTOに変換
-func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
+func (r *JSONSessionRepository) toDTO(sess *session.Session) (*sessionDTO, error) {
 	history := make([]taskDTO, 0, sess.HistoryCount())
 	for _, t := range sess.GetHistory() {
+		if err := t.TaskID().Validate(); err != nil {
+			return nil, fmt.Errorf("task %q has invalid task_id: %w", t.TaskID(), err)
+		}
 		history = append(history, taskDTO{
-			JobID:       t.JobID().String(),
+			TaskID:      t.TaskID().String(),
 			UserMessage: t.UserMessage(),
 			Channel:     t.Channel(),
 			ChatID:      t.ChatID(),
@@ -135,17 +148,32 @@ func (r *JSONSessionRepository) toDTO(sess *session.Session) *sessionDTO {
 		Memory:    sess.GetAllMemory(),
 		CreatedAt: sess.CreatedAt(),
 		UpdatedAt: sess.UpdatedAt(),
-	}
+	}, nil
 }
 
 // fromDTO はDTOからSessionを生成
-func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) *session.Session {
+func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) (*session.Session, error) {
 	sess := session.ReconstructSession(dto.ID, dto.Channel, dto.ChatID, dto.CreatedAt, dto.UpdatedAt)
 
 	// 履歴を復元
 	for _, taskDTO := range dto.History {
-		jobID := task.JobIDFromString(taskDTO.JobID)
-		t := task.NewTask(jobID, taskDTO.UserMessage, taskDTO.Channel, taskDTO.ChatID)
+		if taskDTO.TaskID != "" && taskDTO.LegacyJobID != "" {
+			return nil, fmt.Errorf("task history item has both task_id and legacy job_id")
+		}
+		var taskID task.TaskID
+		var err error
+		switch {
+		case taskDTO.TaskID != "":
+			taskID, err = task.ParseTaskID(taskDTO.TaskID)
+		case taskDTO.LegacyJobID != "":
+			taskID, err = task.MigrateLegacySessionTaskID(taskDTO.LegacyJobID)
+		default:
+			err = fmt.Errorf("task history item is missing task_id")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("restore task identity: %w", err)
+		}
+		t := task.NewTask(taskID, taskDTO.UserMessage, taskDTO.Channel, taskDTO.ChatID)
 
 		if taskDTO.ForcedRoute != "" {
 			t = t.WithForcedRoute(routing.Route(taskDTO.ForcedRoute))
@@ -162,5 +190,5 @@ func (r *JSONSessionRepository) fromDTO(dto *sessionDTO) *session.Session {
 		sess.SetMemory(key, value)
 	}
 
-	return sess
+	return sess, nil
 }

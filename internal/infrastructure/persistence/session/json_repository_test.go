@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -25,8 +27,8 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 
 	// セッション作成
 	sess := session.NewSession("20260301-line-U123", "line", "U123")
-	jobID := task.NewJobID()
-	testTask := task.NewTask(jobID, "テストメッセージ", "line", "U123")
+	taskID := task.NewTaskID()
+	testTask := task.NewTask(taskID, "テストメッセージ", "line", "U123")
 	sess.AddTask(testTask)
 	sess.SetMemory("key1", "value1")
 
@@ -64,6 +66,76 @@ func TestJSONSessionRepository_SaveAndLoad(t *testing.T) {
 	}
 	if value != "value1" {
 		t.Errorf("Expected memory value 'value1', got '%v'", value)
+	}
+}
+
+func TestJSONSessionRepositoryWritesCanonicalTaskID(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewJSONSessionRepository(tmpDir)
+	sess := session.NewSession("canonical-task-session", "line", "U123")
+	sess.AddTask(task.NewTask(task.NewTaskID(), "hello", "line", "U123"))
+
+	if err := repo.Save(context.Background(), sess); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "canonical-task-session.json"))
+	if err != nil {
+		t.Fatalf("read saved session: %v", err)
+	}
+	var decoded struct {
+		History []map[string]any `json:"history"`
+	}
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode saved session: %v", err)
+	}
+	if len(decoded.History) != 1 {
+		t.Fatalf("saved history length = %d, want 1", len(decoded.History))
+	}
+	raw, ok := decoded.History[0]["task_id"].(string)
+	if !ok || !strings.HasPrefix(raw, "tsk_") {
+		t.Fatalf("saved task_id = %#v, want canonical tsk_ ID", decoded.History[0]["task_id"])
+	}
+	if _, exists := decoded.History[0]["job_id"]; exists {
+		t.Fatal("saved session contains legacy job_id")
+	}
+	if _, err := task.ParseTaskID(raw); err != nil {
+		t.Fatalf("saved task_id is invalid: %v", err)
+	}
+}
+
+func TestJSONSessionRepositoryRejectsInvalidTaskIDOnWrite(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	sess := session.NewSession("invalid-task-session", "line", "U123")
+	sess.AddTask(task.NewTask(task.TaskID("job-legacy"), "hello", "line", "U123"))
+
+	if err := repo.Save(context.Background(), sess); err == nil {
+		t.Fatal("Save accepted a non-canonical TaskID")
+	}
+}
+
+func TestJSONSessionRepositoryMigratesLegacySessionJobIDOnRead(t *testing.T) {
+	tmpDir := t.TempDir()
+	repo := NewJSONSessionRepository(tmpDir)
+	legacy := "20260301-120000-abcd1234"
+	fixture := `{"id":"legacy-session","channel":"line","chat_id":"U123","history":[{"job_id":"` + legacy + `","user_message":"old","channel":"line","chat_id":"U123"}],"memory":{}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "legacy-session.json"), []byte(fixture), 0644); err != nil {
+		t.Fatalf("write legacy session: %v", err)
+	}
+
+	loaded, err := repo.Load(context.Background(), "legacy-session")
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	history := loaded.GetHistory()
+	if len(history) != 1 {
+		t.Fatalf("loaded history length = %d, want 1", len(history))
+	}
+	want, err := task.MigrateLegacySessionTaskID(legacy)
+	if err != nil {
+		t.Fatalf("derive expected migration ID: %v", err)
+	}
+	if history[0].TaskID() != want {
+		t.Fatalf("migrated task_id = %q, want %q", history[0].TaskID(), want)
 	}
 }
 
@@ -161,8 +233,8 @@ func TestJSONSessionRepository_MultipleHistoryItems(t *testing.T) {
 
 	// 複数のタスクを追加
 	for i := 0; i < 5; i++ {
-		jobID := task.NewJobID()
-		testTask := task.NewTask(jobID, "Message "+string(rune('A'+i)), "line", "U123")
+		taskID := task.NewTaskID()
+		testTask := task.NewTask(taskID, "Message "+string(rune('A'+i)), "line", "U123")
 		sess.AddTask(testTask)
 	}
 

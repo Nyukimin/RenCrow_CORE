@@ -143,7 +143,7 @@ func NewHeartbeatService(
 	}
 }
 
-func newHeartbeatWorkerTask(jobID task.JobID, message, channel, chatID string) task.Task {
+func newHeartbeatWorkerTask(jobID task.TaskID, message, channel, chatID string) task.Task {
 	return task.NewTask(jobID, message, channel, chatID).
 		WithRoute(routing.RouteOPS).
 		WithForcedRoute(routing.RouteOPS)
@@ -390,11 +390,11 @@ func (s *HeartbeatService) tick(ctx context.Context) error {
 	message := s.contextBuilder.BuildMessageWithTask(routing.RouteOPS.String(), "HEARTBEAT TASKS", heartbeatContent)
 
 	// タスクを作成してShiroに処理させる
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	t := newHeartbeatWorkerTask(jobID, message, "heartbeat", "heartbeat")
 
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		RequestID: jobID.String(), TraceID: jobID.String(), TaskID: jobID,
 		Initiator: "shiro", Caller: "heartbeat.tasks", Purpose: "process_heartbeat_file",
 	})
 	response, err := s.workerAgent.Execute(workerCtx, t)
@@ -861,11 +861,11 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 		return report, nil
 	}
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
 	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s target=%s", item.ItemID, jobID.String(), target))
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		RequestID: jobID.String(), TraceID: jobID.String(), TaskID: jobID,
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
 	if _, err := s.workerAgent.Execute(workerCtx, t); err != nil {
@@ -956,11 +956,11 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 		return report, err
 	}
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	t := newHeartbeatWorkerTask(jobID, backlogRunnerMessage(item), "backlog-runner", "heartbeat")
 	s.emitEvent("backlog.runner.started", fmt.Sprintf("%s job_id=%s", item.ItemID, jobID.String()))
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		RequestID: jobID.String(), TraceID: jobID.String(), TaskID: jobID,
 		Initiator: "shiro", Caller: "heartbeat.backlog", Purpose: "process_backlog_item",
 	})
 	if _, err := s.workerAgent.Execute(workerCtx, t); err != nil {
@@ -1040,10 +1040,10 @@ func (s *HeartbeatService) runWorkstreamHeartbeat(ctx context.Context, schedule 
 			formatSteeringForPrompt(pendingSteering),
 		),
 	)
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	t := newHeartbeatWorkerTask(jobID, message, "workstream-heartbeat", "heartbeat")
 	workerCtx := llm.WithExecutionObservation(ctx, llm.ExecutionObservation{
-		RequestID: jobID.String(), TraceID: jobID.String(), JobID: jobID.String(),
+		RequestID: jobID.String(), TraceID: jobID.String(), TaskID: jobID,
 		Initiator: "shiro", Caller: "heartbeat.workstream", Purpose: "draft_workstream_report",
 	})
 	response, err := s.workerAgent.Execute(workerCtx, t)

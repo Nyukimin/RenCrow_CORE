@@ -46,7 +46,7 @@ func main() {
 
 	// Worker実行
 	ctx := context.Background()
-	jobID := task.JobIDFromString("test-worker-001")
+	jobID := task.NewTaskID()
 
 	fmt.Printf("📋 Patch: %s\n", patchFile)
 	fmt.Printf("🆔 JobID: %s\n", jobID)

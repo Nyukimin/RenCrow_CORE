@@ -21,19 +21,21 @@ func newMessageTaskContextBuilder(emit messageEventEmitter, ttsEnabled ttsEnable
 	}
 }
 
-func (b *messageTaskContextBuilder) Build(req ProcessMessageRequest) (task.Task, task.JobID, string) {
+func (b *messageTaskContextBuilder) Build(req ProcessMessageRequest) (task.Task, task.TaskID, string) {
 	jobID := resolveProcessMessageJobID(req.JobID)
 	return b.BuildWithJobID(req, jobID)
 }
 
-func resolveProcessMessageJobID(raw string) task.JobID {
-	if jobID := strings.TrimSpace(raw); jobID != "" {
-		return task.JobIDFromString(jobID)
+func resolveProcessMessageJobID(raw string) task.TaskID {
+	if raw != "" {
+		if taskID, err := task.ParseTaskID(raw); err == nil {
+			return taskID
+		}
 	}
-	return task.NewJobID()
+	return task.NewTaskID()
 }
 
-func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.JobID) (task.Task, task.JobID, string) {
+func (b *messageTaskContextBuilder) BuildWithJobID(req ProcessMessageRequest, jobID task.TaskID) (task.Task, task.TaskID, string) {
 	t := task.NewTask(jobID, req.UserMessage, req.Channel, req.ChatID).
 		WithAttachments(req.Attachments).
 		WithViewerRecipient(normalizeProcessViewerRecipient(req.To))

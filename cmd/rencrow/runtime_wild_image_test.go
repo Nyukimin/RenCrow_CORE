@@ -84,7 +84,7 @@ func TestBuildWildAgentInjectsImageGeneratorForMidoriChat(t *testing.T) {
 	wild := buildWildAgent(rejectingWildLLMProvider{}, "Wild", nil, newWildImageGenerator(gateway))
 
 	response, err := wild.Generate(context.Background(), task.NewTask(
-		task.NewJobID(),
+		task.NewTaskID(),
 		"海辺の白い灯台の画像を生成して",
 		"viewer",
 		"viewer-user",

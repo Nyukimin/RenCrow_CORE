@@ -48,13 +48,13 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, t task.Tas
 		return "", err
 	}
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
-		JobID:      t.JobID().String(),
+		JobID:      t.TaskID().String(),
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
 		MaxRepair:  c.maxRepair(),
 		Observe: func(stage autonomousapp.Stage) {
-			c.emit("entry.stage", channel, "system", string(stage), route.String(), t.JobID().String(), sessionID, channel, chatID)
+			c.emit("entry.stage", channel, "system", string(stage), route.String(), t.TaskID().String(), sessionID, channel, chatID)
 		},
 		ReportStore: c.reporter,
 		Execute: func(execCtx context.Context, attempt int, failureKind, failureReason string) (autonomousapp.AttemptResult, error) {

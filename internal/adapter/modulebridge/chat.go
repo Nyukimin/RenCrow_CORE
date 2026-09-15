@@ -55,7 +55,7 @@ func (p mioRoutePolicy) DecideRoute(ctx context.Context, input chat.Input) (chat
 		}, nil
 	}
 	input = chat.NormalizeInput(input)
-	decision, err := p.decider.DecideAction(ctx, task.NewTask(task.NewJobID(), input.Text, input.Channel, input.UserID))
+	decision, err := p.decider.DecideAction(ctx, task.NewTask(task.NewTaskID(), input.Text, input.Channel, input.UserID))
 	if err != nil {
 		return chat.RouteDecision{}, err
 	}

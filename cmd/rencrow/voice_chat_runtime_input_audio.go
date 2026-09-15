@@ -273,7 +273,7 @@ func processVoiceChatInputAudioFinal(handler voiceDirectFinalHandler, sess *voic
 		StartedAt:   sess.startedAt,
 		FinalText:   text,
 	}
-	handler.NotifyVoiceDirectFirstToken(context.Background(), req, task.NewJobID(), time.Now())
+	handler.NotifyVoiceDirectFirstToken(context.Background(), req, task.NewTaskID(), time.Now())
 	if _, err := handler.ProcessVoiceDirect(context.Background(), req); err != nil {
 		log.Printf("[voice-chat] ProcessVoiceDirect failed utterance_id=%s: %v", req.UtteranceID, err)
 		return

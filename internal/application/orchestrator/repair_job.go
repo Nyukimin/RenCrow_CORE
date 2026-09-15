@@ -29,8 +29,10 @@ type ProcessRepairResponse struct {
 
 func normalizeRepairProcessRequest(req ProcessRepairRequest) ProcessRepairRequest {
 	req.JobID = strings.TrimSpace(req.JobID)
-	if req.JobID == "" {
-		req.JobID = task.NewJobID().String()
+	if taskID, err := task.ParseTaskID(req.JobID); err != nil {
+		req.JobID = task.NewTaskID().String()
+	} else {
+		req.JobID = taskID.String()
 	}
 	req.SessionID = strings.TrimSpace(req.SessionID)
 	if req.SessionID == "" {
@@ -96,7 +98,11 @@ func repairTargetRoute(target string) routing.Route {
 }
 
 func repairTask(req ProcessRepairRequest, route routing.Route) task.Task {
-	return task.NewTask(task.JobIDFromString(req.JobID), repairTaskMessage(req), "viewer", "repair").WithRoute(route)
+	taskID, err := task.ParseTaskID(req.JobID)
+	if err != nil {
+		taskID = task.NewTaskID()
+	}
+	return task.NewTask(taskID, repairTaskMessage(req), "viewer", "repair").WithRoute(route)
 }
 
 func (o *MessageOrchestrator) ProcessRepair(ctx context.Context, req ProcessRepairRequest) (ProcessRepairResponse, error) {

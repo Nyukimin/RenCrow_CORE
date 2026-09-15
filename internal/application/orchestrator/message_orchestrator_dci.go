@@ -13,7 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
-func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *MessageOrchestrator) handleExplicitDCI(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.TaskID) (ProcessMessageResponse, bool, error) {
 	// スラッシュコマンド（/code3, /analyze 等）はルーティングを最優先。DCI をスキップ。
 	if strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil

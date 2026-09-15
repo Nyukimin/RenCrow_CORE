@@ -69,8 +69,8 @@ func (d *messageRouteDispatcher) SetWorkflowEventRecorder(recorder WorkflowEvent
 func (d *messageRouteDispatcher) ExecuteTask(ctx context.Context, t task.Task, route routing.Route, sessionID, channel, chatID, ttsSessionID string) (string, error) {
 	if route != routing.RouteCHAT {
 		if shouldTraceShiroDelegation(route) {
-			d.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(t, route), route.String(), t.JobID().String(), sessionID, channel, chatID)
-			d.emit("agent.acknowledge", "shiro", "mio", formatShiroReadbackToMio(t, route), route.String(), t.JobID().String(), sessionID, channel, chatID)
+			d.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(t, route), route.String(), t.TaskID().String(), sessionID, channel, chatID)
+			d.emit("agent.acknowledge", "shiro", "mio", formatShiroReadbackToMio(t, route), route.String(), t.TaskID().String(), sessionID, channel, chatID)
 		}
 		return d.executeAutonomous(ctx, t, route, sessionID, channel, chatID, ttsSessionID)
 	}
@@ -98,7 +98,7 @@ func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, t task.Task,
 }
 
 func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	speaker := chatSpeakerForTask(t)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", jid, sessionID, channel, chatID)
 	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, jid, sessionID, channel, chatID, ttsSessionID)
@@ -143,7 +143,7 @@ func chatSpeakerForTask(t task.Task) string {
 }
 
 func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	shiroCtx, err := domaintool.DeriveAgentToolExecutionScope(ctx, jid, "shiro", "worker", "ops", true)
 	if err != nil {
 		return "", err
@@ -173,7 +173,7 @@ func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, t task.Ta
 	if d.wild == nil {
 		return "", fmt.Errorf("no wild agent available")
 	}
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	work := fmt.Sprintf("route=%s job=%s の創作", routing.RouteWILD.String(), jid)
 	d.emit("agent.delegate", "mio", "wild", formatAgentHandoffSpeech("mio", "wild", work, t.UserMessage()), "WILD", jid, sessionID, channel, chatID)
 	d.emit("agent.acknowledge", "wild", "mio", formatAgentHandoffReadbackSpeech("mio", "wild", work, t.UserMessage()), "WILD", jid, sessionID, channel, chatID)
@@ -191,7 +191,7 @@ func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, t task.Ta
 }
 
 func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	d.emit("agent.start", "mio", "user", "計画を検討中...", "PLAN", jid, sessionID, channel, chatID)
 	planCtx, ttsStream := d.withStreamHooks(ctx, routing.RoutePLAN, jid, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.mio.Chat(planCtx, t)
@@ -203,7 +203,7 @@ func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, t task.Ta
 }
 
 func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	if d.heavy == nil {
 		return "", fmt.Errorf("no heavy agent available")
 	}
@@ -228,7 +228,7 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, t task
 }
 
 func (d *messageRouteDispatcher) executeResearchRoute(ctx context.Context, t task.Task, sessionID, channel, chatID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	d.emit("agent.start", "mio", "user", "調査中...", "RESEARCH", jid, sessionID, channel, chatID)
 	researchCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteRESEARCH, jid, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.mio.Chat(researchCtx, t)
@@ -252,7 +252,7 @@ func (d *messageRouteDispatcher) executeCodeViaShiro(
 		SessionID: sessionID,
 		Channel:   channel,
 		ChatID:    chatID,
-		JobID:     t.JobID().String(),
+		JobID:     t.TaskID().String(),
 	}
 	resp, err := d.codeExecutor.ExecuteCode(ctx, req)
 	return resp.Response, err

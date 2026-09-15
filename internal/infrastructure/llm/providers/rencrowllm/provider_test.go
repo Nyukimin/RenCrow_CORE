@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func writeToolChatSSE(w http.ResponseWriter, chunks ...string) {
@@ -46,10 +47,11 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 
 	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second).
 		WithRenCrowExecution("shiro", "worker", "worker")
+	taskID := task.NewTaskID()
 	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
 		RequestID: "request-1",
 		TraceID:   "trace-1",
-		JobID:     "job-1",
+		TaskID:    taskID,
 		SessionID: "session-1",
 		Initiator: "shiro",
 		Caller:    "orchestrator.ops",
@@ -68,7 +70,7 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		"execution_alias": "worker",
 		"request_id":      "request-1",
 		"trace_id":        "trace-1",
-		"job_id":          "job-1",
+		"task_id":         taskID.String(),
 		"session_id":      "session-1",
 		"initiator":       "shiro",
 		"caller":          "orchestrator.ops",
@@ -77,6 +79,9 @@ func TestGatewayProviderSendsRenCrowExecutionMetadata(t *testing.T) {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
+	}
+	if _, exists := metadata["job_id"]; exists {
+		t.Fatal("rencrow metadata contains legacy job_id")
 	}
 }
 
@@ -113,6 +118,27 @@ func TestGatewayProviderChatSendsExecutionObservation(t *testing.T) {
 		if metadata[key] != want {
 			t.Errorf("rencrow.%s=%#v want %q", key, metadata[key], want)
 		}
+	}
+}
+
+func TestGatewayProviderRejectsInvalidTaskIDBeforeGatewayCall(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := NewGatewayProviderWithOptions("", "worker", server.URL, time.Second)
+	ctx := llm.WithExecutionObservation(context.Background(), llm.ExecutionObservation{
+		RequestID: "request-invalid-task",
+		TaskID:    task.TaskID("job-legacy"),
+	})
+	if _, err := provider.Generate(ctx, llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "run"}}}); err == nil {
+		t.Fatal("Generate accepted an invalid TaskID")
+	}
+	if called {
+		t.Fatal("provider sent a request after TaskID validation failed")
 	}
 }
 

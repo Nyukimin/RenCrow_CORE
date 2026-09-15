@@ -33,7 +33,7 @@ func (h *slowVoiceDirectHandler) ProcessVoiceDirect(context.Context, orchestrato
 	return orchestrator.ProcessMessageResponse{}, nil
 }
 
-func (h *slowVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.JobID, time.Time) {
+func (h *slowVoiceDirectHandler) NotifyVoiceDirectFirstToken(context.Context, orchestrator.ProcessVoiceDirectRequest, task.TaskID, time.Time) {
 }
 
 type recordingVoiceChatIdleNotifier struct {

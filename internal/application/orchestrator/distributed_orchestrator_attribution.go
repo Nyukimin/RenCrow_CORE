@@ -25,7 +25,7 @@ func (g *distributedAttributionGuard) Apply(t task.Task, targetAgent, sessionID 
 	if guarded == t.UserMessage() {
 		return t
 	}
-	out := task.NewTask(t.JobID(), guarded, t.Channel(), t.ChatID())
+	out := task.NewTask(t.TaskID(), guarded, t.Channel(), t.ChatID())
 	if t.HasForcedRoute() {
 		out = out.WithForcedRoute(t.ForcedRoute())
 	}

@@ -7,7 +7,7 @@ import (
 
 // Task はユーザーからの指示を表す値オブジェクト
 type Task struct {
-	jobID       JobID
+	taskID      TaskID
 	userMessage string
 	channel     string
 	chatID      string
@@ -18,9 +18,9 @@ type Task struct {
 }
 
 // NewTask は新しいTaskを作成
-func NewTask(jobID JobID, userMessage, channel, chatID string) Task {
+func NewTask(taskID TaskID, userMessage, channel, chatID string) Task {
 	return Task{
-		jobID:       jobID,
+		taskID:      taskID,
 		userMessage: userMessage,
 		channel:     channel,
 		chatID:      chatID,
@@ -29,9 +29,9 @@ func NewTask(jobID JobID, userMessage, channel, chatID string) Task {
 	}
 }
 
-// JobID はジョブIDを返す
-func (t Task) JobID() JobID {
-	return t.jobID
+// TaskID はTaskの正規識別子を返す
+func (t Task) TaskID() TaskID {
+	return t.taskID
 }
 
 // UserMessage はユーザーメッセージを返す

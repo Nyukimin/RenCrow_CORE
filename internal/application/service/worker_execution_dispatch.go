@@ -12,7 +12,7 @@ import (
 // executeCommand は単一コマンドを実行
 func (w *workerExecutionService) executeCommand(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID task.TaskID,
 	cmd patch.PatchCommand,
 	index int,
 ) patch.CommandResult {

@@ -35,7 +35,7 @@ func TestNewSession(t *testing.T) {
 
 func TestSessionAddTask(t *testing.T) {
 	session := NewSession("session1", "line", "U123")
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	newTask := task.NewTask(jobID, "Hello", "line", "U123")
 
 	session.AddTask(newTask)
@@ -59,7 +59,7 @@ func TestSessionGetRecentHistory(t *testing.T) {
 
 	// 5つのタスクを追加
 	for i := 1; i <= 5; i++ {
-		jobID := task.NewJobID()
+		jobID := task.NewTaskID()
 		newTask := task.NewTask(jobID, string(rune('A'+i-1)), "line", "U123")
 		session.AddTask(newTask)
 	}
@@ -191,7 +191,7 @@ func TestSessionUpdatedAt(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	// タスク追加で更新時刻が変わる
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	newTask := task.NewTask(jobID, "Test", "line", "U123")
 	session.AddTask(newTask)
 

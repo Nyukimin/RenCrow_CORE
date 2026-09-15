@@ -106,7 +106,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		jobID := task.NewJobID().String()
+		jobID := task.NewTaskID().String()
 		messageID := string(modulecore.NewMessageID())
 		sendReq := SendRequest{
 			JobID:          jobID,

@@ -168,7 +168,7 @@ func TestShiroAgentExecute(t *testing.T) {
 
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil)
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "ファイルを作成して", "line", "U123")
 
 	result, err := shiro.Execute(context.Background(), testTask)
@@ -222,7 +222,7 @@ func TestShiroAgentExecute_UsesCodexRunForWorkPath(t *testing.T) {
 			}
 			shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil)
 
-			result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), tt.message, "line", "U123"))
+			result, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), tt.message, "line", "U123"))
 			if err != nil {
 				t.Fatalf("Execute failed: %v", err)
 			}
@@ -266,7 +266,7 @@ func TestShiroAgentExecute_CodexWorkPathFallsBackWhenToolUnavailable(t *testing.
 	}
 	shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil)
 
-	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "この場面を描画して", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestShiroAgentExecute_UsesAdvisorForCodexWorkPath(t *testing.T) {
 	shiro := NewShiroAgent(llmProvider, toolRunner, &mockMCPClient{}, "test prompt", nil).
 		WithAdvisorService(advisorService)
 
-	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "この場面を描画して", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestShiroAgentExecute_AdvisorPolicyForbiddenFallsBackWithoutAdvisorCall(t *
 		WithAdvisorService(advisorService).
 		WithAgentPolicyService(policy)
 
-	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "この場面を描画して", "line", "U123"))
+	result, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "この場面を描画して", "line", "U123"))
 	if err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
@@ -355,7 +355,7 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 	memory.Record("U123", "first worker task", "first worker response")
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).WithLightMemory(memory)
 
-	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "second worker task", "line", "U123")); err != nil {
+	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "second worker task", "line", "U123")); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 
@@ -403,7 +403,7 @@ func TestShiroAgentExecuteSharesAllConversationMemory(t *testing.T) {
 	}
 	shiro := NewShiroAgent(provider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil).WithConversationEngine(engine)
 
-	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "整理して", "line", "U123")); err != nil {
+	if _, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "整理して", "line", "U123")); err != nil {
 		t.Fatalf("Execute failed: %v", err)
 	}
 	var prompt strings.Builder
@@ -429,7 +429,7 @@ func TestShiroAgentExecute_LLMError(t *testing.T) {
 
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", nil)
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	testTask := task.NewTask(jobID, "テスト", "line", "U123")
 
 	_, err := shiro.Execute(context.Background(), testTask)
@@ -447,7 +447,7 @@ func TestShiroAgentExecute_TypedNilSubagentManagerReturnsError(t *testing.T) {
 	var typedNilManager *mockSubagentManager
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", typedNilManager)
 
-	_, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "テスト", "line", "U123"))
+	_, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "テスト", "line", "U123"))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -460,7 +460,7 @@ func TestShiroAgentExecute_SubagentPanicReturnsError(t *testing.T) {
 	llmProvider := &mockLLMProvider{}
 	shiro := NewShiroAgent(llmProvider, &mockToolRunner{}, &mockMCPClient{}, "test prompt", &panicSubagentManager{})
 
-	_, err := shiro.Execute(context.Background(), task.NewTask(task.NewJobID(), "テスト", "line", "U123"))
+	_, err := shiro.Execute(context.Background(), task.NewTask(task.NewTaskID(), "テスト", "line", "U123"))
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

@@ -26,7 +26,7 @@ func (o *DistributedOrchestrator) SetDurableStoreWorkflow(workflow DurableStoreW
 	o.durableStoreWorkflow = workflow
 }
 
-func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.TaskID) (ProcessMessageResponse, bool, error) {
 	if o.durableStoreWorkflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
 	}
@@ -51,7 +51,7 @@ func (o *MessageOrchestrator) handleDurableStore(ctx context.Context, req Proces
 	return durableStoreResponse(response, result, jobID), true, nil
 }
 
-func (o *DistributedOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.JobID) (ProcessMessageResponse, bool, error) {
+func (o *DistributedOrchestrator) handleDurableStore(ctx context.Context, req ProcessMessageRequest, sess *session.Session, t task.Task, jobID task.TaskID) (ProcessMessageResponse, bool, error) {
 	if o.durableStoreWorkflow == nil || strings.HasPrefix(strings.TrimSpace(req.UserMessage), "/") {
 		return ProcessMessageResponse{}, false, nil
 	}
@@ -96,7 +96,7 @@ func durableStoreInput(req ProcessMessageRequest) appstore.Input {
 	return appstore.Input{RequestID: req.MessageID, TraceID: req.TraceID, RequestedBy: requestedBy, UserScope: req.Channel + ":" + req.ChatID, Message: req.UserMessage}
 }
 
-func durableStoreResponse(response string, result domainstore.WorkflowResult, jobID task.JobID) ProcessMessageResponse {
+func durableStoreResponse(response string, result domainstore.WorkflowResult, jobID task.TaskID) ProcessMessageResponse {
 	copyResult := result
 	return ProcessMessageResponse{Response: response, Route: routing.RouteCHAT, Confidence: 1, JobID: jobID.String(), Capability: durableStoreCapability, StorageWorkflow: &copyResult}
 }

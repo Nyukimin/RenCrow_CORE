@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 func TestPhase12TaskContextBuilderHonorsAudioOutputIntent(t *testing.T) {
@@ -44,8 +45,8 @@ func TestPhase12TaskContextBuilderEmitsAttachmentEvent(t *testing.T) {
 		Attachments: []attachment.Attachment{{ID: "att-1"}},
 	})
 
-	if tk.JobID().String() != jobID.String() {
-		t.Fatalf("expected task and returned job ID to match: task=%s returned=%s", tk.JobID(), jobID)
+	if tk.TaskID().String() != jobID.String() {
+		t.Fatalf("expected task and returned job ID to match: task=%s returned=%s", tk.TaskID(), jobID)
 	}
 	if len(tk.Attachments()) != 1 {
 		t.Fatalf("expected attachment to be copied to task, got %d", len(tk.Attachments()))
@@ -124,15 +125,16 @@ func TestPhase12TaskContextBuilderPreservesProvidedJobID(t *testing.T) {
 		func() bool { return false },
 	)
 
+	taskID := task.NewTaskID()
 	_, jobID, _ := builder.Build(ProcessMessageRequest{
-		JobID:       "viewer-job-1",
+		JobID:       taskID.String(),
 		SessionID:   "viewer",
 		Channel:     "viewer",
 		ChatID:      "viewer-user",
 		UserMessage: "こんにちは",
 	})
 
-	if jobID.String() != "viewer-job-1" {
-		t.Fatalf("job ID = %q, want viewer-job-1", jobID.String())
+	if jobID != taskID {
+		t.Fatalf("task ID = %q, want %q", jobID, taskID)
 	}
 }

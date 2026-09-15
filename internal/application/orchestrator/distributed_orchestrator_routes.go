@@ -89,7 +89,7 @@ func (d *distributedRouteDispatcher) ExecuteTask(ctx context.Context, t task.Tas
 }
 
 func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, t task.Task, route routing.Route, sessionID, ttsSessionID string) (string, error) {
-	jid := t.JobID().String()
+	jid := t.TaskID().String()
 	if isCodeRoute(route) {
 		resp, err := d.executeCodeViaShiro(ctx, t, route, sessionID, jid)
 		if err == nil {

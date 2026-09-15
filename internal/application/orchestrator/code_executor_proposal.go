@@ -256,11 +256,11 @@ func (e *DefaultCodeExecutor) executeProposalWithResolvedWorkspace(
 	if req.Module.Found() && req.Module.Module.Root != "" {
 		if worker, ok := e.workerExecution.(service.WorkspaceOverrideWorkerExecutionService); ok {
 			e.emit("worker.workspace", "shiro", "worker", req.Module.Summary(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
-			return worker.ExecuteProposalInWorkspace(ctx, req.Task.JobID(), p, req.Module.Module.Root)
+			return worker.ExecuteProposalInWorkspace(ctx, req.Task.TaskID(), p, req.Module.Module.Root)
 		}
 		e.emit("worker.workspace_unavailable", "shiro", "worker", req.Module.Summary(), req.Route.String(), req.JobID, req.SessionID, req.Channel, req.ChatID)
 	}
-	return e.workerExecution.ExecuteProposal(ctx, req.Task.JobID(), p)
+	return e.workerExecution.ExecuteProposal(ctx, req.Task.TaskID(), p)
 }
 
 func (e *DefaultCodeExecutor) emitProposalExecutionResult(req CodeExecutionRequest, formatted string) {

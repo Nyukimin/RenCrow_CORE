@@ -74,7 +74,7 @@ func main() {
 	for i, msg := range testMessages {
 		fmt.Printf("--- Test %d: %s ---\n", i+1, msg)
 
-		jobID := task.NewJobID()
+		jobID := task.NewTaskID()
 		testTask := task.NewTask(jobID, msg, "test", "test_user")
 
 		// ルーティング決定

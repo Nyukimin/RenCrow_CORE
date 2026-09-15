@@ -29,7 +29,7 @@ func TestCodeExecutor_CoderLoopReportsBackThroughDelegationChain(t *testing.T) {
 	executor := NewDefaultCodeExecutor(coder, nil, nil, nil, worker, nil, recordingCodeEventEmitter(&events)).
 		WithCoderLoopPrompts(map[string]string{"coder1": "CoderLoop prompt"})
 
-	jobID := task.NewJobID()
+	jobID := task.NewTaskID()
 	req := CodeExecutionRequest{
 		Task:      task.NewTask(jobID, "会話内容を保ったまま修正して", "test", "chat-1"),
 		Route:     routing.RouteCODE1,

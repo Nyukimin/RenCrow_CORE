@@ -11,12 +11,12 @@ import (
 
 // WorkerExecutionService はPatch実行サービスのインターフェース
 type WorkerExecutionService interface {
-	ExecuteProposal(ctx context.Context, jobID task.JobID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
+	ExecuteProposal(ctx context.Context, jobID task.TaskID, p *proposal.Proposal) (*patch.PatchExecutionResult, error)
 	ExecuteObservation(ctx context.Context, actions []ObservationAction) ([]ObservationActionResult, error)
 }
 
 type WorkspaceOverrideWorkerExecutionService interface {
-	ExecuteProposalInWorkspace(ctx context.Context, jobID task.JobID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
+	ExecuteProposalInWorkspace(ctx context.Context, jobID task.TaskID, p *proposal.Proposal, workspace string) (*patch.PatchExecutionResult, error)
 }
 
 // MCPToolCaller は MCP プロトコル経由でツールを呼び出すインターフェース
@@ -45,7 +45,7 @@ func (w *workerExecutionService) SetMCPToolCaller(caller MCPToolCaller) {
 // ExecuteProposal はProposalのPatchを解析・実行する
 func (w *workerExecutionService) ExecuteProposal(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID task.TaskID,
 	p *proposal.Proposal,
 ) (*patch.PatchExecutionResult, error) {
 	commands, err := w.parseProposalCommands(p)
@@ -69,7 +69,7 @@ func (w *workerExecutionService) ExecuteProposal(
 
 func (w *workerExecutionService) ExecuteProposalInWorkspace(
 	ctx context.Context,
-	jobID task.JobID,
+	jobID task.TaskID,
 	p *proposal.Proposal,
 	workspace string,
 ) (*patch.PatchExecutionResult, error) {

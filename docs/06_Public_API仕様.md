@@ -477,7 +477,7 @@ ThreadSummarizerは一threadにつき一回のLLM requestとし、64KiB以下の
 3〜5個のunique keyword（各1〜64 rune）をCOREが検証します。CORE由来のevidence SHA-256、roles、provider、
 `llm | deterministic_fallback | legacy_unverified`のgeneration modeと固定failure codeをarchive receiptへ保存し、
 raw provider error、invalid LLM output、物理pathをAPI responseやreceiptへ含めません。
-Canonical AgentのEndTurnはroot `job_id`を維持したtyped internal requestであり、L1 SQLiteの同一transactionへ
+Canonical AgentのEndTurnはroot `task_id`を維持したtyped internal requestであり、L1 SQLiteの同一transactionへ
 Recall trace、User／Agent 2 message、ProfilePromotion job、event log、turn receipt、required follower outboxを保存します。
 resultは`status=completed | partial | failed`、turn／trace／2 message／receipt ID、follower status、固定error codeだけを
 返します。同一turn＋同一payload hashはidempotent replay、異なるhashは`conflict`です。Redis／archive／VectorDBは
@@ -511,15 +511,23 @@ encoded bytesで最大32 KiBです。
 ```
 
 COREはtokenに束縛したserver設定の`user_id`からHTTP user scopeを作り、Shiro／`worker`／`ops`の
-child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、job IDを
-指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、task／responseの
-`job_id`は別に生成します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
-再現できますが、job IDは実行ごとに別です。成功時は次の6 fieldだけをHTTP 200で返します。
+child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、TaskIDを
+指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、実行Taskの
+`task_id`とは分離します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
+再現できますが、TaskIDは実行ごとに別です。成功時は次の6 fieldだけをHTTP 200で返します。
+
+TaskIDはCOREの`internal/domain/task`が生成・検証する実行Taskの正規識別子です。新規値は`tsk_` prefix付き
+UUIDv7、履歴移行値だけはUUIDv5を使います。`task_id`は小文字のcanonical UUID表記で、UUIDv4、空白、旧形式を
+受け付けません。RenCrow_LLM Gatewayへ送る`rencrow` metadataも`task_id`だけを使い、`job_id`を送信しません。
+session JSONの履歴を読むときだけ、`task_id`がない項目の旧`job_id`を決定的に移行します。移行namespaceは
+`6570d821-e63e-592d-a51f-8cf4b43cdba5`、UUIDv5 nameは
+`TaskID\0session_history\0job_id\0<legacy-value>`です。旧値は前後空白とNULを含められず、`task_id`との併記や
+欠落は拒否します。新しいsession JSONには`task_id`だけを書きます。
 
 ```json
 {
   "request_id": "ops-opaque",
-  "job_id": "job-opaque",
+  "task_id": "tsk_01a07000-0000-7000-8000-000000000001",
   "agent_id": "shiro",
   "role": "worker",
   "route": "OPS",

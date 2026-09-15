@@ -8,7 +8,7 @@ import (
 )
 
 // showExecutionSummary は実行前サマリを表示
-func (w *workerExecutionService) showExecutionSummary(jobID task.JobID, commands []patch.PatchCommand) {
+func (w *workerExecutionService) showExecutionSummary(jobID task.TaskID, commands []patch.PatchCommand) {
 	fileEdits := 0
 	shellCmds := 0
 	gitOps := 0
