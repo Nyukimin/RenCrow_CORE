@@ -189,3 +189,71 @@ func TestBuildTTSEntryRuntime_Configured(t *testing.T) {
 		t.Fatal("expected runtime configured")
 	}
 }
+
+func TestBuildTTSEntryRuntime_BrowserOnlyConfiguredWithoutLocalPlayer(t *testing.T) {
+	cfg := &config.Config{
+		TTS: config.TTSConfig{
+			Enabled:        true,
+			GatewayBaseURL: "http://127.0.0.1:7870",
+			VoiceID:        "mio",
+		},
+	}
+	rt := buildTTSEntryRuntime(cfg)
+	if !rt.configured() {
+		t.Fatal("browser-only TTS entry must be configured from synthesizer")
+	}
+	if rt.player != nil {
+		t.Fatal("browser-only TTS entry must not require a local player")
+	}
+}
+
+func TestProcessEntryRequest_TTSBrowserOnlySkipsLocalPlayback(t *testing.T) {
+	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Response: "短い確認です"}}
+	reportPath := filepath.Join(t.TempDir(), "execution_report.jsonl")
+	req := entryadapter.Request{SessionID: "s1", Channel: "viewer", UserID: "u1", Message: "tts 短い確認"}
+	synth := &recordingSynthStub{out: ttsinfra.SynthesisOutput{
+		Provider:      "tts-gateway",
+		VoiceID:       "mio",
+		AudioFilePath: "/tmp/tts-gateway.wav",
+		DurationMS:    800,
+	}}
+	runtime := ttsEntryRuntime{synthesizer: synth, outputDir: t.TempDir(), voiceID: "mio"}
+
+	res, err := processEntryRequestWithRuntime(context.Background(), proc, req, reportPath, runtime)
+	if err != nil {
+		t.Fatalf("browser-only TTS entry failed: %v", err)
+	}
+	if proc.calls != 1 {
+		t.Fatalf("browser-only TTS must keep the orchestrator route, got %d calls", proc.calls)
+	}
+	if synth.last.Text != "短い確認です" {
+		t.Fatalf("spoke %q, want orchestrator response text", synth.last.Text)
+	}
+	if !strings.Contains(res.EvidenceRef, "execution_report:") {
+		t.Fatalf("expected evidence ref, got %q", res.EvidenceRef)
+	}
+	b, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("expected report file, got %v", err)
+	}
+	if !strings.Contains(string(b), `"status":"passed"`) || !strings.Contains(string(b), `"tts_provider":"tts-gateway"`) {
+		t.Fatalf("expected passed TTS report, got: %s", string(b))
+	}
+	if strings.Contains(string(b), `"tts-playback"`) {
+		t.Fatalf("browser-only TTS must not plan a local playback step, got: %s", string(b))
+	}
+	if strings.Contains(string(b), `"tts_error_kind":"playback"`) {
+		t.Fatalf("browser-only TTS must not fail closed on local playback, got: %s", string(b))
+	}
+}
+
+type recordingSynthStub struct {
+	out  ttsinfra.SynthesisOutput
+	err  error
+	last ttsinfra.SynthesisInput
+}
+
+func (s *recordingSynthStub) Synthesize(_ context.Context, in ttsinfra.SynthesisInput) (ttsinfra.SynthesisOutput, error) {
+	s.last = in
+	return s.out, s.err
+}

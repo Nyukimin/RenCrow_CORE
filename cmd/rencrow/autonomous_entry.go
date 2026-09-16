@@ -38,12 +38,21 @@ type ttsEntryRuntime struct {
 	voiceID     string
 }
 
+// configured reports whether CORE can synthesize audio through the TTS Gateway.
+// A local player is optional: in browser-only deployments the browser owns playback.
 func (r ttsEntryRuntime) configured() bool {
-	return r.synthesizer != nil && r.player != nil
+	return r.synthesizer != nil
+}
+
+// localPlayback reports whether CORE owns a local audio player and therefore has to
+// verify local playback.
+func (r ttsEntryRuntime) localPlayback() bool {
+	return r.player != nil
 }
 
 type ttsEntryPlanner struct {
-	requireTTS bool
+	requireTTS    bool
+	localPlayback bool
 }
 
 type ttsEntryApplier struct {
@@ -63,7 +72,8 @@ type ttsEntryVerifier struct {
 }
 
 type ttsEntryRepairer struct {
-	requireTTS bool
+	requireTTS    bool
+	localPlayback bool
 }
 
 func processEntryRequest(ctx context.Context, proc messageProcessor, req entryadapter.Request, reportPath string) (entryadapter.Result, error) {
@@ -96,10 +106,10 @@ func processEntryRequestWithRuntime(ctx context.Context, proc messageProcessor, 
 	taskID := modulecore.NewTaskID()
 	applier := &ttsEntryApplier{proc: proc, req: req, taskID: taskID, runtime: runtime}
 	svc := autonomousapp.NewService(
-		ttsEntryPlanner{requireTTS: true},
+		ttsEntryPlanner{requireTTS: true, localPlayback: runtime.localPlayback()},
 		applier,
-		ttsEntryVerifier{applier: applier, requirePlayback: true},
-		ttsEntryRepairer{requireTTS: true},
+		ttsEntryVerifier{applier: applier, requirePlayback: runtime.localPlayback()},
+		ttsEntryRepairer{requireTTS: true, localPlayback: runtime.localPlayback()},
 		1,
 	).WithReportStore(store)
 
@@ -174,13 +184,14 @@ func buildTTSEntryRuntime(cfg *config.Config) ttsEntryRuntime {
 	}
 
 	cmds := buildTTSCommandSpecs(cfg)
-	if len(cmds) == 0 {
-		return ttsEntryRuntime{}
+	var player ttsPlayer
+	if len(cmds) > 0 {
+		player = ttsinfra.NewCommandPlayer(cmds)
 	}
-
+	// Browser-only deployments have no local playback commands; the browser owns playback.
 	return ttsEntryRuntime{
 		synthesizer: synthesizer,
-		player:      ttsinfra.NewCommandPlayer(cmds),
+		player:      player,
 		outputDir:   cfg.TTS.OutputDir,
 		voiceID:     chooseTTSVoiceID(cfg),
 	}
@@ -189,7 +200,10 @@ func buildTTSEntryRuntime(cfg *config.Config) ttsEntryRuntime {
 func (p ttsEntryPlanner) Plan(_ context.Context, _ domaincontract.Contract) (autonomousapp.Plan, error) {
 	steps := []autonomousapp.Step{{Name: "process-message"}}
 	if p.requireTTS {
-		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"}, autonomousapp.Step{Name: "tts-playback"})
+		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"})
+		if p.localPlayback {
+			steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
+		}
 	}
 	return autonomousapp.Plan{Steps: steps}, nil
 }
@@ -259,7 +273,10 @@ func (v ttsEntryVerifier) Verify(_ context.Context, _ domaincontract.Contract) (
 func (r ttsEntryRepairer) Repair(_ context.Context, _ domaincontract.Contract, _ string) (autonomousapp.Plan, error) {
 	steps := []autonomousapp.Step{{Name: "retry-process-message"}}
 	if r.requireTTS {
-		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"}, autonomousapp.Step{Name: "tts-playback"})
+		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"})
+		if r.localPlayback {
+			steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
+		}
 	}
 	return autonomousapp.Plan{Steps: steps}, nil
 }
