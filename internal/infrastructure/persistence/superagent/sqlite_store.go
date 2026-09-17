@@ -49,6 +49,16 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+// contextPackTableDDL is the canonical context_pack schema. Legacy DBs created
+// before the canonical save path declared run_id NOT NULL while saves only
+// write artifact_id, created_at and payload, so migrate() rebuilds them.
+const contextPackTableDDL = `CREATE TABLE IF NOT EXISTS context_pack (
+			artifact_id TEXT PRIMARY KEY,
+			run_id TEXT,
+			created_at TEXT,
+			payload TEXT NOT NULL
+		)`
+
 func (s *SQLiteStore) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS agent_run (
@@ -62,12 +72,7 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS context_pack (
-			artifact_id TEXT PRIMARY KEY,
-			run_id TEXT,
-			created_at TEXT,
-			payload TEXT NOT NULL
-		)`,
+		contextPackTableDDL,
 		`CREATE TABLE IF NOT EXISTS message_channel (
 			channel_id TEXT PRIMARY KEY,
 			created_at TEXT,
@@ -87,7 +92,37 @@ func (s *SQLiteStore) migrate() error {
 	}
 	// Best-effort rename for local DBs created before queue_item_id was canonical.
 	_, _ = s.db.Exec(`ALTER TABLE run_queue RENAME COLUMN queue_id TO queue_item_id`)
-	return nil
+	return s.migrateContextPackRunID()
+}
+
+// migrateContextPackRunID rebuilds context_pack tables that still declare
+// run_id NOT NULL. The canonical save path writes only artifact_id, created_at
+// and payload, so the legacy constraint fails every context pack insert.
+func (s *SQLiteStore) migrateContextPackRunID() error {
+	var notNull int
+	if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('context_pack') WHERE name='run_id' AND "notnull"=1`).Scan(&notNull); err != nil {
+		return err
+	}
+	if notNull == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS context_pack_legacy_notnull`,
+		`ALTER TABLE context_pack RENAME TO context_pack_legacy_notnull`,
+		strings.Replace(contextPackTableDDL, "IF NOT EXISTS ", "", 1),
+		`INSERT INTO context_pack (artifact_id, run_id, created_at, payload) SELECT artifact_id, run_id, created_at, payload FROM context_pack_legacy_notnull`,
+		`DROP TABLE context_pack_legacy_notnull`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate legacy context_pack schema: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) SaveAgentRun(ctx context.Context, item domainsuperagent.AgentRun) error {

@@ -419,3 +419,64 @@ func TestSQLiteStoreConfiguresSingleConnectionAndBusyTimeout(t *testing.T) {
 		t.Fatalf("busy timeout=%d want=5000", busyTimeout)
 	}
 }
+
+func TestSQLiteStoreMigratesLegacyContextPackNotNullRunID(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "superagent.db")
+	store, err := NewSQLiteStore(path, 3000)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	// Recreate the pre-cutover schema that declared context_pack.run_id NOT NULL
+	// while the canonical save path only writes artifact_id, created_at and payload.
+	if _, err := store.db.Exec(`DROP TABLE context_pack`); err != nil {
+		t.Fatalf("drop context_pack: %v", err)
+	}
+	if _, err := store.db.Exec(`CREATE TABLE context_pack (artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, created_at TEXT NOT NULL, payload TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create legacy context_pack: %v", err)
+	}
+	legacyArtifactID := string(modulecore.NewArtifactID())
+	if _, err := store.db.Exec(`INSERT INTO context_pack (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
+		legacyArtifactID, "run_legacy", "2026-09-08T00:00:00.000000Z", `{"artifact_id":"`+legacyArtifactID+`"}`); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	reopened, err := NewSQLiteStore(path, 3000)
+	if err != nil {
+		t.Fatalf("reopen legacy store: %v", err)
+	}
+	defer reopened.Close()
+	var notNull int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM pragma_table_info('context_pack') WHERE name='run_id' AND "notnull"=1`).Scan(&notNull); err != nil {
+		t.Fatalf("inspect context_pack schema: %v", err)
+	}
+	if notNull != 0 {
+		t.Fatal("legacy context_pack.run_id NOT NULL constraint survived migrate")
+	}
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	if err := reopened.SaveContextPack(ctx, domainsuperagent.ContextPack{
+		ArtifactID:    modulecore.NewArtifactID(),
+		Kind:          modulecore.ArtifactKindContextPack,
+		TaskID:        taskID,
+		RunID:         runID,
+		Summary:       "summary",
+		TokenEstimate: 120,
+		CreatedAt:     time.Now(),
+	}); err != nil {
+		t.Fatalf("SaveContextPack() on migrated DB error = %v", err)
+	}
+	var preserved int
+	if err := reopened.db.QueryRow(`SELECT count(*) FROM context_pack WHERE artifact_id=?`, legacyArtifactID).Scan(&preserved); err != nil {
+		t.Fatalf("count legacy rows: %v", err)
+	}
+	if preserved != 1 {
+		t.Fatalf("legacy context_pack rows preserved=%d, want 1", preserved)
+	}
+	packs, err := reopened.ListContextPacks(ctx, 10)
+	if err != nil || len(packs) != 2 {
+		t.Fatalf("ListContextPacks() = %#v, %v", packs, err)
+	}
+}
