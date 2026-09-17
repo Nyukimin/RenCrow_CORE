@@ -1,8 +1,34 @@
 {
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step13-artifact",
-  "phase": "design-frozen-v1",
-  "evaluated_at": "2026-09-07T01:20:00Z",
+  "phase": "post-deploy-route-verified",
+  "evaluated_at": "2026-09-17T08:17:00Z",
+  "outcome": {
+    "status": "partial",
+    "source_revision": "a0d0ae8898218ce989bd1aa4843eb5cfe4a7f22a",
+    "deployed_binary_sha256": "24a41febd173f830baa0131e5a592b5eeadc5ca2e25aa4270c89c866b1d69ec7",
+    "passed": [
+      "ArtifactKind 9種（report draft context_pack image patch specification transcript diff document）とart_前検証契約がmodules/coreに実装（HEADのancestor 8a867f1、36 files）",
+      "revenue report draft context_pack api_coverage_reportがtyped ArtifactIDとJSON artifact_kindを使用",
+      "offline one-shot migration applyがcontext_pack 315/315とapi_coverage_report 1/1をremap、再実行noop成立",
+      "TestStep13ArtifactIdentityLegacyFieldsAreBannedとTestStep13MigrationSourceIsRemovedAfterCutoverがPASS、legacy token 6種のzero-scan残りはネガティブアサーション1件（sqlite_store_test.go:185）のみ",
+      "owner tests 9 packagesとgo vetとgo buildが成功、差分なし",
+      "配備binary sha256 24a41feb...がHEAD a0d0ae8の非docs差分0と等価、/health/ready ready true、:18790 LISTEN",
+      "live context_pack 323/323がart_とartifact_kind context_pack（remint UUIDv5 315件、現行binaryのUUIDv7 8件（うち2件は2026-09-17 06:18 UTC再起動後））、2026-09-17 06:18 JST再起動後も2 rows維持",
+      "live DB全体でreport_id draft_id context_pack_id source_report_idの残存列0件",
+      "cutover receipt（deployment status passed、apply、dry-run noop、installed binary sha256、health after）の存在確認",
+      "正規Viewer routeがartifact_idとartifact_kindのみを露出しcontext_pack_idを露出しない（/viewer/superagent のcontext_packs 20件、/viewer/revenue はreport/draft/apply recordが全て空配列）"
+    ],
+    "open": [
+      "s13_runtime_route未証跡: revenue reportとdraftの本番生成実績が0件のためArtifactID projectionのbefore/after restartを実証できない",
+      "api_artifact 6 rowsが非正準なopaque IDとartifact_typeを使用しartifact_kindを持たない（typed化とKind付与が未実施）",
+      "IDENTITY_CANONICAL Step13のSupersedeとContent hashがArtifactに未実装（SupersededByはUserMemoryとchat_commandsのみ、ContentHashは0 hit）",
+      "Verification ReportをArtifactへ変更するartifact_kind網羅がStep14に依存",
+      "cutover receiptのsourceが未コミット差分3e8b0bfで、HEAD現行revision 8a867f1相当の再cutover証跡が不在（live状態が現行binaryで正しいことが実質根拠）",
+      "化石context_pack.jsonl 442行が旧context_pack_id keyで残存（Step20 cleanup候補、削除はユーザー承認要）",
+      "xbookmarkworkflow ImageIDが既存deferred（Image module契約確認要）"
+    ]
+  },
   "input": {
     "base_revision": "3e8b0bf",
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-13-artifactid",
@@ -103,5 +129,39 @@
       "failure_action": "reopen the failed Identity ledger row"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [
+    {
+      "kind": "superagent_context_pack",
+      "table": "core/databases/ops/superagent_harness.db::context_pack",
+      "artifact_id": "art_01a0ae0b-1177-7941-a13b-b8ae5bb44f19",
+      "artifact_kind": "context_pack",
+      "rows": 323,
+      "remapped_count": 315,
+      "note": "315 rows reminted by the Step13 migration and 8 rows written as UUIDv7 by the deployed binary after cutover; the newest 2 rows were created after the 2026-09-17 06:18 UTC CORE restart",
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step13-artifact-20260907T014111Z/migration/apply-receipt.json"
+    },
+    {
+      "kind": "browser_coverage_report",
+      "table": "core/databases/ops/browser_trace_to_api.db::api_coverage_report",
+      "artifact_id": "art_ad1854de-914a-58e5-a1db-298b4b6cc233",
+      "artifact_kind": "report",
+      "rows": 1,
+      "remapped_count": 1,
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step13-artifact-20260907T014111Z/migration/apply-receipt.json"
+    },
+    {
+      "kind": "step13_migration",
+      "dry_run_after_apply_status": "noop",
+      "migration_checksum": "ffcad1438e122f8b99fa602dc23f57491",
+      "deployment_receipt_status": "passed",
+      "deployment_source_head": "3e8b0bf45e08e1bdaf007de76c7ece8887b95009",
+      "installed_binary_sha256": "904ebbad6e718ba121dcadbece6232d98ab9f173f28f947828e89183a2d4f5d0",
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step13-artifact-20260907T014111Z/step13-deployment-receipt.json"
+    },
+    {
+      "kind": "viewer_runtime_route",
+      "result": "authenticated loopback GET /viewer/superagent returned 20 context_packs where every entry carries artifact_id and artifact_kind context_pack, and the whole payload contains zero context_pack_id keys; /viewer/revenue returned daily_routine_reports channel_drafts and external_send_apply_records as empty arrays with zero report_id draft_id source_report_id keys, which confirms the revenue ArtifactID projection has no production rows to observe",
+      "evidence": "/tmp/s13_viewer_superagent.json and /tmp/s13_viewer_revenue.json captured 2026-09-17T08:26:24Z against revision a0d0ae8"
+    }
+  ]
 }
