@@ -22,14 +22,19 @@ import (
 const (
 	runnerSchemaVersion  = 1
 	ownerManifestVersion = 2
-	ownerReceiptSchema   = "rencrow.check-receipt.v1"
-	defaultCoreURL       = "http://127.0.0.1:18790"
-	defaultPlanner       = "rencrow-check-plan"
-	maxManifestBytes     = 1 << 20
-	maxPlanBytes         = 1 << 20
-	maxResponseBytes     = 64 << 10
-	maxReceiptMessage    = 256
-	maxManifestChecks    = 128
+	// maxOwnerManifestVersion is the newest CORE-owned manifest schema the
+	// runner may project. v3 adds executor.acquisition, whose meaning is owned
+	// by rencrow-core-verify (the v3 evidence owner); the runner only accepts
+	// the field so a v3 manifest still projects to the strict v1 planner input.
+	maxOwnerManifestVersion = 3
+	ownerReceiptSchema      = "rencrow.check-receipt.v1"
+	defaultCoreURL          = "http://127.0.0.1:18790"
+	defaultPlanner          = "rencrow-check-plan"
+	maxManifestBytes        = 1 << 20
+	maxPlanBytes            = 1 << 20
+	maxResponseBytes        = 64 << 10
+	maxReceiptMessage       = 256
+	maxManifestChecks       = 128
 )
 
 var stableCommandIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
@@ -67,9 +72,9 @@ type checkRequest struct {
 }
 
 // ownerManifestEnvelope is the on-disk CORE-owned source representation. v2
-// adds metadata used by full-system composition; only its planner-compatible
-// Check fields are projected into checkRequest before invoking the strict v1
-// planner.
+// adds metadata used by full-system composition and v3 adds
+// executor.acquisition; only the planner-compatible Check fields are projected
+// into checkRequest before invoking the strict v1 planner.
 type ownerManifestEnvelope struct {
 	SchemaVersion int               `json:"schema_version"`
 	Purpose       string            `json:"purpose"`
@@ -85,8 +90,9 @@ type ownerManifest struct {
 }
 
 type ownerExecutor struct {
-	Kind      string `json:"kind"`
-	CommandID string `json:"command_id"`
+	Kind        string           `json:"kind"`
+	CommandID   string           `json:"command_id"`
+	Acquisition *json.RawMessage `json:"acquisition,omitempty"`
 }
 
 type manifestCheck struct {
@@ -444,10 +450,10 @@ func loadCheckManifest(path string) (ownerManifest, error) {
 	if len(envelope.Checks) == 0 || len(envelope.Checks) > maxManifestChecks {
 		return ownerManifest{}, fmt.Errorf("manifest checks must contain 1..%d entries", maxManifestChecks)
 	}
-	if envelope.SchemaVersion != runnerSchemaVersion && envelope.SchemaVersion != ownerManifestVersion {
-		return ownerManifest{}, fmt.Errorf("manifest schema_version must be %d or %d", runnerSchemaVersion, ownerManifestVersion)
+	if envelope.SchemaVersion < runnerSchemaVersion || envelope.SchemaVersion > maxOwnerManifestVersion {
+		return ownerManifest{}, fmt.Errorf("manifest schema_version must be %d to %d", runnerSchemaVersion, maxOwnerManifestVersion)
 	}
-	if envelope.SchemaVersion == ownerManifestVersion && !validManifestPhase(envelope.Phase) {
+	if envelope.SchemaVersion >= ownerManifestVersion && !validManifestPhase(envelope.Phase) {
 		return ownerManifest{}, fmt.Errorf("manifest has invalid phase %q", envelope.Phase)
 	}
 
@@ -493,6 +499,8 @@ var plannerManifestFields = map[string]struct{}{
 	"consumer": {}, "failure_action": {}, "cost": {}, "safety_gate": {}, "replacement_check_id": {}, "evidence": {},
 }
 
+// v2ManifestFields is shared by manifest schema_version 2 and 3: v3 keeps the
+// same check field names and only extends the shape of executor.
 var v2ManifestFields = map[string]struct{}{
 	"check_id": {}, "guarantee_id": {}, "owner": {}, "purpose": {}, "target": {}, "phase": {},
 	"consumer": {}, "failure_action": {}, "cost": {}, "safety_gate": {}, "replacement_check_id": {}, "evidence": {},
@@ -508,7 +516,7 @@ func decodeManifestCheck(raw json.RawMessage, schemaVersion int) (manifestCheck,
 		return manifestCheck{}, errors.New("check must be an object")
 	}
 	allowed := plannerManifestFields
-	if schemaVersion == ownerManifestVersion {
+	if schemaVersion >= ownerManifestVersion {
 		allowed = v2ManifestFields
 	}
 	for key := range fields {
@@ -530,14 +538,14 @@ func decodeManifestCheck(raw json.RawMessage, schemaVersion int) (manifestCheck,
 	if strings.TrimSpace(check.CheckID) == "" {
 		return manifestCheck{}, errors.New("check_id is required")
 	}
-	if schemaVersion != ownerManifestVersion {
+	if schemaVersion < ownerManifestVersion {
 		return check, nil
 	}
 
 	if _, err := validateStringList(fields, "coverage", true); err != nil {
 		return manifestCheck{}, err
 	}
-	if _, err := decodeOwnerExecutor(fields); err != nil {
+	if _, err := decodeOwnerExecutor(fields, schemaVersion); err != nil {
 		return manifestCheck{}, err
 	}
 	receiptSchema, err := decodeRequiredString(fields, "receipt_schema")
@@ -553,7 +561,7 @@ func decodeManifestCheck(raw json.RawMessage, schemaVersion int) (manifestCheck,
 	return check, nil
 }
 
-func decodeOwnerExecutor(fields map[string]json.RawMessage) (ownerExecutor, error) {
+func decodeOwnerExecutor(fields map[string]json.RawMessage, schemaVersion int) (ownerExecutor, error) {
 	raw, ok := fields["executor"]
 	if !ok {
 		return ownerExecutor{}, errors.New("executor is required")
@@ -565,7 +573,14 @@ func decodeOwnerExecutor(fields map[string]json.RawMessage) (ownerExecutor, erro
 	if object == nil {
 		return ownerExecutor{}, errors.New("executor must be an object")
 	}
-	if len(object) != 2 {
+	if schemaVersion >= maxOwnerManifestVersion {
+		if len(object) != 3 {
+			return ownerExecutor{}, errors.New("executor must contain exactly kind, command_id and acquisition")
+		}
+		if _, ok := object["acquisition"]; !ok {
+			return ownerExecutor{}, errors.New("executor.acquisition is required")
+		}
+	} else if len(object) != 2 {
 		return ownerExecutor{}, errors.New("executor must contain exactly kind and command_id")
 	}
 	if _, ok := object["kind"]; !ok {
@@ -584,7 +599,62 @@ func decodeOwnerExecutor(fields map[string]json.RawMessage) (ownerExecutor, erro
 	if strings.TrimSpace(executor.CommandID) == "" || !stableCommandIDPattern.MatchString(executor.CommandID) {
 		return ownerExecutor{}, fmt.Errorf("executor.command_id must be a non-empty stable id: %q", executor.CommandID)
 	}
+	if schemaVersion >= maxOwnerManifestVersion {
+		if err := validateOwnerExecutorAcquisition(object["acquisition"]); err != nil {
+			return ownerExecutor{}, err
+		}
+	}
 	return executor, nil
+}
+
+// ownerExecutorAcquisition is the structural shape of a v3 acquisition
+// declaration. The allowed input classes and sources, and the coupling between
+// verification_safe and safety_gate, are owned by cmd/rencrow-core-verify, so
+// the runner deliberately does not re-declare those enumerations.
+type ownerExecutorAcquisition struct {
+	Mode             string                  `json:"mode"`
+	VerificationSafe *bool                   `json:"verification_safe"`
+	Inputs           []ownerAcquisitionInput `json:"inputs"`
+}
+
+type ownerAcquisitionInput struct {
+	ID       string `json:"id"`
+	Class    string `json:"class"`
+	Required *bool  `json:"required"`
+	Source   string `json:"source"`
+}
+
+func validateOwnerExecutorAcquisition(raw json.RawMessage) error {
+	var acquisition ownerExecutorAcquisition
+	if err := decodeStrictJSON(raw, &acquisition); err != nil {
+		return fmt.Errorf("decode executor.acquisition: %w", err)
+	}
+	if acquisition.Mode != "owner_self_collect" {
+		return fmt.Errorf("executor.acquisition.mode must be owner_self_collect, got %q", acquisition.Mode)
+	}
+	if acquisition.VerificationSafe == nil {
+		return errors.New("executor.acquisition.verification_safe is required")
+	}
+	if len(acquisition.Inputs) == 0 {
+		return errors.New("executor.acquisition.inputs must be non-empty")
+	}
+	seen := make(map[string]struct{}, len(acquisition.Inputs))
+	for index, input := range acquisition.Inputs {
+		if !stableCommandIDPattern.MatchString(input.ID) {
+			return fmt.Errorf("executor.acquisition.inputs[%d].id must be a non-empty stable id: %q", index, input.ID)
+		}
+		if _, exists := seen[input.ID]; exists {
+			return fmt.Errorf("executor.acquisition.inputs contains duplicate id %q", input.ID)
+		}
+		seen[input.ID] = struct{}{}
+		if input.Required == nil {
+			return fmt.Errorf("executor.acquisition.inputs[%d].required is required", index)
+		}
+		if strings.TrimSpace(input.Class) == "" || strings.TrimSpace(input.Source) == "" {
+			return fmt.Errorf("executor.acquisition.inputs[%d] requires class and source", index)
+		}
+	}
+	return nil
 }
 
 func decodeRequiredString(fields map[string]json.RawMessage, key string) (string, error) {

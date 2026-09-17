@@ -111,6 +111,64 @@ const testManifestV2 = `{
   ]
 }`
 
+const testManifestV3 = `{
+  "schema_version": 3,
+  "purpose": "operational_status",
+  "phase": "runtime",
+  "checks": [
+    {
+      "check_id": "core_health",
+      "guarantee_id": "core_health_available",
+      "owner": "RenCrow_CORE",
+      "purpose": "runtime health",
+      "target": "core:/health",
+      "phase": "runtime",
+      "consumer": "runtime operational status",
+      "failure_action": "degraded",
+      "cost": "low",
+      "safety_gate": false,
+      "coverage": ["readiness"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-health",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": false,
+          "inputs": [
+            {"id": "core_base_url", "class": "discoverable", "required": true, "source": "owner_active_config"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_complexity_identity_orphan",
+      "guarantee_id": "complexity_identity_orphan_zero",
+      "owner": "RenCrow_CORE",
+      "purpose": "complexity identity index integrity",
+      "target": "explicit complexity_hotspot database opened read-only",
+      "phase": "diagnostic",
+      "consumer": "Step14 identity completion decision",
+      "failure_action": "blocked",
+      "cost": "low",
+      "safety_gate": false,
+      "coverage": ["durability"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-complexity-identity-orphan",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": false,
+          "inputs": [
+            {"id": "complexity_hotspot_db", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
+    }
+  ]
+}`
+
 func writeTestManifest(t *testing.T, contents string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "core-checks.json")
@@ -393,5 +451,201 @@ func TestRuntimeRunnerFailsClosedForTamperedPlanShape(t *testing.T) {
 	}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "purpose/phase") {
 		t.Fatalf("expected tampered plan rejection, got %v", err)
+	}
+}
+
+func TestRuntimeRunnerAcceptsV3ManifestAndProjectsItForPlanner(t *testing.T) {
+	var healthHits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			healthHits.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"ok":true,"status":"ok"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	manifestPath := writeTestManifest(t, testManifestV3)
+	sourceBefore, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read source manifest: %v", err)
+	}
+	now := time.Date(2026, 9, 17, 23, 0, 0, 0, time.UTC)
+	var projected []byte
+	planner := func(_ context.Context, args []string) ([]byte, error) {
+		if len(args) != 5 || args[0] != "plan" || args[1] != "--input" || args[3] != "--now" {
+			t.Fatalf("unexpected planner args: %v", args)
+		}
+		projected, err = os.ReadFile(args[2])
+		if err != nil {
+			t.Fatalf("read projected planner input: %v", err)
+		}
+		var request struct {
+			SchemaVersion int                          `json:"schema_version"`
+			Purpose       string                       `json:"purpose"`
+			Phase         string                       `json:"phase"`
+			Checks        []map[string]json.RawMessage `json:"checks"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(projected))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			t.Fatalf("decode projected planner input: %v", err)
+		}
+		if request.SchemaVersion != 1 {
+			t.Fatalf("projected schema_version=%d, want 1: %s", request.SchemaVersion, projected)
+		}
+		if request.Purpose != "operational_status" {
+			t.Fatalf("projected purpose=%q, want operational_status", request.Purpose)
+		}
+		if request.Phase != "runtime" {
+			t.Fatalf("projected phase=%q, want runtime", request.Phase)
+		}
+		if len(request.Checks) != 2 {
+			t.Fatalf("projected checks=%d, want 2", len(request.Checks))
+		}
+		for _, check := range request.Checks {
+			for _, extension := range []string{"coverage", "executor", "receipt_schema", "surfaces"} {
+				if _, ok := check[extension]; ok {
+					t.Fatalf("v3 owner extension %q leaked into v1 planner input: %s", extension, projected)
+				}
+			}
+		}
+		return []byte(`{"schema_version":1,"status":"ready","purpose":"operational_status","phase":"runtime","evaluated_at":"` + now.Format(time.RFC3339) + `","plan_revision":"sha256:v3-projection","included":[{"check_id":"core_health","reason":"required"}],"excluded":[],"deferred":[{"check_id":"core_complexity_identity_orphan","classifications":["wrong_phase"],"reason":"diagnostic check is deferred for runtime"}],"errors":[]}`), nil
+	}
+
+	receipt, err := runRunner(context.Background(), runnerOptions{
+		ManifestPath: manifestPath,
+		CoreURL:      srv.URL,
+		Phase:        "runtime",
+		Now:          now,
+		Planner:      planner,
+		HTTPClient:   srv.Client(),
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("runRunner: %v", err)
+	}
+	if healthHits.Load() != 1 {
+		t.Fatalf("included health check route hits = %d, want 1", healthHits.Load())
+	}
+	if len(receipt.Results) != 1 || receipt.Results[0].CheckID != "core_health" {
+		t.Fatalf("unexpected v3 results: %+v", receipt.Results)
+	}
+	if receipt.Status != "passed" || receipt.PlanRevision != "sha256:v3-projection" {
+		t.Fatalf("unexpected v3 projection receipt: %+v", receipt)
+	}
+	if len(receipt.Deferred) != 1 || receipt.Deferred[0].CheckID != "core_complexity_identity_orphan" {
+		t.Fatalf("unexpected deferred: %+v", receipt.Deferred)
+	}
+	sourceAfter, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("read source manifest after run: %v", err)
+	}
+	if !bytes.Equal(sourceBefore, sourceAfter) {
+		t.Fatal("source manifest was mutated")
+	}
+}
+
+func TestLoadV3ManifestRejectsMalformedAcquisition(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(map[string]any)
+		want string
+	}{
+		{
+			name: "acquisition missing",
+			edit: func(executor map[string]any) { delete(executor, "acquisition") },
+			want: "exactly kind, command_id and acquisition",
+		},
+		{
+			name: "acquisition field set",
+			edit: func(executor map[string]any) { executor["transport"] = "http" },
+			want: "exactly kind, command_id and acquisition",
+		},
+		{
+			name: "acquisition mode",
+			edit: func(executor map[string]any) {
+				executor["acquisition"].(map[string]any)["mode"] = "runner_collect"
+			},
+			want: "acquisition.mode must be owner_self_collect",
+		},
+		{
+			name: "verification_safe missing",
+			edit: func(executor map[string]any) {
+				delete(executor["acquisition"].(map[string]any), "verification_safe")
+			},
+			want: "verification_safe is required",
+		},
+		{
+			name: "inputs empty",
+			edit: func(executor map[string]any) {
+				executor["acquisition"].(map[string]any)["inputs"] = []any{}
+			},
+			want: "inputs must be non-empty",
+		},
+		{
+			name: "duplicate input id",
+			edit: func(executor map[string]any) {
+				input := executor["acquisition"].(map[string]any)["inputs"].([]any)[0].(map[string]any)
+				executor["acquisition"].(map[string]any)["inputs"] = []any{input, input}
+			},
+			want: "contains duplicate id",
+		},
+		{
+			name: "input required missing",
+			edit: func(executor map[string]any) {
+				delete(executor["acquisition"].(map[string]any)["inputs"].([]any)[0].(map[string]any), "required")
+			},
+			want: "[0].required is required",
+		},
+		{
+			name: "unknown acquisition field",
+			edit: func(executor map[string]any) {
+				executor["acquisition"].(map[string]any)["timeout_seconds"] = 5
+			},
+			want: "decode executor.acquisition",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var document map[string]any
+			if err := json.Unmarshal([]byte(testManifestV3), &document); err != nil {
+				t.Fatalf("decode fixture: %v", err)
+			}
+			checks, ok := document["checks"].([]any)
+			if !ok || len(checks) == 0 {
+				t.Fatal("fixture checks missing")
+			}
+			executor, ok := checks[0].(map[string]any)["executor"].(map[string]any)
+			if !ok {
+				t.Fatal("fixture executor is not an object")
+			}
+			tt.edit(executor)
+			contents, err := json.Marshal(document)
+			if err != nil {
+				t.Fatalf("encode fixture: %v", err)
+			}
+			_, err = loadCheckManifest(writeTestManifest(t, string(contents)))
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("load error = %v, want substring %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsManifestVersionsAboveOwnerMax(t *testing.T) {
+	var document map[string]any
+	if err := json.Unmarshal([]byte(testManifestV3), &document); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	document["schema_version"] = maxOwnerManifestVersion + 1
+	contents, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("encode fixture: %v", err)
+	}
+	_, err = loadCheckManifest(writeTestManifest(t, string(contents)))
+	if err == nil || !strings.Contains(err.Error(), "manifest schema_version must be 1 to 3") {
+		t.Fatalf("load error = %v, want v1..v3 window rejection", err)
 	}
 }
