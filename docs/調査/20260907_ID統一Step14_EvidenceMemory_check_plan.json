@@ -1,8 +1,31 @@
 {
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step14-evidence-memory",
-  "phase": "design-frozen-v1",
-  "evaluated_at": "2026-09-07T03:40:00Z",
+  "phase": "post-deploy-route-verified",
+  "evaluated_at": "2026-09-17T14:25:00Z",
+  "outcome": {
+    "status": "partial",
+    "source_revision": "082ad99f17cf249a4be1be040eb0d2c369a826bd",
+    "deployed_binary_sha256": "5d010023d107eb0a3b846f52a7ea5f22d2db980391cf235101a70f1388deb584",
+    "passed": [
+      "EvidenceID文字列派生0がarchitecture testで機械強制（TestStep14EvidenceMemoryLegacyFieldsAreBannedとTestStep14MigrationSourceIsRemovedAfterCutoverがmodules/coreでPASS、HEADのancestor 8a867f1に既入）",
+      "Evidence orphanの意味的な値0がliveで実測（TOTAL_ORPHANS=0、scan_events 2 / hotspots 4 / evidence 4 / artifacts 3）",
+      "共通save()がFK index列へpayload正本を書かずliveに空列8行（hotspot.scan_id 3、evidence.hotspot_id 3、artifact.scan_id 2）残っていた実バグを修正し、hotspot/evidence/artifactのindex列をpayloadのscan_id・hotspot_idから決定論的に書くようにした",
+      "空またはpayload不一致のindex列をInvalidIndex、index列が非空で親行不在をMissingとして数えるCountComplexityIdentityOrphansをcomplexity store APIとして追加（外部caller無しは意図的な最小境界）",
+      "owner tests TestSQLiteStoreWritesIdentityIndexColumnsとTestCountComplexityIdentityOrphansReportsEmptyIndexColumnsがPASS（legacyの空FK→EvidenceInvalidIndex=1、親欠落→EvidenceMissingHotspot=1）",
+      "pre-deploy検査としてgofmtとgo vet ./internal/infrastructure/persistence/complexity/がclean、go test -count=1でcomplexity 0.310s、domain 0.009s、application 0.009s、modules/core 11.866s（arch test 2本含む）が全てok",
+      "writer-stop（rencrow-resilience.timer→rencrow.service停止、:18790非listen確認）後のlive backfillでUPDATE <t> SET <fk>=json_extract(payload,'$.<fk>') WHERE COALESCE(<fk},'')=''により8行更新、pragma integrity_check ok",
+      "正規runtime routeのPOST /viewer/complexity-hotspots/scanがHTTP 201を返し、新evidence evd_01a0afad-08d8-7996-954a-9bf0e6b9b7aeがtyped evd_接頭辞で発行され、hotspot_./evidence./artifact.のindex列がpayloadと一致することをrows単位で実測、このroute書込み後もTOTAL_ORPHANS=0",
+      "systemctl --user restart rencrow.service後にready（MainPID 1887514、起動2026-09-17 14:06:07 UTC）へ復帰し、GET /viewer/complexity-hotspotsが200でscans 2 / hotspots 4 / evidence 4 / reports 3、step14 routeのscanが残存、orphan 0を維持",
+      "go build ./cmd/rencrow を*.rencrow-new経由のrenameで~/.local/bin/rencrowへ配備。初回配備はsha256 2eb77d4944722094…（HEAD 40393d1＋未コミット差分）で再起動後も変化なしを確認し、Step14差分をcommitした現行revisionではsha256 5d010023d107eb0a…（vcs.revision 082ad99）へ再配備してready trueと:18790 listenを約140sで回復"
+    ],
+    "open": [
+      "go test ./...がこのrepositoryでは構造的にFAIL（EXIT=1、239 packagesはok、pattern ./...: directory Tmp/test-runtime/gomodcache/github.com/dgryski/go-rendezvous@v0.0.0-20200823014737-9f7001d12a5f outside main module or its selected dependencies）。/Tmp/は.gitignore済みでuntrackedのためgo list解決段階で失敗し、RENCROW_RESILIENCE_REPO_DIRへgo test ./...を使うbuildInstallAndRestart（cmd/rencrow/resilience_commands.go:561）がincident時に必ずfailedする。過去2時間のrepair試行は0件で実害未発生、本IUのscope外",
+      "新設したCountComplexityIdentityOrphansの運用checkがconfig/checks/core.json（正本）と~/.local/share/rencrow/checks/core.json（配備）の双方に未登録（complexityを参照するcheck 0件）。強制はstore APIとowner testsだけで、固定Check Planのgateではない",
+      "loopback viewer route /viewer/complexity-hotspots と /scan に認証middlewareが効いているか未確認（grepでWithAuth/RequireAuth等の該当なし）",
+      "再配備したHEAD 082ad99のビルドはdocs/調査の未コミット差分を含むためvcs.modified=true（*.go・go.mod・go.sum・config/・cmd/・internal/にdirty 0件であることをgit statusで確認済み）。cutover receiptのsourceは8a867f1のままなので、receiptとbinaryのsource紐付けはStep13と同様に未完了"
+    ]
+  },
   "input": {
     "base_revision": "8a867f1",
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-14-evidenceidとmemoryid",
@@ -106,5 +129,57 @@
       "failure_action": "reopen the failed Identity ledger row"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [
+    {
+      "kind": "complexity_orphan_backfill",
+      "table": "core/databases/ops/complexity_hotspot.db::{complexity_hotspot, complexity_hotspot_evidence, complexity_report_artifact}",
+      "rows_updated": 8,
+      "rows_by_table": {
+        "complexity_hotspot.scan_id": 3,
+        "complexity_hotspot_evidence.hotspot_id": 3,
+        "complexity_report_artifact.scan_id": 2
+      },
+      "writer_stop": "rencrow-resilience.timer停止後にrencrow.serviceを停止し:18790の非listenを確認して実行",
+      "pre_sha256": "decebfc7b07d407fb3f335d4c0b1f32a94495fae438bc1ad785ee296b17ef8a3",
+      "post_sha256": "1bf784a4746f67b9542e65a935523620302cb4f4a695dabe1653310e477fd7e7",
+      "integrity_check": "ok",
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step14-evidence-memory-20260907T035720Z/orphan-backfill-20260917T1350Z"
+    },
+    {
+      "kind": "complexity_identity_orphan_count",
+      "api": "CountComplexityIdentityOrphans（owner実装）および同queryを集計した/tmp/s14_orphan_count.py",
+      "result": "backfill直後とCORE再起動後の両集計でTOTAL_ORPHANS=0（scan_events 2、hotspots 4、evidence 4、artifacts 3、invalid_index 0、missing 0）",
+      "db": "/srv/rencrow/db/core/databases/ops/complexity_hotspot.db"
+    },
+    {
+      "kind": "step14_head_redeploy",
+      "source_head": "082ad99f17cf249a4be1be040eb0d2c369a826bd",
+      "build_reproducibility": "/tmp/rencrow-head-082ad99を2回go buildしてsha256 5d010023d107eb0a3b846f52a7ea5f22d2db980391cf235101a70f1388deb584が一致（同revisionの再ビルドが決定論的であるため配備物の同一性検証に使える）",
+      "previous_binary_sha256": "2eb77d49447220949dcb91110a2529a5fc2e90102fc1f730d9d67ce4f574127b",
+      "installed_binary_sha256": "5d010023d107eb0a3b846f52a7ea5f22d2db980391cf235101a70f1388deb584",
+      "installed_vcs_revision": "082ad99f17cf249a4be1be040eb0d2c369a826bd",
+      "installed_vcs_modified": "true（docs/調査のdirtyのみ）",
+      "writer_stop": "rencrow-resilience.timer停止後にrencrow.serviceを停止し:18790の非listenを確認してswap",
+      "ready_after_restart": "2026-09-17T14:38:09 UTCにready true（約140s）、MainPID 1922844",
+      "runtime_route_after_redeploy": "GET /viewer/complexity-hotspots 200でscans 2 / hotspots 4 / evidence 4 / reports 3、step14_orphan_route_20260917が残存しTOTAL_ORPHANS=0",
+      "timer_restored": "rencrow-resilience.timerをactiveへ復帰",
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step14-evidence-memory-20260907T035720Z/redeploy-head-082ad99-20260917T143802Z"
+    },
+    {
+      "kind": "step14_orphan_index_fix_deploy",
+      "deployment_receipt_status": "passed",
+      "deployment_source_head": "8a867f1f96623ac8f3483be0abaf2bba347fc9e8",
+      "deployment_checksum": "c03a15f7cea656d604522f9d8ef643d10db6c664783be94bfff4ff7220b0a4f2",
+      "orphan_fix_source_head": "40393d1417644b4a018f36b6192668a568f17940",
+      "orphan_fix_uncommitted_diff_sha256": "d7638caf78e31e4324029843a07ac659470b684f162ab4253cfbbb2d7fd5e2cb",
+      "previous_binary_sha256": "24a41febd173f830baa0131e5a592b5eeadc5ca2e25aa4270c89c866b1d69ec7",
+      "installed_binary_sha256": "2eb77d49447220949dcb91110a2529a5fc2e90102fc1f730d9d67ce4f574127b",
+      "receipt_path": "/home/nyukimi/.rencrow/backup/recovery/step14-evidence-memory-20260907T035720Z/step14-deployment-receipt.json"
+    },
+    {
+      "kind": "viewer_runtime_route",
+      "result": "認証loopback POST /viewer/complexity-hotspots/scan（scan_id=step14_orphan_route_20260917）がHTTP 201を返し、typed evd_のevidence 1件とhotspot 1件、art_complexity_step14_orphan_route_20260917を issuance、index列がpayloadと一致してTOTAL_ORPHANS=0を維持。systemctl --user restart後もreadyへ復帰しGET /viewer/complexity-hotspots 200で同scanが残存",
+      "evidence": "/tmp/s14_scan_post.jsonと/tmp/s14_get_after_restart.json（2026-09-17T14:02Z〜14:08Zにrevision 40393d1＋未コミット差分で取得）"
+    }
+  ]
 }
