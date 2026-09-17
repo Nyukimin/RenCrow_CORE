@@ -1,12 +1,12 @@
 {
   "schema_version": "rencrow.check_plan.v1",
   "purpose": "identity-step12-request-response",
-  "phase": "post-restart-partial",
-  "evaluated_at": "2026-09-15T22:37:00Z",
+  "phase": "post-deploy-route-verified",
+  "evaluated_at": "2026-09-17T06:26:00Z",
   "outcome": {
-    "status": "partial",
-    "source_revision": "32ba5643b7cff85be31e35ca1c38ebb61fc8b6b5",
-    "deployed_binary_sha256": "888b4872dbe455ef1f242c8f8796240a4d9fe77ac0bdb2186e659b9e320897d7",
+    "status": "complete",
+    "source_revision": "ad93eaa3b1419321ba8eea896f5be00d0f870132",
+    "deployed_binary_sha256": "24a41febd173f830baa0131e5a592b5eeadc5ca2e25aa4270c89c866b1d69ec7",
     "passed": [
       "focused Request Response Action Attempt and restart recovery tests",
       "go test ./cmd/... ./internal/... ./modules/... -count=1",
@@ -17,13 +17,13 @@
       "Vision real Viewer attachment Request Response E2E",
       "controlled CORE restart and persisted receipt re-read",
       "canonical ID format orphan response and terminal-sent consistency audit",
-      "Step 12 legacy architecture zero scans"
+      "Step 12 legacy architecture zero scans",
+      "TTS synthesis through the canonical entry route on the Irodori-TTS-v4.1-Anime model persisted CORE Action Attempt Request and Response receipts with linked ResponseIDs and tts_* ExternalRefs",
+      "deployed TTS Gateway echoes the canonical caller request_id so CORE accepts the response and records the provider tts_* id only as ExternalRef and target_request_id with zero identity mismatches",
+      "authenticated Viewer chat passes the orchestration boundary after the legacy context_pack.run_id NOT NULL schema migration",
+      "browser-only entry autonomy plans no tts-synthesize or tts-playback step so one request no longer synthesizes audio twice and workspace tts wav growth was zero"
     ],
-    "open": [
-      "TTS post-deploy synthesis E2E through CORE Action/Attempt receipts remains unclosed: IdleChat/Voice cannot keep Gemma4 and Irodori on the same RTX 5060 Ti at once, so canonical CORE TTS receipts were not persisted",
-      "real TTS Gateway synthesis succeeded after approved GPU swap, but echoed request_id is provider-owned tts_* while CORE sends canonical req_* in X-RenCrow-TTS-Request-Id and client_request_id is null, so CORE identity mismatch would reject the response",
-      "authenticated Viewer chat reaches orchestration but fails before LLM transport on the pre-existing context_pack.run_id NOT NULL constraint"
-    ]
+    "open": []
   },
   "input": {
     "base_revision": "2f67d83",
@@ -164,6 +164,24 @@
     {
       "kind": "tts_idlechat_route_probe",
       "result": "cmd-idlechat start plus portal-idlechat playback reached topic_ready but stalled before TTS because Gemma4 was stopped for Irodori; journal showed topic_generation_failed TARGET_UNAVAILABLE/context canceled and heartbeat_idlechat_sequence_stall; no tts.* transport receipts were written"
+    },
+    {
+      "kind": "tts_runtime",
+      "request_id": "req_01a0ae0b-4367-7172-870a-7d70e71d5634",
+      "response_id": "rsp_01a0ae0b-5400-74c0-9689-810c8cf33274",
+      "task_id": "tsk_01a0ae0a-ecc9-7879-b57c-5a7bc3b66cc6",
+      "run_id": "run_01a0ae0b-0a24-727c-942b-bcafb9239ba4",
+      "action_id": "act_01a0ae0b-0dca-7886-a9b3-734cd2777942",
+      "attempt_id": "att_01a0ae0b-0dca-78a5-ada5-cc61f28a8cca",
+      "result": "responded; sequence 1 and 2 of the same Attempt each minted a distinct RequestID and each received a linked ResponseID; ExternalRef tts_20260917_152609_813605; synthesized by Irodori-TTS-v4.1-Anime on 192.168.1.205:7880 via the canonical TTS Gateway 7870 after the browser-only single-synthesis change"
+    },
+    {
+      "kind": "tts_duplicate_synthesis_removal",
+      "result": "entry autonomy no longer plans tts-synthesize or tts-playback in browser-only mode (commits 6163aa3 and ad93eaa); post-deploy entry TTS run wrote only two tts.synthesis transport receipts from the orchestrator session and zero new files under workspace tts, where previously a full-text entry wav was also generated without reaching the browser playback path"
+    },
+    {
+      "kind": "context_pack_run_id_migration",
+      "result": "commit d70c4d6 rebuilds a legacy context_pack table that still declares run_id NOT NULL; live superagent_harness.db reports pragma_table_info run_id notnull 0 and authenticated Viewer chat reached the transport boundary"
     }
   ]
 }
