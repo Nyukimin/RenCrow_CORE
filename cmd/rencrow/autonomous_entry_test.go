@@ -207,7 +207,10 @@ func TestBuildTTSEntryRuntime_BrowserOnlyConfiguredWithoutLocalPlayer(t *testing
 	}
 }
 
-func TestProcessEntryRequest_TTSBrowserOnlySkipsLocalPlayback(t *testing.T) {
+// Browser-only deployments have no local player: the orchestrator TTS session owns
+// synthesis and delivery to the browser, so the autonomous entry must not synthesize
+// a second copy of the same answer (Semantic Duplication / GPU double synthesis).
+func TestProcessEntryRequest_TTSBrowserOnlyDoesNotSynthesize(t *testing.T) {
 	proc := &fakeEntryProcessor{resp: orchestrator.ProcessMessageResponse{Response: "短い確認です"}}
 	reportPath := filepath.Join(t.TempDir(), "execution_report.jsonl")
 	req := entryadapter.Request{SessionID: "s1", Channel: "viewer", UserID: "u1", Message: "tts 短い確認"}
@@ -226,8 +229,8 @@ func TestProcessEntryRequest_TTSBrowserOnlySkipsLocalPlayback(t *testing.T) {
 	if proc.calls != 1 {
 		t.Fatalf("browser-only TTS must keep the orchestrator route, got %d calls", proc.calls)
 	}
-	if synth.last.Text != "短い確認です" {
-		t.Fatalf("spoke %q, want orchestrator response text", synth.last.Text)
+	if synth.calls != 0 {
+		t.Fatalf("browser-only TTS must not synthesize locally, got %d synthesis calls", synth.calls)
 	}
 	if !strings.Contains(res.EvidenceRef, "execution_report:") {
 		t.Fatalf("expected evidence ref, got %q", res.EvidenceRef)
@@ -236,8 +239,11 @@ func TestProcessEntryRequest_TTSBrowserOnlySkipsLocalPlayback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected report file, got %v", err)
 	}
-	if !strings.Contains(string(b), `"status":"passed"`) || !strings.Contains(string(b), `"tts_provider":"tts-gateway"`) {
-		t.Fatalf("expected passed TTS report, got: %s", string(b))
+	if !strings.Contains(string(b), `"status":"passed"`) {
+		t.Fatalf("expected passed report, got: %s", string(b))
+	}
+	if strings.Contains(string(b), `"tts-synthesize"`) {
+		t.Fatalf("browser-only TTS must not plan a synthesis step, got: %s", string(b))
 	}
 	if strings.Contains(string(b), `"tts-playback"`) {
 		t.Fatalf("browser-only TTS must not plan a local playback step, got: %s", string(b))
@@ -248,12 +254,14 @@ func TestProcessEntryRequest_TTSBrowserOnlySkipsLocalPlayback(t *testing.T) {
 }
 
 type recordingSynthStub struct {
-	out  ttsinfra.SynthesisOutput
-	err  error
-	last ttsinfra.SynthesisInput
+	out   ttsinfra.SynthesisOutput
+	err   error
+	last  ttsinfra.SynthesisInput
+	calls int
 }
 
 func (s *recordingSynthStub) Synthesize(_ context.Context, in ttsinfra.SynthesisInput) (ttsinfra.SynthesisOutput, error) {
+	s.calls++
 	s.last = in
 	return s.out, s.err
 }

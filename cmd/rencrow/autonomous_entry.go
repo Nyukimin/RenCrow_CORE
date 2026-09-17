@@ -199,11 +199,11 @@ func buildTTSEntryRuntime(cfg *config.Config) ttsEntryRuntime {
 
 func (p ttsEntryPlanner) Plan(_ context.Context, _ domaincontract.Contract) (autonomousapp.Plan, error) {
 	steps := []autonomousapp.Step{{Name: "process-message"}}
-	if p.requireTTS {
+	// Browser-only deployments: the orchestrator TTS session owns synthesis and delivery
+	// to the browser, so the autonomous entry must not synthesize a second copy.
+	if p.requireTTS && p.localPlayback {
 		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"})
-		if p.localPlayback {
-			steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
-		}
+		steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
 	}
 	return autonomousapp.Plan{Steps: steps}, nil
 }
@@ -221,6 +221,9 @@ func (a *ttsEntryApplier) Apply(ctx context.Context, step autonomousapp.Step) er
 		a.latest = resp
 		return nil
 	case "tts-synthesize":
+		if !a.runtime.localPlayback() {
+			return fmt.Errorf("tts-synthesize step is not planned without a local player")
+		}
 		text := strings.TrimSpace(a.latest.Response)
 		if text == "" {
 			text = strings.TrimSpace(a.req.Message)
@@ -272,11 +275,9 @@ func (v ttsEntryVerifier) Verify(_ context.Context, _ domaincontract.Contract) (
 
 func (r ttsEntryRepairer) Repair(_ context.Context, _ domaincontract.Contract, _ string) (autonomousapp.Plan, error) {
 	steps := []autonomousapp.Step{{Name: "retry-process-message"}}
-	if r.requireTTS {
+	if r.requireTTS && r.localPlayback {
 		steps = append(steps, autonomousapp.Step{Name: "tts-synthesize"})
-		if r.localPlayback {
-			steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
-		}
+		steps = append(steps, autonomousapp.Step{Name: "tts-playback"})
 	}
 	return autonomousapp.Plan{Steps: steps}, nil
 }
