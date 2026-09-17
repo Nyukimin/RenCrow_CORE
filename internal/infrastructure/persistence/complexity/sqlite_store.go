@@ -82,7 +82,7 @@ func (s *SQLiteStore) SaveScanEvent(ctx context.Context, item domaincomplexity.S
 	if err := domaincomplexity.ValidateScanEvent(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "complexity_scan_event", "scan_id", item.ScanID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "complexity_scan_event", "scan_id", item.ScanID, "", "", item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListScanEvents(ctx context.Context, limit int) ([]domaincomplexity.ScanEvent, error) {
@@ -93,7 +93,7 @@ func (s *SQLiteStore) SaveHotspot(ctx context.Context, item domaincomplexity.Hot
 	if err := domaincomplexity.ValidateHotspot(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "complexity_hotspot", "hotspot_id", item.HotspotID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "complexity_hotspot", "hotspot_id", item.HotspotID, "scan_id", item.ScanID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListHotspots(ctx context.Context, limit int) ([]domaincomplexity.Hotspot, error) {
@@ -130,7 +130,7 @@ func (s *SQLiteStore) SaveHotspotEvidence(ctx context.Context, item domaincomple
 	if err := domaincomplexity.ValidateHotspotEvidence(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "complexity_hotspot_evidence", "evidence_id", string(item.EvidenceID), item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "complexity_hotspot_evidence", "evidence_id", string(item.EvidenceID), "hotspot_id", item.HotspotID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListHotspotEvidence(ctx context.Context, limit int) ([]domaincomplexity.HotspotEvidence, error) {
@@ -141,7 +141,7 @@ func (s *SQLiteStore) SaveReportArtifact(ctx context.Context, item domaincomplex
 	if err := domaincomplexity.ValidateReportArtifact(item); err != nil {
 		return err
 	}
-	return s.save(ctx, "complexity_report_artifact", "artifact_id", item.ArtifactID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	return s.save(ctx, "complexity_report_artifact", "artifact_id", item.ArtifactID, "scan_id", item.ScanID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
 }
 
 func (s *SQLiteStore) ListReportArtifacts(ctx context.Context, limit int) ([]domaincomplexity.ReportArtifact, error) {
@@ -174,7 +174,12 @@ func (s *SQLiteStore) FindReportArtifactByID(ctx context.Context, artifactID str
 	return item, true, nil
 }
 
-func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, createdAt string, item any) error {
+// save writes one payload row together with the identity index column that the
+// payload is authoritative for. Passing an empty indexColumn keeps a table that
+// has no parent reference. The index value must come from the same record the
+// payload carries, otherwise the column cannot prove that the row is not an
+// orphan, which is the Step 14 completion rule "Evidence orphan zero".
+func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, indexColumn string, indexValue string, createdAt string, item any) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("complexity sqlite store is closed")
 	}
@@ -182,9 +187,98 @@ func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, i
 	if err != nil {
 		return err
 	}
-	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, created_at, payload) VALUES (?, ?, ?)`, table, idColumn)
-	_, err = s.db.ExecContext(ctx, query, id, createdAt, string(payload))
+	if indexColumn == "" {
+		query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, created_at, payload) VALUES (?, ?, ?)`, table, idColumn)
+		_, err = s.db.ExecContext(ctx, query, id, createdAt, string(payload))
+		return err
+	}
+	query := fmt.Sprintf(`INSERT OR REPLACE INTO %s (%s, %s, created_at, payload) VALUES (?, ?, ?, ?)`,
+		table, idColumn, indexColumn)
+	_, err = s.db.ExecContext(ctx, query, id, indexValue, createdAt, string(payload))
 	return err
+}
+
+// ComplexityIdentityOrphanCounts reports, per Step 14 complexity owner, how many
+// persisted rows fail the identity reference rules. A row whose index column is
+// empty or disagrees with its payload counts as InvalidIndex, and a row that
+// references a parent record that does not exist counts as Missing*.
+type ComplexityIdentityOrphanCounts struct {
+	ScanEvents             int `json:"scan_events"`
+	Hotspots               int `json:"hotspots"`
+	Evidence               int `json:"evidence"`
+	Artifacts              int `json:"artifacts"`
+	HotspotsMissingScan    int `json:"hotspots_missing_scan"`
+	HotspotsInvalidIndex   int `json:"hotspots_invalid_index"`
+	EvidenceMissingHotspot int `json:"evidence_missing_hotspot"`
+	EvidenceInvalidIndex   int `json:"evidence_invalid_index"`
+	ArtifactsMissingScan   int `json:"artifacts_missing_scan"`
+	ArtifactsInvalidIndex  int `json:"artifacts_invalid_index"`
+}
+
+const complexityOrphanCountQuery = `
+WITH hotspot_orphans AS (
+	SELECT
+		CASE WHEN COALESCE(hotspot.scan_id, '') = ''
+			OR hotspot.scan_id <> COALESCE(json_extract(hotspot.payload, '$.scan_id'), '')
+			THEN 1 ELSE 0 END AS invalid_index,
+		CASE WHEN COALESCE(hotspot.scan_id, '') <> ''
+			AND scan.scan_id IS NULL
+			THEN 1 ELSE 0 END AS missing_parent
+	FROM complexity_hotspot hotspot
+	LEFT JOIN complexity_scan_event scan ON scan.scan_id = hotspot.scan_id
+),
+evidence_orphans AS (
+	SELECT
+		CASE WHEN COALESCE(evidence.hotspot_id, '') = ''
+			OR evidence.hotspot_id <> COALESCE(json_extract(evidence.payload, '$.hotspot_id'), '')
+			THEN 1 ELSE 0 END AS invalid_index,
+		CASE WHEN COALESCE(evidence.hotspot_id, '') <> ''
+			AND hotspot.hotspot_id IS NULL
+			THEN 1 ELSE 0 END AS missing_parent
+	FROM complexity_hotspot_evidence evidence
+	LEFT JOIN complexity_hotspot hotspot ON hotspot.hotspot_id = evidence.hotspot_id
+),
+artifact_orphans AS (
+	SELECT
+		CASE WHEN COALESCE(artifact.scan_id, '') = ''
+			OR artifact.scan_id <> COALESCE(json_extract(artifact.payload, '$.scan_id'), '')
+			THEN 1 ELSE 0 END AS invalid_index,
+		CASE WHEN COALESCE(artifact.scan_id, '') <> ''
+			AND scan.scan_id IS NULL
+			THEN 1 ELSE 0 END AS missing_parent
+	FROM complexity_report_artifact artifact
+	LEFT JOIN complexity_scan_event scan ON scan.scan_id = artifact.scan_id
+)
+SELECT
+	(SELECT count(*) FROM complexity_scan_event),
+	(SELECT count(*) FROM complexity_hotspot),
+	(SELECT count(*) FROM complexity_hotspot_evidence),
+	(SELECT count(*) FROM complexity_report_artifact),
+	(SELECT COALESCE(sum(missing_parent), 0) FROM hotspot_orphans),
+	(SELECT COALESCE(sum(invalid_index), 0) FROM hotspot_orphans),
+	(SELECT COALESCE(sum(missing_parent), 0) FROM evidence_orphans),
+	(SELECT COALESCE(sum(invalid_index), 0) FROM evidence_orphans),
+	(SELECT COALESCE(sum(missing_parent), 0) FROM artifact_orphans),
+	(SELECT COALESCE(sum(invalid_index), 0) FROM artifact_orphans)`
+
+// CountComplexityIdentityOrphans counts the rows that violate the Step 14
+// identity reference rules. A total greater than one means an orphan that no
+// owner test can see, so callers treat every non-zero field as a Step 14 failure.
+func (s *SQLiteStore) CountComplexityIdentityOrphans(ctx context.Context) (ComplexityIdentityOrphanCounts, error) {
+	var counts ComplexityIdentityOrphanCounts
+	if s == nil || s.db == nil {
+		return counts, fmt.Errorf("complexity sqlite store is closed")
+	}
+	err := s.db.QueryRowContext(ctx, complexityOrphanCountQuery).Scan(
+		&counts.ScanEvents, &counts.Hotspots, &counts.Evidence, &counts.Artifacts,
+		&counts.HotspotsMissingScan, &counts.HotspotsInvalidIndex,
+		&counts.EvidenceMissingHotspot, &counts.EvidenceInvalidIndex,
+		&counts.ArtifactsMissingScan, &counts.ArtifactsInvalidIndex,
+	)
+	if err != nil {
+		return ComplexityIdentityOrphanCounts{}, err
+	}
+	return counts, nil
 }
 
 func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, limit int) ([]T, error) {

@@ -264,3 +264,178 @@ func TestSQLiteStoreConfiguresSingleConnectionAndBusyTimeout(t *testing.T) {
 		t.Fatalf("busy timeout=%d want=5000", busyTimeout)
 	}
 }
+
+// TestSQLiteStoreWritesIdentityIndexColumns verifies that the Step 14 identity
+// index columns are written from the canonical payload value instead of being
+// left empty by the shared insert path. Empty index columns make an Evidence
+// orphan undetectable, so Step 14 requires the index to carry the same value as
+// the payload it indexes.
+func TestSQLiteStoreWritesIdentityIndexColumns(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "complexity.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 17, 9, 0, 0, 0, time.UTC)
+	scan := domaincomplexity.ScanEvent{
+		ScanID:        "scan_index_1",
+		Repo:          "repo",
+		Mode:          "report_only",
+		FilesScanned:  1,
+		HotspotsFound: 1,
+		Status:        "completed",
+		CreatedAt:     now,
+		CompletedAt:   now,
+	}
+	hotspot := domaincomplexity.Hotspot{
+		HotspotID:           "hotspot_index_1",
+		ScanID:              "scan_index_1",
+		FilePath:            "src/app.go",
+		HotspotType:         "nested_loop",
+		EstimatedComplexity: "O(n^2)",
+		RiskLevel:           "medium",
+		Summary:             "nested loop",
+		CreatedAt:           now,
+	}
+	evidenceID := modulecore.NewEvidenceID()
+	evidence := domaincomplexity.HotspotEvidence{
+		EvidenceID: evidenceID,
+		HotspotID:  "hotspot_index_1",
+		FilePath:   "src/app.go",
+		CreatedAt:  now,
+	}
+	report := domaincomplexity.ReportArtifact{
+		ArtifactID: "art_complexity_scan_index_1",
+		ScanID:     "scan_index_1",
+		Type:       "complexity_hotspot_report",
+		Title:      "Complexity Hotspot Report",
+		Status:     "generated",
+		Content:    "# Complexity Hotspot Report",
+		CreatedAt:  now,
+	}
+	for _, save := range []func() error{
+		func() error { return store.SaveScanEvent(ctx, scan) },
+		func() error { return store.SaveHotspot(ctx, hotspot) },
+		func() error { return store.SaveHotspotEvidence(ctx, evidence) },
+		func() error { return store.SaveReportArtifact(ctx, report) },
+	} {
+		if err := save(); err != nil {
+			t.Fatalf("save complexity record: %v", err)
+		}
+	}
+	for _, item := range []struct {
+		table, idColumn, idValue, indexColumn, indexValue string
+	}{
+		{"complexity_hotspot", "hotspot_id", "hotspot_index_1", "scan_id", "scan_index_1"},
+		{"complexity_hotspot_evidence", "evidence_id", string(evidenceID), "hotspot_id", "hotspot_index_1"},
+		{"complexity_report_artifact", "artifact_id", "art_complexity_scan_index_1", "scan_id", "scan_index_1"},
+	} {
+		var stored string
+		err := store.db.QueryRow("SELECT "+item.indexColumn+" FROM "+item.table+" WHERE "+item.idColumn+" = ?",
+			item.idValue).Scan(&stored)
+		if err != nil {
+			t.Fatalf("read %s.%s: %v", item.table, item.indexColumn, err)
+		}
+		if stored != item.indexValue {
+			t.Fatalf("%s.%s = %q want %q", item.table, item.indexColumn, stored, item.indexValue)
+		}
+		var payloadValue string
+		err = store.db.QueryRow("SELECT json_extract(payload, '$."+item.indexColumn+"') FROM "+item.table+
+			" WHERE "+item.idColumn+" = ?", item.idValue).Scan(&payloadValue)
+		if err != nil {
+			t.Fatalf("read payload %s of %s: %v", item.indexColumn, item.table, err)
+		}
+		if payloadValue != stored {
+			t.Fatalf("%s index column %q disagrees with payload %q", item.table, stored, payloadValue)
+		}
+	}
+}
+
+// TestCountComplexityIdentityOrphansReportsEmptyIndexColumns verifies the
+// mechanical enforcement of the Step 14 completion rule "Evidence orphan zero":
+// an index column that is empty or disagrees with its payload is an orphan, and
+// a row that references a missing parent is reported as well.
+func TestCountComplexityIdentityOrphansReportsEmptyIndexColumns(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "complexity.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 17, 9, 30, 0, 0, time.UTC)
+	if err := store.SaveScanEvent(ctx, domaincomplexity.ScanEvent{
+		ScanID: "scan_orphan_1", Repo: "repo", Mode: "report_only",
+		FilesScanned: 1, HotspotsFound: 1, Status: "completed",
+		CreatedAt: now, CompletedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveScanEvent() error = %v", err)
+	}
+	if err := store.SaveHotspot(ctx, domaincomplexity.Hotspot{
+		HotspotID: "hotspot_orphan_1", ScanID: "scan_orphan_1",
+		FilePath: "src/app.go", HotspotType: "nested_loop",
+		EstimatedComplexity: "O(n^2)", RiskLevel: "medium",
+		Summary: "nested loop", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveHotspot() error = %v", err)
+	}
+	if err := store.SaveHotspotEvidence(ctx, domaincomplexity.HotspotEvidence{
+		EvidenceID: modulecore.NewEvidenceID(), HotspotID: "hotspot_orphan_1",
+		FilePath: "src/app.go", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveHotspotEvidence() error = %v", err)
+	}
+	if err := store.SaveReportArtifact(ctx, domaincomplexity.ReportArtifact{
+		ArtifactID: "art_complexity_scan_orphan_1", ScanID: "scan_orphan_1",
+		Type: "complexity_hotspot_report", Title: "report", Status: "generated",
+		Content: "# report", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("SaveReportArtifact() error = %v", err)
+	}
+	counts, err := store.CountComplexityIdentityOrphans(ctx)
+	if err != nil {
+		t.Fatalf("CountComplexityIdentityOrphans() error = %v", err)
+	}
+	if counts.Hotspots != 1 || counts.Evidence != 1 || counts.Artifacts != 1 {
+		t.Fatalf("row counts = %+v want 1/1/1", counts)
+	}
+	if counts.EvidenceMissingHotspot != 0 || counts.EvidenceInvalidIndex != 0 ||
+		counts.HotspotsMissingScan != 0 || counts.HotspotsInvalidIndex != 0 ||
+		counts.ArtifactsMissingScan != 0 || counts.ArtifactsInvalidIndex != 0 {
+		t.Fatalf("clean store reported orphans: %+v", counts)
+	}
+
+	// A legacy row written before the identity index columns were maintained is
+	// an orphan and must be reported.
+	if _, err := store.db.Exec(`INSERT INTO complexity_hotspot_evidence
+		(evidence_id, hotspot_id, created_at, payload) VALUES (?, '', ?, ?)`,
+		"evd_legacy_orphan", "2026-08-14T13:39:45.570764482Z",
+		`{"evidence_id":"evd_legacy_orphan","hotspot_id":"hotspot_orphan_1","file_path":"src/app.go","created_at":"2026-08-14T13:39:45.570764482Z"}`); err != nil {
+		t.Fatalf("insert legacy orphan row: %v", err)
+	}
+	counts, err = store.CountComplexityIdentityOrphans(ctx)
+	if err != nil {
+		t.Fatalf("CountComplexityIdentityOrphans() after legacy row: %v", err)
+	}
+	if counts.Evidence != 2 {
+		t.Fatalf("evidence rows = %d want 2", counts.Evidence)
+	}
+	if counts.EvidenceInvalidIndex != 1 {
+		t.Fatalf("evidence invalid index rows = %d want 1: %+v", counts.EvidenceInvalidIndex, counts)
+	}
+
+	// A row that references a parent that does not exist is a missing orphan.
+	if _, err := store.db.Exec(`INSERT INTO complexity_hotspot_evidence
+		(evidence_id, hotspot_id, created_at, payload) VALUES (?, ?, ?, ?)`,
+		"evd_missing_parent", "hotspot_gone", "2026-09-17T09:31:00Z",
+		`{"evidence_id":"evd_missing_parent","hotspot_id":"hotspot_gone","file_path":"src/app.go","created_at":"2026-09-17T09:31:00Z"}`); err != nil {
+		t.Fatalf("insert missing-parent row: %v", err)
+	}
+	counts, err = store.CountComplexityIdentityOrphans(ctx)
+	if err != nil {
+		t.Fatalf("CountComplexityIdentityOrphans() after missing parent: %v", err)
+	}
+	if counts.EvidenceMissingHotspot != 1 {
+		t.Fatalf("evidence missing hotspot rows = %d want 1: %+v", counts.EvidenceMissingHotspot, counts)
+	}
+}
