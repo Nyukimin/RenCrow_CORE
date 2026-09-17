@@ -22,7 +22,7 @@
     "open": [
       "go test ./...がこのrepositoryでは構造的にFAIL（EXIT=1、239 packagesはok、pattern ./...: directory Tmp/test-runtime/gomodcache/github.com/dgryski/go-rendezvous@v0.0.0-20200823014737-9f7001d12a5f outside main module or its selected dependencies）。/Tmp/は.gitignore済みでuntrackedのためgo list解決段階で失敗し、RENCROW_RESILIENCE_REPO_DIRへgo test ./...を使うbuildInstallAndRestart（cmd/rencrow/resilience_commands.go:561）がincident時に必ずfailedする。過去2時間のrepair試行は0件で実害未発生、本IUのscope外",
       "新設したCountComplexityIdentityOrphansの運用checkがconfig/checks/core.json（正本）と~/.local/share/rencrow/checks/core.json（配備）の双方に未登録（complexityを参照するcheck 0件）。強制はstore APIとowner testsだけで、固定Check Planのgateではない",
-      "loopback viewer route /viewer/complexity-hotspots と /scan に認証middlewareが効いているか未確認（grepでWithAuth/RequireAuth等の該当なし）",
+      "loopback viewer routeの認証middlewareはper-routeには存在しない（main.go:195のwithTailscaleViewerOnlyGuard(withInteractionProfileGuard(mux))の2層のみ、web/registrar.go:35-39はmux.HandleFuncへ素のHandlerFuncを直接登録）。実測でもヘッダ無しGETは200、自己申告profileではallow listにより403。COREが0.0.0.0:18790でlistenするため認証scopeはnetwork境界とguardの組合せ依存で、invariantとして未強制",
       "再配備したHEAD 082ad99のビルドはdocs/調査の未コミット差分を含むためvcs.modified=true（*.go・go.mod・go.sum・config/・cmd/・internal/にdirty 0件であることをgit statusで確認済み）。cutover receiptのsourceは8a867f1のままなので、receiptとbinaryのsource紐付けはStep13と同様に未完了"
     ]
   },

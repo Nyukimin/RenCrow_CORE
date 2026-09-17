@@ -45,7 +45,7 @@ Step 14 の完了条件①EvidenceID 文字列派生 0、②Evidence orphan 0、
 
 ## 未確認
 
-- loopback viewer route `/viewer/complexity-hotspots` と `/scan` に認証 middleware が効いているか（grep で `WithAuth` / `RequireAuth` 等の該当なしと読めるが断定しない）。
+- ~~loopback viewer route の認証 middleware~~ 確定済み（2026-09-17 15:0x UTC 実測）。top-level handler stack は `cmd/rencrow/main.go:195` の `withTailscaleViewerOnlyGuard(withInteractionProfileGuard(mux))` の 2 層のみで、`internal/features/web/registrar.go:35-39` の complexity-hotspots 5 route は `mux.HandleFunc` へ素の `http.HandlerFunc` を直接登録する（per-route の認証 wrapper なし）。実測でもヘッダ無し GET は 200 を返し、`X-RenCrow-Client` と `X-RenCrow-Interaction-Profile` を自己申告した場合は profile の allow list で 403 になる。つまり **loopback はヘッダ無しで読むと guard を素通りし、guard は host（`.ts.net`）と自己申告 profile ベース**。CORE が `0.0.0.0:18790` で listen する現構成では loopback 以外の origin も同条件で読めるため、認証scopeの保証は network 境界と guard の組合せ依存であり invariant として強制されていない（恒久措置は未実施）。
 - cutover receipt の source 紐付け。receipt に記録された source は `8a867f1` のままで、現行 binary は HEAD `082ad99`（`vcs.modified=true` は `docs/調査/` の dirty のみ、`*.go`・`go.mod`・`go.sum`・`config/`・`cmd/`・`internal/` は dirty 0 件を `git status` で確認）。Step 13 と同種の残件。
 - resilience auto-repair が実際に incident へ落ちて挙動がどう記録されるか（過去 2 時間は試行 0 件で未観測）。
 - `CountComplexityIdentityOrphans` を運用 check へ登録した場合の所要時間と失敗時の consumer（未測定）。
@@ -56,4 +56,4 @@ Step 14 の完了条件①EvidenceID 文字列派生 0、②Evidence orphan 0、
 1. ~~未コミット 2 ファイルを論理的な日本語 commit にする~~ 実施済み（`082ad99`）し、現行 revision 相当の再配備証跡を `redeploy-head-082ad99-20260917T143802Z` に残した。残りは cutover receipt 側の source 更新。
 2. `CountComplexityIdentityOrphans` を `config/checks/core.json` の check として登録し、Check Plan 側で gate を持つ。
 3. resilience の `go test ./...` を、この仓库で成立する形式（単一 package または `./internal/...` 列挙、もしくは gitignore 済み cache dir の扱いを修正）へ寄せる。現運用で repair が成功した記録が無い点を先に確認する。
-4. loopback viewer route の認証 middleware 有無を owner route 定義から確定させる。
+4. ~~loopback viewer route の認証 middleware 有無を owner route 定義から確定させる~~ 実施済み。上記の実測で per-route 認証 wrapper が無いことを確認。残りは `0.0.0.0:18790` listen 现状の network 境界のみで保証されている点の恒久措置（bind 方針の決定、または check による強制）。
