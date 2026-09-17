@@ -21,6 +21,14 @@ explicit owner inputs and return `blocked` when those inputs or the canonical
 route are unavailable. No fallback route, test double, restart, build, deploy,
 or external mutation is performed.
 
+The complexity identity orphan check is the one category that reads a live
+database: it opens only the database named by `--complexity-db` under
+`PRAGMA query_only` and counts identity index columns that are empty, disagree
+with their payload, or reference a missing parent. There is no live-database
+discovery and no default path, so a missing owner input is `blocked` rather
+than a pass. Evidence carries bounded row and orphan counts plus the database
+base name, never the supplied path.
+
 Step 03 DCI acceptance uses three fixed checks. The pre check records a fresh
 authenticated Shiro route result, the post check binds the same request after a
 canonical service restart, and `core-dci-identity-final` strictly joins those

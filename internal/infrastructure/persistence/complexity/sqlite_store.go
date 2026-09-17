@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	domaincomplexity "github.com/Nyukimin/RenCrow_CORE/internal/domain/complexity"
 	_ "modernc.org/sqlite"
@@ -14,6 +17,56 @@ import (
 
 type SQLiteStore struct {
 	db *sql.DB
+}
+
+// OpenSQLiteStoreReadOnly opens an existing complexity database for counting
+// without creating directories, migrating, or writing anything. The CORE owner
+// verifier uses this entry point so a live database is only observed under
+// PRAGMA query_only; a missing or non-regular path fails closed instead of
+// falling back to a default location.
+func OpenSQLiteStoreReadOnly(ctx context.Context, path string) (*SQLiteStore, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, errors.New("complexity sqlite path is required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("complexity sqlite path %q is not a regular file", filepath.Base(path))
+	}
+	dsn := (&url.URL{
+		Scheme: "file", Path: filepath.ToSlash(path),
+		RawQuery: "mode=ro&_time_format=sqlite&_pragma=busy_timeout%3d5000",
+	}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	store := &SQLiteStore{db: db}
+	if _, err := db.ExecContext(ctx, "PRAGMA query_only = ON"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	var queryOnly int
+	if err := db.QueryRowContext(ctx, "PRAGMA query_only").Scan(&queryOnly); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if queryOnly != 1 {
+		_ = db.Close()
+		return nil, errors.New("complexity sqlite source is not query-only")
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {

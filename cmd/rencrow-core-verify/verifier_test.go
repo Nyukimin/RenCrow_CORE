@@ -145,8 +145,8 @@ func TestVerifierAllowlistCoversCurrentManifestCommands(t *testing.T) {
 		}
 		seen[check.Executor.CommandID] = struct{}{}
 	}
-	if len(seen) != 11 {
-		t.Fatalf("current CORE manifest commands=%d, want 11: %#v", len(seen), seen)
+	if len(seen) != 12 {
+		t.Fatalf("current CORE manifest commands=%d, want 12: %#v", len(seen), seen)
 	}
 }
 

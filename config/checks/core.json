@@ -295,6 +295,31 @@
         }
       },
       "receipt_schema": "rencrow.check-receipt.v1"
+    },
+    {
+      "check_id": "core_complexity_identity_orphan",
+      "guarantee_id": "complexity_identity_orphan_zero",
+      "owner": "RenCrow_CORE",
+      "purpose": "complexity identity index columns match their payload and existing parents",
+      "target": "explicit complexity_hotspot database opened read-only -> identity orphan counts must be zero",
+      "phase": "diagnostic",
+      "consumer": "Step14 identity completion decision",
+      "failure_action": "blocked",
+      "cost": "low",
+      "safety_gate": false,
+      "coverage": ["durability"],
+      "executor": {
+        "kind": "owner_cli",
+        "command_id": "core-complexity-identity-orphan",
+        "acquisition": {
+          "mode": "owner_self_collect",
+          "verification_safe": false,
+          "inputs": [
+            {"id": "complexity_hotspot_db", "class": "external_prerequisite", "required": true, "source": "owner_external_artifact"}
+          ]
+        }
+      },
+      "receipt_schema": "rencrow.check-receipt.v1"
     }
   ]
 }

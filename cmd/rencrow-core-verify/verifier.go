@@ -136,6 +136,7 @@ type verifierOptions struct {
 	DCIServiceCutoverReceipt string
 	DCICutoverReceipt        string
 	DCIDeployReceiptLog      string
+	ComplexityDBPath         string
 }
 
 type verifierCommandResult struct {
@@ -251,6 +252,7 @@ var fixedVerifierCommands = map[string]string{
 	"core-dci-identity-pre-restart":            "core_dci_identity_pre_restart",
 	"core-dci-identity-post-restart":           "core_dci_identity_post_restart",
 	"core-dci-identity-final":                  "core_dci_identity_final",
+	"core-complexity-identity-orphan":          "core_complexity_identity_orphan",
 }
 
 func checkIDForCommand(commandID string) (string, bool) {
@@ -284,6 +286,8 @@ func verifierForCommand(commandID string) (verifierHandler, bool) {
 		return runDCIIdentityPostRestart, true
 	case "core-dci-identity-final":
 		return runDCIIdentityFinal, true
+	case complexityOrphanCommandID:
+		return runComplexityIdentityOrphan, true
 	default:
 		return nil, false
 	}
@@ -570,6 +574,8 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 	dciServiceCutoverReceipt := flags.String("dci-service-cutover-receipt", "", "owner-only DCI service-cutover receipt for the fixed final check")
 	dciCutoverReceipt := flags.String("dci-cutover-receipt", "", "owner-only DCI cutover receipt for the fixed final check")
 	dciDeployReceiptLog := flags.String("dci-deploy-receipt-log", "", "owner-only DCI deployment receipt log for the fixed final check")
+	complexityDB := flags.String("complexity-db", "", "explicit complexity identity database path for the orphan check")
+	complexityDBAlias := flags.String("complexity-database", "", "alias for --complexity-db")
 	if err := flags.Parse(args[1:]); err != nil {
 		return verifierExitCLIError
 	}
@@ -654,6 +660,9 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 	if strings.TrimSpace(*actorMessage) == "" {
 		*actorMessage = strings.TrimSpace(*messageAlias)
 	}
+	if strings.TrimSpace(*complexityDB) == "" {
+		*complexityDB = strings.TrimSpace(*complexityDBAlias)
+	}
 	var journalSince time.Time
 	if strings.TrimSpace(*journalSinceRaw) != "" {
 		journalSince, err = parseVerifierObservedAt(*journalSinceRaw)
@@ -675,6 +684,7 @@ func runVerifierCLI(ctx context.Context, args []string, out, errOut io.Writer, d
 		DCIServiceCutoverReceipt: *dciServiceCutoverReceipt,
 		DCICutoverReceipt:        *dciCutoverReceipt,
 		DCIDeployReceiptLog:      *dciDeployReceiptLog,
+		ComplexityDBPath:         *complexityDB,
 	}
 	deps = normalizeVerifierDependencies(deps)
 	outcome := handler(ctx, options, check, deps)
