@@ -2,9 +2,12 @@ package jsonlbatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -456,5 +459,195 @@ func TestMultiplePendingPreparesFailClosed(t *testing.T) {
 	}
 	if err := store.Recover(context.Background()); !errors.Is(err, ErrJournalCorrupt) || !errors.Is(err, ErrRecoveryRequired) {
 		t.Fatalf("Recover() error = %v, want both journal corruption and recovery required", err)
+	}
+}
+
+// appendState builds the Write callback shape that appends one record to
+// state.jsonl, so a test reads as the append it performs.
+func appendState(payload string) func() (map[string][]byte, error) {
+	return func() (map[string][]byte, error) {
+		return map[string][]byte{"state.jsonl": []byte(payload)}, nil
+	}
+}
+
+// journalSize reports the WAL size so a test can assert on the bounded cost of
+// one write instead of on incidental record counts.
+func journalSize(t *testing.T, root string) int64 {
+	t.Helper()
+	info, err := os.Stat(filepath.Join(root, journalFilename))
+	if err != nil {
+		t.Fatalf("stat journal: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("journal is not a regular file")
+	}
+	return info.Size()
+}
+
+// padSettledJournalHistory appends valid committed prepare/commit pairs until
+// the WAL passes minBytes. The pairs are inert: recovery only acts on a prepare
+// that has no terminal record, so the padding reproduces the production shape
+// of a long settled history without replaying thousands of real writes.
+func padSettledJournalHistory(t *testing.T, root string, minBytes int64) {
+	t.Helper()
+	var builder strings.Builder
+	for i := 0; int64(builder.Len()) < minBytes; i++ {
+		txID := fmt.Sprintf("settled-history-%d", i)
+		prepare := journalRecord{
+			Version: journalVersion,
+			Kind:    journalPrepare,
+			TxID:    txID,
+			Files: []journalFile{{
+				Name:          "state.jsonl",
+				Offset:        0,
+				AppendLength:  1,
+				PrefixSHA256:  strings.Repeat("0", 64),
+				PayloadSHA256: strings.Repeat("a", 64),
+			}},
+		}
+		encoded, err := json.Marshal(prepare)
+		if err != nil {
+			t.Fatalf("encode padding prepare: %v", err)
+		}
+		builder.Write(encoded)
+		builder.WriteByte('\n')
+		commit := journalRecord{Version: journalVersion, Kind: journalCommit, TxID: txID}
+		encoded, err = json.Marshal(commit)
+		if err != nil {
+			t.Fatalf("encode padding commit: %v", err)
+		}
+		builder.Write(encoded)
+		builder.WriteByte('\n')
+	}
+	file, err := os.OpenFile(filepath.Join(root, journalFilename), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open journal to pad: %v", err)
+	}
+	if _, err := file.WriteString(builder.String()); err != nil {
+		_ = file.Close()
+		t.Fatalf("pad journal: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close padded journal: %v", err)
+	}
+}
+
+// A settled WAL is only history: parseJournal needs unresolved records, and a
+// settled WAL guarantees no orphan data bytes. The writer therefore compacts it
+// so one write costs the payload rather than the accumulated history.
+func TestWriteCheckpointsOversizedSettledJournal(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root, []string{"state.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Write(context.Background(), appendState("first\n")); err != nil {
+		t.Fatalf("first Write() error = %v", err)
+	}
+	padSettledJournalHistory(t, root, journalCheckpointBytesThreshold+1)
+	if size := journalSize(t, root); size <= journalCheckpointBytesThreshold {
+		t.Fatalf("padded journal size = %d, want more than %d", size, journalCheckpointBytesThreshold)
+	}
+
+	if err := store.Write(context.Background(), appendState("second\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	if size := journalSize(t, root); size > journalCheckpointBytesThreshold {
+		t.Fatalf("journal size after write = %d, want at most %d", size, journalCheckpointBytesThreshold)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "state.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "first\nsecond\n" {
+		t.Fatalf("state file = %q, want %q", data, "first\nsecond\n")
+	}
+	reader, err := OpenReader(root, []string{"state.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Read(context.Background(), func() error { return nil }); err != nil {
+		t.Fatalf("Read() after checkpoint error = %v", err)
+	}
+}
+
+// Compaction must never skip recovery: a pending prepare that is still owed a
+// rollback keeps its rollback even when the WAL is already oversized.
+func TestWriteCheckpointsAfterRollingBackPendingPrepare(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root, []string{"state.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(root, "state.jsonl")
+	if err := os.WriteFile(statePath, []byte("before-state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	padSettledJournalHistory(t, root, journalCheckpointBytesThreshold+1)
+
+	offset := int64(len("before-state\n"))
+	orphan := "partial-state"
+	if err := os.WriteFile(statePath, []byte("before-state\n"+orphan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pending := journalRecord{
+		Version: journalVersion,
+		Kind:    journalPrepare,
+		TxID:    "pending-over-threshold",
+		Files: []journalFile{{
+			Name:          "state.jsonl",
+			Offset:        offset,
+			AppendLength:  int64(len(orphan)),
+			PrefixSHA256:  mustHashPrefix(t, statePath, offset),
+			PayloadSHA256: hashBytes([]byte(orphan)),
+		}},
+	}
+	if err := appendJournalRecord(filepath.Join(root, journalFilename), pending); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Write(context.Background(), appendState("next\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "before-state\nnext\n" {
+		t.Fatalf("state file = %q, want %q", data, "before-state\nnext\n")
+	}
+	if size := journalSize(t, root); size > journalCheckpointBytesThreshold {
+		t.Fatalf("journal size after write = %d, want at most %d", size, journalCheckpointBytesThreshold)
+	}
+}
+
+// Recover is the explicit owner-level operation, so it also compacts a settled
+// WAL for an operator who wants the history dropped before the next write.
+func TestRecoverCompactsOversizedSettledJournal(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root, []string{"state.jsonl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Write(context.Background(), appendState("first\n")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	padSettledJournalHistory(t, root, journalCheckpointBytesThreshold+1)
+
+	if err := store.Recover(context.Background()); err != nil {
+		t.Fatalf("Recover() error = %v", err)
+	}
+
+	if size := journalSize(t, root); size > journalCheckpointBytesThreshold {
+		t.Fatalf("journal size after recover = %d, want at most %d", size, journalCheckpointBytesThreshold)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "state.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "first\n" {
+		t.Fatalf("state file = %q, want %q", data, "first\n")
 	}
 }

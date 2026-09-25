@@ -21,6 +21,19 @@ const (
 	journalFilename = ".jsonlbatch.wal"
 	journalVersion  = 1
 
+	// MaxJSONLRecordBytes is the largest single JSONL record, excluding its
+	// terminating newline, that this helper will append: validatePayload rejects a
+	// record only when it is longer than this. It is exported as the single owner of
+	// that size contract so a reader that has to hold an appended record does not
+	// maintain a second, independently edited number.
+	MaxJSONLRecordBytes = 16 << 20
+	// MaxJSONLReadBufferSize is the buffer ceiling a reader needs for that record:
+	// bufio.Scanner reports ErrTooLong when a token fills the buffer before the
+	// delimiter appears, so a reader sized at MaxJSONLRecordBytes alone cannot read
+	// back the largest record this writer accepted. The extra byte is the delimiter,
+	// nothing more: the read stays bounded.
+	MaxJSONLReadBufferSize = MaxJSONLRecordBytes + 1
+
 	journalPrepare  = "prepare"
 	journalCommit   = "commit"
 	journalRollback = "rollback"
@@ -28,9 +41,21 @@ const (
 	// Bounds apply to one payload and one journal record. The journal itself is
 	// deliberately append-only; callers should compact it only as an explicit
 	// owner-level operation after the corresponding evidence is available.
+	// That owner-level operation is this package's writer: once recovery has
+	// settled every transaction, Write and Recover drop the settled history past
+	// journalCheckpointBytesThreshold, so a caller outside this package still
+	// never edits the journal.
 	maxPayloadBytes       = 64 << 20
-	maxJSONLRecordBytes   = 16 << 20
+	maxJSONLRecordBytes   = MaxJSONLRecordBytes
 	maxJournalRecordBytes = 1 << 20
+
+	// journalCheckpointBytesThreshold is how large a settled WAL may grow before
+	// the writer drops its history. The production WAL had reached 37 MB, and
+	// every write re-read and re-parsed all of it under the exclusive store lock:
+	// a measured append of one 91-byte record cost 1,948 ms, of which 1,400 ms
+	// was that journal scan, so queued writers routinely exceeded their 10 s
+	// deadlines and left task runs holding an operations slot.
+	journalCheckpointBytesThreshold = 256 << 10
 )
 
 var (
@@ -236,6 +261,9 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 		if err := contextError(ctx); err != nil {
 			return err
 		}
+		if err := s.checkpointJournalIfSettled(); err != nil {
+			return err
+		}
 		payloads, err := callback()
 		if err != nil {
 			return err
@@ -300,7 +328,12 @@ func (s *Store) Recover(ctx context.Context) error {
 	if s.readOnly {
 		return fmt.Errorf("jsonl batch reader is read-only")
 	}
-	return s.withLock(ctx, func() error { return s.recoverLocked(ctx) })
+	return s.withLock(ctx, func() error {
+		if err := s.recoverLocked(ctx); err != nil {
+			return err
+		}
+		return s.checkpointJournalIfSettled()
+	})
 }
 
 func (s *Store) pathFor(name string) string {
@@ -367,6 +400,30 @@ func (s *Store) recoverLocked(ctx context.Context) error {
 		return errors.Join(ErrRecoveryRequired, err)
 	}
 	return nil
+}
+
+// checkpointJournalIfSettled is the owner-level compaction the journal contract
+// reserves for this package. It runs only after recovery, under the exclusive
+// store lock, and only once the WAL holds no torn tail and no pending
+// transaction. The records it drops are history: parseJournal acts on a prepare
+// that has no terminal record and on nothing else, and a settled WAL guarantees
+// that no data file holds orphan bytes, because a prepare record is appended and
+// Sync-ed before any append it describes. Dropping it therefore changes no read
+// result and leaves nothing to repair: a crash mid-truncation leaves the whole
+// WAL, an empty WAL, or a WAL prefix with a torn tail that the next writer
+// already repairs.
+func (s *Store) checkpointJournalIfSettled() error {
+	info, err := regularFileInfo(s.walPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat jsonl batch journal: %w", err)
+	}
+	if info.Size() <= journalCheckpointBytesThreshold {
+		return nil
+	}
+	return truncateJournal(s.walPath, 0)
 }
 
 func (s *Store) preparePayloads(payloads map[string][]byte) ([]preparedFile, error) {
