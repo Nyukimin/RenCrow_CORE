@@ -29,6 +29,9 @@ type TaskOwner interface {
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
 	Cancel(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
+	// Get は終端再試行の前にTaskの現在状態を確認するための読み取り境界。
+	// 既に終端したTaskへ書き直さないために必要。
+	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
 }
 
 const heartbeatTaskCleanupTimeout = 10 * time.Second
@@ -195,21 +198,33 @@ func heartbeatTaskTitle(channel string) string {
 	}
 }
 
+// finalizeWorkerTask はTask ownerへ終端意図 (取消/成功/失敗) を1回書き込むだけ。
+// 失敗を握りつぶさずそのまま返し、呼び出し側が滞留台帳へ登録する。
+func (s *HeartbeatService) finalizeWorkerTask(ctx context.Context, taskID modulecore.TaskID, workerErr error) error {
+	switch {
+	case ctx.Err() != nil || errors.Is(workerErr, context.Canceled) || errors.Is(workerErr, context.DeadlineExceeded):
+		_, err := s.taskOwner.Cancel(ctx, taskID, "heartbeat worker cancelled")
+		return err
+	case workerErr == nil:
+		_, err := s.taskOwner.Succeed(ctx, taskID, "heartbeat worker completed")
+		return err
+	default:
+		_, err := s.taskOwner.Fail(ctx, taskID, "heartbeat worker failed", []string{"inspect heartbeat worker failure"})
+		return err
+	}
+}
+
+// finishWorker はHeartbeat Taskを終端させる。書き込みが失敗するとTaskはrunningの
+// ままoperations枠を返し続けるため、失敗を滞留台帳へ登録して後続tickで再試行する。
+// 登録を省略すると原因がログに何も残り、枠の恒久占有を追えなくなる。
 func (s *HeartbeatService) finishWorker(ctx context.Context, taskID modulecore.TaskID, workerErr error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), heartbeatTaskCleanupTimeout)
 	defer cancel()
 
-	var err error
-	switch {
-	case ctx.Err() != nil || errors.Is(workerErr, context.Canceled) || errors.Is(workerErr, context.DeadlineExceeded):
-		_, err = s.taskOwner.Cancel(cleanupCtx, taskID, "heartbeat worker cancelled")
-	case workerErr == nil:
-		_, err = s.taskOwner.Succeed(cleanupCtx, taskID, "heartbeat worker completed")
-	default:
-		_, err = s.taskOwner.Fail(cleanupCtx, taskID, "heartbeat worker failed", []string{"inspect heartbeat worker failure"})
-	}
-	if err != nil {
+	if err := s.finalizeWorkerTask(cleanupCtx, taskID, workerErr); err != nil {
+		s.recordDeferredWorkerFinalization(taskID, workerErr, err)
 		return errors.Join(ctx.Err(), fmt.Errorf("heartbeat task finalization failed: %w", err))
 	}
+	s.forgetDeferredWorkerFinalization(taskID)
 	return ctx.Err()
 }

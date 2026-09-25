@@ -127,6 +127,10 @@ type HeartbeatService struct {
 	mu                       sync.Mutex
 	running                  bool
 	lastMaturationSweep      time.Time
+	// finalizationMu が守る滞留台帳は、終端書き込みが失敗してrunningのまま
+	// operations枠を占有するHeartbeat Taskを次tickで再試行するための台帳。
+	finalizationMu        sync.Mutex
+	deferredFinalizations map[modulecore.TaskID]*deferredWorkerFinalization
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成
@@ -373,6 +377,9 @@ func (s *HeartbeatService) runIdleChatSequenceCheck(ctx context.Context, now tim
 
 // tick は1回のHeartbeat処理を実行
 func (s *HeartbeatService) tick(ctx context.Context) (resultErr error) {
+	// 新しいTaskを開始する前に、終端書き込みに失敗して枠を占有していたTaskを
+	// 終端させる。後に回すとAtlas backlog runner等のoperations枠が空き待ちになる。
+	s.sweepDeferredWorkerFinalizations(ctx, time.Now().UTC())
 	if report, err := s.RunEconomicOpportunityDiscovery(ctx, time.Now().UTC()); err != nil {
 		log.Printf("[Heartbeat] economic opportunity discovery error: %v", err)
 		s.emitEvent("heartbeat.economic_objective.error", err.Error())
