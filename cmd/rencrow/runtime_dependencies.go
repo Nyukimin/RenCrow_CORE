@@ -470,6 +470,18 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if recoveredActionRuns > 0 {
 		log.Printf("Recovered %d terminal Action run(s) after process restart", recoveredActionRuns)
 	}
+	// Action を持つ Run を終端へ回収した直後に、Action を持たないまま running で
+	// 残った Run を回収する。この回収がないと再起動前に開始だけされた Task が
+	// 半永久に running のままで、DestructiveTasks=1 の OPS スロットを占有し、
+	// Atlas 起動リカバリと Heartbeat collection が
+	// "parallel limit exceeded" で全拒否になる（Step15 本番実測）。
+	recoveredOrphanRuns, err := recoverOrphanTaskRunsAfterRestart(context.Background(), runtimeActionManager, deps.taskManager)
+	if err != nil {
+		log.Fatalf("Failed to recover orphan task runs after restart: %v", err)
+	}
+	if recoveredOrphanRuns > 0 {
+		log.Printf("Recovered %d orphan task run(s) after process restart", recoveredOrphanRuns)
+	}
 	recoveredTransportRequests, err := deps.transportManager.RecoverAfterRestart(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to recover stale transport requests after restart: %v", err)
