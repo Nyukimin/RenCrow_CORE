@@ -108,7 +108,7 @@ func (s *MonitorStore) taskActivitySnapshotsLocked(filter TaskActivityFilter) []
 		if filter.SessionID != "" && !strings.EqualFold(activity.SessionID, filter.SessionID) {
 			continue
 		}
-		if filter.ChatID != "" && !strings.EqualFold(activity.ChatID, filter.ChatID) {
+		if filter.ChannelAddress != "" && !strings.EqualFold(activity.ChannelAddress, filter.ChannelAddress) {
 			continue
 		}
 		items = append(items, *activity)

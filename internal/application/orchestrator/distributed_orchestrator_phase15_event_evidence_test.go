@@ -81,7 +81,7 @@ func TestPhase15DistributedEventPortEmitsProgressWithMessageContext(t *testing.T
 	if ev.Type != "mailbox.sent" || ev.From != "mio" || ev.To != "shiro" || ev.Content != "sent" {
 		t.Fatalf("unexpected event payload: %#v", ev)
 	}
-	if ev.Route != "CODE1" || ev.TaskID.String() != phase15TaskID || string(ev.SessionID) != "session-1" || ev.Channel != "line" || ev.ChatID != "chat-1" {
+	if ev.Route != "CODE1" || ev.TaskID.String() != phase15TaskID || string(ev.SessionID) != "session-1" || ev.Channel != "line" || ev.ChannelAddress != "chat-1" {
 		t.Fatalf("unexpected event context: %#v", ev)
 	}
 }

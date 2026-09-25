@@ -862,7 +862,7 @@ func (p *recordingTaskLifecycleEventPort) Publish(eventType, from, to, content, 
 		TaskID:             typedTaskID,
 		SessionID:          modulecore.SessionID(sessionID),
 		Channel:            channel,
-		ChatID:             chatID,
+		ChannelAddress:     chatID,
 		CausationEventID:   causationEventID,
 		DependencyEventIDs: append([]modulecore.EventID(nil), dependencyEventIDs...),
 	}

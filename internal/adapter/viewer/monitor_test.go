@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -593,5 +594,102 @@ func TestHandleMonitorAgentDetailReturnsAgentHistory(t *testing.T) {
 	}
 	if len(resp.Events) == 0 {
 		t.Fatalf("expected agent events")
+	}
+}
+
+func TestHandleMonitorLogsRejectsLegacyChatIDFilter(t *testing.T) {
+	store := NewMonitorStore(nil, nil)
+	for _, query := range []string{"chat_id=viewer", "chat_id="} {
+		rr := httptest.NewRecorder()
+		HandleMonitorLogs(store).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/viewer/logs?"+query, nil))
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, want 400", query, rr.Code)
+		}
+	}
+}
+
+func TestHandleMonitorLogsFiltersByChannelAddressAndPublishesCanonicalKey(t *testing.T) {
+	store := NewMonitorStore(nil, nil)
+	matched := modulecore.NewTaskID()
+	other := modulecore.NewTaskID()
+	store.OnEvent(orchestrator.OrchestratorEvent{
+		Type:           "agent.note",
+		From:           "mio",
+		To:             "user",
+		Content:        "matched",
+		Route:          "CHAT",
+		TaskID:         matched,
+		Channel:        "telegram",
+		ChannelAddress: "chat-42",
+		Timestamp:      "2026-01-01T00:00:01Z",
+	})
+	store.OnEvent(orchestrator.OrchestratorEvent{
+		Type:           "agent.note",
+		From:           "mio",
+		To:             "user",
+		Content:        "other",
+		Route:          "CHAT",
+		TaskID:         other,
+		Channel:        "viewer",
+		ChannelAddress: "viewer-user",
+		Timestamp:      "2026-01-01T00:00:02Z",
+	})
+
+	rr := httptest.NewRecorder()
+	HandleMonitorLogs(store).ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/viewer/logs?channel_address=chat-42&limit=10", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 body=%s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, `"chat_id"`) {
+		t.Fatalf("logs response still publishes legacy chat_id key: %s", body)
+	}
+	if !strings.Contains(body, `"channel_address":"chat-42"`) {
+		t.Fatalf("logs response missing canonical channel_address key: %s", body)
+	}
+	var resp struct {
+		Items []orchestrator.OrchestratorEvent `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].TaskID != matched {
+		t.Fatalf("items = %#v, want only task %s", resp.Items, matched)
+	}
+}
+
+func TestMonitorTaskActivitiesProjectCanonicalChannelAddress(t *testing.T) {
+	store := NewMonitorStore(nil, nil)
+	taskID := modulecore.NewTaskID()
+	store.OnEvent(orchestrator.OrchestratorEvent{
+		Type:           "agent.note",
+		From:           "mio",
+		To:             "user",
+		Content:        "hello",
+		Route:          "CHAT",
+		TaskID:         taskID,
+		Channel:        "telegram",
+		ChannelAddress: "chat-42",
+		Timestamp:      "2026-01-01T00:00:01Z",
+	})
+
+	if items := store.TaskActivities(TaskActivityFilter{ChannelAddress: "chat-42"}); len(items) != 1 || items[0].TaskID != string(taskID) {
+		t.Fatalf("task activities = %#v, want one activity for task %s", items, taskID)
+	} else if items[0].ChannelAddress != "chat-42" {
+		t.Fatalf("channel address = %q, want chat-42", items[0].ChannelAddress)
+	}
+	if items := store.TaskActivities(TaskActivityFilter{ChannelAddress: "chat-43"}); len(items) != 0 {
+		t.Fatalf("non-matching channel address must filter out the activity, got %#v", items)
+	}
+	items := store.TaskActivities(TaskActivityFilter{})
+	encoded, err := json.Marshal(items[0])
+	if err != nil {
+		t.Fatalf("marshal activity: %v", err)
+	}
+	if strings.Contains(string(encoded), `"chat_id"`) {
+		t.Fatalf("task activity projection still publishes legacy chat_id key: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"channel_address":"chat-42"`) {
+		t.Fatalf("task activity projection missing canonical channel_address key: %s", encoded)
 	}
 }

@@ -254,36 +254,36 @@ type OrchestratorEvent struct {
 	TraceID            modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
 	CausationEventID   modulecore.EventID    `json:"causation_event_id,omitempty"`
 	DependencyEventIDs []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
-	SessionID          modulecore.SessionID  `json:"session_id,omitempty"`  // session identifier
-	ThreadID           modulecore.ThreadID   `json:"thread_id,omitempty"`   // canonical conversation/work thread identifier
-	ThreadSeq          modulecore.ThreadSeq  `json:"thread_seq,omitempty"`  // canonical thread sequence within the session
-	ThreadKind         modulecore.ThreadKind `json:"thread_kind,omitempty"` // canonical thread kind
-	Channel            string                `json:"channel,omitempty"`     // channel identifier
-	ChatID             string                `json:"chat_id,omitempty"`     // chat identifier
+	SessionID          modulecore.SessionID  `json:"session_id,omitempty"`      // session identifier
+	ThreadID           modulecore.ThreadID   `json:"thread_id,omitempty"`       // canonical conversation/work thread identifier
+	ThreadSeq          modulecore.ThreadSeq  `json:"thread_seq,omitempty"`      // canonical thread sequence within the session
+	ThreadKind         modulecore.ThreadKind `json:"thread_kind,omitempty"`     // canonical thread kind
+	Channel            string                `json:"channel,omitempty"`         // channel identifier
+	ChannelAddress     string                `json:"channel_address,omitempty"` // external channel address (canonical replacement for legacy chat id)
 	Timestamp          string                `json:"timestamp"`
 }
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp
-func NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) OrchestratorEvent {
-	return NewEventWithTraceID(modulecore.NewTraceID(), eventType, from, to, content, route, taskID, sessionID, channel, chatID)
+func NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, channelAddress string) OrchestratorEvent {
+	return NewEventWithTraceID(modulecore.NewTraceID(), eventType, from, to, content, route, taskID, sessionID, channel, channelAddress)
 }
 
 // NewEventWithTraceID creates an event inside an owner-assigned canonical
 // trace. Callers must create the TraceID once at the root interaction boundary.
-func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, content, route, taskID, sessionID, channel, chatID string) OrchestratorEvent {
+func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, content, route, taskID, sessionID, channel, channelAddress string) OrchestratorEvent {
 	return OrchestratorEvent{
-		EventID:   modulecore.NewEventID(),
-		Type:      eventType,
-		From:      from,
-		To:        to,
-		Content:   content,
-		Route:     route,
-		TaskID:    modulecore.TaskID(taskID),
-		TraceID:   traceID,
-		SessionID: modulecore.SessionID(sessionID),
-		Channel:   channel,
-		ChatID:    chatID,
-		Timestamp: time.Now().In(jst).Format(time.RFC3339),
+		EventID:        modulecore.NewEventID(),
+		Type:           eventType,
+		From:           from,
+		To:             to,
+		Content:        content,
+		Route:          route,
+		TaskID:         modulecore.TaskID(taskID),
+		TraceID:        traceID,
+		SessionID:      modulecore.SessionID(sessionID),
+		Channel:        channel,
+		ChannelAddress: channelAddress,
+		Timestamp:      time.Now().In(jst).Format(time.RFC3339),
 	}
 }
 
@@ -370,7 +370,7 @@ func (t *conversationIdentityTracker) Assign(ev *OrchestratorEvent, preferredMes
 	if t == nil || ev == nil || !isConversationMessageEvent(ev.Type) {
 		return
 	}
-	sessionID := conversationIdentitySession(string(ev.SessionID), ev.ChatID)
+	sessionID := conversationIdentitySession(string(ev.SessionID), ev.ChannelAddress)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.turns[sessionID]++

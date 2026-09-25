@@ -218,7 +218,7 @@ func TestNewSuperAgentRunQueueProcessorReportsFailure(t *testing.T) {
 	if len(events) != 2 {
 		t.Fatalf("events=%d, want 2", len(events))
 	}
-	if events[0].Type != "background_job.failed" || events[0].ChatID != "superagent_run_queue" {
+	if events[0].Type != "background_job.failed" || events[0].ChannelAddress != "superagent_run_queue" {
 		t.Fatalf("failed event = %#v", events[0])
 	}
 	if !strings.Contains(events[0].Content, "unsupported run queue action") {
@@ -245,7 +245,7 @@ func TestBackgroundJobFailureReporterEmitsShiroAndMioEvents(t *testing.T) {
 		t.Fatalf("events=%d, want 2", len(events))
 	}
 	failed := events[0]
-	if failed.Type != "background_job.failed" || failed.From != "background_job" || failed.To != "shiro" || failed.Route != "OPS" || failed.Channel != "background" || failed.ChatID != "daily_intake_sweep" {
+	if failed.Type != "background_job.failed" || failed.From != "background_job" || failed.To != "shiro" || failed.Route != "OPS" || failed.Channel != "background" || failed.ChannelAddress != "daily_intake_sweep" {
 		t.Fatalf("failed event = %#v", failed)
 	}
 	var payload map[string]string
@@ -400,7 +400,7 @@ func TestStartMemoryLifecycleJobReportsFailure(t *testing.T) {
 		t.Fatalf("events=%d, want failure notification events", len(listener.Events()))
 	}
 	events := listener.Events()
-	if events[0].ChatID != "memory_lifecycle" || events[1].ChatID != "memory_lifecycle" {
+	if events[0].ChannelAddress != "memory_lifecycle" || events[1].ChannelAddress != "memory_lifecycle" {
 		t.Fatalf("events = %#v", events)
 	}
 }

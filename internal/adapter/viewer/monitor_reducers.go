@@ -128,17 +128,17 @@ func (s *MonitorStore) reduceTaskActivity(ev orchestrator.OrchestratorEvent) {
 	activity := s.taskActivities[taskID]
 	if activity == nil {
 		activity = &TaskActivitySnapshot{
-			TaskID:    taskID,
-			EventSeq:  ev.EventSeq,
-			Route:     valueOr(ev.Route, "-"),
-			Phase:     "received",
-			Owner:     "mio",
-			Status:    "running",
-			SessionID: string(ev.SessionID),
-			Channel:   ev.Channel,
-			ChatID:    ev.ChatID,
-			StartedAt: ev.Timestamp,
-			UpdatedAt: ev.Timestamp,
+			TaskID:         taskID,
+			EventSeq:       ev.EventSeq,
+			Route:          valueOr(ev.Route, "-"),
+			Phase:          "received",
+			Owner:          "mio",
+			Status:         "running",
+			SessionID:      string(ev.SessionID),
+			Channel:        ev.Channel,
+			ChannelAddress: ev.ChannelAddress,
+			StartedAt:      ev.Timestamp,
+			UpdatedAt:      ev.Timestamp,
 		}
 		s.taskActivities[taskID] = activity
 	}
@@ -153,8 +153,8 @@ func (s *MonitorStore) reduceTaskActivity(ev orchestrator.OrchestratorEvent) {
 	if ev.Channel != "" {
 		activity.Channel = ev.Channel
 	}
-	if ev.ChatID != "" {
-		activity.ChatID = ev.ChatID
+	if ev.ChannelAddress != "" {
+		activity.ChannelAddress = ev.ChannelAddress
 	}
 	if ev.Content != "" {
 		activity.Summary = shortText(ev.Content, 160)

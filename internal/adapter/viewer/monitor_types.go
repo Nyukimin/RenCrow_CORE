@@ -57,7 +57,7 @@ type TaskActivitySnapshot struct {
 	TerminalOutcome string                           `json:"terminal_outcome,omitempty"`
 	SessionID       string                           `json:"session_id,omitempty"`
 	Channel         string                           `json:"channel,omitempty"`
-	ChatID          string                           `json:"chat_id,omitempty"`
+	ChannelAddress  string                           `json:"channel_address,omitempty"`
 	StartedAt       string                           `json:"started_at,omitempty"`
 	UpdatedAt       string                           `json:"updated_at,omitempty"`
 	Summary         string                           `json:"summary,omitempty"`
@@ -69,23 +69,23 @@ type TaskActivitySnapshot struct {
 }
 
 type TaskActivityFilter struct {
-	Route     string
-	Status    string
-	Owner     string
-	SessionID string
-	ChatID    string
-	Limit     int
+	Route          string
+	Status         string
+	Owner          string
+	SessionID      string
+	ChannelAddress string
+	Limit          int
 }
 
 type LogFilter struct {
-	EventID   modulecore.EventID
-	Type      string
-	Agent     string
-	Route     string
-	TaskID    modulecore.TaskID
-	SessionID string
-	ChatID    string
-	Limit     int
+	EventID        modulecore.EventID
+	Type           string
+	Agent          string
+	Route          string
+	TaskID         modulecore.TaskID
+	SessionID      string
+	ChannelAddress string
+	Limit          int
 }
 
 type AgentDetail struct {

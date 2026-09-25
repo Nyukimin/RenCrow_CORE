@@ -94,7 +94,7 @@ func TestPhase12TurnInputBuilderEmitsAttachmentEvent(t *testing.T) {
 	if ev.Type != "viewer.attachment.received" || ev.From != "viewer" || ev.To != "mio" {
 		t.Fatalf("unexpected attachment event routing: %#v", ev)
 	}
-	if ev.Content != "1 attachment(s)" || ev.TaskID.String() != taskID.String() || ev.SessionID != "sess-1" || ev.Channel != "line" || ev.ChatID != "U123" {
+	if ev.Content != "1 attachment(s)" || ev.TaskID.String() != taskID.String() || ev.SessionID != "sess-1" || ev.Channel != "line" || ev.ChannelAddress != "U123" {
 		t.Fatalf("unexpected attachment event payload: %#v", ev)
 	}
 }

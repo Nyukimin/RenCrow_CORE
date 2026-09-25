@@ -347,7 +347,7 @@ func matchesLogFilter(event orchestrator.OrchestratorEvent, filter LogFilter) bo
 		return false
 	case filter.SessionID != "" && !strings.EqualFold(string(event.SessionID), filter.SessionID):
 		return false
-	case filter.ChatID != "" && !strings.EqualFold(event.ChatID, filter.ChatID):
+	case filter.ChannelAddress != "" && !strings.EqualFold(event.ChannelAddress, filter.ChannelAddress):
 		return false
 	default:
 		return true

@@ -84,14 +84,14 @@ func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 			taskID = parsed
 		}
 		filter := LogFilter{
-			EventID:   eventID,
-			Type:      strings.TrimSpace(r.URL.Query().Get("type")),
-			Agent:     strings.TrimSpace(r.URL.Query().Get("agent")),
-			Route:     strings.TrimSpace(r.URL.Query().Get("route")),
-			TaskID:    taskID,
-			SessionID: strings.TrimSpace(r.URL.Query().Get("session_id")),
-			ChatID:    strings.TrimSpace(r.URL.Query().Get("chat_id")),
-			Limit:     limit,
+			EventID:        eventID,
+			Type:           strings.TrimSpace(r.URL.Query().Get("type")),
+			Agent:          strings.TrimSpace(r.URL.Query().Get("agent")),
+			Route:          strings.TrimSpace(r.URL.Query().Get("route")),
+			TaskID:         taskID,
+			SessionID:      strings.TrimSpace(r.URL.Query().Get("session_id")),
+			ChannelAddress: strings.TrimSpace(r.URL.Query().Get("channel_address")),
+			Limit:          limit,
 		}
 		items := store.Logs(filter)
 		if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("scope")), "persisted") {
@@ -109,7 +109,7 @@ func HandleMonitorLogs(store *MonitorStore) http.HandlerFunc {
 func validateMonitorLogQuery(w http.ResponseWriter, r *http.Request) bool {
 	allowed := map[string]struct{}{
 		"event_id": {}, "type": {}, "agent": {}, "route": {}, "task_id": {}, "session_id": {},
-		"chat_id": {}, "limit": {}, "scope": {},
+		"channel_address": {}, "limit": {}, "scope": {},
 	}
 	for key := range r.URL.Query() {
 		if _, ok := allowed[key]; !ok {
