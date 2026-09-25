@@ -38,13 +38,18 @@ Safety (measured, not assumed)
 
 import argparse
 import json
+import hashlib
 import os
 import shutil
 import sqlite3
 import sys
+import subprocess
 import tempfile
 
 FORBIDDEN_APPLY_ROOT = "/srv/rencrow"
+DEFAULT_LIVE_STORE_ROOT = "/srv/rencrow/db/core/databases"
+LIVE_STORE_ROOT_ENV = "RENCROW_LIVE_STORE_ROOT"
+LIVE_BACKUP_ACK_ENV = "RENCROW_LIVE_BACKUP_OK"
 CANON = "backlog_item_id"
 LEGACY = "item_id"
 RECEIPT_TABLES = ("stage_run_receipt", "closure_receipt", "queue_freeze")
@@ -339,6 +344,87 @@ def self_test():
         check("scan_of_missing_database_fails_closed",
               missing_fails_closed("/srv/rencrow/definitely/absent.sqlite"), "")
 
+        # ---- live cutover mode -------------------------------------------------
+        # RENCROW_LIVE_STORE_ROOT lets the live-store contract run outside /srv so the
+        # self-test stays sandbox-safe, while the real root stays the default.
+        live_root = os.path.join(work, "live-root")
+        os.makedirs(live_root, exist_ok=True)
+        live_db = fixture(live_root, "workstream.db")
+        legacy_before = open(live_db, "rb").read()
+
+        def with_env(pairs, fn):
+            saved = {k: os.environ.get(k) for k in pairs}
+            for k, v in pairs.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            try:
+                return fn()
+            finally:
+                for k, v in saved.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+
+        no_ack = with_env({LIVE_STORE_ROOT_ENV: live_root, LIVE_BACKUP_ACK_ENV: None},
+                          lambda: call_live(live_db))
+        check("live_mode_refuses_without_backup_ack",
+              isinstance(no_ack, SystemExit) and "backup" in str(no_ack), str(no_ack))
+        check("live_mode_refusal_leaves_database_untouched",
+              open(live_db, "rb").read() == legacy_before, "")
+
+        elsewhere = fixture(work, "elsewhere.sqlite")
+        elsewhere_before = open(elsewhere, "rb").read()
+        bad_root = with_env({LIVE_STORE_ROOT_ENV: live_root, LIVE_BACKUP_ACK_ENV: "1"},
+                            lambda: call_live(elsewhere))
+        check("live_mode_refuses_target_outside_live_root",
+              isinstance(bad_root, SystemExit) and LIVE_STORE_ROOT_ENV in str(bad_root),
+              str(bad_root))
+        check("live_mode_outside_root_leaves_database_untouched",
+              open(elsewhere, "rb").read() == elsewhere_before, "")
+
+        applied = with_env({LIVE_STORE_ROOT_ENV: live_root, LIVE_BACKUP_ACK_ENV: "1"},
+                           lambda: call_live(live_db))
+        check("live_mode_applies_legacy_rows",
+              isinstance(applied, dict) and applied.get("converted") == 2
+              and applied.get("already_canonical") == 1, "stats=%s" % applied)
+        replay = with_env({LIVE_STORE_ROOT_ENV: live_root, LIVE_BACKUP_ACK_ENV: "1"},
+                          lambda: call_live(live_db))
+        check("live_mode_is_idempotent",
+              isinstance(replay, dict) and replay.get("converted", 0) == 0, "stats=%s" % replay)
+        sha_b = applied.get("_sha256:before", "") if isinstance(applied, dict) else ""
+        sha_a = applied.get("_sha256:after", "") if isinstance(applied, dict) else ""
+        check("live_mode_records_database_sha",
+              len(sha_b) == 64 and len(sha_a) == 64 and sha_b != sha_a,
+              "before=%s after=%s" % (sha_b[:12], sha_a[:12]))
+        check("live_mode_noop_run_keeps_sha",
+              isinstance(replay, dict)
+              and replay.get("_sha256:before") == replay.get("_sha256:after")
+              and replay.get("_sha256:after") == sha_a, "stats=%s" % replay)
+        live_after = scan(live_db)
+        check("live_mode_head_reader_resolves_after_apply",
+              live_after["tables"]["stage_run_receipt"]["ids_both_readers_resolve"]
+              == ["atlas:atlas.lifecycle"]
+              and live_after["tables"]["stage_run_receipt"]["ids_deployed_resolves_only"] == [],
+              str(live_after["tables"]["stage_run_receipt"]))
+        check("live_mode_default_root_is_srv",
+              DEFAULT_LIVE_STORE_ROOT == "/srv/rencrow/db/core/databases",
+              DEFAULT_LIVE_STORE_ROOT)
+        copy_conflict = subprocess.run(
+            [sys.executable, os.path.realpath(__file__), "--db", live_db,
+             "--copy-into", os.path.join(work, "copy.sqlite"), "--apply-live-cutover"],
+            capture_output=True, text=True,
+            env=dict(os.environ, **{LIVE_STORE_ROOT_ENV: live_root, LIVE_BACKUP_ACK_ENV: "1"}))
+        check("live_mode_rejects_copy_into",
+              copy_conflict.returncode != 0
+              and "--copy-into" in (copy_conflict.stderr + copy_conflict.stdout),
+              "rc=%s out=%s" % (copy_conflict.returncode,
+                                (copy_conflict.stderr + copy_conflict.stdout)[:160]))
+        check("live_mode_copy_into_rejection_wrote_no_copy",
+              not os.path.exists(os.path.join(work, "copy.sqlite")), "")
+
     failed = [n for n, ok in checks if not ok]
     print("selftest summary: %d checks, %d failures" % (len(checks), len(failed)))
     if failed:
@@ -348,9 +434,62 @@ def self_test():
     return 0
 
 
-def guard_apply(path):
-    """Refuse to write anything that resolves under /srv/rencrow (live store)."""
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def live_store_root():
+    return os.path.realpath(os.environ.get(LIVE_STORE_ROOT_ENV) or DEFAULT_LIVE_STORE_ROOT)
+
+
+def apply_live(path):
+    """Controlled cutover write against the live store.
+
+    Two preconditions, both fail closed, because this is the only path allowed to
+    rewrite a live database:
+      * RENCROW_LIVE_BACKUP_OK=1 -- a verified backup of this exact database was
+        taken by the operator (the tool never trusts an unverified backup).
+      * the target resolves under the live store root (default
+        /srv/rencrow/db/core/databases, overridable only so the contract can run
+        its fixtures off /srv).
+    The rename itself runs inside apply_remap's BEGIN IMMEDIATE transaction, so a
+    concurrent CORE writer either lands before or after it, never interleaved.
+    """
     resolved = os.path.realpath(path)
+    if os.environ.get(LIVE_BACKUP_ACK_ENV) != "1":
+        raise SystemExit(
+            "fail closed: live cutover needs %s=1 after a verified backup of %s"
+            % (LIVE_BACKUP_ACK_ENV, resolved))
+    root = live_store_root()
+    if not (resolved == root or resolved.startswith(root + os.sep)):
+        raise SystemExit("fail closed: live cutover target %s is outside the live store "
+                         "root %s (override with %s)" % (resolved, root, LIVE_STORE_ROOT_ENV))
+    stats = {"_sha256:before": sha256_file(resolved)}
+    stats.update(apply_remap(resolved))
+    stats["_sha256:after"] = sha256_file(resolved)
+    return stats
+
+
+def call_live(path):
+    """Self-test entry point for the live cutover guard."""
+    try:
+        return apply_live(path)
+    except SystemExit as exc:
+        return exc
+
+
+def guard_apply(path, live=False):
+    """Refuse to write anything that resolves under /srv/rencrow (live store).
+
+    ``live=True`` is the controlled cutover mode and takes its own guards.
+    """
+    resolved = os.path.realpath(path)
+    if live:
+        return apply_live(resolved)
     if resolved == FORBIDDEN_APPLY_ROOT or resolved.startswith(FORBIDDEN_APPLY_ROOT + os.sep):
         raise SystemExit("refused apply under %s: %s" % (FORBIDDEN_APPLY_ROOT, resolved))
     return apply_remap(resolved)
@@ -369,6 +508,10 @@ def main():
     parser.add_argument("--db", help="SQLite workstream store; required unless --self-test")
     parser.add_argument("--copy-into", help="copy the database into this path and remap the copy")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--apply-live-cutover", action="store_true",
+                        help="controlled cutover write against the live store "
+                             "(requires %s=1 and a target under the live store root)"
+                             % LIVE_BACKUP_ACK_ENV)
     parser.add_argument("--self-test", action="store_true",
                         help="run the contract fixtures in a temp dir (no live data, no server)")
     args = parser.parse_args()
@@ -377,6 +520,9 @@ def main():
         return self_test()
     if not args.db:
         parser.error("--db is required unless --self-test is given")
+    if args.apply_live_cutover and args.copy_into:
+        parser.error("--apply-live-cutover rewrites the live store in place; "
+                     "--copy-into belongs to the rehearsal path")
 
     src = os.path.realpath(args.db)
     before = scan(src)
@@ -385,11 +531,12 @@ def main():
         target = os.path.realpath(args.copy_into)
         shutil.copyfile(src, target)
     report = {"schema_version": "rencrow-step20-receipt-payload-remap/v1",
-              "mode": "apply" if args.apply else "dry-run",
+              "mode": ("apply-live-cutover" if args.apply_live_cutover
+                       else "apply" if args.apply else "dry-run"),
               "database": src, "target": target, "before": before}
 
-    if args.apply:
-        report["stats"] = guard_apply(target)
+    if args.apply or args.apply_live_cutover:
+        report["stats"] = guard_apply(target, live=args.apply_live_cutover)
         report["after"] = scan(target)
         problems = check_integrity(before, report["after"])
         report["integrity_problems"] = problems
