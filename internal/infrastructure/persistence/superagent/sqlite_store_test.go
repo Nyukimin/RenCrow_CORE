@@ -2,7 +2,10 @@ package superagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +13,35 @@ import (
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+// contextPackFixtureBody is the byte string that the superagent domain declares as the
+// content of the fixture pack below: compact JSON in the fixed key order summary,
+// included_sources, token_estimate. Hashing this literal with crypto/sha256 keeps the
+// store expectation independent from the domain projection helper.
+const contextPackFixtureBody = `{"summary":"summary","included_sources":["session:s1"],"token_estimate":1200}`
+
+func contextPackFixtureDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return modulecore.ContentHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// contextPackFixture is a valid ContextPack with the digest of contextPackFixtureBody
+// and one canonical successor reference, so a save exercises both content fields.
+func contextPackFixture(artifactID modulecore.ArtifactID, taskID modulecore.TaskID, runID modulecore.RunID, successor modulecore.ArtifactID, now time.Time) domainsuperagent.ContextPack {
+	return domainsuperagent.ContextPack{
+		ArtifactID:      artifactID,
+		Kind:            modulecore.ArtifactKindContextPack,
+		TaskID:          taskID,
+		RunID:           runID,
+		WorkstreamID:    "session-1",
+		Summary:         "summary",
+		IncludedSources: []string{"session:s1"},
+		TokenEstimate:   1200,
+		ContentHash:     contextPackFixtureDigest(contextPackFixtureBody),
+		SupersededBy:    successor,
+		CreatedAt:       now,
+	}
+}
 
 func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
@@ -55,15 +87,8 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
 	artifactID := modulecore.NewArtifactID()
-	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ArtifactID:    artifactID,
-		Kind:          modulecore.ArtifactKindContextPack,
-		TaskID:        taskID,
-		RunID:         runID,
-		Summary:       "summary",
-		TokenEstimate: 1200,
-		CreatedAt:     now,
-	}); err != nil {
+	pack := contextPackFixture(artifactID, taskID, runID, modulecore.NewArtifactID(), now)
+	if err := store.SaveContextPack(context.Background(), pack); err != nil {
 		t.Fatalf("SaveContextPack() error = %v", err)
 	}
 	if err := store.SaveMessageChannel(context.Background(), domainsuperagent.MessageChannel{
@@ -98,6 +123,21 @@ func TestSQLiteStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	contexts, err := store.ListContextPacks(context.Background(), 10)
 	if err != nil || len(contexts) != 1 || contexts[0].ArtifactID != artifactID || contexts[0].Kind != modulecore.ArtifactKindContextPack {
 		t.Fatalf("ListContextPacks() = %#v, %v", contexts, err)
+	}
+	// The payload roundtrip keeps the content digest and the supersession reference,
+	// plus the body and identity those fields describe.
+	if contexts[0].ContentHash != pack.ContentHash {
+		t.Fatalf("stored content_hash = %q, want %q", contexts[0].ContentHash, pack.ContentHash)
+	}
+	if contexts[0].SupersededBy != pack.SupersededBy {
+		t.Fatalf("stored superseded_by = %q, want %q", contexts[0].SupersededBy, pack.SupersededBy)
+	}
+	if contexts[0].Summary != pack.Summary || contexts[0].TokenEstimate != pack.TokenEstimate ||
+		contexts[0].WorkstreamID != pack.WorkstreamID || !contexts[0].CreatedAt.Equal(pack.CreatedAt) {
+		t.Fatalf("stored context pack body or identity changed: %+v want %+v", contexts[0], pack)
+	}
+	if len(contexts[0].IncludedSources) != 1 || contexts[0].IncludedSources[0] != "session:s1" {
+		t.Fatalf("stored included_sources = %v, want [session:s1]", contexts[0].IncludedSources)
 	}
 	channels, err := store.ListMessageChannels(context.Background(), 10)
 	if err != nil || len(channels) != 1 || channels[0].ChannelID != "ch_1" {
@@ -457,15 +497,7 @@ func TestSQLiteStoreMigratesLegacyContextPackNotNullRunID(t *testing.T) {
 		t.Fatal("legacy context_pack.run_id NOT NULL constraint survived migrate")
 	}
 	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
-	if err := reopened.SaveContextPack(ctx, domainsuperagent.ContextPack{
-		ArtifactID:    modulecore.NewArtifactID(),
-		Kind:          modulecore.ArtifactKindContextPack,
-		TaskID:        taskID,
-		RunID:         runID,
-		Summary:       "summary",
-		TokenEstimate: 120,
-		CreatedAt:     time.Now(),
-	}); err != nil {
+	if err := reopened.SaveContextPack(ctx, contextPackFixture(modulecore.NewArtifactID(), taskID, runID, modulecore.NewArtifactID(), time.Now())); err != nil {
 		t.Fatalf("SaveContextPack() on migrated DB error = %v", err)
 	}
 	var preserved int
@@ -478,5 +510,78 @@ func TestSQLiteStoreMigratesLegacyContextPackNotNullRunID(t *testing.T) {
 	packs, err := reopened.ListContextPacks(ctx, 10)
 	if err != nil || len(packs) != 2 {
 		t.Fatalf("ListContextPacks() = %#v, %v", packs, err)
+	}
+}
+
+// TestSQLiteStoreContextPackContentHashAndSupersessionAreStored reads the payload column
+// directly, so the digest and the successor reference are proven to live in the row
+// rather than being recomputed on read, and the canonical save path refuses a pack whose
+// digest is missing, malformed, hashed from other content, or whose successor is the
+// artifact itself or an opaque legacy token.
+func TestSQLiteStoreContextPackContentHashAndSupersessionAreStored(t *testing.T) {
+	ctx := context.Background()
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "superagent.db"), 3000)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	pack := contextPackFixture(modulecore.NewArtifactID(), taskID, runID, modulecore.NewArtifactID(), now)
+	if err := store.SaveContextPack(ctx, pack); err != nil {
+		t.Fatalf("SaveContextPack() error = %v", err)
+	}
+
+	var payload string
+	if err := store.db.QueryRow(`SELECT payload FROM context_pack WHERE artifact_id=?`, string(pack.ArtifactID)).Scan(&payload); err != nil {
+		t.Fatalf("read stored payload: %v", err)
+	}
+	if !strings.Contains(payload, pack.ContentHash) {
+		t.Fatalf("stored payload carries no content digest: %s", payload)
+	}
+	if !strings.Contains(payload, string(pack.SupersededBy)) {
+		t.Fatalf("stored payload carries no superseded_by: %s", payload)
+	}
+
+	cases := []struct {
+		name string
+		want string
+		run  func(domainsuperagent.ContextPack) domainsuperagent.ContextPack
+	}{
+		{name: "missing digest", want: "content_hash is required", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = ""
+			return p
+		}},
+		{name: "malformed digest", want: "lowercase SHA-256 digest", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = "sha256:not-a-digest"
+			return p
+		}},
+		{name: "digest of other content", want: "does not match content digest", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = contextPackFixtureDigest(`{"summary":"other","included_sources":[],"token_estimate":0}`)
+			return p
+		}},
+		{name: "self supersession", want: "must not reference the artifact itself", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.SupersededBy = p.ArtifactID
+			return p
+		}},
+		{name: "opaque successor", want: "superseded_by is invalid", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.SupersededBy = "art_1"
+			return p
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			item := tc.run(contextPackFixture(modulecore.NewArtifactID(), taskID, runID, modulecore.NewArtifactID(), now))
+			if err := store.SaveContextPack(ctx, item); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SaveContextPack(%s) error = %v, want %q", tc.name, err, tc.want)
+			}
+		})
+	}
+	var rows int
+	if err := store.db.QueryRow(`SELECT count(*) FROM context_pack`).Scan(&rows); err != nil {
+		t.Fatalf("count context_pack rows: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("context_pack rows=%d, want 1: a rejected save must write nothing", rows)
 	}
 }

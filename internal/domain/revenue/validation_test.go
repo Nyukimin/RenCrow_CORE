@@ -1,10 +1,14 @@
 package revenue
 
 import (
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestValidateProductRejectsSuccessGuarantee(t *testing.T) {
@@ -42,7 +46,12 @@ func TestValidateRevenueRecords(t *testing.T) {
 	if err := ValidateRevenueEvent(RevenueEvent{EventID: "rev_1", EventType: "purchase", Amount: 980, CreatedAt: now}); err != nil {
 		t.Fatalf("revenue event should be valid: %v", err)
 	}
-	if err := ValidateDailyRoutineReport(DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-18", Status: "draft_report", CreatedAt: now}); err != nil {
+	report := DailyRoutineReport{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport, Date: "2026-05-18", Status: "draft_report", CreatedAt: now}
+	if got := string(DailyRoutineReportBodyBytes(report)); got != revenueReportMinimalBody {
+		t.Fatalf("report digested body bytes = %s, want %s", got, revenueReportMinimalBody)
+	}
+	report.ContentHash = revenueTestContentHash(t, revenueReportMinimalBody)
+	if err := ValidateDailyRoutineReport(report); err != nil {
 		t.Fatalf("daily routine report should be valid: %v", err)
 	}
 }
@@ -118,7 +127,12 @@ func TestValidateRevenueRejectsMissingCreatedAt(t *testing.T) {
 
 func TestValidateChannelDraft(t *testing.T) {
 	now := time.Date(2026, 5, 20, 7, 30, 0, 0, time.UTC)
-	if err := ValidateChannelDraft(ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文", CreatedAt: now}); err != nil {
+	draft := ChannelDraft{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft, Channel: "email", Body: "下書き本文", CreatedAt: now}
+	if got := string(ChannelDraftBodyBytes(draft)); got != revenueDraftMinimalBody {
+		t.Fatalf("draft digested body bytes = %s, want %s", got, revenueDraftMinimalBody)
+	}
+	draft.ContentHash = revenueTestContentHash(t, revenueDraftMinimalBody)
+	if err := ValidateChannelDraft(draft); err != nil {
 		t.Fatalf("empty policy metadata should be accepted: %v", err)
 	}
 
@@ -505,4 +519,393 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// IU-18c3 fixtures. The DailyRoutineReport and ChannelDraft content digest covers the
+// body projection declared once by the revenue domain (compact JSON in this fixed key
+// order): report = date, summary, the seven counts, suggested_actions; draft = channel,
+// subject, body. Identity (artifact_id, artifact_kind, workstream_id, trace_id,
+// opportunity_id, source_artifact_id), lifecycle and policy state (status,
+// external_send_applied), created_at, content_hash itself and superseded_by stay out of
+// the body, so a remint or an appended supersession never changes the digest. The
+// expectations below are computed with crypto/sha256 so they do not depend on the
+// producer helper.
+const (
+	revenueReportFixtureBody = `{"date":"2026-05-18","summary":"2026-05-18 のRevenue日次ルーチン下書きです。","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"]}`
+	revenueDraftFixtureBody  = `{"channel":"x","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。"}`
+	// revenueReportMinimalBody and revenueDraftMinimalBody are the body bytes of the
+	// smallest accepted report and draft, so a test that only needs a valid digest does
+	// not have to restate every count.
+	revenueReportMinimalBody = `{"date":"2026-05-18","summary":"","market_research_count":0,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[]}`
+	revenueDraftMinimalBody  = `{"channel":"email","subject":"","body":"下書き本文"}`
+)
+
+func revenueTestContentHash(t *testing.T, content string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(content))
+	return modulecore.ContentHashPrefix + hex.EncodeToString(sum[:])
+}
+
+func revenueReportPayload(extra string) string {
+	return `{"artifact_id":"art_00000000-0000-5000-8000-000000000001","artifact_kind":"report","workstream_id":"ws_revenue","date":"2026-05-18","summary":"2026-05-18 のRevenue日次ルーチン下書きです。","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"],"status":"draft_report","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"}`
+}
+
+func revenueDraftPayload(extra string) string {
+	return `{"artifact_id":"art_00000000-0000-5000-8000-000000000002","artifact_kind":"draft","trace_id":"trc_1","opportunity_id":"opp_1","workstream_id":"ws_revenue","channel":"x","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。","source_artifact_id":"art_00000000-0000-5000-8000-000000000001","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"}`
+}
+
+func TestDailyRoutineReportLinePreservesContentHashAndSupersededBy(t *testing.T) {
+	digest := revenueTestContentHash(t, revenueReportFixtureBody)
+	payload := revenueReportPayload(`"content_hash":"` + digest + `","superseded_by":"art_00000000-0000-5000-8000-00000000000b",`)
+	var item DailyRoutineReport
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("unmarshal report payload: %v", err)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal report: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"content_hash":"`+digest+`"`) {
+		t.Fatalf("persisted content_hash lost after roundtrip: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"superseded_by":"art_00000000-0000-5000-8000-00000000000b"`) {
+		t.Fatalf("persisted superseded_by lost after roundtrip: %s", encoded)
+	}
+}
+
+func TestValidateDailyRoutineReportRejectsLineWithoutContentHash(t *testing.T) {
+	var item DailyRoutineReport
+	if err := json.Unmarshal([]byte(revenueReportPayload("")), &item); err != nil {
+		t.Fatalf("unmarshal report payload: %v", err)
+	}
+	if err := ValidateDailyRoutineReport(item); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("expected content_hash rejection for a report persisted without a digest, got %v", err)
+	}
+}
+
+func TestValidateDailyRoutineReportRejectsContentHashOfOtherBody(t *testing.T) {
+	other := `{"date":"2026-05-18","summary":"2026-05-18 のRevenue日次ルーチン下書きです。","market_research_count":2,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"]}`
+	var item DailyRoutineReport
+	if err := json.Unmarshal([]byte(revenueReportPayload(`"content_hash":"`+revenueTestContentHash(t, other)+`",`)), &item); err != nil {
+		t.Fatalf("unmarshal report payload: %v", err)
+	}
+	if err := ValidateDailyRoutineReport(item); err == nil || !strings.Contains(err.Error(), "does not match content") {
+		t.Fatalf("expected content digest mismatch rejection, got %v", err)
+	}
+}
+
+func TestValidateDailyRoutineReportRejectsSelfSupersession(t *testing.T) {
+	payload := revenueReportPayload(`"content_hash":"` + revenueTestContentHash(t, revenueReportFixtureBody) + `","superseded_by":"art_00000000-0000-5000-8000-000000000001",`)
+	var item DailyRoutineReport
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("unmarshal report payload: %v", err)
+	}
+	if err := ValidateDailyRoutineReport(item); err == nil || !strings.Contains(err.Error(), "must not reference the artifact itself") {
+		t.Fatalf("expected self-referencing superseded_by rejection, got %v", err)
+	}
+}
+
+func TestValidateDailyRoutineReportRejectsOpaqueSupersededBy(t *testing.T) {
+	payload := revenueReportPayload(`"content_hash":"` + revenueTestContentHash(t, revenueReportFixtureBody) + `","superseded_by":"art_1",`)
+	var item DailyRoutineReport
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("unmarshal report payload: %v", err)
+	}
+	if err := ValidateDailyRoutineReport(item); err == nil || !strings.Contains(err.Error(), "superseded_by") {
+		t.Fatalf("expected opaque superseded_by rejection, got %v", err)
+	}
+}
+
+func TestChannelDraftLinePreservesContentHashAndSupersededBy(t *testing.T) {
+	digest := revenueTestContentHash(t, revenueDraftFixtureBody)
+	payload := revenueDraftPayload(`"content_hash":"` + digest + `","superseded_by":"art_00000000-0000-5000-8000-00000000000b",`)
+	var item ChannelDraft
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("unmarshal draft payload: %v", err)
+	}
+	encoded, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("marshal draft: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"content_hash":"`+digest+`"`) {
+		t.Fatalf("persisted content_hash lost after roundtrip: %s", encoded)
+	}
+	if !strings.Contains(string(encoded), `"superseded_by":"art_00000000-0000-5000-8000-00000000000b"`) {
+		t.Fatalf("persisted superseded_by lost after roundtrip: %s", encoded)
+	}
+}
+
+func TestValidateChannelDraftRejectsLineWithoutContentHash(t *testing.T) {
+	var item ChannelDraft
+	if err := json.Unmarshal([]byte(revenueDraftPayload("")), &item); err != nil {
+		t.Fatalf("unmarshal draft payload: %v", err)
+	}
+	if err := ValidateChannelDraft(item); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("expected content_hash rejection for a draft persisted without a digest, got %v", err)
+	}
+}
+
+func TestValidateChannelDraftRejectsContentHashOfOtherBody(t *testing.T) {
+	other := `{"channel":"x","subject":"Re: 納品のご確認","body":"本日18時までに納品いたします。"}`
+	var item ChannelDraft
+	if err := json.Unmarshal([]byte(revenueDraftPayload(`"content_hash":"`+revenueTestContentHash(t, other)+`",`)), &item); err != nil {
+		t.Fatalf("unmarshal draft payload: %v", err)
+	}
+	if err := ValidateChannelDraft(item); err == nil || !strings.Contains(err.Error(), "does not match content") {
+		t.Fatalf("expected content digest mismatch rejection, got %v", err)
+	}
+}
+
+func TestValidateChannelDraftRejectsSelfSupersession(t *testing.T) {
+	payload := revenueDraftPayload(`"content_hash":"` + revenueTestContentHash(t, revenueDraftFixtureBody) + `","superseded_by":"art_00000000-0000-5000-8000-000000000002",`)
+	var item ChannelDraft
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		t.Fatalf("unmarshal draft payload: %v", err)
+	}
+	if err := ValidateChannelDraft(item); err == nil || !strings.Contains(err.Error(), "must not reference the artifact itself") {
+		t.Fatalf("expected self-referencing superseded_by rejection, got %v", err)
+	}
+}
+
+// testReportFixture and testDraftFixture build the accepted report and draft whose body
+// bytes are revenueReportFixtureBody and revenueDraftFixtureBody, so a digest test can
+// change one field without restating the whole artifact.
+func testReportFixture() DailyRoutineReport {
+	return DailyRoutineReport{
+		ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+		Kind:             modulecore.ArtifactKindReport,
+		WorkstreamID:     "ws_revenue",
+		Date:             "2026-05-18",
+		Summary:          "2026-05-18 のRevenue日次ルーチン下書きです。",
+		MarketResearch:   1,
+		SNSPosts:         2,
+		Products:         3,
+		CustomerVoices:   4,
+		RevenueEvents:    5,
+		PaidCustomers:    1,
+		BlockedDecisions: 0,
+		SuggestedActions: []string{"市場調査を追加する"},
+		Status:           "draft_report",
+		CreatedAt:        time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+func testDraftFixture() ChannelDraft {
+	return ChannelDraft{
+		ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		Kind:             modulecore.ArtifactKindDraft,
+		TraceID:          "trc_1",
+		OpportunityID:    "opp_1",
+		WorkstreamID:     "ws_revenue",
+		Channel:          "x",
+		Subject:          "Re: 納品のご確認",
+		Body:             "本日17時までに納品いたします。",
+		SourceArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+		CreatedAt:        time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC),
+	}
+}
+
+// TestDailyRoutineReportDigestCoversBodyNotIdentityMetadata pins the report body bytes,
+// so identity metadata, lifecycle and policy state, created_at and the supersession
+// reference cannot drift into the digest, while a content change always shows up.
+func TestDailyRoutineReportDigestCoversBodyNotIdentityMetadata(t *testing.T) {
+	item := testReportFixture()
+	if got := string(DailyRoutineReportBodyBytes(item)); got != revenueReportFixtureBody {
+		t.Fatalf("report body bytes = %s, want %s", got, revenueReportFixtureBody)
+	}
+	digest := ComputeDailyRoutineReportContentHash(item)
+	if want := revenueTestContentHash(t, revenueReportFixtureBody); digest != want {
+		t.Fatalf("report digest = %s, want %s", digest, want)
+	}
+
+	reminted := testReportFixture()
+	reminted.ArtifactID = modulecore.ArtifactID("art_00000000-0000-7000-8000-00000000000d")
+	reminted.WorkstreamID = "ws_other"
+	reminted.Status = "sent"
+	reminted.ExternalSendApplied = true
+	reminted.CreatedAt = reminted.CreatedAt.Add(48 * time.Hour)
+	reminted.SupersededBy = modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000b")
+	if got := ComputeDailyRoutineReportContentHash(reminted); got != digest {
+		t.Fatalf("digest after identity, lifecycle and created_at changes = %s, want %s", got, digest)
+	}
+	if got := string(reminted.ArtifactID); got == digest {
+		t.Fatalf("digest %s reuses the reminted ArtifactID as a hash", digest)
+	}
+
+	// A missing action list and an empty one are the same content.
+	nilActions := testReportFixture()
+	nilActions.SuggestedActions = nil
+	emptyActions := testReportFixture()
+	emptyActions.SuggestedActions = []string{}
+	if got, want := string(DailyRoutineReportBodyBytes(nilActions)), string(DailyRoutineReportBodyBytes(emptyActions)); got != want {
+		t.Fatalf("nil action list body bytes = %s, want %s", got, want)
+	}
+	if got, want := ComputeDailyRoutineReportContentHash(nilActions), ComputeDailyRoutineReportContentHash(emptyActions); got != want {
+		t.Fatalf("nil action list digest = %s, want %s", got, want)
+	}
+
+	cases := []struct {
+		name   string
+		mutate func(*DailyRoutineReport)
+	}{
+		{"summary", func(i *DailyRoutineReport) { i.Summary += "外部送信しました。" }},
+		{"count", func(i *DailyRoutineReport) { i.MarketResearch = 2 }},
+		{"paid customers", func(i *DailyRoutineReport) { i.PaidCustomers = 0 }},
+		{"appended action", func(i *DailyRoutineReport) { i.SuggestedActions = append(i.SuggestedActions, "商品を追加する") }},
+	}
+	for _, tc := range cases {
+		changed := testReportFixture()
+		tc.mutate(&changed)
+		if got := ComputeDailyRoutineReportContentHash(changed); got == digest {
+			t.Errorf("digest unchanged by a %s change: %s", tc.name, got)
+		}
+	}
+
+	// Order is content: two reports listing the same actions in another order differ.
+	first := testReportFixture()
+	first.SuggestedActions = []string{"市場調査を追加する", "商品を追加する"}
+	second := testReportFixture()
+	second.SuggestedActions = []string{"商品を追加する", "市場調査を追加する"}
+	if ComputeDailyRoutineReportContentHash(first) == ComputeDailyRoutineReportContentHash(second) {
+		t.Error("reordering the suggested actions left the digest unchanged")
+	}
+}
+
+// TestValidateDailyRoutineReportAcceptsCanonicalSuccessors pins that a migrated UUIDv5 and
+// a newly minted UUIDv7 successor are both accepted with the correct body digest, and
+// that a self reference, an opaque reference and a digest of other bytes are refused.
+func TestValidateDailyRoutineReportAcceptsCanonicalSuccessors(t *testing.T) {
+	for _, successor := range []string{
+		"art_00000000-0000-5000-8000-00000000000b",
+		"art_00000000-0000-7000-8000-00000000000d",
+	} {
+		item := testReportFixture()
+		item.ContentHash = ComputeDailyRoutineReportContentHash(item)
+		item.SupersededBy = modulecore.ArtifactID(successor)
+		if err := ValidateDailyRoutineReport(item); err != nil {
+			t.Errorf("ValidateDailyRoutineReport() successor %s error = %v", successor, err)
+		}
+	}
+
+	self := testReportFixture()
+	self.ContentHash = ComputeDailyRoutineReportContentHash(self)
+	self.SupersededBy = self.ArtifactID
+	if err := ValidateDailyRoutineReport(self); err == nil || !strings.Contains(err.Error(), "must not reference the artifact itself") {
+		t.Errorf("error = %v, want self reference reason", err)
+	}
+
+	opaque := testReportFixture()
+	opaque.ContentHash = ComputeDailyRoutineReportContentHash(opaque)
+	opaque.SupersededBy = modulecore.ArtifactID("art_1")
+	if err := ValidateDailyRoutineReport(opaque); err == nil || !strings.Contains(err.Error(), "superseded_by") {
+		t.Errorf("error = %v, want opaque superseded_by rejection", err)
+	}
+
+	otherBody := testReportFixture()
+	otherBody.ContentHash = revenueTestContentHash(t, revenueReportMinimalBody)
+	if err := ValidateDailyRoutineReport(otherBody); err == nil || !strings.Contains(err.Error(), "does not match content") {
+		t.Errorf("error = %v, want content digest mismatch rejection", err)
+	}
+
+	malformed := testReportFixture()
+	malformed.ContentHash = "sha256:0000"
+	if err := ValidateDailyRoutineReport(malformed); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Errorf("error = %v, want malformed content_hash rejection", err)
+	}
+}
+
+// TestChannelDraftDigestCoversBodyNotIdentityMetadata pins the draft body bytes and the
+// escaping of quotes, newlines and non-ASCII text, and keeps the successor reference and
+// identity metadata out of the digest.
+func TestChannelDraftDigestCoversBodyNotIdentityMetadata(t *testing.T) {
+	item := testDraftFixture()
+	if got := string(ChannelDraftBodyBytes(item)); got != revenueDraftFixtureBody {
+		t.Fatalf("draft body bytes = %s, want %s", got, revenueDraftFixtureBody)
+	}
+	digest := ComputeChannelDraftContentHash(item)
+	if want := revenueTestContentHash(t, revenueDraftFixtureBody); digest != want {
+		t.Fatalf("draft digest = %s, want %s", digest, want)
+	}
+
+	reminted := testDraftFixture()
+	reminted.ArtifactID = modulecore.ArtifactID("art_00000000-0000-7000-8000-00000000000e")
+	reminted.TraceID = "trc_2"
+	reminted.OpportunityID = "opp_2"
+	reminted.WorkstreamID = "ws_other"
+	reminted.SourceArtifactID = modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003")
+	reminted.CreatedAt = reminted.CreatedAt.Add(48 * time.Hour)
+	reminted.SupersededBy = modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000b")
+	if got := ComputeChannelDraftContentHash(reminted); got != digest {
+		t.Fatalf("digest after identity and created_at changes = %s, want %s", got, digest)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ChannelDraft)
+	}{
+		{"channel", func(i *ChannelDraft) { i.Channel = "email" }},
+		{"subject", func(i *ChannelDraft) { i.Subject = "Re: 納品のご確認（再送）" }},
+		{"body", func(i *ChannelDraft) { i.Body = "本日18時までに納品いたします。" }},
+	} {
+		changed := testDraftFixture()
+		tc.mutate(&changed)
+		if got := ComputeChannelDraftContentHash(changed); got == digest {
+			t.Errorf("digest unchanged by a %s change: %s", tc.name, got)
+		}
+	}
+
+	// Quotes, newlines and non-ASCII text are digested in the persisted JSON form.
+	punctuation := testDraftFixture()
+	punctuation.Subject = `Re: "納品"のご確認`
+	punctuation.Body = "本日17時までに納品いたします。\n（日本語と引用符と改行）"
+	want := `{"channel":"x","subject":"Re: \"納品\"のご確認","body":"本日17時までに納品いたします。\n（日本語と引用符と改行）"}`
+	if got := string(ChannelDraftBodyBytes(punctuation)); got != want {
+		t.Fatalf("draft body bytes = %s, want %s", got, want)
+	}
+	if got, wantDigest := ComputeChannelDraftContentHash(punctuation), revenueTestContentHash(t, want); got != wantDigest {
+		t.Fatalf("draft digest = %s, want %s", got, wantDigest)
+	}
+}
+
+// TestValidateChannelDraftAcceptsCanonicalSuccessors pins the draft successor forms: the
+// migrated UUIDv5 and the new UUIDv7 are accepted, a self reference and an opaque
+// reference are refused, and a digest of other bytes never passes.
+func TestValidateChannelDraftAcceptsCanonicalSuccessors(t *testing.T) {
+	for _, successor := range []string{
+		"art_00000000-0000-5000-8000-00000000000b",
+		"art_00000000-0000-7000-8000-00000000000d",
+	} {
+		item := testDraftFixture()
+		item.ContentHash = ComputeChannelDraftContentHash(item)
+		item.SupersededBy = modulecore.ArtifactID(successor)
+		if err := ValidateChannelDraft(item); err != nil {
+			t.Errorf("ValidateChannelDraft() successor %s error = %v", successor, err)
+		}
+	}
+
+	self := testDraftFixture()
+	self.ContentHash = ComputeChannelDraftContentHash(self)
+	self.SupersededBy = self.ArtifactID
+	if err := ValidateChannelDraft(self); err == nil || !strings.Contains(err.Error(), "must not reference the artifact itself") {
+		t.Errorf("error = %v, want self reference reason", err)
+	}
+
+	opaque := testDraftFixture()
+	opaque.ContentHash = ComputeChannelDraftContentHash(opaque)
+	opaque.SupersededBy = modulecore.ArtifactID("art_1")
+	if err := ValidateChannelDraft(opaque); err == nil || !strings.Contains(err.Error(), "superseded_by") {
+		t.Errorf("error = %v, want opaque superseded_by rejection", err)
+	}
+
+	otherBody := testDraftFixture()
+	otherBody.ContentHash = revenueTestContentHash(t, revenueDraftMinimalBody)
+	if err := ValidateChannelDraft(otherBody); err == nil || !strings.Contains(err.Error(), "does not match content") {
+		t.Errorf("error = %v, want content digest mismatch rejection", err)
+	}
+
+	malformed := testDraftFixture()
+	malformed.ContentHash = "sha512:" + strings.Repeat("a", 64)
+	if err := ValidateChannelDraft(malformed); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Errorf("error = %v, want malformed content_hash rejection", err)
+	}
 }

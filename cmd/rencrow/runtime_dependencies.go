@@ -241,6 +241,7 @@ type Dependencies struct {
 	browserTraceAPIDiscover        http.HandlerFunc                            // viewer browser trace to API discover API
 	browserTraceAPIValidation      http.HandlerFunc                            // viewer browser trace API validation review API
 	browserTraceAPIFetcherProposal http.HandlerFunc                            // viewer browser trace to API fetcher proposal API
+	browserTraceAPISupersede       http.HandlerFunc                            // viewer browser trace to API artifact supersede API
 	complexityHotspotStatus        http.HandlerFunc                            // viewer complexity hotspot status API
 	complexityHotspotScan          http.HandlerFunc                            // viewer complexity hotspot scan API
 	complexityHotspotProposal      http.HandlerFunc                            // viewer complexity hotspot proposal mode API
@@ -1230,9 +1231,30 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			}
 			browserTraceStore = store
 		} else {
-			browserTraceStore = browsertracepersistence.NewJSONLStore(cfg.BrowserTraceToAPI.LogPath)
+			store, err := browsertracepersistence.NewJSONLStore(cfg.BrowserTraceToAPI.LogPath)
+			if err != nil {
+				log.Fatalf("Failed to initialize Browser Trace to API JSONL store: %v", err)
+			}
+			browserTraceStore = store
 		}
 		deps.browserTraceAPIStatus = viewer.HandleBrowserTraceAPIStatus(browserTraceStore)
+		// Undelivered creation facts are retried before this start advertises the route, so a
+		// previous process that stored an artifact without delivering its creation fact does
+		// not leave that fact waiting for a request nobody resends.
+		if err := recoverBrowserTraceAPICreationFacts(context.Background(), browserTraceStore, canonicalEventStore); err != nil {
+			log.Printf("WARN: browser trace api creation fact recovery: %v", err)
+		}
+		// Undelivered supersession facts are retried on the same start. The store is
+		// asserted to the owner's fact source instead of widening the viewer store
+		// interface here, because the supersede route owns that widening; a store that
+		// cannot expose its facts is reported, not silently treated as delivered.
+		if supersessionSource, ok := browserTraceStore.(browsertraceapp.APIArtifactSupersessionSource); ok {
+			if err := recoverBrowserTraceAPISupersessionFacts(context.Background(), supersessionSource, canonicalEventStore); err != nil {
+				log.Printf("WARN: browser trace api supersession fact recovery: %v", err)
+			}
+		} else {
+			log.Printf("WARN: browser trace api supersession fact recovery: store %T exposes no supersession facts", browserTraceStore)
+		}
 		if err := registerRuntimeDataRecallBrowserTraceToAPI(dataRecallRegistry, browserTraceStore); err != nil {
 			log.Fatalf("Failed to register Browser Trace data recall: %v", err)
 		}
@@ -1262,9 +1284,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		if deps.taskManager != nil {
 			runVerifier = viewer.NewBrowserTraceRunVerifier(deps.taskManager)
 		}
-		deps.browserTraceAPIDiscover = viewer.HandleBrowserTraceAPIDiscoverWithPolicy(browserTraceStore, browsertraceapp.NewDiscovererWithAcceptedPaths(cfg.BrowserTraceToAPI.AcceptedPaths), runVerifier, candidateSink, workstreamArtifactSink, validationPolicy)
+		deps.browserTraceAPIDiscover = viewer.HandleBrowserTraceAPIDiscoverWithPolicy(browserTraceStore, browsertraceapp.NewDiscovererWithAcceptedPaths(cfg.BrowserTraceToAPI.AcceptedPaths), runVerifier, candidateSink, workstreamArtifactSink, canonicalEventStore, validationPolicy)
 		deps.browserTraceAPIValidation = viewer.HandleBrowserTraceAPIValidationReview(browserTraceStore)
-		deps.browserTraceAPIFetcherProposal = viewer.HandleBrowserTraceAPIFetcherProposal(browserTraceStore, workstreamArtifactSink)
+		deps.browserTraceAPIFetcherProposal = viewer.HandleBrowserTraceAPIFetcherProposal(browserTraceStore, runVerifier, workstreamArtifactSink, canonicalEventStore)
+		// The supersede route is the only surface that may establish an edge: it drives the one
+		// owner operation that writes the edge together with the durable fact naming it, and
+		// delivers that fact to the canonical event store before the response claims success.
+		// A store that cannot expose its facts leaves the route unregistered instead of letting
+		// an edge be written by a path whose event nobody owns.
+		if supersedeStore, ok := browserTraceStore.(viewer.BrowserTraceAPISupersedeStore); ok {
+			deps.browserTraceAPISupersede = viewer.HandleBrowserTraceAPIArtifactSupersede(supersedeStore, runVerifier, canonicalEventStore)
+		} else {
+			log.Printf("WARN: browser trace api supersede route: store %T exposes no supersession facts", browserTraceStore)
+		}
 	}
 	if cfg.ComplexityHotspot.IsEnabled() {
 		var complexityStore viewer.ComplexityHotspotStore

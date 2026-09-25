@@ -1893,6 +1893,18 @@ func TestProcessMessage_RecordsLeadAgentRun(t *testing.T) {
 	if super.contextPacks[0].Kind != modulecore.ArtifactKindContextPack {
 		t.Fatalf("context pack kind=%q want=%q", super.contextPacks[0].Kind, modulecore.ArtifactKindContextPack)
 	}
+	// The producer stamps the content digest of the pack body right before the pack is
+	// saved, so a pack reaching the recorder already carries the digest of its own
+	// summary, sources and token estimate, and a freshly produced pack is not superseded.
+	if err := modulecore.ValidateContentHash(super.contextPacks[0].ContentHash, "produced context pack content_hash"); err != nil {
+		t.Fatalf("produced context pack content_hash: %v", err)
+	}
+	if got := domainsuperagent.ComputeContextPackContentHash(super.contextPacks[0]); super.contextPacks[0].ContentHash != got {
+		t.Fatalf("context pack content_hash = %q, want the digest of the produced body %q", super.contextPacks[0].ContentHash, got)
+	}
+	if super.contextPacks[0].SupersededBy != "" {
+		t.Fatalf("a newly produced context pack must not be superseded, got %q", super.contextPacks[0].SupersededBy)
+	}
 	if runID := modulecore.RunID(super.runs[0].RunID); runID.Validate() != nil {
 		t.Fatalf("lead agent RunID is not canonical: %q", runID)
 	}

@@ -18,11 +18,16 @@ type Routes struct {
 	BrowserTraceAPIDiscover        http.HandlerFunc
 	BrowserTraceAPIValidation      http.HandlerFunc
 	BrowserTraceAPIFetcherProposal http.HandlerFunc
-	ComplexityHotspotStatus        http.HandlerFunc
-	ComplexityHotspotScan          http.HandlerFunc
-	ComplexityHotspotProposal      http.HandlerFunc
-	ComplexityHotspotConcreteDiff  http.HandlerFunc
-	ComplexityHotspotCoderDiff     http.HandlerFunc
+	// BrowserTraceAPISupersede is the only route allowed to establish an artifact
+	// supersession edge, because it drives the owner operation that writes the edge and its
+	// durable fact together. An ordinary Save is refused an edge, so leaving this handler nil
+	// leaves the edge unwritable rather than writable without its event.
+	BrowserTraceAPISupersede      http.HandlerFunc
+	ComplexityHotspotStatus       http.HandlerFunc
+	ComplexityHotspotScan         http.HandlerFunc
+	ComplexityHotspotProposal     http.HandlerFunc
+	ComplexityHotspotConcreteDiff http.HandlerFunc
+	ComplexityHotspotCoderDiff    http.HandlerFunc
 }
 
 // RegisterRoutes registers handlers at the feature route boundary.
@@ -32,6 +37,7 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/browser-trace-api/discover", routes.BrowserTraceAPIDiscover)
 	registerRoute(mux, "/viewer/browser-trace-api/validations", routes.BrowserTraceAPIValidation)
 	registerRoute(mux, "/viewer/browser-trace-api/fetcher-proposals", routes.BrowserTraceAPIFetcherProposal)
+	registerRoute(mux, "/viewer/browser-trace-api/supersede", routes.BrowserTraceAPISupersede)
 	registerRoute(mux, "/viewer/complexity-hotspots", routes.ComplexityHotspotStatus)
 	registerRoute(mux, "/viewer/complexity-hotspots/scan", routes.ComplexityHotspotScan)
 	registerRoute(mux, "/viewer/complexity-hotspots/proposals", routes.ComplexityHotspotProposal)

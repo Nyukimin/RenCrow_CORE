@@ -242,6 +242,15 @@ func ValidateDailyRoutineReport(item DailyRoutineReport) error {
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if got := ComputeDailyRoutineReportContentHash(item); got != item.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -271,6 +280,15 @@ func ValidateChannelDraft(item ChannelDraft) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
+	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if got := ComputeChannelDraftContentHash(item); got != item.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
 	}
 	return nil
 }
@@ -412,6 +430,7 @@ func BuildDailyRoutineReport(input DailyRoutineInput) DailyRoutineReport {
 		report.RevenueEvents,
 	)
 	report.SuggestedActions = buildDailyRoutineSuggestedActions(report)
+	report.ContentHash = ComputeDailyRoutineReportContentHash(report)
 	return report
 }
 

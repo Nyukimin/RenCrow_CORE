@@ -139,7 +139,13 @@ type DailyRoutineReport struct {
 	SuggestedActions    []string                `json:"suggested_actions,omitempty"`
 	Status              string                  `json:"status"`
 	ExternalSendApplied bool                    `json:"external_send_applied"`
-	CreatedAt           time.Time               `json:"created_at"`
+	// ContentHash is the digest of the report body declared once by
+	// artifact_content.go, so it is a content field and never an ID
+	// (IDENTITY_CANONICAL 2.3). SupersededBy is the optional canonical ArtifactID of the
+	// report that replaced this one. Both forms are owned by modules/core.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type ChannelDraft struct {
@@ -153,7 +159,12 @@ type ChannelDraft struct {
 	Body                string                  `json:"body"`
 	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
 	ExternalSendApplied bool                    `json:"external_send_applied"`
-	CreatedAt           time.Time               `json:"created_at"`
+	// ContentHash is the digest of the channel, subject and draft body projection owned
+	// by artifact_content.go, and SupersededBy is the optional canonical ArtifactID of the
+	// draft that replaced this one. Neither is recomputed on read.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type ExternalSendApplyRecord struct {

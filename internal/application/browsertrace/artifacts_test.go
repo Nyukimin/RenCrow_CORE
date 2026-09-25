@@ -1,6 +1,8 @@
 package browsertrace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +13,7 @@ import (
 
 func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	artifacts := BuildAPIArtifacts(domaintrace.DiscoveryResult{
+	artifacts, err := BuildAPIArtifacts(domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
 			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			WorkstreamID: "ws_1",
@@ -38,6 +40,9 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 			CreatedAt:         now,
 		},
 	})
+	if err != nil {
+		t.Fatalf("BuildAPIArtifacts() error = %v", err)
+	}
 	if len(artifacts) != 6 {
 		t.Fatalf("artifacts=%#v", artifacts)
 	}
@@ -63,7 +68,7 @@ func TestBuildAPIArtifactsCreatesOpenAPICoverageInventoryAndRisk(t *testing.T) {
 
 func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(t *testing.T) {
 	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
-	artifacts := BuildAPIArtifactsWithValidations(domaintrace.DiscoveryResult{
+	artifacts, err := BuildAPIArtifactsWithValidations(domaintrace.DiscoveryResult{
 		Run: domaintrace.TraceRun{
 			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
 			TracePath: "traces/trace_1",
@@ -94,11 +99,66 @@ func TestBuildAPIArtifactsWithValidationsAllowsFetcherPlanForValidatedCandidate(
 		Status:    "validated",
 		CreatedAt: now,
 	}})
+	if err != nil {
+		t.Fatalf("BuildAPIArtifactsWithValidations() error = %v", err)
+	}
 
 	if !strings.Contains(artifacts[4].Content, "proposal allowed by synchronous execution policy") {
 		t.Fatalf("fetcher plan artifact=%#v", artifacts[4])
 	}
 	if !strings.Contains(artifacts[5].Content, "fetchAllowedByPolicy: true") {
 		t.Fatalf("client draft artifact=%#v", artifacts[5])
+	}
+}
+
+// TestBuildAPIArtifactsCarriesCanonicalArtifactIdentity pins that every generated
+// artifact carries its own canonical ArtifactID and the ArtifactKind declared by
+// the browsertrace domain for its content role, so the stores never receive an
+// artifact that is missing a canonical identity.
+func TestBuildAPIArtifactsCarriesCanonicalArtifactIdentity(t *testing.T) {
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	artifacts, err := BuildAPIArtifacts(domaintrace.DiscoveryResult{
+		Run: domaintrace.TraceRun{
+			TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
+			TracePath: "traces/trace_1",
+			CreatedAt: now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildAPIArtifacts() error = %v", err)
+	}
+	wantKinds := []modulecore.ArtifactKind{
+		modulecore.ArtifactKindSpecification, // observed_openapi
+		modulecore.ArtifactKindReport,        // coverage_report
+		modulecore.ArtifactKindDocument,      // endpoint_inventory
+		modulecore.ArtifactKindReport,        // risk_assessment
+		modulecore.ArtifactKindDraft,         // fetcher_plan
+		modulecore.ArtifactKindDraft,         // client_draft
+	}
+	if len(artifacts) != len(wantKinds) {
+		t.Fatalf("artifacts = %d, want %d", len(artifacts), len(wantKinds))
+	}
+	seen := map[modulecore.ArtifactID]bool{}
+	for i, artifact := range artifacts {
+		if err := artifact.ArtifactID.Validate(); err != nil {
+			t.Errorf("artifact %d (%s) artifact_id %q: %v", i, artifact.Type, artifact.ArtifactID, err)
+		}
+		if seen[artifact.ArtifactID] {
+			t.Errorf("artifact %d (%s) reuses artifact_id %q", i, artifact.Type, artifact.ArtifactID)
+		}
+		seen[artifact.ArtifactID] = true
+		if artifact.Kind != wantKinds[i] {
+			t.Errorf("artifact %d (%s) artifact_kind = %q, want %q", i, artifact.Type, artifact.Kind, wantKinds[i])
+		}
+		sum := sha256.Sum256([]byte(artifact.Content))
+		if wantHash := "sha256:" + hex.EncodeToString(sum[:]); artifact.ContentHash != wantHash {
+			t.Errorf("artifact %d (%s) content_hash = %q, want the digest of its content %q", i, artifact.Type, artifact.ContentHash, wantHash)
+		}
+		if artifact.SupersededBy != "" {
+			t.Errorf("artifact %d (%s) superseded_by = %q, want empty for a freshly generated artifact", i, artifact.Type, artifact.SupersededBy)
+		}
+		if err := domaintrace.ValidateAPIArtifact(artifact); err != nil {
+			t.Errorf("ValidateAPIArtifact(%s) error = %v", artifact.Type, err)
+		}
 	}
 }

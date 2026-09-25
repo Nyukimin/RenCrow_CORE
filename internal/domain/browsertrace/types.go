@@ -83,7 +83,14 @@ type APICoverageReport struct {
 	ObservedEndpoints     []string                `json:"observed_endpoints,omitempty"`
 	MissingFlows          []string                `json:"missing_flows,omitempty"`
 	RecommendedNextTraces []string                `json:"recommended_next_traces,omitempty"`
-	CreatedAt             time.Time               `json:"created_at"`
+	// ContentHash is the digest of the four body lists, whose composition and order
+	// the browsertrace domain declares in coverage_content.go. SupersededBy is the
+	// optional canonical ArtifactID of the report that replaced this one. The digest
+	// form and supersession shape are owned by modules/core, and neither field is
+	// part of the digested body.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type NetworkRequest struct {
@@ -113,14 +120,21 @@ type DiscoveryResult struct {
 }
 
 type APIArtifact struct {
-	ArtifactID   string            `json:"artifact_id"`
-	TaskID       modulecore.TaskID `json:"task_id"`
-	RunID        modulecore.RunID  `json:"run_id"`
-	ActorID      string            `json:"actor_id"`
-	WorkstreamID string            `json:"workstream_id,omitempty"`
-	Type         string            `json:"artifact_type"`
-	Title        string            `json:"title"`
-	Status       string            `json:"status"`
-	Content      string            `json:"content"`
-	CreatedAt    time.Time         `json:"created_at"`
+	ArtifactID   modulecore.ArtifactID   `json:"artifact_id"`
+	Kind         modulecore.ArtifactKind `json:"artifact_kind"`
+	TaskID       modulecore.TaskID       `json:"task_id"`
+	RunID        modulecore.RunID        `json:"run_id"`
+	ActorID      string                  `json:"actor_id"`
+	WorkstreamID string                  `json:"workstream_id,omitempty"`
+	Type         string                  `json:"artifact_type"`
+	Title        string                  `json:"title"`
+	Status       string                  `json:"status"`
+	Content      string                  `json:"content"`
+	// ContentHash is the sha256-prefixed digest of Content as persisted, so it is
+	// a content field and never an ID (IDENTITY_CANONICAL 2.3). SupersededBy is
+	// the optional canonical ArtifactID of the artifact that replaced this one.
+	// Both forms are owned by modules/core.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }

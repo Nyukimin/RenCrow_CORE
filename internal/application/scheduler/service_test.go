@@ -103,6 +103,37 @@ func TestServiceRunsOnlyRequestedDueSchedule(t *testing.T) {
 	}
 }
 
+func TestServiceDueFireMintsDistinctTaskRunAndPreventsDuplicateOccurrence(t *testing.T) {
+	now := time.Date(2026, 7, 19, 19, 30, 0, 0, time.UTC)
+	scheduleID := modulecore.NewScheduleID()
+	store := &memoryStore{schedules: []domainscheduler.Schedule{{
+		ScheduleID: scheduleID, Name: "TTS pronunciation daily",
+		Schedule: "every 24h", Target: "tts_pronunciation_check", Enabled: true,
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour), NextRunAt: now,
+	}}}
+	svc := NewService(store, &recordingExecutor{}).WithNow(func() time.Time { return now })
+	ctx := context.Background()
+
+	log, ran, err := svc.RunDueSchedule(ctx, string(scheduleID))
+	if err != nil || !ran || log.ScheduleID != scheduleID {
+		t.Fatalf("first fire log=%+v ran=%v err=%v", log, ran, err)
+	}
+	firstRunID, firstTaskID := log.RunID, log.TaskID
+	if firstTaskID == modulecore.TaskID(scheduleID) || string(firstRunID) == string(scheduleID) {
+		t.Fatalf("fire must not reuse ScheduleID as TaskID or RunID: log=%+v", log)
+	}
+
+	if due, err := svc.DueSchedules(ctx, 10); err != nil || len(due) != 0 {
+		t.Fatalf("fired occurrence must leave the due set: due=%#v err=%v", due, err)
+	}
+	if second, ranAgain, err := svc.RunDueSchedule(ctx, string(scheduleID)); err != nil || ranAgain {
+		t.Fatalf("duplicate fire of the same occurrence must be rejected: log=%+v ran=%v err=%v", second, ranAgain, err)
+	}
+	if len(store.logs) != 1 || store.logs[0].RunID != firstRunID || store.logs[0].TaskID != firstTaskID {
+		t.Fatalf("run logs must keep exactly one occurrence: logs=%+v", store.logs)
+	}
+}
+
 func TestServiceCreateDueRunAndDisableSchedule(t *testing.T) {
 	now := time.Date(2026, 6, 22, 7, 0, 0, 0, time.UTC)
 	store := &memoryStore{}

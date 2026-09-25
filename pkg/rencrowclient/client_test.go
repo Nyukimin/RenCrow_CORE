@@ -2,6 +2,8 @@ package rencrowclient
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -64,6 +66,33 @@ func canonicalClientTestArtifactID(t *testing.T, value string) string {
 	return raw
 }
 
+// canonicalClientTestContentHash computes the reference SHA-256 content digest of a
+// fixture content body with crypto/sha256, so the expectation stays independent from
+// the producer helper in modules/core.
+func canonicalClientTestContentHash(t *testing.T, content string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(content))
+	return modulecore.ContentHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// contextPackClientFixtureBody is the exact byte sequence the superagent domain
+// digests for the packs built by canonicalClientTestContextPack: the summary below,
+// an empty source list and a zero token estimate. Identity fields are excluded from
+// the digest, so every fixture key shares this one value.
+const contextPackClientFixtureBody = `{"summary":"summary","included_sources":[],"token_estimate":0}`
+
+// The revenue fixture bodies below are the exact byte sequences the revenue domain
+// digests for the report and draft fixtures further down: the reported day with its
+// summary and derived counts, and the channel, subject and draft text. Identity,
+// lifecycle and policy state, created_at, the digest itself and the successor are not
+// part of the digest, so fixtures sharing one body share one digest value.
+const (
+	revenueReportMay18FixtureBody = `{"date":"2026-05-18","summary":"","market_research_count":1,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[]}`
+	revenueReportMay19FixtureBody = `{"date":"2026-05-19","summary":"","market_research_count":0,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[]}`
+	revenueDraftMay18FixtureBody  = `{"channel":"email","subject":"","body":"下書き"}`
+	revenueDraftEchoFixtureBody   = `{"channel":"email","subject":"Draft","body":"外部送信しない下書きです"}`
+)
+
 func canonicalClientTestContextPack(t *testing.T, artifactKey, taskID, runID string, now time.Time) ContextPack {
 	t.Helper()
 	return ContextPack{
@@ -73,6 +102,11 @@ func canonicalClientTestContextPack(t *testing.T, artifactKey, taskID, runID str
 		RunID:      runID,
 		Summary:    "summary",
 		CreatedAt:  now,
+		// The fixture body is the summary above with no sources and a zero token
+		// estimate, so the digest is the one the superagent domain declares for
+		// {"summary":"summary","included_sources":[],"token_estimate":0}. Identity is not
+		// part of the digest, so every fixture key below shares this single value.
+		ContentHash: canonicalClientTestContentHash(t, contextPackClientFixtureBody),
 	}
 }
 
@@ -3174,8 +3208,8 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				APICandidates:  []BrowserTraceAPICandidate{{CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now}},
 				APISchemas:     []BrowserTraceAPISchema{{SchemaID: "schema_1", CandidateID: "api_cand_1", SchemaType: "response", SchemaJSON: `{"type":"object"}`, SampleCount: 1, CreatedAt: now}},
 				APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_cand_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "official_api_unverified", Message: "needs review"}}, CreatedAt: now}},
-				CoverageReport: BrowserTraceAPICoverage{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, CreatedAt: now},
-				APIArtifacts:   []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Type: "fetcher_plan", Title: "Fetcher plan", Status: "pending_review", Content: "review only", CreatedAt: now}},
+				CoverageReport: BrowserTraceAPICoverage{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-coverage-report")), Kind: modulecore.ArtifactKindReport, TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, ContentHash: canonicalClientTestContentHash(t, `{"observed_flows":[],"observed_endpoints":[],"missing_flows":[],"recommended_next_traces":[]}`), CreatedAt: now},
+				APIArtifacts:   []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-status-artifact")), Kind: modulecore.ArtifactKindDraft, TaskID: req.TaskID, RunID: req.RunID, ActorID: req.ActorID, Type: "fetcher_plan", Title: "Fetcher plan", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only"), CreatedAt: now}},
 			})
 		case "/viewer/browser-trace-api/validations":
 			if r.Method != http.MethodPost {
@@ -3200,8 +3234,8 @@ func TestBrowserTraceAPIStatusDiscoverAndFetcherProposal(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_fetcher_proposal_api_cand_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: req.WorkstreamID, Type: "fetcher_proposal", Title: "Fetcher Proposal", Status: "pending_review", Content: "no direct promoted DB write", CreatedAt: now},
-				WorkstreamArtifact:  &WorkstreamArtifact{ArtifactID: "art_fetcher_proposal_api_cand_1", WorkstreamID: req.WorkstreamID, Type: "browser_trace_fetcher_proposal", Status: "pending_review", CreatedAt: now},
+				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-fetcher-proposal-artifact")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: req.WorkstreamID, Type: "fetcher_proposal", Title: "Fetcher Proposal", Status: "pending_review", Content: "no direct promoted DB write", ContentHash: canonicalClientTestContentHash(t, "no direct promoted DB write"), CreatedAt: now},
+				WorkstreamArtifact:  &WorkstreamArtifact{ArtifactID: canonicalClientTestArtifactID(t, "s13-fetcher-proposal-artifact"), WorkstreamID: req.WorkstreamID, Type: "browser_trace_fetcher_proposal", Status: "pending_review", CreatedAt: now},
 				Candidate:           BrowserTraceAPICandidate{CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com/api/items", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
 				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: req.CandidateID, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated", CreatedAt: now},
 				OfficialPromotion:   false,
@@ -3289,9 +3323,14 @@ func TestBrowserTraceAPIStatusRejectsMalformedCurrentView(t *testing.T) {
 		{name: "needs review with passed", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Passed: true, Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}, CreatedAt: now}}}, want: "passed without validated status"},
 		{name: "validation missing created at", resp: BrowserTraceAPIStatus{APIValidations: []BrowserTraceAPIValidation{{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms", Message: "terms required"}}}}}, want: "validation missing created_at"},
 		{name: "coverage missing created at", resp: BrowserTraceAPIStatus{CoverageReports: []BrowserTraceAPICoverage{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000003"), Kind: modulecore.ArtifactKindReport, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio"}}}, want: "coverage missing created_at"},
-		{name: "artifact unknown status", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "promoted", Content: "review only", CreatedAt: now}}}, want: "artifact status"},
-		{name: "artifact missing content", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", CreatedAt: now}}}, want: "missing content"},
-		{name: "artifact missing created at", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only"}}}, want: "artifact missing created_at"},
+		{name: "artifact unknown status", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-artifact-status-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "promoted", Content: "review only", CreatedAt: now}}}, want: "artifact status"},
+		{name: "artifact missing content", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-artifact-content-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", CreatedAt: now}}}, want: "missing content"},
+		{name: "artifact missing created at", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-artifact-created-at-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only"}}}, want: "artifact missing created_at"},
+		{name: "artifact missing content hash", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only", CreatedAt: now}}}, want: "artifact missing content_hash"},
+		{name: "artifact content hash wrong form", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only", ContentHash: "sha256:deadbeef", CreatedAt: now}}}, want: "content_hash must be"},
+		{name: "artifact content hash of other bytes", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only."), CreatedAt: now}}}, want: "does not match content"},
+		{name: "artifact supersedes itself", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only"), SupersededBy: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), CreatedAt: now}}}, want: "must not reference the artifact itself"},
+		{name: "artifact superseded by opaque id", resp: BrowserTraceAPIStatus{APIArtifacts: []BrowserTraceAPIArtifact{{ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a"), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_plan", Title: "Plan", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only"), SupersededBy: modulecore.ArtifactID("art_1"), CreatedAt: now}}}, want: "superseded_by"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3355,7 +3394,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "proposal applies implementation",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
+				APIArtifact:         BrowserTraceAPIArtifact{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-proposal-implementation-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only")},
 				Candidate:           BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate"},
 				Validation:          BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated"},
 				ImplementationApply: true,
@@ -3397,8 +3436,8 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "proposal workstream artifact missing created at",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact:        BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: "ws_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", CreatedAt: now},
-				WorkstreamArtifact: &WorkstreamArtifact{ArtifactID: "art_1", WorkstreamID: "ws_1", Type: "browser_trace_fetcher_proposal", Status: "pending_review"},
+				APIArtifact:        BrowserTraceAPIArtifact{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-proposal-workstream-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", WorkstreamID: "ws_1", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only"), CreatedAt: now},
+				WorkstreamArtifact: &WorkstreamArtifact{ArtifactID: canonicalClientTestArtifactID(t, "s13-proposal-workstream-case"), WorkstreamID: "ws_1", Type: "browser_trace_fetcher_proposal", Status: "pending_review"},
 				Candidate:          BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
 				Validation:         BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: true, Status: "validated", CreatedAt: now},
 			},
@@ -3412,7 +3451,7 @@ func TestBrowserTraceAPIDiscoverAndFetcherProposalRejectInvalidOrMalformed(t *te
 			name: "proposal unvalidated",
 			path: "/viewer/browser-trace-api/fetcher-proposals",
 			resp: BrowserTraceAPIFetcherProposalResponse{
-				APIArtifact: BrowserTraceAPIArtifact{ArtifactID: "art_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only"},
+				APIArtifact: BrowserTraceAPIArtifact{ArtifactID: modulecore.ArtifactID(canonicalClientTestArtifactID(t, "s13-proposal-unvalidated-case")), Kind: modulecore.ArtifactKindDraft, TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Type: "fetcher_proposal", Title: "Proposal", Status: "pending_review", Content: "review only", ContentHash: canonicalClientTestContentHash(t, "review only")},
 				Candidate:   BrowserTraceAPICandidate{CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Method: "GET", ObservedURL: "https://example.com", ContainsPersonalData: "none", Status: "candidate", CreatedAt: now},
 				Validation:  BrowserTraceAPIValidation{ValidationID: "val_1", CandidateID: "api_1", TaskID: "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio", Passed: false, Status: "needs_review", Issues: []BrowserTraceAPIValidationIssue{{Code: "terms_unverified", Message: "terms required"}}},
 			},
@@ -5209,6 +5248,7 @@ func TestCreateRevenueDailyRoutineReport(t *testing.T) {
 				Status:              "draft_report",
 				ExternalSendApplied: false,
 				MarketResearch:      1,
+				ContentHash:         canonicalClientTestContentHash(t, revenueReportMay18FixtureBody),
 				CreatedAt:           now,
 			},
 			ExternalActionsApplied: false,
@@ -5359,6 +5399,12 @@ func TestCreateRevenueChannelDraft(t *testing.T) {
 		req.ExternalSendApplied = false
 		if req.Kind == "" {
 			req.Kind = modulecore.ArtifactKindDraft
+		}
+		// The viewer handler stamps the digest of the draft body it persisted when the
+		// caller left it out, so the stub does the same instead of echoing an unstamped
+		// draft back.
+		if req.ContentHash == "" {
+			req.ContentHash = canonicalClientTestContentHash(t, revenueDraftEchoFixtureBody)
 		}
 		req.CreatedAt = now
 		_ = json.NewEncoder(w).Encode(RevenueChannelDraftResponse{
@@ -5736,15 +5782,17 @@ func TestRevenueStatus(t *testing.T) {
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
 				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
-				Date:      "2026-05-19",
-				Status:    "draft_report",
-				CreatedAt: now,
+				Date:        "2026-05-19",
+				Status:      "draft_report",
+				ContentHash: canonicalClientTestContentHash(t, revenueReportMay19FixtureBody),
+				CreatedAt:   now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
 				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
-				Channel:   "email",
-				Body:      "下書き",
-				CreatedAt: now,
+				Channel:     "email",
+				Body:        "下書き",
+				ContentHash: canonicalClientTestContentHash(t, revenueDraftMay18FixtureBody),
+				CreatedAt:   now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
 				ActionID:      modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
@@ -5792,15 +5840,17 @@ func TestRevenueStatusRejectsMalformedCurrentView(t *testing.T) {
 			}},
 			DailyRoutineReports: []RevenueDailyRoutineReport{{
 				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
-				Date:      "2026-05-19",
-				Status:    "draft_report",
-				CreatedAt: now,
+				Date:        "2026-05-19",
+				Status:      "draft_report",
+				ContentHash: canonicalClientTestContentHash(t, revenueReportMay19FixtureBody),
+				CreatedAt:   now,
 			}},
 			ChannelDrafts: []RevenueChannelDraft{{
 				ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
-				Channel:   "email",
-				Body:      "下書き",
-				CreatedAt: now,
+				Channel:     "email",
+				Body:        "下書き",
+				ContentHash: canonicalClientTestContentHash(t, revenueDraftMay18FixtureBody),
+				CreatedAt:   now,
 			}},
 			ExternalSendApplyRecords: []RevenueExternalSendApplyRecord{{
 				ActionID:      modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
@@ -8103,4 +8153,321 @@ func boolPtr(value bool) *bool {
 
 func intPtr(value int) *int {
 	return &value
+}
+
+// TestValidateBrowserTraceAPIArtifactRequiresCanonicalIdentity pins the client-side
+// JSON contract for api_artifacts: a legacy opaque artifact_id and a payload that
+// carries no artifact_kind must not be accepted as a valid CORE projection.
+func TestValidateBrowserTraceAPIArtifactRequiresCanonicalIdentity(t *testing.T) {
+	const payloadWithLegacyArtifactID = `{"artifact_id":"art_openapi_1","task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002","actor_id":"mio","artifact_type":"fetcher_plan","title":"Plan","status":"pending_review","content":"review only","created_at":"2026-05-18T12:00:00Z"}`
+	var legacy BrowserTraceAPIArtifact
+	if err := json.Unmarshal([]byte(payloadWithLegacyArtifactID), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy artifact: %v", err)
+	}
+	if err := validateBrowserTraceAPIArtifact(legacy, "browser trace api status"); err == nil || !strings.Contains(err.Error(), "artifact_id") {
+		t.Errorf("legacy artifact_id %q: validateBrowserTraceAPIArtifact() error = %v, want a canonical artifact_id rejection", legacy.ArtifactID, err)
+	}
+
+	const payloadWithoutArtifactKind = `{"artifact_id":"art_00000000-0000-5000-8000-00000000000a","task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002","actor_id":"mio","artifact_type":"fetcher_plan","title":"Plan","status":"pending_review","content":"review only","created_at":"2026-05-18T12:00:00Z"}`
+	var noKind BrowserTraceAPIArtifact
+	if err := json.Unmarshal([]byte(payloadWithoutArtifactKind), &noKind); err != nil {
+		t.Fatalf("unmarshal artifact without artifact_kind: %v", err)
+	}
+	if err := validateBrowserTraceAPIArtifact(noKind, "browser trace api status"); err == nil || !strings.Contains(err.Error(), "artifact kind") {
+		t.Errorf("payload without artifact_kind: validateBrowserTraceAPIArtifact() error = %v, want the shared artifact kind rejection", err)
+	}
+}
+
+// TestValidateBrowserTraceAPIArtifactContentHashContract pins the Step13 client JSON
+// contract for api_artifacts: the projection has to carry the sha256-prefixed digest
+// of its content, that digest has to match the content bytes, and a supersession
+// reference has to be a canonical ArtifactID that is not the artifact itself. The
+// deployed CORE revision 351def7 answers without content_hash, so this client
+// contract is paired with a server build that produces the field.
+// TestValidateBrowserTraceAPICoverageContentHashContract pins the public client contract
+// for the browsertrace coverage projection: content_hash has to arrive, it has to be the
+// digest of the four body lists the server digested, and superseded_by has to be a
+// canonical ArtifactID that is not the report itself. Lists that the server omitted are
+// absent from the body, so they still have to reproduce the digest of empty lists.
+func TestValidateBrowserTraceAPICoverageContentHashContract(t *testing.T) {
+	coverageBody := `{"observed_flows":["network_trace"],"observed_endpoints":["GET /api/items"],"missing_flows":["error cases"],"recommended_next_traces":["empty result"]}`
+	emptyListsBody := `{"observed_flows":[],"observed_endpoints":["GET /api/items"],"missing_flows":[],"recommended_next_traces":[]}`
+	otherBody := `{"observed_flows":["network_trace"],"observed_endpoints":["GET /api/items"],"missing_flows":["error cases"],"recommended_next_traces":["other trace"]}`
+	coveragePayload := func(body, extra string) string {
+		return `{"artifact_id":"art_00000000-0000-5000-8000-000000000003","artifact_kind":"report","task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002","actor_id":"mio",` + body + `,` + extra + `"created_at":"2026-05-18T12:00:00Z"}`
+	}
+	body := `"observed_flows":["network_trace"],"observed_endpoints":["GET /api/items"],"missing_flows":["error cases"],"recommended_next_traces":["empty result"]`
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "missing content hash", payload: coveragePayload(body, ""), want: "coverage missing content_hash"},
+		{name: "content hash without prefix", payload: coveragePayload(body, `"content_hash":"019a899b366c21bfabc8fc678dd00531dfb7af9fd094bc60eaf60516b16e8484",`), want: "content_hash must be"},
+		{name: "content hash of another body", payload: coveragePayload(body, `"content_hash":"`+canonicalClientTestContentHash(t, otherBody)+`",`), want: "does not match content"},
+		{name: "supersedes itself", payload: coveragePayload(body, `"content_hash":"`+canonicalClientTestContentHash(t, coverageBody)+`","superseded_by":"art_00000000-0000-5000-8000-000000000003",`), want: "must not reference the artifact itself"},
+		{name: "superseded by opaque id", payload: coveragePayload(body, `"content_hash":"`+canonicalClientTestContentHash(t, coverageBody)+`","superseded_by":"art_1",`), want: "superseded_by"},
+		{name: "matching hash and canonical supersession", payload: coveragePayload(body, `"content_hash":"`+canonicalClientTestContentHash(t, coverageBody)+`","superseded_by":"art_00000000-0000-5000-8000-00000000000b",`), want: ""},
+		{name: "omitted lists digest as empty lists", payload: coveragePayload(`"observed_endpoints":["GET /api/items"]`, `"content_hash":"`+canonicalClientTestContentHash(t, emptyListsBody)+`",`), want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var item BrowserTraceAPICoverage
+			if err := json.Unmarshal([]byte(tt.payload), &item); err != nil {
+				t.Fatalf("unmarshal coverage payload: %v", err)
+			}
+			err := validateBrowserTraceAPICoverage(item, "browser trace api status")
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateBrowserTraceAPICoverage() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateBrowserTraceAPICoverage() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateBrowserTraceAPIArtifactContentHashContract(t *testing.T) {
+	artifactPayload := func(extra string) string {
+		return `{"artifact_id":"art_00000000-0000-5000-8000-00000000000a","artifact_kind":"draft","task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002","actor_id":"mio","artifact_type":"fetcher_plan","title":"Plan","status":"pending_review","content":"review only",` + extra + `"created_at":"2026-05-18T12:00:00Z"}`
+	}
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "missing content hash", payload: artifactPayload(""), want: "artifact missing content_hash"},
+		{name: "content hash without prefix", payload: artifactPayload(`"content_hash":"019a899b366c21bfabc8fc678dd00531dfb7af9fd094bc60eaf60516b16e8484",`), want: "content_hash must be"},
+		{name: "content hash of other bytes", payload: artifactPayload(`"content_hash":"` + canonicalClientTestContentHash(t, "review only.") + `",`), want: "does not match content"},
+		{name: "supersedes itself", payload: artifactPayload(`"content_hash":"` + canonicalClientTestContentHash(t, "review only") + `","superseded_by":"art_00000000-0000-5000-8000-00000000000a",`), want: "must not reference the artifact itself"},
+		{name: "superseded by opaque id", payload: artifactPayload(`"content_hash":"` + canonicalClientTestContentHash(t, "review only") + `","superseded_by":"art_1",`), want: "superseded_by"},
+		{name: "matching hash and canonical supersession", payload: artifactPayload(`"content_hash":"` + canonicalClientTestContentHash(t, "review only") + `","superseded_by":"art_00000000-0000-5000-8000-00000000000b",`), want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var item BrowserTraceAPIArtifact
+			if err := json.Unmarshal([]byte(tt.payload), &item); err != nil {
+				t.Fatalf("unmarshal artifact payload: %v", err)
+			}
+			err := validateBrowserTraceAPIArtifact(item, "browser trace api status")
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateBrowserTraceAPIArtifact() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateBrowserTraceAPIArtifact() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateSuperAgentContextPackContentHashContract pins the public client contract
+// for the superagent context_pack projection: content_hash has to arrive, it has to be
+// the digest of the pack body, and superseded_by has to be a canonical ArtifactID that
+// is not the pack itself. The body layout is owned by the superagent domain, which the
+// client hands the whole DTO to, so a pack that collected no sources digests as an
+// empty source list and the stored token estimate is part of the body.
+func TestValidateSuperAgentContextPackContentHashContract(t *testing.T) {
+	noSourcesBody := `{"summary":"summary","included_sources":[],"token_estimate":0}`
+	withSourcesBody := `{"summary":"summary","included_sources":["session:s1"],"token_estimate":0}`
+	estimateBody := `{"summary":"summary","included_sources":[],"token_estimate":17}`
+	otherBody := `{"summary":"other summary","included_sources":[],"token_estimate":0}`
+	packPayload := func(body, extra string) string {
+		return `{"context_packs":[{"artifact_id":"art_00000000-0000-5000-8000-00000000000c","artifact_kind":"context_pack","task_id":"tsk_00000000-0000-5000-8000-000000000001","run_id":"run_00000000-0000-5000-8000-000000000002",` + body + `,` + extra + `"created_at":"2026-05-18T12:00:00Z"}]}`
+	}
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "missing content hash", payload: packPayload(`"summary":"summary"`, ""), want: `context_pack "art_00000000-0000-5000-8000-00000000000c" missing content_hash`},
+		{name: "content hash without prefix", payload: packPayload(`"summary":"summary"`, `"content_hash":"019a899b366c21bfabc8fc678dd00531dfb7af9fd094bc60eaf60516b16e8484",`), want: "content_hash must be"},
+		{name: "content hash of another body", payload: packPayload(`"summary":"summary"`, `"content_hash":"`+canonicalClientTestContentHash(t, otherBody)+`",`), want: "does not match content"},
+		{name: "supersedes itself", payload: packPayload(`"summary":"summary"`, `"content_hash":"`+canonicalClientTestContentHash(t, noSourcesBody)+`","superseded_by":"art_00000000-0000-5000-8000-00000000000c",`), want: "must not reference the artifact itself"},
+		{name: "superseded by opaque id", payload: packPayload(`"summary":"summary"`, `"content_hash":"`+canonicalClientTestContentHash(t, noSourcesBody)+`","superseded_by":"art_1",`), want: "superseded_by"},
+		{name: "matching hash and canonical supersession", payload: packPayload(`"summary":"summary"`, `"content_hash":"`+canonicalClientTestContentHash(t, noSourcesBody)+`","superseded_by":"art_00000000-0000-5000-8000-00000000000b",`), want: ""},
+		{name: "omitted sources digest as empty list", payload: packPayload(`"summary":"summary","token_estimate":17`, `"content_hash":"`+canonicalClientTestContentHash(t, estimateBody)+`",`), want: ""},
+		{name: "stored token estimate is body", payload: packPayload(`"summary":"summary","token_estimate":17`, `"content_hash":"`+canonicalClientTestContentHash(t, noSourcesBody)+`",`), want: "does not match content"},
+		{name: "included sources are body", payload: packPayload(`"summary":"summary","included_sources":["session:s1"]`, `"content_hash":"`+canonicalClientTestContentHash(t, withSourcesBody)+`",`), want: ""},
+		{name: "dropped source changes digest", payload: packPayload(`"summary":"summary","included_sources":["session:s1"]`, `"content_hash":"`+canonicalClientTestContentHash(t, noSourcesBody)+`",`), want: "does not match content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var resp SuperAgentStatus
+			if err := json.Unmarshal([]byte(tt.payload), &resp); err != nil {
+				t.Fatalf("unmarshal superagent status payload: %v", err)
+			}
+			err := validateSuperAgentStatus(resp)
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateSuperAgentStatus() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateSuperAgentStatus() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// The revenue report and draft digests cover the body projection declared by the
+// revenue domain: report = date, summary, the seven counts and the suggested actions,
+// draft = channel, subject and body. Identity, lifecycle and policy state, created_at,
+// the digest itself and the successor reference stay out of it, so these fixture bodies
+// are what a server response has to carry.
+const (
+	revenueReportClientFixtureBody = `{"date":"2026-05-18","summary":"日次摘要","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"]}`
+	revenueDraftClientFixtureBody  = `{"channel":"email","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。"}`
+)
+
+// revenueReportClientResponse builds a daily routine response whose report carries the
+// fixture body; extra adds or, by the last-key-wins rule of encoding/json, overrides a
+// body field so a case can state one change.
+func revenueReportClientResponse(t *testing.T, extra string) RevenueDailyRoutineResponse {
+	t.Helper()
+	payload := `{"daily_routine_report":{"artifact_id":"art_00000000-0000-5000-8000-000000000001","artifact_kind":"report","workstream_id":"ws_revenue","date":"2026-05-18","summary":"日次摘要","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"],"status":"draft_report","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"},"external_actions_applied":false}`
+	var resp RevenueDailyRoutineResponse
+	if err := json.Unmarshal([]byte(payload), &resp); err != nil {
+		t.Fatalf("unmarshal daily routine response payload: %v", err)
+	}
+	return resp
+}
+
+func revenueDraftClientResponse(t *testing.T, extra string) RevenueChannelDraftResponse {
+	t.Helper()
+	payload := `{"channel_draft":{"artifact_id":"art_00000000-0000-5000-8000-000000000002","artifact_kind":"draft","trace_id":"trc_1","workstream_id":"ws_revenue","channel":"email","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。","source_artifact_id":"art_00000000-0000-5000-8000-000000000001","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"},"external_actions_applied":false}`
+	var resp RevenueChannelDraftResponse
+	if err := json.Unmarshal([]byte(payload), &resp); err != nil {
+		t.Fatalf("unmarshal channel draft response payload: %v", err)
+	}
+	return resp
+}
+
+func reportDigestFixture(t *testing.T, body string) string {
+	t.Helper()
+	return `"content_hash":"` + canonicalClientTestContentHash(t, body) + `",`
+}
+
+// TestValidateRevenueDailyRoutineResponseContentHashContract pins the public client
+// contract for the revenue daily routine report projection: the digest has to arrive, it
+// has to be the digest of the report body the server persisted, and superseded_by has to
+// be a canonical ArtifactID that is not the report itself. A list the server left out
+// reads back as an empty list, exactly as the revenue domain digested it.
+func TestValidateRevenueDailyRoutineResponseContentHashContract(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{name: "missing content hash", extra: "", want: "missing content_hash"},
+		{name: "content hash without prefix", extra: `"content_hash":"019a899b366c21bfabc8fc678dd00531dfb7af9fd094bc60eaf60516b16e8484",`, want: "content_hash must be"},
+		{name: "content hash of another body", extra: reportDigestFixture(t, `{"date":"2026-05-18","summary":"別の摘要","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"]}`), want: "does not match content"},
+		{name: "content hash counts are body", extra: reportDigestFixture(t, `{"date":"2026-05-18","summary":"日次摘要","market_research_count":2,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":["市場調査を追加する"]}`), want: "does not match content"},
+		{name: "supersedes itself", extra: reportDigestFixture(t, revenueReportClientFixtureBody) + `"superseded_by":"art_00000000-0000-5000-8000-000000000001",`, want: "must not reference the artifact itself"},
+		{name: "superseded by opaque id", extra: reportDigestFixture(t, revenueReportClientFixtureBody) + `"superseded_by":"art_1",`, want: "superseded_by"},
+		{name: "matching hash and canonical supersession", extra: reportDigestFixture(t, revenueReportClientFixtureBody) + `"superseded_by":"art_00000000-0000-5000-8000-00000000000b",`, want: ""},
+		{name: "omitted actions digest as empty list", extra: `"suggested_actions":[],` + reportDigestFixture(t, `{"date":"2026-05-18","summary":"日次摘要","market_research_count":1,"sns_post_count":2,"product_count":3,"customer_voice_count":4,"revenue_event_count":5,"paid_customer_count":1,"blocked_decision_count":0,"suggested_actions":[]}`), want: ""},
+		{name: "appended action changes digest", extra: `"suggested_actions":["市場調査を追加する","商品を追加する"],` + reportDigestFixture(t, revenueReportClientFixtureBody), want: "does not match content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := revenueReportClientResponse(t, tt.extra)
+			err := validateRevenueDailyRoutineResponse(resp, RevenueDailyRoutineRequest{})
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateRevenueDailyRoutineResponse() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateRevenueDailyRoutineResponse() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateRevenueChannelDraftResponseContentHashContract pins the same contract for
+// the channel draft projection, including the escaped form of the persisted non-ASCII and
+// newline content.
+func TestValidateRevenueChannelDraftResponseContentHashContract(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra string
+		want  string
+	}{
+		{name: "missing content hash", extra: "", want: "missing content_hash"},
+		{name: "content hash without prefix", extra: `"content_hash":"019a899b366c21bfabc8fc678dd00531dfb7af9fd094bc60eaf60516b16e8484",`, want: "content_hash must be"},
+		{name: "content hash of another body", extra: reportDigestFixture(t, `{"channel":"email","subject":"Re: 納品のご確認","body":"本日18時までに納品いたします。"}`), want: "does not match content"},
+		{name: "supersedes itself", extra: reportDigestFixture(t, revenueDraftClientFixtureBody) + `"superseded_by":"art_00000000-0000-5000-8000-000000000002",`, want: "must not reference the artifact itself"},
+		{name: "superseded by opaque id", extra: reportDigestFixture(t, revenueDraftClientFixtureBody) + `"superseded_by":"art_1",`, want: "superseded_by"},
+		{name: "matching hash and canonical supersession", extra: reportDigestFixture(t, revenueDraftClientFixtureBody) + `"superseded_by":"art_00000000-0000-7000-8000-00000000000d",`, want: ""},
+		{name: "newline in body is digested as persisted", extra: `"body":"本日17時までに納品いたします。\n（日本語）",` + reportDigestFixture(t, `{"channel":"email","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。\n（日本語）"}`), want: ""},
+		{name: "dropped newline changes digest", extra: `"body":"本日17時までに納品いたします。（日本語）",` + reportDigestFixture(t, `{"channel":"email","subject":"Re: 納品のご確認","body":"本日17時までに納品いたします。\n（日本語）"}`), want: "does not match content"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := revenueDraftClientResponse(t, tt.extra)
+			err := validateRevenueChannelDraftResponse(resp, RevenueChannelDraft{})
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateRevenueChannelDraftResponse() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateRevenueChannelDraftResponse() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestValidateRevenueStatusContentHashContract pins that the revenue current view reports
+// and drafts carry their body digest too, so a projection that lost content_hash on the
+// way out cannot be read back as a persisted artifact.
+func TestValidateRevenueStatusContentHashContract(t *testing.T) {
+	reports := func(extra string) string {
+		return `"daily_routine_reports":[{"artifact_id":"art_00000000-0000-5000-8000-000000000001","artifact_kind":"report","date":"2026-05-18","summary":"日次摘要","market_research_count":1,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[],"status":"draft_report","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"}]`
+	}
+	drafts := func(extra string) string {
+		return `"channel_drafts":[{"artifact_id":"art_00000000-0000-5000-8000-000000000002","artifact_kind":"draft","channel":"email","subject":"","body":"下書き本文","external_send_applied":false,` + extra + `"created_at":"2026-05-18T12:00:00Z"}]`
+	}
+	status := func(items string) string {
+		return `{"policy_decisions":[],` + items + `,"external_send_apply_records":[],"external_channel_adapter":"unconfigured","external_channel_adapter_configured":false,"summary":{"blocked_decision_count":0,"daily_report_count":1,"channel_draft_count":1,"external_send_apply_count":0,"external_actions_applied":false}}`
+	}
+	tests := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{name: "report without content hash", payload: status(reports("")), want: "daily_routine_report"},
+		{name: "report digest of another body", payload: status(reports(reportDigestFixture(t, `{"date":"2026-05-18","summary":"別の摘要","market_research_count":1,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[]}`))), want: "does not match content"},
+		{name: "draft without content hash", payload: status(drafts("")), want: "channel_draft"},
+		{name: "draft digest of another body", payload: status(drafts(reportDigestFixture(t, `{"channel":"email","subject":"","body":"別の下書き本文"}`))), want: "does not match content"},
+		{name: "report digest of the persisted empty action list", payload: status(reports(reportDigestFixture(t, `{"date":"2026-05-18","summary":"日次摘要","market_research_count":1,"sns_post_count":0,"product_count":0,"customer_voice_count":0,"revenue_event_count":0,"paid_customer_count":0,"blocked_decision_count":0,"suggested_actions":[]}`))), want: ""},
+		{name: "draft digest of the persisted body", payload: status(drafts(reportDigestFixture(t, `{"channel":"email","subject":"","body":"下書き本文"}`))), want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var resp RevenueStatus
+			if err := json.Unmarshal([]byte(tt.payload), &resp); err != nil {
+				t.Fatalf("unmarshal revenue status payload: %v", err)
+			}
+			err := validateRevenueStatus(resp)
+			if tt.want == "" {
+				if err != nil {
+					t.Errorf("validateRevenueStatus() rejected a valid projection: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("validateRevenueStatus() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
 }

@@ -40,7 +40,7 @@ type errNotFoundForTest struct{}
 func (errNotFoundForTest) Error() string { return "not found" }
 
 func TestHandleVerificationRecent(t *testing.T) {
-	report := testVerificationReport()
+	report := testVerificationReport(t)
 	handler := HandleVerificationRecent(stubVerificationReader{items: []domainverification.VerificationReport{report}})
 	req := httptest.NewRequest(http.MethodGet, "/viewer/verification/recent", nil)
 	rec := httptest.NewRecorder()
@@ -52,6 +52,13 @@ func TestHandleVerificationRecent(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), string(report.TaskID)) {
 		t.Fatalf("expected report body, got %s", rec.Body.String())
+	}
+	// The Viewer hands the domain report straight out, so the content hash and the successor
+	// reference arrive as the values the store holds, without a client-side copy restating them.
+	for _, want := range []string{`"content_hash":"` + report.ContentHash + `"`, `"superseded_by":"` + string(report.SupersededBy) + `"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("recent body missing %s, got %s", want, rec.Body.String())
+		}
 	}
 }
 
@@ -68,13 +75,18 @@ func TestHandleVerificationDetailRequiresTaskID(t *testing.T) {
 }
 
 func TestHandleVerificationDetailUsesCanonicalTaskIDOnly(t *testing.T) {
-	report := testVerificationReport()
+	report := testVerificationReport(t)
 	handler := HandleVerificationDetail(stubVerificationReader{items: []domainverification.VerificationReport{report}})
 
 	valid := httptest.NewRecorder()
 	handler(valid, httptest.NewRequest(http.MethodGet, "/viewer/verification/detail?task_id="+string(report.TaskID), nil))
 	if valid.Code != http.StatusOK {
 		t.Fatalf("valid TaskID status=%d body=%s", valid.Code, valid.Body.String())
+	}
+	for _, want := range []string{`"content_hash":"` + report.ContentHash + `"`, `"superseded_by":"` + string(report.SupersededBy) + `"`} {
+		if !strings.Contains(valid.Body.String(), want) {
+			t.Fatalf("detail body missing %s, got %s", want, valid.Body.String())
+		}
 	}
 
 	legacyKey := "job" + "_" + "id"
@@ -88,7 +100,7 @@ func TestHandleVerificationDetailUsesCanonicalTaskIDOnly(t *testing.T) {
 }
 
 func TestHandleVerificationSummary(t *testing.T) {
-	handler := HandleVerificationSummary(stubVerificationReader{items: []domainverification.VerificationReport{testVerificationReport()}})
+	handler := HandleVerificationSummary(stubVerificationReader{items: []domainverification.VerificationReport{testVerificationReport(t)}})
 	req := httptest.NewRequest(http.MethodGet, "/viewer/verification/summary", nil)
 	rec := httptest.NewRecorder()
 
@@ -132,8 +144,8 @@ func TestHandleVerificationUnavailableOptional(t *testing.T) {
 	}
 }
 
-func testVerificationReport() domainverification.VerificationReport {
-	return domainverification.VerificationReport{
+func testVerificationReport(t *testing.T) domainverification.VerificationReport {
+	report := domainverification.VerificationReport{
 		ArtifactID:   modulecore.NewArtifactID(),
 		Kind:         modulecore.ArtifactKindReport,
 		TaskID:       modulecore.NewTaskID(),
@@ -141,6 +153,20 @@ func testVerificationReport() domainverification.VerificationReport {
 		Route:        "CHAT",
 		Status:       domainverification.StatusWeaklySupported,
 		TriggerLevel: domainverification.TriggerMedium,
+		SupersededBy: modulecore.ArtifactID("art_00000000-0000-7000-8000-0000000000a2"),
 		CreatedAt:    time.Now().UTC(),
 	}
+	report.ContentHash = testVerificationDigest(t, report)
+	return report
+}
+
+// testVerificationDigest stamps the fixture the way the producer stamps a saved report, so the
+// Viewer assertions check a real digest rather than an opaque string.
+func testVerificationDigest(t *testing.T, report domainverification.VerificationReport) string {
+	t.Helper()
+	digest, err := domainverification.ComputeVerificationReportContentHash(report)
+	if err != nil {
+		t.Fatalf("compute fixture content hash: %v", err)
+	}
+	return digest
 }

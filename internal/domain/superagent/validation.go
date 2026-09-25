@@ -109,6 +109,19 @@ func ValidateContextPack(item ContextPack, maxTokens int) error {
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("created_at is required")
 	}
+	// The content digest and the supersession edge are checked last so an identity
+	// defect keeps reporting its own field. The digest covers only the body declared
+	// once in contextpack_content.go, and the shared canonical validators in
+	// modules/core own the hash form and the supersession direction.
+	if err := modulecore.ValidateContentHash(item.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if got := ComputeContextPackContentHash(item); got != item.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
+	}
 	return nil
 }
 

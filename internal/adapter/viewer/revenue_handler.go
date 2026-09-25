@@ -648,6 +648,17 @@ func HandleRevenueChannelDraftCreate(store RevenueStore) http.HandlerFunc {
 		if item.Kind == "" {
 			item.Kind = modulecore.ArtifactKindDraft
 		}
+		// The draft body (channel, subject, text) is already final once the request is
+		// decoded, so a request that leaves content_hash unspecified is stamped here with
+		// the digest of exactly those persisted bytes. Only the empty value means
+		// unspecified: a whitespace-only or otherwise invalid non-empty value is a value
+		// the client did send, so it is kept and reaches SaveChannelDraft unchanged, where
+		// the revenue domain contract refuses it as a bad request instead of the handler
+		// silently correcting a digest the client never sent. The same holds for a digest
+		// of other bytes.
+		if item.ContentHash == "" {
+			item.ContentHash = domainrevenue.ComputeChannelDraftContentHash(item)
+		}
 		if item.CreatedAt.IsZero() {
 			item.CreatedAt = time.Now().UTC()
 		}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -155,22 +156,12 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
-	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
-		Date:                "2026-05-18",
-		Status:              "draft_report",
-		ExternalSendApplied: false,
-		CreatedAt:           now,
-	}); err != nil {
+	// fixtureReport/fixtureDraft carry the digest of their own body, computed
+	// independently of the store, so the roundtrip cannot pass by recomputing it.
+	if err := store.SaveDailyRoutineReport(ctx, fixtureReport(now)); err != nil {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
-	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
-		Channel:   "email",
-		Subject:   "購入者向け案内",
-		Body:      "下書き本文",
-		CreatedAt: now,
-	}); err != nil {
+	if err := store.SaveChannelDraft(ctx, fixtureDraft(now)); err != nil {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
@@ -221,8 +212,17 @@ func TestSQLiteStoreSaveAndListRevenueRecords(t *testing.T) {
 	assertOne("policy decisions", err, len(decisions))
 	daily, err := store.ListDailyRoutineReports(ctx, 10)
 	assertOne("daily routine reports", err, len(daily))
+	// The saved report has to come back field for field: every body value, the digest
+	// above and the successor reference, plus identity and lifecycle state, so a roundtrip
+	// cannot pass by dropping a field or refilling a digest on read.
+	if diff := reportRoundtripMismatch(daily[0], now); diff != "" {
+		t.Fatalf("daily routine report roundtrip = %#v: %s", daily[0], diff)
+	}
 	drafts, err := store.ListChannelDrafts(ctx, 10)
 	assertOne("channel drafts", err, len(drafts))
+	if diff := draftRoundtripMismatch(drafts[0], now); diff != "" {
+		t.Fatalf("channel draft roundtrip = %#v: %s", drafts[0], diff)
+	}
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
 	assertOne("external send applies", err, len(applies))
 	deliveries, err := store.ListDeliveries(ctx, 10)
@@ -285,5 +285,57 @@ func TestSQLiteStoreFindOpportunityByIDUsesExactPrimaryKey(t *testing.T) {
 	}
 	if _, found, err := store.FindOpportunityByID(ctx, "missing"); err != nil || found {
 		t.Fatalf("missing FindOpportunityByID() found=%v err=%v", found, err)
+	}
+}
+
+// TestSQLiteStoreRejectsInvalidArtifactContentHash checks that the SQLite store refuses to
+// persist a revenue artifact whose content_hash is missing, malformed or does not match
+// the digest of the stored body, and that a superseded_by naming the artifact itself is
+// refused. Nothing rejected here may show up in the later lists.
+func TestSQLiteStoreRejectsInvalidArtifactContentHash(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "revenue.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+
+	missingHash := fixtureReport(now)
+	missingHash.ContentHash = ""
+	if err := store.SaveDailyRoutineReport(ctx, missingHash); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("report without content_hash: err=%v, want content_hash rejection", err)
+	}
+
+	foreignDigest := fixtureReport(now)
+	foreignDigest.ContentHash = "sha256:cd3668ffb26f36cd58f99b1253c07f7eb594d43b7f23e58b720889729499db2d"
+	if err := store.SaveDailyRoutineReport(ctx, foreignDigest); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("report carrying another body's digest: err=%v, want digest mismatch rejection", err)
+	}
+
+	selfSuperseded := fixtureReport(now)
+	selfSuperseded.SupersededBy = selfSuperseded.ArtifactID
+	if err := store.SaveDailyRoutineReport(ctx, selfSuperseded); err == nil || !strings.Contains(err.Error(), "superseded_by") {
+		t.Fatalf("report superseding itself: err=%v, want superseded_by rejection", err)
+	}
+
+	if reports, err := store.ListDailyRoutineReports(ctx, 10); err != nil || len(reports) != 0 {
+		t.Fatalf("reports after rejected writes = %#v err=%v, want none stored", reports, err)
+	}
+
+	malformedHash := fixtureDraft(now)
+	malformedHash.ContentHash = "sha256:not-a-digest"
+	if err := store.SaveChannelDraft(ctx, malformedHash); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("draft with malformed content_hash: err=%v, want content_hash rejection", err)
+	}
+
+	editedBody := fixtureDraft(now)
+	editedBody.Body = "書き換えた後の本文"
+	if err := store.SaveChannelDraft(ctx, editedBody); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("draft with edited body: err=%v, want digest mismatch rejection", err)
+	}
+
+	if drafts, err := store.ListChannelDrafts(ctx, 10); err != nil || len(drafts) != 0 {
+		t.Fatalf("drafts after rejected writes = %#v err=%v, want none stored", drafts, err)
 	}
 }

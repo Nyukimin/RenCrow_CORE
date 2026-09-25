@@ -88,6 +88,11 @@ func (p *Pipeline) VerifyResponse(ctx context.Context, req Request) (Result, err
 		report.Status = domainverification.StatusNotChecked
 		report.SkipReason = "verifier disabled"
 		report.ErrorKind = domainverification.ErrorVerifierDisabled
+		digest, err := domainverification.ComputeVerificationReportContentHash(report)
+		if err != nil {
+			return Result{}, fmt.Errorf("verification report content hash: %w", err)
+		}
+		report.ContentHash = digest
 		return Result{Response: req.DraftResponse, Report: report}, nil
 	}
 
@@ -223,6 +228,14 @@ func (p *Pipeline) finish(ctx context.Context, req Request, report domainverific
 }
 
 func (p *Pipeline) persist(ctx context.Context, result Result) (Result, error) {
+	// The digest is taken over the final body, before the store sees it, so a report that is
+	// handed back without a Save still carries the hash of its own content. A body that
+	// cannot be encoded never reaches Save.
+	digest, err := domainverification.ComputeVerificationReportContentHash(result.Report)
+	if err != nil {
+		return result, fmt.Errorf("verification report content hash: %w", err)
+	}
+	result.Report.ContentHash = digest
 	if p.repository == nil {
 		return result, nil
 	}

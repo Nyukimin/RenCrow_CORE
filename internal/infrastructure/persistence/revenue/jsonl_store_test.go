@@ -2,12 +2,123 @@ package revenue
 
 import (
 	"context"
+	"fmt"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 )
+
+// The revenue artifact fixtures below are written by both the JSONL and the SQLite store
+// tests, and the digests are the values of those exact bodies, computed independently of
+// the store and of the domain projection, so a roundtrip cannot pass by recomputing a
+// digest that was lost on the way out.
+const (
+	fixtureReportContentHash  = "sha256:83293ec3d95115bb4c7da0f72654fd482e547a9fc2efd886d5ba4cb88fa38122"
+	fixtureDraftContentHash   = "sha256:e974587f1014c872c2052f60d9e6e3516163bf8dda14460d5888f0252844fe40"
+	fixtureReportSupersededBy = modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000b")
+	// fixtureDraftSupersededBy is a canonical successor that is not the draft itself, so
+	// a non-empty supersession edge is carried through both stores instead of only the
+	// empty case. It is identity metadata, so the draft digest above does not cover it.
+	fixtureDraftSupersededBy = modulecore.ArtifactID("art_00000000-0000-5000-8000-00000000000a")
+)
+
+func fixtureReport(now time.Time) domainrevenue.DailyRoutineReport {
+	return domainrevenue.DailyRoutineReport{
+		ArtifactID:       modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"),
+		Kind:             modulecore.ArtifactKindReport,
+		Date:             "2026-05-18",
+		Summary:          "日次摘要",
+		MarketResearch:   1,
+		SNSPosts:         2,
+		Products:         3,
+		CustomerVoices:   4,
+		RevenueEvents:    5,
+		PaidCustomers:    1,
+		BlockedDecisions: 0,
+		SuggestedActions: []string{"市場調査を追加する"},
+		Status:           "draft_report",
+		ContentHash:      fixtureReportContentHash,
+		SupersededBy:     fixtureReportSupersededBy,
+		CreatedAt:        now,
+	}
+}
+
+func fixtureDraft(now time.Time) domainrevenue.ChannelDraft {
+	return domainrevenue.ChannelDraft{
+		ArtifactID:   modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"),
+		Kind:         modulecore.ArtifactKindDraft,
+		Channel:      "email",
+		Subject:      "購入者向け案内",
+		Body:         "下書き本文",
+		ContentHash:  fixtureDraftContentHash,
+		SupersededBy: fixtureDraftSupersededBy,
+		CreatedAt:    now,
+	}
+}
+
+// reportRoundtripMismatch lists every field of a report that came back from a store and
+// differs from the written one. The body values, the digest and the successor are compared
+// next to identity and lifecycle state, so a store that dropped a body field, lost the
+// digest or refilled it on read fails instead of passing.
+func reportRoundtripMismatch(got domainrevenue.DailyRoutineReport, now time.Time) string {
+	want := fixtureReport(now)
+	var problems []string
+	check := func(name string, gotValue, wantValue any) {
+		if gotValue != wantValue {
+			problems = append(problems, fmt.Sprintf("%s=%v want %v", name, gotValue, wantValue))
+		}
+	}
+	check("artifact_id", got.ArtifactID, want.ArtifactID)
+	check("artifact_kind", got.Kind, want.Kind)
+	check("date", got.Date, want.Date)
+	check("summary", got.Summary, want.Summary)
+	check("market_research_count", got.MarketResearch, want.MarketResearch)
+	check("sns_post_count", got.SNSPosts, want.SNSPosts)
+	check("product_count", got.Products, want.Products)
+	check("customer_voice_count", got.CustomerVoices, want.CustomerVoices)
+	check("revenue_event_count", got.RevenueEvents, want.RevenueEvents)
+	check("paid_customer_count", got.PaidCustomers, want.PaidCustomers)
+	check("blocked_decision_count", got.BlockedDecisions, want.BlockedDecisions)
+	// Element-wise so a stored list that merged or split elements on one separator is not
+	// read back as the same content.
+	if !slices.Equal(got.SuggestedActions, want.SuggestedActions) {
+		problems = append(problems, fmt.Sprintf("suggested_actions=%v want %v", got.SuggestedActions, want.SuggestedActions))
+	}
+	check("status", got.Status, want.Status)
+	check("external_send_applied", got.ExternalSendApplied, want.ExternalSendApplied)
+	check("content_hash", got.ContentHash, want.ContentHash)
+	check("superseded_by", got.SupersededBy, want.SupersededBy)
+	if !got.CreatedAt.Equal(now) {
+		problems = append(problems, fmt.Sprintf("created_at=%s want %s", got.CreatedAt, now))
+	}
+	return strings.Join(problems, "; ")
+}
+
+func draftRoundtripMismatch(got domainrevenue.ChannelDraft, now time.Time) string {
+	want := fixtureDraft(now)
+	var problems []string
+	check := func(name string, gotValue, wantValue any) {
+		if gotValue != wantValue {
+			problems = append(problems, fmt.Sprintf("%s=%v want %v", name, gotValue, wantValue))
+		}
+	}
+	check("artifact_id", got.ArtifactID, want.ArtifactID)
+	check("artifact_kind", got.Kind, want.Kind)
+	check("channel", got.Channel, want.Channel)
+	check("subject", got.Subject, want.Subject)
+	check("body", got.Body, want.Body)
+	check("external_send_applied", got.ExternalSendApplied, want.ExternalSendApplied)
+	check("content_hash", got.ContentHash, want.ContentHash)
+	check("superseded_by", got.SupersededBy, want.SupersededBy)
+	if !got.CreatedAt.Equal(now) {
+		problems = append(problems, fmt.Sprintf("created_at=%s want %s", got.CreatedAt, now))
+	}
+	return strings.Join(problems, "; ")
+}
 
 func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	store := NewJSONLStore(t.TempDir())
@@ -96,22 +207,10 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SavePolicyDecisionRecord failed: %v", err)
 	}
-	if err := store.SaveDailyRoutineReport(ctx, domainrevenue.DailyRoutineReport{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001"), Kind: modulecore.ArtifactKindReport,
-		Date:                "2026-05-18",
-		Status:              "draft_report",
-		ExternalSendApplied: false,
-		CreatedAt:           now,
-	}); err != nil {
+	if err := store.SaveDailyRoutineReport(ctx, fixtureReport(now)); err != nil {
 		t.Fatalf("SaveDailyRoutineReport failed: %v", err)
 	}
-	if err := store.SaveChannelDraft(ctx, domainrevenue.ChannelDraft{
-		ArtifactID: modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002"), Kind: modulecore.ArtifactKindDraft,
-		Channel:   "email",
-		Subject:   "購入者向け案内",
-		Body:      "下書き本文",
-		CreatedAt: now,
-	}); err != nil {
+	if err := store.SaveChannelDraft(ctx, fixtureDraft(now)); err != nil {
 		t.Fatalf("SaveChannelDraft failed: %v", err)
 	}
 	if err := store.SaveExternalSendApplyRecord(ctx, domainrevenue.ExternalSendApplyRecord{
@@ -174,9 +273,15 @@ func TestJSONLStoreSaveAndListRevenueRecords(t *testing.T) {
 	if err != nil || len(daily) != 1 || daily[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000001") {
 		t.Fatalf("daily=%#v err=%v", daily, err)
 	}
+	if diff := reportRoundtripMismatch(daily[0], now); diff != "" {
+		t.Fatalf("daily routine report roundtrip = %#v: %s", daily[0], diff)
+	}
 	drafts, err := store.ListChannelDrafts(ctx, 10)
 	if err != nil || len(drafts) != 1 || drafts[0].ArtifactID != modulecore.ArtifactID("art_00000000-0000-5000-8000-000000000002") {
 		t.Fatalf("drafts=%#v err=%v", drafts, err)
+	}
+	if diff := draftRoundtripMismatch(drafts[0], now); diff != "" {
+		t.Fatalf("channel draft roundtrip = %#v: %s", drafts[0], diff)
 	}
 	applies, err := store.ListExternalSendApplyRecords(ctx, 10)
 	if err != nil || len(applies) != 1 || applies[0].ActionID != modulecore.ActionID("act_00000000-0000-5000-8000-000000000001") {
@@ -272,5 +377,53 @@ func TestJSONLStoreListPolicyDecisionRecordsReturnsLatestStatePerDecision(t *tes
 	}
 	if len(decisions) != 1 || decisions[0].DecisionID != "dec_1" || decisions[0].Status != "allowed" {
 		t.Fatalf("decisions=%#v", decisions)
+	}
+}
+
+// TestJSONLStoreRejectsInvalidArtifactContentHash checks that the JSONL store refuses to
+// persist a revenue artifact whose content_hash is missing, malformed or does not match
+// the digest of the stored body, and that a superseded_by naming the artifact itself is
+// refused. Nothing rejected here may show up in the later lists.
+func TestJSONLStoreRejectsInvalidArtifactContentHash(t *testing.T) {
+	store := NewJSONLStore(t.TempDir())
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+
+	missingHash := fixtureReport(now)
+	missingHash.ContentHash = ""
+	if err := store.SaveDailyRoutineReport(ctx, missingHash); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("report without content_hash: err=%v, want content_hash rejection", err)
+	}
+
+	foreignDigest := fixtureReport(now)
+	foreignDigest.ContentHash = "sha256:cd3668ffb26f36cd58f99b1253c07f7eb594d43b7f23e58b720889729499db2d"
+	if err := store.SaveDailyRoutineReport(ctx, foreignDigest); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("report carrying another body's digest: err=%v, want digest mismatch rejection", err)
+	}
+
+	selfSuperseded := fixtureReport(now)
+	selfSuperseded.SupersededBy = selfSuperseded.ArtifactID
+	if err := store.SaveDailyRoutineReport(ctx, selfSuperseded); err == nil || !strings.Contains(err.Error(), "superseded_by") {
+		t.Fatalf("report superseding itself: err=%v, want superseded_by rejection", err)
+	}
+
+	if reports, err := store.ListDailyRoutineReports(ctx, 10); err != nil || len(reports) != 0 {
+		t.Fatalf("reports after rejected writes = %#v err=%v, want none stored", reports, err)
+	}
+
+	malformedHash := fixtureDraft(now)
+	malformedHash.ContentHash = "sha256:not-a-digest"
+	if err := store.SaveChannelDraft(ctx, malformedHash); err == nil || !strings.Contains(err.Error(), "content_hash") {
+		t.Fatalf("draft with malformed content_hash: err=%v, want content_hash rejection", err)
+	}
+
+	editedBody := fixtureDraft(now)
+	editedBody.Body = "書き換えた後の本文"
+	if err := store.SaveChannelDraft(ctx, editedBody); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("draft with edited body: err=%v, want digest mismatch rejection", err)
+	}
+
+	if drafts, err := store.ListChannelDrafts(ctx, 10); err != nil || len(drafts) != 0 {
+		t.Fatalf("drafts after rejected writes = %#v err=%v, want none stored", drafts, err)
 	}
 }

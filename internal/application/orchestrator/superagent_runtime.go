@@ -102,6 +102,13 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		TokenEstimate:   estimateRuntimeContextTokens(req.UserMessage),
 		CreatedAt:       startedAt,
 	}
+	// The content digest is stamped from the body of the pack built above, so the
+	// persisted row always carries the digest of the summary, sources and token
+	// estimate that were actually saved. The body layout is declared once by the
+	// superagent domain and the hash form by modules/core; the producer copies
+	// neither, and a supersession reference stays empty until a real supersede
+	// operation appends one.
+	pack.ContentHash = domainsuperagent.ComputeContextPackContentHash(pack)
 	if err := recorder.SaveContextPack(ctx, pack); err != nil {
 		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent context pack: %w", err)
 	}

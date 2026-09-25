@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
+	domainrevenue "github.com/Nyukimin/RenCrow_CORE/internal/domain/revenue"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -122,15 +124,21 @@ type SubagentTask struct {
 }
 
 type ContextPack struct {
-	ArtifactID      string    `json:"artifact_id"`
-	Kind            string    `json:"artifact_kind"`
-	TaskID          string    `json:"task_id"`
-	RunID           string    `json:"run_id"`
-	WorkstreamID    string    `json:"workstream_id,omitempty"`
-	Summary         string    `json:"summary"`
-	IncludedSources []string  `json:"included_sources,omitempty"`
-	TokenEstimate   int       `json:"token_estimate,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ArtifactID      string   `json:"artifact_id"`
+	Kind            string   `json:"artifact_kind"`
+	TaskID          string   `json:"task_id"`
+	RunID           string   `json:"run_id"`
+	WorkstreamID    string   `json:"workstream_id,omitempty"`
+	Summary         string   `json:"summary"`
+	IncludedSources []string `json:"included_sources,omitempty"`
+	TokenEstimate   int      `json:"token_estimate,omitempty"`
+	// ContentHash is the digest of the pack body and SupersededBy is the canonical
+	// ArtifactID of the pack that replaced this one. The body layout is owned by the
+	// superagent domain and both forms by modules/core, so the client projects them
+	// unchanged and never recomputes a missing value on read.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type MessageChannel struct {
@@ -977,20 +985,37 @@ type BrowserTraceAPICoverage struct {
 	ObservedEndpoints     []string                `json:"observed_endpoints,omitempty"`
 	MissingFlows          []string                `json:"missing_flows,omitempty"`
 	RecommendedNextTraces []string                `json:"recommended_next_traces,omitempty"`
-	CreatedAt             time.Time               `json:"created_at"`
+	// ContentHash is the digest of the four body lists and SupersededBy is the canonical
+	// ArtifactID of the report that replaced this one. The browsertrace domain owns which
+	// bytes the digest covers and modules/core owns the digest form, so this projection
+	// reuses both rather than restating either. A CORE build that predates the Step13
+	// content hash (for example the deployed revision 351def7 binary) answers a coverage
+	// report without content_hash, so this client contract and that server have to be
+	// paired at deploy time.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type BrowserTraceAPIArtifact struct {
-	ArtifactID   string            `json:"artifact_id"`
-	TaskID       modulecore.TaskID `json:"task_id"`
-	RunID        modulecore.RunID  `json:"run_id"`
-	ActorID      string            `json:"actor_id"`
-	WorkstreamID string            `json:"workstream_id,omitempty"`
-	Type         string            `json:"artifact_type"`
-	Title        string            `json:"title"`
-	Status       string            `json:"status"`
-	Content      string            `json:"content"`
-	CreatedAt    time.Time         `json:"created_at"`
+	ArtifactID   modulecore.ArtifactID   `json:"artifact_id"`
+	Kind         modulecore.ArtifactKind `json:"artifact_kind"`
+	TaskID       modulecore.TaskID       `json:"task_id"`
+	RunID        modulecore.RunID        `json:"run_id"`
+	ActorID      string                  `json:"actor_id"`
+	WorkstreamID string                  `json:"workstream_id,omitempty"`
+	Type         string                  `json:"artifact_type"`
+	Title        string                  `json:"title"`
+	Status       string                  `json:"status"`
+	Content      string                  `json:"content"`
+	// ContentHash is the sha256-prefixed digest of Content and SupersededBy is the
+	// canonical ArtifactID of the artifact that replaced this one. A CORE build
+	// that predates the Step13 content hash (for example the deployed revision
+	// 351def7 binary) answers without content_hash, so this client contract and
+	// that server have to be paired at deploy time.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type BrowserTraceAPIDiscoverRequest struct {
@@ -1547,7 +1572,12 @@ type RevenueDailyRoutineReport struct {
 	SuggestedActions    []string                `json:"suggested_actions,omitempty"`
 	Status              string                  `json:"status"`
 	ExternalSendApplied bool                    `json:"external_send_applied"`
-	CreatedAt           time.Time               `json:"created_at"`
+	// ContentHash is the digest of the report body declared once by the revenue domain
+	// and SupersededBy is the optional canonical ArtifactID of the report that replaced
+	// this one. Neither is recomputed on read (IDENTITY_CANONICAL Step13).
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type RevenueDailyRoutineResponse struct {
@@ -1566,7 +1596,12 @@ type RevenueChannelDraft struct {
 	Body                string                  `json:"body"`
 	SourceArtifactID    modulecore.ArtifactID   `json:"source_artifact_id,omitempty"`
 	ExternalSendApplied bool                    `json:"external_send_applied"`
-	CreatedAt           time.Time               `json:"created_at,omitempty"`
+	// ContentHash is the digest of the channel, subject and draft body declared once by
+	// the revenue domain, and SupersededBy the optional canonical ArtifactID that
+	// replaced this draft. Neither is recomputed on read.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at,omitempty"`
 }
 
 type RevenueChannelDraftResponse struct {
@@ -2968,6 +3003,21 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		if item.ExternalSendApplied {
 			return fmt.Errorf("revenue status daily_routine_report must not claim external send applied")
 		}
+		if strings.TrimSpace(item.ContentHash) == "" {
+			return fmt.Errorf("revenue status daily_routine_report %s missing content_hash", id)
+		}
+		if err := modulecore.ValidateContentHash(item.ContentHash, fmt.Sprintf("revenue status daily_routine_report %s content_hash", id)); err != nil {
+			return err
+		}
+		// The report body digest is recomputed through the revenue domain projection, so
+		// a projection that lost content_hash on the way out is not read back as a
+		// persisted artifact.
+		if got := domainrevenue.ComputeDailyRoutineReportContentHash(domainrevenue.DailyRoutineReport(item)); got != item.ContentHash {
+			return fmt.Errorf("revenue status daily_routine_report %s content_hash %s does not match content digest %s", id, item.ContentHash, got)
+		}
+		if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+			return fmt.Errorf("revenue status daily_routine_report %s supersession: %w", id, err)
+		}
 	}
 	drafts := map[string]struct{}{}
 	for _, item := range resp.ChannelDrafts {
@@ -2993,6 +3043,18 @@ func validateRevenueStatus(resp RevenueStatus) error {
 		}
 		if item.ExternalSendApplied {
 			return fmt.Errorf("revenue status channel_draft must not claim external send applied")
+		}
+		if strings.TrimSpace(item.ContentHash) == "" {
+			return fmt.Errorf("revenue status channel_draft %s missing content_hash", id)
+		}
+		if err := modulecore.ValidateContentHash(item.ContentHash, fmt.Sprintf("revenue status channel_draft %s content_hash", id)); err != nil {
+			return err
+		}
+		if got := domainrevenue.ComputeChannelDraftContentHash(domainrevenue.ChannelDraft(item)); got != item.ContentHash {
+			return fmt.Errorf("revenue status channel_draft %s content_hash %s does not match content digest %s", id, item.ContentHash, got)
+		}
+		if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+			return fmt.Errorf("revenue status channel_draft %s supersession: %w", id, err)
 		}
 	}
 	applies := map[string]struct{}{}
@@ -3289,6 +3351,25 @@ func validateRevenueDailyRoutineResponse(resp RevenueDailyRoutineResponse, req R
 	if report.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue daily routine response report missing created_at")
 	}
+	if strings.TrimSpace(report.ContentHash) == "" {
+		return fmt.Errorf("revenue daily routine response report missing content_hash")
+	}
+	if err := modulecore.ValidateContentHash(report.ContentHash, "revenue daily routine response report content_hash"); err != nil {
+		return err
+	}
+	// The revenue domain declares which bytes the digest covers, so the projection is
+	// handed over whole by conversion rather than restating the digested fields here:
+	// RevenueDailyRoutineReport and domainrevenue.DailyRoutineReport are field-for-field
+	// identical in field names, order and types, which makes drift in those a compile
+	// error; Go conversion ignores struct tags, so tags are not covered by that
+	// guarantee. A list the server omitted reads back as an empty list there, exactly as
+	// the server digested it.
+	if got := domainrevenue.ComputeDailyRoutineReportContentHash(domainrevenue.DailyRoutineReport(report)); got != report.ContentHash {
+		return fmt.Errorf("revenue daily routine response report content_hash %s does not match content digest %s", report.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(report.ArtifactID, report.SupersededBy); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -3478,6 +3559,21 @@ func validateRevenueChannelDraftResponse(resp RevenueChannelDraftResponse, req R
 	}
 	if resp.Draft.CreatedAt.IsZero() {
 		return fmt.Errorf("revenue channel draft response draft missing created_at")
+	}
+	if strings.TrimSpace(resp.Draft.ContentHash) == "" {
+		return fmt.Errorf("revenue channel draft response draft missing content_hash")
+	}
+	if err := modulecore.ValidateContentHash(resp.Draft.ContentHash, "revenue channel draft response draft content_hash"); err != nil {
+		return err
+	}
+	// Same boundary as the report above: the revenue domain owns the draft body the
+	// digest covers, so the whole draft is converted instead of the client picking the
+	// digested fields.
+	if got := domainrevenue.ComputeChannelDraftContentHash(domainrevenue.ChannelDraft(resp.Draft)); got != resp.Draft.ContentHash {
+		return fmt.Errorf("revenue channel draft response draft content_hash %s does not match content digest %s", resp.Draft.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(resp.Draft.ArtifactID, resp.Draft.SupersededBy); err != nil {
+		return err
 	}
 	return nil
 }
@@ -3740,6 +3836,35 @@ func validateSuperAgentStatus(resp SuperAgentStatus) error {
 		}
 		if pack.CreatedAt.IsZero() {
 			return fmt.Errorf("superagent status context_pack %q missing created_at", artifactID)
+		}
+		// The content digest and the supersession edge are projected as persisted, so a
+		// missing digest is a contract error instead of a value the client silently fills
+		// in. The whole DTO is handed to the superagent domain, which alone decides which
+		// fields the digest covers; the client lists no body fields of its own, it only
+		// converts the persisted string identities back to the canonical domain types.
+		if strings.TrimSpace(pack.ContentHash) == "" {
+			return fmt.Errorf("superagent status context_pack %q missing content_hash", artifactID)
+		}
+		if err := modulecore.ValidateContentHash(pack.ContentHash, fmt.Sprintf("superagent status context_pack %s content_hash", artifactID)); err != nil {
+			return err
+		}
+		if got := domainsuperagent.ComputeContextPackContentHash(domainsuperagent.ContextPack{
+			ArtifactID:      modulecore.ArtifactID(artifactID),
+			Kind:            modulecore.ArtifactKind(kind),
+			TaskID:          modulecore.TaskID(taskID),
+			RunID:           modulecore.RunID(runID),
+			WorkstreamID:    pack.WorkstreamID,
+			Summary:         pack.Summary,
+			IncludedSources: pack.IncludedSources,
+			TokenEstimate:   pack.TokenEstimate,
+			ContentHash:     pack.ContentHash,
+			SupersededBy:    pack.SupersededBy,
+			CreatedAt:       pack.CreatedAt,
+		}); got != pack.ContentHash {
+			return fmt.Errorf("superagent status context_pack %q content_hash %s does not match content digest %s", artifactID, pack.ContentHash, got)
+		}
+		if err := modulecore.ValidateArtifactSupersession(modulecore.ArtifactID(artifactID), pack.SupersededBy); err != nil {
+			return fmt.Errorf("superagent status context_pack %q %w", artifactID, err)
 		}
 		if _, ok := seenContexts[artifactID]; ok {
 			return fmt.Errorf("superagent status contains duplicate context_pack for artifact_id %q", artifactID)
@@ -5184,7 +5309,7 @@ func validateBrowserTraceAPIStatus(resp BrowserTraceAPIStatus) error {
 		if err := validateBrowserTraceAPIArtifact(item, "browser trace api status"); err != nil {
 			return err
 		}
-		id := strings.TrimSpace(item.ArtifactID)
+		id := strings.TrimSpace(string(item.ArtifactID))
 		if _, ok := seenArtifacts[id]; ok {
 			return fmt.Errorf("browser trace api status contains duplicate artifact_id %q", id)
 		}
@@ -5488,12 +5613,39 @@ func validateBrowserTraceAPICoverage(item BrowserTraceAPICoverage, label string)
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("%s coverage missing created_at", label)
 	}
+	if strings.TrimSpace(item.ContentHash) == "" {
+		return fmt.Errorf("%s coverage missing content_hash", label)
+	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, fmt.Sprintf("%s coverage content_hash", label)); err != nil {
+		return err
+	}
+	// The digest covers the body lists only, so the client reproduces it from the body
+	// and ignores identity, created_at, the digest itself and the supersession. The
+	// browsertrace domain declares which bytes the digest covers, so the projection is
+	// handed over whole by conversion rather than restating the digested fields here:
+	// BrowserTraceAPICoverage and domaintrace.APICoverageReport are field-for-field
+	// identical in field names, order and types, which makes drift in those a compile
+	// error; Go conversion ignores struct tags, so tags are not covered by that guarantee.
+	// A list the server omitted reads back as an empty list there, exactly as the server
+	// digested it.
+	if got := domaintrace.ComputeAPICoverageReportContentHash(domaintrace.APICoverageReport(item)); got != item.ContentHash {
+		return fmt.Errorf("%s coverage content_hash %s does not match content digest %s", label, item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
+	}
 	return nil
 }
 
 func validateBrowserTraceAPIArtifact(item BrowserTraceAPIArtifact, label string) error {
-	if strings.TrimSpace(item.ArtifactID) == "" {
+	if strings.TrimSpace(string(item.ArtifactID)) == "" {
 		return fmt.Errorf("%s artifact missing artifact_id", label)
+	}
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("%s invalid artifact_id: %w", label, err)
+	}
+	if err := item.Kind.Validate(); err != nil {
+		return fmt.Errorf("%s invalid artifact_kind: %w", label, err)
 	}
 	if err := validateBrowserTraceProjectionIdentity(item.TaskID, item.RunID, item.ActorID, label+" artifact"); err != nil {
 		return err
@@ -5515,6 +5667,18 @@ func validateBrowserTraceAPIArtifact(item BrowserTraceAPIArtifact, label string)
 	}
 	if item.CreatedAt.IsZero() {
 		return fmt.Errorf("%s artifact missing created_at", label)
+	}
+	if strings.TrimSpace(item.ContentHash) == "" {
+		return fmt.Errorf("%s artifact missing content_hash", label)
+	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, fmt.Sprintf("%s artifact content_hash", label)); err != nil {
+		return err
+	}
+	if got := modulecore.ContentHashOf([]byte(item.Content)); got != item.ContentHash {
+		return fmt.Errorf("%s artifact content_hash %s does not match content digest %s", label, item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
 	}
 	return nil
 }

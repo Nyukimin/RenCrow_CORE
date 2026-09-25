@@ -243,6 +243,10 @@ func BuildCandidates(run domaintrace.TraceRun, exchanges []domaintrace.Exchange,
 		RecommendedNextTraces: []string{"empty result", "last page", "invalid id"},
 		CreatedAt:             now,
 	}
+	// The digest covers the body lists only, so it is stamped after the body is final
+	// and stays valid when the report is later reminted or superseded. The browsertrace
+	// domain owns which bytes the digest covers.
+	coverage.ContentHash = domaintrace.ComputeAPICoverageReportContentHash(coverage)
 	return candidates, schemas, coverage
 }
 

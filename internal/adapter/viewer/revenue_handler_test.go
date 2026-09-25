@@ -3,10 +3,13 @@ package viewer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -616,6 +619,83 @@ func TestHandleRevenueChannelDraftCreateInheritsOpportunityTrace(t *testing.T) {
 	}
 	if len(store.drafts) != 1 || store.drafts[0].TraceID != "trc_opportunity" {
 		t.Fatalf("drafts=%#v", store.drafts)
+	}
+}
+
+// TestHandleRevenueChannelDraftCreateContentHashBoundary pins the create boundary of the
+// draft body digest: a request that leaves content_hash unspecified is stamped with the
+// digest of the bytes that are actually persisted, a digest the client sent is kept as it
+// is, and a value that is not that digest (the digest of another body, or a whitespace-only
+// value that is not a canonical digest at all) is refused with the store's own reason and
+// saves nothing. So a hash is never silently corrected into one the client never sent.
+func TestHandleRevenueChannelDraftCreateContentHashBoundary(t *testing.T) {
+	digest := func(body string) string {
+		sum := sha256.Sum256([]byte(body))
+		return modulecore.ContentHashPrefix + hex.EncodeToString(sum[:])
+	}
+	const persistedBody = `{"channel":"email","subject":"","body":"下書き本文"}`
+	canonical := digest(persistedBody)
+	other := digest(`{"channel":"email","subject":"","body":"別の下書き本文"}`)
+
+	tests := []struct {
+		name     string
+		extra    string
+		wantCode int
+		wantHash string
+		want     string
+	}{
+		{name: "unspecified digest is stamped from the persisted body", wantCode: http.StatusCreated, wantHash: canonical},
+		{name: "digest the client sent for this body is kept", extra: `"content_hash":"` + canonical + `"`, wantCode: http.StatusCreated, wantHash: canonical},
+		{name: "digest of another body is refused", extra: `"content_hash":"` + other + `"`, wantCode: http.StatusBadRequest, want: "does not match content digest"},
+		{name: "whitespace digest is refused and not corrected", extra: `"content_hash":"   "`, wantCode: http.StatusBadRequest, want: "content_hash must be a sha256:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubRevenueStore{}
+			payload := `{
+		"artifact_id":"art_00000000-0000-5000-8000-000000000002",
+		"channel":"email",
+		"body":"下書き本文"`
+			if tt.extra != "" {
+				payload += "," + tt.extra
+			}
+			payload += "}"
+			req := httptest.NewRequest(http.MethodPost, "/viewer/revenue/channel-drafts", bytes.NewBufferString(payload))
+			rec := httptest.NewRecorder()
+
+			HandleRevenueChannelDraftCreate(store).ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status=%d body=%s want %d", rec.Code, rec.Body.String(), tt.wantCode)
+			}
+			if tt.want != "" {
+				if !strings.Contains(rec.Body.String(), tt.want) {
+					t.Fatalf("body=%s want the store reason %q", rec.Body.String(), tt.want)
+				}
+				if len(store.drafts) != 0 {
+					t.Fatalf("refused draft was saved: %#v", store.drafts)
+				}
+				return
+			}
+			if len(store.drafts) != 1 {
+				t.Fatalf("drafts=%#v", store.drafts)
+			}
+			if store.drafts[0].ContentHash != tt.wantHash {
+				t.Fatalf("saved content_hash=%q want %q", store.drafts[0].ContentHash, tt.wantHash)
+			}
+			var body struct {
+				Draft domainrevenue.ChannelDraft `json:"channel_draft"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if body.Draft.ContentHash != tt.wantHash {
+				t.Fatalf("response content_hash=%q want %q", body.Draft.ContentHash, tt.wantHash)
+			}
+			if got := domainrevenue.ComputeChannelDraftContentHash(store.drafts[0]); got != tt.wantHash {
+				t.Fatalf("digest of the saved draft=%q want %q", got, tt.wantHash)
+			}
+		})
 	}
 }
 

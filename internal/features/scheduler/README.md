@@ -22,7 +22,7 @@ scheduler persistence store and run log
 
 ## Logs
 
-job_id, schedule_id, due_at, status, error kind
+schedule_id, run_id, task_id, due_at, status, error kind
 
 ## Error Contract
 

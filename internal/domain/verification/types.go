@@ -203,7 +203,14 @@ type VerificationReport struct {
 	ErrorKind        ErrorKind               `json:"error_kind,omitempty"`
 	Error            string                  `json:"error,omitempty"`
 	SkipReason       string                  `json:"skip_reason,omitempty"`
-	CreatedAt        time.Time               `json:"created_at"`
+	// ContentHash is the digest of the report body declared once by
+	// artifact_content.go: the final verification result, the counts and the claims,
+	// questions and evidence lists. It is a content field and never an ID or EventID
+	// (IDENTITY_CANONICAL 2.3). SupersededBy is the optional canonical ArtifactID of the
+	// artifact that replaces this report, and is a different axis from Status.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 func (r VerificationReport) Validate() error {
@@ -245,6 +252,21 @@ func (r VerificationReport) Validate() error {
 		if err := evidence.Validate(); err != nil {
 			return err
 		}
+	}
+	// The digest and supersession checks run after the existing field checks so a report
+	// missing its identity keeps reporting the missing identity field.
+	if err := modulecore.ValidateContentHash(r.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	digest, err := ComputeVerificationReportContentHash(r)
+	if err != nil {
+		return err
+	}
+	if digest != r.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", r.ContentHash, digest)
+	}
+	if err := modulecore.ValidateArtifactSupersession(r.ArtifactID, r.SupersededBy); err != nil {
+		return err
 	}
 	return nil
 }

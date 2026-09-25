@@ -2,7 +2,11 @@ package superagent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,15 +54,8 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 		t.Fatalf("SaveSubagentTask(completed) error = %v", err)
 	}
 	artifactID := modulecore.NewArtifactID()
-	if err := store.SaveContextPack(context.Background(), domainsuperagent.ContextPack{
-		ArtifactID:    artifactID,
-		Kind:          modulecore.ArtifactKindContextPack,
-		TaskID:        taskID,
-		RunID:         runID,
-		Summary:       "summary",
-		TokenEstimate: 1200,
-		CreatedAt:     now,
-	}); err != nil {
+	pack := contextPackFixture(artifactID, taskID, runID, modulecore.NewArtifactID(), now)
+	if err := store.SaveContextPack(context.Background(), pack); err != nil {
 		t.Fatalf("SaveContextPack() error = %v", err)
 	}
 	if err := store.SaveRunQueueItem(context.Background(), domainsuperagent.RunQueueItem{
@@ -85,6 +82,21 @@ func TestJSONLStoreSavesAndListsSuperAgentRecords(t *testing.T) {
 	contexts, err := store.ListContextPacks(context.Background(), 10)
 	if err != nil || len(contexts) != 1 || contexts[0].ArtifactID != artifactID || contexts[0].Kind != modulecore.ArtifactKindContextPack {
 		t.Fatalf("ListContextPacks() = %#v, %v", contexts, err)
+	}
+	// The JSONL line roundtrip keeps the content digest and the supersession
+	// reference, plus the body and identity those fields describe.
+	if contexts[0].ContentHash != pack.ContentHash {
+		t.Fatalf("stored content_hash = %q, want %q", contexts[0].ContentHash, pack.ContentHash)
+	}
+	if contexts[0].SupersededBy != pack.SupersededBy {
+		t.Fatalf("stored superseded_by = %q, want %q", contexts[0].SupersededBy, pack.SupersededBy)
+	}
+	if contexts[0].Summary != pack.Summary || contexts[0].TokenEstimate != pack.TokenEstimate ||
+		contexts[0].WorkstreamID != pack.WorkstreamID || !contexts[0].CreatedAt.Equal(pack.CreatedAt) {
+		t.Fatalf("stored context pack body or identity changed: %+v want %+v", contexts[0], pack)
+	}
+	if len(contexts[0].IncludedSources) != 1 || contexts[0].IncludedSources[0] != "session:s1" {
+		t.Fatalf("stored included_sources = %v, want [session:s1]", contexts[0].IncludedSources)
 	}
 	queue, err := store.ListRunQueueItems(context.Background(), 10)
 	if err != nil || len(queue) != 1 {
@@ -375,5 +387,79 @@ func TestJSONLStoreFindAgentRunByIDReturnsLatestExactRecord(t *testing.T) {
 	}
 	if _, _, err := corruptStore.FindAgentRunByID(ctx, string(runID)); err == nil {
 		t.Fatal("expected malformed JSON error")
+	}
+}
+
+// TestJSONLStoreContextPackContentHashAndSupersessionAreStored reads the appended line
+// directly, so the digest and the successor reference are proven to live in the file
+// rather than being recomputed on read, and the canonical save path refuses a pack whose
+// digest is missing, malformed, hashed from other content, or whose successor is the
+// artifact itself or an opaque legacy token.
+func TestJSONLStoreContextPackContentHashAndSupersessionAreStored(t *testing.T) {
+	root := t.TempDir()
+	store := NewJSONLStore(root, 3000)
+	ctx := context.Background()
+	now := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	pack := contextPackFixture(modulecore.NewArtifactID(), taskID, runID, modulecore.NewArtifactID(), now)
+	if err := store.SaveContextPack(ctx, pack); err != nil {
+		t.Fatalf("SaveContextPack() error = %v", err)
+	}
+
+	line, err := os.ReadFile(filepath.Join(root, "context_pack.jsonl"))
+	if err != nil {
+		t.Fatalf("read stored line: %v", err)
+	}
+	if !strings.Contains(string(line), pack.ContentHash) {
+		t.Fatalf("stored line carries no content digest: %s", line)
+	}
+	if !strings.Contains(string(line), string(pack.SupersededBy)) {
+		t.Fatalf("stored line carries no superseded_by: %s", line)
+	}
+
+	// The reference digest is hashed here with crypto/sha256 so the check does not just
+	// repeat whatever the domain projection produced.
+	reference := sha256.Sum256([]byte(contextPackFixtureBody))
+	if want := modulecore.ContentHashPrefix + hex.EncodeToString(reference[:]); pack.ContentHash != want {
+		t.Fatalf("fixture content_hash = %q, want %q", pack.ContentHash, want)
+	}
+
+	cases := []struct {
+		name string
+		want string
+		run  func(domainsuperagent.ContextPack) domainsuperagent.ContextPack
+	}{
+		{name: "missing digest", want: "content_hash is required", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = ""
+			return p
+		}},
+		{name: "malformed digest", want: "lowercase SHA-256 digest", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = "sha256:not-a-digest"
+			return p
+		}},
+		{name: "digest of other content", want: "does not match content digest", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.ContentHash = contextPackFixtureDigest(`{"summary":"other","included_sources":[],"token_estimate":0}`)
+			return p
+		}},
+		{name: "self supersession", want: "must not reference the artifact itself", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.SupersededBy = p.ArtifactID
+			return p
+		}},
+		{name: "opaque successor", want: "superseded_by is invalid", run: func(p domainsuperagent.ContextPack) domainsuperagent.ContextPack {
+			p.SupersededBy = "art_1"
+			return p
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			item := tc.run(contextPackFixture(modulecore.NewArtifactID(), taskID, runID, modulecore.NewArtifactID(), now))
+			if err := store.SaveContextPack(ctx, item); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("SaveContextPack(%s) error = %v, want %q", tc.name, err, tc.want)
+			}
+		})
+	}
+	stored, err := store.ListContextPacks(ctx, 10)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("ListContextPacks() = %#v, %v: a rejected save must append nothing", stored, err)
 	}
 }

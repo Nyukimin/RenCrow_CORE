@@ -23,6 +23,35 @@ func TestPairRequestsResponses(t *testing.T) {
 	}
 }
 
+// TestBuildCandidatesStampsCoverageContentHash pins that the coverage producer stamps
+// the digest of its own body. The store boundary validates every saved report, so a
+// report leaving discovery without a content hash is unpersistable and a hash that does
+// not match the body would be unverifiable after reload.
+func TestBuildCandidatesStampsCoverageContentHash(t *testing.T) {
+	now := time.Date(2026, 5, 20, 6, 40, 0, 0, time.UTC)
+	run := domaintrace.TraceRun{
+		TaskID:    "tsk_00000000-0000-5000-8000-000000000001",
+		RunID:     "run_00000000-0000-5000-8000-000000000002",
+		ActorID:   "mio",
+		TracePath: "traces/trace_1",
+		CreatedAt: now,
+	}
+	exchanges := PairRequestsResponses(
+		mustRequests(t, `{"request_id":"r1","method":"GET","url":"https://example.com/api/items"}`),
+		mustResponses(t, `{"request_id":"r1","status":200,"body":"{\"items\":[{\"id\":1}]}"}`),
+	)
+	_, _, coverage := BuildCandidates(run, exchanges, now)
+	if coverage.ContentHash == "" {
+		t.Fatal("coverage produced without content_hash")
+	}
+	if err := domaintrace.ValidateAPICoverageReport(coverage); err != nil {
+		t.Fatalf("ValidateAPICoverageReport() error = %v", err)
+	}
+	if got := domaintrace.ComputeAPICoverageReportContentHash(coverage); got != coverage.ContentHash {
+		t.Errorf("coverage content_hash = %s, want the body digest %s", coverage.ContentHash, got)
+	}
+}
+
 func TestTemplatizeURL(t *testing.T) {
 	templated, pathTemplate, params := TemplatizeURL("https://example.com/users/123/items?page=2&q=ai")
 	if pathTemplate != "/users/{id}/items" {

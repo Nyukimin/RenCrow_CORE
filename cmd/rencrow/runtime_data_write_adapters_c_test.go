@@ -104,7 +104,10 @@ func TestRuntimeDataWritePersonaArchitectureRejectsModelOwnedFields(t *testing.T
 }
 
 func TestRuntimeDataWriteBrowserTraceValidationOwnerE2EThroughWorkerAndRecall(t *testing.T) {
-	store := browsertracepersistence.NewJSONLStore(t.TempDir())
+	store, newStoreErr := browsertracepersistence.NewJSONLStore(t.TempDir())
+	if newStoreErr != nil {
+		t.Fatalf("NewJSONLStore() error = %v", newStoreErr)
+	}
 	candidate := domainbrowser.APICandidate{
 		CandidateID: "candidate-owner-1",
 		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",
@@ -190,7 +193,10 @@ func TestRuntimeDataWriteBrowserTraceValidationOwnerE2EThroughWorkerAndRecall(t 
 }
 
 func TestRuntimeDataWriteBrowserTraceValidationRejectsModelOwnedFields(t *testing.T) {
-	store := browsertracepersistence.NewJSONLStore(t.TempDir())
+	store, newStoreErr := browsertracepersistence.NewJSONLStore(t.TempDir())
+	if newStoreErr != nil {
+		t.Fatalf("NewJSONLStore() error = %v", newStoreErr)
+	}
 	if err := store.SaveAPICandidate(context.Background(), domainbrowser.APICandidate{
 		CandidateID: "candidate-owner-invalid",
 		TaskID:      "tsk_00000000-0000-5000-8000-000000000001", RunID: "run_00000000-0000-5000-8000-000000000002", ActorID: "mio",

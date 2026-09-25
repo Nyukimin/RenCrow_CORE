@@ -32,6 +32,14 @@ type BrowserTraceAPIStore interface {
 	SaveAPICandidateValidationResult(ctx context.Context, item domaintrace.APICandidateValidationResult) error
 	SaveAPICoverageReport(ctx context.Context, item domaintrace.APICoverageReport) error
 	SaveAPIArtifact(ctx context.Context, item domaintrace.APIArtifact) error
+	// CreateAPIArtifactWithPublicationIntent stores a new artifact together with the
+	// creation fact its caller minted, in one durable operation. The discover route uses
+	// this instead of SaveAPIArtifact so a created artifact can never exist without the
+	// fact that says it was created.
+	CreateAPIArtifactWithPublicationIntent(ctx context.Context, item domaintrace.APIArtifact, intent modulecore.EventEnvelope) error
+	// ListAPIArtifactPublicationIntents pages the creation facts the store still holds,
+	// which is what the restart recovery pass walks until a page comes back empty.
+	ListAPIArtifactPublicationIntents(ctx context.Context, after modulecore.ArtifactID, limit int) ([]modulecore.EventEnvelope, error)
 }
 
 type BrowserTraceAPIDiscoverer interface {
@@ -184,17 +192,21 @@ func HandleBrowserTraceAPIStatus(store BrowserTraceAPILister) http.HandlerFunc {
 	}
 }
 
-func HandleBrowserTraceAPIDiscover(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink) http.HandlerFunc {
-	return HandleBrowserTraceAPIDiscoverWithPolicy(store, discoverer, verifier, candidateSink, workstreamArtifactSink, browsertraceapp.DefaultValidationPolicy())
+// HandleBrowserTraceAPIDiscover stores the discovery result and delivers the creation
+// fact of every new artifact to events, the one canonical event store. Workstream
+// registration follows a confirmed publication, so a registered workstream artifact
+// always refers to an artifact whose creation fact is observable.
+func HandleBrowserTraceAPIDiscover(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, events browsertraceapp.APIArtifactCreationPublisher) http.HandlerFunc {
+	return HandleBrowserTraceAPIDiscoverWithPolicy(store, discoverer, verifier, candidateSink, workstreamArtifactSink, events, browsertraceapp.DefaultValidationPolicy())
 }
 
-func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, validationPolicy browsertraceapp.ValidationPolicy) http.HandlerFunc {
+func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discoverer BrowserTraceAPIDiscoverer, verifier BrowserTraceRunVerifier, candidateSink BrowserTraceAPICandidateSink, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, events browsertraceapp.APIArtifactCreationPublisher, validationPolicy browsertraceapp.ValidationPolicy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if store == nil || discoverer == nil || verifier == nil {
+		if store == nil || discoverer == nil || verifier == nil || events == nil {
 			http.Error(w, "browser trace api discovery unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -213,6 +225,13 @@ func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discove
 		}
 		if !isCoreActorID(req.ActorID) {
 			http.Error(w, "actor_id is invalid", http.StatusBadRequest)
+			return
+		}
+		// A creation fact is a canonical event, and the browsertrace contract requires the
+		// workstream the artifact belongs to. Checked here, before anything is written, so a
+		// request that cannot produce observable creation facts persists nothing.
+		if err := modulecore.WorkstreamID(strings.TrimSpace(req.WorkstreamID)).Validate(); err != nil {
+			http.Error(w, "workstream_id is invalid", http.StatusBadRequest)
 			return
 		}
 		assignee, err := verifier.VerifyTaskRun(r.Context(), req.TaskID, req.RunID)
@@ -270,12 +289,34 @@ func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discove
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		artifacts := browsertraceapp.BuildAPIArtifactsWithValidations(result, validations)
+		artifacts, err := browsertraceapp.BuildAPIArtifactsWithValidations(result, validations)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Each artifact is stored together with the creation fact minted for it, then those
+		// facts are delivered to the canonical event store before the response. A delivery
+		// that cannot be confirmed fails the request: the intents stay durable in the
+		// artifact store, and the explicit recovery pass on the next start retries them, so
+		// success never rests on an artifact whose creation fact was written nowhere else.
+		creationTraceID := modulecore.NewTraceID()
+		occurredAt := time.Now().UTC()
+		intents := make([]modulecore.EventEnvelope, 0, len(artifacts))
 		for _, artifact := range artifacts {
-			if err := store.SaveAPIArtifact(r.Context(), artifact); err != nil {
+			intent, err := browsertraceapp.NewAPIArtifactCreationIntent(artifact, creationTraceID, occurredAt)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if err := store.CreateAPIArtifactWithPublicationIntent(r.Context(), artifact, intent); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			intents = append(intents, intent)
+		}
+		if _, err := browsertraceapp.PublishAPIArtifactCreationIntents(r.Context(), events, intents...); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
 		}
 		if candidateSink != nil {
 			if err := candidateSink.SaveBrowserTraceAPICandidates(r.Context(), result); err != nil {
@@ -286,7 +327,7 @@ func HandleBrowserTraceAPIDiscoverWithPolicy(store BrowserTraceAPIStore, discove
 		if workstreamArtifactSink != nil && result.Run.WorkstreamID != "" {
 			for _, artifact := range artifacts {
 				if err := workstreamArtifactSink.SaveArtifact(r.Context(), domainworkstream.Artifact{
-					ArtifactID:   artifact.ArtifactID,
+					ArtifactID:   string(artifact.ArtifactID),
 					WorkstreamID: result.Run.WorkstreamID,
 					Type:         "browser_trace_" + artifact.Type,
 					Title:        artifact.Title,
@@ -382,14 +423,24 @@ func HandleBrowserTraceAPIValidationReview(store BrowserTraceAPIStore) http.Hand
 	}
 }
 
-func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink) http.HandlerFunc {
+// HandleBrowserTraceAPIFetcherProposal turns a validated api candidate into a fetcher
+// proposal artifact. The proposal is a new artifact, so it is stored together with the
+// creation fact minted for it and that fact is delivered to the one canonical event store
+// before the response: storing the row through an ordinary Save would leave an artifact
+// whose creation was recorded nowhere else, and reading the row back cannot recover an
+// event that was never written. The task, run and actor the proposal claims come from the
+// candidate, and they are verified against the Task Store instead of being trusted
+// because a request field named them. Workstream registration follows a confirmed
+// publication, so a registered workstream artifact always refers to an artifact whose
+// creation fact is observable.
+func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, verifier BrowserTraceRunVerifier, workstreamArtifactSink BrowserTraceWorkstreamArtifactSink, events browsertraceapp.APIArtifactCreationPublisher) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if store == nil {
-			http.Error(w, "browser trace api store unavailable", http.StatusServiceUnavailable)
+		if store == nil || verifier == nil || events == nil {
+			http.Error(w, "browser trace api fetcher proposal unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		defer r.Body.Close()
@@ -439,33 +490,72 @@ func HandleBrowserTraceAPIFetcherProposal(store BrowserTraceAPIStore, workstream
 			})
 			return
 		}
+		// A creation fact is a canonical event, and the browsertrace contract requires the
+		// workstream its artifact belongs to. Checked before anything is written, so a
+		// request that cannot produce an observable creation fact persists nothing.
+		workstreamID := strings.TrimSpace(req.WorkstreamID)
+		if err := modulecore.WorkstreamID(workstreamID).Validate(); err != nil {
+			http.Error(w, "workstream_id is invalid", http.StatusBadRequest)
+			return
+		}
+		// The proposal inherits the task, run and actor of the candidate. Those are checked
+		// against the Task Store here, so provenance comes from verified ownership and not
+		// from a stored string the request happened to carry.
+		assignee, err := verifier.VerifyTaskRun(r.Context(), candidate.TaskID, candidate.RunID)
+		if err != nil {
+			http.Error(w, "browser trace task/run ownership verification failed", http.StatusForbidden)
+			return
+		}
+		if assignee != "" && assignee != candidate.ActorID {
+			http.Error(w, "browser trace actor does not own run", http.StatusForbidden)
+			return
+		}
 		schemas, err := store.ListAPICandidateSchemas(r.Context(), 500)
 		if err != nil {
 			http.Error(w, "failed to load api schemas", http.StatusInternalServerError)
 			return
 		}
 		now := time.Now().UTC()
+		proposalKind, err := domaintrace.ArtifactKindForAPIArtifactType(domaintrace.APIArtifactTypeFetcherProposal)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		proposalContent := browsertraceapp.BuildFetcherProposalMarkdown(*candidate, *validation, schemas)
 		artifact := domaintrace.APIArtifact{
-			ArtifactID:   string(modulecore.NewArtifactID()),
+			ArtifactID:   modulecore.NewArtifactID(),
+			Kind:         proposalKind,
 			TaskID:       candidate.TaskID,
 			RunID:        candidate.RunID,
 			ActorID:      candidate.ActorID,
-			WorkstreamID: req.WorkstreamID,
-			Type:         "fetcher_proposal",
+			WorkstreamID: workstreamID,
+			Type:         domaintrace.APIArtifactTypeFetcherProposal,
 			Title:        "Fetcher Proposal: " + req.CandidateID,
 			Status:       "pending_review",
-			Content:      browsertraceapp.BuildFetcherProposalMarkdown(*candidate, *validation, schemas),
+			Content:      proposalContent,
+			ContentHash:  modulecore.ContentHashOf([]byte(proposalContent)),
 			CreatedAt:    now,
 		}
-		if err := store.SaveAPIArtifact(r.Context(), artifact); err != nil {
+		intent, err := browsertraceapp.NewAPIArtifactCreationIntent(artifact, modulecore.NewTraceID(), time.Now().UTC())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := store.CreateAPIArtifactWithPublicationIntent(r.Context(), artifact, intent); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// The fact stays durable in the artifact store even when this delivery fails, so the
+		// explicit publication pass on the next start can retry it without a resent request.
+		if _, err := browsertraceapp.PublishAPIArtifactCreationIntents(r.Context(), events, intent); err != nil {
+			http.Error(w, err.Error(), http.StatusServiceUnavailable)
+			return
+		}
 		var workstreamArtifact *domainworkstream.Artifact
-		if workstreamArtifactSink != nil && req.WorkstreamID != "" {
+		if workstreamArtifactSink != nil {
 			item := domainworkstream.Artifact{
-				ArtifactID:   artifact.ArtifactID,
-				WorkstreamID: req.WorkstreamID,
+				ArtifactID:   string(artifact.ArtifactID),
+				WorkstreamID: workstreamID,
 				Type:         "browser_trace_fetcher_proposal",
 				Title:        artifact.Title,
 				Status:       "pending_review",

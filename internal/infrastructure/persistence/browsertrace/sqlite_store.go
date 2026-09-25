@@ -15,6 +15,10 @@ import (
 
 type SQLiteStore struct {
 	db *sql.DB
+	// rollbackArtifact ends the transaction this store's Artifact operations open.
+	// NewSQLiteStore always installs the real ROLLBACK; only tests in this package
+	// replace it, on their own store instance, to reach a rollback that fails.
+	rollbackArtifact artifactRollbackFunc
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
@@ -30,7 +34,7 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &SQLiteStore{db: db}
+	store := &SQLiteStore{db: db, rollbackArtifact: realArtifactRollback}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -81,6 +85,26 @@ func (s *SQLiteStore) migrate() error {
 			artifact_id TEXT PRIMARY KEY,
 			run_id TEXT,
 			created_at TEXT,
+			payload TEXT NOT NULL
+		)`,
+		// One owner-local publication intent row per created artifact, in the same
+		// database and the same transaction as the artifact write. The payload holds
+		// the typed creation envelope; artifact_id and event_id are validated indexes
+		// of that envelope, not separately editable truth. The UNIQUE event_id is what
+		// makes one event id claimable by only one creation.
+		`CREATE TABLE IF NOT EXISTS ` + publicationIntentTable + ` (
+			artifact_id TEXT PRIMARY KEY,
+			event_id TEXT NOT NULL UNIQUE,
+			payload TEXT NOT NULL
+		)`,
+		// One owner-local supersession fact row per established edge, in the same
+		// database and the same transaction as the edge UPDATE. The payload holds the
+		// typed supersession envelope; artifact_id is the predecessor the fact is about
+		// and event_id is a validated index of that envelope, not separately editable
+		// truth. The UNIQUE event_id stops one event id from claiming two supersessions.
+		`CREATE TABLE IF NOT EXISTS ` + supersessionIntentTable + ` (
+			artifact_id TEXT PRIMARY KEY,
+			event_id TEXT NOT NULL UNIQUE,
 			payload TEXT NOT NULL
 		)`,
 	}
@@ -187,15 +211,167 @@ func (s *SQLiteStore) ListAPICoverageReports(ctx context.Context, limit int) ([]
 	return listSQLiteItems[domaintrace.APICoverageReport](ctx, s, "api_coverage_report", limit)
 }
 
+// SaveAPIArtifact writes one APIArtifact row. Basic validation is kept, and the
+// write then runs on one reserved connection inside one BEGIN IMMEDIATE
+// transaction, serialized with SupersedeAPIArtifact, so the row it reads is the
+// row it overwrites: a Save that read the row before a supersede cannot commit
+// afterwards and erase that edge.
+//
+// The supersession edge belongs to SupersedeAPIArtifact, so an ordinary Save may
+// only carry the edge exactly as stored. A brand new row may not carry one at all,
+// because the successor may not exist and nothing has been checked, and a stored
+// row may not have its edge added, moved or cleared here. An existing artifact_id
+// may not be moved into another task, run, actor, workstream, content role or
+// kind either, because that would invalidate a chain that was already checked.
+// Everything else stays the owner's normal in-place update: title, status, body
+// and their digest are written as given, and a row that cannot be read back fails
+// closed instead of being silently replaced. There is no global immutability rule.
 func (s *SQLiteStore) SaveAPIArtifact(ctx context.Context, item domaintrace.APIArtifact) error {
 	if err := domaintrace.ValidateAPIArtifact(item); err != nil {
 		return err
 	}
-	return s.saveOwned(ctx, "api_artifact", "artifact_id", item.ArtifactID, item.RunID, item.CreatedAt.Format(timeFormatRFC3339Nano), item)
+	if s == nil || s.db == nil {
+		return fmt.Errorf("browser trace sqlite store is closed")
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return err
+	}
+	return s.withArtifactTransaction(ctx, "artifact save", func(ctx context.Context, conn *sql.Conn) error {
+		stored, found, err := findAPIArtifactOnConn(ctx, conn, item.ArtifactID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			if item.SupersededBy != "" {
+				return fmt.Errorf("artifact %s is new with superseded_by %s: only SupersedeAPIArtifact may establish an edge", item.ArtifactID, item.SupersededBy)
+			}
+		} else if err := domaintrace.ValidateAPIArtifactScope(stored, item); err != nil {
+			return fmt.Errorf("save of artifact %s: %w", item.ArtifactID, err)
+		} else if item.SupersededBy != stored.SupersededBy {
+			return fmt.Errorf("artifact %s superseded_by %q does not match the stored edge %q: only SupersedeAPIArtifact may add, move or clear that edge", item.ArtifactID, item.SupersededBy, stored.SupersededBy)
+		}
+		if _, err := conn.ExecContext(ctx,
+			`INSERT OR REPLACE INTO api_artifact (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
+			string(item.ArtifactID), string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload)); err != nil {
+			return fmt.Errorf("write artifact %s: %w", item.ArtifactID, err)
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) ListAPIArtifacts(ctx context.Context, limit int) ([]domaintrace.APIArtifact, error) {
 	return listSQLiteItems[domaintrace.APIArtifact](ctx, s, "api_artifact", limit)
+}
+
+// SupersedeAPIArtifact establishes the edge that says an existing APIArtifact was
+// replaced by an existing successor. It is the only browsertrace SQLite operation
+// allowed to create that edge, because only here can both rows be read and checked
+// before the write. The reservation, every read, the checks and the single UPDATE
+// all run on one reserved connection inside one transaction: the connection is
+// never returned to the pool between BEGIN and COMMIT, so a second supersede
+// cannot interleave and observe a half-applied edge, and any error path rolls back
+// and releases it. Neither the predecessor's identity, content role, body, digest
+// and created_at nor the successor row are rewritten.
+func (s *SQLiteStore) SupersedeAPIArtifact(ctx context.Context, predecessorID, successorID modulecore.ArtifactID) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("browser trace sqlite store is closed")
+	}
+	if err := modulecore.ValidateArtifactSupersession(predecessorID, successorID); err != nil {
+		return err
+	}
+	return s.withArtifactTransaction(ctx, "supersede", func(ctx context.Context, conn *sql.Conn) error {
+		predecessor, err := loadAPIArtifactOnConn(ctx, conn, predecessorID)
+		if err != nil {
+			return err
+		}
+		successor, err := loadAPIArtifactOnConn(ctx, conn, successorID)
+		if err != nil {
+			return err
+		}
+		// The predecessor and the successor are two distinct artifacts that have to
+		// agree on task, run, actor, workstream, content role and stored kind, and
+		// every row below the successor has to stay verifiable and in that same scope,
+		// because the new edge joins that chain. Nothing is written before all of it
+		// has been read on this one reserved connection.
+		if err := domaintrace.ValidateAPIArtifactSupersessionPair(predecessor, successor); err != nil {
+			return err
+		}
+		if err := verifyAPIArtifactSuccessorChain(ctx, func(ctx context.Context, id modulecore.ArtifactID) (domaintrace.APIArtifact, error) {
+			return loadAPIArtifactOnConn(ctx, conn, id)
+		}, predecessorID, successor); err != nil {
+			return err
+		}
+
+		switch {
+		case predecessor.SupersededBy == successorID:
+			// The requested edge is already there, so repeating the call is idempotent.
+			return nil
+		case predecessor.SupersededBy != "":
+			return fmt.Errorf("artifact %s is already superseded by %s, not %s", predecessorID, predecessor.SupersededBy, successorID)
+		}
+
+		updated := predecessor
+		updated.SupersededBy = successorID
+		if err := domaintrace.ValidateAPIArtifact(updated); err != nil {
+			return fmt.Errorf("supersede of artifact %s leaves an invalid row: %w", predecessorID, err)
+		}
+		payload, err := json.Marshal(updated)
+		if err != nil {
+			return fmt.Errorf("encode superseded payload for artifact %s: %w", predecessorID, err)
+		}
+		if _, err := conn.ExecContext(ctx, `UPDATE api_artifact SET payload = ? WHERE artifact_id = ?`, string(payload), string(predecessorID)); err != nil {
+			return fmt.Errorf("write supersede edge for artifact %s: %w", predecessorID, err)
+		}
+		return nil
+	})
+}
+
+// loadAPIArtifactOnConn reads one artifact row on the reserved connection. A
+// missing row, a payload that belongs to another artifact and a payload that will
+// not decode are all errors: a row that cannot be verified cannot be superseded.
+// loadAPIArtifactOnConn reads one artifact row on the reserved connection and
+// treats a missing row as an error.
+func loadAPIArtifactOnConn(ctx context.Context, conn *sql.Conn, id modulecore.ArtifactID) (domaintrace.APIArtifact, error) {
+	item, found, err := findAPIArtifactOnConn(ctx, conn, id)
+	if err != nil {
+		return domaintrace.APIArtifact{}, err
+	}
+	if !found {
+		return domaintrace.APIArtifact{}, fmt.Errorf("artifact %s is not in api_artifact", id)
+	}
+	return item, nil
+}
+
+// findAPIArtifactOnConn reads one artifact row on the reserved connection and
+// reports whether it exists. A row that is there but cannot be verified is an
+// error, never a miss: the caller has to fail closed on it rather than treat it
+// as a free artifact_id.
+func findAPIArtifactOnConn(ctx context.Context, conn *sql.Conn, id modulecore.ArtifactID) (domaintrace.APIArtifact, bool, error) {
+	var payload, runIDColumn string
+	if err := conn.QueryRowContext(ctx, `SELECT payload, run_id FROM api_artifact WHERE artifact_id = ?`, string(id)).Scan(&payload, &runIDColumn); err != nil {
+		if err == sql.ErrNoRows {
+			return domaintrace.APIArtifact{}, false, nil
+		}
+		return domaintrace.APIArtifact{}, false, fmt.Errorf("read artifact %s: %w", id, err)
+	}
+	var item domaintrace.APIArtifact
+	if err := json.Unmarshal([]byte(payload), &item); err != nil {
+		return domaintrace.APIArtifact{}, false, fmt.Errorf("artifact %s payload is corrupt: %w", id, err)
+	}
+	if item.ArtifactID != id {
+		return domaintrace.APIArtifact{}, false, fmt.Errorf("artifact %s payload holds artifact_id %s", id, item.ArtifactID)
+	}
+	// The indexed run_id column and the run inside the payload must name the same
+	// run, otherwise a chain check that reads one would disagree with a reader of
+	// the other, so the row fails closed rather than being quietly accepted.
+	if runIDColumn != string(item.RunID) {
+		return domaintrace.APIArtifact{}, false, fmt.Errorf("artifact %s run_id column %s disagrees with payload run_id %s", id, runIDColumn, item.RunID)
+	}
+	if err := domaintrace.ValidateAPIArtifact(item); err != nil {
+		return domaintrace.APIArtifact{}, false, fmt.Errorf("artifact %s row is invalid: %w", id, err)
+	}
+	return item, true, nil
 }
 
 func (s *SQLiteStore) save(ctx context.Context, table string, idColumn string, id string, createdAt string, item any) error {

@@ -182,18 +182,31 @@ func ValidateAPICoverageReport(item APICoverageReport) error {
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
 	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if got := ComputeAPICoverageReportContentHash(item); got != item.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
+	}
 	return nil
 }
 
 func ValidateAPIArtifact(item APIArtifact) error {
-	if strings.TrimSpace(item.ArtifactID) == "" {
-		return errors.New("artifact_id is required")
+	if err := item.ArtifactID.Validate(); err != nil {
+		return fmt.Errorf("artifact_id is invalid: %w", err)
 	}
 	if err := validateProjectionIdentity(item.TaskID, item.RunID, item.ActorID); err != nil {
 		return err
 	}
-	if strings.TrimSpace(item.Type) == "" {
+	artifactType := strings.TrimSpace(item.Type)
+	if artifactType == "" {
 		return errors.New("artifact_type is required")
+	}
+	if err := ValidateAPIArtifactKindForType(artifactType, item.Kind); err != nil {
+		return err
 	}
 	if strings.TrimSpace(item.Title) == "" {
 		return errors.New("title is required")
@@ -210,6 +223,15 @@ func ValidateAPIArtifact(item APIArtifact) error {
 	}
 	if item.CreatedAt.IsZero() {
 		return errors.New("created_at is required")
+	}
+	if err := modulecore.ValidateContentHash(item.ContentHash, "content_hash"); err != nil {
+		return err
+	}
+	if got := modulecore.ContentHashOf([]byte(item.Content)); got != item.ContentHash {
+		return fmt.Errorf("content_hash %s does not match content digest %s", item.ContentHash, got)
+	}
+	if err := modulecore.ValidateArtifactSupersession(item.ArtifactID, item.SupersededBy); err != nil {
+		return err
 	}
 	return nil
 }

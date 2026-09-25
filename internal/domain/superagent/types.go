@@ -48,7 +48,13 @@ type ContextPack struct {
 	Summary         string                  `json:"summary"`
 	IncludedSources []string                `json:"included_sources,omitempty"`
 	TokenEstimate   int                     `json:"token_estimate,omitempty"`
-	CreatedAt       time.Time               `json:"created_at"`
+	// ContentHash is the digest of the pack body declared once by
+	// contextpack_content.go, so it is a content field and never an ID
+	// (IDENTITY_CANONICAL 2.3). SupersededBy is the optional canonical ArtifactID of
+	// the pack that replaced this one. Both forms are owned by modules/core.
+	ContentHash  string                `json:"content_hash"`
+	SupersededBy modulecore.ArtifactID `json:"superseded_by,omitempty"`
+	CreatedAt    time.Time             `json:"created_at"`
 }
 
 type MessageChannel struct {

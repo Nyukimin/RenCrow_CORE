@@ -209,6 +209,7 @@ func registerWebRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 		BrowserTraceAPIDiscover:        dependencies.browserTraceAPIDiscover,
 		BrowserTraceAPIValidation:      dependencies.browserTraceAPIValidation,
 		BrowserTraceAPIFetcherProposal: dependencies.browserTraceAPIFetcherProposal,
+		BrowserTraceAPISupersede:       dependencies.browserTraceAPISupersede,
 		ComplexityHotspotStatus:        dependencies.complexityHotspotStatus,
 		ComplexityHotspotScan:          dependencies.complexityHotspotScan,
 		ComplexityHotspotProposal:      dependencies.complexityHotspotProposal,

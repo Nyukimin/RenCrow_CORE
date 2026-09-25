@@ -1,6 +1,9 @@
 package superagent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +67,7 @@ func TestValidateSuperAgentAcceptsCompleteRecords(t *testing.T) {
 		RunID:         runID,
 		Summary:       "summary",
 		TokenEstimate: 3000,
+		ContentHash:   contextPackReferenceDigest(`{"summary":"summary","included_sources":[],"token_estimate":3000}`),
 		CreatedAt:     now,
 	}, 3000); err != nil {
 		t.Fatalf("context pack should validate: %v", err)
@@ -629,4 +633,204 @@ func TestValidateRunQueueBlockedBeforeRun(t *testing.T) {
 			t.Fatalf("expected blocked run_id error, got %v", err)
 		}
 	})
+}
+
+// contextPackFixtureBody is the exact byte string that the ContextPack content
+// digest covers for the fixture pack below: compact JSON in the fixed key order
+// summary, included_sources, token_estimate, with a nil source list normalized to an
+// empty array. The digest is hashed from this literal so the expectation stays
+// independent from the domain projection.
+const contextPackFixtureBody = `{"summary":"route=ops channel=line","included_sources":[],"token_estimate":0}`
+
+func contextPackReferenceDigest(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// contextPackFixture is a valid pack whose body is the byte string above, so the
+// expected content hash is the digest of that body and not of the summary alone.
+func contextPackFixture() ContextPack {
+	return ContextPack{
+		ArtifactID:      validArtifactID(),
+		Kind:            modulecore.ArtifactKindContextPack,
+		TaskID:          validTaskID(),
+		RunID:           validRunID(),
+		WorkstreamID:    "session-1",
+		Summary:         "route=ops channel=line",
+		IncludedSources: nil,
+		TokenEstimate:   0,
+		ContentHash:     contextPackReferenceDigest(contextPackFixtureBody),
+		CreatedAt:       time.Date(2026, 5, 20, 7, 0, 0, 0, time.UTC),
+	}
+}
+
+// TestContextPackLinePreservesContentHashAndSupersededBy is the IU-18c2 Red: the
+// persisted ContextPack line carries the content digest and the supersession
+// reference, so a reader that decodes and re-encodes that line keeps both values.
+func TestContextPackLinePreservesContentHashAndSupersededBy(t *testing.T) {
+	successor := validArtifactID()
+	item := contextPackFixture()
+	item.SupersededBy = successor
+
+	line, err := json.Marshal(item)
+	if err != nil {
+		t.Fatalf("encode context pack line: %v", err)
+	}
+	var decoded ContextPack
+	if err := json.Unmarshal(line, &decoded); err != nil {
+		t.Fatalf("decode persisted context pack: %v", err)
+	}
+	if decoded.ContentHash != item.ContentHash {
+		t.Fatalf("decoded content_hash = %q, want %q", decoded.ContentHash, item.ContentHash)
+	}
+	if decoded.SupersededBy != successor {
+		t.Fatalf("decoded superseded_by = %q, want %q", decoded.SupersededBy, successor)
+	}
+
+	reencoded, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("re-encode decoded context pack: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(reencoded, &fields); err != nil {
+		t.Fatalf("decode re-encoded context pack: %v", err)
+	}
+	if got := string(fields["content_hash"]); got != `"`+item.ContentHash+`"` {
+		t.Fatalf("persisted content_hash lost after roundtrip: field=%s want %q", got, item.ContentHash)
+	}
+	if got := string(fields["superseded_by"]); got != `"`+string(successor)+`"` {
+		t.Fatalf("persisted superseded_by lost after roundtrip: field=%s want %q", got, successor)
+	}
+}
+
+// TestValidateContextPackRejectsLineWithoutContentHash: a ContextPack row persisted
+// without a content digest cannot be trusted as content identity, so validation
+// rejects it instead of accepting an unhashed body.
+func TestValidateContextPackRejectsLineWithoutContentHash(t *testing.T) {
+	item := contextPackFixture()
+	item.ContentHash = ""
+	if err := ValidateContextPack(item, 0); err == nil || !strings.Contains(err.Error(), "content_hash is required") {
+		t.Fatalf("expected content_hash rejection for a context pack persisted without a digest, got %v", err)
+	}
+}
+
+// TestValidateContextPackRejectsContentHashOfOtherContent: a well-formed digest of
+// other bytes must not pass, so the validator compares the digest with the pack body
+// rather than only checking the form.
+func TestValidateContextPackRejectsContentHashOfOtherContent(t *testing.T) {
+	item := contextPackFixture()
+	item.ContentHash = contextPackReferenceDigest(`{"summary":"some other artifact body","included_sources":[],"token_estimate":0}`)
+	if err := ValidateContextPack(item, 0); err == nil || !strings.Contains(err.Error(), "does not match content digest") {
+		t.Fatalf("expected content digest mismatch rejection, got %v", err)
+	}
+}
+
+// TestValidateContextPackRejectsSelfSupersession: the supersession edge points at the
+// artifact that replaces the row, so a row pointing at itself is rejected by the shared
+// canonical supersession validator. The content hash here is the digest of the fixture
+// body, so the rejection reason is the self reference and not a hash problem.
+func TestValidateContextPackRejectsSelfSupersession(t *testing.T) {
+	artifactID := validArtifactID()
+	item := contextPackFixture()
+	item.ArtifactID = artifactID
+	item.SupersededBy = artifactID
+	if got := ComputeContextPackContentHash(item); got != item.ContentHash {
+		t.Fatalf("fixture content_hash %q does not match body digest %q", item.ContentHash, got)
+	}
+	err := ValidateContextPack(item, 0)
+	if err == nil || !strings.Contains(err.Error(), "must not reference the artifact itself") {
+		t.Fatalf("expected self-referencing superseded_by rejection, got %v", err)
+	}
+}
+
+// TestValidateContextPackAcceptsCanonicalSuccessors: a supersession reference is any
+// canonical ArtifactID, so both a deterministic UUIDv5 migration ID and a freshly
+// issued UUIDv7 ID are accepted, while an opaque legacy token is not.
+func TestValidateContextPackAcceptsCanonicalSuccessors(t *testing.T) {
+	v5, err := modulecore.NewMigrationID(modulecore.CanonicalArtifactID, "superagent_test", "artifact_id", "context-pack-successor-1")
+	if err != nil {
+		t.Fatalf("build uuidv5 successor: %v", err)
+	}
+	for _, successor := range []modulecore.ArtifactID{modulecore.ArtifactID(v5), validArtifactID()} {
+		item := contextPackFixture()
+		item.SupersededBy = successor
+		if err := ValidateContextPack(item, 0); err != nil {
+			t.Fatalf("canonical successor %q rejected: %v", successor, err)
+		}
+	}
+	item := contextPackFixture()
+	item.SupersededBy = "art_1"
+	if err := ValidateContextPack(item, 0); err == nil || !strings.Contains(err.Error(), "superseded_by is invalid") {
+		t.Fatalf("expected opaque superseded_by rejection, got %v", err)
+	}
+}
+
+// TestContextPackContentHashCoversBodyNotIdentity pins the digest contract: the body
+// lists and the stored-context token estimate are content, so a change to any of them
+// changes the digest, while a remint or a new supersession reference leaves the digest
+// alone. A missing source list and an empty list are the same content.
+func TestContextPackContentHashCoversBodyNotIdentity(t *testing.T) {
+	base := contextPackFixture()
+
+	emptyList := contextPackFixture()
+	emptyList.IncludedSources = []string{}
+	if ComputeContextPackContentHash(base) != ComputeContextPackContentHash(emptyList) {
+		t.Fatalf("nil and empty included_sources must share one digest: %s vs %s",
+			ComputeContextPackContentHash(base), ComputeContextPackContentHash(emptyList))
+	}
+
+	identityChanges := map[string]func(*ContextPack){
+		"artifact_id":         func(c *ContextPack) { c.ArtifactID = validArtifactID() },
+		"artifact_kind":       func(c *ContextPack) { c.Kind = modulecore.ArtifactKindReport },
+		"task_id":             func(c *ContextPack) { c.TaskID = validTaskID() },
+		"run_id":              func(c *ContextPack) { c.RunID = validRunID() },
+		"workstream_id":       func(c *ContextPack) { c.WorkstreamID = "other-session" },
+		"created_at":          func(c *ContextPack) { c.CreatedAt = c.CreatedAt.Add(time.Hour) },
+		"superseded_by":       func(c *ContextPack) { c.SupersededBy = validArtifactID() },
+		"content_hash itself": func(c *ContextPack) { c.ContentHash = contextPackReferenceDigest("{}") },
+	}
+	for name, change := range identityChanges {
+		item := contextPackFixture()
+		change(&item)
+		if got := ComputeContextPackContentHash(item); got != base.ContentHash {
+			t.Fatalf("identity field %s changed the body digest: %s vs %s", name, got, base.ContentHash)
+		}
+	}
+
+	bodyChanges := map[string]func(*ContextPack){
+		"summary text":        func(c *ContextPack) { c.Summary = c.Summary + "!" },
+		"added source":        func(c *ContextPack) { c.IncludedSources = []string{"session:s1"} },
+		"source count":        func(c *ContextPack) { c.IncludedSources = []string{"session:s1"} },
+		"token estimate":      func(c *ContextPack) { c.TokenEstimate = 512 },
+		"non-ascii summary":   func(c *ContextPack) { c.Summary = "経路: ops\n\"quoted\"" },
+		"trailing whitespace": func(c *ContextPack) { c.Summary = c.Summary + " " },
+	}
+	for name, change := range bodyChanges {
+		item := contextPackFixture()
+		change(&item)
+		if got := ComputeContextPackContentHash(item); got == base.ContentHash {
+			t.Fatalf("body change %q left the digest unchanged: %s", name, got)
+		}
+	}
+
+	// The same sources in a different order are different bytes, so a reordered list
+	// gets a different digest rather than a set-insensitive one.
+	forward := contextPackFixture()
+	forward.IncludedSources = []string{"a", "b"}
+	reversed := contextPackFixture()
+	reversed.IncludedSources = []string{"b", "a"}
+	if ComputeContextPackContentHash(forward) == ComputeContextPackContentHash(reversed) {
+		t.Fatalf("reordered included_sources kept one digest: %s", ComputeContextPackContentHash(forward))
+	}
+
+	// The body byte order and escaping are fixed, so the same pack always hashes to
+	// the reference digest of the declared key order, including escaped non-ASCII text.
+	escaped := contextPackFixture()
+	escaped.Summary = "経路: ops"
+	escaped.IncludedSources = []string{"セッション:1"}
+	escaped.TokenEstimate = 512
+	want := contextPackReferenceDigest(`{"summary":"経路: ops","included_sources":["セッション:1"],"token_estimate":512}`)
+	if got := ComputeContextPackContentHash(escaped); got != want {
+		t.Fatalf("escaped body digest = %s, want %s", got, want)
+	}
 }

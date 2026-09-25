@@ -38,6 +38,7 @@ modules/browseractor, modules/webgather, internal/application/webgather, interna
 - `/viewer/browser-trace-api/discover`
 - `/viewer/browser-trace-api/validations`
 - `/viewer/browser-trace-api/fetcher-proposals`
+- `/viewer/browser-trace-api/supersede`
 - `/viewer/complexity-hotspots`
 - `/viewer/complexity-hotspots/scan`
 - `/viewer/complexity-hotspots/proposals`

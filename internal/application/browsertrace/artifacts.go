@@ -4,91 +4,68 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	domaintrace "github.com/Nyukimin/RenCrow_CORE/internal/domain/browsertrace"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func BuildAPIArtifacts(result domaintrace.DiscoveryResult) []domaintrace.APIArtifact {
+func BuildAPIArtifacts(result domaintrace.DiscoveryResult) ([]domaintrace.APIArtifact, error) {
 	return BuildAPIArtifactsWithValidations(result, nil)
 }
 
-func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, validations []domaintrace.APICandidateValidationResult) []domaintrace.APIArtifact {
+// BuildAPIArtifactsWithValidations generates the six browsertrace API artifacts
+// for a discovery run. Every artifact carries a canonical ArtifactID and the
+// ArtifactKind that the browsertrace domain owns for its content Type, so the
+// persistence boundary never receives an artifact without canonical identity.
+func BuildAPIArtifactsWithValidations(result domaintrace.DiscoveryResult, validations []domaintrace.APICandidateValidationResult) ([]domaintrace.APIArtifact, error) {
 	now := result.Run.CreatedAt
-	return []domaintrace.APIArtifact{
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "observed_openapi",
-			Title:        "Observed OpenAPI Draft",
-			Status:       "generated",
-			Content:      BuildObservedOpenAPIYAML(result),
-			CreatedAt:    now,
-		},
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "coverage_report",
-			Title:        "API Coverage Report",
-			Status:       "generated",
-			Content:      BuildCoverageMarkdown(result.Coverage),
-			CreatedAt:    now,
-		},
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "endpoint_inventory",
-			Title:        "Endpoint Inventory",
-			Status:       "generated",
-			Content:      BuildEndpointInventoryJSON(result),
-			CreatedAt:    now,
-		},
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "risk_assessment",
-			Title:        "API Risk Assessment",
-			Status:       "generated",
-			Content:      BuildRiskAssessmentMarkdown(result),
-			CreatedAt:    now,
-		},
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "fetcher_plan",
-			Title:        "Fetcher Plan",
-			Status:       "draft",
-			Content:      BuildFetcherPlanMarkdown(result, validations),
-			CreatedAt:    now,
-		},
-		{
-			ArtifactID:   string(modulecore.NewArtifactID()),
-			TaskID:       result.Run.TaskID,
-			RunID:        result.Run.RunID,
-			ActorID:      result.Run.ActorID,
-			WorkstreamID: result.Run.WorkstreamID,
-			Type:         "client_draft",
-			Title:        "Client Draft",
-			Status:       "draft",
-			Content:      BuildClientDraftMJS(result, validations),
-			CreatedAt:    now,
-		},
+	specs := []struct {
+		artifactType string
+		title        string
+		status       string
+		content      string
+	}{
+		{domaintrace.APIArtifactTypeObservedOpenAPI, "Observed OpenAPI Draft", "generated", BuildObservedOpenAPIYAML(result)},
+		{domaintrace.APIArtifactTypeCoverageReport, "API Coverage Report", "generated", BuildCoverageMarkdown(result.Coverage)},
+		{domaintrace.APIArtifactTypeEndpointInventory, "Endpoint Inventory", "generated", BuildEndpointInventoryJSON(result)},
+		{domaintrace.APIArtifactTypeRiskAssessment, "API Risk Assessment", "generated", BuildRiskAssessmentMarkdown(result)},
+		{domaintrace.APIArtifactTypeFetcherPlan, "Fetcher Plan", "draft", BuildFetcherPlanMarkdown(result, validations)},
+		{domaintrace.APIArtifactTypeClientDraft, "Client Draft", "draft", BuildClientDraftMJS(result, validations)},
 	}
+	artifacts := make([]domaintrace.APIArtifact, 0, len(specs))
+	for _, spec := range specs {
+		artifact, err := newAPIArtifact(result, spec.artifactType, spec.title, spec.status, spec.content, now)
+		if err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, artifact)
+	}
+	return artifacts, nil
+}
+
+// newAPIArtifact mints a fresh canonical ArtifactID and resolves the ArtifactKind
+// from the browsertrace domain mapping. There is no default Kind: an unknown
+// content Type is reported as an error instead of being silently projected.
+func newAPIArtifact(result domaintrace.DiscoveryResult, artifactType, title, status, content string, now time.Time) (domaintrace.APIArtifact, error) {
+	kind, err := domaintrace.ArtifactKindForAPIArtifactType(artifactType)
+	if err != nil {
+		return domaintrace.APIArtifact{}, err
+	}
+	return domaintrace.APIArtifact{
+		ArtifactID:   modulecore.NewArtifactID(),
+		Kind:         kind,
+		TaskID:       result.Run.TaskID,
+		RunID:        result.Run.RunID,
+		ActorID:      result.Run.ActorID,
+		WorkstreamID: result.Run.WorkstreamID,
+		Type:         artifactType,
+		Title:        title,
+		Status:       status,
+		Content:      content,
+		ContentHash:  modulecore.ContentHashOf([]byte(content)),
+		CreatedAt:    now,
+	}, nil
 }
 
 func BuildEndpointInventoryJSON(result domaintrace.DiscoveryResult) string {
