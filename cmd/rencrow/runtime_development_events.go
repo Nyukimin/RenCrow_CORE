@@ -14,7 +14,26 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type developmentEventLogSink struct{ store *viewer.CanonicalEventLog }
+// atlasExecutionActorID is the single CORE agent that owns every Atlas Action:
+// it is the actor handed to Service.WithExecutionOwners, which creates the
+// Atlas Task/Run, and it is the actor the sink has to stamp on the companion
+// events written under those Task/Run identities.  Wiring both from one symbol
+// keeps a receipt's Action owner and its companion event's actor from drifting.
+const atlasExecutionActorID = "shiro"
+
+type developmentEventLogSink struct {
+	store *viewer.CanonicalEventLog
+	// canonicalActorID names the CORE agent that owns the Atlas Action behind
+	// the bound execution identity (atlasExecutionActorID at runtime wiring).
+	//
+	// A ToolExecutionScope answers who was authorized to reach which data, which
+	// is not the same question as who executed a Run.  The owner API binds the
+	// authenticated human as a *user* scope, so copying that scope onto a
+	// run-scoped event labelled CORE's own Atlas Run as user-executed, and the
+	// canonical actor contract rejected every receipt companion with
+	// "execution actor_kind must be \"agent\"" (Step18 production E2E).
+	canonicalActorID string
+}
 
 // canonicalDevelopmentEventID adopts the EventID that an Atlas lifecycle
 // transition event already claims.  A receipt stores that EventID as its
@@ -58,8 +77,17 @@ func (s developmentEventLogSink) AppendDevelopmentEvent(ctx context.Context, eve
 		if err := scope.Validate(); err != nil {
 			return fmt.Errorf("development execution actor scope: %w", err)
 		}
+		if strings.TrimSpace(s.canonicalActorID) == "" {
+			return fmt.Errorf("development event sink requires the canonical Atlas execution actor")
+		}
 		outgoing.TaskID, outgoing.RunID = identity.TaskID, identity.RunID
-		outgoing.ActorKind, outgoing.ActorID = string(scope.ActorKind), scope.ActorID
+		actorKind, actorID := string(scope.ActorKind), scope.ActorID
+		if scope.ActorKind == tool.ActorKindUser {
+			// The user authorized the call; CORE executes the Atlas Run under the
+			// wired Action owner, so the event carries that agent identity.
+			actorKind, actorID = string(tool.ActorKindAgent), s.canonicalActorID
+		}
+		outgoing.ActorKind, outgoing.ActorID = actorKind, actorID
 		if identity.TraceID != "" {
 			outgoing.TraceID = identity.TraceID
 		}

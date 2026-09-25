@@ -15,6 +15,8 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -25,7 +27,7 @@ func claimedEventSink(t *testing.T) (*developmentCapturingStore, developmentEven
 	if err != nil {
 		t.Fatalf("canonical event log: %v", err)
 	}
-	return store, developmentEventLogSink{store: archive}
+	return store, developmentEventLogSink{store: archive, canonicalActorID: atlasExecutionActorID}
 }
 
 func TestDevelopmentEventSinkWritesTransitionEventUnderClaimedEventID(t *testing.T) {
@@ -112,5 +114,86 @@ func TestDevelopmentEventSinkRejectsMalformedClaimedEventID(t *testing.T) {
 	}
 	if len(store.captured) != 0 {
 		t.Fatalf("malformed claim persisted anyway: %+v", store.captured)
+	}
+}
+
+// TestDevelopmentEventSinkStampsCanonicalActorUnderOwnerAPIUserScope covers the
+// production owner route (POST /v1/atlas/items/{id}/{op}).  The HTTP ingress
+// binds a *user* ToolExecutionScope for the authenticated owner, while the
+// Atlas Action owner binds a Task/Run whose canonical execution actor is the
+// CORE agent wired at startup.  Copying the user scope into the event made
+// every run-scoped companion fail the canonical actor contract, so revise
+// returned HTTP 400 "execution actor_kind must be \"agent\"" and the receipt
+// never reached the canonical Event log (Step18 production E2E).
+func TestDevelopmentEventSinkStampsCanonicalActorUnderOwnerAPIUserScope(t *testing.T) {
+	store, sink := claimedEventSink(t)
+	task, run, trace := modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID()
+	scope, err := tool.NewToolExecutionScope(
+		"req-s18-owner-api",
+		tool.ActorKindUser,
+		"nyukimi",
+		"nyukimi",
+		[]string{tool.DataScopeUser},
+		tool.AuthenticationSourceHTTP,
+	)
+	if err != nil {
+		t.Fatalf("owner API scope: %v", err)
+	}
+	ctx := tool.WithToolExecutionScope(context.Background(), scope)
+	ctx, err = execution.WithIdentity(ctx, task, run, trace)
+	if err != nil {
+		t.Fatalf("bind execution identity: %v", err)
+	}
+	claimed := modulecore.NewEventID()
+	err = sink.AppendDevelopmentEvent(ctx, backlogapp.DevelopmentEvent{
+		EventID:    claimed,
+		Type:       backlogapp.DevelopmentEventStageRunTransition,
+		UnitID:     "unit-s18-owner",
+		ArtifactID: "transition:unit-s18-owner:SPEC:c1",
+		RequestID:  "req-s18-owner-api",
+		CreatedAt:  time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("owner API user scope rejected by the canonical execution actor contract: %v", err)
+	}
+	if len(store.captured) != 1 {
+		t.Fatalf("captured=%d, want 1", len(store.captured))
+	}
+	got := store.captured[0]
+	if got.EventID != claimed {
+		t.Fatalf("companion EventID=%q, receipt references %q", got.EventID, claimed)
+	}
+	if got.TaskID != task || got.RunID != run {
+		t.Fatalf("execution identity lost: task=%q run=%q", got.TaskID, got.RunID)
+	}
+	if got.ActorKind != "agent" || got.ActorID != atlasExecutionActorID {
+		t.Fatalf("actor=%s/%s, want agent/%s (the CORE agent that owns the Atlas Action)", got.ActorKind, got.ActorID, atlasExecutionActorID)
+	}
+}
+
+// TestDevelopmentEventSinkKeepsNonCanonicalAgentActorRejected states the
+// boundary that the normalization above must not widen: an *agent*
+// ToolExecutionScope still names the acting agent, and a name outside the
+// canonical CORE actors stays rejected instead of being silently rewritten.
+func TestDevelopmentEventSinkKeepsNonCanonicalAgentActorRejected(t *testing.T) {
+	store, sink := claimedEventSink(t)
+	ctx, err := withTrustedAgentPublicToolScope(context.Background(), "req-s18-guest", "tour-guide")
+	if err != nil {
+		t.Fatalf("agent scope: %v", err)
+	}
+	ctx, err = execution.WithIdentity(ctx, modulecore.NewTaskID(), modulecore.NewRunID(), modulecore.NewTraceID())
+	if err != nil {
+		t.Fatalf("bind execution identity: %v", err)
+	}
+	err = sink.AppendDevelopmentEvent(ctx, backlogapp.DevelopmentEvent{
+		Type:      backlogapp.DevelopmentEventClosureTransition,
+		UnitID:    "unit-s18-guest",
+		CreatedAt: time.Now().UTC(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "actor") {
+		t.Fatalf("non-canonical agent actor err=%v, want rejection naming actor", err)
+	}
+	if len(store.captured) != 0 {
+		t.Fatalf("non-canonical agent actor persisted anyway: %+v", store.captured)
 	}
 }

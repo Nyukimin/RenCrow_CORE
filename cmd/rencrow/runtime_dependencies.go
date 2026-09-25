@@ -1057,7 +1057,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	// Atlas shares the established Backlog JSONL and Workstream store. No
 	// lifecycle state is initialized when either owner store is unavailable;
 	// reads still expose an empty/legacy-safe projection and writes fail closed.
-	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore).WithExecutionOwners(runtimeActionManager, deps.taskManager, "shiro")
+	deps.atlasService = backlogapp.NewService(deps.backlogStore, deps.workstreamStore).WithExecutionOwners(runtimeActionManager, deps.taskManager, atlasExecutionActorID)
 	if llmRuntime.Worker != nil {
 		deps.atlasService.WithRevalidationEvaluator(backlogapp.NewLLMRevalidationEvaluator(llmRuntime.Worker, "shiro"))
 		log.Printf("Atlas maturation revalidation evaluator enabled via RenCrow_LLM Worker")
@@ -1120,7 +1120,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		// deps.atlasService drops a sink attached there (Step18 production E2E:
 		// receipts saved while the canonical Event log held zero companion events).
 		if deps.eventLogStore != nil {
-			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: deps.eventLogStore})
+			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: deps.eventLogStore, canonicalActorID: atlasExecutionActorID})
 			log.Printf("Atlas development event sink enabled: receipt TransitionEventID is written to the canonical Viewer Event log")
 		} else {
 			log.Printf("WARN: Atlas development event sink unavailable: canonical Viewer Event log is not configured, so receipt TransitionEventID cannot resolve in the canonical Event log")

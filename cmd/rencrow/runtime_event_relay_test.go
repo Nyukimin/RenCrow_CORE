@@ -320,7 +320,7 @@ func TestDevelopmentEventSinkCanonicalIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			sink := developmentEventLogSink{store: archive}
+			sink := developmentEventLogSink{store: archive, canonicalActorID: atlasExecutionActorID}
 			trace := modulecore.NewTraceID()
 			task := modulecore.NewTaskID()
 			run := modulecore.NewRunID()
