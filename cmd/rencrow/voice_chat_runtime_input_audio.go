@@ -33,7 +33,6 @@ type voiceChatInputAudioSettings struct {
 	APIKey         string
 	Timeout        time.Duration
 	ModelContext   int
-	Stream         bool
 	MaxTokens      int
 	Temperature    float64
 	TopP           *float64
@@ -258,14 +257,16 @@ func postVoiceChatInputAudio(ctx context.Context, baseURL string, settings voice
 				{Type: llm.MessagePartText, Text: sess.prompt},
 			},
 		}},
-		MaxTokens:       settings.MaxTokens,
-		Temperature:     settings.Temperature,
-		SystemPrompt:    voiceChatInputAudioSystemPrompt,
+		MaxTokens:    settings.MaxTokens,
+		Temperature:  settings.Temperature,
+		SystemPrompt: voiceChatInputAudioSystemPrompt,
+		// input_audio は {"user_text","reply"} を丸ごと解析して確定させるため
+		// ストリーム配送先を持たない。stream=true を添えると LLM ゲートウェイの
+		// 上流ランタイムが 400 INVALID_REQUEST
+		// ("response_format json_object requires stream=false") で拒否するため、
+		// mio.generation.stream の設定に関係なく非ストリームで送信する。
 		ResponseFormat:  llm.ResponseFormatJSONObject,
 		ProviderOptions: providerOptions,
-	}
-	if settings.Stream {
-		request.OnToken = func(string) {}
 	}
 	var provider llm.LLMProvider = rencrowllm.NewGatewayProviderWithModelContext(settings.APIKey, settings.Model, baseURL, settings.Timeout, settings.ModelContext)
 	if owners.actions != nil && owners.tasks != nil && owners.transport != nil {

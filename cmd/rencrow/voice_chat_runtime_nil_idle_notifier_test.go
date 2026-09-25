@@ -51,7 +51,7 @@ func TestVoiceChatRuntimeTypedNilIdleChatOrchestratorServesSessionReady(t *testi
 				t.Fatalf("dial bridge websocket: %v", err)
 			}
 			defer conn.Close()
-			if err := conn.SetReadDeadline(time.Now().Add(10*time.Second)); err != nil {
+			if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 				t.Fatalf("set read deadline: %v", err)
 			}
 			if err := websocket.Message.Send(conn, `{"type":"session.start","utterance_id":"utt-step17","sample_rate":16000,"channels":1,"format":"pcm16le","channel":"viewer"}`); err != nil {

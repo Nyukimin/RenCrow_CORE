@@ -40,7 +40,6 @@ func voiceChatInputAudioSettingsFromConfig(cfg *config.Config) voiceChatInputAud
 		APIKey:         apiKey,
 		Timeout:        time.Duration(cfg.LLMGateway.TimeoutSec) * time.Second,
 		ModelContext:   0,
-		Stream:         cfg.Mio.Generation.Stream,
 		MaxTokens:      cfg.Mio.Generation.MaxTokens,
 		Temperature:    cfg.Mio.Generation.Temperature,
 		TopP:           cfg.Mio.Generation.TopP,
