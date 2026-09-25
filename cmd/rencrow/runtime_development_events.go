@@ -16,6 +16,22 @@ import (
 
 type developmentEventLogSink struct{ store *viewer.CanonicalEventLog }
 
+// canonicalDevelopmentEventID adopts the EventID that an Atlas lifecycle
+// transition event already claims.  A receipt stores that EventID as its
+// TransitionEventID, so minting a fresh one here would put a real canonical
+// event under an id no receipt references and leave the receipt dangling.
+// Development projection events claim no EventID and keep minting one at this
+// store boundary.
+func canonicalDevelopmentEventID(event backlogapp.DevelopmentEvent) (modulecore.EventID, error) {
+	if strings.TrimSpace(string(event.EventID)) == "" {
+		return modulecore.NewEventID(), nil
+	}
+	if err := event.EventID.Validate(); err != nil {
+		return "", fmt.Errorf("development event %q claims a non-canonical EventID %q: %w", event.Type, event.EventID, err)
+	}
+	return event.EventID, nil
+}
+
 func (s developmentEventLogSink) AppendDevelopmentEvent(ctx context.Context, event backlogapp.DevelopmentEvent) error {
 	if s.store == nil {
 		return fmt.Errorf("development canonical event store is required")
@@ -26,7 +42,11 @@ func (s developmentEventLogSink) AppendDevelopmentEvent(ctx context.Context, eve
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	outgoing := orchestrator.OrchestratorEvent{EventID: modulecore.NewEventID(), Type: strings.TrimSpace(event.Type), From: "rencrow_core", TraceID: modulecore.TraceID(event.TraceID), Timestamp: event.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
+	eventID, err := canonicalDevelopmentEventID(event)
+	if err != nil {
+		return err
+	}
+	outgoing := orchestrator.OrchestratorEvent{EventID: eventID, Type: strings.TrimSpace(event.Type), From: "rencrow_core", TraceID: modulecore.TraceID(event.TraceID), Timestamp: event.CreatedAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")}
 	if identity, err := execution.IdentityFromContext(ctx); err == nil {
 		if outgoing.TraceID != "" && identity.TraceID != "" && outgoing.TraceID != identity.TraceID {
 			return fmt.Errorf("development event trace conflicts with execution identity")

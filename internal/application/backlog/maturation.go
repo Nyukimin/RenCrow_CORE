@@ -355,7 +355,19 @@ func (s *Service) Revalidate(ctx context.Context, id string, request RevalidateR
 		Forced: request.Forced, MaturationBypass: bypassUsed, BypassReason: request.BypassReason,
 		TransitionEventID: modulecore.NewEventID(),
 	}
+	// The revalidation record is the only place a decision is recorded, so its
+	// EventID has to exist as a canonical event too.  The companion event is
+	// written before the item append for the same reason the lifecycle receipts
+	// write theirs first: a persisted record never points at a missing event.
 	if err := domainbacklog.ValidateRevalidationRecord(record); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventRevalidationTransition, record.TransitionEventID, item, string(item.ConceptState), string(item.BacklogItemID)+":"+record.RevalidationDate, request.RequestID, map[string]any{
+		"decision":        request.Decision,
+		"maturation_days": maturationDays,
+		"forced":          request.Forced,
+		"merged_into":     request.MergedInto,
+	}); err != nil {
 		return domainbacklog.Item{}, err
 	}
 	item.RevalidationRecords = append(append([]domainbacklog.RevalidationRecord(nil), item.RevalidationRecords...), record)

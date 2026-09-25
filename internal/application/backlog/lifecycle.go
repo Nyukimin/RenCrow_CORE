@@ -326,9 +326,15 @@ func (s *Service) completeDone(ctx context.Context, before, next domainbacklog.I
 		if actionErr != nil {
 			return actionErr
 		}
+		closureEventID := transitionEventID("")
+		if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventClosureTransition, closureEventID, next, string(domainbacklog.DeliveryDone), key, request.RequestID, map[string]any{
+			"idempotency_key": key, "payload_hash": payloadHash,
+		}); err != nil {
+			return err
+		}
 		receipt = domainworkstream.ClosureReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: operationActionID,
-			TransitionEventID: transitionEventID(""),
+			TransitionEventID: closureEventID,
 			UnitID:            unitID, BacklogItemID: next.BacklogItemID, ImplementationRevision: next.ImplementationRevision,
 			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
 			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(string(next.BacklogItemID)),
@@ -447,9 +453,15 @@ func (s *Service) completeLiveVerifiedClosure(ctx context.Context, live domainba
 		if actionErr != nil {
 			return domainbacklog.Item{}, actionErr
 		}
+		doneStageEventID := transitionEventID("")
+		if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventStageRunTransition, doneStageEventID, live, string(domainbacklog.DeliveryDone), doneKey, doneRequest.RequestID, map[string]any{
+			"idempotency_key": doneKey, "payload_hash": donePayloadHash,
+		}); err != nil {
+			return domainbacklog.Item{}, err
+		}
 		doneReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: doneKey,
-			ActionID: operationActionID, TransitionEventID: transitionEventID(""),
+			ActionID: operationActionID, TransitionEventID: doneStageEventID,
 			UnitID: unitID, BacklogItemID: live.BacklogItemID,
 			ImplementationRevision: live.ImplementationRevision, TargetStage: domainbacklog.DeliveryDone,
 			PayloadHash: donePayloadHash, Status: domainworkstream.StageRunPrepared,
@@ -502,10 +514,17 @@ func (s *Service) completeBlocked(ctx context.Context, before, next domainbacklo
 	if err := s.save(ctx, next); err != nil {
 		return err
 	}
+	freezeEventID := transitionEventID("")
+	if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventQueueFreezeTransition, freezeEventID, next, string(domainbacklog.DeliveryBlocked), queueFreezeID(next.ImplementationUnit, next.ImplementationRevision), request.RequestID, map[string]any{
+		"reason_code":            firstNonEmpty(strings.TrimSpace(request.Reason), "stage_failed"),
+		"invalidated_from_stage": next.InvalidatedFromStage,
+	}); err != nil {
+		return err
+	}
 	freeze := domainworkstream.QueueFreeze{
 		FreezeID:      queueFreezeID(next.ImplementationUnit, next.ImplementationRevision),
 		BlockedUnitID: next.ImplementationUnit, BlockedRevision: next.ImplementationRevision, FreezeRevision: 1,
-		TransitionEventID:    transitionEventID(""),
+		TransitionEventID:    freezeEventID,
 		ReasonCode:           firstNonEmpty(strings.TrimSpace(request.Reason), "stage_failed"),
 		InvalidatedFromStage: next.InvalidatedFromStage,
 		EvidenceRefs:         append([]domainbacklog.EvidenceRef(nil), request.EvidenceRefs...),

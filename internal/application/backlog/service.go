@@ -641,9 +641,15 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 		if actionErr != nil {
 			return domainbacklog.Item{}, actionErr
 		}
+		stageEventID := transitionEventID(existingReceipt.TransitionEventID)
+		if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventStageRunTransition, stageEventID, item, string(target), key, request.RequestID, map[string]any{
+			"idempotency_key": key, "payload_hash": payloadHash,
+		}); err != nil {
+			return domainbacklog.Item{}, err
+		}
 		preparedReceipt = domainworkstream.StageRunReceipt{
 			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: operationActionID,
-			TransitionEventID: transitionEventID(existingReceipt.TransitionEventID),
+			TransitionEventID: stageEventID,
 			UnitID:            unitID, BacklogItemID: item.BacklogItemID, ImplementationRevision: revision,
 			TargetStage: target, PayloadHash: payloadHash, Status: domainworkstream.StageRunPrepared,
 			DeliveryState: next.DeliveryState, ResultJSON: string(resultJSON), CreatedAt: s.now(),
@@ -901,6 +907,15 @@ func (s *Service) ensureBlockedQueueFreeze(ctx context.Context, item domainbackl
 		}
 		return nil
 	}
+	repairEventID := modulecore.NewEventID()
+	if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventQueueFreezeTransition, repairEventID, item, string(domainbacklog.DeliveryBlocked), expected.FreezeID, "", map[string]any{
+		"reason_code":            expected.ReasonCode,
+		"invalidated_from_stage": expected.InvalidatedFromStage,
+		"repaired_by_recovery":   true,
+	}); err != nil {
+		return err
+	}
+	expected.TransitionEventID = repairEventID
 	return s.saveFreeze(ctx, expected)
 }
 

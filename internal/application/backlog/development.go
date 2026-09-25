@@ -14,6 +14,7 @@ import (
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	methodology "github.com/Nyukimin/RenCrow_CORE/internal/domain/developmentmethodology"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const developmentArtifactPrefix = "development."
@@ -21,6 +22,17 @@ const developmentArtifactPrefix = "development."
 const developmentArtifactSegmentMaxRunes = 128
 
 const developmentArtifactProjectionLimit = 5000
+
+// Atlas lifecycle transition event types.  One of these is written under the
+// EventID stored in the referencing receipt, so a TransitionEventID always
+// addresses a real canonical event instead of a number that only exists inside
+// the receipt payload.
+const (
+	DevelopmentEventStageRunTransition     = "atlas_stage_run_transition"
+	DevelopmentEventClosureTransition      = "atlas_closure_transition"
+	DevelopmentEventQueueFreezeTransition  = "atlas_queue_freeze_transition"
+	DevelopmentEventRevalidationTransition = "atlas_revalidation_transition"
+)
 
 const (
 	DevelopmentArtifactSpecification           = "specification"
@@ -52,13 +64,19 @@ type IssueDevelopmentImplementationAuthorityRequest struct {
 }
 
 type DevelopmentEvent struct {
-	Type       string         `json:"type"`
-	UnitID     string         `json:"unit_id"`
-	ArtifactID string         `json:"artifact_id"`
-	RequestID  string         `json:"request_id,omitempty"`
-	TraceID    string         `json:"trace_id,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-	Fields     map[string]any `json:"fields,omitempty"`
+	// EventID is the canonical EventID this development event claims.  A receipt
+	// that stores a TransitionEventID is only honest when an event was actually
+	// written under that EventID, so the transition companion events carry the
+	// very EventID the receipt references.  Projection/diagnostic events leave it
+	// empty and receive a fresh EventID at the canonical log boundary.
+	EventID    modulecore.EventID `json:"event_id,omitempty"`
+	Type       string             `json:"type"`
+	UnitID     string             `json:"unit_id"`
+	ArtifactID string             `json:"artifact_id"`
+	RequestID  string             `json:"request_id,omitempty"`
+	TraceID    string             `json:"trace_id,omitempty"`
+	CreatedAt  time.Time          `json:"created_at"`
+	Fields     map[string]any     `json:"fields,omitempty"`
 }
 
 type DevelopmentEventSink interface {
@@ -76,6 +94,40 @@ func (s *Service) emitDevelopmentTransition(ctx context.Context, eventType strin
 		fields["reason"] = methodology.RedactSecrets(reason)
 	}
 	return s.developmentEvents.AppendDevelopmentEvent(ctx, DevelopmentEvent{Type: eventType, UnitID: item.ImplementationUnit, ArtifactID: artifactID, RequestID: safeRequestID, CreatedAt: s.now(), Fields: fields})
+}
+
+// appendTransitionCompanionEvent writes the canonical event addressed by a
+// receipt's TransitionEventID.  It is called before the receipt save: a failed
+// write cannot leave a receipt pointing at a missing event, and the worst case
+// is an event that no receipt references.  A replay reuses the EventID that is
+// already persisted in the receipt and therefore never writes the event twice.
+func (s *Service) appendTransitionCompanionEvent(ctx context.Context, eventType string, eventID modulecore.EventID, item domainbacklog.Item, stage, recordID, requestID string, fields map[string]any) error {
+	if s.developmentEvents == nil {
+		return nil
+	}
+	if err := eventID.Validate(); err != nil {
+		return fmt.Errorf("transition event id %q is not a canonical EventID: %w", eventID, err)
+	}
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	if unitID == "" {
+		unitID = string(item.BacklogItemID)
+	}
+	artifactID := strings.Join([]string{"transition", boundedDevelopmentArtifactSegment(unitID), boundedDevelopmentArtifactSegment(stage), boundedDevelopmentArtifactSegment(recordID)}, ":")
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["target_stage"] = stage
+	fields["backlog_item_id"] = string(item.BacklogItemID)
+	fields["implementation_revision"] = item.ImplementationRevision
+	return s.developmentEvents.AppendDevelopmentEvent(ctx, DevelopmentEvent{
+		EventID:    eventID,
+		Type:       eventType,
+		UnitID:     unitID,
+		ArtifactID: artifactID,
+		RequestID:  methodology.RedactSecrets(strings.TrimSpace(requestID)),
+		CreatedAt:  s.now(),
+		Fields:     fields,
+	})
 }
 
 type DevelopmentProjection struct {
