@@ -979,7 +979,7 @@ const state = {ops: {
   superAgentContextPacks: [],
   superAgentMessageChannels: [],
   superAgentTraceEvents: [],
-  superAgentRunQueue: [{queue_id: 'rq_1', status: 'queued'}],
+  superAgentRunQueue: [{queue_item_id: 'rq_1', status: 'queued'}],
   superAgentRuntimeConfig: {
     run_queue_scheduler_enabled: false,
     run_queue_scheduler_interval_sec: 60,
@@ -3486,7 +3486,7 @@ const state = {ops: {
     summary: 'RenCrow_LLM Gateway connection refused',
   }],
   superAgentRunQueue: [{
-    queue_id: 'rq_1',
+    queue_item_id: 'rq_1',
     run_id: 'run_1',
     status: 'failed',
     completed_at: '2026-05-19T21:16:26Z',
@@ -3536,7 +3536,7 @@ function sandboxField(obj, snake, pascal) {
 const state = {ops: {
   superAgentFetchError: 'HTTP 500: superagent store unavailable',
   superAgentRuns: [{run_id: 'stale_run', status: 'completed', summary: 'stale success'}],
-  superAgentRunQueue: [{queue_id: 'stale_queue', action: 'resume', status: 'completed'}],
+  superAgentRunQueue: [{queue_item_id: 'stale_queue', action: 'resume', status: 'completed'}],
   superAgentSubagentTasks: [],
   superAgentContextPacks: [],
   superAgentMessageChannels: [],
@@ -3601,7 +3601,7 @@ function canonicalEventField(item, field) {
 }
 const state = {ops: {
   superAgentRunQueue: [{
-    queue_id: 'rq_resume_1',
+    queue_item_id: 'rq_resume_1',
     task_id: 'task_resume_1',
     run_id: '',
     action: 'resume',

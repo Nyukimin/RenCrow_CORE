@@ -1338,6 +1338,22 @@ func TestStep16QueueCheckpointReceiptLegacyFieldsAreBanned(t *testing.T) {
 		}
 		checkContent(relative, content, superagentTokens)
 	}
+	// The Viewer run_queue projection is a Step16 owner surface: reading the
+	// retired queue_id/QueueID key there renders an empty QueueItemID even
+	// though the handler emits queue_item_id, so the token scan must cover it.
+	for _, relative := range []string{
+		"internal/adapter/viewer/assets/js/tabs/ops.js",
+	} {
+		path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read %s: %v", relative, err)
+		}
+		checkContent(relative, content, superagentTokens)
+	}
 	if block := canonicalArchitectureStructBlock(repoRoot, "internal/domain/workstream/types.go", "StageRunReceipt"); block != "" {
 		if strings.Contains(block, "RequestID") || strings.Contains(block, `json:"request_id"`) {
 			violations = append(violations, "internal/domain/workstream/types.go:StageRunReceipt retains legacy request_id field")

@@ -958,7 +958,7 @@ function renderSuperAgentTerminalAudits() {
     rows.push({
       time: sandboxField(item, 'completed_at', 'CompletedAt') || sandboxField(item, 'claimed_at', 'ClaimedAt') || sandboxField(item, 'created_at', 'CreatedAt'),
       kind: 'run_queue',
-      id: sandboxField(item, 'queue_id', 'QueueID') || '',
+      id: sandboxField(item, 'queue_item_id', 'QueueItemID') || '',
       run: sandboxField(item, 'run_id', 'RunID') || '',
       status,
       evidence: sandboxField(item, 'reason', 'Reason') || '',
@@ -1066,7 +1066,7 @@ function superAgentResumeAuditRows() {
     const runtimeControlApplied = runtimeControlActions.some((action) => action !== 'none');
     return {
       time: sandboxField(item, 'completed_at', 'CompletedAt') || sandboxField(item, 'claimed_at', 'ClaimedAt') || sandboxField(item, 'created_at', 'CreatedAt'),
-      queueID: sandboxField(item, 'queue_id', 'QueueID') || '',
+      queueID: sandboxField(item, 'queue_item_id', 'QueueItemID') || '',
       taskID: String(taskID || ''),
       runID: String(sourceRunID || ''),
       status: String(sandboxField(item, 'status', 'Status') || ''),
