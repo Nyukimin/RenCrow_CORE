@@ -122,9 +122,6 @@ func buildViewerRuntimeHandlers(
 		}
 		deps.eventLogStore = eventLogStore
 		hub.SetReplayReader(eventLogStore)
-		if deps.atlasService != nil {
-			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: eventLogStore})
-		}
 	}
 	if reportStore, err := executionpersistence.NewJSONLReportStore(reportPath); err != nil {
 		deps.monitorStore = viewer.NewMonitorStore(nil, deps.eventLogStore)

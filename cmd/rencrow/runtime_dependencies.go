@@ -1112,6 +1112,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			deps.atlasService.WithEvidenceVerifier(verifier)
 			log.Printf("Atlas evidence verifier enabled (embedded specs, execution reports, deployment receipts)")
 		}
+		// Every Atlas receipt stores a TransitionEventID, and that reference is
+		// only honest when the canonical Event log holds the companion event
+		// written under the very same EventID.  The sink has to be attached here,
+		// after the service survives lifecycle migration and backfill, because
+		// buildViewerRuntimeHandlers runs earlier and every later assignment to
+		// deps.atlasService drops a sink attached there (Step18 production E2E:
+		// receipts saved while the canonical Event log held zero companion events).
+		if deps.eventLogStore != nil {
+			deps.atlasService.WithDevelopmentEventSink(developmentEventLogSink{store: deps.eventLogStore})
+			log.Printf("Atlas development event sink enabled: receipt TransitionEventID is written to the canonical Viewer Event log")
+		} else {
+			log.Printf("WARN: Atlas development event sink unavailable: canonical Viewer Event log is not configured, so receipt TransitionEventID cannot resolve in the canonical Event log")
+		}
 	}
 	var atlasToken []byte
 	if cfg.LocalAgentOps.Enabled {
