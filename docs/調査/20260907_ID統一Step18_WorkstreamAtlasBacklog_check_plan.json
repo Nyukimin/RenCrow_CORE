@@ -58,5 +58,22 @@
       "failure_action": "reopen"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [],
+  "outcome": {
+    "status": "partial",
+    "evaluated_at": "2026-09-23T12:33:30Z",
+    "source_revision": "f159ed9249dac04c0fa893de0f77dc2a1d0b506c",
+    "deployed_binary_sha256": "f79071c1059401b69f86898ce83158b0c7049d8a00ee1512eeef049917e53872",
+    "head_build_sha256": "af8865c75524e4ce2d57b1552f6a9a6a6646f6f718e41e1940040463f9eb8c07",
+    "passed": [
+      "s18_backlog_item_id: backlog owners（internal/domain/backlog, internal/application/backlog, internal/infrastructure/backlog）の非テストコードは generic ItemID=0 かつ json \"item_id\"=0 （Tmp/test-runtime/_qwen-supervision/qwen_s18_scan_20260923T113622Z.log の census と Tmp/test-runtime/_qwen-supervision/qwen_s18_companion_event_persist_probe_20260923T121713Z.log の ItemID=0 item_id=0 を零件実測）。残る item_id/ItemID は KnowledgeRelationItem・KnowledgeCreativeItem・KnowledgeNewsItem・SourceRegistryValidationResult など別 owner の別 identity で BacklogItemID の互換フィールドではない。backlog owner tests は domain/application が ok（Tmp/test-runtime/_qwen-supervision/qwen_s18_scan_20260923T113622Z.log S18_BACKLOG_TEST_EXIT=0）。",
+      "s18_atlas_event_refs: 新規 internal/application/backlog/lifecycle_event_refs_test.go の 4 テストが PASS（TestStageRunReceiptReferencesItsOwnEventID / TestClosureReceiptReferencesItsOwnEventID / TestQueueFreezeReferencesItsOwnEventID / TestRevalidationPromotionRecordReferencesItsOwnEventID、Tmp/test-runtime/_qwen-supervision/qwen_s18_event_refs_newtest3_20260923T115249Z.log S18_EVENTREFS_EXIT=0、 regression backlog pkg S18_PKG_EXIT=0、Step18 gate S18_ARCH_EXIT=0）。各 receipt の TransitionEventID が modulecore.EventID.Validate() を通ること、同一 receipt の ReceiptID・ActionID・BacklogItemID・UnitID・FreezeID・GoalID・ArtifactID・ReasonCode と非共有であること、冪等 replay では同一 EventID を再利用して新規採番しないこと、DONE stage receipt と closure receipt が別 EventID であることをアサートし、ReceiptID/ActionID を EventID へ代入する導線を塞いだ。",
+      "s18_architecture_zero: Step18 scanner（generic ItemID/ResultID/RecordID ゼロ）が PASS。Tmp/test-runtime/_qwen-supervision/qwen_s18_scan_20260923T113622Z.log S18_ARCH_EXIT=0 および ops.js・modules/core/identity_architecture_test.go・internal/application/scheduler/service_test.go 編集後の再 gate Tmp/test-runtime/_qwen-supervision/qwen_s15_19_postedit_gate_20260923T121619Z.log で TestStep15..TestStep20 の gate 9 件 PASS・GATES_EXIT=0（FAIL/SKIP なし）、gofmt GOFMT_EXIT=0。"
+    ],
+    "open": [
+      "s18_runtime_route（cutover: health ok after Step18 deploy）: 未実施。稼働 binary は sha f79071c1059401b6... で埋め込み vcs.revision=351def7876cb・vcs.modified=false（main 由来）であり、現 HEAD+dirty 差分をビルドした af8865c75524e4ce...（vcs.revision=f159ed9, vcs.modified=true）は未配備（Tmp/test-runtime/_qwen-supervision/qwen_s20_validation_20260923T115523Z.log）。sandbox では loopback listen と curl が socket: operation not permitted / curl exit 7 で拒否される（実ログ Tmp/test-runtime/_qwen-supervision/qwen_supersede_route_verify2_20260923T003204Z.log）。必要な正規操作: Astra の正規環境で現差分のまま ~/.local/bin/rencrow へ配備し systemd 再起動、/health/ready と backlog route の before/after を取得すること。source テストの PASS を deploy 後 health の成功として記録しない。",
+      "s18_atlas_event_refs（dangling reference 未決着）: TransitionEventID を companion Event として EventID 付きで永続化する writer が Step18 owner 側に未確認（Tmp/test-runtime/_qwen-supervision/qwen_s18_companion_event_persist_probe_20260923T121713Z.log: lifecycle.go:331/452/508、maturation.go:356、service.go:646 の 5 箇所はすべて receipt 側書き込みで、TransitionEventID の読取側は新規テストのみ）。plan の guarantee は \"receipts or companion events\" を receipt 側で満たすが、参照が実 Event log で解決できるかは live EventID 集合との突合が必要で、sandbox の socket・/srv 境界で未実施。Step20 の ID integrity scan で決着させる（dangling を否定も肯定もしない）。",
+      "deferred のまま未実施: s18_full_synthetic_ws_goal_artifact_generators、s18_full_system_restorecheck。bounded source gate の PASS を以て full 検査の完了とは記録しない。"
+    ]
+  }
 }

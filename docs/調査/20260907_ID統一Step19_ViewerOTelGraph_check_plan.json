@@ -80,5 +80,24 @@
       "failure_action": "keep outside Step19 architecture zero for non-owner tabs"
     }
   ],
-  "replacement_receipts": []
+  "replacement_receipts": [],
+  "outcome": {
+    "status": "partial",
+    "evaluated_at": "2026-09-23T12:33:30Z",
+    "source_revision": "f159ed9249dac04c0fa893de0f77dc2a1d0b506c",
+    "deployed_binary_sha256": "f79071c1059401b69f86898ce83158b0c7049d8a00ee1512eeef049917e53872",
+    "head_build_sha256": "af8865c75524e4ce2d57b1552f6a9a6a6646f6f718e41e1940040463f9eb8c07",
+    "passed": [
+      "s19_otel_trace_id: otelexport の trace-{n} 合成が TRACE_SYNTH_HITS=0 で、canonical TraceID のみ export しinvalid/missing trace_id は dropped 計上（internal/application/otelexport/service.go:37,71,73,82）。go test -count=1 ./internal/application/otelexport/ が ok（Tmp/test-runtime/_qwen-supervision/qwen_s19_precommit_20260923T113916Z.log S19_OTEL_EXIT=0）。",
+      "s19_viewer_js_task_id: owner JS 4 ファイルで job_id=0 chat_id=0 を実測し task_id/session_id/trace_id 読みへ置換済み（Tmp/test-runtime/_qwen-supervision/qwen_s19_precommit_20260923T113916Z.log: viewer.js job_id=0 chat_id=0 task_id=1 session_id=1 trace_id=1、tabs/timeline.js job_id=0 chat_id=0 task_id=1、tabs/ops.js job_id=0 chat_id=0 task_id=1 session_id=1 trace_id=1、tabs/idlechat.js job_id=0 chat_id=0 session_id=1）。ops.js の run_queue 投影を Step16 正準の queue_item_id へ修正した差分でも、fixture を queue_item_id へ更新した internal/adapter/viewer/viewer_memory_panel.test.mjs が node --test で # tests 1 / # pass 1 / # fail 0（Tmp/test-runtime/_qwen-supervision/qwen_s15_19_postedit_gate_20260923T121619Z.log MJS_EXIT=0）。",
+      "s19_viewer_handler_task_id: Go 側 handler が task_id を受理・送出することを確認（Tmp/test-runtime/_qwen-supervision/qwen_s19_precommit_20260923T113916Z.log: monitor_handler.go:78 query 受理・:111 JSON 列挙に task_id/session_id、task_handler.go:52、evidence_handler.go:64、verification_handler.go:72、superagent_handler.go:251/378、repair_handler.go:68/103）。shipped JS 側の chat_id consumer は 0（同ログ residual=0）で描画欠落は未観測。",
+      "s19_architecture_zero: TestStep19ViewerOTelGraphLegacyFieldsAreBanned が PASS（Tmp/test-runtime/_qwen-supervision/qwen_s19_precommit_20260923T113916Z.log S19_ARCH_EXIT=0）、viewer JS / identity_architecture_test.go / scheduler service_test.go 編集後の再 gate でも TestStep15..TestStep20 が 9 件 PASS・GATES_EXIT=0・FAIL/SKIP なし（Tmp/test-runtime/_qwen-supervision/qwen_s15_19_postedit_gate_20260923T121619Z.log）。",
+      "s19_predeploy_verification: gofmt GOFMT_EXIT=0、go test ./internal/application/otelexport/ ok、go test ./modules/core/ -run TestStep19 ok、go build ./cmd/rencrow S19_BUILD_EXIT=0（生成 sha af8865c75524e4ce...、vcs.revision=f159ed9、vcs.modified=true、129665768 bytes）。Tmp/test-runtime/_qwen-supervision/qwen_s19_precommit_20260923T113916Z.log。"
+    ],
+    "open": [
+      "s19_viewer_handler_task_id（viewer monitor 系の chat_id 残存 10 箇所 / 5 files）: canonical_event_log.go:350、monitor_types.go:60/76/87、monitor_reducers.go:139/156-157、monitor_queries.go:111、monitor_handler.go:93（query 受理）/112（JSON 列挙）（Tmp/test-runtime/_qwen-supervision/qwen_s19_monitor_chatid_probe_20260923T115425Z.log）。owner 境界の判断が要る: IDENTITY_CANONICAL.md の置換表は ChatID を external channel address 側へ対応させ、viewer monitor の chat_id は event.ChatID（external address）の読取経路である一方、Step20 の削除対象（旧 Viewer query / Deprecated JSON key）と最終条件 Internal ChatID zero も同箇所を対象にする。Step19 scanner が覆盖するのは JS assets と otelexport のみでこの残存を gate が検出しないため、判定は Step20 outcome の open（s20_viewer_monitor_chat_id_scope）へ移す。現 shipped JS は chat_id を送らないため削除自体は可能だが、live Event JSONL の chat_id 属性行に対する Viewer 実 route before/after 無しに削除を適用しない（検証できない cleanup を先に適用しない）。",
+      "s19 実 route 疎通: /viewer/monitor の task_id query と /api/events を実 Event に対して叩く検証は未実施。稼働 binary が main 由来 f79071c1059401b6...（embedded vcs.revision=351def7876cb）で HEAD 差分を含まず、sandbox では loopback socket と curl が socket: operation not permitted / curl exit 7 で拒否（Tmp/test-runtime/_qwen-supervision/qwen_s20_validation_20260923T115523Z.log と Tmp/test-runtime/_qwen-supervision/qwen_supersede_route_verify2_20260923T003204Z.log）。host read-only では rencrow.service active（MainPID 2232）と http://127.0.0.1:18790/health/ready の ready=true を確認済みだが、これは稼働確認であり HEAD 配備でも Step 受入でもない（sandbox の拒否を host 停止と同一視しない）。",
+      "deferred のまま未実施: s19_full_event_task_comm_graph、s19_remaining_viewer_tabs_job_id、s19_sse_reconnect_matrix、s19_all_viewer_tabs_secret_redaction。plan deferred 相当の full 検査は今回の bounded 範囲外であり、4 gate の PASS を以て完了とは記録しない。"
+    ]
+  }
 }
