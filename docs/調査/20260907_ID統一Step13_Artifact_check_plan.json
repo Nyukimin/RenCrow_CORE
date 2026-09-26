@@ -5,7 +5,7 @@
   "evaluated_at": "2026-09-21T17:55:48Z",
   "outcome": {
     "status": "partial",
-    "source_revision": "e778c76",
+    "source_revision": "c1a16e4",
     "deployed_binary_sha256": "208b5731b7fa0fbafd4bfa103a965541e11e0bf29872f3e33dda10c31c7ae54f",
     "passed": [
       "ArtifactKind 9種（report draft context_pack image patch specification transcript diff document）とart_前検証契約がmodules/coreに実装（HEADのancestor 8a867f1、36 files）",
@@ -56,7 +56,7 @@
       "origin/main tip 351def7 と HEAD（e778c76）の未収束（2026-09-26 05:47 UTC 実測・判断者=Ren・本タスク範囲外）: HEAD は 214 ahead/7 behind で git cherry HEAD 351def7 は 7 件すべて '+'（patch-equivalent 不在）。U1=llmfit/Ops 4 commit（08a31a7→cd5baae→656184d→351def7、cd5baae 以降は HEAD 不在 file への diff で単体適用不可）、U2=LAN IP 56501f4、U3=IdleChat 外部情報 bd602f9（tts gateway_provider_test.go hunk は HEAD 側と要調整）、U4=TaskID 移行 4a5e31b（105 files）。HEAD tree の internal/infrastructure/llmfit は 0 files、config の llm_capability キーも HEAD に不在。稼働 binary は HEAD 系（0f46860・09-25 14:14 UTC から運用）なので本番機能として llmfit Ops・task_id 移行・IdleChat 外部情報強化が欠落しており、統合順と release 判断が残件。ユーザー指示により main の取り込み（merge・rebase・reset・pull）は本タスクで行わない",
       "verification report と context_pack の live 後継 row 運用実績 0（2026-09-26 実測・判断者=Ren）: 実 supersede 操作の live 受入は api_artifact で完了済み（/viewer/browser-trace-api/supersede・passed 参照）だが、verification_report.jsonl 122 行（全行 content_hash 保持・Kind=report）と context_pack 324 rows では live で後継 row 追記／循環検査／再試行の運用実績が 0。supersede route は internal/features/web/registrar.go:40（api_artifact）と internal/features/memory/registrar.go:53（memory user）の 2 本のみで、この 2 kind には後継 edge を確立する正規 route が存在しない。route を新設するか api_artifact の実績で Kind横断の受入とするかの設計判断が必要で、source 側（domain validator・store の循環／原子性検査）は Astra 独立受入済みなので live 観測のみが残る"
     ],
-    "evaluated_at": "2026-09-26T05:51:36Z",
+    "evaluated_at": "2026-09-26T07:57:34Z",
     "deployed_binary_vcs_revision": "0f46860a7d5e6f396dc1cb423c643a82a1cffc15",
     "deployed_binary_vcs_modified": false
   },
@@ -177,9 +177,11 @@
     },
     {
       "check_id": "s13_native_windows_run",
-      "reason": "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 の go vet と go build ./... は 2026-09-26 00:43-00:47 UTC に exit 0（Tmp/ev/s13close/phase1_20260926T004356Z.log）だが、Windows native 実行は未実施。本ホストは Linux のみで wine/wine64 不在、既知の Windows ノード（lan-llm-rtx4060 ほか）への SSH は picoclaw_agent 鍵が無くて BatchMode 認証不可。Ren の指示（2026-09-26）により他ホストでの実行・ビルド・ファイル配置は行わないため、Windows 実機を使うかどうか自体が判断待ち",
-      "consumer": "Windows 実機での Step13 native 実行（または native 実行を不要とする受入判断）",
-      "failure_action": "実機実行が承認されたら GOOS=windows ビルド生成物を Windows で起動し、JSONL WAL と SQLite の sidecar 挙動を確認する。未承認のまま native 実行実績なしで Step13 を受入とする場合は、その判断を本書へ記録する"
+      "reason": "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 の go vet（対象 package）と go build ./... は exit 0（2026-09-26 00:43-00:47 UTC 実測・Tmp/ev/s13close/phase1_20260926T004356Z.log）で、Windows 向け源码の構文・型・ビルド可能性は確認済み。native 実行は本ホストが Linux のみで wine/wine64 不在、既知の Windows ノード（lan-llm-rtx4060 ほか）への SSH は picoclaw_agent 鍵が無くて BatchMode 認証不可、加えて Ren の指示（2026-09-26）により他ホストでの実行・ビルド・ファイル配置は行わない。Ren の判断（2026-09-26）で native Windows 実行はスキップして終了扱い。実装変更は不要で、本項目はこれ以上 open を増やさない",
+      "consumer": "（closure）Windows native 実行を必要とする後続 IU があればそこで起票する",
+      "failure_action": "Windows 実機での実行が将来必要になった場合は本 check_id を新規 check として起票し直し、JSONL WAL と SQLite sidecar 挙動を実機確認する",
+      "status": "closed",
+      "closed_by": "Ren 判断 2026-09-26: native Windows 実行はスキップ（終了扱い）"
     }
   ],
   "replacement_receipts": [
