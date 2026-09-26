@@ -5,7 +5,7 @@
   "evaluated_at": "2026-09-17T19:40:00Z",
   "outcome": {
     "status": "partial",
-    "source_revision": "b13801e",
+    "source_revision": "e778c76",
     "deployed_binary_sha256": "208b5731b7fa0fbafd4bfa103a965541e11e0bf29872f3e33dda10c31c7ae54f",
     "passed": [
       "EvidenceID文字列派生0がarchitecture testで機械強制（TestStep14EvidenceMemoryLegacyFieldsAreBannedとTestStep14MigrationSourceIsRemovedAfterCutoverがmodules/coreでPASS、HEADのancestor 8a867f1に既入）",
@@ -28,10 +28,10 @@
       "cutover receipt と配備 binary の source 紐付けを確立（2026-09-26 03:2x UTC 実測）: ~/.local/bin/rencrow sha256 208b5731b7fa0fbafd4bfa103a965541e11e0bf29872f3e33dda10c31c7ae54f・embedded vcs.revision=0f46860a7d5e6f396dc1cb423c643a82a1cffc15・vcs.modified=false で、0f46860..HEAD（b13801e）の Go 源码差分 0 件（docs と scripts/ のみ）。vcs.modified=true 混合ビルド（082ad99 時点）に依存していた receipt-source 紐付けは不要になり、receipt の実効 source は HEAD 現行 revision と等価。配備 check manifest ~/.local/share/rencrow/checks/core.json は正本 config/checks/core.json と byte 一致（sha256 bb97d7ec1ce6de8f…・12 件）で 09-17 に実測した 11 件への自動巻き戻りは 09-26 まで未発生"
     ],
     "open": [
-      "complexity identity orphan 運用 check の実行側ギャップ（2026-09-26 03:2x UTC 現状確認・変更なし）: ~/.local/bin/rencrow-core-verify（sha256 274bb24b648d7dc9…）に owner_cli の実行経路が無く、core_complexity_identity_orphan の集計実行と allowlist 所有は rencrow-core-verify のまま。drift の pin は root ecosystem.yaml components.core.version=bae91856 の 6f6a6ff2…（11 件）で、配備 manifest が byte copy した正本 bb97d7ec…（12 件）と content hash 不一致のまま。--apply 付き auto-redeploy を走らせると 11 件へ巻き戻るリスクは現運用（notify unit は --json のみ）で未顕在化だが、pin 前進は components.core.version の release 判断（check-pins は RenCrow_PORTAL dirty で blocked）と rencrow-core-verify/runner の drift inventory 登録が前提",
-      "loopback viewer route の認証 invariant 未強制（2026-09-26 現状確認・変更なし・design decision open）: per-route middleware は存在せず、main.go の withTailscaleViewerOnlyGuard(withInteractionProfileGuard(mux)) の 2 層 guard と web/registrar.go の素の mux.HandleFunc 登録のみ。ヘッダ無し GET は 200、自己申告 profile は allow list で 403。CORE が 0.0.0.0:18790 で listen するため認証 scope は network 境界と guard の組合せ依存で、invariant として機械強制されていない"
+      "complexity identity orphan 運用 check の実行側ギャップ（2026-09-26 05:47 UTC 現状確認・変更なし・判断者=Ren）: ~/.local/bin/rencrow-core-verify（sha256 274bb24b648d7dc9…）に owner_cli の実行経路が無く、core_complexity_identity_orphan の集計実行と allowlist 所有は rencrow-core-verify のまま。drift の pin は root ecosystem.yaml components.core.version=bae91856 の 6f6a6ff2…（11 件）で、配備 manifest が byte copy した正本 bb97d7ec…（12 件）と content hash 不一致のまま。--apply 付き auto-redeploy を走らせると 11 件へ巻き戻るリスクは現運用（notify unit は --json のみ）で未顕在化。収束には (a) runner か verifier のどちらに owner_cli 実行経路を持たせるかの設計判断、(b) components.core.version の release 判断（make check-pins は RenCrow_PORTAL dirty で blocked）、(c) rencrow-core-verify/runner の drift inventory 登録が必要で、いずれも本 IU の実装範囲を広げるため判断を仰ぐ",
+      "loopback viewer route の認証 invariant 未強制（2026-09-26 05:47 UTC 現状確認・変更なし・設計判断 open・判断者=Ren）: per-route middleware は存在せず、main.go の withTailscaleViewerOnlyGuard(withInteractionProfileGuard(mux)) の 2 層 guard と web/registrar.go の素の mux.HandleFunc 登録のみ。ヘッダ無し GET は 200、自己申告 profile は allow list で 403。CORE が 0.0.0.0:18790 で listen するため認証 scope は network 境界と guard の組合せ依存で、invariant として機械強制されていない。per-route 認証を課すか現行の 2 層 guard を受入とするかの設計判断が未了（課す場合は全 route の登録順と既有 client の影響範囲が別 IU の作業）"
     ],
-    "evaluated_at": "2026-09-26T03:48:01Z",
+    "evaluated_at": "2026-09-26T05:51:36Z",
     "deployed_binary_vcs_revision": "0f46860a7d5e6f396dc1cb423c643a82a1cffc15",
     "deployed_binary_vcs_modified": false
   },
