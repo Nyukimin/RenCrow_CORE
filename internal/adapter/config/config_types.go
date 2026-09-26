@@ -44,6 +44,9 @@ type Config struct {
 	// === Local authenticated Agent OPS ingress ===
 	LocalAgentOps LocalAgentOpsConfig `yaml:"local_agent_ops"`
 
+	// === LLM Ops / Hardware Capability (llmfit observation) ===
+	LLMCapability LLMCapabilityConfig `yaml:"llm_capability"`
+
 	// === Optional Webwright browser-backed fetch bridge ===
 	WebwrightFetch WebwrightFetchConfig `yaml:"webwright_fetch"`
 
@@ -329,7 +332,7 @@ type DistributedConfig struct {
 // TransportConfig はAgent別のTransport設定
 type TransportConfig struct {
 	Type             string `yaml:"type"`               // "local" or "ssh"
-	RemoteHost       string `yaml:"remote_host"`        // SSH接続先（例: "192.168.1.100:22"）
+	RemoteHost       string `yaml:"remote_host"`        // SSH接続先（書式: "<ホスト名またはIP>:<SSHポート>"、例: "coder3.lan:22"）
 	RemoteUser       string `yaml:"remote_user"`        // SSHユーザー名
 	SSHKeyPath       string `yaml:"ssh_key_path"`       // SSH秘密鍵パス
 	StrictHostKey    bool   `yaml:"strict_host_key"`    // true: known_hosts必須（本番用）、false: Insecureフォールバック許可
@@ -863,4 +866,35 @@ func (c PersonRelatedCatalogIdentityMappingConfig) IsEnabled() bool {
 
 func (c KnowledgeMemoryConfig) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+// LLMCapabilityConfig groups LLM Ops / Hardware Capability observation settings.
+type LLMCapabilityConfig struct {
+	LLMFit LLMFitConfig `yaml:"llmfit"`
+}
+
+// LLMFitConfig configures the llmfit observation source (feature spec
+// "LLM Ops / Hardware Capability"). TTL and timeout values are Go duration
+// strings ("5m", "30s"). Nodes may be empty: the Ops screen then lists no
+// nodes without raising an error.
+type LLMFitConfig struct {
+	Enabled        *bool              `yaml:"enabled"`         // default true
+	SystemTTL      string             `yaml:"system_ttl"`      // hardware profile cache TTL (default 5m)
+	ModelsTTL      string             `yaml:"models_ttl"`      // model fit cache TTL (default 15m)
+	HealthTTL      string             `yaml:"health_ttl"`      // health check cache TTL (default 30s)
+	RequestTimeout string             `yaml:"request_timeout"` // per llmfit request / command timeout (default 5s)
+	TopLimit       int                `yaml:"top_limit"`       // default number of models per node (default 20)
+	Nodes          []LLMFitNodeConfig `yaml:"nodes"`
+}
+
+// IsEnabled reports whether llmfit observation is enabled (default true).
+func (c LLMFitConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// LLMFitNodeConfig identifies one observed LLM node.
+type LLMFitNodeConfig struct {
+	ID       string `yaml:"id"`       // unique node id shown in the viewer
+	Mode     string `yaml:"mode"`     // http | cli
+	Endpoint string `yaml:"endpoint"` // llmfit serve base URL; required for http, must be empty for cli
 }

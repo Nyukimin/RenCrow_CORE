@@ -6,7 +6,9 @@ import { fileURLToPath } from 'node:url';
 
 const DEFAULT_URL = 'http://127.0.0.1:18790/viewer?tab=timeline';
 const DEFAULT_WAV = 'tmp/stt_inputs/client_stt_input_20260609_140311.wav';
-const DEFAULT_WS_URL = 'ws://192.168.1.207:8081/v1/chat/audio/sessions';
+// RenCrow_LLM node host on the LAN. Override with RENCROW_LLM_HOST; --ws-url still takes precedence.
+const DEFAULT_LLM_HOST = process.env.RENCROW_LLM_HOST || '192.168.1.207';
+const DEFAULT_WS_URL = `ws://${DEFAULT_LLM_HOST}:8081/v1/chat/audio/sessions`;
 const DEFAULT_OUT_DIR = 'tmp/llm_voice_latency';
 const DEFAULT_ROUNDS = 3;
 const DEFAULT_TARGET_BYTES = 820000;
@@ -55,7 +57,7 @@ export function usage() {
     '',
     'Options:',
     `  --url <url>                 Viewer URL (default: ${DEFAULT_URL})`,
-    `  --ws-url <url>              RenCrow_LLM audio session WS (default: ${DEFAULT_WS_URL})`,
+    `  --ws-url <url>              RenCrow_LLM audio session WS (default: ${DEFAULT_WS_URL}; host from RENCROW_LLM_HOST)`,
     `  --wav <path>                Fake mic WAV (default: ${DEFAULT_WAV})`,
     `  --out-dir <path>            Output directory (default: ${DEFAULT_OUT_DIR})`,
     `  --rounds <n>                Viewer E2E rounds (default: ${DEFAULT_ROUNDS})`,

@@ -17,6 +17,10 @@ from pathlib import Path
 
 
 LOCAL_PROFILE_CONFIG = Path(__file__).with_name("config_local_worker.yaml")
+# RenCrow_LLM host on the LAN, used for the --local-responses-endpoint help example.
+# Override with RENCROW_LLM_HOST; the option itself still defaults to empty.
+DEFAULT_LLM_HOST = os.environ.get("RENCROW_LLM_HOST", "192.168.1.207")
+LOCAL_RESPONSES_ENDPOINT_EXAMPLE = f"http://{DEFAULT_LLM_HOST}:8082/v1/responses"
 
 
 def prepare_config_args(args: argparse.Namespace) -> None:
@@ -90,7 +94,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--local-responses-endpoint",
         default="",
-        help="Set Webwright's openai_endpoint schema field to the RenCrow_LLM Gateway, e.g. http://192.168.1.207:8082/v1/responses.",
+        help=f"Set Webwright's openai_endpoint schema field to the RenCrow_LLM Gateway, e.g. {LOCAL_RESPONSES_ENDPOINT_EXAMPLE}.",
     )
     parser.add_argument("--local-model", default="Coder1", help="Model used with --local-responses-endpoint.")
     parser.add_argument("--local-api-key", default="dummy", help="API key value used with --local-responses-endpoint.")

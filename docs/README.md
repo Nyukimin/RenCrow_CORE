@@ -42,6 +42,9 @@ Development Methodology v1は別正本を持たず、上記Atlas仕様の第16�
   catalog DB、新module、外部systemではなく、COREが所有する論理source-of-truth層です。source adapter、
   immutable intake、domain projection、Recall、backup／restoreの一方向契約は[機能仕様のCommon Raw Data](02_機能仕様.md#common-raw-data-intakeとdomain-projection)、
   [アーキテクチャ概要の記憶ストレージ](04_アーキテクチャ概要.md#記憶ストレージ)、[安全・データ方針のKnowledgeとMemory](07_安全・自動実行・データ方針.md#knowledge-と-memory)を参照し、設定入口と実装状態は05／08で確認します。
+- LLM Ops / Hardware Capability（llmfit統合）はStatus: Proposed・未実装の機能であり、
+  [機能仕様の「LLM Ops / Hardware Capability（llmfit統合）」](02_機能仕様.md#llm-ops--hardware-capabilityllmfit統合)を
+  正本とします。構成は04、設定は05、APIは06、安全境界は07、実装状況は08の該当章で確認します。新しい正本ファイルは追加しません。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。
 - 現行正本に必要な情報が不足している場合は、該当する `01` から `10`、Atlas仕様、またはIdentity Canonical仕様を更新します。Identity Canonical仕様の正規配置である`docs/architecture/identity/`を除き、別の正本ディレクトリ、版付き正本、補助正本を追加しません。

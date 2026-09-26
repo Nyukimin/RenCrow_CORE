@@ -260,7 +260,9 @@ distributed:
       type: "local"
     coder3:
       type: "ssh"
-      remote_host: "192.168.1.100:22"
+      # remote_host は "<ホスト名またはIP>:<SSHポート>" 形式。<CODER3_SSH_HOST> は実環境の値に置き換える
+      # （環境変数から与える場合は "${CODER3_SSH_HOST}:22" のように書ける）
+      remote_host: "<CODER3_SSH_HOST>:22"
       remote_user: "rencrow"
       ssh_key_path: "~/.ssh/id_ed25519_rencrow"
       strict_host_key: true
@@ -443,6 +445,29 @@ local_agent_ops:
   enabled: false
   auth_token_file: "/absolute/runtime/path/agent-ops.token"
   user_id: "ren"
+
+# LLM Ops / Hardware Capability (llmfit observation, Debug Viewer Ops screen).
+# Read-only: CORE only fetches llmfit results. It never changes llmfit settings,
+# loads models, or runs benchmarks. llmfit downtime only degrades the Ops screen
+# (OFFLINE / STALE); it never stops Chat, Shiro, Coder, LLM Runtime, or Tools.
+# nodes may be empty: the Ops screen then lists no nodes without raising an error.
+# The retired "llm_ops" key (RenCrow_LLM management daemon settings) is a different
+# item and is not parsed by CORE; it is unrelated to this section.
+llm_capability:
+  llmfit:
+    enabled: true
+    system_ttl: 5m        # hardware profile cache TTL
+    models_ttl: 15m       # model fit cache TTL
+    health_ttl: 30s       # health check cache TTL
+    request_timeout: 5s   # per llmfit request / command timeout
+    top_limit: 20         # default number of models per node (1..200)
+    nodes: []
+    # nodes:
+    #   - id: "node-a"                          # unique, [A-Za-z0-9_.-]
+    #     mode: "http"                          # http | cli
+    #     endpoint: "http://192.168.x.x:8787"   # llmfit serve base URL (http mode only)
+    #   - id: "local"
+    #     mode: "cli"                           # runs `llmfit` from PATH on the CORE host; no endpoint
 
 # 画像・動画認識は必ず RenCrow_Vision を経由する。
 # Wild backend のURL・model・認証は RenCrow_Vision 側で管理し、COREには置かない。

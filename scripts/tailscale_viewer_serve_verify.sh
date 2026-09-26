@@ -4,8 +4,12 @@ set -euo pipefail
 TAILSCALE_HOST="${TAILSCALE_HOST:-fujitsu-ubunts.tailb07d8d.ts.net}"
 REN_CROW_URL="${REN_CROW_URL:-http://127.0.0.1:18790}"
 EXPECTED_STT_STREAM="${EXPECTED_STT_STREAM:-wss://${TAILSCALE_HOST}/stt}"
-EXPECTED_STT_BASE="${EXPECTED_STT_BASE:-http://192.168.1.207:8766}"
-EXPECTED_TTS_BASE="${EXPECTED_TTS_BASE:-http://192.168.1.207:7870}"
+# LAN hosts of RenCrow_STT / RenCrow_TTS. Defaults keep the previous fixed values;
+# EXPECTED_*_BASE still override the full URL.
+RENCROW_STT_HOST="${RENCROW_STT_HOST:-192.168.1.207}"
+RENCROW_TTS_HOST="${RENCROW_TTS_HOST:-192.168.1.207}"
+EXPECTED_STT_BASE="${EXPECTED_STT_BASE:-http://${RENCROW_STT_HOST}:8766}"
+EXPECTED_TTS_BASE="${EXPECTED_TTS_BASE:-http://${RENCROW_TTS_HOST}:7870}"
 
 log() {
   printf '[tailscale-viewer] %s\n' "$*"

@@ -24,6 +24,7 @@ func registerFeatureRoutes(
 		LogicalAlias:      "kuro",
 	})
 	registerOpsRoutes(mux, cfg, dependencies)
+	registerLLMOpsRoutes(mux, dependencies)
 	registerSTTAndAudioRoutes(mux, cfg, sttRuntime, voiceChatRuntime, dependencies)
 	registerWebRoutes(mux, dependencies)
 	registerKnowledgeMemorySourceRoutes(mux, dependencies)

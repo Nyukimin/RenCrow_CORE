@@ -819,6 +819,39 @@ func (c *Config) setDefaults() {
 	if c.Coder4.LightMemory.MaxTurns == 0 {
 		c.Coder4.LightMemory.MaxTurns = 3
 	}
+
+	c.setLLMCapabilityDefaults()
+}
+
+// setLLMCapabilityDefaults applies the feature-spec refresh intervals for llmfit
+// observation and normalizes node entries.
+func (c *Config) setLLMCapabilityDefaults() {
+	fit := &c.LLMCapability.LLMFit
+	fit.SystemTTL = strings.TrimSpace(fit.SystemTTL)
+	fit.ModelsTTL = strings.TrimSpace(fit.ModelsTTL)
+	fit.HealthTTL = strings.TrimSpace(fit.HealthTTL)
+	fit.RequestTimeout = strings.TrimSpace(fit.RequestTimeout)
+	if fit.SystemTTL == "" {
+		fit.SystemTTL = "5m"
+	}
+	if fit.ModelsTTL == "" {
+		fit.ModelsTTL = "15m"
+	}
+	if fit.HealthTTL == "" {
+		fit.HealthTTL = "30s"
+	}
+	if fit.RequestTimeout == "" {
+		fit.RequestTimeout = "5s"
+	}
+	if fit.TopLimit == 0 {
+		fit.TopLimit = 20
+	}
+	for i := range fit.Nodes {
+		node := &fit.Nodes[i]
+		node.ID = strings.TrimSpace(node.ID)
+		node.Mode = strings.ToLower(strings.TrimSpace(node.Mode))
+		node.Endpoint = strings.TrimRight(strings.TrimSpace(node.Endpoint), "/")
+	}
 }
 
 func (c *Config) applyIdleChatEpisodePreparationDefaults() {

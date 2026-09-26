@@ -1197,6 +1197,7 @@ const panels = {
   reports: document.getElementById('panel-reports'),
   'prompt-logs': document.getElementById('panel-prompt-logs'),
   ops: document.getElementById('panel-ops'),
+  'llm-ops': document.getElementById('panel-llm-ops'),
   games: document.getElementById('panel-games'),
   overview: document.getElementById('panel-overview'),
   roles: document.getElementById('panel-roles'),
@@ -1343,6 +1344,7 @@ function switchTab(tab) {
     refreshRuntimeBlockedRouteData();
     if (typeof refreshToBeOpsData === 'function') refreshToBeOpsData();
   }
+  if (tab === 'llm-ops' && typeof refreshLlmOpsData === 'function') refreshLlmOpsData();
   if (tab === 'games' && typeof refreshGameBridgeData === 'function') {
     refreshGameBridgeData();
   }
