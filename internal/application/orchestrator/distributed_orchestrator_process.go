@@ -31,6 +31,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			resp.SessionID = req.SessionID
 		}
 	}()
+	preserveOriginalUserMessage(&req)
 	rootTaskID := modulecore.TaskID(req.RootTaskID)
 	taskID := rootTaskID
 	executionTaskID := rootTaskID
@@ -42,6 +43,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			// the normal error finalizer fail the already-owned canonical Run.
 			lifecycleCreated = false
 		}
+	}
+	rootAssignee := taskLifecycleMio
+	if selected, direct := directViewerRootAssignee(req, o.durableStoreWorkflow, o.dciSearcher); direct {
+		rootAssignee = selected
 	}
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
@@ -107,13 +112,13 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			}
 			attachedTask = &attached
 		} else {
-			if _, err := o.taskLifecycle.createRoot(ctx, req); err != nil {
+			if _, err := o.taskLifecycle.createRootForAssignee(ctx, req, rootAssignee); err != nil {
 				return ProcessMessageResponse{}, err
 			}
 		}
 		lifecycleCreated = true
 	}
-	taskActivation, cleanupTaskActivation := newTaskLifecycleActivation(o.taskLifecycle, o.events, req, attachedTask)
+	taskActivation, cleanupTaskActivation := newTaskLifecycleActivation(o.taskLifecycle, o.events, req, attachedTask, rootAssignee)
 	defer cleanupTaskActivation()
 	activateConfiguredTask := func(route routing.Route, actor, content string) (modulecore.TaskID, error) {
 		if o.taskLifecycle == nil {
@@ -128,7 +133,6 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		return activatedTaskID, activateErr
 	}
-	preserveOriginalUserMessage(&req)
 	log.Printf("[DistributedOrch] ProcessMessage START: taskID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		taskID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
 	if err := o.events.EmitMessageReceived(req, taskID.String()); err != nil {
@@ -265,6 +269,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	actor, err := actualCoreActorForRequest(decision.Route, req)
 	if err != nil {
 		return ProcessMessageResponse{}, err
+	}
+	if directViewerExecutionActor(req, decision.Route, actor) {
+		ctx = withOrchestrationLLMInitiator(ctx, actor)
 	}
 	preparedTaskID, err := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
 	rejectAttachedMismatch(err)

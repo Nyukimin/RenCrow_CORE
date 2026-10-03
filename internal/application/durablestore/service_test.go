@@ -109,6 +109,31 @@ func TestServiceAssessAndDedupe(t *testing.T) {
 	}
 }
 
+func TestServiceCanHandleUsesTheStorageIntentClassifierWithoutHandling(t *testing.T) {
+	store := &memoryStore{}
+	implementer := &countingImplementer{}
+	svc := NewService(nil, store, implementer)
+	tests := []struct {
+		name    string
+		message string
+		want    bool
+	}{
+		{name: "storage implementation", message: "ゲームDBを実装して", want: true},
+		{name: "storage assessment", message: "案件DBの設計案を比較して", want: true},
+		{name: "ordinary chat", message: "今日の天気は？", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := svc.CanHandle(Input{Message: test.message}); got != test.want {
+				t.Fatalf("CanHandle(%q) = %v, want %v", test.message, got, test.want)
+			}
+			if len(store.byKey) != 0 || len(store.receipts) != 0 || implementer.calls != 0 {
+				t.Fatalf("CanHandle performed handling side effects: store=%#v implementer calls=%d", store, implementer.calls)
+			}
+		})
+	}
+}
+
 func TestServiceRequestReceiptReplayConflictAndSemanticDedupe(t *testing.T) {
 	store := &memoryStore{}
 	svc := NewService([]domain.Manifest{domainTestManifest()}, store, nil)

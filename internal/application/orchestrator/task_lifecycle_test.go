@@ -276,7 +276,7 @@ func TestTaskLifecycleAttachedActivationRejectsSavedRouteAndActorMismatch(t *tes
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			events := newRecordingTaskLifecycleEventPort()
-			activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, &attached)
+			activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, &attached, taskLifecycleMio)
 			defer cleanup()
 			if _, err := activation.Activate(ctx, test.route, test.actor, "resume"); err == nil {
 				t.Fatal("mismatched attached execution was accepted")
@@ -338,7 +338,7 @@ func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testin
 	}
 	events := newRecordingTaskLifecycleEventPort()
 	events.BindTrace(rootID.String(), traceID)
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleMio)
 
 	mioTaskID, err := activation.Activate(context.Background(), routing.RouteCHAT, "mio", "daily news brief")
 	if err != nil {
@@ -386,7 +386,7 @@ func TestTaskLifecycleActivationBindsExactRunOnlyAfterStart(t *testing.T) {
 		t.Fatalf("createRoot() error = %v", err)
 	}
 	events := newRecordingTaskLifecycleEventPort()
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleMio)
 	defer cleanup()
 	childID, err := activation.Activate(ctx, routing.RouteCODE2, taskLifecycleShiro, "execute")
 	if err != nil {
@@ -432,7 +432,7 @@ func TestTaskLifecycleAttachedActivationBindsExistingRun(t *testing.T) {
 		t.Fatalf("attachExisting() error = %v", err)
 	}
 	events := newRecordingTaskLifecycleEventPort()
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, ProcessMessageRequest{RootTaskID: taskID.String()}, &attached)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, ProcessMessageRequest{RootTaskID: taskID.String()}, &attached, taskLifecycleMio)
 	defer cleanup()
 	if _, err := activation.Activate(ctx, routing.RouteCODE2, taskLifecycleShiro, "resume"); err != nil {
 		t.Fatalf("attached Activate() error = %v", err)
@@ -461,7 +461,7 @@ func TestTaskLifecycleActivationReturnsCreatedChildWhenAssignmentPublicationFail
 	events.failType = "agent.assignment"
 	wantErr := errors.New("event store unavailable")
 	events.failErr = wantErr
-	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleMio)
 	defer cleanup()
 
 	childID, err := activation.Activate(context.Background(), routing.RouteOPS, "shiro", "ops")

@@ -38,3 +38,12 @@ func withOrchestrationLLMTask(ctx context.Context, taskID modulecore.TaskID) con
 	observation.TaskID = taskID
 	return domainllm.WithExecutionObservation(ctx, observation)
 }
+
+func withOrchestrationLLMInitiator(ctx context.Context, initiator string) context.Context {
+	observation, ok := domainllm.ExecutionObservationFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	observation.Initiator = initiator
+	return domainllm.WithExecutionObservation(ctx, observation)
+}

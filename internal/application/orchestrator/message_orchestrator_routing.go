@@ -74,6 +74,28 @@ func directViewerRecipientForChat(req ProcessMessageRequest) (string, bool) {
 	return recipient, true
 }
 
+// directViewerRootAssignee selects the initial root owner only when the
+// request is a plain Viewer chat rather than an existing specialized path.
+// Workflows that do not expose a pure matcher keep the legacy Mio-owned root.
+func directViewerRootAssignee(req ProcessMessageRequest, workflow DurableStoreWorkflow, dciSearcher DCISearcher) (string, bool) {
+	recipient, direct := directViewerRecipientForChat(req)
+	if !direct || isDailyNewsBriefRequest(req.UserMessage) || shouldHandleExplicitDCI(dciSearcher, req.UserMessage) {
+		return "", false
+	}
+	if workflow != nil {
+		matcher, ok := workflow.(durableStoreIntentMatcher)
+		if !ok || matcher.CanHandle(durableStoreInput(req)) {
+			return "", false
+		}
+	}
+	return recipient, true
+}
+
+func directViewerExecutionActor(req ProcessMessageRequest, route routing.Route, actor string) bool {
+	recipient, direct := directViewerRecipientForChat(req)
+	return direct && route == routing.RouteCHAT && actor == recipient
+}
+
 // directViewerRecipientDecision builds the pinned CHAT decision used when the
 // user explicitly selected shiro/kuro/midori for a plain Viewer chat message.
 // The decision is constructed without invoking Mio.DecideAction, so the extra

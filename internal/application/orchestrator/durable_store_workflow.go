@@ -19,6 +19,10 @@ type DurableStoreWorkflow interface {
 	Handle(context.Context, appstore.Input) (domainstore.WorkflowResult, bool, error)
 }
 
+type durableStoreIntentMatcher interface {
+	CanHandle(appstore.Input) bool
+}
+
 func (o *MessageOrchestrator) SetDurableStoreWorkflow(workflow DurableStoreWorkflow) {
 	o.durableStoreWorkflow = workflow
 }

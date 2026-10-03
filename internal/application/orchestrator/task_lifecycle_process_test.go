@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domainstore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	domainllm "github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -61,6 +62,328 @@ func TestConfiguredMessageOrchestratorLifecycleUsesRootForMio(t *testing.T) {
 	}
 	if routingEvent.TraceID != traceID || assignmentEvent.TraceID != traceID {
 		t.Fatalf("event traces = %q / %q, want %q", routingEvent.TraceID, assignmentEvent.TraceID, traceID)
+	}
+}
+
+func TestConfiguredOrchestratorsUseSelectedViewerAgentAsRoot(t *testing.T) {
+	for _, orchestratorKind := range []string{"message", "distributed"} {
+		for _, actor := range []string{taskLifecycleShiro, taskLifecycleKuro, taskLifecycleMidori} {
+			t.Run(orchestratorKind+"/"+actor, func(t *testing.T) {
+				rootID := modulecore.NewTaskID()
+				traceID := modulecore.NewTraceID()
+				manager := newRecordingTaskLifecycleManager()
+				mio := &lifecycleMioAgent{response: "unused Mio response"}
+				selected := &lifecycleSelectedChatAgent{response: actor + " response"}
+				listener := &lifecycleEventListener{}
+
+				var process func(context.Context, ProcessMessageRequest) (ProcessMessageResponse, error)
+				switch orchestratorKind {
+				case "message":
+					orch := NewMessageOrchestrator(newLifecycleSessionRepository(), mio, nil, nil, nil, nil, nil, nil)
+					orch.SetTaskLifecycleManager(manager)
+					orch.SetEventListener(listener)
+					orch.SetShiroChatAgent(selected)
+					orch.SetWildAgent(selected)
+					orch.SetHeavyAgent(selected)
+					process = orch.ProcessMessage
+				case "distributed":
+					router := transport.NewMessageRouter()
+					defer router.Stop()
+					orch := NewDistributedOrchestrator(newLifecycleSessionRepository(), mio, router, session.NewCentralMemory(), nil)
+					orch.SetTaskLifecycleManager(manager)
+					orch.SetEventListener(listener)
+					orch.SetShiroChatAgent(selected)
+					orch.SetWildAgent(selected)
+					orch.SetHeavyAgent(selected)
+					process = orch.ProcessMessage
+				}
+
+				resp, err := process(context.Background(), ProcessMessageRequest{
+					RootTaskID: string(rootID), TraceID: string(traceID), SessionID: "direct-" + actor,
+					Channel: "viewer", ChatID: "viewer-user", To: actor, UserMessage: "hello directly",
+				})
+				if err != nil {
+					t.Fatalf("ProcessMessage: %v", err)
+				}
+				if resp.TaskID != rootID.String() || resp.RootTaskID != rootID.String() || resp.TraceID != string(traceID) {
+					t.Fatalf("response identity = %#v", resp)
+				}
+				if len(manager.tasks) != 1 {
+					t.Fatalf("created tasks = %#v, want one root and no child", manager.tasks)
+				}
+				root := manager.tasks[rootID]
+				if root.OwnerID != actor || root.Assignee != actor || root.Status != domaintask.StatusSucceeded {
+					t.Fatalf("root task = %#v, want owner/assignee %s and success", root, actor)
+				}
+				if got, want := manager.calls, []string{"Create", "RecordRouting", "RecordAssignment", "Start", "Succeed"}; !equalStrings(got, want) {
+					t.Fatalf("lifecycle calls = %#v, want %#v", got, want)
+				}
+
+				var rootRuns []domaintask.Run
+				for _, run := range manager.runs {
+					if run.TaskID == rootID {
+						rootRuns = append(rootRuns, run)
+					}
+				}
+				if len(rootRuns) != 1 || rootRuns[0].Assignee != actor || rootRuns[0].Status != domaintask.RunStatusSucceeded {
+					t.Fatalf("root runs = %#v, want one succeeded Run assigned to %s", rootRuns, actor)
+				}
+				if mio.decideCalls != 0 || mio.chatCalls != 0 || selected.calls != 1 {
+					t.Fatalf("agent calls: Mio route=%d chat=%d selected=%d", mio.decideCalls, mio.chatCalls, selected.calls)
+				}
+				if selected.observation.TaskID != rootID || selected.observation.TraceID != string(traceID) ||
+					selected.observation.SessionID != "direct-"+actor || selected.observation.Initiator != actor {
+					t.Fatalf("direct execution observation = %+v", selected.observation)
+				}
+
+				routingEvent := lifecycleProcessEvent(listener.events, "routing.decision")
+				assignmentEvent := lifecycleProcessEvent(listener.events, "agent.assignment")
+				responseEvent := lifecycleAssignmentResponseEvent(listener.events, actor)
+				if routingEvent.From != "user" || routingEvent.TaskID != rootID || routingEvent.Route != string(routing.RouteCHAT) || routingEvent.TraceID != traceID {
+					t.Fatalf("routing event = %#v", routingEvent)
+				}
+				if assignmentEvent.From != "user" || assignmentEvent.To != actor || assignmentEvent.TaskID != rootID ||
+					assignmentEvent.CausationEventID != routingEvent.EventID || assignmentEvent.TraceID != traceID {
+					t.Fatalf("assignment event = %#v", assignmentEvent)
+				}
+				if root.RoutingEventID != routingEvent.EventID || root.AssignmentEventID != assignmentEvent.EventID {
+					t.Fatalf("root event references = routing:%s assignment:%s", root.RoutingEventID, root.AssignmentEventID)
+				}
+				if responseEvent.From != actor || responseEvent.TaskID != rootID || responseEvent.TraceID != traceID ||
+					responseEvent.RunID != rootRuns[0].RunID {
+					t.Fatalf("response event = %#v, want root task/run trace", responseEvent)
+				}
+			})
+		}
+	}
+}
+
+func TestConfiguredOrchestratorsResumeSelectedAgentRunWithoutReassignmentOrRestart(t *testing.T) {
+	for _, orchestratorKind := range []string{"message", "distributed"} {
+		for _, actor := range []string{taskLifecycleShiro, taskLifecycleKuro, taskLifecycleMidori} {
+			t.Run(orchestratorKind+"/"+actor, func(t *testing.T) {
+				rootID := modulecore.NewTaskID()
+				traceID := modulecore.NewTraceID()
+				manager := newRecordingTaskLifecycleManager()
+				run := seedRunningTask(manager, rootID, domaintask.RouteCHAT, actor)
+				task := manager.tasks[rootID]
+				task.OwnerID = actor
+				manager.tasks[rootID] = task
+				mio := &lifecycleMioAgent{response: "unused Mio response"}
+				selected := &lifecycleSelectedChatAgent{response: actor + " resumed response"}
+				listener := &lifecycleEventListener{}
+
+				var process func(context.Context, ProcessMessageRequest) (ProcessMessageResponse, error)
+				switch orchestratorKind {
+				case "message":
+					orch := NewMessageOrchestrator(newLifecycleSessionRepository(), mio, nil, nil, nil, nil, nil, nil)
+					orch.SetTaskLifecycleManager(manager)
+					orch.SetEventListener(listener)
+					orch.SetShiroChatAgent(selected)
+					orch.SetWildAgent(selected)
+					orch.SetHeavyAgent(selected)
+					process = orch.ProcessMessage
+				case "distributed":
+					router := transport.NewMessageRouter()
+					defer router.Stop()
+					orch := NewDistributedOrchestrator(newLifecycleSessionRepository(), mio, router, session.NewCentralMemory(), nil)
+					orch.SetTaskLifecycleManager(manager)
+					orch.SetEventListener(listener)
+					orch.SetShiroChatAgent(selected)
+					orch.SetWildAgent(selected)
+					orch.SetHeavyAgent(selected)
+					process = orch.ProcessMessage
+				}
+
+				resp, err := process(context.Background(), ProcessMessageRequest{
+					RootTaskID: rootID.String(), CanonicalRunID: run.RunID, TraceID: string(traceID),
+					SessionID: "resume-direct-" + actor, Channel: "viewer", ChatID: "viewer-user",
+					To: actor, UserMessage: "continue this task",
+				})
+				if err != nil {
+					t.Fatalf("ProcessMessage: %v", err)
+				}
+				if resp.TaskID != rootID.String() || resp.RootTaskID != rootID.String() || resp.TraceID != string(traceID) {
+					t.Fatalf("response identity = %#v", resp)
+				}
+				if len(manager.tasks) != 1 || len(manager.runs) != 1 {
+					t.Fatalf("tasks/runs = %d/%d, want one existing pair", len(manager.tasks), len(manager.runs))
+				}
+				if got, want := manager.calls, []string{"RecordRouting", "RecordAssignment", "Succeed"}; !equalStrings(got, want) {
+					t.Fatalf("resume lifecycle calls = %#v, want %#v", got, want)
+				}
+				resumedTask := manager.tasks[rootID]
+				resumedRun := manager.runs[run.RunID]
+				if resumedTask.OwnerID != actor || resumedTask.Assignee != actor || resumedTask.TaskID != rootID ||
+					resumedRun.TaskID != rootID || resumedRun.RunID != run.RunID || resumedRun.Assignee != actor ||
+					resumedRun.Status != domaintask.RunStatusSucceeded {
+					t.Fatalf("resumed task/run = %#v / %#v", resumedTask, resumedRun)
+				}
+				if mio.decideCalls != 0 || mio.chatCalls != 0 || selected.calls != 1 {
+					t.Fatalf("agent calls: Mio route=%d chat=%d selected=%d", mio.decideCalls, mio.chatCalls, selected.calls)
+				}
+				if selected.observation.TaskID != rootID || selected.observation.TraceID != string(traceID) ||
+					selected.observation.Initiator != actor {
+					t.Fatalf("resumed execution observation = %+v", selected.observation)
+				}
+				responseEvent := lifecycleAssignmentResponseEvent(listener.events, actor)
+				routingEvent := lifecycleProcessEvent(listener.events, "routing.decision")
+				assignmentEvent := lifecycleProcessEvent(listener.events, "agent.assignment")
+				if routingEvent.From != "user" || routingEvent.TaskID != rootID || routingEvent.TraceID != traceID {
+					t.Fatalf("resumed routing event = %#v", routingEvent)
+				}
+				if assignmentEvent.From != "user" || assignmentEvent.To != actor || assignmentEvent.TaskID != rootID ||
+					assignmentEvent.CausationEventID != routingEvent.EventID || assignmentEvent.TraceID != traceID {
+					t.Fatalf("resumed assignment event = %#v", assignmentEvent)
+				}
+				if responseEvent.TaskID != rootID || responseEvent.TraceID != traceID || responseEvent.RunID != run.RunID {
+					t.Fatalf("resumed response event = %#v", responseEvent)
+				}
+			})
+		}
+	}
+}
+
+func TestDirectViewerRootAssigneePreservesSpecialAndNonViewerOwnership(t *testing.T) {
+	storageWorkflow := appstore.NewService(nil, nil, nil)
+	unknownWorkflow := lifecycleDurableWorkflow{}
+	triggeredDCI := &lifecycleDCISearcher{trigger: true}
+	tests := []struct {
+		name     string
+		req      ProcessMessageRequest
+		workflow DurableStoreWorkflow
+		dci      DCISearcher
+		want     string
+	}{
+		{
+			name: "plain selected Viewer chat",
+			req:  ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "hello"},
+			want: taskLifecycleShiro,
+		},
+		{
+			name: "slash command precedence",
+			req:  ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "/status"},
+		},
+		{
+			name: "daily brief remains Mio owned",
+			req:  ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "今朝のニュースを教えて"},
+		},
+		{
+			name: "explicit DCI remains specialized",
+			req:  ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "find recent evidence"},
+			dci:  triggeredDCI,
+		},
+		{
+			name:     "matched durable-store intent remains specialized",
+			req:      ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "ゲームDBを実装して"},
+			workflow: storageWorkflow,
+		},
+		{
+			name:     "unmatched durable-store preflight allows direct chat",
+			req:      ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "hello"},
+			workflow: storageWorkflow,
+			want:     taskLifecycleShiro,
+		},
+		{
+			name:     "unknown durable workflow preserves legacy root",
+			req:      ProcessMessageRequest{Channel: "viewer", To: "shiro", UserMessage: "hello"},
+			workflow: unknownWorkflow,
+		},
+		{
+			name: "default Mio recipient remains automatic",
+			req:  ProcessMessageRequest{Channel: "viewer", To: "mio", UserMessage: "hello"},
+		},
+		{
+			name: "non-Viewer channel remains automatic",
+			req:  ProcessMessageRequest{Channel: "line", To: "shiro", UserMessage: "hello"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, direct := directViewerRootAssignee(test.req, test.workflow, test.dci)
+			if test.want == "" {
+				if direct {
+					t.Fatalf("root assignee = %q, want legacy Mio ownership", got)
+				}
+				return
+			}
+			if !direct || got != test.want {
+				t.Fatalf("root assignee = %q direct=%v, want %q", got, direct, test.want)
+			}
+		})
+	}
+}
+
+func TestDirectShiroRootKeepsOwnerForLaterActualKuroAndMioHandoffs(t *testing.T) {
+	ctx := context.Background()
+	rootID := modulecore.NewTaskID()
+	traceID := modulecore.NewTraceID()
+	req := ProcessMessageRequest{
+		RootTaskID: string(rootID), TraceID: string(traceID), SessionID: "direct-shiro-handoffs",
+		Channel: "viewer", ChatID: "viewer-user", To: taskLifecycleShiro, UserMessage: "hello directly",
+	}
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	if _, err := lifecycle.createRootForAssignee(ctx, req, taskLifecycleShiro); err != nil {
+		t.Fatalf("create direct root: %v", err)
+	}
+	events := newRecordingTaskLifecycleEventPort()
+	events.BindTrace(rootID.String(), traceID)
+	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleShiro)
+	defer cleanup()
+
+	if taskID, err := activation.Activate(ctx, routing.RouteCHAT, taskLifecycleShiro, "user-selected Shiro"); err != nil || taskID != rootID {
+		t.Fatalf("initial Shiro activation = %s, %v", taskID, err)
+	}
+	kuroTaskID, err := activation.Activate(ctx, routing.RouteCHAT, taskLifecycleKuro, "Shiro delegated to Kuro")
+	if err != nil {
+		t.Fatalf("Kuro handoff: %v", err)
+	}
+	mioTaskID, err := activation.Activate(ctx, routing.RouteCHAT, taskLifecycleMio, "Shiro delegated to Mio")
+	if err != nil {
+		t.Fatalf("Mio handoff: %v", err)
+	}
+	if kuroTaskID == rootID || mioTaskID == rootID || kuroTaskID == mioTaskID {
+		t.Fatalf("handoff task IDs = root:%s Kuro:%s Mio:%s", rootID, kuroTaskID, mioTaskID)
+	}
+	root := manager.tasks[rootID]
+	if root.OwnerID != taskLifecycleShiro || root.Assignee != taskLifecycleShiro {
+		t.Fatalf("direct root ownership changed: %#v", root)
+	}
+	if len(manager.tasks) != 3 || len(manager.runs) != 3 {
+		t.Fatalf("tasks/runs = %d/%d, want root plus two real handoff executions", len(manager.tasks), len(manager.runs))
+	}
+	for taskID, actor := range map[modulecore.TaskID]string{kuroTaskID: taskLifecycleKuro, mioTaskID: taskLifecycleMio} {
+		child := manager.tasks[taskID]
+		if child.ParentTaskID != rootID || child.OwnerID != taskLifecycleShiro || child.Assignee != actor || child.Status != domaintask.StatusRunning {
+			t.Fatalf("handoff child for %s = %#v", actor, child)
+		}
+		var childRuns []domaintask.Run
+		for _, run := range manager.runs {
+			if run.TaskID == taskID {
+				childRuns = append(childRuns, run)
+			}
+		}
+		if len(childRuns) != 1 || childRuns[0].Assignee != actor || childRuns[0].Status != domaintask.RunStatusRunning {
+			t.Fatalf("handoff runs for %s = %#v", actor, childRuns)
+		}
+	}
+	routingEvent := lifecycleProcessEvent(events.events, "routing.decision")
+	initialAssignment := lifecycleAssignmentEvent(events.events, taskLifecycleShiro)
+	kuroAssignment := lifecycleAssignmentEvent(events.events, taskLifecycleKuro)
+	mioAssignment := lifecycleAssignmentEvent(events.events, taskLifecycleMio)
+	if routingEvent.From != "user" || routingEvent.TaskID != rootID || routingEvent.TraceID != traceID {
+		t.Fatalf("direct routing event = %#v", routingEvent)
+	}
+	if initialAssignment.From != "user" || initialAssignment.TaskID != rootID ||
+		kuroAssignment.From != taskLifecycleShiro || kuroAssignment.TaskID != kuroTaskID ||
+		mioAssignment.From != taskLifecycleShiro || mioAssignment.TaskID != mioTaskID {
+		t.Fatalf("assignments = initial:%#v Kuro:%#v Mio:%#v", initialAssignment, kuroAssignment, mioAssignment)
+	}
+	for _, assignment := range []OrchestratorEvent{initialAssignment, kuroAssignment, mioAssignment} {
+		if assignment.CausationEventID != routingEvent.EventID || assignment.TraceID != traceID {
+			t.Fatalf("handoff assignment lost route/trace correlation: %#v", assignment)
+		}
 	}
 }
 
@@ -225,7 +548,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversPreRoutingCommand(t *testin
 	orch.SetEventListener(listener)
 
 	resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-		RootTaskID: string(rootID), SessionID: "lifecycle-command", Channel: "viewer", ChatID: "ren", UserMessage: "/status",
+		RootTaskID: string(rootID), SessionID: "lifecycle-command", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "/status",
 	})
 	if err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
@@ -281,7 +604,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversDailyBriefCacheAndShiroColl
 			return usableLifecycleDailyBrief(now), nil
 		}))
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-daily-cache", Channel: "viewer", ChatID: "ren", UserMessage: "今朝のニュースを教えて",
+			RootTaskID: string(rootID), SessionID: "lifecycle-daily-cache", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -305,7 +628,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversDailyBriefCacheAndShiroColl
 		listener := &lifecycleEventListener{}
 		orch.SetEventListener(listener)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-daily-collector", Channel: "viewer", ChatID: "ren", UserMessage: "今朝のニュースを教えて",
+			RootTaskID: string(rootID), SessionID: "lifecycle-daily-collector", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "今朝のニュースを教えて",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -319,7 +642,8 @@ func TestConfiguredMessageOrchestratorLifecycleCoversDailyBriefCacheAndShiroColl
 		}
 		routingEvent := lifecycleProcessEvent(listener.events, "routing.decision")
 		shiroAssignment := lifecycleAssignmentEvent(listener.events, "shiro")
-		if shiroAssignment.TaskID != childID || shiroAssignment.CausationEventID != routingEvent.EventID {
+		if routingEvent.From != taskLifecycleMio || shiroAssignment.From != taskLifecycleMio ||
+			shiroAssignment.TaskID != childID || shiroAssignment.CausationEventID != routingEvent.EventID {
 			t.Fatalf("route/Shiro assignment = %#v / %#v", routingEvent, shiroAssignment)
 		}
 	})
@@ -334,7 +658,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversExplicitDCIAndDurableStore(
 		orch.SetTaskLifecycleManager(manager)
 		orch.SetDCISearcher(searcher)
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-dci", Channel: "viewer", ChatID: "ren", UserMessage: "DCI を探して",
+			RootTaskID: string(rootID), SessionID: "lifecycle-dci", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "DCI を探して",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -355,7 +679,7 @@ func TestConfiguredMessageOrchestratorLifecycleCoversExplicitDCIAndDurableStore(
 			Requirement: domainstore.StorageRequirement{RequirementID: "sr-lifecycle", RequestedOutcome: domainstore.OutcomeImplement},
 		}})
 		resp, err := orch.ProcessMessage(context.Background(), ProcessMessageRequest{
-			RootTaskID: string(rootID), SessionID: "lifecycle-store", Channel: "viewer", ChatID: "ren", UserMessage: "ゲームDBを実装して",
+			RootTaskID: string(rootID), SessionID: "lifecycle-store", Channel: "viewer", ChatID: "ren", To: "shiro", UserMessage: "ゲームDBを実装して",
 		})
 		if err != nil {
 			t.Fatalf("ProcessMessage: %v", err)
@@ -448,6 +772,15 @@ func lifecycleProcessEvent(events []OrchestratorEvent, typ string) OrchestratorE
 	return OrchestratorEvent{}
 }
 
+func lifecycleAssignmentResponseEvent(events []OrchestratorEvent, actor string) OrchestratorEvent {
+	for _, event := range events {
+		if event.Type == "agent.response" && event.From == actor {
+			return event
+		}
+	}
+	return OrchestratorEvent{}
+}
+
 func lifecycleProcessEventIndex(events []OrchestratorEvent, typ string) int {
 	for index, event := range events {
 		if event.Type == typ {
@@ -495,14 +828,17 @@ func (l *lifecycleEventListener) OnEvent(event OrchestratorEvent) error {
 }
 
 type lifecycleMioAgent struct {
-	decision   routing.Decision
-	response   string
-	decideFunc func(context.Context, conversation.TurnInput) (routing.Decision, error)
-	chatFunc   func(context.Context, conversation.TurnInput) (string, error)
-	cmdFunc    func(context.Context, string, string) (domainagent.ChatCommandResult, error)
+	decision    routing.Decision
+	response    string
+	decideCalls int
+	chatCalls   int
+	decideFunc  func(context.Context, conversation.TurnInput) (routing.Decision, error)
+	chatFunc    func(context.Context, conversation.TurnInput) (string, error)
+	cmdFunc     func(context.Context, string, string) (domainagent.ChatCommandResult, error)
 }
 
 func (a *lifecycleMioAgent) DecideAction(ctx context.Context, input conversation.TurnInput) (routing.Decision, error) {
+	a.decideCalls++
 	if a.decideFunc != nil {
 		return a.decideFunc(ctx, input)
 	}
@@ -510,9 +846,43 @@ func (a *lifecycleMioAgent) DecideAction(ctx context.Context, input conversation
 }
 
 func (a *lifecycleMioAgent) Chat(ctx context.Context, input conversation.TurnInput) (string, error) {
+	a.chatCalls++
 	if a.chatFunc != nil {
 		return a.chatFunc(ctx, input)
 	}
+	return a.response, nil
+}
+
+type lifecycleSelectedChatAgent struct {
+	response    string
+	calls       int
+	observation domainllm.ExecutionObservation
+}
+
+func (a *lifecycleSelectedChatAgent) capture(ctx context.Context) {
+	a.calls++
+	a.observation, _ = domainllm.ExecutionObservationFromContext(ctx)
+}
+
+func (a *lifecycleSelectedChatAgent) DecideAction(context.Context, conversation.TurnInput) (routing.Decision, error) {
+	return routing.NewDecision(routing.RouteCHAT, 1, "unused selected-agent decision"), nil
+}
+
+func (a *lifecycleSelectedChatAgent) Chat(ctx context.Context, _ conversation.TurnInput) (string, error) {
+	a.capture(ctx)
+	return a.response, nil
+}
+
+func (a *lifecycleSelectedChatAgent) HandleChatCommand(context.Context, string, string) (domainagent.ChatCommandResult, error) {
+	return domainagent.ChatCommandResult{Handled: false}, nil
+}
+
+func (a *lifecycleSelectedChatAgent) Execute(context.Context, conversation.TurnInput) (string, error) {
+	return a.response, nil
+}
+
+func (a *lifecycleSelectedChatAgent) Generate(ctx context.Context, _ conversation.TurnInput) (string, error) {
+	a.capture(ctx)
 	return a.response, nil
 }
 

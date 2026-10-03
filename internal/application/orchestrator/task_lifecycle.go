@@ -76,11 +76,12 @@ type taskLifecycleActivation struct {
 	traceID        modulecore.TraceID
 	routingEventID modulecore.EventID
 	route          routing.Route
+	rootAssignee   string
 	actorTasks     map[string]modulecore.TaskID
 	cleanups       []func()
 }
 
-func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEventPort, req ProcessMessageRequest, attachedTask *domaintask.Task) (*taskLifecycleActivation, func()) {
+func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEventPort, req ProcessMessageRequest, attachedTask *domaintask.Task, rootAssignee string) (*taskLifecycleActivation, func()) {
 	activation := &taskLifecycleActivation{
 		lifecycle:    lifecycle,
 		events:       events,
@@ -88,6 +89,7 @@ func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEv
 		attachedTask: attachedTask,
 		rootTaskID:   modulecore.TaskID(req.RootTaskID),
 		traceID:      modulecore.TraceID(req.TraceID),
+		rootAssignee: rootAssignee,
 		actorTasks:   make(map[string]modulecore.TaskID),
 	}
 	return activation, func() {
@@ -131,8 +133,12 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 		return existing, nil
 	}
 	if a.routingEventID == "" {
+		routingFrom := taskLifecycleMio
+		if a.userSelectedDirectExecution(route, actor) {
+			routingFrom = "user"
+		}
 		routingEvent, err := a.events.Publish(
-			"routing.decision", taskLifecycleMio, "", routingContent,
+			"routing.decision", routingFrom, "", routingContent,
 			string(route), a.rootTaskID.String(), a.req.SessionID, a.req.Channel, a.req.ChatID, "", nil,
 		)
 		if err != nil {
@@ -157,8 +163,12 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 		if _, err := a.lifecycle.manager.RecordRouting(ctx, a.rootTaskID, a.attachedTask.Route, a.routingEventID); err != nil {
 			return "", fmt.Errorf("record attached task routing: %w", err)
 		}
+		assignmentFrom := taskLifecycleMio
+		if a.userSelectedDirectExecution(route, actor) {
+			assignmentFrom = "user"
+		}
 		assignmentEvent, err := a.events.Publish(
-			"agent.assignment", taskLifecycleMio, actor, fmt.Sprintf("assigned route=%s", route),
+			"agent.assignment", assignmentFrom, actor, fmt.Sprintf("assigned route=%s", route),
 			string(route), a.rootTaskID.String(), a.req.SessionID, a.req.Channel, a.req.ChatID, a.routingEventID, nil,
 		)
 		if err != nil {
@@ -176,11 +186,11 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 
 	var taskID modulecore.TaskID
 	if len(a.actorTasks) == 0 {
-		taskID, err = a.lifecycle.prepareExecution(ctx, a.rootTaskID, route, a.routingEventID, actor)
-	} else if actor == taskLifecycleMio {
+		taskID, err = a.lifecycle.prepareExecutionForRootAssignee(ctx, a.rootTaskID, route, a.routingEventID, actor, a.rootAssignee)
+	} else if actor == a.rootAssignee {
 		taskID = a.rootTaskID
 	} else {
-		taskID, err = a.lifecycle.createExecutionChild(ctx, a.rootTaskID, route, a.routingEventID, actor)
+		taskID, err = a.lifecycle.createExecutionChildForRootAssignee(ctx, a.rootTaskID, route, a.routingEventID, actor, a.rootAssignee)
 	}
 	if err != nil {
 		return "", err
@@ -194,8 +204,12 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 			a.events.ReleaseResponseMessageID(childTaskID.String())
 		})
 	}
+	assignmentFrom := a.rootAssignee
+	if len(a.actorTasks) == 0 && a.userSelectedDirectExecution(route, actor) {
+		assignmentFrom = "user"
+	}
 	assignmentEvent, err := a.events.Publish(
-		"agent.assignment", taskLifecycleMio, actor, fmt.Sprintf("assigned route=%s", route),
+		"agent.assignment", assignmentFrom, actor, fmt.Sprintf("assigned route=%s", route),
 		string(route), taskID.String(), a.req.SessionID, a.req.Channel, a.req.ChatID, a.routingEventID, nil,
 	)
 	if err != nil {
@@ -214,6 +228,16 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	}
 	a.actorTasks[actor] = taskID
 	return taskID, nil
+}
+
+func (a *taskLifecycleActivation) userSelectedDirectExecution(route routing.Route, actor string) bool {
+	if !directViewerExecutionActor(a.req, route, actor) || a.rootAssignee != actor {
+		return false
+	}
+	if a.attachedTask != nil {
+		return a.attachedTask.Assignee == actor
+	}
+	return true
 }
 
 func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, taskID modulecore.TaskID, actor string) error {
@@ -384,8 +408,16 @@ func (l *taskLifecycle) startRepairExecution(ctx context.Context, events taskLif
 }
 
 func (l *taskLifecycle) createRoot(ctx context.Context, req ProcessMessageRequest) (domaintask.Task, error) {
+	return l.createRootForAssignee(ctx, req, taskLifecycleMio)
+}
+
+func (l *taskLifecycle) createRootForAssignee(ctx context.Context, req ProcessMessageRequest, assignee string) (domaintask.Task, error) {
 	if l == nil || l.manager == nil {
 		return domaintask.Task{}, fmt.Errorf("task lifecycle manager is unavailable")
+	}
+	owner, err := canonicalCoreActor(assignee)
+	if err != nil {
+		return domaintask.Task{}, fmt.Errorf("root task owner is invalid: %w", err)
 	}
 	rootTaskID, err := modulecore.ParseTaskID(req.RootTaskID)
 	if err != nil {
@@ -399,7 +431,7 @@ func (l *taskLifecycle) createRoot(ctx context.Context, req ProcessMessageReques
 	draft := domaintask.Task{
 		TaskID:   rootTaskID,
 		Title:    title,
-		OwnerID:  taskLifecycleMio,
+		OwnerID:  owner,
 		Route:    domaintask.RouteGeneral,
 		Status:   domaintask.StatusQueued,
 		Priority: domaintask.PriorityNormal,
@@ -460,6 +492,10 @@ func (l *taskLifecycle) attachExisting(ctx context.Context, req ProcessMessageRe
 }
 
 func (l *taskLifecycle) prepareExecution(ctx context.Context, rootTaskID modulecore.TaskID, route routing.Route, routingEventID modulecore.EventID, assignee string) (modulecore.TaskID, error) {
+	return l.prepareExecutionForRootAssignee(ctx, rootTaskID, route, routingEventID, assignee, taskLifecycleMio)
+}
+
+func (l *taskLifecycle) prepareExecutionForRootAssignee(ctx context.Context, rootTaskID modulecore.TaskID, route routing.Route, routingEventID modulecore.EventID, assignee, rootAssignee string) (modulecore.TaskID, error) {
 	if l == nil || l.manager == nil {
 		return "", fmt.Errorf("task lifecycle manager is unavailable")
 	}
@@ -477,13 +513,21 @@ func (l *taskLifecycle) prepareExecution(ctx context.Context, rootTaskID modulec
 	if _, err := l.manager.RecordRouting(ctx, rootTaskID, domainRoute, routingEventID); err != nil {
 		return "", fmt.Errorf("record root task routing: %w", err)
 	}
-	if actor == taskLifecycleMio {
+	canonicalRootAssignee, err := canonicalCoreActor(rootAssignee)
+	if err != nil {
+		return "", fmt.Errorf("root task owner is invalid: %w", err)
+	}
+	if actor == canonicalRootAssignee {
 		return rootTaskID, nil
 	}
-	return l.createExecutionChild(ctx, rootTaskID, route, routingEventID, actor)
+	return l.createExecutionChildForRootAssignee(ctx, rootTaskID, route, routingEventID, actor, canonicalRootAssignee)
 }
 
 func (l *taskLifecycle) createExecutionChild(ctx context.Context, rootTaskID modulecore.TaskID, route routing.Route, routingEventID modulecore.EventID, assignee string) (modulecore.TaskID, error) {
+	return l.createExecutionChildForRootAssignee(ctx, rootTaskID, route, routingEventID, assignee, taskLifecycleMio)
+}
+
+func (l *taskLifecycle) createExecutionChildForRootAssignee(ctx context.Context, rootTaskID modulecore.TaskID, route routing.Route, routingEventID modulecore.EventID, assignee, rootAssignee string) (modulecore.TaskID, error) {
 	if l == nil || l.manager == nil {
 		return "", fmt.Errorf("task lifecycle manager is unavailable")
 	}
@@ -498,7 +542,11 @@ func (l *taskLifecycle) createExecutionChild(ctx context.Context, rootTaskID mod
 	if err != nil {
 		return "", err
 	}
-	if actor == taskLifecycleMio {
+	owner, err := canonicalCoreActor(rootAssignee)
+	if err != nil {
+		return "", fmt.Errorf("root task owner is invalid: %w", err)
+	}
+	if actor == owner {
 		return rootTaskID, nil
 	}
 	childTaskID := modulecore.NewTaskID()
@@ -507,7 +555,7 @@ func (l *taskLifecycle) createExecutionChild(ctx context.Context, rootTaskID mod
 		Title:          fmt.Sprintf("%s execution", string(route)),
 		Route:          domainRoute,
 		RoutingEventID: routingEventID,
-		OwnerID:        taskLifecycleMio,
+		OwnerID:        owner,
 		Assignee:       actor,
 		Status:         domaintask.StatusQueued,
 		Priority:       domaintask.PriorityNormal,

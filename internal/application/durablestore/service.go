@@ -42,6 +42,13 @@ func NewService(manifests []domain.Manifest, store Store, implementer Implemente
 	return &Service{manifests: append([]domain.Manifest(nil), manifests...), store: store, implementer: implementer, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// CanHandle reports whether the message is a durable-store intent without
+// performing validation, persistence, or implementation work.
+func (s *Service) CanHandle(in Input) bool {
+	_, handled := domain.NormalizeStorageIntent(in.Message)
+	return handled
+}
+
 func (s *Service) Handle(ctx context.Context, in Input) (domain.WorkflowResult, bool, error) {
 	req, handled := domain.NormalizeStorageIntent(in.Message)
 	if !handled {

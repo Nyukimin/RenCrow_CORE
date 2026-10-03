@@ -13,6 +13,29 @@ permissions:
   contents: read
 
 jobs:
+  direct-chat-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify direct conversation lifecycle and durable dispatch
+        shell: bash
+        run: |
+          runtime="$GITHUB_WORKSPACE/Tmp/test-runtime/_ci-direct-chat"
+          mkdir -p "$runtime/temp" "$runtime/go-build" "$runtime/go-mod"
+          export TEMP="$runtime/temp" TMP="$runtime/temp" TMPDIR="$runtime/temp" GOTMPDIR="$runtime/temp"
+          export GOCACHE="$runtime/go-build" GOMODCACHE="$runtime/go-mod"
+          go vet ./...
+          mkdir -p "$runtime/build-output"
+          go build -o "$runtime/build-output/" ./...
+          go test -timeout 15m ./internal/application/orchestrator/... ./internal/application/taskmanager/... ./internal/infrastructure/persistence/task/... ./internal/application/durablestore/...
+
   canonical-tests:
     timeout-minutes: 60
     strategy:
