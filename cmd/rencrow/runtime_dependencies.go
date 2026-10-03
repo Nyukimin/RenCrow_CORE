@@ -298,7 +298,7 @@ type Dependencies struct {
 	router                         *transport.MessageRouter                    // v4 distributed mode
 	localTransports                map[string]*transport.LocalTransport        // v4 local transports
 	idleChatOrch                   *idlechat.IdleChatOrchestrator              // v4 idle chat
-	idleChatSurfacePresence        *idleChatSurfacePresenceController          // PORTAL Chat/IdleChat surface lease arbitration
+	surfacePresence                *surfacePresenceController                  // PORTAL Chat/IdleChat shared surface lease arbitration
 	dailyNewsBriefReader           domainnews.DailyNewsBriefReader             // scheduled cache with persistent L1 fallback
 	sshTransports                  map[string]domaintransport.Transport        // v4 SSH transports
 	heartbeatSvc                   *heartbeat.HeartbeatService                 // heartbeat service
@@ -367,10 +367,10 @@ func (d *Dependencies) Shutdown() {
 	if d.heartbeatSvc != nil {
 		d.heartbeatSvc.Stop()
 	}
+	if d.surfacePresence != nil {
+		d.surfacePresence.Close()
+	}
 	if d.idleChatOrch != nil {
-		if d.idleChatSurfacePresence != nil {
-			d.idleChatSurfacePresence.Close()
-		}
 		d.idleChatOrch.Stop()
 	}
 	if d.conversationBackgroundStop != nil {
@@ -1571,6 +1571,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		newRuntimeDailySourceBriefResearch(conversationRuntime.WebGatherFetcher, toolRuntime.WorkerRuntimeRunnerV2),
 		ttsBridge,
 	)
+	buildSurfacePresenceController(deps)
 	var idleChatWorkerNotifier agentOpsWorkerBusyNotifier
 	if deps.idleChatOrch != nil {
 		idleChatWorkerNotifier = deps.idleChatOrch

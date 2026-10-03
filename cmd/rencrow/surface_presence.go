@@ -9,11 +9,14 @@ import (
 	"time"
 )
 
-const idleChatSurfacePresenceTTL = 30 * time.Second
+const surfacePresenceTTL = 30 * time.Second
 
 var errChatSurfacePresent = errors.New("chat surface is visible")
 
-type idleChatSurfaceRuntime interface {
+// surfaceLifecycleRuntime is the optional IdleChat observer attached to the
+// shared surface-presence controller. When nil, Chat lease aggregation still
+// works but no IdleChat runtime transition is performed.
+type surfaceLifecycleRuntime interface {
 	StartManualMode() error
 	StopManualMode()
 	IsManualMode() bool
@@ -34,12 +37,18 @@ type surfacePresenceSnapshot struct {
 	LeaseExpiresAt        *time.Time
 }
 
-// idleChatSurfacePresenceController owns PORTAL surface lease aggregation.
-// State selection and the corresponding IdleChat transition run under one
-// mutex so concurrent browser tabs cannot race independent start/stop calls.
-type idleChatSurfacePresenceController struct {
+// surfacePresenceController owns PORTAL surface lease aggregation for the
+// Chat / IdleChat sibling surfaces. State selection and the corresponding
+// IdleChat transition (when a runtime is attached) run under one mutex so
+// concurrent browser tabs cannot race independent start/stop calls.
+//
+// The controller is sibling-neutral: it is always initialized, regardless of
+// whether the IdleChat feature is enabled. When runtime is nil (IdleChat
+// disabled), lease aggregation still operates and Chat surface claims still
+// resolve, but IdleChat start/stop transitions are no-ops.
+type surfacePresenceController struct {
 	mu                 sync.Mutex
-	runtime            idleChatSurfaceRuntime
+	runtime            surfaceLifecycleRuntime
 	ttl                time.Duration
 	resetTTS           func()
 	leases             map[surfacePresenceKey]time.Time
@@ -50,11 +59,11 @@ type idleChatSurfacePresenceController struct {
 	portalOwnsIdleChat bool
 }
 
-func newIdleChatSurfacePresenceController(runtime idleChatSurfaceRuntime, ttl time.Duration, resetTTS func()) *idleChatSurfacePresenceController {
+func newSurfacePresenceController(runtime surfaceLifecycleRuntime, ttl time.Duration, resetTTS func()) *surfacePresenceController {
 	if ttl <= 0 {
-		ttl = idleChatSurfacePresenceTTL
+		ttl = surfacePresenceTTL
 	}
-	return &idleChatSurfacePresenceController{
+	return &surfacePresenceController{
 		runtime:           runtime,
 		ttl:               ttl,
 		resetTTS:          resetTTS,
@@ -63,9 +72,9 @@ func newIdleChatSurfacePresenceController(runtime idleChatSurfaceRuntime, ttl ti
 	}
 }
 
-func (c *idleChatSurfacePresenceController) Update(viewerClientID, surface, action string) (surfacePresenceSnapshot, error) {
-	if c == nil || c.runtime == nil {
-		return surfacePresenceSnapshot{}, fmt.Errorf("idlechat surface presence is unavailable")
+func (c *surfacePresenceController) Update(viewerClientID, surface, action string) (surfacePresenceSnapshot, error) {
+	if c == nil {
+		return surfacePresenceSnapshot{}, fmt.Errorf("surface presence is unavailable")
 	}
 	now := time.Now().UTC()
 	key := surfacePresenceKey{viewerClientID: viewerClientID, surface: surface}
@@ -73,7 +82,7 @@ func (c *idleChatSurfacePresenceController) Update(viewerClientID, surface, acti
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return surfacePresenceSnapshot{}, fmt.Errorf("idlechat surface presence is closed")
+		return surfacePresenceSnapshot{}, fmt.Errorf("surface presence is closed")
 	}
 	c.pruneExpiredLocked(now)
 	var leaseExpiresAt *time.Time
@@ -95,7 +104,7 @@ func (c *idleChatSurfacePresenceController) Update(viewerClientID, surface, acti
 	return c.snapshotLocked(leaseExpiresAt), nil
 }
 
-func (c *idleChatSurfacePresenceController) StartExplicit() error {
+func (c *surfacePresenceController) StartExplicit() error {
 	if c == nil || c.runtime == nil {
 		return fmt.Errorf("idlechat surface presence is unavailable")
 	}
@@ -120,7 +129,7 @@ func (c *idleChatSurfacePresenceController) StartExplicit() error {
 	return nil
 }
 
-func (c *idleChatSurfacePresenceController) StopExplicit() {
+func (c *surfacePresenceController) StopExplicit() {
 	if c == nil || c.runtime == nil {
 		return
 	}
@@ -131,7 +140,7 @@ func (c *idleChatSurfacePresenceController) StopExplicit() {
 	c.portalOwnsIdleChat = false
 }
 
-func (c *idleChatSurfacePresenceController) Close() {
+func (c *surfacePresenceController) Close() {
 	if c == nil {
 		return
 	}
@@ -153,13 +162,21 @@ func (c *idleChatSurfacePresenceController) Close() {
 	}
 }
 
-func (c *idleChatSurfacePresenceController) reconcileLocked() error {
+func (c *surfacePresenceController) reconcileLocked() error {
 	chatCount, idleChatCount := c.countsLocked()
 	effectiveMode := "none"
 	if chatCount > 0 {
 		effectiveMode = "chat"
 	} else if idleChatCount > 0 {
 		effectiveMode = "idlechat"
+	}
+
+	if c.runtime == nil {
+		// IdleChat is disabled; lease aggregation still records the effective mode
+		// so Chat clients can observe `effective_mode=chat` and transition to ready.
+		c.lastEffectiveMode = effectiveMode
+		c.portalOwnsIdleChat = false
+		return nil
 	}
 
 	switch effectiveMode {
@@ -187,7 +204,7 @@ func (c *idleChatSurfacePresenceController) reconcileLocked() error {
 	return nil
 }
 
-func (c *idleChatSurfacePresenceController) snapshotLocked(leaseExpiresAt *time.Time) surfacePresenceSnapshot {
+func (c *surfacePresenceController) snapshotLocked(leaseExpiresAt *time.Time) surfacePresenceSnapshot {
 	chatCount, idleChatCount := c.countsLocked()
 	effectiveMode := "none"
 	if chatCount > 0 {
@@ -195,16 +212,20 @@ func (c *idleChatSurfacePresenceController) snapshotLocked(leaseExpiresAt *time.
 	} else if idleChatCount > 0 {
 		effectiveMode = "idlechat"
 	}
+	idleChatActive := false
+	if c.runtime != nil {
+		idleChatActive = c.runtime.IsManualMode() || c.runtime.IsChatActive()
+	}
 	return surfacePresenceSnapshot{
 		EffectiveMode:         effectiveMode,
-		IdleChatActive:        c.runtime.IsManualMode() || c.runtime.IsChatActive(),
+		IdleChatActive:        idleChatActive,
 		ChatPresenceCount:     chatCount,
 		IdleChatPresenceCount: idleChatCount,
 		LeaseExpiresAt:        leaseExpiresAt,
 	}
 }
 
-func (c *idleChatSurfacePresenceController) countsLocked() (int, int) {
+func (c *surfacePresenceController) countsLocked() (int, int) {
 	var chatCount, idleChatCount int
 	for key := range c.leases {
 		switch key.surface {
@@ -217,7 +238,7 @@ func (c *idleChatSurfacePresenceController) countsLocked() (int, int) {
 	return chatCount, idleChatCount
 }
 
-func (c *idleChatSurfacePresenceController) pruneExpiredLocked(now time.Time) {
+func (c *surfacePresenceController) pruneExpiredLocked(now time.Time) {
 	for key, expiresAt := range c.leases {
 		if !expiresAt.After(now) {
 			delete(c.leases, key)
@@ -225,7 +246,7 @@ func (c *idleChatSurfacePresenceController) pruneExpiredLocked(now time.Time) {
 	}
 }
 
-func (c *idleChatSurfacePresenceController) scheduleExpiryLocked(now time.Time) {
+func (c *surfacePresenceController) scheduleExpiryLocked(now time.Time) {
 	c.timerGeneration++
 	generation := c.timerGeneration
 	if c.timer != nil {
@@ -250,7 +271,7 @@ func (c *idleChatSurfacePresenceController) scheduleExpiryLocked(now time.Time) 
 	})
 }
 
-func (c *idleChatSurfacePresenceController) expireLeases(generation uint64) {
+func (c *surfacePresenceController) expireLeases(generation uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || generation != c.timerGeneration {
@@ -259,12 +280,12 @@ func (c *idleChatSurfacePresenceController) expireLeases(generation uint64) {
 	now := time.Now().UTC()
 	c.pruneExpiredLocked(now)
 	if err := c.reconcileLocked(); err != nil {
-		log.Printf("[IdleChat] surface lease reconciliation failed: %v", err)
+		log.Printf("[presence] surface lease reconciliation failed: %v", err)
 	}
 	c.scheduleExpiryLocked(now)
 }
 
-func (c *idleChatSurfacePresenceController) resetIdleChatTTSLocked() {
+func (c *surfacePresenceController) resetIdleChatTTSLocked() {
 	if c.resetTTS != nil {
 		c.resetTTS()
 	}

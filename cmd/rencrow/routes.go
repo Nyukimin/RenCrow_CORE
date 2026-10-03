@@ -27,6 +27,7 @@ import (
 	llmopsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/llmops"
 	memoryfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/memory"
 	opsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/ops"
+	presencefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/presence"
 	reportsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/reports"
 	revenuefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/revenue"
 	sandboxfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/sandbox"
@@ -396,6 +397,18 @@ func viewerDatabasePaths(cfg *config.Config) configuredViewerDatabasePaths {
 	return paths
 }
 
+// registerPresenceRoutes registers the shared PORTAL surface-presence endpoint.
+// Chat and IdleChat are sibling surfaces that share this endpoint, so the
+// handler is registered independently of IdleChat feature enablement.
+func registerPresenceRoutes(mux *http.ServeMux, dependencies *Dependencies) {
+	if dependencies == nil || dependencies.surfacePresence == nil {
+		return
+	}
+	presencefeature.RegisterRoutes(mux, presencefeature.Dependencies{Routes: presencefeature.Routes{
+		SurfacePresence: dependencies.handleSurfacePresence(),
+	}})
+}
+
 func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 	if dependencies.idleChatOrch == nil {
 		return
@@ -403,7 +416,6 @@ func registerIdleChatRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 	idlechatfeature.RegisterRoutes(mux, idlechatfeature.Dependencies{Routes: idlechatfeature.Routes{
 		Start:            dependencies.handleIdleChatStart(),
 		Stop:             dependencies.handleIdleChatStop(),
-		SurfacePresence:  dependencies.handleSurfacePresence(),
 		Interrupt:        dependencies.handleIdleChatInterrupt(),
 		Playback:         dependencies.handleIdleChatPlayback(),
 		Status:           dependencies.handleIdleChatStatus(),

@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-type fakeSurfaceIdleChatRuntime struct {
+type fakeSurfacePresenceRuntime struct {
 	mu       sync.Mutex
 	manual   bool
 	active   bool
@@ -22,7 +22,7 @@ type fakeSurfaceIdleChatRuntime struct {
 	startErr error
 }
 
-func (f *fakeSurfaceIdleChatRuntime) StartManualMode() error {
+func (f *fakeSurfacePresenceRuntime) StartManualMode() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.startErr != nil {
@@ -34,7 +34,7 @@ func (f *fakeSurfaceIdleChatRuntime) StartManualMode() error {
 	return nil
 }
 
-func (f *fakeSurfaceIdleChatRuntime) StopManualMode() {
+func (f *fakeSurfacePresenceRuntime) StopManualMode() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.stops++
@@ -43,34 +43,34 @@ func (f *fakeSurfaceIdleChatRuntime) StopManualMode() {
 	f.disabled = true
 }
 
-func (f *fakeSurfaceIdleChatRuntime) IsManualMode() bool {
+func (f *fakeSurfacePresenceRuntime) IsManualMode() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.manual
 }
 
-func (f *fakeSurfaceIdleChatRuntime) IsChatActive() bool {
+func (f *fakeSurfacePresenceRuntime) IsChatActive() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.active
 }
 
-func (f *fakeSurfaceIdleChatRuntime) IsDisabled() bool {
+func (f *fakeSurfacePresenceRuntime) IsDisabled() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.disabled
 }
 
-func (f *fakeSurfaceIdleChatRuntime) counts() (int, int) {
+func (f *fakeSurfacePresenceRuntime) counts() (int, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.starts, f.stops
 }
 
 func TestSurfacePresenceArbitratesChatOverIdleChatAcrossClients(t *testing.T) {
-	runtime := &fakeSurfaceIdleChatRuntime{disabled: true}
+	runtime := &fakeSurfacePresenceRuntime{disabled: true}
 	var resets atomic.Int32
-	controller := newIdleChatSurfacePresenceController(runtime, time.Minute, func() { resets.Add(1) })
+	controller := newSurfacePresenceController(runtime, time.Minute, func() { resets.Add(1) })
 	t.Cleanup(controller.Close)
 
 	idleSnapshot, err := controller.Update("idle-tab", "idlechat", "claim")
@@ -114,8 +114,8 @@ func TestSurfacePresenceArbitratesChatOverIdleChatAcrossClients(t *testing.T) {
 }
 
 func TestSurfacePresenceHeartbeatIsIdempotent(t *testing.T) {
-	runtime := &fakeSurfaceIdleChatRuntime{disabled: true}
-	controller := newIdleChatSurfacePresenceController(runtime, time.Minute, nil)
+	runtime := &fakeSurfacePresenceRuntime{disabled: true}
+	controller := newSurfacePresenceController(runtime, time.Minute, nil)
 	t.Cleanup(controller.Close)
 
 	if _, err := controller.Update("idle-tab", "idlechat", "claim"); err != nil {
@@ -134,8 +134,8 @@ func TestSurfacePresenceHeartbeatIsIdempotent(t *testing.T) {
 }
 
 func TestSurfacePresenceLeaseExpiryStopsPortalOwnedIdleChat(t *testing.T) {
-	runtime := &fakeSurfaceIdleChatRuntime{disabled: true}
-	controller := newIdleChatSurfacePresenceController(runtime, 20*time.Millisecond, nil)
+	runtime := &fakeSurfacePresenceRuntime{disabled: true}
+	controller := newSurfacePresenceController(runtime, 20*time.Millisecond, nil)
 	t.Cleanup(controller.Close)
 	if _, err := controller.Update("idle-tab", "idlechat", "claim"); err != nil {
 		t.Fatal(err)
@@ -153,8 +153,8 @@ func TestSurfacePresenceLeaseExpiryStopsPortalOwnedIdleChat(t *testing.T) {
 }
 
 func TestSurfacePresenceBlocksExplicitStartWhileChatIsVisible(t *testing.T) {
-	runtime := &fakeSurfaceIdleChatRuntime{disabled: true}
-	controller := newIdleChatSurfacePresenceController(runtime, time.Minute, nil)
+	runtime := &fakeSurfacePresenceRuntime{disabled: true}
+	controller := newSurfacePresenceController(runtime, time.Minute, nil)
 	t.Cleanup(controller.Close)
 	if _, err := controller.Update("chat-tab", "chat", "claim"); err != nil {
 		t.Fatal(err)
@@ -164,11 +164,48 @@ func TestSurfacePresenceBlocksExplicitStartWhileChatIsVisible(t *testing.T) {
 	}
 }
 
-func TestHandleSurfacePresenceValidatesProfileAndReturnsAggregateState(t *testing.T) {
-	runtime := &fakeSurfaceIdleChatRuntime{disabled: true}
-	controller := newIdleChatSurfacePresenceController(runtime, time.Minute, nil)
+func TestSurfacePresenceWithoutRuntimeAllowsChatReady(t *testing.T) {
+	controller := newSurfacePresenceController(nil, time.Minute, nil)
 	t.Cleanup(controller.Close)
-	deps := &Dependencies{idleChatSurfacePresence: controller}
+
+	snapshot, err := controller.Update("chat-tab", "chat", "claim")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.EffectiveMode != "chat" {
+		t.Fatalf("effective_mode=%q want chat", snapshot.EffectiveMode)
+	}
+	if snapshot.IdleChatActive {
+		t.Fatalf("idlechat_active=true want false (runtime detached)")
+	}
+	if snapshot.ChatPresenceCount != 1 {
+		t.Fatalf("chat_presence_count=%d want 1", snapshot.ChatPresenceCount)
+	}
+
+	released, err := controller.Update("chat-tab", "chat", "release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.EffectiveMode != "none" {
+		t.Fatalf("released effective_mode=%q want none", released.EffectiveMode)
+	}
+}
+
+func TestSurfacePresenceExplicitStartRejectsWhenRuntimeDetached(t *testing.T) {
+	controller := newSurfacePresenceController(nil, time.Minute, nil)
+	t.Cleanup(controller.Close)
+
+	err := controller.StartExplicit()
+	if err == nil {
+		t.Fatal("StartExplicit returned nil; want error when runtime is nil")
+	}
+}
+
+func TestHandleSurfacePresenceValidatesProfileAndReturnsAggregateState(t *testing.T) {
+	runtime := &fakeSurfacePresenceRuntime{disabled: true}
+	controller := newSurfacePresenceController(runtime, time.Minute, nil)
+	t.Cleanup(controller.Close)
+	deps := &Dependencies{surfacePresence: controller}
 
 	requestBody := []byte(`{"viewer_client_id":"idle-tab","surface":"idlechat","action":"claim"}`)
 	req := httptest.NewRequest(http.MethodPost, "/viewer/surface-presence", bytes.NewReader(requestBody))
@@ -197,5 +234,34 @@ func TestHandleSurfacePresenceValidatesProfileAndReturnsAggregateState(t *testin
 	deps.handleSurfacePresence().ServeHTTP(mismatchRec, mismatch)
 	if mismatchRec.Code != http.StatusForbidden {
 		t.Fatalf("profile mismatch status=%d, want 403", mismatchRec.Code)
+	}
+}
+
+func TestHandleSurfacePresenceEnablesChatReadyWithoutIdleChatRuntime(t *testing.T) {
+	controller := newSurfacePresenceController(nil, time.Minute, nil)
+	t.Cleanup(controller.Close)
+	deps := &Dependencies{surfacePresence: controller}
+
+	body := []byte(`{"viewer_client_id":"chat-tab","surface":"chat","action":"claim"}`)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/surface-presence", bytes.NewReader(body))
+	req.Header.Set("X-RenCrow-Client", "RenCrow_PORTAL")
+	req.Header.Set(interactionProfileHeader, "portal-chat")
+	rec := httptest.NewRecorder()
+	deps.handleSurfacePresence().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		EffectiveMode  string `json:"effective_mode"`
+		IdleChatActive bool   `json:"idlechat_active"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.EffectiveMode != "chat" {
+		t.Fatalf("effective_mode=%q want chat", response.EffectiveMode)
+	}
+	if response.IdleChatActive {
+		t.Fatalf("idlechat_active=true want false when runtime is detached")
 	}
 }

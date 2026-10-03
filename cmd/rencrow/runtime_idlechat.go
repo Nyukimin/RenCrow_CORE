@@ -145,7 +145,6 @@ func buildIdleChatRuntime(
 		log.Printf("WARN: idlechat background start failed: %v", err)
 	}
 	deps.idleChatOrch = idleChatOrch
-	deps.idleChatSurfacePresence = newIdleChatSurfacePresenceController(idleChatOrch, idleChatSurfacePresenceTTL, resetIdleChatTTSQueue)
 	log.Printf("IdleChat enabled (participants=%v)", cfg.IdleChat.Participants)
 }
 
@@ -211,6 +210,23 @@ func newIdleChatRuntimeEventEmitter(
 		}
 		return emitIdleChatTTSAsync(ttsBridge, ev)
 	}
+}
+
+// buildSurfacePresenceController initializes the shared PORTAL surface-presence
+// controller. The controller is sibling-neutral and is always initialized so
+// that the `/viewer/surface-presence` handler can respond regardless of whether
+// the IdleChat feature is enabled. When IdleChat is enabled, the orchestrator
+// is attached as the optional runtime observer; otherwise Chat lease
+// aggregation still functions and no IdleChat transitions are performed.
+func buildSurfacePresenceController(deps *Dependencies) {
+	if deps == nil {
+		return
+	}
+	var runtime surfaceLifecycleRuntime
+	if deps.idleChatOrch != nil {
+		runtime = deps.idleChatOrch
+	}
+	deps.surfacePresence = newSurfacePresenceController(runtime, surfacePresenceTTL, resetIdleChatTTSQueue)
 }
 
 func idleChatCodexWorkingDir(cfg *config.Config) string {

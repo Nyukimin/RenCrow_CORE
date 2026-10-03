@@ -14,10 +14,13 @@ type Dependencies struct {
 
 // Routes groups IdleChat Viewer route handlers supplied by cmd/rencrow.
 // Handler implementations are supplied by the IdleChat application runtime.
+//
+// The shared PORTAL `/viewer/surface-presence` endpoint is owned by the
+// sibling-neutral `features/presence` package, not by IdleChat. Chat and
+// IdleChat are sibling surfaces; neither registers the other's routes.
 type Routes struct {
 	Start            http.HandlerFunc
 	Stop             http.HandlerFunc
-	SurfacePresence  http.HandlerFunc
 	Interrupt        http.HandlerFunc
 	Playback         http.HandlerFunc
 	Status           http.HandlerFunc
@@ -41,7 +44,6 @@ func RegisterRoutes(mux *http.ServeMux, deps Dependencies) {
 	routes := deps.Routes
 	registerRoute(mux, "/viewer/idlechat/start", routes.Start)
 	registerRoute(mux, "/viewer/idlechat/stop", routes.Stop)
-	registerRoute(mux, "/viewer/surface-presence", routes.SurfacePresence)
 	registerRoute(mux, "/viewer/idlechat/interrupt", routes.Interrupt)
 	registerRoute(mux, "/viewer/idlechat/playback", routes.Playback)
 	registerRoute(mux, "/viewer/idlechat/status", routes.Status)

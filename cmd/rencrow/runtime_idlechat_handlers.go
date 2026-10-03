@@ -24,8 +24,8 @@ func (d *Dependencies) handleIdleChatStart() http.HandlerFunc {
 			return
 		}
 		var err error
-		if d.idleChatSurfacePresence != nil {
-			err = d.idleChatSurfacePresence.StartExplicit()
+		if d.surfacePresence != nil {
+			err = d.surfacePresence.StartExplicit()
 		} else {
 			if !d.idleChatOrch.IsChatActive() {
 				resetIdleChatTTSQueue()
@@ -61,8 +61,8 @@ func (d *Dependencies) handleIdleChatStop() http.HandlerFunc {
 			http.Error(w, "idlechat not enabled", http.StatusNotFound)
 			return
 		}
-		if d.idleChatSurfacePresence != nil {
-			d.idleChatSurfacePresence.StopExplicit()
+		if d.surfacePresence != nil {
+			d.surfacePresence.StopExplicit()
 		} else {
 			d.idleChatOrch.StopManualMode()
 			resetIdleChatTTSQueue()
@@ -99,8 +99,8 @@ func (d *Dependencies) handleSurfacePresence() http.HandlerFunc {
 			http.Error(w, "surface presence profile is not allowed", http.StatusForbidden)
 			return
 		}
-		if d.idleChatSurfacePresence == nil {
-			http.Error(w, "idlechat surface presence is unavailable", http.StatusServiceUnavailable)
+		if d.surfacePresence == nil {
+			http.Error(w, "surface presence is unavailable", http.StatusServiceUnavailable)
 			return
 		}
 
@@ -136,7 +136,7 @@ func (d *Dependencies) handleSurfacePresence() http.HandlerFunc {
 			return
 		}
 
-		snapshot, err := d.idleChatSurfacePresence.Update(req.ViewerClientID, req.Surface, req.Action)
+		snapshot, err := d.surfacePresence.Update(req.ViewerClientID, req.Surface, req.Action)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

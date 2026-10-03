@@ -77,8 +77,8 @@ func TestBuildIdleChatRuntimeFailsClosedOnInvalidTopicStore(t *testing.T) {
 
 	buildIdleChatRuntime(cfg, deps, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
-	if deps.idleChatOrch != nil || deps.idleChatSurfacePresence != nil {
-		t.Fatalf("invalid topic store exposed IdleChat runtime: orchestrator=%v surface=%v", deps.idleChatOrch, deps.idleChatSurfacePresence)
+	if deps.idleChatOrch != nil || deps.surfacePresence != nil {
+		t.Fatalf("invalid topic store exposed IdleChat runtime: orchestrator=%v surface=%v", deps.idleChatOrch, deps.surfacePresence)
 	}
 }
 

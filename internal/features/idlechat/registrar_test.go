@@ -12,7 +12,6 @@ func TestRegisterRoutesKeepsIdleChatViewerPaths(t *testing.T) {
 	RegisterRoutes(mux, Dependencies{Routes: Routes{
 		Start:            statusHandler(http.StatusAccepted),
 		Stop:             statusHandler(http.StatusNoContent),
-		SurfacePresence:  statusHandler(http.StatusOK),
 		Interrupt:        statusHandler(http.StatusResetContent),
 		Playback:         statusHandler(http.StatusAccepted),
 		Status:           statusHandler(http.StatusOK),
@@ -32,7 +31,6 @@ func TestRegisterRoutesKeepsIdleChatViewerPaths(t *testing.T) {
 	}{
 		{path: "/viewer/idlechat/start", want: http.StatusAccepted},
 		{path: "/viewer/idlechat/stop", want: http.StatusNoContent},
-		{path: "/viewer/surface-presence", want: http.StatusOK},
 		{path: "/viewer/idlechat/interrupt", want: http.StatusResetContent},
 		{path: "/viewer/idlechat/playback", want: http.StatusAccepted},
 		{path: "/viewer/idlechat/status", want: http.StatusOK},
