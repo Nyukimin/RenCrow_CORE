@@ -108,6 +108,9 @@ func TestConfiguredOrchestratorsUseSelectedViewerAgentAsRoot(t *testing.T) {
 				if resp.TaskID != rootID.String() || resp.RootTaskID != rootID.String() || resp.TraceID != string(traceID) {
 					t.Fatalf("response identity = %#v", resp)
 				}
+				if err := modulecore.SessionID(resp.SessionID).Validate(); err != nil {
+					t.Fatalf("response session ID %q is not canonical: %v", resp.SessionID, err)
+				}
 				if len(manager.tasks) != 1 {
 					t.Fatalf("created tasks = %#v, want one root and no child", manager.tasks)
 				}
@@ -132,7 +135,7 @@ func TestConfiguredOrchestratorsUseSelectedViewerAgentAsRoot(t *testing.T) {
 					t.Fatalf("agent calls: Mio route=%d chat=%d selected=%d", mio.decideCalls, mio.chatCalls, selected.calls)
 				}
 				if selected.observation.TaskID != rootID || selected.observation.TraceID != string(traceID) ||
-					selected.observation.SessionID != "direct-"+actor || selected.observation.Initiator != actor {
+					selected.observation.SessionID != resp.SessionID || selected.observation.Initiator != actor {
 					t.Fatalf("direct execution observation = %+v", selected.observation)
 				}
 
@@ -206,6 +209,9 @@ func TestConfiguredOrchestratorsResumeSelectedAgentRunWithoutReassignmentOrResta
 				if resp.TaskID != rootID.String() || resp.RootTaskID != rootID.String() || resp.TraceID != string(traceID) {
 					t.Fatalf("response identity = %#v", resp)
 				}
+				if err := modulecore.SessionID(resp.SessionID).Validate(); err != nil {
+					t.Fatalf("resumed response session ID %q is not canonical: %v", resp.SessionID, err)
+				}
 				if len(manager.tasks) != 1 || len(manager.runs) != 1 {
 					t.Fatalf("tasks/runs = %d/%d, want one existing pair", len(manager.tasks), len(manager.runs))
 				}
@@ -223,7 +229,7 @@ func TestConfiguredOrchestratorsResumeSelectedAgentRunWithoutReassignmentOrResta
 					t.Fatalf("agent calls: Mio route=%d chat=%d selected=%d", mio.decideCalls, mio.chatCalls, selected.calls)
 				}
 				if selected.observation.TaskID != rootID || selected.observation.TraceID != string(traceID) ||
-					selected.observation.Initiator != actor {
+					selected.observation.SessionID != resp.SessionID || selected.observation.Initiator != actor {
 					t.Fatalf("resumed execution observation = %+v", selected.observation)
 				}
 				responseEvent := lifecycleAssignmentResponseEvent(listener.events, actor)
