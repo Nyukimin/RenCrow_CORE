@@ -32,6 +32,9 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 }
 
 func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, error) {
+	if recipient, ok := directViewerRecipientForChat(req); ok {
+		return directViewerRecipientDecision(recipient), nil
+	}
 	decision, err := c.mio.DecideAction(ctx, input)
 	if err != nil {
 		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
@@ -44,30 +47,76 @@ func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconve
 	return decision, nil
 }
 
-func shouldPinSelectedViewerRecipientToChat(req ProcessMessageRequest) bool {
-	if !strings.EqualFold(strings.TrimSpace(req.Channel), "viewer") || normalizeProcessViewerRecipient(req.To) != "midori" {
-		return false
+// directViewerRecipientForChat returns the explicit Viewer recipient (shiro,
+// kuro, or midori) when the user picked an agent other than Mio for a plain
+// Viewer chat message. The returned bool is true only when Mio's routing
+// should be skipped entirely because the explicit recipient supersedes it per
+// the "明示commandは会話相手の選択より優先されます" rule in docs/02_機能仕様.md.
+// to=mio keeps routing engaged (Mio is the route owner) and so does a message
+// that starts with a slash command.
+func directViewerRecipientForChat(req ProcessMessageRequest) (string, bool) {
+	if !strings.EqualFold(strings.TrimSpace(req.Channel), "viewer") {
+		return "", false
+	}
+	recipient := normalizeProcessViewerRecipient(req.To)
+	switch recipient {
+	case "shiro", "kuro", "midori":
+	default:
+		return "", false
 	}
 	originalMessage := req.originalUserMessage
 	if originalMessage == "" {
 		originalMessage = req.UserMessage
 	}
-	return !strings.HasPrefix(strings.TrimSpace(originalMessage), "/")
+	if strings.HasPrefix(strings.TrimSpace(originalMessage), "/") {
+		return "", false
+	}
+	return recipient, true
+}
+
+// directViewerRecipientDecision builds the pinned CHAT decision used when the
+// user explicitly selected shiro/kuro/midori for a plain Viewer chat message.
+// The decision is constructed without invoking Mio.DecideAction, so the extra
+// LLM round-trip is avoided.
+func directViewerRecipientDecision(recipient string) routing.Decision {
+	return routing.Decision{
+		Route:      routing.RouteCHAT,
+		Confidence: 1,
+		Reason:     fmt.Sprintf("explicit Viewer recipient (%s) without a route command", recipient),
+		Evidence: []routing.DecisionEvidence{{
+			Source:     "viewer_recipient",
+			Matched:    true,
+			Route:      routing.RouteCHAT,
+			Confidence: 1,
+			Reason:     fmt.Sprintf("explicit %s Viewer recipient without a route command", recipient),
+		}},
+	}
+}
+
+// shouldPinSelectedViewerRecipientToChat preserves the earlier midori-only
+// safety net. The pre-check in directViewerRecipientForChat already covers
+// shiro/kuro/midori before Mio.DecideAction runs, so this function now only
+// catches cases where a code path still invokes Mio and the result needs to
+// honor an explicit Viewer recipient.
+func shouldPinSelectedViewerRecipientToChat(req ProcessMessageRequest) bool {
+	_, ok := directViewerRecipientForChat(req)
+	return ok
 }
 
 func pinSelectedViewerRecipientDecision(decision routing.Decision, req ProcessMessageRequest) (routing.Decision, bool) {
-	if !shouldPinSelectedViewerRecipientToChat(req) {
+	recipient, ok := directViewerRecipientForChat(req)
+	if !ok {
 		return decision, false
 	}
 	decision.Route = routing.RouteCHAT
 	decision.Confidence = 1
-	decision.Reason = "selected Midori owns the direct Viewer Chat response"
+	decision.Reason = fmt.Sprintf("explicit Viewer recipient (%s) without a route command", recipient)
 	decision.Evidence = append(decision.Evidence, routing.DecisionEvidence{
 		Source:     "viewer_recipient",
 		Matched:    true,
 		Route:      routing.RouteCHAT,
 		Confidence: 1,
-		Reason:     "explicit Midori Viewer recipient without a route command",
+		Reason:     fmt.Sprintf("explicit %s Viewer recipient without a route command", recipient),
 	})
 	return decision, true
 }

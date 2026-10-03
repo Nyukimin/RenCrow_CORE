@@ -155,11 +155,12 @@ func (m *mockSessionRepository) Delete(ctx context.Context, id string) error {
 
 // mockMioAgent はテスト用のMioAgent（function pointer でエラー注入可能）
 type mockMioAgent struct {
-	decision   routing.Decision
-	response   string
-	decideFunc func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
-	chatFunc   func(ctx context.Context, t conversation.TurnInput) (string, error)
-	cmdFunc    func(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
+	decision    routing.Decision
+	response    string
+	decideCalls int
+	decideFunc  func(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
+	chatFunc    func(ctx context.Context, t conversation.TurnInput) (string, error)
+	cmdFunc     func(ctx context.Context, sessionID string, message string) (agent.ChatCommandResult, error)
 }
 
 type failOnEventListener struct {
@@ -177,6 +178,7 @@ func (l *failOnEventListener) OnEvent(ev OrchestratorEvent) error {
 }
 
 func (m *mockMioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
+	m.decideCalls++
 	if m.decideFunc != nil {
 		return m.decideFunc(ctx, t)
 	}

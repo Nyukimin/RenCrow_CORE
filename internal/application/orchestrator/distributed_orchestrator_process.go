@@ -223,13 +223,24 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, durableErr
 	}
 
-	// 3. mio がルーティング決定
-	decision, err := o.mio.DecideAction(ctx, input)
-	if err != nil {
-		o.saveExecutionReport(ctx, taskID, req.UserMessage, "", startedAt, time.Now().UTC(), err)
-		return ProcessMessageResponse{}, fmt.Errorf("routing decision failed: %w", err)
+	// 3. ルーティング決定: 明示 Viewer recipient (shiro/kuro/midori) は Mio を飛ばして直接 CHAT に pin する。
+	//    "明示commandは会話相手の選択より優先されます" (docs/02_機能仕様.md §会話とルーティング) に従う。
+	var (
+		decision              routing.Decision
+		pinnedViewerRecipient bool
+	)
+	if recipient, direct := directViewerRecipientForChat(req); direct {
+		decision = directViewerRecipientDecision(recipient)
+		pinnedViewerRecipient = true
+	} else {
+		var err error
+		decision, err = o.mio.DecideAction(ctx, input)
+		if err != nil {
+			o.saveExecutionReport(ctx, taskID, req.UserMessage, "", startedAt, time.Now().UTC(), err)
+			return ProcessMessageResponse{}, fmt.Errorf("routing decision failed: %w", err)
+		}
+		decision, pinnedViewerRecipient = pinSelectedViewerRecipientDecision(decision, req)
 	}
-	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	log.Printf("[DistributedOrch] routing decision: route=%s confidence=%.2f reason=%q",
 		decision.Route, decision.Confidence, decision.Reason)
 
