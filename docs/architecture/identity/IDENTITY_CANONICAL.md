@@ -3340,6 +3340,32 @@ deploy、初回／再起動後の実 request、service receipt、artifact checks
   terminal を検査する。request cancellation 後も同じ Task／Run を failed terminal にできる
   ことを検査し、既存の typed/narrow tests は exact order、replay、failure terminal、non-leak
   を継続して検査する。
+- **Failure:** existing Heartbeat worker の `RouteOperations` Task／Run が running で
+  `DestructiveTasks=1` を占有しているとき、fixed DCI acceptance の調整 Task も
+  `RouteOperations` として admission され、global capacity に空きがあるにもかかわらず
+  `/v1/agent/ops` が HTTP 500 (`runtime_unavailable`) になった。
+- **Problem:** DCI fixed operation の canonical Task／Run admission が通常の destructive
+  OPS capacity と競合し、既存 Shiro scope／policy／Action lifecycle へ到達する前に失敗した。
+- **Cause:** identity 調整 Task の route を、LLM／自然言語の `RouteOPS` を使わない fixed
+  acceptance branch にも `RouteOperations` と誤設定していた。`taskmanager.Manager` の
+  route-specific `DestructiveTasks` gate が通常 background OPS と同じ枠で評価した。
+- **Lesson:** fixed DCI acceptance の調整 Task は `RouteGeneral` とし、既存の canonical
+  Task／Run／Trace admission、Shiro internal scope、Tool／Action lifecycle をそのまま
+  通す。これにより OPS slot を横取りせず、global capacity が残る場合に admission を
+  継続できる。
+- **Invariant:** running の既存 OPS Task／Run があっても、global running task limit 未満
+  なら DCI fixed branch は canonical Task／Run を `RouteGeneral` で作成・開始し、exact
+  three tool calls を同一 identity へ束ねて terminal 化する。global limit 自体、通常 OPS
+  の `DestructiveTasks` gate、認証／policy／Action の境界は緩和しない。
+- **Enforcement:** fixed branch の Task draft に `RouteGeneral` を指定し、既存
+  `taskmanager.Manager` の `StartRunWithReason`／terminal API と最外周
+  `taskExecutionRunner` admission を再利用する。新しい route、wrapper、registry、policy
+  bypass は追加しない。
+- **Tests:** `TestAgentOpsDCIIdentityAcceptanceAdmitsAlongsideRunningOPSWithinGlobalCapacity`
+  は running Heartbeat `RouteOperations` Task／Run を fixture に置き、global capacity 内で
+  DCI acceptance が HTTP 200、DCI Task／Run が `RouteGeneral`／`succeeded`、Heartbeat Run
+  が `running` のままになることを production-equivalent runner で検査する。focused
+  command は `go test ./cmd/rencrow -run '^(TestAgentOpsDCIIdentityAcceptance|TestTaskExecutionRunner)' -count=1`。
 - **Failure:** 自然言語 `RouteOPS` の LLM 応答、direct DB read、fake actor、または D2e-1
   verifier の内部呼出しだけを post-deploy route acceptance と扱った。
 - **Problem:** 実際の authenticated Shiro が既存 owner route と policy を通った事実、write

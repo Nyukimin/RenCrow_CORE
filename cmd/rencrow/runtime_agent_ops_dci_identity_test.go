@@ -135,6 +135,61 @@ func TestAgentOpsDCIIdentityAcceptanceUsesProductionTaskExecutionAdmission(t *te
 	}
 }
 
+func TestAgentOpsDCIIdentityAcceptanceAdmitsAlongsideRunningOPSWithinGlobalCapacity(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	heartbeat, err := deps.taskManager.Create(context.Background(), domaintask.Task{
+		Title:    "Heartbeat worker",
+		Route:    domaintask.RouteOperations,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatalf("create running Heartbeat Task: %v", err)
+	}
+	if _, err := deps.taskManager.StartRunWithReason(context.Background(), heartbeat.TaskID, domaintask.RunStartReasonFirst); err != nil {
+		t.Fatalf("start running Heartbeat Run: %v", err)
+	}
+
+	actionID := modulecore.NewActionID()
+	traceID := modulecore.NewTraceID()
+	requestID := "req-dci-alongside-running-ops"
+	inner := &agentOpsDCIToolExecutorStub{outputs: []string{
+		agentOpsDCIWriteReceiptJSON(actionID, false),
+		agentOpsDCIWriteReceiptJSON(actionID, true),
+		agentOpsDCIRecallResultJSON(requestID, actionID, traceID),
+	}}
+	executor := &agentOpsProductionEquivalentExecutor{
+		inner:  inner,
+		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
+	}
+	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	rec := serveAgentOpsDCIRequest(t, handler, token, requestID, `{"operation":"dci_identity_acceptance","query":"query"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	tasks, err := deps.taskManager.List(context.Background(), domaintask.Filter{})
+	if err != nil {
+		t.Fatalf("list admitted tasks: %v", err)
+	}
+	var admitted domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Title == "DCI identity acceptance" {
+			admitted = candidate
+		}
+	}
+	if admitted.TaskID == "" || admitted.Route != domaintask.RouteGeneral || admitted.Status != domaintask.StatusSucceeded {
+		t.Fatalf("admitted DCI task=%+v, want GENERAL succeeded", admitted)
+	}
+	runs, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: heartbeat.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusRunning {
+		t.Fatalf("heartbeat runs=%+v err=%v, want one running Run", runs, err)
+	}
+	if dciRuns, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: admitted.TaskID}); err != nil || len(dciRuns) != 1 || dciRuns[0].Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("DCI runs=%+v err=%v, want one succeeded Run", dciRuns, err)
+	}
+}
+
 func TestAgentOpsDCIIdentityAcceptanceFailureClosesAdmittedTaskAndRun(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	deps, _, _ := newTaskExecutionRunnerFixture(t)

@@ -174,7 +174,7 @@ func (h *agentOpsHandler) admitAgentOpsDCIExecution(ctx context.Context) (domain
 	}
 	task, err := h.taskOwner.Create(ctx, domaintask.Task{
 		Title:    "DCI identity acceptance",
-		Route:    domaintask.RouteOperations,
+		Route:    domaintask.RouteGeneral,
 		Assignee: "shiro",
 	}, domaintask.SharedRoleContext{UserIntent: agentOpsDCIIdentityAcceptanceOperation})
 	if err != nil {
