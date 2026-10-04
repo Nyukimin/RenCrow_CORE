@@ -19,10 +19,11 @@ import (
 )
 
 const (
-	verifierMinActorTokenBytes     = 32
-	verifierMaxActorMessageBytes   = 32 << 10
-	verifierMaxActorRequestIDBytes = 128
-	verifierActorRequestTimeout    = 60 * time.Second
+	verifierMinActorTokenBytes        = 32
+	verifierMaxActorMessageBytes      = 32 << 10
+	verifierMaxActorRequestIDBytes    = 128
+	verifierActorRequestTimeout       = 60 * time.Second
+	verifierDCIIdentityRequestTimeout = 180 * time.Second
 )
 
 var verifierActorRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)

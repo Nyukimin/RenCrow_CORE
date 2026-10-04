@@ -226,6 +226,12 @@ func TestAgentOpsDCIIdentityAcceptanceFailureClosesAdmittedTaskAndRun(t *testing
 	}
 }
 
+func TestAgentOpsDCIIdentityAcceptanceUsesProductionSizedFinalizationTimeout(t *testing.T) {
+	if agentOpsDCIFinalizationTimeout < 60*time.Second {
+		t.Fatalf("DCI finalization timeout=%s, want at least 60s", agentOpsDCIFinalizationTimeout)
+	}
+}
+
 func TestAgentOpsDCIIdentityAcceptanceCancellationStillTerminalizesTaskAndRun(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	deps, _, _ := newTaskExecutionRunnerFixture(t)
@@ -276,7 +282,7 @@ func TestAgentOpsDCIIdentityAcceptanceCancellationStillTerminalizesTaskAndRun(t 
 func TestAgentOpsDCIIdentityAcceptanceStartsFinalizationBudgetAfterToolCalls(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	previousTimeout := agentOpsDCIFinalizationTimeout
-	agentOpsDCIFinalizationTimeout = 20 * time.Millisecond
+	agentOpsDCIFinalizationTimeout = time.Second
 	t.Cleanup(func() { agentOpsDCIFinalizationTimeout = previousTimeout })
 
 	deps, _, _ := newTaskExecutionRunnerFixture(t)
@@ -291,7 +297,7 @@ func TestAgentOpsDCIIdentityAcceptanceStartsFinalizationBudgetAfterToolCalls(t *
 		},
 		beforeCall: func(index int, _ context.Context) {
 			if index == 0 {
-				time.Sleep(3 * agentOpsDCIFinalizationTimeout)
+				time.Sleep(1500 * time.Millisecond)
 			}
 		},
 	}

@@ -530,6 +530,9 @@ func performDCIIdentityRequest(ctx context.Context, options verifierOptions, con
 		return dciIdentityResponse{}, "", verifierOutcome{Status: "blocked", FailureBoundary: "canonical DCI identity request could not be encoded"}
 	}
 	actorClient := verifierActorHTTPClient(deps.HTTPClient)
+	if actorClient.Timeout < verifierDCIIdentityRequestTimeout {
+		actorClient.Timeout = verifierDCIIdentityRequestTimeout
+	}
 	response := verifierHTTPJSON(ctx, &actorClient, http.MethodPost, coreEndpoint(baseURL, dciIdentityRoute), map[string]string{
 		"Accept":                        "application/json",
 		"Content-Type":                  "application/json",

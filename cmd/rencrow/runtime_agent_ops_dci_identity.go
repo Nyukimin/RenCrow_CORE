@@ -26,7 +26,7 @@ const (
 	agentOpsDCIRecallOperation = "identity_evidence"
 )
 
-var agentOpsDCIFinalizationTimeout = 10 * time.Second
+var agentOpsDCIFinalizationTimeout = 60 * time.Second
 
 var (
 	errAgentOpsRequestTooLarge        = errors.New("agent ops request is too large")

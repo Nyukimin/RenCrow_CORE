@@ -3340,6 +3340,36 @@ deploy、初回／再起動後の実 request、service receipt、artifact checks
   terminal を検査する。request cancellation 後も同じ Task／Run を failed terminal にできる
   ことを検査し、既存の typed/narrow tests は exact order、replay、failure terminal、non-leak
   を継続して検査する。
+- **Failure:** production の fixed DCI request は pre check を `2026-10-04T16:44:48Z` に
+  観測して 60 秒後も `http_status=0` の `blocked` となり、GENERAL Task
+  `tsk_01a107cd-ebbd-7289-85d9-d4420f4798e0`／Run
+  `run_01a107ce-0d1b-72b2-b3ed-3424527d0589` が `running` のまま残った。DCI Action
+  `act_01a107ce-2669-7a52-b187-c807c02e94d1` も `16:45:13Z` 開始後 `16:45:50Z` に
+  context deadline で失敗した。
+- **Problem:** handler の request cancellation から値を保持して分離する terminalization
+  context が 10 秒で切れ、production Task store の terminal write が完了する前に
+  `Task`／`Run` が orphan になった。verifier 側も DCI request を共有 Actor の 60 秒
+  client timeout のまま実行し、handler の bounded finalization を待てなかった。
+- **Cause:** fixed DCI branch の terminal budget と通常 Actor request budget を同じ現実時間の
+  前提で扱い、DCI identity route の三つの owner call と durable Task／Run finalization に
+  必要な時間を専用の固定 bound として定義していなかった。
+- **Lesson:** fixed handler の terminalization は cancellation-independent な 60 秒 bound
+  を使い、`cmd/rencrow-core-verify` の DCI identity request だけは固定 180 秒の client
+  minimum を使う。caller context の cancellation は HTTP request と tool execution に
+  そのまま伝え、明示されたそれ以上の client timeout は短縮しない。
+- **Invariant:** DCI の terminal write は `context.WithoutCancel` で値を保持した bounded
+  60 秒 context で試行し、観測済み production Task store の10秒超過を吸収する。timeout時は
+  成功を偽装せず bounded error とし、Task／Run terminal は production route evidenceで確認する。
+  通常の Actor check は共有 60 秒を維持し、DCI verifier の client timeout は180秒未満だけを
+  拡張し、180秒以上はその値を保持する。
+- **Enforcement:** fixed `agentOpsDCIFinalizationTimeout` と DCI branch 専用の
+  `verifierDCIIdentityRequestTimeout` を既存 client copy に適用する。任意 timeout flag／入力、
+  別 route、新しい operation wrapper、shared `verifierActorRequestTimeout` の変更は追加しない。
+- **Tests:** production-sized handler finalization bound の先行 RED／GREEN、DCI verifier
+  client が共有 60 秒から 180 秒へ拡張されること、240 秒の明示 client timeout を保持する
+  ことを focused test で検査する。既存の request cancellation、terminal budget、exact
+  identity、failure terminal、non-leak test は継続して通す。production build／deploy／
+  restart／実 route replay は別受入として未実施のまま残す。
 - **Failure:** existing Heartbeat worker の `RouteOperations` Task／Run が running で
   `DestructiveTasks=1` を占有しているとき、fixed DCI acceptance の調整 Task も
   `RouteOperations` として admission され、global capacity に空きがあるにもかかわらず

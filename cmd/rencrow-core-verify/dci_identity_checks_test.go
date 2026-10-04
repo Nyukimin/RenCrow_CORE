@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDCIIdentityCommandsAreFixedAndAllowlisted(t *testing.T) {
@@ -42,6 +43,63 @@ type dciIdentityTestRuntime struct {
 	requestIDs  [][]string
 	requestRaw  [][]byte
 	requestAuth []string
+}
+
+type dciIdentityTimeoutRoundTripper struct {
+	deadline time.Time
+	body     []byte
+}
+
+func (r *dciIdentityTimeoutRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	deadline, ok := request.Context().Deadline()
+	if !ok {
+		return nil, errors.New("DCI identity request has no client timeout deadline")
+	}
+	r.deadline = deadline
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(r.body)),
+		Request:    request,
+	}, nil
+}
+
+func TestDCIIdentityRequestUsesDedicatedBoundedTimeout(t *testing.T) {
+	tokenPath := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(tokenPath, []byte("owner-token-012345678901234567890123"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requestID := "req-dci-timeout"
+	body, err := json.Marshal(dciIdentityTestResponse(requestID, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		source time.Duration
+		want   time.Duration
+	}{
+		{name: "shared actor timeout expands", source: verifierActorRequestTimeout, want: 180 * time.Second},
+		{name: "larger explicit timeout is preserved", source: 240 * time.Second, want: 240 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			transport := &dciIdentityTimeoutRoundTripper{body: body}
+			client := &http.Client{Timeout: test.source, Transport: transport}
+			started := time.Now()
+			_, _, outcome := performDCIIdentityRequest(context.Background(), verifierOptions{
+				ActorTokenFile: tokenPath,
+				CoreURL:        "http://127.0.0.1:18790",
+				RequestID:      requestID,
+			}, "", requestID, verifierDependencies{HTTPClient: client})
+			if outcome.Status != "" {
+				t.Fatalf("outcome=%+v", outcome)
+			}
+			got := transport.deadline.Sub(started)
+			if got < test.want-time.Second || got > test.want+time.Second {
+				t.Fatalf("client timeout deadline=%s, want about %s", got, test.want)
+			}
+		})
+	}
 }
 
 func newDCIIdentityTestRuntime(t *testing.T) (*dciIdentityTestRuntime, *httptest.Server, verifierDependencies) {
