@@ -3370,6 +3370,29 @@ deploy、初回／再起動後の実 request、service receipt、artifact checks
   ことを focused test で検査する。既存の request cancellation、terminal budget、exact
   identity、failure terminal、non-leak test は継続して通す。production build／deploy／
   restart／実 route replay は別受入として未実施のまま残す。
+- **Failure:** production configで`dci.max_seconds`を未指定のままDCI ownerを起動すると、
+  `internal/adapter/config/config_defaults.go`と`internal/application/dci/explorer.go`の内部defaultが
+  30秒で一致し、長いstorage-host separation acceptanceの保存・終端前に
+  `context deadline exceeded`となった（Action `act_01a107e3-10b6-748c-9a4c-0ee3bf5c3dc0`、
+  2026-10-04観測）。
+- **Problem:** DCI ownerの有限deadlineがproduction verifier／handlerの境界より短く、
+  DCI trace／step／evidenceを保存する前に検索が失敗した。設定未指定時の既定値とExplorer単体の
+  fallback値を別々に保守していたため、owner内部の受入条件がテストで固定されていなかった。
+- **Cause:** DCI defaultを30秒に置いたまま、handler terminalizationの60秒boundおよび
+  verifier DCI clientの180秒minimumとの関係を設定正本とowner testへ明示していなかった。
+- **Lesson:** DCI ownerの検索deadlineは有限60秒へ統一し、config loaderと`NewExplorer`の両方を
+  同じdefaultへ収束させる。handlerの60秒terminalization、verifierの180秒minimum、通常Actorの
+  共有60秒はそれぞれ別境界として維持する。
+- **Invariant:** `dci.max_seconds`未指定／0以下は60秒、DCI owner検索は無期限化しない。DCI
+  terminalizationは60秒、DCI verifier clientは180秒未満だけを180秒へ拡張し、180秒以上の明示値を
+  短縮しない。任意payload timeout、別route、無制限fallbackは存在しない。
+- **Enforcement:** DCI domain ownerの`dci.DefaultMaxSeconds`を単一の正本とし、
+  `config.(*Config).setDefaults`と`dci.NewExplorer`の両境界がそれを参照する。設定リファレンスの
+  境界記述、およびowner／config focused testで強制する。production config／DB／runtime binaryは
+  このsource修正だけでは変更しない。
+- **Tests:** `TestLoadConfig_DefaultValues`と`TestNewExplorerUsesSixtySecondDefault`を先行REDで
+  30秒実装に対して失敗させ、60秒修正後に両focused testをGREENで確認する。既存のDCI timeout、
+  terminalization、verifier 180／240秒境界testは継続して通し、配備後route replayは別受入とする。
 - **Failure:** existing Heartbeat worker の `RouteOperations` Task／Run が running で
   `DestructiveTasks=1` を占有しているとき、fixed DCI acceptance の調整 Task も
   `RouteOperations` として admission され、global capacity に空きがあるにもかかわらず
@@ -3585,7 +3608,7 @@ Step 03をcompleteとしない。
   最大`MaxFilesRead`であり、同一request内の各候補を一度だけ読む。`MaxEvidence`等の成功終端を
   満たした後は、同時にdeadlineへ達しても次候補のcontext判定で成功結果を失敗へ上書きしない。
 - **Runtime bound:** foreground開始時のbackground ToolRunner退避時間を含めても正規routeを完遂できるよう、
-  DCIの未指定時budgetは30秒とする。明示設定した短いbudgetと、Evidence未到達時のdeadline failureは維持する。
+  DCIの未指定時budgetは60秒とする。明示設定した短いbudgetと、Evidence未到達時のdeadline failureは維持する。
 - **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、fallbackのcontent discovery、
   provider統合、metadata優先、実Shiro production routeを回帰検証する。
 

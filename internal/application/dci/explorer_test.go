@@ -101,6 +101,13 @@ func newTestExplorer(cfg Config, store TraceStore, opts ...Option) *Explorer {
 	return NewExplorer(cfg, store, append([]Option{WithEventAppender(&recordingEventAppender{})}, opts...)...)
 }
 
+func TestNewExplorerUsesSixtySecondDefault(t *testing.T) {
+	explorer := NewExplorer(Config{}, nil)
+	if domaindci.DefaultMaxSeconds != 60 || explorer.cfg.MaxSeconds != domaindci.DefaultMaxSeconds {
+		t.Fatalf("MaxSeconds default = %d, want 60", explorer.cfg.MaxSeconds)
+	}
+}
+
 // Search keeps low-level Explorer tests focused on corpus behavior. Production
 // callers use OwnedSearcher so ActionID and AttemptID always come from the
 // canonical Action owner.

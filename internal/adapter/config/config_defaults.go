@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 )
 
 func defaultOwnerStorage(currentStorage, sqlitePath string) string {
@@ -426,7 +428,7 @@ func (c *Config) setDefaults() {
 		c.DCI.ExplicitKeywords = []string{"探して", "grep", "仕様書", "ログ", "原文", "どこに書いてある", "矛盾", "前に話した"}
 	}
 	if c.DCI.MaxSeconds <= 0 {
-		c.DCI.MaxSeconds = 30
+		c.DCI.MaxSeconds = domaindci.DefaultMaxSeconds
 	}
 	if c.DCI.MaxSteps <= 0 {
 		c.DCI.MaxSteps = 8
