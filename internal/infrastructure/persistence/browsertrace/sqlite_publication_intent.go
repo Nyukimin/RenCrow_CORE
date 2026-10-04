@@ -127,53 +127,55 @@ func (s *SQLiteStore) CreateAPIArtifactWithPublicationIntent(ctx context.Context
 		return err
 	}
 	return s.withArtifactTransaction(ctx, "artifact create", func(ctx context.Context, conn *sql.Conn) error {
-		storedIntent, storedIntentFound, err := findAPIArtifactPublicationIntentOnConn(ctx, conn, item.ArtifactID)
-		if err != nil {
-			return err
-		}
-		if !storedIntentFound {
-			owner, ownerFound, err := findAPIArtifactPublicationIntentOwnerByEventID(ctx, conn, intent.EventID)
-			if err != nil {
-				return err
-			}
-			if ownerFound && owner != item.ArtifactID {
-				return fmt.Errorf("publication intent %s is already the creation fact of artifact %s, so artifact %s cannot claim the same event", intent.EventID, owner, item.ArtifactID)
-			}
-		}
-		storedRow, storedRowFound, err := findAPIArtifactOnConn(ctx, conn, item.ArtifactID)
-		if err != nil {
-			return err
-		}
+		return createAPIArtifactWithPublicationIntentOnConn(ctx, conn, item, intent, artifactPayload, intentPayload)
+	})
+}
 
-		if storedIntentFound {
-			if !reflect.DeepEqual(storedIntent, intent) {
-				return fmt.Errorf("artifact %s already carries publication intent %s, so creation intent %s would be a second event for one creation", item.ArtifactID, storedIntent.EventID, intent.EventID)
-			}
-			if !storedRowFound {
-				return fmt.Errorf("publication intent %s is stored for artifact %s, which has no row in api_artifact, so creating it again is not a no-op", intent.EventID, item.ArtifactID)
-			}
-			// A body digest a later update replaced or an edge a Supersede set is exactly
-			// what the shared immutable-reference check leaves alone.
-			if err := domaintrace.ValidateAPIArtifactPublicationIntentRow(intent, storedRow); err != nil {
-				return err
-			}
-			return nil
+func createAPIArtifactWithPublicationIntentOnConn(ctx context.Context, conn *sql.Conn, item domaintrace.APIArtifact, intent modulecore.EventEnvelope, artifactPayload, intentPayload []byte) error {
+	storedIntent, storedIntentFound, err := findAPIArtifactPublicationIntentOnConn(ctx, conn, item.ArtifactID)
+	if err != nil {
+		return err
+	}
+	if !storedIntentFound {
+		owner, ownerFound, err := findAPIArtifactPublicationIntentOwnerByEventID(ctx, conn, intent.EventID)
+		if err != nil {
+			return err
+		}
+		if ownerFound && owner != item.ArtifactID {
+			return fmt.Errorf("publication intent %s is already the creation fact of artifact %s, so artifact %s cannot claim the same event", intent.EventID, owner, item.ArtifactID)
+		}
+	}
+	storedRow, storedRowFound, err := findAPIArtifactOnConn(ctx, conn, item.ArtifactID)
+	if err != nil {
+		return err
+	}
+
+	if storedIntentFound {
+		if !reflect.DeepEqual(storedIntent, intent) {
+			return fmt.Errorf("artifact %s already carries publication intent %s, so creation intent %s would be a second event for one creation", item.ArtifactID, storedIntent.EventID, intent.EventID)
 		}
 		if !storedRowFound {
-			if _, err := conn.ExecContext(ctx,
-				`INSERT OR REPLACE INTO api_artifact (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
-				string(item.ArtifactID), string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), string(artifactPayload)); err != nil {
-				return fmt.Errorf("write artifact %s: %w", item.ArtifactID, err)
-			}
-			if _, err := conn.ExecContext(ctx,
-				`INSERT INTO `+publicationIntentTable+` (artifact_id, event_id, payload) VALUES (?, ?, ?)`,
-				string(item.ArtifactID), string(intent.EventID), string(intentPayload)); err != nil {
-				return fmt.Errorf("write publication intent %s for artifact %s: %w", intent.EventID, item.ArtifactID, err)
-			}
-			return nil
+			return fmt.Errorf("publication intent %s is stored for artifact %s, which has no row in api_artifact, so creating it again is not a no-op", intent.EventID, item.ArtifactID)
 		}
-		return fmt.Errorf("artifact %s is stored in api_artifact without a publication intent, so it predates CreateAPIArtifactWithPublicationIntent and its creation fact has to be recorded by an explicit migration repair, not by this create", item.ArtifactID)
-	})
+		if err := domaintrace.ValidateAPIArtifactPublicationIntentRow(intent, storedRow); err != nil {
+			return err
+		}
+		return nil
+	}
+	if !storedRowFound {
+		if _, err := conn.ExecContext(ctx,
+			`INSERT OR REPLACE INTO api_artifact (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
+			string(item.ArtifactID), string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), string(artifactPayload)); err != nil {
+			return fmt.Errorf("write artifact %s: %w", item.ArtifactID, err)
+		}
+		if _, err := conn.ExecContext(ctx,
+			`INSERT INTO `+publicationIntentTable+` (artifact_id, event_id, payload) VALUES (?, ?, ?)`,
+			string(item.ArtifactID), string(intent.EventID), string(intentPayload)); err != nil {
+			return fmt.Errorf("write publication intent %s for artifact %s: %w", intent.EventID, item.ArtifactID, err)
+		}
+		return nil
+	}
+	return fmt.Errorf("artifact %s is stored in api_artifact without a publication intent, so it predates CreateAPIArtifactWithPublicationIntent and its creation fact has to be recorded by an explicit migration repair, not by this create", item.ArtifactID)
 }
 
 // ListAPIArtifactPublicationIntents returns one bounded page of stored creation intents in

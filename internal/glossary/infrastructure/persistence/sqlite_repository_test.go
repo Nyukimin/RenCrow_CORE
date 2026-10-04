@@ -2,6 +2,8 @@ package persistence
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,4 +143,46 @@ func TestSQLiteGlossaryRepositoryCandidateRejectsMalformedStoredRow(t *testing.T
 		t.Fatalf("invalid state candidate result found=%v err=%v", found, err)
 	}
 
+}
+
+func TestGlossaryOwnerMutationReceiptIsAtomicBoundAndDurable(t *testing.T) {
+	path := t.TempDir() + "/glossary-owner-receipt.db"
+	ctx := context.Background()
+	identity := GlossaryOperationIdentity{OpID: "glossary-candidate-commit", Operation: "save_candidate", PayloadHash: strings.Repeat("a", 64)}
+	candidate := testGlossaryCandidate()
+	repo, err := NewSQLiteGlossaryRepository(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteGlossaryRepository: %v", err)
+	}
+	if err := repo.SaveCandidateForStorageHostOperation(ctx, identity, candidate); err != nil {
+		t.Fatalf("SaveCandidateForStorageHostOperation: %v", err)
+	}
+	receipt, found, err := repo.LookupStorageHostOperationReceipt(ctx, identity)
+	if err != nil || !found || receipt.Identity != identity || string(receipt.ResultJSON) != "null" {
+		t.Fatalf("owner receipt=%+v found=%v err=%v", receipt, found, err)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	reopened, err := NewSQLiteGlossaryRepository(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.SaveCandidateForStorageHostOperation(ctx, identity, candidate); err != nil {
+		t.Fatalf("exact replay after owner reopen: %v", err)
+	}
+	got, ok, err := reopened.FindCandidateByID(ctx, candidate.ID)
+	if err != nil || !ok || got != candidate {
+		t.Fatalf("candidate after exact replay=%+v found=%v err=%v", got, ok, err)
+	}
+	changed := identity
+	changed.PayloadHash = strings.Repeat("b", 64)
+	if err := reopened.SaveCandidateForStorageHostOperation(ctx, changed, candidate); !errors.Is(err, ErrGlossaryOperationConflict) {
+		t.Fatalf("same op_id with changed payload err=%v, want ErrGlossaryOperationConflict", err)
+	}
+	receipt, found, err = reopened.LookupStorageHostOperationReceipt(ctx, changed)
+	if err != nil || !found || receipt.Identity != identity {
+		t.Fatalf("changed-payload lookup=%+v found=%v err=%v, want original durable binding", receipt, found, err)
+	}
 }

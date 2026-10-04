@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
@@ -17,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const dciSchemaVersion = 2
+const dciSchemaVersion = 3
 
 const (
 	dciTraceTraceIDIndex      = "dci_search_trace_trace_id_unique"
@@ -32,6 +33,7 @@ var dciSchemaTables = []string{
 	"dci_search_step",
 	"dci_evidence",
 	"dci_query_terms",
+	"dci_storagehost_receipt",
 }
 
 var dciSchemaColumns = map[string][]string{
@@ -50,6 +52,10 @@ var dciSchemaColumns = map[string][]string{
 	},
 	"dci_query_terms": {
 		"id", "action_id", "term", "term_type", "parent_term", "created_at",
+	},
+	"dci_storagehost_receipt": {
+		"op_id", "operation", "payload_sha256", "writer_generation", "effect_id", "effect_sha256",
+		"proof_sha256", "result_json", "result_sha256", "created_at",
 	},
 }
 
@@ -75,13 +81,19 @@ var dciSchemaTypes = map[string]map[string]string{
 		"id": "INTEGER", "action_id": "TEXT", "term": "TEXT", "term_type": "TEXT",
 		"parent_term": "TEXT", "created_at": "TEXT",
 	},
+	"dci_storagehost_receipt": {
+		"op_id": "TEXT", "operation": "TEXT", "payload_sha256": "TEXT", "writer_generation": "INTEGER",
+		"effect_id": "TEXT", "effect_sha256": "TEXT", "proof_sha256": "TEXT", "result_json": "TEXT",
+		"result_sha256": "TEXT", "created_at": "TEXT",
+	},
 }
 
 var dciSchemaPrimaryKeys = map[string]string{
-	"dci_search_trace": "action_id",
-	"dci_search_step":  "id",
-	"dci_evidence":     "evidence_id",
-	"dci_query_terms":  "id",
+	"dci_search_trace":        "action_id",
+	"dci_search_step":         "id",
+	"dci_evidence":            "evidence_id",
+	"dci_query_terms":         "id",
+	"dci_storagehost_receipt": "op_id",
 }
 
 var dciSchemaNotNull = map[string]map[string]bool{
@@ -102,10 +114,16 @@ var dciSchemaNotNull = map[string]map[string]bool{
 	"dci_query_terms": {
 		"id": true, "action_id": true, "term": true, "created_at": true,
 	},
+	"dci_storagehost_receipt": {
+		"op_id": true, "operation": true, "payload_sha256": true, "writer_generation": true,
+		"effect_id": true, "effect_sha256": true, "proof_sha256": true, "result_json": true,
+		"result_sha256": true, "created_at": true,
+	},
 }
 
 type SQLiteStore struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 // MigrationRecord is one validated historical DCI result and the exact
@@ -423,6 +441,10 @@ func (s *SQLiteStore) ensureSchema() error {
 		if err := s.createSchemaV2(); err != nil {
 			return err
 		}
+	case 2:
+		if err := s.upgradeSchemaV2ToV3(tables); err != nil {
+			return err
+		}
 	case dciSchemaVersion:
 		if err := validateSchemaV2(s.db, tables); err != nil {
 			return err
@@ -494,6 +516,19 @@ CREATE TABLE dci_query_terms (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE dci_storagehost_receipt (
+  op_id TEXT PRIMARY KEY NOT NULL,
+  operation TEXT NOT NULL,
+  payload_sha256 TEXT NOT NULL,
+  writer_generation INTEGER NOT NULL,
+  effect_id TEXT NOT NULL,
+  effect_sha256 TEXT NOT NULL,
+  proof_sha256 TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  result_sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE UNIQUE INDEX dci_search_trace_trace_id_unique
   ON dci_search_trace(trace_id);
 CREATE UNIQUE INDEX dci_search_trace_idempotency_unique
@@ -514,12 +549,37 @@ CREATE UNIQUE INDEX dci_evidence_created_by_event_unique
 		_ = tx.Rollback()
 		return fmt.Errorf("failed to initialize dci sqlite schema: %w", err)
 	}
-	if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err := tx.Exec("PRAGMA user_version = 3"); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("failed to set dci sqlite schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit dci sqlite schema: %w", err)
+	}
+	return validateSchemaV2(s.db, dciSchemaTables)
+}
+
+func (s *SQLiteStore) upgradeSchemaV2ToV3(actualTables []string) error {
+	if err := validateOriginalSchemaV2(s.db, actualTables); err != nil {
+		return err
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin dci sqlite v3 migration: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`CREATE TABLE dci_storagehost_receipt (
+		op_id TEXT PRIMARY KEY NOT NULL, operation TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+		writer_generation INTEGER NOT NULL, effect_id TEXT NOT NULL, effect_sha256 TEXT NOT NULL,
+		proof_sha256 TEXT NOT NULL, result_json TEXT NOT NULL, result_sha256 TEXT NOT NULL, created_at TEXT NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create dci storage-host receipt table: %w", err)
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 3"); err != nil {
+		return fmt.Errorf("set dci sqlite schema version 3: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit dci sqlite v3 migration: %w", err)
 	}
 	return validateSchemaV2(s.db, dciSchemaTables)
 }
@@ -549,7 +609,20 @@ func validateSchemaV2(db *sql.DB, actualTables []string) error {
 	if !sameStringSet(actualTables, dciSchemaTables) {
 		return fmt.Errorf("dci sqlite schema tables do not match v2")
 	}
-	for table, columns := range dciSchemaColumns {
+	return validateDCISchemaTables(db, dciSchemaTables)
+}
+
+func validateOriginalSchemaV2(db *sql.DB, actualTables []string) error {
+	tables := dciSchemaTables[:len(dciSchemaTables)-1]
+	if !sameStringSet(actualTables, tables) {
+		return fmt.Errorf("dci sqlite schema tables do not match v2")
+	}
+	return validateDCISchemaTables(db, tables)
+}
+
+func validateDCISchemaTables(db *sql.DB, tables []string) error {
+	for _, table := range tables {
+		columns := dciSchemaColumns[table]
 		if err := validateTableColumns(db, table, columns, dciSchemaTypes[table], dciSchemaPrimaryKeys[table], dciSchemaNotNull[table]); err != nil {
 			return err
 		}

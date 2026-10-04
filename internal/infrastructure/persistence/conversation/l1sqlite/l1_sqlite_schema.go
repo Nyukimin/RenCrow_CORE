@@ -573,6 +573,12 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to initialize l1 sqlite schema: %w", err)
 	}
+	if err := s.initConversationL1OperationSchema(ctx); err != nil {
+		return err
+	}
+	if err := s.initUserMemoryStorageHostOperationSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.applyConversationTurnSchema(ctx); err != nil {
 		return err
 	}

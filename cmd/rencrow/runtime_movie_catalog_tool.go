@@ -9,11 +9,13 @@ import (
 	"strings"
 
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/storagehost"
 	_ "modernc.org/sqlite"
 )
 
 type runtimeMovieCatalogLookup struct {
 	dbPath string
+	remote *storagehost.MovieCatalogClient
 }
 
 // runtimeMoviePreferenceCandidate is the owner-owned projection shared by the
@@ -67,7 +69,20 @@ func prepareRuntimeMovieCatalogLookup(ctx context.Context, configuredPath string
 	return &runtimeMovieCatalogLookup{dbPath: absPath}, nil
 }
 
+func newRuntimeMovieCatalogLookup(ctx context.Context, configuredPath string, selected *storagehost.MovieCatalogClient) (*runtimeMovieCatalogLookup, error) {
+	if selected != nil {
+		return &runtimeMovieCatalogLookup{remote: selected}, nil
+	}
+	return prepareRuntimeMovieCatalogLookup(ctx, configuredPath)
+}
+
 func (l *runtimeMovieCatalogLookup) Lookup(ctx context.Context, kind string, name string, information string, limit int) (any, error) {
+	if l != nil && l.remote != nil {
+		if strings.EqualFold(strings.TrimSpace(information), "all") {
+			information = ""
+		}
+		return l.remote.Lookup(ctx, moviecatalogapp.LookupRequest{Kind: kind, Name: name, Information: information, Limit: limit})
+	}
 	if l == nil || strings.TrimSpace(l.dbPath) == "" {
 		return nil, fmt.Errorf("movie catalog lookup is unavailable")
 	}
@@ -99,6 +114,9 @@ func openRuntimeMovieCatalogReadOnly(dbPath string) (*sql.DB, error) {
 // boundary for private movie preference proposals. It never touches canonical
 // movie/person or selection tables.
 func (l *runtimeMovieCatalogLookup) ensureRuntimeMoviePreferenceCandidateSchema(ctx context.Context) error {
+	if l != nil && l.remote != nil {
+		return nil
+	}
 	if l == nil || strings.TrimSpace(l.dbPath) == "" {
 		return fmt.Errorf("movie catalog preference candidate is unavailable")
 	}
@@ -143,6 +161,18 @@ CREATE TABLE IF NOT EXISTS movie_preference_candidate (
 // request lookup in one SQLite transaction. Existing rows are returned to the
 // adapter for binding comparison; no update or replace is ever performed.
 func (l *runtimeMovieCatalogLookup) insertRuntimeMoviePreferenceCandidate(ctx context.Context, candidate runtimeMoviePreferenceCandidate) (runtimeMoviePreferenceCandidate, bool, error) {
+	if l != nil && l.remote != nil {
+		if existing, found, err := l.remote.FindPreferenceCandidateByRequestID(ctx, candidate.UserID, candidate.RequestID); err != nil {
+			return runtimeMoviePreferenceCandidate{}, false, err
+		} else if found {
+			return runtimeMoviePreferenceCandidateFromStorageHost(existing), true, nil
+		}
+		stored, err := l.remote.SavePreferenceCandidate(ctx, runtimeMoviePreferenceCandidateToStorageHost(candidate))
+		if err != nil {
+			return runtimeMoviePreferenceCandidate{}, false, err
+		}
+		return runtimeMoviePreferenceCandidateFromStorageHost(stored.Candidate), stored.Replay, nil
+	}
 	if l == nil || strings.TrimSpace(l.dbPath) == "" {
 		return runtimeMoviePreferenceCandidate{}, false, fmt.Errorf("movie catalog preference candidate is unavailable")
 	}
@@ -224,11 +254,37 @@ FROM movie_preference_candidate WHERE `+column+` = ?`, value)
 }
 
 func (l *runtimeMovieCatalogLookup) findRuntimeMoviePreferenceCandidateByID(ctx context.Context, userID, candidateID string) (runtimeMoviePreferenceCandidate, bool, error) {
+	if l != nil && l.remote != nil {
+		candidate, found, err := l.remote.FindPreferenceCandidateByID(ctx, userID, candidateID)
+		return runtimeMoviePreferenceCandidateFromStorageHost(candidate), found, err
+	}
 	return l.findRuntimeMoviePreferenceCandidate(ctx, userID, "id", candidateID)
 }
 
 func (l *runtimeMovieCatalogLookup) findRuntimeMoviePreferenceCandidateByRequestID(ctx context.Context, userID, requestID string) (runtimeMoviePreferenceCandidate, bool, error) {
+	if l != nil && l.remote != nil {
+		candidate, found, err := l.remote.FindPreferenceCandidateByRequestID(ctx, userID, requestID)
+		return runtimeMoviePreferenceCandidateFromStorageHost(candidate), found, err
+	}
 	return l.findRuntimeMoviePreferenceCandidate(ctx, userID, "request_id", requestID)
+}
+
+func runtimeMoviePreferenceCandidateToStorageHost(candidate runtimeMoviePreferenceCandidate) moviecatalogapp.StorageHostPreferenceCandidate {
+	return moviecatalogapp.StorageHostPreferenceCandidate{
+		ID: candidate.ID, RequestID: candidate.RequestID, UserID: candidate.UserID, ActorID: candidate.ActorID,
+		PayloadHash: candidate.PayloadHash, TargetKind: candidate.TargetKind, TargetID: candidate.TargetID,
+		Familiarity: candidate.Familiarity, Sentiment: candidate.Sentiment, Note: candidate.Note,
+		State: candidate.State, CreatedAt: candidate.CreatedAt,
+	}
+}
+
+func runtimeMoviePreferenceCandidateFromStorageHost(candidate moviecatalogapp.StorageHostPreferenceCandidate) runtimeMoviePreferenceCandidate {
+	return runtimeMoviePreferenceCandidate{
+		ID: candidate.ID, RequestID: candidate.RequestID, UserID: candidate.UserID, ActorID: candidate.ActorID,
+		PayloadHash: candidate.PayloadHash, TargetKind: candidate.TargetKind, TargetID: candidate.TargetID,
+		Familiarity: candidate.Familiarity, Sentiment: candidate.Sentiment, Note: candidate.Note,
+		State: candidate.State, CreatedAt: candidate.CreatedAt,
+	}
 }
 
 func (l *runtimeMovieCatalogLookup) findRuntimeMoviePreferenceCandidate(ctx context.Context, userID, column, value string) (runtimeMoviePreferenceCandidate, bool, error) {

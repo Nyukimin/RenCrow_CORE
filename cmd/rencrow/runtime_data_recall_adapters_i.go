@@ -112,11 +112,22 @@ func runtimeHobbyGraphPreferenceRecallUserID(ctx context.Context) (string, error
 }
 
 func findRuntimeHobbyPreferenceCandidate(ctx context.Context, lookup *runtimeMusicCatalogLookup, column, value, userID string) (runtimeHobbyPreferenceCandidate, bool, error) {
-	if lookup == nil || strings.TrimSpace(lookup.dbPath) == "" {
-		return runtimeHobbyPreferenceCandidate{}, false, fmt.Errorf("hobby graph preference candidate is unavailable")
-	}
 	if column != "candidate_id" && column != "request_id" {
 		return runtimeHobbyPreferenceCandidate{}, false, fmt.Errorf("unsupported hobby graph preference candidate lookup column")
+	}
+	if lookup == nil || (lookup.remote == nil && strings.TrimSpace(lookup.dbPath) == "") {
+		return runtimeHobbyPreferenceCandidate{}, false, fmt.Errorf("hobby graph preference candidate is unavailable")
+	}
+	if lookup.remote != nil {
+		var candidate musiccatalogapp.StorageHostPreferenceCandidate
+		var found bool
+		var err error
+		if column == "candidate_id" {
+			candidate, found, err = lookup.remote.FindPreferenceCandidateByID(ctx, userID, value)
+		} else {
+			candidate, found, err = lookup.remote.FindPreferenceCandidateByRequestID(ctx, userID, value)
+		}
+		return runtimeHobbyPreferenceCandidateFromStorageHost(candidate), found, err
 	}
 	db, err := openRuntimeMusicCatalogReadOnly(lookup.dbPath)
 	if err != nil {

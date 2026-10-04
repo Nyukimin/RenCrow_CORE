@@ -78,6 +78,10 @@ func (s *L1SQLiteStore) SetCommonRawSourceRoot(root string) error {
 // before one SQLite transaction, and deliberately does not write projection,
 // Conversation, UserMemory, Knowledge, or Recall rows.
 func (s *L1SQLiteStore) IntakeCommonRaw(ctx context.Context, requestID, ownerID, actorID string, input domainmemory.CommonRawIntakeRequest) (domainmemory.CommonRawIntakeReceipt, error) {
+	return s.intakeCommonRaw(ctx, requestID, ownerID, actorID, input, nil)
+}
+
+func (s *L1SQLiteStore) intakeCommonRaw(ctx context.Context, requestID, ownerID, actorID string, input domainmemory.CommonRawIntakeRequest, storageHostIdentity *CommonRawStorageHostOperationIdentity) (domainmemory.CommonRawIntakeReceipt, error) {
 	if s == nil || s.db == nil {
 		return domainmemory.CommonRawIntakeReceipt{}, domainmemory.NewCommonRawError(domainmemory.CommonRawErrorUnavailable, "conversation_l1 store is unavailable")
 	}
@@ -118,6 +122,9 @@ func (s *L1SQLiteStore) IntakeCommonRaw(ctx context.Context, requestID, ownerID,
 		return domainmemory.CommonRawIntakeReceipt{}, err
 	} else if found {
 		replay.IdempotentReplay = true
+		if err := completeCommonRawStorageHostReplay(ctx, s, storageHostIdentity, replay); err != nil {
+			return domainmemory.CommonRawIntakeReceipt{}, fmt.Errorf("%w: store common raw replay operation receipt", domainmemory.ErrCommonRawUnavailable)
+		}
 		return replay, nil
 	}
 	manifestID := domainmemory.DeterministicCommonRawManifestID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, prepared.manifestSHA256)
@@ -263,6 +270,9 @@ VALUES (?, ?, ?, 'ingested', ?, ?, ?, ?, ?, ?, ?, ?)`, stateEventID,
 			domainmemory.DeterministicCommonRawRecordID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID, record.hash), manifestID, record.hash, ownerID, prepared.manifest.Scope, requestID, actorID, "ingested", "{}", now); err != nil {
 			return rollback(fmt.Errorf("%w: insert common raw ingested state", domainmemory.ErrCommonRawUnavailable))
 		}
+	}
+	if err := writeCommonRawStorageHostReceipt(ctx, tx, storageHostIdentity, receipt); err != nil {
+		return rollback(fmt.Errorf("%w: store common raw operation receipt", domainmemory.ErrCommonRawUnavailable))
 	}
 	if err := tx.Commit(); err != nil {
 		cleanup()

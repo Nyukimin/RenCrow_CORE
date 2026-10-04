@@ -23,6 +23,22 @@ import (
 // exists. A different request that names an identical archived event is a
 // semantic dedupe, but still creates its own receipt and returns false.
 func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, item l1sqlite.L1MemoryEvent, receipt ArchiveRequestReceipt) (bool, error) {
+	return d.archiveUserMemoryWithReceipt(ctx, item, receipt, nil)
+}
+
+// ArchiveUserMemoryWithReceiptAndOperation atomically writes the product
+// RequestID receipt and a storage-host operation result receipt. The product
+// receipt remains the domain idempotency key; the operation receipt exists
+// only to reproduce the original RPC result after a lost response.
+func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceiptAndOperation(ctx context.Context, item l1sqlite.L1MemoryEvent, receipt ArchiveRequestReceipt, opID, payloadSHA256 string) (bool, error) {
+	if !validArchiveStorageHostOperationIdentity(opID, payloadSHA256) {
+		return false, fmt.Errorf("%w: storage-host archive operation identity is invalid", domainmemory.ErrUserMemoryOwnerInvalid)
+	}
+	operation := &archiveStorageHostUserMemoryReceipt{OpID: opID, PayloadSHA256: payloadSHA256}
+	return d.archiveUserMemoryWithReceipt(ctx, item, receipt, operation)
+}
+
+func (d *ArchiveSQLiteStore) archiveUserMemoryWithReceipt(ctx context.Context, item l1sqlite.L1MemoryEvent, receipt ArchiveRequestReceipt, operation *archiveStorageHostUserMemoryReceipt) (bool, error) {
 	if d == nil || d.db == nil {
 		return false, fmt.Errorf("%w: archive sqlite store is closed", domainmemory.ErrUserMemoryOwnerUnavailable)
 	}
@@ -39,6 +55,11 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 	if err := validateArchiveUserMemoryBinding(item, receipt); err != nil {
 		return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerInvalid, err)
 	}
+	if operation != nil {
+		operation.RequestID = receipt.RequestID
+		operation.UserID = receipt.UserID
+		operation.MemoryID = receipt.MemoryID
+	}
 	metaJSON, err := json.Marshal(item.Meta)
 	if err != nil {
 		return false, fmt.Errorf("failed to marshal archive user memory meta: %w", err)
@@ -51,6 +72,35 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 		return false, fmt.Errorf("%w: failed to begin archive user memory transaction: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
 	defer tx.Rollback()
+	if operation != nil {
+		storedOperation, operationFound, err := findArchiveStorageHostUserMemoryReceipt(ctx, tx, operation.OpID)
+		if err != nil {
+			return false, fmt.Errorf("%w: inspect storage-host archive operation receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+		}
+		if operationFound {
+			if !archiveStorageHostUserMemoryReceiptBindingEqual(storedOperation, *operation) {
+				return false, fmt.Errorf("%w: storage-host archive operation receipt conflict", domainmemory.ErrUserMemoryOwnerConflict)
+			}
+			existingReceipt, found, err := findArchiveRequestReceipt(ctx, tx, receipt.RequestID, "")
+			if err != nil {
+				return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+			}
+			if !found || !archiveRequestReceiptBindingEqual(existingReceipt, receipt) {
+				return false, fmt.Errorf("%w: storage-host archive operation receipt has no matching product receipt", domainmemory.ErrUserMemoryOwnerConflict)
+			}
+			existingEvent, found, err := findArchiveMemoryEventByID(ctx, tx, receipt.MemoryID)
+			if err != nil {
+				return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+			}
+			if !found || existingEvent.Namespace != "user:"+receipt.UserID || !archiveL1MemoryEventEqual(existingEvent, item) {
+				return false, fmt.Errorf("%w: storage-host archive operation receipt has no matching user memory", domainmemory.ErrUserMemoryOwnerConflict)
+			}
+			if err := tx.Commit(); err != nil {
+				return false, fmt.Errorf("%w: verify storage-host archive operation receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+			}
+			return storedOperation.IdempotentReplay, nil
+		}
+	}
 
 	existingReceipt, found, err := findArchiveRequestReceipt(ctx, tx, receipt.RequestID, "")
 	if err != nil {
@@ -70,38 +120,46 @@ func (d *ArchiveSQLiteStore) ArchiveUserMemoryWithReceipt(ctx context.Context, i
 		if !archiveL1MemoryEventEqual(existingEvent, item) {
 			return false, fmt.Errorf("%w: conversation archive request receipt memory conflicts with archived event", domainmemory.ErrUserMemoryOwnerConflict)
 		}
-		return true, nil
-	}
-
-	existingEvent, eventFound, err := findArchiveMemoryEvent(ctx, tx, "user:"+receipt.UserID, receipt.MemoryID)
-	if err != nil {
-		return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
-	}
-	if eventFound && !archiveL1MemoryEventEqual(existingEvent, item) {
-		return false, fmt.Errorf("%w: conversation archive memory conflict", domainmemory.ErrUserMemoryOwnerConflict)
-	}
-	if !eventFound {
-		if _, err := tx.ExecContext(ctx, `
+		if operation == nil {
+			return true, nil
+		}
+	} else {
+		existingEvent, eventFound, err := findArchiveMemoryEvent(ctx, tx, "user:"+receipt.UserID, receipt.MemoryID)
+		if err != nil {
+			return false, fmt.Errorf("%w: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+		}
+		if eventFound && !archiveL1MemoryEventEqual(existingEvent, item) {
+			return false, fmt.Errorf("%w: conversation archive memory conflict", domainmemory.ErrUserMemoryOwnerConflict)
+		}
+		if !eventFound {
+			if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event_archive (
 	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, item.ID, item.Namespace, item.SessionID, string(item.ThreadID), int64(item.ThreadSeq), string(item.ThreadKind), string(item.Speaker), item.Message, string(metaJSON),
-			item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
-			return false, fmt.Errorf("%w: failed to archive user memory event: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+				item.MemoryState, item.Layer, item.Source, item.CreatedAt, item.UpdatedAt); err != nil {
+				return false, fmt.Errorf("%w: failed to archive user memory event: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+			}
 		}
-	}
-	if _, err := tx.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 INSERT INTO conversation_archive_request_receipt (
 	request_id, user_id, actor_id, payload_hash, memory_id, created_at
 ) VALUES (?, ?, ?, ?, ?, ?)
 	`, receipt.RequestID, receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.MemoryID, receipt.CreatedAt); err != nil {
-		return false, fmt.Errorf("%w: failed to persist conversation archive request receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+			return false, fmt.Errorf("%w: failed to persist conversation archive request receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+		}
+	}
+	if operation != nil {
+		operation.IdempotentReplay = found
+		if err := insertArchiveStorageHostUserMemoryReceipt(ctx, tx, *operation); err != nil {
+			return false, fmt.Errorf("%w: persist storage-host archive operation receipt: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, fmt.Errorf("%w: failed to commit conversation archive request: %v", domainmemory.ErrUserMemoryOwnerUnavailable, err)
 	}
-	return false, nil
+	return found, nil
 }
 
 // ArchiveUserMemoryWithRequest is an explicit alias for callers that name the

@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	musiccatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/musiccatalog"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 )
@@ -209,6 +210,9 @@ func runtimeHobbyPreferenceCandidateBindingEqual(left, right runtimeHobbyPrefere
 }
 
 func ensureRuntimeHobbyPreferenceCandidateSchema(ctx context.Context, lookup *runtimeMusicCatalogLookup) error {
+	if lookup != nil && lookup.remote != nil {
+		return nil
+	}
 	if lookup == nil || strings.TrimSpace(lookup.dbPath) == "" {
 		return fmt.Errorf("hobby graph preference candidate is unavailable")
 	}
@@ -248,6 +252,18 @@ CREATE TABLE IF NOT EXISTS hobby_agent_preference_candidate (
 }
 
 func insertRuntimeHobbyPreferenceCandidate(ctx context.Context, lookup *runtimeMusicCatalogLookup, candidate runtimeHobbyPreferenceCandidate) (runtimeHobbyPreferenceCandidate, bool, error) {
+	if lookup != nil && lookup.remote != nil {
+		if existing, found, err := lookup.remote.FindPreferenceCandidateByRequestID(ctx, candidate.UserID, candidate.RequestID); err != nil {
+			return runtimeHobbyPreferenceCandidate{}, false, err
+		} else if found {
+			return runtimeHobbyPreferenceCandidateFromStorageHost(existing), true, nil
+		}
+		stored, err := lookup.remote.SavePreferenceCandidate(ctx, runtimeHobbyPreferenceCandidateToStorageHost(candidate))
+		if err != nil {
+			return runtimeHobbyPreferenceCandidate{}, false, err
+		}
+		return runtimeHobbyPreferenceCandidateFromStorageHost(stored.Candidate), stored.Replay, nil
+	}
 	if lookup == nil || strings.TrimSpace(lookup.dbPath) == "" {
 		return runtimeHobbyPreferenceCandidate{}, false, fmt.Errorf("hobby graph preference candidate is unavailable")
 	}
@@ -303,6 +319,22 @@ VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		return runtimeHobbyPreferenceCandidate{}, false, fmt.Errorf("commit hobby graph preference candidate: %w", err)
 	}
 	return candidate, false, nil
+}
+
+func runtimeHobbyPreferenceCandidateToStorageHost(candidate runtimeHobbyPreferenceCandidate) musiccatalogapp.StorageHostPreferenceCandidate {
+	return musiccatalogapp.StorageHostPreferenceCandidate{
+		CandidateID: candidate.CandidateID, RequestID: candidate.RequestID, UserID: candidate.UserID,
+		ActorID: candidate.ActorID, PayloadHash: candidate.PayloadHash, TargetID: candidate.TargetID,
+		SignalType: candidate.SignalType, Note: candidate.Note, State: candidate.State, CreatedAt: candidate.CreatedAt,
+	}
+}
+
+func runtimeHobbyPreferenceCandidateFromStorageHost(candidate musiccatalogapp.StorageHostPreferenceCandidate) runtimeHobbyPreferenceCandidate {
+	return runtimeHobbyPreferenceCandidate{
+		CandidateID: candidate.CandidateID, RequestID: candidate.RequestID, UserID: candidate.UserID,
+		ActorID: candidate.ActorID, PayloadHash: candidate.PayloadHash, TargetID: candidate.TargetID,
+		SignalType: candidate.SignalType, Note: candidate.Note, State: candidate.State, CreatedAt: candidate.CreatedAt,
+	}
 }
 
 func queryRuntimeHobbyPreferenceCandidateTx(ctx context.Context, tx *sql.Tx, column, value string) (runtimeHobbyPreferenceCandidate, bool, error) {

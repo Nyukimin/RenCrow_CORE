@@ -13,7 +13,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
 )
@@ -78,7 +77,7 @@ func buildAgentRuntime(
 	convEngine conversation.ConversationEngine,
 	recentGlossaryContext func(context.Context, int) (string, error),
 	realMgr *conversationpersistence.RealConversationManager,
-	l1Store *l1sqlite.L1SQLiteStore,
+	userMemoryStore agent.UserMemoryManager,
 	subagentMgr *subagent.Manager,
 	advisorService agent.AdvisorService,
 	agentPolicy agent.AgentPolicyService,
@@ -122,9 +121,9 @@ func buildAgentRuntime(
 		shiroChatAgent = shiroChatAgent.WithKBManager(realMgr)
 		log.Printf("Mio: KBManager injected (KB autosave enabled)")
 	}
-	if l1Store != nil {
-		mioAgent = mioAgent.WithUserMemoryManager(l1Store)
-		shiroChatAgent = shiroChatAgent.WithUserMemoryManager(l1Store)
+	if userMemoryStore != nil {
+		mioAgent = mioAgent.WithUserMemoryManager(userMemoryStore)
+		shiroChatAgent = shiroChatAgent.WithUserMemoryManager(userMemoryStore)
 		log.Printf("Mio: UserMemoryManager injected")
 	}
 	mioPersonaFile := filepath.Join(cfg.WorkspaceDir, "persona", "mio.md")

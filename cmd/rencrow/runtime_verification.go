@@ -9,15 +9,16 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	appverification "github.com/Nyukimin/RenCrow_CORE/internal/application/verification"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/storagehost"
 	verificationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/verification"
 )
 
 type verificationRuntime struct {
 	Pipeline *appverification.Pipeline
-	Store    *verificationpersistence.JSONLReportStore
+	Store    storagehost.VerificationReportGroupOwner
 }
 
-func buildVerificationRuntime(cfg *config.Config, deps *Dependencies, l1Store *l1sqlite.L1SQLiteStore) verificationRuntime {
+func buildVerificationRuntime(cfg *config.Config, deps *Dependencies, l1Store *l1sqlite.L1SQLiteStore, reportStore storagehost.VerificationReportGroupOwner) verificationRuntime {
 	policy := domainverification.VerificationPolicy{
 		Enabled: cfg.Verification.Enabled,
 		Mode:    cfg.Verification.Mode,
@@ -31,9 +32,14 @@ func buildVerificationRuntime(cfg *config.Config, deps *Dependencies, l1Store *l
 		return verificationRuntime{}
 	}
 
-	store, err := verificationpersistence.NewJSONLReportStore(cfg.Verification.ReportPath)
-	if err != nil {
-		log.Printf("Verification report store disabled: %v", err)
+	store := reportStore
+	if store == nil {
+		localStore, err := verificationpersistence.NewJSONLReportStore(cfg.Verification.ReportPath)
+		if err != nil {
+			log.Printf("Verification report store disabled: %v", err)
+		} else {
+			store = localStore
+		}
 	}
 
 	var evidenceReader appverification.EvidenceReader

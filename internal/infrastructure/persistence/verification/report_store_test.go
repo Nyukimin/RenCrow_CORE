@@ -2,7 +2,11 @@ package verification
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,4 +218,210 @@ func TestJSONLReportStoreContentHashAndSupersessionGuards(t *testing.T) {
 	if got, want := items[0].ContentHash, testReportDigest(t, items[0]); got != want {
 		t.Fatalf("read-back row does not match its own digest: stored=%s recomputed=%s", got, want)
 	}
+}
+
+func TestJSONLReportStoreStorageHostOperationRecoversWithoutDuplicate(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+	identity := testVerificationOperationIdentity("verification-report-op-1", []byte("save"), 7)
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err != nil {
+		t.Fatalf("SaveForStorageHostOperation: %v", err)
+	}
+
+	reopened, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, found, err := reopened.LookupStorageHostOperationReceipt(ctx, identity)
+	if err != nil || !found || strings.TrimSpace(string(raw)) != "null" {
+		t.Fatalf("LookupStorageHostOperationReceipt found=%v raw=%s err=%v", found, raw, err)
+	}
+	if err := reopened.SaveForStorageHostOperation(ctx, identity, report); err != nil {
+		t.Fatalf("exact replay: %v", err)
+	}
+	items, err := reopened.ListRecent(ctx, 10)
+	if err != nil || len(items) != 1 || items[0].ArtifactID != report.ArtifactID {
+		t.Fatalf("items=%+v err=%v, want one exact report", items, err)
+	}
+	changed := identity
+	changed.PayloadSHA256 = strings.Repeat("a", 64)
+	if _, found, err := reopened.LookupStorageHostOperationReceipt(ctx, changed); !errors.Is(err, ErrVerificationReportOperationConflict) || found {
+		t.Fatalf("changed payload found=%v err=%v, want conflict", found, err)
+	}
+	changed = identity
+	changed.WriterGeneration++
+	if _, found, err := reopened.LookupStorageHostOperationReceipt(ctx, changed); !errors.Is(err, ErrVerificationReportOperationConflict) || found {
+		t.Fatalf("changed generation found=%v err=%v, want conflict", found, err)
+	}
+}
+
+func TestJSONLReportStoreStorageHostOperationRecoversLostCommitRecord(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+	identity := testVerificationOperationIdentity("verification-report-lost-response", []byte("save"), 11)
+	store.afterReportHook = func() error { return errors.New("simulated process loss") }
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err == nil {
+		t.Fatal("expected simulated loss after durable report append")
+	}
+
+	reopened, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, found, err := reopened.LookupStorageHostOperationReceipt(ctx, identity)
+	if err != nil || !found || string(raw) != "null" {
+		t.Fatalf("recovered receipt found=%v raw=%q err=%v", found, raw, err)
+	}
+	if err := reopened.SaveForStorageHostOperation(ctx, identity, report); err != nil {
+		t.Fatalf("replay recovered mutation: %v", err)
+	}
+	items, err := reopened.ListRecent(ctx, 10)
+	if err != nil || len(items) != 1 || items[0].ContentHash != report.ContentHash {
+		t.Fatalf("recovered items=%+v err=%v", items, err)
+	}
+}
+
+func TestJSONLReportStoreStorageHostOperationSyncsNewLogParentBeforeEffect(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentSyncs := 0
+	store.operationParentSyncHook = func(parent string) error {
+		if parent != filepath.Dir(store.operationPath()) {
+			t.Fatalf("synced parent=%q want=%q", parent, filepath.Dir(store.operationPath()))
+		}
+		parentSyncs++
+		return nil
+	}
+	store.afterReportHook = func() error {
+		if parentSyncs != 1 {
+			return fmt.Errorf("effect append preceded durable operation-log parent: syncs=%d", parentSyncs)
+		}
+		return errors.New("simulated process loss after effect")
+	}
+	report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+	identity := testVerificationOperationIdentity("verification-report-parent-sync", []byte("save"), 17)
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err == nil {
+		t.Fatal("expected simulated process loss")
+	}
+	if parentSyncs != 1 {
+		t.Fatalf("new operation log parent syncs=%d want 1 before effect", parentSyncs)
+	}
+}
+
+func TestJSONLReportStoreStorageHostOperationDoesNotCertifyVisibleBytesAfterSyncFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.reportSyncHook = func(*os.File) error { return errors.New("injected report sync failure") }
+	report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+	identity := testVerificationOperationIdentity("verification-report-effect-sync-failure", []byte("save"), 18)
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err == nil {
+		t.Fatal("expected report sync failure")
+	}
+	if rows := strings.TrimSpace(string(mustReadVerificationFile(t, path))); rows == "" {
+		t.Fatal("fault seam did not leave report bytes visible")
+	}
+	if raw, found, err := store.LookupStorageHostOperationReceipt(ctx, identity); !errors.Is(err, ErrVerificationReportOperationUnknown) || found || raw != nil {
+		t.Fatalf("visible unsynced effect was certified: raw=%q found=%v err=%v", raw, found, err)
+	}
+}
+
+func TestJSONLReportStoreStorageHostOperationReestablishesFailedParentBarrierBeforeEffect(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+	store, err := NewJSONLReportStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.operationParentSyncHook = func(string) error { return errors.New("injected operation-log parent sync failure") }
+	report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+	identity := testVerificationOperationIdentity("verification-report-parent-sync-failure", []byte("save"), 19)
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err == nil {
+		t.Fatal("expected initial parent sync failure")
+	}
+	if err := store.SaveForStorageHostOperation(ctx, identity, report); err == nil {
+		t.Fatal("expected retry parent sync failure")
+	}
+	if rows := strings.TrimSpace(string(mustReadVerificationFile(t, path))); rows != "" {
+		t.Fatalf("report effect appended before parent barrier recovery: %s", rows)
+	}
+}
+
+func mustReadVerificationFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestJSONLReportStoreStorageHostOperationRejectsSubstitutedEffectAndMalformedProof(t *testing.T) {
+	t.Run("substituted report", func(t *testing.T) {
+		ctx := context.Background()
+		path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+		store, err := NewJSONLReportStore(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		report := testReport(t, modulecore.NewTaskID(), domainverification.StatusVerified, time.Now().UTC())
+		identity := testVerificationOperationIdentity("verification-report-substituted", []byte("save"), 12)
+		if err := store.SaveForStorageHostOperation(ctx, identity, report); err != nil {
+			t.Fatal(err)
+		}
+		substitute := testReport(t, modulecore.NewTaskID(), domainverification.StatusConflict, report.CreatedAt)
+		raw, err := json.Marshal(substitute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, found, err := store.LookupStorageHostOperationReceipt(ctx, identity); !errors.Is(err, ErrVerificationReportOperationUnknown) || found {
+			t.Fatalf("substituted lookup found=%v err=%v", found, err)
+		}
+		if err := store.SaveForStorageHostOperation(ctx, identity, report); !errors.Is(err, ErrVerificationReportOperationUnknown) {
+			t.Fatalf("substituted replay err=%v", err)
+		}
+	})
+
+	for _, proof := range []string{"{\n", `{"version":0}` + "\n"} {
+		t.Run("malformed proof "+proof[:1], func(t *testing.T) {
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "verification_report.jsonl")
+			store, err := NewJSONLReportStore(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity := testVerificationOperationIdentity("verification-report-malformed", []byte("save"), 13)
+			if err := os.WriteFile(store.operationPath(), []byte(proof), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := store.LookupStorageHostOperationReceipt(ctx, identity); !errors.Is(err, ErrVerificationReportOperationCorrupt) || found {
+				t.Fatalf("malformed proof found=%v err=%v", found, err)
+			}
+		})
+	}
+}
+
+func testVerificationOperationIdentity(opID string, payload []byte, generation int64) StorageHostOperationIdentity {
+	hash := sha256.Sum256(payload)
+	return StorageHostOperationIdentity{OpID: opID, PayloadSHA256: hex.EncodeToString(hash[:]), WriterGeneration: generation}
 }

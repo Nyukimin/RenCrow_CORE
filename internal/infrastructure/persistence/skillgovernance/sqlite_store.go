@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -16,6 +17,7 @@ import (
 
 type SQLiteStore struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -85,13 +87,25 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS skill_storagehost_receipt (
+			op_id TEXT PRIMARY KEY NOT NULL,
+			operation TEXT NOT NULL,
+			payload_sha256 TEXT NOT NULL,
+			writer_generation INTEGER NOT NULL,
+			effect_id TEXT NOT NULL,
+			effect_sha256 TEXT NOT NULL,
+			proof_sha256 TEXT NOT NULL,
+			result_json TEXT NOT NULL,
+			result_sha256 TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
 	}
-	return nil
+	return validateSkillStorageHostReceiptSchema(s.db)
 }
 
 func (s *SQLiteStore) SaveSkillManifest(ctx context.Context, item domainskill.SkillManifest) error {

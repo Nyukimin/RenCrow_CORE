@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -107,11 +108,56 @@ func (s *SQLiteStore) migrate() error {
 			event_id TEXT NOT NULL UNIQUE,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS ` + browserTraceStorageHostReceiptTable + ` (
+			op_id TEXT PRIMARY KEY,
+			operation TEXT NOT NULL,
+			payload_sha256 TEXT NOT NULL,
+			writer_generation INTEGER NOT NULL,
+			effect_kind TEXT NOT NULL,
+			effect_id TEXT NOT NULL,
+			result_json TEXT NOT NULL,
+			result_sha256 TEXT NOT NULL,
+			effect_json TEXT NOT NULL,
+			effect_sha256 TEXT NOT NULL
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+	return s.validateBrowserTraceStorageHostReceiptSchema()
+}
+
+func (s *SQLiteStore) validateBrowserTraceStorageHostReceiptSchema() error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + browserTraceStorageHostReceiptTable + `)`)
+	if err != nil {
+		return fmt.Errorf("inspect browser trace storage-host receipt schema: %w", err)
+	}
+	defer rows.Close()
+	primaryKeyColumns := 0
+	opIDIsSolePrimaryKey := false
+	for rows.Next() {
+		var cid, primaryKeyOrdinal int
+		var name, columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKeyOrdinal); err != nil {
+			return fmt.Errorf("read browser trace storage-host receipt schema: %w", err)
+		}
+		if primaryKeyOrdinal == 0 {
+			continue
+		}
+		primaryKeyColumns++
+		if name == "op_id" && primaryKeyOrdinal == 1 {
+			opIDIsSolePrimaryKey = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read browser trace storage-host receipt schema: %w", err)
+	}
+	if !opIDIsSolePrimaryKey || primaryKeyColumns != 1 {
+		return errors.New("browser trace storage-host receipt schema requires op_id as its sole primary key")
 	}
 	return nil
 }
@@ -238,26 +284,30 @@ func (s *SQLiteStore) SaveAPIArtifact(ctx context.Context, item domaintrace.APIA
 		return err
 	}
 	return s.withArtifactTransaction(ctx, "artifact save", func(ctx context.Context, conn *sql.Conn) error {
-		stored, found, err := findAPIArtifactOnConn(ctx, conn, item.ArtifactID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			if item.SupersededBy != "" {
-				return fmt.Errorf("artifact %s is new with superseded_by %s: only SupersedeAPIArtifact may establish an edge", item.ArtifactID, item.SupersededBy)
-			}
-		} else if err := domaintrace.ValidateAPIArtifactScope(stored, item); err != nil {
-			return fmt.Errorf("save of artifact %s: %w", item.ArtifactID, err)
-		} else if item.SupersededBy != stored.SupersededBy {
-			return fmt.Errorf("artifact %s superseded_by %q does not match the stored edge %q: only SupersedeAPIArtifact may add, move or clear that edge", item.ArtifactID, item.SupersededBy, stored.SupersededBy)
-		}
-		if _, err := conn.ExecContext(ctx,
-			`INSERT OR REPLACE INTO api_artifact (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
-			string(item.ArtifactID), string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload)); err != nil {
-			return fmt.Errorf("write artifact %s: %w", item.ArtifactID, err)
-		}
-		return nil
+		return saveAPIArtifactOnConn(ctx, conn, item, payload)
 	})
+}
+
+func saveAPIArtifactOnConn(ctx context.Context, conn *sql.Conn, item domaintrace.APIArtifact, payload []byte) error {
+	stored, found, err := findAPIArtifactOnConn(ctx, conn, item.ArtifactID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if item.SupersededBy != "" {
+			return fmt.Errorf("artifact %s is new with superseded_by %s: only SupersedeAPIArtifact may establish an edge", item.ArtifactID, item.SupersededBy)
+		}
+	} else if err := domaintrace.ValidateAPIArtifactScope(stored, item); err != nil {
+		return fmt.Errorf("save of artifact %s: %w", item.ArtifactID, err)
+	} else if item.SupersededBy != stored.SupersededBy {
+		return fmt.Errorf("artifact %s superseded_by %q does not match the stored edge %q: only SupersedeAPIArtifact may add, move or clear that edge", item.ArtifactID, item.SupersededBy, stored.SupersededBy)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT OR REPLACE INTO api_artifact (artifact_id, run_id, created_at, payload) VALUES (?, ?, ?, ?)`,
+		string(item.ArtifactID), string(item.RunID), item.CreatedAt.Format(timeFormatRFC3339Nano), string(payload)); err != nil {
+		return fmt.Errorf("write artifact %s: %w", item.ArtifactID, err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListAPIArtifacts(ctx context.Context, limit int) ([]domaintrace.APIArtifact, error) {

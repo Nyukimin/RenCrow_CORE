@@ -7,23 +7,35 @@ import (
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 )
 
-func initializeRuntimeTaskOwner(deps *Dependencies, workspace string) error {
+func initializeRuntimeTaskOwner(deps *Dependencies, workspace string, selectedStores ...domaintask.Store) error {
 	if deps == nil {
 		return errors.New("runtime dependencies are nil")
+	}
+	if len(selectedStores) > 1 {
+		return errors.New("canonical Task owner accepts at most one selected store")
 	}
 	if deps.taskStore != nil || deps.taskManager != nil {
 		return errors.New("canonical Task owner is already initialized")
 	}
-	if strings.TrimSpace(defaultTaskStorePath(workspace)) == "" {
-		return errors.New("workspace directory is required for canonical Task owner")
+	var store domaintask.Store
+	if len(selectedStores) == 1 {
+		store = selectedStores[0]
 	}
-	store, err := taskpersistence.NewJSONLStore(defaultTaskStorePath(workspace))
-	if err != nil {
-		return fmt.Errorf("open canonical Task store: %w", err)
+	if store == nil {
+		path := strings.TrimSpace(defaultTaskStorePath(workspace))
+		if path == "" {
+			return errors.New("workspace directory is required for canonical Task owner")
+		}
+		var err error
+		store, err = taskpersistence.NewJSONLStore(path)
+		if err != nil {
+			return fmt.Errorf("open canonical Task store: %w", err)
+		}
 	}
 	deps.taskStore = store
 	deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits())

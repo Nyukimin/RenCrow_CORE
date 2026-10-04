@@ -125,6 +125,14 @@ func (m *mockArchiveSQLiteStore) SaveThreadSummaryWithReceipt(_ context.Context,
 func (m *mockArchiveSQLiteStore) GetSessionHistory(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
 	return m.saved, nil
 }
+func (m *mockArchiveSQLiteStore) GetThreadSummary(_ context.Context, threadID modulecore.ThreadID) (*domconv.ThreadSummary, error) {
+	for _, summary := range m.saved {
+		if summary != nil && summary.ThreadID == threadID {
+			return summary, nil
+		}
+	}
+	return nil, domconv.ErrThreadNotFound
+}
 func (m *mockArchiveSQLiteStore) SearchByDomain(_ context.Context, _ string, _ int) ([]*domconv.ThreadSummary, error) {
 	return nil, nil
 }

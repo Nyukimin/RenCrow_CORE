@@ -39,3 +39,58 @@ func TestBuildDurableStoreRuntimeRejectsUnknownManifestFields(t *testing.T) {
 		t.Fatal("unknown manifest field must be rejected")
 	}
 }
+
+func TestBuildDurableStoreRuntimeUsesSelectedOwnerWithoutLocalFallback(t *testing.T) {
+	root := t.TempDir()
+	store := &runtimeDurableWorkflowStoreStub{}
+	cfg := &config.Config{
+		DurableStore: config.DurableStoreConfig{Enabled: true, ManifestPath: filepath.Join("..", "..", "config", "durable-stores.json")},
+		Storage:      config.StorageConfig{Databases: config.DatabasePathsConfig{DurableStoreWorkflow: filepath.Join(root, "missing-parent", "workflow.db")}},
+	}
+	workflow, closer, err := buildDurableStoreRuntime(cfg, store)
+	if err != nil {
+		t.Fatalf("buildDurableStoreRuntime with selected remote Store: %v", err)
+	}
+	defer closer.Close()
+	selected, ok := closer.(*runtimeBorrowedDurableWorkflowStore)
+	if !ok || selected.Store != store {
+		t.Fatalf("selected durable Store wrapper = %T, want borrowed injected owner", closer)
+	}
+	_, handled, err := workflow.Handle(context.Background(), appstore.Input{
+		ActionID:    modulecore.ActionID("act_00000000-0000-5000-8000-000000000001"),
+		RequestedBy: "agent:mio",
+		UserScope:   "user:authenticated-test",
+		Message:     "XのBookmarkを保存するDBの設計を確認して",
+	})
+	if err != nil || !handled {
+		t.Fatalf("workflow.Handle handled=%v err=%v", handled, err)
+	}
+	if store.findActionCalls != 1 || store.findDedupeCalls != 1 || store.saveCalls != 1 {
+		t.Fatalf("injected Store calls action/dedupe/save=%d/%d/%d, want 1/1/1", store.findActionCalls, store.findDedupeCalls, store.saveCalls)
+	}
+}
+
+type runtimeDurableWorkflowStoreStub struct {
+	findActionCalls int
+	findDedupeCalls int
+	saveCalls       int
+}
+
+func (store *runtimeDurableWorkflowStoreStub) FindByDedupeKey(context.Context, string) (*domainstore.WorkflowResult, error) {
+	store.findDedupeCalls++
+	return nil, nil
+}
+
+func (store *runtimeDurableWorkflowStoreStub) FindByActionID(context.Context, modulecore.ActionID) (*domainstore.RequestReceipt, error) {
+	store.findActionCalls++
+	return nil, nil
+}
+
+func (*runtimeDurableWorkflowStoreStub) FindByRequirementID(context.Context, string) (*domainstore.WorkflowResult, error) {
+	return nil, nil
+}
+
+func (store *runtimeDurableWorkflowStoreStub) SaveWithReceipt(context.Context, *domainstore.WorkflowResult, domainstore.RequestReceipt) error {
+	store.saveCalls++
+	return nil
+}

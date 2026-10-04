@@ -273,3 +273,20 @@ func TestLegacyToolRegistryRowsRemainReadableAfterReceiptMigration(t *testing.T)
 		t.Fatalf("missing receipt = %+v found=%v err=%v", receipt, found, err)
 	}
 }
+
+func TestSQLiteToolRegistryReadsFailClosedOnMalformedPlatforms(t *testing.T) {
+	store := newTestStore(t)
+	_, err := store.db.Exec(`
+		INSERT INTO tool_registry (name, description, schema_json, platforms, source, created_at, created_by)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, "malformed_platforms", "description", `{}`, `["linux",]`, string(capability.ToolSourceBuiltin), time.Now().UTC(), "builtin")
+	if err != nil {
+		t.Fatalf("seed malformed row: %v", err)
+	}
+	if _, err := store.Get(context.Background(), "malformed_platforms"); err == nil {
+		t.Fatal("Get must reject malformed stored platform JSON")
+	}
+	if _, err := store.ListForPlatform(context.Background(), "linux"); err == nil {
+		t.Fatal("ListForPlatform must reject malformed stored platform JSON")
+	}
+}

@@ -52,6 +52,7 @@ Commands:
   browser-actor  Operate an allowlisted browser session from JSON
   knowledge  Import Knowledge DB seed data
   person-related  Run bounded person-related catalog collection (collect-batch)
+  storage-host    Serve CORE-owned durable storage over authenticated RPC
   help      Show this help message
 
 Agent Mode:

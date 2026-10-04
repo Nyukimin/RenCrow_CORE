@@ -79,6 +79,8 @@ func main() {
 		cmdPersonRelated()
 	case "knowledge-memory":
 		cmdKnowledgeMemory()
+	case "storage-host":
+		cmdStorageHost()
 	case "help", "-h", "--help":
 		cmdHelp()
 	default:

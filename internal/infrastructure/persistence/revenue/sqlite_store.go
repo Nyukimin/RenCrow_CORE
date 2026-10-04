@@ -113,11 +113,73 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS revenue_storagehost_operation_receipt (
+			op_id TEXT PRIMARY KEY CHECK(length(op_id) BETWEEN 1 AND 128),
+			operation TEXT NOT NULL CHECK(operation IN (
+				'save_market_research_item', 'save_sns_post_metric', 'save_product', 'save_customer_voice',
+				'save_revenue_event', 'save_opportunity', 'save_economic_task', 'save_economic_reflection',
+				'save_policy_decision_record', 'save_daily_routine_report', 'save_channel_draft',
+				'save_external_send_apply_record', 'save_delivery')),
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 = lower(payload_sha256) AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+			writer_generation INTEGER NOT NULL CHECK(writer_generation > 0),
+			effect_table TEXT NOT NULL CHECK(effect_table IN (
+				'market_research_item', 'sns_post_metric', 'product_catalog', 'customer_voice', 'revenue_event',
+				'opportunity', 'economic_task', 'economic_reflection', 'policy_decision',
+				'revenue_daily_routine_report', 'channel_draft', 'external_send_apply', 'delivery')),
+			effect_id TEXT NOT NULL CHECK(length(effect_id) BETWEEN 1 AND 512),
+			result_json TEXT NOT NULL,
+			result_sha256 TEXT NOT NULL CHECK(length(result_sha256) = 64 AND result_sha256 = lower(result_sha256) AND result_sha256 NOT GLOB '*[^0-9a-f]*'),
+			CHECK(
+				(operation = 'save_market_research_item' AND effect_table = 'market_research_item') OR
+				(operation = 'save_sns_post_metric' AND effect_table = 'sns_post_metric') OR
+				(operation = 'save_product' AND effect_table = 'product_catalog') OR
+				(operation = 'save_customer_voice' AND effect_table = 'customer_voice') OR
+				(operation = 'save_revenue_event' AND effect_table = 'revenue_event') OR
+				(operation = 'save_opportunity' AND effect_table = 'opportunity') OR
+				(operation = 'save_economic_task' AND effect_table = 'economic_task') OR
+				(operation = 'save_economic_reflection' AND effect_table = 'economic_reflection') OR
+				(operation = 'save_policy_decision_record' AND effect_table = 'policy_decision') OR
+				(operation = 'save_daily_routine_report' AND effect_table = 'revenue_daily_routine_report') OR
+				(operation = 'save_channel_draft' AND effect_table = 'channel_draft') OR
+				(operation = 'save_external_send_apply_record' AND effect_table = 'external_send_apply') OR
+				(operation = 'save_delivery' AND effect_table = 'delivery'))
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+	return s.validateRevenueStorageHostReceiptSchema()
+}
+
+func (s *SQLiteStore) validateRevenueStorageHostReceiptSchema() error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + revenueStorageHostReceiptTable + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	primaryKeyCount := 0
+	primaryKeyColumn := ""
+	for rows.Next() {
+		var cid, notNull, primaryKeyOrdinal int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKeyOrdinal); err != nil {
+			return err
+		}
+		if primaryKeyOrdinal > 0 {
+			primaryKeyCount++
+			if primaryKeyOrdinal == 1 {
+				primaryKeyColumn = name
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if primaryKeyCount != 1 || primaryKeyColumn != "op_id" {
+		return fmt.Errorf("revenue storage-host receipt primary key must be exactly op_id")
 	}
 	return nil
 }

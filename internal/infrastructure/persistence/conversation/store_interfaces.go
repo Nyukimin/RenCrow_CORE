@@ -24,13 +24,21 @@ type redisStoreIface interface {
 	Close() error
 }
 
-// archiveStoreIface はArchiveSQLiteStoreのインターフェース
-type archiveStoreIface interface {
-	SaveThreadSummary(ctx context.Context, summary *conversation.ThreadSummary) error
+// ConversationArchiveStore is the closed history/summary surface used by
+// canonical Conversation routes. Local-only export and cleanup stay outside
+// this runtime interface.
+type ConversationArchiveStore interface {
 	SaveThreadSummaryWithReceipt(ctx context.Context, summary *conversation.ThreadSummary, receipt *conversation.ThreadSummaryReceipt) error
+	GetThreadSummary(ctx context.Context, threadID modulecore.ThreadID) (*conversation.ThreadSummary, error)
 	GetSessionHistory(ctx context.Context, sessionID string, limit int) ([]*conversation.ThreadSummary, error)
 	SearchByDomain(ctx context.Context, domain string, limit int) ([]*conversation.ThreadSummary, error)
 	SearchKnowledgeArchiveFTS(ctx context.Context, domain string, query string, limit int) ([]l1sqlite.L1KnowledgeItem, error)
+}
+
+// archiveStoreIface is the additional local owner surface used for archive
+// maintenance and local close ownership.
+type archiveStoreIface interface {
+	ConversationArchiveStore
 	ExportThreadSummariesParquet(ctx context.Context, outputPath string) error
 	ExportL1ArchivesParquet(ctx context.Context, outputDir string) (map[string]string, error)
 	CleanupOldRecords(ctx context.Context) (int64, error)
@@ -56,7 +64,7 @@ type vectordbStoreIface interface {
 	Close() error
 }
 
-type l1StoreIface interface {
+type L1ConversationStore interface {
 	SaveMessage(ctx context.Context, sessionID string, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, namespace string, msg conversation.Message, memoryState string) error
 	SaveSearchCache(ctx context.Context, provider string, rawQuery string, resultsJSON string, sourceURLs []string, ttl time.Duration) (*l1sqlite.L1SearchCacheEntry, error)
 	GetFreshSearchCache(ctx context.Context, provider string, rawQuery string, now time.Time) (*l1sqlite.L1SearchCacheEntry, error)
@@ -74,8 +82,9 @@ type l1StoreIface interface {
 	LatestConversationThreadReference(ctx context.Context, sessionID string) (modulecore.ThreadID, modulecore.ThreadSeq, modulecore.ThreadKind, bool, error)
 	SaveRecallTrace(ctx context.Context, trace conversation.RecallTrace) error
 	RecentRecallTraces(ctx context.Context, sessionID string, limit int) ([]conversation.RecallTrace, error)
-	Close() error
 }
+
+type l1StoreIface = L1ConversationStore
 
 // conversationTurnL1Store is the bounded EndTurn/follower surface. It stays
 // separate from the legacy Store interface so old callers and test doubles do

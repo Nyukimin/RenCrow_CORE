@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
@@ -14,9 +15,12 @@ import (
 // - 長期記憶: memory/MEMORY.md
 // - 日次ノート: memory/YYYYMM/YYYYMMDD.md
 type FileStore struct {
-	memoryDir  string
-	memoryFile string
-	now        func() time.Time // テスト用に注入可能
+	mu           sync.Mutex
+	memoryDir    string
+	memoryFile   string
+	now          func() time.Time // テスト用に注入可能
+	recoverable  bool
+	operationDir string
 }
 
 // NewFileStore は新しいFileStoreを作成する
@@ -41,6 +45,8 @@ func NewFileStoreAt(memoryDir string) *FileStore {
 
 // WithClock はテスト用に時刻関数を差し替える
 func (fs *FileStore) WithClock(now func() time.Time) *FileStore {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	fs.now = now
 	return fs
 }
@@ -54,6 +60,12 @@ func (fs *FileStore) getTodayFile() string {
 
 // ReadLongTerm は長期記憶（MEMORY.md）を読み込む
 func (fs *FileStore) ReadLongTerm() string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.readLongTermLocked()
+}
+
+func (fs *FileStore) readLongTermLocked() string {
 	if data, err := os.ReadFile(fs.memoryFile); err == nil {
 		return string(data)
 	}
@@ -62,11 +74,22 @@ func (fs *FileStore) ReadLongTerm() string {
 
 // WriteLongTerm は長期記憶に書き込む
 func (fs *FileStore) WriteLongTerm(content string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.recoverable {
+		return errStorageHostOperationIdentityRequired
+	}
 	return os.WriteFile(fs.memoryFile, []byte(content), 0644)
 }
 
 // ReadToday は今日の日次ノートを読み込む
 func (fs *FileStore) ReadToday() string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.readTodayLocked()
+}
+
+func (fs *FileStore) readTodayLocked() string {
 	todayFile := fs.getTodayFile()
 	if data, err := os.ReadFile(todayFile); err == nil {
 		return string(data)
@@ -76,6 +99,15 @@ func (fs *FileStore) ReadToday() string {
 
 // AppendToday は今日の日次ノートに追記する
 func (fs *FileStore) AppendToday(content string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.recoverable {
+		return errStorageHostOperationIdentityRequired
+	}
+	return fs.appendTodayLocked(content)
+}
+
+func (fs *FileStore) appendTodayLocked(content string) error {
 	todayFile := fs.getTodayFile()
 
 	// 月ディレクトリを確保
@@ -100,6 +132,12 @@ func (fs *FileStore) AppendToday(content string) error {
 
 // GetRecentDailyNotes は直近N日分の日次ノートを返す
 func (fs *FileStore) GetRecentDailyNotes(days int) string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return fs.getRecentDailyNotesLocked(days)
+}
+
+func (fs *FileStore) getRecentDailyNotesLocked(days int) string {
 	var notes []string
 
 	for i := range days {
@@ -122,6 +160,15 @@ func (fs *FileStore) GetRecentDailyNotes(days int) string {
 
 // SaveDailyNoteForDate は指定日の日次ノートに書き込む
 func (fs *FileStore) SaveDailyNoteForDate(date time.Time, content string) error {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.recoverable {
+		return errStorageHostOperationIdentityRequired
+	}
+	return fs.saveDailyNoteForDateLocked(date, content)
+}
+
+func (fs *FileStore) saveDailyNoteForDateLocked(date time.Time, content string) error {
 	dateStr := date.Format("20060102")
 	monthDir := dateStr[:6]
 	dirPath := filepath.Join(fs.memoryDir, monthDir)
@@ -147,14 +194,16 @@ func (fs *FileStore) SaveDailyNoteForDate(date time.Time, content string) error 
 
 // GetMemoryContext はエージェントプロンプト用のメモリコンテキストを返す
 func (fs *FileStore) GetMemoryContext() string {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	var parts []string
 
-	longTerm := fs.ReadLongTerm()
+	longTerm := fs.readLongTermLocked()
 	if longTerm != "" {
 		parts = append(parts, "## Long-term Memory\n\n"+longTerm)
 	}
 
-	recentNotes := fs.GetRecentDailyNotes(3)
+	recentNotes := fs.getRecentDailyNotesLocked(3)
 	if recentNotes != "" {
 		parts = append(parts, "## Recent Daily Notes\n\n"+recentNotes)
 	}

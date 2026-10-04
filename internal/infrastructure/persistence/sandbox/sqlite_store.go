@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	domainsandbox "github.com/Nyukimin/RenCrow_CORE/internal/domain/sandbox"
 	_ "modernc.org/sqlite"
@@ -14,6 +15,7 @@ import (
 
 type SQLiteStore struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
@@ -81,6 +83,12 @@ func (s *SQLiteStore) migrate() error {
 				gate_status TEXT,
 				created_at TEXT,
 				payload TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS sandbox_storagehost_receipt (
+			op_id TEXT PRIMARY KEY, operation TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+			writer_generation INTEGER NOT NULL, effect_id TEXT NOT NULL, effect_sha256 TEXT NOT NULL,
+			proof_sha256 TEXT NOT NULL, result_json TEXT NOT NULL, result_sha256 TEXT NOT NULL,
+			created_at TEXT NOT NULL
 		)`,
 	}
 	for _, stmt := range stmts {

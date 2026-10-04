@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,5 +217,231 @@ func TestDirectoryStructure(t *testing.T) {
 	monthDir := filepath.Join(dir, "memory", "202603")
 	if _, err := os.Stat(monthDir); os.IsNotExist(err) {
 		t.Error("month directory should be created")
+	}
+}
+
+func TestOpenRecoverableFileStoreRejectsCorruptPendingWAL(t *testing.T) {
+	dir := t.TempDir()
+	operationDir := filepath.Join(dir, operationMemoryDirectoryName)
+	if err := os.MkdirAll(operationDir, 0o700); err != nil {
+		t.Fatalf("create operation metadata directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(operationDir, operationMemoryPendingName), []byte(`{"version":`), 0o600); err != nil {
+		t.Fatalf("write corrupt pending WAL: %v", err)
+	}
+	if _, err := OpenRecoverableFileStoreAt(dir); err == nil {
+		t.Fatal("OpenRecoverableFileStoreAt succeeded with a corrupt pending WAL")
+	}
+}
+
+func TestOpenRecoverableFileStoreRejectsTargetMismatch(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("open recoverable store: %v", err)
+	}
+	operation := StorageHostMemoryOperation{
+		OpID:        "memory-target-mismatch",
+		Operation:   StorageHostMemoryWriteLongTerm,
+		PayloadHash: memorySHA256([]byte("request")),
+		Content:     "prepared content",
+	}
+	store.mu.Lock()
+	record, err := store.newOperationMemoryWALLocked(operation)
+	if err == nil {
+		err = store.writePendingOperationMemoryLocked(record)
+	}
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatalf("prepare WAL: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("unrelated content"), 0o644); err != nil {
+		t.Fatalf("write mismatched target: %v", err)
+	}
+	if _, err := OpenRecoverableFileStoreAt(dir); err == nil {
+		t.Fatal("OpenRecoverableFileStoreAt succeeded with a mismatched target")
+	}
+}
+
+func TestOpenRecoverableFileStoreFinishesPreparedBeforeAndAfterStates(t *testing.T) {
+	for _, state := range []string{"before", "after"} {
+		t.Run(state, func(t *testing.T) {
+			dir := t.TempDir()
+			store, err := OpenRecoverableFileStoreAt(dir)
+			if err != nil {
+				t.Fatalf("open recoverable store: %v", err)
+			}
+			operation := StorageHostMemoryOperation{
+				OpID:        "memory-recovery-" + state,
+				Operation:   StorageHostMemoryWriteLongTerm,
+				PayloadHash: memorySHA256([]byte("request-" + state)),
+				Content:     "recover exactly once",
+			}
+			store.mu.Lock()
+			record, err := store.newOperationMemoryWALLocked(operation)
+			if err == nil {
+				err = store.writePendingOperationMemoryLocked(record)
+			}
+			store.mu.Unlock()
+			if err != nil {
+				t.Fatalf("prepare WAL: %v", err)
+			}
+			if state == "after" {
+				if err := os.WriteFile(filepath.Join(dir, "MEMORY.md"), record.AfterContent, 0o644); err != nil {
+					t.Fatalf("write after-state target: %v", err)
+				}
+			}
+
+			reopened, err := OpenRecoverableFileStoreAt(dir)
+			if err != nil {
+				t.Fatalf("recover prepared WAL: %v", err)
+			}
+			if got := reopened.ReadLongTerm(); got != operation.Content {
+				t.Fatalf("recovered long-term memory=%q, want %q", got, operation.Content)
+			}
+			lookup, err := reopened.LookupStorageHostMemoryOperation(operation.OpID, operation.Operation, operation.PayloadHash)
+			if err != nil || lookup.Resolution != StorageHostMemoryCommitted {
+				t.Fatalf("lookup after recovery=%+v err=%v, want committed receipt", lookup, err)
+			}
+		})
+	}
+}
+
+func TestOpenRecoverableFileStoreRecoversAppendAfterTargetWrite(t *testing.T) {
+	dir := t.TempDir()
+	ownerDate := time.Date(2026, 3, 5, 14, 0, 0, 0, jst())
+	store, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("open recoverable store: %v", err)
+	}
+	store.WithClock(func() time.Time { return ownerDate })
+	operation := StorageHostMemoryOperation{
+		OpID:        "memory-append-crash-after-target-write",
+		Operation:   StorageHostMemoryAppendToday,
+		PayloadHash: memorySHA256([]byte(`{"content":"recover this append"}`)),
+		Content:     "recover this append",
+	}
+
+	store.mu.Lock()
+	record, err := store.newOperationMemoryWALLocked(operation)
+	if err == nil {
+		err = store.writePendingOperationMemoryLocked(record)
+	}
+	if err == nil {
+		err = store.writeOperationMemoryTargetLocked(record.Target, record.AfterContent)
+	}
+	store.mu.Unlock()
+	if err != nil {
+		t.Fatalf("prepare and write append target before simulated crash: %v", err)
+	}
+
+	reopened, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("recover append on reopen: %v", err)
+	}
+	reopened.WithClock(func() time.Time { return ownerDate.AddDate(0, 0, 1) })
+	lookup, err := reopened.LookupStorageHostMemoryOperation(operation.OpID, operation.Operation, operation.PayloadHash)
+	if err != nil || lookup.Resolution != StorageHostMemoryCommitted {
+		t.Fatalf("lookup recovered append=%+v err=%v, want committed", lookup, err)
+	}
+	if _, err := reopened.ApplyStorageHostMemoryOperation(operation); err != nil {
+		t.Fatalf("replay recovered append after owner clock changed: %v", err)
+	}
+
+	path := filepath.Join(dir, "202603", "20260305.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read recovered append target: %v", err)
+	}
+	if got := strings.Count(string(data), operation.Content); got != 1 {
+		t.Fatalf("recovered append marker count=%d, want exactly once; content=%q", got, data)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "202603", "20260306.md")); !os.IsNotExist(err) {
+		t.Fatalf("retry created a different owner-clock target: stat error=%v", err)
+	}
+}
+
+func TestFileStoreStorageHostOperationIdentityIsIdempotentAndConflicts(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("open recoverable store: %v", err)
+	}
+	store.WithClock(func() time.Time { return time.Date(2026, 3, 5, 14, 0, 0, 0, jst()) })
+
+	operation := StorageHostMemoryOperation{
+		OpID:        "memory-idempotent-append",
+		Operation:   StorageHostMemoryAppendToday,
+		PayloadHash: memorySHA256([]byte(`{"content":"once"}`)),
+		Content:     "once",
+	}
+	if _, err := store.ApplyStorageHostMemoryOperation(operation); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+	if _, err := store.ApplyStorageHostMemoryOperation(StorageHostMemoryOperation{
+		OpID:        "memory-next-append",
+		Operation:   StorageHostMemoryAppendToday,
+		PayloadHash: memorySHA256([]byte(`{"content":"later"}`)),
+		Content:     "later",
+	}); err != nil {
+		t.Fatalf("later append: %v", err)
+	}
+
+	// A durable receipt remains authoritative even after a later operation has
+	// legitimately changed the same canonical file.
+	reopened, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("reopen recoverable store: %v", err)
+	}
+	lookup, err := reopened.LookupStorageHostMemoryOperation(operation.OpID, operation.Operation, operation.PayloadHash)
+	if err != nil || lookup.Resolution != StorageHostMemoryCommitted {
+		t.Fatalf("lookup historical receipt=%+v err=%v, want committed", lookup, err)
+	}
+	if _, err := reopened.ApplyStorageHostMemoryOperation(operation); err != nil {
+		t.Fatalf("replay original append after reopen and later target change: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "202603", "20260305.md"))
+	if err != nil {
+		t.Fatalf("read daily note: %v", err)
+	}
+	if strings.Count(string(data), operation.Content) != 1 || strings.Count(string(data), "later") != 1 {
+		t.Fatalf("daily note=%q, want one original and one later append", data)
+	}
+
+	conflicting := operation
+	conflicting.PayloadHash = memorySHA256([]byte(`{"content":"different"}`))
+	conflicting.Content = "different"
+	if _, err := store.ApplyStorageHostMemoryOperation(conflicting); err == nil || !errors.Is(err, ErrStorageHostOperationConflict) {
+		t.Fatalf("same op_id with another payload error=%v, want ErrStorageHostOperationConflict", err)
+	}
+}
+
+func TestFileStoreRejectsCorruptOperationReceipt(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenRecoverableFileStoreAt(dir)
+	if err != nil {
+		t.Fatalf("open recoverable store: %v", err)
+	}
+	operation := StorageHostMemoryOperation{
+		OpID:        "memory-corrupt-receipt",
+		Operation:   StorageHostMemoryWriteLongTerm,
+		PayloadHash: memorySHA256([]byte("request")),
+		Content:     "durably committed",
+	}
+	if _, err := store.ApplyStorageHostMemoryOperation(operation); err != nil {
+		t.Fatalf("commit owner operation: %v", err)
+	}
+	if err := os.WriteFile(store.operationMemoryReceiptPath(operation.OpID), []byte(`{"version":1,"op_id":"memory-corrupt-receipt"}`), 0o600); err != nil {
+		t.Fatalf("tamper with receipt: %v", err)
+	}
+	if _, err := store.LookupStorageHostMemoryOperation(operation.OpID, operation.Operation, operation.PayloadHash); err == nil {
+		t.Fatal("lookup accepted a corrupt durable receipt")
+	}
+	if _, err := store.ApplyStorageHostMemoryOperation(operation); err == nil {
+		t.Fatal("apply accepted a corrupt durable receipt instead of failing closed")
+	}
+	if got := store.ReadLongTerm(); got != operation.Content {
+		t.Fatalf("corrupt receipt caused owner content to change: %q", got)
 	}
 }

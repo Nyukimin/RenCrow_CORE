@@ -9,10 +9,14 @@ import (
 	"strings"
 
 	musiccatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/musiccatalog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/storagehost"
 	_ "modernc.org/sqlite"
 )
 
-type runtimeMusicCatalogLookup struct{ dbPath string }
+type runtimeMusicCatalogLookup struct {
+	dbPath string
+	remote *storagehost.HobbyGraphClient
+}
 
 func prepareRuntimeMusicCatalogLookup(ctx context.Context, configuredPath string) (*runtimeMusicCatalogLookup, error) {
 	configuredPath = strings.TrimSpace(configuredPath)
@@ -45,7 +49,17 @@ func prepareRuntimeMusicCatalogLookup(ctx context.Context, configuredPath string
 	return &runtimeMusicCatalogLookup{dbPath: absPath}, nil
 }
 
+func newRuntimeMusicCatalogLookup(ctx context.Context, configuredPath string, selected *storagehost.HobbyGraphClient) (*runtimeMusicCatalogLookup, error) {
+	if selected != nil {
+		return &runtimeMusicCatalogLookup{remote: selected}, nil
+	}
+	return prepareRuntimeMusicCatalogLookup(ctx, configuredPath)
+}
+
 func (l *runtimeMusicCatalogLookup) LookupMusic(ctx context.Context, kind string, name string, artist string, limit int) (any, error) {
+	if l != nil && l.remote != nil {
+		return l.remote.LookupCatalog(ctx, musiccatalogapp.CatalogRequest{Kind: kind, Name: name, Artist: artist, Limit: limit})
+	}
 	db, err := l.open(ctx)
 	if err != nil {
 		return nil, err
@@ -55,6 +69,9 @@ func (l *runtimeMusicCatalogLookup) LookupMusic(ctx context.Context, kind string
 }
 
 func (l *runtimeMusicCatalogLookup) LookupLyrics(ctx context.Context, song string, artist string, language string, information string, limit int) (any, error) {
+	if l != nil && l.remote != nil {
+		return l.remote.LookupLyrics(ctx, musiccatalogapp.LyricsRequest{Song: song, Artist: artist, Language: language, Information: information, Limit: limit})
+	}
 	db, err := l.open(ctx)
 	if err != nil {
 		return nil, err
@@ -64,7 +81,7 @@ func (l *runtimeMusicCatalogLookup) LookupLyrics(ctx context.Context, song strin
 }
 
 func (l *runtimeMusicCatalogLookup) open(ctx context.Context) (*sql.DB, error) {
-	if l == nil || strings.TrimSpace(l.dbPath) == "" {
+	if l == nil || l.remote != nil || strings.TrimSpace(l.dbPath) == "" {
 		return nil, fmt.Errorf("music catalog lookup is unavailable")
 	}
 	db, err := openRuntimeMusicCatalogReadOnly(l.dbPath)

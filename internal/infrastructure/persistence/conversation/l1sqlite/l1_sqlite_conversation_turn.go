@@ -3,6 +3,7 @@ package l1sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,10 +22,141 @@ const (
 	conversationTurnActiveThreadTable = "conversation_active_thread"
 	conversationTurnReceiptTable      = "conversation_turn_receipt"
 	conversationTurnOutboxTable       = "conversation_turn_outbox"
+	conversationTurnOperationTable    = "conversation_turn_operation_receipt"
 	conversationTurnDefaultLease      = time.Minute
 	conversationTurnMaxLease          = 24 * time.Hour
 	conversationTurnMaxResultBytes    = 64 * 1024
 )
+
+// ConversationTurnOperationIdentity binds a storage-host mutation receipt to
+// the caller's exact operation ID and canonical request payload hash.
+type ConversationTurnOperationIdentity struct {
+	OpID          string
+	Operation     string
+	PayloadSHA256 string
+}
+
+type conversationTurnClaimOperationResult struct {
+	Outbox     *domconv.ConversationTurnOutbox `json:"outbox"`
+	LeaseToken string                          `json:"lease_token,omitempty"`
+}
+
+type conversationTurnOperationReceipt struct {
+	Operation     string
+	PayloadSHA256 string
+	TurnID        string
+	Target        string
+	LeaseToken    string
+	ResultJSON    string
+}
+
+type conversationTurnOperationReceiptQuery interface {
+	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+}
+
+func (identity ConversationTurnOperationIdentity) validate() error {
+	if len(identity.OpID) == 0 || len(identity.OpID) > 128 || identity.Operation == "" || len(identity.Operation) > 64 ||
+		len(identity.PayloadSHA256) != 64 || strings.ToLower(identity.PayloadSHA256) != identity.PayloadSHA256 {
+		return domconv.ErrConversationTurnInvalid
+	}
+	for _, r := range identity.OpID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || strings.ContainsRune("._:-", r)) {
+			return domconv.ErrConversationTurnInvalid
+		}
+	}
+	decoded, err := hex.DecodeString(identity.PayloadSHA256)
+	if err != nil || len(decoded) != 32 {
+		return domconv.ErrConversationTurnInvalid
+	}
+	switch identity.Operation {
+	case "outbox_claim", "outbox_claim_next", "complete", "fail":
+		return nil
+	default:
+		return domconv.ErrConversationTurnInvalid
+	}
+}
+
+func readConversationTurnOperationReceipt(ctx context.Context, query conversationTurnOperationReceiptQuery, identity ConversationTurnOperationIdentity) (conversationTurnOperationReceipt, bool, error) {
+	if err := identity.validate(); err != nil {
+		return conversationTurnOperationReceipt{}, false, err
+	}
+	var receipt conversationTurnOperationReceipt
+	err := query.QueryRowContext(ctx, `
+SELECT operation, payload_sha256, turn_id, target, lease_token, result_json
+FROM conversation_turn_operation_receipt
+WHERE op_id = ?`, identity.OpID).Scan(&receipt.Operation, &receipt.PayloadSHA256, &receipt.TurnID, &receipt.Target, &receipt.LeaseToken, &receipt.ResultJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return conversationTurnOperationReceipt{}, false, nil
+	}
+	if err != nil {
+		return conversationTurnOperationReceipt{}, false, domconv.ErrConversationTurnInternal
+	}
+	if receipt.Operation != identity.Operation || receipt.PayloadSHA256 != identity.PayloadSHA256 || len(receipt.ResultJSON) > conversationTurnMaxResultBytes {
+		return conversationTurnOperationReceipt{}, false, domconv.ErrConversationTurnConflict
+	}
+	return receipt, true, nil
+}
+
+func insertConversationTurnOperationReceipt(ctx context.Context, tx *sql.Tx, identity ConversationTurnOperationIdentity, turnID, target, leaseToken string, result any) error {
+	if err := identity.validate(); err != nil {
+		return err
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil || len(resultJSON) > conversationTurnMaxResultBytes {
+		return domconv.ErrConversationTurnInternal
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO conversation_turn_operation_receipt (op_id, operation, payload_sha256, turn_id, target, lease_token, result_json, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, identity.OpID, identity.Operation, identity.PayloadSHA256, turnID, target, leaseToken, string(resultJSON), time.Now().UTC()); err != nil {
+		return domconv.ErrConversationTurnInternal
+	}
+	return nil
+}
+
+func lookupConversationTurnClaimOperationReceipt(ctx context.Context, query conversationTurnOperationReceiptQuery, identity ConversationTurnOperationIdentity) (*domconv.ConversationTurnOutbox, bool, error) {
+	if identity.Operation != "outbox_claim" && identity.Operation != "outbox_claim_next" {
+		return nil, false, domconv.ErrConversationTurnInvalid
+	}
+	receipt, found, err := readConversationTurnOperationReceipt(ctx, query, identity)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	var result conversationTurnClaimOperationResult
+	if err := json.Unmarshal([]byte(receipt.ResultJSON), &result); err != nil {
+		return nil, false, domconv.ErrConversationTurnInternal
+	}
+	if result.Outbox == nil {
+		if receipt.TurnID != "" || receipt.Target != "" || receipt.LeaseToken != "" || result.LeaseToken != "" {
+			return nil, false, domconv.ErrConversationTurnInternal
+		}
+		return nil, true, nil
+	}
+	if receipt.TurnID == "" || receipt.Target == "" || receipt.LeaseToken == "" || result.LeaseToken != receipt.LeaseToken ||
+		string(result.Outbox.TurnID) != receipt.TurnID || result.Outbox.Target != receipt.Target || result.Outbox.Status != domconv.ConversationTurnOutboxRunning ||
+		result.Outbox.LeaseToken != "" {
+		return nil, false, domconv.ErrConversationTurnInternal
+	}
+	result.Outbox.LeaseToken = receipt.LeaseToken
+	return result.Outbox, true, nil
+}
+
+func lookupConversationTurnFinishOperationReceipt(ctx context.Context, query conversationTurnOperationReceiptQuery, identity ConversationTurnOperationIdentity, turnID, target, leaseToken string) (domconv.ConversationTurnResult, bool, error) {
+	if (identity.Operation != "complete" && identity.Operation != "fail") || turnID == "" || target == "" || leaseToken == "" {
+		return domconv.ConversationTurnResult{}, false, domconv.ErrConversationTurnInvalid
+	}
+	receipt, found, err := readConversationTurnOperationReceipt(ctx, query, identity)
+	if err != nil || !found {
+		return domconv.ConversationTurnResult{}, found, err
+	}
+	if receipt.TurnID != turnID || receipt.Target != target || receipt.LeaseToken != leaseToken {
+		return domconv.ConversationTurnResult{}, false, domconv.ErrConversationTurnConflict
+	}
+	var result domconv.ConversationTurnResult
+	if err := json.Unmarshal([]byte(receipt.ResultJSON), &result); err != nil || string(result.TurnID) != turnID {
+		return domconv.ConversationTurnResult{}, false, domconv.ErrConversationTurnInternal
+	}
+	return result, true, nil
+}
 
 type conversationThreadIdentity struct {
 	ID   modulecore.ThreadID
@@ -119,6 +251,20 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conversation_turn_outbox_claim ON conversation_turn_outbox(status, lease_expires_at, created_at, turn_id, target)`,
+		`CREATE TABLE IF NOT EXISTS conversation_turn_operation_receipt (
+			op_id TEXT NOT NULL PRIMARY KEY CHECK(length(op_id) BETWEEN 1 AND 128),
+			operation TEXT NOT NULL CHECK(operation IN ('outbox_claim', 'outbox_claim_next', 'complete', 'fail')),
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+			turn_id TEXT NOT NULL DEFAULT '',
+			target TEXT NOT NULL DEFAULT '' CHECK(target IN ('', 'redis_projection', 'thread_followers')),
+			lease_token TEXT NOT NULL DEFAULT '' CHECK(length(lease_token) <= 256),
+			result_json TEXT NOT NULL CHECK(length(result_json) <= 65536),
+			created_at TIMESTAMP NOT NULL,
+			CHECK (
+				(turn_id = '' AND target = '' AND lease_token = '') OR
+				(turn_id <> '' AND target <> '' AND lease_token <> '')
+			)
+		)`,
 	}
 	for _, statement := range statements {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
@@ -283,6 +429,16 @@ func (s *L1SQLiteStore) ClaimConversationTurnOutbox(ctx context.Context, turnID 
 	return s.claimConversationTurnOutbox(ctx, turnID, now, leaseDuration)
 }
 
+// ClaimConversationTurnOutboxForOperation persists the caller's operation
+// receipt in the same transaction as the lease claim.
+func (s *L1SQLiteStore) ClaimConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, turnID string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	turnID = strings.TrimSpace(turnID)
+	if identity.Operation != "outbox_claim" || turnID == "" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, &identity)
+}
+
 // ClaimConversationTurnOutboxExcluding is used by the bounded foreground
 // drain so one turn+target is claimed at most once in that call.
 func (s *L1SQLiteStore) ClaimConversationTurnOutboxExcluding(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
@@ -290,7 +446,7 @@ func (s *L1SQLiteStore) ClaimConversationTurnOutboxExcluding(ctx context.Context
 	if turnID == "" {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, excluded)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, excluded, nil)
 }
 
 // ClaimNextConversationTurnOutbox claims the oldest pending or stale-running
@@ -299,21 +455,46 @@ func (s *L1SQLiteStore) ClaimNextConversationTurnOutbox(ctx context.Context, now
 	return s.claimConversationTurnOutbox(ctx, "", now, leaseDuration)
 }
 
+// ClaimNextConversationTurnOutboxForOperation persists the caller's
+// operation receipt in the same transaction as the selected lease.
+func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	if identity.Operation != "outbox_claim_next" {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, nil, &identity)
+}
+
+// GetConversationTurnClaimOperationReceipt returns only a claim result bound
+// to this exact caller operation and payload hash. A missing receipt is not
+// proof that a claim did not commit.
+func (s *L1SQLiteStore) GetConversationTurnClaimOperationReceipt(ctx context.Context, identity ConversationTurnOperationIdentity) (*domconv.ConversationTurnOutbox, bool, error) {
+	if s == nil || s.db == nil {
+		return nil, false, domconv.ErrConversationTurnUnavailable
+	}
+	return lookupConversationTurnClaimOperationReceipt(ctx, s.db, identity)
+}
+
 // ClaimNextConversationTurnOutboxExcluding is the drain-only variant that
 // prevents a failed target from being claimed again in the same bounded call.
 // The normal claim primitive still exposes retryable failed rows to later
 // calls.
 func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxExcluding(ctx context.Context, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
-	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded, nil)
 }
 
 func (s *L1SQLiteStore) claimConversationTurnOutbox(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
-	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, nil)
 }
 
-func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
+func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}, identity *ConversationTurnOperationIdentity) (*domconv.ConversationTurnOutbox, error) {
 	if s == nil || s.db == nil {
 		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	if identity != nil {
+		if err := identity.validate(); err != nil || (identity.Operation == "outbox_claim" && turnID == "") ||
+			(identity.Operation == "outbox_claim_next" && turnID != "") {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -327,6 +508,22 @@ func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Co
 	rollback := func(code domconv.ConversationTurnErrorCode) (*domconv.ConversationTurnOutbox, error) {
 		_ = tx.Rollback()
 		return nil, conversationTurnError(code)
+	}
+	if identity != nil {
+		existing, found, err := lookupConversationTurnClaimOperationReceipt(ctx, tx, *identity)
+		if err != nil {
+			code := domconv.ConversationTurnErrorCodeOf(err)
+			if code == "" {
+				code = domconv.ConversationTurnErrorInternal
+			}
+			return rollback(code)
+		}
+		if found {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				return nil, domconv.ErrConversationTurnInternal
+			}
+			return existing, nil
+		}
 	}
 	if err := terminalizeExhaustedConversationTurnOutbox(ctx, tx, now, turnID); err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal)
@@ -374,6 +571,11 @@ LIMIT 1`
 	row := tx.QueryRowContext(ctx, query, args...)
 	outbox, err := scanConversationTurnOutbox(row)
 	if errors.Is(err, sql.ErrNoRows) {
+		if identity != nil {
+			if err := insertConversationTurnOperationReceipt(ctx, tx, *identity, "", "", "", conversationTurnClaimOperationResult{}); err != nil {
+				return rollback(domconv.ConversationTurnErrorInternal)
+			}
+		}
 		if commitErr := tx.Commit(); commitErr != nil {
 			return nil, domconv.ErrConversationTurnInternal
 		}
@@ -399,14 +601,20 @@ WHERE turn_id = ? AND target = ? AND (
 	if err != nil || affected != 1 {
 		return rollback(domconv.ConversationTurnErrorConflict)
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, domconv.ErrConversationTurnInternal
-	}
 	outbox.Status = domconv.ConversationTurnOutboxRunning
 	outbox.LeaseToken = leaseToken
 	outbox.LeaseExpiresAt = expires
 	outbox.Attempts++
 	outbox.UpdatedAt = now
+	if identity != nil {
+		result := conversationTurnClaimOperationResult{Outbox: outbox, LeaseToken: leaseToken}
+		if err := insertConversationTurnOperationReceipt(ctx, tx, *identity, string(outbox.TurnID), outbox.Target, leaseToken, result); err != nil {
+			return rollback(domconv.ConversationTurnErrorInternal)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, domconv.ErrConversationTurnInternal
+	}
 	return outbox, nil
 }
 
@@ -474,17 +682,44 @@ WHERE turn_id = ? AND target = ? AND status = 'running' AND attempts >= ?`, stri
 }
 
 func (s *L1SQLiteStore) CompleteConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, now time.Time) (domconv.ConversationTurnResult, error) {
-	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, "", now)
+	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, "", now, nil)
+}
+
+// CompleteConversationTurnOutboxForOperation stores the exact result and
+// lease identity atomically with completion.
+func (s *L1SQLiteStore) CompleteConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, turnID, target, leaseToken string, now time.Time) (domconv.ConversationTurnResult, error) {
+	if identity.Operation != "complete" {
+		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnInvalid
+	}
+	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, "", now, &identity)
 }
 
 func (s *L1SQLiteStore) FailConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, code domconv.ConversationTurnErrorCode, now time.Time) (domconv.ConversationTurnResult, error) {
 	if !validConversationTurnErrorCode(code) {
 		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(strings.TrimSpace(turnID)), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
 	}
-	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, code, now)
+	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, code, now, nil)
 }
 
-func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, failureCode domconv.ConversationTurnErrorCode, now time.Time) (domconv.ConversationTurnResult, error) {
+// FailConversationTurnOutboxForOperation stores the exact result and lease
+// identity atomically with failure.
+func (s *L1SQLiteStore) FailConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, turnID, target, leaseToken string, code domconv.ConversationTurnErrorCode, now time.Time) (domconv.ConversationTurnResult, error) {
+	if identity.Operation != "fail" || !validConversationTurnErrorCode(code) {
+		return domconv.ConversationTurnResult{}, domconv.ErrConversationTurnInvalid
+	}
+	return s.finishConversationTurnOutbox(ctx, turnID, target, leaseToken, code, now, &identity)
+}
+
+// GetConversationTurnFinishOperationReceipt proves a finish result only when
+// operation, payload hash, turn, target, and lease all match.
+func (s *L1SQLiteStore) GetConversationTurnFinishOperationReceipt(ctx context.Context, identity ConversationTurnOperationIdentity, turnID, target, leaseToken string) (domconv.ConversationTurnResult, bool, error) {
+	if s == nil || s.db == nil {
+		return domconv.ConversationTurnResult{}, false, domconv.ErrConversationTurnUnavailable
+	}
+	return lookupConversationTurnFinishOperationReceipt(ctx, s.db, identity, turnID, target, leaseToken)
+}
+
+func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, failureCode domconv.ConversationTurnErrorCode, now time.Time, identity *ConversationTurnOperationIdentity) (domconv.ConversationTurnResult, error) {
 	turnID = strings.TrimSpace(turnID)
 	target = strings.TrimSpace(target)
 	leaseToken = strings.TrimSpace(leaseToken)
@@ -493,6 +728,12 @@ func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID
 	}
 	if s == nil || s.db == nil {
 		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorUnavailable}, domconv.ErrConversationTurnUnavailable
+	}
+	if identity != nil {
+		if err := identity.validate(); err != nil || (identity.Operation == "complete" && failureCode != "") ||
+			(identity.Operation == "fail" && failureCode == "") {
+			return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInvalid}, domconv.ErrConversationTurnInvalid
+		}
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -505,6 +746,22 @@ func (s *L1SQLiteStore) finishConversationTurnOutbox(ctx context.Context, turnID
 	rollback := func(code domconv.ConversationTurnErrorCode) (domconv.ConversationTurnResult, error) {
 		_ = tx.Rollback()
 		return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: code}, conversationTurnError(code)
+	}
+	if identity != nil {
+		existing, found, err := lookupConversationTurnFinishOperationReceipt(ctx, tx, *identity, turnID, target, leaseToken)
+		if err != nil {
+			code := domconv.ConversationTurnErrorCodeOf(err)
+			if code == "" {
+				code = domconv.ConversationTurnErrorInternal
+			}
+			return rollback(code)
+		}
+		if found {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				return domconv.ConversationTurnResult{TurnID: modulecore.TurnID(turnID), Status: domconv.ConversationTurnFailed, ErrorCode: domconv.ConversationTurnErrorInternal}, domconv.ErrConversationTurnInternal
+			}
+			return existing, nil
+		}
 	}
 	var status string
 	var expires sql.NullTime
@@ -522,6 +779,11 @@ WHERE turn_id = ? AND target = ? AND lease_token = ?`, turnID, target, leaseToke
 		result, resultErr := recomputeConversationTurnReceipt(ctx, tx, turnID, now)
 		if resultErr != nil {
 			return rollback(domconv.ConversationTurnErrorInternal)
+		}
+		if identity != nil {
+			if err := insertConversationTurnOperationReceipt(ctx, tx, *identity, turnID, target, leaseToken, result); err != nil {
+				return rollback(domconv.ConversationTurnErrorInternal)
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return rollbackNoTxConversationTurn(turnID, domconv.ConversationTurnErrorInternal)
@@ -554,6 +816,11 @@ WHERE turn_id = ? AND target = ? AND status = 'running' AND lease_token = ? AND 
 	result, err := recomputeConversationTurnReceipt(ctx, tx, turnID, now)
 	if err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal)
+	}
+	if identity != nil {
+		if err := insertConversationTurnOperationReceipt(ctx, tx, *identity, turnID, target, leaseToken, result); err != nil {
+			return rollback(domconv.ConversationTurnErrorInternal)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return rollbackNoTxConversationTurn(turnID, domconv.ConversationTurnErrorInternal)

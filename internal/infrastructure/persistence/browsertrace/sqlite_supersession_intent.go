@@ -127,82 +127,78 @@ func (s *SQLiteStore) SupersedeAPIArtifactWithPublicationIntent(ctx context.Cont
 		return err
 	}
 	return s.withArtifactTransaction(ctx, "supersede with publication fact", func(ctx context.Context, conn *sql.Conn) error {
-		predecessor, err := loadAPIArtifactOnConn(ctx, conn, predecessorID)
-		if err != nil {
-			return err
-		}
-		successor, err := loadAPIArtifactOnConn(ctx, conn, successorID)
-		if err != nil {
-			return err
-		}
-		// The predecessor and successor must agree on task, run, actor, workstream, content
-		// role and stored kind, and every row below the successor has to stay verifiable in
-		// that same scope, because the new edge joins that chain. Nothing is written before
-		// all of it has been read on this one reserved connection.
-		if err := domaintrace.ValidateAPIArtifactSupersessionPair(predecessor, successor); err != nil {
-			return err
-		}
-		if err := verifyAPIArtifactSuccessorChain(ctx, func(ctx context.Context, id modulecore.ArtifactID) (domaintrace.APIArtifact, error) {
-			return loadAPIArtifactOnConn(ctx, conn, id)
-		}, predecessorID, successor); err != nil {
-			return err
-		}
-		storedFact, storedFactFound, err := findAPIArtifactSupersessionIntentOnConn(ctx, conn, predecessorID)
-		if err != nil {
-			return err
-		}
-		if !storedFactFound {
-			owner, ownerFound, err := findAPIArtifactSupersessionIntentOwnerByEventID(ctx, conn, fact.EventID)
-			if err != nil {
-				return err
-			}
-			if ownerFound && owner != predecessorID {
-				return fmt.Errorf("supersession fact %s is already the fact of artifact %s, so artifact %s cannot claim the same event", fact.EventID, owner, predecessorID)
-			}
-		}
-
-		if storedFactFound {
-			if !reflect.DeepEqual(storedFact, fact) {
-				return fmt.Errorf("artifact %s already carries supersession fact %s, so supersession fact %s would be a second event for one supersession", predecessorID, storedFact.EventID, fact.EventID)
-			}
-			if predecessor.SupersededBy != successorID {
-				return fmt.Errorf("supersession fact %s is stored for artifact %s, which stores superseded_by %q, so superseding it again is not a no-op", fact.EventID, predecessorID, predecessor.SupersededBy)
-			}
-			// References a later legitimate body update replaced are exactly what the shared
-			// row check leaves alone: the digests in this fact are history, not the current row.
-			return domaintrace.ValidateAPIArtifactSupersessionFactRow(fact, predecessor, successor)
-		}
-		switch {
-		case predecessor.SupersededBy == successorID:
-			return fmt.Errorf("artifact %s is stored with superseded_by %s but no supersession fact, so the edge predates SupersedeAPIArtifactWithPublicationIntent and its fact has to be recorded by an explicit migration repair, not by this supersede", predecessorID, successorID)
-		case predecessor.SupersededBy != "":
-			return fmt.Errorf("artifact %s is already superseded by %s, not %s", predecessorID, predecessor.SupersededBy, successorID)
-		}
-
-		// The create-only contract is checked on the rows this transaction read, so the two
-		// digests the fact carries are the bytes actually being superseded and replaced.
-		if err := domaintrace.ValidateAPIArtifactSupersessionFact(predecessor, successor, fact); err != nil {
-			return err
-		}
-		updated := predecessor
-		updated.SupersededBy = successorID
-		if err := domaintrace.ValidateAPIArtifact(updated); err != nil {
-			return fmt.Errorf("supersede of artifact %s leaves an invalid row: %w", predecessorID, err)
-		}
-		payload, err := json.Marshal(updated)
-		if err != nil {
-			return fmt.Errorf("encode superseded payload for artifact %s: %w", predecessorID, err)
-		}
-		if _, err := conn.ExecContext(ctx, `UPDATE api_artifact SET payload = ? WHERE artifact_id = ?`, string(payload), string(predecessorID)); err != nil {
-			return fmt.Errorf("write supersede edge for artifact %s: %w", predecessorID, err)
-		}
-		if _, err := conn.ExecContext(ctx,
-			`INSERT INTO `+supersessionIntentTable+` (artifact_id, event_id, payload) VALUES (?, ?, ?)`,
-			string(predecessorID), string(fact.EventID), string(factPayload)); err != nil {
-			return fmt.Errorf("write supersession fact %s for artifact %s: %w", fact.EventID, predecessorID, err)
-		}
-		return nil
+		return supersedeAPIArtifactWithPublicationIntentOnConn(ctx, conn, predecessorID, successorID, fact, factPayload)
 	})
+}
+
+func supersedeAPIArtifactWithPublicationIntentOnConn(ctx context.Context, conn *sql.Conn, predecessorID, successorID modulecore.ArtifactID, fact modulecore.EventEnvelope, factPayload []byte) error {
+	predecessor, err := loadAPIArtifactOnConn(ctx, conn, predecessorID)
+	if err != nil {
+		return err
+	}
+	successor, err := loadAPIArtifactOnConn(ctx, conn, successorID)
+	if err != nil {
+		return err
+	}
+	if err := domaintrace.ValidateAPIArtifactSupersessionPair(predecessor, successor); err != nil {
+		return err
+	}
+	if err := verifyAPIArtifactSuccessorChain(ctx, func(ctx context.Context, id modulecore.ArtifactID) (domaintrace.APIArtifact, error) {
+		return loadAPIArtifactOnConn(ctx, conn, id)
+	}, predecessorID, successor); err != nil {
+		return err
+	}
+	storedFact, storedFactFound, err := findAPIArtifactSupersessionIntentOnConn(ctx, conn, predecessorID)
+	if err != nil {
+		return err
+	}
+	if !storedFactFound {
+		owner, ownerFound, err := findAPIArtifactSupersessionIntentOwnerByEventID(ctx, conn, fact.EventID)
+		if err != nil {
+			return err
+		}
+		if ownerFound && owner != predecessorID {
+			return fmt.Errorf("supersession fact %s is already the fact of artifact %s, so artifact %s cannot claim the same event", fact.EventID, owner, predecessorID)
+		}
+	}
+
+	if storedFactFound {
+		if !reflect.DeepEqual(storedFact, fact) {
+			return fmt.Errorf("artifact %s already carries supersession fact %s, so supersession fact %s would be a second event for one supersession", predecessorID, storedFact.EventID, fact.EventID)
+		}
+		if predecessor.SupersededBy != successorID {
+			return fmt.Errorf("supersession fact %s is stored for artifact %s, which stores superseded_by %q, so superseding it again is not a no-op", fact.EventID, predecessorID, predecessor.SupersededBy)
+		}
+		return domaintrace.ValidateAPIArtifactSupersessionFactRow(fact, predecessor, successor)
+	}
+	switch {
+	case predecessor.SupersededBy == successorID:
+		return fmt.Errorf("artifact %s is stored with superseded_by %s but no supersession fact, so the edge predates SupersedeAPIArtifactWithPublicationIntent and its fact has to be recorded by an explicit migration repair, not by this supersede", predecessorID, successorID)
+	case predecessor.SupersededBy != "":
+		return fmt.Errorf("artifact %s is already superseded by %s, not %s", predecessorID, predecessor.SupersededBy, successorID)
+	}
+
+	if err := domaintrace.ValidateAPIArtifactSupersessionFact(predecessor, successor, fact); err != nil {
+		return err
+	}
+	updated := predecessor
+	updated.SupersededBy = successorID
+	if err := domaintrace.ValidateAPIArtifact(updated); err != nil {
+		return fmt.Errorf("supersede of artifact %s leaves an invalid row: %w", predecessorID, err)
+	}
+	payload, err := json.Marshal(updated)
+	if err != nil {
+		return fmt.Errorf("encode superseded payload for artifact %s: %w", predecessorID, err)
+	}
+	if _, err := conn.ExecContext(ctx, `UPDATE api_artifact SET payload = ? WHERE artifact_id = ?`, string(payload), string(predecessorID)); err != nil {
+		return fmt.Errorf("write supersede edge for artifact %s: %w", predecessorID, err)
+	}
+	if _, err := conn.ExecContext(ctx,
+		`INSERT INTO `+supersessionIntentTable+` (artifact_id, event_id, payload) VALUES (?, ?, ?)`,
+		string(predecessorID), string(fact.EventID), string(factPayload)); err != nil {
+		return fmt.Errorf("write supersession fact %s for artifact %s: %w", fact.EventID, predecessorID, err)
+	}
+	return nil
 }
 
 // ListAPIArtifactSupersessionFacts returns one bounded page of stored supersession facts in

@@ -1,11 +1,16 @@
 package toolregistry
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +29,12 @@ type SQLiteToolRegistryStore struct {
 
 const sqliteBusyTimeoutMilliseconds = 5000
 
+const ToolRegistryRegisterWithReceiptOperation = "register_with_receipt"
+
+const maxToolRegistryStorageHostResult = 1 << 20
+
+var toolRegistryStorageHostOpIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
+
 var (
 	// ErrToolRegistryRequestConflict indicates that a request ID was already
 	// used with a different actor or payload.
@@ -34,6 +45,22 @@ var (
 	// ErrToolRegistryRequestNotFound indicates that an exact receipt is absent.
 	ErrToolRegistryRequestNotFound = errors.New("tool registry request receipt not found")
 )
+
+// ToolRegistryStorageHostOperationIdentity binds one recovery proof to the
+// storage-host journal entry that first accepted the request.
+type ToolRegistryStorageHostOperationIdentity struct {
+	OpID             string
+	Operation        string
+	PayloadSHA256    string
+	WriterGeneration int64
+}
+
+// ToolRegistryStorageHostReceiptOwner is the storage-host-specific exact
+// result hook. The canonical ToolRegistryReceiptOwner API remains unchanged.
+type ToolRegistryStorageHostReceiptOwner interface {
+	RegisterWithReceiptForStorageHost(ctx context.Context, entry capability.ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string, identity ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, error)
+	FindStorageHostRegistrationResult(ctx context.Context, identity ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, bool, error)
+}
 
 // NewSQLiteToolRegistryStore は新しい SQLiteToolRegistryStore を作成する。
 // dbPath が空の場合はインメモリ DB（":memory:"）を使用する。
@@ -84,6 +111,17 @@ func (s *SQLiteToolRegistryStore) initTables(ctx context.Context) error {
 		tool_name    TEXT NOT NULL,
 		created_at   TIMESTAMP NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS tool_registry_storagehost_receipts (
+		op_id             TEXT NOT NULL PRIMARY KEY CHECK(length(op_id) BETWEEN 1 AND 128),
+		operation         TEXT NOT NULL CHECK(operation = 'register_with_receipt'),
+		payload_sha256    TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND lower(payload_sha256) = payload_sha256 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+		writer_generation INTEGER NOT NULL CHECK(writer_generation > 0),
+		result_json       TEXT NOT NULL CHECK(length(result_json) BETWEEN 1 AND 1048576),
+		result_sha256     TEXT NOT NULL CHECK(length(result_sha256) = 64 AND lower(result_sha256) = result_sha256 AND result_sha256 NOT GLOB '*[^0-9a-f]*'),
+		effect_sha256     TEXT NOT NULL CHECK(length(effect_sha256) = 64 AND lower(effect_sha256) = effect_sha256 AND effect_sha256 NOT GLOB '*[^0-9a-f]*'),
+		proof_sha256      TEXT NOT NULL CHECK(length(proof_sha256) = 64 AND lower(proof_sha256) = proof_sha256 AND proof_sha256 NOT GLOB '*[^0-9a-f]*'),
+		created_at        TIMESTAMP NOT NULL
+	);
 	CREATE INDEX IF NOT EXISTS idx_tool_registry_request_receipts_tool_name
 		ON tool_registry_request_receipts(tool_name);
 	`
@@ -131,6 +169,19 @@ func (s *SQLiteToolRegistryStore) Register(ctx context.Context, entry capability
 // dedupe receipt, while different content is rejected. The entry and receipt
 // are inserted in one SQLite transaction.
 func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry capability.ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string) (capability.ToolRegistryRegistrationResult, error) {
+	return s.registerWithReceipt(ctx, entry, actionID, actorID, payloadHash, nil)
+}
+
+// RegisterWithReceiptForStorageHost commits the normal action receipt and an
+// exact storage-host recovery proof atomically with the canonical tool row.
+func (s *SQLiteToolRegistryStore) RegisterWithReceiptForStorageHost(ctx context.Context, entry capability.ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string, identity ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, error) {
+	if err := identity.validate(); err != nil {
+		return capability.ToolRegistryRegistrationResult{}, err
+	}
+	return s.registerWithReceipt(ctx, entry, actionID, actorID, payloadHash, &identity)
+}
+
+func (s *SQLiteToolRegistryStore) registerWithReceipt(ctx context.Context, entry capability.ToolEntry, actionID modulecore.ActionID, actorID, payloadHash string, identity *ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, error) {
 	if s == nil || s.db == nil {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("tool registry sqlite store is closed")
 	}
@@ -157,10 +208,23 @@ func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("begin tool registry receipt transaction: %w", err)
 	}
 	defer tx.Rollback()
+	if identity != nil {
+		previous, found, err := lookupToolRegistryStorageHostReceipt(ctx, tx, *identity)
+		if err != nil {
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("read tool registry storage-host receipt: %w", err)
+		}
+		if found {
+			if previous.Receipt.ActionID != actionID || previous.Receipt.ActorID != actorID || previous.Receipt.PayloadHash != payloadHash || previous.Receipt.ToolName != entry.Name {
+				return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("tool registry storage-host receipt does not match action request")
+			}
+			return previous, nil
+		}
+	}
 
 	var receipt capability.ToolRegistryRequestReceipt
 	var receiptCreatedAt time.Time
 	var actionIDRaw string
+	requestReplay := false
 	err = tx.QueryRowContext(ctx, `
 		SELECT action_id, actor_id, payload_hash, tool_name, created_at
 		FROM tool_registry_request_receipts WHERE action_id = ?
@@ -173,49 +237,265 @@ func (s *SQLiteToolRegistryStore) RegisterWithReceipt(ctx context.Context, entry
 		if receipt.ActorID != actorID || receipt.PayloadHash != payloadHash || receipt.ToolName != entry.Name {
 			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("%w: action_id %q", ErrToolRegistryRequestConflict, actionID)
 		}
-		if err := tx.Commit(); err != nil {
-			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("commit tool registry request replay: %w", err)
-		}
-		return capability.ToolRegistryRegistrationResult{Receipt: receipt, RequestReplay: true}, nil
+		requestReplay = true
 	}
-	if err != sql.ErrNoRows {
+	if err != nil && err != sql.ErrNoRows {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("read tool registry request receipt: %w", err)
 	}
 
-	rowEntry, found, err := scanToolEntry(tx.QueryRowContext(ctx, `
-		SELECT name, description, schema_json, platforms, source, created_at, created_by
-		FROM tool_registry WHERE name = ?
-	`, entry.Name))
-	if err != nil {
-		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("read existing tool %q: %w", entry.Name, err)
-	}
 	semanticDedupe := false
-	if found {
-		if !toolEntriesEquivalent(rowEntry, entry) {
-			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("%w: tool %q", ErrToolRegistryEntryConflict, entry.Name)
+	if !requestReplay {
+		rowEntry, found, err := scanToolEntry(tx.QueryRowContext(ctx, `
+			SELECT name, description, schema_json, platforms, source, created_at, created_by
+			FROM tool_registry WHERE name = ?
+		`, entry.Name))
+		if err != nil {
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("read existing tool %q: %w", entry.Name, err)
 		}
-		semanticDedupe = true
-	} else if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tool_registry (name, description, schema_json, platforms, source, created_at, created_by)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, entry.Name, entry.Description, entry.SchemaJSON, string(platformsJSON), string(entry.Source), entry.CreatedAt, entry.CreatedBy); err != nil {
-		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("insert tool %q: %w", entry.Name, err)
+		if found {
+			if !toolEntriesEquivalent(rowEntry, entry) {
+				return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("%w: tool %q", ErrToolRegistryEntryConflict, entry.Name)
+			}
+			semanticDedupe = true
+		} else if _, err := tx.ExecContext(ctx, `
+			INSERT INTO tool_registry (name, description, schema_json, platforms, source, created_at, created_by)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, entry.Name, entry.Description, entry.SchemaJSON, string(platformsJSON), string(entry.Source), entry.CreatedAt, entry.CreatedBy); err != nil {
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("insert tool %q: %w", entry.Name, err)
+		}
+		receipt = capability.ToolRegistryRequestReceipt{
+			ActionID: actionID, ActorID: actorID, PayloadHash: payloadHash,
+			ToolName: entry.Name, CreatedAt: entry.CreatedAt,
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO tool_registry_request_receipts (action_id, actor_id, payload_hash, tool_name, created_at)
+			VALUES (?, ?, ?, ?, ?)
+		`, string(receipt.ActionID), receipt.ActorID, receipt.PayloadHash, receipt.ToolName, receipt.CreatedAt); err != nil {
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("insert tool registry request receipt: %w", err)
+		}
 	}
-
-	receipt = capability.ToolRegistryRequestReceipt{
-		ActionID: actionID, ActorID: actorID, PayloadHash: payloadHash,
-		ToolName: entry.Name, CreatedAt: entry.CreatedAt,
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tool_registry_request_receipts (action_id, actor_id, payload_hash, tool_name, created_at)
-		VALUES (?, ?, ?, ?, ?)
-	`, string(receipt.ActionID), receipt.ActorID, receipt.PayloadHash, receipt.ToolName, receipt.CreatedAt); err != nil {
-		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("insert tool registry request receipt: %w", err)
+	result := capability.ToolRegistryRegistrationResult{Receipt: receipt, RequestReplay: requestReplay, SemanticDedupe: semanticDedupe}
+	if identity != nil {
+		if err := insertToolRegistryStorageHostReceipt(ctx, tx, *identity, result); err != nil {
+			return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("write tool registry storage-host receipt: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return capability.ToolRegistryRegistrationResult{}, fmt.Errorf("commit tool registry registration: %w", err)
 	}
-	return capability.ToolRegistryRegistrationResult{Receipt: receipt, SemanticDedupe: semanticDedupe}, nil
+	return result, nil
+}
+
+// FindStorageHostRegistrationResult returns the original typed result only
+// when its operation identity, result digest, proof digest and current owner
+// effect all match. A missing proof is distinct from a malformed proof.
+func (s *SQLiteToolRegistryStore) FindStorageHostRegistrationResult(ctx context.Context, identity ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, bool, error) {
+	if s == nil || s.db == nil {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry sqlite store is closed")
+	}
+	if err := identity.validate(); err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return lookupToolRegistryStorageHostReceipt(ctx, s.db, identity)
+}
+
+func (identity ToolRegistryStorageHostOperationIdentity) validate() error {
+	if !toolRegistryStorageHostOpIDPattern.MatchString(identity.OpID) || identity.Operation != ToolRegistryRegisterWithReceiptOperation {
+		return errors.New("tool registry storage-host operation identity is invalid")
+	}
+	if len(identity.PayloadSHA256) != sha256.Size*2 || identity.PayloadSHA256 != strings.ToLower(identity.PayloadSHA256) {
+		return errors.New("tool registry storage-host payload hash is invalid")
+	}
+	if _, err := hex.DecodeString(identity.PayloadSHA256); err != nil || identity.WriterGeneration <= 0 {
+		return errors.New("tool registry storage-host operation generation or payload hash is invalid")
+	}
+	return nil
+}
+
+type toolRegistryStorageHostReceiptQuery interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+type toolRegistryCanonicalEffect struct {
+	Receipt capability.ToolRegistryRequestReceipt `json:"receipt"`
+	Entry   capability.ToolEntry                  `json:"entry"`
+}
+
+type toolRegistryStorageHostProofHashInput struct {
+	OpID             string `json:"op_id"`
+	Operation        string `json:"operation"`
+	PayloadSHA256    string `json:"payload_sha256"`
+	WriterGeneration int64  `json:"writer_generation"`
+	ResultSHA256     string `json:"result_sha256"`
+	EffectSHA256     string `json:"effect_sha256"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func insertToolRegistryStorageHostReceipt(ctx context.Context, tx *sql.Tx, identity ToolRegistryStorageHostOperationIdentity, result capability.ToolRegistryRegistrationResult) error {
+	if err := identity.validate(); err != nil {
+		return err
+	}
+	if err := validateToolRegistryRegistrationResult(result); err != nil {
+		return err
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil || len(resultJSON) == 0 || len(resultJSON) > maxToolRegistryStorageHostResult {
+		return errors.New("tool registry storage-host result is invalid or exceeds its bound")
+	}
+	effect, err := loadToolRegistryCanonicalEffect(ctx, tx, result.Receipt.ActionID)
+	if err != nil {
+		return err
+	}
+	if !sameToolRegistryReceipt(effect.Receipt, result.Receipt) {
+		return errors.New("tool registry storage-host result does not match its canonical receipt")
+	}
+	effectJSON, err := json.Marshal(effect)
+	if err != nil {
+		return err
+	}
+	createdAt := time.Now().UTC()
+	resultSHA256 := toolRegistrySHA256(resultJSON)
+	effectSHA256 := toolRegistrySHA256(effectJSON)
+	proofSHA256, err := toolRegistryStorageHostProofSHA256(identity, resultSHA256, effectSHA256, createdAt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO tool_registry_storagehost_receipts
+			(op_id, operation, payload_sha256, writer_generation, result_json, result_sha256, effect_sha256, proof_sha256, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, identity.OpID, identity.Operation, identity.PayloadSHA256, identity.WriterGeneration, string(resultJSON), resultSHA256, effectSHA256, proofSHA256, createdAt)
+	return err
+}
+
+func lookupToolRegistryStorageHostReceipt(ctx context.Context, query toolRegistryStorageHostReceiptQuery, identity ToolRegistryStorageHostOperationIdentity) (capability.ToolRegistryRegistrationResult, bool, error) {
+	if err := identity.validate(); err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	var operation, payloadSHA256, resultJSON, resultSHA256, effectSHA256, proofSHA256 string
+	var writerGeneration int64
+	var createdAt time.Time
+	err := query.QueryRowContext(ctx, `
+		SELECT operation, payload_sha256, writer_generation, result_json, result_sha256, effect_sha256, proof_sha256, created_at
+		FROM tool_registry_storagehost_receipts WHERE op_id = ?
+	`, identity.OpID).Scan(&operation, &payloadSHA256, &writerGeneration, &resultJSON, &resultSHA256, &effectSHA256, &proofSHA256, &createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return capability.ToolRegistryRegistrationResult{}, false, nil
+	}
+	if err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, fmt.Errorf("read tool registry storage-host receipt: %w", err)
+	}
+	if operation != identity.Operation || payloadSHA256 != identity.PayloadSHA256 || writerGeneration != identity.WriterGeneration {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host receipt identity mismatch")
+	}
+	if createdAt.IsZero() || len(resultJSON) == 0 || len(resultJSON) > maxToolRegistryStorageHostResult || !json.Valid([]byte(resultJSON)) {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host result is malformed")
+	}
+	if !validToolRegistryDigest(resultSHA256) || resultSHA256 != toolRegistrySHA256([]byte(resultJSON)) ||
+		!validToolRegistryDigest(effectSHA256) || !validToolRegistryDigest(proofSHA256) {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host receipt digest is malformed or mismatched")
+	}
+	var result capability.ToolRegistryRegistrationResult
+	decoder := json.NewDecoder(bytes.NewReader([]byte(resultJSON)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&result); err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, fmt.Errorf("decode tool registry storage-host result: %w", err)
+	}
+	var trailing any
+	if !errors.Is(decoder.Decode(&trailing), io.EOF) {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host result has trailing data")
+	}
+	if err := validateToolRegistryRegistrationResult(result); err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	effect, err := loadToolRegistryCanonicalEffect(ctx, query, result.Receipt.ActionID)
+	if err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	if !sameToolRegistryReceipt(effect.Receipt, result.Receipt) {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host result receipt was substituted")
+	}
+	effectJSON, err := json.Marshal(effect)
+	if err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	if effectSHA256 != toolRegistrySHA256(effectJSON) {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host canonical effect digest mismatch")
+	}
+	wantProofSHA256, err := toolRegistryStorageHostProofSHA256(identity, resultSHA256, effectSHA256, createdAt)
+	if err != nil {
+		return capability.ToolRegistryRegistrationResult{}, false, err
+	}
+	if proofSHA256 != wantProofSHA256 {
+		return capability.ToolRegistryRegistrationResult{}, false, errors.New("tool registry storage-host proof digest mismatch")
+	}
+	return result, true, nil
+}
+
+func loadToolRegistryCanonicalEffect(ctx context.Context, query toolRegistryStorageHostReceiptQuery, actionID modulecore.ActionID) (toolRegistryCanonicalEffect, error) {
+	var effect toolRegistryCanonicalEffect
+	var actionIDRaw string
+	if err := query.QueryRowContext(ctx, `
+		SELECT action_id, actor_id, payload_hash, tool_name, created_at
+		FROM tool_registry_request_receipts WHERE action_id = ?
+	`, string(actionID)).Scan(&actionIDRaw, &effect.Receipt.ActorID, &effect.Receipt.PayloadHash, &effect.Receipt.ToolName, &effect.Receipt.CreatedAt); err != nil {
+		return toolRegistryCanonicalEffect{}, fmt.Errorf("read tool registry canonical receipt: %w", err)
+	}
+	effect.Receipt.ActionID = modulecore.ActionID(actionIDRaw)
+	entry, found, err := scanToolEntry(query.QueryRowContext(ctx, `
+		SELECT name, description, schema_json, platforms, source, created_at, created_by
+		FROM tool_registry WHERE name = ?
+	`, effect.Receipt.ToolName))
+	if err != nil {
+		return toolRegistryCanonicalEffect{}, fmt.Errorf("read tool registry canonical entry: %w", err)
+	}
+	if !found || entry.Name != effect.Receipt.ToolName {
+		return toolRegistryCanonicalEffect{}, errors.New("tool registry canonical entry is missing")
+	}
+	effect.Entry = entry
+	return effect, nil
+}
+
+func toolRegistryStorageHostProofSHA256(identity ToolRegistryStorageHostOperationIdentity, resultSHA256, effectSHA256 string, createdAt time.Time) (string, error) {
+	encoded, err := json.Marshal(toolRegistryStorageHostProofHashInput{
+		OpID: identity.OpID, Operation: identity.Operation, PayloadSHA256: identity.PayloadSHA256,
+		WriterGeneration: identity.WriterGeneration, ResultSHA256: resultSHA256, EffectSHA256: effectSHA256,
+		CreatedAt: createdAt.UTC().Format(time.RFC3339Nano),
+	})
+	if err != nil {
+		return "", err
+	}
+	return toolRegistrySHA256(encoded), nil
+}
+
+func toolRegistrySHA256(value []byte) string {
+	digest := sha256.Sum256(value)
+	return hex.EncodeToString(digest[:])
+}
+
+func validToolRegistryDigest(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validateToolRegistryRegistrationResult(result capability.ToolRegistryRegistrationResult) error {
+	if result.Receipt.ActionID.Validate() != nil || strings.TrimSpace(result.Receipt.ActorID) == "" ||
+		strings.TrimSpace(result.Receipt.ActorID) != result.Receipt.ActorID || result.Receipt.PayloadHash == "" ||
+		strings.TrimSpace(result.Receipt.ToolName) == "" || strings.TrimSpace(result.Receipt.ToolName) != result.Receipt.ToolName ||
+		result.Receipt.CreatedAt.IsZero() || (result.RequestReplay && result.SemanticDedupe) {
+		return errors.New("tool registry storage-host result is invalid")
+	}
+	return nil
+}
+
+func sameToolRegistryReceipt(left, right capability.ToolRegistryRequestReceipt) bool {
+	return left.ActionID == right.ActionID && left.ActorID == right.ActorID && left.PayloadHash == right.PayloadHash &&
+		left.ToolName == right.ToolName && left.CreatedAt.Equal(right.CreatedAt)
 }
 
 // FindActionReceipt returns the exact durable receipt for actionID.
@@ -270,12 +550,28 @@ func scanToolEntry(scanner interface{ Scan(...any) error }) (capability.ToolEntr
 	} else if err != nil {
 		return capability.ToolEntry{}, false, err
 	}
-	if err := json.Unmarshal([]byte(platformsJSON), &entry.Platforms); err != nil {
+	if err := decodePlatforms(platformsJSON, &entry.Platforms); err != nil {
 		return capability.ToolEntry{}, false, fmt.Errorf("decode tool platforms: %w", err)
 	}
 	entry.Source = capability.ToolSource(source)
 	entry.CreatedAt = createdAt
 	return entry, true, nil
+}
+
+func decodePlatforms(raw string, destination *[]string) error {
+	trimmed := strings.TrimSpace(raw)
+	if len(trimmed) < 2 || trimmed[0] != '[' || trimmed[len(trimmed)-1] != ']' {
+		return errors.New("platforms must be a JSON array")
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(trimmed), &values); err != nil || values == nil {
+		if err != nil {
+			return err
+		}
+		return errors.New("platforms array is null")
+	}
+	*destination = values
+	return nil
 }
 
 func toolEntriesEquivalent(left, right capability.ToolEntry) bool {
@@ -334,8 +630,8 @@ func (s *SQLiteToolRegistryStore) Get(ctx context.Context, name string) (capabil
 		return capability.ToolEntry{}, fmt.Errorf("get tool %q: %w", name, err)
 	}
 
-	if err := json.Unmarshal([]byte(platformsJSON), &e.Platforms); err != nil {
-		e.Platforms = []string{}
+	if err := decodePlatforms(platformsJSON, &e.Platforms); err != nil {
+		return capability.ToolEntry{}, fmt.Errorf("get tool %q: decode platforms: %w", name, err)
 	}
 	e.Source = capability.ToolSource(source)
 	e.CreatedAt = createdAt
@@ -357,8 +653,8 @@ func scanEntries(rows *sql.Rows) ([]capability.ToolEntry, error) {
 			return nil, err
 		}
 
-		if err := json.Unmarshal([]byte(platformsJSON), &e.Platforms); err != nil {
-			e.Platforms = []string{}
+		if err := decodePlatforms(platformsJSON, &e.Platforms); err != nil {
+			return nil, fmt.Errorf("decode tool platforms for %q: %w", e.Name, err)
 		}
 		e.Source = capability.ToolSource(source)
 		e.CreatedAt = createdAt

@@ -10,7 +10,10 @@ import (
 	toolregistry "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolregistry"
 )
 
-func buildRuntimeToolRegistry(cfg *config.Config) capdomain.ToolRegistry {
+func buildRuntimeToolRegistry(cfg *config.Config, selected capdomain.ToolRegistry) capdomain.ToolRegistry {
+	if selected != nil {
+		return selected
+	}
 	if cfg.Capability.ToolRegistryDB == "" {
 		return nil
 	}

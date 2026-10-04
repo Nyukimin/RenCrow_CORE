@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	advisorDomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
@@ -17,6 +18,7 @@ import (
 
 type SQLiteStore struct {
 	db *sql.DB
+	mu sync.Mutex
 }
 
 const sqliteBusyTimeoutMilliseconds = 5000
@@ -58,6 +60,12 @@ func (s *SQLiteStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS advisor_adoption (adoption_id TEXT PRIMARY KEY, created_at TEXT, payload TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS advisor_score_snapshot (snapshot_id TEXT PRIMARY KEY, created_at TEXT, payload TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS agent_policy_decision (decision_id TEXT PRIMARY KEY, created_at TEXT, payload TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS advisor_storagehost_receipt (
+			op_id TEXT PRIMARY KEY, operation TEXT NOT NULL, payload_sha256 TEXT NOT NULL,
+			writer_generation INTEGER NOT NULL, effect_id TEXT NOT NULL, effect_sha256 TEXT NOT NULL,
+			proof_sha256 TEXT NOT NULL, result_json TEXT NOT NULL, result_sha256 TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			return err

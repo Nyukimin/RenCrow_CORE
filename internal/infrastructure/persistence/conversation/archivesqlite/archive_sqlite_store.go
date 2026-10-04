@@ -144,6 +144,17 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	CREATE INDEX IF NOT EXISTS idx_conversation_archive_request_memory
 		ON conversation_archive_request_receipt(memory_id);
 
+	CREATE TABLE IF NOT EXISTS conversation_archive_storagehost_user_memory_receipt (
+		op_id TEXT PRIMARY KEY NOT NULL,
+		payload_sha256 TEXT NOT NULL,
+		request_id TEXT NOT NULL,
+		user_id TEXT NOT NULL,
+		memory_id TEXT NOT NULL,
+		idempotent_replay INTEGER NOT NULL CHECK (idempotent_replay IN (0, 1)),
+		created_at TIMESTAMP NOT NULL,
+		integrity_sha256 TEXT NOT NULL
+	);
+
 	CREATE TABLE IF NOT EXISTS conversation_archive_parquet_receipt (
 		request_id TEXT PRIMARY KEY,
 		user_id TEXT NOT NULL,
@@ -240,10 +251,58 @@ func (d *ArchiveSQLiteStore) initTables(ctx context.Context) error {
 	if _, err := d.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
+	if err := d.ensureStorageHostUserMemoryIntegrityColumn(ctx); err != nil {
+		return err
+	}
+	if err := d.initL1PromotionArchiveReceiptSchema(ctx); err != nil {
+		return err
+	}
 	if err := d.validateThreadIdentitySchema(ctx); err != nil {
 		return err
 	}
 
+	return nil
+}
+
+// ensureStorageHostUserMemoryIntegrityColumn upgrades pre-integrity operation
+// receipts without blessing their old contents. Existing rows remain NULL and
+// are rejected by the receipt reader; new writes always store a bound digest.
+func (d *ArchiveSQLiteStore) ensureStorageHostUserMemoryIntegrityColumn(ctx context.Context) error {
+	rows, err := d.db.QueryContext(ctx, "PRAGMA table_info(conversation_archive_storagehost_user_memory_receipt)")
+	if err != nil {
+		return fmt.Errorf("failed to inspect storage-host user-memory receipt schema: %w", err)
+	}
+	found := false
+	integrityColumnType := ""
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("failed to inspect storage-host user-memory receipt schema: %w", err)
+		}
+		if name == "integrity_sha256" {
+			found = true
+			integrityColumnType = columnType
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("failed to inspect storage-host user-memory receipt schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("failed to close storage-host user-memory receipt schema inspection: %w", err)
+	}
+	if found {
+		if !strings.EqualFold(strings.TrimSpace(integrityColumnType), "TEXT") {
+			return fmt.Errorf("archive sqlite storage-host receipt integrity column has type %q, want TEXT", integrityColumnType)
+		}
+		return nil
+	}
+	if _, err := d.db.ExecContext(ctx, `ALTER TABLE conversation_archive_storagehost_user_memory_receipt ADD COLUMN integrity_sha256 TEXT`); err != nil {
+		return fmt.Errorf("failed to add storage-host user-memory receipt integrity column: %w", err)
+	}
 	return nil
 }
 

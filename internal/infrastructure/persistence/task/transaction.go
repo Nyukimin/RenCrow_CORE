@@ -23,7 +23,7 @@ var (
 )
 
 func taskBatchFilenames() []string {
-	return []string{stateFilename, runFilename, contextFilename, notificationsFilename}
+	return []string{stateFilename, runFilename, contextFilename, notificationsFilename, taskOperationReceiptFilename, taskExecutionFenceFilename}
 }
 
 // Transaction executes one Manager mutation against a pending append view.
@@ -64,6 +64,9 @@ func (s *JSONLStore) TaskTransaction(ctx context.Context, taskID modulecore.Task
 		return err
 	}
 	defer lease.release()
+	if err := s.activeTaskExecutionFenceError(taskID); err != nil {
+		return err
+	}
 	return s.transactionWithScope(ctx, taskID, lease, fn)
 }
 
@@ -71,35 +74,7 @@ func (s *JSONLStore) TaskTransaction(ctx context.Context, taskID modulecore.Task
 // exclusive Task gate. Only the short validation transaction runs under the
 // global JSONL lock; the callback runs after that lock is released.
 func (s *JSONLStore) WithTaskExecutionFence(ctx context.Context, taskID modulecore.TaskID, fn func() error) error {
-	if s == nil {
-		return errors.New("task store is nil")
-	}
-	if fn == nil {
-		return errors.New("task execution fence callback is nil")
-	}
-	if ctx == nil {
-		return errors.New("task execution fence context is nil")
-	}
-	if err := taskID.Validate(); err != nil {
-		return err
-	}
-	if s.readOnly {
-		return fmt.Errorf("task store is read-only")
-	}
-	releaseAdmission, err := s.lifecycle.admit(ctx)
-	if err != nil {
-		return err
-	}
-	defer releaseAdmission()
-	lease, err := s.executionFence.acquire(ctx, taskID)
-	if err != nil {
-		return err
-	}
-	defer lease.release()
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return fn()
+	return s.withDurableTaskExecutionFence(ctx, taskID, fn)
 }
 
 func validateTransactionArgs(s *JSONLStore, ctx context.Context, fn func(domaintask.Store) error) error {
@@ -217,7 +192,12 @@ func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot t
 	}
 	if parent.executionFence != nil {
 		if activeTaskID := parent.executionFence.hasActive(snapshot.touched, snapshot.owner); activeTaskID != "" {
-			return fmt.Errorf("task transaction conflicts with active execution fence for task %s", activeTaskID)
+			return fmt.Errorf("%w: task transaction conflicts with active execution fence for task %s", ErrTaskExecutionFenceActive, activeTaskID)
+		}
+	}
+	for taskID := range snapshot.touched {
+		if err := parent.activeTaskExecutionFenceError(taskID); err != nil {
+			return err
 		}
 	}
 	view := &transactionStore{

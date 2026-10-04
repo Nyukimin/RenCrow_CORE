@@ -45,6 +45,7 @@ import (
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domainskill "github.com/Nyukimin/RenCrow_CORE/internal/domain/skillgovernance"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
@@ -62,8 +63,8 @@ import (
 	sandboxpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/sandbox"
 	schedulerpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/scheduler"
 	skillpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/storagehost"
 	superagentpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/superagent"
-	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	workstreampersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/workstream"
 	xbookmarkworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/xbookmarkworkflow"
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
@@ -104,7 +105,7 @@ type Dependencies struct {
 	taskDetail                     http.HandlerFunc                            // canonical Task detail API
 	identityGraph                  http.HandlerFunc                            // canonical identity graph projection
 	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
-	taskStore                      *taskpersistence.JSONLStore                 // shared canonical Task persistence owner
+	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
 	transportManager               *transportmanager.Manager                   // shared canonical Request Response receipt owner
@@ -317,6 +318,9 @@ type Dependencies struct {
 	personRelatedIdentityCancel    context.CancelFunc                          // fixed-authority person identity worker
 	personRelatedCollectionCancel  context.CancelFunc                          // positive movie/person D1 category collector
 	toolRegistry                   capdomain.ToolRegistry                      // Phase 4: Shiro ツール共有用 ToolRegistry
+	glossaryStore                  *storagehost.GlossaryStoreClient            // typed remote owner for direct database Viewer reads
+	movieCatalogStore              *storagehost.MovieCatalogClient             // typed remote owner for runtime and Viewer reads
+	hobbyGraphStore                *storagehost.HobbyGraphClient               // typed remote owner for runtime and Viewer reads
 	workerToolRunner               domaintool.RunnerV2                         // production Worker tool execution/listing boundary
 	personRelatedCatalogLookup     viewer.PersonRelatedCatalogProvider         // read-only Viewer projection over the startup lookup instance
 	personRelatedCatalogPeople     viewer.PersonRelatedCatalogPeopleProvider   // indexed explicitly assessed people projection
@@ -457,8 +461,15 @@ func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Servi
 // buildDependencies は依存関係を構築
 func buildDependencies(cfg *config.Config) *Dependencies {
 	deps := &Dependencies{}
-	if err := initializeRuntimeTaskOwner(deps, cfg.WorkspaceDir); err != nil {
+	storageOwners, err := newRuntimeStorageOwnerBundle(context.Background(), cfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize storage host owner bundle: %v", err)
+	}
+	if err := initializeRuntimeTaskOwner(deps, cfg.WorkspaceDir, storageOwners.TaskStore); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
+	}
+	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
+		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
 	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir)
 	if err != nil {
@@ -499,7 +510,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err != nil {
 		log.Fatalf("Failed to initialize Playback receipt owner: %v", err)
 	}
-	runtimeToolRegistry := buildRuntimeToolRegistry(cfg)
+	var selectedToolRegistry capdomain.ToolRegistry
+	if storageOwners.ToolRegistry != nil {
+		selectedToolRegistry = storageOwners.ToolRegistry
+	}
+	runtimeToolRegistry := buildRuntimeToolRegistry(cfg, selectedToolRegistry)
 	nodeCaps := buildCapabilityRuntime(cfg, runtimeToolRegistry)
 	canonicalEventStore, err := openRuntimeCanonicalEventStore(cfg.Storage.Databases.EventStore)
 	if err != nil {
@@ -550,6 +565,10 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		runtimeSkillCatalog,
 		serenaRuntime.catalog,
 		canonicalEventStore,
+		runtimeSelectedCatalogOwners{
+			MovieCatalog: storageOwners.MovieCatalog,
+			HobbyGraph:   storageOwners.HobbyGraph,
+		},
 	)
 	advisorRuntime, err := buildAdvisorRuntime(cfg, toolRuntime.WorkerRuntimeRunnerV2)
 	if err != nil {
@@ -557,8 +576,12 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	mcpClient := mcp.NewMCPClient()
 	log.Printf("MCPClient initialized with %d servers", len(mcpClient.ListServers()))
-	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2)
-	glossaryRuntime := buildGlossaryRuntime(cfg)
+	conversationRuntime := buildConversationRuntime(cfg, llmRuntime.Primary, toolRuntime.ChatRunnerV2, toolRuntime.WorkerRunnerV2, storageOwners)
+	var selectedGlossaryOwner runtimeGlossaryRemoteOwner
+	if storageOwners.GlossaryStore != nil {
+		selectedGlossaryOwner = storageOwners.GlossaryStore
+	}
+	glossaryRuntime := buildGlossaryRuntime(cfg, selectedGlossaryOwner)
 	// Conversation runtime may attach late-bound web_gather adapters to the
 	// production Worker runner. Build the Agent snapshot only after every
 	// runtime Tool has been registered so awareness and execution stay equal.
@@ -577,7 +600,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		conversationRuntime.Engine,
 		glossaryRuntime.RecentContext,
 		conversationRuntime.Manager,
-		conversationRuntime.L1Store,
+		conversationRuntime.UserMemoryStore,
 		toolRuntime.SubagentMgr,
 		advisorRuntime.Service,
 		advisorRuntime.Policy,
@@ -658,7 +681,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			log.Fatalf("Failed to register Glossary data write: %v", err)
 		}
 	}
-	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg)
+	var selectedDurableStore durablestoreapp.Store
+	if storageOwners.DurableWorkflow != nil {
+		selectedDurableStore = storageOwners.DurableWorkflow
+	}
+	durableStoreWorkflow, durableStoreCloser, err := buildDurableStoreRuntime(cfg, selectedDurableStore)
 	if err != nil {
 		log.Fatalf("Failed to initialize durable store workflow: %v", err)
 	}
@@ -742,6 +769,9 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	}
 	deps.glossaryRecent = glossaryRuntime.RecentHandler
 	deps.toolRegistry = runtimeToolRegistry
+	deps.glossaryStore = storageOwners.GlossaryStore
+	deps.movieCatalogStore = storageOwners.MovieCatalog
+	deps.hobbyGraphStore = storageOwners.HobbyGraph
 	deps.knowledgeMemoryToolStore = toolRuntime.KnowledgeMemoryToolStore
 	deps.workerToolRunner = toolRuntime.WorkerRuntimeRunnerV2
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
@@ -1514,7 +1544,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		llmRuntime.Coder4,
 	)
 	deps.recallTraceStore = conversationRuntime.L1Store
-	verificationRuntime := buildVerificationRuntime(cfg, deps, conversationRuntime.L1Store)
+	var selectedVerificationReportStore storagehost.VerificationReportGroupOwner
+	if storageOwners.Verification != nil {
+		selectedVerificationReportStore = storageOwners.Verification
+	}
+	verificationRuntime := buildVerificationRuntime(cfg, deps, conversationRuntime.L1Store, selectedVerificationReportStore)
 
 	ttsRuntime := buildTTSEntryRuntime(cfg)
 	vtuberBridge := buildVTuberBridge(cfg)

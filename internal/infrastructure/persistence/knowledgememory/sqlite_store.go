@@ -96,6 +96,7 @@ func (s *SQLiteStore) EnsureOwnerRouteSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_knowledge_memory_request_receipts_user_created
 			ON knowledge_memory_request_receipts(user_id, created_at DESC)`,
 	}
+	statements = append(statements, knowledgeMemoryStorageHostReceiptSchemaStatements()...)
 	statements = append(statements, newsKnowledgeReceiptSchemaStatements()...)
 	for _, stmt := range statements {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
@@ -201,6 +202,7 @@ func (s *SQLiteStore) migrate() error {
 			updated_at TEXT NOT NULL
 		)`,
 	}
+	stmts = append(stmts, knowledgeMemoryStorageHostReceiptSchemaStatements()...)
 	stmts = append(stmts, newsKnowledgeReceiptSchemaStatements()...)
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
@@ -236,6 +238,29 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("knowledge memory sqlite store is closed")
 	}
+	item, receipt, payload, err := prepareCreativeCandidateWrite(item, receipt)
+	if err != nil {
+		return false, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin knowledge memory candidate transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	replayed, err := saveCreativeCandidateWithReceiptTx(ctx, tx, item, receipt, payload)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit knowledge memory candidate: %w", err)
+	}
+	return replayed, nil
+}
+
+func prepareCreativeCandidateWrite(item domainkm.CreativeKnowledgeItem, receipt KnowledgeMemoryRequestReceipt) (domainkm.CreativeKnowledgeItem, KnowledgeMemoryRequestReceipt, string, error) {
 	item.ItemID = strings.TrimSpace(item.ItemID)
 	item.UserID = strings.TrimSpace(item.UserID)
 	item.Title = strings.TrimSpace(item.Title)
@@ -254,28 +279,23 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 		receipt.CreatedAt = receipt.CreatedAt.UTC()
 	}
 	if err := domainkm.ValidateCreativeCandidate(item); err != nil {
-		return false, err
+		return item, receipt, "", err
 	}
 	if strings.TrimSpace(string(receipt.ActionID)) == "" || receipt.UserID == "" || receipt.ActorID == "" || receipt.PayloadHash == "" || receipt.ItemID == "" {
-		return false, fmt.Errorf("knowledge memory request receipt fields are required")
+		return item, receipt, "", fmt.Errorf("knowledge memory request receipt fields are required")
 	}
 	if receipt.UserID != item.UserID || receipt.ItemID != item.ItemID {
-		return false, fmt.Errorf("knowledge memory request receipt binding does not match candidate")
+		return item, receipt, "", fmt.Errorf("knowledge memory request receipt binding does not match candidate")
 	}
 
 	payload, err := marshalKnowledgeItem(item)
 	if err != nil {
-		return false, err
+		return item, receipt, "", err
 	}
+	return item, receipt, payload, nil
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin knowledge memory candidate transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
+func saveCreativeCandidateWithReceiptTx(ctx context.Context, tx *sql.Tx, item domainkm.CreativeKnowledgeItem, receipt KnowledgeMemoryRequestReceipt, payload string) (bool, error) {
 	existingReceipt, found, err := findKnowledgeMemoryActionReceipt(ctx, tx, receipt.ActionID, "")
 	if err != nil {
 		return false, err
@@ -290,9 +310,6 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 		}
 		if !itemFound || existingItem.UserID != item.UserID || !creativeCandidateEqual(existingItem, item) {
 			return false, fmt.Errorf("%w: action_id %q candidate binding", ErrKnowledgeMemoryRequestConflict, receipt.ActionID)
-		}
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit knowledge memory candidate replay: %w", err)
 		}
 		return true, nil
 	}
@@ -310,9 +327,6 @@ func (s *SQLiteStore) SaveCreativeCandidateWithReceipt(ctx context.Context, item
 		string(receipt.ActionID), receipt.UserID, receipt.ActorID, receipt.PayloadHash, receipt.ItemID,
 		receipt.CreatedAt.Format(timeFormatRFC3339Nano)); err != nil {
 		return false, fmt.Errorf("insert knowledge memory request receipt: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit knowledge memory candidate: %w", err)
 	}
 	return false, nil
 }

@@ -30,7 +30,7 @@ func TestConversationRuntimeL1SelectsL1AsPrimaryCloser(t *testing.T) {
 		Conversation: config.ConversationConfig{Enabled: false},
 		Storage:      config.StorageConfig{Databases: config.DatabasePathsConfig{ConversationL1: filepath.Join(t.TempDir(), "l1.db")}},
 	}
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.Closer == nil {
 		t.Fatal("L1 runtime primary closer is nil")
 	}
@@ -52,7 +52,7 @@ func TestConversationRuntimeL1KeepsArchiveAsIndependentCloser(t *testing.T) {
 			ConversationArchive: filepath.Join(dir, "archive.db"),
 		}},
 	}
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.ArchiveStore == nil || runtime.ArchiveCloser != runtime.ArchiveStore {
 		t.Fatalf("L1 archive closer=%p store=%p, want independent route archive", runtime.ArchiveCloser, runtime.ArchiveStore)
 	}
@@ -114,7 +114,7 @@ func TestBuildConversationRuntimeUsesL1ConversationEngineWithoutAdvancedRuntime(
 		},
 	}
 
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.L1Store == nil {
 		t.Fatal("L1Store is nil; configured Viewer read store must not depend on Conversation engine")
 	}
@@ -149,7 +149,7 @@ func TestConversationRuntimeOwnerRecallTraceUsesConfiguredOwnerAndRealL1(t *test
 		},
 	}
 
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.L1Store == nil || runtime.Engine == nil {
 		t.Fatal("configured runtime must expose the real L1 store and conversation engine")
 	}
@@ -273,7 +273,7 @@ func TestBuildConversationRuntimeConfiguresParquetExportRootAndDelegates(t *test
 		},
 	}
 
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.L1Store == nil || runtime.ArchiveStore == nil {
 		t.Fatal("configured runtime must expose L1 and archive stores")
 	}
@@ -347,7 +347,7 @@ func TestBuildConversationRuntimeLeavesParquetUnavailableWithoutColdExportRoot(t
 		},
 	}
 
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.L1Store == nil || runtime.ArchiveStore == nil {
 		t.Fatal("runtime with archive path must expose both stores")
 	}
@@ -387,7 +387,7 @@ func TestBuildConversationRuntimeConfiguresCommonRawSourceRootAndFailsClosedWhen
 				Memory:    config.MemoryStorageConfig{RawSourceDir: rawRoot},
 			},
 		}
-		runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+		runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 		if runtime.L1Store == nil {
 			t.Fatal("configured runtime must expose L1 store")
 		}
@@ -420,7 +420,7 @@ func TestBuildConversationRuntimeConfiguresCommonRawSourceRootAndFailsClosedWhen
 			LocalAgentOps: config.LocalAgentOpsConfig{UserID: "owner-42"},
 			Storage:       config.StorageConfig{Databases: config.DatabasePathsConfig{ConversationL1: filepath.Join(dir, "l1.db")}},
 		}
-		runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+		runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 		if runtime.L1Store == nil {
 			t.Fatal("runtime must expose L1 store")
 		}

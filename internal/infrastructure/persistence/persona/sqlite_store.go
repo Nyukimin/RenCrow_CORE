@@ -110,11 +110,63 @@ func (s *SQLiteStore) migrate() error {
 			created_at TEXT,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS persona_storagehost_operation_receipt (
+			op_id TEXT PRIMARY KEY CHECK(length(op_id) BETWEEN 1 AND 128),
+			operation TEXT NOT NULL CHECK(operation IN (
+				'save_discomfort_log', 'save_trigger_log', 'save_canonical_response_log',
+				'save_observation_log', 'save_meta_profile_update', 'save_interface_session')),
+			payload_sha256 TEXT NOT NULL CHECK(length(payload_sha256) = 64 AND payload_sha256 = lower(payload_sha256) AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
+			writer_generation INTEGER NOT NULL CHECK(writer_generation > 0),
+			effect_table TEXT NOT NULL CHECK(effect_table IN (
+				'persona_discomfort_log', 'persona_trigger_log', 'canonical_response_log',
+				'observation_log', 'meta_profile_update', 'persona_interface_session')),
+			effect_id TEXT NOT NULL CHECK(length(effect_id) BETWEEN 1 AND 512),
+			result_json TEXT NOT NULL,
+			result_sha256 TEXT NOT NULL CHECK(length(result_sha256) = 64 AND result_sha256 = lower(result_sha256) AND result_sha256 NOT GLOB '*[^0-9a-f]*'),
+			CHECK(
+				(operation = 'save_discomfort_log' AND effect_table = 'persona_discomfort_log') OR
+				(operation = 'save_trigger_log' AND effect_table = 'persona_trigger_log') OR
+				(operation = 'save_canonical_response_log' AND effect_table = 'canonical_response_log') OR
+				(operation = 'save_observation_log' AND effect_table = 'observation_log') OR
+				(operation = 'save_meta_profile_update' AND effect_table = 'meta_profile_update') OR
+				(operation = 'save_interface_session' AND effect_table = 'persona_interface_session'))
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return err
 		}
+	}
+	return s.validatePersonaStorageHostReceiptSchema()
+}
+
+func (s *SQLiteStore) validatePersonaStorageHostReceiptSchema() error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + personaStorageHostReceiptTable + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	primaryKeyCount := 0
+	primaryKeyColumn := ""
+	for rows.Next() {
+		var cid, notNull, primaryKeyOrdinal int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKeyOrdinal); err != nil {
+			return err
+		}
+		if primaryKeyOrdinal > 0 {
+			primaryKeyCount++
+			if primaryKeyOrdinal == 1 {
+				primaryKeyColumn = name
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if primaryKeyCount != 1 || primaryKeyColumn != "op_id" {
+		return fmt.Errorf("persona storage-host receipt primary key must be exactly op_id")
 	}
 	return nil
 }

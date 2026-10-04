@@ -24,6 +24,22 @@ const artifactTransactionCleanupTimeout = 5 * time.Second
 // ROLLBACK on the reserved connection.
 type artifactRollbackFunc func(context.Context, *sql.Conn) error
 
+// artifactTransactionRollbackConfirmedError marks only a work failure whose
+// explicit ROLLBACK succeeded before COMMIT was attempted. A failed COMMIT is
+// deliberately never wrapped: even a later ROLLBACK cannot establish whether
+// SQLite committed before reporting the error.
+type artifactTransactionRollbackConfirmedError struct{ cause error }
+
+func (e artifactTransactionRollbackConfirmedError) Error() string { return e.cause.Error() }
+func (e artifactTransactionRollbackConfirmedError) Unwrap() error { return e.cause }
+
+// ArtifactTransactionRollbackConfirmed reports whether this exact error carries
+// proof that the owner's open transaction was explicitly rolled back.
+func ArtifactTransactionRollbackConfirmed(err error) bool {
+	var confirmed artifactTransactionRollbackConfirmedError
+	return errors.As(err, &confirmed)
+}
+
 // realArtifactRollback is that production rollback. Nothing here swaps the driver,
 // the DSN or the schema: the database file and the statements stay real, and only the
 // moment at which the rollback is observed to fail is under test control.
@@ -57,13 +73,19 @@ func (s *SQLiteStore) withArtifactTransaction(ctx context.Context, label string,
 		return fmt.Errorf("begin browser trace %s transaction: %w", label, err)
 	}
 	committed := false
+	workFailed := false
 	defer func() {
 		if committed {
 			return
 		}
-		err = s.cleanupArtifactTransaction(label, conn, err)
+		var rollbackConfirmed bool
+		err, rollbackConfirmed = s.cleanupArtifactTransaction(label, conn, err)
+		if workFailed && rollbackConfirmed {
+			err = artifactTransactionRollbackConfirmedError{cause: err}
+		}
 	}()
 	if err := work(ctx, conn); err != nil {
+		workFailed = true
 		return err
 	}
 	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
@@ -95,27 +117,27 @@ func (s *SQLiteStore) withArtifactTransaction(ctx context.Context, label string,
 // Already-done and already-discarded sentinels mean the connection cannot be recycled
 // either, so they are handled deliberately; any other cleanup failure is reported
 // instead of hidden.
-func (s *SQLiteStore) cleanupArtifactTransaction(label string, conn *sql.Conn, operationErr error) error {
+func (s *SQLiteStore) cleanupArtifactTransaction(label string, conn *sql.Conn, operationErr error) (error, bool) {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), artifactTransactionCleanupTimeout)
 	defer cancel()
 	rollbackErr := s.rollbackArtifact(rollbackCtx, conn)
 	if rollbackErr == nil {
-		return operationErr
+		return operationErr, true
 	}
 	failure := errors.Join(operationErr, fmt.Errorf("rollback browser trace %s transaction: %w", label, rollbackErr))
 	if errors.Is(rollbackErr, sql.ErrConnDone) || errors.Is(rollbackErr, driver.ErrBadConn) {
 		// That connection is already closed or discarded, so there is nothing left to
 		// recycle: the open transaction cannot reach another operation. The rollback
 		// is still reported, because it did not confirm that the write was undone.
-		return failure
+		return failure, false
 	}
 	// The transaction is in an unknown state on a connection that is still open, so
 	// it has to be disposed of rather than returned to the pool.
 	if discardErr := conn.Raw(func(driverConn any) error { return driver.ErrBadConn }); discardErr != nil {
 		if errors.Is(discardErr, sql.ErrConnDone) || errors.Is(discardErr, driver.ErrBadConn) {
-			return failure
+			return failure, false
 		}
-		return errors.Join(failure, fmt.Errorf("discard browser trace %s sqlite connection after an unconfirmed rollback: %w", label, discardErr))
+		return errors.Join(failure, fmt.Errorf("discard browser trace %s sqlite connection after an unconfirmed rollback: %w", label, discardErr)), false
 	}
-	return failure
+	return failure, false
 }

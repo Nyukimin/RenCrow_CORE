@@ -176,6 +176,7 @@ type SessionConfig struct {
 type StorageConfig struct {
 	Databases DatabasePathsConfig `yaml:"databases"`
 	Memory    MemoryStorageConfig `yaml:"memory"`
+	Host      StorageHostConfig   `yaml:"host"`
 }
 
 // DurableStoreConfig はChat起点の永続Store判定経路を明示的に有効化する。

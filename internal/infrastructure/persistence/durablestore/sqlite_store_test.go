@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	appdurable "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -71,6 +73,52 @@ func TestSQLiteStoreRequestReceiptRoundTripAndExactConflict(t *testing.T) {
 	}
 	if err := store.SaveWithReceipt(context.Background(), nil, receipt); err == nil {
 		t.Fatal("duplicate action receipt must fail")
+	}
+}
+
+func TestSQLiteStoreReceiptOnlySemanticDedupeRequiresCanonicalUserScope(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "workflow.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 3, 21, 22, 23, 0, time.UTC)
+	result := domain.WorkflowResult{
+		Status: domain.StatusCompleted, Lifecycle: domain.LifecycleValidated, CreatedAt: now, UpdatedAt: now,
+		Requirement: domain.StorageRequirement{
+			RequirementID: "sr-receipt-scope", DedupeKey: "dedupe-receipt-scope",
+			ActionID:    modulecore.ActionID("act_00000000-0000-5000-8000-000000000061"),
+			RequestedBy: "shiro", UserScope: "AuthenticatedUser", RequestedOutcome: domain.OutcomeAssess,
+		},
+	}
+	initial := domain.RequestReceipt{
+		ActionID: result.Requirement.ActionID, UserScope: result.Requirement.UserScope,
+		PayloadHash: domain.HashStorageRequirement(result.Requirement), RequirementID: result.Requirement.RequirementID, CreatedAt: now,
+	}
+	if err := store.SaveWithReceipt(context.Background(), &result, initial); err != nil {
+		t.Fatal(err)
+	}
+	sameScopeRequirement := result.Requirement
+	sameScopeRequirement.ActionID = modulecore.ActionID("act_00000000-0000-5000-8000-000000000062")
+	sameScope := domain.RequestReceipt{
+		ActionID: sameScopeRequirement.ActionID, UserScope: sameScopeRequirement.UserScope,
+		PayloadHash: domain.HashStorageRequirement(sameScopeRequirement), RequirementID: result.Requirement.RequirementID, CreatedAt: now.Add(time.Second),
+	}
+	if err := store.SaveWithReceipt(context.Background(), nil, sameScope); err != nil {
+		t.Fatalf("same-scope semantic receipt-only dedupe: %v", err)
+	}
+	differentScopeRequirement := result.Requirement
+	differentScopeRequirement.ActionID = modulecore.ActionID("act_00000000-0000-5000-8000-000000000063")
+	differentScopeRequirement.UserScope = "Channel:ChatID"
+	differentScope := domain.RequestReceipt{
+		ActionID: differentScopeRequirement.ActionID, UserScope: differentScopeRequirement.UserScope,
+		PayloadHash: domain.HashStorageRequirement(differentScopeRequirement), RequirementID: result.Requirement.RequirementID, CreatedAt: now.Add(2 * time.Second),
+	}
+	if err := store.SaveWithReceipt(context.Background(), nil, differentScope); !errors.Is(err, appdurable.ErrRequestConflict) {
+		t.Fatalf("different-scope receipt-only error=%v want ErrRequestConflict", err)
+	}
+	if receipt, err := store.FindByActionID(context.Background(), differentScope.ActionID); err != nil || receipt != nil {
+		t.Fatalf("different-scope receipt persisted=%+v err=%v", receipt, err)
 	}
 }
 

@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	appdurable "github.com/Nyukimin/RenCrow_CORE/internal/application/durablestore"
 	domain "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
 const (
-	schemaVersion = 2
+	schemaVersion = 3
 	timeFormat    = "2006-01-02T15:04:05.999999999Z07:00"
 )
 
@@ -100,6 +101,11 @@ func (s *SQLiteStore) migrate() error {
 		if err := migrateLegacyReceipts(tx); err != nil {
 			return err
 		}
+	case 2:
+		// Version 3 adds only the storage-host operation receipt below.
+	}
+	if err := createStorageHostOperationReceiptTable(tx); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return err
@@ -180,53 +186,75 @@ func (s *SQLiteStore) SaveWithReceipt(ctx context.Context, result *domain.Workfl
 	if s == nil || s.db == nil {
 		return fmt.Errorf("durable store workflow sqlite store is closed")
 	}
-	receipt.ActionID = modulecore.ActionID(strings.TrimSpace(string(receipt.ActionID)))
-	receipt.UserScope = strings.TrimSpace(receipt.UserScope)
-	receipt.PayloadHash = strings.TrimSpace(receipt.PayloadHash)
-	receipt.RequirementID = strings.TrimSpace(receipt.RequirementID)
-	if err := domain.ValidateRequestReceipt(receipt); err != nil {
+	receipt, payload, err := prepareWorkflowSave(result, receipt)
+	if err != nil {
 		return err
-	}
-	var payload string
-	if result != nil {
-		if strings.TrimSpace(result.Requirement.RequirementID) == "" || strings.TrimSpace(result.Requirement.DedupeKey) == "" {
-			return fmt.Errorf("requirement_id and dedupe_key are required")
-		}
-		if receipt.RequirementID != result.Requirement.RequirementID {
-			return fmt.Errorf("receipt requirement_id does not match workflow result")
-		}
-		if receipt.PayloadHash != domain.HashStorageRequirement(result.Requirement) {
-			return fmt.Errorf("receipt payload_hash does not match workflow result")
-		}
-		payloadBytes, marshalErr := json.Marshal(result)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		payload = string(payloadBytes)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := saveWithReceiptTx(ctx, tx, result, receipt, payload); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func prepareWorkflowSave(result *domain.WorkflowResult, receipt domain.RequestReceipt) (domain.RequestReceipt, string, error) {
+	receipt.ActionID = modulecore.ActionID(strings.TrimSpace(string(receipt.ActionID)))
+	receipt.UserScope = strings.TrimSpace(receipt.UserScope)
+	receipt.PayloadHash = strings.TrimSpace(receipt.PayloadHash)
+	receipt.RequirementID = strings.TrimSpace(receipt.RequirementID)
+	if err := domain.ValidateRequestReceipt(receipt); err != nil {
+		return domain.RequestReceipt{}, "", err
+	}
+	var payload string
+	if result != nil {
+		if strings.TrimSpace(result.Requirement.RequirementID) == "" || strings.TrimSpace(result.Requirement.DedupeKey) == "" {
+			return domain.RequestReceipt{}, "", fmt.Errorf("requirement_id and dedupe_key are required")
+		}
+		if receipt.RequirementID != result.Requirement.RequirementID {
+			return domain.RequestReceipt{}, "", fmt.Errorf("receipt requirement_id does not match workflow result")
+		}
+		if receipt.PayloadHash != domain.HashStorageRequirement(result.Requirement) {
+			return domain.RequestReceipt{}, "", fmt.Errorf("receipt payload_hash does not match workflow result")
+		}
+		payloadBytes, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			return domain.RequestReceipt{}, "", marshalErr
+		}
+		payload = string(payloadBytes)
+	}
+	return receipt, payload, nil
+}
+
+func saveWithReceiptTx(ctx context.Context, tx *sql.Tx, result *domain.WorkflowResult, receipt domain.RequestReceipt, payload string) error {
 	if result != nil {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO durable_store_workflow (requirement_id, dedupe_key, status, lifecycle, created_at, updated_at, payload)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`, result.Requirement.RequirementID, result.Requirement.DedupeKey, result.Status, result.Lifecycle, result.CreatedAt.UTC().Format(timeFormat), result.UpdatedAt.UTC().Format(timeFormat), payload); err != nil {
 			return err
 		}
 	} else {
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM durable_store_workflow WHERE requirement_id = ?`, receipt.RequirementID).Scan(&exists); err != nil {
+		var persistedPayload string
+		if err := tx.QueryRowContext(ctx, `SELECT payload FROM durable_store_workflow WHERE requirement_id = ?`, receipt.RequirementID).Scan(&persistedPayload); err != nil {
 			if err == sql.ErrNoRows {
 				return fmt.Errorf("receipt requirement %q is not persisted", receipt.RequirementID)
 			}
 			return err
 		}
+		persisted, err := decodeWorkflowPayload(receipt.RequirementID, persistedPayload)
+		if err != nil {
+			return fmt.Errorf("receipt requirement %q is malformed: %w", receipt.RequirementID, err)
+		}
+		if persisted.Requirement.UserScope != receipt.UserScope {
+			return fmt.Errorf("%w: receipt user scope does not match requirement %q", appdurable.ErrRequestConflict, receipt.RequirementID)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO durable_store_workflow_receipt (action_id, user_scope, payload_hash, requirement_id, created_at) VALUES (?, ?, ?, ?, ?)`, string(receipt.ActionID), receipt.UserScope, receipt.PayloadHash, receipt.RequirementID, receipt.CreatedAt.UTC().Format(timeFormat)); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLiteStore) FindByDedupeKey(ctx context.Context, key string) (*domain.WorkflowResult, error) {

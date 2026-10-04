@@ -57,6 +57,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("person_related_catalog.identity_mapping.batch_categories must be between 1 and 7")
 		}
 	}
+	if err := c.validateStorageHostConfig(); err != nil {
+		return err
+	}
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}

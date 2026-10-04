@@ -12,6 +12,7 @@ import (
 	knowledgerelationapp "github.com/Nyukimin/RenCrow_CORE/internal/application/knowledgerelation"
 	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
 	webgatherapp "github.com/Nyukimin/RenCrow_CORE/internal/application/webgather"
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainrelation "github.com/Nyukimin/RenCrow_CORE/internal/domain/knowledgerelation"
 	conversationpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation"
@@ -27,7 +28,10 @@ type conversationRuntime struct {
 	Engine           conversation.ConversationEngine
 	Manager          *conversationpersistence.RealConversationManager
 	L1Store          *l1sqlite.L1SQLiteStore
+	ChatL1Store      conversationpersistence.L1ConversationStore
 	ArchiveStore     *archivesqlite.ArchiveSQLiteStore
+	ChatArchiveStore conversationpersistence.ConversationArchiveStore
+	UserMemoryStore  domainagent.UserMemoryManager
 	Closer           conversationRuntimeCloser
 	ArchiveCloser    conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
 	WebGatherFetcher tools.WebGatherFetcher
@@ -43,19 +47,30 @@ func buildConversationRuntime(
 	primaryProviders primaryLLMProviders,
 	chatToolRunnerV2 *tools.ToolRunner,
 	workerToolRunnerV2 *tools.ToolRunner,
+	storageOwners runtimeStorageOwnerBundle,
 ) conversationRuntime {
 	ownerID := conversationRuntimeUserID(cfg)
 	var convEngine conversation.ConversationEngine
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
+	var chatL1Store conversationpersistence.L1ConversationStore
 	var archiveStore *archivesqlite.ArchiveSQLiteStore
+	var chatArchiveStore conversationpersistence.ConversationArchiveStore
+	var userMemoryStore domainagent.UserMemoryManager
 	var profilePromotion *memorypromotionapp.Service
 	mioPersona := conversation.DefaultMioPersona()
 	if cfg.Prompts != nil {
 		mioPersona = conversation.NewMioPersona(cfg.Prompts.MioPersona)
 	}
 	l1StoreStartedAt := time.Now()
-	if cfg.Storage.Databases.ConversationL1 != "" {
+	if storageOwners.Remote {
+		if storageOwners.ConversationStore == nil || storageOwners.ArchiveStore == nil || storageOwners.UserMemoryStore == nil {
+			log.Fatalf("remote Conversation runtime requires selected L1+Turn, Archive, and UserMemory owners")
+		}
+		chatL1Store = storageOwners.ConversationStore
+		chatArchiveStore = storageOwners.ArchiveStore
+		userMemoryStore = storageOwners.UserMemoryStore
+	} else if cfg.Storage.Databases.ConversationL1 != "" {
 		if err := os.MkdirAll(filepath.Dir(cfg.Storage.Databases.ConversationL1), 0755); err != nil {
 			log.Fatalf("Failed to create L1 SQLite directory: %v", err)
 		}
@@ -64,6 +79,8 @@ func buildConversationRuntime(
 		if err != nil {
 			log.Fatalf("Failed to initialize L1 SQLite store: %v", err)
 		}
+		chatL1Store = l1Store
+		userMemoryStore = l1Store
 		if exportRoot := strings.TrimSpace(cfg.Storage.Memory.ColdExportDir); exportRoot != "" {
 			if err := l1Store.SetParquetExportRoot(exportRoot); err != nil {
 				log.Fatalf("Failed to configure Parquet export root: %v", err)
@@ -86,7 +103,7 @@ func buildConversationRuntime(
 	// Conversation Archive is a CORE-owned L2 boundary for user-memory
 	// archive/receipt routes. It must be available with standard L1-only
 	// startup; advanced Redis/vector conversation is not a prerequisite.
-	if l1Store != nil {
+	if !storageOwners.Remote && l1Store != nil {
 		archivePath := strings.TrimSpace(cfg.Storage.Databases.ConversationArchive)
 		if archivePath != "" {
 			if err := os.MkdirAll(filepath.Dir(archivePath), 0755); err != nil {
@@ -97,11 +114,15 @@ func buildConversationRuntime(
 			if err != nil {
 				log.Fatalf("Failed to initialize conversation archive SQLite store: %v", err)
 			}
+			chatArchiveStore = archiveStore
 			l1Store.WithArchiveStore(archiveStore)
 			log.Printf("  Conversation Archive SQLite: %s", archivePath)
 		}
 	}
-	categoryRecallRegistry := buildCategoryRecallRegistry(context.Background(), cfg, l1Store)
+	var categoryRecallRegistry *conversation.DeterministicCategoryRecallRegistry
+	if !storageOwners.Remote {
+		categoryRecallRegistry = buildCategoryRecallRegistry(context.Background(), cfg, l1Store)
+	}
 	if cfg.Conversation.Enabled {
 		var err error
 		vectorCollection := cfg.Conversation.VectorCollection
@@ -112,19 +133,29 @@ func buildConversationRuntime(
 		if vectorDimension <= 0 {
 			vectorDimension = 768
 		}
-		realMgr, err = conversationpersistence.NewRealConversationManagerWithVectorOptions(
-			cfg.Conversation.RedisURL,
-			cfg.Storage.Databases.ConversationArchive,
-			cfg.Conversation.VectorDBURL,
-			vectorCollection,
-			uint64(vectorDimension),
-		)
+		if storageOwners.Remote {
+			realMgr, err = conversationpersistence.NewRealConversationManagerWithVectorOptionsAndArchiveStore(
+				cfg.Conversation.RedisURL,
+				cfg.Conversation.VectorDBURL,
+				vectorCollection,
+				uint64(vectorDimension),
+				chatArchiveStore,
+			)
+		} else {
+			realMgr, err = conversationpersistence.NewRealConversationManagerWithVectorOptions(
+				cfg.Conversation.RedisURL,
+				cfg.Storage.Databases.ConversationArchive,
+				cfg.Conversation.VectorDBURL,
+				vectorCollection,
+				uint64(vectorDimension),
+			)
+		}
 		if err != nil {
 			log.Fatalf("Failed to initialize conversation manager: %v", err)
 		}
 		log.Printf("  VectorDB collection: %s (dimension=%d)", vectorCollection, vectorDimension)
-		if l1Store != nil {
-			realMgr.WithL1Store(l1Store)
+		if chatL1Store != nil {
+			realMgr.WithL1Store(chatL1Store)
 			if archiveStore != nil {
 				// RealConversationManager may attach its optional archive
 				// connection; the CORE-owned route store is authoritative for
@@ -182,12 +213,12 @@ func buildConversationRuntime(
 			engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
 			log.Printf("  Category Recall Registry: enabled")
 		}
-		if l1Store != nil {
-			engine = engine.WithUserMemoryStore(l1Store, ownerID)
-			if cfg.KnowledgeRelation.Enabled {
-				engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
-				log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
-			}
+		if userMemoryStore != nil {
+			engine = engine.WithUserMemoryStore(userMemoryStore, ownerID)
+		}
+		if l1Store != nil && cfg.KnowledgeRelation.Enabled {
+			engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
+			log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
 		}
 		if err := realMgr.DrainConversationTurnOutbox(context.Background(), 100); err != nil {
 			code := conversation.ConversationTurnErrorCodeOf(err)
@@ -213,12 +244,12 @@ func buildConversationRuntime(
 		log.Printf("  SQLite archive: %s", cfg.Storage.Databases.ConversationArchive)
 		log.Printf("  VectorDB: %s", cfg.Conversation.VectorDBURL)
 	} else {
-		if l1Store != nil {
-			l1Manager := conversationpersistence.NewL1ConversationManager(l1Store)
+		if chatL1Store != nil {
+			l1Manager := conversationpersistence.NewL1ConversationManager(chatL1Store)
 			engine := conversationpersistence.NewRealConversationEngine(
 				l1Manager,
 				mioPersona,
-			).WithUserMemoryStore(l1Store, ownerID)
+			).WithUserMemoryStore(userMemoryStore, ownerID)
 			if categoryRecallRegistry != nil {
 				engine = engine.WithCategoryRecallRegistry(categoryRecallRegistry).WithCategoryRecallScope("public")
 				log.Printf("  Category Recall Registry: enabled")
@@ -289,10 +320,13 @@ func buildConversationRuntime(
 		}
 	}
 	return conversationRuntime{
-		Engine:       convEngine,
-		Manager:      realMgr,
-		L1Store:      l1Store,
-		ArchiveStore: archiveStore,
+		Engine:           convEngine,
+		Manager:          realMgr,
+		L1Store:          l1Store,
+		ChatL1Store:      chatL1Store,
+		ArchiveStore:     archiveStore,
+		ChatArchiveStore: chatArchiveStore,
+		UserMemoryStore:  userMemoryStore,
 		Closer: func() conversationRuntimeCloser {
 			if realMgr != nil {
 				return realMgr

@@ -32,6 +32,10 @@ type JSONLStore struct {
 	closed            bool
 	readOnly          bool
 	mu                sync.RWMutex
+	fenceMu           sync.RWMutex
+	fenceByID         map[string]persistedTaskFence
+	activeFences      map[modulecore.TaskID]string
+	fenceRecovery     bool
 	lifecycle         *taskStoreLifecycle
 	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
@@ -72,10 +76,16 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 		notificationsPath: filepath.Join(root, notificationsFilename),
 		lifecycle:         newTaskStoreLifecycle(),
 		executionFence:    newTaskExecutionFence(),
+		fenceByID:         make(map[string]persistedTaskFence),
+		activeFences:      make(map[modulecore.TaskID]string),
 	}
 	store.readOnly = readOnly
 	if readOnly {
-		batch, err := jsonlbatch.OpenReader(root, taskBatchFilenames())
+		filenames, err := taskBatchReaderFilenames(root)
+		if err != nil {
+			return nil, err
+		}
+		batch, err := jsonlbatch.OpenReader(root, filenames)
 		if err != nil {
 			return nil, err
 		}
@@ -101,6 +111,15 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	if err := batch.Recover(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover task store batch: %w", err)
 	}
+	receipts, err := readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
+	if err != nil {
+		return nil, fmt.Errorf("load task operation receipts: %w", err)
+	}
+	fenceSnapshot, err := readTaskExecutionFences(context.Background(), filepath.Join(root, taskExecutionFenceFilename))
+	if err != nil {
+		return nil, fmt.Errorf("load task execution fences: %w", err)
+	}
+	store.installTaskFenceSnapshot(fenceSnapshot)
 	generation, err := advanceTaskWriterGeneration(lock)
 	if err != nil {
 		return nil, fmt.Errorf("advance task store writer generation: %w", err)
@@ -114,6 +133,16 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	for _, run := range runs {
 		if run.WriterGeneration >= generation {
 			return nil, fmt.Errorf("writer generation does not advance persisted Run ownership")
+		}
+	}
+	for _, receipt := range receipts {
+		if receipt.WriterGeneration >= generation {
+			return nil, fmt.Errorf("writer generation does not advance persisted task operation receipt ownership")
+		}
+	}
+	for _, fence := range fenceSnapshot.byID {
+		if fence.AcquireGeneration >= generation || fence.ReleaseGeneration >= generation {
+			return nil, fmt.Errorf("writer generation does not advance persisted task execution fence ownership")
 		}
 	}
 	success = true

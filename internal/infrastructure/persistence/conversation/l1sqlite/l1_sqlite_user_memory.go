@@ -18,6 +18,14 @@ import (
 )
 
 func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {
+	return s.createUserMemory(ctx, nil, input)
+}
+
+func (s *L1SQLiteStore) createUserMemory(ctx context.Context, identity *UserMemoryStorageHostOperationIdentity, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {
+	return s.createUserMemoryWithTx(ctx, nil, identity, input)
+}
+
+func (s *L1SQLiteStore) createUserMemoryWithTx(ctx context.Context, tx *sql.Tx, identity *UserMemoryStorageHostOperationIdentity, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, error) {
 	userID := strings.TrimSpace(input.UserID)
 	if userID == "" {
 		userID = "ren"
@@ -78,25 +86,32 @@ func (s *L1SQLiteStore) CreateUserMemory(ctx context.Context, input domainmemory
 		return nil, err
 	}
 	id := fmt.Sprintf("%s:user_memory:%d:%d", namespace, now.UnixNano(), l1IDSequence.Add(1))
-	_, err = s.db.ExecContext(ctx, `
+	if tx == nil {
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO l1_memory_event (
 	id, namespace, session_id, thread_id, thread_seq, thread_kind, speaker, message, meta_json,
 	memory_state, layer, source, created_at, updated_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, id, namespace, "", "", 0, "", string(domconv.SpeakerMemory), statement, metaJSON, state, MemoryLayerL1, source, now, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create user memory: %w", err)
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to create user memory: %w", err))
 	}
-	if _, err := s.AppendEvent(ctx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":          id,
 		"user_id":            userID,
 		"type":               memoryType,
 		"memory_state":       state,
 		"evidence_event_ids": input.EvidenceEventIDs,
-	}, "memory"); err != nil {
-		return nil, fmt.Errorf("failed to append user memory creation event: %w", err)
+	}, "memory")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to append user memory creation event: %w", err))
 	}
-	return l1EventToUserMemory(L1MemoryEvent{
+	result := l1EventToUserMemory(L1MemoryEvent{
 		ID:          id,
 		Namespace:   namespace,
 		Speaker:     domconv.SpeakerMemory,
@@ -107,7 +122,15 @@ INSERT INTO l1_memory_event (
 		Source:      source,
 		CreatedAt:   now,
 		UpdatedAt:   now,
-	}), nil
+	})
+	if identity != nil {
+		if err := commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostResult{Memory: result}, string(auditEventID(auditEntry))); err != nil {
+			return nil, err
+		}
+	} else if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 const userMemoryCandidateIDPrefix = "user-memory-candidate/sha256:"
@@ -117,6 +140,10 @@ const userMemoryCandidateIDPrefix = "user-memory-candidate/sha256:"
 // stable idempotency identity; state and source are intentionally owned here,
 // rather than by the caller-controlled input.
 func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context, requestID, actorID string, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, bool, error) {
+	return s.createUserMemoryCandidateWithRequest(ctx, nil, nil, requestID, actorID, input)
+}
+
+func (s *L1SQLiteStore) createUserMemoryCandidateWithRequest(ctx context.Context, tx *sql.Tx, identity *UserMemoryStorageHostOperationIdentity, requestID, actorID string, input domainmemory.CreateUserMemoryInput) (*domainmemory.UserMemory, bool, error) {
 	requestID = strings.TrimSpace(requestID)
 	actorID = strings.TrimSpace(actorID)
 	if requestID == "" {
@@ -167,9 +194,11 @@ func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context
 		UpdatedAt:        now,
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, false, err
+	if tx == nil {
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	existing, found, err := findL1MemoryEventByID(ctx, tx, candidateID)
 	if err != nil {
@@ -183,7 +212,11 @@ func (s *L1SQLiteStore) CreateUserMemoryCandidateWithRequest(ctx context.Context
 		if existing.Source != source || !userMemoryLogicalEqual(*existingMemory, expected) {
 			return nil, false, rollbackL1Tx(tx, errors.New("user memory request idempotency conflict"))
 		}
-		if err := tx.Commit(); err != nil {
+		if identity != nil {
+			if err := commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostCandidateResult{Memory: existingMemory, IdempotentReplay: true}, ""); err != nil {
+				return nil, false, err
+			}
+		} else if err := tx.Commit(); err != nil {
 			return nil, false, err
 		}
 		return existingMemory, true, nil
@@ -197,7 +230,7 @@ INSERT INTO l1_memory_event (
 		MemoryStateCandidate, MemoryLayerL1, source, now, now); err != nil {
 		return nil, false, rollbackL1Tx(tx, fmt.Errorf("failed to create user memory candidate: %w", err))
 	}
-	if _, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
+	auditEntry, err := appendL1EventLog(ctx, tx, "memory.user_created", namespace, "", "", 0, "", map[string]interface{}{
 		"memory_id":          candidateID,
 		"request_id":         requestID,
 		"actor_id":           actorID,
@@ -205,10 +238,15 @@ INSERT INTO l1_memory_event (
 		"type":               normalized.Type,
 		"memory_state":       MemoryStateCandidate,
 		"evidence_event_ids": normalized.EvidenceEventIDs,
-	}, source); err != nil {
+	}, source)
+	if err != nil {
 		return nil, false, rollbackL1Tx(tx, fmt.Errorf("failed to append user memory candidate audit event: %w", err))
 	}
-	if err := tx.Commit(); err != nil {
+	if identity != nil {
+		if err := commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostCandidateResult{Memory: &expected}, string(auditEventID(auditEntry))); err != nil {
+			return nil, false, err
+		}
+	} else if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
 	return &expected, false, nil
@@ -567,100 +605,200 @@ func (s *L1SQLiteStore) ListPromptInjectableUserMemories(ctx context.Context, us
 }
 
 func (s *L1SQLiteStore) UpdateUserMemoryState(ctx context.Context, id string, state string, reason string) (*domainmemory.UserMemory, error) {
-	ev, err := s.memoryByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.HasPrefix(ev.Namespace, "user:") {
-		return nil, fmt.Errorf("memory is not user namespace: %s", ev.Namespace)
-	}
-	mem := l1EventToUserMemory(*ev)
-	if mem == nil {
-		return nil, errors.New("memory is not user memory")
-	}
-	if err := domainmemory.CanPromoteUserMemory(state, mem.EvidenceEventIDs, mem.Sensitivity, reason); err != nil {
-		return nil, err
-	}
-	if err := s.UpdateMemoryState(ctx, id, state); err != nil {
-		return nil, err
-	}
-	ev.MemoryState = state
-	ev.UpdatedAt = time.Now().UTC()
-	mem = l1EventToUserMemory(*ev)
-	return mem, nil
+	return s.updateUserMemoryState(ctx, nil, nil, id, state, reason)
 }
 
 func (s *L1SQLiteStore) ForgetUserMemory(ctx context.Context, id string, reason string) (*domainmemory.UserMemory, error) {
-	ev, err := s.memoryByID(ctx, id)
-	if err != nil {
+	return s.forgetUserMemory(ctx, nil, nil, id, reason)
+}
+
+func (s *L1SQLiteStore) SupersedeUserMemory(ctx context.Context, oldID string, newID string, reason string) (*domainmemory.UserMemory, error) {
+	return s.supersedeUserMemory(ctx, nil, nil, oldID, newID, reason)
+}
+
+func (s *L1SQLiteStore) updateUserMemoryState(ctx context.Context, tx *sql.Tx, identity *UserMemoryStorageHostOperationIdentity, id, state, reason string) (*domainmemory.UserMemory, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("user memory id is required")
+	}
+	state = strings.TrimSpace(state)
+	if err := validateMemoryState(state); err != nil {
 		return nil, err
 	}
+	var err error
+	if tx == nil {
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	ev, found, err := findL1MemoryEventByID(ctx, tx, id)
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if !found {
+		return nil, rollbackL1Tx(tx, sql.ErrNoRows)
+	}
 	if !strings.HasPrefix(ev.Namespace, "user:") {
-		return nil, fmt.Errorf("memory is not user namespace: %s", ev.Namespace)
+		return nil, rollbackL1Tx(tx, fmt.Errorf("memory is not user namespace: %s", ev.Namespace))
+	}
+	mem := l1EventToUserMemory(ev)
+	if mem == nil {
+		return nil, rollbackL1Tx(tx, errors.New("memory is not user memory"))
+	}
+	if err := domainmemory.CanPromoteUserMemory(state, mem.EvidenceEventIDs, mem.Sensitivity, reason); err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	now := time.Now().UTC()
+	entry, err := appendL1EventLog(ctx, tx, "memory.state_updated", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{"memory_id": id, "previous_state": ev.MemoryState, "memory_state": state}, "memory")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
 	}
 	meta := ev.Meta
 	if meta == nil {
 		meta = map[string]interface{}{}
 	}
-	meta["active"] = false
-	meta["forget_reason"] = strings.TrimSpace(reason)
-	meta["forgot_at"] = time.Now().UTC().Format(time.RFC3339)
-	entry, err := s.AppendEvent(ctx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{
-		"memory_id": id,
-		"reason":    reason,
-	}, "memory")
+	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal memory meta")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET memory_state = ?, meta_json = ?, updated_at = ? WHERE id = ?`, state, metaJSON, now, id); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to update user memory state: %w", err))
+	}
+	ev.MemoryState, ev.Meta, ev.UpdatedAt = state, meta, now
+	result := l1EventToUserMemory(ev)
+	if identity != nil {
+		err = commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostResult{Memory: result}, string(auditEventID(entry)))
+	} else {
+		err = tx.Commit()
+	}
 	if err != nil {
 		return nil, err
 	}
-	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
-	if err := s.updateMemoryMeta(ctx, id, meta); err != nil {
-		return nil, err
-	}
-	ev.Meta = meta
-	ev.UpdatedAt = time.Now().UTC()
-	return l1EventToUserMemory(*ev), nil
+	return result, nil
 }
 
-func (s *L1SQLiteStore) SupersedeUserMemory(ctx context.Context, oldID string, newID string, reason string) (*domainmemory.UserMemory, error) {
-	old, err := s.memoryByID(ctx, oldID)
-	if err != nil {
-		return nil, err
+func (s *L1SQLiteStore) forgetUserMemory(ctx context.Context, tx *sql.Tx, identity *UserMemoryStorageHostOperationIdentity, id, reason string) (*domainmemory.UserMemory, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, errors.New("user memory id is required")
 	}
-	if !strings.HasPrefix(old.Namespace, "user:") {
-		return nil, fmt.Errorf("memory is not user namespace: %s", old.Namespace)
-	}
-	if strings.TrimSpace(newID) != "" {
-		newMem, err := s.memoryByID(ctx, newID)
+	var err error
+	if tx == nil {
+		tx, err = s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
-		if old.Namespace != newMem.Namespace {
-			return nil, errors.New("superseding memory must be in the same user namespace")
+	}
+	ev, found, err := findL1MemoryEventByID(ctx, tx, id)
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if !found {
+		return nil, rollbackL1Tx(tx, sql.ErrNoRows)
+	}
+	if !strings.HasPrefix(ev.Namespace, "user:") {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("memory is not user namespace: %s", ev.Namespace))
+	}
+	if l1EventToUserMemory(ev) == nil {
+		return nil, rollbackL1Tx(tx, errors.New("memory is not user memory"))
+	}
+	now := time.Now().UTC()
+	meta := ev.Meta
+	if meta == nil {
+		meta = map[string]interface{}{}
+	}
+	meta["active"], meta["forget_reason"], meta["forgot_at"] = false, strings.TrimSpace(reason), now.Format(time.RFC3339)
+	entry, err := appendL1EventLog(ctx, tx, "memory.user_forgotten", ev.Namespace, ev.SessionID, ev.ThreadID, ev.ThreadSeq, ev.ThreadKind, map[string]interface{}{"memory_id": id, "reason": reason}, "memory")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal memory meta")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET meta_json = ?, updated_at = ? WHERE id = ?`, metaJSON, now, id); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to update forgotten user memory: %w", err))
+	}
+	ev.Meta, ev.UpdatedAt = meta, now
+	result := l1EventToUserMemory(ev)
+	if identity != nil {
+		err = commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostResult{Memory: result}, string(auditEventID(entry)))
+	} else {
+		err = tx.Commit()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *L1SQLiteStore) supersedeUserMemory(ctx context.Context, tx *sql.Tx, identity *UserMemoryStorageHostOperationIdentity, oldID, newID, reason string) (*domainmemory.UserMemory, error) {
+	if strings.TrimSpace(oldID) == "" {
+		return nil, errors.New("user memory id is required")
+	}
+	newID = strings.TrimSpace(newID)
+	var err error
+	if tx == nil {
+		tx, err = s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
 		}
 	}
+	old, found, err := findL1MemoryEventByID(ctx, tx, oldID)
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if !found {
+		return nil, rollbackL1Tx(tx, sql.ErrNoRows)
+	}
+	if !strings.HasPrefix(old.Namespace, "user:") {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("memory is not user namespace: %s", old.Namespace))
+	}
+	if l1EventToUserMemory(old) == nil {
+		return nil, rollbackL1Tx(tx, errors.New("memory is not user memory"))
+	}
+	if newID != "" {
+		newMemory, found, err := findL1MemoryEventByID(ctx, tx, newID)
+		if err != nil {
+			return nil, rollbackL1Tx(tx, err)
+		}
+		if !found {
+			return nil, rollbackL1Tx(tx, sql.ErrNoRows)
+		}
+		if old.Namespace != newMemory.Namespace {
+			return nil, rollbackL1Tx(tx, errors.New("superseding memory must be in the same user namespace"))
+		}
+	}
+	now := time.Now().UTC()
 	meta := old.Meta
 	if meta == nil {
 		meta = map[string]interface{}{}
 	}
-	meta["active"] = false
-	meta["superseded_by"] = strings.TrimSpace(newID)
-	meta["supersede_reason"] = strings.TrimSpace(reason)
-	meta["superseded_at"] = time.Now().UTC().Format(time.RFC3339)
-	entry, err := s.AppendEvent(ctx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, old.ThreadSeq, old.ThreadKind, map[string]interface{}{
-		"memory_id":     oldID,
-		"superseded_by": strings.TrimSpace(newID),
-		"reason":        reason,
-	}, "memory")
+	meta["active"], meta["superseded_by"], meta["supersede_reason"], meta["superseded_at"] = false, newID, strings.TrimSpace(reason), now.Format(time.RFC3339)
+	entry, err := appendL1EventLog(ctx, tx, "memory.user_superseded", old.Namespace, old.SessionID, old.ThreadID, old.ThreadSeq, old.ThreadKind, map[string]interface{}{"memory_id": oldID, "superseded_by": newID, "reason": reason}, "memory")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
+	metaJSON, err := marshalL1MetaJSON(meta, "failed to marshal memory meta")
+	if err != nil {
+		return nil, rollbackL1Tx(tx, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE l1_memory_event SET meta_json = ?, updated_at = ? WHERE id = ?`, metaJSON, now, oldID); err != nil {
+		return nil, rollbackL1Tx(tx, fmt.Errorf("failed to update superseded user memory: %w", err))
+	}
+	old.Meta, old.UpdatedAt = meta, now
+	result := l1EventToUserMemory(old)
+	if identity != nil {
+		err = commitUserMemoryStorageHostOperation(ctx, tx, *identity, userMemoryStorageHostResult{Memory: result}, string(auditEventID(entry)))
+	} else {
+		err = tx.Commit()
+	}
 	if err != nil {
 		return nil, err
 	}
-	writeUserMemoryEventLinkMeta(meta, "", auditEventID(entry))
-	if err := s.updateMemoryMeta(ctx, oldID, meta); err != nil {
-		return nil, err
-	}
-	old.Meta = meta
-	old.UpdatedAt = time.Now().UTC()
-	return l1EventToUserMemory(*old), nil
+	return result, nil
 }
 
 func (s *L1SQLiteStore) updateMemoryMeta(ctx context.Context, id string, meta map[string]interface{}) error {

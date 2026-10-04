@@ -24,6 +24,7 @@ import (
 	browseractorinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/browseractor"
 	executionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/execution"
 	knowledgememorypersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/knowledgememory"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/storagehost"
 	toolharnesspersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/toolharness"
 	securityinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/security"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
@@ -49,6 +50,11 @@ type toolRuntime struct {
 	KnowledgeMemoryToolStore      interface{ Close() error }
 }
 
+type runtimeSelectedCatalogOwners struct {
+	MovieCatalog *storagehost.MovieCatalogClient
+	HobbyGraph   *storagehost.HobbyGraphClient
+}
+
 func buildToolRuntimeWithCapabilities(
 	taskOwner *taskmanager.Manager,
 	cfg *config.Config,
@@ -58,7 +64,14 @@ func buildToolRuntimeWithCapabilities(
 	workerSkillCatalog *tools.SkillCatalog,
 	mcpToolCatalog *tools.MCPToolCatalog,
 	canonicalStore modulecore.EventStore,
+	selectedCatalogOwners ...runtimeSelectedCatalogOwners,
 ) toolRuntime {
+	var selectedMovieCatalog *storagehost.MovieCatalogClient
+	var selectedHobbyGraph *storagehost.HobbyGraphClient
+	if len(selectedCatalogOwners) > 0 {
+		selectedMovieCatalog = selectedCatalogOwners[0].MovieCatalog
+		selectedHobbyGraph = selectedCatalogOwners[0].HobbyGraph
+	}
 	dataRecallRegistry := newRuntimeDataRecallRegistry()
 	dataWriteRegistry := newRuntimeDataWriteRegistry()
 	personaWritePaths := []string{
@@ -74,9 +87,7 @@ func buildToolRuntimeWithCapabilities(
 		log.Fatal("Required Tool Harness mediation recorder initialization failed")
 	}
 	movieCatalogPrepareCtx, cancelMovieCatalogPrepare := context.WithTimeout(context.Background(), 10*time.Second)
-	movieCatalogLookup, movieCatalogLookupErr := prepareRuntimeMovieCatalogLookup(
-		movieCatalogPrepareCtx, cfg.Storage.Databases.MovieCatalog,
-	)
+	movieCatalogLookup, movieCatalogLookupErr := newRuntimeMovieCatalogLookup(movieCatalogPrepareCtx, cfg.Storage.Databases.MovieCatalog, selectedMovieCatalog)
 	cancelMovieCatalogPrepare()
 	if movieCatalogLookupErr != nil {
 		log.Printf("Movie catalog lookup Tool unavailable: %v", movieCatalogLookupErr)
@@ -84,9 +95,7 @@ func buildToolRuntimeWithCapabilities(
 		log.Printf("Movie catalog lookup Tool ready (indexed read-only execution)")
 	}
 	musicCatalogPrepareCtx, cancelMusicCatalogPrepare := context.WithTimeout(context.Background(), 10*time.Second)
-	musicCatalogLookup, musicCatalogLookupErr := prepareRuntimeMusicCatalogLookup(
-		musicCatalogPrepareCtx, cfg.Storage.Databases.HobbyGraph,
-	)
+	musicCatalogLookup, musicCatalogLookupErr := newRuntimeMusicCatalogLookup(musicCatalogPrepareCtx, cfg.Storage.Databases.HobbyGraph, selectedHobbyGraph)
 	cancelMusicCatalogPrepare()
 	if musicCatalogLookupErr != nil {
 		log.Printf("Music and lyrics catalog lookup Tools unavailable: %v", musicCatalogLookupErr)

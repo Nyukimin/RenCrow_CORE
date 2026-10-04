@@ -20,7 +20,7 @@ func TestBuildConversationRuntimeCategoryRecallMissingCatalogIsPartialOnlyWhenRe
 		},
 	}
 
-	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil)
+	runtime := buildConversationRuntime(cfg, primaryLLMProviders{}, nil, nil, runtimeStorageOwnerBundle{})
 	if runtime.Engine == nil || runtime.L1Store == nil {
 		t.Fatal("L1 conversation runtime should be available with a configured L1 store")
 	}

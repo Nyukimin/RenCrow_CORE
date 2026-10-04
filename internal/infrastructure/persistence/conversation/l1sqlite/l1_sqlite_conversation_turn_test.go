@@ -558,7 +558,7 @@ func TestConversationTurnSchemaUsesExpectedTables(t *testing.T) {
 		t.Fatalf("NewL1SQLiteStore: %v", err)
 	}
 	defer store.Close()
-	for _, table := range []string{"recall_trace", conversationTurnActiveThreadTable, conversationTurnReceiptTable, conversationTurnOutboxTable} {
+	for _, table := range []string{"recall_trace", conversationTurnActiveThreadTable, conversationTurnReceiptTable, conversationTurnOutboxTable, conversationTurnOperationTable} {
 		var count int
 		if err := store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&count); err != nil {
 			t.Fatalf("table %s: %v", table, err)
@@ -612,9 +612,10 @@ func TestConversationTurnSchemaUsesExpectedTables(t *testing.T) {
 		}
 	}
 	for table, required := range map[string][]string{
-		"recall_trace":               {"root_task_id"},
-		conversationTurnReceiptTable: {"root_task_id"},
-		conversationTurnOutboxTable:  {"trace_id", "root_task_id"},
+		"recall_trace":                 {"root_task_id"},
+		conversationTurnReceiptTable:   {"root_task_id"},
+		conversationTurnOutboxTable:    {"trace_id", "root_task_id"},
+		conversationTurnOperationTable: {"op_id", "operation", "payload_sha256", "result_json"},
 	} {
 		rows, err := store.db.Query(`PRAGMA table_info(` + table + `)`)
 		if err != nil {

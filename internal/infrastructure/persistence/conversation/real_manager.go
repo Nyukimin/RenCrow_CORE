@@ -20,7 +20,7 @@ import (
 type RealConversationManager struct {
 	redisStore                  redisStoreIface
 	l1Store                     l1StoreIface
-	archiveStore                archiveStoreIface
+	archiveStore                ConversationArchiveStore
 	vectordbStore               vectordbStoreIface
 	embedder                    domconv.EmbeddingProvider      // nilの場合はVectorDB機能無効
 	summarizer                  domconv.ConversationSummarizer // nilの場合は簡易実装
@@ -68,6 +68,34 @@ func NewRealConversationManagerWithVectorOptions(redisURL, archiveSQLitePath, ve
 	if err != nil {
 		log.Printf("WARN: L2 SQLite archive disabled: %v", err)
 	}
+	return newRealConversationManagerWithStores(redisStore, archiveStore, vectordbURL, vectorCollection, vectorDimension)
+}
+
+// NewRealConversationManagerWithVectorOptionsAndArchiveStore preserves the
+// normal Redis/vector manager while injecting the selected archive owner. It
+// never opens a local archive path and the archive client does not own the
+// shared storage-host connection.
+func NewRealConversationManagerWithVectorOptionsAndArchiveStore(
+	redisURL string,
+	vectordbURL string,
+	vectorCollection string,
+	vectorDimension uint64,
+	archiveStore ConversationArchiveStore,
+) (*RealConversationManager, error) {
+	redisStore, err := redisstore.NewRedisStore(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create redis store: %w", err)
+	}
+	return newRealConversationManagerWithStores(redisStore, archiveStore, vectordbURL, vectorCollection, vectorDimension)
+}
+
+func newRealConversationManagerWithStores(
+	redisStore redisStoreIface,
+	archiveStore ConversationArchiveStore,
+	vectordbURL string,
+	vectorCollection string,
+	vectorDimension uint64,
+) (*RealConversationManager, error) {
 
 	if vectorCollection == "" {
 		vectorCollection = "rencrow_memory"
@@ -75,8 +103,8 @@ func NewRealConversationManagerWithVectorOptions(redisURL, archiveSQLitePath, ve
 	vectordbStore, err := vectordb.NewVectorDBStoreWithDimension(vectordbURL, vectorCollection, vectorDimension)
 	if err != nil {
 		redisStore.Close()
-		if archiveStore != nil {
-			archiveStore.Close()
+		if closer, ok := archiveStore.(interface{ Close() error }); ok {
+			_ = closer.Close()
 		}
 		return nil, fmt.Errorf("failed to create vectordb store: %w", err)
 	}
@@ -133,16 +161,20 @@ func (r *RealConversationManager) Close() error {
 		errs = append(errs, fmt.Errorf("redis close: %w", err))
 	}
 	if r.archiveStore != nil {
-		if err := r.archiveStore.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("archive sqlite close: %w", err))
+		if closer, ok := r.archiveStore.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("archive store close: %w", err))
+			}
 		}
 	}
 	if err := r.vectordbStore.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("vectordb close: %w", err))
 	}
 	if r.l1Store != nil {
-		if err := r.l1Store.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("l1 sqlite close: %w", err))
+		if closer, ok := r.l1Store.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				errs = append(errs, fmt.Errorf("l1 store close: %w", err))
+			}
 		}
 	}
 	if len(errs) > 0 {
