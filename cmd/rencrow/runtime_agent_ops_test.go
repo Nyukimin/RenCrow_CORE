@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -263,7 +264,7 @@ func TestAgentOpsHandlerRejectsRemoteRequestsThroughLocalWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	handler, err := newConfiguredAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil)
+	handler, err := newConfiguredAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t))
 	if err != nil {
 		t.Fatalf("newConfiguredAgentOpsHandler() error=%v", err)
 	}
@@ -421,7 +422,7 @@ func TestAgentOpsTokenFileIsValidatedAndReadOnce(t *testing.T) {
 				t.Fatal("test mode must be owner-only")
 			}
 			cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-			handler, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil)
+			handler, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t))
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected token validation error")
@@ -454,9 +455,21 @@ func TestAgentOpsTokenFileIsValidatedAndReadOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-		if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{}, nil); err == nil {
+		if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{}, nil, newAgentOpsTestTaskOwner(t)); err == nil {
 			t.Fatal("group/world-readable token file must be rejected")
 		}
+	}
+}
+
+func TestAgentOpsHandlerRequiresTaskOwnerAtStartup(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	path := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
+	if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, nil); err == nil || err.Error() != "local_agent_ops task owner is unavailable" {
+		t.Fatalf("nil task owner error=%v", err)
 	}
 }
 
@@ -464,14 +477,51 @@ func newAgentOpsTestHandler(t *testing.T, token string, executor agentOpsExecuto
 	return newAgentOpsTestHandlerWithNotifier(t, token, executor, nil)
 }
 
-func newAgentOpsTestHandlerWithNotifier(t *testing.T, token string, executor agentOpsExecutor, notifier agentOpsWorkerBusyNotifier) http.HandlerFunc {
+func newAgentOpsTestTaskOwner(t *testing.T) *taskmanager.Manager {
+	t.Helper()
+	deps := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err != nil {
+		t.Fatalf("initialize Agent OPS task owner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := deps.taskManager.Close(); err != nil {
+			t.Errorf("close Agent OPS task owner: %v", err)
+		}
+	})
+	return deps.taskManager
+}
+
+func newAgentOpsTestHandlerWithTaskOwner(t *testing.T, token string, executor agentOpsExecutor, owner *taskmanager.Manager) http.HandlerFunc {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent-ops.token")
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	handler, err := newAgentOpsHandler(cfg, executor, notifier)
+	handler, err := newAgentOpsHandler(cfg, executor, nil, owner)
+	if err != nil {
+		t.Fatalf("newAgentOpsHandler() error=%v", err)
+	}
+	return handler
+}
+
+func newAgentOpsTestHandlerWithNotifier(t *testing.T, token string, executor agentOpsExecutor, notifier agentOpsWorkerBusyNotifier) http.HandlerFunc {
+	t.Helper()
+	deps := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err != nil {
+		t.Fatalf("initialize Agent OPS task owner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := deps.taskManager.Close(); err != nil {
+			t.Errorf("close Agent OPS task owner: %v", err)
+		}
+	})
+	path := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
+	handler, err := newAgentOpsHandler(cfg, executor, notifier, deps.taskManager)
 	if err != nil {
 		t.Fatalf("newAgentOpsHandler() error=%v", err)
 	}

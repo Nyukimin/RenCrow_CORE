@@ -1610,7 +1610,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if deps.idleChatOrch != nil {
 		idleChatWorkerNotifier = deps.idleChatOrch
 	}
-	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier)
+	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager)
 	if err != nil {
 		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
 	}

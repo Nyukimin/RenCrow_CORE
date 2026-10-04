@@ -12,8 +12,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -30,7 +33,236 @@ type agentOpsDCIToolExecutorStub struct {
 	calls       []agentOpsDCIToolCall
 	outputs     []string
 	errors      []error
+	beforeCall  func(int, context.Context)
 	executeCall int
+}
+
+// agentOpsProductionEquivalentExecutor keeps this behavioral test on the same
+// outer taskExecutionRunner admission boundary used by production Shiro.
+// The inner stub remains a narrow tool seam; no alternate route is introduced.
+type agentOpsProductionEquivalentExecutor struct {
+	inner  *agentOpsDCIToolExecutorStub
+	runner *taskExecutionRunner
+}
+
+func (e *agentOpsProductionEquivalentExecutor) Execute(ctx context.Context, input conversation.TurnInput) (string, error) {
+	return e.inner.Execute(ctx, input)
+}
+
+func (e *agentOpsProductionEquivalentExecutor) ExecuteTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+	response, err := e.runner.ExecuteV2(ctx, toolName, args)
+	if err != nil {
+		return "", err
+	}
+	if response == nil || response.IsError() {
+		return "", errors.New("production-equivalent tool response is unavailable")
+	}
+	return response.String(), nil
+}
+
+func (s *agentOpsDCIToolExecutorStub) ExecuteV2(ctx context.Context, toolName string, args map[string]any) (*domaintool.ToolResponse, error) {
+	raw, err := s.ExecuteTool(ctx, toolName, args)
+	if err != nil {
+		return nil, err
+	}
+	return domaintool.NewSuccess(raw), nil
+}
+
+func (s *agentOpsDCIToolExecutorStub) ListTools(context.Context) ([]domaintool.ToolMetadata, error) {
+	return nil, nil
+}
+
+func TestAgentOpsDCIIdentityAcceptanceUsesProductionTaskExecutionAdmission(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	actionID := modulecore.NewActionID()
+	traceID := modulecore.NewTraceID()
+	requestID := "req-dci-task-admission"
+	inner := &agentOpsDCIToolExecutorStub{outputs: []string{
+		agentOpsDCIWriteReceiptJSON(actionID, false),
+		agentOpsDCIWriteReceiptJSON(actionID, true),
+		agentOpsDCIRecallResultJSON(requestID, actionID, traceID),
+	}}
+	// The handler must issue its own canonical Task/Run/Trace identity before
+	// this production-equivalent runner is reached. Before the admission fix,
+	// taskExecutionRunner rejected the first call and this test was RED.
+	executor := &agentOpsProductionEquivalentExecutor{
+		inner:  inner,
+		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
+	}
+	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	rec := serveAgentOpsDCIRequest(t, handler, token, requestID, `{"operation":"dci_identity_acceptance","query":"query"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	calls, executeCalls := inner.snapshot()
+	if executeCalls != 0 || len(calls) != 3 {
+		t.Fatalf("production-equivalent calls=%d legacy=%d, want 3/0", len(calls), executeCalls)
+	}
+	firstIdentity, err := domainexecution.IdentityFromContext(calls[0].ctx)
+	if err != nil {
+		t.Fatalf("first tool call identity: %v", err)
+	}
+	for index, call := range calls {
+		identity, err := domainexecution.IdentityFromContext(call.ctx)
+		if err != nil {
+			t.Fatalf("tool call %d identity: %v", index, err)
+		}
+		if identity != firstIdentity {
+			t.Fatalf("tool call %d identity=%+v, want %+v", index, identity, firstIdentity)
+		}
+		scope, ok := domaintool.ToolExecutionScopeFromContext(call.ctx)
+		if !ok || scope.RequestID != requestID || scope.ActorID != "shiro" || scope.AgentRole != "worker" || scope.Purpose != "ops" || !scope.Allows(domaintool.DataScopeInternal) {
+			t.Fatalf("tool call %d scope=%+v found=%t", index, scope, ok)
+		}
+	}
+	tasks, err := deps.taskManager.List(context.Background(), domaintask.Filter{})
+	if err != nil {
+		t.Fatalf("list admitted tasks: %v", err)
+	}
+	var admitted domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Title == "DCI identity acceptance" {
+			admitted = candidate
+		}
+	}
+	if admitted.TaskID != firstIdentity.TaskID || admitted.Status != domaintask.StatusSucceeded {
+		t.Fatalf("admitted task=%+v identity=%+v", admitted, firstIdentity)
+	}
+	runs, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: admitted.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].RunID != firstIdentity.RunID || runs[0].Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("admitted runs=%+v err=%v identity=%+v", runs, err, firstIdentity)
+	}
+}
+
+func TestAgentOpsDCIIdentityAcceptanceFailureClosesAdmittedTaskAndRun(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	actionID := modulecore.NewActionID()
+	inner := &agentOpsDCIToolExecutorStub{
+		outputs: []string{agentOpsDCIWriteReceiptJSON(actionID, false)},
+		errors:  []error{nil, errors.New("backend detail must stay bounded")},
+	}
+	executor := &agentOpsProductionEquivalentExecutor{
+		inner:  inner,
+		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
+	}
+	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	rec := serveAgentOpsDCIRequest(t, handler, token, "req-dci-task-failure", `{"operation":"dci_identity_acceptance","query":"query"}`)
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "{\"error\":\"execution_failed\"}\n" {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	tasks, err := deps.taskManager.List(context.Background(), domaintask.Filter{})
+	if err != nil {
+		t.Fatalf("list failed admitted tasks: %v", err)
+	}
+	var admitted domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Title == "DCI identity acceptance" {
+			admitted = candidate
+		}
+	}
+	if admitted.TaskID == "" || admitted.Status != domaintask.StatusFailed || admitted.FinishedAt == nil {
+		t.Fatalf("failed admitted task=%+v", admitted)
+	}
+	runs, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: admitted.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusFailed || runs[0].CompletedAt == nil {
+		t.Fatalf("failed admitted runs=%+v err=%v", runs, err)
+	}
+}
+
+func TestAgentOpsDCIIdentityAcceptanceCancellationStillTerminalizesTaskAndRun(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	actionID := modulecore.NewActionID()
+	requestID := "req-dci-task-cancel"
+	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	inner := &agentOpsDCIToolExecutorStub{
+		outputs: []string{agentOpsDCIWriteReceiptJSON(actionID, false)},
+		beforeCall: func(index int, _ context.Context) {
+			if index == 0 {
+				cancel()
+			}
+		},
+	}
+	executor := &agentOpsProductionEquivalentExecutor{
+		inner:  inner,
+		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
+	}
+	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"operation":"dci_identity_acceptance","query":"query"}`)).WithContext(requestCtx)
+	setAgentOpsHeaders(req, token, requestID)
+	req.RemoteAddr = "127.0.0.1:18791"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "{\"error\":\"execution_failed\"}\n" {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	tasks, err := deps.taskManager.List(context.Background(), domaintask.Filter{})
+	if err != nil {
+		t.Fatalf("list cancelled admitted tasks: %v", err)
+	}
+	var admitted domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Title == "DCI identity acceptance" {
+			admitted = candidate
+		}
+	}
+	if admitted.TaskID == "" || admitted.Status != domaintask.StatusFailed || admitted.FinishedAt == nil {
+		t.Fatalf("cancelled admitted task=%+v", admitted)
+	}
+	runs, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: admitted.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusFailed || runs[0].CompletedAt == nil {
+		t.Fatalf("cancelled admitted runs=%+v err=%v", runs, err)
+	}
+}
+
+func TestAgentOpsDCIIdentityAcceptanceStartsFinalizationBudgetAfterToolCalls(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	previousTimeout := agentOpsDCIFinalizationTimeout
+	agentOpsDCIFinalizationTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { agentOpsDCIFinalizationTimeout = previousTimeout })
+
+	deps, _, _ := newTaskExecutionRunnerFixture(t)
+	actionID := modulecore.NewActionID()
+	traceID := modulecore.NewTraceID()
+	requestID := "req-dci-finalization-budget"
+	inner := &agentOpsDCIToolExecutorStub{
+		outputs: []string{
+			agentOpsDCIWriteReceiptJSON(actionID, false),
+			agentOpsDCIWriteReceiptJSON(actionID, true),
+			agentOpsDCIRecallResultJSON(requestID, actionID, traceID),
+		},
+		beforeCall: func(index int, _ context.Context) {
+			if index == 0 {
+				time.Sleep(3 * agentOpsDCIFinalizationTimeout)
+			}
+		},
+	}
+	executor := &agentOpsProductionEquivalentExecutor{
+		inner:  inner,
+		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
+	}
+	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	rec := serveAgentOpsDCIRequest(t, handler, token, requestID, `{"operation":"dci_identity_acceptance","query":"query"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+
+	tasks, err := deps.taskManager.List(context.Background(), domaintask.Filter{})
+	if err != nil {
+		t.Fatalf("list finalized tasks: %v", err)
+	}
+	var admitted domaintask.Task
+	for _, candidate := range tasks {
+		if candidate.Title == "DCI identity acceptance" {
+			admitted = candidate
+		}
+	}
+	if admitted.Status != domaintask.StatusSucceeded || admitted.FinishedAt == nil {
+		t.Fatalf("finalized task=%+v", admitted)
+	}
 }
 
 func (s *agentOpsDCIToolExecutorStub) Execute(context.Context, conversation.TurnInput) (string, error) {
@@ -45,6 +277,9 @@ func (s *agentOpsDCIToolExecutorStub) ExecuteTool(ctx context.Context, toolName 
 	defer s.mu.Unlock()
 	index := len(s.calls)
 	s.calls = append(s.calls, agentOpsDCIToolCall{ctx: ctx, toolName: toolName, args: args})
+	if s.beforeCall != nil {
+		s.beforeCall(index, ctx)
+	}
 	if index < len(s.errors) && s.errors[index] != nil {
 		return "", s.errors[index]
 	}

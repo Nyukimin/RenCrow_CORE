@@ -3294,6 +3294,14 @@ deploy、初回／再起動後の実 request、service receipt、artifact checks
   bounded mapping、success field allowlist、malformed／unavailable／tamper の non-leak を
   検査する。test double は seam の検査に限り、実 Shiro actor、production identity、deploy
   または post-deploy E2E の証拠を名乗らない。
+- 固定 operation の production route は、既存 CORE Task owner (`taskmanager.Manager`) で
+  一つの canonical Task と Run を先に admission し、同一 request の三つの `ExecuteTool`
+  呼出しへ同じ `domainexecution.Identity`（TaskID／RunID／TraceID）を束ねる。三 call の
+  完了後は成功なら Task／Run を `succeeded`、途中失敗なら同じ owner で `failed` の
+  terminal にする。Task／Run は実 Actor や owner ではなく execution identity であり、
+  post-restart replay は新しい admission Task／Run を使いながら request-id idempotency
+  で既存 Action／Trace／Event graph を再利用する。この lifecycle は D2e-2 の実装境界で
+  あり、別 registry、wrapper、identity 正本を追加しない。
 - production acceptance は、artifact と active config の checksum／owner を先に照合し、
   正規 service の readiness を確認した後、同じ認証と固定 route で fresh pre-restart
   request（first `false`, second `true`）を保存する。正規 service を restart し、owner／
@@ -3306,6 +3314,32 @@ deploy、初回／再起動後の実 request、service receipt、artifact checks
 
 ### Failure Knowledge
 
+- **Failure:** fixed DCI handler が `ToolExecutionScope` だけを作って production の
+  `taskExecutionRunner` へ渡し、canonical Task／Run execution identity の admission 前で
+  拒否されたため、`/v1/agent/ops` が HTTP 500 となり DCI trace／receipt／Action が 0 件になった。
+- **Problem:** request scope と durable Task／Run execution identity が別々に扱われ、実際の
+  Worker runner が要求する TaskID／RunID／TraceID、Task／Run terminal lifecycle、同一 request
+  の三 call binding を route acceptance で証明できなかった。
+- **Cause:** fixed branch の owner boundary を `Shiro.ExecuteTool` 入口だけと誤認し、production
+  wiring の最外周 `taskExecutionRunner` と既存 Task owner を handler admission に接続しなかった。
+- **Lesson:** 新しい identity owner を作らず、fixed operation ごとに既存 `taskmanager.Manager`
+  で Task／Run を開始し、`domainexecution.WithIdentity` を同じ Shiro internal scope へ束ねて
+  三 call を行う。完了時は owner の terminal API を必ず通し、replay の Action／Trace graph
+  安定性は request-id idempotency に委ねる。
+- **Invariant:** exact three-call order の各 call は同一 canonical TaskID／RunID／TraceID と
+  既存 Shiro internal scope を持ち、成功は Task／Run `succeeded`、途中失敗は `failed` で
+  terminal になる。post-restart は新しい Task／Run admission でも既存 request の Action／
+  Trace／Event graph を変えず、Task／Run は Actor／owner にならない。
+- **Enforcement:** production `taskmanager.Manager` injection、Task／Run Create／StartRun／
+  CompleteRun、`domainexecution.WithIdentity`、最外周 `taskExecutionRunner` admission、
+  request-id idempotent DCI owner route、request cancellation から値を保持して分離した
+  bounded terminalization context、および production-equivalent runner behavioral test で
+  強制する。
+- **Tests:** production-equivalent `taskExecutionRunner` を HTTP handler から通す behavioral
+  test で exact 3 calls、同一 Task／Run／Trace identity、既存 Shiro scope、Task／Run succeeded
+  terminal を検査する。request cancellation 後も同じ Task／Run を failed terminal にできる
+  ことを検査し、既存の typed/narrow tests は exact order、replay、failure terminal、non-leak
+  を継続して検査する。
 - **Failure:** 自然言語 `RouteOPS` の LLM 応答、direct DB read、fake actor、または D2e-1
   verifier の内部呼出しだけを post-deploy route acceptance と扱った。
 - **Problem:** 実際の authenticated Shiro が既存 owner route と policy を通った事実、write

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	dcipersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/dci"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -23,6 +25,8 @@ const (
 	agentOpsDCIRecallStore     = "dci"
 	agentOpsDCIRecallOperation = "identity_evidence"
 )
+
+var agentOpsDCIFinalizationTimeout = 10 * time.Second
 
 var (
 	errAgentOpsRequestTooLarge        = errors.New("agent ops request is too large")
@@ -136,13 +140,74 @@ type agentOpsDCIIdentityRecord struct {
 }
 
 func (h *agentOpsHandler) executeAgentOpsDCIIdentityAcceptance(ctx context.Context, requestID, query string) (agentOpsDCIIdentityAcceptanceResponse, error) {
-	if h == nil || h.toolExecutor == nil {
+	if h == nil || h.toolExecutor == nil || h.taskOwner == nil {
 		return agentOpsDCIIdentityAcceptanceResponse{}, errAgentOpsDCIIdentityUnavailable
 	}
 	if !validAgentOpsDCIIdentityScope(ctx, requestID) {
 		return agentOpsDCIIdentityAcceptanceResponse{}, errAgentOpsDCIIdentityUnavailable
 	}
 
+	task, run, executionCtx, err := h.admitAgentOpsDCIExecution(ctx)
+	if err != nil {
+		return agentOpsDCIIdentityAcceptanceResponse{}, err
+	}
+	response, executionErr := h.executeAgentOpsDCIIdentityAcceptanceCalls(executionCtx, requestID, query)
+	terminalStatus := domaintask.StatusSucceeded
+	if executionErr != nil {
+		terminalStatus = domaintask.StatusFailed
+	}
+	terminalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentOpsDCIFinalizationTimeout)
+	if _, err := h.taskOwner.CompleteRun(terminalCtx, task.TaskID, run.RunID, "shiro", terminalStatus, dciExecutionSummary(executionErr), ""); err != nil {
+		cancel()
+		return agentOpsDCIIdentityAcceptanceResponse{}, errors.Join(errAgentOpsDCIIdentityExecution, executionErr, err)
+	}
+	cancel()
+	if executionErr != nil {
+		return agentOpsDCIIdentityAcceptanceResponse{}, executionErr
+	}
+	return response, nil
+}
+
+func (h *agentOpsHandler) admitAgentOpsDCIExecution(ctx context.Context) (domaintask.Task, domaintask.Run, context.Context, error) {
+	if h == nil || h.taskOwner == nil {
+		return domaintask.Task{}, domaintask.Run{}, nil, errAgentOpsDCIIdentityUnavailable
+	}
+	task, err := h.taskOwner.Create(ctx, domaintask.Task{
+		Title:    "DCI identity acceptance",
+		Route:    domaintask.RouteOperations,
+		Assignee: "shiro",
+	}, domaintask.SharedRoleContext{UserIntent: agentOpsDCIIdentityAcceptanceOperation})
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, nil, errors.Join(errAgentOpsDCIIdentityUnavailable, err)
+	}
+	run, err := h.taskOwner.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
+	if err != nil {
+		// A queued Task has no Run to close, so use the canonical Task owner to
+		// make the failed admission terminal before returning a bounded error.
+		terminalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentOpsDCIFinalizationTimeout)
+		_, terminalErr := h.taskOwner.Fail(terminalCtx, task.TaskID, "DCI identity acceptance admission failed", nil)
+		cancel()
+		return domaintask.Task{}, domaintask.Run{}, nil, errors.Join(errAgentOpsDCIIdentityUnavailable, err, terminalErr)
+	}
+	traceID := modulecore.NewTraceID()
+	executionCtx, err := domainexecution.WithIdentity(ctx, task.TaskID, run.RunID, traceID)
+	if err != nil {
+		terminalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentOpsDCIFinalizationTimeout)
+		_, terminalErr := h.taskOwner.CompleteRun(terminalCtx, task.TaskID, run.RunID, "shiro", domaintask.StatusFailed, "DCI identity acceptance admission failed", "")
+		cancel()
+		return domaintask.Task{}, domaintask.Run{}, nil, errors.Join(errAgentOpsDCIIdentityUnavailable, err, terminalErr)
+	}
+	return task, run, executionCtx, nil
+}
+
+func dciExecutionSummary(err error) string {
+	if err != nil {
+		return "DCI identity acceptance failed"
+	}
+	return "DCI identity acceptance passed"
+}
+
+func (h *agentOpsHandler) executeAgentOpsDCIIdentityAcceptanceCalls(ctx context.Context, requestID, query string) (agentOpsDCIIdentityAcceptanceResponse, error) {
 	writeArgs := map[string]interface{}{
 		"store":     agentOpsDCIWriteStore,
 		"operation": agentOpsDCIWriteOperation,

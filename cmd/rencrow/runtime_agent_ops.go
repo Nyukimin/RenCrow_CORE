@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -65,6 +66,7 @@ type agentOpsWorkerBusyNotifier interface {
 type agentOpsHandler struct {
 	executor           agentOpsExecutor
 	toolExecutor       agentOpsToolExecutor
+	taskOwner          *taskmanager.Manager
 	userID             string
 	token              []byte
 	workerBusyNotifier agentOpsWorkerBusyNotifier
@@ -93,9 +95,12 @@ type agentOpsErrorResponse struct {
 
 // newAgentOpsHandler validates enabled startup configuration, reads the
 // bearer token once, and returns nil when the ingress is disabled.
-func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier) (http.HandlerFunc, error) {
+func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager) (http.HandlerFunc, error) {
 	if cfg == nil || !cfg.LocalAgentOps.Enabled {
 		return nil, nil
+	}
+	if taskOwner == nil {
+		return nil, errors.New("local_agent_ops task owner is unavailable")
 	}
 	if executor == nil {
 		return nil, errors.New("local_agent_ops executor is unavailable")
@@ -114,6 +119,7 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 			toolExecutor, _ := executor.(agentOpsToolExecutor)
 			return toolExecutor
 		}(),
+		taskOwner:          taskOwner,
 		userID:             userID,
 		token:              append([]byte(nil), token...),
 		workerBusyNotifier: workerBusyNotifier,
@@ -121,8 +127,8 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 	return handler.ServeHTTP, nil
 }
 
-func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier) (http.HandlerFunc, error) {
-	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier)
+func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager) (http.HandlerFunc, error) {
+	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier, taskOwner)
 	if err != nil || handler == nil {
 		return handler, err
 	}
@@ -250,7 +256,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	releaseWorkerBusy := h.acquireWorkerBusyLease()
 	defer releaseWorkerBusy()
 	if branch == agentOpsRequestBranchDCIIdentityAcceptance {
-		if h.toolExecutor == nil {
+		if h.toolExecutor == nil || h.taskOwner == nil {
 			writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
 			return
 		}
