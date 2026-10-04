@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -53,6 +54,42 @@ func TestL1SQLiteStoreConnectionPolicyPreservesWAL(t *testing.T) {
 	}
 	if !strings.EqualFold(journalMode, "wal") {
 		t.Fatalf("journal_mode = %q, want WAL", journalMode)
+	}
+}
+
+func TestL1SQLiteStoreListSourceRegistryEntriesUsesReadPoolWhenWriterConnectionHeld(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "l1.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.SaveSourceRegistryEntry(context.Background(), L1SourceRegistryEntry{
+		SourceID:      "rss:held-writer",
+		URL:           "https://example.com/held-writer.xml",
+		Kind:          L1SourceKindRSS,
+		TrustScore:    0.9,
+		FetchInterval: time.Hour,
+		LicenseNote:   "test source",
+		Enabled:       true,
+	}); err != nil {
+		t.Fatalf("SaveSourceRegistryEntry failed: %v", err)
+	}
+
+	conn, err := store.db.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("hold writer connection: %v", err)
+	}
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	entries, err := store.ListSourceRegistryEntries(ctx, true)
+	if err != nil {
+		t.Fatalf("ListSourceRegistryEntries should use the query-only read pool while the writer connection is held: %v", err)
+	}
+	if len(entries) != 1 || entries[0].SourceID != "rss:held-writer" {
+		t.Fatalf("unexpected source registry entries: %+v", entries)
 	}
 }
 

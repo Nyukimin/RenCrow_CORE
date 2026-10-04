@@ -103,7 +103,7 @@ FROM l1_source_registry
 		args = append(args, 1)
 	}
 	query += "ORDER BY source_id ASC"
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query l1 source registry: %w", err)
 	}

@@ -3614,6 +3614,20 @@ Step 03をcompleteとしない。
   `TestExplorerFallbackContentRankingRespectsMaxFilesRead`を含むfallbackのcontent discovery、
   provider統合、metadata優先、実Shiro production routeを回帰検証する。
 
+### D2e-4 Failure Knowledge: metadata ranking readのwriter starvation
+
+- **Failure / Problem:** 7d9c283配備後のDCI metadata rankingが、唯一のwriter connectionを待ち続けて
+  60秒の検索deadlineを消費し、file read action／evidenceへ到達しなかった。
+- **Cause:** `L1SourceMetadataRanker.RankDCICandidateFiles` が呼ぶ
+  `ListSourceRegistryEntries` が、max conn 1のwriter `s.db`をqueryしていた。query-only `readDB`は
+  用意されていたが、このread pathで使われていなかった。
+- **Lesson / Invariant:** metadata rankingのreadは常にquery-only read poolを使い、writer接続の占有や
+  継続writeでranking deadlineを消費しない。vector provider不一致やcontent-ranking budgetとは別の境界として扱う。
+- **Enforcement / Tests:** `ListSourceRegistryEntries` は `s.readDB.QueryContext` を使う。
+  `TestL1SQLiteStoreListSourceRegistryEntriesUsesReadPoolWhenWriterConnectionHeld` が既存registry entryを
+  保存後にwriter connectionを保持し、短いcontextでもreadが成功することを検査する。
+- **Remaining:** provider vector dimension mismatchの修正と、修正配備後の実Shiro DCI route受入は別途必要である。
+
 ### Failure Knowledge
 
 - **Failure:** pre と post を一つの phase flag／generic verifier command にまとめ、restart を
