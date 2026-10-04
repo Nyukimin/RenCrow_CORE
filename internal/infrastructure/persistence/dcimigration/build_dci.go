@@ -62,7 +62,7 @@ type buildDCIOutputRows struct {
 var buildDCIAfterCreate = func(string) error { return nil }
 
 // createBuiltDCI materializes the retained migration plan through the DCI
-// owner's canonical snapshot API, then verifies the resulting v2 database
+// owner's canonical snapshot API, then verifies the resulting current-schema database
 // read-only. It creates no production output and never re-plans identities.
 func createBuiltDCI(ctx context.Context, target string, snapshot sourceSnapshot, plan migrationPlan) (evidence buildDCIEvidence, err error) {
 	if ctx == nil {
@@ -571,36 +571,7 @@ func readBuildDCIOutput(ctx context.Context, db *sql.DB, records []dci.Migration
 }
 
 func validateBuildDCIReadOnlySchema(ctx context.Context, db *sql.DB) error {
-	var version int
-	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return err
-	}
-	if version != 2 {
-		return errors.New("DCI output schema version is not v2")
-	}
-	traceColumns, err := db.QueryContext(ctx, "PRAGMA table_info('dci_search_trace')")
-	if err != nil {
-		return err
-	}
-	for traceColumns.Next() {
-		var cid int
-		var name, columnType string
-		var notNull, primary int
-		var defaultValue any
-		if err := traceColumns.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primary); err != nil {
-			_ = traceColumns.Close()
-			return err
-		}
-		if name == "event_id" {
-			_ = traceColumns.Close()
-			return errors.New("legacy DCI event_id trace column remains")
-		}
-	}
-	if err := traceColumns.Err(); err != nil {
-		_ = traceColumns.Close()
-		return err
-	}
-	return traceColumns.Close()
+	return dci.ValidateMigrationSnapshotReadOnly(ctx, db)
 }
 
 func formatBuildDCITime(value time.Time) string {

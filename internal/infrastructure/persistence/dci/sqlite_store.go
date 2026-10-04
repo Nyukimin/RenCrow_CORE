@@ -139,7 +139,7 @@ type MigrationRecord struct {
 // production sync operation.
 var syncMigrationSnapshotForMigration = syncMigrationSnapshot
 
-// CreateMigrationSnapshot creates a new canonical v2 DCI database containing
+// CreateMigrationSnapshot creates a new canonical DCI database containing
 // validated historical results. It never overwrites an existing target and
 // removes the fresh target and SQLite sidecars if any post-create operation
 // fails.
@@ -228,6 +228,47 @@ func CreateMigrationSnapshot(ctx context.Context, targetPath string, records []M
 		return err
 	}
 	created = false
+	return nil
+}
+
+// ValidateMigrationSnapshotReadOnly verifies the current owner schema and the
+// migration-only invariant that no storage-host operation receipts are
+// present. It performs no writes and is intended for callers that opened the
+// snapshot through a query-only SQLite connection.
+func ValidateMigrationSnapshotReadOnly(ctx context.Context, db *sql.DB) error {
+	if ctx == nil {
+		return fmt.Errorf("dci migration snapshot validation context is required")
+	}
+	if db == nil {
+		return fmt.Errorf("dci migration snapshot validation database is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var version int
+	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("read dci migration snapshot schema version: %w", err)
+	}
+	if version != dciSchemaVersion {
+		return fmt.Errorf("unsupported dci migration snapshot schema version %d", version)
+	}
+	tables, err := listUserTables(db)
+	if err != nil {
+		return fmt.Errorf("inspect dci migration snapshot schema: %w", err)
+	}
+	if err := validateSchemaV2(db, tables); err != nil {
+		return fmt.Errorf("validate dci migration snapshot schema: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	var receiptRows int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM dci_storagehost_receipt").Scan(&receiptRows); err != nil {
+		return fmt.Errorf("count dci migration snapshot storage-host receipts: %w", err)
+	}
+	if receiptRows != 0 {
+		return fmt.Errorf("dci migration snapshot contains %d storage-host receipts", receiptRows)
+	}
 	return nil
 }
 

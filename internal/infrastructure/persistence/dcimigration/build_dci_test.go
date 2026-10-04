@@ -53,6 +53,13 @@ func TestCreateBuiltDCIProducesExactAuthenticatedSnapshot(t *testing.T) {
 
 	db := openTestDB(t, fixture.target)
 	defer db.Close()
+	var storageHostReceiptRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM dci_storagehost_receipt`).Scan(&storageHostReceiptRows); err != nil {
+		t.Fatalf("read migration storage-host receipts: %v", err)
+	}
+	if storageHostReceiptRows != 0 {
+		t.Fatalf("migration storage-host receipt rows = %d, want 0", storageHostReceiptRows)
+	}
 	var createdAt string
 	evidenceID := fixture.records[0].Result.Pack.Evidence[0].EvidenceID
 	if err := db.QueryRow(`SELECT created_at FROM dci_evidence WHERE evidence_id = ?`, string(evidenceID)).Scan(&createdAt); err != nil {
@@ -195,6 +202,29 @@ func TestCreateBuiltDCICleansTargetAfterPostCreateFailures(t *testing.T) {
 			mutate: func(t *testing.T, path string) {
 				db := openTestDB(t, path)
 				mustExec(t, db, `CREATE TABLE unexpected_build_table (value TEXT)`)
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "legacy event_id column",
+			mutate: func(t *testing.T, path string) {
+				db := openTestDB(t, path)
+				mustExec(t, db, `ALTER TABLE dci_search_trace ADD COLUMN event_id TEXT`)
+				if err := db.Close(); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unexpected storage-host receipt",
+			mutate: func(t *testing.T, path string) {
+				db := openTestDB(t, path)
+				mustExec(t, db, `INSERT INTO dci_storagehost_receipt
+					(op_id, operation, payload_sha256, writer_generation, effect_id, effect_sha256, proof_sha256, result_json, result_sha256, created_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					"unexpected-receipt", "save_search_result", "payload", 1, "effect", "effect-sha", "proof", "null", "result-sha", "2026-08-31T00:00:00Z")
 				if err := db.Close(); err != nil {
 					t.Fatal(err)
 				}

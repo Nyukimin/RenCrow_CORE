@@ -753,6 +753,35 @@ func TestCreateMigrationSnapshotWritesAuthenticatedAndLegacyHistoryWithExactEvid
 	}
 }
 
+func TestValidateMigrationSnapshotReadOnlyRejectsWrongVersion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wrong-version.db")
+	records, _, _ := migrationTestRecords(t)
+	if err := CreateMigrationSnapshot(context.Background(), path, records); err != nil {
+		t.Fatalf("CreateMigrationSnapshot: %v", err)
+	}
+	writable, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open writable fixture: %v", err)
+	}
+	if _, err := writable.Exec("PRAGMA user_version = 2"); err != nil {
+		_ = writable.Close()
+		t.Fatalf("set wrong schema version: %v", err)
+	}
+	if err := writable.Close(); err != nil {
+		t.Fatalf("close writable fixture: %v", err)
+	}
+	queryOnly, err := sql.Open("sqlite", path+"?mode=ro&_pragma=query_only%3d1")
+	if err != nil {
+		t.Fatalf("open query-only fixture: %v", err)
+	}
+	queryOnly.SetMaxOpenConns(1)
+	queryOnly.SetMaxIdleConns(1)
+	t.Cleanup(func() { _ = queryOnly.Close() })
+	if err := ValidateMigrationSnapshotReadOnly(context.Background(), queryOnly); err == nil {
+		t.Fatal("wrong migration snapshot schema version was accepted")
+	}
+}
+
 func TestCreateMigrationSnapshotCleansTargetAndSidecarsAfterPostCreateFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "failed-migration.db")
 	records, _, _ := migrationTestRecords(t)
