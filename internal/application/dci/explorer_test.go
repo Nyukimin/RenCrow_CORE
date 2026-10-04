@@ -656,7 +656,7 @@ func TestExplorerSearchRanksContentMatchesBeforeWalkOrder(t *testing.T) {
 		Enabled:           true,
 		Allowlist:         []string{dir},
 		MaxCandidateFiles: 10,
-		MaxFilesRead:      1,
+		MaxFilesRead:      10,
 		MaxEvidence:       1,
 		Now:               fixedNow,
 	}, nil)
@@ -1023,6 +1023,30 @@ func TestExplorerContentRankingReadsOnlyFilesWithinExecutionBudget(t *testing.T)
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("file reads=%d, want 2 (each executable candidate read once and reused for scan)", len(runner.calls))
+	}
+}
+
+func TestExplorerFallbackContentRankingRespectsMaxFilesRead(t *testing.T) {
+	dir := t.TempDir()
+	for index := 0; index < 5; index++ {
+		path := filepath.Join(dir, fmt.Sprintf("fallback-candidate-%d.md", index))
+		writeFile(t, path, "fallback ranking evidence\n")
+	}
+	runner := &captureToolRunner{}
+	explorer := newTestExplorer(Config{
+		Enabled:           true,
+		Allowlist:         []string{dir},
+		MaxCandidateFiles: 5,
+		MaxFilesRead:      2,
+		MaxEvidence:       6,
+		Now:               fixedNow,
+	}, nil, WithToolRunner(runner))
+
+	if _, err := explorer.Search(context.Background(), "fallback"); err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("fallback content-ranking file reads=%d, want 2 (MaxFilesRead)", len(runner.calls))
 	}
 }
 

@@ -365,7 +365,7 @@ func (e *Explorer) SearchWithIdentity(ctx context.Context, query string, traceID
 	// bounded search deadline on files that could never produce evidence.
 	sortCandidateFilesWithRank(candidates, terms, sourceRanks, nil)
 	contentCandidates := candidates
-	if len(sourceRanks) > 0 && e.cfg.MaxFilesRead > 0 && len(contentCandidates) > e.cfg.MaxFilesRead {
+	if e.cfg.MaxFilesRead > 0 && len(contentCandidates) > e.cfg.MaxFilesRead {
 		contentCandidates = contentCandidates[:e.cfg.MaxFilesRead]
 	}
 	contentRanks, rankedContent := e.rankCandidateFilesByContent(searchCtx, contentCandidates, terms, &pack)

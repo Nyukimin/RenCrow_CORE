@@ -3603,13 +3603,15 @@ Step 03をcompleteとしない。
   rank済みcontentをrequest内で再利用しなかった。
 - **Lesson:** canonical metadata rankがある場合は先に決定的に順位付けし、content rankは実際に実行可能な
   `MaxFilesRead`範囲だけへ限定し、rank時のcontentを同一requestの最終scanで再利用する。
-  metadataのないfilesystem fallbackは全候補content rankを維持する。
-- **Invariant:** provider／registry候補に対するfile readは、content rankと最終scanを合わせて
-  最大`MaxFilesRead`であり、同一request内の各候補を一度だけ読む。`MaxEvidence`等の成功終端を
+  metadataのないfilesystem fallbackも同じ`MaxFilesRead` budgetへ限定する。
+- **Invariant:** provider／registry候補とmetadataのないfilesystem fallbackのcontent ranking read数は、
+  metadata rankの有無にかかわらず常に`MaxFilesRead`以下である。content rankと最終scanを合わせた
+  file readは同一request内の各候補を一度だけ読む。`MaxEvidence`等の成功終端を
   満たした後は、同時にdeadlineへ達しても次候補のcontext判定で成功結果を失敗へ上書きしない。
 - **Runtime bound:** foreground開始時のbackground ToolRunner退避時間を含めても正規routeを完遂できるよう、
   DCIの未指定時budgetは60秒とする。明示設定した短いbudgetと、Evidence未到達時のdeadline failureは維持する。
-- **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、fallbackのcontent discovery、
+- **Enforcement / Tests:** Explorerの順序とbounded read testで強制し、
+  `TestExplorerFallbackContentRankingRespectsMaxFilesRead`を含むfallbackのcontent discovery、
   provider統合、metadata優先、実Shiro production routeを回帰検証する。
 
 ### Failure Knowledge
