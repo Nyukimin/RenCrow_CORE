@@ -1517,6 +1517,29 @@ path segmentとしてURL encodeします。
 - ASSISTANTのPUSHを第二の会話systemにせず、CORE応答を利用者、source、category、
   correlation ID付きのInteraction outputとして元のdeliveryへ戻せるようにする。
 
+## RenCrow_Harness native RPCとの境界
+
+本節はStatus: 採用済み設計・未実装（RenCrow_Harness設計v0.2.2、2026-10-07）の境界です。実装状況は
+[実装状況・ロードマップ](08_実装状況・ロードマップ.md#rencrow_harnessロードマップ)で確認します。
+
+- 初回は、CORE Public APIへRenCrow_Harness専用のendpointを追加しません。
+- COREとRenCrow_Harnessの間のnative RPCはHarnessが所有するprotocolで、COREはそのclientです。method、DTO、
+  error、receiptの定義はRenCrow_Harnessの内部契約であり、CORE Public API契約として再公開・複製しません。
+  process起動とprotocolの境界は
+  [アーキテクチャ概要のRenCrow_Harness委譲境界](04_アーキテクチャ概要.md#rencrow_harness委譲境界)を正本とします。
+- 既存endpointの契約は変えません。Shiroのnative coding実行profileはCOREのadmissionが認証済み設定から選ぶため
+  （[キャラクター・エージェント仕様](03_キャラクター・エージェント仕様.md#shiroのnative-coding実行profile)）、
+  client requestにprofile、backend、Harnessのbinary／config、workspace path、Gateway bindingを選択する
+  fieldを追加しません。
+- 委譲結果のViewer／API projectionのfieldは、実装時（WP08）に確定して本節へ追記します。確定するまで、公開
+  contractとして固定したfieldはありません。確定時も、raw Evidence、Model入出力、鍵・credentialを含めず、
+  Harness由来のIDは`(owner, id)`で所有者を区別する外部参照として扱います。相関の記録は
+  [ログ仕様](10_ログ仕様.md#rencrow_harness委譲の相関)、安全境界は
+  [安全・自動実行・データ方針](07_安全・自動実行・データ方針.md#rencrow_harness委譲の安全境界)を参照します。
+- RunResultの意味と親Taskの採用は
+  [機能仕様のRenCrow_Harness作業委譲](02_機能仕様.md#rencrow_harness作業委譲)を正本とし、
+  projectionで`completed`以外を成功へ丸めません。
+
 ## Atlas owner API
 
 Gmail取り込みのowner専用参照は`GET /viewer/atlas/gmail`。直近20件のreceiptを返し、direct-local、owner bearer、既存cmd-diagnostics client profileを必須とします。`Cache-Control: no-store`。内部の再開用要求と任意filesystem pathは公開しません。選択規則と運用契約は[Atlas仕様17節](RenCrow_Atlas_Backlog_Implementation_Lifecycle_仕様.md#17-gmailからの定期取り込み)が正本です。

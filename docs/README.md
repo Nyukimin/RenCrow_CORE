@@ -45,8 +45,20 @@ Development Methodology v1は別正本を持たず、上記Atlas仕様の第16�
 - LLM Ops / Hardware Capability（llmfit統合）はStatus: Proposed・未実装の機能であり、
   [機能仕様の「LLM Ops / Hardware Capability（llmfit統合）」](02_機能仕様.md#llm-ops--hardware-capabilityllmfit統合)を
   正本とします。構成は04、設定は05、APIは06、安全境界は07、実装状況は08の該当章で確認します。新しい正本ファイルは追加しません。
+- RenCrow_Harness（独立したnative Go実行プログラム）はStatus: 採用済み設計・未実装（設計v0.2.2、2026-10-07）であり、
+  COREとの所有権・process境界・Context供給は
+  [アーキテクチャ概要の「RenCrow_Harness委譲境界」](04_アーキテクチャ概要.md#rencrow_harness委譲境界)を正本とします。
+  利用者から見た機能は[機能仕様](02_機能仕様.md#rencrow_harness作業委譲)、Shiroの対象routeは
+  [キャラクター・エージェント仕様](03_キャラクター・エージェント仕様.md#shiroのnative-coding実行profile)、
+  設定とstore配置は[設定リファレンス](05_設定リファレンス.md#rencrow_harness委譲設定)、
+  Public APIとの境界は[Public API仕様](06_Public_API仕様.md#rencrow_harness-native-rpcとの境界)、
+  由来とHuman relay・実行modeは[安全方針](07_安全・自動実行・データ方針.md#rencrow_harness委譲の安全境界)、
+  工程と実装状況は[ロードマップ](08_実装状況・ロードマップ.md#rencrow_harnessロードマップ)、
+  相関は[ログ仕様](10_ログ仕様.md#rencrow_harness委譲の相関)、
+  ID発行の境界は[Identity Canonical仕様](architecture/identity/IDENTITY_CANONICAL.md#51-rencrow_harnessのissuer境界)の
+  該当節で確認します。新しい正本ファイルは追加しません。
 - 実装、production wiring、test、config は現在状態を確認する証拠です。正本と差異が見つかった場合は事実を照合し、採用する契約をこの正本へ反映してから実装を合わせます。
 - 実装済み、未実装、deployment依存を区別します。
 - 現行正本に必要な情報が不足している場合は、該当する `01` から `10`、Atlas仕様、またはIdentity Canonical仕様を更新します。Identity Canonical仕様の正規配置である`docs/architecture/identity/`を除き、別の正本ディレクトリ、版付き正本、補助正本を追加しません。
 
-最終整理日: 2026-08-29
+最終整理日: 2026-10-07

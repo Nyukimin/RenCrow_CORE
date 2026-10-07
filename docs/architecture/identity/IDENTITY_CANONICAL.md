@@ -453,6 +453,39 @@ UUIDv5(
 
 同じLegacy文字列が、Trace、Task、Turnで兼用されていても、target_typeが異なるため別のCanonical IDになる。
 
+### 5.1 RenCrow_Harnessのissuer境界
+
+Status: 採用済み設計・未実装（RenCrow_Harness設計v0.2.2、2026-10-07）。`RenCrow_Harness` repositoryは未作成で、
+HarnessがIDを発行する実装はない。境界の全体は[アーキテクチャ概要](../../04_アーキテクチャ概要.md#rencrow_harness委譲境界)、
+観測の相関は[ログ仕様](../../10_ログ仕様.md#rencrow_harness委譲の相関)を正本とする。
+
+RenCrow_Harnessは独立したnative Go実行プログラムであり、自分のdomainで生成するIDを自分で発行する。
+これは新しいID体系の追加ではなく、issuerの追加である。IDの名前、意味、prefixの唯一の正本は本書のままで、
+issuerが増えても一つの名前に一つの意味を保つ。
+
+- Harnessは本書のCanonical ID名、prefix、UUIDv7（Migrationだけ UUIDv5）をそのまま使う。§5のRegistry表とPrefixは
+  変更せず、Harness専用のprefixとID名を作らない。
+- ID発行のためにCOREへ問い合わせない。
+- Harnessが自domainで発行するIDは、SessionID、ThreadID、TurnID、MessageID、TaskID（Rootと子）、RunID、ActionID、
+  AttemptID、RequestID、ResponseID、EvidenceID、CheckpointID、ReceiptID、EventID、QueueItemIDである。
+
+issuerが複数になるため、次の規則を固定する。
+
+1. 所有の異なるIDは`(owner, id)`で区別する。`owner`は`RenCrow_CORE`、`RenCrow_Harness`のように発行したmoduleを表す。
+   prefixが同じでも、同一owner、同一実体とみなさない。
+2. COREのSessionID、ThreadID、TurnID、TaskID等は、Harness側で`upstream`参照に置く。Harnessは同義の新IDとして再発行せず、
+   Harness自身のIDと同一視しない。
+3. ParentTaskIDはowner境界を跨いで、親のCORE Taskを指せる。COREの親Taskと、Harnessが記録する子Taskは別の仕事であり、
+   同義のaliasではない。
+4. process再起動後の再開、checkpointからの再開、lease再取得、実行Agent変更は、新しいRunIDにする。`resume`という新しい
+   Triggerは新しいTraceIDにする。旧Runを改名しない（§4.2のRun規則と同じ）。
+5. COREの同名型をpackage alias表でHarnessのIDへ対応付けない（§0のIdentity alias table禁止と同じ）。protocol境界は文字列を
+   厳密にparseする。
+6. `idempotency_key`（MutationKey）はIDではなく、Registryへ加えない。ProviderToolCallIDはActionIDへコピーしない。
+7. HarnessのEventIDは、Harnessが自身のEvent storeへ保存した事実を指す。COREはHarnessのEventをCOREのCanonical Event Storeへ
+   写してCOREの事実にしない。Eventの引用は`{owner, event_id}`で行い、COREが記録する「委譲が完了した」という別の事実には、
+   COREが新しいEventIDを付ける。
+
 ---
 
 ## 6. Core以外のID命名規則
