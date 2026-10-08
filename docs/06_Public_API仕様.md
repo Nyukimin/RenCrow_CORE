@@ -1531,9 +1531,11 @@ path segmentとしてURL encodeします。
   （[キャラクター・エージェント仕様](03_キャラクター・エージェント仕様.md#shiroのnative-coding実行profile)）、
   client requestにprofile、backend、Harnessのbinary／config、workspace path、Gateway bindingを選択する
   fieldを追加しません。
-- 委譲結果のViewer／API projectionのfieldは、実装時（WP08）に確定して本節へ追記します。確定するまで、公開
-  contractとして固定したfieldはありません。確定時も、raw Evidence、Model入出力、鍵・credentialを含めず、
-  Harness由来のIDは`(owner, id)`で所有者を区別する外部参照として扱います。相関の記録は
+- 委譲結果のViewer／API projectionのfieldは、Viewer／APIへ出す実装時に確定して本節へ追記します。WP08で実装したのは
+  CORE内部のtyped projection（RunResultの`status`、`code`、`verification.status`、`resumable`と、Harnessの
+  task／run／receiptを`{owner:"RenCrow_Harness", id}`で保持）と、委譲Action／Attemptのsummary、構造化logまでで、
+  Viewer／APIへは出していません。したがって公開contractとして固定したfieldは引き続きありません。確定時も、
+  raw Evidence、Model入出力、鍵・credentialを含めず、Harness由来のIDは`(owner, id)`で所有者を区別する外部参照として扱います。相関の記録は
   [ログ仕様](10_ログ仕様.md#rencrow_harness委譲の相関)、安全境界は
   [安全・自動実行・データ方針](07_安全・自動実行・データ方針.md#rencrow_harness委譲の安全境界)を参照します。
 - RunResultの意味と親Taskの採用は
