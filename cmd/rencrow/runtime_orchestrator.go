@@ -76,6 +76,10 @@ func buildOrchestratorRuntime(
 	}
 
 	log.Println("=== v3 Local Mode ===")
+	nativeCoding, err := buildNativeCodingRuntime(cfg, deps.actionManager)
+	if err != nil {
+		log.Fatalf("Failed to configure the shiro_native_coding_v1 profile: %v", err)
+	}
 	orch := orchestrator.NewMessageOrchestrator(
 		sessionRepo,
 		agents.Mio,
@@ -88,6 +92,15 @@ func buildOrchestratorRuntime(
 	)
 	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 	orch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
+	if nativeCoding != nil {
+		// The profile is selected by configuration only: the same runtime is the
+		// admission that selects new OPS turns and the delegate Shiro hands them to.
+		agents.Shiro.WithNativeCodingDelegate(nativeCoding)
+		orch.SetNativeCodingAdmission(nativeCoding)
+		deps.nativeCoding = nativeCoding
+		warmNativeCodingRuntime(nativeCoding)
+		log.Println("Execution profile shiro_native_coding_v1 enabled: new OPS turns are delegated to RenCrow_Harness")
+	}
 	if coderCaps := buildCoderCapabilities(nodeCaps, cfg); coderCaps != nil {
 		orch.SetCoderCapabilities(coderCaps)
 		log.Printf("Coder capability metadata loaded (%d coders); CODE uses only local coder1 unless an explicit CODE route is requested", len(coderCaps))

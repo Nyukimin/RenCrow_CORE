@@ -70,3 +70,27 @@ func TestAttemptRetryKeepsActionIdentityContract(t *testing.T) {
 		t.Fatal("retry must issue a new AttemptID")
 	}
 }
+
+func TestDelegationKindIsAValidActionKind(t *testing.T) {
+	t.Parallel()
+	if !ValidKind(KindDelegation) || KindDelegation != Kind("delegation") {
+		t.Fatalf("delegation must be a valid, stable Action kind: %q", KindDelegation)
+	}
+	now := time.Now().UTC()
+	action := Action{
+		ActionID:  modulecore.NewActionID(),
+		TaskID:    modulecore.NewTaskID(),
+		RunID:     modulecore.NewRunID(),
+		Kind:      KindDelegation,
+		Name:      "native_harness.delegate",
+		Status:    StatusOpen,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := action.Validate(); err != nil {
+		t.Fatalf("a delegation Action must validate: %v", err)
+	}
+	if ValidKind(Kind("harness")) {
+		t.Fatal("the kind set stays closed")
+	}
+}

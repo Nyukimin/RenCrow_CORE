@@ -28,6 +28,11 @@ const (
 	KindVerification     Kind = "verification"
 	KindMemoryPromotion  Kind = "memory_promotion"
 	KindPolicyMediation  Kind = "policy_mediation"
+	// KindDelegation is the one Action that records a delegation of work to
+	// RenCrow_Harness. The work done inside the Harness is the Harness's own
+	// (its Tool Actions are never re-issued here), so this Action stays a
+	// single record of "CORE delegated" in the parent Task Run.
+	KindDelegation Kind = "delegation"
 )
 
 // Status is the lifecycle state of one logical Action.
@@ -110,7 +115,7 @@ func ValidKind(kind Kind) bool {
 	switch kind {
 	case KindTool, KindLLM, KindDCI, KindSTT, KindTTS, KindVision, KindPlayback,
 		KindPatchApply, KindExternalSend, KindExternalPRSubmit,
-		KindVerification, KindMemoryPromotion, KindPolicyMediation:
+		KindVerification, KindMemoryPromotion, KindPolicyMediation, KindDelegation:
 		return true
 	default:
 		return false

@@ -27,6 +27,7 @@ type messageRouteDispatcher struct {
 	pushTTS           messageTTSPusher
 	executeAutonomous autonomousRouteExecutor
 	canonicalEvents   CanonicalEventRecorder
+	nativeCoding      NativeCodingAdmission
 }
 
 func newMessageRouteDispatcher(
@@ -80,6 +81,13 @@ func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input dom
 	}
 	input = input.WithRoute(route)
 	if route != routing.RouteCHAT {
+		// shiro_native_coding_v1: the admission selects a new OPS turn before it
+		// enters the autonomous coordinator, so the selection travels with the
+		// input through every attempt. A refusal ends the turn here.
+		input, err = admitNativeCoding(ctx, d.nativeCoding, input, route)
+		if err != nil {
+			return "", err
+		}
 		if shouldTraceShiroDelegation(route) {
 			sessionID, channel, chatID := turnInputMetadata(input)
 			d.emit("agent.delegate", "mio", "shiro", formatMioToShiroInstruction(input, route, taskID.String()), route.String(), taskID.String(), sessionID, channel, chatID)

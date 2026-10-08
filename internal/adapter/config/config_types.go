@@ -59,6 +59,9 @@ type Config struct {
 	// === Codex non-interactive coding agent bridge ===
 	Codex CodexConfig `yaml:"codex"`
 
+	// === RenCrow_Harness delegation: Human relay issuer ===
+	NativeHarness NativeHarnessConfig `yaml:"native_harness"`
+
 	// === Advisor execution records and score snapshots ===
 	Advisor AdvisorConfig `yaml:"advisor"`
 

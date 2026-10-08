@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	configpolicy "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/policybundle"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/modulebridge"
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/nativeharnessclient/delegation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	aiworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/aiworkflow"
@@ -108,6 +109,7 @@ type Dependencies struct {
 	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
+	nativeCoding                   *delegation.Runtime                         // shiro_native_coding_v1 admission and delegate (nil unless the profile is enabled)
 	transportManager               *transportmanager.Manager                   // shared canonical Request Response receipt owner
 	playbackRecorder               *playbackActionRecorder                     // canonical actual-playback receipt owner
 	viewerLogs                     http.HandlerFunc                            // viewer logs API
@@ -339,6 +341,7 @@ type Dependencies struct {
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	closeNativeCodingRuntime(d.nativeCoding)
 	if d.llmGatewayProcess != nil {
 		if err := d.llmGatewayProcess.Kill(); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already finished") {
 			log.Printf("Failed to stop CORE-started RenCrow_LLM Gateway: %v", err)

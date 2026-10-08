@@ -60,6 +60,9 @@ func (c *Config) Validate() error {
 	if err := c.validateStorageHostConfig(); err != nil {
 		return err
 	}
+	if err := c.validateNativeHarnessConfig(); err != nil {
+		return err
+	}
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}

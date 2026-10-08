@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	autonomousapp "github.com/Nyukimin/RenCrow_CORE/internal/application/autonomous"
 	contractapp "github.com/Nyukimin/RenCrow_CORE/internal/application/contract"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domaincontract "github.com/Nyukimin/RenCrow_CORE/internal/domain/contract"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -50,12 +52,20 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input doma
 		return "", err
 	}
 	sessionID, channel, chatID := turnInputMetadata(input)
+	maxRepair := c.maxRepair()
+	if input.BackendSelection() != domainconversation.BackendSelectionNone {
+		// A turn selected for shiro_native_coding_v1 is delegated once. The repair
+		// loop would start a second Harness Task for the same request (after an
+		// unknown outcome, a block or a failed check), and resuming is the
+		// Harness's own operation with its own limits, so it is not repaired here.
+		maxRepair = 0
+	}
 	result, err := autonomousapp.RunExecutor(ctx, autonomousapp.ExecuteRequest{
 		TaskID:     taskID,
 		Route:      route.String(),
 		Capability: capabilityForRoute(route),
 		Contract:   contract,
-		MaxRepair:  c.maxRepair(),
+		MaxRepair:  maxRepair,
 		Observe: func(stage autonomousapp.Stage) {
 			c.emit("entry.stage", channel, "system", string(stage), route.String(), taskID.String(), sessionID, channel, chatID)
 		},
@@ -74,6 +84,10 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input doma
 			}, runErr
 		},
 		Verify: func(_ context.Context, c domaincontract.Contract, last autonomousapp.AttemptResult) (bool, string, string, error) {
+			if input.BackendSelection() != domainconversation.BackendSelectionNone {
+				ok, kind, reason := verifyNativeCodingAttempt(last)
+				return ok, kind, reason, nil
+			}
 			ok, kind, reason := verifyByContract(route, c, last)
 			return ok, kind, reason, nil
 		},
@@ -82,6 +96,21 @@ func (c *autonomousExecutionCoordinator) Execute(ctx context.Context, input doma
 		return result.Response, err
 	}
 	return result.Response, nil
+}
+
+// verifyNativeCodingAttempt is the verification of an attempt of a turn that was
+// selected for shiro_native_coding_v1. The acceptance of such a turn is decided
+// from the typed RunResult before this point (agent.ShiroAgent.Execute returns
+// an error for every Run that is not a completed one, and for a failed
+// verification), so the answer text is only required to be present. The
+// keyword check of verifyByContract (any "error", "失敗" or "エラー" in the text)
+// is a heuristic for the text of a chat or ops answer; applied to the answer of
+// a coding Run it would reject an answer that merely talks about an error.
+func verifyNativeCodingAttempt(last autonomousapp.AttemptResult) (bool, string, string) {
+	if strings.TrimSpace(last.Response) == "" {
+		return false, "verification_failed", "empty response"
+	}
+	return true, "", ""
 }
 
 func capabilityForRoute(route routing.Route) autonomousapp.CapabilityPack {
@@ -97,6 +126,11 @@ func routeExecutionSteps(route routing.Route, ok bool) []string {
 }
 
 func classifyExecutorFailure(err error) string {
+	if agent.IsNativeCodingFailure(err) {
+		// Not one of the retryable kinds: a delegation that did not succeed is not
+		// repaired by delegating again.
+		return "native_coding"
+	}
 	var terminal *workerResultError
 	if errors.As(err, &terminal) {
 		return "worker_result_failed"

@@ -3,6 +3,7 @@ module github.com/Nyukimin/RenCrow_CORE
 go 1.25.0
 
 require (
+	github.com/Nyukimin/RenCrow_Harness v0.0.0-20261007224419-4caf3b3e4665
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-ole/go-ole v1.3.0
 	github.com/google/uuid v1.6.0

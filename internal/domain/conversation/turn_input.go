@@ -8,6 +8,28 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+// BackendSelection is the typed, accepted selection of an execution backend
+// for one turn. It is assigned only by the admission step of the orchestrator
+// from authenticated configuration; message text, model output and client
+// requests never produce it, and it is not part of the transport form of a
+// TurnInput, so an input reconstructed from a transport message carries none.
+type BackendSelection string
+
+const (
+	// BackendSelectionNone means no explicit selection: the existing routes run
+	// unchanged.
+	BackendSelectionNone BackendSelection = ""
+	// BackendShiroNativeCodingV1 selects the execution profile
+	// shiro_native_coding_v1: Shiro hands the work to RenCrow_Harness and
+	// never falls back to the CodexWorkPath, toolloop or plain Generate.
+	BackendShiroNativeCodingV1 BackendSelection = "shiro_native_coding_v1"
+)
+
+// Valid reports whether the selection is none or a known backend.
+func (b BackendSelection) Valid() bool {
+	return b == BackendSelectionNone || b == BackendShiroNativeCodingV1
+}
+
 // TurnInput is the canonical value object for one user conversation input.
 // It carries the complete identity assigned at the conversation boundary and
 // remains immutable through its With... methods.
@@ -24,6 +46,7 @@ type TurnInput struct {
 	viewerRecipient string
 	forcedRoute     routing.Route
 	route           routing.Route
+	backend         BackendSelection
 }
 
 // NewTurnInput creates a user input with a supplied root task and fresh turn,
@@ -191,6 +214,22 @@ func (t TurnInput) WithForcedRoute(route routing.Route) TurnInput {
 func (t TurnInput) WithRoute(route routing.Route) TurnInput {
 	t.route = route
 	return t
+}
+
+// BackendSelection returns the accepted execution backend selection, if any.
+func (t TurnInput) BackendSelection() BackendSelection {
+	return t.backend
+}
+
+// WithBackendSelection returns a copy carrying an accepted backend selection.
+// Only the admission step of the orchestrator may call it (an architecture
+// test fixes the callers); an unknown value is refused.
+func (t TurnInput) WithBackendSelection(selection BackendSelection) (TurnInput, error) {
+	if !selection.Valid() {
+		return TurnInput{}, fmt.Errorf("unknown backend selection %q", selection)
+	}
+	t.backend = selection
+	return t, nil
 }
 
 // HasForcedRoute reports whether an explicit route was assigned.

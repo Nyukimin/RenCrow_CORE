@@ -29,6 +29,7 @@ type ShiroAgent struct {
 	persona                *AgentPersona // v4.2: Optional Agent Persona
 	lightMemory            *LightMemory  // Optional: short-term memory
 	conversation           conversation.ConversationEngine
+	nativeCoding           NativeCodingDelegate // shiro_native_coding_v1 (see native_coding.go)
 }
 
 // NewShiroAgent は新しいShiroAgentを作成
@@ -100,6 +101,15 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	}}
 	if s.persona != nil {
 		dynamic = append(dynamic, llm.Message{Role: "system", Content: s.persona.BuildSystemPrompt(""), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "legacy_persona"}})
+	}
+
+	// A turn that the admission step selected for shiro_native_coding_v1 is
+	// delegated to RenCrow_Harness here, before every old route. It never enters
+	// the CodexWorkPath, the SubagentManager (toolloop) or the plain Generate
+	// path, whatever the delegation returns, and a keyword that would match the
+	// CodexWorkPath does not change that.
+	if t.BackendSelection() == conversation.BackendShiroNativeCodingV1 {
+		return s.executeNativeCoding(ctx, t, characterPrompt, dynamic)
 	}
 
 	if resp, ok, err := s.tryExecuteCodexWorkPath(ctx, t); ok || err != nil {

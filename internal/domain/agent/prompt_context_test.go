@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -89,6 +90,40 @@ func TestAssemblePromptContextUsesCanonicalOrderAndSingleCharacterBlocks(t *test
 	for index, want := range wantTypes {
 		if messages[index].Type != want {
 			t.Fatalf("message %d type = %q, want %q", index, messages[index].Type, want)
+		}
+	}
+}
+
+func TestAssemblePromptContextExportReturnsTheSameTypedMessages(t *testing.T) {
+	// Arrange
+	character := strings.Join([]string{"identity", "policy", "scope", "knowledge"}, "\n\n---\n\n")
+	stable := "# Shared Agent Control\nagent\n\n## Routing\nroute\n\n## Handoff\nhandoff\n\n## Tools\ntools"
+	dynamic := []llm.Message{
+		{Role: "system", Content: "runtime", Type: llm.PromptContextVariable},
+		{Role: "system", Content: "recall", Type: llm.PromptContextRecall, Metadata: map[string]string{"recall_section": "l0"}},
+		{Role: "assistant", Content: "untyped dynamic message"},
+	}
+	user := llm.Message{Role: "user", Content: "now"}
+
+	// Act
+	exported := AssemblePromptContext(character, stable, dynamic, user)
+	internal := assemblePromptContext(character, stable, dynamic, user)
+
+	// Assert
+	if !reflect.DeepEqual(exported, internal) {
+		t.Fatalf("exported assembly differs from the internal assembly:\n%#v\n%#v", exported, internal)
+	}
+	wantTypes := []llm.PromptContextType{
+		llm.PromptContextCharacter, llm.PromptContextCharacter, llm.PromptContextCharacter, llm.PromptContextCharacter,
+		llm.PromptContextStable, llm.PromptContextStable, llm.PromptContextStable,
+		llm.PromptContextRecall, llm.PromptContextRecall, llm.PromptContextVariable, llm.PromptContextUser,
+	}
+	if len(exported) != len(wantTypes) {
+		t.Fatalf("messages = %d, want %d: %#v", len(exported), len(wantTypes), exported)
+	}
+	for index, want := range wantTypes {
+		if exported[index].Type != want {
+			t.Fatalf("message %d type = %q, want %q", index, exported[index].Type, want)
 		}
 	}
 }

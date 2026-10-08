@@ -50,20 +50,31 @@ func openValidatedStorageHostTokenFile(path string) (*os.File, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("storage.host.token_file is required")
 	}
+	return openConfidentialFile("storage.host.token_file", path, errStorageHostTokenUnreadable)
+}
+
+// openConfidentialFile opens a regular file whose access is limited by the
+// platform-native rule (validateConfidentialFileAccess) and returns the open
+// handle, so the caller reads the file that was checked. unreadable is
+// returned, without the OS error, when the file cannot be opened, is not a
+// regular file, or cannot be inspected. label names the setting in the
+// permission error. It is shared by the storage host bearer token and the
+// Human relay HMAC key.
+func openConfidentialFile(label, path string, unreadable error) (*os.File, error) {
 	handle, err := os.Open(path)
 	if err != nil {
-		return nil, errStorageHostTokenUnreadable
+		return nil, unreadable
 	}
 	info, err := handle.Stat()
 	if err != nil {
 		_ = handle.Close()
-		return nil, errStorageHostTokenUnreadable
+		return nil, unreadable
 	}
 	if !info.Mode().IsRegular() {
 		_ = handle.Close()
-		return nil, errStorageHostTokenUnreadable
+		return nil, unreadable
 	}
-	if err := validateStorageHostTokenFileAccess(path, info); err != nil {
+	if err := validateConfidentialFileAccess(label, path, info); err != nil {
 		_ = handle.Close()
 		return nil, err
 	}

@@ -125,6 +125,16 @@ func assemblePromptContext(characterPrompt, stableRuntimeContext string, dynamic
 	return messages
 }
 
+// AssemblePromptContext returns the typed messages of assemblePromptContext
+// unchanged: Character, Stable, Recall and Variable blocks in the standard
+// order and the current user message last, each keeping its Type. It exists so
+// a caller outside this package (the RenCrow_Harness delegation client) reads
+// the classification from the typed messages instead of recovering it from a
+// flattened string such as renderSystemMessages produces.
+func AssemblePromptContext(characterPrompt, stableRuntimeContext string, dynamic []llm.Message, user llm.Message) []llm.Message {
+	return assemblePromptContext(characterPrompt, stableRuntimeContext, dynamic, user)
+}
+
 func renderSystemMessages(messages []llm.Message) string {
 	parts := make([]string, 0, len(messages))
 	for _, message := range messages {

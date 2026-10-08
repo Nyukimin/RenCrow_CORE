@@ -203,3 +203,49 @@ func TestTurnInputHasNoLegacySemanticAccessors(t *testing.T) {
 		}
 	}
 }
+
+func TestTurnInputBackendSelectionIsTypedAndExplicit(t *testing.T) {
+	input := newTestTurnInput(t)
+	if input.BackendSelection() != BackendSelectionNone {
+		t.Fatalf("a new input carries no backend selection, got %q", input.BackendSelection())
+	}
+	selected, err := input.WithBackendSelection(BackendShiroNativeCodingV1)
+	if err != nil {
+		t.Fatalf("WithBackendSelection(native) error = %v", err)
+	}
+	if selected.BackendSelection() != BackendShiroNativeCodingV1 {
+		t.Fatalf("selection = %q", selected.BackendSelection())
+	}
+	if input.BackendSelection() != BackendSelectionNone {
+		t.Fatal("selecting must not mutate the original value")
+	}
+	if err := selected.Validate(); err != nil {
+		t.Fatalf("a selected input must still validate: %v", err)
+	}
+	// Other With methods keep the selection; it is state of the input.
+	if got := selected.WithMessageText("other").WithRoute(routing.RouteOPS).BackendSelection(); got != BackendShiroNativeCodingV1 {
+		t.Fatalf("selection lost across With methods: %q", got)
+	}
+	if _, err := input.WithBackendSelection(BackendSelection("codex")); err == nil {
+		t.Fatal("an unknown backend selection must be refused")
+	}
+	cleared, err := selected.WithBackendSelection(BackendSelectionNone)
+	if err != nil || cleared.BackendSelection() != BackendSelectionNone {
+		t.Fatalf("clearing the selection failed: %v %q", err, cleared.BackendSelection())
+	}
+}
+
+func TestReconstructedTurnInputCarriesNoBackendSelection(t *testing.T) {
+	original := newTestTurnInput(t)
+	selected, err := original.WithBackendSelection(BackendShiroNativeCodingV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := ReconstructTurnInput(selected.RootTaskID(), selected.TurnID(), selected.TraceID(), selected.UserMessageID(), selected.AgentMessageID(), selected.MessageText(), selected.ChannelAddress())
+	if err != nil {
+		t.Fatalf("ReconstructTurnInput() error = %v", err)
+	}
+	if rebuilt.BackendSelection() != BackendSelectionNone {
+		t.Fatalf("a reconstructed input (transport, distributed worker) must not carry a selection, got %q", rebuilt.BackendSelection())
+	}
+}
