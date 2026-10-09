@@ -131,6 +131,8 @@ type HeartbeatService struct {
 	// operations枠を占有するHeartbeat Taskを次tickで再試行するための台帳。
 	finalizationMu        sync.Mutex
 	deferredFinalizations map[modulecore.TaskID]*deferredWorkerFinalization
+	// finalizeTimeout は終端書き込み1回の予算の上書き (0なら既定値)。テスト用。
+	finalizeTimeout time.Duration
 }
 
 // NewHeartbeatService は新しいHeartbeatServiceを作成

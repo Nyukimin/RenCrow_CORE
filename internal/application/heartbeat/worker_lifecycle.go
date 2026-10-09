@@ -29,12 +29,26 @@ type TaskOwner interface {
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
 	Cancel(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
-	// Get は終端再試行の前にTaskの現在状態を確認するための読み取り境界。
-	// 既に終端したTaskへ書き直さないために必要。
-	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
+	// 終端再試行のための事前読み取り (Get) は意図的に持たない。task store の
+	// 1トランザクションは store 全体を走査するため、書き込み前の読み取りは遅い store での
+	// 再試行を構造的に不利にする。決着済みかどうかは書き込みの拒否
+	// (domaintask.AlreadyTerminal) だけで判断する。
 }
 
-const heartbeatTaskCleanupTimeout = 10 * time.Second
+// heartbeatTaskFinalizeTimeout は終端書き込み (Succeed/Fail/Cancel) 1回に渡す予算。
+// task store の1トランザクションは store 全体を走査するため履歴量に比例して遅くなる
+// (本番2026-10で約11秒、日々増加。非公平なグローバルロックの待ちも含む)。旧値の10秒は
+// その遅延を下回り、worker は3秒で終わっていたのに終端書き込みだけが期限切れで失敗した。
+// 予算は書き込みごとに独立して与え、entry間やGetと共有しない。
+const heartbeatTaskFinalizeTimeout = 60 * time.Second
+
+// finalizationTimeout は終端書き込み1回の予算。テストが短い予算へ差し替えられる。
+func (s *HeartbeatService) finalizationTimeout() time.Duration {
+	if s != nil && s.finalizeTimeout > 0 {
+		return s.finalizeTimeout
+	}
+	return heartbeatTaskFinalizeTimeout
+}
 
 // WithTaskOwner configures the canonical Task/Run owner and the Agent that
 // owns heartbeat execution.
@@ -215,16 +229,21 @@ func (s *HeartbeatService) finalizeWorkerTask(ctx context.Context, taskID module
 }
 
 // finishWorker はHeartbeat Taskを終端させる。書き込みが失敗するとTaskはrunningの
-// ままoperations枠を返し続けるため、失敗を滞留台帳へ登録して後続tickで再試行する。
-// 登録を省略すると原因がログに何も残り、枠の恒久占有を追えなくなる。
+// ままoperations枠を返し続けるため、失敗を滞留台帳へ登録して後続tickでbackoff付きで
+// 再試行する。登録を省略すると原因がログに何も残り、枠の恒久占有を追えなくなる。
+//
+// 終端書き込みは親のcancelを引き継がない (WithoutCancel)。停止中でも取消の終端を
+// 書くためで、その代わり停止はこの1回分の予算 (最大 heartbeatTaskFinalizeTimeout) だけ待つ。
 func (s *HeartbeatService) finishWorker(ctx context.Context, taskID modulecore.TaskID, workerErr error) error {
-	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), heartbeatTaskCleanupTimeout)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.finalizationTimeout())
 	defer cancel()
 
+	started := time.Now()
 	if err := s.finalizeWorkerTask(cleanupCtx, taskID, workerErr); err != nil {
-		s.recordDeferredWorkerFinalization(taskID, workerErr, err)
+		s.recordDeferredWorkerFinalizationAt(taskID, workerErr, err, time.Now().UTC(), time.Since(started))
 		return errors.Join(ctx.Err(), fmt.Errorf("heartbeat task finalization failed: %w", err))
 	}
+	s.noteFinalizationLatency(taskID, time.Since(started))
 	s.forgetDeferredWorkerFinalization(taskID)
 	return ctx.Err()
 }

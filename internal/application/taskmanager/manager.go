@@ -485,7 +485,7 @@ func (m *Manager) updateStatusInTransaction(ctx context.Context, taskID moduleco
 		return domaintask.Task{}, err
 	}
 	if !domaintask.CanTransition(task.Status, status) {
-		return domaintask.Task{}, fmt.Errorf("invalid status transition: %s -> %s", task.Status, status)
+		return domaintask.Task{}, &domaintask.InvalidStatusTransitionError{From: task.Status, To: status}
 	}
 	if status == domaintask.StatusWaiting && strings.TrimSpace(waitingReason) == "" {
 		return domaintask.Task{}, fmt.Errorf("waiting reason is required")
