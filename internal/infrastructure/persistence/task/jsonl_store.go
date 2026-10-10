@@ -49,7 +49,7 @@ type JSONLStore struct {
 }
 
 func NewJSONLStore(root string) (*JSONLStore, error) {
-	return openJSONLStore(root, false, OpenOptions{Index: defaultIndexOption})
+	return openJSONLStore(root, false, OpenOptions{Index: defaultIndexOption, Persist: defaultPersistOption})
 }
 
 // NewJSONLReader opens the canonical files without acquiring write ownership.
@@ -60,6 +60,9 @@ func NewJSONLReader(root string) (*JSONLStore, error) {
 func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("task store root is required")
+	}
+	if opts.Persist && !opts.Index {
+		return nil, errors.New("task store option Persist requires Index")
 	}
 	root = filepath.Clean(root)
 	if !readOnly {
@@ -123,11 +126,29 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	}
 	var receipts map[string]TaskOperationReceipt
 	if opts.Index {
-		idx, err := buildTaskIndex(root)
+		idx, err := openTaskIndex(root, opts.Persist, opts.failpoint)
 		if err != nil {
 			return nil, fmt.Errorf("build task index: %w", err)
 		}
 		store.idx = idx
+		if opts.Persist {
+			policy := defaultCheckpointPolicy()
+			if opts.checkpoint != nil {
+				policy = *opts.checkpoint
+			}
+			idx.ck = newCheckpointer(idx, root, policy)
+			idx.ck.fp = opts.failpoint
+			if idx.source == sourceSidecar && idx.replayedLines == 0 {
+				// The sidecar on disk already says everything.
+				idx.ck.markWritten(idx.applied, totalLines(idx.lines))
+			} else {
+				// After a rebuild, or a restore that needed the log beyond the
+				// sidecar, write a fresh one now: a crash before the first interval
+				// must not send the next start through the same work. A failure is
+				// logged and retried later; it does not stop the open.
+				_ = idx.ck.checkpointNow("open")
+			}
+		}
 		batch.SetPostCommitHook(idx.onCommit)
 	} else {
 		receipts, err = readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
@@ -170,6 +191,9 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 		if fence.AcquireGeneration >= generation || fence.ReleaseGeneration >= generation {
 			return nil, fmt.Errorf("writer generation does not advance persisted task execution fence ownership")
 		}
+	}
+	if store.idx != nil && store.idx.ck != nil {
+		store.idx.ck.start()
 	}
 	success = true
 	return store, nil
@@ -469,7 +493,11 @@ func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
 }
 
 // Close relinquishes this writer's OS lease. The persistent lock file is never removed.
-func (s *JSONLStore) Close() error {
+func (s *JSONLStore) Close() error { return s.closeStore(true) }
+
+// closeStore is Close; flushCheckpoint false skips the final sidecar write, which
+// leaves the store as a crash after the last commit would (tests only).
+func (s *JSONLStore) closeStore(flushCheckpoint bool) error {
 	if s == nil {
 		return nil
 	}
@@ -478,6 +506,17 @@ func (s *JSONLStore) Close() error {
 	}
 	if s.lifecycle != nil {
 		s.lifecycle.wait()
+	}
+	// No transaction is in flight and none can start. Stop the checkpoint loop
+	// first and only then write the final checkpoint, so two writers of the
+	// sidecar never overlap; it runs before the writer lock is released, so no
+	// other process can be replacing the sidecar at the same time.
+	if s.idx != nil && s.idx.ck != nil {
+		if flushCheckpoint {
+			s.idx.ck.stopAndFlush()
+		} else {
+			s.idx.ck.stop()
+		}
 	}
 	s.mu.Lock()
 	if s.closed {

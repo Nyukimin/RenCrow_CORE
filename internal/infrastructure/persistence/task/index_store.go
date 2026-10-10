@@ -21,12 +21,28 @@ type OpenOptions struct {
 	// from it at open and followed after every commit, and a store opened
 	// without Index reads the same files.
 	Index bool
+	// Persist keeps the index in a sidecar file (index/seg-legacy.tsi) so that
+	// the next open restores it instead of reading the whole log: the writer
+	// replaces the sidecar periodically and when it closes. The sidecar is
+	// derived data; a missing, damaged or outdated one only costs a rebuild from
+	// the log. Persist requires Index.
+	Persist bool
+
+	// checkpoint and failpoint are seams for tests. A nil checkpoint selects the
+	// production policy; failpoint, if set, is called at each stage of a sidecar
+	// replacement.
+	checkpoint *checkpointPolicy
+	failpoint  func(stage string)
 }
 
-// defaultIndexOption is what NewJSONLStore uses. It is false in every build
-// except one made with the taskindexdefault tag, which exists so the existing
-// consumer tests can run against the index (see index_default_on.go).
-var defaultIndexOption = false
+// defaultIndexOption and defaultPersistOption are what NewJSONLStore uses. They
+// are false in every build except one made with the taskindexdefault tag, which
+// exists so the existing consumer tests can run against the index (see
+// index_default_on.go).
+var (
+	defaultIndexOption   = false
+	defaultPersistOption = false
+)
 
 // NewJSONLStoreWithOptions opens the writable Task store at root.
 func NewJSONLStoreWithOptions(root string, opts OpenOptions) (*JSONLStore, error) {

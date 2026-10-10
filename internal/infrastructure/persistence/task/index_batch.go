@@ -529,6 +529,13 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 	if b.maxReceiptGeneration > ix.maxReceiptGeneration {
 		ix.maxReceiptGeneration = b.maxReceiptGeneration
 	}
+	if ix.ck != nil {
+		var total int64
+		for _, n := range ix.lines {
+			total += n
+		}
+		ix.ck.noteLines(total)
+	}
 	return nil
 }
 

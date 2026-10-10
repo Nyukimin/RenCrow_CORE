@@ -216,7 +216,25 @@ type taskIndex struct {
 	dirty        atomic.Bool
 	closed       atomic.Bool
 	corruptReads atomic.Uint64
+
+	// ck persists the index to its sidecar; nil unless OpenOptions.Persist.
+	ck *checkpointer
+	// source and rebuildReason record how the index came to be (see IndexStats).
+	source        string
+	rebuildReason string
+	// replayedLines is how many log lines a restore absorbed beyond the sidecar.
+	replayedLines int64
+	// replayHook, if set, is called after each file of a build or a tail replay
+	// has been absorbed (a test seam; nil in production).
+	replayHook func(kind fileKind)
 }
+
+// How an index was obtained (IndexStats.Source).
+const (
+	sourceBuilt   = "built"
+	sourceSidecar = "sidecar"
+	sourceRebuilt = "rebuilt"
+)
 
 func newTaskIndex(root string) *taskIndex {
 	return &taskIndex{
@@ -244,17 +262,32 @@ type IndexStats struct {
 	Dirty       bool
 	// CorruptReads counts reads that failed line verification (ErrRecordCorrupt).
 	CorruptReads uint64
+	// Source says how the index was obtained at open: "built" from the log with
+	// no sidecar involved, "sidecar" restored from the sidecar (plus the log
+	// written after it), or "rebuilt" from the log because the sidecar could not
+	// be used (RebuildReason says why).
+	Source        string
+	RebuildReason string
+	// Checkpoints is the number of sidecars written by this writer;
+	// CheckpointFailures the failures in a row since the last success.
+	Checkpoints        uint64
+	CheckpointFailures int64
 }
 
 // stats returns a snapshot. The caller must not hold mu.
 func (ix *taskIndex) stats() IndexStats {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	return IndexStats{
+	stats := IndexStats{
 		Tasks: len(ix.tasks), Runs: len(ix.runs), Notifications: len(ix.notifs), Receipts: len(ix.receipts),
 		Lines: ix.lines, AppliedBytes: ix.applied,
 		ApproxBytes: ix.approxBytesLocked(), Dirty: ix.dirty.Load(), CorruptReads: ix.corruptReads.Load(),
+		Source: ix.source, RebuildReason: ix.rebuildReason,
 	}
+	if ix.ck != nil {
+		stats.Checkpoints, stats.CheckpointFailures = ix.ck.count.Load(), ix.ck.failures.Load()
+	}
+	return stats
 }
 
 // approxBytesLocked estimates the heap held by the index from slice capacities
