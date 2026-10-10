@@ -40,6 +40,7 @@ type JSONLStore struct {
 	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
 	txObserver        *txObserver
+	idx               *taskIndex // optional in-memory index (OpenOptions.Index); nil keeps the original path
 	root              string
 	statePath         string
 	runPath           string
@@ -47,12 +48,16 @@ type JSONLStore struct {
 	notificationsPath string
 }
 
-func NewJSONLStore(root string) (*JSONLStore, error) { return openJSONLStore(root, false) }
+func NewJSONLStore(root string) (*JSONLStore, error) {
+	return openJSONLStore(root, false, OpenOptions{Index: defaultIndexOption})
+}
 
 // NewJSONLReader opens the canonical files without acquiring write ownership.
-func NewJSONLReader(root string) (*JSONLStore, error) { return openJSONLStore(root, true) }
+func NewJSONLReader(root string) (*JSONLStore, error) {
+	return openJSONLStore(root, true, OpenOptions{})
+}
 
-func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
+func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("task store root is required")
 	}
@@ -116,9 +121,19 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	if err := batch.Recover(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover task store batch: %w", err)
 	}
-	receipts, err := readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
-	if err != nil {
-		return nil, fmt.Errorf("load task operation receipts: %w", err)
+	var receipts map[string]TaskOperationReceipt
+	if opts.Index {
+		idx, err := buildTaskIndex(root)
+		if err != nil {
+			return nil, fmt.Errorf("build task index: %w", err)
+		}
+		store.idx = idx
+		batch.SetPostCommitHook(idx.onCommit)
+	} else {
+		receipts, err = readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
+		if err != nil {
+			return nil, fmt.Errorf("load task operation receipts: %w", err)
+		}
 	}
 	fenceSnapshot, err := readTaskExecutionFences(context.Background(), filepath.Join(root, taskExecutionFenceFilename))
 	if err != nil {
@@ -131,18 +146,24 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 	}
 	store.writerGeneration = generation
 	// A missing/truncated counter must not reuse any generation already bound to a Run.
-	runs, err := store.loadRuns(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	for _, run := range runs {
-		if run.WriterGeneration >= generation {
-			return nil, fmt.Errorf("writer generation does not advance persisted Run ownership")
+	if store.idx != nil {
+		if err := checkIndexGenerations(store.idx, generation); err != nil {
+			return nil, err
 		}
-	}
-	for _, receipt := range receipts {
-		if receipt.WriterGeneration >= generation {
-			return nil, fmt.Errorf("writer generation does not advance persisted task operation receipt ownership")
+	} else {
+		runs, err := store.loadRuns(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		for _, run := range runs {
+			if run.WriterGeneration >= generation {
+				return nil, fmt.Errorf("writer generation does not advance persisted Run ownership")
+			}
+		}
+		for _, receipt := range receipts {
+			if receipt.WriterGeneration >= generation {
+				return nil, fmt.Errorf("writer generation does not advance persisted task operation receipt ownership")
+			}
 		}
 	}
 	for _, fence := range fenceSnapshot.byID {
@@ -184,6 +205,9 @@ func (s *JSONLStore) SaveRun(ctx context.Context, value domaintask.Run) error {
 }
 
 func (s *JSONLStore) GetRun(ctx context.Context, runID modulecore.RunID) (domaintask.Run, error) {
+	if s != nil && s.idx != nil {
+		return s.indexGetRun(ctx, runID)
+	}
 	var result domaintask.Run
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
 		var err error
@@ -204,6 +228,9 @@ func (s *JSONLStore) ListRuns(ctx context.Context, filter domaintask.RunFilter) 
 }
 
 func (s *JSONLStore) GetTask(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error) {
+	if s != nil && s.idx != nil {
+		return s.indexGetTask(ctx, taskID)
+	}
 	var result domaintask.Task
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
 		var err error
@@ -230,6 +257,9 @@ func (s *JSONLStore) SaveContext(ctx context.Context, value domaintask.SharedRol
 }
 
 func (s *JSONLStore) GetContext(ctx context.Context, taskID modulecore.TaskID) (domaintask.SharedRoleContext, error) {
+	if s != nil && s.idx != nil {
+		return s.indexGetContext(ctx, taskID)
+	}
 	var result domaintask.SharedRoleContext
 	err := s.ReadTransaction(ctx, func(store domaintask.Store) error {
 		var err error
@@ -463,6 +493,7 @@ func (s *JSONLStore) Close() error {
 		err = releaseTaskWriter(s.writerLock)
 		s.writerLock = nil
 	}
+	err = errors.Join(err, s.idx.close())
 	s.mu.Unlock()
 	if s.lifecycle != nil {
 		s.lifecycle.finishClose()

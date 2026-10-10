@@ -361,9 +361,13 @@ func TestTransactionSnapshotRollbackStartsFreshView(t *testing.T) {
 	}
 }
 
+// This test edits the log files behind the store and expects the next read to
+// notice, which only the original full-fold path does; it opens the store
+// without the index. The index reports the same corruption at open, replay and
+// read (index_build_test.go).
 func TestTransactionSnapshotRejectsMalformedHistoricalRunTransition(t *testing.T) {
 	root := t.TempDir()
-	store, err := NewJSONLStore(root)
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

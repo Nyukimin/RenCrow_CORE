@@ -210,11 +210,13 @@ func TestTxObserverReportsLockFailureAsSlowWithoutPhases(t *testing.T) {
 }
 
 // labeledStoreHarness opens a real writer store whose observer treats every
-// transaction as slow, so each store entry point leaves one labelled line.
+// transaction as slow, so each store entry point leaves one labelled line. It
+// opens the store without the index: an indexed store answers reads without the
+// OS lock, so a read is not a batch transaction and leaves no line.
 func labeledStoreHarness(t *testing.T) (*JSONLStore, func() []string) {
 	t.Helper()
 	root := t.TempDir()
-	store, err := NewJSONLStore(root)
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

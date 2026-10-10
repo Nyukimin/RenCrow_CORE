@@ -108,7 +108,7 @@ func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modul
 	if scopeTaskID != "" {
 		op = "TaskTransaction"
 	}
-	return s.batch.Write(withTxLabel(ctx, op, scopeTaskID), func() (map[string][]byte, error) {
+	return s.writeBatch(withTxLabel(ctx, op, scopeTaskID), func() (map[string][]byte, error) {
 		tx := newTaskTransaction(s, false, scopeTaskID, lease)
 		defer tx.end()
 		err := fn(tx)
@@ -143,6 +143,9 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, fn func(domaintask.Sto
 	if s.batch == nil {
 		return errors.New("task store batch is unavailable")
 	}
+	if s.idx != nil {
+		return s.indexReadTransaction(ctx, fn)
+	}
 	return s.batch.Read(withTxLabel(ctx, "ReadTransaction", ""), func() error {
 		tx := newTaskTransaction(s, true, "", nil)
 		defer tx.end()
@@ -156,6 +159,9 @@ type transactionStore struct {
 	readOnly    bool
 	scopeTaskID modulecore.TaskID
 	lease       *taskExecutionLease
+	// idxLocked is true for the views of a read transaction on an indexed store,
+	// which holds the index read lock for its whole callback.
+	idxLocked bool
 
 	mu    sync.Mutex
 	local bool
@@ -172,16 +178,23 @@ type transactionState struct {
 	base           *transactionTaskRunBase
 	viewVersion    uint64
 	view           *transactionTaskRunView
+	// ov mirrors the pending appends as decoded records; it is set only for a
+	// write transaction on an indexed store (see index_tx.go).
+	ov *txOverlay
 }
 
 func newTaskTransaction(parent *JSONLStore, readOnly bool, scopeTaskID modulecore.TaskID, lease *taskExecutionLease) *transactionStore {
+	state := &transactionState{active: true, pending: make(map[string][]byte), touched: make(map[modulecore.TaskID]struct{})}
+	if parent != nil && parent.idx != nil && !readOnly {
+		state.ov = newTxOverlay()
+	}
 	return &transactionStore{
 		parent:      parent,
 		readOnly:    readOnly,
 		scopeTaskID: scopeTaskID,
 		lease:       lease,
 		local:       true,
-		state:       &transactionState{active: true, pending: make(map[string][]byte), touched: make(map[modulecore.TaskID]struct{})},
+		state:       state,
 	}
 }
 
@@ -205,6 +218,12 @@ func validateTaskTransaction(ctx context.Context, parent *JSONLStore, snapshot t
 		if err := parent.activeTaskExecutionFenceError(taskID); err != nil {
 			return err
 		}
+	}
+	if parent.idx != nil {
+		// The records of an indexed store were checked as they were written and
+		// are dry-run against the index right before commit (writeBatch), which
+		// replaces the fold of every record in the log.
+		return nil
 	}
 	view := &transactionStore{
 		parent:      parent,
@@ -340,7 +359,7 @@ func (s *transactionStore) ReadTransaction(ctx context.Context, fn func(domainta
 	if s.readOnly {
 		return fn(s)
 	}
-	view := &transactionStore{parent: s.parent, readOnly: true, scopeTaskID: s.scopeTaskID, lease: s.lease, local: true, state: s.state}
+	view := &transactionStore{parent: s.parent, readOnly: true, scopeTaskID: s.scopeTaskID, lease: s.lease, idxLocked: s.idxLocked, local: true, state: s.state}
 	defer view.end()
 	return fn(view)
 }
@@ -363,6 +382,11 @@ func (s *transactionStore) appendValue(ctx context.Context, filename string, val
 	defer s.state.mu.Unlock()
 	if !s.state.active {
 		return errTaskTransactionExpired
+	}
+	if s.state.ov != nil {
+		if err := s.state.ov.record(filename, encoded); err != nil {
+			return err
+		}
 	}
 	s.state.pending[filename] = append(s.state.pending[filename], encoded...)
 	if filename == stateFilename || filename == runFilename {
@@ -521,6 +545,12 @@ func (s *transactionStore) SaveRun(ctx context.Context, value domaintask.Run) er
 	if err := s.touchTask(ctx, value.TaskID); err != nil {
 		return err
 	}
+	if s.parent.idx != nil {
+		if err := s.idxSaveRunChecks(value); err != nil {
+			return err
+		}
+		return s.appendValue(ctx, runFilename, value)
+	}
 	tasks, err := s.loadTasks(ctx)
 	if err != nil {
 		return err
@@ -576,6 +606,9 @@ func (s *transactionStore) GetRun(ctx context.Context, runID modulecore.RunID) (
 	if err := runID.Validate(); err != nil {
 		return domaintask.Run{}, err
 	}
+	if s.parent.idx != nil {
+		return s.idxGetRun(runID)
+	}
 	items, err := s.loadRuns(ctx)
 	if err != nil {
 		return domaintask.Run{}, err
@@ -606,6 +639,9 @@ func (s *transactionStore) ListRuns(ctx context.Context, filter domaintask.RunFi
 	}
 	if filter.Status != "" && !domaintask.ValidRunStatus(filter.Status) {
 		return nil, fmt.Errorf("invalid run status: %s", filter.Status)
+	}
+	if s.parent.idx != nil {
+		return s.idxListRuns(ctx, filter)
 	}
 	items, err := s.loadRuns(ctx)
 	if err != nil {
@@ -647,6 +683,9 @@ func (s *transactionStore) GetTask(ctx context.Context, taskID modulecore.TaskID
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
+	if s.parent.idx != nil {
+		return s.idxGetTask(taskID)
+	}
 	items, err := s.loadTasks(ctx)
 	if err != nil {
 		return domaintask.Task{}, err
@@ -662,6 +701,9 @@ func (s *transactionStore) GetTask(ctx context.Context, taskID modulecore.TaskID
 func (s *transactionStore) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
+	}
+	if s.parent.idx != nil {
+		return s.idxListTasks(ctx, filter)
 	}
 	items, err := s.loadTasks(ctx)
 	if err != nil {
@@ -712,6 +754,9 @@ func (s *transactionStore) GetContext(ctx context.Context, taskID modulecore.Tas
 	if err := taskID.Validate(); err != nil {
 		return domaintask.SharedRoleContext{}, err
 	}
+	if s.parent.idx != nil {
+		return s.idxGetContext(taskID)
+	}
 	items, err := readJSONLLinesWithPending[domaintask.SharedRoleContext](ctx, s.parent.contextPath, s.pendingBytes(contextFilename))
 	if err != nil {
 		return domaintask.SharedRoleContext{}, err
@@ -743,6 +788,9 @@ func (s *transactionStore) SaveNotification(ctx context.Context, value domaintas
 func (s *transactionStore) ListNotifications(ctx context.Context, limit int, interruptOnly bool) ([]domaintask.Notification, error) {
 	if err := s.check(ctx); err != nil {
 		return nil, err
+	}
+	if s.parent.idx != nil {
+		return s.idxListNotifications(ctx, limit, interruptOnly)
 	}
 	items, err := readJSONLLinesWithPending[domaintask.Notification](ctx, s.parent.notificationsPath, s.pendingBytes(notificationsFilename))
 	if err != nil {

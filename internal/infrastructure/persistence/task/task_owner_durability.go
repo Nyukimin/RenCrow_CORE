@@ -151,12 +151,12 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.batch.Write(withTxLabel(ctx, "ExecuteIdempotentTaskOperation", taskID), func() (map[string][]byte, error) {
-		receipts, err := readTaskOperationReceipts(ctx, filepath.Join(s.root, taskOperationReceiptFilename))
+	err = s.writeBatch(withTxLabel(ctx, "ExecuteIdempotentTaskOperation", taskID), func() (map[string][]byte, error) {
+		previous, ok, err := s.loadReceipt(ctx, operationID)
 		if err != nil {
 			return nil, err
 		}
-		if previous, ok := receipts[operationID]; ok {
+		if ok {
 			if previous.TaskID != taskID || previous.RequestHash != requestHash {
 				return nil, ErrTaskOperationConflict
 			}
@@ -232,6 +232,9 @@ func (s *JSONLStore) LookupTaskOperation(ctx context.Context, operationID string
 	}
 	if s.batch == nil {
 		return TaskOperationReceipt{}, errors.New("task store batch is unavailable")
+	}
+	if s.idx != nil {
+		return s.indexLookupTaskOperation(ctx, operationID)
 	}
 	var result TaskOperationReceipt
 	err = s.batch.Read(withTxLabel(ctx, "LookupTaskOperation", ""), func() error {
@@ -824,5 +827,5 @@ func (s *JSONLStore) writeTaskFenceEvent(ctx context.Context, callback func() (m
 	if s.readOnly || s.writerLock == nil || s.batch == nil {
 		return errors.New("task store writer is unavailable")
 	}
-	return s.batch.Write(ctx, callback)
+	return s.writeBatch(ctx, callback)
 }

@@ -58,17 +58,21 @@ func TestJSONLStoreKeepsLatestCanonicalTaskState(t *testing.T) {
 	}
 }
 
+// This test edits the log files behind the store and expects the next read to
+// notice, which only the original full-fold path does; it opens the store
+// without the index. The index reports the same corruption at open, replay and
+// read (index_build_test.go).
 func TestJSONLStoreRejectsLegacyFilesAndUnknownAliases(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "job_state.jsonl"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewJSONLStore(root); err == nil || !strings.Contains(err.Error(), "legacy") {
+	if _, err := NewJSONLStoreWithOptions(root, OpenOptions{}); err == nil || !strings.Contains(err.Error(), "legacy") {
 		t.Fatalf("legacy store result = %v", err)
 	}
 
 	root = t.TempDir()
-	store, err := NewJSONLStore(root)
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{})
 	t.Cleanup(func() {
 		if store != nil {
 			_ = store.Close()
@@ -286,8 +290,12 @@ func TestJSONLStoreRunHistoryReloadsByRunIDAndTaskID(t *testing.T) {
 	}
 }
 
+// This test edits the log files behind the store and expects the next read to
+// notice, which only the original full-fold path does; it opens the store
+// without the index. The index reports the same corruption at open, replay and
+// read (index_build_test.go).
 func TestJSONLStoreRejectsInvalidRunOwnershipAndUnknownFields(t *testing.T) {
-	store, err := NewJSONLStore(t.TempDir())
+	store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{})
 	t.Cleanup(func() {
 		if store != nil {
 			_ = store.Close()
@@ -314,6 +322,10 @@ func TestJSONLStoreRejectsInvalidRunOwnershipAndUnknownFields(t *testing.T) {
 	}
 }
 
+// This test edits the log files behind the store and expects the next read to
+// notice, which only the original full-fold path does; it opens the store
+// without the index. The index reports the same corruption at open, replay and
+// read (index_build_test.go).
 func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -338,7 +350,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store, err := NewJSONLStore(t.TempDir())
+			store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{})
 			t.Cleanup(func() {
 				if store != nil {
 					_ = store.Close()
@@ -365,7 +377,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 	}
 
 	t.Run("closed_terminal_rewrite", func(t *testing.T) {
-		store, err := NewJSONLStore(t.TempDir())
+		store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{})
 		t.Cleanup(func() {
 			if store != nil {
 				_ = store.Close()
@@ -396,7 +408,7 @@ func TestJSONLStoreRejectsRunHistoryCorruption(t *testing.T) {
 	})
 
 	t.Run("two_active_runs", func(t *testing.T) {
-		store, err := NewJSONLStore(t.TempDir())
+		store, err := NewJSONLStoreWithOptions(t.TempDir(), OpenOptions{})
 		t.Cleanup(func() {
 			if store != nil {
 				_ = store.Close()

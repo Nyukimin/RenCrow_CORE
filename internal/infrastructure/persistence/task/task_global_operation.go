@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -53,12 +52,12 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.batch.Write(withTxLabel(ctx, "ExecuteIdempotentGlobalTaskOperation", ""), func() (map[string][]byte, error) {
-		receipts, err := readTaskOperationReceipts(ctx, filepath.Join(s.root, taskOperationReceiptFilename))
+	err = s.writeBatch(withTxLabel(ctx, "ExecuteIdempotentGlobalTaskOperation", ""), func() (map[string][]byte, error) {
+		previous, ok, err := s.loadReceipt(ctx, operationID)
 		if err != nil {
 			return nil, err
 		}
-		if previous, ok := receipts[operationID]; ok {
+		if ok {
 			if effectiveTaskOperationScope(previous.Scope) != TaskOperationScopeGlobal || previous.TaskID != "" || previous.RequestHash != requestHash {
 				return nil, ErrTaskOperationConflict
 			}
