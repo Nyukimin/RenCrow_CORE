@@ -3785,6 +3785,15 @@ Step 03をcompleteとしない。
 - Viewerの再送はCanonicalEventLogの既存projectionを使用する。購読登録後に固定範囲を再送し、live channelと重複するEventSeqは一度だけ送信する。transient audio等の既存再送禁止を維持する。
 - replayはrequest contextで中止可能とし、途中失敗時に未取得範囲を取得済みと報告しない。slow clientのlive queue overflowはsilent dropではなく切断して再接続による正本再送へ戻す。各consumerはchannel closeを終端として扱う。
 - CLI工程はindexed range queryと順序・重複制御、Boundary工程はcursor validation・page bound・context・エラーと切断。LLM工程は不要。source受入には保持容量外、restart後、再送/live境界、overflow回復、拒否・取消しを含める。実Viewer再接続は配備後に別途検証する。
+- 購読開始位置は三種に限る。正の`Last-Event-ID`はEvent Store正本のEventSeqからのresume、`?from=now`は接続登録時点以降のliveだけを送るtail、どちらも無い場合はin-memory履歴のsnapshotである。`from`は予約queryで値は`now`だけ、他は400とし、未知のqueryは無視する。正の`Last-Event-ID`があるときはtailを適用せずresumeを優先する。tailは履歴とdurable replayを使わず、接続していない間のEventと再接続の間の欠落を保証しない。欠落させない購読者は最後に受信したEventSeqでresumeする。transient eventはreplayから除外したままtailのliveでは配信する。正本より先の`Last-Event-ID`は従来どおり拒否する。
+- **Failure Knowledge（購読開始位置）:**
+  - **Failure:** `rencrowctl idlechat watch`が`Last-Event-ID: 9223372036854775807`を送り、durable replay導入後にHTTP 409となった。
+  - **Problem:** 公開APIに「今から購読」の正規手段がなく、clientが非公開の暗黙値に依存していた。
+  - **Cause:** 旧replayはcursor以下を全て省略するため暗黙のtailとして機能していた。仕様化されないまま、cursorを正本EventSeqとして厳格化した。
+  - **Lesson:** streamの購読開始位置（履歴、resume、tail）は公開仕様で明示し、clientは擬似cursorに依存しない。
+  - **Invariant:** `Last-Event-ID`は正本EventSeqだけを意味する。「今から」は`?from=now`で表す。
+  - **Enforcement:** handlerが`from`の値を検証し、正本より先のcursorを拒否する。
+  - **Tests:** `internal/adapter/viewer/hub_sse_tail_test.go`がtail、resume優先、400、transient、実SQLite正本での409境界を、`cmd/rencrow/interaction_profile_guard_test.go`が`cmd-idlechat`のtail許可を、`scripts/vds_e2e_probe_test.py`がprobeの購読要求を検査する。
 
 #### Follow-up specification: STT transport identity boundary
 

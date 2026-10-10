@@ -4,9 +4,11 @@ import importlib.util
 import struct
 import sys
 import tempfile
+import types
 import unittest
 import wave
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).with_name("vds_e2e_probe.py")
@@ -125,6 +127,63 @@ class VDSE2EProbeTest(unittest.TestCase):
         args = argparse.Namespace(require_llm_final=False, require_phase1_gate=False, max_delta_events=1)
         result = {"results": [], "phase1_gate": [], "delta_event_gate": [{"passed": False, "reasons": ["too many"]}]}
         self.assertEqual(probe.result_exit_code(args, result), 4)
+
+    def test_sse_events_request_tails_without_last_event_id(self):
+        url, headers = probe.sse_events_request("http://example:18790/")
+        self.assertEqual(url, "http://example:18790/viewer/events?from=now")
+        self.assertNotIn("Last-Event-ID", {key.title(): value for key, value in headers.items()})
+
+    def fake_requests(self, status_code, lines=(), error=None):
+        calls = []
+
+        class FakeResponse:
+            def __init__(self):
+                self.status_code = status_code
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                return False
+
+            def iter_lines(self, decode_unicode=True):
+                return iter(lines)
+
+        def get(url, headers=None, stream=False, timeout=None):
+            calls.append({"url": url, "headers": dict(headers or {})})
+            if error is not None:
+                raise error
+            return FakeResponse()
+
+        return types.SimpleNamespace(get=get), calls
+
+    def test_sse_collector_collects_live_events_from_a_tail_subscription(self):
+        fake, calls = self.fake_requests(200, ['data: {"type": "agent.response", "content": "hi"}', ""])
+        with mock.patch.dict(sys.modules, {"requests": fake}):
+            collector = probe.SSECollector("http://example:18790", timeout=5)
+            collector.start()
+            collector.stop()
+        self.assertEqual(collector.error, "")
+        self.assertEqual([event["type"] for event in collector.events], ["agent.response"])
+        self.assertEqual(calls[0]["url"], "http://example:18790/viewer/events?from=now")
+        self.assertNotIn("last-event-id", {key.lower() for key in calls[0]["headers"]})
+
+    def test_sse_collector_start_fails_on_non_200(self):
+        fake, _ = self.fake_requests(409)
+        with mock.patch.dict(sys.modules, {"requests": fake}):
+            collector = probe.SSECollector("http://example:18790", timeout=5)
+            with self.assertRaises(RuntimeError) as raised:
+                collector.start()
+        self.assertIn("409", str(raised.exception))
+        self.assertIn("409", collector.error)
+
+    def test_sse_collector_start_fails_when_the_connection_fails(self):
+        fake, _ = self.fake_requests(200, error=ConnectionError("refused"))
+        with mock.patch.dict(sys.modules, {"requests": fake}):
+            collector = probe.SSECollector("http://example:18790", timeout=5)
+            with self.assertRaises(RuntimeError) as raised:
+                collector.start()
+        self.assertIn("refused", str(raised.exception))
 
 
 if __name__ == "__main__":

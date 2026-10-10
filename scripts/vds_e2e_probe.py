@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 import uuid
 import wave
@@ -21,6 +22,7 @@ DEFAULT_PROMPT = (
 
 PHASE1_MAX_COMMIT_TO_FIRST_TOKEN_MS = 15_000.0
 PHASE1_MAX_COMMIT_TO_FINAL_MS = 25_000.0
+SSE_CONNECT_TIMEOUT_S = 6.0
 
 
 @dataclass
@@ -175,19 +177,33 @@ def meets_phase1_gate(timings: dict[str, float], *, wav_duration_sec: float, war
     return not reasons, reasons
 
 
+def sse_events_request(base_url: str) -> tuple[str, dict[str, str]]:
+    """Return the URL and headers of a tail subscription to CORE events.
+
+    ``?from=now`` streams only events published after the connection is
+    registered. Do not send Last-Event-ID: it is a canonical EventSeq, and a
+    value ahead of the canonical window is rejected with HTTP 409.
+    """
+    return f"{base_url.rstrip('/')}/viewer/events?from=now", {}
+
+
 class SSECollector:
     def __init__(self, base_url: str, timeout: float):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._stop = False
+        self._connected = threading.Event()
+        self.error = ""
         self.events: list[dict] = []
 
     def start(self) -> None:
-        import threading
-
+        """Subscribe and wait for the response status; raise RuntimeError if it is not 200."""
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        time.sleep(0.2)
+        if not self._connected.wait(timeout=SSE_CONNECT_TIMEOUT_S + 2.0) and not self.error:
+            self.error = "timed out waiting for the SSE subscription"
+        if self.error:
+            raise RuntimeError(f"SSE subscription failed: {self.error}")
 
     def stop(self) -> None:
         self._stop = True
@@ -198,14 +214,15 @@ class SSECollector:
         return len(self.events)
 
     def _run(self) -> None:
-        import requests
-
-        url = f"{self.base_url}/viewer/events"
-        headers = {"Last-Event-ID": "9223372036854775807"}
+        url, headers = sse_events_request(self.base_url)
         try:
-            with requests.get(url, headers=headers, stream=True, timeout=(6, self.timeout)) as resp:
+            import requests
+
+            with requests.get(url, headers=headers, stream=True, timeout=(SSE_CONNECT_TIMEOUT_S, self.timeout)) as resp:
                 if resp.status_code != 200:
+                    self.error = f"GET {url} returned HTTP {resp.status_code}"
                     return
+                self._connected.set()
                 data_lines: list[str] = []
                 for raw in resp.iter_lines(decode_unicode=True):
                     if self._stop:
@@ -222,8 +239,10 @@ class SSECollector:
                         continue
                     if line.startswith("data:"):
                         data_lines.append(line[5:].strip())
-        except Exception:
-            return
+        except Exception as exc:  # noqa: BLE001
+            self.error = self.error or f"{type(exc).__name__}: {exc}"
+        finally:
+            self._connected.set()
 
 
 def wait_for_agent_response(collector: SSECollector, *, sent_at: float, cursor: int, timeout: float) -> tuple[float | None, str]:
@@ -475,7 +494,10 @@ def main() -> None:
     collector = None
     if args.with_sse:
         collector = SSECollector(args.base_url, timeout=max(args.wait + 10, 30))
-        collector.start()
+        try:
+            collector.start()
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from exc
 
     try:
         rounds = run_vds_ws_bench(

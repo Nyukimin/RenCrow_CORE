@@ -42,7 +42,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /health/ready` | CORE capabilityのreadiness。未ready時は503と`status=unavailable`を返す |
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
-| `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
+| `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読。購読開始位置は「Viewer event streamの購読開始位置」に従う（`?from=now`は接続時点以降のliveだけ） |
 | `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
@@ -1511,6 +1511,23 @@ Chat在席による停止はIdleChatの自動再開より優先し、未送信�
 明示的な`POST /viewer/idlechat/start|stop`は`cmd-idlechat`等の認可client用として維持し、
 PORTALは使用しません。`portal-idlechat`は利用者操作としては引き続き読み取り専用であり、
 このsurface在席APIだけをstate-changingな例外として許可します。
+
+## Viewer event streamの購読開始位置
+
+`GET /viewer/events`はSSEです。購読開始位置は次の順で決まります。
+
+| 条件 | 開始位置 |
+| --- | --- |
+| 正の`Last-Event-ID` | Event Store正本のEventSeqとして、その次のEventから再送し、続けてliveを送る。正本より先の値は409 |
+| 正の`Last-Event-ID`がなく、`?from=now` | 接続登録時点以降のliveだけを送る。履歴とdurable replayは使わない（tail） |
+| 上記のどちらでもない | in-memory履歴のsnapshotを再送し、続けてliveを送る |
+
+- `from`は予約済みのqueryで、値は`now`だけです。空、`now`以外、複数指定は400を返し、購読を開始しません。それ以外の未知のqueryは従来どおり無視します。
+- 正の`Last-Event-ID`と`?from=now`を同時に受けた場合は`Last-Event-ID`を優先します。EventSourceは`id:`を受信した後の自動再接続で`Last-Event-ID`を再送するため、再接続でtailを再適用せず、取りこぼしを避けます。`Last-Event-ID: 0`は指定なしと同義で、tailが有効です。
+- tailは接続時点以降のliveだけを保証します。接続していない間に発生したEventは配信されず、再接続の間の欠落は保証しません。欠落させない場合は、最後に受信したEventSeqを正の`Last-Event-ID`で送ってresumeします。これはEventをsilentに省略する動作ではなく、開始位置の明示です。
+- transient event（`idlechat.message`、`idlechat.summary`、`tts.audio_chunk`等）は`id:`行を持たず、replayには含まれませんが、tailのliveでは配信されます。
+- 「今から購読」を`Last-Event-ID`の擬似値（`9223372036854775807`等）で表さないでください。`Last-Event-ID`は正本のEventSeqであり、正本より先の値は409です。
+- 200とheaderは接続の登録直後に確定します。`from`を解釈しない旧版のCOREは`?from=now`を無視し、in-memory履歴のsnapshotを先に返します。
 
 ## Client の注意
 
