@@ -1173,7 +1173,7 @@ Google desktop OAuth client JSONとtoken JSONは別々の絶対pathで指定す�
 が表示するURLをブラウザで開き、Google同意画面を操作する。認証にはPKCE／state／loopback callbackを使う。
 secretはリポジトリ、引数値、メール本文、共有logへ出力しない。JSON内容をChatへ貼り付けない。
 設定例は`config/config.yaml.example`、Tools側の手順は
-[collector README](../../RenCrow_Tools/tools/mail/gmail/README.md)を参照する。
+[collector README](https://github.com/Nyukimin/RenCrow_Tools/blob/main/tools/mail/gmail/README.md)を参照する。
 
 COREのreceipt正本は`<workspace>/logs/gmail-intake/`。
 account／message IDをキーに、原文、判定理由、準備済み登録要求、登録先ID、Agent／Task／Run／Traceを保存する。

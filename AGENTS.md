@@ -1,6 +1,6 @@
 # RenCrow_CORE rules
 
-本書はRenCrow_COREだけの入口。[統一ルール](../AGENTS.md)を継承し、本文・モデル役割・共通検査規定を複製しない。親がcatalogではない配置では、global設定が参照するEcoSystem正本（manifestの隣のAGENTS.md）を確認する。既読なら読み直さない。
+本書はRenCrow_COREだけの入口。[EcoSystemの統一ルール正本](https://github.com/Nyukimin/RenCrow_EcoSystem/blob/main/AGENTS.md)を継承し、本文・モデル役割・共通検査規定を複製しない。catalog root配置ではlocal catalog入口`../AGENTS.md`を読み、別配置ではglobal設定が参照するmanifest隣のEcoSystem正本を確認する。既読なら再読しない。
 
 ## 所有範囲
 
