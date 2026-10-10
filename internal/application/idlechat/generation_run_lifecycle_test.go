@@ -44,8 +44,8 @@ type wordRunLifecycleOwnerFake struct {
 	verifyCtx     context.Context
 }
 
-func (f *wordRunLifecycleOwnerFake) Create(_ context.Context, draft domaintask.Task, _ domaintask.SharedRoleContext) (domaintask.Task, error) {
-	return draft, nil
+func (f *wordRunLifecycleOwnerFake) CreateAndStartRun(_ context.Context, _ domaintask.Task, _ domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	return domaintask.Task{}, domaintask.Run{}, errors.New("not used by word run lifecycle tests")
 }
 
 func (f *wordRunLifecycleOwnerFake) StartRunWithReason(_ context.Context, _ modulecore.TaskID, _ domaintask.RunStartReason) (domaintask.Run, error) {

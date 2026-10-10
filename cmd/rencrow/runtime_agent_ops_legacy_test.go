@@ -395,17 +395,14 @@ func TestAgentOpsLegacyOPSParallelLimitReturns503AndLeavesNoQueuedTask(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, task := range tasks {
-		if task.TaskID == holder.TaskID {
-			continue
-		}
-		if task.Status != domaintask.StatusFailed {
-			t.Fatalf("refused admission left Task %s in %s, want failed", task.TaskID, task.Status)
-		}
-		assertLegacyOPSTaskShape(t, task)
+	// Admission is one transaction: the refusal persisted no Task at all (not
+	// even a failed one), so only the slot holder remains.
+	if len(tasks) != 1 || tasks[0].TaskID != holder.TaskID {
+		t.Fatalf("Task owner holds %d Tasks, want only the slot holder", len(tasks))
 	}
-	if len(tasks) != 2 {
-		t.Fatalf("Task owner holds %d Tasks, want the holder and one failed admission", len(tasks))
+	runs, err := owner.ListRuns(context.Background(), domaintask.RunFilter{})
+	if err != nil || len(runs) != 1 || runs[0].TaskID != holder.TaskID {
+		t.Fatalf("refused admission left Runs behind: %d err=%v", len(runs), err)
 	}
 }
 

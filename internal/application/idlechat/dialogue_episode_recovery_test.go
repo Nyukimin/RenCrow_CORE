@@ -31,6 +31,17 @@ func (o *dialogueRecoveryOwner) StartRunWithReason(ctx context.Context, taskID m
 	return run, err
 }
 
+func (o *dialogueRecoveryOwner) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	task, run, err := o.Manager.CreateAndStartRun(ctx, draft, shared)
+	if err == nil {
+		o.startCalls++
+		if o.afterStart != nil {
+			o.afterStart(domaintask.RunStartReasonFirst, run)
+		}
+	}
+	return task, run, err
+}
+
 func (o *dialogueRecoveryOwner) StartRunFromCheckpoint(ctx context.Context, taskID modulecore.TaskID, expectedRunID modulecore.RunID, actorID string, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Run, error) {
 	o.startCalls++
 	run, err := o.Manager.StartRunFromCheckpoint(ctx, taskID, expectedRunID, actorID, reason, checkpointSHA256)

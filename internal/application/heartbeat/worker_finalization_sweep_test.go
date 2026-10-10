@@ -360,12 +360,8 @@ func (o *scriptedTaskOwner) recorded() []scriptedWrite {
 	return append([]scriptedWrite(nil), o.calls...)
 }
 
-func (o *scriptedTaskOwner) Create(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, error) {
-	return domaintask.Task{}, errors.New("scripted owner does not create tasks")
-}
-
-func (o *scriptedTaskOwner) StartRunWithReason(context.Context, modulecore.TaskID, domaintask.RunStartReason) (domaintask.Run, error) {
-	return domaintask.Run{}, errors.New("scripted owner does not start runs")
+func (o *scriptedTaskOwner) CreateAndStartRun(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	return domaintask.Task{}, domaintask.Run{}, errors.New("scripted owner does not admit tasks")
 }
 
 func (o *scriptedTaskOwner) Succeed(ctx context.Context, _ modulecore.TaskID, _ string) (domaintask.Task, error) {

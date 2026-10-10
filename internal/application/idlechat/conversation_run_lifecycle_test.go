@@ -9,6 +9,7 @@ import (
 	"time"
 
 	taskmanager "github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager/taskmanagertest"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -159,15 +160,10 @@ type failingConversationAdmissionOwner struct {
 	*taskmanager.Manager
 	startErr    error
 	cancelCalls atomic.Int32
-	createdTask modulecore.TaskID
 }
 
-func (o *failingConversationAdmissionOwner) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
-	task, err := o.Manager.Create(ctx, draft, shared)
-	if err == nil {
-		o.createdTask = task.TaskID
-	}
-	return task, err
+func (o *failingConversationAdmissionOwner) CreateAndStartRun(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	return domaintask.Task{}, domaintask.Run{}, o.startErr
 }
 
 func (o *failingConversationAdmissionOwner) StartRunWithReason(context.Context, modulecore.TaskID, domaintask.RunStartReason) (domaintask.Run, error) {
@@ -179,22 +175,20 @@ func (o *failingConversationAdmissionOwner) Cancel(ctx context.Context, taskID m
 	return o.Manager.Cancel(ctx, taskID, summary)
 }
 
-func TestIssueIdleChatRunCancelsOnlyNewTaskAfterAdmissionFailure(t *testing.T) {
+func TestIssueIdleChatRunAdmissionFailureLeavesNoNewTaskAndKeepsExistingTask(t *testing.T) {
 	manager := newTestIdleChatRunIssuer(t)
 	owner := &failingConversationAdmissionOwner{Manager: manager, startErr: errors.New("parallel limit reached")}
 	_, _, err := issueIdleChatRun(context.Background(), owner, "IdleChat test", "shiro", domaintask.RunStartReasonFirst, "")
 	if err == nil || !strings.Contains(err.Error(), "parallel limit reached") {
 		t.Fatalf("issueIdleChatRun error=%v, want original admission error", err)
 	}
-	if owner.cancelCalls.Load() != 1 {
-		t.Fatalf("new task cancellation calls=%d, want one", owner.cancelCalls.Load())
+	// Admission is one transaction, so a refused new task needs no compensation.
+	if owner.cancelCalls.Load() != 0 {
+		t.Fatalf("new task cancellation calls=%d, want none", owner.cancelCalls.Load())
 	}
-	task, err := owner.Get(context.Background(), owner.createdTask)
-	if err != nil {
-		t.Fatalf("get cancelled admission task: %v", err)
-	}
-	if task.Status != domaintask.StatusCancelled {
-		t.Fatalf("new task status=%s, want cancelled", task.Status)
+	tasks, err := owner.List(context.Background(), domaintask.Filter{Limit: 100})
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("a refused admission left Tasks behind: %d err=%v", len(tasks), err)
 	}
 
 	existing, err := owner.Create(context.Background(), domaintask.Task{Title: "existing IdleChat task", Route: domaintask.RouteGeneral, Assignee: "Shiro"}, domaintask.SharedRoleContext{})
@@ -205,7 +199,7 @@ func TestIssueIdleChatRunCancelsOnlyNewTaskAfterAdmissionFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("existing task admission unexpectedly succeeded")
 	}
-	if owner.cancelCalls.Load() != 1 {
+	if owner.cancelCalls.Load() != 0 {
 		t.Fatalf("existing task was cancelled after admission failure: calls=%d", owner.cancelCalls.Load())
 	}
 	existingAfter, err := owner.Get(context.Background(), existing.TaskID)
@@ -217,13 +211,23 @@ func TestIssueIdleChatRunCancelsOnlyNewTaskAfterAdmissionFailure(t *testing.T) {
 	}
 }
 
+func TestIssueIdleChatRunRefusedByExecutionCapacityPersistsNothing(t *testing.T) {
+	saturated := taskmanagertest.NewSaturated(t)
+
+	_, _, err := issueIdleChatRun(context.Background(), saturated.Manager, "IdleChat test", "shiro", domaintask.RunStartReasonFirst, "")
+	if !errors.Is(err, taskmanager.ErrParallelLimit) {
+		t.Fatalf("issueIdleChatRun error=%v, want ErrParallelLimit", err)
+	}
+	saturated.AssertNothingPersisted(t)
+}
+
 type noCancelConversationOwner struct {
 	createCalls atomic.Int32
 }
 
-func (o *noCancelConversationOwner) Create(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, error) {
+func (o *noCancelConversationOwner) CreateAndStartRun(context.Context, domaintask.Task, domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
 	o.createCalls.Add(1)
-	return domaintask.Task{TaskID: modulecore.NewTaskID()}, nil
+	return domaintask.Task{TaskID: modulecore.NewTaskID()}, domaintask.Run{TaskID: modulecore.NewTaskID(), RunID: modulecore.NewRunID()}, nil
 }
 
 func (*noCancelConversationOwner) StartRunWithReason(context.Context, modulecore.TaskID, domaintask.RunStartReason) (domaintask.Run, error) {
@@ -307,11 +311,11 @@ type probingConversationOwner struct {
 	probe func()
 }
 
-func (o *probingConversationOwner) Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
+func (o *probingConversationOwner) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
 	if o.probe != nil {
 		o.probe()
 	}
-	return o.Manager.Create(ctx, draft, shared)
+	return o.Manager.CreateAndStartRun(ctx, draft, shared)
 }
 
 func (o *probingConversationOwner) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
@@ -324,7 +328,9 @@ func (o *probingConversationOwner) StartRunWithReason(ctx context.Context, taskI
 func TestConversationRunOwnerIORunsOutsideOrchestratorLocks(t *testing.T) {
 	manager := newTestIdleChatRunIssuer(t)
 	o := NewIdleChatOrchestrator(nil, session.NewCentralMemory(), []string{"mio", "shiro"}, 5, 2, 0.7, nil, "")
-	probes := make(chan struct{}, 2)
+	// A new conversation task is admitted by one owner call (create and first
+	// run in one transaction).
+	probes := make(chan struct{}, 1)
 	owner := &probingConversationOwner{Manager: manager, probe: func() {
 		_ = o.IsChatActive()
 		probes <- struct{}{}
@@ -338,7 +344,7 @@ func TestConversationRunOwnerIORunsOutsideOrchestratorLocks(t *testing.T) {
 		_, err := o.startIdleRun()
 		done <- err
 	}()
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 1; i++ {
 		select {
 		case <-probes:
 		case <-time.After(time.Second):
@@ -365,13 +371,13 @@ type blockingConversationAdmissionOwner struct {
 	startCalls atomic.Int32
 }
 
-func (o *blockingConversationAdmissionOwner) StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
-	run, err := o.Manager.StartRunWithReason(ctx, taskID, reason)
+func (o *blockingConversationAdmissionOwner) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	task, run, err := o.Manager.CreateAndStartRun(ctx, draft, shared)
 	if o.startCalls.Add(1) == 1 {
 		close(o.started)
 		<-o.release
 	}
-	return run, err
+	return task, run, err
 }
 
 func TestConversationRunAdmissionRaceFinalizesInvalidatedPairBeforeNextStart(t *testing.T) {

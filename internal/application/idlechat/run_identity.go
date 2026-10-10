@@ -11,15 +11,19 @@ import (
 )
 
 type idlechatRunIssuer interface {
-	Create(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error)
+	// CreateAndStartRun admits a new conversation Task and its first Run in one
+	// transaction: a refusal (for example execution capacity) persists nothing.
+	CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error)
 	StartRunWithReason(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error)
 }
 
 // idlechatRunCanceller is kept separate from the narrow admission interface so
 // existing checkpoint/recovery owners can continue to use their read/start
-// surface. A configured owner that creates a new conversation task must also
-// expose this canonical cancellation operation; otherwise admission fails
-// before it can create an orphan task.
+// surface. A configured owner that admits a new conversation task must also
+// expose this canonical cancellation operation: it closes a newly admitted
+// Task when the owner's answer is inconsistent (the only case in which an
+// admitted Task must be withdrawn), so admission fails closed before it can
+// create an unusable Task.
 type idlechatRunCanceller interface {
 	Cancel(ctx context.Context, taskID modulecore.TaskID, summary string) (domaintask.Task, error)
 }
@@ -75,29 +79,34 @@ func issueIdleChatRun(
 			return "", "", errors.New("idlechat run owner cannot cancel newly created tasks")
 		}
 	}
-	if taskID == "" {
-		task, err := issuer.Create(ctx, domaintask.Task{
+	var run domaintask.Run
+	if newTask {
+		if reason != domaintask.RunStartReasonFirst {
+			return "", "", fmt.Errorf("a new idlechat task starts with the %s reason, got %s", domaintask.RunStartReasonFirst, reason)
+		}
+		task, startedRun, err := issuer.CreateAndStartRun(ctx, domaintask.Task{
 			Title:    title,
 			Route:    domaintask.RouteGeneral,
 			Assignee: idleChatAssignee(assignee),
 		}, domaintask.SharedRoleContext{})
 		if err != nil {
+			// Nothing was persisted, so there is no Task to withdraw.
 			return "", "", err
 		}
 		taskID = task.TaskID
+		run = startedRun
 		if err := taskID.Validate(); err != nil {
 			return "", "", fmt.Errorf("created task_id is invalid: %w", err)
 		}
-	} else if err := taskID.Validate(); err != nil {
-		return "", "", fmt.Errorf("existing task_id is invalid: %w", err)
-	}
-	run, err := issuer.StartRunWithReason(ctx, taskID, reason)
-	if err != nil {
-		if !newTask {
+	} else {
+		if err := taskID.Validate(); err != nil {
+			return "", "", fmt.Errorf("existing task_id is invalid: %w", err)
+		}
+		startedRun, err := issuer.StartRunWithReason(ctx, taskID, reason)
+		if err != nil {
 			return "", "", err
 		}
-		cleanupErr := cancelCreatedIdleChatTask(ctx, canceller, taskID)
-		return "", "", errors.Join(err, cleanupErr)
+		run = startedRun
 	}
 	if err := validateIdleChatRunIdentity(run.TaskID, run.RunID); err != nil {
 		if !newTask {

@@ -182,22 +182,15 @@ func (h *agentOpsHandler) admitAgentOpsDCIExecution(ctx context.Context) (domain
 	if h == nil || h.taskOwner == nil {
 		return domaintask.Task{}, domaintask.Run{}, nil, errAgentOpsDCIIdentityUnavailable
 	}
-	task, err := h.taskOwner.Create(ctx, domaintask.Task{
+	// One transaction: a refused admission persists no Task, so there is no
+	// queued Task to close.
+	task, run, err := h.taskOwner.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "DCI identity acceptance",
 		Route:    domaintask.RouteGeneral,
 		Assignee: "shiro",
 	}, domaintask.SharedRoleContext{UserIntent: agentOpsDCIIdentityAcceptanceOperation})
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, nil, errors.Join(errAgentOpsDCIIdentityUnavailable, err)
-	}
-	run, err := h.taskOwner.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
-	if err != nil {
-		// A queued Task has no Run to close, so use the canonical Task owner to
-		// make the failed admission terminal before returning a bounded error.
-		terminalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentOpsDCIFinalizationTimeout)
-		_, terminalErr := h.taskOwner.Fail(terminalCtx, task.TaskID, "DCI identity acceptance admission failed", nil)
-		cancel()
-		return domaintask.Task{}, domaintask.Run{}, nil, errors.Join(errAgentOpsDCIIdentityUnavailable, err, terminalErr)
 	}
 	traceID := modulecore.NewTraceID()
 	executionCtx, err := domainexecution.WithIdentity(ctx, task.TaskID, run.RunID, traceID)

@@ -1260,20 +1260,14 @@ func TestHeartbeatPersistsOwnerIdentityAndTerminalOutcome(t *testing.T) {
 
 type failingHeartbeatTaskOwner struct {
 	TaskOwner
-	createErr, startErr, finishErr error
+	admitErr, finishErr error
 }
 
-func (o failingHeartbeatTaskOwner) Create(ctx context.Context, task domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
-	if o.createErr != nil {
-		return domaintask.Task{}, o.createErr
+func (o failingHeartbeatTaskOwner) CreateAndStartRun(ctx context.Context, task domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	if o.admitErr != nil {
+		return domaintask.Task{}, domaintask.Run{}, o.admitErr
 	}
-	return o.TaskOwner.Create(ctx, task, shared)
-}
-func (o failingHeartbeatTaskOwner) StartRunWithReason(ctx context.Context, id modulecore.TaskID, reason domaintask.RunStartReason) (domaintask.Run, error) {
-	if o.startErr != nil {
-		return domaintask.Run{}, o.startErr
-	}
-	return o.TaskOwner.StartRunWithReason(ctx, id, reason)
+	return o.TaskOwner.CreateAndStartRun(ctx, task, shared)
 }
 func (o failingHeartbeatTaskOwner) Succeed(ctx context.Context, id modulecore.TaskID, summary string) (domaintask.Task, error) {
 	if o.finishErr != nil {
@@ -1282,7 +1276,7 @@ func (o failingHeartbeatTaskOwner) Succeed(ctx context.Context, id modulecore.Ta
 	return o.TaskOwner.Succeed(ctx, id, summary)
 }
 func TestHeartbeatTaskOwnerFailuresRemainFailures(t *testing.T) {
-	for _, mode := range []string{"create", "start", "finish", "prebound"} {
+	for _, mode := range []string{"admit", "finish", "prebound"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("check"), 0600); err != nil {
@@ -1301,10 +1295,8 @@ func TestHeartbeatTaskOwnerFailuresRemainFailures(t *testing.T) {
 			failure := errors.New("owner failure")
 			owner := failingHeartbeatTaskOwner{TaskOwner: manager}
 			switch mode {
-			case "create":
-				owner.createErr = failure
-			case "start":
-				owner.startErr = failure
+			case "admit":
+				owner.admitErr = failure
 			case "finish":
 				owner.finishErr = failure
 			}
@@ -1323,10 +1315,12 @@ func TestHeartbeatTaskOwnerFailuresRemainFailures(t *testing.T) {
 			if worker.called != (mode == "finish") {
 				t.Fatalf("unexpected Worker invocation for %s: %t", mode, worker.called)
 			}
-			if mode == "start" {
+			if mode == "admit" {
+				// Admission is one transaction: a refusal persists no Task, so
+				// nothing is left queued or active.
 				tasks, listErr := manager.List(context.Background(), domaintask.Filter{})
-				if listErr != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusFailed {
-					t.Fatalf("failed start left Task active: %+v %v", tasks, listErr)
+				if listErr != nil || len(tasks) != 0 {
+					t.Fatalf("failed admission left a Task behind: %+v %v", tasks, listErr)
 				}
 			}
 		})

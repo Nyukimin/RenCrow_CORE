@@ -130,32 +130,17 @@ func (h *agentOpsHandler) serveLegacyOPS(w http.ResponseWriter, parentContext co
 	})
 }
 
-// admitLegacyOPS creates the Task and its first Run through the Task owner. A
-// Task whose Run could not start is closed as failed so that no queued Task is
-// left behind.
+// admitLegacyOPS creates the Task and its first Run through the Task owner in
+// one transaction. A refused admission (including execution capacity) persists
+// nothing, so no queued or failed Task is left behind.
 func (h *agentOpsHandler) admitLegacyOPS(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, domaintask.Run, error) {
-	task, err := h.taskOwner.Create(ctx, domaintask.Task{
+	return h.taskOwner.CreateAndStartRun(ctx, domaintask.Task{
 		TaskID:   taskID,
 		Title:    agentOpsLegacyTaskTitle,
 		Route:    domaintask.RouteOperations,
 		OwnerID:  "shiro",
 		Assignee: "shiro",
 	}, domaintask.SharedRoleContext{TaskID: taskID, UserIntent: agentOpsLegacyTaskIntent})
-	if err != nil {
-		return domaintask.Task{}, domaintask.Run{}, err
-	}
-	run, err := h.taskOwner.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
-	if err != nil {
-		summary := "OPS admission failed"
-		if errors.Is(err, taskmanager.ErrParallelLimit) {
-			summary = "Task execution capacity is unavailable"
-		}
-		terminalContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), agentOpsLegacyFinalizationTimeout)
-		defer cancel()
-		_, failErr := h.taskOwner.Fail(terminalContext, task.TaskID, summary, nil)
-		return domaintask.Task{}, domaintask.Run{}, errors.Join(err, failErr)
-	}
-	return task, run, nil
 }
 
 // executeLegacyOPS runs Shiro on the admitted Run and decides the outcome. It
