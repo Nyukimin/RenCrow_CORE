@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	_ "modernc.org/sqlite"
 )
@@ -20,6 +21,31 @@ type l1SourceStub struct {
 
 func (s l1SourceStub) SearchKnowledgeItemsFTS(_ context.Context, _ string, _ string, _ int) ([]l1sqlite.L1KnowledgeItem, error) {
 	return append([]l1sqlite.L1KnowledgeItem(nil), s.items...), nil
+}
+
+type l1RecallSourceStub struct {
+	legacyItems      []l1sqlite.L1KnowledgeItem
+	verifiedItems    []l1sqlite.L1KnowledgeItem
+	legacyCalls      int
+	verifierCalls    int
+	eligibilityCalls int
+}
+
+func (s *l1RecallSourceStub) SearchKnowledgeItemsFTS(context.Context, string, string, int) ([]l1sqlite.L1KnowledgeItem, error) {
+	s.legacyCalls++
+	return s.legacyItems, nil
+}
+
+func (s *l1RecallSourceStub) SearchKnowledgeItemsForCategoryRecall(_ context.Context, _, _ string, _ int, eligible func(l1sqlite.L1KnowledgeItem) bool) ([]l1sqlite.L1KnowledgeItem, error) {
+	s.verifierCalls++
+	items := make([]l1sqlite.L1KnowledgeItem, 0, len(s.verifiedItems))
+	for _, item := range s.verifiedItems {
+		s.eligibilityCalls++
+		if eligible(item) {
+			items = append(items, item)
+		}
+	}
+	return items, nil
 }
 
 func TestL1KnowledgeSourceProjectsValidatedCategories(t *testing.T) {
@@ -37,6 +63,147 @@ func TestL1KnowledgeSourceProjectsValidatedCategories(t *testing.T) {
 	}
 	if len(result.Records[0].ProvenanceURLs) != 1 {
 		t.Fatalf("L1 provenance missing: %#v", result.Records[0])
+	}
+}
+
+func TestL1KnowledgeSourceRequiresVerifiedSourceForQuoteCandidates(t *testing.T) {
+	now := time.Now().UTC()
+	quoteCandidate := l1sqlite.L1KnowledgeItem{
+		ID: "quote-without-verifier", Domain: "movie", Title: "Catalog fact", RawText: "source exact summary bytes",
+		SummaryDraft: " exact summary bytes ", SourceURL: "https://example.test/quote", UpdatedAt: now,
+	}
+	legacyCandidate := quoteCandidate
+	legacyCandidate.PromptSource = &llm.PromptSourceRef{
+		Owner: "RenCrow_CORE", SourceID: "legacy-source", RawHash: strings.Repeat("a", 64),
+		ProjectionVersion: "knowledge-recall-quote/v1", Range: llm.ByteRange{Start: 0, End: 22}, Origin: "unknown",
+	}
+	legacyResult, err := NewL1KnowledgeSource(l1SourceStub{items: []l1sqlite.L1KnowledgeItem{legacyCandidate}}).
+		Search(context.Background(), conversation.CategoryRecallQuery{Category: "movie", Message: "movie", Limit: 3, Time: now})
+	if err != nil || len(legacyResult.Records) != 1 || legacyResult.Records[0].PromptSource != nil || len(legacyResult.Failures) != 0 {
+		t.Fatalf("legacy quote candidate should preserve its source-null projection: result=%+v err=%v", legacyResult, err)
+	}
+
+	result, err := NewL1KnowledgeSource(l1SourceStub{items: []l1sqlite.L1KnowledgeItem{quoteCandidate}}).
+		Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), conversation.CategoryRecallQuery{Category: "movie", Message: "movie", Limit: 3, Time: now})
+	if err != nil || len(result.Records) != 0 || len(result.Failures) != 1 || result.Failures[0].Code != conversation.CategoryRecallFailureInvalid {
+		t.Fatalf("unverified quote candidate should fail closed: result=%+v err=%v", result, err)
+	}
+
+	quoteCandidate.SourceFailure = l1sqlite.L1KnowledgeSourceFailureScopeDenied
+	result, err = NewL1KnowledgeSource(l1SourceStub{items: []l1sqlite.L1KnowledgeItem{quoteCandidate}}).
+		Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), conversation.CategoryRecallQuery{Category: "movie", Message: "movie", Limit: 3, Time: now})
+	if err != nil || len(result.Records) != 0 || len(result.Failures) != 1 || result.Failures[0].Code != conversation.CategoryRecallFailureScopeDenied {
+		t.Fatalf("scope denial should be preserved as fixed failure: result=%+v err=%v", result, err)
+	}
+}
+
+func TestL1KnowledgeSourceUsesVerifierOnlyForNativeProvenanceIntent(t *testing.T) {
+	now := time.Now().UTC()
+	quote := l1sqlite.L1KnowledgeItem{
+		ID: "native-intent-quote", Domain: "movie", Title: "Catalog fact", RawText: "exact summary",
+		SummaryDraft: "exact summary", SourceURL: "https://example.test/quote", UpdatedAt: now,
+	}
+	store := &l1RecallSourceStub{
+		legacyItems: []l1sqlite.L1KnowledgeItem{quote},
+		verifiedItems: []l1sqlite.L1KnowledgeItem{{
+			ID: quote.ID, Domain: quote.Domain, Title: quote.Title, RawText: quote.RawText, SummaryDraft: quote.SummaryDraft,
+			SourceURL: quote.SourceURL, UpdatedAt: quote.UpdatedAt, SourceFailure: l1sqlite.L1KnowledgeSourceFailureScopeDenied,
+		}},
+	}
+	source := NewL1KnowledgeSource(store)
+	query := conversation.CategoryRecallQuery{Category: "movie", Message: "movie", Limit: 3, Time: now}
+	legacy, err := source.Search(context.Background(), query)
+	if err != nil || len(legacy.Records) != 1 || legacy.Records[0].PromptSource != nil || len(legacy.Failures) != 0 || store.legacyCalls != 1 || store.verifierCalls != 0 {
+		t.Fatalf("legacy recall must keep its source-null path: result=%+v calls=%d/%d err=%v", legacy, store.legacyCalls, store.verifierCalls, err)
+	}
+	native, err := source.Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), query)
+	if err != nil || len(native.Records) != 0 || len(native.Failures) != 1 || native.Failures[0].Code != conversation.CategoryRecallFailureScopeDenied ||
+		native.Failures[0].State != conversation.CategoryRecallFailureScopeDenied || store.legacyCalls != 1 || store.verifierCalls != 1 || store.eligibilityCalls != 1 {
+		t.Fatalf("native verification denial must stay a failure without legacy downgrade: result=%+v calls=%d/%d err=%v", native, store.legacyCalls, store.verifierCalls, err)
+	}
+}
+
+func TestL1KnowledgeSourceChecksValidationAndWorkerPolicyBeforeOwnerVerification(t *testing.T) {
+	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	quote := func(id, scope string, freshUntil time.Time) l1sqlite.L1KnowledgeItem {
+		return l1sqlite.L1KnowledgeItem{
+			ID: id, Domain: "movie", Title: "Catalog fact", RawText: "exact summary",
+			SummaryDraft: "exact summary", SourceURL: "https://example.test/" + id,
+			UpdatedAt: now, Meta: map[string]interface{}{"scope": scope, "fresh_until": freshUntil.Format(time.RFC3339Nano)},
+			PromptSource: &llm.PromptSourceRef{
+				Owner: "RenCrow_CORE", SourceID: "raw-" + id, RawHash: strings.Repeat("a", 64),
+				ProjectionVersion: "knowledge-recall-quote/v1", Range: llm.ByteRange{Start: 0, End: 13}, Origin: "unknown",
+			},
+		}
+	}
+	store := &l1RecallSourceStub{verifiedItems: []l1sqlite.L1KnowledgeItem{
+		quote("stale-quote", "public", now.Add(-time.Second)),
+		quote("private-worker-quote", "ren", now.Add(time.Hour)),
+		quote("eligible-quote", "public", now.Add(time.Hour)),
+	}}
+	query := conversation.CategoryRecallQuery{
+		Category: "movie", Message: "movie", UserScope: "user:ren", Limit: 3, Time: now,
+	}
+	result, err := NewL1KnowledgeSource(store).Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), query)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if store.verifierCalls != 1 || store.eligibilityCalls != 3 {
+		t.Fatalf("eligibility must run inside owner search before Raw verification: calls=%d/%d", store.eligibilityCalls, store.verifierCalls)
+	}
+	if len(result.Records) != 1 || result.Records[0].RecordID != "eligible-quote" || len(result.Failures) != 2 {
+		t.Fatalf("ineligible quotes reached owner verification: result=%+v", result)
+	}
+	if result.Failures[0].RecordID != "stale-quote" || result.Failures[0].Code != conversation.CategoryRecallFailureStale ||
+		result.Failures[1].RecordID != "private-worker-quote" || result.Failures[1].Code != conversation.CategoryRecallFailureScopeDenied {
+		t.Fatalf("eligibility failures lost their existing domain reasons: %+v", result.Failures)
+	}
+}
+
+func TestL1KnowledgeSourceCarriesVerifiedPromptSourceOnlyOnExactSummary(t *testing.T) {
+	now := time.Now().UTC()
+	raw := "prefix 絵文字🧪 summary suffix"
+	summary := "絵文字🧪 summary"
+	start := strings.Index(raw, summary)
+	item := l1sqlite.L1KnowledgeItem{
+		ID: "quote-with-source", Domain: "movie", Title: "Catalog fact", RawText: raw,
+		SummaryDraft: "  絵文字🧪 summary ", SourceURL: "https://example.test/quote", UpdatedAt: now,
+		PromptSource: &llm.PromptSourceRef{
+			Owner: "RenCrow_CORE", SourceID: "raw-record", RawHash: strings.Repeat("a", 64),
+			ProjectionVersion: "knowledge-recall-quote/v1", Range: llm.ByteRange{Start: uint64(start), End: uint64(start + len(summary))}, Origin: "unknown",
+		},
+	}
+	result, err := NewL1KnowledgeSource(l1SourceStub{items: []l1sqlite.L1KnowledgeItem{item}}).
+		Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), conversation.CategoryRecallQuery{Category: "movie", Message: "movie", Limit: 3, Time: now})
+	if err != nil || len(result.Records) != 1 || result.Records[0].PromptSource == nil || result.Records[0].Summary != strings.TrimSpace(item.SummaryDraft) {
+		t.Fatalf("verified source did not reach category record: result=%+v err=%v", result, err)
+	}
+	if *result.Records[0].PromptSource != *item.PromptSource {
+		t.Fatalf("source changed in L1 projection: got=%+v want=%+v", result.Records[0].PromptSource, item.PromptSource)
+	}
+	pack := &conversation.RecallPack{CategorySnippets: []conversation.CategorySnippet{conversation.CategorySnippetFromRecord(result.Records[0])}}
+	messages := pack.ToPromptMessages()
+	if len(messages) != 2 || messages[0].PromptSource != nil || messages[1].Content != result.Records[0].Summary || messages[1].PromptSource == nil || *messages[1].PromptSource != *item.PromptSource {
+		t.Fatalf("RecallPack did not split source-null envelope from exact summary block: %#v", messages)
+	}
+	messages[1].PromptSource.Range.Start = 99
+	if result.Records[0].PromptSource.Range.Start == 99 || pack.CategorySnippets[0].PromptSource.Range.Start == 99 {
+		t.Fatal("prompt message source mutation escaped its clone")
+	}
+}
+
+func TestL1KnowledgeSourceKeepsRawFallbackSourceNullForNativeIntent(t *testing.T) {
+	now := time.Now().UTC()
+	rawFallback := l1sqlite.L1KnowledgeItem{
+		ID: "raw-fallback", Domain: "movie", Title: "Catalog fact", RawText: "original evidence",
+		SourceURL: "https://example.test/fallback", UpdatedAt: now,
+	}
+	result, err := NewL1KnowledgeSource(l1SourceStub{items: []l1sqlite.L1KnowledgeItem{rawFallback}}).
+		Search(conversation.WithNativeRecallProvenanceIntent(context.Background()), conversation.CategoryRecallQuery{
+			Category: "movie", Message: "movie", Limit: 3, Time: now,
+		})
+	if err != nil || len(result.Records) != 1 || result.Records[0].Summary != rawFallback.RawText || result.Records[0].PromptSource != nil || len(result.Failures) != 0 {
+		t.Fatalf("Raw fallback must remain source-null: result=%+v err=%v", result, err)
 	}
 }
 

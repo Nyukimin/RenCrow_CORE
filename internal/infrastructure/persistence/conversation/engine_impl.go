@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -159,8 +160,10 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	if thread, threadErr := e.manager.GetActiveThread(ctx, sessionID); threadErr == nil && thread != nil {
 		activeDomain = strings.TrimSpace(thread.Domain)
 	}
+	nativeRecallProvenanceIntent := domconv.HasNativeRecallProvenanceIntent(ctx)
 	categoryL1KnowledgeRecordIDs := map[string]struct{}{}
 	categoryL1KnowledgeSummaries := map[string]struct{}{}
+	failedCategoryL1KnowledgeRecordIDs := map[string]struct{}{}
 	if e.categoryRecallRegistry != nil {
 		scope := strings.TrimSpace(e.categoryRecallScope)
 		if scope == "" {
@@ -168,6 +171,9 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 		}
 		if scope == "" {
 			scope = "public"
+		}
+		if nativeRecallProvenanceIntent {
+			scope = trustedCategoryRecallUserScope(ctx)
 		}
 		categoryResult, categoryErr := e.categoryRecallRegistry.Recall(ctx, domconv.CategoryRecallQuery{
 			Message: userMessage, ActiveDomain: activeDomain, UserScope: scope, Time: timeNowUTC(), Limit: 3,
@@ -195,6 +201,16 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 				}
 			}
 			pack.CategoryFailures = append(pack.CategoryFailures, categoryResult.Failures...)
+			if nativeRecallProvenanceIntent {
+				for _, failure := range categoryResult.Failures {
+					if !strings.EqualFold(strings.TrimSpace(failure.SourceID), "knowledge_l1") {
+						continue
+					}
+					if recordID := strings.TrimSpace(failure.RecordID); recordID != "" {
+						failedCategoryL1KnowledgeRecordIDs[recordID] = struct{}{}
+					}
+				}
+			}
 		}
 	}
 
@@ -225,6 +241,11 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 			log.Printf("[ConversationEngine] WARN: L1 Knowledge FTS failed: %v", err)
 		} else {
 			for _, item := range items {
+				if nativeRecallProvenanceIntent {
+					if _, rejected := failedCategoryL1KnowledgeRecordIDs[strings.TrimSpace(item.ID)]; rejected {
+						continue
+					}
+				}
 				snippet := strings.TrimSpace(item.SummaryDraft)
 				if snippet == "" {
 					snippet = strings.TrimSpace(item.RawText)
@@ -235,7 +256,17 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 			}
 		}
 		if e.knowledgeRelationEnabled && len(items) > 0 {
-			e.expandKnowledgeRelations(ctx, externalRecall, items, pack)
+			relationSeeds := items
+			if nativeRecallProvenanceIntent && len(failedCategoryL1KnowledgeRecordIDs) > 0 {
+				relationSeeds = make([]l1sqlite.L1KnowledgeItem, 0, len(items))
+				for _, item := range items {
+					if _, rejected := failedCategoryL1KnowledgeRecordIDs[strings.TrimSpace(item.ID)]; rejected {
+						continue
+					}
+					relationSeeds = append(relationSeeds, item)
+				}
+			}
+			e.expandKnowledgeRelations(ctx, externalRecall, relationSeeds, pack, failedCategoryL1KnowledgeRecordIDs)
 		}
 
 		wikiItems, err := externalRecall.SearchWikiPageIndex(ctx, userMessage, 3)
@@ -276,6 +307,14 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	applyL0RollingSummary(pack, 6)
 	budgeted := pack.ApplyRecallBudget(pack.Constraints.MaxTotalTokens, pack.Constraints.RecallBudgetRatio)
 	return &budgeted, nil
+}
+
+func trustedCategoryRecallUserScope(ctx context.Context) string {
+	scope, found := domaintool.ToolExecutionScopeFromContext(ctx)
+	if !found || scope.Validate() != nil || scope.AuthenticatedUserID == "" || !scope.Allows(domaintool.DataScopeUser) {
+		return "public"
+	}
+	return "user:" + scope.AuthenticatedUserID
 }
 
 func isAdoptedCategoryL1Knowledge(item l1sqlite.L1KnowledgeItem, recordIDs map[string]struct{}, summaries map[string]struct{}) bool {
@@ -359,7 +398,7 @@ func isSharedUserMemoryPromptInjectable(item domainmemory.UserMemory) bool {
 	return false
 }
 
-func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, recall conversationEngineExternalRecall, seeds []l1sqlite.L1KnowledgeItem, pack *domconv.RecallPack) {
+func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, recall conversationEngineExternalRecall, seeds []l1sqlite.L1KnowledgeItem, pack *domconv.RecallPack, excludedIDs map[string]struct{}) {
 	if pack == nil || recall == nil {
 		return
 	}
@@ -374,10 +413,11 @@ func (e *RealConversationEngine) expandKnowledgeRelations(ctx context.Context, r
 			continue
 		}
 		for _, hit := range hits {
-			if seen[hit.Item.ID] {
+			itemID := strings.TrimSpace(hit.Item.ID)
+			if _, rejected := excludedIDs[itemID]; rejected || seen[itemID] {
 				continue
 			}
-			seen[hit.Item.ID] = true
+			seen[itemID] = true
 			summary := strings.TrimSpace(hit.Item.SummaryDraft)
 			if summary == "" {
 				summary = strings.TrimSpace(hit.Item.RawText)

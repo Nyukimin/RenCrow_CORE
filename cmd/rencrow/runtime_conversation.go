@@ -25,17 +25,18 @@ import (
 )
 
 type conversationRuntime struct {
-	Engine           conversation.ConversationEngine
-	Manager          *conversationpersistence.RealConversationManager
-	L1Store          *l1sqlite.L1SQLiteStore
-	ChatL1Store      conversationpersistence.L1ConversationStore
-	ArchiveStore     *archivesqlite.ArchiveSQLiteStore
-	ChatArchiveStore conversationpersistence.ConversationArchiveStore
-	UserMemoryStore  domainagent.UserMemoryManager
-	Closer           conversationRuntimeCloser
-	ArchiveCloser    conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
-	WebGatherFetcher tools.WebGatherFetcher
-	ProfilePromotion *memorypromotionapp.Service
+	Engine                conversation.ConversationEngine
+	Manager               *conversationpersistence.RealConversationManager
+	L1Store               *l1sqlite.L1SQLiteStore
+	ChatL1Store           conversationpersistence.L1ConversationStore
+	AcceptedOPSInputStore conversation.AcceptedOPSInputStore
+	ArchiveStore          *archivesqlite.ArchiveSQLiteStore
+	ChatArchiveStore      conversationpersistence.ConversationArchiveStore
+	UserMemoryStore       domainagent.UserMemoryManager
+	Closer                conversationRuntimeCloser
+	ArchiveCloser         conversationRuntimeCloser // nil when Closer owns archive/L1 shutdown
+	WebGatherFetcher      tools.WebGatherFetcher
+	ProfilePromotion      *memorypromotionapp.Service
 }
 
 type conversationRuntimeCloser interface {
@@ -54,6 +55,7 @@ func buildConversationRuntime(
 	var realMgr *conversationpersistence.RealConversationManager
 	var l1Store *l1sqlite.L1SQLiteStore
 	var chatL1Store conversationpersistence.L1ConversationStore
+	var acceptedOPSInputStore conversation.AcceptedOPSInputStore
 	var archiveStore *archivesqlite.ArchiveSQLiteStore
 	var chatArchiveStore conversationpersistence.ConversationArchiveStore
 	var userMemoryStore domainagent.UserMemoryManager
@@ -85,6 +87,13 @@ func buildConversationRuntime(
 			if err := l1Store.SetParquetExportRoot(exportRoot); err != nil {
 				log.Fatalf("Failed to configure Parquet export root: %v", err)
 			}
+		}
+	}
+	if configuredLocalAgentOpsPrincipal(cfg) != "" {
+		if storageOwners.Remote {
+			acceptedOPSInputStore, _ = storageOwners.ConversationStore.(conversation.AcceptedOPSInputStore)
+		} else if l1Store != nil {
+			acceptedOPSInputStore = l1Store
 		}
 	}
 	logStartupPhase("conversation_l1_store_init", l1StoreStartedAt)
@@ -320,13 +329,14 @@ func buildConversationRuntime(
 		}
 	}
 	return conversationRuntime{
-		Engine:           convEngine,
-		Manager:          realMgr,
-		L1Store:          l1Store,
-		ChatL1Store:      chatL1Store,
-		ArchiveStore:     archiveStore,
-		ChatArchiveStore: chatArchiveStore,
-		UserMemoryStore:  userMemoryStore,
+		Engine:                convEngine,
+		Manager:               realMgr,
+		L1Store:               l1Store,
+		ChatL1Store:           chatL1Store,
+		AcceptedOPSInputStore: acceptedOPSInputStore,
+		ArchiveStore:          archiveStore,
+		ChatArchiveStore:      chatArchiveStore,
+		UserMemoryStore:       userMemoryStore,
 		Closer: func() conversationRuntimeCloser {
 			if realMgr != nil {
 				return realMgr
@@ -340,6 +350,13 @@ func buildConversationRuntime(
 		WebGatherFetcher: dailySourceFetcher,
 		ProfilePromotion: profilePromotion,
 	}
+}
+
+func configuredLocalAgentOpsPrincipal(cfg *config.Config) string {
+	if cfg == nil || !cfg.LocalAgentOps.Enabled {
+		return ""
+	}
+	return strings.TrimSpace(cfg.LocalAgentOps.UserID)
 }
 
 func conversationRuntimeUserID(cfg *config.Config) string {

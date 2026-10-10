@@ -17,7 +17,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -288,6 +291,64 @@ func TestTaskGroupTaskTransactionBindsRunGenerationAndScope(t *testing.T) {
 		return tx.SaveTask(ctx, other)
 	}); err == nil {
 		t.Fatal("TaskTransaction accepted a write outside its TaskID scope")
+	}
+}
+
+func TestTaskGroupAcceptedOPSTaskClaimRoundTripsThroughRemoteStore(t *testing.T) {
+	fixture := newTaskGroupFixture(t, time.Second)
+	manager := taskmanager.New(fixture.store, taskmanager.DefaultParallelLimits())
+	receipt := domainconversation.AcceptedOPSInputReceipt{
+		AcceptanceSequence: 1,
+		RequestID:          "request-remote-accepted-ops",
+		OwnerID:            "user-remote",
+		ActorID:            "user-remote",
+		SessionID:          modulecore.NewSessionID(),
+		ThreadID:           modulecore.NewThreadID(),
+		ThreadSeq:          modulecore.ThreadSeq(1),
+		ThreadKind:         modulecore.ThreadKindUserConversation,
+		TaskID:             modulecore.NewTaskID(),
+		TurnID:             modulecore.NewTurnID(),
+		TraceID:            modulecore.NewTraceID(),
+		UserMessageID:      modulecore.NewMessageID(),
+		AgentMessageID:     modulecore.NewMessageID(),
+		DeclaredOrigin:     domainconversation.AcceptedOPSInputOriginAutomation,
+		PayloadSHA256:      strings.Repeat("a", 64),
+		RawRecordID:        "raw_remote_accepted_ops",
+		ManifestID:         "manifest_remote_accepted_ops",
+		RawSHA256:          strings.Repeat("b", 64),
+		ManifestSHA256:     strings.Repeat("c", 64),
+		AcceptedAt:         time.Date(2026, 10, 9, 4, 0, 0, 0, time.UTC),
+	}
+	scope, err := domaintool.NewToolExecutionScope(
+		receipt.RequestID,
+		domaintool.ActorKindUser,
+		receipt.OwnerID,
+		receipt.OwnerID,
+		[]string{domaintool.DataScopePublic, domaintool.DataScopeUser},
+		domaintool.AuthenticationSourceHTTP,
+	)
+	if err != nil {
+		t.Fatalf("NewToolExecutionScope: %v", err)
+	}
+	ctx := domaintool.WithToolExecutionScope(context.Background(), scope)
+	claimed, err := manager.AdmitAcceptedOPS(ctx, receipt, domainconversation.BackendShiroNativeCodingV1)
+	if err != nil || claimed.Status != taskmanager.AcceptedOPSClaimed || !claimed.MayExecute {
+		t.Fatalf("remote accepted OPS claim = %+v err=%v", claimed, err)
+	}
+	stored, err := manager.Get(ctx, receipt.TaskID)
+	if err != nil || stored.AcceptedOPSClaim == nil || stored.AcceptedOPSClaim.ReceiptRef.OwnerID != receipt.OwnerID ||
+		stored.AcceptedOPSClaim.ReceiptRef.RequestID != receipt.RequestID || stored.AcceptedOPSClaim.ReceiptRef.PayloadSHA256 != receipt.PayloadSHA256 ||
+		stored.OriginSessionID != receipt.SessionID || stored.OriginThreadID != receipt.ThreadID ||
+		stored.OriginTurnID != receipt.TurnID || stored.OriginMessageID != receipt.UserMessageID {
+		t.Fatalf("remote Task metadata = %+v err=%v", stored, err)
+	}
+	runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: receipt.TaskID})
+	if err != nil || len(runs) != 1 || runs[0].RunID != claimed.Run.RunID || runs[0].WriterGeneration == 0 {
+		t.Fatalf("remote Runs = %+v err=%v, want one first Run with writer generation", runs, err)
+	}
+	replayed, err := manager.AdmitAcceptedOPS(ctx, receipt, domainconversation.BackendShiroNativeCodingV1)
+	if err != nil || replayed.Status != taskmanager.AcceptedOPSAlreadyRunning || replayed.MayExecute || replayed.Run.RunID != claimed.Run.RunID {
+		t.Fatalf("remote replay = %+v err=%v, want same Run without execution right", replayed, err)
 	}
 }
 

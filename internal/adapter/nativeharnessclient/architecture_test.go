@@ -52,7 +52,7 @@ func goFiles(t *testing.T, root string) []string {
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
 			switch relative {
-			case ".git", "tmp", "node_modules", "data", "workspace", "bin":
+			case ".git", "Tmp", "tmp", "node_modules", "data", "workspace", "bin":
 				return filepath.SkipDir
 			}
 			return nil
@@ -109,7 +109,7 @@ func TestOnlyTheDelegationPackageAndCompositionImportTheHarnessModule(t *testing
 	}
 }
 
-func TestTheBackendSelectionIsWrittenOnlyByTheOrchestratorAdmission(t *testing.T) {
+func TestBackendSelectionIsWrittenOnlyBySharedNativeCodingAdmission(t *testing.T) {
 	root := repositoryRoot(t)
 	const writer = "internal/application/orchestrator/message_orchestrator_native_coding.go"
 	writers := 0
@@ -132,12 +132,52 @@ func TestTheBackendSelectionIsWrittenOnlyByTheOrchestratorAdmission(t *testing.T
 			}
 			writers++
 			if relative != writer {
-				t.Errorf("%s calls WithBackendSelection: only %s may select a backend (from the configured admission)", relative, writer)
+				t.Errorf("%s calls WithBackendSelection: only %s may select a backend (from the shared configured admission)", relative, writer)
 			}
 			return true
 		})
 	}
 	if writers != 1 {
 		t.Fatalf("exactly one production call of WithBackendSelection is expected, found %d", writers)
+	}
+}
+
+func TestAcceptedInputCapabilityIsAttachedOnlyByNativeOPSIngress(t *testing.T) {
+	root := repositoryRoot(t)
+	attachments, reads := 0, 0
+	for _, relative := range goFiles(t, root) {
+		if strings.HasSuffix(relative, "_test.go") {
+			continue // tests attach synthetic readers directly
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(relative)), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", relative, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch selector.Sel.Name {
+			case "WithAcceptedInputReader":
+				attachments++
+				if relative != "cmd/rencrow/runtime_agent_ops_native.go" {
+					t.Errorf("%s attaches the owner capability: only the authenticated native OPS ingress may do so", relative)
+				}
+			case "AcceptedInputReaderFromContext":
+				reads++
+				if relative != "internal/adapter/nativeharnessclient/delegation/accepted_input.go" {
+					t.Errorf("%s reads the owner capability outside the Start source builder", relative)
+				}
+			}
+			return true
+		})
+	}
+	if attachments != 1 || reads != 1 {
+		t.Fatalf("owner capability must have one ingress attachment and one Start builder read, got attachments=%d reads=%d", attachments, reads)
 	}
 }

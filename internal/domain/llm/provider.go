@@ -13,6 +13,9 @@ type Message struct {
 	Parts    []MessagePart
 	Type     PromptContextType
 	Metadata map[string]string
+	// PromptSource is CORE-only provenance for an exact source excerpt. It is
+	// intentionally omitted from JSON/provider payload serialization.
+	PromptSource *PromptSourceRef `json:"-"`
 }
 
 // PromptContextType identifies a prompt block by responsibility rather than

@@ -39,26 +39,36 @@ type agentOpsRequestBranch uint8
 const (
 	agentOpsRequestBranchLegacy agentOpsRequestBranch = iota
 	agentOpsRequestBranchDCIIdentityAcceptance
+	agentOpsRequestBranchNativeResume
 )
 
+const agentOpsNativeResumeOperation = "native_resume"
+
 // normalizeAgentOpsRequest keeps the public request a strict tagged union.
-// The normalized values are written back so the fixed operation receives the
-// same bounded query that was validated at the HTTP boundary.
+// It preserves the legacy message value and normalizes the fixed operation's
+// query so DCI receives the same bounded query validated at the HTTP boundary.
 func normalizeAgentOpsRequest(request *agentOpsRequest) (agentOpsRequestBranch, error) {
 	if request == nil {
 		return 0, errors.New("agent ops request is missing")
 	}
-	request.Message = strings.TrimSpace(request.Message)
 	request.Operation = strings.TrimSpace(request.Operation)
 	request.Query = strings.TrimSpace(request.Query)
 	if len([]byte(request.Message)) > agentOpsMaxMessageBytes || len([]byte(request.Query)) > agentOpsMaxMessageBytes {
 		return 0, errAgentOpsRequestTooLarge
 	}
 	switch {
-	case request.Message != "" && request.Operation == "" && request.Query == "":
+	case strings.TrimSpace(request.Message) != "" && request.Operation == "" && request.Query == "" && request.ResumeTarget == nil:
 		return agentOpsRequestBranchLegacy, nil
-	case request.Message == "" && request.Operation == agentOpsDCIIdentityAcceptanceOperation && request.Query != "":
+	case strings.TrimSpace(request.Message) == "" && request.Operation == agentOpsDCIIdentityAcceptanceOperation && request.Query != "":
+		if request.ResumeTarget != nil {
+			return 0, errors.New("agent ops request shape is invalid")
+		}
 		return agentOpsRequestBranchDCIIdentityAcceptance, nil
+	case strings.TrimSpace(request.Message) == "" && request.Operation == agentOpsNativeResumeOperation && request.Query == "" && request.ResumeTarget != nil:
+		if request.ResumeTarget.TaskID.Validate() != nil || request.ResumeTarget.ExpectedCoreRunID.Validate() != nil {
+			return 0, errors.New("agent ops Resume target is invalid")
+		}
+		return agentOpsRequestBranchNativeResume, nil
 	default:
 		return 0, errors.New("agent ops request shape is invalid")
 	}

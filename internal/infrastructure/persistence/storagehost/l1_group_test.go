@@ -51,7 +51,7 @@ func newL1GroupFixture(t *testing.T, wrap func(L1GroupOwner) L1GroupOwner) *l1Gr
 	if wrap != nil {
 		owner = wrap(owner)
 	}
-	if err := RegisterL1Group(host, owner); err != nil {
+	if err := RegisterL1Group(host, owner, ""); err != nil {
 		t.Fatalf("RegisterL1Group: %v", err)
 	}
 	server := httptest.NewServer(host)
@@ -425,7 +425,7 @@ func TestL1GroupMutationResultReconstructionFailureStaysUnknown(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = host.Close() })
 	owner := &l1AppendCountingOwner{L1RecoverableGroupOwner: store}
-	if err := RegisterL1Group(host, owner); err != nil {
+	if err := RegisterL1Group(host, owner, ""); err != nil {
 		t.Fatalf("RegisterL1Group: %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
@@ -524,7 +524,7 @@ func openL1RestartHostWithArchive(t *testing.T, dbPath, journalDir string, archi
 		_ = store.Close()
 		t.Fatalf("NewHandler: %v", err)
 	}
-	if err := RegisterL1Group(host, store); err != nil {
+	if err := RegisterL1Group(host, store, ""); err != nil {
 		_ = host.Close()
 		_ = store.Close()
 		t.Fatalf("RegisterL1Group: %v", err)

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -55,6 +57,101 @@ func TestManagerLifecycleAndNotification(t *testing.T) {
 	}
 	if len(items) != 2 || items[0].TaskID != value.TaskID || items[0].Type != "task.notification" {
 		t.Fatalf("notifications = %#v", items)
+	}
+}
+
+func TestManagerPinsNativeCapableTasksFromTrustedConfiguration(t *testing.T) {
+	store, err := taskpersistence.NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	registerTaskStoreCleanup(t, store)
+	revision := strings.Repeat("a", 64)
+	manager, err := NewWithExpectedCriteriaRevision(store, DefaultParallelLimits(), revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "general root", Route: domaintask.RouteGeneral, ExpectedCriteriaRevision: strings.Repeat("b", 64),
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.ExpectedCriteriaRevision != revision {
+		t.Fatalf("root criteria revision = %q, want trusted pin", root.ExpectedCriteriaRevision)
+	}
+	child, err := manager.Create(context.Background(), domaintask.Task{
+		Title: "OPS child", Route: domaintask.RouteOperations, ParentTaskID: root.TaskID,
+	}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ExpectedCriteriaRevision != revision {
+		t.Fatalf("OPS child criteria revision = %q, want trusted pin", child.ExpectedCriteriaRevision)
+	}
+	other, err := manager.Create(context.Background(), domaintask.Task{Title: "code task", Route: domaintask.RouteCode}, domaintask.SharedRoleContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.ExpectedCriteriaRevision != "" {
+		t.Fatalf("non-native route unexpectedly received a criteria revision: %q", other.ExpectedCriteriaRevision)
+	}
+}
+
+func TestAcceptedOPSReplayCannotRepinOrFillLegacyCriteriaRevision(t *testing.T) {
+	ctxRevisionA := strings.Repeat("a", 64)
+	ctxRevisionB := strings.Repeat("b", 64)
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "changed deployment", true: "legacy missing pin"}[legacy], func(t *testing.T) {
+			root := t.TempDir()
+			store, err := taskpersistence.NewJSONLStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var original *Manager
+			if legacy {
+				original = New(store, DefaultParallelLimits())
+			} else {
+				original, err = NewWithExpectedCriteriaRevision(store, DefaultParallelLimits(), ctxRevisionA)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			receipt := acceptedOPSReceipt()
+			userCtx := acceptedOPSUserContext(t, receipt.RequestID, receipt.OwnerID)
+			claimed, err := original.AdmitAcceptedOPS(userCtx, receipt, domainconversation.BackendShiroNativeCodingV1)
+			if err != nil {
+				t.Fatalf("initial accepted OPS claim: %v", err)
+			}
+			wantRevision := ctxRevisionA
+			if legacy {
+				wantRevision = ""
+			}
+			if claimed.Task.ExpectedCriteriaRevision != wantRevision {
+				t.Fatalf("initial pin = %q, want %q", claimed.Task.ExpectedCriteriaRevision, wantRevision)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = taskpersistence.NewJSONLStore(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			reopened, err := NewWithExpectedCriteriaRevision(store, DefaultParallelLimits(), ctxRevisionB)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replay := receipt
+			replay.IdempotentReplay = true
+			if _, err := reopened.AdmitAcceptedOPS(userCtx, replay, domainconversation.BackendShiroNativeCodingV1); !errors.Is(err, ErrAcceptedOPSClaimRejected) {
+				t.Fatalf("replay with changed/missing pin error = %v", err)
+			}
+			saved, err := reopened.Get(context.Background(), receipt.TaskID)
+			if err != nil || saved.ExpectedCriteriaRevision != wantRevision {
+				t.Fatalf("replay changed saved pin to %q, want %q (err=%v)", saved.ExpectedCriteriaRevision, wantRevision, err)
+			}
+		})
 	}
 }
 

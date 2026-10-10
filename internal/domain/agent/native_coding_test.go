@@ -208,7 +208,10 @@ func TestShiroNativeCoding_AttachmentsAreRejectedBeforeTheDelegate(t *testing.T)
 func TestShiroNativeCoding_DelegateReceivesTypedContextNotFlattenedText(t *testing.T) {
 	delegate := &recordingNativeDelegate{result: completedResult("ok", NativeVerificationPassed)}
 	stable := "# Shared Agent Control\nbody\n## Routing\nroute\n## Tools\ntools"
-	engine := &mockConversationEngine{beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+	engine := &mockConversationEngine{beginTurnFunc: func(ctx context.Context, _ string, _ string) (*conversation.RecallPack, error) {
+		if !conversation.HasNativeRecallProvenanceIntent(ctx) {
+			t.Error("native Worker BeginTurn must carry provenance intent without changing authorization")
+		}
 		return &conversation.RecallPack{MidSummaries: []conversation.ThreadSummary{{Summary: "worker memory", Roles: []string{"worker"}}}}, nil
 	}}
 	shiro := NewShiroAgent(&mockLLMProvider{}, &mockToolRunner{}, &mockMCPClient{}, "character prompt", nil).
@@ -216,7 +219,8 @@ func TestShiroNativeCoding_DelegateReceivesTypedContextNotFlattenedText(t *testi
 		WithConversationEngine(engine).
 		WithNativeCodingDelegate(delegate)
 
-	input := selectNative(t, newAgentTurnInput(t, "  テストを直して  ", "line", "U123"))
+	userMessage := " \tテストを直して\n  "
+	input := selectNative(t, newAgentTurnInput(t, userMessage, "line", "U123"))
 	if _, err := shiro.Execute(context.Background(), input); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -225,7 +229,7 @@ func TestShiroNativeCoding_DelegateReceivesTypedContextNotFlattenedText(t *testi
 		t.Fatalf("expected typed Character, Stable, Recall, Variable and user messages: %#v", messages)
 	}
 	last := messages[len(messages)-1]
-	if last.Type != llm.PromptContextUser || last.Content != "テストを直して" {
+	if last.Type != llm.PromptContextUser || last.Content != userMessage {
 		t.Fatalf("the user message must be last and carry the text: %#v", last)
 	}
 	rank := map[llm.PromptContextType]int{llm.PromptContextCharacter: 0, llm.PromptContextStable: 1, llm.PromptContextRecall: 2, llm.PromptContextVariable: 3}
@@ -271,8 +275,8 @@ func TestShiroNativeCoding_ResultProjectionToStringAndError(t *testing.T) {
 	}
 	cases := []outcome{
 		{name: "completed and passed", result: completedResult("done", NativeVerificationPassed), wantText: "done", wantCommits: 1},
-		{name: "completed, not run", result: completedResult("done", NativeVerificationNotRun), wantText: "done", wantNote: true, wantCommits: 1},
-		{name: "completed, unknown", result: completedResult("done", NativeVerificationUnknown), wantText: "done", wantNote: true, wantCommits: 1},
+		{name: "completed, not run", result: completedResult("done", NativeVerificationNotRun), wantErr: true, wantText: "done", wantNote: true},
+		{name: "completed, unknown", result: completedResult("done", NativeVerificationUnknown), wantErr: true, wantText: "done", wantNote: true},
 		{name: "completed but verification failed", result: completedResult("done", NativeVerificationFailed), wantErr: true, wantText: "done"},
 		{name: "incomplete", result: nonCompleted(NativeRunIncomplete, "DEADLINE_EXCEEDED", true), wantErr: true, wantText: "partial text"},
 		{name: "rejected", result: nonCompleted(NativeRunRejected, "POLICY", false), wantErr: true, wantText: "partial text"},
@@ -294,7 +298,7 @@ func TestShiroNativeCoding_ResultProjectionToStringAndError(t *testing.T) {
 			if tc.wantErr {
 				var runErr *NativeCodingError
 				if !errors.As(err, &runErr) || runErr.Result.Status != tc.result.Status || runErr.Result.Code != tc.result.Code ||
-					runErr.Result.Resumable != tc.result.Resumable || runErr.Result.HarnessTask != tc.result.HarnessTask ||
+					runErr.Result.Verification != tc.result.Verification || runErr.Result.Resumable != tc.result.Resumable || runErr.Result.HarnessTask != tc.result.HarnessTask ||
 					runErr.Result.HarnessRun.Owner != HarnessOwner {
 					t.Fatalf("the typed result must travel with the error: %#v", err)
 				}

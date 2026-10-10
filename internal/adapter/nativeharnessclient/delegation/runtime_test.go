@@ -33,21 +33,24 @@ func TestNewRuntimeRejectsUnusableSettings(t *testing.T) {
 	for name, mutate := range cases {
 		settings := good
 		mutate(&settings)
-		if _, err := NewRuntime(settings, newRecorder(), Options{}); !errors.Is(err, ErrInvalidSettings) {
+		if _, err := NewRuntime(settings, newRecorder(), &fakeTaskOwner{}, Options{}); !errors.Is(err, ErrInvalidSettings) {
 			t.Errorf("%s: err = %v, want ErrInvalidSettings", name, err)
 		}
 	}
-	if _, err := NewRuntime(good, nil, Options{}); !errors.Is(err, ErrInvalidSettings) {
-		t.Errorf("no recorder: err = %v, want ErrInvalidSettings", err)
+	if _, err := NewRuntime(good, nil, &fakeTaskOwner{}, Options{}); !errors.Is(err, ErrInvalidSettings) {
+		t.Errorf("no Action owner: err = %v, want ErrInvalidSettings", err)
+	}
+	if _, err := NewRuntime(good, newRecorder(), nil, Options{}); !errors.Is(err, ErrInvalidSettings) {
+		t.Errorf("no Task owner: err = %v, want ErrInvalidSettings", err)
 	}
 }
 
 func TestAdmissionStartsTheHarnessOnceAndPassesExplicitStartSettings(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "テストを直して")
+	ctx, input, _ := newTurn(t, "テストを直して")
 
 	for i := 0; i < 3; i++ {
-		if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+		if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 			t.Fatalf("admission %d: %v", i, err)
 		}
 	}
@@ -84,13 +87,13 @@ func TestAdmissionStartsTheHarnessOnceAndPassesExplicitStartSettings(t *testing.
 func TestAdmissionRequiresTheToolRuntimeOfTheConfiguredMode(t *testing.T) {
 	d := newDeployment(t)
 	d.settings.Workspace.ExecutionMode = protocol.ModeTrustedHost
-	runtime, err := NewRuntime(d.settings, d.rec, Options{Start: d.start, Log: d.log.write})
+	runtime, err := NewRuntime(d.settings, d.rec, d.tasks, Options{Start: d.start, Log: d.log.write})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
-	_, input, _ := newTurn(t, "x")
-	if err := runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	ctx, input, _ := newTurn(t, "x")
+	if err := runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.Join(d.configs[0].RequireCapabilities, ","); !strings.Contains(got, "tool.runtime.trusted_host") {
@@ -110,9 +113,9 @@ func TestAdmissionFailsClosedWhenTheHarnessCannotStart(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := newDeployment(t)
 			d.startFn = func(int, client.Config) (*fakeClient, error) { return nil, tc.err }
-			_, input, _ := newTurn(t, "x")
+			ctx, input, _ := newTurn(t, "x")
 
-			err := d.runtime.AdmitNativeCoding(context.Background(), input)
+			err := d.runtime.AdmitNativeCoding(ctx, input)
 			if !errors.Is(err, agent.ErrNativeCodingBlocked) {
 				t.Fatalf("a Harness that cannot start must block the turn, got %v", err)
 			}
@@ -136,21 +139,21 @@ func TestAdmissionDoesNotRestartAFailingHarnessForEveryTurnAndRetriesAfterTheCoo
 		}
 		return newFakeClient(), nil
 	}
-	_, input, _ := newTurn(t, "x")
+	ctx, input, _ := newTurn(t, "x")
 
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); !errors.Is(err, agent.ErrNativeCodingBlocked) {
+	if err := d.runtime.AdmitNativeCoding(ctx, input); !errors.Is(err, agent.ErrNativeCodingBlocked) {
 		t.Fatalf("first admission: %v", err)
 	}
 	// Within the cooldown the refusal is immediate: no second start.
 	d.advance(10 * time.Second)
-	err := d.runtime.AdmitNativeCoding(context.Background(), input)
+	err := d.runtime.AdmitNativeCoding(ctx, input)
 	if !errors.Is(err, agent.ErrNativeCodingBlocked) || d.startCalls() != 1 {
 		t.Fatalf("during the cooldown: err=%v starts=%d", err, d.startCalls())
 	}
 	mustContain(t, "cooldown refusal", err.Error(), codeCooldown, codeStartFailed)
 	// After the cooldown the Harness is started again, and works.
 	d.advance(2 * time.Minute)
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatalf("after the cooldown: %v", err)
 	}
 	if d.startCalls() != 2 {
@@ -165,9 +168,9 @@ func TestAdmissionRefusesAnotherBuildOfTheHarnessAndLeavesNoChildBehind(t *testi
 		c.caps.BuildRevision = "ffffffffffffffffffffffffffffffffffffffff"
 		return c, nil
 	}
-	_, input, _ := newTurn(t, "x")
+	ctx, input, _ := newTurn(t, "x")
 
-	err := d.runtime.AdmitNativeCoding(context.Background(), input)
+	err := d.runtime.AdmitNativeCoding(ctx, input)
 	if !errors.Is(err, agent.ErrNativeCodingBlocked) {
 		t.Fatalf("a Harness of another build must block the turn: %v", err)
 	}
@@ -184,13 +187,13 @@ func TestAdmissionRefusesAnotherBuildOfTheHarnessAndLeavesNoChildBehind(t *testi
 
 func TestAdmissionRejectsWhatTheHarnessCannotReceiveAndBlocksWithoutAWorkspace(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "これを直して")
+	ctx, input, _ := newTurn(t, "これを直して")
 
 	withAttachment := input.WithAttachments([]attachment.Attachment{{Kind: attachment.KindImage, Filename: "a.png"}})
-	if err := d.runtime.AdmitNativeCoding(context.Background(), withAttachment); !errors.Is(err, agent.ErrNativeCodingRejected) {
+	if err := d.runtime.AdmitNativeCoding(ctx, withAttachment); !errors.Is(err, agent.ErrNativeCodingRejected) {
 		t.Fatalf("an attachment must be rejected: %v", err)
 	}
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input.WithMessageText("   ")); !errors.Is(err, agent.ErrNativeCodingRejected) {
+	if err := d.runtime.AdmitNativeCoding(ctx, input.WithMessageText("   ")); !errors.Is(err, agent.ErrNativeCodingRejected) {
 		t.Fatalf("an empty request must be rejected: %v", err)
 	}
 	if d.startCalls() != 0 {
@@ -198,7 +201,7 @@ func TestAdmissionRejectsWhatTheHarnessCannotReceiveAndBlocksWithoutAWorkspace(t
 	}
 
 	d.runtime.settings.Workspace.Path = filepath.Join(t.TempDir(), "absent")
-	err := d.runtime.AdmitNativeCoding(context.Background(), input)
+	err := d.runtime.AdmitNativeCoding(ctx, input)
 	if !errors.Is(err, agent.ErrNativeCodingBlocked) {
 		t.Fatalf("a missing workspace must block the turn: %v", err)
 	}
@@ -212,19 +215,19 @@ func TestAdmissionRejectsWhatTheHarnessCannotReceiveAndBlocksWithoutAWorkspace(t
 		t.Fatal(err)
 	}
 	d.runtime.settings.Workspace.Path = file
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); !errors.Is(err, agent.ErrNativeCodingBlocked) {
+	if err := d.runtime.AdmitNativeCoding(ctx, input); !errors.Is(err, agent.ErrNativeCodingBlocked) {
 		t.Fatalf("a workspace that is not a directory must block the turn: %v", err)
 	}
 }
 
 func TestAdmissionStartsANewHarnessAfterTheConnectionEnded(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "x")
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	ctx, input, _ := newTurn(t, "x")
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	d.client(0).end() // the child exited
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatalf("admission after an ended connection: %v", err)
 	}
 	if d.startCalls() != 2 {
@@ -237,14 +240,14 @@ func TestAdmissionStartsANewHarnessAfterTheConnectionEnded(t *testing.T) {
 
 func TestConcurrentAdmissionsStartExactlyOneHarness(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "x")
+	ctx, input, _ := newTurn(t, "x")
 	var wg sync.WaitGroup
 	errs := make(chan error, 16)
 	for i := 0; i < 16; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- d.runtime.AdmitNativeCoding(context.Background(), input)
+			errs <- d.runtime.AdmitNativeCoding(ctx, input)
 		}()
 	}
 	wg.Wait()
@@ -261,8 +264,8 @@ func TestConcurrentAdmissionsStartExactlyOneHarness(t *testing.T) {
 
 func TestCloseStopsInTwoStagesIsIdempotentAndBlocksLaterWork(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "x")
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	ctx, input, _ := newTurn(t, "x")
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	c := d.client(0)
@@ -282,15 +285,15 @@ func TestCloseStopsInTwoStagesIsIdempotentAndBlocksLaterWork(t *testing.T) {
 	if len(c.shutdown) != 1 {
 		t.Fatal("Close must be idempotent")
 	}
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); !errors.Is(err, agent.ErrNativeCodingBlocked) || d.startCalls() != 1 {
+	if err := d.runtime.AdmitNativeCoding(ctx, input); !errors.Is(err, agent.ErrNativeCodingBlocked) || d.startCalls() != 1 {
 		t.Fatalf("a closed Runtime must not start a Harness again: %v starts=%d", err, d.startCalls())
 	}
 }
 
 func TestCloseAbortsWhenTheOrderlyShutdownFails(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "x")
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	ctx, input, _ := newTurn(t, "x")
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	c := d.client(0)

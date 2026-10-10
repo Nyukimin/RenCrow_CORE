@@ -97,8 +97,8 @@ func TestConfirmedHarnessEventsAreLoggedAsReferencesWithCOREIDsAndNoPayload(t *t
 
 func TestAnEventOfAnUnknownThreadIsStillLoggedWithoutCOREIDs(t *testing.T) {
 	d := newDeployment(t)
-	_, input, _ := newTurn(t, "x")
-	if err := d.runtime.AdmitNativeCoding(context.Background(), input); err != nil {
+	ctx, input, _ := newTurn(t, "x")
+	if err := d.runtime.AdmitNativeCoding(ctx, input); err != nil {
 		t.Fatal(err)
 	}
 	c := d.client(0)

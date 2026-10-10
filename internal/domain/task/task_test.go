@@ -1,6 +1,8 @@
 package task
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,6 +71,29 @@ func TestTaskRejectsUnknownEnumsAndRegressingTimestamp(t *testing.T) {
 				t.Fatal("invalid Task was accepted")
 			}
 		})
+	}
+}
+
+func TestTaskRejectsInvalidExpectedCriteriaRevision(t *testing.T) {
+	value := validTask()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		t.Fatal(err)
+	}
+	object["expected_criteria_revision"] = strings.Repeat("A", 64)
+	raw, err = json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	if err := value.Validate(); err == nil {
+		t.Fatal("Task accepted an uppercase criteria SHA-256 revision")
 	}
 }
 

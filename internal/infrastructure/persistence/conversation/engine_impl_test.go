@@ -2,13 +2,17 @@ package conversation
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
+	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	categoryrecall "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/categoryrecall"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -161,9 +165,10 @@ func (m *mockDetector) Detect(currentThread *domconv.Thread, newMessage, newDoma
 
 type mockExternalRecallManager struct {
 	*mockManager
-	items     []l1sqlite.L1KnowledgeItem
-	hits      map[string][]l1sqlite.L1KnowledgeRelationHit
-	vectorErr error
+	items        []l1sqlite.L1KnowledgeItem
+	hits         map[string][]l1sqlite.L1KnowledgeRelationHit
+	relatedCalls []string
+	vectorErr    error
 }
 
 type categoryRecallRegistryStub struct {
@@ -194,6 +199,7 @@ func (m *mockExternalRecallManager) SearchKB(context.Context, string, string, in
 }
 
 func (m *mockExternalRecallManager) RelatedKnowledgeItems(_ context.Context, itemID string, _ int, _ int) ([]l1sqlite.L1KnowledgeRelationHit, error) {
+	m.relatedCalls = append(m.relatedCalls, itemID)
 	return append([]l1sqlite.L1KnowledgeRelationHit(nil), m.hits[itemID]...), nil
 }
 
@@ -223,8 +229,10 @@ func TestBeginTurn_CategoryRecallRunsForRelatedNormalUtterance(t *testing.T) {
 		Roles: []string{"chat", "worker", "heavy", "creative"},
 	}}}}
 	mgr := &mockManager{}
-	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).WithCategoryRecallRegistry(registry).WithCategoryRecallScope("ren")
-	pack, err := engine.BeginTurn(context.Background(), "s1", "映画マトリックスの話をしよう")
+	engine := NewRealConversationEngine(mgr, domconv.PersonaState{}).
+		WithCategoryRecallRegistry(registry).WithCategoryRecallScope("ren")
+	ctx := context.Background()
+	pack, err := engine.BeginTurn(ctx, "s1", "映画マトリックスの話をしよう")
 	if err != nil {
 		t.Fatalf("BeginTurn failed: %v", err)
 	}
@@ -258,6 +266,46 @@ func TestBeginTurn_CategoryRecallFailureIsPartialTrace(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("category failure was not traced in returned pack: %#v", pack.ToTraceItems())
+	}
+}
+
+func TestBeginTurn_CategoryRecallPreservesConfiguredLegacySelection(t *testing.T) {
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{}}
+	engine := NewRealConversationEngine(&mockManager{}, domconv.PersonaState{}).
+		WithCategoryRecallRegistry(registry).WithCategoryRecallScope("ren")
+	if _, err := engine.BeginTurn(context.Background(), "untrusted-scope", "映画の話"); err != nil {
+		t.Fatalf("BeginTurn failed: %v", err)
+	}
+	if len(registry.queries) != 1 || registry.queries[0].UserScope != "ren" {
+		t.Fatalf("legacy configured selection changed: %#v", registry.queries)
+	}
+}
+
+func TestBeginTurn_NativeRecallIntentUsesOnlyTypedUserScope(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		ctx       context.Context
+		wantScope string
+	}{
+		{name: "no authenticated grant", ctx: context.Background(), wantScope: "public"},
+		{name: "authenticated user grant", ctx: domaintool.WithToolExecutionScope(context.Background(), domaintool.ToolExecutionScope{
+			RequestID: "native-recall", ActorKind: domaintool.ActorKindUser, ActorID: "ren",
+			AuthenticatedUserID: "ren", AllowedDataScopes: []string{domaintool.DataScopeUser},
+			AuthenticationSource: domaintool.AuthenticationSourceHTTP,
+		}), wantScope: "user:ren"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{}}
+			engine := NewRealConversationEngine(&mockManager{}, domconv.PersonaState{}).
+				WithCategoryRecallRegistry(registry).WithCategoryRecallScope("untrusted-configured-owner")
+			ctx := domconv.WithNativeRecallProvenanceIntent(test.ctx)
+			if _, err := engine.BeginTurn(ctx, "native-recall", "映画の話"); err != nil {
+				t.Fatalf("BeginTurn failed: %v", err)
+			}
+			if len(registry.queries) != 1 || registry.queries[0].UserScope != test.wantScope {
+				t.Fatalf("native intent scope=%#v want=%q", registry.queries, test.wantScope)
+			}
+		})
 	}
 }
 
@@ -303,6 +351,254 @@ func TestBeginTurn_KeepsDifferentL1KnowledgeAfterCategoryRecall(t *testing.T) {
 	}
 	if len(pack.KBSnippets) != 1 || !strings.Contains(pack.KBSnippets[0], "Different L1 fact") {
 		t.Fatalf("different external L1 record should remain: %#v", pack.KBSnippets)
+	}
+}
+
+func TestBeginTurnNativeIntentSuppressesFailedKnowledgeFromExternalRecallAndRelations(t *testing.T) {
+	for _, failureCase := range []string{"invalid_receipt", "extra_lifecycle_event", "agent_without_internal"} {
+		t.Run(failureCase, func(t *testing.T) {
+			store, dbPath, failedItemID, goodItemID, items := newNativeExternalRecallKnowledgeFixture(t)
+			wantRejectedIDs := map[string]string{failedItemID: domconv.CategoryRecallFailureInvalid}
+			switch failureCase {
+			case "invalid_receipt":
+				mutateNativeRecallProjectionReceipt(t, dbPath, failedItemID)
+			case "extra_lifecycle_event":
+				mutateNativeRecallLifecycle(t, dbPath, failedItemID)
+			case "agent_without_internal":
+				wantRejectedIDs[failedItemID] = domconv.CategoryRecallFailureScopeDenied
+				wantRejectedIDs[goodItemID] = domconv.CategoryRecallFailureScopeDenied
+			}
+			items, err := store.SearchKnowledgeItemsFTS(context.Background(), "movie", "movie latest 2026", 3)
+			if err != nil || len(items) != 2 {
+				t.Fatalf("external recall fixture items=%+v err=%v", items, err)
+			}
+			var failedItem l1sqlite.L1KnowledgeItem
+			for _, item := range items {
+				if item.ID == failedItemID {
+					failedItem = item
+				}
+			}
+			if failedItem.ID == "" {
+				t.Fatalf("failed source item %q missing from external fallback fixture", failedItemID)
+			}
+			itemsByID := make(map[string]l1sqlite.L1KnowledgeItem, len(items))
+			for _, item := range items {
+				itemsByID[item.ID] = item
+			}
+			manager := &mockExternalRecallManager{
+				mockManager: &mockManager{},
+				items:       items,
+				hits: map[string][]l1sqlite.L1KnowledgeRelationHit{
+					failedItemID: {{Item: l1sqlite.L1KnowledgeItem{ID: "child-of-rejected", Domain: "movie", SummaryDraft: "must not expand from rejected seed"}, Hop: 1, RelationType: "same_entity", Score: 1, Evidence: "test evidence"}},
+					goodItemID:   {{Item: failedItem, Hop: 1, RelationType: "same_entity", Score: 1, Evidence: "failed candidate relation"}},
+				},
+			}
+			registry := domconv.NewCategoryRecallRegistry(categoryrecall.NewL1KnowledgeSource(store)).
+				SetMarkers(map[string][]string{"movie": {"movie"}}).
+				SetNow(func() time.Time { return time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC) })
+			engine := NewRealConversationEngine(manager, domconv.PersonaState{}).
+				WithCategoryRecallRegistry(registry).
+				WithKnowledgeRelationRecall(2)
+			ctx := nativeRecallOwnerContext(failureCase)
+			pack, err := engine.BeginTurn(domconv.WithNativeRecallProvenanceIntent(ctx), "s1", "movie latest 2026")
+			if err != nil {
+				t.Fatalf("BeginTurn failed: %v", err)
+			}
+			if len(pack.CategoryFailures) != len(wantRejectedIDs) {
+				t.Fatalf("owner proof failure was not retained in the category trace: %+v", pack.CategoryFailures)
+			}
+			seenFailureIDs := make(map[string]struct{}, len(pack.CategoryFailures))
+			for _, failure := range pack.CategoryFailures {
+				wantCode, exists := wantRejectedIDs[failure.RecordID]
+				if !exists || failure.SourceID != "knowledge_l1" || failure.Code != wantCode {
+					t.Fatalf("unexpected or missing owner proof failure: %+v want=%v", failure, wantRejectedIDs)
+				}
+				seenFailureIDs[failure.RecordID] = struct{}{}
+			}
+			if len(seenFailureIDs) != len(wantRejectedIDs) {
+				t.Fatalf("owner proof failures missing for records: got=%v want=%v", seenFailureIDs, wantRejectedIDs)
+			}
+			if failureCase == "agent_without_internal" {
+				if len(pack.CategorySnippets) != 0 {
+					t.Fatalf("agent without internal grant received private Knowledge: %+v", pack.CategorySnippets)
+				}
+			} else if len(pack.CategorySnippets) != 1 || pack.CategorySnippets[0].RecordID != goodItemID {
+				t.Fatalf("valid neighboring Knowledge candidate was lost: %+v", pack.CategorySnippets)
+			}
+			if len(pack.KBSnippets) != 0 || len(pack.RelationSnippets) != 0 {
+				t.Fatalf("rejected Knowledge candidate or its relation leaked into the prompt: kb=%+v relations=%+v", pack.KBSnippets, pack.RelationSnippets)
+			}
+			for _, relatedSeed := range manager.relatedCalls {
+				if _, rejected := wantRejectedIDs[relatedSeed]; rejected {
+					t.Fatalf("failed candidate was still used as a relation seed: calls=%v", manager.relatedCalls)
+				}
+			}
+			for _, message := range pack.ToPromptMessages() {
+				for rejectedID := range wantRejectedIDs {
+					if strings.Contains(message.Content, itemsByID[rejectedID].SummaryDraft) {
+						t.Fatalf("rejected candidate text reached prompt message: %#v", message)
+					}
+				}
+				if strings.Contains(message.Content, "must not expand from rejected seed") {
+					t.Fatalf("relation from a rejected candidate reached prompt message: %#v", message)
+				}
+			}
+
+			// Legacy recall remains source-null and keeps its existing non-native
+			// selection behavior even when the Common Raw proof is unavailable.
+			legacyManager := &mockExternalRecallManager{mockManager: &mockManager{}, items: items}
+			legacyEngine := NewRealConversationEngine(legacyManager, domconv.PersonaState{}).
+				WithCategoryRecallRegistry(registry).
+				WithKnowledgeRelationRecall(2)
+			legacyPack, err := legacyEngine.BeginTurn(context.Background(), "s1", "movie latest 2026")
+			if err != nil {
+				t.Fatalf("legacy BeginTurn failed: %v", err)
+			}
+			legacyFailedQuote := false
+			for _, snippet := range legacyPack.CategorySnippets {
+				if snippet.RecordID == failedItemID && snippet.PromptSource == nil {
+					legacyFailedQuote = true
+				}
+			}
+			if !legacyFailedQuote {
+				t.Fatalf("non-native Knowledge recall changed from its source-null projection: %+v", legacyPack.CategorySnippets)
+			}
+		})
+	}
+}
+
+func newNativeExternalRecallKnowledgeFixture(t *testing.T) (*l1sqlite.L1SQLiteStore, string, string, string, []l1sqlite.L1KnowledgeItem) {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "conversation-l1.db")
+	store, err := l1sqlite.NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	userMessage := "movie latest 2026"
+	var failedID, goodID string
+	for _, item := range []struct {
+		id, raw, summary string
+	}{
+		{"kb:movie:failed", userMessage + " rejected evidence", "rejected evidence"},
+		{"kb:movie:good", userMessage + " accepted evidence", "accepted evidence"},
+	} {
+		staging, err := store.SaveStagingItem(context.Background(), l1sqlite.L1StagingItem{
+			Kind: l1sqlite.L1StagingKindExternalFetch, Namespace: "kb:movie", EventID: "engine-recall-" + item.id,
+			SourceID: "test:knowledge", SourceURL: "https://example.test/" + item.id,
+			FetchedAt: time.Now().UTC(), RawText: item.raw, SummaryDraft: item.summary, LicenseNote: "owner",
+			Meta: map[string]interface{}{"title": userMessage + " " + item.id, "scope": "public"},
+		})
+		if err != nil {
+			t.Fatalf("stage Knowledge item %s: %v", item.id, err)
+		}
+		if _, err := store.ValidateStagingItem(context.Background(), staging.ID, l1sqlite.L1StagingValidationPolicy{
+			SourceTrustScores: map[string]float64{"test:knowledge": 1}, MinimumTrustScore: 0.5, Now: time.Now().UTC(),
+		}); err != nil {
+			t.Fatalf("validate Knowledge item %s: %v", item.id, err)
+		}
+		knowledge, err := store.PromoteValidatedStagingItemToKnowledge(context.Background(), staging.ID, "movie")
+		if err != nil {
+			t.Fatalf("promote Knowledge item %s: %v", item.id, err)
+		}
+		if item.id == "kb:movie:failed" {
+			failedID = knowledge.ID
+		} else {
+			goodID = knowledge.ID
+		}
+	}
+	ownerScope, err := domaintool.NewToolExecutionScope(
+		"engine-recall-backfill", domaintool.ActorKindUser, "ren", "ren",
+		[]string{domaintool.DataScopePublic, domaintool.DataScopeUser}, domaintool.AuthenticationSourceHTTP,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BackfillKnowledgeCommonRaw(
+		domaintool.WithToolExecutionScope(context.Background(), ownerScope),
+		"engine-recall-backfill", "ren", "ren", true,
+	); err != nil {
+		t.Fatalf("backfill Knowledge Common Raw: %v", err)
+	}
+	items, err := store.SearchKnowledgeItemsFTS(context.Background(), "movie", userMessage, 3)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("search external Knowledge fixture items=%+v err=%v", items, err)
+	}
+	return store, dbPath, failedID, goodID, items
+}
+
+func nativeRecallOwnerContext(failureCase string) context.Context {
+	scope := domaintool.ToolExecutionScope{
+		RequestID: "native-recall-" + failureCase, ActorKind: domaintool.ActorKindUser,
+		ActorID: "ren", AuthenticatedUserID: "ren", AllowedDataScopes: []string{domaintool.DataScopePublic, domaintool.DataScopeUser},
+		AuthenticationSource: domaintool.AuthenticationSourceHTTP,
+	}
+	if failureCase == "agent_without_internal" {
+		scope.ActorKind = domaintool.ActorKindAgent
+		scope.ActorID = "mio"
+		scope.AllowedDataScopes = []string{domaintool.DataScopeUser}
+		scope.AuthenticationSource = domaintool.AuthenticationSourceAgentOrchestrator
+	}
+	return domaintool.WithToolExecutionScope(context.Background(), scope)
+}
+
+func mutateNativeRecallProjectionReceipt(t *testing.T, dbPath, itemID string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	dropEngineSQLiteTriggers(t, db, "l1_raw_projection_receipt")
+	if _, err := db.Exec(`UPDATE l1_raw_projection_receipt SET output_sha256 = ? WHERE output_record_id = ? AND projection_type = 'knowledge_item' AND revision = 'knowledge-raw/v1' AND status = 'completed'`, strings.Repeat("f", 64), itemID); err != nil {
+		t.Fatalf("corrupt Knowledge projection receipt: %v", err)
+	}
+}
+
+func mutateNativeRecallLifecycle(t *testing.T, dbPath, itemID string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var rawID, manifestID, ownerID, scope, requestID, actorID string
+	if err := db.QueryRow(`SELECT raw_record_id FROM l1_raw_record WHERE source_record_id = ?`, itemID).Scan(&rawID); err != nil {
+		t.Fatalf("load Knowledge Raw record ID: %v", err)
+	}
+	if err := db.QueryRow(`SELECT raw_record_id, manifest_id, owner_id, scope, request_id, actor_id FROM l1_raw_state_event WHERE raw_record_id = ? AND event_type = 'ingested'`, rawID).
+		Scan(&rawID, &manifestID, &ownerID, &scope, &requestID, &actorID); err != nil {
+		t.Fatalf("load Knowledge Raw lifecycle event: %v", err)
+	}
+	dropEngineSQLiteTriggers(t, db, "l1_raw_state_event")
+	if _, err := db.Exec(`INSERT INTO l1_raw_state_event (state_event_id, raw_record_id, manifest_id, event_type, event_hash, owner_id, scope, request_id, actor_id, reason_code, payload_json, created_at) VALUES (?, ?, ?, 'correction', ?, ?, ?, ?, ?, 'test', '{}', ?)`,
+		"engine-recall-extra-event", rawID, manifestID, strings.Repeat("e", 64), ownerID, scope, requestID, actorID, time.Now().UTC()); err != nil {
+		t.Fatalf("insert extra Knowledge Raw lifecycle event: %v", err)
+	}
+}
+
+func dropEngineSQLiteTriggers(t *testing.T, db *sql.DB, table string) {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?`, table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		if _, err := db.Exec(`DROP TRIGGER "` + strings.ReplaceAll(name, `"`, `""`) + `"`); err != nil {
+			t.Fatalf("drop test trigger %q: %v", name, err)
+		}
 	}
 }
 

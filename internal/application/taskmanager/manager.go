@@ -37,9 +37,10 @@ func DefaultParallelLimits() ParallelLimits {
 }
 
 type Manager struct {
-	store  Store
-	limits ParallelLimits
-	now    func() time.Time
+	store                    Store
+	limits                   ParallelLimits
+	expectedCriteriaRevision string
+	now                      func() time.Time
 }
 
 func New(store Store, limits ParallelLimits) *Manager {
@@ -47,6 +48,18 @@ func New(store Store, limits ParallelLimits) *Manager {
 		limits = DefaultParallelLimits()
 	}
 	return &Manager{store: store, limits: limits, now: func() time.Time { return time.Now().UTC() }}
+}
+
+// NewWithExpectedCriteriaRevision configures the trusted Harness deployment
+// pin used when creating native-capable Tasks. The revision is opaque to CORE;
+// only its lowercase SHA-256 encoding is checked here.
+func NewWithExpectedCriteriaRevision(store Store, limits ParallelLimits, revision string) (*Manager, error) {
+	if !domaintask.ValidCriteriaRevision(revision) {
+		return nil, errors.New("expected criteria revision must be one lowercase SHA-256 revision")
+	}
+	manager := New(store, limits)
+	manager.expectedCriteriaRevision = revision
+	return manager, nil
 }
 
 func (m *Manager) taskTransaction(ctx context.Context, taskID modulecore.TaskID, fn func(*Manager) error) error {
@@ -66,7 +79,7 @@ func (m *Manager) taskTransaction(ctx context.Context, taskID modulecore.TaskID,
 		if store == nil {
 			return errors.New("task transaction store is unavailable")
 		}
-		txManager := &Manager{store: store, limits: m.limits, now: m.now}
+		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, now: m.now}
 		return fn(txManager)
 	})
 }
@@ -82,7 +95,7 @@ func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) 
 		if store == nil {
 			return errors.New("task read transaction store is unavailable")
 		}
-		txManager := &Manager{store: store, limits: m.limits, now: m.now}
+		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, now: m.now}
 		return fn(txManager)
 	})
 }
@@ -109,6 +122,13 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 	}
 	now := m.now()
 	draft.ApplyDefaults(now)
+	// Caller data never selects the trusted Harness criteria pin. The Task
+	// owner assigns the deployment pin on first save for roots and OPS Tasks.
+	draft.ExpectedCriteriaRevision = ""
+	draft.NativeResumeClaims = nil
+	if m.expectedCriteriaRevision != "" && (draft.Route == domaintask.RouteGeneral || draft.Route == domaintask.RouteOperations) {
+		draft.ExpectedCriteriaRevision = m.expectedCriteriaRevision
+	}
 	if err := draft.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
@@ -290,6 +310,10 @@ func (m *Manager) startWithReason(ctx context.Context, taskID modulecore.TaskID,
 // allowing a checkpoint-bound caller to attach immutable source evidence before
 // the first Run append. The empty digest preserves the legacy callers.
 func (m *Manager) startWithReasonAndCheckpoint(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason, checkpointSHA256 string) (domaintask.Task, domaintask.Run, error) {
+	return m.startWithReasonAndCheckpointAndTrace(ctx, taskID, reason, checkpointSHA256, "")
+}
+
+func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, taskID modulecore.TaskID, reason domaintask.RunStartReason, checkpointSHA256 string, traceID modulecore.TraceID) (domaintask.Task, domaintask.Run, error) {
 	if err := taskID.Validate(); err != nil {
 		return domaintask.Task{}, domaintask.Run{}, fmt.Errorf("task_id is invalid: %w", err)
 	}
@@ -363,6 +387,7 @@ func (m *Manager) startWithReasonAndCheckpoint(ctx context.Context, taskID modul
 		WriterGeneration:      generation,
 		RunID:                 modulecore.NewRunID(),
 		TaskID:                taskID,
+		TraceID:               traceID,
 		StartReason:           reason,
 		Assignee:              started.Assignee,
 		Status:                domaintask.RunStatusRunning,

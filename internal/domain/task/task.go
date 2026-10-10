@@ -71,38 +71,41 @@ const (
 // origin identities are kept separate from runtime trace, run, and transport
 // identities owned by their respective boundaries.
 type Task struct {
-	TaskID            modulecore.TaskID       `json:"task_id"`
-	Title             string                  `json:"title"`
-	ModuleID          string                  `json:"module_id,omitempty"`
-	ModuleRoot        string                  `json:"module_root,omitempty"`
-	Route             Route                   `json:"route"`
-	RoutingEventID    modulecore.EventID      `json:"routing_event_id,omitempty"`
-	OwnerID           string                  `json:"owner_id,omitempty"`
-	Assignee          string                  `json:"assignee,omitempty"`
-	AssignmentEventID modulecore.EventID      `json:"assignment_event_id,omitempty"`
-	CoderRoles        []string                `json:"coder_roles,omitempty"`
-	Status            Status                  `json:"status"`
-	Priority          Priority                `json:"priority"`
-	ParentTaskID      modulecore.TaskID       `json:"parent_task_id,omitempty"`
-	DependencyTaskIDs []modulecore.TaskID     `json:"dependency_task_ids,omitempty"`
-	OriginSessionID   modulecore.SessionID    `json:"origin_session_id,omitempty"`
-	OriginThreadID    modulecore.ThreadID     `json:"origin_thread_id,omitempty"`
-	OriginTurnID      modulecore.TurnID       `json:"origin_turn_id,omitempty"`
-	OriginMessageID   modulecore.MessageID    `json:"origin_message_id,omitempty"`
-	WorkstreamID      modulecore.WorkstreamID `json:"workstream_id,omitempty"`
-	GoalID            modulecore.GoalID       `json:"goal_id,omitempty"`
-	SupersedesTaskID  modulecore.TaskID       `json:"supersedes_task_id,omitempty"`
-	InterruptPolicy   InterruptPolicy         `json:"interrupt_policy"`
-	ReadOnly          bool                    `json:"read_only"`
-	CreatedAt         time.Time               `json:"created_at"`
-	UpdatedAt         time.Time               `json:"updated_at"`
-	StartedAt         *time.Time              `json:"started_at,omitempty"`
-	FinishedAt        *time.Time              `json:"finished_at,omitempty"`
-	Summary           string                  `json:"summary,omitempty"`
-	WaitingReason     string                  `json:"waiting_reason,omitempty"`
-	NextActions       []string                `json:"next_actions,omitempty"`
-	Evidence          []string                `json:"evidence,omitempty"`
-	Artifacts         []string                `json:"artifacts,omitempty"`
+	TaskID                   modulecore.TaskID       `json:"task_id"`
+	Title                    string                  `json:"title"`
+	ModuleID                 string                  `json:"module_id,omitempty"`
+	ModuleRoot               string                  `json:"module_root,omitempty"`
+	Route                    Route                   `json:"route"`
+	RoutingEventID           modulecore.EventID      `json:"routing_event_id,omitempty"`
+	OwnerID                  string                  `json:"owner_id,omitempty"`
+	Assignee                 string                  `json:"assignee,omitempty"`
+	AssignmentEventID        modulecore.EventID      `json:"assignment_event_id,omitempty"`
+	CoderRoles               []string                `json:"coder_roles,omitempty"`
+	Status                   Status                  `json:"status"`
+	Priority                 Priority                `json:"priority"`
+	ParentTaskID             modulecore.TaskID       `json:"parent_task_id,omitempty"`
+	DependencyTaskIDs        []modulecore.TaskID     `json:"dependency_task_ids,omitempty"`
+	OriginSessionID          modulecore.SessionID    `json:"origin_session_id,omitempty"`
+	OriginThreadID           modulecore.ThreadID     `json:"origin_thread_id,omitempty"`
+	OriginTurnID             modulecore.TurnID       `json:"origin_turn_id,omitempty"`
+	OriginMessageID          modulecore.MessageID    `json:"origin_message_id,omitempty"`
+	AcceptedOPSClaim         *AcceptedOPSClaim       `json:"accepted_ops_claim,omitempty"`
+	ExpectedCriteriaRevision string                  `json:"expected_criteria_revision,omitempty"`
+	NativeResumeClaims       []NativeOPSResumeClaim  `json:"native_resume_claims,omitempty"`
+	WorkstreamID             modulecore.WorkstreamID `json:"workstream_id,omitempty"`
+	GoalID                   modulecore.GoalID       `json:"goal_id,omitempty"`
+	SupersedesTaskID         modulecore.TaskID       `json:"supersedes_task_id,omitempty"`
+	InterruptPolicy          InterruptPolicy         `json:"interrupt_policy"`
+	ReadOnly                 bool                    `json:"read_only"`
+	CreatedAt                time.Time               `json:"created_at"`
+	UpdatedAt                time.Time               `json:"updated_at"`
+	StartedAt                *time.Time              `json:"started_at,omitempty"`
+	FinishedAt               *time.Time              `json:"finished_at,omitempty"`
+	Summary                  string                  `json:"summary,omitempty"`
+	WaitingReason            string                  `json:"waiting_reason,omitempty"`
+	NextActions              []string                `json:"next_actions,omitempty"`
+	Evidence                 []string                `json:"evidence,omitempty"`
+	Artifacts                []string                `json:"artifacts,omitempty"`
 }
 
 type SharedRoleContext struct {
@@ -224,6 +227,17 @@ func (t Task) Validate() error {
 	if err := validateOptionalID(t.OriginMessageID); err != nil {
 		return fmt.Errorf("origin_message_id is invalid: %w", err)
 	}
+	if t.AcceptedOPSClaim != nil {
+		if err := t.AcceptedOPSClaim.Validate(t); err != nil {
+			return fmt.Errorf("accepted_ops_claim is invalid: %w", err)
+		}
+	}
+	if t.ExpectedCriteriaRevision != "" && !ValidCriteriaRevision(t.ExpectedCriteriaRevision) {
+		return fmt.Errorf("expected_criteria_revision must be a lowercase SHA-256 revision")
+	}
+	if err := t.ValidateNativeOPSResumeClaims(); err != nil {
+		return fmt.Errorf("native_resume_claims are invalid: %w", err)
+	}
 	if err := validateOptionalID(t.WorkstreamID); err != nil {
 		return fmt.Errorf("workstream_id is invalid: %w", err)
 	}
@@ -243,6 +257,23 @@ func (t Task) Validate() error {
 		return fmt.Errorf("task cannot supersede itself")
 	}
 	return nil
+}
+
+// ValidCriteriaRevision checks the deployment-pinned Harness criteria token.
+// It validates only the encoding; the Harness owner defines and computes the
+// digest, so CORE never mirrors its inputs or formula.
+func ValidCriteriaRevision(value string) bool {
+	if len(value) != 64 || strings.ToLower(value) != value {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			if char < 'a' || char > 'f' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func validateOptionalID[T interface {

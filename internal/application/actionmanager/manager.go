@@ -148,6 +148,9 @@ func (m *Manager) StartAttempt(ctx context.Context, actionID modulecore.ActionID
 		if !action.IsOpen() {
 			return fmt.Errorf("action %s is closed", action.ActionID)
 		}
+		if isNativeDelegationAction(action) {
+			return fmt.Errorf("%w: native delegation does not support generic retry", ErrAttemptConflict)
+		}
 		now := m.now()
 		if _, err := m.closeCurrentAttemptReturning(ctx, tx, actionID, domainaction.AttemptStatusFailed, now, "superseded by retry"); err != nil && !errors.Is(err, ErrNotFound) {
 			return err
@@ -208,6 +211,9 @@ func (m *Manager) CompleteAttempt(ctx context.Context, actionID modulecore.Actio
 		action, attempt, err := m.currentPair(tx, ctx, actionID, expectedAttemptID)
 		if err != nil {
 			return err
+		}
+		if attempt.NativeDelegation != nil {
+			return fmt.Errorf("%w: native delegation requires its atomic completion path", ErrAttemptConflict)
 		}
 		now := m.now()
 		closedAttempt, err := attempt.Close(attemptStatus, now, summary)

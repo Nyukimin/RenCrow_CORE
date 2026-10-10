@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -339,6 +340,16 @@ type Dependencies struct {
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
 }
 
+func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Runtime) (orchestrator.NativeCodingAdmission, error) {
+	if cfg == nil || !cfg.NativeHarness.Profile.Enabled {
+		return nil, nil
+	}
+	if runtime == nil {
+		return nil, errors.New("shiro_native_coding_v1 runtime is unavailable for the enabled profile")
+	}
+	return runtime, nil
+}
+
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
 	closeNativeCodingRuntime(d.nativeCoding)
@@ -468,7 +479,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err != nil {
 		log.Fatalf("Failed to initialize storage host owner bundle: %v", err)
 	}
-	if err := initializeRuntimeTaskOwner(deps, cfg.WorkspaceDir, storageOwners.TaskStore); err != nil {
+	expectedCriteriaRevision := ""
+	if cfg.NativeHarness.Profile.Enabled {
+		expectedCriteriaRevision = cfg.NativeHarness.Profile.ExpectedCriteriaRevision
+	}
+	if err := initializeRuntimeTaskOwnerWithCriteriaRevision(deps, cfg.WorkspaceDir, expectedCriteriaRevision, storageOwners.TaskStore); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
 	}
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
@@ -1613,11 +1628,6 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if deps.idleChatOrch != nil {
 		idleChatWorkerNotifier = deps.idleChatOrch
 	}
-	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager)
-	if err != nil {
-		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
-	}
-	deps.agentOps = agentOpsHandler
 	var persistentNewsReader domainnews.DailyNewsBriefReader
 	if conversationRuntime.L1Store != nil {
 		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)
@@ -1638,6 +1648,15 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		bridges,
 		verificationRuntime,
 	)
+	nativeCodingAdmission, err := configuredNativeCodingAdmission(cfg, deps.nativeCoding)
+	if err != nil {
+		log.Fatalf("Failed to initialize local Agent OPS native profile: %v", err)
+	}
+	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore)
+	if err != nil {
+		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
+	}
+	deps.agentOps = agentOpsHandler
 	buildHeartbeatRuntime(cfg, deps, agents.Shiro, sessionRuntime.MemoryStore, conversationRuntime.L1Store)
 	buildPronunciationCheckRuntime(cfg, deps)
 	deps.extensionHealth = buildExtensionHealthHandler(cfg, deps)

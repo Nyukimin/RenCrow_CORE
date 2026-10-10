@@ -18,8 +18,10 @@ import (
 )
 
 var (
-	errTaskTransactionExpired = errors.New("task transaction is no longer active")
-	errReadOnlyTransaction    = errors.New("task transaction is read-only")
+	errTaskTransactionExpired            = errors.New("task transaction is no longer active")
+	errReadOnlyTransaction               = errors.New("task transaction is read-only")
+	ErrExpectedCriteriaRevisionImmutable = errors.New("expected criteria revision is immutable after the first Task save")
+	ErrNativeOPSResumeClaimImmutable     = errors.New("native OPS Resume claims are immutable and append-only")
 )
 
 func taskBatchFilenames() []string {
@@ -426,10 +428,83 @@ func (s *transactionStore) SaveTask(ctx context.Context, value domaintask.Task) 
 	if err := value.Validate(); err != nil {
 		return err
 	}
-	if err := s.touchTask(ctx, value.TaskID); err != nil {
+	// Prime the committed Task history before entering the atomic compare+append
+	// below. The committed fold validates every prior pin transition, while the
+	// locked append also checks Task records appended concurrently in this
+	// transaction.
+	if _, err := s.loadTasks(ctx); err != nil {
 		return err
 	}
-	return s.appendValue(ctx, stateFilename, value)
+	return s.appendTask(ctx, value)
+}
+
+func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task) error {
+	if err := s.checkWrite(ctx); err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	encoded = append(encoded, '\n')
+	if s.state == nil {
+		return errTaskTransactionExpired
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.local {
+		return errTaskTransactionExpired
+	}
+	s.state.mu.Lock()
+	defer s.state.mu.Unlock()
+	if !s.state.active {
+		return errTaskTransactionExpired
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.scopeTaskID != "" && s.scopeTaskID != value.TaskID {
+		return errTaskExecutionFenceScope
+	}
+	if !s.state.baseLoaded || s.state.base == nil {
+		return errors.New("task transaction committed snapshot is unavailable")
+	}
+	if s.state.base.tasksErr != nil {
+		return s.state.base.tasksErr
+	}
+	records := append([]domaintask.Task(nil), s.state.base.tasks...)
+	pending, err := readJSONLBytes[domaintask.Task](ctx, s.state.pending[stateFilename])
+	if err != nil {
+		return err
+	}
+	records = append(records, pending...)
+	latest, err := foldTaskRecords(records)
+	if err != nil {
+		return err
+	}
+	foundSavedTask := false
+	for _, saved := range latest {
+		if saved.TaskID == value.TaskID && saved.ExpectedCriteriaRevision != value.ExpectedCriteriaRevision {
+			return ErrExpectedCriteriaRevisionImmutable
+		}
+		if saved.TaskID == value.TaskID {
+			foundSavedTask = true
+			if !domaintask.NativeOPSResumeClaimsExtend(saved.NativeResumeClaims, value.NativeResumeClaims) {
+				return ErrNativeOPSResumeClaimImmutable
+			}
+		}
+	}
+	if !foundSavedTask && len(value.NativeResumeClaims) != 0 {
+		return ErrNativeOPSResumeClaimImmutable
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.state.touched[value.TaskID] = struct{}{}
+	s.state.pending[stateFilename] = append(s.state.pending[stateFilename], encoded...)
+	s.state.pendingVersion++
+	s.state.view = nil
+	return nil
 }
 
 func (s *transactionStore) SaveRun(ctx context.Context, value domaintask.Run) error {

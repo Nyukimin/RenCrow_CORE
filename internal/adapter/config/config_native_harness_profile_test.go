@@ -26,11 +26,12 @@ func validProfileConfig(t *testing.T) (*Config, nativeHarnessPaths) {
 		t.Fatalf("chmod: %v", err)
 	}
 	cfg.NativeHarness.Profile = NativeHarnessProfileConfig{
-		Enabled:               true,
-		HarnessBinary:         binary,
-		ExpectedBuildRevision: testBuildRevision,
-		WorkspaceRef:          NativeHarnessWorkspaceRef{Path: filepath.Join(filepath.Dir(paths.keyFile), "work"), PolicyRef: "workspace-write", ExecutionMode: "structured_only"},
-		BindingRef:            NativeHarnessBindingRef{Kind: "alias", Selector: "shiro-worker-exec", ProfileRevision: "rev-1", ExecutionRole: "worker"},
+		Enabled:                  true,
+		HarnessBinary:            binary,
+		ExpectedBuildRevision:    testBuildRevision,
+		ExpectedCriteriaRevision: strings.Repeat("a", 64),
+		WorkspaceRef:             NativeHarnessWorkspaceRef{Path: filepath.Join(filepath.Dir(paths.keyFile), "work"), PolicyRef: "workspace-write", ExecutionMode: "structured_only"},
+		BindingRef:               NativeHarnessBindingRef{Kind: "alias", Selector: "shiro-worker-exec", ProfileRevision: "rev-1", ExecutionRole: "worker"},
 		Limits: NativeHarnessLimits{
 			MaxModelSteps: 10, MaxToolCallsPerStep: 8, DeadlineSeconds: 1800, MaxCaptureBytes: 67108864, MaxGenerationAttempts: 32,
 		},
@@ -59,6 +60,31 @@ func TestNativeHarnessProfileValidIsAccepted(t *testing.T) {
 	cfg.NativeHarness.Profile.Enabled = false
 	if err := cfg.validateNativeHarnessConfig(); err != nil {
 		t.Fatalf("a complete but disabled profile must stay valid: %v", err)
+	}
+}
+
+func TestNativeHarnessProfileRequiresCriteriaRevision(t *testing.T) {
+	cfg, _ := validProfileConfig(t)
+	cfg.NativeHarness.Profile.ExpectedCriteriaRevision = ""
+	if err := cfg.validateNativeHarnessConfig(); err == nil || !strings.Contains(err.Error(), "expected_criteria_revision") {
+		t.Fatalf("enabled profile without a pinned criteria revision error = %v", err)
+	}
+}
+
+func TestNativeHarnessProfileRejectsInvalidCriteriaRevision(t *testing.T) {
+	for name, revision := range map[string]string{
+		"uppercase": strings.Repeat("A", 64),
+		"short":     strings.Repeat("a", 63),
+		"non-hex":   strings.Repeat("g", 64),
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg, _ := validProfileConfig(t)
+			cfg.NativeHarness.Profile.ExpectedCriteriaRevision = revision
+			err := cfg.validateNativeHarnessConfig()
+			if err == nil || !strings.Contains(err.Error(), "expected_criteria_revision") {
+				t.Fatalf("invalid criteria revision error = %v", err)
+			}
+		})
 	}
 }
 
@@ -160,6 +186,7 @@ func TestLoadConfigReadsTheNativeHarnessProfile(t *testing.T) {
     enabled: true
     harness_binary: %q
     expected_build_revision: %q
+    expected_criteria_revision: %q
     workspace_ref:
       path: %q
       policy_ref: %q
@@ -175,7 +202,7 @@ func TestLoadConfigReadsTheNativeHarnessProfile(t *testing.T) {
       deadline_seconds: %d
       max_capture_bytes: %d
       max_generation_attempts: %d
-`, p.HarnessBinary, p.ExpectedBuildRevision, p.WorkspaceRef.Path, p.WorkspaceRef.PolicyRef, p.WorkspaceRef.ExecutionMode,
+`, p.HarnessBinary, p.ExpectedBuildRevision, p.ExpectedCriteriaRevision, p.WorkspaceRef.Path, p.WorkspaceRef.PolicyRef, p.WorkspaceRef.ExecutionMode,
 		p.BindingRef.Kind, p.BindingRef.Selector, p.BindingRef.ProfileRevision, p.BindingRef.ExecutionRole,
 		p.Limits.MaxModelSteps, p.Limits.MaxToolCallsPerStep, p.Limits.DeadlineSeconds, p.Limits.MaxCaptureBytes, p.Limits.MaxGenerationAttempts)
 

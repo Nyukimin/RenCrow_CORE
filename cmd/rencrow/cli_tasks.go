@@ -445,6 +445,16 @@ func loadTaskManager(configPath string, args []string) (*taskmanager.Manager, er
 	if err != nil {
 		return nil, err
 	}
+	return taskManagerForConfig(store, cfg)
+}
+
+func taskManagerForConfig(store taskmanager.Store, cfg *config.Config) (*taskmanager.Manager, error) {
+	if cfg == nil {
+		return nil, errors.New("task manager config is nil")
+	}
+	if cfg.NativeHarness.Profile.Enabled {
+		return taskmanager.NewWithExpectedCriteriaRevision(store, taskmanager.DefaultParallelLimits(), cfg.NativeHarness.Profile.ExpectedCriteriaRevision)
+	}
 	return taskmanager.New(store, taskmanager.DefaultParallelLimits()), nil
 }
 

@@ -3,8 +3,11 @@ package task
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,6 +111,146 @@ func TestTransactionSnapshotDefensiveCopiesTaskAndRun(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTaskCriteriaRevisionIsImmutableAcrossSaveAndReopen(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	store, err := NewJSONLStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC)
+	pinned := snapshotTestTask(now)
+	pinned.ExpectedCriteriaRevision = strings.Repeat("a", 64)
+	if err := store.SaveTask(ctx, pinned); err != nil {
+		t.Fatalf("save pinned Task: %v", err)
+	}
+	legacy := snapshotTestTask(now.Add(time.Minute))
+	if err := store.SaveTask(ctx, legacy); err != nil {
+		t.Fatalf("save legacy Task: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = NewJSONLStore(root)
+	if err != nil {
+		t.Fatalf("reopen Task store: %v", err)
+	}
+	defer store.Close()
+
+	changed := pinned
+	changed.ExpectedCriteriaRevision = strings.Repeat("b", 64)
+	changed.UpdatedAt = changed.UpdatedAt.Add(time.Second)
+	if err := store.SaveTask(ctx, changed); !errors.Is(err, ErrExpectedCriteriaRevisionImmutable) {
+		t.Fatalf("changed revision save error = %v", err)
+	}
+	deleted := pinned
+	deleted.ExpectedCriteriaRevision = ""
+	deleted.UpdatedAt = deleted.UpdatedAt.Add(time.Second)
+	if err := store.SaveTask(ctx, deleted); !errors.Is(err, ErrExpectedCriteriaRevisionImmutable) {
+		t.Fatalf("deleted revision save error = %v", err)
+	}
+	repinnedLegacy := legacy
+	repinnedLegacy.ExpectedCriteriaRevision = strings.Repeat("a", 64)
+	repinnedLegacy.UpdatedAt = repinnedLegacy.UpdatedAt.Add(time.Second)
+	if err := store.SaveTask(ctx, repinnedLegacy); !errors.Is(err, ErrExpectedCriteriaRevisionImmutable) {
+		t.Fatalf("legacy empty-to-set save error = %v", err)
+	}
+	loaded, err := store.GetTask(ctx, pinned.TaskID)
+	if err != nil || loaded.ExpectedCriteriaRevision != pinned.ExpectedCriteriaRevision {
+		t.Fatalf("reopened Task pin = %q err=%v", loaded.ExpectedCriteriaRevision, err)
+	}
+}
+
+func TestFoldTaskRecordsRejectsCriteriaRevisionTransitionsAndKeepsLegacyEmpty(t *testing.T) {
+	now := time.Date(2026, 10, 9, 1, 0, 0, 0, time.UTC)
+	legacy := snapshotTestTask(now)
+	legacyUpdate := legacy
+	legacyUpdate.UpdatedAt = now.Add(time.Second)
+
+	pinned := snapshotTestTask(now)
+	pinned.ExpectedCriteriaRevision = strings.Repeat("a", 64)
+	changed := pinned
+	changed.ExpectedCriteriaRevision = strings.Repeat("b", 64)
+	changed.UpdatedAt = now.Add(time.Second)
+	deleted := pinned
+	deleted.ExpectedCriteriaRevision = ""
+	deleted.UpdatedAt = now.Add(time.Second)
+	backfilled := legacy
+	backfilled.ExpectedCriteriaRevision = strings.Repeat("a", 64)
+	backfilled.UpdatedAt = now.Add(time.Second)
+
+	if _, err := foldTaskRecords([]domaintask.Task{legacy, legacyUpdate}); err != nil {
+		t.Fatalf("legacy Tasks with consistently empty pins must remain loadable: %v", err)
+	}
+	for _, tc := range []struct {
+		name    string
+		records []domaintask.Task
+	}{
+		{name: "legacy backfill", records: []domaintask.Task{legacy, backfilled}},
+		{name: "pin change", records: []domaintask.Task{pinned, changed}},
+		{name: "pin deletion", records: []domaintask.Task{pinned, deleted}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := foldTaskRecords(tc.records); !errors.Is(err, ErrExpectedCriteriaRevisionImmutable) {
+				t.Fatalf("Task criteria transition error = %v, want immutable pin refusal", err)
+			}
+		})
+	}
+}
+
+func TestConcurrentTaskSavesCannotSelectDifferentFirstCriteriaPins(t *testing.T) {
+	store, err := NewJSONLStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	const writers = 32
+	base := snapshotTestTask(time.Date(2026, 10, 9, 2, 0, 0, 0, time.UTC))
+	start := make(chan struct{})
+	err = store.Transaction(ctx, func(tx domaintask.Store) error {
+		results := make(chan error, writers)
+		var wg sync.WaitGroup
+		for index := 0; index < writers; index++ {
+			wg.Add(1)
+			candidate := base
+			candidate.ExpectedCriteriaRevision = fmt.Sprintf("%064x", index+1)
+			go func(value domaintask.Task) {
+				defer wg.Done()
+				<-start
+				results <- tx.SaveTask(ctx, value)
+			}(candidate)
+		}
+		close(start)
+		wg.Wait()
+		close(results)
+		successes := 0
+		for result := range results {
+			if result == nil {
+				successes++
+				continue
+			}
+			if !errors.Is(result, ErrExpectedCriteriaRevisionImmutable) {
+				return fmt.Errorf("concurrent Task save failed unexpectedly: %w", result)
+			}
+		}
+		if successes != 1 {
+			return fmt.Errorf("concurrent first-save criteria pins accepted %d writers, want exactly one", successes)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("concurrent Task transaction: %v", err)
+	}
+	stored, err := store.GetTask(ctx, base.TaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !domaintask.ValidCriteriaRevision(stored.ExpectedCriteriaRevision) {
+		t.Fatalf("stored first pin is invalid: %q", stored.ExpectedCriteriaRevision)
 	}
 }
 

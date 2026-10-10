@@ -20,15 +20,15 @@ const (
 )
 
 const (
-	complexityOpSaveScanEvent       = persistcomplexity.ComplexitySaveScanEventStorageHostOperation
-	complexityOpSaveHotspot          = persistcomplexity.ComplexitySaveHotspotStorageHostOperation
-	complexityOpSaveHotspotEvidence  = persistcomplexity.ComplexitySaveHotspotEvidenceStorageHostOperation
-	complexityOpSaveReportArtifact   = persistcomplexity.ComplexitySaveReportArtifactStorageHostOperation
-	complexityOpListScanEvents       = "list_scan_events"
-	complexityOpListHotspots          = "list_hotspots"
-	complexityOpFindHotspotByID       = "find_hotspot_by_id"
-	complexityOpListHotspotEvidence  = "list_hotspot_evidence"
-	complexityOpListReportArtifacts  = "list_report_artifacts"
+	complexityOpSaveScanEvent          = persistcomplexity.ComplexitySaveScanEventStorageHostOperation
+	complexityOpSaveHotspot            = persistcomplexity.ComplexitySaveHotspotStorageHostOperation
+	complexityOpSaveHotspotEvidence    = persistcomplexity.ComplexitySaveHotspotEvidenceStorageHostOperation
+	complexityOpSaveReportArtifact     = persistcomplexity.ComplexitySaveReportArtifactStorageHostOperation
+	complexityOpListScanEvents         = "list_scan_events"
+	complexityOpListHotspots           = "list_hotspots"
+	complexityOpFindHotspotByID        = "find_hotspot_by_id"
+	complexityOpListHotspotEvidence    = "list_hotspot_evidence"
+	complexityOpListReportArtifacts    = "list_report_artifacts"
 	complexityOpFindReportArtifactByID = "find_report_artifact_by_id"
 )
 
@@ -74,7 +74,7 @@ type complexityHotspotResult struct {
 
 type complexityReportResult struct {
 	Artifact domaincomplexity.ReportArtifact `json:"artifact"`
-	Found    bool                           `json:"found"`
+	Found    bool                            `json:"found"`
 }
 
 func RegisterComplexityHotspotGroup(handler *Handler, owner ComplexityHotspotGroupOwner) error {
@@ -82,14 +82,26 @@ func RegisterComplexityHotspotGroup(handler *Handler, owner ComplexityHotspotGro
 		return errors.New("storagehost: complexity hotspot group needs a handler and owner")
 	}
 	registrations := []func() error{
-		func() error { return registerComplexitySave(handler, owner, complexityOpSaveScanEvent, domaincomplexity.ValidateScanEvent, owner.SaveScanEventForStorageHostOperation, owner.LookupScanEventStorageHostReceipt) },
-		func() error { return registerComplexitySave(handler, owner, complexityOpSaveHotspot, domaincomplexity.ValidateHotspot, owner.SaveHotspotForStorageHostOperation, owner.LookupHotspotStorageHostReceipt) },
-		func() error { return registerComplexitySave(handler, owner, complexityOpSaveHotspotEvidence, domaincomplexity.ValidateHotspotEvidence, owner.SaveHotspotEvidenceForStorageHostOperation, owner.LookupHotspotEvidenceStorageHostReceipt) },
-		func() error { return registerComplexitySave(handler, owner, complexityOpSaveReportArtifact, domaincomplexity.ValidateReportArtifact, owner.SaveReportArtifactForStorageHostOperation, owner.LookupReportArtifactStorageHostReceipt) },
+		func() error {
+			return registerComplexitySave(handler, owner, complexityOpSaveScanEvent, domaincomplexity.ValidateScanEvent, owner.SaveScanEventForStorageHostOperation, owner.LookupScanEventStorageHostReceipt)
+		},
+		func() error {
+			return registerComplexitySave(handler, owner, complexityOpSaveHotspot, domaincomplexity.ValidateHotspot, owner.SaveHotspotForStorageHostOperation, owner.LookupHotspotStorageHostReceipt)
+		},
+		func() error {
+			return registerComplexitySave(handler, owner, complexityOpSaveHotspotEvidence, domaincomplexity.ValidateHotspotEvidence, owner.SaveHotspotEvidenceForStorageHostOperation, owner.LookupHotspotEvidenceStorageHostReceipt)
+		},
+		func() error {
+			return registerComplexitySave(handler, owner, complexityOpSaveReportArtifact, domaincomplexity.ValidateReportArtifact, owner.SaveReportArtifactForStorageHostOperation, owner.LookupReportArtifactStorageHostReceipt)
+		},
 		func() error { return registerComplexityList(handler, complexityOpListScanEvents, owner.ListScanEvents) },
 		func() error { return registerComplexityList(handler, complexityOpListHotspots, owner.ListHotspots) },
-		func() error { return registerComplexityList(handler, complexityOpListHotspotEvidence, owner.ListHotspotEvidence) },
-		func() error { return registerComplexityList(handler, complexityOpListReportArtifacts, owner.ListReportArtifacts) },
+		func() error {
+			return registerComplexityList(handler, complexityOpListHotspotEvidence, owner.ListHotspotEvidence)
+		},
+		func() error {
+			return registerComplexityList(handler, complexityOpListReportArtifacts, owner.ListReportArtifacts)
+		},
 		func() error { return registerComplexityFindHotspot(handler, owner) },
 		func() error { return registerComplexityFindReport(handler, owner) },
 	}

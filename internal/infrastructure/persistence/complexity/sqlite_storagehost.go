@@ -12,10 +12,10 @@ import (
 )
 
 const (
-	ComplexitySaveScanEventStorageHostOperation      = "save_scan_event"
-	ComplexitySaveHotspotStorageHostOperation        = "save_hotspot"
+	ComplexitySaveScanEventStorageHostOperation       = "save_scan_event"
+	ComplexitySaveHotspotStorageHostOperation         = "save_hotspot"
 	ComplexitySaveHotspotEvidenceStorageHostOperation = "save_hotspot_evidence"
-	ComplexitySaveReportArtifactStorageHostOperation = "save_report_artifact"
+	ComplexitySaveReportArtifactStorageHostOperation  = "save_report_artifact"
 	complexityStorageHostReceiptTable                 = "complexity_storagehost_operation_receipt"
 )
 
@@ -46,11 +46,11 @@ func (identity ComplexityStorageHostOperationIdentity) validate() error {
 }
 
 type complexityStorageHostEffectBinding struct {
-	table      string
-	idColumn   string
-	effectID   string
+	table       string
+	idColumn    string
+	effectID    string
 	indexColumn string
-	indexValue string
+	indexValue  string
 }
 
 func complexityStorageHostEffect(operation string) (complexityStorageHostEffectBinding, bool) {

@@ -48,6 +48,7 @@ const (
 	ErrorCodeDuplicateConflict    = "duplicate_op_conflict"
 	ErrorCodeGenerationStale      = "writer_generation_stale"
 	ErrorCodeStoreUnavailable     = "store_unavailable"
+	ErrorCodeForbidden            = "forbidden"
 	ErrorCodeUnreachable          = "storage_host_unreachable"
 	ErrorCodeOutcomeUnknown       = "outcome_unknown"
 )
@@ -760,6 +761,8 @@ func statusForError(e *Error) int {
 		return http.StatusConflict
 	case ErrorCodeUnauthorized:
 		return http.StatusUnauthorized
+	case ErrorCodeForbidden:
+		return http.StatusForbidden
 	default:
 		return http.StatusBadRequest
 	}

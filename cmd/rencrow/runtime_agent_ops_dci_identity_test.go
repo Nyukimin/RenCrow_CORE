@@ -90,7 +90,8 @@ func TestAgentOpsDCIIdentityAcceptanceUsesProductionTaskExecutionAdmission(t *te
 		inner:  inner,
 		runner: &taskExecutionRunner{owner: deps.taskManager, inner: inner},
 	}
-	handler := newAgentOpsTestHandlerWithTaskOwner(t, token, executor, deps.taskManager)
+	nativeAdmission := &agentOpsNativeCodingAdmissionStub{}
+	handler := newAgentOpsTestHandlerWithTaskOwnerAndNativeAdmission(t, token, executor, deps.taskManager, nativeAdmission)
 	rec := serveAgentOpsDCIRequest(t, handler, token, requestID, `{"operation":"dci_identity_acceptance","query":"query"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
@@ -98,6 +99,9 @@ func TestAgentOpsDCIIdentityAcceptanceUsesProductionTaskExecutionAdmission(t *te
 	calls, executeCalls := inner.snapshot()
 	if executeCalls != 0 || len(calls) != 3 {
 		t.Fatalf("production-equivalent calls=%d legacy=%d, want 3/0", len(calls), executeCalls)
+	}
+	if nativeAdmission.calls != 0 {
+		t.Fatalf("fixed DCI operation reached native admission %d times", nativeAdmission.calls)
 	}
 	firstIdentity, err := domainexecution.IdentityFromContext(calls[0].ctx)
 	if err != nil {
@@ -132,6 +136,21 @@ func TestAgentOpsDCIIdentityAcceptanceUsesProductionTaskExecutionAdmission(t *te
 	runs, err := deps.taskManager.ListRuns(context.Background(), domaintask.RunFilter{TaskID: admitted.TaskID})
 	if err != nil || len(runs) != 1 || runs[0].RunID != firstIdentity.RunID || runs[0].Status != domaintask.RunStatusSucceeded {
 		t.Fatalf("admitted runs=%+v err=%v identity=%+v", runs, err, firstIdentity)
+	}
+}
+
+func TestNormalizeAgentOpsRequestPreservesDCIWhitespaceMessageSemantics(t *testing.T) {
+	request := agentOpsRequest{
+		Message:   " \t",
+		Operation: agentOpsDCIIdentityAcceptanceOperation,
+		Query:     " query ",
+	}
+	branch, err := normalizeAgentOpsRequest(&request)
+	if err != nil || branch != agentOpsRequestBranchDCIIdentityAcceptance {
+		t.Fatalf("branch=%d error=%v, want fixed DCI operation", branch, err)
+	}
+	if request.Message != " \t" || request.Query != "query" {
+		t.Fatalf("normalized request=%#v: preserve message and normalize only DCI query", request)
 	}
 }
 

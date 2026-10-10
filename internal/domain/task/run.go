@@ -40,16 +40,17 @@ const (
 // Run is one non-hierarchical execution belonging to exactly one Task.
 type Run struct {
 	// WriterGeneration is a store-local fencing value, not an identity. Zero marks historical unbound records.
-	WriterGeneration      uint64            `json:"writer_generation,omitempty"`
-	RunID                 modulecore.RunID  `json:"run_id"`
-	TaskID                modulecore.TaskID `json:"task_id"`
-	StartReason           RunStartReason    `json:"start_reason"`
-	Assignee              string            `json:"assignee,omitempty"`
-	Status                RunStatus         `json:"status"`
-	StartedAt             time.Time         `json:"started_at"`
-	CompletedAt           *time.Time        `json:"completed_at,omitempty"`
-	Summary               string            `json:"summary,omitempty"`
-	StartCheckpointSHA256 string            `json:"start_checkpoint_sha256,omitempty"`
+	WriterGeneration      uint64             `json:"writer_generation,omitempty"`
+	RunID                 modulecore.RunID   `json:"run_id"`
+	TaskID                modulecore.TaskID  `json:"task_id"`
+	TraceID               modulecore.TraceID `json:"trace_id,omitempty"`
+	StartReason           RunStartReason     `json:"start_reason"`
+	Assignee              string             `json:"assignee,omitempty"`
+	Status                RunStatus          `json:"status"`
+	StartedAt             time.Time          `json:"started_at"`
+	CompletedAt           *time.Time         `json:"completed_at,omitempty"`
+	Summary               string             `json:"summary,omitempty"`
+	StartCheckpointSHA256 string             `json:"start_checkpoint_sha256,omitempty"`
 }
 
 // RunFilter selects persisted Run history. Results are returned chronologically.
@@ -65,6 +66,11 @@ func (r Run) Validate() error {
 	}
 	if err := r.TaskID.Validate(); err != nil {
 		return fmt.Errorf("task_id is invalid: %w", err)
+	}
+	if r.TraceID != "" {
+		if err := r.TraceID.Validate(); err != nil {
+			return fmt.Errorf("trace_id is invalid: %w", err)
+		}
 	}
 	if !ValidRunStartReason(r.StartReason) {
 		return fmt.Errorf("invalid run start reason: %s", r.StartReason)

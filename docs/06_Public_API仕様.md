@@ -43,7 +43,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /health` | COREと設定済み依存serviceの総合health |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読 |
-| `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを一回実行 |
+| `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |
 | `GET/POST /viewer/character-runtime` | Character一覧、複数Character Roundと会話ID |
 | `/viewer/status`, `/viewer/agents` | runtime と agent の状態 |
 | `GET /viewer/idlechat/status` | IdleChat状態と読み取り専用の`word_topic_stock`、`forecast_stock`、`episode_stock`、`topic_stock_playback` snapshot |
@@ -546,7 +546,7 @@ outbox followerとしてcommit直後とstartupに再生し、外部follower fail
 認証、header、body、request IDの検証に成功したrequestだけがWorker foreground leaseを取得します。
 leaseはShiro実行の成功、失敗、client cancelのいずれでも解放し、並行requestでは最後の1件が終わるまで保持します。
 この間、IdleChatのbackground Worker生成はOPSより先に再queueしません。
-次のheaderを各1個だけ必須とします。
+次のheaderを各1個だけ必須とします。`X-RenCrow-Input-Origin`だけは省略可能で、省略時は`automation`です。指定する場合は1個だけを受理します。
 
 | header | 値 |
 | --- | --- |
@@ -555,19 +555,50 @@ leaseはShiro実行の成功、失敗、client cancelのいずれでも解放し
 | `X-RenCrow-Client` | `RenCrow_CMD` |
 | `X-RenCrow-Interaction-Profile` | `agent-ops` |
 | `Content-Type` | `application/json` |
+| `X-RenCrow-Input-Origin` | 省略時`automation`。指定時は`automation`または`human` |
 
-queryは受けず、request bodyは最大64 KiBのstrict JSONです。唯一のfield `message`は空白でなく、
-encoded bytesで最大32 KiBです。
+query parameterは受けず、request bodyは最大64 KiBのUTF-8 JSON object 1個です。JSON objectの後ろはEOFまで読み、
+未知field、同じDTO fieldへdecodeされる重複key（escape／casefold aliasを含む）、不正UTF-8、不対surrogate escape、
+malformed JSON、trailing valueを拒否します。literal U+FFFDと正しいsurrogate pairは通常のUnicode文字列として扱います。
+body DTOのfieldは`message`、`operation`、`query`、`target`だけで、既存DTOのcase-insensitive field matchingを維持します。
+missing／`null`のfieldは空文字列相当として既存のrequest-shape検証へ渡します。
+
+requestは次のtagged unionです。通常のShiro／Worker実行では`message`が空白以外を含み、`operation`／`query`／`target`は空です。
+固定DCI identity acceptanceでは`message`が空白だけで、`operation`は`dci_identity_acceptance`、`query`は空白以外を含み、`target`は空です。
+native Resumeでは`message`／`query`は空、`operation`は`native_resume`、`target`は`task_id`と`expected_core_run_id`だけを持ちます。
+fieldの混在、欠落、重複、未知fieldは拒否します。`message`はJSON decode後のUTF-8 bytesで最大32 KiBです。上限は先頭・末尾の空白を含む元の文字列に適用し、
+空白判定以外では文字列を変更せず、Shiroの`TurnInput`とnative coding user messageへ渡します。DCI `query`も空白除去後のUTF-8 bytesで最大32 KiBです。
 
 ```json
 {"message":"全DBのOwner routeを確認して"}
 ```
 
+同じnative OPS Taskの明示Resumeは、serverが設定したauthenticated userに属する既存Taskを指します。clientはuser、Agent、scope、backend、
+Harness child IDs、Task criteria revisionを指定できません。
+
+```json
+{"operation":"native_resume","target":{"task_id":"tsk_01a07000-0000-7000-8000-000000000001","expected_core_run_id":"run_01a07000-0000-7000-8000-000000000002"}}
+```
+
+未知、空、重複した`X-RenCrow-Input-Origin`は400で拒否します。`human`はnative profileが有効な通常`message`だけに指定でき、DCI operationまたはnative profile無効時は拒否します。このheaderは認証済みuserが宣言したoriginであり、物理的な人間入力、TTY、model、roleを証明しません。
+
 COREはtokenに束縛したserver設定の`user_id`からHTTP user scopeを作り、Shiro／`worker`／`ops`の
 child scopeへ導出して実在Shiro Agentへ渡します。clientはuser、Agent、role、scope、route、model、TaskIDを
 指定できません。認証済み`X-Request-ID`はShiro child scopeの`request_id`として保持し、実行の
 `task_id`とは分離します。同じrequest IDとcanonical payloadの再送は下流child request／idempotency identityを
-再現できますが、TaskIDをRequestIDまたはTraceIDとして再利用しません。成功時は次の6 fieldだけをHTTP 200で返します。
+再現できますが、TaskIDをRequestIDまたはTraceIDとして再利用しません。local modeでnative coding profileが有効な場合、
+認証済みOPS messageは実行前にConversation ownerの`AcceptOPSInput`と`ReadAcceptedOPSInput`をuser parent scopeで通り、
+owner receiptと本文のexact bytes／payload hashを照合します。保存済みreceiptのcanonical IDsからCORE Taskとfirst Runを一度だけ
+claimし、creatorだけがShiro scope、Task／Run／Trace identity、共通native coding admissionを通って実行します。Human declarationの場合、accepted receiptはdeclared originを含み、初回Start直前に元のuser request capabilityを使ってConversation ownerからreceiptとrawを再読します。identity、payload hash、lifecycle、raw bytesが一致した場合だけOriginProofを署名し、同一Start bytesに固定してHarnessへ渡します。source readまたは署名が不成立ならHumanとしてblocked／rejectedになり、Automationへdowngradeしません。既に凍結したStartのretryは同じbytesを使います。
+AcceptまたはReadの不成立、owner／receipt／本文の不一致はclaimと実行を行いません。native admissionが`rejected`または`blocked`なら
+creatorのRunをTask owner経由でfailedに閉じ、旧経路へfallbackしません。固定DCI identity-acceptance operationはこのmessage admissionを通りません。
+`native_resume`は新しいOPS request IDとTask／Run世代fenceを使い、Conversation `AcceptOPSInput`を再実行しません。Task ownerは
+authenticated userと元のaccepted OPS claim、expected latest CORE Run、terminal Task／Run、source Action／Attemptを同一Task transaction内で照合し、
+新しいCORE Run／Traceとimmutable Resume claimを一度だけ作成します。元のaccepted receipt／raw bytes／Human origin declaration／OriginProofと
+Task criteria revisionは変更せず、Resume用に再署名もしません。Shiroは保存済みHarness Task／Thread／Run IDsへ`run/resume`を送り、
+新規Session／Open／Startは送りません。Resume payloadとkeyは外部RPC前にActionへ固定し、同一invocation内で期限・cancel・現在Task fenceを再確認しながら行う有限retryだけ同じbytesを再利用します。persisted `DeliveryUnknown`になった後の別invocationはHarness mutationを行わず、保存済みReceipt／Run／Session IDsをHarness ownerからread-onlyで照合します。
+known childがterminalで、ID、exact RunResult、criteria proofが一致した場合だけ、Task owner fence内で現在latest Run、Shiro assignment、user claim、criteria pin、writer authorityを再検証してAction／Attemptへ一度だけ保存します。正しいterminal result／proofが既に保存済みなら、Actionをrewriteせず保存済みproofを使います。初回の確定したHarness rejectionはActionへ保存後にTaskをfailedへ閉じます。rejectionの保存失敗、prior unknown後のrejection、owner read failure、running／unknown state、ID mismatch、欠落・不一致のresult proofは成功に投影せず、Task／Runをunknown／blockedのまま保持します。process再開後も、取得済みの新writer leaseと同じimmutable Resume claim／latest Runの確認を通る場合だけ旧generationのterminal resultをadoptし、その後Taskを閉じます。
+native profileが無効な場合の成功responseは次の6 fieldだけをHTTP 200で返します。
 
 TaskIDはCanonical ID規約により`modules/core`が生成・検証し、`internal/domain/task`は同じ型を使います。新規値は`tsk_` prefix付き
 UUIDv7、履歴移行値だけはUUIDv5を使います。`task_id`は小文字のcanonical UUID表記で、UUIDv4、空白、旧形式を
@@ -591,6 +622,27 @@ migrationだけが行い、移行namespaceは`6570d821-e63e-592d-a51f-8cf4b43cdb
 不正JSON／未知field／trailing JSON／request ID不正は400、非JSONは415、上限超過は413、
 Shiro実行失敗または空出力は500です。error responseはsafe codeだけを返し、token、入力本文、内部errorを
 含めません。`POST /viewer/send`の観測用`user_id`はこの認証契約の代替になりません。
+
+native coding profileが有効な通常messageでは、成功時に`request_id`、canonical `task_id`、first `run_id`、
+`claim_status`、`task_status`、`run_status`と、creatorへ返すaccepted outputだけを投影します。replayはowner receiptを再読込した後、
+stored claim／lifecycle statusを返します。replay responseにcached outputやverificationを含めません。既に実行中のclaimと
+outcome unknownはHTTP 202で返し、unknownのTask／Runをactiveのまま保持して再実行しません。Task／Runが既にterminalなら
+そのstatusを返します。Harness resultがcompletedでもverificationがpassedでない場合、criteria revisionが作成時に保存したTask pinと
+一致しない場合、またはsealed verifier evidenceのowner proofを確認できない場合はShiro executionを成功として扱わず、outputを
+成功responseへ投影しません。raw RunResultはAction ownerのterminal recordに保持します。Harnessがcancelledを返した場合はTask／Runもcancelledです。native profileのowner／実行失敗はsafe codeと
+canonical Task／Run statusをHTTP 500または503で返し、入力本文、内部errorは公開しません。
+
+```json
+{
+  "request_id": "ops-opaque",
+  "task_id": "tsk_01a07000-0000-7000-8000-000000000001",
+  "run_id": "run_01a07000-0000-7000-8000-000000000002",
+  "claim_status": "claimed",
+  "task_status": "succeeded",
+  "run_status": "succeeded",
+  "output": "検証済みの実行結果"
+}
+```
 
 ### Worker data.write receipt
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
@@ -123,11 +122,10 @@ var (
 	ErrNativeCodingOutcomeUnknown = errors.New("native coding delegation outcome unknown")
 )
 
-// NativeCodingError is returned by Execute for a Run that the Harness
-// determined and that is not a verified success to nil error: any status other
-// than completed, and completed with a failed verification. The typed result is
-// kept, so a caller reads the Harness status, code and references with
-// errors.As instead of parsing text.
+// NativeCodingError is returned by Execute for any RunResult that is not an
+// accepted result. The typed result is kept, so a caller reads the Harness
+// status, verification, code and references with errors.As instead of parsing
+// text.
 type NativeCodingError struct {
 	Result NativeCodingResult
 }
@@ -180,7 +178,8 @@ func (s *ShiroAgent) executeNativeCoding(ctx context.Context, t conversation.Tur
 	messages := append([]llm.Message(nil), dynamic...)
 	var recallPack *conversation.RecallPack
 	if s.conversation != nil {
-		pack, err := s.conversation.BeginTurn(ctx, t.SessionID(), t.MessageText())
+		recallCtx := conversation.WithNativeRecallProvenanceIntent(ctx)
+		pack, err := s.conversation.BeginTurn(recallCtx, t.SessionID(), t.MessageText())
 		if err != nil {
 			log.Printf("[Shiro] BeginTurn failed for the native coding delegation: %v", err)
 		} else if pack != nil {
@@ -193,7 +192,7 @@ func (s *ShiroAgent) executeNativeCoding(ctx context.Context, t conversation.Tur
 		characterPrompt,
 		currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext),
 		messages,
-		llm.Message{Role: "user", Content: strings.TrimSpace(t.MessageText())},
+		llm.Message{Role: "user", Content: t.MessageText()},
 	)
 	result, err := s.nativeCoding.DelegateNativeCoding(ctx, NativeCodingRequest{Input: t, Messages: typed})
 	if err != nil {
@@ -212,18 +211,16 @@ func (s *ShiroAgent) executeNativeCoding(ctx context.Context, t conversation.Tur
 }
 
 // nativeCodingResponse converts a delegation result to the string/error form of
-// Execute. Only a completed Run is a nil error; completed is not read as the
-// Task's success: a failed verification is an error, and a verification that
-// was not run is said so in the answer.
+// Execute. Only NativeCodingResult.Accepted is a nil error; every other
+// RunResult remains typed so Task owners cannot mistake completed but
+// unverified work for accepted success.
 func nativeCodingResponse(result NativeCodingResult) (string, error) {
-	switch {
-	case result.Status != NativeRunCompleted:
-		return result.FinalText, &NativeCodingError{Result: result}
-	case result.Verification == NativeVerificationFailed:
-		return result.FinalText, &NativeCodingError{Result: result}
-	case result.Verification == NativeVerificationPassed:
+	if result.Accepted() {
 		return result.FinalText, nil
-	default:
-		return result.FinalText + unverifiedNote(result.Verification), nil
 	}
+	response := result.FinalText
+	if result.Status == NativeRunCompleted && result.Verification != NativeVerificationFailed {
+		response += unverifiedNote(result.Verification)
+	}
+	return response, &NativeCodingError{Result: result}
 }

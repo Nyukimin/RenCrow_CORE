@@ -76,7 +76,7 @@ func buildOrchestratorRuntime(
 	}
 
 	log.Println("=== v3 Local Mode ===")
-	nativeCoding, err := buildNativeCodingRuntime(cfg, deps.actionManager)
+	nativeCoding, err := buildNativeCodingRuntime(cfg, deps.actionManager, deps.taskManager)
 	if err != nil {
 		log.Fatalf("Failed to configure the shiro_native_coding_v1 profile: %v", err)
 	}

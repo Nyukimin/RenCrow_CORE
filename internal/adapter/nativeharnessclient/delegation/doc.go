@@ -20,8 +20,8 @@
 // What this package never does: select a backend (the orchestrator admission
 // does, from configuration), fall back to another executor, run a Harness Tool
 // as a CORE Action, copy a Harness Event into CORE's Canonical Event Store, or
-// sign a request. The delegation is sent as Automation: CORE has no ThreadID at
-// reception time and no store of the accepted original input yet (design
-// inquiries D5 and D6), so no OriginProof can be issued, and a Human relay is
-// not claimed.
+// sign a request. A fresh Start for a canonical accepted OPS claim reads the
+// owner record through a typed request-scoped capability; Automation is sent
+// without proof, while a declared Human origin is signed and frozen in the
+// exact Start payload. The capability itself is never persisted in the Action.
 package delegation

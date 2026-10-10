@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -506,6 +507,84 @@ func TestTaskLifecycleFailsQueuedRootAndChildOnExecutionError(t *testing.T) {
 	}
 }
 
+func TestTaskLifecycleKeepsNativeCodingOutcomeUnknownActive(t *testing.T) {
+	ctx := context.Background()
+	manager := newRecordingTaskLifecycleManager()
+	lifecycle := newTaskLifecycle(manager)
+	rootID := modulecore.NewTaskID()
+	_, err := lifecycle.createRoot(ctx, ProcessMessageRequest{RootTaskID: rootID.String(), UserMessage: "delegate"})
+	if err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	executionTaskID, err := lifecycle.prepareExecution(ctx, rootID, routing.RouteCHAT, modulecore.NewEventID(), taskLifecycleMio)
+	if err != nil {
+		t.Fatalf("prepareExecution: %v", err)
+	}
+	if err := lifecycle.recordAssignmentAndStart(ctx, rootID, executionTaskID, taskLifecycleMio, modulecore.NewEventID()); err != nil {
+		t.Fatalf("recordAssignmentAndStart: %v", err)
+	}
+	unknown := fmt.Errorf("wrapped: %w", domainagent.ErrNativeCodingOutcomeUnknown)
+	if err := lifecycle.finish(ctx, rootID, executionTaskID, "ignored", unknown); err != nil {
+		t.Fatalf("finish outcome unknown: %v", err)
+	}
+	if manager.tasks[rootID].Status != domaintask.StatusRunning {
+		t.Fatalf("Task status=%s, want running while native outcome is unknown", manager.tasks[rootID].Status)
+	}
+	run, err := lifecycle.activeRunForTask(ctx, rootID)
+	if err != nil || run.Status != domaintask.RunStatusRunning {
+		t.Fatalf("Run=%+v err=%v, want active running Run", run, err)
+	}
+	for _, call := range manager.calls {
+		if call == "Fail" || call == "Succeed" || call == "Cancel" {
+			t.Fatalf("outcome unknown terminalized Task/Run: calls=%v", manager.calls)
+		}
+	}
+}
+
+func TestTaskLifecycleCancelsParentForNativeCodingCancelledResult(t *testing.T) {
+	ctx := context.Background()
+	manager := &cancellationContextTaskLifecycleManager{recordingTaskLifecycleManager: newRecordingTaskLifecycleManager()}
+	lifecycle := newTaskLifecycle(manager)
+	rootID := modulecore.NewTaskID()
+	root, err := lifecycle.createRoot(ctx, ProcessMessageRequest{RootTaskID: rootID.String(), UserMessage: "cancel native run"})
+	if err != nil {
+		t.Fatalf("createRoot: %v", err)
+	}
+	executionTaskID, err := lifecycle.prepareExecution(ctx, root.TaskID, routing.RouteOPS, modulecore.NewEventID(), taskLifecycleShiro)
+	if err != nil {
+		t.Fatalf("prepareExecution: %v", err)
+	}
+	if err := lifecycle.recordAssignmentAndStart(ctx, root.TaskID, executionTaskID, taskLifecycleShiro, modulecore.NewEventID()); err != nil {
+		t.Fatalf("recordAssignmentAndStart: %v", err)
+	}
+	executionErr := &domainagent.NativeCodingError{Result: domainagent.NativeCodingResult{
+		Status: domainagent.NativeRunCancelled,
+		Code:   "USER_CANCELLED",
+	}}
+	cancelledParent, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := lifecycle.finish(cancelledParent, root.TaskID, executionTaskID, "must not succeed", executionErr); err != nil {
+		t.Fatalf("finish cancelled native result: %v", err)
+	}
+	for _, taskID := range []modulecore.TaskID{executionTaskID, root.TaskID} {
+		if got := manager.tasks[taskID]; got.Status != domaintask.StatusCancelled || got.Summary != executionErr.Error() {
+			t.Fatalf("cancelled task %s = status %s summary %q, want cancelled with typed result %q", taskID, got.Status, got.Summary, executionErr.Error())
+		}
+		if run, err := lifecycle.activeRunForTask(ctx, taskID); err == nil {
+			t.Fatalf("cancelled task %s still has an active Run: %+v", taskID, run)
+		}
+		runs, err := manager.ListRuns(ctx, domaintask.RunFilter{TaskID: taskID})
+		if err != nil || len(runs) != 1 || runs[0].Status != domaintask.RunStatusCancelled || runs[0].Summary != executionErr.Error() {
+			t.Fatalf("cancelled task %s Runs=%+v err=%v", taskID, runs, err)
+		}
+	}
+	for _, call := range manager.calls {
+		if call == "Fail" || call == "Succeed" {
+			t.Fatalf("native cancellation used the wrong terminal transition: %v", manager.calls)
+		}
+	}
+}
+
 func TestTaskLifecyclePreservesWaitingPauseForExecutionAndRoot(t *testing.T) {
 	ctx := context.Background()
 	manager := newRecordingTaskLifecycleManager()
@@ -706,6 +785,12 @@ func (m *recordingTaskLifecycleManager) Succeed(_ context.Context, taskID module
 	return m.finish(taskID, domaintask.StatusSucceeded, summary)
 }
 
+func (m *recordingTaskLifecycleManager) Cancel(_ context.Context, taskID modulecore.TaskID, summary string) (domaintask.Task, error) {
+	m.calls = append(m.calls, "Cancel")
+	m.callIDs = append(m.callIDs, "Cancel:"+taskID.String())
+	return m.finish(taskID, domaintask.StatusCancelled, summary)
+}
+
 func (m *recordingTaskLifecycleManager) Wait(_ context.Context, taskID modulecore.TaskID, reason string) (domaintask.Task, error) {
 	m.calls = append(m.calls, "Wait")
 	m.callIDs = append(m.callIDs, "Wait:"+taskID.String())
@@ -759,6 +844,8 @@ func (m *recordingTaskLifecycleManager) finish(taskID modulecore.TaskID, status 
 		runStatus := domaintask.RunStatusSucceeded
 		if status == domaintask.StatusFailed {
 			runStatus = domaintask.RunStatusFailed
+		} else if status == domaintask.StatusCancelled {
+			runStatus = domaintask.RunStatusCancelled
 		}
 		completedAt := task.UpdatedAt
 		for runID, run := range m.runs {
@@ -831,6 +918,17 @@ func (m *recordingTaskLifecycleManager) RecordAssignment(_ context.Context, task
 }
 
 var _ TaskLifecycleManager = (*recordingTaskLifecycleManager)(nil)
+
+type cancellationContextTaskLifecycleManager struct {
+	*recordingTaskLifecycleManager
+}
+
+func (m *cancellationContextTaskLifecycleManager) Cancel(ctx context.Context, taskID modulecore.TaskID, summary string) (domaintask.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return domaintask.Task{}, err
+	}
+	return m.recordingTaskLifecycleManager.Cancel(ctx, taskID, summary)
+}
 
 type recordingTaskLifecycleEventPort struct {
 	events              []OrchestratorEvent

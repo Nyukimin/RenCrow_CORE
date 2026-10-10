@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	nativedelegation "github.com/Nyukimin/RenCrow_CORE/internal/adapter/nativeharnessclient/delegation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
@@ -32,26 +33,39 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 	for _, action := range storedActions {
 		actionStatus := action.Status
 		summary := action.Summary
-		if actionStatus == domainaction.StatusOpen {
+		isNativeDelegation := action.Kind == domainaction.KindDelegation && action.Name == domainaction.NativeDelegationActionName
+		var current *domainaction.Attempt
+		if actionStatus == domainaction.StatusOpen || isNativeDelegation {
 			attempts, err := actions.ListAttempts(ctx, domainaction.AttemptFilter{ActionID: action.ActionID})
 			if err != nil {
 				return recovered, fmt.Errorf("load attempts for stale Action %s: %w", action.ActionID, err)
 			}
-			var current *domainaction.Attempt
 			for index := range attempts {
 				if attempts[index].AttemptID == action.CurrentAttemptID {
 					current = &attempts[index]
 					break
 				}
 			}
-			if current == nil || current.Status != domainaction.AttemptStatusRunning {
+			if current == nil {
 				return recovered, fmt.Errorf("stale Action %s has no active current Attempt", action.ActionID)
 			}
-			summary = "process restarted before Action completion"
-			if _, _, err := actions.CompleteAttempt(ctx, action.ActionID, current.AttemptID, domainaction.AttemptStatusCancelled, domainaction.StatusCancelled, summary); err != nil {
-				return recovered, fmt.Errorf("cancel stale Action %s: %w", action.ActionID, err)
+			if actionStatus == domainaction.StatusOpen {
+				if current.Status != domainaction.AttemptStatusRunning {
+					return recovered, fmt.Errorf("stale Action %s has no active current Attempt", action.ActionID)
+				}
+				if isNativeDelegation {
+					// A native Harness mutation may have reached the owner before this
+					// process stopped. Its typed owner forbids generic completion; keep
+					// the original Run and frozen idempotency state for later owner-led
+					// reconciliation instead of manufacturing a terminal outcome.
+					continue
+				}
+				summary = "process restarted before Action completion"
+				if _, _, err := actions.CompleteAttempt(ctx, action.ActionID, current.AttemptID, domainaction.AttemptStatusCancelled, domainaction.StatusCancelled, summary); err != nil {
+					return recovered, fmt.Errorf("cancel stale Action %s: %w", action.ActionID, err)
+				}
+				actionStatus = domainaction.StatusCancelled
 			}
-			actionStatus = domainaction.StatusCancelled
 		}
 		run, ok := runByID[action.RunID]
 		if !ok {
@@ -63,7 +77,17 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 		status := domaintask.StatusFailed
 		switch actionStatus {
 		case domainaction.StatusSucceeded:
-			status = domaintask.StatusSucceeded
+			if !isNativeDelegation {
+				status = domaintask.StatusSucceeded
+				break
+			}
+			expectedCriteriaRevision := ""
+			if task, taskErr := tasks.Get(ctx, action.TaskID); taskErr == nil {
+				expectedCriteriaRevision = task.ExpectedCriteriaRevision
+			}
+			if nativedelegation.HasAcceptedStoredRunResult(*current, expectedCriteriaRevision) {
+				status = domaintask.StatusSucceeded
+			}
 		case domainaction.StatusCancelled, domainaction.StatusSuperseded:
 			status = domaintask.StatusCancelled
 		}

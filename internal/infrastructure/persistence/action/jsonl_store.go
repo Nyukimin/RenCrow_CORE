@@ -2,6 +2,7 @@ package action
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,8 +13,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -63,11 +67,16 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		batch:       batch,
 	}
 	if err := batch.Read(context.Background(), func() error {
-		if _, err := store.loadActions(context.Background()); err != nil {
+		actions, err := store.loadActions(context.Background())
+		if err != nil {
 			return fmt.Errorf("validate action state: %w", err)
 		}
-		if _, err := store.loadAttempts(context.Background()); err != nil {
+		attempts, err := store.loadAttempts(context.Background())
+		if err != nil {
 			return fmt.Errorf("validate attempt state: %w", err)
+		}
+		if err := validateSnapshot(actions, attempts); err != nil {
+			return fmt.Errorf("validate action snapshot: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -292,6 +301,14 @@ func (tx *transactionStore) SaveAction(ctx context.Context, value domainaction.A
 			if existing.TaskID != value.TaskID || existing.RunID != value.RunID || existing.Kind != value.Kind || !existing.CreatedAt.Equal(value.CreatedAt) {
 				return fmt.Errorf("action identity fields are immutable")
 			}
+			if isNativeDelegationAction(existing) {
+				if value.Name != existing.Name || value.CurrentAttemptID != existing.CurrentAttemptID {
+					return fmt.Errorf("native delegation name and current attempt are immutable")
+				}
+				if !existing.IsOpen() && value.Status != existing.Status {
+					return fmt.Errorf("terminal native delegation status is immutable")
+				}
+			}
 		}
 		value = cloneAction(value)
 		tx.actions[value.ActionID] = value
@@ -357,10 +374,24 @@ func (tx *transactionStore) SaveAttempt(ctx context.Context, value domainaction.
 		if _, ok := tx.actions[value.ActionID]; !ok {
 			return fmt.Errorf("attempt action is unavailable: %w", domainaction.ErrNotFound)
 		}
-		if existing, ok := tx.attempts[value.AttemptID]; ok {
+		action := tx.actions[value.ActionID]
+		if value.NativeDelegation != nil && !isNativeDelegationAction(action) {
+			return fmt.Errorf("typed native delegation state requires its canonical action")
+		}
+		existing, exists := tx.attempts[value.AttemptID]
+		if exists {
 			if existing.ActionID != value.ActionID || existing.StartReason != value.StartReason || !existing.StartedAt.Equal(value.StartedAt) {
 				return fmt.Errorf("attempt identity and start fields are immutable")
 			}
+			if err := validateAttemptRecordTransition(existing, value); err != nil {
+				return err
+			}
+		} else if isNativeDelegationAction(action) {
+			if err := validateInitialNativeAttempt(action, value); err != nil {
+				return err
+			}
+		} else if value.NativeDelegation != nil {
+			return fmt.Errorf("typed native delegation state requires its canonical action")
 		}
 		if value.Status == domainaction.AttemptStatusRunning {
 			for _, item := range tx.attempts {
@@ -592,14 +623,24 @@ func validateAttemptFilter(filter domainaction.AttemptFilter) error {
 
 func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Attempt) error {
 	actionByID := make(map[modulecore.ActionID]domainaction.Action, len(actions))
+	nativeByTaskRun := make(map[[2]string]modulecore.ActionID)
 	for index, item := range actions {
 		if err := item.Validate(); err != nil {
 			return fmt.Errorf("action snapshot record %d is invalid: %w", index, err)
+		}
+		if isNativeDelegationAction(item) {
+			key := [2]string{string(item.TaskID), string(item.RunID)}
+			if previous, ok := nativeByTaskRun[key]; ok && previous != item.ActionID {
+				return fmt.Errorf("Task Run %s/%s has multiple native delegation actions", item.TaskID, item.RunID)
+			}
+			nativeByTaskRun[key] = item.ActionID
 		}
 		actionByID[item.ActionID] = item
 	}
 	attemptByID := make(map[modulecore.AttemptID]domainaction.Attempt, len(attempts))
 	activeByAction := make(map[modulecore.ActionID]modulecore.AttemptID)
+	attemptCountByAction := make(map[modulecore.ActionID]int)
+	typedNativeByAction := make(map[modulecore.ActionID]bool)
 	for index, item := range attempts {
 		if err := item.Validate(); err != nil {
 			return fmt.Errorf("attempt snapshot record %d is invalid: %w", index, err)
@@ -607,6 +648,13 @@ func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Att
 		if _, ok := actionByID[item.ActionID]; !ok {
 			return fmt.Errorf("attempt %s refers to unavailable action %s", item.AttemptID, item.ActionID)
 		}
+		if item.NativeDelegation != nil {
+			if !isNativeDelegationAction(actionByID[item.ActionID]) {
+				return fmt.Errorf("typed native delegation state belongs to non-native action %s", item.ActionID)
+			}
+			typedNativeByAction[item.ActionID] = true
+		}
+		attemptCountByAction[item.ActionID]++
 		if item.Status == domainaction.AttemptStatusRunning {
 			if activeID, ok := activeByAction[item.ActionID]; ok && activeID != item.AttemptID {
 				return fmt.Errorf("action %s has multiple active attempts", item.ActionID)
@@ -617,6 +665,9 @@ func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Att
 	}
 	for _, action := range actions {
 		if action.CurrentAttemptID == "" {
+			if typedNativeByAction[action.ActionID] {
+				return fmt.Errorf("typed native delegation %s has no current attempt", action.ActionID)
+			}
 			continue
 		}
 		attempt, ok := attemptByID[action.CurrentAttemptID]
@@ -625,6 +676,28 @@ func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Att
 		}
 		if attempt.ActionID != action.ActionID {
 			return fmt.Errorf("action %s current attempt %s belongs to action %s", action.ActionID, action.CurrentAttemptID, attempt.ActionID)
+		}
+		if attempt.NativeDelegation != nil {
+			wantReason := domainaction.AttemptStartReasonFirst
+			if attempt.NativeDelegation.EffectiveMode() == domainaction.NativeDelegationModeResume {
+				wantReason = domainaction.AttemptStartReasonExplicitResume
+			}
+			if !isNativeDelegationAction(action) || attempt.StartReason != wantReason || attemptCountByAction[action.ActionID] != 1 {
+				return fmt.Errorf("typed native delegation %s must own exactly one initial attempt for its mode", action.ActionID)
+			}
+			if len(attempt.NativeDelegation.RunResult) == 0 {
+				stillUnknown := action.IsOpen() && attempt.IsActive() && !nativeHasDefiniteRejection(attempt.NativeDelegation)
+				rejected := action.Status == domainaction.StatusFailed && attempt.Status == domainaction.AttemptStatusFailed && nativeHasDefiniteRejection(attempt.NativeDelegation)
+				if !stillUnknown && !rejected {
+					return fmt.Errorf("native delegation without a run result must remain open/running or be terminally rejected")
+				}
+			} else if action.IsOpen() || attempt.IsActive() {
+				return fmt.Errorf("native delegation result and terminal state must be committed together")
+			} else if attempt.Status == domainaction.AttemptStatusSucceeded && attempt.NativeDelegation.Proof == nil {
+				return fmt.Errorf("successful native delegation requires a durable criteria proof")
+			} else if attempt.NativeDelegation.Proof != nil && attempt.Status != domainaction.AttemptStatusSucceeded {
+				return fmt.Errorf("native criteria proof requires a successful Action and Attempt")
+			}
 		}
 		if !action.IsOpen() && attempt.IsActive() {
 			return fmt.Errorf("terminal action %s current attempt %s is still running", action.ActionID, action.CurrentAttemptID)
@@ -648,9 +721,30 @@ func (s *JSONLStore) loadActions(ctx context.Context) ([]domainaction.Action, er
 		return nil, err
 	}
 	latest := make(map[modulecore.ActionID]domainaction.Action, len(items))
+	nativeByTaskRun := make(map[[2]string]modulecore.ActionID)
 	for index, item := range items {
 		if err := item.Validate(); err != nil {
 			return nil, fmt.Errorf("action record %d is invalid: %w", index, err)
+		}
+		if previous, ok := latest[item.ActionID]; ok {
+			if previous.TaskID != item.TaskID || previous.RunID != item.RunID || previous.Kind != item.Kind || !previous.CreatedAt.Equal(item.CreatedAt) {
+				return nil, fmt.Errorf("action record %d changes immutable identity fields", index)
+			}
+			if isNativeDelegationAction(previous) {
+				if !isNativeDelegationAction(item) || previous.Name != item.Name || previous.CurrentAttemptID != item.CurrentAttemptID {
+					return nil, fmt.Errorf("action record %d changes immutable native delegation identity", index)
+				}
+				if !previous.IsOpen() && item.Status != previous.Status {
+					return nil, fmt.Errorf("action record %d reopens or changes a terminal native delegation", index)
+				}
+			}
+		}
+		if isNativeDelegationAction(item) {
+			key := [2]string{string(item.TaskID), string(item.RunID)}
+			if previous, ok := nativeByTaskRun[key]; ok && previous != item.ActionID {
+				return nil, fmt.Errorf("action record %d duplicates native delegation for Task Run %s/%s", index, item.TaskID, item.RunID)
+			}
+			nativeByTaskRun[key] = item.ActionID
 		}
 		latest[item.ActionID] = item
 	}
@@ -672,6 +766,20 @@ func (s *JSONLStore) loadAttempts(ctx context.Context) ([]domainaction.Attempt, 
 		if err := item.Validate(); err != nil {
 			return nil, fmt.Errorf("attempt record %d is invalid: %w", index, err)
 		}
+		previous, exists := latest[item.AttemptID]
+		if !exists && item.NativeDelegation != nil {
+			if err := validateInitialNativeAttemptShape(item); err != nil {
+				return nil, fmt.Errorf("attempt record %d has invalid initial native state: %w", index, err)
+			}
+		}
+		if exists {
+			if previous.ActionID != item.ActionID || previous.StartReason != item.StartReason || !previous.StartedAt.Equal(item.StartedAt) {
+				return nil, fmt.Errorf("attempt record %d changes immutable identity or start fields", index)
+			}
+			if err := validateAttemptRecordTransition(previous, item); err != nil {
+				return nil, fmt.Errorf("attempt record %d: %w", index, err)
+			}
+		}
 		if item.Status == domainaction.AttemptStatusRunning {
 			if activeID, ok := activeByAction[item.ActionID]; ok && activeID != item.AttemptID {
 				return nil, fmt.Errorf("action %s has multiple active attempts", item.ActionID)
@@ -687,6 +795,37 @@ func (s *JSONLStore) loadAttempts(ctx context.Context) ([]domainaction.Attempt, 
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+func validateInitialNativeAttempt(action domainaction.Action, attempt domainaction.Attempt) error {
+	if !isNativeDelegationAction(action) || action.Name != domainaction.NativeDelegationActionName {
+		return fmt.Errorf("initial native attempt requires its canonical Action")
+	}
+	if action.Status != domainaction.StatusOpen || action.CurrentAttemptID != attempt.AttemptID {
+		return fmt.Errorf("initial native attempt must be the current attempt of an open Action")
+	}
+	if attempt.NativeDelegation == nil || !domaintask.ValidCriteriaRevision(attempt.NativeDelegation.ExpectedCriteriaRevision) {
+		return fmt.Errorf("new native attempt requires a valid frozen criteria revision")
+	}
+	return validateInitialNativeAttemptShape(attempt)
+}
+
+func validateInitialNativeAttemptShape(attempt domainaction.Attempt) error {
+	if attempt.NativeDelegation == nil {
+		return fmt.Errorf("initial native attempt requires typed native state")
+	}
+	wantReason := domainaction.AttemptStartReasonFirst
+	if attempt.NativeDelegation.EffectiveMode() == domainaction.NativeDelegationModeResume {
+		wantReason = domainaction.AttemptStartReasonExplicitResume
+	}
+	if attempt.StartReason != wantReason || attempt.Status != domainaction.AttemptStatusRunning || attempt.CompletedAt != nil || attempt.Summary != "" {
+		return fmt.Errorf("initial native attempt must be running with a mode-matching start reason")
+	}
+	state := attempt.NativeDelegation
+	if state.Open != nil || state.Start != nil || state.Resume != nil || len(state.RunResult) != 0 || state.Proof != nil || state.LastObservation != nil {
+		return fmt.Errorf("initial native attempt may not contain mutation outcomes or terminal data")
+	}
+	return nil
 }
 
 func marshalJSONLLines[T any](items []T) ([]byte, error) {
@@ -711,11 +850,149 @@ func cloneAction(value domainaction.Action) domainaction.Action {
 }
 
 func cloneAttempt(value domainaction.Attempt) domainaction.Attempt {
-	if value.CompletedAt != nil {
-		completedAt := *value.CompletedAt
-		value.CompletedAt = &completedAt
+	return value.Clone()
+}
+
+func validateAttemptRecordTransition(previous, next domainaction.Attempt) error {
+	if previous.NativeDelegation == nil {
+		if next.NativeDelegation != nil {
+			return fmt.Errorf("typed native delegation state cannot be attached after attempt creation")
+		}
+		return nil
 	}
-	return value
+	if next.NativeDelegation == nil {
+		return fmt.Errorf("native delegation state is immutable and cannot be removed")
+	}
+	oldState := previous.NativeDelegation
+	newState := next.NativeDelegation
+	if oldState.Mode != newState.Mode || !sameNativeDelegationSource(oldState.ResumeSource, newState.ResumeSource) {
+		return fmt.Errorf("native delegation mode and Resume source are immutable")
+	}
+	if oldState.ExpectedCriteriaRevision != newState.ExpectedCriteriaRevision {
+		return fmt.Errorf("native delegation expected criteria revision is immutable")
+	}
+	if !sameNativeReference(oldState.InputReference, newState.InputReference) {
+		return fmt.Errorf("native delegation input reference is immutable")
+	}
+	if err := validateMutationTransition(oldState.Open, newState.Open); err != nil {
+		return fmt.Errorf("open mutation transition is invalid: %w", err)
+	}
+	if err := validateMutationTransition(oldState.Start, newState.Start); err != nil {
+		return fmt.Errorf("start mutation transition is invalid: %w", err)
+	}
+	if err := validateMutationTransition(oldState.Resume, newState.Resume); err != nil {
+		return fmt.Errorf("Resume mutation transition is invalid: %w", err)
+	}
+	if len(oldState.RunResult) != 0 && !bytes.Equal(oldState.RunResult, newState.RunResult) {
+		return fmt.Errorf("native run result is immutable")
+	}
+	if oldState.Proof != nil && !sameNativeDelegationProof(oldState.Proof, newState.Proof) {
+		return fmt.Errorf("native criteria proof is immutable")
+	}
+	if oldState.Proof == nil && newState.Proof != nil &&
+		(previous.Status != domainaction.AttemptStatusRunning || next.Status != domainaction.AttemptStatusSucceeded) {
+		return fmt.Errorf("native criteria proof can be attached only with successful terminal state")
+	}
+	if previous.Status != domainaction.AttemptStatusRunning {
+		if next.Status != previous.Status || !sameTimePtr(previous.CompletedAt, next.CompletedAt) || previous.Summary != next.Summary {
+			return fmt.Errorf("terminal native attempt state is immutable")
+		}
+	}
+	if len(newState.RunResult) != 0 && (next.Status == domainaction.AttemptStatusRunning || previous.Status != domainaction.AttemptStatusRunning) {
+		return fmt.Errorf("native run result must be recorded with terminal attempt state")
+	}
+	if next.Status == domainaction.AttemptStatusRunning && nativeHasDefiniteRejection(newState) {
+		return fmt.Errorf("definite native rejection must terminalize the Action and Attempt")
+	}
+	if next.Status != domainaction.AttemptStatusRunning && len(newState.RunResult) == 0 &&
+		(next.Status != domainaction.AttemptStatusFailed || !nativeHasDefiniteRejection(newState)) {
+		return fmt.Errorf("native attempt without a RunResult can terminate only after a definite rejection")
+	}
+	return nil
+}
+
+func nativeHasDefiniteRejection(state *domainaction.NativeDelegation) bool {
+	if state == nil {
+		return false
+	}
+	return state.Open != nil && state.Open.Status == domainaction.NativeMutationStatusRejected ||
+		state.Start != nil && state.Start.Status == domainaction.NativeMutationStatusRejected ||
+		state.Resume != nil && state.Resume.Status == domainaction.NativeMutationStatusRejected
+}
+
+func sameNativeDelegationSource(left, right *domainaction.NativeDelegationResumeSource) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.ActionID == right.ActionID && left.AttemptID == right.AttemptID && left.HarnessTaskID == right.HarnessTaskID &&
+		left.ThreadID == right.ThreadID && left.RunID == right.RunID && left.ReceiptID == right.ReceiptID &&
+		left.PreviousRunID == right.PreviousRunID && left.RunResultSHA256 == right.RunResultSHA256 &&
+		(left.CheckpointID == nil && right.CheckpointID == nil || left.CheckpointID != nil && right.CheckpointID != nil && *left.CheckpointID == *right.CheckpointID)
+}
+
+func sameNativeReference(left, right *conversation.AcceptedOPSInputReference) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameNativeDelegationProof(left, right *domainaction.NativeDelegationProof) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if left.Version != right.Version || left.ExpectedCriteriaRevision != right.ExpectedCriteriaRevision ||
+		left.RunResultSHA256 != right.RunResultSHA256 || left.TerminalEventID != right.TerminalEventID ||
+		left.TerminalEventSeq != right.TerminalEventSeq || len(left.Evidence) != len(right.Evidence) {
+		return false
+	}
+	for index := range left.Evidence {
+		if left.Evidence[index] != right.Evidence[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func validateMutationTransition(previous, next *domainaction.NativeMutation) error {
+	if previous == nil {
+		if next == nil {
+			return nil
+		}
+		if next.Status != domainaction.NativeMutationStatusPrepared {
+			return fmt.Errorf("new mutation must start prepared")
+		}
+		return nil
+	}
+	if next == nil {
+		return fmt.Errorf("prepared mutation cannot be removed")
+	}
+	if previous.Key != next.Key || previous.PayloadSHA256 != next.PayloadSHA256 || !bytes.Equal(previous.Payload, next.Payload) {
+		return fmt.Errorf("mutation key and exact payload are immutable")
+	}
+	if len(previous.Result) != 0 || previous.ErrorCode != "" {
+		if previous.Status != next.Status || !bytes.Equal(previous.Result, next.Result) || previous.ErrorCode != next.ErrorCode {
+			return fmt.Errorf("definite mutation outcome is immutable")
+		}
+	}
+	allowed := previous.Status == next.Status ||
+		previous.Status == domainaction.NativeMutationStatusPrepared && next.Status == domainaction.NativeMutationStatusDeliveryUnknown ||
+		previous.Status == domainaction.NativeMutationStatusDeliveryUnknown && (next.Status == domainaction.NativeMutationStatusAccepted || next.Status == domainaction.NativeMutationStatusRejected)
+	if !allowed {
+		return fmt.Errorf("mutation status cannot move from %s to %s", previous.Status, next.Status)
+	}
+	return nil
+}
+
+func sameTimePtr(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func isNativeDelegationAction(value domainaction.Action) bool {
+	return value.Kind == domainaction.KindDelegation && domainaction.NormalizeName(value.Name) == domainaction.NativeDelegationActionName
 }
 
 func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
@@ -730,14 +1007,24 @@ func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
 		return nil, err
 	}
 	defer file.Close()
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReaderSize(file, jsonlbatch.MaxJSONLReadBufferSize)
 	var items []T
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		line, err := reader.ReadBytes('\n')
+		line, err := reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return nil, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
+		}
 		if len(line) > 0 {
+			recordBytes := len(line)
+			if line[len(line)-1] == '\n' {
+				recordBytes--
+			}
+			if recordBytes > jsonlbatch.MaxJSONLRecordBytes {
+				return nil, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
+			}
 			trimmed := strings.TrimSpace(string(line))
 			if trimmed != "" {
 				var item T

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
@@ -381,21 +382,33 @@ type L1MonthlyHighlight struct {
 }
 
 type L1KnowledgeItem struct {
-	ID           string
-	StagingID    string
-	Domain       string
-	Title        string
-	SourceID     string
-	SourceURL    string
-	RawText      string
-	RawHash      string
-	SummaryDraft string
-	Keywords     []string
-	LicenseNote  string
-	Meta         map[string]interface{}
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID            string
+	StagingID     string
+	Domain        string
+	Title         string
+	SourceID      string
+	SourceURL     string
+	RawText       string
+	RawHash       string
+	SummaryDraft  string
+	Keywords      []string
+	LicenseNote   string
+	Meta          map[string]interface{}
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	PromptSource  *llm.PromptSourceRef     `json:"-"`
+	SourceFailure L1KnowledgeSourceFailure `json:"-"`
 }
+
+// L1KnowledgeSourceFailure is a fixed internal reason why an eligible quote
+// could not be bound to its authenticated Common Raw source.
+type L1KnowledgeSourceFailure string
+
+const (
+	L1KnowledgeSourceFailureScopeDenied       L1KnowledgeSourceFailure = "scope_denied"
+	L1KnowledgeSourceFailureInvalid           L1KnowledgeSourceFailure = "invalid"
+	L1KnowledgeSourceFailureSourceUnavailable L1KnowledgeSourceFailure = "source_unavailable"
+)
 
 type L1KnowledgeEntity struct {
 	EntityID      string

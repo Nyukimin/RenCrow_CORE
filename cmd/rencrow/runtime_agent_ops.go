@@ -4,10 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"os"
@@ -18,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -28,6 +27,7 @@ import (
 
 const (
 	agentOpsPath               = "/v1/agent/ops"
+	agentOpsInputOriginHeader  = "X-RenCrow-Input-Origin"
 	agentOpsClient             = "RenCrow_CMD"
 	agentOpsInteractionProfile = "agent-ops"
 	agentOpsTaskChannel        = "agent_ops"
@@ -64,20 +64,23 @@ type agentOpsWorkerBusyNotifier interface {
 }
 
 type agentOpsHandler struct {
-	executor           agentOpsExecutor
-	toolExecutor       agentOpsToolExecutor
-	taskOwner          *taskmanager.Manager
-	userID             string
-	token              []byte
-	workerBusyNotifier agentOpsWorkerBusyNotifier
-	workerBusyMu       sync.Mutex
-	workerBusyRefs     int
+	executor              agentOpsExecutor
+	toolExecutor          agentOpsToolExecutor
+	nativeCoding          orchestrator.NativeCodingAdmission
+	acceptedOPSInputStore conversation.AcceptedOPSInputStore
+	taskOwner             *taskmanager.Manager
+	userID                string
+	token                 []byte
+	workerBusyNotifier    agentOpsWorkerBusyNotifier
+	workerBusyMu          sync.Mutex
+	workerBusyRefs        int
 }
 
 type agentOpsRequest struct {
-	Message   string `json:"message"`
-	Operation string `json:"operation"`
-	Query     string `json:"query"`
+	Message      string                      `json:"message"`
+	Operation    string                      `json:"operation"`
+	Query        string                      `json:"query"`
+	ResumeTarget *agentOpsNativeResumeTarget `json:"-"`
 }
 
 type agentOpsResponse struct {
@@ -95,7 +98,7 @@ type agentOpsErrorResponse struct {
 
 // newAgentOpsHandler validates enabled startup configuration, reads the
 // bearer token once, and returns nil when the ingress is disabled.
-func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager) (http.HandlerFunc, error) {
+func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore) (http.HandlerFunc, error) {
 	if cfg == nil || !cfg.LocalAgentOps.Enabled {
 		return nil, nil
 	}
@@ -104,6 +107,9 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 	}
 	if executor == nil {
 		return nil, errors.New("local_agent_ops executor is unavailable")
+	}
+	if nativeCoding != nil && acceptedOPSInputStore == nil {
+		return nil, errors.New("local_agent_ops accepted OPS input owner is unavailable")
 	}
 	userID := strings.TrimSpace(cfg.LocalAgentOps.UserID)
 	if userID == "" || !agentOpsUserIDPattern.MatchString(userID) {
@@ -119,16 +125,18 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 			toolExecutor, _ := executor.(agentOpsToolExecutor)
 			return toolExecutor
 		}(),
-		taskOwner:          taskOwner,
-		userID:             userID,
-		token:              append([]byte(nil), token...),
-		workerBusyNotifier: workerBusyNotifier,
+		taskOwner:             taskOwner,
+		nativeCoding:          nativeCoding,
+		acceptedOPSInputStore: acceptedOPSInputStore,
+		userID:                userID,
+		token:                 append([]byte(nil), token...),
+		workerBusyNotifier:    workerBusyNotifier,
 	}
 	return handler.ServeHTTP, nil
 }
 
-func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager) (http.HandlerFunc, error) {
-	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier, taskOwner)
+func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore) (http.HandlerFunc, error) {
+	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier, taskOwner, nativeCoding, acceptedOPSInputStore)
 	if err != nil || handler == nil {
 		return handler, err
 	}
@@ -183,6 +191,11 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeAgentOpsError(w, http.StatusBadRequest, "invalid_request_id")
 		return
 	}
+	inputOrigin, err := parseAgentOpsInputOrigin(r.Header)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusBadRequest, "invalid_input_origin")
+		return
+	}
 	if r.URL == nil || r.URL.RawQuery != "" {
 		writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -199,23 +212,18 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, agentOpsMaxBodyBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	var request agentOpsRequest
-	if err := decoder.Decode(&request); err != nil {
-		if isAgentOpsBodyTooLarge(err) {
+	body, err := readAgentOpsRequestBody(r.Body)
+	if err != nil {
+		if isAgentOpsBodyTooLarge(err) || errors.Is(err, errAgentOpsRequestTooLarge) {
 			writeAgentOpsError(w, http.StatusRequestEntityTooLarge, "request_too_large")
 		} else {
 			writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
 		}
 		return
 	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if isAgentOpsBodyTooLarge(err) {
-			writeAgentOpsError(w, http.StatusRequestEntityTooLarge, "request_too_large")
-		} else {
-			writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
-		}
+	request, err := decodeStrictAgentOpsRequest(body)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	branch, err := normalizeAgentOpsRequest(&request)
@@ -225,6 +233,10 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeAgentOpsError(w, http.StatusBadRequest, "invalid_request")
 		}
+		return
+	}
+	if inputOrigin == conversation.AcceptedOPSInputOriginHuman && (branch != agentOpsRequestBranchLegacy || h.nativeCoding == nil) {
+		writeAgentOpsError(w, http.StatusBadRequest, "invalid_input_origin")
 		return
 	}
 
@@ -241,21 +253,18 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parentContext := domaintool.WithToolExecutionScope(r.Context(), parentScope)
-	shiroContext, err := domaintool.DeriveAgentToolExecutionScope(
-		parentContext,
-		requestID,
-		"shiro",
-		"worker",
-		"ops",
-		true,
-	)
-	if err != nil {
-		writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
+	if branch == agentOpsRequestBranchNativeResume {
+		h.serveNativeOPSResume(w, parentContext, requestID, *request.ResumeTarget)
 		return
 	}
-	releaseWorkerBusy := h.acquireWorkerBusyLease()
-	defer releaseWorkerBusy()
 	if branch == agentOpsRequestBranchDCIIdentityAcceptance {
+		shiroContext, err := deriveAgentOpsShiroContext(parentContext, requestID)
+		if err != nil {
+			writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
+			return
+		}
+		releaseWorkerBusy := h.acquireWorkerBusyLease()
+		defer releaseWorkerBusy()
 		if h.toolExecutor == nil || h.taskOwner == nil {
 			writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
 			return
@@ -272,6 +281,17 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusOK, response)
 		return
 	}
+	if h.nativeCoding != nil {
+		h.serveAcceptedNativeOPS(w, parentContext, requestID, request.Message, inputOrigin)
+		return
+	}
+	shiroContext, err := deriveAgentOpsShiroContext(parentContext, requestID)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
+		return
+	}
+	releaseWorkerBusy := h.acquireWorkerBusyLease()
+	defer releaseWorkerBusy()
 
 	taskID := modulecore.NewTaskID()
 	address, err := conversation.NewChannelAddress(agentOpsTaskChannel, agentOpsTaskChatID)
@@ -287,6 +307,11 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	input = input.
 		WithSessionID(string(modulecore.NewSessionID())).
 		WithRoute(routing.RouteOPS)
+	input, err = orchestrator.AdmitNativeCoding(shiroContext, h.nativeCoding, input, routing.RouteOPS)
+	if err != nil {
+		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
+		return
+	}
 	output, err := h.executor.Execute(shiroContext, input)
 	if err != nil || strings.TrimSpace(output) == "" {
 		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
@@ -301,6 +326,24 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Route:     routing.RouteOPS.String(),
 		Output:    output,
 	})
+}
+
+func parseAgentOpsInputOrigin(headers http.Header) (conversation.AcceptedOPSInputOrigin, error) {
+	values := headers.Values(agentOpsInputOriginHeader)
+	if len(values) == 0 {
+		return conversation.AcceptedOPSInputOriginAutomation, nil
+	}
+	if len(values) != 1 {
+		return "", errors.New("input origin must be declared once")
+	}
+	switch conversation.AcceptedOPSInputOrigin(values[0]) {
+	case conversation.AcceptedOPSInputOriginAutomation:
+		return conversation.AcceptedOPSInputOriginAutomation, nil
+	case conversation.AcceptedOPSInputOriginHuman:
+		return conversation.AcceptedOPSInputOriginHuman, nil
+	default:
+		return "", errors.New("input origin is unknown")
+	}
 }
 
 func (h *agentOpsHandler) acquireWorkerBusyLease() func() {

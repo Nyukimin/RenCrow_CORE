@@ -11,11 +11,12 @@ import (
 type AttemptStartReason string
 
 const (
-	AttemptStartReasonFirst    AttemptStartReason = "first"
-	AttemptStartReasonRetry    AttemptStartReason = "retry"
-	AttemptStartReasonFallback AttemptStartReason = "fallback"
-	AttemptStartReasonTimeout  AttemptStartReason = "timeout"
-	AttemptStartReasonCancel   AttemptStartReason = "cancel_recovery"
+	AttemptStartReasonFirst          AttemptStartReason = "first"
+	AttemptStartReasonExplicitResume AttemptStartReason = "explicit_resume"
+	AttemptStartReasonRetry          AttemptStartReason = "retry"
+	AttemptStartReasonFallback       AttemptStartReason = "fallback"
+	AttemptStartReasonTimeout        AttemptStartReason = "timeout"
+	AttemptStartReasonCancel         AttemptStartReason = "cancel_recovery"
 )
 
 // AttemptStatus is the lifecycle state of one physical Action attempt.
@@ -31,13 +32,14 @@ const (
 
 // Attempt is one non-hierarchical physical try belonging to exactly one Action.
 type Attempt struct {
-	AttemptID   modulecore.AttemptID `json:"attempt_id"`
-	ActionID    modulecore.ActionID  `json:"action_id"`
-	StartReason AttemptStartReason   `json:"start_reason"`
-	Status      AttemptStatus        `json:"status"`
-	StartedAt   time.Time            `json:"started_at"`
-	CompletedAt *time.Time           `json:"completed_at,omitempty"`
-	Summary     string               `json:"summary,omitempty"`
+	AttemptID        modulecore.AttemptID `json:"attempt_id"`
+	ActionID         modulecore.ActionID  `json:"action_id"`
+	StartReason      AttemptStartReason   `json:"start_reason"`
+	Status           AttemptStatus        `json:"status"`
+	StartedAt        time.Time            `json:"started_at"`
+	CompletedAt      *time.Time           `json:"completed_at,omitempty"`
+	Summary          string               `json:"summary,omitempty"`
+	NativeDelegation *NativeDelegation    `json:"native_delegation,omitempty"`
 }
 
 // AttemptFilter selects persisted Attempt history. Results are chronological.
@@ -72,12 +74,17 @@ func (a Attempt) Validate() error {
 	if a.CompletedAt != nil && a.CompletedAt.Before(a.StartedAt) {
 		return fmt.Errorf("completed_at must not precede started_at")
 	}
+	if a.NativeDelegation != nil {
+		if err := a.NativeDelegation.Validate(); err != nil {
+			return fmt.Errorf("native_delegation is invalid: %w", err)
+		}
+	}
 	return nil
 }
 
 func ValidAttemptStartReason(reason AttemptStartReason) bool {
 	switch reason {
-	case AttemptStartReasonFirst, AttemptStartReasonRetry, AttemptStartReasonFallback,
+	case AttemptStartReasonFirst, AttemptStartReasonExplicitResume, AttemptStartReasonRetry, AttemptStartReasonFallback,
 		AttemptStartReasonTimeout, AttemptStartReasonCancel:
 		return true
 	default:
@@ -117,10 +124,24 @@ func (a Attempt) Close(status AttemptStatus, completedAt time.Time, summary stri
 	if completedAt.Before(a.StartedAt) {
 		return Attempt{}, fmt.Errorf("completed_at must not precede started_at")
 	}
+	a = a.Clone()
 	a.Status = status
 	a.CompletedAt = &completedAt
 	if summary != "" {
 		a.Summary = summary
 	}
 	return a, a.Validate()
+}
+
+// Clone returns an Attempt with all nested native state copied.
+func (a Attempt) Clone() Attempt {
+	if a.CompletedAt != nil {
+		completedAt := *a.CompletedAt
+		a.CompletedAt = &completedAt
+	}
+	if a.NativeDelegation != nil {
+		delegation := a.NativeDelegation.Clone()
+		a.NativeDelegation = &delegation
+	}
+	return a
 }

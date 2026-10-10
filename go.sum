@@ -2,6 +2,8 @@ github.com/DATA-DOG/go-sqlmock v1.5.2 h1:OcvFkGmslmlZibjAjaHm3L//6LiuBgolP7Oputl
 github.com/DATA-DOG/go-sqlmock v1.5.2/go.mod h1:88MAG/4G7SMwSE3CeA0ZKzrT5CiOU3OJ+JlNzwDqpNU=
 github.com/Nyukimin/RenCrow_Harness v0.0.0-20261007224419-4caf3b3e4665 h1:SKt/HinnrD8vOQZxmot13Ez6Q9I7oQ2RV+1lEb8gzEA=
 github.com/Nyukimin/RenCrow_Harness v0.0.0-20261007224419-4caf3b3e4665/go.mod h1:Yn7GP+Zcmuw/2zVuKz5tWaWdvviWGrcFWI04Pu0tVBI=
+github.com/Nyukimin/RenCrow_Harness v0.0.0-20261009115431-d7f79318ae85 h1:ZO9eW38TgseF81Gofw5SO9tm+Bkuz2ylSCk6yjdy1Z0=
+github.com/Nyukimin/RenCrow_Harness v0.0.0-20261009115431-d7f79318ae85/go.mod h1:Yn7GP+Zcmuw/2zVuKz5tWaWdvviWGrcFWI04Pu0tVBI=
 github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO8RIBo=
 github.com/PuerkitoBio/goquery v1.12.0/go.mod h1:802ej+gV2y7bbIhOIoPY5sT183ZW0YFofScC4q/hIpQ=
 github.com/alecthomas/assert/v2 v2.10.0 h1:jjRCHsj6hBJhkmhznrCzoNpbA3zqy0fYiUcYZP/GkPY=

@@ -13,6 +13,10 @@ import (
 )
 
 func initializeRuntimeTaskOwner(deps *Dependencies, workspace string, selectedStores ...domaintask.Store) error {
+	return initializeRuntimeTaskOwnerWithCriteriaRevision(deps, workspace, "", selectedStores...)
+}
+
+func initializeRuntimeTaskOwnerWithCriteriaRevision(deps *Dependencies, workspace, expectedCriteriaRevision string, selectedStores ...domaintask.Store) error {
 	if deps == nil {
 		return errors.New("runtime dependencies are nil")
 	}
@@ -38,7 +42,15 @@ func initializeRuntimeTaskOwner(deps *Dependencies, workspace string, selectedSt
 		}
 	}
 	deps.taskStore = store
-	deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	if expectedCriteriaRevision == "" {
+		deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits())
+		return nil
+	}
+	manager, err := taskmanager.NewWithExpectedCriteriaRevision(store, taskmanager.DefaultParallelLimits(), expectedCriteriaRevision)
+	if err != nil {
+		return fmt.Errorf("configure Task owner criteria revision: %w", err)
+	}
+	deps.taskManager = manager
 	return nil
 }
 

@@ -182,7 +182,7 @@ func newRuntimeConversationStorageHostFixture(t *testing.T, root string) *runtim
 		t.Fatalf("create storage-host Handler: %v", err)
 	}
 	t.Cleanup(func() { _ = handler.Close() })
-	if err := storagehost.RegisterL1Group(handler, l1Owner); err != nil {
+	if err := storagehost.RegisterL1Group(handler, l1Owner, "chat-user"); err != nil {
 		t.Fatalf("register L1 group: %v", err)
 	}
 	if err := storagehost.RegisterTurnGroup(handler, l1Owner); err != nil {

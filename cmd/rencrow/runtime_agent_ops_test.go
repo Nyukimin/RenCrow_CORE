@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
@@ -30,6 +32,20 @@ type agentOpsExecutorStub struct {
 	err    error
 	ctxs   []context.Context
 	inputs []conversation.TurnInput
+}
+
+type agentOpsNativeCodingAdmissionStub struct {
+	calls  int
+	ctxs   []context.Context
+	inputs []conversation.TurnInput
+	err    error
+}
+
+func (s *agentOpsNativeCodingAdmissionStub) AdmitNativeCoding(ctx context.Context, input conversation.TurnInput) error {
+	s.calls++
+	s.ctxs = append(s.ctxs, ctx)
+	s.inputs = append(s.inputs, input)
+	return s.err
 }
 
 func (s *agentOpsExecutorStub) Execute(ctx context.Context, got conversation.TurnInput) (string, error) {
@@ -144,7 +160,7 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 	if response["request_id"] != requestID || response["agent_id"] != "shiro" || response["role"] != "worker" || response["route"] != "OPS" || response["output"] != "実行結果" {
 		t.Fatalf("response=%v", response)
 	}
-	if executor.calls != 1 || executor.input.MessageText() != "状態を確認して" || executor.input.ChannelAddress().ChannelType() != "agent_ops" || executor.input.ChannelAddress().ExternalConversationID() != "agent-ops" || executor.input.Route() != routing.RouteOPS {
+	if executor.calls != 1 || executor.input.MessageText() != "状態を確認して" || executor.input.ChannelAddress().ChannelType() != "agent_ops" || executor.input.ChannelAddress().ExternalConversationID() != "agent-ops" || executor.input.Route() != routing.RouteOPS || executor.input.BackendSelection() != conversation.BackendSelectionNone {
 		t.Fatalf("input=%#v calls=%d", executor.input, executor.calls)
 	}
 	if err := modulecore.SessionID(executor.input.SessionID()).Validate(); err != nil {
@@ -166,6 +182,195 @@ func TestAgentOpsHandlerExecutesWithAuthenticatedShiroWorkerScope(t *testing.T) 
 		t.Fatalf("derived scope missing access=%#v", scope)
 	}
 	assertAgentOpsWorkerBusyCalls(t, notifier, true, false)
+}
+
+func TestAgentOpsHandlerRunsConfiguredNativeAdmissionBeforeExecutor(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	message := " \tOPS native selection — 診断\n"
+	executor := &agentOpsExecutorStub{output: "ok"}
+	admission := &agentOpsNativeCodingAdmissionStub{}
+	handler := newAgentOpsTestHandlerWithNativeAdmission(t, token, executor, admission)
+	body, err := json.Marshal(agentOpsRequest{Message: message})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(string(body)))
+	setAgentOpsHeaders(req, token, "req-native-selection")
+	req.RemoteAddr = "127.0.0.1:18791"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if admission.calls != 1 || len(admission.inputs) != 1 {
+		t.Fatalf("admission calls=%d inputs=%d, want exactly one", admission.calls, len(admission.inputs))
+	}
+	if admission.inputs[0].Route() != routing.RouteOPS || admission.inputs[0].MessageText() != message || admission.inputs[0].BackendSelection() != conversation.BackendSelectionNone {
+		t.Fatalf("admission input=%#v", admission.inputs[0])
+	}
+	scope, ok := domaintool.ToolExecutionScopeFromContext(admission.ctxs[0])
+	if !ok || scope.RequestID != "req-native-selection" || scope.ActorID != "shiro" || scope.AgentRole != "worker" || scope.Purpose != "ops" || scope.AuthenticatedUserID != "ren" {
+		t.Fatalf("admission scope=%#v found=%t", scope, ok)
+	}
+	if executor.calls != 1 || executor.input.MessageText() != message || executor.input.BackendSelection() != conversation.BackendShiroNativeCodingV1 {
+		t.Fatalf("executor calls=%d input=%#v", executor.calls, executor.input)
+	}
+}
+
+func TestAgentOpsProductionWiringSharesInitializedNativeCodingRuntime(t *testing.T) {
+	_, testFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("test source path unavailable")
+	}
+	root := filepath.Dir(testFile)
+	dependenciesSource, err := os.ReadFile(filepath.Join(root, "runtime_dependencies.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	orchestratorSource, err := os.ReadFile(filepath.Join(root, "runtime_orchestrator.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependenciesText := string(dependenciesSource)
+	orchestratorText := string(orchestratorSource)
+	orchestratorBuild := strings.Index(dependenciesText, "buildOrchestratorRuntime(")
+	nativeAdmissionBuild := strings.Index(dependenciesText, "configuredNativeCodingAdmission(cfg, deps.nativeCoding)")
+	agentOpsBuild := strings.Index(dependenciesText, "newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore)")
+	if orchestratorBuild < 0 || nativeAdmissionBuild <= orchestratorBuild || agentOpsBuild <= nativeAdmissionBuild {
+		t.Fatalf("Agent OPS handler must use the configured native runtime after the orchestrator initializes it: orchestrator=%d admission=%d handler=%d", orchestratorBuild, nativeAdmissionBuild, agentOpsBuild)
+	}
+	for _, required := range []string{
+		"agents.Shiro.WithNativeCodingDelegate(nativeCoding)",
+		"orch.SetNativeCodingAdmission(nativeCoding)",
+		"deps.nativeCoding = nativeCoding",
+	} {
+		if !strings.Contains(orchestratorText, required) {
+			t.Fatalf("runtime orchestrator must keep one native coding runtime for Shiro and admission; missing %q", required)
+		}
+	}
+}
+
+func TestAgentOpsAuthenticationFailureDoesNotReachNativeAdmission(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	executor := &agentOpsExecutorStub{output: "must not execute"}
+	admission := &agentOpsNativeCodingAdmissionStub{}
+	store := newAgentOpsAcceptedOPSInputStoreStub("ren")
+	handler := newAgentOpsTestHandlerWithOwnerAndStore(t, token, executor, newAgentOpsTestTaskOwner(t), admission, store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"message":"run"}`))
+	setAgentOpsHeaders(req, "wrong-token-wrong-token-wrong-token-", "req-unauthenticated")
+	req.RemoteAddr = "127.0.0.1:18791"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || admission.calls != 0 || executor.calls != 0 {
+		t.Fatalf("status=%d admission=%d executor=%d body=%q", rec.Code, admission.calls, executor.calls, rec.Body.String())
+	}
+	accepts, reads := store.counts()
+	if accepts != 0 || reads != 0 {
+		t.Fatalf("unauthorized request reached accepted OPS owner: accepts=%d reads=%d", accepts, reads)
+	}
+}
+
+func TestAgentOpsStrictDecoderRejectsMalformedAuthenticatedBodiesBeforeAnyExecution(t *testing.T) {
+	validDCI := []byte(`{"operation":"dci_identity_acceptance","query":"identity"}`)
+	oversizedBody := append([]byte(strings.Repeat(" ", agentOpsMaxBodyBytes-len(validDCI))), validDCI...)
+	oversizedBody = append(oversizedBody, ' ')
+	invalidUTF8 := append([]byte(`{"message":"x`), 0xff)
+	invalidUTF8 = append(invalidUTF8, []byte(`"}`)...)
+	deeplyNested := []byte(`{"message":` + strings.Repeat("[", 10_001) + `0` + strings.Repeat("]", 10_001) + `}`)
+	oversizedMessage := []byte(`{"message":"` + strings.Repeat("m", agentOpsMaxMessageBytes+1) + `"}`)
+	cases := []struct {
+		name       string
+		body       []byte
+		wantStatus int
+	}{
+		{name: "duplicate field", body: []byte(`{"message":"first","message":"second"}`), wantStatus: http.StatusBadRequest},
+		{name: "escaped duplicate field", body: []byte(`{"message":"first","mess\u0061ge":"second"}`), wantStatus: http.StatusBadRequest},
+		{name: "casefold duplicate field", body: []byte(`{"message":"first","MESSAGE":"second"}`), wantStatus: http.StatusBadRequest},
+		{name: "duplicate fixed DCI operation", body: []byte(`{"operation":"dci_identity_acceptance","query":"identity","operation":"dci_identity_acceptance"}`), wantStatus: http.StatusBadRequest},
+		{name: "unpaired high surrogate", body: []byte(`{"message":"\ud800"}`), wantStatus: http.StatusBadRequest},
+		{name: "unpaired low surrogate", body: []byte(`{"message":"\udc00"}`), wantStatus: http.StatusBadRequest},
+		{name: "invalid utf8", body: invalidUTF8, wantStatus: http.StatusBadRequest},
+		{name: "malformed nested value", body: []byte(`{"message":"run","query":[[[}`), wantStatus: http.StatusBadRequest},
+		{name: "deeply nested value", body: deeplyNested, wantStatus: http.StatusBadRequest},
+		{name: "unknown field", body: []byte(`{"message":"run","source":"human"}`), wantStatus: http.StatusBadRequest},
+		{name: "trailing value", body: []byte(`{"message":"run"}{}`), wantStatus: http.StatusBadRequest},
+		{name: "oversized message", body: oversizedMessage, wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "oversized request body", body: oversizedBody, wantStatus: http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			const token = "0123456789abcdef0123456789abcdef"
+			executor := &agentOpsExecutorWithToolsStub{agentOpsExecutorStub: &agentOpsExecutorStub{output: "must not execute"}}
+			admission := &agentOpsNativeCodingAdmissionStub{}
+			handler := newAgentOpsTestHandlerWithNativeAdmission(t, token, executor, admission)
+			req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(string(tc.body)))
+			setAgentOpsHeaders(req, token, "req-strict-json")
+			req.RemoteAddr = "127.0.0.1:18791"
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status=%d want=%d body=%q", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if executor.calls != 0 || executor.toolCalls != 0 || admission.calls != 0 {
+				t.Fatalf("malformed authenticated request reached execution: executor=%d DCI=%d admission=%d", executor.calls, executor.toolCalls, admission.calls)
+			}
+			if strings.Contains(rec.Body.String(), string(tc.body)) || strings.Contains(rec.Body.String(), token) {
+				t.Fatalf("response leaked request secret/body: %q", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAgentOpsAdmissionRefusalStopsBeforeExecutor(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	for _, refusal := range []error{domainagent.ErrNativeCodingBlocked, domainagent.ErrNativeCodingRejected} {
+		t.Run(refusal.Error(), func(t *testing.T) {
+			executor := &agentOpsExecutorStub{output: "must not execute"}
+			admission := &agentOpsNativeCodingAdmissionStub{err: refusal}
+			handler := newAgentOpsTestHandlerWithNativeAdmission(t, token, executor, admission)
+			req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(`{"message":"run"}`))
+			setAgentOpsHeaders(req, token, "req-admission-refused")
+			req.RemoteAddr = "127.0.0.1:18791"
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			var response agentOpsNativeResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if rec.Code != http.StatusInternalServerError || response.TaskStatus != "failed" || response.RunStatus != "failed" || admission.calls != 1 || executor.calls != 0 {
+				t.Fatalf("status=%d admission=%d executor=%d body=%q", rec.Code, admission.calls, executor.calls, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestAgentOpsHandlerPreservesOriginalMessageBytes(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	message := " \tこんにちは — исправить?\n "
+	executor := &agentOpsExecutorStub{output: "ok"}
+	handler := newAgentOpsTestHandler(t, token, executor)
+	body, err := json.Marshal(agentOpsRequest{Message: message})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/agent/ops", strings.NewReader(string(body)))
+	setAgentOpsHeaders(req, token, "req-message-bytes")
+	req.RemoteAddr = "127.0.0.1:18791"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if executor.calls != 1 || executor.input.MessageText() != message {
+		t.Fatalf("executor message=%q calls=%d want exact message %q", executor.input.MessageText(), executor.calls, message)
+	}
+}
+
+func TestAgentOpsMessageLimitUsesOriginalEncodedBytes(t *testing.T) {
+	request := agentOpsRequest{Message: strings.Repeat(" ", agentOpsMaxMessageBytes+1) + "run"}
+	if _, err := normalizeAgentOpsRequest(&request); !errors.Is(err, errAgentOpsRequestTooLarge) {
+		t.Fatalf("oversized original message error=%v, want %v", err, errAgentOpsRequestTooLarge)
+	}
 }
 
 func TestAgentOpsHandlerReusesAuthenticatedRequestIDForRepeatedPayload(t *testing.T) {
@@ -264,7 +469,7 @@ func TestAgentOpsHandlerRejectsRemoteRequestsThroughLocalWrapper(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	handler, err := newConfiguredAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t))
+	handler, err := newConfiguredAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t), nil, nil)
 	if err != nil {
 		t.Fatalf("newConfiguredAgentOpsHandler() error=%v", err)
 	}
@@ -422,7 +627,7 @@ func TestAgentOpsTokenFileIsValidatedAndReadOnce(t *testing.T) {
 				t.Fatal("test mode must be owner-only")
 			}
 			cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-			handler, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t))
+			handler, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, newAgentOpsTestTaskOwner(t), nil, nil)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected token validation error")
@@ -455,7 +660,7 @@ func TestAgentOpsTokenFileIsValidatedAndReadOnce(t *testing.T) {
 			t.Fatal(err)
 		}
 		cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-		if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{}, nil, newAgentOpsTestTaskOwner(t)); err == nil {
+		if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{}, nil, newAgentOpsTestTaskOwner(t), nil, nil); err == nil {
 			t.Fatal("group/world-readable token file must be rejected")
 		}
 	}
@@ -468,7 +673,7 @@ func TestAgentOpsHandlerRequiresTaskOwnerAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, nil); err == nil || err.Error() != "local_agent_ops task owner is unavailable" {
+	if _, err := newAgentOpsHandler(cfg, &agentOpsExecutorStub{output: "ok"}, nil, nil, nil, nil); err == nil || err.Error() != "local_agent_ops task owner is unavailable" {
 		t.Fatalf("nil task owner error=%v", err)
 	}
 }
@@ -492,13 +697,22 @@ func newAgentOpsTestTaskOwner(t *testing.T) *taskmanager.Manager {
 }
 
 func newAgentOpsTestHandlerWithTaskOwner(t *testing.T, token string, executor agentOpsExecutor, owner *taskmanager.Manager) http.HandlerFunc {
+	return newAgentOpsTestHandlerWithTaskOwnerAndNativeAdmission(t, token, executor, owner, nil)
+}
+
+func newAgentOpsTestHandlerWithTaskOwnerAndNativeAdmission(t *testing.T, token string, executor agentOpsExecutor, owner *taskmanager.Manager, admission orchestrator.NativeCodingAdmission) http.HandlerFunc {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "agent-ops.token")
 	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	handler, err := newAgentOpsHandler(cfg, executor, nil, owner)
+	handler, err := newAgentOpsHandler(cfg, executor, nil, owner, admission, func() conversation.AcceptedOPSInputStore {
+		if admission == nil {
+			return nil
+		}
+		return newAgentOpsAcceptedOPSInputStoreStub("ren")
+	}())
 	if err != nil {
 		t.Fatalf("newAgentOpsHandler() error=%v", err)
 	}
@@ -506,6 +720,14 @@ func newAgentOpsTestHandlerWithTaskOwner(t *testing.T, token string, executor ag
 }
 
 func newAgentOpsTestHandlerWithNotifier(t *testing.T, token string, executor agentOpsExecutor, notifier agentOpsWorkerBusyNotifier) http.HandlerFunc {
+	return newAgentOpsTestHandlerWithNotifierAndNativeAdmission(t, token, executor, notifier, nil)
+}
+
+func newAgentOpsTestHandlerWithNativeAdmission(t *testing.T, token string, executor agentOpsExecutor, admission orchestrator.NativeCodingAdmission) http.HandlerFunc {
+	return newAgentOpsTestHandlerWithNotifierAndNativeAdmission(t, token, executor, nil, admission)
+}
+
+func newAgentOpsTestHandlerWithNotifierAndNativeAdmission(t *testing.T, token string, executor agentOpsExecutor, notifier agentOpsWorkerBusyNotifier, admission orchestrator.NativeCodingAdmission) http.HandlerFunc {
 	t.Helper()
 	deps := &Dependencies{}
 	if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err != nil {
@@ -521,7 +743,12 @@ func newAgentOpsTestHandlerWithNotifier(t *testing.T, token string, executor age
 		t.Fatal(err)
 	}
 	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
-	handler, err := newAgentOpsHandler(cfg, executor, notifier, deps.taskManager)
+	handler, err := newAgentOpsHandler(cfg, executor, notifier, deps.taskManager, admission, func() conversation.AcceptedOPSInputStore {
+		if admission == nil {
+			return nil
+		}
+		return newAgentOpsAcceptedOPSInputStoreStub("ren")
+	}())
 	if err != nil {
 		t.Fatalf("newAgentOpsHandler() error=%v", err)
 	}

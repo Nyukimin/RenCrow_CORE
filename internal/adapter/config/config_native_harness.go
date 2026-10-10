@@ -54,6 +54,9 @@ type NativeHarnessProfileConfig struct {
 	// ExpectedBuildRevision is the build_revision the Harness must report in
 	// initialize; another build is not started against (fail closed).
 	ExpectedBuildRevision string `yaml:"expected_build_revision"`
+	// ExpectedCriteriaRevision is the immutable Harness-owner verification
+	// criteria revision deployment-pinned for new native-capable Tasks.
+	ExpectedCriteriaRevision string `yaml:"expected_criteria_revision"`
 	// WorkspaceRef names the workspace the Harness works in. The root, the mode
 	// and the policy must be ones the Harness config allows; the Harness
 	// answers a request outside them with FORBIDDEN.

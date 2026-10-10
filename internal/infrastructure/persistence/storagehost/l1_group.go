@@ -84,7 +84,7 @@ const (
 // RegisterL1Group exposes the closed conversation L1 owner contract. Every
 // mutating owner error remains uncertain unless validation rejected it before
 // the owner method was entered.
-func RegisterL1Group(handler *Handler, store L1GroupOwner) error {
+func RegisterL1Group(handler *Handler, store L1GroupOwner, configuredPrincipal string) error {
 	if handler == nil || isNilL1Owner(store) {
 		return errors.New("storagehost: l1 group needs a handler and an owner store")
 	}
@@ -516,6 +516,15 @@ func RegisterL1Group(handler *Handler, store L1GroupOwner) error {
 		}
 		if err != nil {
 			return fmt.Errorf("register l1 %s: %w", item.name, err)
+		}
+	}
+	if configuredPrincipal = strings.TrimSpace(configuredPrincipal); configuredPrincipal != "" {
+		acceptedOPSStore, ok := store.(domconv.AcceptedOPSInputStore)
+		if !ok || acceptedOPSStore == nil {
+			return errors.New("storagehost: configured accepted OPS principal requires the L1 accepted OPS owner")
+		}
+		if err := registerAcceptedOPSInputOperations(handler, acceptedOPSStore, configuredPrincipal); err != nil {
+			return err
 		}
 	}
 	return nil

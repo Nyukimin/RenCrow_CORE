@@ -205,11 +205,20 @@ func (rp *RecallPack) ToPromptMessages() []llm.Message {
 		}
 	}
 	if len(rp.CategorySnippets) > 0 {
-		contextText := "【Category Recall / 検証済み意味データ】\n"
 		for _, category := range rp.CategorySnippets {
-			contextText += "- " + category.ToPromptText() + "\n"
+			envelope := "【Category Recall / 検証済み意味データ】\n- " + category.ToPromptEnvelopeText() + "\n"
+			appendRecall("category", envelope)
+			if strings.TrimSpace(category.Summary) == "" {
+				continue
+			}
+			messages = append(messages, llm.Message{
+				Role:         "system",
+				Content:      category.Summary,
+				Type:         llm.PromptContextRecall,
+				Metadata:     map[string]string{"recall_section": "category"},
+				PromptSource: llm.ClonePromptSourceRef(category.PromptSource),
+			})
 		}
-		appendRecall("category", contextText)
 	}
 	appendRecall("knowledge", knowledgeText)
 	// 3. 直近の会話履歴（ShortContext）
@@ -347,7 +356,7 @@ func (rp *RecallPack) ApplyRecallBudgetWithEstimator(maxContextTokens int, ratio
 	for _, category := range rp.CategorySnippets {
 		promptText := category.ToPromptText()
 		if ok, _ := canAdd(promptText); ok {
-			trimmed.CategorySnippets = append(trimmed.CategorySnippets, category)
+			trimmed.CategorySnippets = append(trimmed.CategorySnippets, cloneCategorySnippet(category))
 		} else {
 			trace := rejectedCategoryTrace(category, "token budget dropped category recall snippet")
 			trace.Status = TraceStatusBudgetDropped
@@ -428,7 +437,7 @@ func (rp *RecallPack) FilterForRole(role string) RecallPack {
 	for _, snippet := range rp.CategorySnippets {
 		decision := NewInjectionPolicy(role).Decide(categoryRecallCandidate(snippet))
 		if decision.Status == TraceStatusInjected {
-			filtered.CategorySnippets = append(filtered.CategorySnippets, snippet)
+			filtered.CategorySnippets = append(filtered.CategorySnippets, cloneCategorySnippet(snippet))
 			continue
 		}
 		filtered.RejectedTraceItems = append(filtered.RejectedTraceItems, rejectedCategoryTrace(snippet, decision.Reason))

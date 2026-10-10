@@ -71,6 +71,17 @@ type Deployment struct {
 // initializes the store. It skips the test under -short because it builds and
 // runs the real binary.
 func New(t testing.TB) *Deployment {
+	return newDeployment(t, false)
+}
+
+// NewWithVerification adds a fixed, owner-managed process verifier to the
+// fixture. Existing integration cases keep the verifier-free fixture through
+// New; this opt-in fixture exercises the current verifier contract.
+func NewWithVerification(t testing.TB) *Deployment {
+	return newDeployment(t, true)
+}
+
+func newDeployment(t testing.TB, withVerification bool) *Deployment {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("builds and runs the real Harness binary")
@@ -127,6 +138,9 @@ func New(t testing.TB) *Deployment {
 		"kind": d.Binding.Kind, "selector": d.Binding.Selector, "profile_revision": d.Binding.ProfileRevision,
 		"agent_id": *d.Binding.AgentID, "execution_role": *d.Binding.ExecutionRole,
 	}}}
+	if withVerification {
+		configureVerificationFixture(t, d, cfg, registry)
+	}
 
 	d.Gateway = newGateway(t, d.Binding)
 	cfg["gateway"].(map[string]any)["base_url"] = d.Gateway.BaseURL()
@@ -141,6 +155,44 @@ func New(t testing.TB) *Deployment {
 		t.Fatalf("rencrow-harness init: %v\n%s", err, out)
 	}
 	return d
+}
+
+func configureVerificationFixture(t testing.TB, d *Deployment, cfg, registry map[string]any) {
+	t.Helper()
+	goExecutable, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("fixed verifier requires the Go executable: %v", err)
+	}
+	goExecutable, err = filepath.Abs(goExecutable)
+	if err != nil {
+		t.Fatalf("resolve fixed verifier executable: %v", err)
+	}
+	cacheRoot := filepath.Join(d.Secrets, "verification-cache")
+	if err := os.MkdirAll(cacheRoot, 0o700); err != nil {
+		t.Fatalf("create fixed verifier cache root: %v", err)
+	}
+	cfg["process_profiles"] = []any{map[string]any{
+		"name": "go-test", "executable": goExecutable, "is_shell": false, "argv_prefix": []any{"test"},
+	}}
+	envProfiles := cfg["env_profiles"].([]any)
+	envProfiles = append(envProfiles, map[string]any{
+		"name": "criteria-test", "values": map[string]string{
+			"GOCACHE": cacheRoot, "GOTMPDIR": cacheRoot, "TMPDIR": cacheRoot, "TEMP": cacheRoot, "TMP": cacheRoot,
+		},
+	})
+	cfg["env_profiles"] = envProfiles
+
+	policy := registry["policies"].([]any)[0].(map[string]any)
+	policy["tools"] = append(policy["tools"].([]any), "process.exec")
+	policy["process_profiles"] = []any{"go-test"}
+	policy["env_profiles"] = []any{"clean", "criteria-test"}
+	policy["verification"] = map[string]any{
+		"format_version": "rencrow-verification-plan/v1", "process_profile_ref": "go-test", "executable": goExecutable,
+		"argv": []any{"test", "./..."}, "cwd": ".", "env_profile_ref": "criteria-test",
+		"timeout_seconds": 120, "pass_condition": "exit_zero",
+	}
+	writeFile(t, filepath.Join(d.Work, "go.mod"), "module rencrow.fixture/criteria\n\ngo 1.25.0\n")
+	writeFile(t, filepath.Join(d.Work, "criteria_test.go"), "package criteria\n\nimport \"testing\"\n\nfunc TestFixedCriteriaFixture(t *testing.T) {}\n")
 }
 
 // CLIConfig writes a second configuration of the same deployment for the human

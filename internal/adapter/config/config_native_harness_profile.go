@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 )
 
 // Validation of native_harness.profile, the selection of the execution profile
@@ -42,6 +44,12 @@ func (c *Config) validateNativeHarnessProfile(workspace string) error {
 	}
 	if err := requirePlainText("native_harness.profile.expected_build_revision", profile.ExpectedBuildRevision); err != nil {
 		return err
+	}
+	if profile.Enabled && !domaintask.ValidCriteriaRevision(profile.ExpectedCriteriaRevision) {
+		return errors.New("native_harness.profile.expected_criteria_revision must be one lowercase SHA-256 revision")
+	}
+	if profile.ExpectedCriteriaRevision != "" && !domaintask.ValidCriteriaRevision(profile.ExpectedCriteriaRevision) {
+		return errors.New("native_harness.profile.expected_criteria_revision must be one lowercase SHA-256 revision")
 	}
 	ref := profile.WorkspaceRef
 	if strings.TrimSpace(ref.Path) == "" {

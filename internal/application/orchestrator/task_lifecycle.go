@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -41,6 +42,7 @@ type TaskLifecycleManager interface {
 	Wait(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Succeed(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	Fail(context.Context, modulecore.TaskID, string, []string) (domaintask.Task, error)
+	Cancel(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 	RecordRouting(context.Context, modulecore.TaskID, domaintask.Route, modulecore.EventID) (domaintask.Task, error)
 	RecordAssignment(context.Context, modulecore.TaskID, string, modulecore.EventID) (domaintask.Task, error)
 }
@@ -631,8 +633,25 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 		}
 		return firstErr
 	}
+	if errors.Is(executionErr, domainagent.ErrNativeCodingOutcomeUnknown) {
+		// The Harness may have accepted the delegation and kept running. Preserve
+		// the owner Task/Run as active so a retry cannot create a second execution.
+		return nil
+	}
 
 	summary := strings.TrimSpace(executionErr.Error())
+	if nativeCodingWasCancelled(executionErr) {
+		terminalContext := context.WithoutCancel(ctx)
+		if executionTaskID != rootTaskID {
+			if _, err := l.manager.Cancel(terminalContext, executionTaskID, summary); err != nil {
+				firstErr = fmt.Errorf("cancel execution task: %w", err)
+			}
+		}
+		if _, err := l.manager.Cancel(terminalContext, rootTaskID, summary); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("cancel root task: %w", err)
+		}
+		return firstErr
+	}
 	executionTask, err := l.manager.Get(ctx, executionTaskID)
 	if err != nil {
 		return fmt.Errorf("get execution task before failure: %w", err)
@@ -664,6 +683,11 @@ func (l *taskLifecycle) finish(ctx context.Context, rootTaskID, executionTaskID 
 		firstErr = fmt.Errorf("fail root task: %w", err)
 	}
 	return firstErr
+}
+
+func nativeCodingWasCancelled(err error) bool {
+	var codingErr *domainagent.NativeCodingError
+	return errors.As(err, &codingErr) && codingErr.Result.Status == domainagent.NativeRunCancelled
 }
 
 // actualCoreActorForRoute maps an orchestrator route to a real CORE Agent.

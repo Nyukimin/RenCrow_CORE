@@ -223,6 +223,36 @@ func (s *L1SQLiteStore) intakeCommonRaw(ctx context.Context, requestID, ownerID,
 		cleanup()
 		return domainmemory.CommonRawIntakeReceipt{}, cause
 	}
+	if err := insertPreparedCommonRawRows(ctx, tx, requestID, ownerID, actorID, manifestID, prepared, receiptJSON, checkpointJSON, now); err != nil {
+		return rollback(err)
+	}
+	if err := writeCommonRawStorageHostReceipt(ctx, tx, storageHostIdentity, receipt); err != nil {
+		return rollback(fmt.Errorf("%w: store common raw operation receipt", domainmemory.ErrCommonRawUnavailable))
+	}
+	if err := tx.Commit(); err != nil {
+		cleanup()
+		return domainmemory.CommonRawIntakeReceipt{}, fmt.Errorf("%w: commit common raw intake transaction", domainmemory.ErrCommonRawUnavailable)
+	}
+	return receipt, nil
+}
+
+// insertPreparedCommonRawRows inserts the immutable Common Raw manifest,
+// records, and initial state events into a caller-owned transaction.
+func insertPreparedCommonRawRows(
+	ctx context.Context,
+	tx l1SQLExecer,
+	requestID string,
+	ownerID string,
+	actorID string,
+	manifestID string,
+	prepared preparedCommonRawIntake,
+	receiptJSON []byte,
+	checkpointJSON []byte,
+	now time.Time,
+) error {
+	if tx == nil {
+		return fmt.Errorf("%w: common raw transaction is required", domainmemory.ErrCommonRawUnavailable)
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_raw_source_manifest (
 	manifest_id, contract_version, source_type, source_identity, manifest_sha256,
@@ -235,12 +265,12 @@ INSERT INTO l1_raw_source_manifest (
 		prepared.manifest.ConverterVersion, ownerID, prepared.manifest.Scope, prepared.manifest.Sensitivity,
 		prepared.manifest.Rights, prepared.manifest.License, prepared.manifest.Provenance, boolInt(prepared.manifest.AllowEmpty),
 		requestID, actorID, domainmemory.CommonRawStateCompleted, string(checkpointJSON), string(receiptJSON), now, now); err != nil {
-		return rollback(fmt.Errorf("%w: insert common raw manifest", domainmemory.ErrCommonRawUnavailable))
+		return fmt.Errorf("%w: insert common raw manifest: %w", domainmemory.ErrCommonRawUnavailable, err)
 	}
 	for _, record := range prepared.records {
 		assetJSON, err := json.Marshal(record.assets)
 		if err != nil {
-			return rollback(fmt.Errorf("%w: marshal common raw asset refs", domainmemory.ErrCommonRawUnavailable))
+			return fmt.Errorf("%w: marshal common raw asset refs: %w", domainmemory.ErrCommonRawUnavailable, err)
 		}
 		inlinePayload := interface{}(nil)
 		objectRef := record.objectRef
@@ -248,6 +278,7 @@ INSERT INTO l1_raw_source_manifest (
 			inlinePayload = record.input.Content
 			objectRef = ""
 		}
+		rawRecordID := domainmemory.DeterministicCommonRawRecordID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID, record.hash)
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_raw_record (
 	raw_record_id, manifest_id, contract_version, source_type, source_identity, source_record_id,
@@ -255,30 +286,22 @@ INSERT INTO l1_raw_record (
 	storage_kind, inline_payload, object_ref, content_sha256, content_size, asset_refs_json,
 	provenance, rights, license, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			domainmemory.DeterministicCommonRawRecordID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID, record.hash),
-			manifestID, domainmemory.CommonRawContractVersion, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID,
+			rawRecordID, manifestID, domainmemory.CommonRawContractVersion, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID,
 			record.input.ParentID, record.input.ThreadID, ownerID, prepared.manifest.Scope, valueOrDefault(record.input.Sensitivity, prepared.manifest.Sensitivity),
 			record.input.Role, record.input.ContentType, record.input.OccurredAt.UTC(), now, record.storage, inlinePayload,
 			objectRef, record.hash, record.size, string(assetJSON), valueOrDefault(record.input.Provenance, prepared.manifest.Provenance),
 			valueOrDefault(record.input.Rights, prepared.manifest.Rights), valueOrDefault(record.input.License, prepared.manifest.License), now); err != nil {
-			return rollback(fmt.Errorf("%w: insert common raw record", domainmemory.ErrCommonRawUnavailable))
+			return fmt.Errorf("%w: insert common raw record: %w", domainmemory.ErrCommonRawUnavailable, err)
 		}
-		stateEventID := domainmemory.DeterministicCommonRawStateEventID(domainmemory.DeterministicCommonRawRecordID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID, record.hash), "ingested", record.hash)
+		stateEventID := domainmemory.DeterministicCommonRawStateEventID(rawRecordID, "ingested", record.hash)
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO l1_raw_state_event (state_event_id, raw_record_id, manifest_id, event_type, event_hash, owner_id, scope, request_id, actor_id, reason_code, payload_json, created_at)
 VALUES (?, ?, ?, 'ingested', ?, ?, ?, ?, ?, ?, ?, ?)`, stateEventID,
-			domainmemory.DeterministicCommonRawRecordID(ownerID, prepared.manifest.Scope, prepared.manifest.SourceType, prepared.manifest.SourceIdentity, record.input.SourceRecordID, record.hash), manifestID, record.hash, ownerID, prepared.manifest.Scope, requestID, actorID, "ingested", "{}", now); err != nil {
-			return rollback(fmt.Errorf("%w: insert common raw ingested state", domainmemory.ErrCommonRawUnavailable))
+			rawRecordID, manifestID, record.hash, ownerID, prepared.manifest.Scope, requestID, actorID, "ingested", "{}", now); err != nil {
+			return fmt.Errorf("%w: insert common raw ingested state: %w", domainmemory.ErrCommonRawUnavailable, err)
 		}
 	}
-	if err := writeCommonRawStorageHostReceipt(ctx, tx, storageHostIdentity, receipt); err != nil {
-		return rollback(fmt.Errorf("%w: store common raw operation receipt", domainmemory.ErrCommonRawUnavailable))
-	}
-	if err := tx.Commit(); err != nil {
-		cleanup()
-		return domainmemory.CommonRawIntakeReceipt{}, fmt.Errorf("%w: commit common raw intake transaction", domainmemory.ErrCommonRawUnavailable)
-	}
-	return receipt, nil
+	return nil
 }
 
 func validateCommonRawOwnerScope(ctx context.Context, requestID, ownerID, actorID string) error {

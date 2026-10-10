@@ -260,9 +260,17 @@ func (s *JSONLStore) loadTasks(ctx context.Context) ([]domaintask.Task, error) {
 
 func foldTaskRecords(items []domaintask.Task) ([]domaintask.Task, error) {
 	latest := make(map[modulecore.TaskID]domaintask.Task, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		if err := item.Validate(); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("task record %d is invalid: %w", index, err)
+		}
+		if previous, ok := latest[item.TaskID]; ok {
+			if previous.ExpectedCriteriaRevision != item.ExpectedCriteriaRevision {
+				return nil, fmt.Errorf("task record %d changes its first-save criteria revision: %w", index, ErrExpectedCriteriaRevisionImmutable)
+			}
+			if !domaintask.NativeOPSResumeClaimsExtend(previous.NativeResumeClaims, item.NativeResumeClaims) {
+				return nil, fmt.Errorf("task record %d rewrites native OPS Resume claims: %w", index, ErrNativeOPSResumeClaimImmutable)
+			}
 		}
 		latest[item.TaskID] = item
 	}

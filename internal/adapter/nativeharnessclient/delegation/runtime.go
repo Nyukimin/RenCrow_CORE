@@ -13,10 +13,12 @@ import (
 	"github.com/Nyukimin/RenCrow_Harness/pkg/client"
 	"github.com/Nyukimin/RenCrow_Harness/pkg/protocol"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/nativeharnessclient"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -27,6 +29,13 @@ type Client interface {
 	Capabilities() protocol.CapabilitiesResult
 	SessionOpen(ctx context.Context, in protocol.SessionOpenInput) (protocol.SessionOpenResult, error)
 	TurnStart(ctx context.Context, in protocol.StartInput) (protocol.StartResult, error)
+	RunResume(ctx context.Context, in protocol.ResumeInput) (protocol.ResumeResult, error)
+	RunGet(ctx context.Context, in protocol.RunGetInput) (protocol.RunInfo, error)
+	SessionGet(ctx context.Context, in protocol.SessionGetInput) (protocol.SessionInfo, error)
+	ReceiptGet(ctx context.Context, in protocol.ReceiptGetInput) (protocol.ReceiptRecord, error)
+	EventsRead(ctx context.Context, in protocol.EventsReadInput) (protocol.EventsReadResult, error)
+	EvidenceRead(ctx context.Context, in protocol.EvidenceReadInput) (protocol.EvidenceReadResult, error)
+	InterruptRun(ctx context.Context, runID, keyPrefix string) (protocol.InterruptReceipt, error)
 	AwaitRun(ctx context.Context, runID string, opts client.AwaitOptions) (protocol.RunResult, error)
 	Notifications() <-chan client.Notification
 	Done() <-chan struct{}
@@ -36,6 +45,12 @@ type Client interface {
 
 // StartFunc starts a Harness client. The production one is client.Start.
 type StartFunc func(ctx context.Context, cfg client.Config) (Client, error)
+
+// OriginProofSigner is the narrow issuer port used only when the accepted
+// Conversation record declares a Human relay. Automation never calls it.
+type OriginProofSigner interface {
+	Sign(nativeharnessclient.OriginProofRequest) (nativeharnessclient.OriginProof, error)
+}
 
 func startHarness(ctx context.Context, cfg client.Config) (Client, error) {
 	c, err := client.Start(ctx, cfg)
@@ -47,12 +62,35 @@ func startHarness(ctx context.Context, cfg client.Config) (Client, error) {
 
 func clientDefaultCapabilities() []string { return client.DefaultRequiredCapabilities() }
 
-// ActionRecorder is the delegation Action owner: the part of
-// actionmanager.Manager that records one Action with its Attempt. The Manager
-// is the sole issuer of ActionID and AttemptID.
-type ActionRecorder interface {
-	CreateAction(ctx context.Context, input actionmanager.CreateInput) (domainaction.Action, domainaction.Attempt, error)
-	CompleteAttempt(ctx context.Context, actionID modulecore.ActionID, expectedAttemptID modulecore.AttemptID, attemptStatus domainaction.AttemptStatus, actionStatus domainaction.Status, summary string) (domainaction.Action, domainaction.Attempt, error)
+// ActionOwner is the typed persistence boundary of one native delegation.
+// actionmanager.Manager is the canonical owner and sole issuer of ActionID and
+// AttemptID; this adapter does not create a second store or generic retry path.
+type ActionOwner interface {
+	EnsureNativeDelegation(ctx context.Context, input actionmanager.EnsureNativeDelegationInput) (domainaction.Action, domainaction.Attempt, error)
+	PrepareNativeMutation(ctx context.Context, input actionmanager.PrepareNativeMutationInput) (domainaction.Action, domainaction.Attempt, error)
+	MarkNativeMutationDeliveryUnknown(ctx context.Context, actionID modulecore.ActionID, attemptID modulecore.AttemptID, slot domainaction.NativeMutationSlot) (domainaction.Action, domainaction.Attempt, error)
+	RecordNativeMutationOutcome(ctx context.Context, input actionmanager.RecordNativeMutationOutcomeInput) (domainaction.Action, domainaction.Attempt, error)
+	RecordNativeObservation(ctx context.Context, input actionmanager.RecordNativeObservationInput) (domainaction.Action, domainaction.Attempt, error)
+	CompleteNativeDelegation(ctx context.Context, input actionmanager.CompleteNativeDelegationInput) (domainaction.Action, domainaction.Attempt, error)
+}
+
+// ResumeActionReader is the read-only action history needed to bind a user
+// Resume to a saved terminal native delegation. It is intentionally separate
+// from the write port so non-Resume test adapters need no broader capability.
+type ResumeActionReader interface {
+	ListActions(ctx context.Context, filter domainaction.Filter) ([]domainaction.Action, error)
+	ListAttempts(ctx context.Context, filter domainaction.AttemptFilter) ([]domainaction.Attempt, error)
+}
+
+// TaskOwner is the existing canonical Task lifecycle owner. Get is used before
+// entering the fence to bind the accepted OPS receipt; ExecuteRunEffect holds
+// the current Task/Run generation fence during each short external effect.
+type TaskOwner interface {
+	Get(ctx context.Context, taskID modulecore.TaskID) (domaintask.Task, error)
+	ExecuteRunEffect(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, effect func(context.Context) error) error
+	ExecuteNativeOPSResumeActionEffect(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, claim domaintask.NativeOPSResumeClaim, effect func(context.Context) error) error
+	CompleteNativeOPSResumeRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, claim domaintask.NativeOPSResumeClaim, status domaintask.Status, summary, waitingReason string) (domaintask.Task, error)
+	VerifyNativeOPSResumeReplay(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, actorID string, claim domaintask.NativeOPSResumeClaim, status domaintask.Status) error
 }
 
 // Options are the injection points of a Runtime. The zero value is the
@@ -67,17 +105,24 @@ type Options struct {
 	// Backoff is the wait before resending after an unknown outcome, per resend
 	// (1-based). Nil is 200ms doubling per resend.
 	Backoff func(resend int) time.Duration
+	// OriginProofSigner signs only a validated, owner-read Human source record.
+	// Nil keeps Automation available and blocks a Human relay before Start.
+	OriginProofSigner OriginProofSigner
 }
 
 // Failure codes of a start, in refusals and logs. They name the cause without
 // carrying a path or the Harness's own message.
 const (
-	codeClosed          = "runtime_closed"
-	codeStartFailed     = "harness_start_failed"
-	codeIncompatible    = "harness_incompatible"
-	codeBuildMismatch   = "harness_build_revision_mismatch"
-	codeCooldown        = "harness_restart_cooldown"
-	codeWorkspaceAbsent = "workspace_unavailable"
+	codeClosed                   = "runtime_closed"
+	codeStartFailed              = "harness_start_failed"
+	codeIncompatible             = "harness_incompatible"
+	codeBuildMismatch            = "harness_build_revision_mismatch"
+	codeCooldown                 = "harness_restart_cooldown"
+	codeWorkspaceAbsent          = "workspace_unavailable"
+	codeTaskUnavailable          = "task_run_unavailable"
+	codeScopeInvalid             = "execution_scope_invalid"
+	codeAcceptedInputUnavailable = "accepted_input_unavailable"
+	codeOriginProofUnavailable   = "origin_proof_unavailable"
 )
 
 // Runtime supervises one Harness client for the profile and implements both
@@ -86,18 +131,21 @@ const (
 // safe for concurrent use: the client is acquired and replaced under one mutex,
 // so a start is never done twice and a closed Runtime never starts again.
 type Runtime struct {
-	settings Settings
-	start    StartFunc
-	actions  ActionRecorder
-	log      *logger
-	now      func() time.Time
-	backoff  func(resend int) time.Duration
+	settings          Settings
+	start             StartFunc
+	actions           ActionOwner
+	tasks             TaskOwner
+	log               *logger
+	now               func() time.Time
+	backoff           func(resend int) time.Duration
+	originProofSigner OriginProofSigner
 
 	mu          sync.Mutex
 	current     Client
 	closed      bool
 	failedAt    time.Time
 	failureCode string
+	runGates    map[string]*runGate
 
 	threads correlations // Harness thread ID -> the delegation that used it
 }
@@ -105,15 +153,15 @@ type Runtime struct {
 // NewRuntime validates the settings and returns a Runtime that has not started
 // the Harness. Call Warm to start it eagerly (the first admission otherwise
 // does), and Close at shutdown.
-func NewRuntime(settings Settings, actions ActionRecorder, opts Options) (*Runtime, error) {
+func NewRuntime(settings Settings, actions ActionOwner, tasks TaskOwner, opts Options) (*Runtime, error) {
 	settings = settings.withDefaults()
 	if err := settings.validate(); err != nil {
 		return nil, err
 	}
-	if actions == nil {
-		return nil, fmt.Errorf("%w: an action recorder is required", ErrInvalidSettings)
+	if actions == nil || tasks == nil {
+		return nil, fmt.Errorf("%w: canonical Action and Task owners are required", ErrInvalidSettings)
 	}
-	r := &Runtime{settings: settings, start: opts.Start, actions: actions, now: opts.Now, backoff: opts.Backoff}
+	r := &Runtime{settings: settings, start: opts.Start, actions: actions, tasks: tasks, now: opts.Now, backoff: opts.Backoff, originProofSigner: opts.OriginProofSigner, runGates: make(map[string]*runGate)}
 	if r.start == nil {
 		r.start = startHarness
 	}
@@ -159,6 +207,9 @@ func (r *Runtime) AdmitNativeCoding(ctx context.Context, input conversation.Turn
 	}
 	if strings.TrimSpace(input.MessageText()) == "" {
 		return fail(rejected("empty_request"), "empty_request")
+	}
+	if _, _, _, err := r.canonicalExecution(ctx, input); err != nil {
+		return fail(err, refusalDetail(err))
 	}
 	// The Harness validates the workspace again when it opens the session; this
 	// check only keeps a turn from starting for a directory that is not there.

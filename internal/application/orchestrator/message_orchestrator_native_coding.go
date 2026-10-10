@@ -9,8 +9,9 @@ import (
 
 // NativeCodingAdmission is the admission of the execution profile
 // shiro_native_coding_v1 (docs 03 and 05, RenCrow_Harness sections). It exists
-// only when authenticated configuration enabled the profile; message text,
-// model output and client requests never create or reach it.
+// only when authenticated configuration enabled the profile. Callers pass the
+// typed turn for admission checks, but its message, model output and client
+// requests never choose or enable the profile.
 //
 // AdmitNativeCoding returns nil when the work can be handed to RenCrow_Harness
 // (the Harness is available and the build CORE pinned, the workspace and the
@@ -21,13 +22,14 @@ type NativeCodingAdmission interface {
 	AdmitNativeCoding(ctx context.Context, input domainconversation.TurnInput) error
 }
 
-// admitNativeCoding is the one place in CORE that gives a turn the backend
+// AdmitNativeCoding is the one place in CORE that gives a turn the backend
 // selection shiro_native_coding_v1 (an architecture test fixes the callers of
 // TurnInput.WithBackendSelection). It selects a new OPS turn when the profile
-// is enabled, from the configured admission only. Other routes (CHAT, CODE,
-// WILD, ANALYZE, ...) and turns without an admission are returned unchanged,
-// so they keep today's behavior.
-func admitNativeCoding(ctx context.Context, admission NativeCodingAdmission, input domainconversation.TurnInput, route routing.Route) (domainconversation.TurnInput, error) {
+// is enabled, from the configured admission only. The MessageOrchestrator and
+// authenticated Agent OPS ingress share this function. Other routes (CHAT,
+// CODE, WILD, ANALYZE, ...) and turns without an admission are returned
+// unchanged, so they keep today's behavior.
+func AdmitNativeCoding(ctx context.Context, admission NativeCodingAdmission, input domainconversation.TurnInput, route routing.Route) (domainconversation.TurnInput, error) {
 	if admission == nil || route != routing.RouteOPS {
 		return input, nil
 	}

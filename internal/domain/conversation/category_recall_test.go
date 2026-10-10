@@ -185,7 +185,8 @@ func TestRecallPack_CategorySnippetsFlowThroughPromptBudgetRoleAndTrace(t *testi
 		t.Fatal("CategorySnippets should count as context")
 	}
 	messages := rp.ToPromptMessages()
-	if len(messages) != 1 || !strings.Contains(messages[0].Content, "映画A") || !strings.Contains(messages[0].Content, "https://example.test/m1") {
+	if len(messages) != 4 || !strings.Contains(messages[0].Content, "title=映画A") || !strings.Contains(messages[0].Content, "https://example.test/m1") || messages[0].PromptSource != nil ||
+		messages[1].Content != "作品概要" || messages[1].PromptSource != nil || strings.Contains(messages[0].Content, "summary=") {
 		t.Fatalf("category prompt missing: %#v", messages)
 	}
 	trimmed := rp.ApplyRecallBudgetWithEstimator(20, 0.5, TokenEstimatorFunc(func(text string) int {

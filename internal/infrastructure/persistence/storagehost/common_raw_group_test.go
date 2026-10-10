@@ -235,7 +235,18 @@ func TestCommonRawCanonicalMaximumBatchCrossesAuthenticatedRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := newStorageHostTestServer(t, handler)
-	client := newCommonRawTestClient(t, server)
+	client, err := NewClient(ClientConfig{
+		Endpoint:   server.URL,
+		Token:      commonRawGroupTestToken,
+		HTTPClient: server.Client(),
+		Timeout:    120 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Handshake(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	record := domainmemory.ChatGPTL3ImportRecord{
 		Format: domainmemory.ChatGPTL3ArtifactFormat, ExportID: "maximum-export", EvidenceID: "chatgpt_export:maximum-conversation:maximum-message",
 		ConversationID: "maximum-conversation", ConversationTitle: "maximum", ConversationCreatedAt: time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC), ConversationUpdatedAt: time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC),
@@ -328,7 +339,18 @@ func TestCommonRawOversizedReceiptIsRecoveredExactly(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := newStorageHostTestServer(t, handler)
-	client := newCommonRawTestClient(t, server)
+	client, err := NewClient(ClientConfig{
+		Endpoint:   server.URL,
+		Token:      commonRawGroupTestToken,
+		HTTPClient: server.Client(),
+		Timeout:    120 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Handshake(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	requestID, opID := "oversized-receipt-request", "oversized-receipt-operation"
 	client.opID = opID
 
@@ -371,14 +393,23 @@ func TestCommonRawOversizedReceiptIsRecoveredExactly(t *testing.T) {
 		t.Fatalf("valid intake request size=%d exceeds the ordinary 32 MiB request bound", len(envelope))
 	}
 
+	responseLossHookCalled := false
 	client.sendHook = func() error {
+		responseLossHookCalled = true
 		server.Close()
 		return errConnectionResetAfterSend
 	}
 	var first commonRawIntakeResult
 	err = client.Call(context.Background(), GroupCommonRaw, commonRawIntakeOp, payload, &first)
+	if !responseLossHookCalled {
+		t.Fatalf("response-loss hook did not run; no completed response was received before the recovery scenario: first call error=%v", err)
+	}
 	if !isOutcomeUnknown(err) {
 		t.Fatalf("first response was deliberately lost after journal completion; got %v", err)
+	}
+	entry, found := handler.journal.lookup(opID)
+	if !found || entry.Status != journalStatusDone || entry.Group != GroupCommonRaw || entry.Op != commonRawIntakeOp || entry.PayloadHash != payloadHash(GroupCommonRaw, commonRawIntakeOp, payloadJSON) || len(entry.Result) <= maxRequestBytes {
+		t.Fatalf("response-loss hook did not follow a durable oversized DONE result: found=%t status=%q group=%q op=%q payload_hash_matches=%t result_bytes=%d", found, entry.Status, entry.Group, entry.Op, entry.PayloadHash == payloadHash(GroupCommonRaw, commonRawIntakeOp, payloadJSON), len(entry.Result))
 	}
 	if err := handler.Close(); err != nil {
 		t.Fatal(err)

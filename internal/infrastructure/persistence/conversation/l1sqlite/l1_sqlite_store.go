@@ -70,10 +70,16 @@ type L1SQLiteStore struct {
 	parquetExportRoot        string
 	rawSourceRoot            string
 	rawMu                    sync.Mutex
-	dailyDigestSummarizer    DailyDigestSummarizer
-	knowledgeVectorSink      L1KnowledgeVectorSink
-	vectorCleanupSink        L1VectorCleanupSink
-	lifecycleMu              sync.Mutex
+	// Package-local seam for deterministic OPS transaction commit-failure tests.
+	// Production stores leave it nil and issue COMMIT on the reserved connection.
+	opsAcceptanceCommitHook func(context.Context, *sql.Conn) error
+	// Package-local seam for proving that a failed rollback discards its connection.
+	// Production stores leave it nil and issue ROLLBACK with a bounded cleanup context.
+	opsAcceptanceRollbackHook func(context.Context, *sql.Conn) error
+	dailyDigestSummarizer     DailyDigestSummarizer
+	knowledgeVectorSink       L1KnowledgeVectorSink
+	vectorCleanupSink         L1VectorCleanupSink
+	lifecycleMu               sync.Mutex
 }
 
 func NewL1SQLiteStore(dbPath string) (*L1SQLiteStore, error) {

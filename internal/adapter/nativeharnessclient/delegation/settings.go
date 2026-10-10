@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_Harness/pkg/protocol"
 )
 
@@ -44,6 +45,9 @@ type Settings struct {
 	HarnessConfig string
 	// ExpectedBuildRevision is the build_revision the Harness must report.
 	ExpectedBuildRevision string
+	// ExpectedCriteriaRevision is the immutable Task-owner pin this runtime
+	// accepts from the deployment configuration.
+	ExpectedCriteriaRevision string
 
 	// Workspace is the root, policy and mode of the Harness session.
 	Workspace Workspace
@@ -121,6 +125,9 @@ func (s Settings) validate() error {
 		if !plainIdentifier(text.value) {
 			return bad("%s must be 1..%d characters of text without control characters", text.name, maxIdentifierRunes)
 		}
+	}
+	if !domaintask.ValidCriteriaRevision(s.ExpectedCriteriaRevision) {
+		return bad("expected criteria revision must be one lowercase SHA-256 revision")
 	}
 	switch s.Workspace.ExecutionMode {
 	case protocol.ModeStructuredOnly, protocol.ModeTrustedHost:

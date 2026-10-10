@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
 const (
@@ -40,20 +42,21 @@ type CategoryRecallQuery struct {
 // applied. Source implementations must preserve provenance and lifecycle
 // state instead of converting an unavailable or unvalidated record into text.
 type CategoryRecallRecord struct {
-	Category       string    `json:"category"`
-	SourceID       string    `json:"source_id"`
-	RecordID       string    `json:"record_id"`
-	Title          string    `json:"title"`
-	Summary        string    `json:"summary"`
-	ProvenanceURLs []string  `json:"provenance_urls"`
-	RetrievedAt    time.Time `json:"retrieved_at"`
-	ValidatedAt    time.Time `json:"validated_at"`
-	FreshUntil     time.Time `json:"fresh_until"`
-	State          string    `json:"state"`
-	Sensitivity    string    `json:"sensitivity"`
-	Scope          string    `json:"scope"`
-	Roles          []string  `json:"roles"`
-	Score          float64   `json:"score"`
+	Category       string               `json:"category"`
+	SourceID       string               `json:"source_id"`
+	RecordID       string               `json:"record_id"`
+	Title          string               `json:"title"`
+	Summary        string               `json:"summary"`
+	ProvenanceURLs []string             `json:"provenance_urls"`
+	RetrievedAt    time.Time            `json:"retrieved_at"`
+	ValidatedAt    time.Time            `json:"validated_at"`
+	FreshUntil     time.Time            `json:"fresh_until"`
+	State          string               `json:"state"`
+	Sensitivity    string               `json:"sensitivity"`
+	Scope          string               `json:"scope"`
+	Roles          []string             `json:"roles"`
+	Score          float64              `json:"score"`
+	PromptSource   *llm.PromptSourceRef `json:"-"`
 }
 
 func (r CategoryRecallRecord) ToPromptText() string {
@@ -294,6 +297,7 @@ func normalizeCategoryRecord(record CategoryRecallRecord, category string, sourc
 	}
 	record.ProvenanceURLs = append([]string(nil), record.ProvenanceURLs...)
 	record.Roles = append([]string(nil), record.Roles...)
+	record.PromptSource = llm.ClonePromptSourceRef(record.PromptSource)
 	return record
 }
 
@@ -337,6 +341,32 @@ func validateCategoryRecallRecord(record CategoryRecallRecord, query CategoryRec
 		}
 	}
 	return CategoryRecallFailure{}, false
+}
+
+// CheckCategoryRecallRecordForRole applies the same category validation and
+// injection policy used by recall assembly. It is used by provenance-aware
+// sources before opening an underlying private source, so a rejected record
+// never causes that read. The result is a normal category failure for the
+// existing recall trace.
+func CheckCategoryRecallRecordForRole(record CategoryRecallRecord, query CategoryRecallQuery, role string) (CategoryRecallFailure, bool) {
+	record = normalizeCategoryRecord(record, query.Category, record.SourceID)
+	if failure, rejected := validateCategoryRecallRecord(record, query); rejected {
+		return failure, true
+	}
+	decision := NewInjectionPolicy(role).Decide(categoryRecallCandidate(categorySnippetFromRecord(record)))
+	if decision.Status == TraceStatusInjected {
+		return CategoryRecallFailure{}, false
+	}
+	code := decision.Status
+	switch decision.Reason {
+	case CategoryRecallFailureRoleDenied, CategoryRecallFailureScopeDenied,
+		CategoryRecallFailureMissingProvenance, CategoryRecallFailureInvalid:
+		code = decision.Reason
+	}
+	return CategoryRecallFailure{
+		Category: record.Category, SourceID: record.SourceID, RecordID: record.RecordID,
+		Code: code, State: decision.Status, Reason: decision.Reason, ObservedAt: query.Time,
+	}, true
 }
 
 func categoryRecordStateInjectable(state string) bool {
@@ -445,20 +475,21 @@ func appendUniqueString(values []string, value string) []string {
 // record. It is intentionally not a conversation Message and is never stored
 // by EndTurn.
 type CategorySnippet struct {
-	Category       string    `json:"category"`
-	SourceID       string    `json:"source_id"`
-	RecordID       string    `json:"record_id"`
-	Title          string    `json:"title"`
-	Summary        string    `json:"summary"`
-	ProvenanceURLs []string  `json:"provenance_urls"`
-	RetrievedAt    time.Time `json:"retrieved_at"`
-	ValidatedAt    time.Time `json:"validated_at"`
-	FreshUntil     time.Time `json:"fresh_until"`
-	State          string    `json:"state"`
-	Sensitivity    string    `json:"sensitivity"`
-	Scope          string    `json:"scope"`
-	Roles          []string  `json:"roles"`
-	Score          float64   `json:"score"`
+	Category       string               `json:"category"`
+	SourceID       string               `json:"source_id"`
+	RecordID       string               `json:"record_id"`
+	Title          string               `json:"title"`
+	Summary        string               `json:"summary"`
+	ProvenanceURLs []string             `json:"provenance_urls"`
+	RetrievedAt    time.Time            `json:"retrieved_at"`
+	ValidatedAt    time.Time            `json:"validated_at"`
+	FreshUntil     time.Time            `json:"fresh_until"`
+	State          string               `json:"state"`
+	Sensitivity    string               `json:"sensitivity"`
+	Scope          string               `json:"scope"`
+	Roles          []string             `json:"roles"`
+	Score          float64              `json:"score"`
+	PromptSource   *llm.PromptSourceRef `json:"-"`
 }
 
 func (s CategorySnippet) ToPromptText() string {
@@ -493,6 +524,13 @@ func (s CategorySnippet) ToPromptText() string {
 	return strings.Join(parts, "; ")
 }
 
+// ToPromptEnvelopeText keeps the record identity and provenance beside a
+// summary while leaving the summary bytes available as their own source block.
+func (s CategorySnippet) ToPromptEnvelopeText() string {
+	s.Summary = ""
+	return s.ToPromptText()
+}
+
 func categorySnippetFromRecord(record CategoryRecallRecord) CategorySnippet {
 	return CategorySnippet{
 		Category: record.Category, SourceID: record.SourceID, RecordID: record.RecordID,
@@ -501,7 +539,15 @@ func categorySnippetFromRecord(record CategoryRecallRecord) CategorySnippet {
 		RetrievedAt:    record.RetrievedAt, ValidatedAt: record.ValidatedAt, FreshUntil: record.FreshUntil,
 		State: record.State, Sensitivity: record.Sensitivity, Scope: record.Scope,
 		Roles: append([]string(nil), record.Roles...), Score: record.Score,
+		PromptSource: llm.ClonePromptSourceRef(record.PromptSource),
 	}
+}
+
+func cloneCategorySnippet(snippet CategorySnippet) CategorySnippet {
+	snippet.ProvenanceURLs = append([]string(nil), snippet.ProvenanceURLs...)
+	snippet.Roles = append([]string(nil), snippet.Roles...)
+	snippet.PromptSource = llm.ClonePromptSourceRef(snippet.PromptSource)
+	return snippet
 }
 
 // CategorySnippetFromRecord converts a source result into the prompt-safe

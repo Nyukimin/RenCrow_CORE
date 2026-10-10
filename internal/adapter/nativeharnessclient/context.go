@@ -31,23 +31,10 @@ const (
 	contextRevisionPrefix = "ctx-v1:"
 )
 
-// ByteRange is the quoted range inside the original of a SourceRef.
-type ByteRange struct {
-	Start uint64 `json:"start"`
-	End   uint64 `json:"end"`
-}
-
-// SourceRef is the reference to existing evidence behind a block. Its Origin
-// is a value of the reference, not proof that the text is authenticated.
-type SourceRef struct {
-	Owner             string    `json:"owner"`
-	SourceID          string    `json:"source_id"`
-	RawHash           string    `json:"raw_hash"`
-	ProjectionVersion string    `json:"projection_version"`
-	Range             ByteRange `json:"range"`
-	Origin            string    `json:"origin"`
-	Sequence          uint64    `json:"sequence"`
-}
+// ByteRange and SourceRef are aliases of CORE's canonical prompt provenance
+// types. Harness serialization uses the same field names and JSON shape.
+type ByteRange = llm.ByteRange
+type SourceRef = llm.PromptSourceRef
 
 // ContextBlock is the public block handed to RenCrow_Harness. It has exactly
 // the four public fields kind, text, revision and source. Kind reuses
@@ -63,6 +50,12 @@ type ContextBlock struct {
 // messages[index], or nil for a block without a source. It receives a copy of
 // the message and is never called for the user message.
 type SourceResolver func(index int, message llm.Message) (*SourceRef, error)
+
+// PromptSourceFromMessage resolves only the typed CORE source carried beside a
+// message. Metadata and text never create a source reference.
+func PromptSourceFromMessage(_ int, message llm.Message) (*SourceRef, error) {
+	return llm.ClonePromptSourceRef(message.PromptSource), nil
+}
 
 // sourceOrigins are the origin values a SourceRef may carry.
 var sourceOrigins = map[string]bool{
@@ -163,7 +156,7 @@ func resolveSource(resolve SourceResolver, index int, message llm.Message) (*Sou
 	if resolved == nil {
 		return nil, nil
 	}
-	source := *resolved
+	source := *llm.ClonePromptSourceRef(resolved)
 	if err := validateSource(source); err != nil {
 		return nil, fmt.Errorf("%w: source of message %d: %v", ErrInvalidContextInput, index, err)
 	}

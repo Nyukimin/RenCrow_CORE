@@ -131,7 +131,7 @@ type storageHostServeDeps struct {
 	RegisterEventGroup           func(*storagehost.Handler, storagehost.EventGroupOwner) error
 	RegisterArchiveGroup         func(*storagehost.Handler, storagehost.ArchiveGroupOwner) error
 	RegisterSessionGroup         func(*storagehost.Handler, storagehost.SessionGroupOwner) error
-	RegisterL1Group              func(*storagehost.Handler, storagehost.L1GroupOwner) error
+	RegisterL1Group              func(*storagehost.Handler, storagehost.L1GroupOwner, string) error
 	RegisterTurnGroup            func(*storagehost.Handler, storagehost.TurnGroupOwner) error
 	RegisterTaskGroup            func(*storagehost.Handler, storagehost.TaskGroupOwner) error
 	RegisterOperationMemoryGroup func(*storagehost.Handler, storagehost.OperationMemoryGroupOwner) error
@@ -651,7 +651,7 @@ func runStorageHostServe(ctx context.Context, cfg *config.Config, deps storageHo
 	if err := deps.RegisterSessionGroup(handler, sessionOwner); err != nil {
 		return fmt.Errorf("register canonical Session storage operations: %w", err)
 	}
-	if err := deps.RegisterL1Group(handler, l1Owner); err != nil {
+	if err := deps.RegisterL1Group(handler, l1Owner, configuredLocalAgentOpsPrincipal(cfg)); err != nil {
 		return fmt.Errorf("register canonical Conversation L1 storage operations: %w", err)
 	}
 	if err := deps.RegisterTurnGroup(handler, l1Owner); err != nil {
