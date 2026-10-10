@@ -51,6 +51,10 @@ func (s *HeartbeatService) startGmailIntake() bool {
 		defer func() { cancel(); g.mu.Lock(); g.cancel = nil; g.mu.Unlock() }()
 		s.emitEvent("heartbeat.gmail.started", "Gmail intake started")
 		report, err := s.runGmailIntake(ctx)
+		if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+			s.emitEvent("heartbeat.gmail.deferred", "Gmail intake deferred: execution capacity unavailable; retry at the next interval")
+			return
+		}
 		if err != nil {
 			// Provider errors may contain URLs or response bodies. Keep shared SSE
 			// and logs free of private mail; detailed per-mail outcomes are owner-only.

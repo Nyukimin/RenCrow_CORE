@@ -60,6 +60,12 @@ func (s *HeartbeatService) startXBookmarkCollection() bool {
 		}()
 
 		report, err := s.runXBookmarkCollection(ctx)
+		if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+			message := "collection deferred: execution capacity unavailable; retry at the next interval"
+			log.Printf("[Heartbeat] X Bookmark %s", message)
+			s.emitEvent("heartbeat.x_bookmarks.deferred", message)
+			return
+		}
 		if err != nil {
 			message := fmt.Sprintf("collection failed: %v", err)
 			log.Printf("[Heartbeat] X Bookmark %s", message)

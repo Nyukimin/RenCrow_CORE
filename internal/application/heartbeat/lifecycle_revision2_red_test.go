@@ -14,6 +14,7 @@ import (
 
 type revision2AtlasRunnerFake struct {
 	result       appbacklog.AcquireRunnableResult
+	acquireErr   error
 	acquireCalls int
 	reviseCalls  []appbacklog.ReviseRequest
 	reviseItemID []string
@@ -23,7 +24,7 @@ type revision2AtlasRunnerFake struct {
 
 func (f *revision2AtlasRunnerFake) AcquireRunnable(_ context.Context) (appbacklog.AcquireRunnableResult, error) {
 	f.acquireCalls++
-	return f.result, nil
+	return f.result, f.acquireErr
 }
 
 func (f *revision2AtlasRunnerFake) Revise(ctx context.Context, itemID string, request appbacklog.ReviseRequest) (domainbacklog.Item, error) {

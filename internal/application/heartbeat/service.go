@@ -16,6 +16,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	revenueapp "github.com/Nyukimin/RenCrow_CORE/internal/application/revenue"
 	skillbootstrap "github.com/Nyukimin/RenCrow_CORE/internal/application/skillgovernance"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	ctxbuilder "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
@@ -416,6 +417,12 @@ func (s *HeartbeatService) tick(ctx context.Context) (resultErr error) {
 
 	// タスクを作成してShiroに処理させる
 	ctx, input, finish, err := s.beginWorker(ctx, message, "heartbeat", "heartbeat")
+	if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+		// Execution capacity is full: not a failure. The next tick retries.
+		s.logHeartbeat("DEFER", "execution capacity unavailable; retry on the next tick")
+		s.emitEvent("heartbeat.skip", "execution capacity unavailable; retry on the next tick")
+		return nil
+	}
 	if err != nil {
 		s.logHeartbeat("ERROR", fmt.Sprintf("worker input failed: %v", err))
 		s.emitEvent("heartbeat.error", fmt.Sprintf("worker input failed: %v", err))
@@ -876,6 +883,9 @@ func atlasNextDeliveryStage(state string) string {
 
 func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now time.Time, items []domainbacklog.Item, report BacklogRunnerReport) (resultReport BacklogRunnerReport, resultErr error) {
 	result, err := s.atlasService.AcquireRunnable(ctx)
+	if errors.Is(err, taskmanager.ErrParallelLimit) {
+		return s.deferBacklogRunner(report, len(items)), nil
+	}
 	if err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("failed to acquire Atlas runnable unit: %v", err))
@@ -896,6 +906,9 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 	}
 
 	ctx, input, finish, err := s.beginWorker(ctx, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")
+	if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+		return s.deferBacklogRunner(report, len(items)), nil
+	}
 	if err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
@@ -942,6 +955,15 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 	report.Started = 1
 	report.Skipped = len(items) - 1
 	return report, nil
+}
+
+// deferBacklogRunner reports a backlog runner pass that could not be admitted
+// for lack of execution capacity. It is not a failure: nothing was started or
+// persisted, so the item stays as it was and the next scheduled pass retries it.
+func (s *HeartbeatService) deferBacklogRunner(report BacklogRunnerReport, items int) BacklogRunnerReport {
+	log.Printf("[Heartbeat] backlog runner deferred: execution capacity unavailable; retry on the next tick")
+	report.Skipped = items
+	return report
 }
 
 func revision2ItemRevision(item domainbacklog.Item) int {
@@ -1002,6 +1024,9 @@ func (s *HeartbeatService) runLegacyBacklogRunner(ctx context.Context, now time.
 	item.Status = "implementing"
 	item.Implementer = "coder"
 	ctx, input, finish, err := s.beginWorker(ctx, backlogRunnerMessage(item), "backlog-runner", "heartbeat")
+	if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+		return s.deferBacklogRunner(report, len(items)), nil
+	}
 	if err != nil {
 		report.Failed++
 		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s worker input failed: %v", item.BacklogItemID, err))
@@ -1069,6 +1094,13 @@ func (s *HeartbeatService) RunDueWorkstreamHeartbeats(ctx context.Context, now t
 			continue
 		}
 		if err := s.runWorkstreamHeartbeat(ctx, schedule, now); err != nil {
+			if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+				// The remaining schedules would be refused for the same
+				// capacity; the next sweep retries them.
+				log.Printf("[Heartbeat] workstream heartbeat deferred: execution capacity unavailable; retry on the next tick")
+				report.Skipped++
+				break
+			}
 			report.Failed++
 			s.emitEvent("workstream.heartbeat.error", err.Error())
 			return report, err

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 )
 
 type memoryPromotionRunner interface {
@@ -14,6 +15,11 @@ type memoryPromotionRunner interface {
 }
 
 const memoryProfilePromotionBusySource = "memory_profile_promotion"
+
+// memoryPromotionCapacityBackoffMax bounds the retry spacing after the Task
+// owner refused a promotion run for lack of execution capacity. It is a
+// variable so tests can shorten it.
+var memoryPromotionCapacityBackoffMax = 5 * time.Minute
 
 func startMemoryPromotionWorker(
 	runner memoryPromotionRunner,
@@ -56,11 +62,18 @@ func startMemoryPromotionWorkerRunner(
 			}
 		}()
 		var idleSince time.Time
+		// A refusal for lack of execution capacity is retried later with a
+		// bounded, growing delay. It is not a job failure and is not reported
+		// as one.
+		capacity := newCapacityBackoff(idleGrace, memoryPromotionCapacityBackoffMax)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case now := <-ticker.C:
+				if capacity.waiting(now) {
+					continue
+				}
 				if tracker.ExternalBusy() {
 					if releaseReservation != nil {
 						releaseReservation()
@@ -97,6 +110,12 @@ func startMemoryPromotionWorkerRunner(
 					runCtx, runCancel := context.WithTimeout(leaseCtx, timeout)
 					result, err := runner.RunOne(runCtx)
 					runCancel()
+					if errors.Is(err, taskmanager.ErrParallelLimit) {
+						delay := capacity.refused(time.Now())
+						log.Printf("Memory ProfilePromotion deferred: execution capacity unavailable; retry in %s", delay)
+						break
+					}
+					capacity.succeeded()
 					if err != nil {
 						if !errors.Is(err, context.Canceled) {
 							reporter.Failed(memoryProfilePromotionBusySource, err, "L1 raw UserMemory candidate extraction")
