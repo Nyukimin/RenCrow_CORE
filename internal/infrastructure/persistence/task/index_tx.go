@@ -164,6 +164,41 @@ func (s *transactionStore) overlayContext(key key16) (domaintask.SharedRoleConte
 	return value, ok
 }
 
+// idxCheckSaveTask is the check appendTask makes for an indexed store, answered
+// from the pending records and the index instead of a fold of the whole log:
+// the latest saved version of the Task fixes its criteria revision and its
+// Resume claims, and a Task cannot be first saved with claims. The caller holds
+// the transaction state lock.
+func (s *transactionStore) idxCheckSaveTask(value domaintask.Task) error {
+	key, err := parseCanonicalKey(string(value.TaskID), taskKeyPrefix)
+	if err != nil {
+		return fmt.Errorf("task_id: %w", err)
+	}
+	var previous taskPin
+	found := false
+	if pending, ok := s.state.ov.tasks[key]; ok {
+		previous, found = pinOfTask(pending), true
+	} else {
+		ix := s.parent.idx
+		unlock := s.indexLock()
+		flags, pos, committed := ix.committedPinLocator(key)
+		unlock()
+		if committed {
+			if previous, err = ix.readTaskPin(flags, pos, key); err != nil {
+				return err
+			}
+			found = true
+		}
+	}
+	if found {
+		return checkTaskPinTransition(previous, value)
+	}
+	if len(value.NativeResumeClaims) != 0 {
+		return ErrNativeOPSResumeClaimImmutable
+	}
+	return nil
+}
+
 func (s *transactionStore) idxGetTask(taskID modulecore.TaskID) (domaintask.Task, error) {
 	key, err := parseCanonicalKey(string(taskID), taskKeyPrefix)
 	if err != nil {

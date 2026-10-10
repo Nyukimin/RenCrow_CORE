@@ -108,6 +108,8 @@ const (
 	flagFinished                    // FinishedAt is set
 	flagReadOnly                    // read_only
 	flagRelations                   // relations holds parent/dependency/supersedes
+	flagPinned                      // expected_criteria_revision is set
+	flagClaims                      // native_resume_claims is not empty
 )
 
 // taskRec is the pointer-free summary of one Task plus the positions of all of
@@ -301,6 +303,7 @@ func summaryOfTask(value domaintask.Task) taskFacts {
 		route: string(value.Route), status: string(value.Status), priority: string(value.Priority), interrupt: string(value.InterruptPolicy),
 		updated: toStamp(value.UpdatedAt), readOnly: value.ReadOnly,
 		hasStarted: value.StartedAt != nil, hasFinished: value.FinishedAt != nil,
+		pinned: value.ExpectedCriteriaRevision != "", hasClaims: len(value.NativeResumeClaims) > 0,
 	}
 	if value.ParentTaskID != "" || value.SupersedesTaskID != "" || len(value.DependencyTaskIDs) > 0 {
 		facts.relations = &taskRelations{
@@ -319,6 +322,7 @@ type taskFacts struct {
 	route, status, priority, interrupt string
 	updated                            stamp
 	hasStarted, hasFinished, readOnly  bool
+	pinned, hasClaims                  bool
 	relations                          *taskRelations
 }
 

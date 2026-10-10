@@ -66,6 +66,7 @@ type indexBatch struct {
 
 	// Fold state for records that depend on earlier records of the same batch.
 	newTasks       map[key16]struct{}
+	pins           map[key16]taskPin
 	latestRun      map[key16]domaintask.Run
 	active         map[key16]activeRun
 	latestReceipts map[string]TaskOperationReceipt
@@ -100,6 +101,7 @@ func (ix *taskIndex) buildBatch(chunks []appendChunk) (*indexBatch, error) {
 	b := &indexBatch{
 		ix:             ix,
 		newTasks:       make(map[key16]struct{}),
+		pins:           make(map[key16]taskPin),
 		latestRun:      make(map[key16]domaintask.Run),
 		active:         make(map[key16]activeRun),
 		latestReceipts: make(map[string]TaskOperationReceipt),
@@ -188,9 +190,36 @@ func (b *indexBatch) absorbTask(line []byte, pos linePos) error {
 	if err != nil {
 		return err
 	}
+	// The same transitions foldTaskRecords refuses between two versions of a Task.
+	previous, known, err := b.previousPin(key)
+	if err != nil {
+		return err
+	}
+	if known {
+		if err := checkTaskPinTransition(previous, value); err != nil {
+			return err
+		}
+	}
+	b.pins[key] = pinOfTask(value)
 	b.tasks = append(b.tasks, batchTask{key: key, facts: summaryOfTask(value), pos: pos})
 	b.newTasks[key] = struct{}{}
 	return nil
+}
+
+// previousPin returns the pin state of the latest version of a Task seen by
+// this batch or, failing that, by the index. The index keeps two flags per Task,
+// so the line is read back only when the previous version carried a criteria
+// revision or Resume claims.
+func (b *indexBatch) previousPin(key key16) (taskPin, bool, error) {
+	if pin, ok := b.pins[key]; ok {
+		return pin, true, nil
+	}
+	flags, pos, ok := b.ix.committedPinLocator(key)
+	if !ok {
+		return taskPin{}, false, nil
+	}
+	pin, err := b.ix.readTaskPin(flags, pos, key)
+	return pin, true, err
 }
 
 func (b *indexBatch) absorbRun(line []byte, pos linePos) error {
@@ -440,6 +469,12 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 		}
 		if bt.facts.hasFinished {
 			rec.flags |= flagFinished
+		}
+		if bt.facts.pinned {
+			rec.flags |= flagPinned
+		}
+		if bt.facts.hasClaims {
+			rec.flags |= flagClaims
 		}
 		if bt.facts.readOnly {
 			rec.flags |= flagReadOnly

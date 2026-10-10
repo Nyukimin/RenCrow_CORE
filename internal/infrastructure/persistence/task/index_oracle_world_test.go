@@ -144,6 +144,8 @@ var oracleSentinels = []error{
 	errTaskExecutionFenceScope,
 	errReadOnlyTransaction,
 	ErrRecordCorrupt,
+	ErrExpectedCriteriaRevisionImmutable,
+	ErrNativeOPSResumeClaimImmutable,
 }
 
 func compareObs(t *testing.T, label string, legacy, indexed []obsItem) {

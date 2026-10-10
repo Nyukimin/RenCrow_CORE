@@ -459,9 +459,12 @@ func (s *transactionStore) SaveTask(ctx context.Context, value domaintask.Task) 
 	// Prime the committed Task history before entering the atomic compare+append
 	// below. The committed fold validates every prior pin transition, while the
 	// locked append also checks Task records appended concurrently in this
-	// transaction.
-	if _, err := s.loadTasks(ctx); err != nil {
-		return err
+	// transaction. An indexed store checked the committed history as it absorbed
+	// it, so there is nothing to prime.
+	if s.parent.idx == nil {
+		if _, err := s.loadTasks(ctx); err != nil {
+			return err
+		}
 	}
 	return s.appendTask(ctx, value)
 }
@@ -494,39 +497,50 @@ func (s *transactionStore) appendTask(ctx context.Context, value domaintask.Task
 	if s.scopeTaskID != "" && s.scopeTaskID != value.TaskID {
 		return errTaskExecutionFenceScope
 	}
-	if !s.state.baseLoaded || s.state.base == nil {
-		return errors.New("task transaction committed snapshot is unavailable")
-	}
-	if s.state.base.tasksErr != nil {
-		return s.state.base.tasksErr
-	}
-	records := append([]domaintask.Task(nil), s.state.base.tasks...)
-	pending, err := readJSONLBytes[domaintask.Task](ctx, s.state.pending[stateFilename])
-	if err != nil {
-		return err
-	}
-	records = append(records, pending...)
-	latest, err := foldTaskRecords(records)
-	if err != nil {
-		return err
-	}
-	foundSavedTask := false
-	for _, saved := range latest {
-		if saved.TaskID == value.TaskID && saved.ExpectedCriteriaRevision != value.ExpectedCriteriaRevision {
-			return ErrExpectedCriteriaRevisionImmutable
+	if s.parent.idx != nil {
+		if err := s.idxCheckSaveTask(value); err != nil {
+			return err
 		}
-		if saved.TaskID == value.TaskID {
-			foundSavedTask = true
-			if !domaintask.NativeOPSResumeClaimsExtend(saved.NativeResumeClaims, value.NativeResumeClaims) {
-				return ErrNativeOPSResumeClaimImmutable
+	} else {
+		if !s.state.baseLoaded || s.state.base == nil {
+			return errors.New("task transaction committed snapshot is unavailable")
+		}
+		if s.state.base.tasksErr != nil {
+			return s.state.base.tasksErr
+		}
+		records := append([]domaintask.Task(nil), s.state.base.tasks...)
+		pending, err := readJSONLBytes[domaintask.Task](ctx, s.state.pending[stateFilename])
+		if err != nil {
+			return err
+		}
+		records = append(records, pending...)
+		latest, err := foldTaskRecords(records)
+		if err != nil {
+			return err
+		}
+		foundSavedTask := false
+		for _, saved := range latest {
+			if saved.TaskID == value.TaskID && saved.ExpectedCriteriaRevision != value.ExpectedCriteriaRevision {
+				return ErrExpectedCriteriaRevisionImmutable
+			}
+			if saved.TaskID == value.TaskID {
+				foundSavedTask = true
+				if !domaintask.NativeOPSResumeClaimsExtend(saved.NativeResumeClaims, value.NativeResumeClaims) {
+					return ErrNativeOPSResumeClaimImmutable
+				}
 			}
 		}
-	}
-	if !foundSavedTask && len(value.NativeResumeClaims) != 0 {
-		return ErrNativeOPSResumeClaimImmutable
+		if !foundSavedTask && len(value.NativeResumeClaims) != 0 {
+			return ErrNativeOPSResumeClaimImmutable
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if s.state.ov != nil {
+		if err := s.state.ov.record(stateFilename, encoded); err != nil {
+			return err
+		}
 	}
 	s.state.touched[value.TaskID] = struct{}{}
 	s.state.pending[stateFilename] = append(s.state.pending[stateFilename], encoded...)
