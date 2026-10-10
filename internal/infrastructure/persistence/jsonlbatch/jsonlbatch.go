@@ -85,6 +85,8 @@ type Store struct {
 	readOnly  bool
 	// observer is nil unless SetTxObserver installed one; see tx_observer.go.
 	observer atomic.Pointer[TxObserver]
+	// postCommit is nil unless SetPostCommitHook installed one; see post_commit.go.
+	postCommit atomic.Pointer[PostCommitHook]
 	// syncFn and closeFn are nil in production. They are narrow package-local
 	// seams for deterministic durability-failure tests; callers cannot replace
 	// the owner-level file operations through the public API.
@@ -330,6 +332,7 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 			// writer determine the outcome from the WAL shape.
 			return errors.Join(ErrCommitUncertain, ErrRecoveryRequired, err)
 		}
+		s.notifyCommitted(ctx, prepared)
 		return nil
 	})
 	rec.report(ctx, err)
