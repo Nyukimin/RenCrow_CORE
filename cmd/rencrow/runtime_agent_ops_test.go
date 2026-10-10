@@ -235,7 +235,7 @@ func TestAgentOpsProductionWiringSharesInitializedNativeCodingRuntime(t *testing
 	orchestratorText := string(orchestratorSource)
 	orchestratorBuild := strings.Index(dependenciesText, "buildOrchestratorRuntime(")
 	nativeAdmissionBuild := strings.Index(dependenciesText, "configuredNativeCodingAdmission(cfg, deps.nativeCoding)")
-	agentOpsBuild := strings.Index(dependenciesText, "newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore)")
+	agentOpsBuild := strings.Index(dependenciesText, "newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore, withAgentOpsLeadRunRecorder(deps.superAgentStore))")
 	if orchestratorBuild < 0 || nativeAdmissionBuild <= orchestratorBuild || agentOpsBuild <= nativeAdmissionBuild {
 		t.Fatalf("Agent OPS handler must use the configured native runtime after the orchestrator initializes it: orchestrator=%d admission=%d handler=%d", orchestratorBuild, nativeAdmissionBuild, agentOpsBuild)
 	}
@@ -428,7 +428,11 @@ func TestAgentOpsHandlerWorkerBusyLeaseRefCountsConcurrentRequests(t *testing.T)
 		release: make(chan struct{}),
 	}
 	notifier := &agentOpsBusyNotifierStub{}
-	handler := newAgentOpsTestHandlerWithNotifier(t, token, executor, notifier)
+	// Legacy OPS requests run on Task owner Runs, so concurrent requests are
+	// bounded by the operations slot. Two slots let both requests run at once,
+	// which is what the lease ref-count needs to be observed.
+	owner := newAgentOpsTestTaskOwnerWithLimits(t, taskmanager.ParallelLimits{Global: 3, PerModule: 1, CodingTasks: 2, LongResearchTasks: 1, DestructiveTasks: 2})
+	handler := newAgentOpsTestHandlerWithOwnerAndNotifier(t, token, executor, notifier, owner)
 	responses := make(chan *httptest.ResponseRecorder, 2)
 	for i := 0; i < 2; i++ {
 		go func(index int) {
@@ -694,6 +698,36 @@ func newAgentOpsTestTaskOwner(t *testing.T) *taskmanager.Manager {
 		}
 	})
 	return deps.taskManager
+}
+
+// newAgentOpsTestTaskOwnerWithLimits returns a Task owner over the same kind of
+// store as newAgentOpsTestTaskOwner but with caller-chosen parallel limits.
+func newAgentOpsTestTaskOwnerWithLimits(t *testing.T, limits taskmanager.ParallelLimits) *taskmanager.Manager {
+	t.Helper()
+	deps := &Dependencies{}
+	if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err != nil {
+		t.Fatalf("initialize Agent OPS task owner: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := deps.taskManager.Close(); err != nil {
+			t.Errorf("close Agent OPS task owner: %v", err)
+		}
+	})
+	return taskmanager.New(deps.taskStore, limits)
+}
+
+func newAgentOpsTestHandlerWithOwnerAndNotifier(t *testing.T, token string, executor agentOpsExecutor, notifier agentOpsWorkerBusyNotifier, owner *taskmanager.Manager) http.HandlerFunc {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent-ops.token")
+	if err := os.WriteFile(path, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{LocalAgentOps: config.LocalAgentOpsConfig{Enabled: true, AuthTokenFile: path, UserID: "ren"}}
+	handler, err := newAgentOpsHandler(cfg, executor, notifier, owner, nil, nil)
+	if err != nil {
+		t.Fatalf("newAgentOpsHandler() error=%v", err)
+	}
+	return handler
 }
 
 func newAgentOpsTestHandlerWithTaskOwner(t *testing.T, token string, executor agentOpsExecutor, owner *taskmanager.Manager) http.HandlerFunc {

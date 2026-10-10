@@ -623,6 +623,16 @@ migrationだけが行い、移行namespaceは`6570d821-e63e-592d-a51f-8cf4b43cdb
 Shiro実行失敗または空出力は500です。error responseはsafe codeだけを返し、token、入力本文、内部errorを
 含めません。`POST /viewer/send`の観測用`user_id`はこの認証契約の代替になりません。
 
+native profileが無効な通常messageも、他のShiro実行経路と同じくTask ownerが発行したTaskとRunの上で実行します。
+Taskは`route=OPS`、Owner／Assigneeは`shiro`で、titleとcontextは固定文です。request messageをTask、SuperAgent台帳、logへ保存しません。
+応答の`task_id`はこのTaskのcanonical IDです。SuperAgent台帳が有効でSubagent Managerが台帳を持つ場合、COREは実行前にLead Agent run
+（`lead_agent.started`とContextPack。Goalは固定文）を記録し、そのrun contextをShiroとSubagentへ渡して、Subagentの記録を同じTask／Runへ相関します。
+終端（成功、失敗、client cancel、panic）では、Lead Agent runとTask Runをrequest contextから切り離した60秒の予算で閉じます。
+台帳の書き込みが失敗した場合もRunをfailedで閉じ、operations実行枠を残しません。operations実行枠（`DestructiveTasks=1`）が空いていない場合は、
+作成したTaskをfailedに閉じ、executorを呼ばずにHTTP 503 `runtime_unavailable`を返します。このため同時に実行できる通常messageはoperations実行枠の数までです。
+Task／Runの作成と終端書き込み、Lead Agent run記録の失敗はHTTP 500 `runtime_unavailable`、Shiro実行の失敗と空出力はHTTP 500 `execution_failed`です。
+実行の失敗は`[AgentOps]`のlogへ、request ID、task ID、長さを制限したerror文字列として1行残します（request messageは含みません）。
+
 native coding profileが有効な通常messageでは、成功時に`request_id`、canonical `task_id`、first `run_id`、
 `claim_status`、`task_status`、`run_status`と、creatorへ返すaccepted outputだけを投影します。replayはowner receiptを再読込した後、
 stored claim／lifecycle statusを返します。replay responseにcached outputやverificationを含めません。既に実行中のclaimと

@@ -20,9 +20,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
-	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 const (
@@ -69,11 +67,26 @@ type agentOpsHandler struct {
 	nativeCoding          orchestrator.NativeCodingAdmission
 	acceptedOPSInputStore conversation.AcceptedOPSInputStore
 	taskOwner             *taskmanager.Manager
+	leadRuns              orchestrator.SuperAgentRuntimeRecorder
 	userID                string
 	token                 []byte
 	workerBusyNotifier    agentOpsWorkerBusyNotifier
 	workerBusyMu          sync.Mutex
 	workerBusyRefs        int
+}
+
+// agentOpsHandlerOption configures an optional handler dependency without
+// changing the positional constructor contract.
+type agentOpsHandlerOption func(*agentOpsHandler)
+
+// withAgentOpsLeadRunRecorder gives the legacy (native profile disabled) branch
+// the SuperAgent ledger it records the Lead Agent run on. It must be the same
+// ledger the Subagent Manager records on: when the Manager has a recorder, a
+// request without a recorded Lead run has no runtime context to give it.
+func withAgentOpsLeadRunRecorder(recorder orchestrator.SuperAgentRuntimeRecorder) agentOpsHandlerOption {
+	return func(handler *agentOpsHandler) {
+		handler.leadRuns = recorder
+	}
 }
 
 type agentOpsRequest struct {
@@ -98,7 +111,7 @@ type agentOpsErrorResponse struct {
 
 // newAgentOpsHandler validates enabled startup configuration, reads the
 // bearer token once, and returns nil when the ingress is disabled.
-func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore) (http.HandlerFunc, error) {
+func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore, options ...agentOpsHandlerOption) (http.HandlerFunc, error) {
 	if cfg == nil || !cfg.LocalAgentOps.Enabled {
 		return nil, nil
 	}
@@ -132,11 +145,16 @@ func newAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBus
 		token:                 append([]byte(nil), token...),
 		workerBusyNotifier:    workerBusyNotifier,
 	}
+	for _, option := range options {
+		if option != nil {
+			option(handler)
+		}
+	}
 	return handler.ServeHTTP, nil
 }
 
-func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore) (http.HandlerFunc, error) {
-	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier, taskOwner, nativeCoding, acceptedOPSInputStore)
+func newConfiguredAgentOpsHandler(cfg *config.Config, executor agentOpsExecutor, workerBusyNotifier agentOpsWorkerBusyNotifier, taskOwner *taskmanager.Manager, nativeCoding orchestrator.NativeCodingAdmission, acceptedOPSInputStore conversation.AcceptedOPSInputStore, options ...agentOpsHandlerOption) (http.HandlerFunc, error) {
+	handler, err := newAgentOpsHandler(cfg, executor, workerBusyNotifier, taskOwner, nativeCoding, acceptedOPSInputStore, options...)
 	if err != nil || handler == nil {
 		return handler, err
 	}
@@ -285,47 +303,7 @@ func (h *agentOpsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveAcceptedNativeOPS(w, parentContext, requestID, request.Message, inputOrigin)
 		return
 	}
-	shiroContext, err := deriveAgentOpsShiroContext(parentContext, requestID)
-	if err != nil {
-		writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
-		return
-	}
-	releaseWorkerBusy := h.acquireWorkerBusyLease()
-	defer releaseWorkerBusy()
-
-	taskID := modulecore.NewTaskID()
-	address, err := conversation.NewChannelAddress(agentOpsTaskChannel, agentOpsTaskChatID)
-	if err != nil {
-		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
-		return
-	}
-	input, err := conversation.NewTurnInput(taskID, request.Message, address)
-	if err != nil {
-		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
-		return
-	}
-	input = input.
-		WithSessionID(string(modulecore.NewSessionID())).
-		WithRoute(routing.RouteOPS)
-	input, err = orchestrator.AdmitNativeCoding(shiroContext, h.nativeCoding, input, routing.RouteOPS)
-	if err != nil {
-		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
-		return
-	}
-	output, err := h.executor.Execute(shiroContext, input)
-	if err != nil || strings.TrimSpace(output) == "" {
-		writeAgentOpsError(w, http.StatusInternalServerError, "execution_failed")
-		return
-	}
-
-	writeJSONStatus(w, http.StatusOK, agentOpsResponse{
-		RequestID: requestID,
-		TaskID:    taskID.String(),
-		AgentID:   "shiro",
-		Role:      "worker",
-		Route:     routing.RouteOPS.String(),
-		Output:    output,
-	})
+	h.serveLegacyOPS(w, parentContext, requestID, request.Message)
 }
 
 func parseAgentOpsInputOrigin(headers http.Header) (conversation.AcceptedOPSInputOrigin, error) {

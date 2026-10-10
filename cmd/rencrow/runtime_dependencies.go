@@ -1652,7 +1652,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err != nil {
 		log.Fatalf("Failed to initialize local Agent OPS native profile: %v", err)
 	}
-	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore)
+	agentOpsHandler, err := newConfiguredAgentOpsHandler(cfg, agents.Shiro, idleChatWorkerNotifier, deps.taskManager, nativeCodingAdmission, conversationRuntime.AcceptedOPSInputStore, withAgentOpsLeadRunRecorder(deps.superAgentStore))
 	if err != nil {
 		log.Fatalf("Failed to initialize local Agent OPS ingress: %v", err)
 	}
