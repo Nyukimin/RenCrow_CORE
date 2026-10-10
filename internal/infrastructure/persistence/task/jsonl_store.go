@@ -85,12 +85,8 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 			return nil, err
 		}
 	}
-	for _, filename := range []string{"job_state.jsonl", "job_context.jsonl", "job_notifications.jsonl"} {
-		if _, err := os.Lstat(filepath.Join(root, filename)); err == nil {
-			return nil, fmt.Errorf("legacy task store file %s is not supported", filename)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
+	if err := rejectLegacyTaskStoreFiles(root); err != nil {
+		return nil, err
 	}
 	store := &JSONLStore{
 		root:              root,

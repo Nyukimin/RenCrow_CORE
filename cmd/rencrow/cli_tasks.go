@@ -18,6 +18,12 @@ import (
 )
 
 func cmdTasks() {
+	if isTaskStorageSubcommand(os.Args[2:]) {
+		// verify / rebuild-index / history work on the store files directly and
+		// must not open the store as a writer through the Manager.
+		cmdTasksStorage()
+		return
+	}
 	manager, err := loadTaskManager(getConfigPath(), os.Args[2:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize task manager: %v\n", err)
@@ -155,7 +161,7 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 		return 0
 	default:
 		fmt.Fprintf(errOut, "unknown tasks subcommand: %s\n", subcommand)
-		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications]")
+		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications|history|verify|rebuild-index]")
 		return 1
 	}
 }
