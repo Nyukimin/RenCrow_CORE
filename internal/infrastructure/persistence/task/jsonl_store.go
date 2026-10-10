@@ -39,6 +39,7 @@ type JSONLStore struct {
 	lifecycle         *taskStoreLifecycle
 	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
+	txObserver        *txObserver
 	root              string
 	statePath         string
 	runPath           string
@@ -108,6 +109,10 @@ func openJSONLStore(root string, readOnly bool) (*JSONLStore, error) {
 		return nil, err
 	}
 	store.batch = batch
+	// Only the writer observes transaction timing; short-lived read-only handles
+	// (CLI) stay silent.
+	store.txObserver = newTxObserver(store.statePath, store.runPath)
+	batch.SetTxObserver(store.txObserver.observe)
 	if err := batch.Recover(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover task store batch: %w", err)
 	}

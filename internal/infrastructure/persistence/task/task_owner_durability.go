@@ -151,7 +151,7 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.batch.Write(ctx, func() (map[string][]byte, error) {
+	err = s.batch.Write(withTxLabel(ctx, "ExecuteIdempotentTaskOperation", taskID), func() (map[string][]byte, error) {
 		receipts, err := readTaskOperationReceipts(ctx, filepath.Join(s.root, taskOperationReceiptFilename))
 		if err != nil {
 			return nil, err
@@ -234,7 +234,7 @@ func (s *JSONLStore) LookupTaskOperation(ctx context.Context, operationID string
 		return TaskOperationReceipt{}, errors.New("task store batch is unavailable")
 	}
 	var result TaskOperationReceipt
-	err = s.batch.Read(ctx, func() error {
+	err = s.batch.Read(withTxLabel(ctx, "LookupTaskOperation", ""), func() error {
 		receipts, err := readTaskOperationReceipts(ctx, filepath.Join(s.root, taskOperationReceiptFilename))
 		if err != nil {
 			return err
@@ -339,7 +339,7 @@ func (s *JSONLStore) GetTaskExecutionFence(ctx context.Context, taskID modulecor
 		return TaskExecutionFenceStatus{}, errors.New("task store batch is unavailable")
 	}
 	var result TaskExecutionFenceStatus
-	err = s.batch.Read(ctx, func() error {
+	err = s.batch.Read(withTxLabel(ctx, "GetTaskExecutionFence", taskID), func() error {
 		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
 		if err != nil {
 			return err
@@ -691,7 +691,7 @@ func (s *JSONLStore) persistTaskExecutionFenceAcquire(ctx context.Context, taskI
 	event := taskExecutionFenceEvent{Event: "acquired", TaskID: taskID, FenceID: fenceID, WriterGeneration: s.writerGeneration}
 	var observed taskExecutionFenceSnapshot
 	observedOnDisk := false
-	err := s.writeTaskFenceEvent(ctx, func() (map[string][]byte, error) {
+	err := s.writeTaskFenceEvent(withTxLabel(ctx, "AcquireTaskExecutionFence", taskID), func() (map[string][]byte, error) {
 		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
 		if err != nil {
 			return nil, err
@@ -758,7 +758,7 @@ func (s *JSONLStore) persistTaskExecutionFenceRelease(ctx context.Context, taskI
 	event := taskExecutionFenceEvent{Event: "released", TaskID: taskID, FenceID: fenceID, WriterGeneration: s.writerGeneration}
 	var observed taskExecutionFenceSnapshot
 	observedOnDisk := false
-	err := s.writeTaskFenceEvent(ctx, func() (map[string][]byte, error) {
+	err := s.writeTaskFenceEvent(withTxLabel(ctx, "ReleaseTaskExecutionFence", taskID), func() (map[string][]byte, error) {
 		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
 		if err != nil {
 			return nil, err

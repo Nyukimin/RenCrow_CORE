@@ -53,7 +53,7 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 		return nil, errors.New("task store writer is unavailable")
 	}
 	var result json.RawMessage
-	err = s.batch.Write(ctx, func() (map[string][]byte, error) {
+	err = s.batch.Write(withTxLabel(ctx, "ExecuteIdempotentGlobalTaskOperation", ""), func() (map[string][]byte, error) {
 		receipts, err := readTaskOperationReceipts(ctx, filepath.Join(s.root, taskOperationReceiptFilename))
 		if err != nil {
 			return nil, err
