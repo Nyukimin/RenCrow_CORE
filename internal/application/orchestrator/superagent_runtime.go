@@ -11,7 +11,45 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type leadAgentRunRecord struct {
+// LeadAgentRunInput is the request context the SuperAgent ledger records for
+// one Lead Agent run. It is a plain value so every Lead Agent entry point (the
+// message orchestrators and the authenticated OPS ingress) records its run
+// through RecordLeadAgentRunStarted/Finished without having to fabricate a
+// ProcessMessageRequest.
+type LeadAgentRunInput struct {
+	TraceID   string
+	SessionID string
+	Channel   string
+	ChatID    string
+	// Goal is stored verbatim as AgentRun.Goal and in the ContextPack summary.
+	Goal string
+
+	// The Resume fields mirror ProcessMessageRequest. They apply together only
+	// when the revision is positive and both texts are non-blank; otherwise a
+	// fresh checkpoint is issued.
+	ResumeCheckpointRevision int
+	ResumeCheckpointSummary  string
+	ResumeNextAction         string
+	ResumeCheckpointID       modulecore.CheckpointID
+}
+
+func leadAgentRunInputFromRequest(req ProcessMessageRequest) LeadAgentRunInput {
+	return LeadAgentRunInput{
+		TraceID:                  req.TraceID,
+		SessionID:                req.SessionID,
+		Channel:                  req.Channel,
+		ChatID:                   req.ChatID,
+		Goal:                     req.UserMessage,
+		ResumeCheckpointRevision: req.ResumeCheckpointRevision,
+		ResumeCheckpointSummary:  req.ResumeCheckpointSummary,
+		ResumeNextAction:         req.ResumeNextAction,
+		ResumeCheckpointID:       req.ResumeCheckpointID,
+	}
+}
+
+// LeadAgentRunRecord is what RecordLeadAgentRunStarted returns: the identity
+// that RecordLeadAgentRunFinished and the Subagent runtime context correlate on.
+type LeadAgentRunRecord struct {
 	StartedAt      time.Time
 	TraceID        modulecore.TraceID
 	StartedEventID modulecore.EventID
@@ -48,18 +86,21 @@ func validateLeadAgentIdentity(taskID modulecore.TaskID, runID modulecore.RunID,
 	return actorID, nil
 }
 
-func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, taskID modulecore.TaskID, runID modulecore.RunID, actor string, route routing.Route) (leadAgentRunRecord, error) {
+// RecordLeadAgentRunStarted saves the running AgentRun, its lead_agent.started
+// event and its ContextPack. A nil recorder records nothing and still returns a
+// start time.
+func RecordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRecorder, req LeadAgentRunInput, taskID modulecore.TaskID, runID modulecore.RunID, actor string, route routing.Route) (LeadAgentRunRecord, error) {
 	startedAt := time.Now().UTC()
 	if recorder == nil {
-		return leadAgentRunRecord{StartedAt: startedAt}, nil
+		return LeadAgentRunRecord{StartedAt: startedAt}, nil
 	}
 	actorID, err := validateLeadAgentIdentity(taskID, runID, actor)
 	if err != nil {
-		return leadAgentRunRecord{}, err
+		return LeadAgentRunRecord{}, err
 	}
 	traceID := modulecore.TraceID(req.TraceID)
 	if err := traceID.Validate(); err != nil {
-		return leadAgentRunRecord{}, fmt.Errorf("lead agent trace identity is invalid: %w", err)
+		return LeadAgentRunRecord{}, fmt.Errorf("lead agent trace identity is invalid: %w", err)
 	}
 	checkpointRevision, checkpointSummary, nextAction, checkpointAt, checkpointID := resumeCheckpoint(req, route, startedAt)
 	run := domainsuperagent.AgentRun{
@@ -67,7 +108,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
 		ActorID:            actorID,
-		Goal:               req.UserMessage,
+		Goal:               req.Goal,
 		Status:             "running",
 		StartedAt:          startedAt,
 		Summary:            fmt.Sprintf("route=%s", route),
@@ -79,7 +120,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		LastCheckpointAt:   checkpointAt,
 	}
 	if err := recorder.SaveAgentRun(ctx, run); err != nil {
-		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent run start: %w", err)
+		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent run start: %w", err)
 	}
 	event := modulecore.NewEventEnvelope(traceID, "", nil, "superagent", "lead_agent.started", startedAt, map[string]any{
 		"route": string(route), "status": "running",
@@ -89,7 +130,7 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	event.ActorKind = "agent"
 	event.ActorID = actorID
 	if err := recorder.Append(ctx, event); err != nil {
-		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
+		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
 	}
 	pack := domainsuperagent.ContextPack{
 		ArtifactID:      modulecore.NewArtifactID(),
@@ -97,9 +138,9 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 		TaskID:          taskID,
 		RunID:           runID,
 		WorkstreamID:    req.SessionID,
-		Summary:         fmt.Sprintf("route=%s channel=%s chat_id=%s user_message=%s", route, req.Channel, req.ChatID, req.UserMessage),
+		Summary:         fmt.Sprintf("route=%s channel=%s chat_id=%s user_message=%s", route, req.Channel, req.ChatID, req.Goal),
 		IncludedSources: []string{"session:" + req.SessionID, "channel:" + req.Channel, "route:" + string(route)},
-		TokenEstimate:   estimateRuntimeContextTokens(req.UserMessage),
+		TokenEstimate:   estimateRuntimeContextTokens(req.Goal),
 		CreatedAt:       startedAt,
 	}
 	// The content digest is stamped from the body of the pack built above, so the
@@ -110,12 +151,15 @@ func recordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	// operation appends one.
 	pack.ContentHash = domainsuperagent.ComputeContextPackContentHash(pack)
 	if err := recorder.SaveContextPack(ctx, pack); err != nil {
-		return leadAgentRunRecord{}, fmt.Errorf("failed to save lead agent context pack: %w", err)
+		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent context pack: %w", err)
 	}
-	return leadAgentRunRecord{StartedAt: startedAt, TraceID: traceID, StartedEventID: event.EventID}, nil
+	return LeadAgentRunRecord{StartedAt: startedAt, TraceID: traceID, StartedEventID: event.EventID}, nil
 }
 
-func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req ProcessMessageRequest, taskID modulecore.TaskID, runID modulecore.RunID, actor string, route routing.Route, record leadAgentRunRecord, status string, summary string) error {
+// RecordLeadAgentRunFinished saves the terminal AgentRun and its
+// lead_agent.<status> event, correlated to the record returned by
+// RecordLeadAgentRunStarted.
+func RecordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeRecorder, req LeadAgentRunInput, taskID modulecore.TaskID, runID modulecore.RunID, actor string, route routing.Route, record LeadAgentRunRecord, status string, summary string) error {
 	if recorder == nil {
 		return nil
 	}
@@ -133,7 +177,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 		TaskID:             taskID,
 		WorkstreamID:       req.SessionID,
 		ActorID:            actorID,
-		Goal:               req.UserMessage,
+		Goal:               req.Goal,
 		Status:             status,
 		StartedAt:          record.StartedAt,
 		CompletedAt:        completedAt,
@@ -165,7 +209,7 @@ func recordLeadAgentRunFinished(ctx context.Context, recorder SuperAgentRuntimeR
 	return nil
 }
 
-func resumeCheckpoint(req ProcessMessageRequest, route routing.Route, fallbackAt time.Time) (int, string, string, time.Time, modulecore.CheckpointID) {
+func resumeCheckpoint(req LeadAgentRunInput, route routing.Route, fallbackAt time.Time) (int, string, string, time.Time, modulecore.CheckpointID) {
 	if req.ResumeCheckpointRevision > 0 && strings.TrimSpace(req.ResumeCheckpointSummary) != "" && strings.TrimSpace(req.ResumeNextAction) != "" {
 		if err := req.ResumeCheckpointID.Validate(); err != nil {
 			panic(fmt.Errorf("resume checkpoint requires canonical checkpoint_id: %w", err))

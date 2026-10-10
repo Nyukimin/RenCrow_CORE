@@ -299,7 +299,8 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		return ProcessMessageResponse{}, err
 	}
 	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision)
-	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route)
+	leadRunInput := leadAgentRunInputFromRequest(req)
+	runStartedAt, err := RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -331,9 +332,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(string(leadRunID)) {
-			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; distributed execution canceled")
+			_ = RecordLeadAgentRunFinished(context.Background(), o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; distributed execution canceled")
 		} else {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+			_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		}
 		if decision.Route == routing.RouteCHAT {
 			o.saveExecutionReport(ctx, taskID, req.UserMessage, string(decision.Route), startedAt, time.Now().UTC(), err)
@@ -344,10 +345,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 
 	// 5. タスクを履歴に追加し、セッションを保存
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+		_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, fmt.Errorf("failed to save session: %w", err)
 	}
-	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
+	if err := RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 

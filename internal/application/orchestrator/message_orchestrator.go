@@ -763,7 +763,8 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	endWorkerBusy := o.idleBusyGuards.BeginWorker(decision.Route)
 	defer endWorkerBusy()
 
-	runStartedAt, err := recordLeadAgentRunStarted(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route)
+	leadRunInput := leadAgentRunInputFromRequest(req)
+	runStartedAt, err := RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -790,9 +791,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	if err != nil {
 		if o.superAgentRunController != nil && o.superAgentRunController.IsPauseRequested(string(leadRunID)) {
-			_ = recordLeadAgentRunFinished(context.Background(), o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
+			_ = RecordLeadAgentRunFinished(context.Background(), o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "paused", "pause requested; task execution canceled")
 		} else {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+			_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		}
 		return ProcessMessageResponse{}, fmt.Errorf("task execution failed: %w", err)
 	}
@@ -814,7 +815,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 			TaskID:        taskID,
 		})
 		if err != nil {
-			_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+			_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 			return ProcessMessageResponse{}, fmt.Errorf("response verification failed: %w", err)
 		}
 		response = verification.Response
@@ -826,17 +827,17 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 
 	if applied, err := o.applyPersonaCanonicalResponse(ctx, req, response); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+		_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	} else if applied != "" {
 		response = applied
 	}
 
 	if err := o.sessions.SaveCompletedTurnInput(ctx, sess, input); err != nil {
-		_ = recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
+		_ = RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "failed", err.Error())
 		return ProcessMessageResponse{}, err
 	}
-	if err := recordLeadAgentRunFinished(ctx, o.superAgentRuns, req, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
+	if err := RecordLeadAgentRunFinished(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route, runStartedAt, "completed", "Lead Agent completed"); err != nil {
 		return ProcessMessageResponse{}, err
 	}
 
