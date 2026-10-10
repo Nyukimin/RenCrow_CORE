@@ -32,17 +32,13 @@ func newActionMemoryPromotionRunner(inner memoryPromotionRunner, actions *action
 }
 
 func (r *actionMemoryPromotionRunner) RunOne(ctx context.Context) (memorypromotionapp.RunResult, error) {
-	task, err := r.tasks.Create(ctx, domaintask.Task{
+	task, run, err := r.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "Memory Promotion",
 		Route:    domaintask.RouteResearch,
 		OwnerID:  r.actorID,
 		Assignee: r.actorID,
 		ReadOnly: false,
 	}, domaintask.SharedRoleContext{CurrentPlan: "promote canonical memory candidates"})
-	if err != nil {
-		return memorypromotionapp.RunResult{}, err
-	}
-	run, err := r.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 	if err != nil {
 		return memorypromotionapp.RunResult{}, err
 	}

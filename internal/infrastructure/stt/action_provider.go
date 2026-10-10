@@ -77,17 +77,13 @@ func (p *ActionProvider) executionContext(ctx context.Context) (context.Context,
 	if identity, err := domainexecution.IdentityFromContext(ctx); err == nil {
 		return ctx, identity, false, nil
 	}
-	task, err := p.tasks.Create(ctx, domaintask.Task{
+	task, run, err := p.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "STT transcription",
 		Route:    domaintask.RouteCHAT,
 		OwnerID:  p.actorID,
 		Assignee: p.actorID,
 		ReadOnly: true,
 	}, domaintask.SharedRoleContext{CurrentPlan: "transcribe authenticated audio input"})
-	if err != nil {
-		return nil, domainexecution.Identity{}, false, fmt.Errorf("create STT task: %w", err)
-	}
-	run, err := p.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 	if err != nil {
 		return nil, domainexecution.Identity{}, false, fmt.Errorf("start STT run: %w", err)
 	}

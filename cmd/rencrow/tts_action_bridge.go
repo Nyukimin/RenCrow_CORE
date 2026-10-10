@@ -142,17 +142,13 @@ func (b *actionTTSBridge) executionContext(ctx context.Context) (context.Context
 	if identity, err := domainexecution.IdentityFromContext(ctx); err == nil {
 		return ctx, identity, false, nil
 	}
-	task, err := b.tasks.Create(ctx, domaintask.Task{
+	task, run, err := b.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "TTS playback session",
 		Route:    domaintask.RouteCHAT,
 		OwnerID:  b.actorID,
 		Assignee: b.actorID,
 		ReadOnly: true,
 	}, domaintask.SharedRoleContext{CurrentPlan: "synthesize and play response audio"})
-	if err != nil {
-		return nil, domainexecution.Identity{}, false, err
-	}
-	run, err := b.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 	if err != nil {
 		return nil, domainexecution.Identity{}, false, err
 	}

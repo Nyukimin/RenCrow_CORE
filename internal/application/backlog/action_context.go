@@ -37,17 +37,15 @@ func (s *Service) beginAction(ctx context.Context, name string) (context.Context
 		if s.tasks == nil || s.actionActorID == "" {
 			return nil, nil, fmt.Errorf("Atlas execution identity: %w", identityErr)
 		}
-		task, err := s.tasks.Create(ctx, domaintask.Task{
+		// One transaction: a refused admission persists no Task, so no
+		// Run-less queued Task is left behind.
+		task, run, err := s.tasks.CreateAndStartRun(ctx, domaintask.Task{
 			Title:    name,
 			Route:    domaintask.RouteOperations,
 			OwnerID:  s.actionActorID,
 			Assignee: s.actionActorID,
 			ReadOnly: name == "atlas_recover",
 		}, domaintask.SharedRoleContext{CurrentPlan: name})
-		if err != nil {
-			return nil, nil, fmt.Errorf("create Atlas task: %w", err)
-		}
-		run, err := s.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 		if err != nil {
 			return nil, nil, fmt.Errorf("start Atlas run: %w", err)
 		}

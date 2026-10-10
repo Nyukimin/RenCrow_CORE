@@ -88,17 +88,13 @@ func (p *actionProvider) begin(ctx context.Context, operation string) (context.C
 		if p.tasks == nil || p.actorID == "" {
 			return nil, nil, fmt.Errorf("LLM execution identity: %w", err)
 		}
-		task, createErr := p.tasks.Create(ctx, domaintask.Task{
+		task, run, startErr := p.tasks.CreateAndStartRun(ctx, domaintask.Task{
 			Title:    "LLM provider call",
 			Route:    domaintask.RouteGeneral,
 			OwnerID:  p.actorID,
 			Assignee: p.actorID,
 			ReadOnly: true,
 		}, domaintask.SharedRoleContext{CurrentPlan: "execute canonical LLM provider operation"})
-		if createErr != nil {
-			return nil, nil, fmt.Errorf("create LLM task: %w", createErr)
-		}
-		run, startErr := p.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 		if startErr != nil {
 			return nil, nil, fmt.Errorf("start LLM run: %w", startErr)
 		}

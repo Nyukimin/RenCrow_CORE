@@ -41,7 +41,7 @@ func (r *playbackActionRecorder) Record(ctx context.Context, ack ttsPlaybackAckR
 			return nil
 		}
 	}
-	task, err := r.tasks.Create(ctx, domaintask.Task{
+	task, run, err := r.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "Playback receipt",
 		Route:    domaintask.RouteCHAT,
 		OwnerID:  r.actorID,
@@ -51,10 +51,6 @@ func (r *playbackActionRecorder) Record(ctx context.Context, ack ttsPlaybackAckR
 		UserIntent:  publicRef,
 		CurrentPlan: "record actual audio playback outcome",
 	})
-	if err != nil {
-		return err
-	}
-	run, err := r.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 	if err != nil {
 		return err
 	}

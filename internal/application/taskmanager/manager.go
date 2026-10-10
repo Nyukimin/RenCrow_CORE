@@ -116,6 +116,37 @@ func (m *Manager) Create(ctx context.Context, draft domaintask.Task, shared doma
 	return created, nil
 }
 
+// CreateAndStartRun admits a new Task and issues its first Run in one Task
+// transaction. It is the only way for a caller that intends to execute
+// immediately to create a Task: Create persists a queued Task that has no Run,
+// and nothing in the runtime starts such a Task later.
+//
+// When the Task cannot start (execution capacity, an unmet dependency, an
+// invalid draft), the error is returned from inside the transaction and the
+// store discards the whole transaction, so no Task, context, Run, or
+// notification is persisted. The error wraps ErrParallelLimit for a capacity
+// refusal. A caller that has the Task but must decide later whether to run it
+// (for example after routing) keeps using Create followed by Start.
+func (m *Manager) CreateAndStartRun(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	if draft.TaskID == "" {
+		draft.TaskID = modulecore.NewTaskID()
+	}
+	var started domaintask.Task
+	var run domaintask.Run
+	err := m.taskTransaction(ctx, draft.TaskID, func(txManager *Manager) error {
+		created, err := txManager.createInTransaction(ctx, draft, shared)
+		if err != nil {
+			return err
+		}
+		started, run, err = txManager.startWithReason(ctx, created.TaskID, domaintask.RunStartReasonFirst)
+		return err
+	})
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	return started, run, nil
+}
+
 func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return domaintask.Task{}, err

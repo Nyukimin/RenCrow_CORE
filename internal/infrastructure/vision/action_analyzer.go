@@ -69,14 +69,10 @@ func (a *ActionAnalyzer) executionContext(ctx context.Context) (context.Context,
 	if identity, err := domainexecution.IdentityFromContext(ctx); err == nil {
 		return ctx, identity, false, nil
 	}
-	task, err := a.tasks.Create(ctx, domaintask.Task{
+	task, run, err := a.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title: "Vision analysis", Route: domaintask.RouteCHAT,
 		OwnerID: a.actorID, Assignee: a.actorID, ReadOnly: true,
 	}, domaintask.SharedRoleContext{CurrentPlan: "analyze authenticated visual input"})
-	if err != nil {
-		return nil, domainexecution.Identity{}, false, err
-	}
-	run, err := a.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 	if err != nil {
 		return nil, domainexecution.Identity{}, false, err
 	}

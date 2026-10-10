@@ -157,17 +157,13 @@ func (a *PromotionDiffApplier) executePatchAction(ctx context.Context, req domai
 	identity, identityErr := domainexecution.IdentityFromContext(ctx)
 	ownsRun := identityErr != nil
 	if ownsRun {
-		task, err := a.tasks.Create(ctx, domaintask.Task{
+		task, run, err := a.tasks.CreateAndStartRun(ctx, domaintask.Task{
 			Title:    "Sandbox patch apply",
 			Route:    domaintask.RouteCode,
 			OwnerID:  a.actorID,
 			Assignee: a.actorID,
 			ReadOnly: false,
 		}, domaintask.SharedRoleContext{CurrentPlan: "apply policy-approved sandbox promotion patch"})
-		if err != nil {
-			return PromotionDiffApplyResult{}, err
-		}
-		run, err := a.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
 		if err != nil {
 			return PromotionDiffApplyResult{}, err
 		}

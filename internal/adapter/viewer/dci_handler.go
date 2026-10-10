@@ -151,7 +151,7 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeMemoryOwnerError(w, http.StatusServiceUnavailable, "scope_unavailable")
 		return
 	}
-	task, err := h.tasks.Create(ctx, domaintask.Task{
+	task, run, err := h.tasks.CreateAndStartRun(ctx, domaintask.Task{
 		Title:    "DCI search",
 		Route:    domaintask.RouteResearch,
 		OwnerID:  h.userID,
@@ -162,11 +162,8 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CurrentPlan: "execute authenticated DCI search",
 	})
 	if err != nil {
-		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_task_create_failed")
-		return
-	}
-	run, err := h.tasks.StartRunWithReason(ctx, task.TaskID, domaintask.RunStartReasonFirst)
-	if err != nil {
+		// Admission is one transaction: a refusal (including execution
+		// capacity) persisted no Task, so there is nothing to close here.
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_run_start_failed")
 		return
 	}
