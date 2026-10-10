@@ -53,8 +53,23 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 }
 
 // NewJSONLReader opens the canonical files without acquiring write ownership.
+//
+// If the writer keeps an index sidecar, the reader restores it (and replays the
+// log written after it) instead of folding the whole log on every read; it never
+// writes a sidecar or anything else. Such a reader answers from the log as it was
+// when it was opened: commits that follow are not seen, which suits a command
+// that opens, reads and exits. Without a sidecar the reader works as it always
+// has (every read folds the log, and sees every commit).
 func NewJSONLReader(root string) (*JSONLStore, error) {
 	return openJSONLStore(root, true, OpenOptions{})
+}
+
+// NewIndexedJSONLReader is NewJSONLReader for callers that need the index
+// itself (a Task's whole history, the verification of the index): the index is
+// restored from the sidecar when it is usable and otherwise built in memory from
+// the log, and failing to get one is an error.
+func NewIndexedJSONLReader(root string) (*JSONLStore, error) {
+	return openJSONLStore(root, true, OpenOptions{Index: true})
 }
 
 func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, error) {
@@ -99,6 +114,9 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 			return nil, err
 		}
 		store.batch = batch
+		if err := store.openReaderIndex(opts.Index); err != nil {
+			return nil, err
+		}
 		return store, nil
 	}
 	lock, err := acquireTaskWriter(root)
