@@ -795,19 +795,19 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if toolRuntime.PersonRelatedSummaryWorker != nil {
 		deps.personRelatedSummaryCancel = startRuntimePersonRelatedSummaryWorker(
 			toolRuntime.PersonRelatedSummaryWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
+			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
 	if toolRuntime.PersonRelatedIdentityWorker != nil {
 		deps.personRelatedIdentityCancel = startRuntimePersonRelatedIdentityWorker(
 			toolRuntime.PersonRelatedIdentityWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
+			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
 	if toolRuntime.PersonRelatedCollectionWorker != nil {
 		deps.personRelatedCollectionCancel = startRuntimePersonRelatedCollectionWorker(
 			toolRuntime.PersonRelatedCollectionWorker,
-			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
+			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
 	if toolRuntime.PersonRelatedCatalogLookup != nil {
@@ -866,7 +866,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.advisorScoreCancel = startAdvisorScoreJob(
 		advisorRuntime.Store,
 		advisorRuntime.Profiles,
-		newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
+		newBackgroundJobFailureReporter(deps.eventRelay),
 	)
 	if conversationRuntime.ProfilePromotion != nil {
 		memoryPromotionRunner, err := newActionMemoryPromotionRunner(
@@ -883,10 +883,10 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			llmBusyTracker,
 			time.Duration(cfg.Conversation.ProfilePromotionIdleGraceSeconds)*time.Second,
 			time.Duration(cfg.Conversation.ProfilePromotionTimeoutSeconds)*time.Second,
-			newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager),
+			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
-	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.taskManager)
+	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}
@@ -1526,7 +1526,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 				}
 			}
 			if dailyRules, ok := knowledgeMemoryStore.(knowledgememoryapp.DailyIntakeRuleStore); ok && conversationRuntime.L1Store != nil {
-				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager))
+				startDailyIntakeSweeper(dailyRules, knowledgememorypersistence.NewDailyIntakeRegistryAdapter(conversationRuntime.L1Store), newBackgroundJobFailureReporter(deps.eventRelay))
 			}
 			deps.knowledgeMemoryStatus = viewer.WithKnowledgeMemoryNewsOwnerAccess(viewer.HandleKnowledgeMemoryStatus(knowledgeMemoryStore), cfg.LocalAgentOps.UserID, atlasToken)
 			deps.personalArchiveCreate = viewer.HandlePersonalArchiveCreate(knowledgeMemoryStore)
@@ -1633,7 +1633,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 		persistentNewsReader = newsbriefapp.NewL1Reader(conversationRuntime.L1Store)
 	}
 	deps.dailyNewsBriefReader = newsbriefapp.NewFallbackReader(deps.idleChatOrch, persistentNewsReader)
-	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay, deps.taskManager))
+	startMovieCatalogBackfillJob(cfg, newBackgroundJobFailureReporter(deps.eventRelay))
 	buildOrchestratorRuntime(
 		cfg,
 		deps,

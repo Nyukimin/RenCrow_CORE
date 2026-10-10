@@ -17,13 +17,12 @@ import (
 func TestMemoryLifecycleCancellationJoinsInFlightWorkWithoutFailureTask(t *testing.T) {
 	runner := &blockingMemoryLifecycleRunner{started: make(chan struct{})}
 	listener := &captureBackgroundJobEventListener{}
-	owner := &captureBackgroundFailureTaskOwner{}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := startMemoryLifecycleJobRunner(ctx, runner, memoryLifecycleJobConfig{
 		Interval: time.Hour,
 		Now:      func() time.Time { return time.Date(2026, 9, 14, 16, 0, 0, 0, time.UTC) },
 		Label:    "shutdown-test",
-	}, newBackgroundJobFailureReporter(listener, owner))
+	}, newBackgroundJobFailureReporter(listener))
 	select {
 	case <-runner.started:
 	case <-time.After(time.Second):
@@ -43,9 +42,6 @@ func TestMemoryLifecycleCancellationJoinsInFlightWorkWithoutFailureTask(t *testi
 	if events := listener.Events(); len(events) != 0 {
 		t.Fatalf("cancellation produced failure events: %#v", events)
 	}
-	if len(owner.created) != 0 {
-		t.Fatalf("cancellation created failure Tasks: %#v", owner.created)
-	}
 }
 
 func TestSourceRegistryShutdownSkipsCanceledOwner(t *testing.T) {
@@ -55,10 +51,9 @@ func TestSourceRegistryShutdownSkipsCanceledOwner(t *testing.T) {
 	}
 	defer store.Close()
 	listener := &captureBackgroundJobEventListener{}
-	owner := &captureBackgroundFailureTaskOwner{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener, owner))
+	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener))
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -67,17 +62,13 @@ func TestSourceRegistryShutdownSkipsCanceledOwner(t *testing.T) {
 	if events := listener.Events(); len(events) != 0 {
 		t.Fatalf("cancellation produced source failure events: %#v", events)
 	}
-	if len(owner.created) != 0 {
-		t.Fatalf("cancellation created source failure Tasks: %#v", owner.created)
-	}
 }
 
 func TestSourceRegistryShutdownCancelsInFlightBeforeDueSweep(t *testing.T) {
 	store := &sourceRegistryShutdownStore{listEntered: make(chan struct{})}
 	listener := &captureBackgroundJobEventListener{}
-	owner := &captureBackgroundFailureTaskOwner{}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener, owner))
+	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener))
 	select {
 	case <-store.listEntered:
 	case <-time.After(time.Second):
@@ -97,9 +88,6 @@ func TestSourceRegistryShutdownCancelsInFlightBeforeDueSweep(t *testing.T) {
 	if events := listener.Events(); len(events) != 0 {
 		t.Fatalf("cancellation produced source failure events: %#v", events)
 	}
-	if len(owner.created) != 0 {
-		t.Fatalf("cancellation created source failure Tasks: %#v", owner.created)
-	}
 }
 
 func TestSourceRegistryShutdownReportsActiveError(t *testing.T) {
@@ -108,9 +96,8 @@ func TestSourceRegistryShutdownReportsActiveError(t *testing.T) {
 		listErr:     errors.New("registry list failed"),
 	}
 	listener := &captureBackgroundJobEventListener{}
-	owner := &captureBackgroundFailureTaskOwner{}
 	ctx, cancel := context.WithCancel(context.Background())
-	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener, owner))
+	done := startSourceRegistrySweeper(ctx, nil, store, newBackgroundJobFailureReporter(listener))
 	select {
 	case <-store.listEntered:
 	case <-time.After(time.Second):
@@ -132,9 +119,6 @@ func TestSourceRegistryShutdownReportsActiveError(t *testing.T) {
 	<-done
 	if got := store.dueCalls.Load(); got != 1 {
 		t.Fatalf("due-stage calls=%d, want one empty due sweep after active list error", got)
-	}
-	if got := len(owner.created); got != 1 {
-		t.Fatalf("failure Tasks=%d, want one active-context failure Task", got)
 	}
 }
 
