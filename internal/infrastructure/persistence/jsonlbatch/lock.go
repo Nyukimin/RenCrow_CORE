@@ -11,6 +11,12 @@ import (
 var errLockBusy = errors.New("jsonl batch lock is busy")
 
 func (s *Store) withLock(ctx context.Context, callback func() error) error {
+	return s.withLockObserved(ctx, nil, callback)
+}
+
+// withLockObserved is withLock plus phase marks for an optional recorder. A nil
+// recorder records nothing.
+func (s *Store) withLockObserved(ctx context.Context, rec *txRecorder, callback func() error) error {
 	if callback == nil {
 		return fmt.Errorf("jsonl batch lock callback is nil")
 	}
@@ -52,6 +58,7 @@ func (s *Store) withLock(ctx context.Context, callback func() error) error {
 		err = tryLockExclusive(file)
 		if err == nil {
 			locked = true
+			rec.lockAcquired()
 			break
 		}
 		if !errors.Is(err, errLockBusy) {
@@ -69,6 +76,7 @@ func (s *Store) withLock(ctx context.Context, callback func() error) error {
 	}
 
 	callbackErr := callback()
+	rec.lockedSectionReturned()
 	unlockErr := unlockExclusive(file)
 	locked = false
 	closeErr := file.Close()

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 )
 
 const (
@@ -82,6 +83,8 @@ type Store struct {
 	lockPath  string
 	walPath   string
 	readOnly  bool
+	// observer is nil unless SetTxObserver installed one; see tx_observer.go.
+	observer atomic.Pointer[TxObserver]
 	// syncFn and closeFn are nil in production. They are narrow package-local
 	// seams for deterministic durability-failure tests; callers cannot replace
 	// the owner-level file operations through the public API.
@@ -233,15 +236,21 @@ func (s *Store) Read(ctx context.Context, callback func() error) error {
 	if callback == nil {
 		return fmt.Errorf("jsonl batch read callback is nil")
 	}
-	return s.withLock(ctx, func() error {
+	rec := s.beginTx(TxKindRead)
+	err := s.withLockObserved(ctx, rec, func() error {
 		if err := s.readCommittedLocked(); err != nil {
 			return err
 		}
 		if err := contextError(ctx); err != nil {
 			return err
 		}
-		return callback()
+		rec.execBegin()
+		err := callback()
+		rec.execFinished()
+		return err
 	})
+	rec.report(ctx, err)
+	return err
 }
 
 // Write obtains the owner-local lock, repairs an earlier pending transaction,
@@ -254,7 +263,8 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 	if s.readOnly {
 		return fmt.Errorf("jsonl batch reader is read-only")
 	}
-	return s.withLock(ctx, func() error {
+	rec := s.beginTx(TxKindWrite)
+	err := s.withLockObserved(ctx, rec, func() error {
 		if err := s.recoverLocked(ctx); err != nil {
 			return err
 		}
@@ -264,7 +274,9 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 		if err := s.checkpointJournalIfSettled(); err != nil {
 			return err
 		}
+		rec.execBegin()
 		payloads, err := callback()
+		rec.execFinished()
 		if err != nil {
 			return err
 		}
@@ -278,6 +290,7 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 		if len(prepared) == 0 {
 			return nil
 		}
+		rec.setFiles(prepared)
 		txID, err := newTxID()
 		if err != nil {
 			return err
@@ -319,6 +332,8 @@ func (s *Store) Write(ctx context.Context, callback func() (map[string][]byte, e
 		}
 		return nil
 	})
+	rec.report(ctx, err)
+	return err
 }
 
 // Recover is the explicit writer-side WAL repair operation. It truncates only

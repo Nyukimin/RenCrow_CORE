@@ -102,7 +102,11 @@ func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modul
 	if s.batch == nil {
 		return errors.New("task store batch is unavailable")
 	}
-	return s.batch.Write(ctx, func() (map[string][]byte, error) {
+	op := "Transaction"
+	if scopeTaskID != "" {
+		op = "TaskTransaction"
+	}
+	return s.batch.Write(withTxLabel(ctx, op, scopeTaskID), func() (map[string][]byte, error) {
 		tx := newTaskTransaction(s, false, scopeTaskID, lease)
 		defer tx.end()
 		err := fn(tx)
@@ -137,7 +141,7 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, fn func(domaintask.Sto
 	if s.batch == nil {
 		return errors.New("task store batch is unavailable")
 	}
-	return s.batch.Read(ctx, func() error {
+	return s.batch.Read(withTxLabel(ctx, "ReadTransaction", ""), func() error {
 		tx := newTaskTransaction(s, true, "", nil)
 		defer tx.end()
 		err := fn(tx)
