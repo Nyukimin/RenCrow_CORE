@@ -270,7 +270,7 @@ TLS／network境界の代替ではありません。
 bodyは不要です。認可されたrequestだけが同一SQLite transactionで次を行います。
 
 1. `failed` rowのうち、対応するL1 Raw eventが存在するものだけを`pending`へ戻す。
-2. `attempt_count=0`、`lease_token=''`、`lease_expires_at=NULL`、`next_attempt_at=NULL`へ初期化する。
+2. `attempt_count=0`、 `lease_token=''`、 `lease_expires_at=NULL`、 `next_attempt_at=NULL`へ初期化する。
 3. `last_error`と`evidence_event_id`、L1 Raw event本文・metadata・stateは保持する。
 4. evidenceのないorphan failedは不変のまま`missing_evidence_count`へ数える。
 5. 1件以上を戻した場合だけ`memory.profile_promotion_retry_requested`監査eventを同じtransactionで追記する。

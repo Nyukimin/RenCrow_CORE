@@ -80,7 +80,7 @@ LLMは翻訳・要約・創作生成の意味処理に使われる。一方、�
 - RenCrow_LLM: config/httpapi focused test、first-output race test、`go vet ./...`、`go build ./...` pass。`first_output_timeout`配備時のbuild / installed SHA-256は `2e885086c14b6dfa923ecf9f4fe5c6ff2477afef447c1ba519f5c3c582ff02c8` で一致。続く固定Runtime ingress切替と`api_key_file`配備後は `5b1ca750433b6dffb79014d468ffe317f7b5503583aa391cb017e2d8965515c9` で一致。
 - live Daily request `llmreq_d0b94500-e788-4fd5-a36f-25ff3cec133b` は現行live route上で無出力のまま `generation_ms=90003` に `TARGET_FIRST_OUTPUT_TIMEOUT` でfailedとなり、直後0.754秒で次のDaily requestが開始した。capacity解放とtyped retryable errorは確認したが、90秒設定は後続のprompt処理まで打ち切ったため240秒へ補正した。
 - low-reasoning配備後も旧8082 proxy経由のrequest `llmreq_e9344caf-538b-42f5-8eeb-6efdb8990f80` は有効contentを返さず、240,004 msで同typed errorとなった。過去調査でも8082 proxyがBackendのtool/final contractを欠落させる境界と判定されていたため、reasoning exhaustion単独原因の仮説は棄却した。
-- Gateway targetに排他的な`api_key_file` credential参照を追加し、既存0600 token fileを使って固定Runtime ingress `192.168.1.31:8091/v1/backends/<id>`へWorker、ChatWorker、Coder、Wildを切り替えた。Portの変更・再利用は行っていない。
+- Gateway targetに排他的な`api_key_file` credential参照を追加し、既存0600 token fileを使って固定Runtime ingress `<private-address>:8091/v1/backends/<id>`へWorker、ChatWorker、Coder、Wildを切り替えた。Portの変更・再利用は行っていない。
 - 切替後のDaily Workerは69,075 ms / first token 511 ms、81,646 ms / first token 559 ms、78,680 ms / first token 377 msで連続completed。Shiro、Midori、Coder1のalias smokeもそれぞれ有効contentを返した。Gateway processの接続は8091だけで、8082/8084へのlive socketは0件だった。
 - CORE `runtime_topology`にはdisabled `local_llm`や旧ops互換用の8082/8084参照が残るが、実生成は`llm_gateway.base_url=http://127.0.0.1:8090`からRenCrow_LLM Gatewayへ入る。これらはlive consumerではなく、今回の切替で削除・Port変更していない。
 - 次回04:00 JSTの定時Daily enrichmentにおける長期再発観測は時間依存のため未実施。

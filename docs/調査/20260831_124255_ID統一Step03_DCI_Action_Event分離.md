@@ -12,7 +12,7 @@ EvidenceIDは独立Entity IDとし、作成Eventを逆参照する。
   - search trace 2、step 10、Evidence 8、query term 0
   - `dci_search_trace.event_id`が検索親key
   - Evidence 8/8が`<search EventID>_ev_<seq>`
-- active legacy DCI JSONL: `/home/nyukimi/.rencrow/workspace/logs/dci_search_trace.jsonl`
+- active legacy DCI JSONL: `/home/<user>/.rencrow/workspace/logs/dci_search_trace.jsonl`
   - trace 8、`read_file` step 3、failed trace 5
   - active configはSQLiteでありruntime consumerではない
 - Conversation L1 current:

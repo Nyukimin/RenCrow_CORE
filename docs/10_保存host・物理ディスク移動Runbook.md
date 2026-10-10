@@ -30,7 +30,7 @@
 
 2026-10-03 19:58:07 UTCに完了した定時backupは、`Result=success`、`ExecMainStatus=0`、`inactive/dead`、snapshot `/srv/rencrow/backup/snapshots/core/recent/20261004-030243`の検証まで確認済みである。ただしHOMEのTask等は含まないため、これだけで移動を開始しない。
 
-2026-10-03 22:08 UTCにwriter停止下の最終cohortを`/home/nyukimi/RenCrow/RenCrow_CORE/Tmp/test-runtime/_storage-e2e/cohort-20261004/db-core`へ固定した。`cold-finalization-receipt.json`はsource停止前後metadata一致・final rsync RC 0・user-visible holderなし・24 HOME roots／Task `.writer.lock`を記録し、SHA-256は`488a4d7f034dcec3f2a07803b2800512b56604e5e366c26126e6ca78f3a0a39e`である。private HOME archive `/srv/rencrow/db/migration-private/20261003-220804/private-home-cohort.tar.gz`はSHA-256 `5bdc93f2aed8eb1ca53ed1b967b09b28be9158f98cc58045281aa48aaae175a6`で、隔離restoreの全regular-file SHA／size／mtime・symbolic-link metadataが一致した。20 SQLiteのread-only `PRAGMA quick_check` receipt SHA-256は`6ee82aee34fa9e4ed3954c3424a6eff239c75e1e053a5d65c815d696946d3507`で全PASS。これらはE2E用のcoherent cohortとrollback入力の準備証拠であり、rootが所有するopen-fileの否定、物理移動、新sourceのAgent E2E、または新binary配備成功の代替ではない。
+2026-10-03 22:08 UTCにwriter停止下の最終cohortを`/home/<user>/RenCrow/RenCrow_CORE/Tmp/test-runtime/_storage-e2e/cohort-20261004/db-core`へ固定した。`cold-finalization-receipt.json`はsource停止前後metadata一致・final rsync RC 0・user-visible holderなし・24 HOME roots／Task `.writer.lock`を記録し、SHA-256は`488a4d7f034dcec3f2a07803b2800512b56604e5e366c26126e6ca78f3a0a39e`である。private HOME archive `/srv/rencrow/db/migration-private/20261003-220804/private-home-cohort.tar.gz`はSHA-256 `5bdc93f2aed8eb1ca53ed1b967b09b28be9158f98cc58045281aa48aaae175a6`で、隔離restoreの全regular-file SHA／size／mtime・symbolic-link metadataが一致した。20 SQLiteのread-only `PRAGMA quick_check` receipt SHA-256は`6ee82aee34fa9e4ed3954c3424a6eff239c75e1e053a5d65c815d696946d3507`で全PASS。これらはE2E用のcoherent cohortとrollback入力の準備証拠であり、rootが所有するopen-fileの否定、物理移動、新sourceのAgent E2E、または新binary配備成功の代替ではない。
 
 同じprivate rootに、変更していないbase `acda6571`の現在配備Linux/amd64 dynamic ELFをbaseline rollback専用入力として保存した。pathは`/srv/rencrow/db/migration-private/20261003-220804/rencrow-linux-amd64-baseline-acda6571`、size 129,974,997 bytes、SHA-256 `c1c0d366d5c666b4d027f5b96ee5f8fffe8a61ff5086de8f66630b3826cda7ca`である。`baseline-runtime-rollback-input.json`（SHA-256 `ad70c71dc23595acc0966be0c06141a431b6dcc929eeb27966ff97c45241475b`）はcopy／fsync／UUID照合を記録する。このbinaryは元の互換Linux runtimeへのrollbackにだけ使い、新版、portable release、または他OS検証品として使わない。
 
@@ -53,7 +53,7 @@ systemctl --user list-units --type=service --state=running
 systemctl --user list-timers --all
 systemctl --user show rencrow-storage-backup.service \
   -p ActiveState -p SubState -p Result -p ExecMainStatus -p MainPID
-/home/nyukimi/.local/bin/rencrow-storage-configure inspect --json
+"$HOME/.local/bin/rencrow-storage-configure" inspect --json
 lsblk --json -o PATH,LABEL,UUID,FSTYPE,SIZE,MOUNTPOINTS
 findmnt --json --target /srv/rencrow/db
 ```
@@ -86,30 +86,30 @@ backup完了は次のすべてで判定する。
 disk snapshotと別に、少なくとも次のprivate cohortを保存する。
 
 ```text
-/home/nyukimi/.rencrow/config
-/home/nyukimi/.rencrow/credentials
-/home/nyukimi/.rencrow/workspace/tasks
-/home/nyukimi/.rencrow/workspace/control
-/home/nyukimi/.rencrow/workspace/prompts
-/home/nyukimi/.rencrow/workspace/logs
-/home/nyukimi/.rencrow/workspace/state
-/home/nyukimi/.rencrow/workspace/policies
-/home/nyukimi/.rencrow/workspace/jobs
-/home/nyukimi/.rencrow/workspace/tools
-/home/nyukimi/.rencrow/workspace/knowledge
-/home/nyukimi/.rencrow/workspace/memory
-/home/nyukimi/.rencrow/workspace/viewer_uploads
-/home/nyukimi/.rencrow/workspace/execution_report.jsonl
-/home/nyukimi/.rencrow/workspace/orchestrator_event_log.jsonl
-/home/nyukimi/.rencrow/workspace/orchestrator_event_gc.jsonl
-/home/nyukimi/.rencrow/state
-/home/nyukimi/.rencrow/resilience
-/home/nyukimi/.rencrow/.env
-/home/nyukimi/.rencrow/llm_ops.env
-/home/nyukimi/.config/rencrow/tts
-/home/nyukimi/.local/share/rencrow/config/durable-stores.json
-/home/nyukimi/.local/share/rencrow/config/durable-stores.d
-/home/nyukimi/.local/share/rencrow/prompts
+/home/<user>/.rencrow/config
+/home/<user>/.rencrow/credentials
+/home/<user>/.rencrow/workspace/tasks
+/home/<user>/.rencrow/workspace/control
+/home/<user>/.rencrow/workspace/prompts
+/home/<user>/.rencrow/workspace/logs
+/home/<user>/.rencrow/workspace/state
+/home/<user>/.rencrow/workspace/policies
+/home/<user>/.rencrow/workspace/jobs
+/home/<user>/.rencrow/workspace/tools
+/home/<user>/.rencrow/workspace/knowledge
+/home/<user>/.rencrow/workspace/memory
+/home/<user>/.rencrow/workspace/viewer_uploads
+/home/<user>/.rencrow/workspace/execution_report.jsonl
+/home/<user>/.rencrow/workspace/orchestrator_event_log.jsonl
+/home/<user>/.rencrow/workspace/orchestrator_event_gc.jsonl
+/home/<user>/.rencrow/state
+/home/<user>/.rencrow/resilience
+/home/<user>/.rencrow/.env
+/home/<user>/.rencrow/llm_ops.env
+/home/<user>/.config/rencrow/tts
+/home/<user>/.local/share/rencrow/config/durable-stores.json
+/home/<user>/.local/share/rencrow/config/durable-stores.d
+/home/<user>/.local/share/rencrow/prompts
 ```
 
 cohortは、operatorが用意した暗号化済みまたは同等のprivate安全性を持つ絶対pathに、symlink、ACL、xattr、数値UID/GIDを保持して作る。secretをstdout、Git、source snapshot、public archiveへ入れない。復元テストは隔離directoryに展開し、実HOMEを上書きしない。`workspace/recovery-*`、`tasks.pre-step10`、`workspace/tmp`、旧backup／legacy tree、model cache、runtime log以外のdownload済みarchiveはこのactive cohortに混ぜない。一方、`workspace/logs`はpolicy decision・scheduler・acklog・workflow・tool mediation等のactive durable stateを含むため、一律にruntime logとして除外しない。

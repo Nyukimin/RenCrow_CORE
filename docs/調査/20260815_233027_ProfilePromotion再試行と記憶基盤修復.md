@@ -60,7 +60,7 @@ Qdrantは再確認でもgreen、exact 55 points／全3584次元／Cosineで、`i
 - **証拠**:
   - Qdrant再確認はgreen、exact point countは55、全vectorは3584次元、collection設定は3584／Cosine、`indexed_vectors_count=0`だった。
   - Qdrantのindex thresholdは`10000KB`であり、index0はこのthreshold未満の少量collection状態で、point countまたはvector次元の欠落を示さない。index countだけで消失とは判定しない。
-  - `/home/nyukimi/.rencrow/config/core.yaml`の`conversation.embed_model`は空で、旧Ollama endpointを使わない設定だった。COREはembedderを生成せず、Recallはvector searchをskipする。
+  - `/home/<user>/.rencrow/config/core.yaml`の`conversation.embed_model`は空で、旧Ollama endpointを使わない設定だった。COREはembedderを生成せず、Recallはvector searchをskipする。
   - RenCrow_LLMの現行aliasにはembedding alias／embedding targetがなく、Gatewayのread-only embedding probeもvectorを返さなかった。正規CORE→Gateway→Runtime embedding E2Eは未成立である。
 - **チェックリスト結果**:
   - ☑ 確証バイアス: health、point count、vector dimension、index count、CORE embedder設定、LLM routeを分離して確認した。
@@ -138,7 +138,7 @@ Qdrantは再確認でもgreen、exact 55 points／全3584次元／Cosineで、`i
 - `cmd/rencrow/interaction_profile_guard.go:128-165` - `RenCrow_CMD`／`cmd-control`のallowlist
 - `scripts/rencrow-storage-backup:11,110-132` - current config default、fail-closed mount preflight
 - `systemd/user/rencrow-storage-backup.service:6-11` - `RENCROW_CONFIG`の明示的service environment
-- `/home/nyukimi/.rencrow/config/core.yaml` - installed CORE conversation／Qdrant／backup設定（read-only確認）
+- `/home/<user>/.rencrow/config/core.yaml` - installed CORE conversation／Qdrant／backup設定（read-only確認）
 
 ## 教訓（将来の調査への知見）
 

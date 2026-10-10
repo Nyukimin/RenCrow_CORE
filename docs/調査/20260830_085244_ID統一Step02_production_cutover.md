@@ -4,7 +4,7 @@
 - Source branch: `identity/02-event`
 - Source revision: `82202a3b0eb70e8c5fb988dcd4a32fbc45289e93`
 - Installed binary SHA-256: `10b5d769000cc9353bebef1cab760225a8f34eba3fe331534e67fa0ac9f4be4e`
-- Active config: `/home/nyukimi/.rencrow/config/core.yaml`
+- Active config: `/home/<user>/.rencrow/config/core.yaml`
 - Canonical Event Store: `/srv/rencrow/db/core/databases/events/event_store.db`
 - Rollback root: `/srv/rencrow/db/core/backups/identity-step02-cutover/20260829T233848Z`
 
@@ -46,7 +46,7 @@ SuperAgent SQLiteをrollback rootへ保存した。live JSONLはSQLiteより古�
 - 正規`RenCrow_CMD -> CORE -> Mio -> Shiro` Chat: OPS routeでShiro実行、Mio最終応答を確認
 - Viewer、AI Workflow、SuperAgent、Memory、Scheduler、DCI、IdleChat、Atlas、Capability API: HTTP 200
 - STT owner readiness: HTTP 200
-- active TTS owner `http://192.168.1.205:7870/health/ready`: HTTP 200、Irodori ready
+- active TTS owner `http://<private-address>:7870/health/ready`: HTTP 200、Irodori ready
 
 起動時間は最終起動で90.602秒だった。内訳の主要部分は
 `chatgpt_import_reconcile=65.546秒`で、Event Store migrationの失敗ではない。

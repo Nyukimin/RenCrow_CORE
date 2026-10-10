@@ -13,7 +13,7 @@
     "event_rows_observed": 44891,
     "orchestrator_payload_job_id_rows_observed": 5214,
     "orchestrator_payload_distinct_job_ids_observed": 179,
-    "task_store": "/home/nyukimi/.rencrow/workspace/tasks",
+    "task_store": "/home/<user>/.rencrow/workspace/tasks",
     "root_task_rule": "one accepted Turn creates one durable root Task whose TaskID is the already assigned RootTaskID; no second top-level TaskID or legacy JobID is generated",
     "child_task_rule": "delegation of executable work from Mio to another actual CORE Agent creates one durable child Task with ParentTaskID equal to RootTaskID; Coder model provider controller and worker mechanism never become the assignee actor",
     "event_rule": "routing.decision is attached to the root Task; agent.assignment is attached to the selected execution Task and causally references the effective routing Event; Task records retain both EventIDs",

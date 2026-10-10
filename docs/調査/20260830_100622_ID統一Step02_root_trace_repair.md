@@ -4,8 +4,8 @@
 - Source branch: `identity/02-event`
 - Source revision: `d69c0437e9885658f01b0ee9beb002ea6c416bef`
 - Installed binary SHA-256: `807e40c590ced77bcf118a50d9533220d846667adfbd9230acc4287724772030`
-- Previous binary backup: `/home/nyukimi/.local/bin/rencrow.before-d69c043`
-- Active config: `/home/nyukimi/.rencrow/config/core.yaml`
+- Previous binary backup: `/home/<user>/.local/bin/rencrow.before-d69c043`
+- Active config: `/home/<user>/.rencrow/config/core.yaml`
 - Canonical Event Store: `/srv/rencrow/db/core/databases/events/event_store.db`
 
 ## Failureと修正境界

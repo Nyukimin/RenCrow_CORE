@@ -13,7 +13,7 @@
     "active_runtime_readiness": "ready",
     "active_runtime_vcs_modified": false,
     "canonical": "docs/architecture/identity/IDENTITY_CANONICAL.md#step-10-runid",
-    "task_store": "/home/nyukimi/.rencrow/workspace/tasks",
+    "task_store": "/home/<user>/.rencrow/workspace/tasks",
     "task_state_rows_observed": 20713,
     "task_run_rows_observed": 7652,
     "task_context_rows_observed": 13560,

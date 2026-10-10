@@ -4,7 +4,7 @@
 - Source branch: `identity/03-dci`
 - Runtime source revision: `649697260911f591c6f700dbac109bbec20b12de`
 - Canonical source: `docs/architecture/identity/IDENTITY_CANONICAL.md` Step 04
-- Active config: `/home/nyukimi/.rencrow/config/core.yaml`
+- Active config: `/home/<user>/.rencrow/config/core.yaml`
 - Active Session root: `/srv/rencrow/db/core/memory/sessions`
 
 ## CLI / Boundary / LLM classification
@@ -51,7 +51,7 @@ history 487、input/output hash一致だった。
 
 旧Session rootは
 `/srv/rencrow/db/core/memory/sessions.before-step04-20260903T033211Z`、旧binaryは
-`/home/nyukimi/.local/bin/rencrow.before-step04-20260903T033211Z`へ削除せず保持した。
+`/home/<user>/.local/bin/rencrow.before-step04-20260903T033211Z`へ削除せず保持した。
 
 ## Runtime identity and readiness
 

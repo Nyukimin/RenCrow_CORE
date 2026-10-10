@@ -173,7 +173,7 @@
       "run_id": "run_01a0ae0b-0a24-727c-942b-bcafb9239ba4",
       "action_id": "act_01a0ae0b-0dca-7886-a9b3-734cd2777942",
       "attempt_id": "att_01a0ae0b-0dca-78a5-ada5-cc61f28a8cca",
-      "result": "responded; sequence 1 and 2 of the same Attempt each minted a distinct RequestID and each received a linked ResponseID; ExternalRef tts_20260917_152609_813605; synthesized by Irodori-TTS-v4.1-Anime on 192.168.1.205:7880 via the canonical TTS Gateway 7870 after the browser-only single-synthesis change"
+      "result": "responded; sequence 1 and 2 of the same Attempt each minted a distinct RequestID and each received a linked ResponseID; ExternalRef tts_20260917_152609_813605; synthesized by Irodori-TTS-v4.1-Anime on <private-address>:7880 via the canonical TTS Gateway 7870 after the browser-only single-synthesis change"
     },
     {
       "kind": "tts_duplicate_synthesis_removal",

@@ -128,13 +128,13 @@
     "legacy_notification_rows_observed": 0,
     "legacy_state_rows_observed": 0,
     "legacy_store_file_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "legacy_store_root": "/home/nyukimi/.rencrow/workspace/jobs",
+    "legacy_store_root": "/home/<user>/.rencrow/workspace/jobs",
     "legacy_store_source_files": [
       "job_state.jsonl",
       "job_context.jsonl",
       "job_notifications.jsonl"
     ],
-    "new_store_root": "/home/nyukimi/.rencrow/workspace/tasks",
+    "new_store_root": "/home/<user>/.rencrow/workspace/tasks",
     "no_human_gate_policy": "replace waiting_user with waiting; waiting requires a machine-observable reason and does not create a grant approval queue or workflow resumed by a human reply",
     "owner_source_sha256": {
       "cmd/rencrow/cli_jobs.go": "cb5f4f0523277f3aa3bc457cc7a8803e0be1e31bddfa3b886a2cf41edef9b63a",
