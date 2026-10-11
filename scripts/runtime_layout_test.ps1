@@ -44,6 +44,21 @@ function Convert-ToRepoRelative([string]$Path) {
     return $relative
 }
 
+function Get-ExistingFixtureProviderPath([string]$Path) {
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $parent = [IO.Directory]::GetParent($fullPath)
+    Assert-Condition($null -ne $parent) "fixture path has no parent: $Path"
+    $leaf = [IO.Path]::GetFileName($fullPath)
+    $providerItems = @(
+        Microsoft.PowerShell.Management\Get-ChildItem -LiteralPath $parent.FullName -File -Force -ErrorAction Stop |
+            Where-Object {
+                [string]::Equals([string]$_.Name, $leaf, [StringComparison]::Ordinal)
+            }
+    )
+    Assert-Condition($providerItems.Count -eq 1) "expected exactly one fixture named '$leaf' in '$($parent.FullName)', found $($providerItems.Count)"
+    return [string]$providerItems[0].FullName
+}
+
 function Get-FunctionFromRunner([string]$Path) {
     $tokens = $null
     $parseErrors = $null
@@ -159,6 +174,7 @@ function Assert-RejectionContains($Result, [string[]]$ExpectedPaths) {
     Assert-Condition($Result.message.StartsWith("TEST_RUNTIME_LAYOUT_INVALID:", [StringComparison]::Ordinal)) "unexpected rejection: $($Result.message)"
     $rejectionMessage = $Result.message.Substring(0, [Math]::Min(4096, $Result.message.Length))
     foreach ($expectedPath in $ExpectedPaths) {
+        Assert-Condition([IO.Path]::IsPathRooted($expectedPath)) "expected rejection path must be absolute: $expectedPath"
         Assert-Condition($Result.message.Contains((Convert-ToRepoRelative $expectedPath))) "rejection omitted $expectedPath; rejection: $rejectionMessage"
     }
 }
@@ -225,14 +241,27 @@ try {
     New-TestFile (Join-Path $caseHidden "ignored.go") "this is deliberately invalid Go"
     $caseResult = Invoke-Layout $caseRuntime
     $caseExpected = @(
-        (Join-Path $caseNormal "root.go"),
-        (Join-Path $caseNested "deep.go"),
-        (Join-Path $caseNormal "upper.GO"),
-        (Join-Path $caseNormal "mixed.Go"),
-        (Join-Path $caseNormal "lower.gO")
+        (Get-ExistingFixtureProviderPath (Join-Path $caseNormal "root.go")),
+        (Get-ExistingFixtureProviderPath (Join-Path $caseNested "deep.go")),
+        (Get-ExistingFixtureProviderPath (Join-Path $caseNormal "upper.GO")),
+        (Get-ExistingFixtureProviderPath (Join-Path $caseNormal "mixed.Go")),
+        (Get-ExistingFixtureProviderPath (Join-Path $caseNormal "lower.gO"))
     )
     Assert-ProviderContract $caseResult @($caseCache, $caseHidden) ""
     Assert-RejectionContains $caseResult $caseExpected
+    foreach ($badExpectedPath in @(
+        (Join-Path (Join-Path $caseRuntime "wrong-directory") "root.go"),
+        "root.go",
+        (Join-Path $caseNormal "missing.go")
+    )) {
+        $assertionFailed = $false
+        try {
+            Assert-RejectionContains $caseResult @($badExpectedPath)
+        } catch {
+            $assertionFailed = $true
+        }
+        Assert-Condition($assertionFailed) "rejection matcher accepted an incorrect fixture expectation: $badExpectedPath"
+    }
     Assert-Condition(-not $caseResult.message.Contains((Convert-ToRepoRelative (Join-Path $caseCache "ignored.go")))) "excluded cache file was reported"
     Assert-Condition(-not $caseResult.message.Contains((Convert-ToRepoRelative (Join-Path $caseHidden "ignored.go")))) "excluded hidden file was reported"
 
@@ -268,7 +297,7 @@ try {
     for ($index = 0; $index -lt 25; $index++) {
         $capFile = Join-Path $capDirectory ("generated-{0:D2}.go" -f $index)
         New-TestFile $capFile
-        [void]$capExpected.Add((Convert-ToRepoRelative $capFile))
+        [void]$capExpected.Add((Convert-ToRepoRelative (Get-ExistingFixtureProviderPath $capFile)))
     }
     New-TestFile (Join-Path $capRuntime "_ignored.go") "invalid ignored Go"
     $capResult = Invoke-Layout $capRuntime
