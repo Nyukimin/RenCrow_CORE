@@ -157,8 +157,9 @@ function Assert-ProviderContract($Result, [string[]]$ExcludedDirectories, [strin
 function Assert-RejectionContains($Result, [string[]]$ExpectedPaths) {
     Assert-Condition($Result.rejected) "normal .go fixture was not rejected"
     Assert-Condition($Result.message.StartsWith("TEST_RUNTIME_LAYOUT_INVALID:", [StringComparison]::Ordinal)) "unexpected rejection: $($Result.message)"
+    $rejectionMessage = $Result.message.Substring(0, [Math]::Min(4096, $Result.message.Length))
     foreach ($expectedPath in $ExpectedPaths) {
-        Assert-Condition($Result.message.Contains((Convert-ToRepoRelative $expectedPath))) "rejection omitted $expectedPath"
+        Assert-Condition($Result.message.Contains((Convert-ToRepoRelative $expectedPath))) "rejection omitted $expectedPath; rejection: $rejectionMessage"
     }
 }
 

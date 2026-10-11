@@ -120,12 +120,20 @@ func TestCanonicalPolicyRequiresReconsiderationAfterRejection(t *testing.T) {
 func TestCodexAndRenCrowAuthorityBoundariesStaySeparated(t *testing.T) {
 	root := repositoryRoot(t)
 	assertFileContainsAll(t, filepath.Join(root, "AGENTS.md"), []string{
-		"[統一ルール](../AGENTS.md)",
+		"https://github.com/Nyukimin/RenCrow_EcoSystem/blob/main/AGENTS.md",
+		"を継承し、本文・モデル役割・共通検査規定を複製しない",
 	})
-	assertFileContainsAll(t, filepath.Join(filepath.Dir(root), "AGENTS.md"), []string{
-		"変更scopeはユーザーの指示に基づく",
-		"利用者判断とNo-Human-Gate",
-		"人の返答で解除するstatus",
+	assertFileContainsAll(t, filepath.Join(root, "rules", "task-rules.md"), []string{
+		"ここでのChat／Worker／Coderは製品内部の役割であり、Codexのモデル分担を指定しない",
+	})
+	assertFileContainsAll(t, filepath.Join(root, "docs", "01_システム概要.md"), []string{
+		"Codexがrepository、runtime、host、外部systemを変更する権限境界はRenCrow製品契約とは別である",
+		"Codexはユーザーの明示指示を必要とするが、その規則をRenCrow runtimeの人待ちworkflowへ変換しない",
+	})
+	assertFileContainsAll(t, filepath.Join(root, "docs", "07_安全・自動実行・データ方針.md"), []string{
+		"## No-Human-Gate",
+		"RenCrowは人の判断待ちを作らない。人の返答で解除するstatus、grant、reference、queue、定期pollを",
+		"Codexのユーザー権限境界をRenCrow runtimeへ移植しません",
 	})
 }
 
