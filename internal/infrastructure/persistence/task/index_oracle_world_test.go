@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -51,11 +52,22 @@ type oraclePair struct {
 	// outcomes counts operations by label and whether they succeeded, so a test
 	// can show the sequence exercised both the success and the error paths.
 	outcomes map[string][2]int
+
+	// persist makes the indexed store keep its index in a sidecar, and makes
+	// every reopen go through a different way of stopping and a different state
+	// of the sidecar (see reopenPersisted). sources counts how the index was
+	// obtained at each open ("sidecar" or "rebuilt/<reason>").
+	persist bool
+	reopens int
+	runs    int
+	sources map[string]int
 }
 
-func newOraclePair(t *testing.T) *oraclePair {
+func newOraclePair(t *testing.T) *oraclePair { return newOraclePairWith(t, false) }
+
+func newOraclePairWith(t *testing.T, persist bool) *oraclePair {
 	t.Helper()
-	p := &oraclePair{t: t, rootLegacy: t.TempDir(), rootIndex: t.TempDir(), outcomes: map[string][2]int{}}
+	p := &oraclePair{t: t, rootLegacy: t.TempDir(), rootIndex: t.TempDir(), outcomes: map[string][2]int{}, persist: persist, sources: map[string]int{}}
 	p.open()
 	t.Cleanup(p.closeBoth)
 	return p
@@ -67,8 +79,20 @@ func (p *oraclePair) open() {
 	if p.legacy, err = NewJSONLStoreWithOptions(p.rootLegacy, OpenOptions{}); err != nil {
 		p.t.Fatalf("open legacy store: %v", err)
 	}
-	if p.indexed, err = NewJSONLStoreWithOptions(p.rootIndex, OpenOptions{Index: true}); err != nil {
+	opts := OpenOptions{Index: true}
+	if p.persist {
+		opts.Persist, opts.checkpoint = true, manualPolicy()
+	}
+	if p.indexed, err = NewJSONLStoreWithOptions(p.rootIndex, opts); err != nil {
 		p.t.Fatalf("open indexed store: %v", err)
+	}
+	if p.persist {
+		stats, _ := p.indexed.IndexStats()
+		key := stats.Source
+		if stats.RebuildReason != "" {
+			key += "/" + stats.RebuildReason
+		}
+		p.sources[key]++
 	}
 	if _, ok := p.indexed.IndexStats(); !ok {
 		p.t.Fatal("indexed store reports no index")
@@ -92,10 +116,85 @@ func (p *oraclePair) reopen() {
 	if err := p.legacy.Close(); err != nil {
 		p.t.Fatalf("close legacy: %v", err)
 	}
+	if p.persist {
+		p.reopenPersisted()
+		return
+	}
 	if err := p.indexed.Close(); err != nil {
 		p.t.Fatalf("close indexed: %v", err)
 	}
 	p.open()
+}
+
+// reopenPersisted stops the indexed store in one of six ways and opens it again,
+// asserting that the index it comes back with is the one a build from the log
+// gives. The ways rotate so a sequence of reopens covers all of them:
+// graceful close (final checkpoint), crash after the last commit (the sidecar
+// lags the log), a crash that follows a checkpoint made half way, and a
+// graceful close whose sidecar is then bit-flipped, deleted or truncated.
+func (p *oraclePair) reopenPersisted() {
+	p.t.Helper()
+	mode := p.reopens % 6
+	p.reopens++
+	sidecar := sidecarFile(p.rootIndex)
+	switch mode {
+	case 0:
+		if err := p.indexed.Close(); err != nil {
+			p.t.Fatalf("close indexed: %v", err)
+		}
+	case 1:
+		if err := p.indexed.closeStore(false); err != nil {
+			p.t.Fatalf("crash-close indexed: %v", err)
+		}
+	case 2:
+		if err := p.indexed.idx.ck.checkpointNow("oracle"); err != nil {
+			p.t.Fatalf("checkpoint: %v", err)
+		}
+		if err := p.indexed.closeStore(false); err != nil {
+			p.t.Fatalf("crash-close indexed: %v", err)
+		}
+	default:
+		if err := p.indexed.Close(); err != nil {
+			p.t.Fatalf("close indexed: %v", err)
+		}
+		switch mode {
+		case 3:
+			data, err := os.ReadFile(sidecar)
+			if err != nil {
+				p.t.Fatal(err)
+			}
+			data[len(data)/2] ^= 0x20
+			if err := os.WriteFile(sidecar, data, 0o600); err != nil {
+				p.t.Fatal(err)
+			}
+		case 4:
+			if err := os.Remove(sidecar); err != nil {
+				p.t.Fatal(err)
+			}
+		case 5:
+			info, err := os.Stat(sidecar)
+			if err != nil {
+				p.t.Fatal(err)
+			}
+			if err := os.Truncate(sidecar, info.Size()/2); err != nil {
+				p.t.Fatal(err)
+			}
+		}
+	}
+	p.open()
+	stats, _ := p.indexed.IndexStats()
+	wantRebuilt := mode >= 3
+	if wantRebuilt != (stats.Source == sourceRebuilt) {
+		p.t.Fatalf("reopen mode %d: index source = %q (%s)", mode, stats.Source, stats.RebuildReason)
+	}
+	built, err := buildTaskIndex(p.rootIndex)
+	if err != nil {
+		p.t.Fatalf("build from the log: %v", err)
+	}
+	defer built.close()
+	if err := equivalentIndex(p.indexed.idx, built); err != nil {
+		p.t.Fatalf("reopen mode %d: the index differs from a build from the log: %v", mode, err)
+	}
 }
 
 // run executes fn against both stores and requires identical results.
@@ -105,6 +204,15 @@ func (p *oraclePair) run(label string, fn func(s *JSONLStore, log *obsLog) error
 	indexedLog := &obsLog{root: p.rootIndex}
 	legacyErr := fn(p.legacy, legacyLog)
 	indexedErr := fn(p.indexed, indexedLog)
+	if p.persist {
+		// Checkpoints at moments the sequence does not choose, so sidecars of many
+		// different ages are the ones a later restore starts from.
+		if p.runs++; p.runs%13 == 0 {
+			if err := p.indexed.idx.ck.checkpointNow("oracle"); err != nil {
+				p.t.Fatalf("checkpoint: %v", err)
+			}
+		}
+	}
 	counts := p.outcomes[label]
 	if legacyErr == nil {
 		counts[0]++
@@ -187,8 +295,13 @@ var oracleNamespace = uuid.MustParse("5e1f6c4a-0b3d-5a4e-8f77-0a1b2c3d4e5f")
 
 func newOracleWorld(t *testing.T, seed int64) *oracleWorld {
 	t.Helper()
+	return newOracleWorldWith(t, seed, false)
+}
+
+func newOracleWorldWith(t *testing.T, seed int64, persist bool) *oracleWorld {
+	t.Helper()
 	return &oracleWorld{
-		t: t, pair: newOraclePair(t), rng: rand.New(rand.NewSource(seed)), seed: seed,
+		t: t, pair: newOraclePairWith(t, persist), rng: rand.New(rand.NewSource(seed)), seed: seed,
 		clock:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
 		opTask: map[string]modulecore.TaskID{}, opHash: map[string]string{},
 	}

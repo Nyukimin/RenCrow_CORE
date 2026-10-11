@@ -70,12 +70,35 @@ func digestOf(t testing.TB, value any) string {
 // and the list queries are compared with the answers of the store that folds
 // everything per transaction.
 func TestIndexMatchesFullFoldOnProductionCopy(t *testing.T) {
+	matchesFullFoldOnProductionCopy(t, false)
+}
+
+// TestSidecarRestoredIndexMatchesFullFoldOnProductionCopy runs the same oracle
+// differential test on an index that was restored from its sidecar instead of
+// being built from the log (IU-2).
+func TestSidecarRestoredIndexMatchesFullFoldOnProductionCopy(t *testing.T) {
+	matchesFullFoldOnProductionCopy(t, true)
+}
+
+func matchesFullFoldOnProductionCopy(t *testing.T, restoredFromSidecar bool) {
 	src := os.Getenv(prodCopyEnv)
 	if src == "" {
 		t.Skipf("set %s to a copy of a production Task store", prodCopyEnv)
 	}
 	ctx := context.Background()
 	dir := copyStoreFiles(t, src)
+	opts := OpenOptions{Index: true}
+	if restoredFromSidecar {
+		opts.Persist = true
+		// Leave the sidecar the measured open restores from.
+		first, err := NewJSONLStoreWithOptions(dir, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := first.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// The oracle: the production fold functions applied to the raw files.
 	taskRecords, err := readJSONLLines[domaintask.Task](ctx, filepath.Join(dir, stateFilename))
@@ -160,7 +183,7 @@ func TestIndexMatchesFullFoldOnProductionCopy(t *testing.T) {
 
 	before := heapInUse()
 	openStart := time.Now()
-	store, err := NewJSONLStoreWithOptions(dir, OpenOptions{Index: true})
+	store, err := NewJSONLStoreWithOptions(dir, opts)
 	if err != nil {
 		t.Fatalf("open indexed store on the production copy: %v", err)
 	}
@@ -168,6 +191,9 @@ func TestIndexMatchesFullFoldOnProductionCopy(t *testing.T) {
 	buildTime := time.Since(openStart)
 	heap := heapInUse() - before
 	stats, _ := store.IndexStats()
+	if restoredFromSidecar && (stats.Source != sourceSidecar || store.idx.replayedLines != 0) {
+		t.Fatalf("index source = %q (%s) replayed=%d, want a plain restore from the sidecar", stats.Source, stats.RebuildReason, store.idx.replayedLines)
+	}
 	perTask := float64(heap) / float64(stats.Tasks)
 	t.Logf("index: tasks=%d runs=%d notifications=%d build+open=%s heap=%.1fMB (%.0f B/Task) approx=%.1fMB", stats.Tasks, stats.Runs, stats.Notifications, buildTime.Round(time.Millisecond), float64(heap)/1e6, perTask, float64(stats.ApproxBytes)/1e6)
 	if perTask > 450 {
@@ -239,7 +265,7 @@ func TestIndexMatchesFullFoldOnProductionCopy(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	again, err := NewJSONLStoreWithOptions(dir, OpenOptions{Index: true})
+	again, err := NewJSONLStoreWithOptions(dir, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
