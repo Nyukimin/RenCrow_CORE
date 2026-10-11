@@ -1,6 +1,7 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"os"
@@ -417,4 +418,53 @@ func TestReplayStoppedHalfwayLeavesNoTraceAndTheNextOpenIsComplete(t *testing.T)
 	}
 	final := openPersisted(t, root, manualPolicy(), nil)
 	requireStoreEqualsFullBuild(t, final, root)
+}
+
+// A sidecar that is intact and plausible but belongs to other bytes must not be
+// believed: the last line of every file it covers is read back and its CRC32C
+// compared with the one the sidecar recorded.
+func TestSidecarThatDoesNotDescribeTheLastLinesOfTheLogIsRebuilt(t *testing.T) {
+	root := t.TempDir()
+	store := openPersisted(t, root, manualPolicy(), nil)
+	populate(t, store, 0, 10)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// For each file, text that appears in its last line and a same-length
+	// replacement: the line stays valid JSON of the same size, so only its
+	// checksum can tell it apart.
+	edits := map[string][2]string{
+		stateFilename:         {"indexed task", "indexdd task"},
+		runFilename:           {`"summary":"done"`, `"summary":"dine"`},
+		contextFilename:       {`"plan"`, `"plam"`},
+		notificationsFilename: {"indexed task", "indexdd task"},
+	}
+	for _, file := range []string{stateFilename, runFilename, contextFilename, notificationsFilename} {
+		t.Run(file, func(t *testing.T) {
+			path := filepath.Join(root, file)
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = os.WriteFile(path, original, 0o600) }()
+			lines := bytes.SplitAfter(original, []byte("\n")) // the final element is empty
+			last := lines[len(lines)-2]
+			edited := bytes.Replace(last, []byte(edits[file][0]), []byte(edits[file][1]), 1)
+			if bytes.Equal(edited, last) || len(edited) != len(last) {
+				t.Fatalf("the edit of the last line of %s did not apply (or changed its length)", file)
+			}
+			changed := append(append([]byte(nil), original[:len(original)-len(last)]...), edited...)
+			if err := os.WriteFile(path, changed, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			reopened := openPersisted(t, root, manualPolicy(), nil)
+			stats, _ := reopened.IndexStats()
+			if stats.Source != sourceRebuilt || stats.RebuildReason != rebuildContent {
+				t.Fatalf("source=%q reason=%q, want rebuilt/%s", stats.Source, stats.RebuildReason, rebuildContent)
+			}
+			if err := reopened.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }

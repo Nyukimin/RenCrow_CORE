@@ -20,6 +20,7 @@ const (
 	rebuildVersion = "version" // written in another format version
 	rebuildSize    = "size"    // covers more bytes than a log file now holds
 	rebuildCount   = "count"   // the log prefix it covers has another line count
+	rebuildContent = "content" // the last line it recorded for a file is not what the file holds
 	rebuildReplay  = "replay"  // the log written after it could not be absorbed
 )
 
@@ -119,6 +120,10 @@ func restoreTaskIndex(root string, allowMissingFiles bool, fp func(stage string)
 		_ = ix.close()
 		return nil, 0, unusable, nil
 	}
+	if unusable := ix.checkLastLines(); unusable != nil {
+		_ = ix.close()
+		return nil, 0, unusable, nil
+	}
 	if fp != nil {
 		ix.replayHook = func(kind fileKind) { fp("replay-" + kindFilename[kind]) }
 	}
@@ -203,6 +208,49 @@ func (ix *taskIndex) checkFileAgainstLog(kind fileKind) *unusableSidecar {
 	if got != lines {
 		return &unusableSidecar{rebuildCount, fmt.Sprintf("%s: the covered prefix holds %d lines, the sidecar says %d", kindFilename[kind], got, lines)}
 	}
+	return nil
+}
+
+// checkLastLines reads back the last indexed line of every file and compares its
+// CRC32C with the one the sidecar recorded. Line counts and sizes alone would
+// accept a sidecar written for other bytes that happen to have the same shape (a
+// log restored from another copy, a line rewritten in place); the last line of a
+// file is the one a sidecar written for these bytes cannot get wrong, and
+// reading five lines costs nothing.
+func (ix *taskIndex) checkLastLines() *unusableSidecar {
+	var last [kindCount]struct {
+		pos linePos
+		ok  bool
+	}
+	offer := func(kind fileKind, pos linePos) {
+		if !last[kind].ok || pos.off > last[kind].pos.off {
+			last[kind].pos, last[kind].ok = pos, true
+		}
+	}
+	for i := range ix.tasks {
+		offer(kindState, ix.lt.pos(ix.tasks[i].stateTail))
+		if ix.tasks[i].ctxTail != 0 {
+			offer(kindContext, ix.lt.pos(ix.tasks[i].ctxTail))
+		}
+	}
+	for i := range ix.runs {
+		offer(kindRun, ix.lt.pos(ix.runs[i].tail))
+	}
+	for i := range ix.notifs {
+		offer(kindNotification, ix.notifs[i].pos)
+	}
+	for _, rec := range ix.receipts {
+		offer(kindReceipt, rec.pos)
+	}
+	for kind := fileKind(0); kind < kindCount; kind++ {
+		if !last[kind].ok {
+			continue
+		}
+		if _, err := ix.readLine(kind, last[kind].pos); err != nil {
+			return &unusableSidecar{rebuildContent, fmt.Sprintf("%s: the last indexed line is not the one the sidecar recorded: %v", kindFilename[kind], err)}
+		}
+	}
+	ix.corruptReads.Store(0) // a failed probe here is not a corrupt read of the live index
 	return nil
 }
 
