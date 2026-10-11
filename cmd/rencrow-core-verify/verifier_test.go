@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -765,7 +767,7 @@ func TestVerifierDeployIdentityUsesCatalogSourceAndGoStamp(t *testing.T) {
 	}
 	manifest := testManifest(t, "core-deploy-identity-chain")
 	var checkerArgs []string
-	deps := verifierDependencies{RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
+	deps := verifierDependencies{Platform: func() string { return "linux" }, RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
 		switch name {
 		case "systemctl":
 			if slices.Contains(args, "cat") {
@@ -837,6 +839,119 @@ func TestVerifierDeployUnstampedArtifactIsUnverified(t *testing.T) {
 	}
 	receipt := decodeVerifierReceipt(t, output.Bytes())
 	if receipt.Status != "unverified" {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+}
+
+func TestVerifierDeployIdentityWithExplicitArtifactDoesNotRequireSystemd(t *testing.T) {
+	root := t.TempDir()
+	const revision = "0123456789abcdef0123456789abcdef01234567"
+	workspace := filepath.Join(root, "RenCrow_CORE")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatalf("workspace: %v", err)
+	}
+	catalogPath := filepath.Join(root, "ecosystem.yaml")
+	catalog := `{"schema_version":4,"components":{"core":{"repository":"Nyukimin/RenCrow_CORE","workspace_path":"./RenCrow_CORE","version":"` + revision + `"}}}`
+	if err := os.WriteFile(catalogPath, []byte(catalog), 0o600); err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	artifact := filepath.Join(root, "rencrow")
+	if err := os.WriteFile(artifact, []byte("binary"), 0o700); err != nil {
+		t.Fatalf("artifact: %v", err)
+	}
+	evidenceDir := t.TempDir()
+	manifest := testManifest(t, "core-deploy-identity-chain")
+	var sourceObserved, cleanlinessObserved, stampObserved bool
+	deps := verifierDependencies{
+		Platform: func() string { return runtime.GOOS },
+		RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
+			switch name {
+			case "systemctl":
+				t.Errorf("explicit artifact path invoked systemctl: %#v", args)
+				return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected systemctl invocation")}
+			case "git":
+				if len(args) >= 4 && args[2] == "rev-parse" {
+					if args[0] != "-C" || args[1] != workspace || args[3] != "HEAD" {
+						t.Errorf("source identity args=%#v", args)
+					}
+					sourceObserved = true
+					return verifierCommandResult{ExitCode: 0, Stdout: revision + "\n"}
+				}
+				if len(args) >= 4 && args[2] == "status" {
+					if args[0] != "-C" || args[1] != workspace || !slices.Equal(args[3:], []string{"--porcelain", "--untracked-files=all"}) {
+						t.Errorf("source cleanliness args=%#v", args)
+					}
+					cleanlinessObserved = true
+					return verifierCommandResult{ExitCode: 0}
+				}
+				return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected git command")}
+			case "go":
+				if !slices.Equal(args, []string{"version", "-m", artifact}) {
+					t.Errorf("Go stamp args=%#v", args)
+				}
+				stampObserved = true
+				return verifierCommandResult{ExitCode: 0, Stdout: "artifact\tpath\tgithub.com/Nyukimin/RenCrow_CORE/cmd/rencrow\nartifact\tmod\tgithub.com/Nyukimin/RenCrow_CORE (devel)\nartifact\tbuild\tvcs.revision=" + revision + "\nartifact\tbuild\tvcs.modified=false\n"}
+			default:
+				return verifierCommandResult{ExitCode: 127, Err: errors.New("unexpected command")}
+			}
+		},
+	}
+	args := verifierArgs(manifest, "core_deploy_identity_chain", evidenceDir)
+	args = append(args, "--catalog", catalogPath, "--workspace", workspace, "--installed-artifact", artifact)
+	var output bytes.Buffer
+	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
+	if code != verifierExitPassed {
+		t.Fatalf("exit=%d output=%s", code, output.String())
+	}
+	if !sourceObserved || !cleanlinessObserved || !stampObserved {
+		t.Fatalf("source=%t cleanliness=%t stamp=%t", sourceObserved, cleanlinessObserved, stampObserved)
+	}
+	receipt := decodeVerifierReceipt(t, output.Bytes())
+	if receipt.Status != "passed" || len(receipt.EvidenceRefs) != 1 || !strings.HasPrefix(receipt.EvidenceRefs[0], "relative:") {
+		t.Fatalf("receipt=%+v", receipt)
+	}
+	evidencePath := filepath.Join(evidenceDir, strings.TrimPrefix(receipt.EvidenceRefs[0], "relative:"))
+	evidenceBytes, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatalf("read verifier evidence: %v", err)
+	}
+	var evidence map[string]any
+	if err := json.Unmarshal(evidenceBytes, &evidence); err != nil {
+		t.Fatalf("decode verifier evidence: %v", err)
+	}
+	expectedHash := sha256.Sum256([]byte("binary"))
+	moduleStamp, _ := evidence["stamp_module"].(string)
+	if evidence["catalog_repository"] != "Nyukimin/RenCrow_CORE" || evidence["source_revision"] != revision || evidence["stamp_revision"] != revision || !strings.HasPrefix(moduleStamp, "github.com/Nyukimin/RenCrow_CORE") || evidence["artifact_sha256"] != hex.EncodeToString(expectedHash[:]) {
+		t.Fatalf("deploy identity evidence=%+v", evidence)
+	}
+}
+
+func TestVerifierDeployIdentityWithoutArtifactBlocksOutsideLinux(t *testing.T) {
+	root := t.TempDir()
+	const revision = "0123456789abcdef0123456789abcdef01234567"
+	catalogPath := filepath.Join(root, "ecosystem.yaml")
+	catalog := `{"components":{"core":{"repository":"Nyukimin/RenCrow_CORE","workspace_path":".","version":"` + revision + `"}}}`
+	if err := os.WriteFile(catalogPath, []byte(catalog), 0o600); err != nil {
+		t.Fatalf("catalog: %v", err)
+	}
+	manifest := testManifest(t, "core-deploy-identity-chain")
+	commandCalled := false
+	deps := verifierDependencies{
+		Platform: func() string { return "darwin" },
+		RunCommand: func(_ context.Context, name string, args []string) verifierCommandResult {
+			commandCalled = true
+			return verifierCommandResult{ExitCode: 127, Err: fmt.Errorf("unexpected command %s %#v", name, args)}
+		},
+	}
+	args := verifierArgs(manifest, "core_deploy_identity_chain", t.TempDir())
+	args = append(args, "--catalog", catalogPath, "--workspace", root)
+	var output bytes.Buffer
+	code := runVerifierCLI(context.Background(), args, &output, &bytes.Buffer{}, deps)
+	if code != verifierExitBlocked || commandCalled {
+		t.Fatalf("exit=%d commandCalled=%t output=%s", code, commandCalled, output.String())
+	}
+	receipt := decodeVerifierReceipt(t, output.Bytes())
+	if receipt.Status != "blocked" || !strings.Contains(receipt.FailureBoundary, "installed CORE artifact evidence is unavailable") {
 		t.Fatalf("receipt=%+v", receipt)
 	}
 }

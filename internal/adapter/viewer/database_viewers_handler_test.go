@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -239,17 +240,24 @@ func TestHandleToolRegistryDatabaseMergesRuntimeAndDynamicWithRuntimePrecedence(
 		name TEXT PRIMARY KEY, description TEXT, schema_json TEXT, platforms TEXT,
 		source TEXT, created_at DATETIME, created_by TEXT
 	)`)
-	mustExecDatabaseViewerTest(t, db, `INSERT INTO tool_registry VALUES
-		('alpha', 'dynamic collision', '{}', '["linux"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro'),
-		('zeta', 'dynamic only', '{}', '["linux"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro')`)
+	hostPlatform := runtime.GOOS
+	foreignPlatform := "linux"
+	if foreignPlatform == hostPlatform {
+		foreignPlatform = "darwin"
+	}
+	mustExecDatabaseViewerTest(t, db, fmt.Sprintf(`INSERT INTO tool_registry VALUES
+		('alpha', 'dynamic collision', '{}', '["%s"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro'),
+		('zeta', 'dynamic only', '{}', '["%s"]', 'shiro-generated', '2026-08-01T10:00:00Z', 'shiro'),
+		('foreign-only', 'foreign platform only', '{}', '["%s"]', 'builtin', '2026-08-01T10:00:00Z', 'builtin')`, hostPlatform, hostPlatform, foreignPlatform))
 	db.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?platform=linux&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/viewer/databases/tool-registry?platform=%s&limit=10", hostPlatform), nil)
 	rec := httptest.NewRecorder()
 	HandleToolRegistryDatabase(databaseViewerOptionsWithRuntimeTools(t, dbPath,
 		runtimeToolMetadata(t, "alpha", "runtime collision", ""),
 	)).ServeHTTP(rec, req)
 	var out struct {
+		Total int `json:"total"`
 		Items []struct {
 			Name, Description, Origin string
 		} `json:"items"`
@@ -257,8 +265,24 @@ func TestHandleToolRegistryDatabaseMergesRuntimeAndDynamicWithRuntimePrecedence(
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Items) != 2 || out.Items[0].Name != "alpha" || out.Items[0].Description != "runtime collision" || out.Items[0].Origin != "core_runtime" || out.Items[1].Name != "zeta" || out.Items[1].Origin != "dynamic_registry" {
+	if rec.Code != http.StatusOK || out.Total != 2 || len(out.Items) != 2 || out.Items[0].Name != "alpha" || out.Items[0].Description != "runtime collision" || out.Items[0].Origin != "core_runtime" || out.Items[1].Name != "zeta" || out.Items[1].Origin != "dynamic_registry" {
 		t.Fatalf("unexpected merged tools: %+v", out.Items)
+	}
+	foreignReq := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/viewer/databases/tool-registry?platform=%s&limit=10", foreignPlatform), nil)
+	foreignRec := httptest.NewRecorder()
+	HandleToolRegistryDatabase(DatabaseViewerOptions{DBPath: dbPath}).ServeHTTP(foreignRec, foreignReq)
+	var foreignOut struct {
+		Total int `json:"total"`
+		Items []struct {
+			Name   string `json:"name"`
+			Origin string `json:"origin"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(foreignRec.Body.Bytes(), &foreignOut); err != nil {
+		t.Fatal(err)
+	}
+	if foreignRec.Code != http.StatusOK || foreignOut.Total != 1 || len(foreignOut.Items) != 1 || foreignOut.Items[0].Name != "foreign-only" || foreignOut.Items[0].Origin != "dynamic_registry" {
+		t.Fatalf("foreign-platform filter status=%d payload=%+v", foreignRec.Code, foreignOut)
 	}
 }
 

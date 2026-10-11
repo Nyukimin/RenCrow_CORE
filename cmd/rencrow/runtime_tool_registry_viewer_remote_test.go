@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -28,8 +30,9 @@ func TestRuntimeToolRegistryDatabaseViewerUsesSelectedRPCOwnerWithoutLocalFallba
 		}, nil
 	}
 	handler := runtimeToolRegistryDatabaseViewerHandler(viewer.DatabaseViewerOptions{DBPath: localPath, RuntimeTools: runtimeTools}, fixture.remote)
+	hostPlatform := runtime.GOOS
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?platform=linux&limit=10", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/viewer/databases/tool-registry?platform=%s&limit=10", hostPlatform), nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("remote Tool Registry Viewer status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -58,8 +61,31 @@ func TestRuntimeToolRegistryDatabaseViewerUsesSelectedRPCOwnerWithoutLocalFallba
 	if payload.Items[1].Name != "movie-fetch" || payload.Items[1].Description != "runtime wins" || payload.Items[1].Origin != domaintool.OriginCoreRuntime {
 		t.Fatalf("runtime precedence=%+v", payload.Items[1])
 	}
+	if payload.Items[2].Name != "shell" || payload.Items[2].Origin != domaintool.OriginCoreRuntime {
+		t.Fatalf("host runtime entry=%+v", payload.Items[2])
+	}
+	foreignPlatform := "linux"
+	if foreignPlatform == hostPlatform {
+		foreignPlatform = "darwin"
+	}
+	foreign := httptest.NewRecorder()
+	handler.ServeHTTP(foreign, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/viewer/databases/tool-registry?platform=%s&limit=10", foreignPlatform), nil))
+	var foreignPayload struct {
+		Available bool `json:"available"`
+		Total     int  `json:"total"`
+		Items     []struct {
+			Name   string `json:"name"`
+			Origin string `json:"origin"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(foreign.Body.Bytes(), &foreignPayload); err != nil {
+		t.Fatal(err)
+	}
+	if foreign.Code != http.StatusOK || !foreignPayload.Available || foreignPayload.Total != 1 || len(foreignPayload.Items) != 1 || foreignPayload.Items[0].Name != "foreign-only" || foreignPayload.Items[0].Origin != domaintool.OriginDynamicRegistry {
+		t.Fatalf("foreign-platform filter status=%d payload=%+v", foreign.Code, foreignPayload)
+	}
 	allPlatforms := httptest.NewRecorder()
-	handler.ServeHTTP(allPlatforms, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?limit=1", nil))
+	handler.ServeHTTP(allPlatforms, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?limit=10", nil))
 	var allPlatformPayload struct {
 		Available bool `json:"available"`
 		Total     int  `json:"total"`
@@ -70,8 +96,23 @@ func TestRuntimeToolRegistryDatabaseViewerUsesSelectedRPCOwnerWithoutLocalFallba
 	if err := json.Unmarshal(allPlatforms.Body.Bytes(), &allPlatformPayload); err != nil {
 		t.Fatal(err)
 	}
-	if allPlatforms.Code != http.StatusOK || !allPlatformPayload.Available || allPlatformPayload.Total != 4 || len(allPlatformPayload.Items) != 1 || allPlatformPayload.Items[0].Name != "darwin-only" {
+	if allPlatforms.Code != http.StatusOK || !allPlatformPayload.Available || allPlatformPayload.Total != 4 || len(allPlatformPayload.Items) != 4 || allPlatformPayload.Items[0].Name != "dynamic-only" || allPlatformPayload.Items[1].Name != "foreign-only" || allPlatformPayload.Items[2].Name != "movie-fetch" || allPlatformPayload.Items[3].Name != "shell" {
 		t.Fatalf("remote Tool Registry all-platform/limit response status=%d payload=%+v", allPlatforms.Code, allPlatformPayload)
+	}
+	limited := httptest.NewRecorder()
+	handler.ServeHTTP(limited, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?limit=1", nil))
+	var limitedPayload struct {
+		Available bool `json:"available"`
+		Total     int  `json:"total"`
+		Items     []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(limited.Body.Bytes(), &limitedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if limited.Code != http.StatusOK || !limitedPayload.Available || limitedPayload.Total != 4 || len(limitedPayload.Items) != 1 || limitedPayload.Items[0].Name != "dynamic-only" {
+		t.Fatalf("remote Tool Registry limit response status=%d payload=%+v", limited.Code, limitedPayload)
 	}
 	badLimit := httptest.NewRecorder()
 	handler.ServeHTTP(badLimit, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?limit=0", nil))
@@ -80,7 +121,7 @@ func TestRuntimeToolRegistryDatabaseViewerUsesSelectedRPCOwnerWithoutLocalFallba
 	}
 	fixture.server.Close()
 	partial := httptest.NewRecorder()
-	handler.ServeHTTP(partial, httptest.NewRequest(http.MethodGet, "/viewer/databases/tool-registry?platform=linux&limit=10", nil))
+	handler.ServeHTTP(partial, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/viewer/databases/tool-registry?platform=%s&limit=10", hostPlatform), nil))
 	var partialPayload struct {
 		Available bool   `json:"available"`
 		Total     int    `json:"total"`
@@ -92,7 +133,7 @@ func TestRuntimeToolRegistryDatabaseViewerUsesSelectedRPCOwnerWithoutLocalFallba
 	if err := json.Unmarshal(partial.Body.Bytes(), &partialPayload); err != nil {
 		t.Fatal(err)
 	}
-	if partial.Code != http.StatusOK || !partialPayload.Available || partialPayload.Total != 2 || partialPayload.Error != "Tool Registry unavailable" || len(partialPayload.Items) != 2 {
+	if partial.Code != http.StatusOK || !partialPayload.Available || partialPayload.Total != 2 || partialPayload.Error != "Tool Registry unavailable" || len(partialPayload.Items) != 2 || partialPayload.Items[0].Name != "movie-fetch" || partialPayload.Items[1].Name != "shell" {
 		t.Fatalf("remote Tool Registry partial failure status=%d payload=%+v", partial.Code, partialPayload)
 	}
 	if _, err := os.Stat(localPath); err == nil {
@@ -114,10 +155,15 @@ func openRuntimeToolRegistryViewerRPCFixture(t *testing.T) *runtimeToolRegistryV
 	if err != nil {
 		t.Fatalf("open Tool Registry SQLite owner: %v", err)
 	}
+	hostPlatform := runtime.GOOS
+	foreignPlatform := "linux"
+	if foreignPlatform == hostPlatform {
+		foreignPlatform = "darwin"
+	}
 	for _, entry := range []capdomain.ToolEntry{
-		{Name: "dynamic-only", Description: "dynamic description", SchemaJSON: `{"type":"object"}`, Platforms: []string{"linux", "windows"}, Source: capdomain.ToolSourceShiroGenerated, CreatedAt: time.Date(2026, 9, 1, 2, 3, 4, 0, time.UTC), CreatedBy: "shiro"},
-		{Name: "movie-fetch", Description: "dynamic value", SchemaJSON: `{"type":"object"}`, Platforms: []string{"linux"}, Source: capdomain.ToolSourceBuiltin, CreatedAt: time.Date(2026, 9, 1, 2, 3, 5, 0, time.UTC), CreatedBy: "builtin"},
-		{Name: "darwin-only", Description: "darwin tool", SchemaJSON: `{"type":"object"}`, Platforms: []string{"darwin"}, Source: capdomain.ToolSourceBuiltin, CreatedAt: time.Date(2026, 9, 1, 2, 3, 6, 0, time.UTC), CreatedBy: "builtin"},
+		{Name: "dynamic-only", Description: "dynamic description", SchemaJSON: `{"type":"object"}`, Platforms: []string{hostPlatform}, Source: capdomain.ToolSourceShiroGenerated, CreatedAt: time.Date(2026, 9, 1, 2, 3, 4, 0, time.UTC), CreatedBy: "shiro"},
+		{Name: "movie-fetch", Description: "dynamic value", SchemaJSON: `{"type":"object"}`, Platforms: []string{hostPlatform}, Source: capdomain.ToolSourceBuiltin, CreatedAt: time.Date(2026, 9, 1, 2, 3, 5, 0, time.UTC), CreatedBy: "builtin"},
+		{Name: "foreign-only", Description: "foreign platform tool", SchemaJSON: `{"type":"object"}`, Platforms: []string{foreignPlatform}, Source: capdomain.ToolSourceBuiltin, CreatedAt: time.Date(2026, 9, 1, 2, 3, 6, 0, time.UTC), CreatedBy: "builtin"},
 	} {
 		if err := owner.Register(context.Background(), entry); err != nil {
 			_ = owner.Close()
