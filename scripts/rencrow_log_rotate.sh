@@ -7,9 +7,43 @@ RENCROW_HOME="${RENCROW_HOME:-${HOME}/.rencrow}"
 ARCHIVE_DIR="${RENCROW_LOG_ARCHIVE_DIR:-${RENCROW_HOME}/logs/archive}"
 RETENTION_DAYS="${RENCROW_LOG_RETENTION_DAYS:-7}"
 SERVICE_UNIT="${RENCROW_LOG_SERVICE_UNIT:-rencrow.service}"
-ANCHOR_DATE="${RENCROW_LOG_ARCHIVE_DATE:-$(date -u +%F)}"
+ANCHOR_DATE="${RENCROW_LOG_ARCHIVE_DATE:-}"
 LOCK_FILE="${RENCROW_LOG_ROTATE_LOCK_FILE:-${RENCROW_HOME}/logs/.rencrow-log-rotate.lock}"
 JOURNALCTL_BIN="${RENCROW_JOURNALCTL_BIN:-journalctl}"
+
+unavailable() {
+  echo "[UNAVAILABLE] $*" >&2
+  exit 69
+}
+
+if ! host_os="$(uname -s 2>/dev/null)"; then
+  unavailable "cannot determine operating system; log retention requires Linux"
+fi
+if [[ "${host_os}" != "Linux" ]]; then
+  unavailable "unsupported platform ${host_os}; log retention requires Linux"
+fi
+
+for required_tool in date flock gzip find seq chmod mv rm dirname mkdir; do
+  if ! command -v "${required_tool}" >/dev/null 2>&1; then
+    unavailable "required command is unavailable: ${required_tool}"
+  fi
+done
+
+if ! date -u -d '2000-01-01' +%F >/dev/null 2>&1; then
+  unavailable "GNU date with -d support is unavailable"
+fi
+
+if [[ "${JOURNALCTL_BIN}" == */* ]]; then
+  if [[ ! -f "${JOURNALCTL_BIN}" || ! -x "${JOURNALCTL_BIN}" ]]; then
+    unavailable "configured journalctl executable is unavailable: ${JOURNALCTL_BIN}"
+  fi
+elif ! command -v "${JOURNALCTL_BIN}" >/dev/null 2>&1; then
+  unavailable "configured journalctl executable is unavailable: ${JOURNALCTL_BIN}"
+fi
+
+if [[ -z "${ANCHOR_DATE}" ]]; then
+  ANCHOR_DATE="$(date -u +%F)"
+fi
 
 if [[ ! "${RETENTION_DAYS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "[NG] RENCROW_LOG_RETENTION_DAYS must be a positive integer: ${RETENTION_DAYS}" >&2
@@ -21,14 +55,23 @@ if ! date -u -d "${ANCHOR_DATE}" +%F >/dev/null 2>&1; then
   exit 2
 fi
 
-mkdir -p "${ARCHIVE_DIR}" "$(dirname "${LOCK_FILE}")"
-chmod 700 "${ARCHIVE_DIR}"
+mkdir -p "$(dirname "${LOCK_FILE}")"
 
 exec 9>"${LOCK_FILE}"
-if ! flock -n 9; then
-  echo "[WARN] another RenCrow log archive is already running"
-  exit 0
+if flock -E 75 -n 9; then
+  :
+else
+  lock_status=$?
+  if [[ "${lock_status}" -eq 75 ]]; then
+    echo "[WARN] another RenCrow log archive is already running"
+    exit 0
+  fi
+  echo "[NG] flock failed while acquiring log rotation lock (status=${lock_status})" >&2
+  exit "${lock_status}"
 fi
+
+mkdir -p "${ARCHIVE_DIR}"
+chmod 700 "${ARCHIVE_DIR}"
 
 find "${ARCHIVE_DIR}" -maxdepth 1 -type f -name '.rencrow-*.log.gz.tmp' -delete
 

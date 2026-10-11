@@ -179,6 +179,9 @@ recipient=mio
 - 7日を超えた日別アーカイブは自動削除します。
 - journalのrate limitはCORE unitだけ無効化し、高頻度ログ中のpanicやerrorを欠落させません。
 - アーカイブは`0600`、アーカイブディレクトリは`0700`とします。
+- `rencrow_log_rotate.sh`とそのowner checkはLinux専用です。Windows／macOSで直接実行した場合は、archiveやlockを作成する前に`unavailable`としてnon-zeroで終了します。
+- 実行前にGNU `date -d`、`flock`、必要なarchive command、設定済み`journalctl` executableを確認します。不足は`unavailable`で失敗し、無効なretention／dateは従来どおり入力errorとして失敗します。
+- lock取得時は実際の競合だけをbusy/no-op成功として扱います。その他の`flock` failureはnon-zeroで終了し、archive処理へ進みません。
 
 ## 生存監視と再起動
 

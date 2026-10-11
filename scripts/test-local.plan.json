@@ -379,7 +379,8 @@
       "tier": "heavy",
       "impact": {
         "paths": [
-          "scripts/tests/**"
+          "scripts/tests/**",
+          "scripts/rencrow_log_rotate.sh"
         ],
         "packages": [],
         "globalPaths": []
@@ -388,7 +389,10 @@
         "storage",
         "systemd"
       ],
-      "timeoutSeconds": 300
+      "timeoutSeconds": 300,
+      "platform": [
+        "linux"
+      ]
     },
     {
       "name": "core-systemd-dropin",
