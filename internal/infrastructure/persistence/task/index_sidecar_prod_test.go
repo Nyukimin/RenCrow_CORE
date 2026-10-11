@@ -80,6 +80,34 @@ func TestSidecarAcceptanceOnProductionCopy(t *testing.T) {
 		t.Errorf("restore median %s exceeds %s", median, restoreBudget)
 	}
 
+	// What a checkpoint costs a running writer: the copy under the read lock (the
+	// only part that can delay a commit) and the whole replacement.
+	{
+		store, err := NewJSONLStoreWithOptions(dir, OpenOptions{Index: true, Persist: true, checkpoint: manualPolicy()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var snapshot, whole []time.Duration
+		for i := 0; i < 5; i++ {
+			started := time.Now()
+			snap := store.idx.snapshot()
+			snapshot = append(snapshot, time.Since(started))
+			_ = snap
+			started = time.Now()
+			if err := store.idx.ck.checkpointNow("measure"); err != nil {
+				t.Fatal(err)
+			}
+			whole = append(whole, time.Since(started))
+		}
+		sort.Slice(snapshot, func(i, j int) bool { return snapshot[i] < snapshot[j] })
+		sort.Slice(whole, func(i, j int) bool { return whole[i] < whole[j] })
+		t.Logf("checkpoint: read-lock copy median=%s max=%s; whole replacement (copy+encode+write+fsync) median=%s max=%s",
+			snapshot[2].Round(time.Microsecond), snapshot[4].Round(time.Microsecond), whole[2].Round(time.Millisecond), whole[4].Round(time.Millisecond))
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	// A crash after some commits: the sidecar lags the log by a tail.
 	store, err := NewJSONLStoreWithOptions(dir, opts)
 	if err != nil {
