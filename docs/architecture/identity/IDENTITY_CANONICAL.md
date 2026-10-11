@@ -3906,7 +3906,7 @@ Step 03をcompleteとしない。
 #### Heartbeat Task / Run owner integration
 
 - **Failure / Problem:** HeartbeatがTaskIDを直接生成してWorkerへ渡し、Task／Run永続ownerを経由しないため、実行、失敗時Atlas記録、終了状態を同じ正本で追跡できなかった。
-- **Invariant:** Heartbeatからの各Worker実行は、既存TaskManagerのCreateとStartRunWithReasonで確定したTask／Runを使用する。owner未接続・発行失敗・返却identity不整合の場合はWorkerを呼ばない。実Actorはruntimeで接続したShiroと一致する認証済みscopeに限り、LLM観測文字列から推定しない。
+- **Invariant:** Heartbeatからの各Worker実行は、既存TaskManagerの`CreateAndStartRun`（Taskの作成と最初のRun開始を一つのtransactionで行う入口）で確定したTask／Runを使用する。owner未接続・発行失敗・返却identity不整合の場合はWorkerを呼ばない。実Actorはruntimeで接続したShiroと一致する認証済みscopeに限り、LLM観測文字列から推定しない。
 - **Execution boundary:** 新規Heartbeat処理に既存の異なるexecution identityを上書きしない。取得したcontextはWorker、失敗時Atlas Revise、後処理へ伝搬する。保存ownerはTaskManager一つとし、Heartbeatへ別Task／Runストアを新設しない。
 - **Terminal boundary:** Workerだけでなく同じ処理内のAtlas更新・通知・保存失敗も終了結果に反映する。成功、失敗、取消はownerの終端APIへ記録する。取消後の終端保存は時間を限定したcleanup contextで行い、保存失敗を成功に変換しない。
 - **Scope:** 三OS共通のGo APIを使用する。新しいLLM処理や直接backend経路を作らず、既存のShiroとmodule routeを維持する。HTTPのユーザー操作をAgent実行に偽装しない。
