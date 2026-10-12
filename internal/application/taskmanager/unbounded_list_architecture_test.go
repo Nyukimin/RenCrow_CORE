@@ -56,6 +56,13 @@ var unboundedTaskListAllowlist = map[string]string{
 	"internal/application/taskmanager/read_task_runs.go:readTaskRunsInOnePass:ListRuns{}":  "one pass for a store without an ID index",
 	"internal/application/taskmanager/read_task_runs.go:RunResolver:ListRuns{}":            "one pass for a store without an ID index",
 
+	// The one-shot reaper of Run-less queued Tasks (reap_queued.go). A reference
+	// to a Task can come from any Task of the history and there is no reverse
+	// lookup, so it reads the latest version of every Task once per dry-run and
+	// once per batch transaction. It runs by hand on a stopped Core, never at
+	// startup or per request.
+	"internal/application/taskmanager/reap_queued.go:scanTasks:ListTasks{}": "one-shot reaper: reference scan over the history",
+
 	// Test support that asserts the whole (tiny) store.
 	"internal/application/taskmanager/taskmanagertest/saturated.go:AssertNothingPersisted:ListRuns{}": "test support over a one-Task store",
 
