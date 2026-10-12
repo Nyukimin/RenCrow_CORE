@@ -16,8 +16,8 @@ func TestBuildRouteTTSPlanForOpsUsesShiroReportVoice(t *testing.T) {
 		t.Fatal("expected plan")
 	}
 	if got.CharacterID != "shiro" ||
-		got.VoiceID != RouteTTSMaleVoiceID ||
-		got.VoiceProfile != RouteTTSMaleVoiceProfile {
+		got.VoiceID != "shiro" ||
+		got.VoiceProfile != "lumina_male" {
 		t.Fatalf("unexpected voice metadata: %+v", got)
 	}
 	if got.SpeechMode != "report" ||
@@ -41,8 +41,8 @@ func TestBuildRouteTTSPlanForChatUsesMioConversation(t *testing.T) {
 		t.Fatal("expected plan")
 	}
 	if got.CharacterID != "mio" ||
-		got.VoiceID != RouteTTSDefaultVoiceID ||
-		got.VoiceProfile != RouteTTSDefaultVoiceProfile {
+		got.VoiceID != "mio" ||
+		got.VoiceProfile != "lumina_female" {
 		t.Fatalf("unexpected voice metadata: %+v", got)
 	}
 	if got.SpeechMode != "conversational" ||

@@ -136,7 +136,7 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 ) (ProcessMessageResponse, bool, error) {
 	now := time.Now()
 	decision := dailyNewsBriefRouteDecision()
-	o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	responder := &dailyNewsBriefResponderTap{}
 	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	brief, readerErr := readDailyNewsBrief(ctx, reader, now)
 	if readerErr != nil {
@@ -158,15 +158,20 @@ func (o *MessageOrchestrator) respondWithDailyNewsBrief(
 		collector,
 		o.mio,
 		shiroChat,
-		o.events.Emit,
+		responder.Wrap(o.events.Emit),
 		o.sessions.SaveCompletedTurnInput,
 		o.responses.Build,
 		activateShiro,
 	)
-	if err == nil && handled {
-		o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, "agent.response", resp.Response)
+	// The voice is the Agent named by the brief's own agent.response, which can
+	// differ from the viewer recipient (the brief is Mio-owned, Shiro only a
+	// fallback). The session therefore starts once that Agent is known.
+	if err == nil && handled && responder.Agent() != "" {
+		if o.ttsLifecycle.StartSessionForResponder(ctx, req, taskID, decision, ttsSessionID, responder.Agent()) {
+			o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, responder.Agent(), "agent.response", resp.Response)
+			o.ttsLifecycle.EndSession(ctx, ttsSessionID)
+		}
 	}
-	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
 	return resp, handled, err
 }
 
@@ -183,7 +188,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 ) (ProcessMessageResponse, bool, error) {
 	now := time.Now()
 	decision := dailyNewsBriefRouteDecision()
-	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision)
+	responder := &dailyNewsBriefResponderTap{}
 	o.events.Emit("news.brief.requested", "user", "mio", "intent="+dailyNewsBriefIntent, "CHAT", taskID.String(), req.SessionID, req.Channel, req.ChatID)
 	brief, readerErr := readDailyNewsBrief(ctx, reader, now)
 	if readerErr != nil {
@@ -205,7 +210,7 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 		collector,
 		o.mio,
 		shiroChat,
-		o.events.Emit,
+		responder.Wrap(o.events.Emit),
 		o.sessions.SaveCompletedTurnInput,
 		func(response string, decision routing.Decision, jid modulecore.TaskID) ProcessMessageResponse {
 			return ProcessMessageResponse{
@@ -217,14 +222,41 @@ func (o *DistributedOrchestrator) respondWithDailyNewsBrief(
 		},
 		activateShiro,
 	)
-	if err == nil && handled {
-		o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, "agent.response", resp.Response)
+	// See the MessageOrchestrator variant: the session starts once the
+	// responding Agent named by agent.response is known.
+	if err == nil && handled && responder.Agent() != "" {
+		if ttsSessionID := o.ttsLifecycle.StartSessionForResponder(ctx, req, taskID, decision, responder.Agent()); ttsSessionID != "" {
+			o.ttsLifecycle.Push(ctx, ttsSessionID, decision.Route, responder.Agent(), "agent.response", resp.Response)
+			o.ttsLifecycle.EndSession(ctx, ttsSessionID)
+		}
 	}
-	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
 	return resp, handled, err
 }
 
 type dailyNewsBriefEventEmitter func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string)
+
+// dailyNewsBriefResponderTap records the Agent named by the brief's
+// agent.response event, so the voiced Agent is by construction the one the
+// event stream reports as responding.
+type dailyNewsBriefResponderTap struct {
+	agent string
+}
+
+// Wrap returns an emitter that forwards to emit and remembers agent.response's from.
+func (t *dailyNewsBriefResponderTap) Wrap(emit dailyNewsBriefEventEmitter) dailyNewsBriefEventEmitter {
+	return func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
+		if eventType == "agent.response" {
+			t.agent = from
+		}
+		emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID)
+	}
+}
+
+// Agent returns the responding Agent, or "" when no agent.response was emitted.
+func (t *dailyNewsBriefResponderTap) Agent() string {
+	return t.agent
+}
+
 type dailyNewsBriefTurnInputSaver func(context.Context, *session.Session, domainconversation.TurnInput) error
 type dailyNewsBriefResponseBuilder func(string, routing.Decision, modulecore.TaskID) ProcessMessageResponse
 type dailyNewsBriefShiroActivation func(context.Context) (modulecore.TaskID, error)

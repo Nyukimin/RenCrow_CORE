@@ -13,6 +13,7 @@ import (
 func buildVTuberRequest(
 	eventType string,
 	route routing.Route,
+	speaker string,
 	sessionID string,
 	text string,
 	ctx moduletts.EmotionContext,
@@ -22,7 +23,7 @@ func buildVTuberRequest(
 	if filtered == "" || emotion == nil {
 		return VTuberEmotionRequest{}, false
 	}
-	characterID := speakerForRoute(route)
+	characterID := strings.ToLower(strings.TrimSpace(speaker))
 	req := VTuberEmotionRequest{
 		CharacterID:  characterID,
 		Text:         filtered,

@@ -758,7 +758,11 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	if !o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID) {
+		// A TTS session that did not start (unresolved speaker or start failure)
+		// receives nothing: the bridge would otherwise open one with its default voice.
+		ttsSessionID = ""
+	}
 
 	endWorkerBusy := o.idleBusyGuards.BeginWorker(decision.Route)
 	defer endWorkerBusy()

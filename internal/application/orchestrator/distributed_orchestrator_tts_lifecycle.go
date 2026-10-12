@@ -33,7 +33,17 @@ func (l *distributedTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
 }
 
+// StartSessionForRoute starts the turn's TTS session with the voice of the Agent
+// that responds on the route (CHAT: the viewer recipient) and returns its ID.
+// An empty ID means no session is open and nothing may be pushed.
 func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision) string {
+	return l.StartSessionForResponder(ctx, req, taskID, decision, chatTTSCharacterForRequest(req, decision.Route))
+}
+
+// StartSessionForResponder is StartSessionForRoute for a CHAT turn whose
+// responding Agent is known explicitly (and may differ from the viewer
+// recipient, e.g. the daily news brief). responder is ignored for other routes.
+func (l *distributedTTSLifecycle) StartSessionForResponder(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision, responder string) string {
 	if l.ttsBridge == nil || !ttsAllowedForRequest(req) || validateDistributedTaskID(taskID) != nil {
 		return ""
 	}
@@ -42,10 +52,11 @@ func (l *distributedTTSLifecycle) StartSessionForRoute(ctx context.Context, req 
 		Route:             string(decision.Route),
 		SessionID:         ttsSessionID,
 		PublicPlaybackRef: taskID.String(),
-		ChatCharacterID:   chatTTSCharacterForRequest(req, decision.Route),
+		ChatCharacterID:   responder,
 		Urgency:           "normal",
 	})
 	if !ok {
+		log.Printf("[DistributedOrch] TTS session not started: unresolved speaker route=%s recipient=%q task_id=%s", decision.Route, responder, taskID.String())
 		return ""
 	}
 	startReq := TTSSessionStart{
@@ -85,8 +96,8 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
-	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, "agent.response", "[DistributedOrch] TTS push degraded:")
-	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, "agent.response", "[DistributedOrch] VTuber push degraded:")
+	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] TTS push degraded:")
+	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] VTuber push degraded:")
 	return llm.ContextWithStreamCallback(ctx, func(token string) {
 		if prev != nil {
 			prev(token)
@@ -100,11 +111,16 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 	}), &streamBundle{tts: ttsStream, vtuber: vtuberStream}
 }
 
-func (l *distributedTTSLifecycle) Push(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {
+// Push voices one finished utterance of speaker (the Agent that produced the
+// text, equal to the turn's agent.response from) on the open session.
+func (l *distributedTTSLifecycle) Push(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {
+	voiceProfile, ok := voiceProfileForSpeaker(speaker, "[DistributedOrch] TTS push degraded:")
+	if !ok {
+		return
+	}
 	ttsCtx := buildTTSContext(route, "normal", false)
-	_, voiceProfile := voiceForSpeaker(speakerForRoute(route))
 	pushTTSTextChunks(ctx, l.ttsBridge, sessionID, route, eventType, text, ttsCtx, voiceProfile, "[DistributedOrch] TTS push degraded:")
-	req, ok := buildVTuberRequest(eventType, route, sessionID, text, ttsCtx, voiceProfile)
+	req, ok := buildVTuberRequest(eventType, route, speaker, sessionID, text, ttsCtx, voiceProfile)
 	if ok {
 		pushVTuber(ctx, l.vtuberBridge, req, "[DistributedOrch] VTuber push degraded:")
 	}

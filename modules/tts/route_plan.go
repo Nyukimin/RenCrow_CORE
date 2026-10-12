@@ -5,13 +5,6 @@ import (
 	"time"
 )
 
-const (
-	RouteTTSDefaultVoiceID      = "mio"
-	RouteTTSDefaultVoiceProfile = "lumina_female"
-	RouteTTSMaleVoiceID         = "male_01"
-	RouteTTSMaleVoiceProfile    = "lumina_male"
-)
-
 type RouteTTSContext struct {
 	ConversationMode      string
 	TimeOfDay             string
@@ -50,14 +43,16 @@ func BuildRouteTTSPlan(input RouteTTSPlanInput) (RouteTTSPlan, bool) {
 		return RouteTTSPlan{}, false
 	}
 	route := normalizeRouteName(input.Route)
-	speaker := SpeakerForRoute(route)
-	voiceID, voiceProfile := RouteVoiceForSpeaker(speaker)
-	if route == "CHAT" {
-		if characterID, chatVoiceID, chatVoiceProfile, ok := ChatVoiceForCharacter(input.ChatCharacterID); ok {
-			speaker = characterID
-			voiceID = chatVoiceID
-			voiceProfile = chatVoiceProfile
-		}
+	// The voice is the responding Agent's own voice. An unresolved route or
+	// recipient yields no plan: no session starts instead of speaking with a
+	// different Agent's voice.
+	speaker, ok := RespondingAgentForRoute(route, input.ChatCharacterID)
+	if !ok {
+		return RouteTTSPlan{}, false
+	}
+	voiceID, voiceProfile, ok := VoiceForAgent(speaker)
+	if !ok {
+		return RouteTTSPlan{}, false
 	}
 	ctx := BuildRouteTTSContext(route, input.Urgency, input.UserAttentionRequired, input.Now)
 	return RouteTTSPlan{
@@ -111,41 +106,6 @@ func SpeechModeForRoute(route string) string {
 		return "report"
 	default:
 		return "conversational"
-	}
-}
-
-func SpeakerForRoute(route string) string {
-	switch normalizeRouteName(route) {
-	case "OPS", "CODE", "CODE1", "CODE2", "CODE3":
-		return "shiro"
-	case "WILD":
-		return "wild"
-	default:
-		return "mio"
-	}
-}
-
-func RouteVoiceForSpeaker(speaker string) (voiceID, voiceProfile string) {
-	switch strings.ToLower(strings.TrimSpace(speaker)) {
-	case "shiro":
-		return RouteTTSMaleVoiceID, RouteTTSMaleVoiceProfile
-	default:
-		return RouteTTSDefaultVoiceID, RouteTTSDefaultVoiceProfile
-	}
-}
-
-// ChatVoiceForCharacter returns the Gateway voice identity for a public CHAT Agent.
-// Only the four CORE-managed Agent identities are accepted here.
-func ChatVoiceForCharacter(characterID string) (normalizedID, voiceID, voiceProfile string, ok bool) {
-	switch strings.ToLower(strings.TrimSpace(characterID)) {
-	case "mio", "midori":
-		normalizedID = strings.ToLower(strings.TrimSpace(characterID))
-		return normalizedID, normalizedID, RouteTTSDefaultVoiceProfile, true
-	case "shiro", "kuro":
-		normalizedID = strings.ToLower(strings.TrimSpace(characterID))
-		return normalizedID, normalizedID, RouteTTSMaleVoiceProfile, true
-	default:
-		return "", "", "", false
 	}
 }
 

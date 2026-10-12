@@ -1097,6 +1097,8 @@ streaming生成では、COREはRenCrow_LLMから受けた本文deltaを`agent.th
 
 同じturnの`agent.thinking`、`agent.start`、`agent.response`の`from`は、実際に応答したAgentと一致します。`agent.thinking.from`は本文deltaを生成したAgentで、CHATは送信時のrecipient（mio／shiro／midori／kuro）、PLAN／RESEARCHはMio、WILDはMidori、ANALYZEはKuroです。同じturnで最初に発行される`agent.response.from`と等しく、`agent.start`は宛先が利用者なら`from`、委譲先Agentなら`to`が同じAgentを指します。固定のAgent名を発行してはいけません。ANALYZEなどでMioが委譲先の結果を利用者へ中継する後続の`agent.response`（`from=mio`、`to=user`）は別の発話であり、deltaの生成者を表しません。clientはdeltaの表示ラベルに`agent.thinking.from`を使い、同じtraceの`agent.start`が先に届いている場合はその応答Agentを優先します。deltaを確定する`agent.response.from`が表示済みのラベルと異なる場合は、その応答Agent名を必ず表示し直します。
 
+TTSの声も同じ応答Agentに従います。`POST /viewer/send`が`audio_output=requested`（または既定でTTS可）のとき、COREが読み上げる声は、その発話を生成したAgentの声です。TTS sessionの`character_id`とGatewayへ送る`voice_id`は応答Agentの公開voice_id（`mio`／`shiro`／`midori`／`kuro`）で、`agent.thinking.from`と最初の`agent.response.from`（委譲先の結果を返すrouteでは結果を返した委譲先）と一致します。委譲先の結果を利用者へ中継するMioの後続`agent.response`は同一本文の別発話ではなく、読み上げは1回です。話者を解決できない場合は別Agentの声で読まず、TTS sessionを開始しません。
+
 対話clientは、送信受付から同じroot `task_id`を持つ利用者向け`agent.response`または終端error eventまで、送信時のrecipientを固定します。この区間に別recipientへ切り替えたり、別`task_id`の応答でpending状態を解除したりしてはいけません。
 
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。

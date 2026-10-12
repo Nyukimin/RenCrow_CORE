@@ -9,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 // messageStreamHook binds the LLM token stream of one turn to event, TTS and
@@ -17,7 +18,9 @@ import (
 // first agent.response of the same turn (docs/06_Public_API仕様.md).
 type messageStreamHook func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)
 
-type messageTTSPusher func(ctx context.Context, sessionID string, route routing.Route, eventType, text string)
+// messageTTSPusher voices one finished utterance. speaker is the Agent that
+// produced the text (the turn's responding Agent), never inferred from route.
+type messageTTSPusher func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string)
 
 type messageRouteDispatcher struct {
 	mio               MioAgent
@@ -197,7 +200,7 @@ func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input doma
 		d.emit("agent.response", "shiro", "mio", resp, "OPS", taskIDText, sessionID, channel, chatID)
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, taskIDText, resp), "OPS", taskIDText, sessionID, channel, chatID)
 		d.emit("agent.response", "mio", "user", resp, "OPS", taskIDText, sessionID, channel, chatID)
-		d.pushTTS(ctx, ttsSessionID, routing.RouteOPS, "agent.response", resp)
+		d.pushTTS(ctx, ttsSessionID, routing.RouteOPS, moduletts.AgentShiro, "agent.response", resp)
 	} else {
 		d.emit("agent.report", "shiro", "mio", formatShiroToMioReport(routing.RouteOPS, taskIDText, "実行失敗: "+err.Error()), "OPS", taskIDText, sessionID, channel, chatID)
 	}
@@ -207,7 +210,7 @@ func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input doma
 func (d *messageRouteDispatcher) executeCodeRoute(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
 	resp, err := d.executeCodeViaShiro(ctx, input, route, taskID)
 	if err == nil {
-		d.pushTTS(ctx, ttsSessionID, route, "agent.response", resp)
+		d.pushTTS(ctx, ttsSessionID, route, moduletts.AgentShiro, "agent.response", resp)
 	}
 	return resp, err
 }

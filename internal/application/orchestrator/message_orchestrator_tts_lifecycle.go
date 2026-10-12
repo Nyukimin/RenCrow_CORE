@@ -32,19 +32,30 @@ func (l *messageTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
 }
 
-func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision, ttsSessionID string) {
+// StartSessionForRoute starts the turn's TTS session with the voice of the Agent
+// that responds on the route (CHAT: the viewer recipient). It reports whether a
+// session is open for ttsSessionID; false means nothing may be pushed to it.
+func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision, ttsSessionID string) bool {
+	return l.StartSessionForResponder(ctx, req, taskID, decision, ttsSessionID, chatTTSCharacterForRequest(req, decision.Route))
+}
+
+// StartSessionForResponder is StartSessionForRoute for a CHAT turn whose
+// responding Agent is known explicitly (and may differ from the viewer
+// recipient, e.g. the daily news brief). responder is ignored for other routes.
+func (l *messageTTSLifecycle) StartSessionForResponder(ctx context.Context, req ProcessMessageRequest, taskID modulecore.TaskID, decision routing.Decision, ttsSessionID, responder string) bool {
 	if l.ttsBridge == nil || ttsSessionID == "" {
-		return
+		return false
 	}
 	plan, ok := moduletts.BuildRouteTTSPlan(moduletts.RouteTTSPlanInput{
 		Route:             string(decision.Route),
 		SessionID:         ttsSessionID,
 		PublicPlaybackRef: taskID.String(),
-		ChatCharacterID:   chatTTSCharacterForRequest(req, decision.Route),
+		ChatCharacterID:   responder,
 		Urgency:           "normal",
 	})
 	if !ok {
-		return
+		log.Printf("[MessageOrch] TTS session not started: unresolved speaker route=%s recipient=%q task_id=%s", decision.Route, responder, taskID.String())
+		return false
 	}
 	startReq := TTSSessionStart{
 		SessionID:             plan.SessionID,
@@ -62,7 +73,9 @@ func (l *messageTTSLifecycle) StartSessionForRoute(ctx context.Context, req Proc
 	}
 	if err := l.ttsBridge.StartSession(ctx, startReq); err != nil {
 		log.Printf("[MessageOrch] TTS route update degraded: %v", err)
+		return false
 	}
+	return true
 }
 
 func chatTTSCharacterForRequest(req ProcessMessageRequest, route routing.Route) string {
@@ -89,8 +102,8 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 	prev := llm.StreamCallbackFromContext(ctx)
 	previousMetrics := llm.GenerationMetricsCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
-	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, "agent.response", "[MessageOrch] TTS push degraded:")
-	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, "agent.response", "[MessageOrch] VTuber push degraded:")
+	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] TTS push degraded:")
+	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] VTuber push degraded:")
 	streamCtx := llm.ContextWithStreamCallback(ctx, func(token string) {
 		if prev != nil {
 			prev(token)
@@ -111,11 +124,16 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 	return streamCtx, &streamBundle{tts: ttsStream, vtuber: vtuberStream}
 }
 
-func (l *messageTTSLifecycle) Push(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {
+// Push voices one finished utterance of speaker (the Agent that produced the
+// text, equal to the turn's agent.response from) on the open session.
+func (l *messageTTSLifecycle) Push(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {
+	voiceProfile, ok := voiceProfileForSpeaker(speaker, "[MessageOrch] TTS push degraded:")
+	if !ok {
+		return
+	}
 	ttsCtx := buildTTSContext(route, "normal", false)
-	_, voiceProfile := voiceForSpeaker(speakerForRoute(route))
 	pushTTSTextChunks(ctx, l.ttsBridge, sessionID, route, eventType, text, ttsCtx, voiceProfile, "[MessageOrch] TTS push degraded:")
-	req, ok := buildVTuberRequest(eventType, route, sessionID, text, ttsCtx, voiceProfile)
+	req, ok := buildVTuberRequest(eventType, route, speaker, sessionID, text, ttsCtx, voiceProfile)
 	if ok {
 		pushVTuber(ctx, l.vtuberBridge, req, "[MessageOrch] VTuber push degraded:")
 	}

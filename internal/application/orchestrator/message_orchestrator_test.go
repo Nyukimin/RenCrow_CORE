@@ -925,8 +925,8 @@ func TestMessageOrchestrator_ProcessMessage_OPSRoute_StartsMaleTTSVoice(t *testi
 	if len(ttsBridge.startReqs) != 1 {
 		t.Fatalf("expected 1 TTS start request, got %d", len(ttsBridge.startReqs))
 	}
-	if ttsBridge.startReqs[0].VoiceID != "male_01" {
-		t.Fatalf("expected male_01 voice for OPS/Shiro route, got %q", ttsBridge.startReqs[0].VoiceID)
+	if ttsBridge.startReqs[0].VoiceID != "shiro" {
+		t.Fatalf("expected shiro voice for OPS/Shiro route, got %q", ttsBridge.startReqs[0].VoiceID)
 	}
 	if ttsBridge.startReqs[0].VoiceProfile != "lumina_male" {
 		t.Fatalf("expected lumina_male voice profile for OPS/Shiro route, got %q", ttsBridge.startReqs[0].VoiceProfile)

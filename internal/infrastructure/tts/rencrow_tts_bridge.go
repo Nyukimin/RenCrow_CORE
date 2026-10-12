@@ -43,6 +43,8 @@ const renCrowTTSMaxConcurrentSynthesis = 2
 type renCrowTTSPlanRequest struct {
 	chunkIndex  int
 	planIndex   int
+	characterID string
+	voiceID     string
 	item        ttsChunkPlanItem
 	speechText  string
 	requestBody []byte
@@ -145,6 +147,8 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 		requests = append(requests, renCrowTTSPlanRequest{
 			chunkIndex:  firstChunk + planIndex,
 			planIndex:   planIndex,
+			characterID: characterID,
+			voiceID:     fmt.Sprint(payload["voice_id"]),
 			item:        item,
 			speechText:  speechText,
 			requestBody: reqBody,
@@ -213,7 +217,8 @@ func (b *RenCrowTTSBridge) PushTextWithDisplay(ctx context.Context, sessionID st
 func (b *RenCrowTTSBridge) synthesizePlanRequest(ctx context.Context, sessionID string, planLength int, request renCrowTTSPlanRequest) renCrowTTSPlanResult {
 	result := renCrowTTSPlanResult{request: request}
 	startedAt := time.Now()
-	log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d", sessionID, request.chunkIndex, request.planIndex+1, planLength, moduletts.SpeechTextRuneCount(request.speechText))
+	// character / voice make the voiced Agent auditable per request (the voice_id sent to the Gateway).
+	log.Printf("[TTS] synthesis request start: session=%s chunk=%d plan_index=%d/%d speech_runes=%d character=%s voice=%s", sessionID, request.chunkIndex, request.planIndex+1, planLength, moduletts.SpeechTextRuneCount(request.speechText), request.characterID, request.voiceID)
 	transportResult, err := b.postSynthesisWithRetry(ctx, request.requestBody)
 	if err != nil {
 		log.Printf("[TTS] synthesis request failed: session=%s chunk=%d elapsed_ms=%d error=%v", sessionID, request.chunkIndex, time.Since(startedAt).Milliseconds(), err)

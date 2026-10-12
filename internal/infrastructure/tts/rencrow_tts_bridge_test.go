@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -85,6 +86,49 @@ func TestRenCrowTTSBridge_PushTextCallsSynthesis(t *testing.T) {
 	}
 	if sink.calls != 1 {
 		t.Fatalf("expected sink submit once, got %d", sink.calls)
+	}
+}
+
+// セッションの voice_id（応答 Agent の公開 voice_id）がそのまま Gateway への合成要求の
+// voice_id になり、既定声（cfg の mio）や別名（male_01 / female_01）へ置き換わらない。
+// 要求ごとのログにも character / voice が出る。
+func TestRenCrowTTSBridgeSendsSessionAgentVoiceAndLogsIt(t *testing.T) {
+	for _, agent := range []string{"mio", "shiro", "midori", "kuro"} {
+		t.Run(agent, func(t *testing.T) {
+			var gotVoice any
+			bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: "http://tts.local", VoiceID: "mio"})
+			bridge.client = &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				gotVoice = body["voice_id"]
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"gateway_service":"tts-gateway","audio_path":"/audio/x.wav"}`)),
+				}, nil
+			})}
+			var logs strings.Builder
+			previousWriter, previousFlags := log.Writer(), log.Flags()
+			log.SetOutput(&logs)
+			log.SetFlags(0)
+			defer func() { log.SetOutput(previousWriter); log.SetFlags(previousFlags) }()
+
+			if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "session-1", CharacterID: agent, VoiceID: agent}); err != nil {
+				t.Fatalf("start session failed: %v", err)
+			}
+			if err := bridge.PushText(context.Background(), "session-1", "こんにちは", &moduletts.EmotionState{}); err != nil {
+				t.Fatalf("push text failed: %v", err)
+			}
+			if gotVoice != agent {
+				t.Fatalf("synthesis voice_id = %v, want %q", gotVoice, agent)
+			}
+			want := "character=" + agent + " voice=" + agent
+			if !strings.Contains(logs.String(), "[TTS] synthesis request start:") || !strings.Contains(logs.String(), want) {
+				t.Fatalf("synthesis request log lacks %q: %q", want, logs.String())
+			}
+		})
 	}
 }
 

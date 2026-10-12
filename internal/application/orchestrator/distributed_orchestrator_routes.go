@@ -10,6 +10,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type distributedAutonomousExecutor func(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, ttsSessionID string) (string, error)
@@ -110,7 +111,7 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input do
 		if err == nil {
 			d.emit("agent.response", "mio", "user", resp, string(route), taskIDText, sessionID, channel, chatID)
 			d.emitNote("mio", "user", "コード作業の報告をまとめて返したよ。", string(route), taskIDText, sessionID, channel, chatID)
-			d.pushTTS(ctx, ttsSessionID, route, "agent.response", resp)
+			d.pushTTS(ctx, ttsSessionID, route, moduletts.AgentShiro, "agent.response", resp)
 		}
 		return resp, err
 	}
@@ -257,7 +258,7 @@ func (d *distributedRouteDispatcher) executeRemoteRoute(ctx context.Context, inp
 		d.emitNote(targetAgent, "mio", fmt.Sprintf("%s の作業が終わりました。", displayAgentName(targetAgent)), string(route), taskIDText, sessionID, channel, chatID)
 		d.emit("agent.response", "mio", "user", result.Content, string(route), taskIDText, sessionID, channel, chatID)
 		d.emitNote("mio", "user", fmt.Sprintf("%sの報告をまとめて返したよ。", displayAgentName(targetAgent)), string(route), taskIDText, sessionID, channel, chatID)
-		d.pushTTS(ctx, ttsSessionID, route, "agent.response", result.Content)
+		d.pushTTS(ctx, ttsSessionID, route, targetAgent, "agent.response", result.Content)
 	} else {
 		d.emit("agent.report", targetAgent, "mio", formatAgentHandoffCompletionSpeech("mio", targetAgent, "実行失敗: "+err.Error()), string(route), taskIDText, sessionID, channel, chatID)
 	}

@@ -36,7 +36,7 @@ func TestPhase16DistributedTTSLifecycleUsesUpdatedTTSBridge(t *testing.T) {
 		t.Fatalf("expected start request session %s, got %s", wantSessionID, bridge.startReqs[0].SessionID)
 	}
 
-	lifecycle.Push(context.Background(), ttsSessionID, routing.RouteOPS, "agent.response", "完了しました")
+	lifecycle.Push(context.Background(), ttsSessionID, routing.RouteOPS, "shiro", "agent.response", "完了しました")
 	if len(bridge.pushes) == 0 {
 		t.Fatal("expected TTS push after bridge update")
 	}

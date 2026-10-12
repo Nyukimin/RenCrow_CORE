@@ -53,12 +53,15 @@ func buildTTSPayload(eventType string, route routing.Route, text string, ctx mod
 	return filtered, &emotion
 }
 
-func voiceForSpeaker(speaker string) (voiceID, voiceProfile string) {
-	return moduletts.RouteVoiceForSpeaker(speaker)
-}
-
-func speakerForRoute(route routing.Route) string {
-	return moduletts.SpeakerForRoute(string(route))
+// voiceProfileForSpeaker returns the emotion-planning profile of the Agent that
+// is speaking. An unresolved speaker is reported and refused: the caller skips
+// the utterance instead of speaking with a default Agent's voice.
+func voiceProfileForSpeaker(speaker, logPrefix string) (string, bool) {
+	_, voiceProfile, ok := moduletts.VoiceForAgent(speaker)
+	if !ok {
+		log.Printf("%s unresolved speaker %q: utterance not voiced", logPrefix, speaker)
+	}
+	return voiceProfile, ok
 }
 
 func chooseNonEmpty(v, def string) string {
@@ -99,11 +102,16 @@ type ttsStreamForwarder struct {
 	closed       bool
 }
 
-func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Route, eventType, logPrefix string) *ttsStreamForwarder {
+// newTTSStreamForwarder voices the stream of the given speaker (the Agent whose
+// model generates the tokens, equal to the turn's agent.response from).
+func newTTSStreamForwarder(bridge TTSBridge, sessionID string, route routing.Route, speaker, eventType, logPrefix string) *ttsStreamForwarder {
 	if bridge == nil || strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
-	_, voiceProfile := voiceForSpeaker(speakerForRoute(route))
+	voiceProfile, ok := voiceProfileForSpeaker(speaker, logPrefix)
+	if !ok {
+		return nil
+	}
 	f := &ttsStreamForwarder{
 		bridge:       bridge,
 		sessionID:    sessionID,

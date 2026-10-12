@@ -12,13 +12,14 @@ const (
 	IdleChatMaleVoiceProfile    = "lumina_male"
 )
 
+// IdleChatVoiceForSpeaker returns the voice of a CORE-managed Agent speaker.
+// IdleChat scripts only carry Agent speakers; any other speaker keeps this
+// path's existing mio default (it never reaches Agent-response TTS).
 func IdleChatVoiceForSpeaker(speaker string) (voiceID, voiceProfile string) {
-	switch NormalizeIdleChatCharacterID(speaker) {
-	case "shiro":
-		return IdleChatShiroVoiceID, IdleChatMaleVoiceProfile
-	default:
-		return IdleChatDefaultVoiceID, IdleChatDefaultVoiceProfile
+	if agentVoiceID, agentProfile, ok := VoiceForAgent(NormalizeIdleChatCharacterID(speaker)); ok {
+		return agentVoiceID, agentProfile
 	}
+	return IdleChatDefaultVoiceID, IdleChatDefaultVoiceProfile
 }
 
 func NormalizeIdleChatCharacterID(speaker string) string {

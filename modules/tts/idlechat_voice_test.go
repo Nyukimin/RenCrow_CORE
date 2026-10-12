@@ -16,6 +16,15 @@ func TestIdleChatVoiceForSpeaker(t *testing.T) {
 	}
 }
 
+func TestIdleChatVoiceForSpeakerKeepsEachAgentVoice(t *testing.T) {
+	for _, agent := range []string{"mio", "shiro", "midori", "kuro"} {
+		voiceID, _ := IdleChatVoiceForSpeaker(agent)
+		if voiceID != agent {
+			t.Fatalf("IdleChatVoiceForSpeaker(%q) voice = %q, want the Agent's own voice", agent, voiceID)
+		}
+	}
+}
+
 func TestNormalizeIdleChatCharacterID(t *testing.T) {
 	tests := map[string]string{
 		"しろ":   "shiro",

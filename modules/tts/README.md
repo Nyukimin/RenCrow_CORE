@@ -14,6 +14,7 @@ Responsibilities:
 - IdleChat character ID normalization and voice profile mapping.
 - IdleChat TTS session and payload plan construction.
 - Route-based TTS session metadata planning for orchestrator lifecycles.
+- Agent -> Gateway voice identity (`VoiceForAgent`) and the responding Agent of a route (`RespondingAgentForRoute`): the single owner of "who speaks", never defaulting an unresolved speaker to another Agent.
 - Audio chunk contract, text chunking rules, and streaming chunk state toward Viewer playback.
 - Playback/session state contracts, snapshot composition, and health/report construction that are reusable outside the composition root.
 - Viewer active audio/input owner state used to decide which playback ACK may consume pending audio.

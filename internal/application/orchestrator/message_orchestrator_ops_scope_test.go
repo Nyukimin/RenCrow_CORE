@@ -42,7 +42,7 @@ func TestMessageRouteDispatcherOPSBuildsShiroWorkerScope(t *testing.T) {
 		nil,
 		func(string, string, string, string, string, string, string, string, string) {},
 		nil,
-		func(context.Context, string, routing.Route, string, string) {},
+		func(context.Context, string, routing.Route, string, string, string) {},
 	)
 	taskID := modulecore.NewTaskID()
 	runID := modulecore.NewRunID()
@@ -85,7 +85,7 @@ func TestMessageRouteDispatcherOPSRejectsInvalidParentBeforeShiro(t *testing.T) 
 		nil,
 		func(string, string, string, string, string, string, string, string, string) {},
 		nil,
-		func(context.Context, string, routing.Route, string, string) {},
+		func(context.Context, string, routing.Route, string, string, string) {},
 	)
 	taskID := modulecore.NewTaskID()
 	runID := modulecore.NewRunID()

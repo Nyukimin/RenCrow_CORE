@@ -43,8 +43,8 @@ func (o *DistributedOrchestrator) withStreamHooks(
 	return o.ttsLifecycle.WithStreamHooks(ctx, route, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 }
 
-func (o *DistributedOrchestrator) pushTTS(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {
-	o.ttsLifecycle.Push(ctx, sessionID, route, eventType, text)
+func (o *DistributedOrchestrator) pushTTS(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {
+	o.ttsLifecycle.Push(ctx, sessionID, route, speaker, eventType, text)
 }
 
 func (o *DistributedOrchestrator) executeCodeViaShiro(

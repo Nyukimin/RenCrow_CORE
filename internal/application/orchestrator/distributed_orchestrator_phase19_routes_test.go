@@ -25,7 +25,7 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 		func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
 			return ctx, &streamBundle{}
 		},
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 		func(ctx context.Context, gotTask conversation.TurnInput, route routing.Route, taskID modulecore.TaskID) (string, error) {
 			t.Fatal("code executor should not be called for CHAT")
 			return "", nil
@@ -108,7 +108,7 @@ func TestPhase19DistributedRemoteRouteVerbalizesHandoffReadbackAndReport(t *test
 		},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		nil,
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 		nil,
 		func(route routing.Route) string { return "shiro" },
 		func(t conversation.TurnInput, targetAgent string) conversation.TurnInput { return t },
@@ -142,7 +142,7 @@ func TestPhase19DistributedRemoteRouteCarriesExactTurnInputProjection(t *testing
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		nil,
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 		nil,
 		func(route routing.Route) string { return "shiro" },
 		func(input conversation.TurnInput, targetAgent string) conversation.TurnInput { return input },
@@ -190,7 +190,7 @@ func TestPhase19DistributedLocalRouteStoresExactTurnInputProjection(t *testing.T
 		func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
 			return ctx, &streamBundle{}
 		},
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 		nil,
 		func(route routing.Route) string { return "" },
 		func(input conversation.TurnInput, targetAgent string) conversation.TurnInput { return input },

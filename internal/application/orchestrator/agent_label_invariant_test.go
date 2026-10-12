@@ -103,7 +103,7 @@ func newLabelMessageDispatcher(rec *labelRecorder) *messageRouteDispatcher {
 		nil,
 		rec.emit,
 		lifecycle.WithStreamHooks,
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 	)
 	dispatcher.SetShiroChatAgent(newStreamingChatAgent("shiro-answer"))
 	dispatcher.SetWildAgent(&streamingGenerator{response: "midori-answer"})
@@ -161,7 +161,7 @@ func newLabelDistributedDispatcher(rec *labelRecorder) *distributedRouteDispatch
 		rec.emit,
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		lifecycle.WithStreamHooks,
-		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
+		func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string) {},
 		func(ctx context.Context, in conversation.TurnInput, route routing.Route, taskID modulecore.TaskID) (string, error) {
 			return "", nil
 		},

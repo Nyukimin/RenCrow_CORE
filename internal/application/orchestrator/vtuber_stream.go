@@ -12,6 +12,7 @@ type vtuberStreamForwarder struct {
 	bridge       VTuberBridge
 	sessionID    string
 	route        routing.Route
+	speaker      string
 	eventType    string
 	ttsCtx       moduletts.EmotionContext
 	voiceProfile string
@@ -19,15 +20,19 @@ type vtuberStreamForwarder struct {
 	chunker      moduletts.StreamChunker
 }
 
-func newVTuberStreamForwarder(bridge VTuberBridge, sessionID string, route routing.Route, eventType, logPrefix string) *vtuberStreamForwarder {
+func newVTuberStreamForwarder(bridge VTuberBridge, sessionID string, route routing.Route, speaker, eventType, logPrefix string) *vtuberStreamForwarder {
 	if bridge == nil || strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
-	_, voiceProfile := voiceForSpeaker(speakerForRoute(route))
+	voiceProfile, ok := voiceProfileForSpeaker(speaker, logPrefix)
+	if !ok {
+		return nil
+	}
 	return &vtuberStreamForwarder{
 		bridge:       bridge,
 		sessionID:    sessionID,
 		route:        route,
+		speaker:      speaker,
 		eventType:    eventType,
 		ttsCtx:       buildTTSContext(route, "normal", false),
 		voiceProfile: voiceProfile,
@@ -54,7 +59,7 @@ func (f *vtuberStreamForwarder) Finalize(ctx context.Context, finalText string) 
 }
 
 func (f *vtuberStreamForwarder) emit(ctx context.Context, text string) {
-	req, ok := buildVTuberRequest(f.eventType, f.route, f.sessionID, text, f.ttsCtx, f.voiceProfile)
+	req, ok := buildVTuberRequest(f.eventType, f.route, f.speaker, f.sessionID, text, f.ttsCtx, f.voiceProfile)
 	if !ok {
 		return
 	}
