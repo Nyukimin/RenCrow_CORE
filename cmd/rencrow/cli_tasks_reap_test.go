@@ -391,3 +391,41 @@ func TestTasksReapCompactOutputIsOneLine(t *testing.T) {
 		t.Fatalf("exit=%d stdout=%q", code, stdout)
 	}
 }
+
+// The command never writes the sidecar. The next CORE start opens the store with
+// the index and the sidecar on: it must restore the old sidecar, absorb the
+// cancellations written after it, and write a fresh sidecar that verify accepts
+// without a replay.
+func TestTasksReapLeavesTheSidecarForTheNextCoreStartToReplay(t *testing.T) {
+	world := seedReapCLIStore(t)
+	sidecar := filepath.Join(world.root, "index", "seg-legacy.tsi")
+	sidecarBefore := mustReadFile(t, sidecar)
+	if code, stdout, stderr := runReap([]string{"reap-queued", "--created-before", reapCLICutoff, "--apply"}, world.root); code != 0 {
+		t.Fatalf("apply exit=%d stderr=%s stdout=%s", code, stderr, stdout)
+	}
+	if !bytes.Equal(sidecarBefore, mustReadFile(t, sidecar)) {
+		t.Fatal("the command must not write the sidecar")
+	}
+
+	core, err := taskpersistence.NewJSONLStoreWithOptions(world.root, taskpersistence.OpenOptions{Index: true, Persist: true})
+	if err != nil {
+		t.Fatalf("the CORE open after the command: %v", err)
+	}
+	stats, ok := core.IndexStats()
+	if !ok || stats.Source != "sidecar" || stats.Dirty {
+		t.Fatalf("index after the CORE open = %+v (ok=%v), want it restored from the old sidecar", stats, ok)
+	}
+	for _, taskID := range world.candidates {
+		task, err := core.GetTask(context.Background(), taskID)
+		if err != nil || task.Status != domaintask.StatusCancelled {
+			t.Fatalf("the replayed tail lost a cancellation: %+v, %v", task, err)
+		}
+	}
+	if err := core.Close(); err != nil {
+		t.Fatal(err)
+	}
+	code, verifyOut, verifyErr := runStorage([]string{"verify"}, world.root)
+	if code != 0 || strings.Contains(verifyOut, "sidecar_replayed_lines") || !strings.Contains(verifyOut, `"sidecar": "matches_log"`) {
+		t.Fatalf("verify after the CORE start: exit=%d stderr=%s stdout=%s", code, verifyErr, verifyOut)
+	}
+}
