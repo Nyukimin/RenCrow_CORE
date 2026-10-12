@@ -233,11 +233,14 @@ func observationCommandArgs(command string) ([]string, error) {
 		return nil, fmt.Errorf("observation command is empty")
 	}
 	allowed := false
+	rootlessFind := false
 	switch args[0] {
 	case "find":
-		if _, err := observationFindRoots(args[1:]); err != nil {
+		_, hasExplicitRoots, err := parseObservationFindRoots(args[1:])
+		if err != nil {
 			return nil, err
 		}
+		rootlessFind = !hasExplicitRoots
 		allowed = true
 	case "cat", "head", "tail", "wc", "grep":
 		if _, err := observationReadFiles(args); err != nil {
@@ -260,10 +263,20 @@ func observationCommandArgs(command string) ([]string, error) {
 	if !allowed {
 		return nil, fmt.Errorf("command not in observation allowlist: %q", command)
 	}
+	if rootlessFind {
+		canonical := make([]string, 0, len(args)+1)
+		canonical = append(canonical, args[0], ".")
+		args = append(canonical, args[1:]...)
+	}
 	return args, nil
 }
 
 func observationFindRoots(args []string) ([]string, error) {
+	roots, _, err := parseObservationFindRoots(args)
+	return roots, err
+}
+
+func parseObservationFindRoots(args []string) ([]string, bool, error) {
 	var roots []string
 	expression := false
 	for i := 0; i < len(args); i++ {
@@ -278,28 +291,28 @@ func observationFindRoots(args []string) ([]string, error) {
 		case "-name", "-iname", "-path", "-ipath", "-type", "-maxdepth", "-mindepth":
 			i++
 			if i == len(args) {
-				return nil, fmt.Errorf("find observation predicate requires a value: %s", token)
+				return nil, false, fmt.Errorf("find observation predicate requires a value: %s", token)
 			}
 			value := args[i]
 			switch token {
 			case "-type":
 				if len(value) != 1 || !strings.Contains("bcdflps", value) {
-					return nil, fmt.Errorf("invalid find observation type: %q", value)
+					return nil, false, fmt.Errorf("invalid find observation type: %q", value)
 				}
 			case "-maxdepth", "-mindepth":
 				n, err := strconv.Atoi(value)
 				if err != nil || n < 0 {
-					return nil, fmt.Errorf("invalid find observation depth: %q", value)
+					return nil, false, fmt.Errorf("invalid find observation depth: %q", value)
 				}
 			}
 		default:
-			return nil, fmt.Errorf("find predicate is not allowed in observation: %q", token)
+			return nil, false, fmt.Errorf("find predicate is not allowed in observation: %q", token)
 		}
 	}
 	if len(roots) == 0 {
-		roots = []string{"."}
+		return []string{"."}, false, nil
 	}
-	return roots, nil
+	return roots, true, nil
 }
 
 type observationGitOperand struct {

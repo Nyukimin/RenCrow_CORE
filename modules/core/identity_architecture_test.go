@@ -63,8 +63,7 @@ func TestCanonicalIDGeneratorsHaveOneSource(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			name := entry.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" || name == "Tmp" {
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -2197,8 +2196,7 @@ func TestCanonicalEventRuntimeHasNoLegacyOwnerEventContract(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			name := entry.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" || name == "Tmp" {
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			cleanPath := filepath.Clean(path)
@@ -2334,7 +2332,7 @@ func TestCanonicalThreadIdentityHasNoIntegerLegacy(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if canonicalThreadIdentitySkipDir(repoRoot, path) {
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -2461,7 +2459,7 @@ func TestCanonicalThreadPositiveTestFixturesHaveNoIntegerLegacy(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			if canonicalThreadIdentitySkipDir(repoRoot, path) {
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -2504,13 +2502,99 @@ func TestCanonicalThreadPositiveTestFixturesHaveNoIntegerLegacy(t *testing.T) {
 	}
 }
 
-func canonicalThreadIdentitySkipDir(repoRoot, path string) bool {
-	base := filepath.Base(path)
-	switch base {
-	case ".git", "vendor", "node_modules", "Tmp":
+func canonicalArchitectureSkipDir(repoRoot, path string) bool {
+	switch filepath.Base(path) {
+	case ".git", "vendor", "node_modules":
 		return true
 	}
-	return false
+	relative, err := filepath.Rel(repoRoot, path)
+	if err != nil {
+		return false
+	}
+	relative = filepath.ToSlash(relative)
+	// Root Tmp is the owner runner's artifact tree; nested directories remain owned source.
+	return !strings.Contains(relative, "/") && strings.EqualFold(relative, "Tmp")
+}
+
+func TestCanonicalArchitectureScannerArtifactRootFixture(t *testing.T) {
+	source := []byte(`package fixture
+import "fmt"
+func NewTraceID() string { return fmt.Sprintf("trc_%s", "id") }
+type LegacyEvent struct { TraceEvent string }
+type LegacyThread struct { ThreadID uint32 }
+`)
+	for _, artifactRoot := range []string{"Tmp", "tmp"} {
+		t.Run(artifactRoot, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			for _, relative := range []string{
+				filepath.ToSlash(filepath.Join(artifactRoot, "test-runtime", "_cache", "go-mod", "dependency", "dependency.go")),
+				"owned/source.go",
+				"owned/tmp/source.go",
+			} {
+				path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("create fixture directory for %s: %v", relative, err)
+				}
+				if err := os.WriteFile(path, source, 0o600); err != nil {
+					t.Fatalf("write fixture %s: %v", relative, err)
+				}
+			}
+
+			var scanned, generatorViolations, eventViolations, threadViolations []string
+			err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if entry.IsDir() {
+					if canonicalArchitectureSkipDir(repoRoot, path) {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if !strings.HasSuffix(path, ".go") {
+					return nil
+				}
+				source, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				relative = filepath.ToSlash(relative)
+				scanned = append(scanned, relative)
+				fileSet := token.NewFileSet()
+				parsed, err := parser.ParseFile(fileSet, path, source, 0)
+				if err != nil {
+					return err
+				}
+				ast.Inspect(parsed, func(node ast.Node) bool {
+					if _, found := canonicalGeneratorLiteral(node); found {
+						generatorViolations = append(generatorViolations, relative)
+					}
+					return true
+				})
+				if strings.Contains(string(source), "TraceEvent") {
+					eventViolations = append(eventViolations, relative)
+				}
+				if found := canonicalThreadIdentifierViolations(relative, fileSet, parsed); len(found) != 0 {
+					threadViolations = append(threadViolations, relative)
+				}
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("scan artifact-root fixture: %v", err)
+			}
+			want := []string{"owned/source.go", "owned/tmp/source.go"}
+			for _, actual := range [][]string{scanned, generatorViolations, eventViolations, threadViolations} {
+				sort.Strings(actual)
+				if got := strings.Join(actual, ","); got != strings.Join(want, ",") {
+					t.Errorf("fixture scan got %v, want only owned source and nested owned tmp", actual)
+				}
+			}
+		})
+	}
 }
 
 func canonicalThreadIdentitySkipFile(relative string) bool {
@@ -3160,7 +3244,7 @@ func canonicalWalkProductionGoFiles(repoRoot string, visit func(relative string,
 			return walkErr
 		}
 		if entry.IsDir() {
-			if canonicalThreadIdentitySkipDir(repoRoot, path) {
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil

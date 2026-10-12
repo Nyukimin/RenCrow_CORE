@@ -549,6 +549,25 @@ func TestObservationFindAllowsReadPredicatesAndLiteralValues(t *testing.T) {
 	}
 }
 
+func TestObservationFindCanonicalizesRootlessArgvAfterValidation(t *testing.T) {
+	for _, tc := range []struct {
+		input string
+		want  []string
+	}{
+		{"find -maxdepth 0", []string{"find", ".", "-maxdepth", "0"}},
+		{"find -name '*.go' -type f -print", []string{"find", ".", "-name", "*.go", "-type", "f", "-print"}},
+		{"find src test -maxdepth 0", []string{"find", "src", "test", "-maxdepth", "0"}},
+	} {
+		got, err := observationCommandArgs(tc.input)
+		if err != nil || !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%q argv=%q err=%v want=%q", tc.input, got, err, tc.want)
+		}
+	}
+	if _, err := observationCommandArgs("find -future-option"); err == nil {
+		t.Fatal("invalid find predicate was accepted while canonicalizing argv")
+	}
+}
+
 func TestObservationGitRejectsSideEffectsAndUnknownOptions(t *testing.T) {
 	for _, command := range []string{"git diff --output=marker", "git log --output marker", "git diff --ext-diff", "git show --textconv", "git grep --textconv value", "git log --show-signature", "git log --format='%G?'", "git status --future-option", "git -c alias.x=unknown status", "git log -n", "git grep -e"} {
 		if _, err := observationCommandArgs(command); err == nil {
