@@ -108,6 +108,7 @@ docs/調査/20261011_082700_legacy_OPS入口の500とRun文脈欠落_FailureKnow
 docs/調査/20261011_090057_Run無しqueued_Taskの滞留_FailureKnowledge.md
 docs/調査/20261012_104710_Agent名表示_thinking_from固定の修正と本番配備.md
 docs/調査/20261012_124337_TTS声指定_応答Agentの声にそろえる修正と本番配備.md
+docs/調査/20261012_192124_TaskStore日次segment回転_FailureKnowledge.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md
 docs/調査/identity-remediation-ledger.json
