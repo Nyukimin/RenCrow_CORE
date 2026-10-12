@@ -268,6 +268,11 @@ import sys
 from unittest.mock import patch
 
 checker_path, test_root = sys.argv[1:]
+test_root = os.path.abspath(test_root)
+
+def normalized_path(path):
+    return os.path.normcase(os.path.abspath(path))
+
 with open(checker_path, encoding="utf-8") as handle:
     checker_source = handle.read()
 command_start = checker_source.index('python3 - "${current_bash_executable}"')
@@ -386,10 +391,13 @@ with open(final_marker, "x", encoding="ascii") as handle:
 final_marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
 real_unlink = os.unlink
 real_rmdir = os.rmdir
+final_marker_unlink_count = 0
 
 def finish_root_after_marker_unlink(path, *args, **kwargs):
+    global final_marker_unlink_count
     result = real_unlink(path, *args, **kwargs)
-    if os.path.abspath(path) == final_marker:
+    if normalized_path(path) == normalized_path(final_marker):
+        final_marker_unlink_count += 1
         real_rmdir(final_root)
     return result
 
@@ -398,7 +406,7 @@ with patch.object(os, "unlink", finish_root_after_marker_unlink):
         final_root, snapshot, final_identity, snapshot_identity,
         final_marker, final_marker_identity,
     )
-if status != 0 or os.path.lexists(final_root):
+if status != 0 or os.path.lexists(final_root) or final_marker_unlink_count != 1:
     raise SystemExit(f"[NG] final empty-root race was not accepted: {status}, {diagnostic!r}")
 
 marker_root = os.path.join(snapshot, ".restore.marker-ownership")
@@ -451,9 +459,12 @@ failure_file = os.path.join(failure_root, "remove-me.txt")
 with open(failure_file, "w", encoding="ascii") as handle:
     handle.write("injected remove failure\n")
 real_unlink = os.unlink
+injected_unlink_count = 0
 
 def injected_unlink(path, *args, **kwargs):
-    if os.path.abspath(path) == failure_file:
+    global injected_unlink_count
+    if normalized_path(path) == normalized_path(failure_file):
+        injected_unlink_count += 1
         raise PermissionError("injected remove failure")
     return real_unlink(path, *args, **kwargs)
 
@@ -462,7 +473,7 @@ with patch.object(os, "unlink", injected_unlink):
         failure_root, snapshot, failure_identity, snapshot_identity,
         failure_marker, failure_marker_identity,
     )
-if status != 125 or "injected remove failure" not in diagnostic:
+if status != 125 or "injected remove failure" not in diagnostic or injected_unlink_count != 1:
     raise SystemExit(f"[NG] injected remove failure did not fail closed: {status}, {diagnostic!r}")
 if not os.path.isfile(failure_marker) or not os.path.isfile(failure_file):
     raise SystemExit("[NG] delete failure did not retain its marker and scratch evidence")
