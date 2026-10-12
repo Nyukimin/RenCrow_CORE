@@ -34,6 +34,15 @@ assert_not_contains() {
   fi
 }
 
+assert_no_restore_scratch() {
+  local snapshot=$1
+  local description=$2
+  if find "${snapshot}" -maxdepth 1 -type d -name '.restore.*' -print -quit | grep -q .; then
+    echo "[NG] restore scratch directory remains after ${description}: ${snapshot}" >&2
+    exit 1
+  fi
+}
+
 assert_contains "${unit_file}" \
   'Environment=RENCROW_CONFIG=%h/.rencrow/config/core.yaml' \
   "backup service must pin the current CORE config"
@@ -169,6 +178,9 @@ assert_contains "${backup_runner}" \
 assert_contains "${checker}" \
   'RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC' \
   "SQLite restore integrity must have a configurable bounded deadline"
+assert_not_contains "${checker}" \
+  'timeout --signal=' \
+  "restore checking must not depend on GNU timeout"
 assert_contains "${checker}" \
   'SQLite integrity check timed out' \
   "SQLite integrity timeout must be distinct from corruption"
@@ -250,7 +262,13 @@ qdrant_export=external-memory/qdrant/full.snapshot
 qdrant_sha256=${qdrant_sha256}
 EOF
 
-"${checker}" "${test_root}/snapshot"
+if ! "${checker}" "${test_root}/snapshot" >"${test_root}/success.out" 2>&1; then
+  cat "${test_root}/success.out" >&2
+  echo "[NG] valid format_version=4 snapshot was rejected" >&2
+  exit 1
+fi
+grep -Fq '[OK] snapshot is checksum-valid, extractable, and restorable:' "${test_root}/success.out"
+assert_no_restore_scratch "${test_root}/snapshot" "successful restore validation"
 
 v5_snapshot=${test_root}/format5-unsupported
 mkdir -p "${v5_snapshot}"
@@ -262,22 +280,351 @@ if "${checker}" "${v5_snapshot}"; then
   echo "[NG] unsupported format_version=5 manifest was accepted" >&2
   exit 1
 fi
+assert_no_restore_scratch "${v5_snapshot}" "unsupported-format rejection"
+
+for invalid_timeout in 0 3601 invalid; do
+  if RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC=${invalid_timeout} \
+    "${checker}" "${test_root}/snapshot" >"${test_root}/invalid-timeout.out" 2>&1; then
+    echo "[NG] invalid SQLite deadline ${invalid_timeout} was accepted" >&2
+    exit 1
+  else
+    invalid_status=$?
+  fi
+  if (( invalid_status != 2 )); then
+    cat "${test_root}/invalid-timeout.out" >&2
+    echo "[NG] invalid SQLite deadline ${invalid_timeout} returned ${invalid_status}, expected 2" >&2
+    exit 1
+  fi
+  if grep -Fq 'timed out' "${test_root}/invalid-timeout.out"; then
+    echo "[NG] invalid SQLite deadline ${invalid_timeout} was mislabeled as a timeout" >&2
+    exit 1
+  fi
+  assert_no_restore_scratch "${test_root}/snapshot" "invalid-deadline rejection"
+done
+
+failed_python=${test_root}/failed-python
+cat > "${failed_python}" <<'SH'
+#!/usr/bin/env bash
+if [[ ${1:-} == - && ${2:-} == *l1.db && ${3:-} == *l2.db ]]; then
+  echo "injected SQLite worker failure" >&2
+  exit "${RENCROW_TEST_WORKER_EXIT:-23}"
+fi
+exec python3 "$@"
+SH
+chmod +x "${failed_python}"
+for worker_error_code in 23 124; do
+  if RENCROW_TEST_PYTHON="${failed_python}" \
+    RENCROW_TEST_WORKER_EXIT=${worker_error_code} \
+    "${checker}" "${test_root}/snapshot" >"${test_root}/worker-error.out" 2>&1; then
+    echo "[NG] non-timeout SQLite worker failure unexpectedly succeeded" >&2
+    exit 1
+  else
+    worker_error_status=$?
+  fi
+  if (( worker_error_status != worker_error_code )); then
+    cat "${test_root}/worker-error.out" >&2
+    echo "[NG] non-timeout SQLite worker failure returned ${worker_error_status}, expected ${worker_error_code}" >&2
+    exit 1
+  fi
+  if grep -Fq 'timed out' "${test_root}/worker-error.out" || \
+    grep -Fq '[OK] snapshot is checksum-valid' "${test_root}/worker-error.out"; then
+    echo "[NG] non-timeout SQLite worker failure was mislabeled or promoted" >&2
+    exit 1
+  fi
+  assert_no_restore_scratch "${test_root}/snapshot" "non-timeout worker failure ${worker_error_code}"
+done
+
+survivor_python=${test_root}/survivor.py
+cat > "${survivor_python}" <<'PY'
+import os
+import sys
+import time
+
+marker, pid_file = sys.argv[1:]
+with open(pid_file, "w", encoding="ascii") as handle:
+    handle.write(str(os.getpid()) + "\n")
+time.sleep(5)
+with open(marker, "w", encoding="ascii") as handle:
+    handle.write("survived\n")
+PY
+
+process_liveness_checker=${test_root}/process-liveness.py
+cat > "${process_liveness_checker}" <<'PY'
+import ctypes
+import os
+import sys
+
+pid = int(sys.argv[1])
+if os.name != "nt":
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        print("dead")
+    except PermissionError:
+        print("alive")
+    else:
+        print("alive")
+else:
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == 87:  # ERROR_INVALID_PARAMETER: PID no longer exists
+            print("dead")
+        else:
+            raise SystemExit(f"cannot inspect native worker PID {pid} (WinError {error})")
+    else:
+        try:
+            state = kernel.WaitForSingleObject(handle, 0)
+        finally:
+            kernel.CloseHandle(handle)
+        if state == 0:
+            print("dead")
+        elif state == 0x00000102:  # WAIT_TIMEOUT
+            print("alive")
+        else:
+            raise SystemExit(f"cannot confirm native worker PID {pid} exit (wait={state})")
+PY
 
 slow_python=${test_root}/slow-python
 cat > "${slow_python}" <<'SH'
 #!/usr/bin/env bash
-if [[ ${1:-} == - && ${2:-} == */l1.db && ${3:-} == */l2.db ]]; then
-  sleep 5
+if [[ ${1:-} == - && ${2:-} == *l1.db && ${3:-} == *l2.db ]]; then
+  python3 "${RENCROW_TEST_SURVIVOR_SCRIPT}" \
+    "${RENCROW_TEST_SURVIVOR_MARKER}" "${RENCROW_TEST_SURVIVOR_PID_FILE}" &
+  wait
 fi
 exec python3 "$@"
 SH
 chmod +x "${slow_python}"
-if RENCROW_TEST_PYTHON="${slow_python}" RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC=1 \
-  "${checker}" "${test_root}/snapshot" >"${test_root}/timeout.out" 2>"${test_root}/timeout.err"; then
+timeout_marker=${test_root}/timeout-survivor.marker
+timeout_child_pid_file=${test_root}/timeout-survivor.pid
+timeout_started=${SECONDS}
+if RENCROW_TEST_PYTHON="${slow_python}" \
+  RENCROW_TEST_SURVIVOR_MARKER="${timeout_marker}" \
+  RENCROW_TEST_SURVIVOR_PID_FILE="${timeout_child_pid_file}" \
+  RENCROW_TEST_SURVIVOR_SCRIPT="${survivor_python}" \
+  RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC=1 \
+  "${checker}" "${test_root}/snapshot" >"${test_root}/timeout.out" 2>&1; then
   echo "[RED] delayed SQLite integrity check unexpectedly succeeded" >&2
   exit 1
+else
+  timeout_status=$?
 fi
-grep -Fq 'SQLite integrity check timed out' "${test_root}/timeout.err"
+timeout_elapsed=$((SECONDS - timeout_started))
+if (( timeout_status == 0 || timeout_elapsed >= 5 )); then
+  cat "${test_root}/timeout.out" >&2
+  echo "[NG] SQLite deadline was not enforced promptly (status=${timeout_status}, elapsed=${timeout_elapsed}s)" >&2
+  exit 1
+fi
+grep -Fq 'SQLite integrity check timed out' "${test_root}/timeout.out"
+if grep -Fq '[OK] snapshot is checksum-valid' "${test_root}/timeout.out"; then
+  echo "[NG] timed-out SQLite validation emitted the final success marker" >&2
+  exit 1
+fi
+assert_no_restore_scratch "${test_root}/snapshot" "SQLite deadline expiry"
+sleep 5.2
+if [[ -e ${timeout_marker} ]]; then
+  echo "[NG] delayed SQLite worker descendant survived timeout and touched scratch state" >&2
+  exit 1
+fi
+if [[ ! -f ${timeout_child_pid_file} ]]; then
+  echo "[NG] delayed SQLite worker did not record its child process" >&2
+  exit 1
+fi
+timeout_child_pid=$(cat "${timeout_child_pid_file}")
+if ! timeout_child_state=$(python3 "${process_liveness_checker}" "${timeout_child_pid}"); then
+  echo "[NG] could not inspect delayed SQLite worker PID ${timeout_child_pid}" >&2
+  exit 1
+fi
+if [[ ${timeout_child_state} != dead ]]; then
+  echo "[NG] delayed SQLite worker child process ${timeout_child_pid} survived timeout" >&2
+  exit 1
+fi
+echo "[OK] SQLite worker deadline and descendant cleanup verified in ${timeout_elapsed}s"
+
+interrupt_python=${test_root}/interrupt-python
+cat > "${interrupt_python}" <<'SH'
+#!/usr/bin/env bash
+if [[ ${1:-} == - && ${2:-} == *l1.db && ${3:-} == *l2.db ]]; then
+  python3 "${RENCROW_TEST_SURVIVOR_SCRIPT}" \
+    "${RENCROW_TEST_SURVIVOR_MARKER}" "${RENCROW_TEST_SURVIVOR_PID_FILE}" &
+  wait
+fi
+exec python3 "$@"
+SH
+chmod +x "${interrupt_python}"
+interrupt_marker=${test_root}/interrupt-survivor.marker
+interrupt_pid_file=${test_root}/interrupt-survivor.pid
+python3 - "${checker}" "${test_root}/snapshot" "${interrupt_python}" \
+  "${interrupt_marker}" "${interrupt_pid_file}" "${survivor_python}" \
+  "${process_liveness_checker}" <<'PY'
+import ctypes
+import os
+import signal
+import subprocess
+import sys
+import time
+
+def bash_path(value):
+    if os.name != "nt":
+        return value
+    if len(value) > 2 and value[1] == ":" and value[2] in "\\/":
+        return "/" + value[0].lower() + "/" + value[3:].replace("\\", "/")
+    if value.startswith("\\\\"):
+        return value.replace("\\", "/")
+    return value
+
+def process_is_alive(pid, liveness_checker):
+    result = subprocess.run(
+        [sys.executable, liveness_checker, str(pid)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        timeout=3.0,
+        check=False,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"[NG] could not inspect interrupted worker PID {pid}: {result.stderr.strip()}")
+    return result.stdout.strip() == "alive"
+
+checker, snapshot, worker, marker, pid_file, survivor_script, liveness_checker = sys.argv[1:]
+windows = os.name == "nt"
+environment = os.environ.copy()
+environment.update({
+    "RENCROW_TEST_PYTHON": bash_path(worker),
+    "RENCROW_TEST_SURVIVOR_MARKER": bash_path(marker),
+    "RENCROW_TEST_SURVIVOR_PID_FILE": bash_path(pid_file),
+    "RENCROW_TEST_SURVIVOR_SCRIPT": bash_path(survivor_script),
+    "RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC": "30",
+})
+checker_command = ["bash.exe" if windows else "bash", bash_path(checker), bash_path(snapshot)]
+kernel = None
+console_attached = False
+child_handle = None
+if windows:
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.FreeConsole.argtypes = []
+    kernel.FreeConsole.restype = wintypes.BOOL
+    kernel.AllocConsole.argtypes = []
+    kernel.AllocConsole.restype = wintypes.BOOL
+    kernel.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+    kernel.GetConsoleProcessList.restype = wintypes.DWORD
+    kernel.GenerateConsoleCtrlEvent.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
+    if not kernel.FreeConsole():
+        raise SystemExit(f"[NG] could not detach interruption fixture from inherited console (WinError {ctypes.get_last_error()})")
+    if not kernel.AllocConsole():
+        raise SystemExit(f"[NG] could not allocate an owned interruption console (WinError {ctypes.get_last_error()})")
+    console_attached = True
+process = None
+child_pid = None
+try:
+    process = subprocess.Popen(
+        checker_command,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        start_new_session=not windows,
+        creationflags=0x00000200 if windows else 0,  # CREATE_NEW_PROCESS_GROUP on the owned console
+        text=True,
+    )
+    if windows:
+        process_ids = (wintypes.DWORD * 256)()
+        process_count = kernel.GetConsoleProcessList(process_ids, len(process_ids))
+        console_members = process_ids[:process_count]
+        if process_count == 0 or process_count > len(process_ids) or \
+                os.getpid() not in console_members or process.pid not in console_members:
+            raise SystemExit("[NG] controller and checker do not share the fixture-owned console")
+    deadline = time.monotonic() + 8.0
+    while time.monotonic() < deadline and process.poll() is None and not os.path.isfile(pid_file):
+        time.sleep(0.05)
+    if not os.path.isfile(pid_file):
+        raise SystemExit("[NG] interrupted SQLite worker did not record its descendant PID")
+    with open(pid_file, encoding="ascii") as handle:
+        child_pid = int(handle.read().strip())
+    if windows:
+        child_handle = kernel.OpenProcess(0x00100001, False, child_pid)  # SYNCHRONIZE | PROCESS_TERMINATE
+        if not child_handle:
+            raise SystemExit(f"[NG] could not hold the native interrupted worker PID {child_pid} (WinError {ctypes.get_last_error()})")
+        if not kernel.GenerateConsoleCtrlEvent(1, process.pid):  # CTRL_BREAK_EVENT
+            raise SystemExit(f"[NG] could not deliver CTRL_BREAK to attached checker group (WinError {ctypes.get_last_error()})")
+    else:
+        os.killpg(process.pid, signal.SIGTERM)
+    output, _ = process.communicate(timeout=8.0)
+    if process.returncode == 0:
+        raise SystemExit("[NG] checker succeeded after its supervisor process group was interrupted\n" + output)
+    time.sleep(5.2)
+    if os.path.exists(marker):
+        raise SystemExit("[NG] interrupted SQLite worker descendant survived and touched scratch state")
+    if windows:
+        child_state = kernel.WaitForSingleObject(child_handle, 0)
+        if child_state == 0x00000102:  # WAIT_TIMEOUT
+            raise SystemExit(f"[NG] interrupted SQLite worker descendant {child_pid} survived")
+        if child_state != 0:
+            raise SystemExit(f"[NG] cannot confirm native interrupted worker PID {child_pid} exit (wait={child_state})")
+    elif process_is_alive(child_pid, liveness_checker):
+        raise SystemExit(f"[NG] interrupted SQLite worker descendant {child_pid} survived")
+    if "[OK] snapshot is checksum-valid" in output:
+        raise SystemExit("[NG] interrupted SQLite validation emitted the final success marker")
+finally:
+    if process is not None and process.poll() is None:
+        if windows:
+            system_root = os.environ.get("SystemRoot", "")
+            taskkill = os.path.join(system_root, "System32", "taskkill.exe")
+            if not os.path.isabs(system_root) or not os.path.isfile(taskkill):
+                raise SystemExit("[NG] cannot prove fixed SystemRoot taskkill.exe for owned checker cleanup")
+            subprocess.run([taskkill, "/PID", str(process.pid), "/T", "/F"],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, shell=False, timeout=4.0, check=False)
+            try:
+                process.wait(timeout=4.0)
+            except subprocess.TimeoutExpired:
+                raise SystemExit("[NG] owned checker process tree survived bounded taskkill cleanup")
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=3.0)
+    if child_pid is not None:
+        if windows and child_handle:
+            child_state = kernel.WaitForSingleObject(child_handle, 0)
+            if child_state == 0x00000102:  # WAIT_TIMEOUT: terminate the held process object, not a reused PID
+                if not kernel.TerminateProcess(child_handle, 1):
+                    raise SystemExit(f"[NG] could not terminate held interrupted worker PID {child_pid} (WinError {ctypes.get_last_error()})")
+                child_state = kernel.WaitForSingleObject(child_handle, 5000)
+                if child_state != 0:
+                    raise SystemExit(f"[NG] held interrupted worker PID {child_pid} was not reaped (wait={child_state})")
+        elif not windows and process_is_alive(child_pid, liveness_checker):
+            os.kill(child_pid, signal.SIGKILL)
+    if child_handle:
+        kernel.CloseHandle(child_handle)
+    if console_attached:
+        kernel.FreeConsole()
+PY
+assert_no_restore_scratch "${test_root}/snapshot" "supervisor interruption"
+echo "[OK] supervisor interruption reaped the SQLite worker tree"
 
 legacy_snapshot=${test_root}/legacy-v3
 mkdir -p "${legacy_snapshot}"
@@ -285,6 +632,7 @@ cp "${test_root}/snapshot/rencrow-state.tar.gz" "${legacy_snapshot}/rencrow-stat
 sed -e 's/^format_version=4$/format_version=3/' -e '/^raw_source_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_snapshot}/manifest.txt"
 (cd "${legacy_snapshot}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
 "${checker}" "${legacy_snapshot}"
+assert_no_restore_scratch "${legacy_snapshot}" "legacy format_version=3 success"
 
 legacy_v2_snapshot=${test_root}/legacy-v2
 mkdir -p "${legacy_v2_snapshot}"
@@ -292,6 +640,7 @@ cp "${test_root}/snapshot/rencrow-state.tar.gz" "${legacy_v2_snapshot}/rencrow-s
 sed -e 's/^format_version=4$/format_version=2/' -e '/^raw_source_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_v2_snapshot}/manifest.txt"
 (cd "${legacy_v2_snapshot}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
 "${checker}" "${legacy_v2_snapshot}"
+assert_no_restore_scratch "${legacy_v2_snapshot}" "legacy format_version=2 success"
 
 make_bad_snapshot() {
   local mode=$1
@@ -312,6 +661,7 @@ make_bad_snapshot() {
     echo "[NG] ${mode} Common Raw object must be rejected" >&2
     exit 1
   fi
+  assert_no_restore_scratch "${bad_root}" "${mode} Common Raw rejection"
 }
 
 make_bad_snapshot missing
