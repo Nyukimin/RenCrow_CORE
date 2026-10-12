@@ -1,5 +1,8 @@
-// Package taskmanagertest provides a real, execution-capacity-saturated Task
-// owner for tests that must prove an admission refusal leaves nothing behind.
+// Package taskmanagertest provides real Task and Action owners for tests of the
+// functions that start a Run: a capacity-saturated Task owner, to prove that an
+// admission refusal leaves nothing behind (Saturated), and owners with injected
+// store faults, to prove that a Run started and then failed is closed
+// (Closure, VerifyStartedRunClosure).
 package taskmanagertest
 
 import (

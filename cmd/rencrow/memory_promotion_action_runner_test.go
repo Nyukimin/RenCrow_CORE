@@ -237,7 +237,7 @@ func (f *memoryPromotionFixture) assertEarlyFailureClosed(t *testing.T, wantTask
 }
 
 // assertTerminalWritesBounded checks that every Task write after the start was
-// given a finite budget of at most memoryPromotionTerminalWriteTimeout. Call it
+// given a finite budget of at most taskmanager.StartedRunTerminalWriteTimeout. Call it
 // before any other use of the manager, which would record unbounded probes.
 func (f *memoryPromotionFixture) assertTerminalWritesBounded(t *testing.T) {
 	t.Helper()
@@ -250,8 +250,8 @@ func (f *memoryPromotionFixture) assertTerminalWritesBounded(t *testing.T) {
 		t.Fatalf("%d terminal write(s) had no deadline", f.taskFault.unbounded)
 	}
 	for _, budget := range f.taskFault.budgets {
-		if budget <= 0 || budget > memoryPromotionTerminalWriteTimeout {
-			t.Fatalf("terminal write budget = %s, want within (0, %s]", budget, memoryPromotionTerminalWriteTimeout)
+		if budget <= 0 || budget > taskmanager.StartedRunTerminalWriteTimeout {
+			t.Fatalf("terminal write budget = %s, want within (0, %s]", budget, taskmanager.StartedRunTerminalWriteTimeout)
 		}
 	}
 }
@@ -301,7 +301,7 @@ func TestActionMemoryPromotionRunnerClosesRunWhenActionCreationFails(t *testing.
 	if !errors.Is(err, errMemoryPromotionInjected) {
 		t.Fatalf("RunOne error = %v, want the Action creation cause", err)
 	}
-	if errors.Is(err, errMemoryPromotionRunNotClosed) {
+	if errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 		t.Fatalf("RunOne error = %v, claims the run was left open although it was closed", err)
 	}
 	fixture.assertEarlyFailureClosed(t, domaintask.StatusFailed, domaintask.RunStatusFailed)
@@ -350,7 +350,7 @@ func TestActionMemoryPromotionRunnerReturnsCloseFailureAfterIdentityBindingFails
 
 	_, err := fixture.runner.RunOne(conflictingIdentityContext(t))
 
-	if err == nil || !errors.Is(err, closeErr) || !errors.Is(err, errMemoryPromotionRunNotClosed) {
+	if err == nil || !errors.Is(err, closeErr) || !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 		t.Fatalf("RunOne error = %v, want the failed close reported and marked as not closed", err)
 	}
 	fixture.assertEarlyFailureLeftRunning(t)
@@ -365,7 +365,7 @@ func TestActionMemoryPromotionRunnerReturnsBothCausesWhenActionCreationAndCloseF
 
 	_, err := fixture.runner.RunOne(context.Background())
 
-	if !errors.Is(err, errMemoryPromotionInjected) || !errors.Is(err, closeErr) || !errors.Is(err, errMemoryPromotionRunNotClosed) {
+	if !errors.Is(err, errMemoryPromotionInjected) || !errors.Is(err, closeErr) || !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 		t.Fatalf("RunOne error = %v, want the Action creation cause and the close failure, marked as not closed", err)
 	}
 	fixture.assertEarlyFailureLeftRunning(t)
@@ -381,7 +381,7 @@ func TestActionMemoryPromotionRunnerMarksRunNotClosedWhenFinalWriteFailsAfterCan
 
 	_, err := fixture.runner.RunOne(context.Background())
 
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, closeErr) || !errors.Is(err, errMemoryPromotionRunNotClosed) {
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, closeErr) || !errors.Is(err, taskmanager.ErrStartedRunNotClosed) {
 		t.Fatalf("RunOne error = %v, want the cancellation and the failed final write, marked as not closed", err)
 	}
 	task, run := fixture.onlyTaskAndRun(t)

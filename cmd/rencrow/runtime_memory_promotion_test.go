@@ -8,6 +8,7 @@ import (
 	"time"
 
 	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
 
@@ -199,7 +200,7 @@ func (s *failingMemoryPromotionRunnerStub) RunOne(context.Context) (memorypromot
 // lease on purpose. But a cancelled run whose terminal write also failed left
 // the Task running and holds the execution slot, and that must be reported.
 func TestMemoryPromotionWorkerReportsCancellationOnlyWhenTheRunWasNotClosed(t *testing.T) {
-	notClosed := errors.Join(context.Canceled, errors.Join(errMemoryPromotionRunNotClosed, errors.New("terminal write refused")))
+	notClosed := errors.Join(context.Canceled, errors.Join(taskmanager.ErrStartedRunNotClosed, errors.New("terminal write refused")))
 	cases := []struct {
 		name       string
 		err        error

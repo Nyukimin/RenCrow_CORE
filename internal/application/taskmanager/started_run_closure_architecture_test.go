@@ -33,8 +33,11 @@ import (
 type startedRunClosure string
 
 const (
-	// Every failure path after the start closes the Run (or the Task), or the
-	// Task owner re-issues the Run on its own.
+	// Every failure path after the start closes the Run through
+	// Manager.CloseStartedRun. The file of the function must call it.
+	startedRunClosesViaSharedAPI startedRunClosure = "closes_via_shared_api"
+	// Every failure path after the start closes the Run (or the Task) by the
+	// function's own means, or the Task owner re-issues the Run on its own.
 	startedRunCloses startedRunClosure = "closes"
 	// The function hands the Run to its caller, which closes it. The reason
 	// names the closer.
@@ -60,9 +63,10 @@ var runStartingMethods = map[string]int{
 
 // startedRunLedger key = "repo-relative path:function".
 var startedRunLedger = map[string]startedRunEntry{
-	// Memory Promotion: fixed together with this test. The behavioral tests are
-	// the TestActionMemoryPromotionRunner* group in cmd/rencrow.
-	"cmd/rencrow/memory_promotion_action_runner.go:RunOne": {startedRunCloses, "closeRunWithoutAction before the Action exists; complete after"},
+	// Memory Promotion: fixed together with this test, and moved onto the shared
+	// API. The behavioral tests are the TestActionMemoryPromotionRunner* group in
+	// cmd/rencrow.
+	"cmd/rencrow/memory_promotion_action_runner.go:RunOne": {startedRunClosesViaSharedAPI, "AbortStartedRun before the Action exists; CloseAttempt then CloseStartedRun after"},
 
 	// Closed: classified by reading the code; only Memory Promotion has a
 	// behavioral test. The reason says what was and was not checked.
@@ -93,6 +97,7 @@ var startedRunLedger = map[string]startedRunEntry{
 func TestRunStartingFunctionsAreReviewedForClosure(t *testing.T) {
 	root := repositoryRoot(t)
 	observed := map[string]struct{}{}
+	callsSharedClose := map[string]bool{}
 	var unreviewed []string
 
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -123,6 +128,7 @@ func TestRunStartingFunctionsAreReviewedForClosure(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		callsSharedClose[relative] = callsMethod(parsed, "CloseStartedRun")
 		for _, declaration := range parsed.Decls {
 			function, ok := declaration.(*ast.FuncDecl)
 			if !ok || function.Body == nil || !startsRun(function.Body) {
@@ -143,7 +149,7 @@ func TestRunStartingFunctionsAreReviewedForClosure(t *testing.T) {
 	sort.Strings(unreviewed)
 	if len(unreviewed) > 0 {
 		t.Fatalf("these functions start a Run that holds an execution slot until it is closed; "+
-			"make every failure path after the start close the Run (Task owner: CompleteRun, Fail, Cancel, or InterruptRun on a context detached from the caller with a finite budget), "+
+			"make every failure path after the start close the Run (Task owner: Manager.CloseStartedRun), "+
 			"add a test that fails when it does not, then add a ledger entry:\n  %s", strings.Join(unreviewed, "\n  "))
 	}
 	var stale []string
@@ -162,10 +168,31 @@ func TestRunStartingFunctionsAreReviewedForClosure(t *testing.T) {
 		}
 		switch entry.closure {
 		case startedRunCloses, startedRunClosedByCaller, startedRunKnownGap:
+		case startedRunClosesViaSharedAPI:
+			file := key[:strings.Index(key, ":")]
+			if !callsSharedClose[file] {
+				t.Errorf("%s: classified as closing through the shared API, but %s never calls CloseStartedRun", key, file)
+			}
 		default:
 			t.Errorf("%s: unknown closure classification %q", key, entry.closure)
 		}
 	}
+}
+
+// callsMethod reports whether the file calls a method with the given name.
+func callsMethod(file *ast.File, name string) bool {
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return !found
+		}
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == name {
+			found = true
+		}
+		return !found
+	})
+	return found
 }
 
 // startsRun reports whether the body calls one of the Run-starting methods.

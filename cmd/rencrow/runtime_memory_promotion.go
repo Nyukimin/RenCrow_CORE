@@ -119,7 +119,7 @@ func startMemoryPromotionWorkerRunner(
 					if err != nil {
 						// A plain cancellation is not a failure, but a run whose
 						// terminal write failed is still open and holds the slot.
-						if !errors.Is(err, context.Canceled) || errors.Is(err, errMemoryPromotionRunNotClosed) {
+						if !errors.Is(err, context.Canceled) || memoryPromotionRunLeftOpen(err) {
 							reporter.Failed(memoryProfilePromotionBusySource, err, "L1 raw UserMemory candidate extraction")
 						}
 						break

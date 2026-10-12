@@ -18,16 +18,17 @@ var (
 	ErrAttemptConflict = errors.New("attempt state conflict")
 )
 
-// toolAttemptTerminalWriteTimeout is the budget of one terminal write of a Tool
-// attempt. It is detached from the caller's context (a cancelled or expired
-// request must still record the fact that the Tool ran), so it must outlast the
-// store: every Action transaction reads and validates the whole history, and on
-// the production host one Tool call spent 7 to 10 seconds on Action store work
-// (2026-10-12). A budget below that turned a finished Tool call into an HTTP 500
-// and left the Attempt running. 60 seconds is at least three times the observed
-// 10 seconds, the same rule and value as the Task terminal writes (Heartbeat,
-// OPS ingress).
-const toolAttemptTerminalWriteTimeout = 60 * time.Second
+// AttemptTerminalWriteTimeout is the budget of one terminal write of an Attempt
+// (CloseAttempt, CompleteToolAttempt). It is detached from the caller's context
+// (a cancelled or expired request must still record the fact that the work ran),
+// so it must outlast the store: every Action transaction reads and validates the
+// whole history, and on the production host one Tool call spent 7 to 10 seconds
+// on Action store work (2026-10-12). A budget below that turned a finished Tool
+// call into an HTTP 500 and left the Attempt running. 60 seconds is at least
+// three times the observed 10 seconds, the same rule and value as the Task
+// terminal writes (taskmanager.StartedRunTerminalWriteTimeout, Heartbeat, OPS
+// ingress).
+const AttemptTerminalWriteTimeout = 60 * time.Second
 
 // Store is the persistence boundary owned by the Action owner.
 type Store = domainaction.Store
@@ -349,7 +350,7 @@ func (m *Manager) CompleteToolAttempt(ctx context.Context, actionID modulecore.A
 	}
 
 	attemptStatus, actionStatus, summary := toolAttemptTerminalState(ctx, response, toolErr)
-	bookkeepingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), toolAttemptTerminalWriteTimeout)
+	bookkeepingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), AttemptTerminalWriteTimeout)
 	defer cancel()
 
 	_, _, err := m.CompleteAttempt(bookkeepingCtx, actionID, attemptID, attemptStatus, actionStatus, summary)
