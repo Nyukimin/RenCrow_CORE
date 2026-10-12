@@ -159,8 +159,9 @@ receipt読取可になることを確かめた (道具は本番binaryより新�
 
 - [WARN] 満杯の原因である「`running` のまま残ったTask」の排除 (枠占有を生存証拠で判定) は未実装。これが無いと
   queuedは溜まらないが、仕事が進まない状態に変わる。
-- [WARN] 既に残っていた約1.8万件のqueuedの整理は、道具 (上記) で2026-10-12に本番で実行した (「本番での実行」)。残るのは
-  ユーザー起点の1件と24時間未満の4件。期限切れqueuedを終端する周期処理は作らない。追記専用なので、整理しても store は縮まない (cancelledの行が約8MB増える)。
+- [WARN] 既に残っていた約1.8万件のqueuedの整理は、道具 (上記) で2026-10-12に本番で実行した (「本番での実行」)。その時点で
+  残した24時間未満の4件 (atlas_acquire_runnable 3、memory_promotion 1) も、同日13:25Zに TaskStore 段階2の配備で CORE を停止している間に
+  `--min-age 9h` で cancelled にした。残るのはユーザー起点の1件だけ。期限切れqueuedを終端する周期処理は作らない。追記専用なので、整理しても store は縮まない (cancelledの行が約8MB増える)。
 - [WARN] health checkの「Run無しqueuedの滞留数」は未実装。architecture testはソース構造だけを見る。
 - orchestratorのintakeの補償 (Fail) はtransactionなので、store遅延下では失敗し得る。SuperAgentのrun queueは、
   既存Taskの再開が枠で拒否されるとTaskを終端する (別論点)。
