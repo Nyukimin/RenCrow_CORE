@@ -122,12 +122,44 @@ rencrow tasks reap-queued --created-before <RFC3339> [--min-age 24h] [--batch-si
   (種別ごとの件数は上の調査と一致) と除外 1 件 (`user_origin`)。`--apply` で 10 batch、18,325 件を cancelled にし、
   通知は増えず、再実行は候補 0 件 (終了status 3)、`tasks verify` は `ok`、不一致 0。
 
+### 本番での実行 (2026-10-12)
+
+本番ホストのCOREを停止して、道具 (commit `6538b04a`) を一度だけ実行した。本番の `rencrow` binary と設定は変えていない
+(道具は同じ commit から本番ホストでbuildした別binary)。実行前に、本番binaryでも予行コピーの `tasks verify` が `ok`・不一致0・
+receipt読取可になることを確かめた (道具は本番binaryより新しい版から作られているため)。
+
+- **時刻 (UTC)**: 08:38:17Z に停止、08:40:09Z に起動、08:43:30Z に `/health` が200。COREが停止していたのは約112秒で、
+  停止から `/health` 200 までは約313秒 (うち `startup_total` が197.2秒)。停止前に、running の OPS と Heartbeat worker が
+  0件であることを確かめた (Memory Promotion の常駐ジョブ1件だけ running)。
+- **件数**: Task 80,447件、queued 18,349件のうち候補 18,344件を cancelled にした。種別は idlechat_conversation 6,484、
+  idlechat_dialogue_episode 3,416、idlechat_word_topic 2,097、background_job_failure 2,044、memory_promotion 2,026、
+  atlas_acquire_runnable 1,997、llm_provider_call 230、tts_playback_session 21、atlas_recover 14、heartbeat_worker 10、
+  dci_search 4、atlas_revise 1。対象外は5件: ユーザー起点 (`user_origin`) の1件は定義上の除外、作成から24時間未満
+  (`younger_than_min_age`) の4件は残す判断 (利用者判断済み。2026-10-13 02:00Z 以降は次回の候補になる)。
+  `created_after_cutoff` は0 (P1配備の後にqueuedは増えていない)。
+- **batch**: 10 batch (2,000件 x 9 + 344件)。1 batch は 3.0〜6.3秒、batch合計 56.6秒、`--apply` 全体で62.7秒。
+  `applied`=18,344、`skipped`=0。候補集合の sha256 は、稼働中のdry-run・停止後のdry-run・applyで同一。
+- **停止中の照合**: 整理前に `tasks/` 全体 (約150MB、`index/seg-legacy.tsi` を含む10 file) を複製し、sha256が全て同一だった。
+  再applyは候補0件 (終了status 3)。`tasks verify` は `ok`、不一致0、`sidecar=matches_log`、`sidecar_replayed_lines`=18,354
+  (= 18,344 + batch 10)、receipt 10。`task_run`・`task_context`・`task_notifications`・`task_execution_fences`・
+  `index/seg-legacy.tsi` は複製とbyte単位で同一 (通知は56,237件のまま)。`task_state.jsonl` は18,344行増えた。
+- **起動後** (起動から約34分まで観測):
+  - `[TaskStore] index loaded` は `source=sidecar replayed=18354` (復元463ms、`rebuilt=0`)、続いて `index checkpoint ... reason=open`。
+    `WARN index rebuild` は無い。
+  - `/health` は31回の標本 (1分間隔) で全て200・`"ok":true`。起動後の `journalctl` に `ERROR`/`panic` は0件。
+  - queued は稼働中のdry-runで `queued_pool`=5 (除外分だけ)・`candidates`=0 (起動13分後と34分後の2回)。
+    通知は、整理前の56,237件と先頭がbyte単位で同一で、整理に由来する通知は無い (起動後の通常動作で12件増えた)。
+  - `tx summary` (window 33m20s、write_n=34): `write_exec_p50`=1ms、`write_commit_p50`=2.80s (整理前2.5s前後。stateが約10%増えた
+    分の増加)、`write_commit_p95`=3.37s、`write_lock_wait_p95`=2.28s。[WARN] lock_wait の p95 は整理前の窓 (0s) と違うが、
+    標本が少なく (34件)、起動直後 (08:43〜08:44Z) に13+3行が集中して書かれた時の待ちと整合する。以降の窓で増えていない。
+  - RSS は、起動直後の10分が200〜350MB、以降 (25標本) は133〜284MB (平均177MB)。基準の約250MBと同程度かそれ以下。
+
 ## 残るリスクと未実施
 
 - [WARN] 満杯の原因である「`running` のまま残ったTask」の排除 (枠占有を生存証拠で判定) は未実装。これが無いと
   queuedは溜まらないが、仕事が進まない状態に変わる。
-- [WARN] 既に残っている約1.8万件のqueuedの整理は、道具 (上記) を実装したが本番では未実行。期限切れqueuedを終端する
-  周期処理は作らない。追記専用なので、整理しても store は縮まない (cancelledの行が約8MB増える)。
+- [WARN] 既に残っていた約1.8万件のqueuedの整理は、道具 (上記) で2026-10-12に本番で実行した (「本番での実行」)。残るのは
+  ユーザー起点の1件と24時間未満の4件。期限切れqueuedを終端する周期処理は作らない。追記専用なので、整理しても store は縮まない (cancelledの行が約8MB増える)。
 - [WARN] health checkの「Run無しqueuedの滞留数」は未実装。architecture testはソース構造だけを見る。
 - orchestratorのintakeの補償 (Fail) はtransactionなので、store遅延下では失敗し得る。SuperAgentのrun queueは、
   既存Taskの再開が枠で拒否されるとTaskを終端する (別論点)。
