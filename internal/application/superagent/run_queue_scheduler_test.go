@@ -3,6 +3,7 @@ package superagent
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -812,13 +813,17 @@ func TestRecoverInterruptedAgentRunsQueuesOnlyDurableCheckpoint(t *testing.T) {
 		t.Fatalf("RecoverInterruptedAgentRuns queued=%d blocked=%d err=%v", queued, blocked, err)
 	}
 	if len(owner.getCalls) != 0 {
-		t.Fatalf("restart recovery used per-task Get %d time(s); want one List of canonical Tasks", len(owner.getCalls))
+		t.Fatalf("restart recovery used per-task Get %d time(s); want one read session for the projection Tasks", len(owner.getCalls))
 	}
-	if owner.listCalls != 1 {
-		t.Fatalf("restart recovery List calls=%d, want 1", owner.listCalls)
+	if owner.listCalls != 0 {
+		t.Fatalf("restart recovery listed all canonical Tasks %d time(s); it must read only the projection Tasks by ID", owner.listCalls)
 	}
-	if owner.listRunCalls != 2 {
-		t.Fatalf("restart recovery ListRuns calls=%d, want 1 full list plus 1 blocked-task re-list", owner.listRunCalls)
+	if owner.unboundedListRunCalls != 0 || owner.listRunCalls != 1 {
+		t.Fatalf("restart recovery ListRuns calls=%d (unbounded=%d), want only the blocked-task re-list by TaskID", owner.listRunCalls, owner.unboundedListRunCalls)
+	}
+	wantRead := []modulecore.TaskID{resumableTaskID, legacyTaskID, finishedTaskID, queueFinishedTaskID}
+	if len(owner.readTaskRunsCalls) != 1 || !reflect.DeepEqual(owner.readTaskRunsCalls[0], wantRead) {
+		t.Fatalf("restart recovery read sessions = %v, want one session for the distinct projection Tasks %v", owner.readTaskRunsCalls, wantRead)
 	}
 	resumable := store.itemByCheckpoint(resumableCheckpointID)
 	if len(store.items) != 3 || resumable.TaskID != resumableTaskID || resumable.RunID != "" || resumable.RunStartReason != domaintask.RunStartReasonProcessRestartResume || resumable.IdempotencyKey != string(resumableCheckpointID) || resumable.CheckpointSummary != "step four committed" || resumable.NextAction != "step five" || store.item(finishedQueueItemID).Status != "claimed" {
@@ -1014,10 +1019,14 @@ type recordingTaskOwner struct {
 	getCalls       []modulecore.TaskID
 	listCalls      int
 	listRunCalls   int
-	blockErr       error
-	blockCalls     []taskOwnerBlockCall
-	failErr        error
-	failCalls      []taskOwnerFailCall
+	// unboundedListRunCalls counts ListRuns calls without a TaskID: a full
+	// scan of the Run history, which restart recovery must not issue.
+	unboundedListRunCalls int
+	readTaskRunsCalls     [][]modulecore.TaskID
+	blockErr              error
+	blockCalls            []taskOwnerBlockCall
+	failErr               error
+	failCalls             []taskOwnerFailCall
 }
 
 type taskOwnerFailCall struct {
@@ -1054,8 +1063,32 @@ func (o *recordingTaskOwner) List(_ context.Context, _ domaintask.Filter) ([]dom
 	return result, nil
 }
 
+// ReadTaskRuns mirrors taskmanager.Manager.ReadTaskRuns: the named Tasks that
+// exist and their Runs, from one read session. A Task that is not stored is
+// absent from the result.
+func (o *recordingTaskOwner) ReadTaskRuns(_ context.Context, taskIDs []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error) {
+	o.readTaskRunsCalls = append(o.readTaskRunsCalls, append([]modulecore.TaskID(nil), taskIDs...))
+	if o.getErr != nil {
+		return nil, nil, o.getErr
+	}
+	tasks := make(map[modulecore.TaskID]domaintask.Task, len(taskIDs))
+	runs := make(map[modulecore.TaskID][]domaintask.Run, len(taskIDs))
+	for _, taskID := range taskIDs {
+		task, ok := o.tasks[taskID]
+		if !ok {
+			continue
+		}
+		tasks[taskID] = task
+		runs[taskID] = append([]domaintask.Run(nil), o.runs[taskID]...)
+	}
+	return tasks, runs, nil
+}
+
 func (o *recordingTaskOwner) ListRuns(_ context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
 	o.listRunCalls++
+	if filter.TaskID == "" {
+		o.unboundedListRunCalls++
+	}
 	if filter.TaskID != "" {
 		return append([]domaintask.Run(nil), o.runs[filter.TaskID]...), nil
 	}

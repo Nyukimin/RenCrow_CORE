@@ -36,12 +36,15 @@ func recoverOrphanTaskRunsAfterRestart(ctx context.Context, actions *actionmanag
 	for _, action := range storedActions {
 		actionOwned[action.RunID] = struct{}{}
 	}
-	allRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{})
+	// Only running Runs can be orphans. Reading the whole Run history here would
+	// decode every Run ever written on each start; the store narrows the read to
+	// the running ones, and the status check below keeps the result identical.
+	activeRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{Status: domaintask.RunStatusRunning})
 	if err != nil {
-		return 0, fmt.Errorf("list canonical runs for orphan Run restart recovery: %w", err)
+		return 0, fmt.Errorf("list running canonical runs for orphan Run restart recovery: %w", err)
 	}
 	recovered := 0
-	for _, run := range allRuns {
+	for _, run := range activeRuns {
 		if run.Status != domaintask.RunStatusRunning {
 			continue
 		}

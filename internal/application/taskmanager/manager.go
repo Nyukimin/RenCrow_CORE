@@ -40,24 +40,55 @@ type Manager struct {
 	store                    Store
 	limits                   ParallelLimits
 	expectedCriteriaRevision string
-	now                      func() time.Time
+	// idIndexed is set only by WithIDIndex. It is a declaration about the store,
+	// not behavior the Manager can discover: see WithIDIndex.
+	idIndexed bool
+	now       func() time.Time
 }
 
-func New(store Store, limits ParallelLimits) *Manager {
+// Option configures a Manager at construction.
+type Option func(*Manager)
+
+// WithIDIndex declares that the store behind this Manager answers a read of one
+// Task or Run by ID from an ID index, in time that does not grow with the size
+// of the history. Bounded readers (ReadTaskRuns, RunResolver) then read only the
+// IDs they are given.
+//
+// Without it they make ONE pass over the whole history instead. That is not a
+// leftover: a store without the index (the default, and any remote storage
+// host, whose configuration the caller cannot see) folds the whole history for
+// every read of one ID, so reading N IDs one by one costs N full passes, far
+// worse than one. Declare it only for a store opened with the index; removing
+// the one-pass path is part of making the index the default.
+func WithIDIndex() Option {
+	return func(m *Manager) { m.idIndexed = true }
+}
+
+// IDIndexed reports whether the Manager was told its store has an ID index
+// (WithIDIndex).
+func (m *Manager) IDIndexed() bool {
+	return m != nil && m.idIndexed
+}
+
+func New(store Store, limits ParallelLimits, options ...Option) *Manager {
 	if limits.Global <= 0 {
 		limits = DefaultParallelLimits()
 	}
-	return &Manager{store: store, limits: limits, now: func() time.Time { return time.Now().UTC() }}
+	manager := &Manager{store: store, limits: limits, now: func() time.Time { return time.Now().UTC() }}
+	for _, option := range options {
+		option(manager)
+	}
+	return manager
 }
 
 // NewWithExpectedCriteriaRevision configures the trusted Harness deployment
 // pin used when creating native-capable Tasks. The revision is opaque to CORE;
 // only its lowercase SHA-256 encoding is checked here.
-func NewWithExpectedCriteriaRevision(store Store, limits ParallelLimits, revision string) (*Manager, error) {
+func NewWithExpectedCriteriaRevision(store Store, limits ParallelLimits, revision string, options ...Option) (*Manager, error) {
 	if !domaintask.ValidCriteriaRevision(revision) {
 		return nil, errors.New("expected criteria revision must be one lowercase SHA-256 revision")
 	}
-	manager := New(store, limits)
+	manager := New(store, limits, options...)
 	manager.expectedCriteriaRevision = revision
 	return manager, nil
 }
@@ -79,7 +110,7 @@ func (m *Manager) taskTransaction(ctx context.Context, taskID modulecore.TaskID,
 		if store == nil {
 			return errors.New("task transaction store is unavailable")
 		}
-		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, now: m.now}
+		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, idIndexed: m.idIndexed, now: m.now}
 		return fn(txManager)
 	})
 }
@@ -95,7 +126,7 @@ func (m *Manager) readTransaction(ctx context.Context, fn func(*Manager) error) 
 		if store == nil {
 			return errors.New("task read transaction store is unavailable")
 		}
-		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, now: m.now}
+		txManager := &Manager{store: store, limits: m.limits, expectedCriteriaRevision: m.expectedCriteriaRevision, idIndexed: m.idIndexed, now: m.now}
 		return fn(txManager)
 	})
 }

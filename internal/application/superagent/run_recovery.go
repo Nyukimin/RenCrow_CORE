@@ -24,7 +24,11 @@ type InterruptedRunRecoveryStore interface {
 // AgentRun or queue receipt.
 type InterruptedRunRecoveryTaskOwner interface {
 	Get(context.Context, modulecore.TaskID) (domaintask.Task, error)
-	List(context.Context, domaintask.Filter) ([]domaintask.Task, error)
+	// ReadTaskRuns reads the named Tasks and their Runs from one snapshot. A
+	// Task that is not stored is absent from the result. Recovery reads only the
+	// Tasks its projections name, never the whole Task and Run history.
+	ReadTaskRuns(context.Context, []modulecore.TaskID) (map[modulecore.TaskID]domaintask.Task, map[modulecore.TaskID][]domaintask.Run, error)
+	// ListRuns is used only with a TaskID, to re-read one Task after blocking it.
 	ListRuns(context.Context, domaintask.RunFilter) ([]domaintask.Run, error)
 	Block(context.Context, modulecore.TaskID, string) (domaintask.Task, error)
 }
@@ -66,31 +70,13 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 		}
 	}
 
-	tasks, err := owner.List(ctx, domaintask.Filter{})
-	if err != nil {
-		return 0, 0, fmt.Errorf("list canonical tasks for interrupted run recovery: %w", err)
-	}
-	taskByID := make(map[modulecore.TaskID]domaintask.Task, len(tasks))
-	for _, task := range tasks {
-		if err := task.TaskID.Validate(); err != nil {
-			return 0, 0, fmt.Errorf("canonical task list contains invalid task_id: %w", err)
-		}
-		taskByID[task.TaskID] = task
-	}
-	allRuns, err := owner.ListRuns(ctx, domaintask.RunFilter{})
-	if err != nil {
-		return 0, 0, fmt.Errorf("list canonical runs for interrupted run recovery: %w", err)
-	}
-	runsByTask := make(map[modulecore.TaskID][]domaintask.Run, len(allRuns))
-	for _, run := range allRuns {
-		runsByTask[run.TaskID] = append(runsByTask[run.TaskID], run)
-	}
-
-	// Resolve every projection and its exact canonical Task+Run before making
-	// any projection or queue mutation. This gives missing/mismatched identity
-	// a fail-closed boundary instead of partially repairing earlier rows.
-	candidates := make([]interruptedRunRecoveryCandidate, 0, len(projections))
+	// Validate every projection identity, then read exactly the Tasks and Runs
+	// they name from one snapshot. The read is proportional to the (at most 500)
+	// projections, not to the history of the store.
+	uniqueProjections := make([]domainsuperagent.AgentRun, 0, len(projections))
+	taskIDs := make([]modulecore.TaskID, 0, len(projections))
 	seen := make(map[string]struct{}, len(projections))
+	seenTasks := make(map[modulecore.TaskID]struct{}, len(projections))
 	for _, projection := range projections {
 		if err := projection.TaskID.Validate(); err != nil {
 			return 0, 0, fmt.Errorf("agent run %s has invalid task_id: %w", projection.RunID, err)
@@ -103,7 +89,22 @@ func RecoverInterruptedAgentRuns(ctx context.Context, store InterruptedRunRecove
 			continue
 		}
 		seen[identity] = struct{}{}
+		uniqueProjections = append(uniqueProjections, projection)
+		if _, known := seenTasks[projection.TaskID]; !known {
+			seenTasks[projection.TaskID] = struct{}{}
+			taskIDs = append(taskIDs, projection.TaskID)
+		}
+	}
+	taskByID, runsByTask, err := owner.ReadTaskRuns(ctx, taskIDs)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read canonical tasks and runs for interrupted run recovery: %w", err)
+	}
 
+	// Resolve every projection and its exact canonical Task+Run before making
+	// any projection or queue mutation. This gives missing/mismatched identity
+	// a fail-closed boundary instead of partially repairing earlier rows.
+	candidates := make([]interruptedRunRecoveryCandidate, 0, len(uniqueProjections))
+	for _, projection := range uniqueProjections {
 		task, ok := taskByID[projection.TaskID]
 		if !ok {
 			return 0, 0, fmt.Errorf("get canonical task %s for interrupted run recovery: %w", projection.TaskID, domaintask.ErrNotFound)

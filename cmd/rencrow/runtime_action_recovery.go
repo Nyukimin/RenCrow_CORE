@@ -10,7 +10,6 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.Manager, tasks *taskmanager.Manager) (int, error) {
@@ -21,13 +20,13 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 	if err != nil {
 		return 0, err
 	}
-	allRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{})
+	// Runs are resolved by ID, never held in a map of the whole history here:
+	// the Task owner decides how (one read per Run with an ID-indexed store, one
+	// shared pass without one). A reference to a Run that no Task owns is still
+	// an error.
+	resolveRun, err := tasks.RunResolver(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("list canonical runs for Action restart recovery: %w", err)
-	}
-	runByID := make(map[modulecore.RunID]domaintask.Run, len(allRuns))
-	for _, run := range allRuns {
-		runByID[run.RunID] = run
+		return 0, fmt.Errorf("prepare canonical run lookup for Action restart recovery: %w", err)
 	}
 	recovered := 0
 	for _, action := range storedActions {
@@ -67,9 +66,9 @@ func recoverActionRunsAfterRestart(ctx context.Context, actions *actionmanager.M
 				actionStatus = domainaction.StatusCancelled
 			}
 		}
-		run, ok := runByID[action.RunID]
-		if !ok {
-			return recovered, fmt.Errorf("load run %s for terminal Action %s: %w", action.RunID, action.ActionID, domaintask.ErrNotFound)
+		run, err := resolveRun(action.RunID)
+		if err != nil {
+			return recovered, fmt.Errorf("load run %s for terminal Action %s: %w", action.RunID, action.ActionID, err)
 		}
 		if run.Status != domaintask.RunStatusRunning {
 			continue
