@@ -404,12 +404,17 @@ import sys
 import time
 
 marker, pid_file = sys.argv[1:]
-with open(pid_file, "w", encoding="ascii") as handle:
-    handle.write(str(os.getpid()) + "\n")
+
+def publish_pid(path, pid):
+    temporary = path + "." + str(os.getpid()) + ".tmp"
+    with open(temporary, "x", encoding="ascii") as handle:
+        handle.write(str(pid) + "\n")
+    os.replace(temporary, path)
+
+publish_pid(pid_file, os.getpid())
 parent_pid_file = os.environ.get("RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE")
 if parent_pid_file:
-    with open(parent_pid_file, "w", encoding="ascii") as handle:
-        handle.write(str(os.getppid()) + "\n")
+    publish_pid(parent_pid_file, os.getppid())
 release_file = os.environ.get("RENCROW_TEST_SURVIVOR_RELEASE_FILE")
 if release_file:
     while not os.path.isfile(release_file):
@@ -527,21 +532,54 @@ root_exit_python=${test_root}/root-exit-python
 cat > "${root_exit_python}" <<'SH'
 #!/usr/bin/env bash
 if [[ ${1:-} == - && ${2:-} == *l1.db && ${3:-} == *l2.db ]]; then
-  python3 -c 'import os,sys; open(sys.argv[1], "w", encoding="ascii").write(str(os.getppid()))' \
-    "${RENCROW_TEST_ROOT_EXIT_PID_FILE}"
-  python3 "${RENCROW_TEST_SURVIVOR_SCRIPT}" \
-    "${RENCROW_TEST_SURVIVOR_MARKER}" "${RENCROW_TEST_SURVIVOR_PID_FILE}" &
-  while [[ ! -f ${RENCROW_TEST_ROOT_EXIT_RELEASE_FILE} ]]; do
-    sleep 0.02
-  done
-  exit "${RENCROW_TEST_WORKER_EXIT}"
+  exec python3 "${RENCROW_TEST_ROOT_EXIT_FIXTURE_SCRIPT}" \
+    "${RENCROW_TEST_ROOT_EXIT_METADATA_FILE}" \
+    "${RENCROW_TEST_SURVIVOR_SCRIPT}" \
+    "${RENCROW_TEST_SURVIVOR_MARKER}" \
+    "${RENCROW_TEST_SURVIVOR_PID_FILE}" \
+    "${RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE}" \
+    "${RENCROW_TEST_ROOT_EXIT_RELEASE_FILE}" \
+    "${RENCROW_TEST_SURVIVOR_RELEASE_FILE}" \
+    "${RENCROW_TEST_WORKER_EXIT}"
 fi
 exec python3 "$@"
 SH
 chmod +x "${root_exit_python}"
+root_exit_fixture_python=${test_root}/root-exit-fixture.py
+cat > "${root_exit_fixture_python}" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import time
+
+metadata_file, survivor_script, marker, child_pid_file, child_parent_pid_file, \
+    root_release_file, child_release_file, exit_status_text = sys.argv[1:]
+
+def publish_root_metadata(path, root_pid, child_launch_pid):
+    temporary = path + "." + str(os.getpid()) + ".tmp"
+    with open(temporary, "x", encoding="ascii") as handle:
+        json.dump({"root_pid": root_pid, "child_launch_pid": child_launch_pid}, handle)
+        handle.write("\n")
+    os.replace(temporary, path)
+
+child_environment = os.environ.copy()
+child_environment["RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE"] = child_parent_pid_file
+child_environment["RENCROW_TEST_SURVIVOR_RELEASE_FILE"] = child_release_file
+survivor = subprocess.Popen(
+    [sys.executable, survivor_script, marker, child_pid_file],
+    env=child_environment,
+    shell=False,
+)
+publish_root_metadata(metadata_file, os.getpid(), survivor.pid)
+while not os.path.isfile(root_release_file):
+    time.sleep(0.02)
+raise SystemExit(int(exit_status_text))
+PY
 python3 - "${current_bash_executable}" "${checker}" "${test_root}/snapshot" \
-  "${root_exit_python}" "${survivor_python}" "${process_liveness_checker}" <<'PY'
+  "${root_exit_python}" "${root_exit_fixture_python}" "${survivor_python}" "${process_liveness_checker}" <<'PY'
 import ctypes
+import json
 import os
 import signal
 import subprocess
@@ -572,7 +610,7 @@ def inspect_posix_pid(pid, liveness_checker):
         raise SystemExit(f"[NG] could not inspect worker PID {pid}: {result.stderr.strip()}")
     return result.stdout.strip() == "alive"
 
-current_bash_executable, checker, snapshot, worker, survivor_script, liveness_checker = sys.argv[1:]
+current_bash_executable, checker, snapshot, worker, root_exit_fixture_script, survivor_script, liveness_checker = sys.argv[1:]
 windows = os.name == "nt"
 kernel = None
 held_handles = []
@@ -601,18 +639,19 @@ for worker_exit, expected_status in (("0", 125), ("23", 23)):
     marker = case_root + ".marker"
     child_pid_file = case_root + ".child-pid"
     child_parent_pid_file = case_root + ".child-parent-pid"
-    root_pid_file = case_root + ".root-pid"
+    root_metadata_file = case_root + ".root-metadata.json"
     release_file = case_root + ".release"
     child_release_file = case_root + ".child-release"
     environment = os.environ.copy()
     environment.update({
         "RENCROW_TEST_PYTHON": bash_path(worker),
+        "RENCROW_TEST_ROOT_EXIT_FIXTURE_SCRIPT": bash_path(root_exit_fixture_script),
         "RENCROW_TEST_SURVIVOR_SCRIPT": bash_path(survivor_script),
         "RENCROW_TEST_SURVIVOR_MARKER": bash_path(marker),
         "RENCROW_TEST_SURVIVOR_PID_FILE": bash_path(child_pid_file),
         "RENCROW_TEST_SURVIVOR_RELEASE_FILE": bash_path(child_release_file),
         "RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE": bash_path(child_parent_pid_file),
-        "RENCROW_TEST_ROOT_EXIT_PID_FILE": bash_path(root_pid_file),
+        "RENCROW_TEST_ROOT_EXIT_METADATA_FILE": bash_path(root_metadata_file),
         "RENCROW_TEST_ROOT_EXIT_RELEASE_FILE": bash_path(release_file),
         "RENCROW_TEST_WORKER_EXIT": worker_exit,
         "RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC": "30",
@@ -643,14 +682,21 @@ for worker_exit, expected_status in (("0", 125), ("23", 23)):
         )
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline and process.poll() is None:
-            if os.path.isfile(root_pid_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file):
+            if os.path.isfile(root_metadata_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file):
                 break
             time.sleep(0.02)
-        if not (os.path.isfile(root_pid_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file)):
+        if not (os.path.isfile(root_metadata_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file)):
             raise SystemExit("[NG] root-exit worker fixture did not record its native process relationship")
-        root_pid = int(open(root_pid_file, encoding="ascii").read().strip())
+        with open(root_metadata_file, encoding="ascii") as handle:
+            root_metadata = json.load(handle)
+        root_pid = int(root_metadata["root_pid"])
+        child_launch_pid = int(root_metadata["child_launch_pid"])
         child_pid = int(open(child_pid_file, encoding="ascii").read().strip())
         child_parent_pid = int(open(child_parent_pid_file, encoding="ascii").read().strip())
+        if child_launch_pid != child_pid:
+            raise SystemExit(
+                f"[NG] native root Popen child PID {child_launch_pid} did not match survivor PID {child_pid}"
+            )
         if child_parent_pid != root_pid:
             raise SystemExit(
                 f"[NG] root-exit child parent PID {child_parent_pid} did not match fixture root PID {root_pid}"
