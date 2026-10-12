@@ -1773,9 +1773,13 @@ function isTTSSyncedSpeaker(agentID) {
   return id === 'mio' || id === 'shiro';
 }
 
+// thinkingDisplayAgentID returns the Agent whose reply is being generated.
+// agent.start to a delegate Agent names that delegate; agent.start addressed to
+// the user (direct CHAT/PLAN/RESEARCH) names its own sender, the responding Agent.
 function thinkingDisplayAgentID(ev) {
   if (!ev) return '';
-  if (ev.type === 'agent.start' && String(ev.to || '').trim()) return String(ev.to || '').trim().toLowerCase();
+  const to = String(ev.to || '').trim().toLowerCase();
+  if (ev.type === 'agent.start' && to && to !== 'user') return to;
   return String(ev.from || '').trim().toLowerCase();
 }
 

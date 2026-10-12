@@ -84,7 +84,7 @@ func (l *messageTTSLifecycle) EndSession(ctx context.Context, ttsSessionID strin
 func (l *messageTTSLifecycle) WithStreamHooks(
 	ctx context.Context,
 	route routing.Route,
-	taskID, sessionID, channel, chatID, ttsSessionID string,
+	speaker, taskID, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
 	prev := llm.StreamCallbackFromContext(ctx)
 	previousMetrics := llm.GenerationMetricsCallbackFromContext(ctx)
@@ -98,7 +98,7 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 		if latency != nil && latency.markFirstToken() {
 			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), taskID, sessionID, channel, chatID, "")
 		}
-		l.emit("agent.thinking", "mio", "user", token, string(route), taskID, sessionID, channel, chatID)
+		l.emit("agent.thinking", speaker, "user", token, string(route), taskID, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
 	})

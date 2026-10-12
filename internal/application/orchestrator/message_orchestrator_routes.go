@@ -11,7 +11,11 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-type messageStreamHook func(ctx context.Context, route routing.Route, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)
+// messageStreamHook binds the LLM token stream of one turn to event, TTS and
+// VTuber forwarding. speaker is the Agent whose model generates the tokens: the
+// agent.thinking events carry it as from, so it must equal the from of the
+// first agent.response of the same turn (docs/06_Public_API仕様.md).
+type messageStreamHook func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)
 
 type messageTTSPusher func(ctx context.Context, sessionID string, route routing.Route, eventType, text string)
 
@@ -143,7 +147,7 @@ func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input dom
 	taskIDText := taskID.String()
 	speaker := chatSpeakerForTurnInput(input)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", taskIDText, sessionID, channel, chatID)
-	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.generateChatResponse(streamCtx, input, speaker)
 	if err == nil {
 		d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)
@@ -218,7 +222,7 @@ func (d *messageRouteDispatcher) executeWildRoute(ctx context.Context, input dom
 	d.emit("agent.delegate", "mio", "midori", formatAgentHandoffSpeech("mio", "midori", work, input.MessageText()), "WILD", taskIDText, sessionID, channel, chatID)
 	d.emit("agent.acknowledge", "midori", "mio", formatAgentHandoffReadbackSpeech("mio", "midori", work, input.MessageText()), "WILD", taskIDText, sessionID, channel, chatID)
 	d.emit("agent.start", "mio", "midori", "創作中...", "WILD", taskIDText, sessionID, channel, chatID)
-	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteWILD, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteWILD, "midori", taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.wild.Generate(streamCtx, input)
 	if err == nil {
 		d.emit("agent.response", "midori", "mio", resp, "WILD", taskIDText, sessionID, channel, chatID)
@@ -234,7 +238,7 @@ func (d *messageRouteDispatcher) executePlanRoute(ctx context.Context, input dom
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
 	d.emit("agent.start", "mio", "user", "計画を検討中...", "PLAN", taskIDText, sessionID, channel, chatID)
-	planCtx, ttsStream := d.withStreamHooks(ctx, routing.RoutePLAN, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	planCtx, ttsStream := d.withStreamHooks(ctx, routing.RoutePLAN, "mio", taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.mio.Chat(planCtx, input)
 	if err == nil {
 		d.emit("agent.response", "mio", "user", resp, "PLAN", taskIDText, sessionID, channel, chatID)
@@ -254,7 +258,7 @@ func (d *messageRouteDispatcher) executeAnalyzeRoute(ctx context.Context, input 
 	d.emit("agent.acknowledge", "kuro", "mio", formatAgentHandoffReadbackSpeech("mio", "kuro", work, input.MessageText()), "ANALYZE", taskIDText, sessionID, channel, chatID)
 	d.emit("agent.start", "mio", "kuro", "分析中...", "ANALYZE", taskIDText, sessionID, channel, chatID)
 	recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "started", "Heavy Worker started", taskIDText)
-	analyzeCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteANALYZE, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	analyzeCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteANALYZE, "kuro", taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.heavy.Generate(analyzeCtx, input)
 	if err == nil {
 		d.emit("agent.response", "kuro", "mio", resp, "ANALYZE", taskIDText, sessionID, channel, chatID)
@@ -273,7 +277,7 @@ func (d *messageRouteDispatcher) executeResearchRoute(ctx context.Context, input
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
 	d.emit("agent.start", "mio", "user", "調査中...", "RESEARCH", taskIDText, sessionID, channel, chatID)
-	researchCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteRESEARCH, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	researchCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteRESEARCH, "mio", taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.mio.Chat(researchCtx, input)
 	if err == nil {
 		d.emit("agent.response", "mio", "user", resp, "RESEARCH", taskIDText, sessionID, channel, chatID)

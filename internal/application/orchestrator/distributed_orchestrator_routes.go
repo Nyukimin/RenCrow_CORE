@@ -122,7 +122,7 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input do
 		d.emit("agent.delegate", "mio", "midori", formatAgentHandoffSpeech("mio", "midori", work, input.MessageText()), string(route), taskIDText, sessionID, channel, chatID)
 		d.emit("agent.acknowledge", "midori", "mio", formatAgentHandoffReadbackSpeech("mio", "midori", work, input.MessageText()), string(route), taskIDText, sessionID, channel, chatID)
 		d.emit("agent.start", "mio", "midori", "創作中...", string(route), taskIDText, sessionID, channel, chatID)
-		streamCtx, ttsStream := d.withStreamHooks(ctx, route, taskIDText, sessionID, channel, chatID, ttsSessionID)
+		streamCtx, ttsStream := d.withStreamHooks(ctx, route, "midori", taskIDText, sessionID, channel, chatID, ttsSessionID)
 		resp, err := d.wild.Generate(streamCtx, input)
 		if err == nil {
 			d.emit("agent.response", "midori", "mio", resp, string(route), taskIDText, sessionID, channel, chatID)
@@ -143,7 +143,7 @@ func (d *distributedRouteDispatcher) ExecuteDirect(ctx context.Context, input do
 		d.emit("agent.acknowledge", "kuro", "mio", formatAgentHandoffReadbackSpeech("mio", "kuro", work, input.MessageText()), string(route), taskIDText, sessionID, channel, chatID)
 		d.emit("agent.start", "mio", "kuro", "分析中...", string(route), taskIDText, sessionID, channel, chatID)
 		recordHeavyCanonicalEvent(ctx, d.canonicalEvents, "started", "Heavy Worker started", taskIDText)
-		streamCtx, ttsStream := d.withStreamHooks(ctx, route, taskIDText, sessionID, channel, chatID, ttsSessionID)
+		streamCtx, ttsStream := d.withStreamHooks(ctx, route, "kuro", taskIDText, sessionID, channel, chatID, ttsSessionID)
 		resp, err := d.heavy.Generate(streamCtx, input)
 		if err == nil {
 			d.emit("agent.response", "kuro", "mio", resp, string(route), taskIDText, sessionID, channel, chatID)
@@ -191,7 +191,7 @@ func (d *distributedRouteDispatcher) executeLocalRoute(ctx context.Context, inpu
 	d.memory.RecordMessage(userMsg)
 
 	d.emit("agent.start", speaker, "user", "考え中...", string(route), taskIDText, sessionID, channel, chatID)
-	streamCtx, ttsStream := d.withStreamHooks(ctx, route, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	streamCtx, ttsStream := d.withStreamHooks(ctx, route, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 	resp, err := d.generateLocalChatResponse(streamCtx, guardedInput, speaker)
 	if err == nil {
 		respMsg := domaintransport.NewMessage(speaker, "user", sessionID, taskID, resp)

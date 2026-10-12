@@ -1095,6 +1095,8 @@ COREは受付時に`turn_id`、root `trace_id`、`root_task_id`、利用者発�
 
 streaming生成では、COREはRenCrow_LLMから受けた本文deltaを`agent.thinking`として逐次発行し、終端後に完成本文を`agent.response`として1回発行します。対話clientはdeltaを逐次表示してよいが、永続化と完了判定には`agent.response`を使用します。backendが最終SSE chunkに`usage.completion_tokens`と`timings.predicted_per_second`を返す場合、COREは同じ`task_id`の`metrics.latency` eventを`kind=llm`、`point=throughput`、`completion_tokens`、`tokens_per_second`付きで発行します。clientはこの値がある場合だけ実token throughputとして表示し、本文delta数をtoken数として扱いません。
 
+同じturnの`agent.thinking`、`agent.start`、`agent.response`の`from`は、実際に応答したAgentと一致します。`agent.thinking.from`は本文deltaを生成したAgentで、CHATは送信時のrecipient（mio／shiro／midori／kuro）、PLAN／RESEARCHはMio、WILDはMidori、ANALYZEはKuroです。同じturnで最初に発行される`agent.response.from`と等しく、`agent.start`は宛先が利用者なら`from`、委譲先Agentなら`to`が同じAgentを指します。固定のAgent名を発行してはいけません。ANALYZEなどでMioが委譲先の結果を利用者へ中継する後続の`agent.response`（`from=mio`、`to=user`）は別の発話であり、deltaの生成者を表しません。clientはdeltaの表示ラベルに`agent.thinking.from`を使い、同じtraceの`agent.start`が先に届いている場合はその応答Agentを優先します。deltaを確定する`agent.response.from`が表示済みのラベルと異なる場合は、その応答Agent名を必ず表示し直します。
+
 対話clientは、送信受付から同じroot `task_id`を持つ利用者向け`agent.response`または終端error eventまで、送信時のrecipientを固定します。この区間に別recipientへ切り替えたり、別`task_id`の応答でpending状態を解除したりしてはいけません。
 
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。

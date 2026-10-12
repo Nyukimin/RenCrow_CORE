@@ -22,7 +22,7 @@ func TestPhase19DistributedRouteDispatcherCHATBypassesAutonomousExecutor(t *test
 		session.NewCentralMemory(),
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(ctx context.Context, route routing.Route, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
+		func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
 			return ctx, &streamBundle{}
 		},
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},
@@ -187,7 +187,7 @@ func TestPhase19DistributedLocalRouteStoresExactTurnInputProjection(t *testing.T
 		memory,
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
 		func(from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(ctx context.Context, route routing.Route, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
+		func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
 			return ctx, &streamBundle{}
 		},
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},

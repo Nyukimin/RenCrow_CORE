@@ -123,7 +123,7 @@ func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackAndEmi
 	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
 		previous = append(previous, token)
 	})
-	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000024", "sess-1", "line", "U123", "")
+	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "mio", "tsk_00000000-0000-5000-8000-000000000024", "sess-1", "line", "U123", "")
 	if bundle == nil {
 		t.Fatal("expected stream bundle")
 	}

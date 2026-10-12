@@ -16,7 +16,7 @@ func newPhase9RouteDispatcher(mio MioAgent, shiro ShiroAgent) *messageRouteDispa
 		shiro,
 		nil,
 		func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {},
-		func(ctx context.Context, route routing.Route, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
+		func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle) {
 			return ctx, &streamBundle{}
 		},
 		func(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {},

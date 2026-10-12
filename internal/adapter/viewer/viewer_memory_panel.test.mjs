@@ -5474,3 +5474,27 @@ const state = {ops: {toolHarnessEvents: [{event_id:'evt_canonical', task_id:'tsk
   for (const expected of ['evt_canonical','tsk_owner','run_owner','trc_owner','actor_kind: agent','&lt;actor&gt;']) assert.ok(rows[0].includes(expected), expected);
   assert.ok(!rows[0].includes('<actor>'));
 });
+
+test('viewer thinking bubble is labelled with the responding agent', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
+  const context = vm.createContext({});
+  vm.runInContext(sourceBetween(js, 'function thinkingDisplayAgentID', 'function matchesThinkingFilters') + `
+this.display = thinkingDisplayAgentID;
+this.render = shouldRenderThinking;
+`, context);
+  const ev = (type, from, to) => ({type, from, to});
+  // 直接宛先の CHAT: agent.start(from=応答者, to=user) は応答者自身を指す。
+  assert.equal(context.display(ev('agent.start', 'midori', 'user')), 'midori');
+  assert.equal(context.display(ev('agent.start', 'shiro', 'user')), 'shiro');
+  assert.equal(context.display(ev('agent.start', 'kuro', '')), 'kuro');
+  // 委譲（WILD/ANALYZE）: agent.start(from=mio, to=委譲先) は委譲先を指す。
+  assert.equal(context.display(ev('agent.start', 'mio', 'midori')), 'midori');
+  assert.equal(context.display(ev('agent.start', 'mio', 'kuro')), 'kuro');
+  // thinking は生成した Agent の from を表示する。
+  assert.equal(context.display(ev('agent.thinking', 'midori', 'user')), 'midori');
+  // mio 自身の応答中バブルは従来どおり描画しない。利用者名義のバブルも作らない。
+  assert.equal(context.render(ev('agent.start', 'mio', 'user')), false);
+  assert.equal(context.render(ev('agent.thinking', 'mio', 'user')), false);
+  assert.equal(context.render(ev('agent.start', 'midori', 'user')), true);
+  assert.equal(context.render(ev('agent.thinking', 'kuro', 'user')), true);
+});

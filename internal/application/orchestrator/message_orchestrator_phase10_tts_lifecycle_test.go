@@ -68,7 +68,7 @@ func TestPhase10TTSLifecycleStreamHooksEmitFirstTokenLatencyMetric(t *testing.T)
 	})
 
 	ctx := contextWithLatencyTrace(context.Background(), time.Now())
-	streamCtx, _ := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000021", "sess-1", "line", "U123", "")
+	streamCtx, _ := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "mio", "tsk_00000000-0000-5000-8000-000000000021", "sess-1", "line", "U123", "")
 	callback := llm.StreamCallbackFromContext(streamCtx)
 	if callback == nil {
 		t.Fatal("expected stream callback")
@@ -103,7 +103,7 @@ func TestPhase10TTSLifecycleStreamHooksEmitBackendThroughputMetric(t *testing.T)
 		events = append(events, NewEvent(eventType, from, to, content, route, taskID, sessionID, channel, chatID))
 	})
 
-	streamCtx, _ := lifecycle.WithStreamHooks(context.Background(), routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000022", "sess-1", "line", "U123", "")
+	streamCtx, _ := lifecycle.WithStreamHooks(context.Background(), routing.RouteCHAT, "mio", "tsk_00000000-0000-5000-8000-000000000022", "sess-1", "line", "U123", "")
 	callback := llm.GenerationMetricsCallbackFromContext(streamCtx)
 	if callback == nil {
 		t.Fatal("expected generation metrics callback")
@@ -135,7 +135,7 @@ func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t
 	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
 		previous = append(previous, token)
 	})
-	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "tsk_00000000-0000-5000-8000-000000000023", "sess-1", "line", "U123", "")
+	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "mio", "tsk_00000000-0000-5000-8000-000000000023", "sess-1", "line", "U123", "")
 	if bundle == nil {
 		t.Fatal("expected stream bundle")
 	}

@@ -38,9 +38,9 @@ func (o *DistributedOrchestrator) executeDistributedDirect(ctx context.Context, 
 func (o *DistributedOrchestrator) withStreamHooks(
 	ctx context.Context,
 	route routing.Route,
-	taskIDText, sessionID, channel, chatID, ttsSessionID string,
+	speaker, taskIDText, sessionID, channel, chatID, ttsSessionID string,
 ) (context.Context, *streamBundle) {
-	return o.ttsLifecycle.WithStreamHooks(ctx, route, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	return o.ttsLifecycle.WithStreamHooks(ctx, route, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 }
 
 func (o *DistributedOrchestrator) pushTTS(ctx context.Context, sessionID string, route routing.Route, eventType, text string) {
