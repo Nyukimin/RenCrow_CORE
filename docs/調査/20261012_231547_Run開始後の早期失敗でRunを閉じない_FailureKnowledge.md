@@ -175,7 +175,8 @@ Action 作成の失敗、Action 作成後の束縛の失敗、Run の終端書�
   別の系統で台帳の対象外にある。2026-10-12 22:54Z に本番で、利用者の chat 要求が `conversation turn conflict` を含む失敗になった。
   本番 store のコピー (2026-10-12 23:19Z) では、その Task と Run は failed で終端していて、running の CHAT は無く、実行枠は握っていない。
   /viewer/status の task_activities (プロセス内の MonitorStore。永続しない) に chatting / running のまま残るのは、この失敗経路が
-  終端を示す表示イベント (`entry.stage` の終端、利用者宛の最終 `agent.response`) を出さないためで、Run の終端漏れではない。再起動で消える。
+  終端を示す表示イベント (`entry.stage` の終端、利用者宛の最終 `agent.response`) が出ないためと推定される (コードの読みによる。当時のイベントログは未確認)。
+  Run の終端漏れではない。MonitorStore はプロセス内のみなので再起動で消える。
 - 本変更は配備していない。本番は旧binaryのままで、再起動までは同型の孤児 Task が残る可能性がある。
 
 ## 関連ファイル
