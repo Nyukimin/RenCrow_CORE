@@ -67,8 +67,8 @@ Tool実行後に Action／Attempt を終端する書き込み（`actionmanager.M
   2. 終端保存は呼出元の取消・期限切れから独立し、元のcontext valuesを保持する。
   3. 終端保存に失敗した場合は成功扱いにせず、元の実行エラーと保存エラーを保持して停止し、後続modelを呼ばない
      （この挙動は変更しない）。
-- **Enforcement**: `internal/application/actionmanager/manager.go` の名前付き定数
-  `toolAttemptTerminalWriteTimeout`（60秒）。値の根拠は定数のコメントとこの記録に残す。
+- **Enforcement**: `internal/application/actionmanager/manager.go` の名前付き定数 `AttemptTerminalWriteTimeout`（60秒。当初は
+  `toolAttemptTerminalWriteTimeout`。2026-10-13 に、Attempt の終端を閉じる共通の `CloseAttempt` と共有するため改名した）。値の根拠は定数のコメントとこの記録に残す。
 - **Tests**: `internal/application/actionmanager/tool_attempt_budget_test.go`
   - `TestCompleteToolAttemptTerminalWriteBudgetCoversObservedStoreLatency`: 呼出元が期限切れでも、storeへ届く
     contextの残り時間が観測遅延の3倍（30秒）以上である。
