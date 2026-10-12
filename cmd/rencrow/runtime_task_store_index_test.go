@@ -151,3 +151,82 @@ func TestStorageHostServeOpensTheTaskStoreWithTheConfiguredIndex(t *testing.T) {
 		})
 	}
 }
+
+// task_store.rotation.enabled reaches the store that owns the Task log: with it
+// the first open moves the store to layout v2 (LAYOUT, a first segment, segment 0
+// frozen); without it nothing changes.
+func TestRuntimeTaskOwnerMovesTheLocalStoreToSegmentsOnlyWhenConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		rotation bool
+	}{
+		{"default off", false},
+		{"enabled", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			root := defaultTaskStorePath(workspace)
+			t.Cleanup(func() {
+				_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+					if err == nil && !entry.IsDir() {
+						_ = os.Chmod(path, 0o644)
+					}
+					return nil
+				})
+			})
+			deps := &Dependencies{taskStoreIndex: true, taskStorePersist: true, taskStoreRotation: tc.rotation, taskStoreSizeValve: 2 << 20}
+			if err := initializeRuntimeTaskOwner(deps, workspace); err != nil {
+				t.Fatal(err)
+			}
+			if err := deps.taskManager.Close(); err != nil {
+				t.Fatal(err)
+			}
+			_, layoutErr := os.Stat(filepath.Join(root, "LAYOUT"))
+			if tc.rotation && layoutErr != nil {
+				t.Fatalf("rotation=true left no LAYOUT: %v", layoutErr)
+			}
+			if !tc.rotation && !errors.Is(layoutErr, os.ErrNotExist) {
+				t.Fatalf("rotation=false wrote LAYOUT (stat err=%v)", layoutErr)
+			}
+		})
+	}
+}
+
+// Rotation needs the persisted index. Configuration rejects the combination; if a
+// caller builds it anyway the runtime fails closed.
+func TestRuntimeTaskOwnerRefusesRotationWithoutThePersistedIndex(t *testing.T) {
+	for _, deps := range []*Dependencies{
+		{taskStoreIndex: false, taskStorePersist: false, taskStoreRotation: true},
+		{taskStoreIndex: true, taskStorePersist: false, taskStoreRotation: true},
+	} {
+		if err := initializeRuntimeTaskOwner(deps, t.TempDir()); err == nil {
+			t.Fatalf("a Task store with rotation but no persisted index was opened (%+v)", deps)
+		}
+		if deps.taskStore != nil || deps.taskManager != nil {
+			t.Fatal("a refused Task owner initialization left a store or manager behind")
+		}
+	}
+}
+
+func TestStorageHostServeOpensTheTaskStoreWithTheConfiguredRotation(t *testing.T) {
+	cfg, _ := newStorageHostTestConfig(t, nextFixedLoopbackAddress(t))
+	cfg.TaskStore.Index.Enabled, cfg.TaskStore.Index.Persist = true, true
+	cfg.TaskStore.Rotation.Enabled, cfg.TaskStore.Rotation.SizeValveBytes = true, 4<<20
+	deps := realStorageHostServeDeps()
+	var openedOptions taskpersistence.OpenOptions
+	stop := errors.New("stop after the Task store is requested")
+	deps.OpenTaskStore = func(_ string, options taskpersistence.OpenOptions) (storageHostTaskStore, error) {
+		openedOptions = options
+		return nil, stop
+	}
+	deps.Listen = func(string, string) (net.Listener, error) {
+		t.Error("the storage host started listening before its Task store opened")
+		return nil, errors.New("unexpected listen")
+	}
+	if err := runStorageHostServe(context.Background(), cfg, deps); !errors.Is(err, stop) {
+		t.Fatalf("runStorageHostServe error = %v, want the Task store open failure", err)
+	}
+	if !openedOptions.Rotation || openedOptions.RotationSizeValve != 4<<20 {
+		t.Fatalf("Task store opened with Rotation=%v RotationSizeValve=%d, want true and %d", openedOptions.Rotation, openedOptions.RotationSizeValve, 4<<20)
+	}
+}
