@@ -93,6 +93,7 @@ func validateTransactionArgs(s *JSONLStore, ctx context.Context, fn func(domaint
 }
 
 func (s *JSONLStore) transactionWithScope(ctx context.Context, scopeTaskID modulecore.TaskID, lease *taskExecutionLease, fn func(domaintask.Store) error) error {
+	s.rotateIfDue(ctx)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {

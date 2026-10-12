@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -21,18 +22,33 @@ type OpenOptions struct {
 	// from it at open and followed after every commit, and a store opened
 	// without Index reads the same files.
 	Index bool
-	// Persist keeps the index in a sidecar file (index/seg-legacy.tsi) so that
-	// the next open restores it instead of reading the whole log: the writer
+	// Persist keeps the index in a sidecar file (index/seg-legacy.tsi on layout
+	// v1, index/tasks.tsi on layout v2) so that the next open restores it instead
+	// of reading the whole log: the writer
 	// replaces the sidecar periodically and when it closes. The sidecar is
 	// derived data; a missing, damaged or outdated one only costs a rebuild from
 	// the log. Persist requires Index.
 	Persist bool
+	// Rotation moves the store to layout v2: the files in the store root are
+	// frozen as segment 0 and writes go to a segment per UTC day under logs/
+	// (and a further segment whenever the current one outgrows
+	// RotationSizeValve). It requires Index and Persist. A store that is already
+	// on layout v2 keeps writing to its newest segment without Rotation; it just
+	// never starts another one.
+	Rotation bool
+	// RotationSizeValve is the size of a segment's log files, in bytes, beyond
+	// which the next write starts another segment of the same day. Zero selects
+	// DefaultRotationSizeValve.
+	RotationSizeValve int64
 
-	// checkpoint and failpoint are seams for tests. A nil checkpoint selects the
+	// checkpoint, failpoint and now are seams for tests. A nil checkpoint selects the
 	// production policy; failpoint, if set, is called at each stage of a sidecar
 	// replacement.
 	checkpoint *checkpointPolicy
 	failpoint  func(stage string)
+	now        func() time.Time
+	// rotationPause, if set, is told how long each rotation stopped the writer.
+	rotationPause func(time.Duration)
 }
 
 // defaultIndexOption and defaultPersistOption are what NewJSONLStore uses. They

@@ -15,24 +15,26 @@ import (
 )
 
 // openReaderIndex gives a read-only store its index. The index is a snapshot
-// taken under the same OS lock a read takes, so the WAL is settled and every
-// byte on disk is committed; nothing is written (no sidecar, no checkpoint).
+// taken under the same OS lock a read takes (the lock of the newest segment, on
+// layout v2), so the WAL is settled and every byte on disk is committed; nothing
+// is written (no sidecar, no checkpoint).
 //
 // Without require, a store whose writer never produced a sidecar keeps reading
 // the way it always did: the index would otherwise change what such a reader
 // accepts (the index refuses IDs that are not in canonical form, the fold
 // does not), and the writer has not opted into it. With a sidecar present, or
 // with require, the reader needs an index and builds one in memory if the
-// sidecar cannot be used.
-func (s *JSONLStore) openReaderIndex(require bool) error {
-	if !require {
+// sidecar cannot be used. A store on layout v2 always needs one.
+func (s *JSONLStore) openReaderIndex(layout layoutInfo, refs []segmentRef, require bool) error {
+	if !require && !layout.v2 {
 		if _, err := os.Stat(sidecarPathOf(s.root)); err != nil {
 			return nil
 		}
 	}
+	require = require || layout.v2
 	var ix *taskIndex
 	err := s.batch.Read(withTxLabel(context.Background(), "ReaderIndexOpen", ""), func() error {
-		restored, _, why, err := restoreTaskIndex(s.root, true, nil)
+		restored, _, why, err := restoreTaskIndex(s.root, layout, refs, true, nil)
 		if err != nil {
 			return err
 		}
@@ -40,7 +42,7 @@ func (s *JSONLStore) openReaderIndex(require bool) error {
 			ix = restored
 			return nil
 		}
-		rebuilt, err := rebuildTaskIndex(s.root, true, why, time.Now(), true)
+		rebuilt, err := rebuildTaskIndex(s.root, layout, refs, true, why, time.Now(), true)
 		if err != nil {
 			return err
 		}
@@ -63,6 +65,9 @@ func (s *JSONLStore) openReaderIndex(require bool) error {
 type TaskHistoryLine struct {
 	// File is the log file the line is in (task_state.jsonl, task_run.jsonl, ...).
 	File string `json:"file"`
+	// Segment is the segment the file is in: "legacy" for the files in the store
+	// root (every store has them) or the name of a directory under logs/.
+	Segment string `json:"segment,omitempty"`
 	// Offset is the byte offset of the line in that file.
 	Offset int64 `json:"offset"`
 	// Line is the stored record, verbatim.
@@ -95,6 +100,7 @@ func (s *JSONLStore) TaskHistory(ctx context.Context, taskID modulecore.TaskID) 
 		kind fileKind
 		pos  linePos
 	}
+	var segmentNames []string
 	var found []located
 	ix := s.idx
 	ix.mu.RLock()
@@ -120,6 +126,9 @@ func (s *JSONLStore) TaskHistory(ctx context.Context, taskID modulecore.TaskID) 
 			found = append(found, located{kindNotification, ix.notifs[i].pos})
 		}
 	}
+	for _, seg := range ix.segs {
+		segmentNames = append(segmentNames, seg.name)
+	}
 	ix.mu.RUnlock()
 
 	sort.SliceStable(found, func(i, j int) bool {
@@ -134,7 +143,7 @@ func (s *JSONLStore) TaskHistory(ctx context.Context, taskID modulecore.TaskID) 
 		if err != nil {
 			return nil, err
 		}
-		lines = append(lines, TaskHistoryLine{File: kindFilename[item.kind], Offset: int64(item.pos.off), Line: json.RawMessage(bytes.TrimSpace(line))})
+		lines = append(lines, TaskHistoryLine{File: kindFilename[item.kind], Segment: segmentNames[item.pos.ordinal()], Offset: item.pos.fileOffset(), Line: json.RawMessage(bytes.TrimSpace(line))})
 	}
 	return lines, nil
 }

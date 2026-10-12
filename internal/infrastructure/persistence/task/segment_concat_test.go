@@ -1,0 +1,262 @@
+package task
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// Return to layout v1 (spec 10.4 R1, 14.1 R-11, AC-14).
+
+func readSegmentFiles(t testing.TB, dir string) map[string][]byte {
+	t.Helper()
+	out := map[string][]byte{}
+	for _, name := range sizedFilenames {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatal(err)
+		}
+		out[name] = data
+	}
+	return out
+}
+
+// buildSegmentedStore makes a store with a frozen segment 0 and three more
+// segments (three days), closes it, and returns the expected concatenation of
+// each file: segment 0 followed by every segment in order.
+func buildSegmentedStore(t *testing.T, root string, clock *testClock) (expected map[string][]byte, segmentBytes map[string]map[string][]byte) {
+	t.Helper()
+	stageOneStore(t, root, 6)
+	original := readSegmentFiles(t, root)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 6, 10)
+	clock.Set("2026-10-14T08:00:00Z")
+	populate(t, store, 10, 14)
+	clock.Set("2026-10-15T08:00:00Z")
+	populate(t, store, 14, 18)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	expected = map[string][]byte{}
+	segmentBytes = map[string]map[string][]byte{}
+	for name, data := range original {
+		expected[name] = append([]byte(nil), data...)
+	}
+	for _, seg := range segmentNames(t, root) {
+		files := readSegmentFiles(t, segmentDir(root, seg))
+		segmentBytes[seg] = files
+		for name, data := range files {
+			expected[name] = append(expected[name], data...)
+		}
+	}
+	return expected, segmentBytes
+}
+
+func TestConcatReturnsTheStoreToLayoutV1WithEveryLineInOrder(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	expected, segmentBytes := buildSegmentedStore(t, root, clock)
+	if len(segmentBytes) != 3 {
+		t.Fatalf("segments = %d, want 3", len(segmentBytes))
+	}
+
+	plan, err := ConcatTaskLayout(context.Background(), root, false)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if plan.State != "plan" {
+		t.Fatalf("plan state = %q", plan.State)
+	}
+	if layout, _ := readLayout(root); !layout.v2 {
+		t.Fatal("a plan changed the layout")
+	}
+
+	report, err := ConcatTaskLayout(context.Background(), root, true)
+	if err != nil {
+		t.Fatalf("concat: %v", err)
+	}
+	if report.State != "done" {
+		t.Fatalf("concat state = %q, want done", report.State)
+	}
+	if layout, err := readLayout(root); err != nil || layout.v2 {
+		t.Fatalf("LAYOUT after concat: %+v, %v", layout, err)
+	}
+	if _, err := os.Stat(layoutPath(root)); !os.IsNotExist(err) {
+		t.Fatalf("LAYOUT is still there: %v", err)
+	}
+	for _, name := range sizedFilenames {
+		got, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, expected[name]) {
+			t.Fatalf("%s after concat is %d bytes, want the original followed by every segment in order (%d bytes)", name, len(got), len(expected[name]))
+		}
+		if mode := fileMode(t, filepath.Join(root, name)); mode&0o200 == 0 {
+			t.Fatalf("%s is %o: layout v1 writes to it", name, mode)
+		}
+	}
+	if mode := fileMode(t, filepath.Join(root, ".jsonlbatch.wal")); mode&0o200 == 0 {
+		t.Fatalf("the WAL is %o", mode)
+	}
+	// Nothing is deleted: the segments are where logs/ was renamed to.
+	if _, err := os.Stat(logsDir(root)); !os.IsNotExist(err) {
+		t.Fatalf("logs/ is still there: %v", err)
+	}
+	matches, _ := filepath.Glob(filepath.Join(root, "logs.rolled-back-*"))
+	if len(matches) != 1 {
+		t.Fatalf("rolled-back logs = %v", matches)
+	}
+	for seg, files := range segmentBytes {
+		for name, want := range files {
+			got, err := os.ReadFile(filepath.Join(matches[0], seg, name))
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("segment %s %s changed by the concat (%v)", seg, name, err)
+			}
+		}
+	}
+	if m, _ := filepath.Glob(filepath.Join(root, "LAYOUT.rolled-back-*")); len(m) != 1 {
+		t.Fatalf("rolled-back LAYOUT = %v", m)
+	}
+
+	// The old implementation (fold of the whole log, no index) opens it and sees
+	// everything; so does the indexed one, from a rebuild of the stale sidecar.
+	legacy, err := NewJSONLStoreWithOptions(root, OpenOptions{})
+	if err != nil {
+		t.Fatalf("open the concatenated store without the index: %v", err)
+	}
+	ctx := context.Background()
+	for n := 0; n < 18; n++ {
+		id := indexedTestTask(n, indexTestNow).TaskID
+		if _, err := legacy.GetTask(ctx, id); err != nil {
+			t.Fatalf("task %d after concat (full fold): %v", n, err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	indexed := openPersisted(t, root, manualPolicy(), nil)
+	requireStoreEqualsFullBuild(t, indexed, root)
+
+	// And it can go to segments again, on top of what it holds.
+	if err := indexed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set("2026-10-20T08:00:00Z")
+	again := openRotating(t, root, clock, 0, nil)
+	populate(t, again, 18, 20)
+	for n := 0; n < 20; n++ {
+		if _, err := again.GetTask(ctx, indexedTestTask(n, indexTestNow).TaskID); err != nil {
+			t.Fatalf("task %d after concat and a second migration: %v", n, err)
+		}
+	}
+	requireSegmentedStoreEqualsFullBuild(t, again, root)
+}
+
+func TestConcatOfAV1StoreChangesNothing(t *testing.T) {
+	root := t.TempDir()
+	stageOneStore(t, root, 4)
+	before := fingerprintDir(t, root)
+	report, err := ConcatTaskLayout(context.Background(), root, true)
+	if err != nil {
+		t.Fatalf("concat of a layout v1 store: %v", err)
+	}
+	if report.State != "layout_v1" {
+		t.Fatalf("state = %q, want layout_v1", report.State)
+	}
+	requireFingerprintsEqual(t, "a layout v1 store after concat", before, fingerprintDir(t, root))
+}
+
+func TestConcatRefusesWhileTheWriterIsRunning(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	stageOneStore(t, root, 3)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 3, 5)
+	if _, err := ConcatTaskLayout(context.Background(), root, true); err == nil || !strings.Contains(err.Error(), ErrTaskWriterBusy.Error()) {
+		t.Fatalf("concat with a live writer: %v, want ErrTaskWriterBusy", err)
+	}
+	if layout, _ := readLayout(root); !layout.v2 {
+		t.Fatal("a refused concat changed the layout")
+	}
+}
+
+// A concat that stops anywhere and is run again ends in the same place.
+func TestConcatStoppedAtEveryStepAndRunAgainEndsTheSame(t *testing.T) {
+	// Count the steps first.
+	count := 0
+	{
+		root := t.TempDir()
+		clock := newTestClock("2026-10-13T08:00:00Z")
+		buildSegmentedStore(t, root, clock)
+		if _, err := concatTaskLayout(context.Background(), root, true, func(string) { count++ }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count < 15 {
+		t.Fatalf("only %d failpoints fired in a concat of three segments", count)
+	}
+	for stop := 1; stop <= count; stop++ {
+		root := t.TempDir()
+		clock := newTestClock("2026-10-13T08:00:00Z")
+		expected, _ := buildSegmentedStore(t, root, clock)
+
+		n := 0
+		crashed := didCrash(func() {
+			_, _ = concatTaskLayout(context.Background(), root, true, func(stage string) {
+				n++
+				if n == stop {
+					panic(simulatedCrash{stage})
+				}
+			})
+		})
+		if !crashed {
+			t.Fatalf("stop %d: the failpoint did not fire", stop)
+		}
+		// A store caught half way is not opened as either layout by a writer.
+		if layout, _ := readLayout(root); layout.v2 {
+			if store, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, 0, nil)); err == nil {
+				names, _ := listSegmentDirs(root)
+				seg0, _ := segmentFileSizes(root)
+				_ = store.Close()
+				if len(names) > 0 && seg0 != layoutFrozenOf(t, root) {
+					t.Fatalf("stop %d: a store caught in the middle of a concat was opened as layout v2", stop)
+				}
+			}
+		}
+		if _, err := ConcatTaskLayout(context.Background(), root, true); err != nil {
+			t.Fatalf("stop %d: running the concat again: %v", stop, err)
+		}
+		for _, name := range sizedFilenames {
+			got, err := os.ReadFile(filepath.Join(root, name))
+			if err != nil || !bytes.Equal(got, expected[name]) {
+				t.Fatalf("stop %d: %s differs from the original followed by the segments (%v)", stop, name, err)
+			}
+		}
+		if layout, err := readLayout(root); err != nil || layout.v2 {
+			t.Fatalf("stop %d: layout after the second run: %+v, %v", stop, layout, err)
+		}
+		legacy, err := NewJSONLStoreWithOptions(root, OpenOptions{})
+		if err != nil {
+			t.Fatalf("stop %d: open after the second run: %v", stop, err)
+		}
+		_ = legacy.Close()
+	}
+	_ = time.Second
+}
+
+func layoutFrozenOf(t testing.TB, root string) [sizedFileCount]int64 {
+	t.Helper()
+	layout, err := readLayout(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return layout.frozen
+}

@@ -58,6 +58,7 @@ func fileSize(path string) (int64, error) {
 // the periodic summary line. It starts no goroutine and no timer: both lines are
 // written from observe, on the goroutine of the transaction that just finished.
 type txObserver struct {
+	pathsMu            sync.RWMutex // guards statePath and runPath, which a rotation changes
 	statePath, runPath string
 	now                func() time.Time
 	logf               func(format string, args ...any)
@@ -135,10 +136,20 @@ func (o *txObserver) observe(ctx context.Context, tx jsonlbatch.TxObservation) {
 	}
 }
 
+// setPaths points the observer at the two hot files of another segment.
+func (o *txObserver) setPaths(statePath, runPath string) {
+	o.pathsMu.Lock()
+	defer o.pathsMu.Unlock()
+	o.statePath, o.runPath = statePath, runPath
+}
+
 // hotSizes stats the two hot files. It never decodes them.
 func (o *txObserver) hotSizes() hotSizes {
-	state, stateErr := o.statSize(o.statePath)
-	run, runErr := o.statSize(o.runPath)
+	o.pathsMu.RLock()
+	statePath, runPath := o.statePath, o.runPath
+	o.pathsMu.RUnlock()
+	state, stateErr := o.statSize(statePath)
+	run, runErr := o.statSize(runPath)
 	if stateErr != nil || runErr != nil {
 		return hotSizes{}
 	}

@@ -17,12 +17,13 @@ func (ix *taskIndex) readLine(kind fileKind, pos linePos) ([]byte, error) {
 	if ix.closed.Load() {
 		return nil, os.ErrClosed
 	}
-	file := ix.files[kind]
-	if file == nil {
-		return nil, os.ErrClosed
+	file, release, err := ix.fc.acquire(pos.ordinal(), kind)
+	if err != nil {
+		return nil, ix.corrupt(kind, pos, fmt.Sprintf("open: %v", err))
 	}
+	defer release()
 	buf := make([]byte, int(pos.length)+1)
-	n, err := file.ReadAt(buf, int64(pos.off))
+	n, err := file.ReadAt(buf, pos.fileOffset())
 	if err != nil && !(err == io.EOF && n == len(buf)) {
 		return nil, ix.corrupt(kind, pos, fmt.Sprintf("read: %v", err))
 	}
@@ -38,7 +39,7 @@ func (ix *taskIndex) readLine(kind fileKind, pos linePos) ([]byte, error) {
 
 func (ix *taskIndex) corrupt(kind fileKind, pos linePos, why string) error {
 	ix.corruptReads.Add(1)
-	return fmt.Errorf("%w: %s offset %d length %d: %s", ErrRecordCorrupt, kindFilename[kind], pos.off, pos.length, why)
+	return fmt.Errorf("%w: %s segment %d offset %d length %d: %s", ErrRecordCorrupt, kindFilename[kind], pos.ordinal(), pos.fileOffset(), pos.length, why)
 }
 
 // decodeLineAt reads, verifies and strictly decodes one line.

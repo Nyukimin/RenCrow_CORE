@@ -53,7 +53,10 @@ type activeRun struct {
 // the initial build: a record the index would reject can be refused before it
 // reaches the log.
 type indexBatch struct {
-	ix    *taskIndex
+	ix *taskIndex
+	// ord is the segment the chunks belong to: always the current one, because a
+	// batch is built under applyMu, which rotation also holds.
+	ord   uint16
 	has   [kindCount]bool
 	end   [kindCount]int64
 	lines [kindCount]int64
@@ -100,6 +103,7 @@ func (ix *taskIndex) buildBatch(chunks []appendChunk) (*indexBatch, error) {
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].kind < ordered[j].kind })
 	b := &indexBatch{
 		ix:             ix,
+		ord:            ix.cur,
 		newTasks:       make(map[key16]struct{}),
 		pins:           make(map[key16]taskPin),
 		latestRun:      make(map[key16]domaintask.Run),
@@ -134,7 +138,7 @@ func (b *indexBatch) scan(chunk appendChunk) error {
 	for start < len(data) {
 		end := bytes.IndexByte(data[start:], '\n')
 		raw := data[start : start+end]
-		pos := linePos{off: uint64(chunk.offset) + uint64(start), length: uint32(len(raw)), crc: crc32.Checksum(raw, castagnoli)}
+		pos := linePos{off: packPos(b.ord, chunk.offset+int64(start)), length: uint32(len(raw)), crc: crc32.Checksum(raw, castagnoli)}
 		start += end + 1
 		b.lines[chunk.kind]++
 		trimmed := bytes.TrimSpace(raw)
@@ -167,7 +171,7 @@ func (b *indexBatch) absorb(kind fileKind, line []byte, pos linePos) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("%w: %s offset %d: %w", ErrIndexInconsistent, kindFilename[kind], pos.off, err)
+	return fmt.Errorf("%w: %s offset %d: %w", ErrIndexInconsistent, kindFilename[kind], pos.fileOffset(), err)
 }
 
 func (b *indexBatch) taskKnown(key key16) bool {
@@ -530,11 +534,7 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 		ix.maxReceiptGeneration = b.maxReceiptGeneration
 	}
 	if ix.ck != nil {
-		var total int64
-		for _, n := range ix.lines {
-			total += n
-		}
-		ix.ck.noteLines(total)
+		ix.ck.noteLines(ix.totalLinesLocked())
 	}
 	return nil
 }
@@ -545,6 +545,22 @@ func (ix *taskIndex) merge(b *indexBatch) error {
 func (ix *taskIndex) apply(chunks []appendChunk) error {
 	ix.applyMu.Lock()
 	defer ix.applyMu.Unlock()
+	b, err := ix.buildBatch(chunks)
+	if err != nil {
+		return err
+	}
+	return ix.merge(b)
+}
+
+// applyTo is apply for bytes announced as belonging to segment ord: if the index
+// has moved on to another segment they are not its current segment's bytes, and
+// the index resynchronizes from the files instead of absorbing them as such.
+func (ix *taskIndex) applyTo(ord uint16, chunks []appendChunk) error {
+	ix.applyMu.Lock()
+	defer ix.applyMu.Unlock()
+	if ord != ix.cur {
+		return fmt.Errorf("%w: a commit of segment %d arrived while the index follows segment %d", ErrIndexInconsistent, ord, ix.cur)
+	}
 	b, err := ix.buildBatch(chunks)
 	if err != nil {
 		return err

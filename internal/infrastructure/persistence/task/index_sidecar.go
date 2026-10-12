@@ -11,13 +11,23 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// The sidecar (index/seg-legacy.tsi) is the persisted form of the in-memory
-// index: length-prefixed little-endian binary with a version, the committed
-// prefix and line count of every indexed file, the highest writer generations
-// and a CRC32C trailer. It is derived data. Deleting it, or failing to read it
-// for any reason, only costs a rebuild from the log; it never changes what the
-// store answers. The reader therefore accepts exactly one format version and
-// treats everything else as "no sidecar".
+// The sidecar is the persisted form of the in-memory index: length-prefixed
+// little-endian binary with a version, the committed prefix and line count of
+// every indexed file, the highest writer generations and a CRC32C trailer. It is
+// derived data. Deleting it, or failing to read it for any reason, only costs a
+// rebuild from the log; it never changes what the store answers. The reader
+// therefore accepts exactly the format versions it knows and treats everything
+// else as "no sidecar".
+//
+// Version 1 (layout v1, index/seg-legacy.tsi) describes the one segment that
+// exists: the files in the store root. Version 2 (layout v2, index/tasks.tsi)
+// describes all segments: applied and lines are those of the current (open)
+// segment, own_ordinal and own_name name it, and a segment table follows the
+// fixed header with the final size and line counts of every closed segment
+// (ordinals 0 to own_ordinal-1). The line positions of the body carry their
+// segment ordinal in the upper 16 bits (see linePos). The one file is replaced
+// as a whole at every checkpoint; segments that closed after it was written are
+// replayed from the log when it is restored.
 //
 // Layout (all integers little-endian):
 //
@@ -25,19 +35,22 @@ import (
 //	         own_name [24]byte | applied [kinds]u64 | lines [kinds]u64 |
 //	         n_tasks n_runs n_lines n_notifs n_receipts n_relations (u32 each) |
 //	         max_run_generation u64 | max_receipt_generation u64 | total_len u64
+//	segments (version 2 only) n_closed u32 (= own_ordinal) | per closed segment:
+//	         name [24]byte | size [6]u64 | lines [kinds]u64
 //	body     4 string tables | tasks | runs | line table (4 columns) |
 //	         notifications | receipts | relations
 //	trailer  crc32c u32 (of everything before it) | magic "ISTR"
 //
-// The segment identity (own_ordinal, own_name) is "0, legacy": this version
-// persists the one segment that exists today (the files in the store root).
+// Version 1's segment identity (own_ordinal, own_name) is "0, legacy".
 const (
 	sidecarMagic       = "RTSI"
 	sidecarEndMagic    = "ISTR"
-	sidecarVersion     = 1
+	sidecarVersionV1   = 1
+	sidecarVersionV2   = 2
 	sidecarNameLen     = 24
-	sidecarLegacyName  = "legacy"
+	sidecarLegacyName  = segmentLegacyName
 	sidecarHeaderFixed = 4 + 2 + 2 + 2 + 2 + sidecarNameLen + 8*int(kindCount)*2 + 4*6 + 8*3
+	sidecarSegEntryLen = sidecarNameLen + 8*sizedFileCount + 8*int(kindCount)
 	sidecarTrailerLen  = 4 + 4
 	// Smallest encoded size of one record, used to refuse an element count that
 	// the remaining bytes cannot hold before allocating for it.
@@ -75,6 +88,9 @@ type sidecarHeader struct {
 	Notifications        uint32
 	Receipts             uint32
 	Relations            uint32
+	// Closed is the number of closed segments the table of a version 2 sidecar
+	// lists (always OwnOrdinal); zero for version 1.
+	Closed uint32
 }
 
 // indexSnapshot is a consistent copy of the index taken under its read lock.
@@ -82,6 +98,9 @@ type sidecarHeader struct {
 // links) are copied; the append-only columns are shared, because the elements
 // below the captured length never change, so encoding can run without the lock.
 type indexSnapshot struct {
+	layoutV2                               bool
+	cur                                    uint16
+	segs                                   []segInfo
 	applied, lines                         [kindCount]int64
 	maxRunGeneration, maxReceiptGeneration uint64
 	tasks                                  []taskRec
@@ -94,11 +113,12 @@ type indexSnapshot struct {
 	titles, assignees, modules, enums      []string
 }
 
-// totalLines is the number of log lines the snapshot covers, over all files.
+// totalLines is the number of log lines the snapshot covers, over all files and
+// all segments.
 func (s *indexSnapshot) totalLines() int64 {
-	var total int64
-	for _, n := range s.lines {
-		total += n
+	total := totalLines(s.lines)
+	for i := 0; i < int(s.cur); i++ {
+		total += totalLines(s.segs[i].lines)
 	}
 	return total
 }
@@ -111,6 +131,9 @@ func (ix *taskIndex) snapshot() *indexSnapshot {
 	defer ix.mu.RUnlock()
 	n := len(ix.lt.off)
 	snap := &indexSnapshot{
+		layoutV2:             ix.layoutV2,
+		cur:                  ix.cur,
+		segs:                 append([]segInfo(nil), ix.segs...),
 		applied:              ix.applied,
 		lines:                ix.lines,
 		maxRunGeneration:     ix.maxRunGeneration,
@@ -181,18 +204,22 @@ func encodeSidecar(snap *indexSnapshot) []byte {
 	}
 	sort.Slice(relationSlots, func(i, j int) bool { return relationSlots[i] < relationSlots[j] })
 
-	estimate := sidecarHeaderFixed + sidecarTrailerLen +
+	estimate := sidecarHeaderFixed + sidecarTrailerLen + int(snap.cur)*sidecarSegEntryLen +
 		len(snap.tasks)*sidecarTaskRecLen + len(snap.runs)*sidecarRunRecLen +
 		len(snap.lineOff)*20 + len(snap.notifs)*sidecarNotifRecLen + len(receiptIDs)*64 + 1024
 	e := &sidecarEncoder{buf: make([]byte, 0, estimate)}
 
 	e.buf = append(e.buf, sidecarMagic...)
-	e.u16(sidecarVersion)
+	if snap.layoutV2 {
+		e.u16(sidecarVersionV2)
+	} else {
+		e.u16(sidecarVersionV1)
+	}
 	e.u16(0) // flags
-	e.u16(0) // own_ordinal
+	e.u16(snap.cur)
 	e.u16(uint16(kindCount))
 	name := make([]byte, sidecarNameLen)
-	copy(name, sidecarLegacyName)
+	copy(name, snap.segs[snap.cur].name)
 	e.buf = append(e.buf, name...)
 	for _, v := range snap.applied {
 		e.i64(v)
@@ -210,6 +237,22 @@ func encodeSidecar(snap *indexSnapshot) []byte {
 	e.u64(snap.maxReceiptGeneration)
 	totalLenAt := len(e.buf)
 	e.u64(0) // total_len, patched below
+
+	if snap.layoutV2 {
+		e.u32(uint32(snap.cur))
+		for i := 0; i < int(snap.cur); i++ {
+			seg := &snap.segs[i]
+			segName := make([]byte, sidecarNameLen)
+			copy(segName, seg.name)
+			e.buf = append(e.buf, segName...)
+			for _, v := range seg.size {
+				e.i64(v)
+			}
+			for _, v := range seg.lines {
+				e.i64(v)
+			}
+		}
+	}
 
 	e.strings(snap.titles)
 	e.strings(snap.assignees)
@@ -426,7 +469,7 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	h.Version = binary.LittleEndian.Uint16(data[4:])
 	h.Flags = binary.LittleEndian.Uint16(data[6:])
 	kinds := binary.LittleEndian.Uint16(data[10:])
-	if h.Version != sidecarVersion || h.Flags != 0 || int(kinds) != int(kindCount) {
+	if (h.Version != sidecarVersionV1 && h.Version != sidecarVersionV2) || h.Flags != 0 || int(kinds) != int(kindCount) {
 		return nil, h, fmt.Errorf("%w: version %d flags %#x kinds %d", errSidecarVersion, h.Version, h.Flags, kinds)
 	}
 	if string(data[len(data)-4:]) != sidecarEndMagic {
@@ -458,8 +501,16 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	if totalLen != uint64(len(data)) {
 		return nil, h, sidecarCorruptf("recorded length %d, file has %d", totalLen, len(data))
 	}
-	if h.OwnOrdinal != 0 || h.OwnName != sidecarLegacyName {
+	v2 := h.Version == sidecarVersionV2
+	if !v2 && (h.OwnOrdinal != 0 || h.OwnName != sidecarLegacyName) {
 		return nil, h, sidecarCorruptf("sidecar belongs to segment %d %q", h.OwnOrdinal, h.OwnName)
+	}
+	var closedSegs []segInfo
+	if v2 {
+		var err error
+		if closedSegs, err = decodeSegmentTable(d, &h); err != nil {
+			return nil, h, err
+		}
 	}
 	for k := fileKind(0); k < kindCount; k++ {
 		if h.Applied[k] < 0 || h.Lines[k] < 0 || (h.Applied[k] == 0) != (h.Lines[k] == 0) {
@@ -468,6 +519,11 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	}
 
 	ix := newTaskIndex("")
+	if v2 {
+		ix.layoutV2 = true
+		ix.cur = h.OwnOrdinal
+		ix.segs = append(closedSegs, segInfo{name: h.OwnName})
+	}
 	ix.applied, ix.lines = h.Applied, h.Lines
 	ix.maxRunGeneration, ix.maxReceiptGeneration = h.MaxRunGeneration, h.MaxReceiptGeneration
 
@@ -582,19 +638,99 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	return ix, h, nil
 }
 
+// decodeSegmentTable reads the table of closed segments of a version 2 sidecar
+// and checks that it is a possible history: as many entries as the open
+// segment's ordinal, segment 0 first, names in ordinal order, the open segment
+// last.
+func decodeSegmentTable(d *sidecarDecoder, h *sidecarHeader) ([]segInfo, error) {
+	closed := d.u32()
+	if d.err != nil {
+		return nil, d.err
+	}
+	h.Closed = closed
+	if h.OwnOrdinal == 0 || uint32(h.OwnOrdinal) != closed {
+		return nil, sidecarCorruptf("the open segment has ordinal %d but %d closed segments are listed", h.OwnOrdinal, closed)
+	}
+	if int(closed) > d.remaining()/sidecarSegEntryLen {
+		return nil, sidecarCorruptf("segment table does not fit in the file")
+	}
+	segs := make([]segInfo, 0, closed+1)
+	previous := ""
+	for i := uint32(0); i < closed; i++ {
+		var seg segInfo
+		seg.name = string(bytes.TrimRight(d.take(sidecarNameLen), "\x00"))
+		for k := range seg.size {
+			seg.size[k] = d.i64()
+		}
+		for k := range seg.lines {
+			seg.lines[k] = d.i64()
+		}
+		if d.err != nil {
+			return nil, d.err
+		}
+		if i == 0 {
+			if seg.name != segmentLegacyName {
+				return nil, sidecarCorruptf("segment 0 is named %q", seg.name)
+			}
+		} else if !segmentNamePattern.MatchString(seg.name) || seg.name <= previous {
+			return nil, sidecarCorruptf("segment %d is named %q, which does not follow %q", i, seg.name, previous)
+		}
+		for _, v := range seg.size {
+			if v < 0 {
+				return nil, sidecarCorruptf("segment %d has a negative size", i)
+			}
+		}
+		for _, v := range seg.lines {
+			if v < 0 {
+				return nil, sidecarCorruptf("segment %d has a negative line count", i)
+			}
+		}
+		if i > 0 {
+			previous = seg.name
+		}
+		segs = append(segs, seg)
+	}
+	if !segmentNamePattern.MatchString(h.OwnName) || (previous != "" && h.OwnName <= previous) {
+		return nil, sidecarCorruptf("the open segment is named %q after %q", h.OwnName, previous)
+	}
+	return segs, nil
+}
+
+// limitOf is the number of bytes of segment ord the index accepts a line to lie
+// in: the largest file of a closed segment, the largest committed prefix of the
+// open one. A segment that does not exist has no room at all (-1).
+func (ix *taskIndex) limitOf(ord uint16) int64 {
+	if ord > ix.cur {
+		return -1
+	}
+	var limit int64
+	if ord == ix.cur {
+		for _, v := range ix.applied {
+			limit = max(limit, v)
+		}
+		return limit
+	}
+	for k := fileKind(0); k < kindCount; k++ {
+		limit = max(limit, ix.segs[ord].size[k])
+	}
+	return limit
+}
+
+// lineBeyondLimit reports whether the line at pos cannot lie inside the segment
+// it names.
+func (ix *taskIndex) lineBeyondLimit(pos linePos) bool {
+	limit := ix.limitOf(pos.ordinal())
+	off := pos.fileOffset()
+	return limit < 0 || off > limit || int64(pos.length)+1 > limit-off
+}
+
 // validateStructure checks the references a decoded index holds against each
 // other: ranges, intern ids, the chains of lines and Runs, and that nothing is
 // shared or left over. It reads only the index, never the log.
 func (ix *taskIndex) validateStructure() error {
 	nTasks, nRuns, nLines := uint32(len(ix.tasks)), uint32(len(ix.runs)), uint32(len(ix.lt.off))
-	var maxApplied int64
-	for _, v := range ix.applied {
-		if v > maxApplied {
-			maxApplied = v
-		}
-	}
 	for i := range ix.lt.off {
-		if ix.lt.off[i] > uint64(maxApplied) || uint64(ix.lt.length[i])+1 > uint64(maxApplied)-ix.lt.off[i] {
+		if ix.lineBeyondLimit(ix.lt.pos(uint32(i + 1))) {
 			return sidecarCorruptf("line %d lies beyond every committed prefix", i+1)
 		}
 		if ix.lt.next[i] > nLines {
@@ -698,8 +834,12 @@ func (ix *taskIndex) validateStructure() error {
 		{kindState, int64(stateLines)}, {kindRun, int64(runLines)}, {kindContext, int64(ctxLines)},
 		{kindNotification, int64(len(ix.notifs))}, {kindReceipt, int64(len(ix.receipts))},
 	} {
-		if check.count > ix.lines[check.kind] {
-			return sidecarCorruptf("%s: %d records in the index but only %d lines", kindFilename[check.kind], check.count, ix.lines[check.kind])
+		lines := ix.lines[check.kind]
+		for i := 0; i < int(ix.cur); i++ {
+			lines += ix.segs[i].lines[check.kind]
+		}
+		if check.count > lines {
+			return sidecarCorruptf("%s: %d records in the index but only %d lines", kindFilename[check.kind], check.count, lines)
 		}
 	}
 	for slot := range ix.relations {
@@ -708,12 +848,12 @@ func (ix *taskIndex) validateStructure() error {
 		}
 	}
 	for _, n := range ix.notifs {
-		if n.pos.off > uint64(maxApplied) || uint64(n.pos.length)+1 > uint64(maxApplied)-n.pos.off {
+		if ix.lineBeyondLimit(n.pos) {
 			return sidecarCorruptf("a notification lies beyond every committed prefix")
 		}
 	}
 	for _, rec := range ix.receipts {
-		if rec.pos.off > uint64(maxApplied) || uint64(rec.pos.length)+1 > uint64(maxApplied)-rec.pos.off {
+		if ix.lineBeyondLimit(rec.pos) {
 			return sidecarCorruptf("a receipt lies beyond every committed prefix")
 		}
 	}
@@ -727,6 +867,17 @@ func (ix *taskIndex) validateStructure() error {
 // index built incrementally and one built from the log in one pass; neither is
 // visible to a reader, so neither is compared.
 func equivalentIndex(a, b *taskIndex) error {
+	if a.layoutV2 != b.layoutV2 || a.cur != b.cur || len(a.segs) != len(b.segs) {
+		return fmt.Errorf("segments differ: layout v2 %v/%v, current %d/%d, %d/%d segments", a.layoutV2, b.layoutV2, a.cur, b.cur, len(a.segs), len(b.segs))
+	}
+	for i := 0; i < int(a.cur); i++ {
+		if a.segs[i].name != b.segs[i].name || a.segs[i].size != b.segs[i].size || a.segs[i].lines != b.segs[i].lines {
+			return fmt.Errorf("closed segment %d differs: %q %v %v vs %q %v %v", i, a.segs[i].name, a.segs[i].size, a.segs[i].lines, b.segs[i].name, b.segs[i].size, b.segs[i].lines)
+		}
+	}
+	if a.segs[a.cur].name != b.segs[b.cur].name {
+		return fmt.Errorf("current segment differs: %q vs %q", a.segs[a.cur].name, b.segs[b.cur].name)
+	}
 	if a.applied != b.applied {
 		return fmt.Errorf("applied bytes differ: %v vs %v", a.applied, b.applied)
 	}

@@ -61,6 +61,25 @@ type oraclePair struct {
 	reopens int
 	runs    int
 	sources map[string]int
+
+	// rotation, if set, opens the indexed store with segment rotation on and the
+	// given clock as the store's clock (see newOracleWorldRotating).
+	rotation *oracleRotation
+}
+
+// oracleRotation drives segment rotation in the oracle: the clock the indexed
+// store reads, and the size valve that makes small segments.
+type oracleRotation struct {
+	clock *testClock
+	valve int64
+}
+
+// sidecarPath is the sidecar of the indexed store under whichever layout it is on.
+func (p *oraclePair) sidecarPath() string {
+	if layout, err := readLayout(p.rootIndex); err == nil && layout.v2 {
+		return sidecarPathFor(p.rootIndex, true)
+	}
+	return sidecarFile(p.rootIndex)
 }
 
 func newOraclePair(t *testing.T) *oraclePair { return newOraclePairWith(t, false) }
@@ -82,6 +101,9 @@ func (p *oraclePair) open() {
 	opts := OpenOptions{Index: true}
 	if p.persist {
 		opts.Persist, opts.checkpoint = true, manualPolicy()
+	}
+	if p.rotation != nil {
+		opts.Rotation, opts.RotationSizeValve, opts.now = true, p.rotation.valve, p.rotation.clock.Now
 	}
 	if p.indexed, err = NewJSONLStoreWithOptions(p.rootIndex, opts); err != nil {
 		p.t.Fatalf("open indexed store: %v", err)
@@ -136,7 +158,7 @@ func (p *oraclePair) reopenPersisted() {
 	p.t.Helper()
 	mode := p.reopens % 6
 	p.reopens++
-	sidecar := sidecarFile(p.rootIndex)
+	sidecar := p.sidecarPath()
 	switch mode {
 	case 0:
 		if err := p.indexed.Close(); err != nil {
@@ -307,6 +329,23 @@ func newOracleWorldWith(t *testing.T, seed int64, persist bool) *oracleWorld {
 	}
 }
 
+// newOracleWorldRotating is newOracleWorldWith(persist) with the indexed store
+// writing to segments: the store's clock runs ahead as the sequence goes on, so
+// days change under it (and a small size valve closes segments within a day),
+// and every restart has several segments to restore.
+func newOracleWorldRotating(t *testing.T, seed int64, valve int64) *oracleWorld {
+	t.Helper()
+	pair := &oraclePair{t: t, rootLegacy: t.TempDir(), rootIndex: t.TempDir(), outcomes: map[string][2]int{}, persist: true, sources: map[string]int{},
+		rotation: &oracleRotation{clock: newTestClock("2026-10-01T06:00:00Z"), valve: valve}}
+	pair.open()
+	t.Cleanup(pair.closeBoth)
+	return &oracleWorld{
+		t: t, pair: pair, rng: rand.New(rand.NewSource(seed)), seed: seed,
+		clock:  time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+		opTask: map[string]modulecore.TaskID{}, opHash: map[string]string{},
+	}
+}
+
 func (w *oracleWorld) newUUID() string {
 	w.seq++
 	return uuid.NewSHA1(oracleNamespace, []byte(fmt.Sprintf("%d/%d", w.seed, w.seq))).String()
@@ -393,6 +432,9 @@ func (w *oracleWorld) fatalf(format string, args ...any) {
 func (w *oracleWorld) step() {
 	w.t.Helper()
 	ctx := context.Background()
+	if w.pair.rotation != nil && w.rng.Intn(9) == 0 {
+		w.pair.rotation.clock.Advance(time.Duration(4+w.rng.Intn(40)) * time.Hour)
+	}
 	switch n := w.rng.Intn(100); {
 	case n < 14 || len(w.tasks) == 0:
 		task := w.randomTask()

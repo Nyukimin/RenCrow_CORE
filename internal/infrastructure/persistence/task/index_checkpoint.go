@@ -59,7 +59,6 @@ func defaultCheckpointPolicy() checkpointPolicy {
 type checkpointer struct {
 	ix     *taskIndex
 	dir    string
-	path   string
 	policy checkpointPolicy
 
 	// Test seams. fp is called at each stage of a replacement (nil in
@@ -69,6 +68,7 @@ type checkpointer struct {
 	renameBackoff []time.Duration
 
 	kick      chan struct{} // capacity 1; a send never blocks (see noteLines)
+	force     chan string   // capacity 1; a checkpoint is wanted now, for the reason sent (see request)
 	stopCh    chan struct{}
 	done      chan struct{} // closed when no goroutine is running
 	stopOnce  sync.Once
@@ -82,7 +82,7 @@ type checkpointer struct {
 
 	mu          sync.Mutex // one replacement at a time; guards the fields below
 	written     bool       // a sidecar of this run exists
-	lastApplied [kindCount]int64
+	lastApplied indexPosition
 	nextTry     time.Time
 	retryDelay  time.Duration
 }
@@ -90,16 +90,39 @@ type checkpointer struct {
 func newCheckpointer(ix *taskIndex, root string, policy checkpointPolicy) *checkpointer {
 	dir := filepath.Join(root, sidecarDirName)
 	c := &checkpointer{
-		ix: ix, dir: dir, path: filepath.Join(dir, sidecarLegacyFile), policy: policy,
+		ix: ix, dir: dir, policy: policy,
 		rename: os.Rename, renameBackoff: sidecarRenameBackoff,
-		kick: make(chan struct{}, 1), stopCh: make(chan struct{}), done: make(chan struct{}),
+		kick: make(chan struct{}, 1), force: make(chan string, 1), stopCh: make(chan struct{}), done: make(chan struct{}),
 	}
 	close(c.done) // nothing is running yet; start replaces it
 	// A temporary file here is the remains of a checkpoint that a crash cut off.
 	// It is this writer's own scratch name and never a sidecar (the writer lock
-	// is held), so it goes. The sidecar itself is never removed.
-	_ = os.Remove(c.path + sidecarTmpSuffix)
+	// is held), so it goes. The sidecars themselves are never removed.
+	_ = os.Remove(filepath.Join(dir, sidecarLegacyFile) + sidecarTmpSuffix)
+	_ = os.Remove(filepath.Join(dir, sidecarV2File) + sidecarTmpSuffix)
 	return c
+}
+
+// sidecarPath is the file the next checkpoint replaces: the sidecar of the
+// layout the store is on now.
+func (c *checkpointer) sidecarPath() string {
+	if c.ix.isLayoutV2() {
+		return filepath.Join(c.dir, sidecarV2File)
+	}
+	return filepath.Join(c.dir, sidecarLegacyFile)
+}
+
+// request asks the checkpoint goroutine for a checkpoint now (a segment just
+// closed). It never blocks the caller. With no goroutine (a manual policy) it
+// does nothing: whoever drives checkpoints decides when.
+func (c *checkpointer) request(reason string) {
+	if c.policy.manual {
+		return
+	}
+	select {
+	case c.force <- reason:
+	default:
+	}
 }
 
 // start launches the checkpoint goroutine, unless the policy is manual.
@@ -124,6 +147,8 @@ func (c *checkpointer) run() {
 			c.checkpointIfDue("interval")
 		case <-c.kick:
 			c.checkpointIfDue("lines")
+		case reason := <-c.force:
+			c.checkpointIfDue(reason)
 		}
 	}
 }
@@ -157,10 +182,10 @@ func (c *checkpointer) noteLines(total int64) {
 
 // markWritten records the state a sidecar on disk already covers, so the loop
 // does not rewrite it unchanged (used after a restore that needed no replay).
-func (c *checkpointer) markWritten(applied [kindCount]int64, lines int64) {
+func (c *checkpointer) markWritten(at indexPosition, lines int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.written, c.lastApplied = true, applied
+	c.written, c.lastApplied = true, at
 	c.lastLines.Store(lines)
 }
 
@@ -172,7 +197,7 @@ func (c *checkpointer) checkpointIfDue(reason string) error {
 		c.mu.Unlock()
 		return nil
 	}
-	if c.written && c.ix.appliedNow() == c.lastApplied {
+	if c.written && c.ix.positionNow() == c.lastApplied {
 		c.mu.Unlock()
 		return nil
 	}
@@ -180,11 +205,25 @@ func (c *checkpointer) checkpointIfDue(reason string) error {
 	return c.checkpointNow(reason)
 }
 
-// appliedNow is the committed prefix the index has absorbed, per file.
-func (ix *taskIndex) appliedNow() [kindCount]int64 {
+// indexPosition is how far the index has absorbed the log: which segment it is
+// in, how many segments there are, and the committed prefix of each file of the
+// current one. Two checkpoints of the same position say the same thing.
+type indexPosition struct {
+	segments int
+	cur      uint16
+	applied  [kindCount]int64
+}
+
+func (ix *taskIndex) positionNow() indexPosition {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
-	return ix.applied
+	return indexPosition{segments: len(ix.segs), cur: ix.cur, applied: ix.applied}
+}
+
+func (ix *taskIndex) isLayoutV2() bool {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	return ix.layoutV2
 }
 
 // checkpointNow snapshots the index and replaces the sidecar. A failure never
@@ -203,15 +242,15 @@ func (c *checkpointer) checkpointNow(reason string) error {
 			c.retryDelay = c.policy.retryMax
 		}
 		c.nextTry = time.Now().Add(c.retryDelay)
-		log.Printf("[TaskStore] WARN index checkpoint seg=legacy result=error failures=%d reason=%s retry_in=%s: %v", failures, reason, c.retryDelay, err)
+		log.Printf("[TaskStore] WARN index checkpoint result=error failures=%d reason=%s retry_in=%s: %v", failures, reason, c.retryDelay, err)
 		return err
 	}
 	c.failures.Store(0)
 	c.retryDelay, c.nextTry = 0, time.Time{}
-	c.written, c.lastApplied = true, snap.applied
+	c.written, c.lastApplied = true, indexPosition{segments: len(snap.segs), cur: snap.cur, applied: snap.applied}
 	c.lastLines.Store(snap.totalLines())
 	c.count.Add(1)
-	log.Printf("[TaskStore] index checkpoint seg=legacy bytes=%d dur=%s reason=%s", len(data), time.Since(started).Round(time.Millisecond), reason)
+	log.Printf("[TaskStore] index checkpoint seg=%s bytes=%d dur=%s reason=%s", snap.segs[snap.cur].name, len(data), time.Since(started).Round(time.Millisecond), reason)
 	return nil
 }
 
@@ -229,13 +268,14 @@ func (c *checkpointer) replaceSidecar(data []byte) error {
 	if err := os.MkdirAll(c.dir, 0o700); err != nil {
 		return fmt.Errorf("create sidecar directory: %w", err)
 	}
-	tmp := c.path + sidecarTmpSuffix
+	path := c.sidecarPath()
+	tmp := path + sidecarTmpSuffix
 	if err := c.writeTemporary(tmp, data); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	c.failpoint("pre-rename")
-	if err := c.renameWithRetry(tmp, c.path); err != nil {
+	if err := c.renameWithRetry(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}

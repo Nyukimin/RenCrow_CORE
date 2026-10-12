@@ -231,6 +231,35 @@ func OpenReader(root string, filenames []string) (*Store, error) {
 	return s, nil
 }
 
+// CheckSettled reports whether the WAL in root holds no torn terminal record
+// and no pending transaction, which is what a data set that will not be written
+// again must look like. It takes no lock and changes nothing, so it is only
+// meaningful for a directory no writer is using; the error wraps
+// ErrRecoveryRequired when the WAL is not settled. A directory with no WAL is
+// settled.
+func CheckSettled(root string, filenames []string) error {
+	allowed, _, err := validateFilenames(filenames)
+	if err != nil {
+		return err
+	}
+	s := &Store{walPath: filepath.Join(root, journalFilename), allowed: allowed, readOnly: true}
+	data, err := s.readJournalData()
+	if err != nil {
+		return err
+	}
+	state, err := parseJournal(data, s.allowed)
+	if err != nil {
+		return errors.Join(ErrRecoveryRequired, err)
+	}
+	if state.torn {
+		return fmt.Errorf("%w: journal has a torn terminal record", ErrRecoveryRequired)
+	}
+	if state.pending != nil {
+		return fmt.Errorf("%w: transaction %q is pending", ErrRecoveryRequired, state.pending.TxID)
+	}
+	return nil
+}
+
 // Read runs callback while holding the same exclusive OS lock used by writes.
 // A reader never repairs the WAL, so a torn or pending transaction fails
 // closed with ErrRecoveryRequired before callback is invoked.

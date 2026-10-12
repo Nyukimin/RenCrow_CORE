@@ -179,12 +179,12 @@ func TestComparisonCatchesADoctoredIndex(t *testing.T) {
 			}
 			defer ix.close()
 			var clean VerifyReport
-			if err := compareIndexWithLog(context.Background(), root, ix, &clean); err != nil || clean.Mismatches != 0 {
+			if err := compareIndexWithLog(context.Background(), ix, &clean); err != nil || clean.Mismatches != 0 {
 				t.Fatalf("an undoctored index does not pass: err=%v report=%+v", err, clean)
 			}
 			doctor(ix)
 			var report VerifyReport
-			if err := compareIndexWithLog(context.Background(), root, ix, &report); err != nil {
+			if err := compareIndexWithLog(context.Background(), ix, &report); err != nil {
 				t.Fatal(err)
 			}
 			if report.Mismatches == 0 {

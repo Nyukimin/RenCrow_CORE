@@ -135,7 +135,7 @@ func TestSidecarOfAnotherVersionIsNotAccepted(t *testing.T) {
 	live := sharedCorpus(t)
 	data := encodeSidecar(live.snapshot())
 	for name, mutate := range map[string]func([]byte){
-		"future version": func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 2) },
+		"future version": func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 3) }, // 2 is the sidecar of layout v2
 		"version zero":   func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 0) },
 		"unknown flags":  func(b []byte) { binary.LittleEndian.PutUint16(b[6:], 1) },
 	} {

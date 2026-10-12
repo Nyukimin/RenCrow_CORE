@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,7 +41,8 @@ type JSONLStore struct {
 	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
 	txObserver        *txObserver
-	idx               *taskIndex // optional in-memory index (OpenOptions.Index); nil keeps the original path
+	rot               *rotationState // segment rotation (nil for a reader)
+	idx               *taskIndex     // optional in-memory index (OpenOptions.Index); nil keeps the original path
 	root              string
 	statePath         string
 	runPath           string
@@ -79,6 +81,9 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	if opts.Persist && !opts.Index {
 		return nil, errors.New("task store option Persist requires Index")
 	}
+	if opts.Rotation && !(opts.Index && opts.Persist) {
+		return nil, errors.New("task store option Rotation requires Index and Persist")
+	}
 	root = filepath.Clean(root)
 	if !readOnly {
 		if err := os.MkdirAll(root, 0o755); err != nil {
@@ -88,12 +93,24 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	if err := rejectLegacyTaskStoreFiles(root); err != nil {
 		return nil, err
 	}
+	// Every opener goes through openLayout, so none of them sees a history that
+	// is not the one that was recorded (segment 0 frozen at its recorded size).
+	layout, refs, err := openLayout(root)
+	if err != nil {
+		return nil, err
+	}
+	if layout.v2 {
+		// A store on layout v2 cannot be read without its index: the segments
+		// are only joined by it.
+		opts.Index = true
+	}
+	current := refs[len(refs)-1]
 	store := &JSONLStore{
 		root:              root,
-		statePath:         filepath.Join(root, stateFilename),
-		runPath:           filepath.Join(root, runFilename),
-		contextPath:       filepath.Join(root, contextFilename),
-		notificationsPath: filepath.Join(root, notificationsFilename),
+		statePath:         filepath.Join(current.dir, stateFilename),
+		runPath:           filepath.Join(current.dir, runFilename),
+		contextPath:       filepath.Join(current.dir, contextFilename),
+		notificationsPath: filepath.Join(current.dir, notificationsFilename),
 		lifecycle:         newTaskStoreLifecycle(),
 		executionFence:    newTaskExecutionFence(),
 		fenceByID:         make(map[string]persistedTaskFence),
@@ -101,19 +118,7 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	}
 	store.readOnly = readOnly
 	if readOnly {
-		filenames, err := taskBatchReaderFilenames(root)
-		if err != nil {
-			return nil, err
-		}
-		batch, err := jsonlbatch.OpenReader(root, filenames)
-		if err != nil {
-			return nil, err
-		}
-		store.batch = batch
-		if err := store.openReaderIndex(opts.Index); err != nil {
-			return nil, err
-		}
-		return store, nil
+		return openReaderStore(store, layout, refs, opts)
 	}
 	lock, err := acquireTaskWriter(root)
 	if err != nil {
@@ -123,14 +128,16 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	success := false
 	defer func() {
 		if !success {
-			_ = store.Close()
+			// The store never served a request: there is nothing to flush.
+			_ = store.closeStore(false)
 		}
 	}()
-	batch, err := jsonlbatch.New(root, taskBatchFilenames())
+	batch, err := openWriterBatch(root, layout, refs)
 	if err != nil {
 		return nil, err
 	}
 	store.batch = batch
+	store.rot = newRotationState(opts)
 	// Only the writer observes transaction timing; short-lived read-only handles
 	// (CLI) stay silent.
 	store.txObserver = newTxObserver(store.statePath, store.runPath)
@@ -140,7 +147,7 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	}
 	var receipts map[string]TaskOperationReceipt
 	if opts.Index {
-		idx, err := openTaskIndex(root, opts.Persist, opts.failpoint)
+		idx, err := openTaskIndex(root, layout, refs, opts.Persist, opts.failpoint)
 		if err != nil {
 			return nil, fmt.Errorf("build task index: %w", err)
 		}
@@ -154,7 +161,7 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 			idx.ck.fp = opts.failpoint
 			if idx.source == sourceSidecar && idx.replayedLines == 0 {
 				// The sidecar on disk already says everything.
-				idx.ck.markWritten(idx.applied, totalLines(idx.lines))
+				idx.ck.markWritten(idx.positionNow(), idx.totalLinesLocked())
 			} else {
 				// After a rebuild, or a restore that needed the log beyond the
 				// sidecar, write a fresh one now: a crash before the first interval
@@ -163,14 +170,14 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 				_ = idx.ck.checkpointNow("open")
 			}
 		}
-		batch.SetPostCommitHook(idx.onCommit)
+		batch.SetPostCommitHook(idx.onCommitFor(idx.cur))
 	} else {
 		receipts, err = readTaskOperationReceipts(context.Background(), filepath.Join(root, taskOperationReceiptFilename))
 		if err != nil {
 			return nil, fmt.Errorf("load task operation receipts: %w", err)
 		}
 	}
-	fenceSnapshot, err := readTaskExecutionFences(context.Background(), filepath.Join(root, taskExecutionFenceFilename))
+	fenceSnapshot, err := readTaskExecutionFences(context.Background(), store.fenceLogPaths()...)
 	if err != nil {
 		return nil, fmt.Errorf("load task execution fences: %w", err)
 	}
@@ -206,11 +213,93 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 			return nil, fmt.Errorf("writer generation does not advance persisted task execution fence ownership")
 		}
 	}
+	if store.idx != nil && store.rot.enabled && !layout.v2 {
+		if err := store.migrateToSegments(context.Background()); err != nil {
+			var aborted *migrationAborted
+			if !errors.As(err, &aborted) {
+				return nil, err
+			}
+			log.Printf("[TaskStore] WARN segment migration did not start; the store stays on layout v1: %v", aborted.cause)
+		}
+	}
 	if store.idx != nil && store.idx.ck != nil {
 		store.idx.ck.start()
 	}
 	success = true
 	return store, nil
+}
+
+// openWriterBatch opens the jsonlbatch Store the writer appends to: the files in
+// the root on layout v1, the newest segment on layout v2. On layout v2 segment 0
+// is frozen (and kept so), and the segments before the newest are checked to
+// hold no unsettled WAL; the newest is repaired by the Recover that follows.
+func openWriterBatch(root string, layout layoutInfo, refs []segmentRef) (*jsonlbatch.Store, error) {
+	current := refs[len(refs)-1]
+	if !layout.v2 {
+		return jsonlbatch.New(current.dir, taskBatchFilenames())
+	}
+	if err := freezeSegmentZero(root); err != nil {
+		// The size check is the defense; the read-only mode is a guard on top.
+		log.Printf("[TaskStore] WARN segment 0 could not be made read-only: %v", err)
+	}
+	for _, ref := range refs[:len(refs)-1] {
+		err := jsonlbatch.CheckSettled(ref.dir, taskBatchFilenames())
+		if err == nil {
+			continue
+		}
+		if ref.ord == 0 || !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
+			return nil, fmt.Errorf("segment %s is closed but its WAL is not settled: %w", ref.name, err)
+		}
+		// A segment that is closed but has a pending WAL: rotation settles the old
+		// segment before it starts the next, so this is something else's doing.
+		// Repair it once (a rollback of the unfinished transaction), and say so.
+		repair, newErr := jsonlbatch.New(ref.dir, taskBatchFilenames())
+		if newErr != nil {
+			return nil, fmt.Errorf("open closed segment %s to repair its WAL: %w", ref.name, newErr)
+		}
+		if recoverErr := repair.Recover(context.Background()); recoverErr != nil {
+			return nil, fmt.Errorf("repair the WAL of closed segment %s: %w", ref.name, recoverErr)
+		}
+		log.Printf("[TaskStore] WARN closed segment %s had an unsettled WAL; it was rolled back", ref.name)
+	}
+	return jsonlbatch.New(current.dir, taskBatchFilenames())
+}
+
+// openReaderStore finishes opening a read-only store. On layout v2 the reader's
+// jsonlbatch Store is that of the newest segment that can be opened: a segment
+// directory that has just been created may not be complete yet, and the one
+// before it is then the newest history there is.
+func openReaderStore(store *JSONLStore, layout layoutInfo, refs []segmentRef, opts OpenOptions) (*JSONLStore, error) {
+	var batch *jsonlbatch.Store
+	var err error
+	for len(refs) > 0 {
+		current := refs[len(refs)-1]
+		var filenames []string
+		if filenames, err = taskBatchReaderFilenames(current.dir); err == nil {
+			batch, err = jsonlbatch.OpenReader(current.dir, filenames)
+		}
+		if err == nil || !layout.v2 || len(refs) <= 2 {
+			break
+		}
+		refs = refs[:len(refs)-1]
+	}
+	if err != nil {
+		return nil, err
+	}
+	store.batch = batch
+	if err := store.openReaderIndex(layout, refs, opts.Index); err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// fenceLogPaths are the execution fence logs of every segment, oldest first. The
+// fence state is the fold of all of them in that order, as it was of the one file.
+func (s *JSONLStore) fenceLogPaths() []string {
+	if s.idx == nil {
+		return []string{filepath.Join(s.root, taskExecutionFenceFilename)}
+	}
+	return s.idx.fenceLogPaths()
 }
 
 // WriterGeneration returns the monotonically increasing generation held by a

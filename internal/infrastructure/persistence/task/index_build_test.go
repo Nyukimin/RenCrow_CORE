@@ -135,7 +135,7 @@ func TestHookThatCannotAbsorbACommitMarksTheIndexDirty(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An append that does not continue the indexed prefix cannot be applied.
-	store.idx.onCommit(ctx, []jsonlbatch.CommittedAppend{{Name: stateFilename, Offset: 1, Payload: []byte("{}\n")}})
+	store.idx.onCommit(ctx, 0, []jsonlbatch.CommittedAppend{{Name: stateFilename, Offset: 1, Payload: []byte("{}\n")}})
 	if stats, _ := store.IndexStats(); !stats.Dirty {
 		t.Fatal("index is not dirty after a commit it could not absorb")
 	}

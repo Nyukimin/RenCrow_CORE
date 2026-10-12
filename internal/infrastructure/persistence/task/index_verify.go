@@ -27,7 +27,8 @@ const (
 // them all.
 const maxVerifyProblems = 20
 
-// VerifyFile is what the log and the index say about one file.
+// VerifyFile is what the log and the index say about one file, summed over all
+// segments.
 type VerifyFile struct {
 	Name       string `json:"name"`
 	Bytes      int64  `json:"bytes"`
@@ -44,6 +45,11 @@ type VerifyReport struct {
 	// independent fold of the log, and a usable sidecar agrees with the log.
 	OK    bool         `json:"ok"`
 	Files []VerifyFile `json:"files"`
+	// Layout is "v1" (the files in the store root) or "v2" (segment 0 frozen and
+	// a segment per day under logs/); Segments counts the segments, segment 0
+	// included.
+	Layout   string `json:"layout"`
+	Segments int    `json:"segments"`
 
 	Tasks         int `json:"tasks"`
 	Runs          int `json:"runs"`
@@ -86,21 +92,25 @@ func VerifyTaskStore(ctx context.Context, root string) (VerifyReport, error) {
 	started := time.Now()
 	var report VerifyReport
 	root = filepath.Clean(root)
-	batch, err := openReaderBatch(root)
+	layout, refs, batch, err := openReaderBatch(root)
 	if err != nil {
 		return report, err
 	}
+	report.Layout, report.Segments = "v1", len(refs)
+	if layout.v2 {
+		report.Layout = "v2"
+	}
 	err = batch.Read(withTxLabel(ctx, "Verify", ""), func() error {
-		ix, buildErr := buildTaskIndexFrom(root, true)
+		ix, buildErr := buildTaskIndexOf(root, layout, refs, true)
 		if buildErr != nil {
 			report.problem("the log cannot be indexed: %v", buildErr)
 			return nil
 		}
 		defer ix.close()
-		if err := compareIndexWithLog(ctx, root, ix, &report); err != nil {
+		if err := compareIndexWithLog(ctx, ix, &report); err != nil {
 			return err
 		}
-		return compareSidecar(root, ix, &report)
+		return compareSidecar(root, layout, refs, ix, &report)
 	})
 	report.OK = err == nil && report.Mismatches == 0
 	report.DurationMs = time.Since(started).Milliseconds()
@@ -108,26 +118,51 @@ func VerifyTaskStore(ctx context.Context, root string) (VerifyReport, error) {
 }
 
 // openReaderBatch opens the read side of the store files, refusing a root that
-// holds a retired layout.
-func openReaderBatch(root string) (*jsonlbatch.Store, error) {
+// holds a retired layout or a history that is not the recorded one. It returns
+// the layout, the segments the reader covers and the jsonlbatch Store whose lock
+// the reader holds while it reads.
+func openReaderBatch(root string) (layoutInfo, []segmentRef, *jsonlbatch.Store, error) {
 	if info, err := os.Stat(root); err != nil {
-		return nil, fmt.Errorf("task store %q: %w", root, err)
+		return layoutInfo{}, nil, nil, fmt.Errorf("task store %q: %w", root, err)
 	} else if !info.IsDir() {
-		return nil, fmt.Errorf("task store %q is not a directory", root)
+		return layoutInfo{}, nil, nil, fmt.Errorf("task store %q is not a directory", root)
 	}
 	if err := rejectLegacyTaskStoreFiles(root); err != nil {
-		return nil, err
+		return layoutInfo{}, nil, nil, err
 	}
-	filenames, err := taskBatchReaderFilenames(root)
+	layout, refs, err := openLayout(root)
 	if err != nil {
-		return nil, err
+		return layoutInfo{}, nil, nil, err
 	}
-	return jsonlbatch.OpenReader(root, filenames)
+	refs, batch, err := openReaderBatchFor(layout, refs)
+	return layout, refs, batch, err
+}
+
+// openReaderBatchFor opens the reader of the newest segment that can be opened:
+// a segment directory that has just been created may not be complete yet, and
+// the one before it is then the newest history there is. It returns the segments
+// up to and including that one.
+func openReaderBatchFor(layout layoutInfo, refs []segmentRef) ([]segmentRef, *jsonlbatch.Store, error) {
+	for {
+		current := refs[len(refs)-1]
+		filenames, err := taskBatchReaderFilenames(current.dir)
+		var batch *jsonlbatch.Store
+		if err == nil {
+			batch, err = jsonlbatch.OpenReader(current.dir, filenames)
+		}
+		if err == nil {
+			return refs, batch, nil
+		}
+		if !layout.v2 || len(refs) <= 2 {
+			return nil, nil, err
+		}
+		refs = refs[:len(refs)-1]
+	}
 }
 
 // compareSidecar holds a usable sidecar against the index built from the log.
-func compareSidecar(root string, built *taskIndex, report *VerifyReport) error {
-	restored, replayed, why, err := restoreTaskIndex(root, true, nil)
+func compareSidecar(root string, layout layoutInfo, refs []segmentRef, built *taskIndex, report *VerifyReport) error {
+	restored, replayed, why, err := restoreTaskIndex(root, layout, refs, true, nil)
 	if err != nil {
 		return err
 	}
@@ -153,39 +188,62 @@ func compareSidecar(root string, built *taskIndex, report *VerifyReport) error {
 // compareIndexWithLog holds ix against an independent fold of the files of root
 // and records every disagreement in report. The caller holds the read lock of
 // the store, so the files do not change during the comparison.
-func compareIndexWithLog(ctx context.Context, root string, ix *taskIndex, report *VerifyReport) error {
-	// Files: lines and bytes.
+func compareIndexWithLog(ctx context.Context, ix *taskIndex, report *VerifyReport) error {
+	// Files: lines and bytes, segment by segment; the report sums them per file.
 	report.Files = report.Files[:0]
+	totals := make([]VerifyFile, kindCount)
 	for kind := fileKind(0); kind < kindCount; kind++ {
-		entry := VerifyFile{Name: kindFilename[kind], IndexBytes: ix.applied[kind], IndexLines: ix.lines[kind]}
-		file, err := os.Open(filepath.Join(root, kindFilename[kind]))
-		switch {
-		case err == nil:
-			info, statErr := file.Stat()
-			if statErr != nil {
-				_ = file.Close()
-				return statErr
-			}
-			entry.Bytes = info.Size()
-			lines, countErr := countNewlines(file, info.Size())
-			_ = file.Close()
-			if countErr != nil {
-				return countErr
-			}
-			entry.Lines = lines
-		case errors.Is(err, os.ErrNotExist):
-			// An absent file is an empty one (a store written before receipts existed).
-		default:
-			return err
-		}
-		if entry.Bytes != entry.IndexBytes || entry.Lines != entry.IndexLines {
-			report.problem("%s: the file has %d bytes and %d lines, the index covers %d bytes and %d lines", entry.Name, entry.Bytes, entry.Lines, entry.IndexBytes, entry.IndexLines)
-		}
-		report.Files = append(report.Files, entry)
+		totals[kind].Name = kindFilename[kind]
 	}
+	for ord := range ix.segs {
+		seg := ix.segs[ord]
+		for kind := fileKind(0); kind < kindCount; kind++ {
+			indexBytes, indexLines := seg.size[kind], seg.lines[kind]
+			if uint16(ord) == ix.cur {
+				indexBytes, indexLines = ix.applied[kind], ix.lines[kind]
+			}
+			entry := VerifyFile{Name: kindFilename[kind], IndexBytes: indexBytes, IndexLines: indexLines}
+			file, err := os.Open(filepath.Join(seg.dir, kindFilename[kind]))
+			switch {
+			case err == nil:
+				info, statErr := file.Stat()
+				if statErr != nil {
+					_ = file.Close()
+					return statErr
+				}
+				entry.Bytes = info.Size()
+				lines, countErr := countNewlines(file, info.Size())
+				_ = file.Close()
+				if countErr != nil {
+					return countErr
+				}
+				entry.Lines = lines
+			case errors.Is(err, os.ErrNotExist):
+				// An absent file is an empty one (a store written before receipts existed).
+			default:
+				return err
+			}
+			if entry.Bytes != entry.IndexBytes || entry.Lines != entry.IndexLines {
+				report.problem("segment %s, %s: the file has %d bytes and %d lines, the index covers %d bytes and %d lines", seg.name, entry.Name, entry.Bytes, entry.Lines, entry.IndexBytes, entry.IndexLines)
+			}
+			totals[kind].Bytes += entry.Bytes
+			totals[kind].Lines += entry.Lines
+			totals[kind].IndexBytes += entry.IndexBytes
+			totals[kind].IndexLines += entry.IndexLines
+		}
+	}
+	report.Files = append(report.Files, totals...)
 
-	// The oracle: the fold the store used before it had an index.
-	taskRecords, err := readJSONLLines[domaintask.Task](ctx, filepath.Join(root, stateFilename))
+	// The oracle: the fold the store used before it had an index, over the files
+	// of all segments in order.
+	pathsOf := func(name string) []string {
+		paths := make([]string, 0, len(ix.segs))
+		for _, seg := range ix.segs {
+			paths = append(paths, filepath.Join(seg.dir, name))
+		}
+		return paths
+	}
+	taskRecords, err := readSegmentedJSONLLines[domaintask.Task](ctx, pathsOf(stateFilename))
 	if err != nil {
 		report.problem("%s cannot be read: %v", stateFilename, err)
 		return nil
@@ -195,7 +253,7 @@ func compareIndexWithLog(ctx context.Context, root string, ix *taskIndex, report
 		report.problem("%s cannot be folded: %v", stateFilename, err)
 		return nil
 	}
-	runRecords, err := readJSONLLines[domaintask.Run](ctx, filepath.Join(root, runFilename))
+	runRecords, err := readSegmentedJSONLLines[domaintask.Run](ctx, pathsOf(runFilename))
 	if err != nil {
 		report.problem("%s cannot be read: %v", runFilename, err)
 		return nil
@@ -205,22 +263,20 @@ func compareIndexWithLog(ctx context.Context, root string, ix *taskIndex, report
 		report.problem("%s cannot be folded: %v", runFilename, err)
 		return nil
 	}
-	contextRecords, err := readJSONLLines[domaintask.SharedRoleContext](ctx, filepath.Join(root, contextFilename))
+	contextRecords, err := readSegmentedJSONLLines[domaintask.SharedRoleContext](ctx, pathsOf(contextFilename))
 	if err != nil {
 		report.problem("%s cannot be read: %v", contextFilename, err)
 		return nil
 	}
-	notifications, err := readJSONLLines[domaintask.Notification](ctx, filepath.Join(root, notificationsFilename))
+	notifications, err := readSegmentedJSONLLines[domaintask.Notification](ctx, pathsOf(notificationsFilename))
 	if err != nil {
 		report.problem("%s cannot be read: %v", notificationsFilename, err)
 		return nil
 	}
-	receipts := map[string]TaskOperationReceipt{}
-	if _, statErr := os.Stat(filepath.Join(root, taskOperationReceiptFilename)); statErr == nil {
-		if receipts, err = readTaskOperationReceipts(ctx, filepath.Join(root, taskOperationReceiptFilename)); err != nil {
-			report.problem("%s cannot be read: %v", taskOperationReceiptFilename, err)
-			return nil
-		}
+	receipts, err := readTaskOperationReceipts(ctx, pathsOf(taskOperationReceiptFilename)...)
+	if err != nil {
+		report.problem("%s cannot be read: %v", taskOperationReceiptFilename, err)
+		return nil
 	}
 	latestContext := make(map[modulecore.TaskID]domaintask.SharedRoleContext, len(contextRecords))
 	for _, record := range contextRecords {
@@ -385,7 +441,7 @@ func RebuildTaskIndex(ctx context.Context, root string) (RebuildReport, error) {
 	started := time.Now()
 	var report RebuildReport
 	root = filepath.Clean(root)
-	batch, err := openReaderBatch(root)
+	layout, refs, batch, err := openReaderBatch(root)
 	if err != nil {
 		return report, err
 	}
@@ -395,21 +451,21 @@ func RebuildTaskIndex(ctx context.Context, root string) (RebuildReport, error) {
 	}
 	defer func() { _ = releaseTaskWriter(lock) }()
 
-	report.Previous = describeSidecar(root)
+	report.Previous = describeSidecar(root, layout)
 	err = batch.Read(withTxLabel(ctx, "RebuildIndex", ""), func() error {
-		ix, err := buildTaskIndexFrom(root, true)
+		ix, err := buildTaskIndexOf(root, layout, refs, true)
 		if err != nil {
 			return err
 		}
 		defer ix.close()
 		stats := ix.stats()
 		report.Tasks, report.Runs, report.Notifications, report.Receipts = stats.Tasks, stats.Runs, stats.Notifications, stats.Receipts
-		report.Lines = totalLines(stats.Lines)
+		report.Lines = stats.TotalLines
 		ck := newCheckpointer(ix, root, checkpointPolicy{manual: true})
 		if err := ck.checkpointNow("rebuild-index"); err != nil {
 			return err
 		}
-		if info, err := os.Stat(sidecarPathOf(root)); err == nil {
+		if info, err := os.Stat(sidecarPathFor(root, layout.v2)); err == nil {
 			report.SidecarBytes = int(info.Size())
 		}
 		return nil
@@ -420,19 +476,23 @@ func RebuildTaskIndex(ctx context.Context, root string) (RebuildReport, error) {
 
 // describeSidecar says in a word what the sidecar of root is, without verifying
 // it against the log.
-func describeSidecar(root string) string {
-	data, err := os.ReadFile(sidecarPathOf(root))
+func describeSidecar(root string, layout layoutInfo) string {
+	data, err := os.ReadFile(sidecarPathFor(root, layout.v2))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "missing"
 		}
 		return "unusable: " + rebuildCorrupt
 	}
-	if _, _, err := decodeSidecar(data); err != nil {
+	_, header, err := decodeSidecar(data)
+	if err != nil {
 		if errors.Is(err, errSidecarVersion) {
 			return "unusable: " + rebuildVersion
 		}
 		return "unusable: " + rebuildCorrupt
+	}
+	if (header.Version == sidecarVersionV2) != layout.v2 {
+		return "unusable: " + rebuildLayout
 	}
 	return "usable"
 }
@@ -448,4 +508,19 @@ func rejectLegacyTaskStoreFiles(root string) error {
 		}
 	}
 	return nil
+}
+
+// readSegmentedJSONLLines reads the records of the same log file of every
+// segment, oldest first: the records the one file would hold on layout v1. A
+// segment without the file contributes none.
+func readSegmentedJSONLLines[T any](ctx context.Context, paths []string) ([]T, error) {
+	var all []T
+	for _, path := range paths {
+		part, err := readJSONLLines[T](ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, part...)
+	}
+	return all, nil
 }

@@ -43,6 +43,7 @@ func (s *JSONLStore) ExecuteIdempotentGlobalTaskOperation(
 	}
 	defer releaseAdmission()
 
+	s.rotateIfDue(ctx)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {

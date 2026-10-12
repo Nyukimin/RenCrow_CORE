@@ -142,6 +142,7 @@ func (s *JSONLStore) ExecuteIdempotentTaskOperation(
 	}
 	defer lease.release()
 
+	s.rotateIfDue(ctx)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {
@@ -343,7 +344,7 @@ func (s *JSONLStore) GetTaskExecutionFence(ctx context.Context, taskID modulecor
 	}
 	var result TaskExecutionFenceStatus
 	err = s.batch.Read(withTxLabel(ctx, "GetTaskExecutionFence", taskID), func() error {
-		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
+		snapshot, err := readTaskExecutionFences(ctx, s.fenceLogPaths()...)
 		if err != nil {
 			return err
 		}
@@ -495,10 +496,15 @@ func validateTaskOperationReceipt(receipt TaskOperationReceipt) error {
 	return nil
 }
 
-func readTaskOperationReceipts(ctx context.Context, path string) (map[string]TaskOperationReceipt, error) {
-	items, err := readJSONLLines[TaskOperationReceipt](ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrTaskOperationReceiptCorrupt, err)
+// readTaskOperationReceipts reads the receipts of the given logs, in order.
+func readTaskOperationReceipts(ctx context.Context, paths ...string) (map[string]TaskOperationReceipt, error) {
+	var items []TaskOperationReceipt
+	for _, path := range paths {
+		part, err := readJSONLLines[TaskOperationReceipt](ctx, path)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrTaskOperationReceiptCorrupt, err)
+		}
+		items = append(items, part...)
 	}
 	receipts := make(map[string]TaskOperationReceipt, len(items))
 	for index, receipt := range items {
@@ -528,10 +534,16 @@ func effectiveTaskOperationScope(scope TaskOperationScope) TaskOperationScope {
 	return scope
 }
 
-func readTaskExecutionFences(ctx context.Context, path string) (taskExecutionFenceSnapshot, error) {
-	items, err := readJSONLLines[taskExecutionFenceEvent](ctx, path)
-	if err != nil {
-		return taskExecutionFenceSnapshot{}, fmt.Errorf("%w: %v", ErrTaskExecutionFenceCorrupt, err)
+// readTaskExecutionFences folds the fence events of the given logs, in order: the
+// one file of a store on layout v1, the files of its segments on layout v2.
+func readTaskExecutionFences(ctx context.Context, paths ...string) (taskExecutionFenceSnapshot, error) {
+	var items []taskExecutionFenceEvent
+	for _, path := range paths {
+		part, err := readJSONLLines[taskExecutionFenceEvent](ctx, path)
+		if err != nil {
+			return taskExecutionFenceSnapshot{}, fmt.Errorf("%w: %v", ErrTaskExecutionFenceCorrupt, err)
+		}
+		items = append(items, part...)
 	}
 	snapshot := taskExecutionFenceSnapshot{
 		byID:   make(map[string]persistedTaskFence, len(items)),
@@ -695,7 +707,7 @@ func (s *JSONLStore) persistTaskExecutionFenceAcquire(ctx context.Context, taskI
 	var observed taskExecutionFenceSnapshot
 	observedOnDisk := false
 	err := s.writeTaskFenceEvent(withTxLabel(ctx, "AcquireTaskExecutionFence", taskID), func() (map[string][]byte, error) {
-		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
+		snapshot, err := readTaskExecutionFences(ctx, s.fenceLogPaths()...)
 		if err != nil {
 			return nil, err
 		}
@@ -762,7 +774,7 @@ func (s *JSONLStore) persistTaskExecutionFenceRelease(ctx context.Context, taskI
 	var observed taskExecutionFenceSnapshot
 	observedOnDisk := false
 	err := s.writeTaskFenceEvent(withTxLabel(ctx, "ReleaseTaskExecutionFence", taskID), func() (map[string][]byte, error) {
-		snapshot, err := readTaskExecutionFences(ctx, filepath.Join(s.root, taskExecutionFenceFilename))
+		snapshot, err := readTaskExecutionFences(ctx, s.fenceLogPaths()...)
 		if err != nil {
 			return nil, err
 		}
@@ -819,6 +831,7 @@ func (s *JSONLStore) clearProvisionalTaskFence(taskID modulecore.TaskID, fenceID
 }
 
 func (s *JSONLStore) writeTaskFenceEvent(ctx context.Context, callback func() (map[string][]byte, error)) error {
+	s.rotateIfDue(ctx)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if s.closed {

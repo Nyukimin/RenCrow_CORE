@@ -3,7 +3,7 @@ package task
 import (
 	"errors"
 	"hash/crc32"
-	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -59,14 +59,33 @@ func kindOfFilename(name string) (fileKind, bool) {
 // castagnoli is the CRC32C table; the standard library uses the CPU instruction.
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
-// linePos locates one log line: its byte offset, its length without the
-// terminating newline, and the CRC32C of those bytes taken when the line was
-// first seen.
+// linePos locates one log line: the segment it is in, its byte offset in that
+// segment's file, its length without the terminating newline, and the CRC32C of
+// those bytes taken when the line was first seen.
+//
+// off packs the segment ordinal into its upper 16 bits and the file offset into
+// the lower 48. Segment 0 (the files in the store root, and the only segment of a
+// store on layout v1) has ordinal 0, so its positions are the plain file offsets
+// they always were, and positions order the way the log does: by segment, then
+// by offset. Nothing outside these accessors computes with off.
 type linePos struct {
 	off    uint64
 	length uint32
 	crc    uint32
 }
+
+const (
+	posOffsetBits = 48
+	posOffsetMask = 1<<posOffsetBits - 1
+)
+
+// packPos builds the off of a line at fileOffset in segment ord.
+func packPos(ord uint16, fileOffset int64) uint64 {
+	return uint64(ord)<<posOffsetBits | uint64(fileOffset)&posOffsetMask
+}
+
+func (p linePos) ordinal() uint16   { return uint16(p.off >> posOffsetBits) }
+func (p linePos) fileOffset() int64 { return int64(p.off & posOffsetMask) }
 
 // lineTable stores line positions as parallel arrays (20 bytes per line, no
 // struct padding). A line index is 1-based; 0 means "none". next chains the
@@ -188,9 +207,23 @@ type taskIndex struct {
 	applyMu sync.Mutex
 	mu      sync.RWMutex
 
-	files   [kindCount]*os.File
+	// fc hands out read handles to the log files of every segment.
+	fc *segFileCache
+	// segs lists the segments in ordinal order, the current one last; cur is the
+	// ordinal of the segment writes go to. applied and lines describe that current
+	// segment only: the bytes of each of its files that the index has absorbed,
+	// and the lines in them. A closed segment's final sizes and lines are in segs.
+	// Rotation is the only thing that changes segs and cur, and it holds applyMu
+	// and mu for it.
+	segs    []segInfo
+	cur     uint16
 	applied [kindCount]int64
 	lines   [kindCount]int64
+	// layoutV2 is true when the store is on layout v2 (a LAYOUT file exists).
+	layoutV2 bool
+	// allowMissing lets a log file be absent (a reader opened before the writer
+	// created it); an absent file is an empty one.
+	allowMissing bool
 
 	tasks     []taskRec
 	taskMap   map[key16]uint32
@@ -229,6 +262,15 @@ type taskIndex struct {
 	replayHook func(kind fileKind)
 }
 
+// segInfo describes one segment. size and lines are final for a closed segment
+// and meaningless for the current one.
+type segInfo struct {
+	name  string
+	dir   string
+	size  [sizedFileCount]int64
+	lines [kindCount]int64
+}
+
 // How an index was obtained (IndexStats.Source).
 const (
 	sourceBuilt   = "built"
@@ -237,13 +279,17 @@ const (
 )
 
 func newTaskIndex(root string) *taskIndex {
-	return &taskIndex{
+	ix := &taskIndex{
 		root:      root,
+		fc:        newSegFileCache(),
+		segs:      []segInfo{{name: segmentLegacyName, dir: root}},
 		taskMap:   make(map[key16]uint32),
 		runMap:    make(map[key16]uint32),
 		receipts:  make(map[string]receiptRec),
 		relations: make(map[uint32]taskRelations),
 	}
+	ix.fc.setDir(0, root)
+	return ix
 }
 
 // IndexStats describes the in-memory index of a store opened with Index enabled.
@@ -272,6 +318,13 @@ type IndexStats struct {
 	// CheckpointFailures the failures in a row since the last success.
 	Checkpoints        uint64
 	CheckpointFailures int64
+	// Segments is the number of segments the index covers (1 on layout v1),
+	// Segment the name of the one writes go to ("legacy" on layout v1) and
+	// TotalLines the lines of all segments together. Lines and AppliedBytes above
+	// are those of that current segment.
+	Segments   int
+	Segment    string
+	TotalLines int64
 }
 
 // stats returns a snapshot. The caller must not hold mu.
@@ -283,6 +336,7 @@ func (ix *taskIndex) stats() IndexStats {
 		Lines: ix.lines, AppliedBytes: ix.applied,
 		ApproxBytes: ix.approxBytesLocked(), Dirty: ix.dirty.Load(), CorruptReads: ix.corruptReads.Load(),
 		Source: ix.source, RebuildReason: ix.rebuildReason,
+		Segments: len(ix.segs), Segment: ix.segs[ix.cur].name, TotalLines: ix.totalLinesLocked(),
 	}
 	if ix.ck != nil {
 		stats.Checkpoints, stats.CheckpointFailures = ix.ck.count.Load(), ix.ck.failures.Load()
@@ -317,16 +371,17 @@ func (ix *taskIndex) close() error {
 	if ix == nil || !ix.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	var firstErr error
-	for _, file := range ix.files {
-		if file == nil {
-			continue
-		}
-		if err := file.Close(); err != nil && firstErr == nil {
-			firstErr = err
-		}
+	return ix.fc.close()
+}
+
+// totalLinesLocked is the number of lines of all segments, over all files. The
+// caller holds mu (or applyMu).
+func (ix *taskIndex) totalLinesLocked() int64 {
+	var total int64
+	for i := 0; i < int(ix.cur); i++ {
+		total += totalLines(ix.segs[i].lines)
 	}
-	return firstErr
+	return total + totalLines(ix.lines)
 }
 
 // summaryOfTask converts a Task into the facts the index keeps.
@@ -371,4 +426,15 @@ func summaryOfRun(value domaintask.Run) runFacts {
 		assignee: value.Assignee, status: string(value.Status), reason: string(value.StartReason),
 		generation: value.WriterGeneration, started: toStamp(value.StartedAt), hasCompleted: value.CompletedAt != nil,
 	}
+}
+
+// fenceLogPaths are the execution fence logs of all segments, oldest first.
+func (ix *taskIndex) fenceLogPaths() []string {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	paths := make([]string, 0, len(ix.segs))
+	for _, seg := range ix.segs {
+		paths = append(paths, filepath.Join(seg.dir, taskExecutionFenceFilename))
+	}
+	return paths
 }
