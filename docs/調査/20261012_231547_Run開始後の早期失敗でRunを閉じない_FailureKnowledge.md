@@ -24,6 +24,9 @@ Runを閉じずに return しており、Action記録の無い RESEARCH の `run
 - 本番のjournal (識別子は転記しない): 13:32:25Z に MP が成功。13:37:26Z に最初の
   `Memory ProfilePromotion deferred: execution capacity unavailable` が出て、再試行間隔が 10s、20s、40s、1m20s、
   2m40s、5m、5m と伸びた (13:48Zまで確認)。13:32:25Z から 13:37:26Z の間に MP 由来のERRORは無い。
+- 本番storeのコピー (14:31Z、識別子と題名は転記しない) の集計: `running` の Task は RESEARCH・midori の1件だけで、
+  Memory Promotion の題名、`started_at` は 13:37:04Z、Run は1つで `running`、以後更新が無い。13:37:26Z の最初の延期は、
+  この Task が枠を握った約22秒後にあたる。
 - プロセス内では回収されない: `recoverOrphanTaskRunsAfterRestart` は再起動時に、Action を持たない running の Run
   を失敗で終端する。現在のプロセスが書いた Run は writer generation が現行のため対象外。再起動が唯一の回収手段だった。
 - 修正前に対して追加した試験は、Task と Run が `running` のまま残ること、閉じる書込みの失敗が返らないことで失敗した。
@@ -33,8 +36,10 @@ Runを閉じずに return しており、Action記録の無い RESEARCH の `run
 - 事実: 上のコード経路が Run を開かせたままにする。その結果、枠が埋まる。
 - 仮説 (未確認): 実際に失敗させた原因は、idle lease の取消である。`llmBusyTracker.BeginExternal` は、利用者向けの
   LLM呼出しが始まると MP が持つ idle lease の context を取り消す。MP の worker は `context.Canceled` を失敗として
-  報告しない (`runtime_memory_promotion.go`) ので、ログに何も残らない。13:36:27Z に OPS 要求のLLM呼出しが始まっており、
-  時刻が近い。孤児Taskのエラー文は読んでいないので確定ではない。45秒の tick 期限でも同じ経路になる。
+  報告しない (`runtime_memory_promotion.go`) ので、ログに何も残らない。孤児Taskが作られた 13:37:04Z の直前
+  (13:37:03Z) に、OPS 要求の ToolLoop が2回目のLLM呼出しを始めている (Toolの実行中は利用者向けのLLM呼出しが途切れ、MP が
+  idle lease を得られた可能性がある。MP が lease を持っていたこと自体は、孤児Taskが作られたことから言える)。時刻は合うが、孤児Taskを作った RunOne のエラー文は
+  どこにも残っていないので、確定ではない。45秒の tick 期限でも同じ経路になる。
 
 ## 結論 (Failure Knowledge)
 
