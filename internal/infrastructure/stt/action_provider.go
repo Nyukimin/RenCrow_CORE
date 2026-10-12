@@ -58,15 +58,21 @@ func (p *ActionProvider) Transcribe(ctx context.Context, wav []byte) (result Res
 		Name:   "stt." + p.inner.Name() + ".transcribe",
 	})
 	if err != nil {
-		return Result{}, fmt.Errorf("create STT action: %w", err)
+		err = fmt.Errorf("create STT action: %w", err)
+		if ownsRun {
+			// The Run this call started holds an execution slot, and no Action
+			// exists to close it later.
+			return Result{}, p.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, err)
+		}
+		return Result{}, err
 	}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return Result{}, err
+		return Result{}, p.complete(ctx, identity, ownsRun, action, attempt, err)
 	}
 	ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, p.transport)
 	if err != nil {
-		return Result{}, err
+		return Result{}, p.complete(ctx, identity, ownsRun, action, attempt, err)
 	}
 	result, resultErr = p.inner.Transcribe(ownedCtx, wav)
 	resultErr = p.complete(ctx, identity, ownsRun, action, attempt, resultErr)
@@ -90,41 +96,20 @@ func (p *ActionProvider) executionContext(ctx context.Context) (context.Context,
 	identity := domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
 	ownedCtx, err := domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
 	if err != nil {
-		return nil, domainexecution.Identity{}, false, err
+		return nil, domainexecution.Identity{}, false, p.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, err)
 	}
 	return ownedCtx, identity, true, nil
 }
 
+// complete closes the Attempt and Action, and the Run when this call started it.
+// If the Attempt cannot be closed the Run stays open with it.
 func (p *ActionProvider) complete(ctx context.Context, identity domainexecution.Identity, ownsRun bool, action domainaction.Action, attempt domainaction.Attempt, operationErr error) error {
-	attemptStatus := domainaction.AttemptStatusSucceeded
-	actionStatus := domainaction.StatusSucceeded
-	taskStatus := domaintask.StatusSucceeded
-	summary := "STT transcription completed"
-	switch {
-	case errors.Is(operationErr, context.Canceled):
-		attemptStatus = domainaction.AttemptStatusCancelled
-		actionStatus = domainaction.StatusCancelled
-		taskStatus = domaintask.StatusCancelled
-		summary = operationErr.Error()
-	case errors.Is(operationErr, context.DeadlineExceeded):
-		attemptStatus = domainaction.AttemptStatusTimedOut
-		actionStatus = domainaction.StatusFailed
-		taskStatus = domaintask.StatusFailed
-		summary = operationErr.Error()
-	case operationErr != nil:
-		attemptStatus = domainaction.AttemptStatusFailed
-		actionStatus = domainaction.StatusFailed
-		taskStatus = domaintask.StatusFailed
-		summary = operationErr.Error()
+	const completed = "STT transcription completed"
+	if closed, err := p.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), operationErr); !closed {
+		return err
 	}
-	completionCtx := context.WithoutCancel(ctx)
-	if _, _, err := p.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
-		return errors.Join(operationErr, fmt.Errorf("complete STT action: %w", err))
+	if !ownsRun {
+		return operationErr
 	}
-	if ownsRun {
-		if _, err := p.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, p.actorID, taskStatus, summary, ""); err != nil {
-			return errors.Join(operationErr, fmt.Errorf("complete STT run: %w", err))
-		}
-	}
-	return operationErr
+	return p.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr)
 }

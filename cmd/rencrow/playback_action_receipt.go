@@ -54,6 +54,8 @@ func (r *playbackActionRecorder) Record(ctx context.Context, ack ttsPlaybackAckR
 	if err != nil {
 		return err
 	}
+	// From here on the Run holds an execution slot, so every path that ends
+	// the call closes it: the failed Action creation here, the receipt below.
 	action, attempt, err := r.actions.CreateAction(ctx, actionmanager.CreateInput{
 		TaskID: task.TaskID,
 		RunID:  run.RunID,
@@ -61,23 +63,27 @@ func (r *playbackActionRecorder) Record(ctx context.Context, ack ttsPlaybackAckR
 		Name:   name,
 	})
 	if err != nil {
-		return err
+		return r.tasks.CloseStartedRun(ctx, task.TaskID, run.RunID, r.actorID, taskmanager.RunOutcomeOf(err, ""), err)
 	}
-	attemptStatus, actionStatus, taskStatus, summary := playbackReceiptOutcome(ack)
-	completionCtx := context.WithoutCancel(ctx)
-	if _, _, err := r.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
+	attemptOutcome, runOutcome := playbackReceiptOutcome(ack)
+	// The outcome is the receipt's own, not an error, so there is no cause to return.
+	if closed, err := r.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, attemptOutcome, nil); !closed {
 		return fmt.Errorf("complete Playback action: %w", err)
 	}
-	if _, err := r.tasks.CompleteRun(completionCtx, task.TaskID, run.RunID, r.actorID, taskStatus, summary, ""); err != nil {
+	if err := r.tasks.CloseStartedRun(ctx, task.TaskID, run.RunID, r.actorID, runOutcome, nil); err != nil {
 		return fmt.Errorf("complete Playback run: %w", err)
 	}
 	return nil
 }
 
-func playbackReceiptOutcome(ack ttsPlaybackAckRequest) (domainaction.AttemptStatus, domainaction.Status, domaintask.Status, string) {
+// playbackReceiptOutcome maps the playback status the viewer reported to how the
+// Attempt, Action, Run, and Task end.
+func playbackReceiptOutcome(ack ttsPlaybackAckRequest) (actionmanager.AttemptOutcome, taskmanager.RunOutcome) {
 	status := strings.ToLower(strings.TrimSpace(ack.Status))
 	if status == "ended" || status == "completed" || status == "succeeded" {
-		return domainaction.AttemptStatusSucceeded, domainaction.StatusSucceeded, domaintask.StatusSucceeded, "Playback completed"
+		const completed = "Playback completed"
+		return actionmanager.AttemptOutcome{Attempt: domainaction.AttemptStatusSucceeded, Action: domainaction.StatusSucceeded, Summary: completed},
+			taskmanager.RunOutcome{Status: domaintask.StatusSucceeded, Summary: completed}
 	}
 	summary := strings.TrimSpace(ack.Error)
 	if summary == "" {
@@ -87,7 +93,9 @@ func playbackReceiptOutcome(ack ttsPlaybackAckRequest) (domainaction.AttemptStat
 		summary = "Playback status rejected: " + status
 	}
 	if status == "cancelled" || status == "aborted" {
-		return domainaction.AttemptStatusCancelled, domainaction.StatusCancelled, domaintask.StatusCancelled, summary
+		return actionmanager.AttemptOutcome{Attempt: domainaction.AttemptStatusCancelled, Action: domainaction.StatusCancelled, Summary: summary},
+			taskmanager.RunOutcome{Status: domaintask.StatusCancelled, Summary: summary}
 	}
-	return domainaction.AttemptStatusFailed, domainaction.StatusFailed, domaintask.StatusFailed, summary
+	return actionmanager.AttemptOutcome{Attempt: domainaction.AttemptStatusFailed, Action: domainaction.StatusFailed, Summary: summary},
+		taskmanager.RunOutcome{Status: domaintask.StatusFailed, Summary: summary}
 }

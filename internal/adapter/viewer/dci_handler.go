@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
@@ -169,16 +169,16 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.searcher.SearchAs(ctx, query, task.TaskID, run.RunID, string(scope.ActorKind), scope.ActorID, scope.RequestID)
 	if err != nil {
-		h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusFailed, err.Error())
+		h.closeDCIRun(ctx, task.TaskID, run.RunID, err)
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_search_failed")
 		return
 	}
 	if err := validateDCIViewerSearchResult(result, query, result.Trace.TraceID, result.Trace.ActionID, scope); err != nil {
-		h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusFailed, err.Error())
+		h.closeDCIRun(ctx, task.TaskID, run.RunID, err)
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_search_failed")
 		return
 	}
-	if err := h.completeDCIRun(ctx, task.TaskID, run.RunID, domaintask.StatusSucceeded, "dci search completed"); err != nil {
+	if err := h.closeDCIRun(ctx, task.TaskID, run.RunID, nil); err != nil {
 		writeMemoryOwnerError(w, http.StatusInternalServerError, "dci_run_complete_failed")
 		return
 	}
@@ -193,10 +193,18 @@ func (h *dciSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *dciSearchHandler) completeDCIRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, status domaintask.Status, summary string) error {
-	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	_, err := h.tasks.CompleteRun(completionCtx, taskID, runID, h.executorID, status, summary, "")
+// closeDCIRun closes the Run this handler started, through the Task owner's rule
+// for a started Run: detached from the request, bounded, and classified from the
+// search outcome (searchErr nil is success). A DCI search holds the long-research
+// slot, so a Run left open stops every later search and Memory Promotion until
+// the next restart. A failed close is logged here, because the response is
+// already decided by the search; it is also returned for the success path, where
+// the caller must not be told the search completed.
+func (h *dciSearchHandler) closeDCIRun(ctx context.Context, taskID modulecore.TaskID, runID modulecore.RunID, searchErr error) error {
+	err := h.tasks.CloseStartedRun(ctx, taskID, runID, h.executorID, taskmanager.RunOutcomeOf(searchErr, "dci search completed"), nil)
+	if err != nil {
+		log.Printf("DCI search run was not closed: %v", err)
+	}
 	return err
 }
 

@@ -168,9 +168,10 @@ func (a *PromotionDiffApplier) executePatchAction(ctx context.Context, req domai
 			return PromotionDiffApplyResult{}, err
 		}
 		identity = domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
+		// The Run holds a coding slot until it is closed.
 		ownedCtx, err = domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
 		if err != nil {
-			return PromotionDiffApplyResult{}, err
+			return PromotionDiffApplyResult{}, a.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, err)
 		}
 	}
 	name := "sandbox_patch_apply"
@@ -184,35 +185,31 @@ func (a *PromotionDiffApplier) executePatchAction(ctx context.Context, req domai
 		Name:   name,
 	})
 	if err != nil {
+		if ownsRun {
+			return PromotionDiffApplyResult{}, a.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, err)
+		}
 		return PromotionDiffApplyResult{}, err
 	}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return PromotionDiffApplyResult{}, err
+		return PromotionDiffApplyResult{}, a.completePatchAction(ctx, identity, ownsRun, action, attempt, err)
 	}
 	result, operationErr := a.applyPromotionDiff(req, rollback)
 	completionErr := a.completePatchAction(ownedCtx, identity, ownsRun, action, attempt, operationErr)
 	return result, completionErr
 }
 
+// completePatchAction closes the Attempt and Action, and the Run when this call
+// started it. If the Attempt cannot be closed the Run stays open with it.
 func (a *PromotionDiffApplier) completePatchAction(ctx context.Context, identity domainexecution.Identity, ownsRun bool, action domainaction.Action, attempt domainaction.Attempt, operationErr error) error {
-	attemptStatus := domainaction.AttemptStatusSucceeded
-	actionStatus := domainaction.StatusSucceeded
-	taskStatus := domaintask.StatusSucceeded
-	summary := "Patch apply completed"
-	if operationErr != nil {
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusFailed, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
+	const completed = "Patch apply completed"
+	if closed, err := a.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), operationErr); !closed {
+		return err
 	}
-	completionCtx := context.WithoutCancel(ctx)
-	if _, _, err := a.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
-		return errors.Join(operationErr, err)
+	if !ownsRun {
+		return operationErr
 	}
-	if ownsRun {
-		if _, err := a.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, a.actorID, taskStatus, summary, ""); err != nil {
-			return errors.Join(operationErr, err)
-		}
-	}
-	return operationErr
+	return a.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr)
 }
 
 func (a *PromotionDiffApplier) applyPromotionDiff(req domainsandbox.PromotionApplyRequest, rollback bool) (PromotionDiffApplyResult, error) {

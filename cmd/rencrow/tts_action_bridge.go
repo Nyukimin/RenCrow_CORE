@@ -83,25 +83,37 @@ func (b *actionTTSBridge) StartSession(ctx context.Context, req orchestrator.TTS
 		Name:   "tts_session",
 	})
 	if err != nil {
-		return fmt.Errorf("create TTS action: %w", err)
+		err = fmt.Errorf("create TTS action: %w", err)
+		if ownsRun {
+			// The Run this call started holds an execution slot, and no Action
+			// exists to close it later.
+			return b.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, b.actorID, err)
+		}
+		return err
 	}
+	session := ttsActionSession{identity: identity, action: action, attempt: attempt, ownsRun: ownsRun}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return err
+		return b.complete(ctx, session, err)
 	}
 	ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, b.transport)
 	if err != nil {
-		return err
+		return b.complete(ctx, session, err)
 	}
 	if err := b.inner.StartSession(ownedCtx, req); err != nil {
-		return b.complete(ctx, ttsActionSession{identity: identity, action: action, attempt: attempt, ownsRun: ownsRun}, err)
+		return b.complete(ctx, session, err)
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, exists := b.sessions[sessionID]; exists {
-		return b.complete(ctx, ttsActionSession{identity: identity, action: action, attempt: attempt, ownsRun: ownsRun}, errors.New("TTS session already exists"))
+	_, exists := b.sessions[sessionID]
+	if !exists {
+		b.sessions[sessionID] = session
 	}
-	b.sessions[sessionID] = ttsActionSession{identity: identity, action: action, attempt: attempt, ownsRun: ownsRun}
+	b.mu.Unlock()
+	if exists {
+		// Closing writes to the stores for up to a minute per write, so the lock
+		// that guards every session is not held across it.
+		return b.complete(ctx, session, errors.New("TTS session already exists"))
+	}
 	return nil
 }
 
@@ -154,7 +166,10 @@ func (b *actionTTSBridge) executionContext(ctx context.Context) (context.Context
 	}
 	identity := domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
 	ownedCtx, err := domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
-	return ownedCtx, identity, true, err
+	if err != nil {
+		return nil, domainexecution.Identity{}, false, b.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, b.actorID, err)
+	}
+	return ownedCtx, identity, true, nil
 }
 
 func (b *actionTTSBridge) sessionContext(ctx context.Context, sessionID string) (ttsActionSession, context.Context, error) {
@@ -185,27 +200,15 @@ func (b *actionTTSBridge) deleteSession(sessionID string) {
 	b.mu.Unlock()
 }
 
+// complete closes the Attempt and Action of a session, and the Run when the
+// session started it. If the Attempt cannot be closed the Run stays open with it.
 func (b *actionTTSBridge) complete(ctx context.Context, session ttsActionSession, operationErr error) error {
-	attemptStatus := domainaction.AttemptStatusSucceeded
-	actionStatus := domainaction.StatusSucceeded
-	taskStatus := domaintask.StatusSucceeded
-	summary := "TTS session completed"
-	switch {
-	case errors.Is(operationErr, context.Canceled):
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusCancelled, domainaction.StatusCancelled, domaintask.StatusCancelled, operationErr.Error()
-	case errors.Is(operationErr, context.DeadlineExceeded):
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusTimedOut, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
-	case operationErr != nil:
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusFailed, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
+	const completed = "TTS session completed"
+	if closed, err := b.actions.CloseAttempt(ctx, session.action.ActionID, session.attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), operationErr); !closed {
+		return err
 	}
-	completionCtx := context.WithoutCancel(ctx)
-	if _, _, err := b.actions.CompleteAttempt(completionCtx, session.action.ActionID, session.attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
-		return errors.Join(operationErr, err)
+	if !session.ownsRun {
+		return operationErr
 	}
-	if session.ownsRun {
-		if _, err := b.tasks.CompleteRun(completionCtx, session.identity.TaskID, session.identity.RunID, b.actorID, taskStatus, summary, ""); err != nil {
-			return errors.Join(operationErr, err)
-		}
-	}
-	return operationErr
+	return b.tasks.CloseStartedRun(ctx, session.identity.TaskID, session.identity.RunID, b.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr)
 }

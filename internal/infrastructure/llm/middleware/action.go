@@ -99,10 +99,11 @@ func (p *actionProvider) begin(ctx context.Context, operation string) (context.C
 			return nil, nil, fmt.Errorf("start LLM run: %w", startErr)
 		}
 		identity = domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
-		ctx, err = domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
-		if err != nil {
-			return nil, nil, err
+		identityCtx, bindErr := domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
+		if bindErr != nil {
+			return nil, nil, p.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, bindErr)
 		}
+		ctx = identityCtx
 		ownsRun = true
 	}
 	name := strings.TrimSpace(p.inner.Name())
@@ -116,58 +117,35 @@ func (p *actionProvider) begin(ctx context.Context, operation string) (context.C
 		Name:   "llm." + name + "." + operation,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("create LLM action: %w", err)
+		err = fmt.Errorf("create LLM action: %w", err)
+		if ownsRun {
+			// The Run this call started holds an execution slot, and no Action
+			// exists to close it later.
+			return nil, nil, p.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, err)
+		}
+		return nil, nil, err
+	}
+	// finish closes the Attempt and Action, and the Run when this call started
+	// it. If the Attempt cannot be closed the Run stays open with it.
+	finish := func(callErr error) error {
+		completed := "LLM " + operation + " completed"
+		if closed, err := p.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(callErr, completed), callErr); !closed {
+			return err
+		}
+		if !ownsRun {
+			return callErr
+		}
+		return p.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, p.actorID, taskmanager.RunOutcomeOf(callErr, completed), callErr)
 	}
 	ownedCtx, err := domainexecution.WithChildBoundActionAttempt(ctx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, finish(err)
 	}
 	if p.transport != nil {
 		ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, p.transport)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, finish(err)
 		}
-	}
-	finish := func(callErr error) error {
-		attemptStatus := domainaction.AttemptStatusSucceeded
-		actionStatus := domainaction.StatusSucceeded
-		summary := "LLM " + operation + " completed"
-		switch {
-		case errors.Is(callErr, context.Canceled):
-			attemptStatus = domainaction.AttemptStatusCancelled
-			actionStatus = domainaction.StatusCancelled
-			summary = callErr.Error()
-		case errors.Is(callErr, context.DeadlineExceeded):
-			attemptStatus = domainaction.AttemptStatusTimedOut
-			actionStatus = domainaction.StatusFailed
-			summary = callErr.Error()
-		case callErr != nil:
-			attemptStatus = domainaction.AttemptStatusFailed
-			actionStatus = domainaction.StatusFailed
-			summary = callErr.Error()
-		}
-		completionCtx := context.WithoutCancel(ctx)
-		if _, _, err := p.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
-			if callErr != nil {
-				return errors.Join(callErr, fmt.Errorf("complete LLM action: %w", err))
-			}
-			return fmt.Errorf("complete LLM action: %w", err)
-		}
-		if ownsRun {
-			taskStatus := domaintask.StatusSucceeded
-			if actionStatus == domainaction.StatusCancelled {
-				taskStatus = domaintask.StatusCancelled
-			} else if actionStatus != domainaction.StatusSucceeded {
-				taskStatus = domaintask.StatusFailed
-			}
-			if _, err := p.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, p.actorID, taskStatus, summary, ""); err != nil {
-				if callErr != nil {
-					return errors.Join(callErr, fmt.Errorf("complete LLM run: %w", err))
-				}
-				return fmt.Errorf("complete LLM run: %w", err)
-			}
-		}
-		return callErr
 	}
 	return ownedCtx, finish, nil
 }

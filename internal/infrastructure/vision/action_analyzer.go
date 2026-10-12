@@ -46,15 +46,21 @@ func (a *ActionAnalyzer) Analyze(ctx context.Context, request domainvision.Analy
 		Kind: domainaction.KindVision, Name: "vision.analyze",
 	})
 	if err != nil {
-		return domainvision.AnalyzeResult{}, fmt.Errorf("create Vision action: %w", err)
+		err = fmt.Errorf("create Vision action: %w", err)
+		if ownsRun {
+			// The Run this call started holds an execution slot, and no Action
+			// exists to close it later.
+			return domainvision.AnalyzeResult{}, a.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, err)
+		}
+		return domainvision.AnalyzeResult{}, err
 	}
 	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return domainvision.AnalyzeResult{}, err
+		return domainvision.AnalyzeResult{}, a.complete(ctx, identity, ownsRun, action, attempt, err)
 	}
 	ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, a.transport)
 	if err != nil {
-		return domainvision.AnalyzeResult{}, err
+		return domainvision.AnalyzeResult{}, a.complete(ctx, identity, ownsRun, action, attempt, err)
 	}
 	result, resultErr = a.inner.Analyze(ownedCtx, request)
 	resultErr = a.complete(ctx, identity, ownsRun, action, attempt, resultErr)
@@ -78,34 +84,21 @@ func (a *ActionAnalyzer) executionContext(ctx context.Context) (context.Context,
 	}
 	identity := domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID, TraceID: modulecore.NewTraceID()}
 	ownedCtx, err := domainexecution.WithIdentity(ctx, identity.TaskID, identity.RunID, identity.TraceID)
-	return ownedCtx, identity, true, err
+	if err != nil {
+		return nil, domainexecution.Identity{}, false, a.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, err)
+	}
+	return ownedCtx, identity, true, nil
 }
 
+// complete closes the Attempt and Action, and the Run when this call started it.
+// If the Attempt cannot be closed the Run stays open with it.
 func (a *ActionAnalyzer) complete(ctx context.Context, identity domainexecution.Identity, ownsRun bool, action domainaction.Action, attempt domainaction.Attempt, operationErr error) error {
-	attemptStatus, actionStatus, taskStatus := domainaction.AttemptStatusSucceeded, domainaction.StatusSucceeded, domaintask.StatusSucceeded
-	summary := "Vision analysis completed"
-	switch {
-	case errors.Is(operationErr, context.Canceled):
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusCancelled, domainaction.StatusCancelled, domaintask.StatusCancelled, operationErr.Error()
-	case errors.Is(operationErr, context.DeadlineExceeded):
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusTimedOut, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
-	case operationErr != nil:
-		attemptStatus, actionStatus, taskStatus, summary = domainaction.AttemptStatusFailed, domainaction.StatusFailed, domaintask.StatusFailed, operationErr.Error()
-	}
-	completionCtx := context.WithoutCancel(ctx)
-	if _, _, err := a.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary); err != nil {
-		if operationErr != nil {
-			return errors.Join(operationErr, err)
-		}
+	const completed = "Vision analysis completed"
+	if closed, err := a.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), operationErr); !closed {
 		return err
 	}
-	if ownsRun {
-		if _, err := a.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, a.actorID, taskStatus, summary, ""); err != nil {
-			if operationErr != nil {
-				return errors.Join(operationErr, err)
-			}
-			return err
-		}
+	if !ownsRun {
+		return operationErr
 	}
-	return operationErr
+	return a.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, a.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr)
 }

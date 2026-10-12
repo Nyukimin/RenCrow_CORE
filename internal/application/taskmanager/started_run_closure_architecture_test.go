@@ -17,7 +17,11 @@ import (
 // Memory Promotion runner issued a Run with CreateAndStartRun, then returned
 // without closing it when binding the identity or creating the Action failed.
 // The RESEARCH slot (LongResearchTasks=1) stayed held and every later Memory
-// Promotion was deferred until the next restart.
+// Promotion was deferred until the next restart. Seven other functions had the
+// same defect; all of them now close the Run they start through
+// Manager.CloseStartedRun, the one rule for it (detached from the caller,
+// 60 seconds per write, cancelled or failed by how the work ended, a failed
+// write returned with its cause).
 //
 // Whether every failure path after a start closes the Run cannot be decided by
 // a syntactic test: closing goes through helpers, deferred functions, and
@@ -26,8 +30,12 @@ import (
 // StartRunFromCheckpoint) is listed below with a reviewed classification, so a
 // new Run-starting path cannot be added without a review of how its failure
 // paths close the Run, and a known gap stays visible until it is fixed. A stale
-// entry fails the test. The behavioral guarantee is held by each owner's own
-// tests (for Memory Promotion: memory_promotion_action_runner_test.go).
+// entry fails the test. A function classified as closing through the shared API
+// must live in a file that calls CloseStartedRun, so the entry cannot claim the
+// shared rule while the file reimplements it. The behavioral guarantee is held
+// by each owner's own tests, which run the scenarios of
+// taskmanagertest.VerifyStartedRunClosure (for Memory Promotion:
+// memory_promotion_action_runner_test.go).
 
 // startedRunClosure is the reviewed state of one Run-starting function.
 type startedRunClosure string
@@ -37,7 +45,8 @@ const (
 	// Manager.CloseStartedRun. The file of the function must call it.
 	startedRunClosesViaSharedAPI startedRunClosure = "closes_via_shared_api"
 	// Every failure path after the start closes the Run (or the Task) by the
-	// function's own means, or the Task owner re-issues the Run on its own.
+	// function's own means, or the Task owner re-issues the Run on its own. The
+	// reason says how and what was not checked.
 	startedRunCloses startedRunClosure = "closes"
 	// The function hands the Run to its caller, which closes it. The reason
 	// names the closer.
@@ -63,35 +72,39 @@ var runStartingMethods = map[string]int{
 
 // startedRunLedger key = "repo-relative path:function".
 var startedRunLedger = map[string]startedRunEntry{
-	// Memory Promotion: fixed together with this test, and moved onto the shared
-	// API. The behavioral tests are the TestActionMemoryPromotionRunner* group in
-	// cmd/rencrow.
-	"cmd/rencrow/memory_promotion_action_runner.go:RunOne": {startedRunClosesViaSharedAPI, "AbortStartedRun before the Action exists; CloseAttempt then CloseStartedRun after"},
+	// Closed through Manager.CloseStartedRun, with the Attempt and Action closed
+	// first through actionmanager.Manager.CloseAttempt where the function creates
+	// an Action. Each has the scenarios of taskmanagertest.VerifyStartedRunClosure
+	// (the DCI search has its own, in dci_handler_closure_test.go).
+	"cmd/rencrow/memory_promotion_action_runner.go:RunOne":                    {startedRunClosesViaSharedAPI, "RESEARCH; fixed first, 4a900edc; TestActionMemoryPromotionRunner*"},
+	"cmd/rencrow/playback_action_receipt.go:Record":                           {startedRunClosesViaSharedAPI, "CHAT; TestPlaybackActionRecorderClosesTheRunItStarted"},
+	"cmd/rencrow/tts_action_bridge.go:executionContext":                       {startedRunClosesViaSharedAPI, "CHAT; closes on WithIdentity failure; StartSession closes on CreateAction and binding failures; TestActionTTSBridgeClosesTheRunItStarted"},
+	"internal/application/backlog/action_context.go:beginAction":              {startedRunClosesViaSharedAPI, "OPERATIONS, the single operations slot; TestBeginActionClosesTheRunItStarted"},
+	"internal/application/sandbox/promotion_diff_apply.go:executePatchAction": {startedRunClosesViaSharedAPI, "CODE; TestPromotionDiffApplierClosesTheRunItStarted"},
+	"internal/infrastructure/llm/middleware/action.go:begin":                  {startedRunClosesViaSharedAPI, "GENERAL; TestActionProviderClosesTheRunItStarted"},
+	"internal/infrastructure/vision/action_analyzer.go:executionContext":      {startedRunClosesViaSharedAPI, "CHAT; Analyze closes on CreateAction and binding failures; TestActionAnalyzerClosesTheRunItStarted"},
+	"internal/infrastructure/stt/action_provider.go:executionContext":         {startedRunClosesViaSharedAPI, "CHAT; Transcribe closes on CreateAction and binding failures; TestActionProviderClosesTheRunItStarted"},
+	"internal/adapter/viewer/dci_handler.go:ServeHTTP":                        {startedRunClosesViaSharedAPI, "RESEARCH, the slot Memory Promotion holds; every path closes through closeDCIRun with the 60s budget (it was 10s, below the observed Task store latency); TestDCISearchHandler*"},
 
-	// Closed: classified by reading the code; only Memory Promotion has a
-	// behavioral test. The reason says what was and was not checked.
+	// Closed by the function's own means: classified by reading the code, with no
+	// behavioral test of the early-failure paths. They use their own bounded
+	// finalization budgets, not the shared API.
 	"internal/application/heartbeat/worker_lifecycle.go:beginWorker":          {startedRunCloses, "its own failures go through failBeforeWorker -> finishWorker; after it returns, its callers call finish (not reviewed here)"},
 	"cmd/rencrow/runtime_agent_ops_legacy.go:admitLegacyOPS":                  {startedRunClosedByCaller, "the handler closes through finalizeLegacyOPS, with a deferred close for panics"},
 	"cmd/rencrow/runtime_agent_ops_dci_identity.go:admitAgentOpsDCIExecution": {startedRunCloses, "closes the Run when WithIdentity fails; the caller closes after execution"},
-	"internal/adapter/viewer/dci_handler.go:ServeHTTP":                        {startedRunCloses, "every path calls completeDCIRun; its 10s budget is below the observed Task store latency, see the failure knowledge"},
 	"internal/application/superagent/run_queue_scheduler.go:startRun":         {startedRunClosedByCaller, "RunOnce interrupts the issued Run when the lease attach fails; a later failure (the claimed trace write) leaves it until the lease expires and the Run is re-issued, so the hold is bounded by the lease"},
 
-	// Known gaps: same defect as Memory Promotion. CreateAndStartRun is followed
-	// by WithIdentity, CreateAction, or the receipt-owner binding, and a failure
-	// there returns without closing the Run. Fix with a test per entry, then
-	// change the entry to "closes".
-	"cmd/rencrow/playback_action_receipt.go:Record":                           {startedRunKnownGap, "CHAT; CreateAction failure leaves the Run open"},
-	"cmd/rencrow/tts_action_bridge.go:executionContext":                       {startedRunKnownGap, "CHAT; StartSession: WithIdentity (here), CreateAction, and binding failures leave the Run open"},
-	"internal/application/backlog/action_context.go:beginAction":              {startedRunKnownGap, "OPERATIONS, the single operations slot; WithIdentity and CreateAction failures"},
-	"internal/application/sandbox/promotion_diff_apply.go:executePatchAction": {startedRunKnownGap, "CODE; WithIdentity and CreateAction failures"},
-	"internal/infrastructure/llm/middleware/action.go:begin":                  {startedRunKnownGap, "GENERAL; WithIdentity, CreateAction, and binding failures"},
-	"internal/infrastructure/vision/action_analyzer.go:executionContext":      {startedRunKnownGap, "CHAT; Analyze: WithIdentity (here), CreateAction, and binding failures leave the Run open"},
-	"internal/infrastructure/stt/action_provider.go:executionContext":         {startedRunKnownGap, "CHAT; Transcribe: WithIdentity (here), CreateAction, and binding failures leave the Run open"},
-	// Not reachable with the real Task owner, which validates the Run it returns,
-	// but the returns exist: an invalid or mismatched Run from the owner is
-	// returned without closing it.
-	"internal/application/idlechat/run_identity.go:issueIdleChatRun":                      {startedRunKnownGap, "existing-Task path only; a new Task is cancelled. The owner-returned Run is not closed when its identity is invalid"},
-	"internal/application/idlechat/generation_run_checkpoint.go:startGenerationSuccessor": {startedRunKnownGap, "closes the successor only when the request was cancelled after the owner committed; owner-returned Run mismatches are returned unclosed"},
+	// Known gaps. Neither is reachable with the real Task owner, which validates
+	// the Run it returns before it returns it: they act only when the owner's
+	// answer is inconsistent. They are left open on purpose, not forgotten.
+	// Closing an answer that contradicts itself would write to a Run whose
+	// identity cannot be trusted (another Task's Run, or no valid ID at all), a
+	// worse failure than the held slot; and the port these functions use
+	// (idlechatRunIssuer) has no operation to close a Run. Re-evaluate when the
+	// owner's contract can no longer return a contradicting Run (a type or
+	// validation that makes it unrepresentable), or when the port gains a close.
+	"internal/application/idlechat/run_identity.go:issueIdleChatRun":                      {startedRunKnownGap, "existing-Task path only; a new Task is cancelled. The owner-returned Run is not closed when its identity is invalid or belongs to another Task"},
+	"internal/application/idlechat/generation_run_checkpoint.go:startGenerationSuccessor": {startedRunKnownGap, "closes the successor only when the request was cancelled after the owner committed; an owner-returned Run that contradicts the persisted intent is returned unclosed"},
 }
 
 func TestRunStartingFunctionsAreReviewedForClosure(t *testing.T) {

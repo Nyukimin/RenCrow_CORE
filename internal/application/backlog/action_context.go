@@ -49,11 +49,13 @@ func (s *Service) beginAction(ctx context.Context, name string) (context.Context
 		if err != nil {
 			return nil, nil, fmt.Errorf("start Atlas run: %w", err)
 		}
-		ctx, err = domainexecution.WithIdentity(ctx, task.TaskID, run.RunID, modulecore.NewTraceID())
-		if err != nil {
-			return nil, nil, err
-		}
 		identity = domainexecution.Identity{TaskID: task.TaskID, RunID: run.RunID}
+		// The Run holds the single operations slot until it is closed.
+		identityCtx, err := domainexecution.WithIdentity(ctx, task.TaskID, run.RunID, modulecore.NewTraceID())
+		if err != nil {
+			return nil, nil, s.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, s.actionActorID, err)
+		}
+		ctx = identityCtx
 		ownsRun = true
 	}
 	action, attempt, err := s.actions.CreateAction(ctx, actionmanager.CreateInput{
@@ -63,47 +65,32 @@ func (s *Service) beginAction(ctx context.Context, name string) (context.Context
 		Name:   name,
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("create Atlas action: %w", err)
+		err = fmt.Errorf("create Atlas action: %w", err)
+		if ownsRun {
+			return nil, nil, s.tasks.AbortStartedRun(ctx, identity.TaskID, identity.RunID, s.actionActorID, err)
+		}
+		return nil, nil, err
+	}
+	// finish closes the Attempt and Action, and the Run when this call started
+	// it. It returns only a failure to close: the caller joins it with the
+	// error of its own operation (finishAction). If the Attempt cannot be
+	// closed the Run stays open with it.
+	finish := func(operationErr error) error {
+		completed := name + " completed"
+		if closed, err := s.actions.CloseAttempt(ctx, action.ActionID, attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), nil); !closed {
+			return fmt.Errorf("complete Atlas action: %w", err)
+		}
+		if !ownsRun {
+			return nil
+		}
+		if err := s.tasks.CloseStartedRun(ctx, identity.TaskID, identity.RunID, s.actionActorID, taskmanager.RunOutcomeOf(operationErr, completed), nil); err != nil {
+			return fmt.Errorf("complete Atlas run: %w", err)
+		}
+		return nil
 	}
 	ownedCtx, err := domainexecution.WithBoundActionAttempt(ctx, action.ActionID, attempt.AttemptID)
 	if err != nil {
-		return nil, nil, err
-	}
-	finish := func(operationErr error) error {
-		attemptStatus := domainaction.AttemptStatusSucceeded
-		actionStatus := domainaction.StatusSucceeded
-		summary := name + " completed"
-		switch {
-		case errors.Is(operationErr, context.Canceled):
-			attemptStatus = domainaction.AttemptStatusCancelled
-			actionStatus = domainaction.StatusCancelled
-			summary = operationErr.Error()
-		case errors.Is(operationErr, context.DeadlineExceeded):
-			attemptStatus = domainaction.AttemptStatusTimedOut
-			actionStatus = domainaction.StatusFailed
-			summary = operationErr.Error()
-		case operationErr != nil:
-			attemptStatus = domainaction.AttemptStatusFailed
-			actionStatus = domainaction.StatusFailed
-			summary = operationErr.Error()
-		}
-		completionCtx := context.WithoutCancel(ctx)
-		_, _, err := s.actions.CompleteAttempt(completionCtx, action.ActionID, attempt.AttemptID, attemptStatus, actionStatus, summary)
-		if err != nil {
-			return fmt.Errorf("complete Atlas action: %w", err)
-		}
-		if ownsRun {
-			taskStatus := domaintask.StatusSucceeded
-			if actionStatus == domainaction.StatusCancelled {
-				taskStatus = domaintask.StatusCancelled
-			} else if actionStatus != domainaction.StatusSucceeded {
-				taskStatus = domaintask.StatusFailed
-			}
-			if _, err := s.tasks.CompleteRun(completionCtx, identity.TaskID, identity.RunID, s.actionActorID, taskStatus, summary, ""); err != nil {
-				return fmt.Errorf("complete Atlas run: %w", err)
-			}
-		}
-		return nil
+		return nil, nil, finishAction(err, finish)
 	}
 	return ownedCtx, finish, nil
 }
