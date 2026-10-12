@@ -15,14 +15,28 @@ func TestStripLeadingSpeakerLabels(t *testing.T) {
 		{name: "plain label", content: "[mio] こんにちは", want: "こんにちは"},
 		{name: "case and colon", content: " [MIO]：こんにちは ", want: "こんにちは"},
 		{name: "ascii colon and spaces", content: "[midori] : こんにちは", want: "こんにちは"},
-		{name: "label without separator", content: "[shiro]からの報告です", want: "からの報告です"},
+		{name: "separator is a tab", content: "[mio]\t本文", want: "本文"},
+		{name: "separator is a CRLF", content: "[mio]\r\n本文", want: "本文"},
+		{name: "separator is a full width colon", content: "[shiro]：報告", want: "報告"},
+		{name: "separator is an ascii colon", content: "[shiro]:報告", want: "報告"},
+		{name: "separator is a full width space", content: "[midori]\u3000本文", want: "本文"},
 		{name: "doubled label", content: "[midori] [midori] 夕焼けです", want: "夕焼けです"},
-		{name: "doubled label without space", content: "[midori][midori]夕焼けです", want: "夕焼けです"},
+		// 区切りが無ければ取り除かない。Mio の旧 test が固定した、他Agentの報告を中継する言い方。
+		{name: "relay phrase stays (other agent, no separator)", content: "[shiro]からの報告です", want: "[shiro]からの報告です"},
+		{name: "relay phrase stays (self, no separator)", content: "[mio]は次のとおり答えました", want: "[mio]は次のとおり答えました"},
+		{name: "label glued to body stays", content: "[midori]本文", want: "[midori]本文"},
+		{name: "glued label stays even when upper case", content: "[MIDORI]本文", want: "[MIDORI]本文"},
+		{name: "labels glued together stay", content: "[midori][midori]夕焼けです", want: "[midori][midori]夕焼けです"},
+		{name: "second label glued to body stays", content: "[midori] [midori]夕焼けです", want: "[midori]夕焼けです"},
+		{name: "nbsp is not a separator", content: "[mio]\u00a0本文", want: "[mio]\u00a0本文"},
 		{name: "mixed other agents", content: "[midori] [shiro] [kuro] 夕焼けです", want: "夕焼けです"},
 		{name: "full width space", content: "　[mio]　こんにちは", want: "こんにちは"},
 		{name: "newline after label", content: "[kuro]\n\n結論です", want: "結論です"},
-		{name: "every known name", content: "[mio][shiro][kuro][midori][aka][ao][kin][gin]本文", want: "本文"},
+		{name: "every known name", content: "[mio] [shiro] [kuro] [midori] [aka] [ao] [kin] [gin] 本文", want: "本文"},
 		{name: "label only", content: "[midori]", want: ""},
+		{name: "label only with spaces", content: "  [midori]  ", want: ""},
+		{name: "label only with colon", content: "[midori]：", want: ""},
+		{name: "doubled label only without trailing separator", content: "[midori] [midori]", want: ""},
 		{name: "doubled label only", content: " [midori] [midori] \n", want: ""},
 		{name: "empty", content: "", want: ""},
 		{name: "whitespace only", content: " 　\n", want: ""},
@@ -129,7 +143,17 @@ func TestSpeakerLabelStreamFilter(t *testing.T) {
 		{name: "doubled label split", tokens: []string{"[mid", "ori] [mid", "ori]", " 夕", "焼け"}, want: "夕焼け"},
 		{name: "other agent label", tokens: []string{"[", "shiro", "]", "：", "報告", "です"}, want: "報告です"},
 		{name: "leading full width space", tokens: []string{"　", "[mio]", "　", "こんにちは"}, want: "こんにちは"},
-		{name: "case insensitive", tokens: []string{"[MI", "o]", "こんにちは"}, want: "こんにちは"},
+		{name: "case insensitive", tokens: []string{"[MI", "o]", " こんにちは"}, want: "こんにちは"},
+		{name: "separator in a later delta", tokens: []string{"[midori", "]", "", "\t", "本文"}, want: "本文"},
+		{name: "newline separator in its own delta", tokens: []string{"[kuro]", "\n", "結論です"}, want: "結論です"},
+		{name: "full width colon in its own delta", tokens: []string{"[shiro", "]", "：", "報告"}, want: "報告"},
+		{name: "separator split across the bytes of a rune", tokens: []string{"[mio]\xef", "\xbc\x9a本文"}, want: "本文"},
+		{name: "relay phrase stays (other agent)", tokens: []string{"[shiro]", "からの報告です"}, want: "[shiro]からの報告です"},
+		{name: "relay phrase stays (self)", tokens: []string{"[mio", "]", "は次のとおり答えました"}, want: "[mio]は次のとおり答えました"},
+		{name: "label glued to body stays", tokens: []string{"[midori]本文"}, want: "[midori]本文"},
+		{name: "label glued to body stays across deltas", tokens: []string{"[mid", "ori]", "本", "文"}, want: "[midori]本文"},
+		{name: "glued second label stays", tokens: []string{"[midori] ", "[midori]", "夕焼け"}, want: "[midori]夕焼け"},
+		{name: "labels glued together stay", tokens: []string{"[midori]", "[midori]", " 夕焼け"}, want: "[midori][midori] 夕焼け"},
 		{name: "no label", tokens: []string{"こん", "にちは"}, want: "こんにちは"},
 		{name: "leading whitespace without label", tokens: []string{"\n", "こんにちは"}, want: "こんにちは"},
 		{name: "embedded label stays", tokens: []string{"引用: ", "[mio]", " です"}, want: "引用: [mio] です"},
@@ -139,7 +163,10 @@ func TestSpeakerLabelStreamFilter(t *testing.T) {
 		{name: "unknown name with known prefix", tokens: []string{"[mi", "x]", " 補足"}, want: "[mix] 補足"},
 		{name: "known label then unknown bracket", tokens: []string{"[midori] ", "[注] ", "補足"}, want: "[注] 補足"},
 		{name: "label only", tokens: []string{"[mid", "ori", "]"}, want: ""},
+		{name: "label only ending without separator", tokens: []string{"[midori]"}, want: ""},
 		{name: "doubled label only", tokens: []string{"[midori]", " ", "[midori]", " "}, want: ""},
+		{name: "doubled label only ending without separator", tokens: []string{"[midori] ", "[midori]"}, want: ""},
+		{name: "label with colon only", tokens: []string{"[midori]", "："}, want: ""},
 		{name: "empty stream", tokens: nil, want: ""},
 		{name: "empty tokens", tokens: []string{"", "", "こんにちは"}, want: "こんにちは"},
 		{name: "truncated partial label is flushed", tokens: []string{"[mid"}, want: "[mid"},
@@ -181,6 +208,36 @@ func TestSpeakerLabelStreamFilterDoesNotDelayDecidedText(t *testing.T) {
 	callback("こん")
 	if got := rec.text(); got != "こん" {
 		t.Fatalf("plain text must be emitted immediately, got %q", got)
+	}
+}
+
+// ラベルが閉じた後は、次の1 delta で区切りかどうかが決まり、すぐ流れる（それ以上は保留しない）。
+func TestSpeakerLabelStreamFilterDecidesOnTheDeltaAfterTheClosingBracket(t *testing.T) {
+	rec := &streamRecorder{}
+	callback, _ := NewSpeakerLabelStreamFilter(rec.next)
+	callback("[midori]")
+	if len(rec.tokens) != 0 {
+		t.Fatalf("a closed label waits for the next delta, got %q", rec.tokens)
+	}
+	callback("本")
+	if got := rec.text(); got != "[midori]本" {
+		t.Fatalf("a non-separator keeps the label and flows at once, got %q", got)
+	}
+	callback("文")
+	if got := rec.text(); got != "[midori]本文" {
+		t.Fatalf("later deltas flow at once, got %q", got)
+	}
+
+	rec = &streamRecorder{}
+	callback, _ = NewSpeakerLabelStreamFilter(rec.next)
+	callback("[midori]")
+	callback(" ")
+	if len(rec.tokens) != 0 {
+		t.Fatalf("a separator drops the label and emits nothing, got %q", rec.tokens)
+	}
+	callback("本")
+	if got := rec.text(); got != "本" {
+		t.Fatalf("the body flows at once after label and separator, got %q", got)
 	}
 }
 
@@ -227,6 +284,12 @@ func TestSpeakerLabelStreamFilterFlushIsIdempotent(t *testing.T) {
 func TestSpeakerLabelStreamMatchesNonStreamStrip(t *testing.T) {
 	inputs := []string{
 		"[midori] [midori] 夕焼けです",
+		"[shiro]からの報告です",
+		"[mio]は次のとおり答えました",
+		"[midori]本文",
+		"[midori][midori] 本文",
+		"[midori] [midori]",
+		"[midori]",
 		"[shiro]：報告",
 		"[注] 補足",
 		"引用: [mio] こんにちは",

@@ -513,12 +513,51 @@ func (e *legacyOnlyConversationEngine) ResetSession(ctx context.Context, session
 }
 
 // Mio の先頭ラベル除去は、全 Agent 共通の conversation.StripLeadingSpeakerLabels /
-// NewSpeakerLabelStreamFilter に移した。Mio の回帰（自分のラベル、大文字小文字、コロン、
-// 本文中のラベルは残す、分割 delta）は speaker_label_test.go（Mio.Chat 経由）と
-// conversation/speaker_label_test.go で検証する。
-// 旧テストは「他 Agent 名のラベルは本文として残す」と固定していたが、本番で shiro の応答が
-// `[midori] [midori] ` で始まる不具合が観測されたため、他 Agent 名のラベルも除去する仕様に
-// 変更した（docs/調査/ の Failure Knowledge を参照）。
+// NewSpeakerLabelStreamFilter に移した。以下は Mio の既存の回帰 test（8/11 commit 4afbd194）を、
+// 共通ヘルパに対して保ったもの。他 Agent 名のラベルは、区切りが無ければ本文として残す
+// （他Agentの報告を中継する言い方）。区切りがある `[midori] ` は別 Agent 名でも除去する。
+func TestStripLeadingAgentSelfLabel(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "plain label", content: "[mio] こんにちは", want: "こんにちは"},
+		{name: "case and colon", content: " [MIO]：こんにちは ", want: "こんにちは"},
+		{name: "other speaker is content", content: "[shiro]からの報告です", want: "[shiro]からの報告です"},
+		{name: "embedded label", content: "引用: [mio] こんにちは", want: "引用: [mio] こんにちは"},
+		{name: "other speaker with a separator is removed", content: "[midori] [midori] こんにちは", want: "こんにちは"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := conversation.StripLeadingSpeakerLabels(tt.content); got != tt.want {
+				t.Fatalf("StripLeadingSpeakerLabels() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFilterLeadingAgentSelfLabel(t *testing.T) {
+	var got strings.Builder
+	callback, flush := conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) })
+	for _, token := range []string{" [", "mi", "o]", "：", " こん", "にちは"} {
+		callback(token)
+	}
+	flush()
+	if got.String() != "こんにちは" {
+		t.Fatalf("filtered stream = %q, want %q", got.String(), "こんにちは")
+	}
+
+	got.Reset()
+	callback, flush = conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) })
+	for _, token := range []string{"[shiro]", "からの報告"} {
+		callback(token)
+	}
+	flush()
+	if got.String() != "[shiro]からの報告" {
+		t.Fatalf("other speaker stream = %q", got.String())
+	}
+}
 
 // === Phase 1C: ConversationEngine integration tests ===
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 )
@@ -44,9 +45,14 @@ func AgentLabelNames() []string {
 }
 
 // StripLeadingSpeakerLabels は、応答の先頭にある既知の Agent 名の角括弧ラベルの連続
-// （例 `[midori] `、`[midori] [shiro]: `）と、その直後の空白・コロンを取り除く。
-// 自分以外の Agent 名も対象とする。本文の途中にあるラベルと、既知でない角括弧（`[注]`）は
-// 変えない。前後の空白も取り除く。
+// （例 `[midori] `、`[midori] [shiro]: `）と、その直後の区切りを取り除く。自分以外の
+// Agent 名も対象とする。前後の空白も取り除く。
+//
+// ラベルを取り除くのは、直後に区切り（半角空白・全角空白・タブ・改行・コロン（半角／全角））が
+// ある場合と、本文がそのラベルだけの場合に限る。履歴の形式 `[speaker] msg` は空白で区切るため、
+// modelが真似たラベルはこの条件を満たす。区切りが無いもの（`[shiro]からの報告です`、
+// `[mio]は…`）は、他Agentの報告を中継する言い方などの本文として残す。本文の途中にある
+// ラベルと、既知でない角括弧（`[注]`）も変えない。
 func StripLeadingSpeakerLabels(content string) string {
 	rest := strings.TrimLeftFunc(content, unicode.IsSpace)
 	for {
@@ -54,14 +60,26 @@ func StripLeadingSpeakerLabels(content string) string {
 		if n == 0 {
 			break
 		}
-		rest = strings.TrimLeftFunc(rest[n:], isLabelSeparator)
+		after := rest[n:]
+		if after != "" {
+			r, _ := utf8.DecodeRuneInString(after)
+			if !isLabelSeparator(r) {
+				break
+			}
+		}
+		rest = strings.TrimLeftFunc(after, isLabelSeparator)
 	}
 	return strings.TrimSpace(rest)
 }
 
-// isLabelSeparator はラベルの直後に置かれる区切り（空白とコロン）。
+// isLabelSeparator はラベルの直後に置かれる区切り。半角空白・全角空白・タブ・改行・
+// コロン（半角／全角）。
 func isLabelSeparator(r rune) bool {
-	return unicode.IsSpace(r) || r == ':' || r == '：'
+	switch r {
+	case ' ', '\t', '\n', '\r', '\u3000', ':', '：':
+		return true
+	}
+	return false
 }
 
 // leadingLabelLen は text の先頭が既知ラベルならそのバイト長、そうでなければ0を返す。
@@ -116,10 +134,14 @@ type speakerLabelStream struct {
 
 // NewSpeakerLabelStreamFilter は next を包み、stream の先頭にある既知の Agent 名ラベルの
 // 連続（delta に分割されて届いてもよい）を取り除く callback と、完了時に呼ぶ flush を返す。
-// 保留するのは、先頭が `[` で始まり、かつ既知ラベルの先頭部分である間だけ（最長でラベル1つ分）。
-// ラベルが確定したら捨て、既知ラベルでないと分かった時点で保留分をまとめて流す。
-// 先頭以降の delta は保留しない。flush は、判定の途中で stream が終わった場合に保留分を流す
-// （冪等）。next が nil のときは nil と何もしない flush を返し、呼び出し側の非streamの経路を保つ。
+// StripLeadingSpeakerLabels と同じ規則で、ラベルの直後に区切りがある場合と、ラベルだけで終わる
+// 場合に限って取り除く。
+// 保留するのは、先頭が `[` で始まり、既知ラベルの先頭部分である間と、既知ラベルが閉じた直後の
+// 1文字（区切りかどうかが決まるまで）だけ。区切りならラベルを捨て、区切りでなければ保留分を
+// ラベルごと流す。既知ラベルでないと分かった時点でも保留分をまとめて流す。確定後の delta は
+// 保留しない。flush は、判定の途中で stream が終わった場合に処理する（冪等）。ラベルで終わった
+// stream はラベルだけの応答として捨て、ラベルの先頭部分で終わった stream は流す。
+// next が nil のときは nil と何もしない flush を返し、呼び出し側の非streamの経路を保つ。
 func NewSpeakerLabelStreamFilter(next llm.StreamCallback) (llm.StreamCallback, func()) {
 	if next == nil {
 		return nil, func() {}
@@ -153,6 +175,10 @@ func (s *speakerLabelStream) flush() {
 }
 
 // decide は先頭部分を評価する。final は stream の終了後であること。
+//
+// 先頭が `[` で既知ラベルとして閉じた後は、次の1文字で区切りかどうかが決まる。区切りなら
+// ラベルを捨てて続きを評価し、区切りでなければラベルごと流す。ラベルで終わった stream
+// （final）は、ラベルだけの応答として捨てる。
 func (s *speakerLabelStream) decide(final bool) {
 	for !s.passthrough {
 		s.head = strings.TrimLeftFunc(s.head, s.isSkippable)
@@ -161,11 +187,23 @@ func (s *speakerLabelStream) decide(final bool) {
 		}
 		if s.head[0] == '[' {
 			if n := leadingLabelLen(s.head); n > 0 {
-				s.head = s.head[n:]
-				s.afterLabel = true
-				continue
-			}
-			if !final && isLeadingLabelPrefix(s.head) {
+				rest := s.head[n:]
+				if rest == "" {
+					if final {
+						s.head = ""
+						return
+					}
+					return // 閉じたラベル。次の delta で区切りかどうかが決まる
+				}
+				if !final && !utf8.FullRuneInString(rest) {
+					return // 区切りの先頭 rune が delta をまたいでいる
+				}
+				if r, _ := utf8.DecodeRuneInString(rest); isLabelSeparator(r) {
+					s.head = rest
+					s.afterLabel = true
+					continue
+				}
+			} else if !final && isLeadingLabelPrefix(s.head) {
 				return
 			}
 		}

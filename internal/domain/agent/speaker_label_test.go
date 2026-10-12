@@ -46,10 +46,29 @@ func labelCases() []labelCase {
 			wantBody: "こんにちは",
 		},
 		{
-			name:     "other agent label is removed",
+			name:     "other agent label with a separator is removed",
+			tokens:   []string{"[shiro]", "：", "からの報告です"},
+			content:  "[shiro]：からの報告です",
+			wantBody: "からの報告です",
+		},
+		// 区切りが無いラベルは本文として残す（Mio の旧 test が固定した、他Agentの報告を中継する言い方）。
+		{
+			name:     "relay phrase stays (other agent, no separator)",
 			tokens:   []string{"[shiro]", "からの報告です"},
 			content:  "[shiro]からの報告です",
-			wantBody: "からの報告です",
+			wantBody: "[shiro]からの報告です",
+		},
+		{
+			name:     "relay phrase stays (self, no separator)",
+			tokens:   []string{"[mio", "]", "は次のとおり答えました"},
+			content:  "[mio]は次のとおり答えました",
+			wantBody: "[mio]は次のとおり答えました",
+		},
+		{
+			name:     "label glued to body stays",
+			tokens:   []string{"[midori]", "夕焼け"},
+			content:  "[midori]夕焼け",
+			wantBody: "[midori]夕焼け",
 		},
 		{
 			name:     "full width space",
@@ -73,6 +92,12 @@ func labelCases() []labelCase {
 			name:     "label only",
 			tokens:   []string{"[mid", "ori]"},
 			content:  "[midori]",
+			wantBody: "",
+		},
+		{
+			name:     "label and separator only",
+			tokens:   []string{"[midori]", " "},
+			content:  "[midori] ",
 			wantBody: "",
 		},
 		{
