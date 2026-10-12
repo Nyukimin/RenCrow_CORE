@@ -5,7 +5,8 @@
 DCI search、IdleChat、Heartbeat worker、OPS入口)、および Background job failure の通知。
 
 事実の根拠は 2026-10-10 の本番Task storeの読み取りコピーに対する読み取り専用の集計 (件数・種別・時刻のみ。
-記録の本文は読んでいない)。本書は再発防止の実装 (本commit群) の記録で、既存queuedの整理や配備は含まない。
+記録の本文は読んでいない)。本書は再発防止の実装 (本commit群) の記録。既存queuedの整理は「既存queuedの整理 (一度きりの
+道具)」節の道具で行う (道具は実装済みで、本番での実行は別の工程)。配備は含まない。
 
 ## 概要
 
@@ -76,12 +77,57 @@ Task storeに、Runを1つも持たない `queued` のTaskが単調に増え続�
 | 枠拒否の扱い (backlog runner、workstream、Gmail／X Bookmark、tick、Memory Promotion worker) | 失敗として報告 | 失敗でなく延期。Memory Promotionは有界backoff |
 | orchestratorのroot／child／repair、`rencrow tasks create` | queuedを作り、routing後にStart | 残す (許可リスト)。Taskがroutingの記録より先に必要で、失敗時はFailで終端する |
 
+## 既存queuedの整理 (一度きりの道具)
+
+再発防止の前に作られたRun無しqueued (読み取り時点で約1.8万件) を、owner経由で一度だけ `cancelled` にする。
+周期的なreaperは作らない (YAGNI。作成側は塞いだので新規は増えない)。
+
+```
+rencrow tasks reap-queued --created-before <RFC3339> [--min-age 24h] [--batch-size 2000] [--apply] [--compact]
+```
+
+- **担い手**: `taskmanager.Manager.ReapStaleQueued` (`internal/application/taskmanager/reap_queued.go`)。
+  永続化は既存の `JSONLStore.ExecuteIdempotentGlobalTaskOperation` (batchごとに、複数Taskの更新と所有者のreceiptを
+  1回のJSONL batchで書く)。状態遷移は `updateStatusInTransaction` を通り、`domaintask.CanTransition` が検査する。
+  JSONLを直接編集しない。cancelledは `ShouldNotify` の対象外なので通知は作られない。
+- **dry-run既定**: `--apply` を付けるまで何も書かない。dry-runは読み取り専用handle (`NewIndexedJSONLReader`) で行い、
+  6つのlogファイルと `index/` を変えない。`--apply` は writer として開くので、稼働中のCOREが writer lock を持つ間は
+  `ErrTaskWriterBusy` で止まる (JSONの `error` は `writer_busy`)。
+- **選択条件** (`classifyStaleQueued`。純粋関数で、dry-runと各batchのtx内再検証が同じ関数を呼ぶ): status=queued、
+  `origin_session/thread/turn/message_id` が無い、種別がallowlistの12種のどれか、`--created-before` より前の作成
+  (必須、既定値なし)、`--min-age` 以上の経過、自身の親・依存・置換先が無い、他のTaskから参照されない、Runが0件。
+  条件を満たさない最初の1つが除外理由として数えられる。dry-runのあとで開始された・Runを得た・参照されたTaskは、
+  tx内の再検証で外れ、cancelされない。
+- **種別の判定**: Taskには作成経路を示す field (kind、source、action) が無い (Actionは Run に付く)。IdleChat 3種は
+  route・assignee・read_only・owner が全て同じで、Background job failure と Heartbeat worker も同じなので、title の
+  定型部を正のキーにするしかない。ただし title だけでは選ばず、route、read_only、owner_id の有無、default の
+  priority と interrupt_policy、assignee があること、routing/assignment event・module・workstream・goal・
+  開始/終了/要約が無いことを必須の連言にする。title の定型は作成箇所のliteralの複製 (Semantic Duplication。
+  一度きりの道具で、作成箇所がtitleを変えると候補が減るだけで増えない)。Background job failure の作成箇所は
+  commit `16d106ed` で削除済みで、過去の版にだけ存在する。
+- **理由コード**: `reaped: stale queued without run (<kind>)` を Task の `summary` に書く (種別ごとの固定文字列。
+  本文は入れない)。`finished_at` は実行時刻になる。
+- **冪等**: 各batchの operation_id は Task 集合から決まる (`reap-queued-` + 集合のsha256の先頭40hex)。request_hash は
+  policy version・`--created-before`・`--min-age`・集合から決まる。再実行の正本は tx 内の status=queued 再検証で、
+  cancel済みのTaskは候補から外れるので、途中で落ちた後・2回実行・`ErrCommitUncertain` の後の再実行でも各Taskは
+  ちょうど1回だけcancelされる。receipt は batch の永続記録で、同じ集合のbatchを再生すると保存済みの結果を返す。
+  自動リトライはしない (commit不確実なら終了status 1 で止まり、再実行で候補が再計算される)。
+- **索引**: 道具はメモリ上のID索引を、設定の `task_store.index` に関わらず使う (使わないと SaveTask ごとに履歴全体を畳み込む
+  ので batch 内が二乗になる)。索引は派生物で、道具は sidecar を書かない。`tasks verify` は古い sidecar を復元して末尾の
+  log を再生し、`matches_log` を返す。次のCORE起動が同じ手順で取り込み、新しい sidecar を書く。
+- **出力と終了status**: 件数だけのJSON (種別ごとの候補数、理由ごとの除外数、batchごとの operation_id と件数、apply件数、
+  候補集合の sha256)。title・context・Task ID は出さない。終了status: 0=候補あり (dry-run) または処理した (apply)、
+  1=失敗、2=コマンドラインの誤り、3=候補なし。
+- **確認** (2026-10-10 の読み取りコピー、Task 75,166件、queued 18,326件に対して手元で実施): dry-run の候補 18,325 件
+  (種別ごとの件数は上の調査と一致) と除外 1 件 (`user_origin`)。`--apply` で 10 batch、18,325 件を cancelled にし、
+  通知は増えず、再実行は候補 0 件 (終了status 3)、`tasks verify` は `ok`、不一致 0。
+
 ## 残るリスクと未実施
 
 - [WARN] 満杯の原因である「`running` のまま残ったTask」の排除 (枠占有を生存証拠で判定) は未実装。これが無いと
   queuedは溜まらないが、仕事が進まない状態に変わる。
-- [WARN] 既に残っている約1.8万件のqueuedの整理 (owner側のバッチ操作) と、期限切れqueuedを終端する周期処理は未実施。
-  本変更は新規の発生を止めるだけで、既存の件数は減らない。
+- [WARN] 既に残っている約1.8万件のqueuedの整理は、道具 (上記) を実装したが本番では未実行。期限切れqueuedを終端する
+  周期処理は作らない。追記専用なので、整理しても store は縮まない (cancelledの行が約8MB増える)。
 - [WARN] health checkの「Run無しqueuedの滞留数」は未実装。architecture testはソース構造だけを見る。
 - orchestratorのintakeの補償 (Fail) はtransactionなので、store遅延下では失敗し得る。SuperAgentのrun queueは、
   既存Taskの再開が枠で拒否されるとTaskを終端する (別論点)。
@@ -93,6 +139,8 @@ Task storeに、Runを1つも持たない `queued` のTaskが単調に増え続�
 
 - `internal/application/taskmanager/manager.go` (`CreateAndStartRun`)
 - `internal/application/taskmanager/queued_creation_architecture_test.go`
+- `internal/application/taskmanager/reap_queued.go`、`reap_queued_classify_test.go`、`reap_queued_test.go`
+- `cmd/rencrow/cli_tasks_reap.go`、`cli_tasks_reap_test.go`
 - `internal/application/taskmanager/taskmanagertest/saturated.go`
 - `internal/application/heartbeat/worker_lifecycle.go`、`internal/application/idlechat/run_identity.go`
 - `cmd/rencrow/runtime_background_jobs.go`、`cmd/rencrow/runtime_memory_promotion.go`、`cmd/rencrow/capacity_backoff.go`
