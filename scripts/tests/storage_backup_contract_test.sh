@@ -928,24 +928,121 @@ try:
         creationflags=0x00000200 if windows else 0,  # CREATE_NEW_PROCESS_GROUP on the owned console
         text=True,
     )
-    if windows:
-        process_ids = (wintypes.DWORD * 256)()
-        process_count = kernel.GetConsoleProcessList(process_ids, len(process_ids))
-        console_members = process_ids[:process_count]
-        if process_count == 0 or process_count > len(process_ids) or \
-                os.getpid() not in console_members or process.pid not in console_members:
-            raise SystemExit("[NG] controller and checker do not share the fixture-owned console")
     deadline = time.monotonic() + 8.0
-    while time.monotonic() < deadline and process.poll() is None and not os.path.isfile(pid_file):
+    child_pid = None
+    pid_record_ready = False
+    pid_record_detail = "worker descendant PID record is not available"
+    console_members = []
+    console_count = None
+    console_ready = not windows
+    expected_console_members = (("controller", os.getpid()), ("checker", process.pid))
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            break
+        if not pid_record_ready and os.path.isfile(pid_file):
+            try:
+                with open(pid_file, encoding="ascii") as handle:
+                    pid_record = handle.read()
+            except OSError as error:
+                pid_record_detail = f"worker descendant PID record could not be read: {error}"
+            else:
+                if pid_record.endswith("\n"):
+                    pid_text = pid_record[:-1]
+                    if not pid_text or not pid_text.isascii() or not pid_text.isdigit():
+                        raise SystemExit(f"[NG] worker descendant PID record is invalid: {pid_record!r}")
+                    child_pid = int(pid_text)
+                    if not 0 < child_pid <= 0xFFFFFFFF:
+                        raise SystemExit(f"[NG] worker descendant PID is outside native DWORD range: {child_pid}")
+                    pid_record_ready = True
+                    pid_record_detail = "worker descendant PID record is complete"
+                else:
+                    pid_record_detail = "worker descendant PID record is incomplete"
+        if windows:
+            process_ids = (wintypes.DWORD * 256)()
+            console_count = kernel.GetConsoleProcessList(process_ids, len(process_ids))
+            if console_count == 0:
+                raise SystemExit(
+                    f"[NG] GetConsoleProcessList failed during interruption readiness "
+                    f"(WinError {ctypes.get_last_error()}, count=0, "
+                    f"expected={[f'{label}={pid}' for label, pid in expected_console_members]})"
+                )
+            if console_count > len(process_ids):
+                raise SystemExit(
+                    f"[NG] GetConsoleProcessList exceeded interruption readiness capacity "
+                    f"(count={console_count}, capacity={len(process_ids)}, WinError {ctypes.get_last_error()}, "
+                    f"expected={[f'{label}={pid}' for label, pid in expected_console_members]})"
+                )
+            console_members = list(process_ids[:console_count])
+            console_ready = all(pid in console_members for _, pid in expected_console_members)
+        if pid_record_ready and console_ready:
+            break
         time.sleep(0.05)
-    if not os.path.isfile(pid_file):
-        raise SystemExit("[NG] interrupted SQLite worker did not record its descendant PID")
-    with open(pid_file, encoding="ascii") as handle:
-        child_pid = int(handle.read().strip())
+    checker_status = process.poll()
+    if checker_status is not None:
+        missing_console_members = [
+            f"{label}={pid}" for label, pid in expected_console_members
+            if windows and pid not in console_members
+        ]
+        raise SystemExit(
+            f"[NG] interruption fixture checker exited before readiness "
+            f"(status={checker_status}, pid_ready={pid_record_ready}, pid_detail={pid_record_detail}, "
+            f"missing_console_members={missing_console_members}, console_members={console_members})"
+        )
+    if not pid_record_ready:
+        raise SystemExit(f"[NG] interruption fixture readiness timed out: {pid_record_detail}")
+    if windows and not console_ready:
+        missing_console_members = [
+            f"{label}={pid}" for label, pid in expected_console_members
+            if pid not in console_members
+        ]
+        raise SystemExit(
+            f"[NG] interruption fixture readiness timed out waiting for console members "
+            f"{missing_console_members}; count={console_count}"
+        )
     if windows:
         child_handle = kernel.OpenProcess(0x00100001, False, child_pid)  # SYNCHRONIZE | PROCESS_TERMINATE
         if not child_handle:
             raise SystemExit(f"[NG] could not hold the native interrupted worker PID {child_pid} (WinError {ctypes.get_last_error()})")
+        child_state = kernel.WaitForSingleObject(child_handle, 0)
+        if child_state != 0x00000102:  # WAIT_TIMEOUT: the held child must still be alive before interruption
+            raise SystemExit(
+                f"[NG] held native interrupted worker PID {child_pid} was not live before CTRL_BREAK "
+                f"(wait={child_state}, WinError={ctypes.get_last_error()})"
+            )
+        if process.poll() is not None:
+            raise SystemExit(f"[NG] checker exited before CTRL_BREAK (status={process.returncode})")
+        child_state = kernel.WaitForSingleObject(child_handle, 0)
+        if child_state != 0x00000102:
+            raise SystemExit(
+                f"[NG] held native interrupted worker PID {child_pid} exited before CTRL_BREAK "
+                f"(wait={child_state}, WinError={ctypes.get_last_error()})"
+            )
+        process_ids = (wintypes.DWORD * 256)()
+        console_count = kernel.GetConsoleProcessList(process_ids, len(process_ids))
+        if console_count == 0:
+            raise SystemExit(
+                f"[NG] GetConsoleProcessList failed before CTRL_BREAK "
+                f"(WinError {ctypes.get_last_error()}, count=0, "
+                f"expected={[f'{label}={pid}' for label, pid in expected_console_members]})"
+            )
+        if console_count > len(process_ids):
+            raise SystemExit(
+                f"[NG] GetConsoleProcessList exceeded capacity before CTRL_BREAK "
+                f"(count={console_count}, capacity={len(process_ids)}, WinError {ctypes.get_last_error()}, "
+                f"expected={[f'{label}={pid}' for label, pid in expected_console_members]})"
+            )
+        console_members = list(process_ids[:console_count])
+        missing_console_members = [
+            f"{label}={pid}" for label, pid in expected_console_members
+            if pid not in console_members
+        ]
+        if missing_console_members:
+            raise SystemExit(
+                f"[NG] interruption fixture lost console membership before CTRL_BREAK "
+                f"for {missing_console_members}; count={console_count}, members={console_members}"
+            )
+        if process.poll() is not None:
+            raise SystemExit(f"[NG] checker exited before CTRL_BREAK (status={process.returncode})")
         if not kernel.GenerateConsoleCtrlEvent(1, process.pid):  # CTRL_BREAK_EVENT
             raise SystemExit(f"[NG] could not deliver CTRL_BREAK to attached checker group (WinError {ctypes.get_last_error()})")
     else:
