@@ -210,9 +210,43 @@ assert_contains "${checker}" \
 assert_contains "${checker}" \
   'os.path.isfile(current_bash_executable)' \
   "native supervisor must validate the supplied Bash executable"
+assert_contains "${checker}" \
+  'CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | EXTENDED_STARTUPINFO_PRESENT' \
+  "native worker must be created suspended with its separate console process group"
+assert_contains "${checker}" \
+  'AssignProcessToJobObject(job_handle, process_info.hProcess)' \
+  "native worker must enter its private Job Object before it can run"
+assert_contains "${checker}" \
+  'ResumeThread(process_info.hThread)' \
+  "native worker must resume through the distinct primary-thread handle"
+assert_contains "${checker}" \
+  'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE' \
+  "native worker Job Object must kill owned processes when its private handle closes"
+assert_contains "${checker}" \
+  'QueryInformationJobObject' \
+  "native worker teardown must query Job Object active-process accounting"
+assert_contains "${checker}" \
+  'inherited_handles = (HANDLE * 3)' \
+  "native worker must inherit only the three configured standard handles"
+assert_contains "${checker}" \
+  'sqlite_supervision_marker' \
+  "restore scratch must be retained when owned-worker teardown is unconfirmed"
+assert_not_contains "${checker}" \
+  'CREATE_BREAKAWAY_FROM_JOB' \
+  "native worker must not opt out of Job Object ownership"
+assert_not_contains "${checker}" \
+  'taskkill' \
+  "native worker cleanup must not fall back to PID-tree enumeration"
 assert_not_contains "${checker}" \
   '"bash.exe"' \
   "native restore supervisor must not rediscover Bash by bare name"
+native_create_line=$(grep -nF 'created = kernel.CreateProcessW(' "${checker}" | head -n 1 | cut -d: -f1)
+native_assign_line=$(grep -nF 'if not kernel.AssignProcessToJobObject(job_handle, process_info.hProcess):' "${checker}" | head -n 1 | cut -d: -f1)
+native_resume_line=$(grep -nF 'previous_suspend_count = kernel.ResumeThread(process_info.hThread)' "${checker}" | head -n 1 | cut -d: -f1)
+if [[ ! ${native_create_line} =~ ^[0-9]+$ || ! ${native_assign_line} =~ ^[0-9]+$ || ! ${native_resume_line} =~ ^[0-9]+$ ]] || \
+  (( native_create_line >= native_assign_line || native_assign_line >= native_resume_line )); then
+  contract_failures+=("native worker creation, Job assignment, and primary-thread resume must stay in that order")
+fi
 
 if (( ${#contract_failures[@]} > 0 )); then
   printf '[RED] storage backup contract violations:\n' >&2
@@ -372,7 +406,16 @@ import time
 marker, pid_file = sys.argv[1:]
 with open(pid_file, "w", encoding="ascii") as handle:
     handle.write(str(os.getpid()) + "\n")
-time.sleep(5)
+parent_pid_file = os.environ.get("RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE")
+if parent_pid_file:
+    with open(parent_pid_file, "w", encoding="ascii") as handle:
+        handle.write(str(os.getppid()) + "\n")
+release_file = os.environ.get("RENCROW_TEST_SURVIVOR_RELEASE_FILE")
+if release_file:
+    while not os.path.isfile(release_file):
+        time.sleep(0.02)
+else:
+    time.sleep(5)
 with open(marker, "w", encoding="ascii") as handle:
     handle.write("survived\n")
 PY
@@ -479,6 +522,260 @@ if [[ ${timeout_child_state} != dead ]]; then
   exit 1
 fi
 echo "[OK] SQLite worker deadline and descendant cleanup verified in ${timeout_elapsed}s"
+
+root_exit_python=${test_root}/root-exit-python
+cat > "${root_exit_python}" <<'SH'
+#!/usr/bin/env bash
+if [[ ${1:-} == - && ${2:-} == *l1.db && ${3:-} == *l2.db ]]; then
+  python3 -c 'import os,sys; open(sys.argv[1], "w", encoding="ascii").write(str(os.getppid()))' \
+    "${RENCROW_TEST_ROOT_EXIT_PID_FILE}"
+  python3 "${RENCROW_TEST_SURVIVOR_SCRIPT}" \
+    "${RENCROW_TEST_SURVIVOR_MARKER}" "${RENCROW_TEST_SURVIVOR_PID_FILE}" &
+  while [[ ! -f ${RENCROW_TEST_ROOT_EXIT_RELEASE_FILE} ]]; do
+    sleep 0.02
+  done
+  exit "${RENCROW_TEST_WORKER_EXIT}"
+fi
+exec python3 "$@"
+SH
+chmod +x "${root_exit_python}"
+python3 - "${current_bash_executable}" "${checker}" "${test_root}/snapshot" \
+  "${root_exit_python}" "${survivor_python}" "${process_liveness_checker}" <<'PY'
+import ctypes
+import os
+import signal
+import subprocess
+import sys
+import time
+
+def bash_path(value):
+    if os.name != "nt":
+        return value
+    if len(value) > 2 and value[1] == ":" and value[2] in "\\/":
+        return "/" + value[0].lower() + "/" + value[3:].replace("\\", "/")
+    if value.startswith("\\\\"):
+        return value.replace("\\", "/")
+    return value
+
+def inspect_posix_pid(pid, liveness_checker):
+    result = subprocess.run(
+        [sys.executable, liveness_checker, str(pid)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        timeout=3.0,
+        check=False,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"[NG] could not inspect worker PID {pid}: {result.stderr.strip()}")
+    return result.stdout.strip() == "alive"
+
+current_bash_executable, checker, snapshot, worker, survivor_script, liveness_checker = sys.argv[1:]
+windows = os.name == "nt"
+kernel = None
+held_handles = []
+if windows:
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = wintypes.BOOL
+    kernel.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    kernel.IsProcessInJob.restype = wintypes.BOOL
+    kernel.FreeConsole.argtypes = []
+    kernel.FreeConsole.restype = wintypes.BOOL
+    kernel.AllocConsole.argtypes = []
+    kernel.AllocConsole.restype = wintypes.BOOL
+    kernel.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+    kernel.GetConsoleProcessList.restype = wintypes.DWORD
+
+for worker_exit, expected_status in (("0", 125), ("23", 23)):
+    case_root = os.path.join(os.path.dirname(snapshot), f"root-exit-{worker_exit}")
+    marker = case_root + ".marker"
+    child_pid_file = case_root + ".child-pid"
+    child_parent_pid_file = case_root + ".child-parent-pid"
+    root_pid_file = case_root + ".root-pid"
+    release_file = case_root + ".release"
+    child_release_file = case_root + ".child-release"
+    environment = os.environ.copy()
+    environment.update({
+        "RENCROW_TEST_PYTHON": bash_path(worker),
+        "RENCROW_TEST_SURVIVOR_SCRIPT": bash_path(survivor_script),
+        "RENCROW_TEST_SURVIVOR_MARKER": bash_path(marker),
+        "RENCROW_TEST_SURVIVOR_PID_FILE": bash_path(child_pid_file),
+        "RENCROW_TEST_SURVIVOR_RELEASE_FILE": bash_path(child_release_file),
+        "RENCROW_TEST_ROOT_EXIT_PARENT_PID_FILE": bash_path(child_parent_pid_file),
+        "RENCROW_TEST_ROOT_EXIT_PID_FILE": bash_path(root_pid_file),
+        "RENCROW_TEST_ROOT_EXIT_RELEASE_FILE": bash_path(release_file),
+        "RENCROW_TEST_WORKER_EXIT": worker_exit,
+        "RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC": "30",
+    })
+    command = [current_bash_executable, bash_path(checker), bash_path(snapshot)]
+    process = None
+    root_pid = None
+    child_pid = None
+    console_attached = False
+    cleanup_errors = []
+    try:
+        if windows:
+            if not kernel.FreeConsole():
+                raise SystemExit(f"[NG] could not detach root-exit fixture from inherited console (WinError {ctypes.get_last_error()})")
+            if not kernel.AllocConsole():
+                raise SystemExit(f"[NG] could not allocate an owned root-exit fixture console (WinError {ctypes.get_last_error()})")
+            console_attached = True
+        process = subprocess.Popen(
+            command,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=False,
+            start_new_session=not windows,
+            creationflags=0x00000200 if windows else 0,
+            text=True,
+        )
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline and process.poll() is None:
+            if os.path.isfile(root_pid_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file):
+                break
+            time.sleep(0.02)
+        if not (os.path.isfile(root_pid_file) and os.path.isfile(child_pid_file) and os.path.isfile(child_parent_pid_file)):
+            raise SystemExit("[NG] root-exit worker fixture did not record its native process relationship")
+        root_pid = int(open(root_pid_file, encoding="ascii").read().strip())
+        child_pid = int(open(child_pid_file, encoding="ascii").read().strip())
+        child_parent_pid = int(open(child_parent_pid_file, encoding="ascii").read().strip())
+        if child_parent_pid != root_pid:
+            raise SystemExit(
+                f"[NG] root-exit child parent PID {child_parent_pid} did not match fixture root PID {root_pid}"
+            )
+        if windows:
+            console_process_ids = (wintypes.DWORD * 256)()
+            console_process_count = kernel.GetConsoleProcessList(console_process_ids, len(console_process_ids))
+            console_members = console_process_ids[:console_process_count]
+            if console_process_count == 0 or console_process_count > len(console_process_ids) or \
+                    os.getpid() not in console_members or process.pid not in console_members:
+                raise SystemExit("[NG] controller and checker do not share the fixture-owned root-exit console")
+            for pid in (root_pid, child_pid):
+                handle = kernel.OpenProcess(0x00100401, False, pid)  # SYNCHRONIZE | PROCESS_QUERY_INFORMATION | PROCESS_TERMINATE
+                if not handle:
+                    raise SystemExit(f"[NG] could not hold native root-exit process PID {pid} (WinError {ctypes.get_last_error()})")
+                held_handles.append(handle)
+            membership = []
+            for handle in held_handles:
+                in_job = wintypes.BOOL()
+                if not kernel.IsProcessInJob(handle, None, ctypes.byref(in_job)):
+                    raise SystemExit(f"[NG] could not inspect native Job membership (WinError {ctypes.get_last_error()})")
+                membership.append(bool(in_job.value))
+            if membership != [True, True]:
+                raise SystemExit(f"[NG] root and child were not both in a native Job before root exit: {membership}")
+            for pid, handle in zip((root_pid, child_pid), held_handles):
+                wait_result = kernel.WaitForSingleObject(handle, 0)
+                if wait_result != 0x00000102:
+                    raise SystemExit(f"[NG] native root-exit fixture PID {pid} was not live before root release (wait={wait_result})")
+        elif not inspect_posix_pid(root_pid, liveness_checker) or not inspect_posix_pid(child_pid, liveness_checker):
+            raise SystemExit("[NG] root-exit fixture root and child must both be live before root release")
+        with open(release_file, "w", encoding="ascii") as handle:
+            handle.write("root may exit\n")
+        output, _ = process.communicate(timeout=8.0)
+        if process.returncode != expected_status:
+            raise SystemExit(
+                f"[NG] worker root exit {worker_exit} returned {process.returncode}, expected {expected_status}\n{output}"
+            )
+        if "[OK] snapshot is checksum-valid" in output:
+            raise SystemExit("[NG] root-exit worker fixture emitted the final success marker")
+        if windows:
+            expected_diagnostic = f"worker root exited with status {worker_exit} while its owned Job still had "
+            if expected_diagnostic not in output:
+                raise SystemExit(
+                    f"[NG] root-exit worker {worker_exit} omitted its owned-Job cleanup diagnostic\n{output}"
+                )
+        with open(child_release_file, "w", encoding="ascii") as handle:
+            handle.write("release only after checker completion\n")
+        time.sleep(0.1)
+        if os.path.exists(marker):
+            raise SystemExit(f"[NG] root-exit worker child {child_pid} survived and touched scratch state")
+        if windows:
+            for pid, handle in zip((root_pid, child_pid), held_handles):
+                wait_result = kernel.WaitForSingleObject(handle, 0)
+                if wait_result != 0:
+                    raise SystemExit(f"[NG] held native root-exit process PID {pid} is still active (wait={wait_result})")
+            print(
+                f"[OK] root-exit Job cleanup root_pid={root_pid} child_pid={child_pid} "
+                f"child_parent_pid={child_parent_pid} any_job_membership=confirmed"
+            )
+        else:
+            reap_deadline = time.monotonic() + 3.0
+            while time.monotonic() < reap_deadline and (
+                inspect_posix_pid(root_pid, liveness_checker) or inspect_posix_pid(child_pid, liveness_checker)
+            ):
+                time.sleep(0.05)
+            if inspect_posix_pid(root_pid, liveness_checker) or inspect_posix_pid(child_pid, liveness_checker):
+                raise SystemExit(f"[NG] root-exit process group still contains root {root_pid} or child {child_pid}")
+            print(
+                f"[OK] root-exit process-group cleanup root_pid={root_pid} child_pid={child_pid} "
+                f"child_parent_pid={child_parent_pid}"
+            )
+    finally:
+        for path in (release_file, child_release_file):
+            try:
+                if not os.path.exists(path):
+                    with open(path, "w", encoding="ascii") as handle:
+                        handle.write("release during fixture cleanup\n")
+            except OSError as error:
+                cleanup_errors.append(f"could not release root-exit fixture through {path}: {error}")
+        if process is not None and process.poll() is None:
+            try:
+                if windows:
+                    process.send_signal(signal.CTRL_BREAK_EVENT)
+                else:
+                    os.killpg(process.pid, signal.SIGTERM)
+            except (OSError, ValueError) as error:
+                cleanup_errors.append(f"could not signal the owned root-exit checker: {error}")
+            try:
+                process.communicate(timeout=8.0)
+            except subprocess.TimeoutExpired:
+                cleanup_errors.append("owned root-exit checker did not exit after its supported interruption")
+                if windows:
+                    for pid, handle in zip((root_pid, child_pid), held_handles):
+                        if kernel.WaitForSingleObject(handle, 0) == 0x00000102:
+                            if not kernel.TerminateProcess(handle, 1):
+                                cleanup_errors.append(
+                                    f"could not terminate held root-exit process PID {pid} "
+                                    f"(WinError {ctypes.get_last_error()})"
+                                )
+                            elif kernel.WaitForSingleObject(handle, 5000) != 0:
+                                cleanup_errors.append(f"held root-exit process PID {pid} did not exit")
+                    try:
+                        process.kill()
+                        process.wait(timeout=3.0)
+                    except (OSError, subprocess.TimeoutExpired) as error:
+                        cleanup_errors.append(f"could not reap the owned root-exit checker: {error}")
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait(timeout=3.0)
+                    except (OSError, subprocess.TimeoutExpired) as error:
+                        cleanup_errors.append(f"could not reap the root-exit process group: {error}")
+        for handle in held_handles:
+            if not kernel.CloseHandle(handle):
+                cleanup_errors.append(f"could not close a held root-exit process handle (WinError {ctypes.get_last_error()})")
+        held_handles.clear()
+        if console_attached and not kernel.FreeConsole():
+            cleanup_errors.append(f"could not release the owned root-exit console (WinError {ctypes.get_last_error()})")
+        if cleanup_errors:
+            message = "[NG] root-exit fixture cleanup was not confirmed: " + "; ".join(cleanup_errors)
+            if sys.exc_info()[0] is None:
+                raise SystemExit(message)
+            print(message, file=sys.stderr)
+PY
+assert_no_restore_scratch "${test_root}/snapshot" "root-exit worker cleanup"
 
 interrupt_python=${test_root}/interrupt-python
 cat > "${interrupt_python}" <<'SH'

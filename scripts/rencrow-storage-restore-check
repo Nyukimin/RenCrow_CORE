@@ -103,11 +103,17 @@ for raw in sys.stdin:
 '
 
 restore_root=$(mktemp -d "${snapshot_dir}/.restore.XXXXXX")
+sqlite_supervision_marker=${restore_root}/.sqlite-integrity-supervision-active
 cleanup() {
   local status=$?
   trap - EXIT INT TERM
   if [[ -n ${restore_root:-} && -d ${restore_root} ]]; then
-    rm -rf -- "${restore_root}"
+    if [[ -f ${sqlite_supervision_marker} ]]; then
+      echo "[NG] owned SQLite worker teardown is unconfirmed; restore scratch was retained at ${restore_root}" >&2
+      restore_root=
+    else
+      rm -rf -- "${restore_root}"
+    fi
   fi
   exit "${status}"
 }
@@ -142,15 +148,16 @@ set +e
 # python3 is the existing operational interpreter and supervises the configured
 # worker. RENCROW_TEST_PYTHON remains the worker executable, so its startup is
 # covered by the deadline instead of starting the supervisor itself.
-python3 - "${current_bash_executable}" "${python_bin}" "${sqlite_integrity_timeout}" "${sqlite_timeout_marker}" \
+python3 - "${current_bash_executable}" "${python_bin}" "${sqlite_integrity_timeout}" "${sqlite_timeout_marker}" "${sqlite_supervision_marker}" \
   "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
-current_bash_executable, worker_python, timeout_text, timeout_marker, *database_paths = sys.argv[1:]
+current_bash_executable, worker_python, timeout_text, timeout_marker, supervision_marker, *database_paths = sys.argv[1:]
 timeout_seconds = int(timeout_text)
 deadline = time.monotonic() + timeout_seconds
 
@@ -207,34 +214,6 @@ def stop_posix_process_group(process):
     return wait_for_process_group(process, 2.0)
 
 
-def stop_windows_process_tree(process):
-    if process.poll() is not None:
-        return False
-    system_root = os.environ.get("SystemRoot", "")
-    if not system_root or not os.path.isabs(system_root):
-        return False
-    taskkill = os.path.join(system_root, "System32", "taskkill.exe")
-    try:
-        result = subprocess.run(
-            [taskkill, "/PID", str(process.pid), "/T", "/F"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            shell=False,
-            timeout=4.0,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    if result.returncode != 0:
-        return False
-    try:
-        process.wait(timeout=1.0)
-    except subprocess.TimeoutExpired:
-        return False
-    return True
-
-
 def close_stdin(process):
     if process.stdin is not None and not process.stdin.closed:
         try:
@@ -264,16 +243,499 @@ for watched_signal in watched_signals:
     signal.signal(watched_signal, exit_on_signal)
 
 
-process = None
-try:
-    if os.name == "nt":
+def run_windows_owned_worker(worker_command):
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    DWORD = wintypes.DWORD
+    BOOL = wintypes.BOOL
+    HANDLE = wintypes.HANDLE
+    SIZE_T = ctypes.c_size_t
+    ULONG_PTR = ctypes.c_size_t
+    LARGE_INTEGER = ctypes.c_longlong
+    INVALID_HANDLE_VALUE = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    CREATE_SUSPENDED = 0x00000004
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    EXTENDED_STARTUPINFO_PRESENT = 0x00080000
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", LARGE_INTEGER),
+            ("PerJobUserTimeLimit", LARGE_INTEGER),
+            ("LimitFlags", DWORD),
+            ("MinimumWorkingSetSize", SIZE_T),
+            ("MaximumWorkingSetSize", SIZE_T),
+            ("ActiveProcessLimit", DWORD),
+            ("Affinity", ULONG_PTR),
+            ("PriorityClass", DWORD),
+            ("SchedulingClass", DWORD),
+        ]
+
+    class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", SIZE_T),
+            ("JobMemoryLimit", SIZE_T),
+            ("PeakProcessMemoryUsed", SIZE_T),
+            ("PeakJobMemoryUsed", SIZE_T),
+        ]
+
+    class JOBOBJECT_BASIC_ACCOUNTING_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("TotalUserTime", LARGE_INTEGER),
+            ("TotalKernelTime", LARGE_INTEGER),
+            ("ThisPeriodTotalUserTime", LARGE_INTEGER),
+            ("ThisPeriodTotalKernelTime", LARGE_INTEGER),
+            ("TotalPageFaultCount", DWORD),
+            ("TotalProcesses", DWORD),
+            ("ActiveProcesses", DWORD),
+            ("TotalTerminatedProcesses", DWORD),
+        ]
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [
+            ("cb", DWORD),
+            ("lpReserved", wintypes.LPWSTR),
+            ("lpDesktop", wintypes.LPWSTR),
+            ("lpTitle", wintypes.LPWSTR),
+            ("dwX", DWORD),
+            ("dwY", DWORD),
+            ("dwXSize", DWORD),
+            ("dwYSize", DWORD),
+            ("dwXCountChars", DWORD),
+            ("dwYCountChars", DWORD),
+            ("dwFillAttribute", DWORD),
+            ("dwFlags", DWORD),
+            ("wShowWindow", wintypes.WORD),
+            ("cbReserved2", wintypes.WORD),
+            ("lpReserved2", ctypes.POINTER(ctypes.c_ubyte)),
+            ("hStdInput", HANDLE),
+            ("hStdOutput", HANDLE),
+            ("hStdError", HANDLE),
+        ]
+
+    class STARTUPINFOEXW(ctypes.Structure):
+        _fields_ = [
+            ("StartupInfo", STARTUPINFOW),
+            ("lpAttributeList", ctypes.c_void_p),
+        ]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("hProcess", HANDLE),
+            ("hThread", HANDLE),
+            ("dwProcessId", DWORD),
+            ("dwThreadId", DWORD),
+        ]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.argtypes = []
+    kernel.GetCurrentProcess.restype = HANDLE
+    kernel.GetStdHandle.argtypes = [DWORD]
+    kernel.GetStdHandle.restype = HANDLE
+    kernel.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel.CreateJobObjectW.restype = HANDLE
+    kernel.SetInformationJobObject.argtypes = [HANDLE, ctypes.c_int, ctypes.c_void_p, DWORD]
+    kernel.SetInformationJobObject.restype = BOOL
+    kernel.QueryInformationJobObject.argtypes = [HANDLE, ctypes.c_int, ctypes.c_void_p, DWORD, ctypes.POINTER(DWORD)]
+    kernel.QueryInformationJobObject.restype = BOOL
+    kernel.AssignProcessToJobObject.argtypes = [HANDLE, HANDLE]
+    kernel.AssignProcessToJobObject.restype = BOOL
+    kernel.TerminateJobObject.argtypes = [HANDLE, wintypes.UINT]
+    kernel.TerminateJobObject.restype = BOOL
+    kernel.CreateProcessW.argtypes = [
+        wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
+        BOOL, DWORD, ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_void_p,
+        ctypes.POINTER(PROCESS_INFORMATION),
+    ]
+    kernel.CreateProcessW.restype = BOOL
+    kernel.ResumeThread.argtypes = [HANDLE]
+    kernel.ResumeThread.restype = DWORD
+    kernel.WaitForSingleObject.argtypes = [HANDLE, DWORD]
+    kernel.WaitForSingleObject.restype = DWORD
+    kernel.GetExitCodeProcess.argtypes = [HANDLE, ctypes.POINTER(DWORD)]
+    kernel.GetExitCodeProcess.restype = BOOL
+    kernel.TerminateProcess.argtypes = [HANDLE, wintypes.UINT]
+    kernel.TerminateProcess.restype = BOOL
+    kernel.DuplicateHandle.argtypes = [HANDLE, HANDLE, HANDLE, ctypes.POINTER(HANDLE), DWORD, BOOL, DWORD]
+    kernel.DuplicateHandle.restype = BOOL
+    kernel.CloseHandle.argtypes = [HANDLE]
+    kernel.CloseHandle.restype = BOOL
+    kernel.InitializeProcThreadAttributeList.argtypes = [ctypes.c_void_p, DWORD, DWORD, ctypes.POINTER(SIZE_T)]
+    kernel.InitializeProcThreadAttributeList.restype = BOOL
+    kernel.UpdateProcThreadAttribute.argtypes = [
+        ctypes.c_void_p, DWORD, ULONG_PTR, ctypes.c_void_p, SIZE_T,
+        ctypes.c_void_p, ctypes.POINTER(SIZE_T),
+    ]
+    kernel.UpdateProcThreadAttribute.restype = BOOL
+    kernel.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
+    kernel.DeleteProcThreadAttributeList.restype = None
+
+    class WorkerInterrupted(Exception):
+        def __init__(self, signum):
+            self.signum = signum
+
+    interrupted = {"signum": None}
+
+    def record_signal(signum, _frame):
+        interrupted["signum"] = signum
+
+    def check_interruption():
+        if interrupted["signum"] is not None:
+            raise WorkerInterrupted(interrupted["signum"])
+
+    def last_error(operation):
+        error = ctypes.get_last_error()
+        return OSError(error, f"{operation} failed with WinError {error}")
+
+    def handle_value(handle):
+        if handle is None:
+            return 0
+        if isinstance(handle, int):
+            return handle
+        return ctypes.cast(handle, ctypes.c_void_p).value or 0
+
+    def close_handle(handle):
+        if handle_value(handle):
+            if not kernel.CloseHandle(handle):
+                return False
+        return True
+
+    old_handlers = {}
+    for watched_signal in watched_signals:
+        old_handlers[watched_signal] = signal.signal(watched_signal, record_signal)
+
+    job_handle = HANDLE()
+    process_info = PROCESS_INFORMATION()  # Preallocated so interrupted CreateProcessW still leaves inspectable handles.
+    assignment_attempted = False
+    worker_may_have_run = False
+    active_marker_created = False
+    worker_input_path = None
+    worker_input = None
+    duplicate_handles = []
+    fallback_streams = []
+    attribute_buffer = None
+    attribute_list = ctypes.c_void_p()
+    attribute_list_initialized = False
+    cleanup_proven = True
+    requested_status = 125
+    timed_out = False
+    root_exit_status = None
+    diagnostics = []
+
+    def job_active_processes():
+        accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION()
+        returned = DWORD()
+        if not kernel.QueryInformationJobObject(
+            job_handle, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), ctypes.byref(returned)
+        ):
+            raise last_error("QueryInformationJobObject")
+        return int(accounting.ActiveProcesses)
+
+    def wait_for_job_empty(seconds):
+        end = time.monotonic() + seconds
+        while True:
+            if job_active_processes() == 0:
+                return True
+            if time.monotonic() >= end:
+                return False
+            time.sleep(0.05)
+
+    def terminate_job_and_wait():
+        if not kernel.TerminateJobObject(job_handle, 125):
+            diagnostics.append(str(last_error("TerminateJobObject")))
+            return False
+        if not wait_for_job_empty(5.0):
+            diagnostics.append("Job Object still reported active processes after bounded termination")
+            return False
+        return True
+
+    def duplicate_inheritable(source_handle):
+        duplicate = HANDLE()
+        duplicate_handles.append(duplicate)
+        current = kernel.GetCurrentProcess()
+        if not kernel.DuplicateHandle(
+            current, source_handle, current, ctypes.byref(duplicate), 0, True, 0x00000002
+        ):
+            raise last_error("DuplicateHandle for child stdio")
+        return duplicate
+
+    try:
+        check_interruption()
         if (
             not os.path.isabs(current_bash_executable)
             or not os.path.isfile(current_bash_executable)
             or not current_bash_executable.lower().endswith(".exe")
         ):
-            print("[NG] selected Bash executable is not a native absolute executable file", file=sys.stderr)
-            raise SystemExit(125)
+            raise RuntimeError("selected Bash executable is not a native absolute executable file")
+
+        job_handle = kernel.CreateJobObjectW(None, None)
+        if not handle_value(job_handle):
+            raise last_error("CreateJobObjectW")
+        check_interruption()
+        job_limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel.SetInformationJobObject(
+            job_handle, 9, ctypes.byref(job_limits), ctypes.sizeof(job_limits)
+        ):
+            raise last_error("SetInformationJobObject")
+        check_interruption()
+
+        input_fd, worker_input_path = tempfile.mkstemp(
+            prefix=".sqlite-integrity-worker-", suffix=".py", dir=os.path.dirname(timeout_marker)
+        )
+        with os.fdopen(input_fd, "wb") as input_file:
+            input_file.write(worker_script.encode("utf-8"))
+        worker_input = open(worker_input_path, "rb", buffering=0)
+
+        stdin_source = msvcrt.get_osfhandle(worker_input.fileno())
+        stdin_handle = duplicate_inheritable(ctypes.c_void_p(stdin_source))
+        std_handles = []
+        for standard_id in (-11, -12):  # stdout and stderr remain connected to the existing checker streams.
+            standard_handle = kernel.GetStdHandle(standard_id & 0xFFFFFFFF)
+            standard_value = handle_value(standard_handle)
+            if not standard_value or standard_value == INVALID_HANDLE_VALUE:
+                fallback = open(os.devnull, "wb", buffering=0)
+                fallback_streams.append(fallback)
+                standard_handle = ctypes.c_void_p(msvcrt.get_osfhandle(fallback.fileno()))
+            std_handles.append(duplicate_inheritable(standard_handle))
+
+        startup = STARTUPINFOEXW()
+        startup.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEXW)
+        startup.StartupInfo.dwFlags = 0x00000100  # STARTF_USESTDHANDLES
+        startup.StartupInfo.hStdInput = stdin_handle
+        startup.StartupInfo.hStdOutput = std_handles[0]
+        startup.StartupInfo.hStdError = std_handles[1]
+
+        attribute_size = SIZE_T()
+        kernel.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(attribute_size))
+        if not attribute_size.value:
+            raise last_error("InitializeProcThreadAttributeList size query")
+        attribute_buffer = ctypes.create_string_buffer(attribute_size.value)
+        attribute_list = ctypes.cast(attribute_buffer, ctypes.c_void_p)
+        if not kernel.InitializeProcThreadAttributeList(attribute_list, 1, 0, ctypes.byref(attribute_size)):
+            raise last_error("InitializeProcThreadAttributeList")
+        attribute_list_initialized = True
+        inherited_handles = (HANDLE * 3)(stdin_handle, std_handles[0], std_handles[1])
+        if not kernel.UpdateProcThreadAttribute(
+            attribute_list, 0, 0x00020002, ctypes.cast(inherited_handles, ctypes.c_void_p),
+            ctypes.sizeof(inherited_handles), None, None,
+        ):
+            raise last_error("UpdateProcThreadAttribute(HANDLE_LIST)")
+        startup.lpAttributeList = attribute_list
+        check_interruption()
+
+        with open(supervision_marker, "x", encoding="ascii") as marker:
+            marker.write("owned worker creation is in progress\n")
+        active_marker_created = True
+        command_line = ctypes.create_unicode_buffer(subprocess.list2cmdline(worker_command))
+        creation_flags = CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | EXTENDED_STARTUPINFO_PRESENT
+        created = kernel.CreateProcessW(
+            current_bash_executable, command_line, None, None, True, creation_flags,
+            None, None, ctypes.byref(startup), ctypes.byref(process_info),
+        )
+        if not created:
+            raise last_error("CreateProcessW")
+        check_interruption()
+
+        assignment_attempted = True
+        if not kernel.AssignProcessToJobObject(job_handle, process_info.hProcess):
+            raise last_error("AssignProcessToJobObject")
+        if job_active_processes() != 1:
+            raise RuntimeError("Job Object did not report exactly one suspended worker before resume")
+        check_interruption()
+
+        previous_suspend_count = kernel.ResumeThread(process_info.hThread)
+        if previous_suspend_count == 0xFFFFFFFF:
+            raise last_error("ResumeThread")
+        worker_may_have_run = previous_suspend_count <= 1
+        if previous_suspend_count != 1:
+            raise RuntimeError(f"ResumeThread returned unexpected previous suspend count {previous_suspend_count}")
+        check_interruption()
+
+        while True:
+            check_interruption()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                wait_result = kernel.WaitForSingleObject(process_info.hProcess, 0)
+                if wait_result == 0:
+                    break
+                if wait_result != 0x00000102:
+                    raise last_error("WaitForSingleObject(worker process at deadline)")
+                timed_out = True
+                requested_status = 124
+                break
+            wait_ms = max(1, min(100, int(remaining * 1000)))
+            wait_result = kernel.WaitForSingleObject(process_info.hProcess, wait_ms)
+            if wait_result == 0:
+                break
+            if wait_result != 0x00000102:
+                raise last_error("WaitForSingleObject(worker process)")
+
+        if not timed_out:
+            exit_code = DWORD()
+            if not kernel.GetExitCodeProcess(process_info.hProcess, ctypes.byref(exit_code)):
+                raise last_error("GetExitCodeProcess")
+            root_exit_status = int(exit_code.value)
+            if root_exit_status == 259:
+                raise RuntimeError("worker process handle was signaled while GetExitCodeProcess reported STILL_ACTIVE")
+            active_count = job_active_processes()
+            if active_count > 0:
+                diagnostics.append(
+                    f"worker root exited with status {root_exit_status} while its owned Job still had "
+                    f"{active_count} active descendant(s)"
+                )
+                if not terminate_job_and_wait():
+                    cleanup_proven = False
+                    requested_status = 125
+                elif root_exit_status == 0:
+                    requested_status = 125
+                else:
+                    requested_status = root_exit_status
+            else:
+                requested_status = root_exit_status
+    except WorkerInterrupted as interrupted_error:
+        requested_status = 128 + interrupted_error.signum
+    except BaseException as error:
+        requested_status = 125
+        diagnostics.append(f"SQLite integrity worker could not be supervised: {error}")
+    finally:
+        process_handle = process_info.hProcess
+        thread_handle = process_info.hThread
+        if handle_value(job_handle):
+            try:
+                active_count = job_active_processes()
+                if active_count > 0:
+                    if not terminate_job_and_wait():
+                        cleanup_proven = False
+                if cleanup_proven and job_active_processes() != 0:
+                    cleanup_proven = False
+                    diagnostics.append("Job Object active-process count did not reach zero")
+            except BaseException as error:
+                cleanup_proven = False
+                diagnostics.append(f"Job Object teardown could not be confirmed: {error}")
+                if assignment_attempted and not kernel.TerminateJobObject(job_handle, 125):
+                    diagnostics.append(str(last_error("TerminateJobObject after query failure")))
+
+        if handle_value(process_handle):
+            wait_result = kernel.WaitForSingleObject(process_handle, 5000 if worker_may_have_run else 0)
+            if wait_result == 0x00000102:
+                if assignment_attempted and handle_value(job_handle):
+                    if not terminate_job_and_wait():
+                        cleanup_proven = False
+                if not kernel.TerminateProcess(process_handle, 125):
+                    diagnostics.append(str(last_error("TerminateProcess(worker handle)")))
+                wait_result = kernel.WaitForSingleObject(process_handle, 5000)
+            if wait_result != 0:
+                cleanup_proven = False
+                diagnostics.append("owned worker root process did not signal within the cleanup bound")
+        if handle_value(job_handle):
+            try:
+                if job_active_processes() != 0:
+                    cleanup_proven = False
+                    diagnostics.append("Job Object still has active processes after root wait")
+            except BaseException as error:
+                cleanup_proven = False
+                diagnostics.append(f"final Job Object query failed: {error}")
+                if assignment_attempted and not kernel.TerminateJobObject(job_handle, 125):
+                    diagnostics.append(str(last_error("TerminateJobObject after final query failure")))
+
+        if attribute_list_initialized and attribute_list:
+            kernel.DeleteProcThreadAttributeList(attribute_list)
+        for duplicate in duplicate_handles:
+            if not close_handle(duplicate):
+                cleanup_proven = False
+                diagnostics.append("a duplicated child stdio handle could not be closed")
+        if worker_input is not None:
+            try:
+                worker_input.close()
+            except OSError as error:
+                cleanup_proven = False
+                diagnostics.append(f"temporary worker input handle could not be closed: {error}")
+        for fallback in fallback_streams:
+            try:
+                fallback.close()
+            except OSError as error:
+                cleanup_proven = False
+                diagnostics.append(f"a fallback child stdio handle could not be closed: {error}")
+        if not close_handle(thread_handle):
+            cleanup_proven = False
+            diagnostics.append("the worker primary-thread handle could not be closed")
+        if not close_handle(process_handle):
+            cleanup_proven = False
+            diagnostics.append("the worker process handle could not be closed")
+        if not close_handle(job_handle):
+            cleanup_proven = False
+            diagnostics.append("the private Job Object handle could not be closed")
+
+        if cleanup_proven:
+            if worker_input_path is not None:
+                try:
+                    os.unlink(worker_input_path)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    requested_status = 125
+                    diagnostics.append(f"temporary worker input could not be removed: {error}")
+            if active_marker_created:
+                try:
+                    os.unlink(supervision_marker)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    requested_status = 125
+                    diagnostics.append(f"worker supervision marker could not be removed: {error}")
+        else:
+            requested_status = 125
+        if interrupted["signum"] is not None and requested_status != 125:
+            requested_status = 128 + interrupted["signum"]
+
+        for watched_signal, old_handler in old_handlers.items():
+            signal.signal(watched_signal, old_handler)
+        if interrupted["signum"] is not None and requested_status != 125:
+            requested_status = 128 + interrupted["signum"]
+
+    if diagnostics:
+        for diagnostic in diagnostics:
+            print(f"[NG] {diagnostic}", file=sys.stderr)
+    if timed_out and requested_status == 124 and cleanup_proven and interrupted["signum"] is None:
+        staged_marker = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="ascii", delete=False,
+                dir=os.path.dirname(timeout_marker), prefix=".sqlite-timeout-",
+            ) as marker:
+                staged_marker = marker.name
+                marker.write("deadline_expired\n")
+            os.replace(staged_marker, timeout_marker)
+            staged_marker = None
+        except OSError as error:
+            if staged_marker is not None:
+                try:
+                    os.unlink(staged_marker)
+                except OSError:
+                    pass
+            print(f"[NG] SQLite deadline marker could not be created: {error}", file=sys.stderr)
+            return 125
+    return requested_status
+
+
+process = None
+try:
+    if os.name == "nt":
         # Native Windows cannot CreateProcess an extensionless Bash shim. Run
         # both shims and native Python through the already-required Bash with
         # fixed shell text and positional argv; no worker value is interpolated.
@@ -286,15 +748,18 @@ try:
             "-",
             *(bash_argument(path) for path in database_paths),
         ]
-        creationflags = 0x00000200  # CREATE_NEW_PROCESS_GROUP
+        try:
+            worker_status = run_windows_owned_worker(worker_command)
+        except BaseException as error:
+            print(f"[NG] SQLite integrity worker could not be supervised: {error}", file=sys.stderr)
+            worker_status = 125
+        raise SystemExit(worker_status)
     else:
         worker_command = [worker_python, "-", *database_paths]
-        creationflags = 0
     process = subprocess.Popen(
         worker_command,
         stdin=subprocess.PIPE,
         start_new_session=(os.name == "posix"),
-        creationflags=creationflags,
     )
 
     try:
@@ -303,8 +768,6 @@ try:
         close_stdin(process)
         if os.name == "posix":
             stopped = stop_posix_process_group(process)
-        else:
-            stopped = stop_windows_process_tree(process)
         try:
             process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
@@ -335,8 +798,6 @@ except OSError as error:
     if process is not None and process.poll() is None:
         if os.name == "posix":
             stop_posix_process_group(process)
-        else:
-            stop_windows_process_tree(process)
         process.kill()
         try:
             process.wait(timeout=5.0)
@@ -354,8 +815,6 @@ finally:
         if needs_cleanup:
             if os.name == "posix":
                 stopped = stop_posix_process_group(process)
-            else:
-                stopped = stop_windows_process_tree(process)
             if process.poll() is None:
                 try:
                     process.kill()
@@ -368,6 +827,10 @@ finally:
 PY
 sqlite_integrity_status=$?
 set -e
+if [[ -e ${sqlite_supervision_marker} ]]; then
+  echo "[NG] SQLite integrity worker teardown is unconfirmed; refusing to clean restore scratch" >&2
+  exit 125
+fi
 if [[ -f ${sqlite_timeout_marker} ]]; then
   echo "[NG] SQLite integrity check timed out after ${sqlite_integrity_timeout}s" >&2
   exit 1
