@@ -152,6 +152,7 @@ python3 - "${current_bash_executable}" "${python_bin}" "${sqlite_integrity_timeo
   "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
 import os
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -241,6 +242,160 @@ if hasattr(signal, "SIGBREAK"):
     watched_signals.append(signal.SIGBREAK)
 for watched_signal in watched_signals:
     signal.signal(watched_signal, exit_on_signal)
+
+
+def capture_owned_scratch_identity(path):
+    path = os.path.abspath(path)
+    info = os.lstat(path)
+    attributes = getattr(info, "st_file_attributes", 0)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or stat.S_ISLNK(info.st_mode)
+        or attributes & 0x00000400
+    ):
+        raise RuntimeError(f"owned restore scratch boundary is not an ordinary directory: {path}")
+    return path, info.st_dev, info.st_ino
+
+
+def cleanup_interrupted_scratch(
+    root_path, snapshot_path, root_identity, snapshot_identity,
+    supervision_marker, marker_identity,
+):
+    root_path = os.path.abspath(root_path)
+    snapshot_path = os.path.abspath(snapshot_path)
+    supervision_marker = os.path.abspath(supervision_marker)
+    if os.path.dirname(supervision_marker) != root_path:
+        return 125, "worker supervision marker is outside its owned restore root"
+
+    def require_directory(path, expected_identity):
+        info = os.lstat(path)
+        attributes = getattr(info, "st_file_attributes", 0)
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or attributes & 0x00000400
+            or (info.st_dev, info.st_ino) != expected_identity[1:]
+        ):
+            raise RuntimeError(f"restore scratch directory identity changed: {path}")
+
+    def require_root():
+        if os.path.dirname(root_path) != snapshot_path:
+            raise RuntimeError("restore scratch root is not a direct child of its snapshot")
+        require_directory(snapshot_path, snapshot_identity)
+        require_directory(root_path, root_identity)
+
+    def require_parent_chain(path):
+        parent = os.path.dirname(path)
+        while parent != root_path:
+            if not parent.startswith(root_path + os.sep):
+                raise RuntimeError(f"restore scratch entry escaped its owned root: {path}")
+            info = os.lstat(parent)
+            attributes = getattr(info, "st_file_attributes", 0)
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or stat.S_ISLNK(info.st_mode)
+                or attributes & 0x00000400
+            ):
+                raise RuntimeError(f"restore scratch parent is not an ordinary directory: {parent}")
+            parent = os.path.dirname(parent)
+
+    def require_owned_marker():
+        require_root()
+        if os.path.dirname(supervision_marker) != root_path:
+            raise RuntimeError("worker supervision marker is outside its owned restore root")
+        info = os.lstat(supervision_marker)
+        attributes = getattr(info, "st_file_attributes", 0)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or stat.S_ISLNK(info.st_mode)
+            or attributes & 0x00000400
+            or (info.st_dev, info.st_ino) != marker_identity
+        ):
+            raise RuntimeError("worker supervision marker ownership could not be confirmed")
+
+    def remove_entry(path):
+        require_owned_marker()
+        require_parent_chain(path)
+        before = os.lstat(path)
+        identity = (before.st_dev, before.st_ino)
+        attributes = getattr(before, "st_file_attributes", 0)
+        is_reparse = bool(attributes & 0x00000400)
+        is_link = stat.S_ISLNK(before.st_mode)
+
+        if stat.S_ISDIR(before.st_mode) and not is_link and not is_reparse:
+            with os.scandir(path) as entries:
+                names = [entry.name for entry in entries]
+            for name in names:
+                remove_entry(os.path.join(path, name))
+            require_owned_marker()
+            require_parent_chain(path)
+            after = os.lstat(path)
+            if (after.st_dev, after.st_ino) != identity or not stat.S_ISDIR(after.st_mode):
+                raise RuntimeError(f"restore scratch entry changed during cleanup: {path}")
+            os.rmdir(path)
+            return
+
+        require_owned_marker()
+        require_parent_chain(path)
+        after = os.lstat(path)
+        if (after.st_dev, after.st_ino) != identity:
+            raise RuntimeError(f"restore scratch entry changed during cleanup: {path}")
+        if is_reparse and stat.S_ISDIR(after.st_mode) and not is_link:
+            os.rmdir(path)
+        else:
+            os.unlink(path)
+
+    def recreate_marker_if_missing():
+        if os.path.dirname(supervision_marker) != root_path:
+            raise RuntimeError("worker supervision marker is outside its owned restore root")
+        try:
+            require_root()
+            os.lstat(supervision_marker)
+            return
+        except FileNotFoundError:
+            require_root()
+            with open(supervision_marker, "x", encoding="ascii") as marker:
+                marker.write("interrupted worker cleanup failed; scratch retained\n")
+                marker.flush()
+
+    try:
+        require_root()
+    except Exception as error:
+        return 125, str(error)
+
+    try:
+        require_owned_marker()
+        with os.scandir(root_path) as entries:
+            names = [entry.name for entry in entries if os.path.abspath(entry.path) != supervision_marker]
+        for name in names:
+            remove_entry(os.path.join(root_path, name))
+
+        require_owned_marker()
+        os.unlink(supervision_marker)
+        try:
+            require_root()
+        except FileNotFoundError:
+            require_directory(snapshot_path, snapshot_identity)
+            return 0, ""
+        try:
+            os.rmdir(root_path)
+        except FileNotFoundError:
+            require_directory(snapshot_path, snapshot_identity)
+            try:
+                os.lstat(root_path)
+            except FileNotFoundError:
+                return 0, ""
+            raise
+        except OSError:
+            recreate_marker_if_missing()
+            raise
+        return 0, ""
+    except Exception as error:
+        try:
+            recreate_marker_if_missing()
+        except Exception as marker_error:
+            return 125, f"{error}; supervision marker could not be preserved: {marker_error}"
+        return 125, str(error)
 
 
 def run_windows_owned_worker(worker_command):
@@ -425,6 +580,9 @@ def run_windows_owned_worker(worker_command):
     active_marker_created = False
     worker_input_path = None
     worker_input = None
+    supervision_marker_identity = None
+    scratch_identity = None
+    snapshot_identity = None
     duplicate_handles = []
     fallback_streams = []
     attribute_buffer = None
@@ -474,6 +632,20 @@ def run_windows_owned_worker(worker_command):
         return duplicate
 
     try:
+        scratch_root = os.path.abspath(os.path.dirname(timeout_marker))
+        snapshot_root = os.path.dirname(scratch_root)
+        if os.path.abspath(os.path.dirname(supervision_marker)) != scratch_root:
+            raise RuntimeError("timeout and supervision markers do not share the expected restore root")
+        if os.path.dirname(scratch_root) != snapshot_root or scratch_root == snapshot_root:
+            raise RuntimeError("restore scratch root is not an ordinary snapshot child")
+        snapshot_identity = capture_owned_scratch_identity(snapshot_root)
+        scratch_identity = capture_owned_scratch_identity(scratch_root)
+        with open(supervision_marker, "x", encoding="ascii") as marker:
+            marker.write("owned worker creation is in progress\n")
+            marker.flush()
+            marker_info = os.fstat(marker.fileno())
+            supervision_marker_identity = (marker_info.st_dev, marker_info.st_ino)
+        active_marker_created = True
         check_interruption()
         if (
             not os.path.isabs(current_bash_executable)
@@ -538,9 +710,6 @@ def run_windows_owned_worker(worker_command):
         startup.lpAttributeList = attribute_list
         check_interruption()
 
-        with open(supervision_marker, "x", encoding="ascii") as marker:
-            marker.write("owned worker creation is in progress\n")
-        active_marker_created = True
         command_line = ctypes.create_unicode_buffer(subprocess.list2cmdline(worker_command))
         creation_flags = CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | EXTENDED_STARTUPINFO_PRESENT
         created = kernel.CreateProcessW(
@@ -681,7 +850,26 @@ def run_windows_owned_worker(worker_command):
             cleanup_proven = False
             diagnostics.append("the private Job Object handle could not be closed")
 
-        if cleanup_proven:
+        if cleanup_proven and interrupted["signum"] is not None and active_marker_created:
+            if (
+                scratch_identity is None
+                or snapshot_identity is None
+                or supervision_marker_identity is None
+            ):
+                cleanup_proven = False
+                diagnostics.append("interrupted restore scratch identity was not captured")
+            else:
+                cleanup_status, cleanup_error = cleanup_interrupted_scratch(
+                    scratch_identity[0], snapshot_identity[0], scratch_identity,
+                    snapshot_identity, supervision_marker, supervision_marker_identity,
+                )
+                if cleanup_status != 0:
+                    cleanup_proven = False
+                    requested_status = 125
+                    diagnostics.append(f"interrupted restore scratch cleanup failed: {cleanup_error}")
+                else:
+                    active_marker_created = False
+        elif cleanup_proven:
             if worker_input_path is not None:
                 try:
                     os.unlink(worker_input_path)

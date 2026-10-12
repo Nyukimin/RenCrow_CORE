@@ -247,12 +247,227 @@ if [[ ! ${native_create_line} =~ ^[0-9]+$ || ! ${native_assign_line} =~ ^[0-9]+$
   (( native_create_line >= native_assign_line || native_assign_line >= native_resume_line )); then
   contract_failures+=("native worker creation, Job assignment, and primary-thread resume must stay in that order")
 fi
+assert_contains "${checker}" \
+  'def cleanup_interrupted_scratch(' \
+  "native interruption cleanup must stay inside the existing restore checker"
+assert_contains "${checker}" \
+  'interrupted restore scratch cleanup failed:' \
+  "interruption cleanup failures must be diagnosed and fail closed"
 
 if (( ${#contract_failures[@]} > 0 )); then
   printf '[RED] storage backup contract violations:\n' >&2
   printf ' - %s\n' "${contract_failures[@]}" >&2
   exit 1
 fi
+
+python3 - "${checker}" "${test_root}/portable-scratch" <<'PY'
+import ast
+import os
+import stat
+import sys
+from unittest.mock import patch
+
+checker_path, test_root = sys.argv[1:]
+with open(checker_path, encoding="utf-8") as handle:
+    checker_source = handle.read()
+command_start = checker_source.index('python3 - "${current_bash_executable}"')
+body_start = checker_source.index("<<'PY'\n", command_start) + len("<<'PY'\n")
+body_end = checker_source.index("\nPY\n", body_start)
+supervisor = ast.parse(checker_source[body_start:body_end])
+functions = [
+    node for node in supervisor.body
+    if isinstance(node, ast.FunctionDef)
+    and node.name in {"capture_owned_scratch_identity", "cleanup_interrupted_scratch"}
+]
+if {node.name for node in functions} != {"capture_owned_scratch_identity", "cleanup_interrupted_scratch"}:
+    raise SystemExit("[NG] portable scratch tests could not load the owned cleanup implementation")
+scope = {"os": os, "stat": stat}
+exec(compile(ast.Module(body=functions, type_ignores=[]), checker_path, "exec"), scope)
+capture_identity = scope["capture_owned_scratch_identity"]
+cleanup_scratch = scope["cleanup_interrupted_scratch"]
+
+os.makedirs(test_root)
+snapshot = os.path.join(test_root, "snapshot")
+os.mkdir(snapshot)
+sibling = os.path.join(snapshot, ".restore.sibling")
+os.mkdir(sibling)
+with open(os.path.join(sibling, "keep.txt"), "w", encoding="ascii") as handle:
+    handle.write("sibling retained\n")
+
+outside = os.path.join(test_root, "outside")
+os.mkdir(outside)
+target = os.path.join(outside, "keep.txt")
+with open(target, "w", encoding="ascii") as handle:
+    handle.write("link target retained\n")
+
+root = os.path.join(snapshot, ".restore.exact-owned-root")
+os.mkdir(root)
+root_identity = capture_identity(root)
+snapshot_identity = capture_identity(snapshot)
+marker_path = os.path.join(root, ".sqlite-integrity-supervision-active")
+with open(marker_path, "x", encoding="ascii") as handle:
+    handle.write("owned worker\n")
+    marker_stat = os.fstat(handle.fileno())
+marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
+os.makedirs(os.path.join(root, "state", "nested"))
+with open(os.path.join(root, "state", "nested", "worker-input.py"), "w", encoding="ascii") as handle:
+    handle.write("scratch\n")
+link_path = os.path.join(root, "outside-link")
+try:
+    os.symlink(target, link_path)
+except (NotImplementedError, OSError):
+    print("[SKIP] portable external-link target case is unsupported by this OS")
+    link_path = None
+
+status, diagnostic = cleanup_scratch(
+    root, snapshot, root_identity, snapshot_identity, marker_path, marker_identity,
+)
+if status != 0 or diagnostic or os.path.lexists(root):
+    raise SystemExit(f"[NG] exact owned scratch was not removed: status={status}, diagnostic={diagnostic!r}")
+if not os.path.isfile(target) or not os.path.isfile(os.path.join(sibling, "keep.txt")):
+    raise SystemExit("[NG] interruption cleanup removed the snapshot sibling or link target")
+if link_path is not None and os.path.lexists(link_path):
+    raise SystemExit("[NG] interruption cleanup did not unlink the external symlink itself")
+
+replacement_root = os.path.join(snapshot, ".restore.root-substitution")
+os.mkdir(replacement_root)
+replacement_identity = capture_identity(replacement_root)
+replacement_marker = os.path.join(replacement_root, ".sqlite-integrity-supervision-active")
+with open(replacement_marker, "x", encoding="ascii") as handle:
+    handle.write("owned worker\n")
+    marker_stat = os.fstat(handle.fileno())
+replacement_marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
+replacement_moved = replacement_root + ".owned"
+os.rename(replacement_root, replacement_moved)
+replacement_moved_marker = os.path.join(replacement_moved, os.path.basename(replacement_marker))
+os.mkdir(replacement_root)
+replacement_file = os.path.join(replacement_root, "keep.txt")
+with open(replacement_file, "w", encoding="ascii") as handle:
+    handle.write("replacement retained\n")
+status, diagnostic = cleanup_scratch(
+    replacement_root, snapshot, replacement_identity, snapshot_identity,
+    replacement_marker, replacement_marker_identity,
+)
+if status != 125 or not os.path.isfile(replacement_file) or not os.path.isfile(replacement_moved_marker):
+    raise SystemExit("[NG] replaced restore root was not refused with the owned evidence retained")
+
+reparse_root = os.path.join(snapshot, ".restore.reparse-substitution")
+os.mkdir(reparse_root)
+reparse_identity = capture_identity(reparse_root)
+reparse_marker = os.path.join(reparse_root, ".sqlite-integrity-supervision-active")
+with open(reparse_marker, "x", encoding="ascii") as handle:
+    handle.write("owned worker\n")
+    marker_stat = os.fstat(handle.fileno())
+reparse_marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
+reparse_moved = reparse_root + ".owned"
+os.rename(reparse_root, reparse_moved)
+reparse_moved_marker = os.path.join(reparse_moved, os.path.basename(reparse_marker))
+try:
+    os.symlink(outside, reparse_root, target_is_directory=True)
+except (NotImplementedError, OSError):
+    print("[SKIP] reparse-root refusal case is unsupported by this OS")
+    os.mkdir(reparse_root)
+    with open(os.path.join(reparse_root, "keep.txt"), "w", encoding="ascii") as handle:
+        handle.write("replacement retained\n")
+status, diagnostic = cleanup_scratch(
+    reparse_root, snapshot, reparse_identity, snapshot_identity,
+    reparse_marker, reparse_marker_identity,
+)
+if status != 125 or not os.path.isfile(target) or not os.path.isfile(reparse_moved_marker):
+    raise SystemExit("[NG] reparse restore root was not refused with its target protected")
+
+final_root = os.path.join(snapshot, ".restore.bash-finished-empty-root")
+os.mkdir(final_root)
+final_identity = capture_identity(final_root)
+final_marker = os.path.join(final_root, ".sqlite-integrity-supervision-active")
+with open(final_marker, "x", encoding="ascii") as handle:
+    handle.write("owned worker\n")
+    marker_stat = os.fstat(handle.fileno())
+final_marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
+real_unlink = os.unlink
+real_rmdir = os.rmdir
+
+def finish_root_after_marker_unlink(path, *args, **kwargs):
+    result = real_unlink(path, *args, **kwargs)
+    if os.path.abspath(path) == final_marker:
+        real_rmdir(final_root)
+    return result
+
+with patch.object(os, "unlink", finish_root_after_marker_unlink):
+    status, diagnostic = cleanup_scratch(
+        final_root, snapshot, final_identity, snapshot_identity,
+        final_marker, final_marker_identity,
+    )
+if status != 0 or os.path.lexists(final_root):
+    raise SystemExit(f"[NG] final empty-root race was not accepted: {status}, {diagnostic!r}")
+
+marker_root = os.path.join(snapshot, ".restore.marker-ownership")
+os.mkdir(marker_root)
+marker_root_identity = capture_identity(marker_root)
+marker_root_marker = os.path.join(marker_root, ".sqlite-integrity-supervision-active")
+with open(marker_root_marker, "x", encoding="ascii") as handle:
+    handle.write("owned marker\n")
+    owned_marker_stat = os.fstat(handle.fileno())
+owned_marker_identity = (owned_marker_stat.st_dev, owned_marker_stat.st_ino)
+staged_marker = marker_root_marker + ".replacement"
+with open(staged_marker, "x", encoding="ascii") as handle:
+    handle.write("replacement marker\n")
+    replacement_marker_stat = os.fstat(handle.fileno())
+replacement_identity = (replacement_marker_stat.st_dev, replacement_marker_stat.st_ino)
+os.replace(staged_marker, marker_root_marker)
+with open(marker_root_marker, "rb") as handle:
+    marker_data = handle.read()
+status, diagnostic = cleanup_scratch(
+    marker_root, snapshot, marker_root_identity, snapshot_identity,
+    marker_root_marker, owned_marker_identity,
+)
+after_marker_stat = os.lstat(marker_root_marker)
+with open(marker_root_marker, "rb") as handle:
+    marker_after = handle.read()
+if (
+    status != 125
+    or (after_marker_stat.st_dev, after_marker_stat.st_ino) != replacement_identity
+    or marker_after != marker_data
+):
+    raise SystemExit("[NG] substituted supervision marker was not preserved as unowned evidence")
+
+external_marker = os.path.join(outside, ".sqlite-integrity-supervision-active")
+status, diagnostic = cleanup_scratch(
+    marker_root, snapshot, marker_root_identity, snapshot_identity,
+    external_marker, owned_marker_identity,
+)
+if status != 125 or os.path.lexists(external_marker) or not os.path.isfile(marker_root_marker):
+    raise SystemExit("[NG] out-of-root marker path was touched during cleanup recovery")
+
+failure_root = os.path.join(snapshot, ".restore.remove-failure")
+os.mkdir(failure_root)
+failure_identity = capture_identity(failure_root)
+failure_marker = os.path.join(failure_root, ".sqlite-integrity-supervision-active")
+with open(failure_marker, "x", encoding="ascii") as handle:
+    handle.write("owned worker\n")
+    marker_stat = os.fstat(handle.fileno())
+failure_marker_identity = (marker_stat.st_dev, marker_stat.st_ino)
+failure_file = os.path.join(failure_root, "remove-me.txt")
+with open(failure_file, "w", encoding="ascii") as handle:
+    handle.write("injected remove failure\n")
+real_unlink = os.unlink
+
+def injected_unlink(path, *args, **kwargs):
+    if os.path.abspath(path) == failure_file:
+        raise PermissionError("injected remove failure")
+    return real_unlink(path, *args, **kwargs)
+
+with patch.object(os, "unlink", injected_unlink):
+    status, diagnostic = cleanup_scratch(
+        failure_root, snapshot, failure_identity, snapshot_identity,
+        failure_marker, failure_marker_identity,
+    )
+if status != 125 or "injected remove failure" not in diagnostic:
+    raise SystemExit(f"[NG] injected remove failure did not fail closed: {status}, {diagnostic!r}")
+if not os.path.isfile(failure_marker) or not os.path.isfile(failure_file):
+    raise SystemExit("[NG] delete failure did not retain its marker and scratch evidence")
+print("[OK] portable interruption scratch ownership and failure boundaries verified")
+PY
 
 mkdir -p \
   "${test_root}/source/state/sessions" \
