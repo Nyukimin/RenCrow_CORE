@@ -30,23 +30,30 @@ func initializeRuntimeTaskOwnerWithCriteriaRevision(deps *Dependencies, workspac
 	if len(selectedStores) == 1 {
 		store = selectedStores[0]
 	}
+	// The Task owner is told its store has an ID index only when this process
+	// opened the store with one. A selected (remote) store lives in the storage
+	// host, whose configuration is not visible here, so it is never declared.
+	var managerOptions []taskmanager.Option
 	if store == nil {
 		path := strings.TrimSpace(defaultTaskStorePath(workspace))
 		if path == "" {
 			return errors.New("workspace directory is required for canonical Task owner")
 		}
 		var err error
-		store, err = taskpersistence.NewJSONLStore(path)
+		store, err = taskpersistence.NewJSONLStoreWithOptions(path, taskpersistence.OpenOptions{Index: deps.taskStoreIndex, Persist: deps.taskStorePersist})
 		if err != nil {
 			return fmt.Errorf("open canonical Task store: %w", err)
+		}
+		if deps.taskStoreIndex {
+			managerOptions = append(managerOptions, taskmanager.WithIDIndex())
 		}
 	}
 	deps.taskStore = store
 	if expectedCriteriaRevision == "" {
-		deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits())
+		deps.taskManager = taskmanager.New(store, taskmanager.DefaultParallelLimits(), managerOptions...)
 		return nil
 	}
-	manager, err := taskmanager.NewWithExpectedCriteriaRevision(store, taskmanager.DefaultParallelLimits(), expectedCriteriaRevision)
+	manager, err := taskmanager.NewWithExpectedCriteriaRevision(store, taskmanager.DefaultParallelLimits(), expectedCriteriaRevision, managerOptions...)
 	if err != nil {
 		return fmt.Errorf("configure Task owner criteria revision: %w", err)
 	}

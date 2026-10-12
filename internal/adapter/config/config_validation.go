@@ -66,6 +66,9 @@ func (c *Config) Validate() error {
 	if err := c.validateBackupConfig(); err != nil {
 		return err
 	}
+	if err := c.TaskStore.validate(); err != nil {
+		return err
+	}
 	if err := validateVerificationConfig(c.Verification, c.Backup); err != nil {
 		return err
 	}

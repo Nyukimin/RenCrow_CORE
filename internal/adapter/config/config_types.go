@@ -8,6 +8,7 @@ type Config struct {
 	Session      SessionConfig      `yaml:"session"`
 	Storage      StorageConfig      `yaml:"storage"`
 	DurableStore DurableStoreConfig `yaml:"durable_store"`
+	TaskStore    TaskStoreConfig    `yaml:"task_store"`
 	Backup       BackupConfig       `yaml:"backup"`
 	Worker       WorkerConfig       `yaml:"worker"`
 	Line         LineConfig         `yaml:"line"`

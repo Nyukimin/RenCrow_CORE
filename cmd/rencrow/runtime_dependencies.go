@@ -107,6 +107,8 @@ type Dependencies struct {
 	taskDetail                     http.HandlerFunc                            // canonical Task detail API
 	identityGraph                  http.HandlerFunc                            // canonical identity graph projection
 	taskNotifications              http.HandlerFunc                            // canonical Task interrupt notification API
+	taskStoreIndex                 bool                                        // task_store.index.enabled: open the local Task store with its ID index
+	taskStorePersist               bool                                        // task_store.index.persist: keep the index in a sidecar file
 	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
@@ -474,7 +476,7 @@ func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Servi
 
 // buildDependencies は依存関係を構築
 func buildDependencies(cfg *config.Config) *Dependencies {
-	deps := &Dependencies{}
+	deps := &Dependencies{taskStoreIndex: cfg.TaskStore.Index.Enabled, taskStorePersist: cfg.TaskStore.Index.Persist}
 	storageOwners, err := newRuntimeStorageOwnerBundle(context.Background(), cfg)
 	if err != nil {
 		log.Fatalf("Failed to initialize storage host owner bundle: %v", err)

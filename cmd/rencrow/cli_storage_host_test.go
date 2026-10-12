@@ -79,9 +79,9 @@ func TestRunStorageHostServeUsesRealEventStoreAndClosesResources(t *testing.T) {
 	deps := realStorageHostServeDeps()
 	var openedTaskPath string
 	openTaskStore := deps.OpenTaskStore
-	deps.OpenTaskStore = func(path string) (storageHostTaskStore, error) {
+	deps.OpenTaskStore = func(path string, options taskpersistence.OpenOptions) (storageHostTaskStore, error) {
 		openedTaskPath = path
-		return openTaskStore(path)
+		return openTaskStore(path, options)
 	}
 	listenCalled := make(chan struct{}, 1)
 	realListen := deps.Listen
@@ -837,7 +837,7 @@ func TestRunStorageHostServeRejectsInvalidTaskStorePathBeforeOpeningOwners(t *te
 		eventOpenCalls++
 		return nil, nil
 	}
-	deps.OpenTaskStore = func(string) (storageHostTaskStore, error) {
+	deps.OpenTaskStore = func(string, taskpersistence.OpenOptions) (storageHostTaskStore, error) {
 		taskOpenCalls++
 		return nil, nil
 	}
@@ -908,8 +908,8 @@ func TestRunStorageHostServeTaskRegistrationFailureClosesOwnersBeforeListening(t
 		return trackedStorageHostL1Store{L1SQLiteStore: owner, closeCalls: &l1CloseCalls}, err
 	}
 	openTaskStore := deps.OpenTaskStore
-	deps.OpenTaskStore = func(path string) (storageHostTaskStore, error) {
-		owner, err := openTaskStore(path)
+	deps.OpenTaskStore = func(path string, options taskpersistence.OpenOptions) (storageHostTaskStore, error) {
+		owner, err := openTaskStore(path, options)
 		if owner == nil {
 			return nil, err
 		}

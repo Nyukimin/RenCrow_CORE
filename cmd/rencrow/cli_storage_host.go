@@ -115,7 +115,7 @@ type storageHostServeDeps struct {
 	OpenArchiveStore             func(string) (storageHostArchiveStore, error)
 	OpenSessionStore             func(string) (storagehost.SessionGroupOwner, error)
 	OpenL1Store                  func(string) (storageHostL1Store, error)
-	OpenTaskStore                func(string) (storageHostTaskStore, error)
+	OpenTaskStore                func(string, taskpersistence.OpenOptions) (storageHostTaskStore, error)
 	OpenOperationMemoryStore     func(string) (storagehost.OperationMemoryGroupOwner, error)
 	OpenGlossaryStore            func(string) (storageHostGlossaryStore, error)
 	OpenMovieCatalogStore        func(string) (storageHostMovieCatalogStore, error)
@@ -188,8 +188,8 @@ func defaultStorageHostServeDeps() storageHostServeDeps {
 		OpenL1Store: func(path string) (storageHostL1Store, error) {
 			return l1sqlite.NewL1SQLiteStore(path)
 		},
-		OpenTaskStore: func(path string) (storageHostTaskStore, error) {
-			return taskpersistence.NewJSONLStore(path)
+		OpenTaskStore: func(path string, options taskpersistence.OpenOptions) (storageHostTaskStore, error) {
+			return taskpersistence.NewJSONLStoreWithOptions(path, options)
 		},
 		OpenOperationMemoryStore: func(path string) (storagehost.OperationMemoryGroupOwner, error) {
 			return memorypersistence.OpenRecoverableFileStoreAt(path)
@@ -483,7 +483,7 @@ func runStorageHostServe(ctx context.Context, cfg *config.Config, deps storageHo
 		return errors.New("open canonical Conversation L1 SQLite owner: constructor returned nil")
 	}
 
-	taskOwner, err := deps.OpenTaskStore(taskStorePath)
+	taskOwner, err := deps.OpenTaskStore(taskStorePath, taskpersistence.OpenOptions{Index: cfg.TaskStore.Index.Enabled, Persist: cfg.TaskStore.Index.Persist})
 	if taskOwner != nil {
 		defer func() {
 			if err := taskOwner.Close(); err != nil {

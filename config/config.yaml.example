@@ -166,6 +166,15 @@ durable_store:
   enabled: false
   manifest_path: "config/durable-stores.json"
 
+# canonical Task storeのID索引（メモリ上。ログが唯一の正本で、falseに戻せば従来の読み方になる）。
+# localではruntime、remote profileではTask storeを開く保存host側の設定が効く。既定はfalse。
+task_store:
+  index:
+    enabled: false
+    # 索引をsidecar（tasks/index/seg-legacy.tsi）に保存し、次の起動でログ全体を読まずに復元する。
+    # 索引（enabled）が前提で、既定はfalse。
+    persist: false
+
 # Long-running Agent Runはdurable checkpointから同一run/job identityで再開する。
 superagent_harness:
   run_queue_scheduler_enabled: true
