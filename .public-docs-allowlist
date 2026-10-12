@@ -106,6 +106,7 @@ docs/調査/20261010_084428_TaskStore保持期限_設計案.md
 docs/調査/20261010_205550_TaskStore_ID索引形式_仕様案.md
 docs/調査/20261011_082700_legacy_OPS入口の500とRun文脈欠落_FailureKnowledge.md
 docs/調査/20261011_090057_Run無しqueued_Taskの滞留_FailureKnowledge.md
+docs/調査/20261012_104710_Agent名表示_thinking_from固定の修正と本番配備.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md
 docs/調査/identity-remediation-ledger.json

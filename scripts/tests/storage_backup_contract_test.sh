@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+current_bash_executable=${BASH:-}
+if [[ ${current_bash_executable} != /* || ! -x ${current_bash_executable} ]]; then
+  echo "[NG] selected Bash executable must be an absolute executable path" >&2
+  exit 2
+fi
+case ${OSTYPE:-} in
+  msys*|cygwin*|mingw*)
+    if ! current_bash_executable=$(cygpath -aw "${current_bash_executable}"); then
+      echo "[NG] selected Bash executable could not be converted to a native Windows path" >&2
+      exit 2
+    fi
+    if [[ ${current_bash_executable} != *.exe ]]; then
+      current_bash_executable=${current_bash_executable}.exe
+    fi
+    ;;
+esac
+
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 checker=${repo_root}/scripts/rencrow-storage-restore-check
 backup_runner=${repo_root}/scripts/rencrow-storage-backup
@@ -184,6 +201,18 @@ assert_not_contains "${checker}" \
 assert_contains "${checker}" \
   'SQLite integrity check timed out' \
   "SQLite integrity timeout must be distinct from corruption"
+assert_contains "${checker}" \
+  'current_bash_executable=${BASH:-}' \
+  "restore supervisor must inherit the selected Bash executable"
+assert_contains "${checker}" \
+  'cygpath -aw' \
+  "native Windows Bash must use the selected MSYS executable path"
+assert_contains "${checker}" \
+  'os.path.isfile(current_bash_executable)' \
+  "native supervisor must validate the supplied Bash executable"
+assert_not_contains "${checker}" \
+  '"bash.exe"' \
+  "native restore supervisor must not rediscover Bash by bare name"
 
 if (( ${#contract_failures[@]} > 0 )); then
   printf '[RED] storage backup contract violations:\n' >&2
@@ -464,7 +493,7 @@ SH
 chmod +x "${interrupt_python}"
 interrupt_marker=${test_root}/interrupt-survivor.marker
 interrupt_pid_file=${test_root}/interrupt-survivor.pid
-python3 - "${checker}" "${test_root}/snapshot" "${interrupt_python}" \
+python3 - "${current_bash_executable}" "${checker}" "${test_root}/snapshot" "${interrupt_python}" \
   "${interrupt_marker}" "${interrupt_pid_file}" "${survivor_python}" \
   "${process_liveness_checker}" <<'PY'
 import ctypes
@@ -498,8 +527,15 @@ def process_is_alive(pid, liveness_checker):
         raise SystemExit(f"[NG] could not inspect interrupted worker PID {pid}: {result.stderr.strip()}")
     return result.stdout.strip() == "alive"
 
-checker, snapshot, worker, marker, pid_file, survivor_script, liveness_checker = sys.argv[1:]
+current_bash_executable, checker, snapshot, worker, marker, pid_file, survivor_script, liveness_checker = sys.argv[1:]
 windows = os.name == "nt"
+if (
+    not os.path.isabs(current_bash_executable)
+    or not os.path.isfile(current_bash_executable)
+    or (windows and not current_bash_executable.lower().endswith(".exe"))
+    or (not windows and not os.access(current_bash_executable, os.X_OK))
+):
+    raise SystemExit("[NG] selected Bash executable is not an absolute executable file")
 environment = os.environ.copy()
 environment.update({
     "RENCROW_TEST_PYTHON": bash_path(worker),
@@ -508,7 +544,7 @@ environment.update({
     "RENCROW_TEST_SURVIVOR_SCRIPT": bash_path(survivor_script),
     "RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC": "30",
 })
-checker_command = ["bash.exe" if windows else "bash", bash_path(checker), bash_path(snapshot)]
+checker_command = [current_bash_executable, bash_path(checker), bash_path(snapshot)]
 kernel = None
 console_attached = False
 child_handle = None

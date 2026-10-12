@@ -56,12 +56,36 @@ done
 
 resolve_label() {
   local label=$1
-  local -a devices=()
-  mapfile -t devices < <(lsblk -rpn -o PATH,LABEL | awk -v label="${label}" '$2 == label { print $1 }')
-  if (( ${#devices[@]} != 1 )); then
-    die "label ${label} must resolve to exactly one filesystem (found ${#devices[@]})"
+  local devices
+  local candidate
+  local device_count=0
+  devices=$(lsblk -rpn -o PATH,LABEL | awk -v label="${label}" '$2 == label { print $1 }') \
+    || die "cannot query filesystem labels for ${label}"
+  resolved_device=
+  while IFS= read -r candidate; do
+    [[ -n ${candidate} ]] || continue
+    device_count=$((device_count + 1))
+    resolved_device=${candidate}
+  done <<<"${devices}"
+  if [[ ${device_count} != 1 ]]; then
+    die "label ${label} must resolve to exactly one filesystem (found ${device_count})"
   fi
-  resolved_device=${devices[0]}
+}
+
+fstab_mode() {
+  local path=$1
+  case "${OSTYPE:-}" in
+    msys*|mingw*|cygwin*)
+      # Preserve MSYS permission semantics; Python's Windows stat view differs.
+      stat -c '%a' "${path}"
+      ;;
+    *)
+      python3 - "${path}" <<'PY'
+import os, stat, sys
+print(format(stat.S_IMODE(os.stat(sys.argv[1]).st_mode), "o"))
+PY
+      ;;
+  esac
 }
 
 read_device() {
@@ -205,7 +229,7 @@ if [[ ${operation} == apply ]]; then
   if ! cmp -s "${fstab}" "${candidate}"; then
     backup_copy=${fstab}.rencrow-storage.bak
     cp -p -- "${fstab}" "${backup_copy}"
-    mode=$(stat -c '%a' "${fstab}")
+    mode=$(fstab_mode "${fstab}") || die "cannot read fstab file mode"
     chmod "${mode}" "${candidate}"
     mv -f -- "${candidate}" "${fstab}"
     candidate=

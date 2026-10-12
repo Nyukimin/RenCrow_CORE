@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+current_bash_executable=${BASH:-}
+if [[ ${current_bash_executable} != /* || ! -x ${current_bash_executable} ]]; then
+  echo "[NG] selected Bash executable must be an absolute executable path" >&2
+  exit 2
+fi
+case ${OSTYPE:-} in
+  msys*|cygwin*|mingw*)
+    if ! current_bash_executable=$(cygpath -aw "${current_bash_executable}"); then
+      echo "[NG] selected Bash executable could not be converted to a native Windows path" >&2
+      exit 2
+    fi
+    if [[ ${current_bash_executable} != *.exe ]]; then
+      current_bash_executable=${current_bash_executable}.exe
+    fi
+    ;;
+esac
+
 python_bin=${RENCROW_TEST_PYTHON:-python3}
 sqlite_integrity_timeout=${RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC:-600}
 umask 077
@@ -125,7 +142,7 @@ set +e
 # python3 is the existing operational interpreter and supervises the configured
 # worker. RENCROW_TEST_PYTHON remains the worker executable, so its startup is
 # covered by the deadline instead of starting the supervisor itself.
-python3 - "${python_bin}" "${sqlite_integrity_timeout}" "${sqlite_timeout_marker}" \
+python3 - "${current_bash_executable}" "${python_bin}" "${sqlite_integrity_timeout}" "${sqlite_timeout_marker}" \
   "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
 import os
 import signal
@@ -133,7 +150,7 @@ import subprocess
 import sys
 import time
 
-worker_python, timeout_text, timeout_marker, *database_paths = sys.argv[1:]
+current_bash_executable, worker_python, timeout_text, timeout_marker, *database_paths = sys.argv[1:]
 timeout_seconds = int(timeout_text)
 deadline = time.monotonic() + timeout_seconds
 
@@ -250,11 +267,18 @@ for watched_signal in watched_signals:
 process = None
 try:
     if os.name == "nt":
+        if (
+            not os.path.isabs(current_bash_executable)
+            or not os.path.isfile(current_bash_executable)
+            or not current_bash_executable.lower().endswith(".exe")
+        ):
+            print("[NG] selected Bash executable is not a native absolute executable file", file=sys.stderr)
+            raise SystemExit(125)
         # Native Windows cannot CreateProcess an extensionless Bash shim. Run
         # both shims and native Python through the already-required Bash with
         # fixed shell text and positional argv; no worker value is interpolated.
         worker_command = [
-            "bash.exe",
+            current_bash_executable,
             "-c",
             'exec "$@"',
             "rencrow-sqlite-worker",
