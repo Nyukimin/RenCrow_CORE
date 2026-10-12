@@ -1019,49 +1019,86 @@ func TestRecall_UsesL1WhenRedisThreadMissing(t *testing.T) {
 
 func TestRecall_RestoresAllCharacterMessagesFromL1AfterRestart(t *testing.T) {
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "l1-memory.db")
-	store, err := l1sqlite.NewL1SQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("NewL1SQLiteStore failed: %v", err)
+	base := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		timestamps []time.Time
+		wantOrder  []int
+	}{
+		{
+			name:       "equal timestamps preserve insertion order",
+			timestamps: []time.Time{base, base, base, base, base},
+			wantOrder:  []int{0, 1, 2, 3, 4},
+		},
+		{
+			name:       "mixed timestamps remain chronological",
+			timestamps: []time.Time{base, base.Add(2 * time.Minute), base.Add(time.Minute), base.Add(2 * time.Minute), base.Add(3 * time.Minute)},
+			wantOrder:  []int{0, 2, 1, 3, 4},
+		},
 	}
-	first := newTestManager(nil, nil)
-	first.WithL1Store(store)
-	sessionID := conversationTestSessionID("shared-restart")
-	want := []domconv.Message{
-		domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil),
-		domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil),
-		domconv.NewMessage(domconv.SpeakerShiro, "確認しました", nil),
-		domconv.NewMessage(domconv.SpeakerKuro, "分析しました", nil),
-		domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil),
-	}
-	for _, msg := range want {
-		if err := first.Store(ctx, sessionID, msg); err != nil {
-			t.Fatalf("Store(%s) failed: %v", msg.Speaker, err)
-		}
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close first L1 store: %v", err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "l1-memory.db")
+			store, err := l1sqlite.NewL1SQLiteStore(dbPath)
+			if err != nil {
+				t.Fatalf("NewL1SQLiteStore failed: %v", err)
+			}
+			first := newTestManager(nil, nil)
+			first.WithL1Store(store)
+			sessionID := conversationTestSessionID("shared-restart")
+			messages := []domconv.Message{
+				domconv.NewMessage(domconv.SpeakerUser, "合言葉は青い水路", nil),
+				domconv.NewMessage(domconv.SpeakerMio, "覚えたよ", nil),
+				domconv.NewMessage(domconv.SpeakerShiro, "確認しました", nil),
+				domconv.NewMessage(domconv.SpeakerKuro, "分析しました", nil),
+				domconv.NewMessage(domconv.SpeakerMidori, "物語にしました", nil),
+			}
+			for i := range messages {
+				messages[i].Timestamp = test.timestamps[i]
+				if err := first.Store(ctx, sessionID, messages[i]); err != nil {
+					t.Fatalf("Store(%s) failed: %v", messages[i].Speaker, err)
+				}
+			}
+			if err := store.Close(); err != nil {
+				t.Fatalf("close first L1 store: %v", err)
+			}
 
-	reopened, err := l1sqlite.NewL1SQLiteStore(dbPath)
-	if err != nil {
-		t.Fatalf("reopen L1 store: %v", err)
-	}
-	t.Cleanup(func() { _ = reopened.Close() })
-	second := newTestManager(nil, nil)
-	second.WithL1Store(reopened)
+			reopened, err := l1sqlite.NewL1SQLiteStore(dbPath)
+			if err != nil {
+				t.Fatalf("reopen L1 store: %v", err)
+			}
+			t.Cleanup(func() { _ = reopened.Close() })
+			second := newTestManager(nil, nil)
+			second.WithL1Store(reopened)
 
-	got, err := second.Recall(ctx, sessionID, "合言葉は？", len(want))
-	if err != nil {
-		t.Fatalf("Recall after restart failed: %v", err)
-	}
-	if len(got) != len(want) {
-		t.Fatalf("Recall after restart=%#v, want %d messages", got, len(want))
-	}
-	for i := range want {
-		if got[i].Speaker != want[i].Speaker || got[i].Msg != want[i].Msg {
-			t.Fatalf("recalled[%d]=%#v, want speaker=%s msg=%q", i, got[i], want[i].Speaker, want[i].Msg)
-		}
+			got, err := second.Recall(ctx, sessionID, "合言葉は？", len(messages))
+			if err != nil {
+				t.Fatalf("Recall after restart failed: %v", err)
+			}
+			l1Manager := NewL1ConversationManager(reopened)
+			l1Got, err := l1Manager.Recall(ctx, sessionID, "合言葉は？", len(messages))
+			if err != nil {
+				t.Fatalf("L1ConversationManager.Recall after restart failed: %v", err)
+			}
+			recalls := []struct {
+				name     string
+				messages []domconv.Message
+			}{
+				{name: "RealConversationManager", messages: got},
+				{name: "L1ConversationManager", messages: l1Got},
+			}
+			for _, recall := range recalls {
+				if len(recall.messages) != len(messages) {
+					t.Fatalf("%s Recall after restart=%#v, want %d messages", recall.name, recall.messages, len(messages))
+				}
+				for i, wantIndex := range test.wantOrder {
+					want := messages[wantIndex]
+					if recall.messages[i].Speaker != want.Speaker || recall.messages[i].Msg != want.Msg || !recall.messages[i].Timestamp.Equal(want.Timestamp) {
+						t.Fatalf("%s recalled[%d]=%#v, want speaker=%s msg=%q timestamp=%s", recall.name, i, recall.messages[i], want.Speaker, want.Msg, want.Timestamp)
+					}
+				}
+			}
+		})
 	}
 }
 

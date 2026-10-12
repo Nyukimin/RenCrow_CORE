@@ -86,6 +86,10 @@ func (r *RealConversationManager) Recall(ctx context.Context, sessionID string, 
 }
 
 func l1EventsToMessages(events []l1sqlite.L1MemoryEvent) []domconv.Message {
+	// RecentBySession returns newest first; restore insertion order for equal-time events.
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
 	sort.SliceStable(events, func(i, j int) bool {
 		return events[i].CreatedAt.Before(events[j].CreatedAt)
 	})
