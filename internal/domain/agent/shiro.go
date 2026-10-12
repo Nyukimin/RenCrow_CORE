@@ -166,16 +166,18 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	if err != nil {
 		return "", err
 	}
+	// 履歴の `[speaker] msg` を真似た先頭の Agent 名ラベルを、返却・保存の前に取り除く。
+	response := conversation.StripLeadingSpeakerLabels(resp.Content)
 	if s.lightMemory != nil {
-		s.lightMemory.Record(t.SessionID(), t.MessageText(), resp.Content)
+		s.lightMemory.Record(t.SessionID(), t.MessageText(), response)
 	}
 
 	if s.conversation != nil {
-		if err := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.MessageText(), resp.Content, conversation.SpeakerShiro, recallPack); err != nil {
-			return resp.Content, err
+		if err := commitConversationTurn(ctx, s.conversation, t, t.SessionID(), t.MessageText(), response, conversation.SpeakerShiro, recallPack); err != nil {
+			return response, err
 		}
 	}
-	return resp.Content, nil
+	return response, nil
 }
 
 func (s *ShiroAgent) tryExecuteCodexWorkPath(ctx context.Context, t conversation.TurnInput) (string, bool, error) {

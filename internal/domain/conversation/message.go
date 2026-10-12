@@ -13,6 +13,7 @@ const (
 	SpeakerMidori Speaker = "midori"
 	SpeakerAka    Speaker = "aka"
 	SpeakerAo     Speaker = "ao"
+	SpeakerKin    Speaker = "kin"
 	SpeakerGin    Speaker = "gin"
 	SpeakerSystem Speaker = "system"
 	SpeakerTool   Speaker = "tool"

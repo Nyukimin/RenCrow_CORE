@@ -115,7 +115,7 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		return response, nil
 	}
 	messages = assemblePromptContext(w.systemPrompt, currentRuntimeContext(ctx, w.runtimeContextProvider, "midori", w.stableRuntimeContext), messages, userMessageWithAttachments(userMessage, t.Attachments()))
-	onToken := llm.StreamCallbackFromContext(ctx)
+	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx))
 	if onToken == nil {
 		onToken = func(string) {}
 	}
@@ -129,7 +129,8 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 	if err != nil {
 		return "", err
 	}
-	response := strings.TrimSpace(resp.Content)
+	flushLabels()
+	response := conversation.StripLeadingSpeakerLabels(resp.Content)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if w.conversationEngine != nil {
 		if err := commitConversationTurn(ctx, w.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {

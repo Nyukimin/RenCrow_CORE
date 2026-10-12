@@ -512,46 +512,13 @@ func (e *legacyOnlyConversationEngine) ResetSession(ctx context.Context, session
 	return e.delegate.ResetSession(ctx, sessionID)
 }
 
-func TestStripLeadingAgentSelfLabel(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		speaker conversation.Speaker
-		want    string
-	}{
-		{name: "plain label", content: "[mio] こんにちは", speaker: conversation.SpeakerMio, want: "こんにちは"},
-		{name: "case and colon", content: " [MIO]：こんにちは ", speaker: conversation.SpeakerMio, want: "こんにちは"},
-		{name: "other speaker is content", content: "[shiro]からの報告です", speaker: conversation.SpeakerMio, want: "[shiro]からの報告です"},
-		{name: "embedded label", content: "引用: [mio] こんにちは", speaker: conversation.SpeakerMio, want: "引用: [mio] こんにちは"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := stripLeadingAgentSelfLabel(tt.content, tt.speaker); got != tt.want {
-				t.Fatalf("stripLeadingAgentSelfLabel() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFilterLeadingAgentSelfLabel(t *testing.T) {
-	var got strings.Builder
-	callback := filterLeadingAgentSelfLabel(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
-	for _, token := range []string{" [", "mi", "o]", "：", " こん", "にちは"} {
-		callback(token)
-	}
-	if got.String() != "こんにちは" {
-		t.Fatalf("filtered stream = %q, want %q", got.String(), "こんにちは")
-	}
-
-	got.Reset()
-	callback = filterLeadingAgentSelfLabel(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
-	for _, token := range []string{"[shiro]", "からの報告"} {
-		callback(token)
-	}
-	if got.String() != "[shiro]からの報告" {
-		t.Fatalf("other speaker stream = %q", got.String())
-	}
-}
+// Mio の先頭ラベル除去は、全 Agent 共通の conversation.StripLeadingSpeakerLabels /
+// NewSpeakerLabelStreamFilter に移した。Mio の回帰（自分のラベル、大文字小文字、コロン、
+// 本文中のラベルは残す、分割 delta）は speaker_label_test.go（Mio.Chat 経由）と
+// conversation/speaker_label_test.go で検証する。
+// 旧テストは「他 Agent 名のラベルは本文として残す」と固定していたが、本番で shiro の応答が
+// `[midori] [midori] ` で始まる不具合が観測されたため、他 Agent 名のラベルも除去する仕様に
+// 変更した（docs/調査/ の Failure Knowledge を参照）。
 
 // === Phase 1C: ConversationEngine integration tests ===
 

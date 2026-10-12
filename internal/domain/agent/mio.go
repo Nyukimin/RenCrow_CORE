@@ -351,14 +351,16 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		currentUserMessage,
 	)
 
-	req := m.generationRequest(messages, filterLeadingAgentSelfLabel(llm.StreamCallbackFromContext(ctx), currentSpeaker))
+	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx))
+	req := m.generationRequest(messages, onToken)
 
 	resp, err := m.llmProvider.Generate(ctx, req)
 	if err != nil {
 		return "", err
 	}
+	flushLabels()
 
-	response := stripLeadingAgentSelfLabel(resp.Content, currentSpeaker)
+	response := conversation.StripLeadingSpeakerLabels(resp.Content)
 	finalGeneration := resp
 	if violatesAttributionInChat(response, latestOther) {
 		retryMessages := append([]llm.Message{}, messages...)
@@ -366,14 +368,18 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 			Role:    "user",
 			Content: "直前の返答は発言帰属が曖昧です。誰のアイデアかを明示して1回だけ言い直してください。",
 		})
-		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, filterLeadingAgentSelfLabel(llm.StreamCallbackFromContext(ctx), currentSpeaker)))
+		retryOnToken, flushRetryLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx))
+		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, retryOnToken))
+		if retryErr == nil {
+			flushRetryLabels()
+		}
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
-			response = stripLeadingAgentSelfLabel(retryResp.Content, currentSpeaker)
+			response = conversation.StripLeadingSpeakerLabels(retryResp.Content)
 			finalGeneration = retryResp
 		}
 	}
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
-	response = stripLeadingAgentSelfLabel(response, currentSpeaker)
+	response = conversation.StripLeadingSpeakerLabels(response)
 	m.rememberExpression(response)
 	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
 		onMetrics(llm.GenerationMetrics{
@@ -390,68 +396,6 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	}
 
 	return response, nil
-}
-
-// stripLeadingAgentSelfLabel removes a model-generated speaker label from the
-// user-visible body. Speaker identity remains available through event and
-// conversation metadata, so duplicating it in text is unnecessary.
-func stripLeadingAgentSelfLabel(content string, speaker conversation.Speaker) string {
-	trimmed := strings.TrimSpace(content)
-	name := strings.TrimSpace(string(speaker))
-	if trimmed == "" || name == "" {
-		return trimmed
-	}
-	label := "[" + name + "]"
-	if len(trimmed) < len(label) || !strings.EqualFold(trimmed[:len(label)], label) {
-		return trimmed
-	}
-	return strings.TrimSpace(strings.TrimLeft(trimmed[len(label):], ":："))
-}
-
-func filterLeadingAgentSelfLabel(next llm.StreamCallback, speaker conversation.Speaker) llm.StreamCallback {
-	if next == nil {
-		return nil
-	}
-	label := "[" + strings.TrimSpace(string(speaker)) + "]"
-	if label == "[]" {
-		return next
-	}
-	var pending string
-	decided := false
-	strippingSeparator := false
-	return func(token string) {
-		if decided {
-			next(token)
-			return
-		}
-		if strippingSeparator {
-			candidate := strings.TrimLeft(token, " \t\r\n:：")
-			if candidate == "" {
-				return
-			}
-			decided = true
-			next(candidate)
-			return
-		}
-		pending += token
-		candidate := strings.TrimLeft(pending, " \t\r\n")
-		if len(candidate) < len(label) && strings.HasPrefix(strings.ToLower(label), strings.ToLower(candidate)) {
-			return
-		}
-		if len(candidate) >= len(label) && strings.EqualFold(candidate[:len(label)], label) {
-			candidate = strings.TrimLeft(candidate[len(label):], " \t\r\n:：")
-			if candidate == "" {
-				pending = ""
-				strippingSeparator = true
-				return
-			}
-		}
-		decided = true
-		if candidate != "" {
-			next(candidate)
-		}
-		pending = ""
-	}
 }
 
 func (m *MioAgent) systemPromptForViewerRecipient(recipient string) string {
