@@ -722,6 +722,10 @@ func (m *recordingTaskLifecycleManager) Create(_ context.Context, draft domainta
 	if err := draft.Validate(); err != nil {
 		return domaintask.Task{}, err
 	}
+	// Like the Task owner (decision D8), never replace an existing Task.
+	if _, exists := m.tasks[draft.TaskID]; exists {
+		return domaintask.Task{}, domaintask.NewTaskExistsError(draft.TaskID)
+	}
 	if shared.TaskID == "" {
 		shared.TaskID = draft.TaskID
 	}

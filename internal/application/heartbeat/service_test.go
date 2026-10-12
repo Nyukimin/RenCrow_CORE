@@ -1326,3 +1326,39 @@ func TestHeartbeatTaskOwnerFailuresRemainFailures(t *testing.T) {
 		})
 	}
 }
+
+// Heartbeat leaves the TaskID blank, so the owner allocates a fresh one. A
+// refusal because that ID already exists (decision D8) is an inconsistency of
+// the Task owner, not a full execution capacity: it is a failure, never a
+// deferral that would be retried as if nothing were wrong, and the Worker does
+// not run.
+func TestHeartbeatAdmissionRefusedBecauseTheTaskExistsIsAFailureNotADeferral(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "HEARTBEAT.md"), []byte("check"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := taskpersistence.NewJSONLStore(filepath.Join(dir, "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close heartbeat task store: %v", err)
+		}
+	})
+	manager := taskmanager.New(store, taskmanager.DefaultParallelLimits())
+	exists := domaintask.NewTaskExistsError(modulecore.NewTaskID())
+	owner := failingHeartbeatTaskOwner{TaskOwner: manager, admitErr: exists}
+	worker := &mockWorkerAgent{response: "HEARTBEAT_OK"}
+
+	err = NewHeartbeatService(worker, &mockSender{}, dir, 30).WithTaskOwner(owner, "shiro").tick(context.Background())
+	if !errors.Is(err, domaintask.ErrTaskExists) {
+		t.Fatalf("tick error = %v, want errors.Is(ErrTaskExists)", err)
+	}
+	if errors.Is(err, ErrHeartbeatAdmissionDeferred) {
+		t.Fatalf("an existing-Task refusal was reported as a capacity deferral: %v", err)
+	}
+	if worker.called {
+		t.Fatal("the Worker ran although admission was refused")
+	}
+}

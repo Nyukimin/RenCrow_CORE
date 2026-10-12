@@ -56,14 +56,17 @@ type ttsEntryPlanner struct {
 }
 
 type ttsEntryApplier struct {
-	proc    messageProcessor
-	req     entryadapter.Request
-	taskID  modulecore.TaskID
-	latest  orchestrator.ProcessMessageResponse
-	runtime ttsEntryRuntime
-	synth   ttsinfra.SynthesisOutput
-	play    ttsinfra.PlaybackResult
-	errKind string
+	proc   messageProcessor
+	req    entryadapter.Request
+	taskID modulecore.TaskID
+	// attemptTaskIDs lists the root Task of every process attempt, in order. The
+	// first is taskID; each retry adds a new one (see Apply).
+	attemptTaskIDs []modulecore.TaskID
+	latest         orchestrator.ProcessMessageResponse
+	runtime        ttsEntryRuntime
+	synth          ttsinfra.SynthesisOutput
+	play           ttsinfra.PlaybackResult
+	errKind        string
 }
 
 type ttsEntryVerifier struct {
@@ -214,7 +217,15 @@ func (a *ttsEntryApplier) Apply(ctx context.Context, step autonomousapp.Step) er
 	}
 	switch step.Name {
 	case "process-message", "retry-process-message":
-		resp, err := runProcessMessage(ctx, a.proc, a.req, a.taskID)
+		rootTaskID := a.taskID
+		if step.Name == "retry-process-message" {
+			// The previous attempt's root Task is finished, and a TaskID names one
+			// Task for its whole life, so a retry is a new execution with its own
+			// root Task. Reusing the ID would be refused by the Task owner.
+			rootTaskID = modulecore.NewTaskID()
+		}
+		a.attemptTaskIDs = append(a.attemptTaskIDs, rootTaskID)
+		resp, err := runProcessMessage(ctx, a.proc, a.req, rootTaskID)
 		if err != nil {
 			return err
 		}
@@ -301,6 +312,13 @@ func saveTTSEvidence(
 	verification := make([]string, 0, len(contract.Verification)+len(runReport.VerificationLog))
 	verification = append(verification, contract.Verification...)
 	verification = append(verification, runReport.VerificationLog...)
+	if len(applier.attemptTaskIDs) > 1 {
+		// The report's TaskID names the first attempt; keep every attempt's root
+		// Task recoverable from the evidence.
+		for index, attemptTaskID := range applier.attemptTaskIDs {
+			verification = append(verification, fmt.Sprintf("process attempt %d root_task_id=%s", index+1, attemptTaskID))
+		}
+	}
 	reason := runReport.Reason
 	if reason == "" && runErr != nil {
 		reason = runErr.Error()

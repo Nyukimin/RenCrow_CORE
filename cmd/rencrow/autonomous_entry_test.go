@@ -12,6 +12,7 @@ import (
 	entryadapter "github.com/Nyukimin/RenCrow_CORE/internal/adapter/entry"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -264,4 +265,69 @@ func (s *recordingSynthStub) Synthesize(_ context.Context, in ttsinfra.Synthesis
 	s.calls++
 	s.last = in
 	return s.out, s.err
+}
+
+// taskOwnerProcessor stands in for the orchestrator over the Task owner: like
+// createRootForAssignee it creates the root Task named by RootTaskID, and a
+// TaskID names one Task for its whole life (decision D8), so reusing an ID is
+// refused with ErrTaskExists instead of overwriting the finished Task.
+type taskOwnerProcessor struct {
+	responses []string
+	roots     []string
+	created   map[string]bool
+}
+
+func (p *taskOwnerProcessor) ProcessMessage(_ context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	if p.created == nil {
+		p.created = map[string]bool{}
+	}
+	p.roots = append(p.roots, req.RootTaskID)
+	if p.created[req.RootTaskID] {
+		return orchestrator.ProcessMessageResponse{}, fmt.Errorf("create root task: %w", domaintask.NewTaskExistsError(modulecore.TaskID(req.RootTaskID)))
+	}
+	p.created[req.RootTaskID] = true
+	response := ""
+	if len(p.roots) <= len(p.responses) {
+		response = p.responses[len(p.roots)-1]
+	}
+	return orchestrator.ProcessMessageResponse{Route: routing.RouteCODE3, TaskID: req.RootTaskID, Response: response}, nil
+}
+
+// The first answer is empty, so verification fails and the autonomous entry
+// repairs by processing the message again. The first attempt's root Task is
+// already finished, so the retry is a new execution with its own root Task; it
+// must not reuse the ID (the Task owner would refuse it).
+func TestProcessEntryRequest_TTSRetryUsesANewRootTask(t *testing.T) {
+	proc := &taskOwnerProcessor{responses: []string{"", "retried answer"}}
+	reportPath := filepath.Join(t.TempDir(), "execution_report.jsonl")
+	req := entryadapter.Request{SessionID: "s1", Channel: "viewer", UserID: "u1", Message: "tts retry please"}
+	runtime := ttsEntryRuntime{synthesizer: &recordingSynthStub{}, outputDir: t.TempDir(), voiceID: "mio"}
+
+	res, err := processEntryRequestWithRuntime(context.Background(), proc, req, reportPath, runtime)
+	if err != nil {
+		t.Fatalf("retry after a failed verification must succeed: %v", err)
+	}
+	if len(proc.roots) != 2 {
+		t.Fatalf("processed %d times (%v), want the original attempt and one retry", len(proc.roots), proc.roots)
+	}
+	if proc.roots[0] == proc.roots[1] {
+		t.Fatalf("the retry reused root Task %s; each attempt needs its own", proc.roots[0])
+	}
+	for _, root := range proc.roots {
+		if modulecore.TaskID(root).Validate() != nil {
+			t.Fatalf("root Task ID %q is not canonical", root)
+		}
+	}
+	if res.Response != "retried answer" || res.TaskID != proc.roots[1] {
+		t.Fatalf("result = response %q task %s, want the retry's answer and Task %s", res.Response, res.TaskID, proc.roots[1])
+	}
+	b, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatalf("expected report file, got %v", err)
+	}
+	for _, root := range proc.roots {
+		if !strings.Contains(string(b), root) {
+			t.Fatalf("execution report does not record attempt root_task_id %s: %s", root, string(b))
+		}
+	}
 }

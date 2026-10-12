@@ -366,6 +366,14 @@ func (l *taskLifecycle) startRepairExecution(ctx context.Context, events taskLif
 		UserIntent: repairTaskMessage(req),
 	}
 	if _, err := l.manager.Create(ctx, draft, shared); err != nil {
+		// The Get above is outside the Create transaction, so a Task can appear
+		// between the two. The Task owner decides inside its transaction
+		// (ErrTaskExists); that refusal reads like the pre-check's. A repair is
+		// a request to create a new Task, never a resend, so it is not success
+		// and nothing is written to the existing Task.
+		if errors.Is(err, domaintask.ErrTaskExists) {
+			return domaintask.Run{}, fmt.Errorf("repair task %s already exists: %w", req.TaskID, err)
+		}
 		return domaintask.Run{}, fmt.Errorf("create repair task: %w", err)
 	}
 

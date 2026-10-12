@@ -15,6 +15,7 @@ import (
 
 var (
 	ErrNotFound      = domaintask.ErrNotFound
+	ErrTaskExists    = domaintask.ErrTaskExists
 	ErrParallelLimit = errors.New("parallel limit exceeded")
 	ErrRunConflict   = errors.New("run state conflict")
 )
@@ -199,6 +200,16 @@ func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task
 	}
 	if shared.TaskID != "" && shared.TaskID != draft.TaskID {
 		return domaintask.Task{}, fmt.Errorf("context task_id must match created task_id")
+	}
+	// A TaskID names one Task for its whole life (decision D8). SaveTask cannot
+	// tell a creation from an update, so the owner decides here, in the same
+	// Task transaction that writes: an existing Task is never replaced or
+	// re-opened by a second creation. Only ErrNotFound lets the creation
+	// continue; any other read failure fails closed.
+	if _, err := m.store.GetTask(ctx, draft.TaskID); err == nil {
+		return domaintask.Task{}, domaintask.NewTaskExistsError(draft.TaskID)
+	} else if !errors.Is(err, domaintask.ErrNotFound) {
+		return domaintask.Task{}, fmt.Errorf("check task %s before creation: %w", draft.TaskID, err)
 	}
 	if err := m.store.SaveTask(ctx, draft); err != nil {
 		return domaintask.Task{}, err
