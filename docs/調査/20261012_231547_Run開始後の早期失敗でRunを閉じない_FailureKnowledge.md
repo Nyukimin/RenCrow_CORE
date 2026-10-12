@@ -170,6 +170,12 @@ Action 作成の失敗、Action 作成後の束縛の失敗、Run の終端書�
   IdleChat の Run の終端 (`generation_run_checkpoint.go` の後継 Run の終端と `generation_run_recovery.go` の終端は5秒、会話の cleanup は30秒) は、
   Task store の実測 (約11秒) を下回る、または3倍に足りない。DCI 検索や MP のように実行枠を握り続ける型の失敗が、ここにも起こり得る。
   IdleChat の Run は別の owner の経路で、本変更の範囲外にした。
+- [WARN] 台帳が見るのは `CreateAndStartRun`、`StartRunWithReason`、`StartRunFromCheckpoint` を呼ぶ関数だけである。Task 単位の `Start` で Run を
+  開始する経路 (orchestrator の `task_lifecycle.go` と `message_orchestrator.go`。`defer` の `finish` が Task と Run を終端する設計) は、
+  別の系統で台帳の対象外にある。2026-10-12 22:54Z に本番で、利用者の chat 要求が `conversation turn conflict` を含む失敗になった。
+  本番 store のコピー (2026-10-12 23:19Z) では、その Task と Run は failed で終端していて、running の CHAT は無く、実行枠は握っていない。
+  /viewer/status の task_activities (プロセス内の MonitorStore。永続しない) に chatting / running のまま残るのは、この失敗経路が
+  終端を示す表示イベント (`entry.stage` の終端、利用者宛の最終 `agent.response`) を出さないためで、Run の終端漏れではない。再起動で消える。
 - 本変更は配備していない。本番は旧binaryのままで、再起動までは同型の孤児 Task が残る可能性がある。
 
 ## 関連ファイル
