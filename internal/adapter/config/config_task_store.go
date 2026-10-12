@@ -6,7 +6,35 @@ import "fmt"
 // (workspace tasks/*.jsonl). The log stays the only source of truth: nothing
 // here changes what is written, so a setting can be turned off again.
 type TaskStoreConfig struct {
-	Index TaskStoreIndexConfig `yaml:"index"`
+	Index    TaskStoreIndexConfig    `yaml:"index"`
+	Rotation TaskStoreRotationConfig `yaml:"rotation"`
+}
+
+// MinTaskStoreRotationSizeValve is the smallest size valve the configuration
+// accepts. Below it a store would open a segment every few transactions.
+const MinTaskStoreRotationSizeValve int64 = 1 << 20
+
+// TaskStoreRotationConfig controls the daily segments of the Task store (layout
+// v2: the files in tasks/ become segment 0 and are frozen, writes go to
+// tasks/logs/<YYYYMMDD>-<NN>/).
+type TaskStoreRotationConfig struct {
+	// Enabled starts a segment per UTC day, and moves a store that is still on
+	// the plain layout to segments the first time it is opened with this on: the
+	// files in tasks/ are frozen (made read-only, their sizes recorded in
+	// tasks/LAYOUT) and writes go to a new segment. The commit time then depends
+	// on the size of the current segment instead of on the whole history.
+	//
+	// Turning it off again does not return the store to the plain layout: it only
+	// stops new segments (the store keeps writing to the newest one). Going back
+	// is the offline command "rencrow tasks layout concat". An older binary must
+	// not be started on a store that has segments. The default is false;
+	// switching it on is a deployment decision (see the runbook). It requires
+	// task_store.index.enabled and task_store.index.persist.
+	Enabled bool `yaml:"enabled"`
+
+	// SizeValveBytes is the size of a segment's log files beyond which the next
+	// write starts another segment of the same day. 0 selects the default, 8 MiB.
+	SizeValveBytes int64 `yaml:"size_valve_bytes"`
 }
 
 // TaskStoreIndexConfig controls the in-memory ID and summary index of the Task
@@ -35,6 +63,12 @@ type TaskStoreIndexConfig struct {
 func (c TaskStoreConfig) validate() error {
 	if c.Index.Persist && !c.Index.Enabled {
 		return fmt.Errorf("task_store.index.persist requires task_store.index.enabled=true")
+	}
+	if c.Rotation.Enabled && !(c.Index.Enabled && c.Index.Persist) {
+		return fmt.Errorf("task_store.rotation.enabled requires task_store.index.enabled=true and task_store.index.persist=true")
+	}
+	if v := c.Rotation.SizeValveBytes; v != 0 && v < MinTaskStoreRotationSizeValve {
+		return fmt.Errorf("task_store.rotation.size_valve_bytes must be 0 (the default) or at least %d", MinTaskStoreRotationSizeValve)
 	}
 	return nil
 }

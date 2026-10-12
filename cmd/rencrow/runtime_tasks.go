@@ -40,7 +40,7 @@ func initializeRuntimeTaskOwnerWithCriteriaRevision(deps *Dependencies, workspac
 			return errors.New("workspace directory is required for canonical Task owner")
 		}
 		var err error
-		store, err = taskpersistence.NewJSONLStoreWithOptions(path, taskpersistence.OpenOptions{Index: deps.taskStoreIndex, Persist: deps.taskStorePersist})
+		store, err = taskpersistence.NewJSONLStoreWithOptions(path, taskpersistence.OpenOptions{Index: deps.taskStoreIndex, Persist: deps.taskStorePersist, Rotation: deps.taskStoreRotation, RotationSizeValve: deps.taskStoreSizeValve})
 		if err != nil {
 			return fmt.Errorf("open canonical Task store: %w", err)
 		}

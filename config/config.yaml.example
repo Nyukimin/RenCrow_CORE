@@ -174,6 +174,13 @@ task_store:
     # 索引をsidecar（tasks/index/seg-legacy.tsi）に保存し、次の起動でログ全体を読まずに復元する。
     # 索引（enabled）が前提で、既定はfalse。
     persist: false
+  # 書込み先をUTC日ごとのsegment（tasks/logs/<YYYYMMDD>-<NN>/）へ分ける（段階2）。既定はfalse。
+  # 初めてtrueで開くとtasks/直下のfileが読取専用に凍結される。有効化は配備時の判断で、index.enabledと
+  # index.persistが前提。戻すにはCOREを止めて `rencrow tasks layout concat --apply`。
+  rotation:
+    enabled: false
+    # 同じ日の次のsegmentへ切り替える大きさ（byte）。0は8 MiB。
+    size_valve_bytes: 0
 
 # Long-running Agent Runはdurable checkpointから同一run/job identityで再開する。
 superagent_harness:

@@ -483,7 +483,7 @@ func runStorageHostServe(ctx context.Context, cfg *config.Config, deps storageHo
 		return errors.New("open canonical Conversation L1 SQLite owner: constructor returned nil")
 	}
 
-	taskOwner, err := deps.OpenTaskStore(taskStorePath, taskpersistence.OpenOptions{Index: cfg.TaskStore.Index.Enabled, Persist: cfg.TaskStore.Index.Persist})
+	taskOwner, err := deps.OpenTaskStore(taskStorePath, taskpersistence.OpenOptions{Index: cfg.TaskStore.Index.Enabled, Persist: cfg.TaskStore.Index.Persist, Rotation: cfg.TaskStore.Rotation.Enabled, RotationSizeValve: cfg.TaskStore.Rotation.SizeValveBytes})
 	if taskOwner != nil {
 		defer func() {
 			if err := taskOwner.Close(); err != nil {

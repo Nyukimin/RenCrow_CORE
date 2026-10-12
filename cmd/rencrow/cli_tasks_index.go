@@ -25,6 +25,11 @@ import (
 //	                    running production store run it on a copy.
 //	rebuild-index       rebuild the index sidecar from the log while CORE is stopped
 //	                    (ErrTaskWriterBusy otherwise). The log is not modified.
+//	layout show         what layout the store is on (plain files, or segments) and what
+//	                    it is made of. Reads sizes only; takes no lock.
+//	layout concat       return a store with segments to the plain layout, while CORE is
+//	                    stopped: the segments are appended to the files in tasks/ in
+//	                    order. Without --apply it only prints the plan.
 
 func isTaskStorageSubcommand(args []string) bool {
 	clean := removeTaskFlag(args, "--compact")
@@ -32,7 +37,7 @@ func isTaskStorageSubcommand(args []string) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(clean[0])) {
-	case "history", "verify", "rebuild-index":
+	case "history", "verify", "rebuild-index", "layout":
 		return true
 	}
 	return false
@@ -56,7 +61,7 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 	pretty := !hasFlag(args, "--compact")
 	args = removeTaskFlag(args, "--compact")
 	if len(args) == 0 {
-		fmt.Fprintln(errOut, "usage: rencrow tasks [history <task_id>|verify|rebuild-index]")
+		fmt.Fprintln(errOut, "usage: rencrow tasks [history <task_id>|verify|rebuild-index|layout show|layout concat [--apply]]")
 		return 1
 	}
 	if strings.TrimSpace(root) == "" {
@@ -89,6 +94,8 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 		}
 		writeJSONCLI(out, report, pretty)
 		return 0
+	case "layout":
+		return runTaskLayoutCommand(ctx, args[1:], root, pretty, out, errOut)
 	case "history":
 		taskID, err := parseTaskIDArg(args, 1, "usage: rencrow tasks history <task_id>")
 		if err != nil {
@@ -114,5 +121,51 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 		return 0
 	}
 	fmt.Fprintf(errOut, "unknown tasks subcommand: %s\n", args[0])
+	return 1
+}
+
+// runTaskLayoutCommand runs `rencrow tasks layout <show|concat>`.
+func runTaskLayoutCommand(ctx context.Context, args []string, root string, pretty bool, out io.Writer, errOut io.Writer) int {
+	usage := "usage: rencrow tasks layout show | rencrow tasks layout concat [--apply]"
+	if len(args) == 0 {
+		fmt.Fprintln(errOut, usage)
+		return 1
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "show":
+		if len(args) != 1 {
+			fmt.Fprintln(errOut, usage)
+			return 1
+		}
+		report, err := taskpersistence.InspectTaskLayout(root)
+		if err != nil {
+			fmt.Fprintf(errOut, "failed to inspect the task store layout: %v\n", err)
+			return 1
+		}
+		writeJSONCLI(out, report, pretty)
+		return 0
+	case "concat":
+		apply := false
+		for _, arg := range args[1:] {
+			if arg != "--apply" {
+				fmt.Fprintf(errOut, "unexpected argument %q\n%s\n", arg, usage)
+				return 1
+			}
+			apply = true
+		}
+		report, err := taskpersistence.ConcatTaskLayout(ctx, root, apply)
+		if err != nil {
+			if errors.Is(err, taskpersistence.ErrTaskWriterBusy) {
+				fmt.Fprintf(errOut, "failed to concatenate the task store layout: %v (stop the running CORE first)\n", err)
+			} else {
+				fmt.Fprintf(errOut, "failed to concatenate the task store layout: %v\n", err)
+			}
+			writeJSONCLI(out, report, pretty)
+			return 1
+		}
+		writeJSONCLI(out, report, pretty)
+		return 0
+	}
+	fmt.Fprintf(errOut, "unknown layout subcommand: %s\n%s\n", args[0], usage)
 	return 1
 }

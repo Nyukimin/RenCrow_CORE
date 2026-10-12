@@ -192,6 +192,26 @@ Windows CORE検証はnative processで行い、official `scripts/test-local.ps1`
 5. storage host readiness→SSH tunnel→COREの順で起動し、「8. 起動後の受入確認」を同じように実行する。
 6. rollback完了後だけ、停止前にactiveだったtimer/serviceのうち必要なものを戻す。終了状態を受入記録とexecution receiptに対応させる。
 
+## Task storeの段階2（segment回転）の停止・復元手順
+
+`task_store.rotation.enabled`（`docs/05_設定リファレンス.md`）を有効にした起動は、Task storeを段階2（layout v2）へ**一方向に**進めます。
+`tasks/`直下の6 fileと`.jsonlbatch.wal`が読取専用のsegment 0になり、書込み先は`tasks/logs/<YYYYMMDD>-<NN>/`、版標識は
+`tasks/LAYOUT`、索引は`tasks/index/`（派生物）になります。backupでは`logs/`と`LAYOUT`が正本の増分（閉じたsegmentは不変）で、
+`index/`は派生物（無くても起動時に作り直す）です。
+
+1. 切替前の停止: `rules/task-rules.md`の停止手順（service停止、残process停止、`:18790`のlisten無し、`/health`無応答）。
+   `tasks/`全体（`.writer.lock`、WAL、6 file、`index/`）を別directoryへコピーし、全fileを`cmp`で照合してから切り替える。
+   このコピーはR2（復元）の入力で、14日以上保持する。
+2. 切替: 設定を`rotation.enabled: true`にして起動する。起動log `[TaskStore] segment migration done`、`rencrow tasks layout show`
+   （`layout v2`、`segment0_read_only`、`segment0_matches_layout`が真）、`rencrow tasks verify`で確認する。
+3. 戻し（R1、履歴を失わない）: 停止し、`rencrow tasks layout concat`（計画の確認）→ `--apply`。途中で止まっても再実行で続きから
+   終わる。終わると`tasks/`直下の6 fileが全履歴を持つ段階1の形式に戻る。そのうえで旧版を起動してよい。
+4. 戻し（R2、段階2以降の書込みを捨てる）: 停止し、1.のコピーを戻す。
+5. **禁止**: 段階2のstoreで旧版binaryを起動しない（`layout concat`せずに旧版を起動してはならない）。旧版は`tasks/`直下のfileを
+   `O_RDWR`で開けずに失敗し何も書かないが、旧版の`rencrow tasks list`などの読取は凍結時点までの履歴しか見せない。
+   起動時は、segment 0のsize、閉じたsegmentのsize、`LAYOUT`の版、segmentのdirectory欠損のいずれかが記録と違えば起動しない。
+   その場合は原因（旧版の誤起動、手編集、別copyの復元）を調べ、自動修復しない。
+
 ## execution receiptの必須項目
 
 - 実行者、host、OS、UTC/JST時刻
