@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -181,4 +182,56 @@ func TestMemoryPromotionWorkerCancellationReleasesIdleReservation(t *testing.T) 
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("worker cancellation did not release its idle reservation")
+}
+
+// failingMemoryPromotionRunnerStub returns the same error from every run.
+type failingMemoryPromotionRunnerStub struct {
+	calls atomic.Int32
+	err   error
+}
+
+func (s *failingMemoryPromotionRunnerStub) RunOne(context.Context) (memorypromotionapp.RunResult, error) {
+	s.calls.Add(1)
+	return memorypromotionapp.RunResult{}, s.err
+}
+
+// A cancelled run is not a job failure: a user-facing LLM call takes the idle
+// lease on purpose. But a cancelled run whose terminal write also failed left
+// the Task running and holds the execution slot, and that must be reported.
+func TestMemoryPromotionWorkerReportsCancellationOnlyWhenTheRunWasNotClosed(t *testing.T) {
+	notClosed := errors.Join(context.Canceled, errors.Join(errMemoryPromotionRunNotClosed, errors.New("terminal write refused")))
+	cases := []struct {
+		name       string
+		err        error
+		wantReport bool
+	}{
+		{"plain cancellation stays silent", context.Canceled, false},
+		{"cancellation with a failed close is reported", notClosed, true},
+		{"other failure is reported", errors.New("extraction failed"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			listener := &captureBackgroundJobEventListener{}
+			runner := &failingMemoryPromotionRunnerStub{err: tc.err}
+			cancel := startMemoryPromotionWorkerRunner(
+				runner, newLLMBusyTracker(), 5*time.Millisecond, time.Second, 5*time.Millisecond,
+				newBackgroundJobFailureReporter(listener),
+			)
+			defer cancel()
+
+			deadline := time.Now().Add(2 * time.Second)
+			for runner.calls.Load() == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if runner.calls.Load() == 0 {
+				t.Fatal("worker did not run")
+			}
+			time.Sleep(50 * time.Millisecond)
+
+			reported := len(listener.Events()) > 0
+			if reported != tc.wantReport {
+				t.Fatalf("reported=%v want=%v (events=%d)", reported, tc.wantReport, len(listener.Events()))
+			}
+		})
+	}
 }
