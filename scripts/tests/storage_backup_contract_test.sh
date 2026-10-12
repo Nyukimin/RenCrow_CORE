@@ -870,6 +870,78 @@ def process_is_alive(pid, liveness_checker):
         raise SystemExit(f"[NG] could not inspect interrupted worker PID {pid}: {result.stderr.strip()}")
     return result.stdout.strip() == "alive"
 
+def emit_scratch_diagnostics(snapshot, checker_status, output, force=False):
+    max_scratch_dirs = 32
+    max_worker_inputs = 8
+    max_output_bytes = 8192
+    scratch_dirs = []
+    more_scratch_dirs = False
+    try:
+        with os.scandir(snapshot) as entries:
+            for entry in entries:
+                if not entry.name.startswith(".restore.") or not entry.is_dir(follow_symlinks=False):
+                    continue
+                if len(scratch_dirs) == max_scratch_dirs:
+                    more_scratch_dirs = True
+                    break
+                scratch_dirs.append(entry.name)
+    except OSError as error:
+        print(f"[DIAG] restore scratch directory listing failed: {error}", file=sys.stderr)
+        return False
+
+    if not scratch_dirs and not more_scratch_dirs and not force:
+        return False
+
+    print(
+        f"[DIAG] interrupted checker status={checker_status} "
+        f"status_u32=0x{checker_status & 0xFFFFFFFF:08x}",
+        file=sys.stderr,
+    )
+    print(
+        f"[DIAG] direct restore scratch dirs={scratch_dirs!r} "
+        f"additional_dirs={more_scratch_dirs}",
+        file=sys.stderr,
+    )
+    for scratch_name in scratch_dirs:
+        scratch_path = os.path.join(snapshot, scratch_name)
+        try:
+            marker_present = os.path.exists(
+                os.path.join(scratch_path, ".sqlite-integrity-supervision-active")
+            )
+        except OSError:
+            marker_present = "unavailable"
+        worker_inputs = []
+        more_worker_inputs = False
+        try:
+            with os.scandir(scratch_path) as entries:
+                for entry in entries:
+                    if (
+                        not entry.name.startswith(".sqlite-integrity-worker-")
+                        or not entry.name.endswith(".py")
+                        or not entry.is_file(follow_symlinks=False)
+                    ):
+                        continue
+                    if len(worker_inputs) == max_worker_inputs:
+                        more_worker_inputs = True
+                        break
+                    worker_inputs.append(entry.name)
+        except OSError:
+            more_worker_inputs = "unavailable"
+        print(
+            f"[DIAG] scratch={scratch_name!r} supervision_marker={marker_present} "
+            f"worker_inputs={worker_inputs!r} additional_worker_inputs={more_worker_inputs}",
+            file=sys.stderr,
+        )
+
+    output_bytes = output.encode("utf-8", errors="replace")
+    print("[DIAG] captured checker output (maximum 8192 bytes):", file=sys.stderr)
+    sys.stderr.write(output_bytes[:max_output_bytes].decode("utf-8", errors="replace"))
+    if len(output_bytes) > max_output_bytes:
+        sys.stderr.write("\n[DIAG] captured checker output truncated\n")
+    elif output_bytes and not output_bytes.endswith(b"\n"):
+        sys.stderr.write("\n")
+    return bool(scratch_dirs or more_scratch_dirs)
+
 current_bash_executable, checker, snapshot, worker, marker, pid_file, survivor_script, liveness_checker = sys.argv[1:]
 windows = os.name == "nt"
 if (
@@ -1049,6 +1121,7 @@ try:
         os.killpg(process.pid, signal.SIGTERM)
     output, _ = process.communicate(timeout=8.0)
     if process.returncode == 0:
+        emit_scratch_diagnostics(snapshot, process.returncode, output, force=True)
         raise SystemExit("[NG] checker succeeded after its supervisor process group was interrupted\n" + output)
     time.sleep(5.2)
     if os.path.exists(marker):
@@ -1062,7 +1135,9 @@ try:
     elif process_is_alive(child_pid, liveness_checker):
         raise SystemExit(f"[NG] interrupted SQLite worker descendant {child_pid} survived")
     if "[OK] snapshot is checksum-valid" in output:
+        emit_scratch_diagnostics(snapshot, process.returncode, output, force=True)
         raise SystemExit("[NG] interrupted SQLite validation emitted the final success marker")
+    emit_scratch_diagnostics(snapshot, process.returncode, output)
 finally:
     if process is not None and process.poll() is None:
         if windows:
