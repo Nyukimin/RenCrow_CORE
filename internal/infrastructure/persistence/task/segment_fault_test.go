@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -175,48 +177,193 @@ func requireSegmentedOrPlainStoreEqualsFullBuild(t testing.TB, store *JSONLStore
 }
 
 func TestRotationStoppedAtEveryStepLosesNothing(t *testing.T) {
-	for _, stage := range []string{"rotate-settled", "rotate-created", "rotate-switched"} {
-		t.Run(stage, func(t *testing.T) {
-			root := t.TempDir()
-			t.Cleanup(func() { makeWritable(t, root) })
-			clock := newTestClock("2026-10-13T08:00:00Z")
-			stageOneStore(t, root, 4)
-			var armed atomic.Bool
-			store, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, 0, func(s string) {
-				if s == stage && armed.Load() {
-					panic(simulatedCrash{s})
+	for _, reason := range []string{"day", "size"} {
+		for _, stage := range []string{"rotate-settled", "rotate-created", "rotate-switched"} {
+			t.Run(reason+"/"+stage, func(t *testing.T) {
+				root := t.TempDir()
+				t.Cleanup(func() { makeWritable(t, root) })
+				clock := newTestClock("2026-10-13T08:00:00Z")
+				valve := int64(0)
+				if reason == "size" {
+					valve = 3 << 10
 				}
-			}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			populate(t, store, 4, 8)
-			acked := scanSegmentedLog(t, root)
-			closedBefore := fingerprintDir(t, segmentDir(root, "20261013-01"))
-
-			armed.Store(true)
-			clock.Set("2026-10-14T08:00:00Z")
-			crashed := didCrash(func() { _ = store.SaveTask(context.Background(), indexedTestTask(900, indexTestNow)) })
-			if !crashed {
-				t.Fatal("the failpoint did not fire")
-			}
-			if err := store.closeStore(false); err != nil {
-				t.Fatal(err)
-			}
-			requireFingerprintsEqual(t, "the segment that was being closed", closedBefore, fingerprintDir(t, segmentDir(root, "20261013-01")))
-
-			again := openRotating(t, root, clock, 0, nil)
-			for id := range acked.tasks {
-				if _, err := again.GetTask(context.Background(), id); err != nil {
-					t.Fatalf("task %s was acknowledged and is gone: %v", id, err)
+				stageOneStore(t, root, 4)
+				var armed atomic.Bool
+				store, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, valve, func(s string) {
+					if s == stage && armed.Load() {
+						panic(simulatedCrash{s})
+					}
+				}))
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			populate(t, again, 8, 10)
-			if got := segmentNames(t, root); len(got) != 2 || got[1] != "20261014-01" {
-				t.Fatalf("segments after reopening on the next day = %v", got)
-			}
-			requireSegmentedStoreEqualsFullBuild(t, again, root)
-		})
+				populate(t, store, 4, 8)
+				acked := scanSegmentedLog(t, root)
+				closed := map[string]map[string]fileFingerprint{}
+				for _, name := range segmentNames(t, root) {
+					closed[name] = fingerprintDir(t, segmentDir(root, name))
+				}
+				sealedNow := len(closed)
+
+				armed.Store(true)
+				if reason == "day" {
+					clock.Set("2026-10-14T08:00:00Z")
+				}
+				crashed := false
+				for n := 900; n < 960 && !crashed; n++ {
+					crashed = didCrash(func() { _ = store.SaveTask(context.Background(), indexedTestTask(n, indexTestNow)) })
+				}
+				if !crashed {
+					t.Fatal("the failpoint did not fire")
+				}
+				if err := store.closeStore(false); err != nil {
+					t.Fatal(err)
+				}
+				// Whatever was complete before the stop is untouched: the segments that
+				// existed and were closed by the rotation that stopped.
+				for name, before := range closed {
+					if name == segmentNames(t, root)[sealedNow-1] && reason == "size" {
+						continue // the segment that was still being written
+					}
+					if name == "20261013-01" && reason == "day" {
+						requireFingerprintsEqual(t, "the segment that was being closed", before, fingerprintDir(t, segmentDir(root, name)))
+					}
+				}
+
+				again := openRotating(t, root, clock, valve, nil)
+				for id := range acked.tasks {
+					if _, err := again.GetTask(context.Background(), id); err != nil {
+						t.Fatalf("task %s was acknowledged and is gone: %v", id, err)
+					}
+				}
+				populate(t, again, 8, 10)
+				requireSegmentedStoreEqualsFullBuild(t, again, root)
+			})
+		}
+	}
+}
+
+// A rotation waits for no transaction: a session that keeps the store's read lock
+// for a long time must not stop the reads that come after it.
+func TestALongLivedReadLockDoesNotStopReadsWhileARotationIsDue(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { makeWritable(t, root) })
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	stageOneStore(t, root, 4)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 4, 6)
+	store.rot.lockWait = 150 * time.Millisecond
+	store.rot.deferAfter = time.Hour
+	taskID := indexedTestTask(1, indexTestNow).TaskID
+
+	store.mu.RLock() // what a storage host session holds between its requests
+	clock.Set("2026-10-14T08:00:00Z")
+	done := make(chan error, 1)
+	go func() { done <- store.SaveTask(context.Background(), indexedTestTask(900, indexTestNow)) }()
+	var worst time.Duration
+	deadline := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		started := time.Now()
+		if _, err := store.GetTask(context.Background(), taskID); err != nil {
+			store.mu.RUnlock()
+			t.Fatalf("read while a rotation was due: %v", err)
+		}
+		if d := time.Since(started); d > worst {
+			worst = d
+		}
+	}
+	if err := <-done; err != nil {
+		store.mu.RUnlock()
+		t.Fatalf("the write that found the rotation due: %v", err)
+	}
+	store.mu.RUnlock()
+	if worst > 100*time.Millisecond {
+		t.Fatalf("a read took %s while a rotation was due and a read lock was held", worst)
+	}
+	if got := store.idx.currentSegmentName(); got != "20261013-01" {
+		t.Fatalf("rotated to %s although a read lock was held", got)
+	}
+
+	// Once the store is idle the next write rotates.
+	store.rot.succeeded()
+	populate(t, store, 6, 8)
+	if got := store.idx.currentSegmentName(); got != "20261014-01" {
+		t.Fatalf("current segment = %s after the lock was released, want 20261014-01", got)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+}
+
+// A segment directory an earlier rotation created and did not switch to is where
+// the next rotation goes, so the segments on disk and in memory keep the same
+// order.
+func TestARotationReusesAnEmptyNewerSegmentDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { makeWritable(t, root) })
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	stageOneStore(t, root, 3)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 3, 5)
+
+	if _, err := createSegment(root, segmentRef{ord: 2, name: "20261013-02", dir: segmentDir(root, "20261013-02")}); err != nil {
+		t.Fatal(err)
+	}
+	clock.Set("2026-10-14T08:00:00Z")
+	populate(t, store, 5, 7)
+	// The first rotation went to the orphan (dated the 13th) and the write that
+	// found it due landed there; the clock is on the 14th, so the next write
+	// rotated again. Disk and memory agree on the order, which a restart shows.
+	want := []string{"20261013-01", "20261013-02", "20261014-01"}
+	got := segmentNames(t, root)
+	if len(got) != len(want) || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("segments = %v, want %v", got, want)
+	}
+	if cur := store.idx.currentSegmentName(); cur != "20261014-01" {
+		t.Fatalf("current segment = %s", cur)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := openRotating(t, root, clock, 0, nil)
+	if stats, _ := again.IndexStats(); stats.Source != sourceSidecar || stats.Segments != 4 {
+		t.Fatalf("restart: source %q, %d segments (%s)", stats.Source, stats.Segments, stats.RebuildReason)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, again, root)
+}
+
+// A closed segment whose WAL is torn or pending is not what a crash leaves
+// behind. It is not repaired (that would cut bytes something else wrote): the
+// store is not opened and the files stay as they are.
+func TestAClosedSegmentWithAnUnsettledWALIsNotRepairedAndNotOpened(t *testing.T) {
+	root := t.TempDir()
+	t.Cleanup(func() { makeWritable(t, root) })
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	stageOneStore(t, root, 3)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 3, 5)
+	clock.Set("2026-10-14T08:00:00Z")
+	populate(t, store, 5, 7)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	wal := filepath.Join(segmentDir(root, "20261013-01"), ".jsonlbatch.wal")
+	before, err := os.ReadFile(wal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	torn := append(append([]byte(nil), before...), []byte(`{"version":1,"kind":"prepare"`)...)
+	if err := os.WriteFile(wal, torn, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, 0, nil)); err == nil {
+		_ = again.Close()
+		t.Fatal("the store opened with a torn WAL in a closed segment")
+	} else if !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
+		t.Fatalf("open error = %v, want ErrRecoveryRequired", err)
+	}
+	after, _ := os.ReadFile(wal)
+	if string(after) != string(torn) {
+		t.Fatal("the WAL of the closed segment was changed")
 	}
 }
 

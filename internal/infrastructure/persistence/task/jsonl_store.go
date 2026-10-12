@@ -213,6 +213,9 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 			return nil, fmt.Errorf("writer generation does not advance persisted task execution fence ownership")
 		}
 	}
+	if layout.v2 && !store.rot.enabled {
+		log.Printf("[TaskStore] WARN the store is on layout v2 but rotation is off: writes stay in segment %s and its commit time grows with it (task_store.rotation.enabled)", current.name)
+	}
 	if store.idx != nil && store.rot.enabled && !layout.v2 {
 		if err := store.migrateToSegments(context.Background()); err != nil {
 			var aborted *migrationAborted
@@ -231,8 +234,8 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 
 // openWriterBatch opens the jsonlbatch Store the writer appends to: the files in
 // the root on layout v1, the newest segment on layout v2. On layout v2 segment 0
-// is frozen (and kept so), and the segments before the newest are checked to
-// hold no unsettled WAL; the newest is repaired by the Recover that follows.
+// is frozen (and kept so), and the segments before the newest must hold no
+// unsettled WAL; the newest is repaired by the Recover that follows.
 func openWriterBatch(root string, layout layoutInfo, refs []segmentRef) (*jsonlbatch.Store, error) {
 	current := refs[len(refs)-1]
 	if !layout.v2 {
@@ -243,24 +246,14 @@ func openWriterBatch(root string, layout layoutInfo, refs []segmentRef) (*jsonlb
 		log.Printf("[TaskStore] WARN segment 0 could not be made read-only: %v", err)
 	}
 	for _, ref := range refs[:len(refs)-1] {
-		err := jsonlbatch.CheckSettled(ref.dir, taskBatchFilenames())
-		if err == nil {
-			continue
-		}
-		if ref.ord == 0 || !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
+		// A rotation settles the WAL of the segment it closes before it starts the
+		// next one, so a closed segment with a transaction pending or torn is not
+		// what a crash leaves behind. Repairing it would roll back (cut) bytes
+		// that something else wrote; the store is not opened instead, and the
+		// bytes are left where they are for someone to look at.
+		if err := jsonlbatch.CheckSettled(ref.dir, taskBatchFilenames()); err != nil {
 			return nil, fmt.Errorf("segment %s is closed but its WAL is not settled: %w", ref.name, err)
 		}
-		// A segment that is closed but has a pending WAL: rotation settles the old
-		// segment before it starts the next, so this is something else's doing.
-		// Repair it once (a rollback of the unfinished transaction), and say so.
-		repair, newErr := jsonlbatch.New(ref.dir, taskBatchFilenames())
-		if newErr != nil {
-			return nil, fmt.Errorf("open closed segment %s to repair its WAL: %w", ref.name, newErr)
-		}
-		if recoverErr := repair.Recover(context.Background()); recoverErr != nil {
-			return nil, fmt.Errorf("repair the WAL of closed segment %s: %w", ref.name, recoverErr)
-		}
-		log.Printf("[TaskStore] WARN closed segment %s had an unsettled WAL; it was rolled back", ref.name)
 	}
 	return jsonlbatch.New(current.dir, taskBatchFilenames())
 }

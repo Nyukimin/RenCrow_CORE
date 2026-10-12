@@ -248,10 +248,12 @@ func newestRolledBackLogs(root string) (string, error) {
 	return newest, nil
 }
 
-// settleSegmentsForConcat checks that no segment has a WAL transaction pending. The
-// newest segment was the one written to, so a crash can have left one there: it
-// is repaired the way any writer would repair it (a rollback of the transaction
-// that never committed) before its files are copied.
+// settleSegmentsForConcat checks that no segment has a WAL transaction pending.
+// The newest segment is the one that was written to, so a crash can have left a
+// pending transaction there: it is repaired the way any writer would repair it
+// (a rollback of the transaction that never committed) before its files are
+// copied. A pending transaction in any other segment is not something a crash
+// leaves; the concat stops.
 func settleSegmentsForConcat(ctx context.Context, root string, dirs []string) error {
 	if err := jsonlbatch.CheckSettled(root, taskBatchFilenames()); err != nil {
 		return fmt.Errorf("segment 0 WAL is not settled: %w", err)
@@ -261,15 +263,15 @@ func settleSegmentsForConcat(ctx context.Context, root string, dirs []string) er
 		if err == nil {
 			continue
 		}
-		if !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
-			return err
+		if i != len(dirs)-1 || !errors.Is(err, jsonlbatch.ErrRecoveryRequired) {
+			return fmt.Errorf("segment %s is closed but its WAL is not settled: %w", filepath.Base(dir), err)
 		}
 		store, newErr := jsonlbatch.New(dir, taskBatchFilenames())
 		if newErr != nil {
 			return fmt.Errorf("open segment %s to repair its WAL: %w", filepath.Base(dir), newErr)
 		}
 		if recoverErr := store.Recover(ctx); recoverErr != nil {
-			return fmt.Errorf("repair the WAL of segment %s (%d of %d): %w", filepath.Base(dir), i+1, len(dirs), recoverErr)
+			return fmt.Errorf("repair the WAL of segment %s: %w", filepath.Base(dir), recoverErr)
 		}
 	}
 	return nil
@@ -287,6 +289,15 @@ func appendSegmentsToFile(path, name string, frozen, current int64, segSizes [][
 		done++
 	}
 	if current != boundary {
+		// What is past the last whole segment must be the start of the next one, as
+		// an append that stopped half way leaves it. Anything else was written by
+		// something else, and is not cut away.
+		if done >= len(dirs) {
+			return fmt.Errorf("%w: %s holds %d bytes more than the segments add", ErrSealedSegmentChanged, name, current-boundary)
+		}
+		if err := verifyPrefixOf(path, boundary, current-boundary, filepath.Join(dirs[done], name)); err != nil {
+			return fmt.Errorf("%w: the %d bytes of %s past segment %d are not the start of segment %s: %v", ErrSealedSegmentChanged, current-boundary, name, done, filepath.Base(dirs[done]), err)
+		}
 		if err := os.Truncate(path, boundary); err != nil {
 			return fmt.Errorf("cut %s back to the end of segment %d: %w", name, done, err)
 		}
@@ -310,6 +321,40 @@ func appendSegmentsToFile(path, name string, frozen, current int64, segSizes [][
 			}
 		}
 		fire(fmt.Sprintf("concat-appended-%s-%d", name, i))
+	}
+	return nil
+}
+
+// verifyPrefixOf checks that the n bytes of path from offset are the first n
+// bytes of src.
+func verifyPrefixOf(path string, offset, n int64, src string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	got, want := make([]byte, concatCopyChunk), make([]byte, concatCopyChunk)
+	for n > 0 {
+		chunk := int64(len(got))
+		if n < chunk {
+			chunk = n
+		}
+		if _, err := file.ReadAt(got[:chunk], offset); err != nil {
+			return err
+		}
+		if _, err := io.ReadFull(in, want[:chunk]); err != nil {
+			return err
+		}
+		if !bytes.Equal(got[:chunk], want[:chunk]) {
+			return errors.New("the bytes differ")
+		}
+		offset += chunk
+		n -= chunk
 	}
 	return nil
 }

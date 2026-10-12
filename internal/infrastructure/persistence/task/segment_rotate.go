@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
@@ -22,6 +23,19 @@ const rotationRetryAfter = 30 * time.Second
 // WAL lock.
 const rotationTimeout = 30 * time.Second
 
+// rotationLockWait is how long a write waits for the moment no transaction is in
+// flight, which a rotation needs. It never queues for the store's exclusive lock
+// (a queued exclusive lock holds off every new reader, and a storage host session
+// keeps its read lock for as long as the client takes): it only tries. To make
+// that moment come under a steady stream of writes, the writes that arrive while
+// a rotation is trying wait at a gate (readers do not); the ones already in flight
+// finish. When the store stays busy for the whole wait, the gate opens, this write
+// goes on in the current segment and the next attempt is rotationDeferAfter later.
+const (
+	rotationLockWait   = 250 * time.Millisecond
+	rotationDeferAfter = 5 * time.Second
+)
+
 // rotationState is the policy and bookkeeping of segment rotation for one writer.
 type rotationState struct {
 	enabled    bool
@@ -30,6 +44,10 @@ type rotationState struct {
 	failpoint  func(stage string)
 	pause      func(time.Duration) // told the stop time of each rotation (tests)
 	retryAfter time.Duration
+	lockWait   time.Duration
+	deferAfter time.Duration
+	attempting atomic.Bool                   // one writer at a time tries to rotate
+	gate       atomic.Pointer[chan struct{}] // set while a rotation tries: new writes wait on it
 
 	mu          sync.Mutex // guards the fields below
 	retryAt     time.Time
@@ -37,7 +55,7 @@ type rotationState struct {
 }
 
 func newRotationState(opts OpenOptions) *rotationState {
-	r := &rotationState{enabled: opts.Rotation, valve: opts.RotationSizeValve, now: opts.now, failpoint: opts.failpoint, pause: opts.rotationPause, retryAfter: rotationRetryAfter}
+	r := &rotationState{enabled: opts.Rotation, valve: opts.RotationSizeValve, now: opts.now, failpoint: opts.failpoint, pause: opts.rotationPause, retryAfter: rotationRetryAfter, lockWait: rotationLockWait, deferAfter: rotationDeferAfter}
 	if r.valve <= 0 {
 		r.valve = DefaultRotationSizeValve
 	}
@@ -45,6 +63,17 @@ func newRotationState(opts OpenOptions) *rotationState {
 		r.now = time.Now
 	}
 	return r
+}
+
+// waitGate holds a write at the gate while a rotation is trying to find the store
+// idle.
+func (r *rotationState) waitGate(ctx context.Context) {
+	if g := r.gate.Load(); g != nil {
+		select {
+		case <-*g:
+		case <-ctx.Done():
+		}
+	}
 }
 
 func (r *rotationState) fire(stage string) {
@@ -64,6 +93,14 @@ func (r *rotationState) failed() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.retryAt = time.Now().Add(r.retryAfter)
+}
+
+// deferred records that the store was too busy to rotate: the next attempt is
+// rotationDeferAfter from now.
+func (r *rotationState) deferred() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.retryAt = time.Now().Add(r.deferAfter)
 }
 
 func (r *rotationState) succeeded() {
@@ -119,13 +156,30 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 // rotate, and a failure leaves the store writing to the segment it has.
 func (s *JSONLStore) rotateIfDue(ctx context.Context) {
 	r := s.rot
-	if r == nil || !r.enabled || s.idx == nil || !s.idx.isLayoutV2() || r.backingOff() {
+	if r == nil || !r.enabled || s.idx == nil || !s.idx.isLayoutV2() {
+		return
+	}
+	r.waitGate(ctx)
+	if r.backingOff() {
 		return
 	}
 	if name, _ := s.rotationTarget(r.now()); name == "" {
 		return
 	}
-	s.mu.Lock()
+	if !r.attempting.CompareAndSwap(false, true) {
+		return
+	}
+	gate := make(chan struct{})
+	r.gate.Store(&gate)
+	defer func() {
+		r.gate.Store(nil)
+		close(gate)
+		r.attempting.Store(false)
+	}()
+	if !s.tryLockExclusive(ctx, r.lockWait) {
+		r.deferred()
+		return
+	}
 	defer s.mu.Unlock()
 	if s.closed || s.batch == nil || s.readOnly {
 		return
@@ -151,6 +205,23 @@ func (s *JSONLStore) rotateIfDue(ctx context.Context) {
 	log.Printf("[TaskStore] segment rotated from=%s to=%s reason=%s pause=%s", from, name, reason, pause.Round(time.Microsecond))
 }
 
+// tryLockExclusive takes the store's exclusive lock if it can within wait, without
+// ever queueing for it: Go holds off new readers as soon as an exclusive lock is
+// waited for, and a reader that stays (a storage host session) would then stop
+// every other read with it.
+func (s *JSONLStore) tryLockExclusive(ctx context.Context, wait time.Duration) bool {
+	deadline := time.Now().Add(wait)
+	for {
+		if s.mu.TryLock() {
+			return true
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // rotateLocked closes the current segment and starts name. The caller holds the
 // store's exclusive lock, so no transaction is in flight. Nothing that happens
 // here changes a byte of a closed segment's data files: the WAL is settled (a
@@ -174,6 +245,10 @@ func (s *JSONLStore) rotateLocked(ctx context.Context, name string) error {
 		return fmt.Errorf("bring the index up to the current segment: %w", err)
 	}
 	r.fire("rotate-settled")
+	name, err := s.reuseOrphanSegment(name)
+	if err != nil {
+		return err
+	}
 	ref := segmentRef{ord: uint16(s.idx.segmentCount()), name: name, dir: segmentDir(s.root, name)}
 	if ref.ord == 0 || int(ref.ord) > maxSegmentOrdinal {
 		return fmt.Errorf("segment %q cannot be given an ordinal", name)
@@ -189,6 +264,33 @@ func (s *JSONLStore) rotateLocked(ctx context.Context, name string) error {
 	r.fire("rotate-switched")
 	s.idx.ck.request("rotate")
 	return nil
+}
+
+// reuseOrphanSegment returns the segment a rotation should start: name, unless an
+// earlier rotation created a newer, still empty segment directory and then failed
+// to switch to it. That directory is the newest on disk and is what the next open
+// would choose, so the switch goes to it (under any other name the ordinals of
+// the segments on disk and in memory would disagree after a restart). A newer
+// directory that holds data is not an orphan: the store is in a state this build
+// does not understand.
+func (s *JSONLStore) reuseOrphanSegment(name string) (string, error) {
+	names, err := listSegmentDirs(s.root)
+	if err != nil {
+		return "", err
+	}
+	current := s.idx.currentSegmentName()
+	if len(names) == 0 || names[len(names)-1] <= current {
+		return name, nil
+	}
+	newest := names[len(names)-1]
+	empty, err := segmentHoldsNoData(segmentDir(s.root, newest))
+	if err != nil {
+		return "", err
+	}
+	if !empty {
+		return "", fmt.Errorf("segment %s is newer than the current segment %s and holds data", newest, current)
+	}
+	return newest, nil
 }
 
 // createSegment creates the directory of ref with its six files, WAL and lock,

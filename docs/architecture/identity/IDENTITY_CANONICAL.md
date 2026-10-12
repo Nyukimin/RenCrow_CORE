@@ -3928,7 +3928,7 @@ Step 03をcompleteとしない。
 
 #### Run writer-generation binding
 
-- **Contract:** `writer_generation`はTask store内の単調増加する数値fenceであり、GenerationIDでもAgent identityでもない。OS writer排他の取得後に保存counterを追記で進め、同期書込みが成功してからwriterを公開する。末尾はbounded readで検査し、途中書込み・不連続値を拒否する。保存済みRunの最大世代以下をwriterとして公開しない。counter不正・overflowはfail closedとし、0へ戻さない。
+- **Contract:** `writer_generation`はTask store内の単調増加する数値fenceであり、GenerationIDでもAgent identityでもない。OS writer排他の取得後に保存counterを追記で進め、同期書込みが成功してからwriterを公開する。末尾はbounded readで検査し、途中書込み・不連続値を拒否する。保存済みRunの最大世代以下をwriterとして公開しない。counter不正・overflowはfail closedとし、0へ戻さない。 Task storeをsegmentに分けた場合（layout v2）も、この「最大世代」は全segmentのRun・receipt・fenceに対するもので、索引のsidecarが持つ値（無い・壊れていればログから再計算）で保たれる。
 - **Run ownership:** TaskManagerは現在writerのgenerationを取得して新Runへ束縛する。保存・返却Runは同じ値を持ち、後から変更しない。新Runのgenerationは現在writerと一致しなければ保存しない。既存Runの0は歴史的な所有権未確認を表し、現在generationを後付けしない。
 - **Recovery boundary:** 新generationの取得は旧writerの排他権が失われた証拠であり、旧Actorの外部効果が全て停止した証拠ではない。external effectに至る実行境界でのfence検査・quiescence、checkpoint／再開policy、過去Runの扱いが確定するまで自動回復を完了扱いにしない。
 

@@ -3,6 +3,7 @@ package task
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,4 +260,64 @@ func layoutFrozenOf(t testing.TB, root string) [sizedFileCount]int64 {
 		t.Fatal(err)
 	}
 	return layout.frozen
+}
+
+// What is past the last whole segment in segment 0 must be the start of the next
+// one, as an append that stopped leaves it. Anything else was written by something
+// else and is neither cut away nor built on.
+func TestConcatCutsBackAnUnfinishedAppendButNotForeignBytes(t *testing.T) {
+	build := func(t *testing.T) (string, map[string][]byte, string) {
+		root := t.TempDir()
+		t.Cleanup(func() { makeWritable(t, root) })
+		clock := newTestClock("2026-10-13T08:00:00Z")
+		expected, _ := buildSegmentedStore(t, root, clock)
+		first := segmentNames(t, root)[0]
+		return root, expected, first
+	}
+	appendBytes := func(t *testing.T, path string, extra []byte) {
+		t.Helper()
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.Write(extra); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("the start of the next segment", func(t *testing.T) {
+		root, expected, first := build(t)
+		head := readSegmentFiles(t, segmentDir(root, first))[stateFilename][:7]
+		appendBytes(t, filepath.Join(root, stateFilename), head)
+		if _, err := ConcatTaskLayout(context.Background(), root, true); err != nil {
+			t.Fatalf("concat after an unfinished append: %v", err)
+		}
+		got, _ := os.ReadFile(filepath.Join(root, stateFilename))
+		if !bytes.Equal(got, expected[stateFilename]) {
+			t.Fatal("segment 0 does not hold the original followed by the segments")
+		}
+	})
+
+	t.Run("bytes that are not", func(t *testing.T) {
+		root, _, _ := build(t)
+		appendBytes(t, filepath.Join(root, stateFilename), []byte("not a record"))
+		before, _ := os.ReadFile(filepath.Join(root, stateFilename))
+		_, err := ConcatTaskLayout(context.Background(), root, true)
+		if err == nil || !errors.Is(err, ErrSealedSegmentChanged) {
+			t.Fatalf("concat over foreign bytes: %v, want ErrSealedSegmentChanged", err)
+		}
+		after, _ := os.ReadFile(filepath.Join(root, stateFilename))
+		if !bytes.Equal(before, after) {
+			t.Fatal("the foreign bytes were cut away")
+		}
+		if layout, _ := readLayout(root); !layout.v2 {
+			t.Fatal("LAYOUT was set aside although the concat did not finish")
+		}
+	})
 }
