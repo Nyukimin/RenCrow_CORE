@@ -132,6 +132,17 @@ func TestCanonicalConversationTurnArchitecture(t *testing.T) {
 		t.Fatal("resolve current file")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	violations, err := canonicalConversationTurnArchitectureViolations(repoRoot)
+	if err != nil {
+		t.Fatalf("scan conversation identity architecture: %v", err)
+	}
+	if len(violations) != 0 {
+		sort.Strings(violations)
+		t.Fatalf("legacy conversation identity routes remain: %v", violations)
+	}
+}
+
+func canonicalConversationTurnArchitectureViolations(repoRoot string) ([]string, error) {
 	forbidden := map[string]struct{}{
 		"ConversationTurnMessageIDs": {},
 		"RecallTraceID":              {},
@@ -145,8 +156,7 @@ func TestCanonicalConversationTurnArchitecture(t *testing.T) {
 			return walkErr
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "vendor", "node_modules", "Tmp":
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -176,13 +186,7 @@ func TestCanonicalConversationTurnArchitecture(t *testing.T) {
 		})
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("scan conversation identity architecture: %v", err)
-	}
-	if len(violations) != 0 {
-		sort.Strings(violations)
-		t.Fatalf("legacy conversation identity routes remain: %v", violations)
-	}
+	return violations, err
 }
 
 func canonicalGeneratorLiteral(node ast.Node) (string, bool) {
@@ -230,14 +234,24 @@ func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
 		t.Fatal("resolve current file")
 	}
 	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(currentFile), "..", ".."))
+	violations, err := canonicalSessionIngressLegacyIDBuilderViolations(repoRoot)
+	if err != nil {
+		t.Fatalf("scan Go source: %v", err)
+	}
+	if len(violations) != 0 {
+		sort.Strings(violations)
+		t.Fatalf("legacy Session identity construction remains in runtime source: %v", violations)
+	}
+}
+
+func canonicalSessionIngressLegacyIDBuilderViolations(repoRoot string) ([]string, error) {
 	var violations []string
 	err := filepath.WalkDir(repoRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", "vendor", "node_modules", "Tmp":
+			if canonicalArchitectureSkipDir(repoRoot, path) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -256,13 +270,7 @@ func TestCanonicalSessionIngressHasNoLegacyIDBuilder(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("scan Go source: %v", err)
-	}
-	if len(violations) != 0 {
-		sort.Strings(violations)
-		t.Fatalf("legacy Session identity construction remains in runtime source: %v", violations)
-	}
+	return violations, err
 }
 
 func TestCanonicalSessionMigrationCodeIsRemovedAfterCutover(t *testing.T) {
@@ -2595,6 +2603,111 @@ type LegacyThread struct { ThreadID uint32 }
 			}
 		})
 	}
+}
+
+func TestCanonicalConversationAndSessionCollectorsUseArtifactRootPolicy(t *testing.T) {
+	validSource := []byte(`package fixture
+type recorder struct{}
+func EndTurn() {}
+func (recorder) EndTurnAs() {}
+func use(recorder recorder) { recorder.EndTurnAs() }
+const legacy = "BuildSessionID func NewSession( func ReconstructSession("
+`)
+	invalidCacheSource := []byte(`package fixture
+this is not valid Go
+const legacy = "BuildSessionID func NewSession( func ReconstructSession("
+`)
+	ownedFiles := []string{
+		"owned/source.go",
+		filepath.ToSlash(filepath.Join("owned", "lower", "tmp", "source.go")),
+		filepath.ToSlash(filepath.Join("owned", "upper", "Tmp", "source.go")),
+	}
+	for _, artifactRoot := range []string{"Tmp", "tmp"} {
+		t.Run(artifactRoot, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			files := map[string][]byte{
+				filepath.ToSlash(filepath.Join(artifactRoot, "test-runtime", "_runs", "run", "_go-build", "dependency", "artifact.go")):     validSource,
+				filepath.ToSlash(filepath.Join(artifactRoot, "test-runtime", "_runs", "run", "_go-build", "dependency", "cache-broken.go")): invalidCacheSource,
+			}
+			for _, relative := range ownedFiles {
+				files[relative] = validSource
+			}
+			for relative, source := range files {
+				path := filepath.Join(repoRoot, filepath.FromSlash(relative))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("create fixture directory for %s: %v", relative, err)
+				}
+				if err := os.WriteFile(path, source, 0o600); err != nil {
+					t.Fatalf("write fixture %s: %v", relative, err)
+				}
+			}
+
+			conversationViolations, err := canonicalConversationTurnArchitectureViolations(repoRoot)
+			if err != nil {
+				t.Fatalf("scan conversation collector fixture: %v", err)
+			}
+			wantConversationViolations := make([]string, 0, len(ownedFiles)*3)
+			for _, relative := range ownedFiles {
+				relative = filepath.FromSlash(relative)
+				wantConversationViolations = append(wantConversationViolations,
+					relative+":EndTurn",
+					relative+":EndTurnAs",
+					relative+":EndTurnAs",
+				)
+			}
+			sort.Strings(conversationViolations)
+			sort.Strings(wantConversationViolations)
+			if got, want := strings.Join(conversationViolations, "\n"), strings.Join(wantConversationViolations, "\n"); got != want {
+				t.Errorf("conversation collector violations = %q, want %q", got, want)
+			}
+
+			sessionViolations, err := canonicalSessionIngressLegacyIDBuilderViolations(repoRoot)
+			if err != nil {
+				t.Fatalf("scan Session collector fixture: %v", err)
+			}
+			wantSessionViolations := make([]string, 0, len(ownedFiles)*3)
+			for _, relative := range ownedFiles {
+				relative = filepath.FromSlash(relative)
+				wantSessionViolations = append(wantSessionViolations,
+					relative+":BuildSessionID",
+					relative+":func NewSession(",
+					relative+":func ReconstructSession(",
+				)
+			}
+			sort.Strings(sessionViolations)
+			sort.Strings(wantSessionViolations)
+			if got, want := strings.Join(sessionViolations, "\n"), strings.Join(wantSessionViolations, "\n"); got != want {
+				t.Errorf("Session collector violations = %q, want %q", got, want)
+			}
+		})
+	}
+
+	t.Run("walk-errors-propagate", func(t *testing.T) {
+		missingRepoRoot := filepath.Join(t.TempDir(), "missing")
+		if _, err := canonicalConversationTurnArchitectureViolations(missingRepoRoot); err == nil {
+			t.Fatal("conversation collector swallowed WalkDir error for missing root")
+		}
+		if _, err := canonicalSessionIngressLegacyIDBuilderViolations(missingRepoRoot); err == nil {
+			t.Fatal("Session collector swallowed WalkDir error for missing root")
+		}
+	})
+
+	t.Run("owned-parse-errors-propagate", func(t *testing.T) {
+		repoRoot := t.TempDir()
+		path := filepath.Join(repoRoot, "owned", "invalid.go")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create owned invalid-Go fixture directory: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("package fixture\nthis is not valid Go\n"), 0o600); err != nil {
+			t.Fatalf("write owned invalid-Go fixture: %v", err)
+		}
+		if _, err := canonicalConversationTurnArchitectureViolations(repoRoot); err == nil {
+			t.Fatal("conversation collector swallowed owned-source parse error")
+		}
+		if _, err := canonicalSessionIngressLegacyIDBuilderViolations(repoRoot); err != nil {
+			t.Fatalf("raw Session collector unexpectedly parsed owned source: %v", err)
+		}
+	})
 }
 
 func canonicalThreadIdentitySkipFile(relative string) bool {

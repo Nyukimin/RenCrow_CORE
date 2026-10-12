@@ -816,7 +816,10 @@ func TestIntegrationALostStartAnswerIsRepeatedWithTheSameKeyAndTheHarnessStartsO
 }
 
 func TestIntegrationCancellingTheTurnStopsTheRealRunAndKeepsTheCancelledResult(t *testing.T) {
-	it := newIntegration(t, nil, nil)
+	capture := &nativeResumeClientCapture{awaitRunEntered: make(chan struct{})}
+	it := newIntegration(t, nil, func(real StartFunc) StartFunc {
+		return captureNativeResumeClient(real, capture)
+	})
 	release := make(chan struct{})
 	it.deploy.Gateway.Hold(release)
 	defer close(release)
@@ -829,14 +832,21 @@ func TestIntegrationCancellingTheTurnStopsTheRealRunAndKeepsTheCancelledResult(t
 		err    error
 	}
 	done := make(chan outcome, 1)
+	startupDeadline := time.After(60 * time.Second)
 	go func() {
 		result, err := it.runtime.DelegateNativeCoding(ctx, agent.NativeCodingRequest{Input: input, Messages: messages})
 		done <- outcome{result, err}
 	}()
 	select {
 	case <-it.deploy.Gateway.Measuring():
-	case <-time.After(60 * time.Second):
+	case <-startupDeadline:
 		t.Fatal("the Run never reached the model")
+	}
+	// AwaitRun entry proves the accepted Start returned and the Task fence was released.
+	select {
+	case <-capture.awaitRunEntered:
+	case <-startupDeadline:
+		t.Fatal("the accepted Run never reached AwaitRun")
 	}
 	cancel()
 	select {
