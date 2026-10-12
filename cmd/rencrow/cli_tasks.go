@@ -18,6 +18,12 @@ import (
 )
 
 func cmdTasks() {
+	if isTasksReapSubcommand(os.Args[2:]) {
+		// reap-queued opens the store itself: a read-only handle for the dry-run,
+		// the writer for --apply.
+		cmdTasksReap()
+		return
+	}
 	if isTaskStorageSubcommand(os.Args[2:]) {
 		// verify / rebuild-index / history work on the store files directly and
 		// must not open the store as a writer through the Manager.
@@ -161,7 +167,7 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 		return 0
 	default:
 		fmt.Fprintf(errOut, "unknown tasks subcommand: %s\n", subcommand)
-		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications|history|verify|rebuild-index]")
+		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications|history|verify|rebuild-index|reap-queued]")
 		return 1
 	}
 }
