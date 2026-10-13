@@ -444,14 +444,25 @@ tts:
 # STT基本機能
 # 本番の音声入力入口は HTTPS Viewer です。
 # Viewerはsecure contextでマイクを取得し、CORE同一originの /stt にPCM chunkを送ります。
-# COREはRenCrow_STTのPOST /v1/audio/transcriptionsだけを呼び出します。
+# COREは発話ごとにPCMを貯め、RenCrow_STTのPOST /v1/audio/transcriptionsを発話につき1回だけ呼び出します。
+# 発話の終わりはViewerのVADとstop制御が決め、COREは最大長と無通信時間だけを安全弁として持ちます。
 stt:
   enabled: true
   # 同一host上のRenCrow_STT Gateway。別hostへ置く場合もmodule URLだけを変更する。
   gateway_base_url: "http://127.0.0.1:8766"
-  timeout_ms: 120000
-  busy_policy: "queue_latest"
+  # 1回の認識要求の上限。max_utterance_ms以上（目安は2倍）にする。
+  timeout_ms: 60000
+  # direct: 全発話をGatewayへ渡す（既定）。queue_latestは古い要求を捨てるため連続発話のfinalが消える。
+  busy_policy: "direct"
   endpoint_path: "/stt"
+  # 認識に回す最小の有声長。これ未満の発話（クリック音・咳など）は認識せず空のfinalを返す。
+  min_speech_ms: 150
+  # 1発話の最大長。超えたらfinalを返し、続きを新しい発話として受ける。
+  max_utterance_ms: 30000
+  # 発話中にフレームが届かなくなってからfinalを返すまでの時間（stop制御が来ない場合の安全弁）。
+  idle_timeout_ms: 2000
+  # 無音・雑音でエンジンが出す定型句のうち、発話全体が一致したものを捨てる追加分（組込み一覧に追加される）。
+  # noise_phrases: ["また見てね"]
   debug:
     save_audio: false
     save_transcript: true

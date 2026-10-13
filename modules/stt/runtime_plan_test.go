@@ -45,8 +45,14 @@ func TestBuildRuntimeProviderPlanAppliesProviderDefaults(t *testing.T) {
 	if plan.Provider != ProviderRenCrowSTT || plan.Language != DefaultProviderLanguage {
 		t.Fatalf("BuildRuntimeProviderPlan() default provider/language = %#v", plan)
 	}
-	if plan.Timeout != DefaultProviderTimeout || plan.BusyPolicy != BusyPolicyQueueLatest {
+	if plan.Timeout != DefaultProviderTimeout || plan.BusyPolicy != BusyPolicyDirect {
 		t.Fatalf("BuildRuntimeProviderPlan() default timeout/busy = %#v", plan)
+	}
+}
+
+func TestDefaultProviderTimeoutCoversTheLongestUtterance(t *testing.T) {
+	if DefaultProviderTimeout < 2*DefaultMaxUtterance {
+		t.Fatalf("DefaultProviderTimeout %s must be at least twice DefaultMaxUtterance %s", DefaultProviderTimeout, DefaultMaxUtterance)
 	}
 }
 

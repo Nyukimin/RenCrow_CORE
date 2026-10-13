@@ -9,7 +9,7 @@ const (
 	ProviderMock = "mock"
 
 	DefaultProviderLanguage = "ja"
-	DefaultProviderTimeout  = 8 * time.Second
+	DefaultProviderTimeout  = 60 * time.Second
 
 	BusyPolicyQueueLatest = "queue_latest"
 	BusyPolicyReject      = "reject"
@@ -83,7 +83,7 @@ func ApplyProviderDefaults(cfg ProviderDefaultsConfig) ProviderDefaultsConfig {
 		cfg.Timeout = DefaultProviderTimeout
 	}
 	if strings.TrimSpace(cfg.BusyPolicy) == "" {
-		cfg.BusyPolicy = BusyPolicyQueueLatest
+		cfg.BusyPolicy = DefaultBusyPolicy
 	} else {
 		cfg.BusyPolicy = NormalizeBusyPolicy(cfg.BusyPolicy)
 	}

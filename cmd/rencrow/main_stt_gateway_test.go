@@ -76,7 +76,6 @@ func TestSTTWebSocketProviderE2E_ReturnsFinal(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(3 * time.Second)
-	seenDraft := false
 	for time.Now().Before(deadline) {
 		var raw string
 		if err := websocket.Message.Receive(conn, &raw); err != nil {
@@ -86,13 +85,10 @@ func TestSTTWebSocketProviderE2E_ReturnsFinal(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
 			t.Fatalf("decode event %q: %v", raw, err)
 		}
-		if ev["type"] == "draft" {
-			seenDraft = true
+		if ev["type"] == "draft" || ev["type"] == "partial" {
+			t.Fatalf("utterance recognition has no interim results yet: %+v", ev)
 		}
 		if ev["type"] == "final" {
-			if !seenDraft {
-				t.Fatal("final arrived before draft")
-			}
 			if strings.TrimSpace(ev["text"].(string)) == "" {
 				t.Fatalf("empty final event: %+v", ev)
 			}
@@ -149,8 +145,10 @@ func TestSTTWebSocketProviderE2E_AcceptsRawPCM16Chunks(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := websocket.Message.Send(conn, rawPCM16Chunk()); err != nil {
-		t.Fatalf("send raw pcm: %v", err)
+	for i := 0; i < 4; i++ { // 400 ms: a 100 ms fragment is below stt.min_speech_ms
+		if err := websocket.Message.Send(conn, rawPCM16Chunk()); err != nil {
+			t.Fatalf("send raw pcm: %v", err)
+		}
 	}
 	if err := websocket.Message.Send(conn, `{"type":"final_pending"}`); err != nil {
 		t.Fatalf("send final_pending: %v", err)

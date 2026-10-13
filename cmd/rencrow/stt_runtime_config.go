@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
@@ -66,6 +67,22 @@ func sttRuntimeConfigFromAppConfig(cfg *config.Config) modulestt.RuntimeConfig {
 		SaveAudio:      cfg.STT.Debug.SaveAudio,
 		SaveTranscript: cfg.STT.Debug.SaveTranscript,
 	}
+}
+
+// sttSessionConfigFromAppConfig maps the CORE-side /stt input settings. The
+// energy threshold stays an environment knob (STT_SILENCE_ABS_THRESHOLD).
+func sttSessionConfigFromAppConfig(cfg *config.Config) sttSessionConfig {
+	session := sttSessionConfig{
+		Limits: modulestt.UtteranceLimits{SilenceAbsThreshold: sttSilenceAbsThresholdFromEnv()},
+	}
+	if cfg == nil {
+		return session
+	}
+	session.Limits.MinSpeech = time.Duration(cfg.STT.MinSpeechMS) * time.Millisecond
+	session.Limits.MaxLength = time.Duration(cfg.STT.MaxUtteranceMS) * time.Millisecond
+	session.Limits.IdleTimeout = time.Duration(cfg.STT.IdleTimeoutMS) * time.Millisecond
+	session.NoisePhrases = cfg.STT.NoisePhrases
+	return session
 }
 
 func sttRuntimeURLConfigFromAppConfig(cfg *config.Config, ttsBaseURL string) modulestt.RuntimeURLConfig {

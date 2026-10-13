@@ -1,7 +1,6 @@
 package stt
 
 import (
-	"encoding/json"
 	"errors"
 	"net"
 	"strings"
@@ -9,20 +8,11 @@ import (
 )
 
 const (
-	DefaultFinalTimeout        = 1200 * time.Millisecond
-	MinFinalTimeout            = 200 * time.Millisecond
 	DefaultSilenceAbsThreshold = 220
 	DefaultHTTPTimeout         = 3000 * time.Millisecond
 	MinHTTPTimeout             = 300 * time.Millisecond
 	DefaultSampleRate          = 16000
 )
-
-func FinalTimeoutFromMilliseconds(ms int) time.Duration {
-	if ms < int(MinFinalTimeout/time.Millisecond) {
-		return DefaultFinalTimeout
-	}
-	return time.Duration(ms) * time.Millisecond
-}
 
 func SilenceAbsThreshold(value int) int {
 	if value < 1 {
@@ -36,25 +26,6 @@ func HTTPTimeoutFromMilliseconds(ms int) time.Duration {
 		return DefaultHTTPTimeout
 	}
 	return time.Duration(ms) * time.Millisecond
-}
-
-func ParseControlMessage(payload []byte) (string, bool) {
-	if len(payload) == 0 {
-		return "", false
-	}
-	lead := payload[0]
-	if lead != '{' && lead != '[' && lead != '"' {
-		return "", false
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(payload, &obj); err != nil {
-		return "", false
-	}
-	msgType, _ := obj["type"].(string)
-	if strings.TrimSpace(msgType) != "" {
-		return strings.TrimSpace(msgType), true
-	}
-	return "", false
 }
 
 func NormalizeAudioPayload(payload []byte) []byte {

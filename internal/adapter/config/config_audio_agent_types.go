@@ -45,6 +45,11 @@ type STTConfig struct {
 	BusyPolicy     string         `yaml:"busy_policy"`
 	EndpointPath   string         `yaml:"endpoint_path"`
 	Debug          STTDebugConfig `yaml:"debug"`
+
+	MinSpeechMS    int      `yaml:"min_speech_ms"`
+	MaxUtteranceMS int      `yaml:"max_utterance_ms"`
+	IdleTimeoutMS  int      `yaml:"idle_timeout_ms"`
+	NoisePhrases   []string `yaml:"noise_phrases"`
 }
 
 type STTDebugConfig struct {

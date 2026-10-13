@@ -58,7 +58,7 @@ func (p *busyPolicyProvider) Transcribe(ctx context.Context, wav []byte) (Result
 	case BusyPolicyQueueLatest:
 		return p.transcribeQueueLatest(ctx, wav)
 	default:
-		return p.transcribeQueueLatest(ctx, wav)
+		return p.inner.Transcribe(ctx, wav)
 	}
 }
 

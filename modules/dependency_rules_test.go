@@ -482,52 +482,43 @@ func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 	}
 	text := string(content)
 	for _, want := range []string{
-		"FinalTextAfterDraftTimeout",
-		"FinalTextForPending",
-		"FinalTextAfterSilence",
-		"FinalTextOnProviderError",
-		"NormalizeTranscriptText",
-		"MarkVoiceObserved",
-		"MarkSpeechStarted",
-		"ApplyDraftTranscript",
-		"ResetDraftAfterFinal",
-		"BuildFinalEvent",
-		"BuildDraftEvent",
+		"ParseControl",
+		"IsFinalizeControl",
+		"NewUtteranceBuffer",
+		"IsVoicedPCM",
+		"WAVToPCM16",
+		"ClassifyTranscript",
+		"NewNoisePhraseFilter",
+		"BuildUtteranceFinalEvent",
 		"BuildSpeechStartEvent",
 		"BuildSessionInfoEvent",
 		"BuildReadyEvent",
 		"BuildErrorEvent",
+		"BuildCancelledEvent",
+		"StampUtteranceEvent",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("%s must delegate STT session rule %q to modules/stt", path, want)
 		}
 	}
 	for _, forbidden := range []string{
-		"strings.TrimSpace(lastDraft)",
-		"time.Since(lastDraftAt)",
-		"time.Since(lastVoiceAt)",
-		`lastDraft = ""`,
-		"lastDraftAt = time.Time{}",
-		"lastVoiceAt = time.Time{}",
-		"speechStarted = false",
-		"lastDraft = normalized",
-		"func sttDraftState",
 		"strings.TrimSpace(result.Text)",
-		"timeoutStreak",
-		"successStreak",
-		"inferCooldownUntil",
-		"lastTimeoutNotice",
-		"800 * time.Millisecond",
+		"strings.TrimSpace(lastDraft)",
 		`"type": "final"`,
 		`"type": "draft"`,
 		`"type": "speech_start"`,
 		`"type": "status"`,
 		`"type": "error"`,
-		`"stt provider timeout (retrying)"`,
+		`"type": "cancelled"`,
+		`"utterance_id"`,
+		`"end_reason"`,
+		`"empty_reason"`,
+		`"max_utterance_ms"`,
 		`"sample_rate": 16000`,
+		"DraftState",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns STT draft/final session rule containing %q; keep it in modules/stt", path, forbidden)
+			t.Fatalf("%s owns STT utterance/session rule containing %q; keep it in modules/stt", path, forbidden)
 		}
 	}
 }

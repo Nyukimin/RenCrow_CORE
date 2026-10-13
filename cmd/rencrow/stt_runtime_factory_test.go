@@ -24,7 +24,8 @@ import (
 )
 
 func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
-	requestSeen := make(chan struct{}, 1)
+	const frames = 10 // one second of Viewer-sized 100 ms frames
+	requestSeen := make(chan struct{}, frames)
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/audio/transcriptions" {
 			http.NotFound(w, r)
@@ -34,7 +35,16 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		file, _, err := r.FormFile("file")
+		// CORE -> RenCrow_STT contract: file (audio.wav) + response_format=json only.
+		if r.MultipartForm.Value["response_format"] == nil || r.MultipartForm.Value["response_format"][0] != "json" ||
+			len(r.MultipartForm.Value) != 1 || len(r.MultipartForm.File) != 1 || r.Header.Get("X-RenCrow-Request-ID") == "" {
+			http.Error(w, "CORE changed the RenCrow_STT request contract", http.StatusBadRequest)
+			return
+		}
+		file, header, err := r.FormFile("file")
+		if err == nil && header.Filename != "audio.wav" {
+			err = io.ErrUnexpectedEOF
+		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -45,8 +55,14 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if len(payload) < 12 || !bytes.Equal(payload[:4], []byte("RIFF")) || !bytes.Equal(payload[8:12], []byte("WAVE")) {
+		if len(payload) < 44 || !bytes.Equal(payload[:4], []byte("RIFF")) || !bytes.Equal(payload[8:12], []byte("WAVE")) {
 			http.Error(w, "CORE did not normalize Viewer PCM to WAV", http.StatusBadRequest)
+			return
+		}
+		// One request carries the whole utterance as 16 kHz mono PCM16.
+		if payload[22] != 1 || payload[24] != 0x80 || payload[25] != 0x3e || payload[34] != 16 ||
+			len(payload) != 44+frames*len(rawPCM16Chunk()) {
+			http.Error(w, "CORE did not send the whole utterance as one 16 kHz mono PCM16 WAV", http.StatusBadRequest)
 			return
 		}
 		requestSeen <- struct{}{}
@@ -106,8 +122,10 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 	if err := websocket.Message.Send(conn, `{"type":"start","sample_rate":16000,"channels":1,"format":"pcm_s16le"}`); err != nil {
 		t.Fatalf("send start: %v", err)
 	}
-	if err := websocket.Message.Send(conn, rawPCM16Chunk()); err != nil {
-		t.Fatalf("send raw pcm: %v", err)
+	for i := 0; i < frames; i++ {
+		if err := websocket.Message.Send(conn, rawPCM16Chunk()); err != nil {
+			t.Fatalf("send raw pcm: %v", err)
+		}
 	}
 	if err := websocket.Message.Send(conn, `{"type":"stop"}`); err != nil {
 		t.Fatalf("send stop: %v", err)
@@ -132,6 +150,9 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 		}
 		select {
 		case <-requestSeen:
+			if len(requestSeen) != 0 {
+				t.Fatalf("RenCrow_STT was called %d times for one utterance, want 1", len(requestSeen)+1)
+			}
 			requests, err := transports.ListRequests(context.Background(), domaintransport.RequestFilter{})
 			if err != nil {
 				t.Fatal(err)

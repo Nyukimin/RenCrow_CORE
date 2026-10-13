@@ -92,10 +92,7 @@ func (p GatewayProvider) Transcribe(ctx context.Context, wav []byte) (Result, er
 		return Result{}, err
 	}
 
-	timeout := p.Timeout
-	if timeout <= 0 {
-		timeout = 8 * time.Second
-	}
+	timeout := p.requestTimeout()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(p.URL), &body)
 	if err != nil {
 		return Result{}, err
@@ -147,6 +144,13 @@ func (p GatewayProvider) Transcribe(ctx context.Context, wav []byte) (Result, er
 	out.RequestID = requestID
 	out.ResponseID = responseID
 	return out, nil
+}
+
+func (p GatewayProvider) requestTimeout() time.Duration {
+	if p.Timeout > 0 {
+		return p.Timeout
+	}
+	return modulestt.DefaultProviderTimeout
 }
 
 func sttProviderExternalRef(response *http.Response) string {

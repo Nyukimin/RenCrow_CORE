@@ -11,6 +11,12 @@ type BusyPolicyPlan struct {
 	UsesDirect bool
 }
 
+// DefaultBusyPolicy lets every utterance reach the engine. The engine
+// serialises requests itself and each session transcribes its utterances in
+// order, so no caller needs to be superseded. queue_latest drops older
+// requests and stays available only when configured explicitly.
+const DefaultBusyPolicy = BusyPolicyDirect
+
 func BuildBusyPolicyPlan(policy string) BusyPolicyPlan {
 	normalized := NormalizeBusyPolicy(policy)
 	return BusyPolicyPlan{
@@ -27,9 +33,9 @@ func NormalizeBusyPolicy(policy string) string {
 		return BusyPolicyDirect
 	case BusyPolicyReject:
 		return BusyPolicyReject
-	case BusyPolicyQueueLatest, "":
+	case BusyPolicyQueueLatest:
 		return BusyPolicyQueueLatest
 	default:
-		return BusyPolicyQueueLatest
+		return DefaultBusyPolicy
 	}
 }

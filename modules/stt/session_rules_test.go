@@ -5,51 +5,6 @@ import (
 	"time"
 )
 
-func TestFinalTextForPending(t *testing.T) {
-	text, ok := FinalTextForPending(DraftState{LastDraft: "  hello  "})
-	if !ok || text != "hello" {
-		t.Fatalf("FinalTextForPending() = %q,%t", text, ok)
-	}
-}
-
-func TestFinalTextAfterDraftTimeout(t *testing.T) {
-	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	state := DraftState{
-		SpeechStarted: true,
-		LastDraft:     " draft ",
-		LastDraftAt:   now.Add(-1500 * time.Millisecond),
-	}
-	text, ok := FinalTextAfterDraftTimeout(state, now, time.Second)
-	if !ok || text != "draft" {
-		t.Fatalf("FinalTextAfterDraftTimeout() = %q,%t", text, ok)
-	}
-
-	state.LastDraftAt = now.Add(-500 * time.Millisecond)
-	if _, ok := FinalTextAfterDraftTimeout(state, now, time.Second); ok {
-		t.Fatal("draft should not finalize before timeout")
-	}
-}
-
-func TestFinalTextAfterSilence(t *testing.T) {
-	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	state := DraftState{
-		SpeechStarted: true,
-		LastDraft:     " draft ",
-		LastVoiceAt:   now.Add(-1500 * time.Millisecond),
-	}
-	text, ok := FinalTextAfterSilence(state, now, time.Second)
-	if !ok || text != "draft" {
-		t.Fatalf("FinalTextAfterSilence() = %q,%t", text, ok)
-	}
-}
-
-func TestFinalTextOnProviderError(t *testing.T) {
-	text, ok := FinalTextOnProviderError(DraftState{SpeechStarted: true, LastDraft: " draft "})
-	if !ok || text != "draft" {
-		t.Fatalf("FinalTextOnProviderError() = %q,%t", text, ok)
-	}
-}
-
 func TestNormalizeTranscriptText(t *testing.T) {
 	if got := NormalizeTranscriptText("  hello  "); got != "hello" {
 		t.Fatalf("NormalizeTranscriptText() = %q", got)
@@ -97,45 +52,6 @@ func TestIsUsableProvisionalFinalText(t *testing.T) {
 	}
 }
 
-func TestDraftStateTransitions(t *testing.T) {
-	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
-	state := DraftState{}
-
-	state = MarkVoiceObserved(state, now)
-	if !state.LastVoiceAt.Equal(now) {
-		t.Fatalf("LastVoiceAt = %s", state.LastVoiceAt)
-	}
-
-	var started bool
-	state, started = MarkSpeechStarted(state)
-	if !started || !state.SpeechStarted {
-		t.Fatalf("speech start was not marked: %+v started=%t", state, started)
-	}
-	state, started = MarkSpeechStarted(state)
-	if started {
-		t.Fatal("already-started speech should not send another start event")
-	}
-
-	draftAt := now.Add(100 * time.Millisecond)
-	state = ApplyDraftTranscript(state, " draft ", draftAt)
-	if state.LastDraft != "draft" || !state.LastDraftAt.Equal(draftAt) {
-		t.Fatalf("draft was not applied: %+v", state)
-	}
-
-	reset := ResetDraftAfterFinal(state, false)
-	if reset.SpeechStarted || reset.LastDraft != "" || !reset.LastDraftAt.IsZero() {
-		t.Fatalf("draft fields were not reset: %+v", reset)
-	}
-	if !reset.LastVoiceAt.Equal(now) {
-		t.Fatalf("voice timestamp should be preserved: %+v", reset)
-	}
-
-	reset = ResetDraftAfterFinal(state, true)
-	if !reset.LastVoiceAt.IsZero() {
-		t.Fatalf("voice timestamp should be reset: %+v", reset)
-	}
-}
-
 func TestBuildWebSocketEvents(t *testing.T) {
 	session := BuildSessionInfoEvent(" http ")
 	if session["type"] != WebSocketEventTypeSessionInfo || session["provider"] != "http" {
@@ -144,15 +60,12 @@ func TestBuildWebSocketEvents(t *testing.T) {
 	if _, ok := session["session_id"]; ok {
 		t.Fatalf("session event must not invent a conversation session: %#v", session)
 	}
-	ready := BuildReadyEvent()
+	ready := BuildReadyEvent(DefaultMaxUtterance)
 	if ready["type"] != WebSocketEventTypeReady || ready["sample_rate"] != WebSocketReadySampleRate {
 		t.Fatalf("ready event = %#v", ready)
 	}
 	if got := BuildSpeechStartEvent(); got["type"] != WebSocketEventTypeSpeechStart {
 		t.Fatalf("speech start event = %#v", got)
-	}
-	if got := BuildDraftEvent(" draft "); got["type"] != WebSocketEventTypeDraft || got["text"] != "draft" {
-		t.Fatalf("draft event = %#v", got)
 	}
 	if got := BuildFinalEvent(" final "); got["type"] != WebSocketEventTypeFinal || got["text"] != "final" {
 		t.Fatalf("final event = %#v", got)

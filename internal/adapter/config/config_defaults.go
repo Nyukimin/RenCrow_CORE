@@ -731,10 +731,23 @@ func (c *Config) setDefaults() {
 		c.STT.GatewayBaseURL = "http://127.0.0.1:8766"
 	}
 	if c.STT.TimeoutMS <= 0 {
-		c.STT.TimeoutMS = 8000
+		// One call carries a whole utterance (up to max_utterance_ms) and may
+		// wait behind another request inside the engine.
+		c.STT.TimeoutMS = 60000
 	}
 	if c.STT.BusyPolicy == "" {
-		c.STT.BusyPolicy = "queue_latest"
+		// queue_latest supersedes older requests, which would drop the final of
+		// an utterance spoken right after another one.
+		c.STT.BusyPolicy = "direct"
+	}
+	if c.STT.MinSpeechMS <= 0 {
+		c.STT.MinSpeechMS = 150
+	}
+	if c.STT.MaxUtteranceMS <= 0 {
+		c.STT.MaxUtteranceMS = 30000
+	}
+	if c.STT.IdleTimeoutMS <= 0 {
+		c.STT.IdleTimeoutMS = 2000
 	}
 	if c.STT.EndpointPath == "" {
 		c.STT.EndpointPath = "/stt"

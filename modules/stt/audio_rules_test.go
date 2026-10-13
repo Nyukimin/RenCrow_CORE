@@ -7,15 +7,6 @@ import (
 	"time"
 )
 
-func TestFinalTimeoutFromMilliseconds(t *testing.T) {
-	if got := FinalTimeoutFromMilliseconds(150); got != DefaultFinalTimeout {
-		t.Fatalf("FinalTimeoutFromMilliseconds(150) = %s, want %s", got, DefaultFinalTimeout)
-	}
-	if got := FinalTimeoutFromMilliseconds(800); got != 800*time.Millisecond {
-		t.Fatalf("FinalTimeoutFromMilliseconds(800) = %s", got)
-	}
-}
-
 func TestHTTPTimeoutFromMilliseconds(t *testing.T) {
 	if got := HTTPTimeoutFromMilliseconds(200); got != DefaultHTTPTimeout {
 		t.Fatalf("HTTPTimeoutFromMilliseconds(200) = %s, want %s", got, DefaultHTTPTimeout)

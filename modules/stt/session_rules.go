@@ -5,42 +5,6 @@ import (
 	"time"
 )
 
-type DraftState struct {
-	SpeechStarted bool
-	LastDraft     string
-	LastDraftAt   time.Time
-	LastVoiceAt   time.Time
-}
-
-func MarkVoiceObserved(state DraftState, at time.Time) DraftState {
-	state.LastVoiceAt = at
-	return state
-}
-
-func MarkSpeechStarted(state DraftState) (DraftState, bool) {
-	if state.SpeechStarted {
-		return state, false
-	}
-	state.SpeechStarted = true
-	return state, true
-}
-
-func ApplyDraftTranscript(state DraftState, text string, at time.Time) DraftState {
-	state.LastDraft = NormalizeTranscriptText(text)
-	state.LastDraftAt = at
-	return state
-}
-
-func ResetDraftAfterFinal(state DraftState, resetVoice bool) DraftState {
-	state.SpeechStarted = false
-	state.LastDraft = ""
-	state.LastDraftAt = time.Time{}
-	if resetVoice {
-		state.LastVoiceAt = time.Time{}
-	}
-	return state
-}
-
 const (
 	InferCooldownAfterTimeout = 800 * time.Millisecond
 	TimeoutNoticeInterval     = 3 * time.Second
@@ -70,6 +34,9 @@ const (
 	WebSocketEventTypeFinal       = "final"
 	WebSocketEventTypeStatus      = "status"
 	WebSocketEventTypeError       = "error"
+	WebSocketEventTypeCancelled   = "cancelled"
+
+	WebSocketProtocolUtterance = "utterance.v1"
 
 	WebSocketReadySampleRate  = 16000
 	ProviderTimeoutStatusText = "stt provider timeout (retrying)"
@@ -82,11 +49,18 @@ func BuildSessionInfoEvent(provider string) map[string]any {
 	}
 }
 
-func BuildReadyEvent() map[string]any {
-	return map[string]any{
+// BuildReadyEvent announces the utterance protocol and the longest utterance
+// CORE accepts before it closes one and continues in a new utterance.
+func BuildReadyEvent(maxUtterance time.Duration) map[string]any {
+	event := map[string]any{
 		"type":        WebSocketEventTypeReady,
 		"sample_rate": WebSocketReadySampleRate,
+		"protocol":    WebSocketProtocolUtterance,
 	}
+	if maxUtterance > 0 {
+		event["max_utterance_ms"] = maxUtterance.Milliseconds()
+	}
+	return event
 }
 
 func BuildSpeechStartEvent() map[string]any {
@@ -98,10 +72,6 @@ func BuildTranscriptEvent(eventType string, text string) map[string]any {
 		"type": strings.TrimSpace(eventType),
 		"text": strings.TrimSpace(text),
 	}
-}
-
-func BuildDraftEvent(text string) map[string]any {
-	return BuildTranscriptEvent(WebSocketEventTypeDraft, text)
 }
 
 func BuildFinalEvent(text string) map[string]any {
@@ -146,32 +116,6 @@ func ApplyInferenceSuccess(state AdaptiveTimeoutState, now time.Time, minTimeout
 
 func InferenceInCooldown(state AdaptiveTimeoutState, now time.Time) bool {
 	return !state.CooldownUntil.IsZero() && now.Before(state.CooldownUntil)
-}
-
-func FinalTextForPending(state DraftState) (string, bool) {
-	text := strings.TrimSpace(state.LastDraft)
-	return text, text != ""
-}
-
-func FinalTextAfterDraftTimeout(state DraftState, now time.Time, timeout time.Duration) (string, bool) {
-	text := strings.TrimSpace(state.LastDraft)
-	if !state.SpeechStarted || text == "" || state.LastDraftAt.IsZero() {
-		return "", false
-	}
-	return text, now.Sub(state.LastDraftAt) >= timeout
-}
-
-func FinalTextAfterSilence(state DraftState, now time.Time, timeout time.Duration) (string, bool) {
-	text := strings.TrimSpace(state.LastDraft)
-	if !state.SpeechStarted || text == "" || state.LastVoiceAt.IsZero() {
-		return "", false
-	}
-	return text, now.Sub(state.LastVoiceAt) >= timeout
-}
-
-func FinalTextOnProviderError(state DraftState) (string, bool) {
-	text := strings.TrimSpace(state.LastDraft)
-	return text, state.SpeechStarted && text != ""
 }
 
 func NormalizeTranscriptText(text string) string {
@@ -253,4 +197,49 @@ var provisionalFinalNoiseTexts = []string{
 
 func init() {
 	transcriptNoiseMarkers = append(transcriptNoiseMarkers, providerErrorTranscriptMarkers...)
+}
+
+// BuildUtteranceFinalEvent is the single terminal event of a recognised or
+// skipped utterance. text is empty when emptyReason is set; endReason records
+// why the utterance was closed and audio its accumulated length.
+func BuildUtteranceFinalEvent(text, endReason, emptyReason string, audio time.Duration) map[string]any {
+	event := BuildFinalEvent(text)
+	if endReason != "" {
+		event["end_reason"] = endReason
+	}
+	event["audio_ms"] = audio.Milliseconds()
+	if emptyReason != "" {
+		event["empty_reason"] = emptyReason
+	}
+	return event
+}
+
+// BuildCancelledEvent is the terminal event of a cancelled utterance.
+func BuildCancelledEvent() map[string]any {
+	return map[string]any{"type": WebSocketEventTypeCancelled}
+}
+
+// BuildErrorEventWithCode is the terminal event of an utterance that failed.
+func BuildErrorEventWithCode(code, message string) map[string]any {
+	event := BuildErrorEvent(message)
+	if code = strings.TrimSpace(code); code != "" {
+		event["code"] = code
+	}
+	return event
+}
+
+// StampUtteranceEvent returns a copy of event carrying the utterance id (when
+// there is one) and the session-wide event sequence number. Within one
+// utterance a higher seq supersedes a lower one; final, error and cancelled are
+// terminal.
+func StampUtteranceEvent(event map[string]any, utteranceID string, seq int64) map[string]any {
+	stamped := make(map[string]any, len(event)+2)
+	for key, value := range event {
+		stamped[key] = value
+	}
+	if utteranceID != "" {
+		stamped["utterance_id"] = utteranceID
+	}
+	stamped["seq"] = seq
+	return stamped
 }

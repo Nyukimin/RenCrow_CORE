@@ -42,7 +42,7 @@ func buildSTTRuntime(cfg *config.Config, tasks *taskmanager.Manager, actions *ac
 		Provider:       provider,
 		Handler:        sttinfra.NewHandler(provider),
 		GatewayHTTPURL: gatewayHTTPURL,
-		WSHandler:      handleSTTWebSocketProvider(provider),
+		WSHandler:      handleSTTWebSocketProviderWithConfig(provider, sttSessionConfigFromAppConfig(cfg)),
 		Module:         modulebridge.NewRuntimeSTTProviderAdapter(provider),
 		DebugOptions: viewer.DebugSystemOptions{
 			TTSBaseURL:    inferTTSDebugBaseURLFromConfig(cfg),

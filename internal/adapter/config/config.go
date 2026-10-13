@@ -58,6 +58,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
+	warnSTTConfig(&root, &cfg)
 
 	// プロンプトファイル読み込み（prompts/ → workspace/ の順でオーバーライド）
 	cfg.Prompts = LoadPrompts(cfg.PromptsDir, cfg.WorkspaceDir)

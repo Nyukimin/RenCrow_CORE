@@ -10,13 +10,22 @@ func TestNormalizeBusyPolicy(t *testing.T) {
 		{" direct ", BusyPolicyDirect},
 		{" reject ", BusyPolicyReject},
 		{" queue_latest ", BusyPolicyQueueLatest},
-		{" ", BusyPolicyQueueLatest},
-		{"unknown", BusyPolicyQueueLatest},
+		{" ", BusyPolicyDirect},
+		{"unknown", BusyPolicyDirect},
 	}
 	for _, tt := range tests {
 		if got := NormalizeBusyPolicy(tt.raw); got != tt.want {
 			t.Fatalf("NormalizeBusyPolicy(%q) = %q, want %q", tt.raw, got, tt.want)
 		}
+	}
+}
+
+func TestDefaultBusyPolicyDoesNotDropFinals(t *testing.T) {
+	if DefaultBusyPolicy != BusyPolicyDirect {
+		t.Fatalf("DefaultBusyPolicy = %q; queue_latest supersedes older utterances and must stay opt-in", DefaultBusyPolicy)
+	}
+	if got := BuildBusyPolicyPlan("").Policy; got != BusyPolicyDirect {
+		t.Fatalf("empty policy plans %q", got)
 	}
 }
 
