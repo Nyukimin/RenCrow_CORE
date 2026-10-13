@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -321,6 +322,263 @@ func TestAClockThatRunsBackwardsNeverWritesToAnEarlierSegment(t *testing.T) {
 		t.Fatalf("segments after the clock went back = %v, want only 20261014-01", got)
 	}
 	requireSegmentedStoreEqualsFullBuild(t, store, root)
+}
+
+// logCapture collects what the standard logger writes during one test.
+type logCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+// captureLog sends the standard logger to a buffer until the test ends. Call it
+// before opening the store: the store's cleanup then runs while it still listens.
+func captureLog(t testing.TB) *logCapture {
+	t.Helper()
+	c := &logCapture{}
+	previous := log.Writer()
+	log.SetOutput(c)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return c
+}
+
+// lines returns the captured lines that contain every one of parts.
+func (c *logCapture) lines(parts ...string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+next:
+	for _, line := range strings.Split(c.buf.String(), "\n") {
+		for _, part := range parts {
+			if !strings.Contains(line, part) {
+				continue next
+			}
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// logField returns the value of key=value in a log line ("" when absent).
+func logField(line, key string) string {
+	for _, field := range strings.Fields(line) {
+		if value, ok := strings.CutPrefix(field, key+"="); ok {
+			return strings.TrimSuffix(value, ";")
+		}
+	}
+	return ""
+}
+
+// requireClockLines checks the log lines about the clock (spec 5.3, 6.6) that
+// contain "clock_day=": reasons in order, and that every WARN carries the segment
+// and both days as key=value.
+func requireClockLines(t testing.TB, logs *logCapture, want ...string) []string {
+	t.Helper()
+	got := logs.lines("[TaskStore]", "clock_day=")
+	var reasons []string
+	for _, line := range got {
+		reasons = append(reasons, logField(line, "reason"))
+		for _, key := range []string{"segment", "segment_day", "clock_day", "reason"} {
+			if logField(line, key) == "" {
+				t.Fatalf("clock log line has no %s=: %q", key, line)
+			}
+		}
+		if strings.Contains(line, " WARN ") == (logField(line, "reason") == "clock_recovered") {
+			t.Fatalf("a recovery is not a warning and every other clock line is: %q", line)
+		}
+	}
+	if strings.Join(reasons, ",") != strings.Join(want, ",") {
+		t.Fatalf("clock log reasons = %v, want %v\nlines: %q", reasons, want, got)
+	}
+	return got
+}
+
+func TestAClockBehindTheNewestSegmentIsWarnedOnceAndTheWritesDoNotFloodTheLog(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-14T10:00:00Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 2, 5)
+	requireClockLines(t, logs) // a clock that is right says nothing
+
+	clock.Set("2026-10-12T10:00:00Z")
+	populate(t, store, 5, 8)
+	lines := requireClockLines(t, logs, "clock_behind")
+	for key, want := range map[string]string{"segment": "20261014-01", "segment_day": "20261014", "clock_day": "20261012"} {
+		if got := logField(lines[0], key); got != want {
+			t.Fatalf("%s = %q, want %q: %q", key, got, want, lines[0])
+		}
+	}
+
+	populate(t, store, 8, 60) // many more writes in the same state
+	requireClockLines(t, logs, "clock_behind")
+	if got := segmentNames(t, root); len(got) != 1 || got[0] != "20261014-01" {
+		t.Fatalf("segments after the clock went back = %v, want only 20261014-01 (the log must not change where writes go)", got)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+}
+
+func TestAClockThatGoesFurtherBackIsWarnedAgainAndOneThatRecoversIsLoggedAsRecovered(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-14T10:00:00Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	n := 2
+	write := func(at string) {
+		t.Helper()
+		clock.Set(at)
+		populate(t, store, n, n+3)
+		n += 3
+	}
+
+	write("2026-10-13T10:00:00Z") // behind
+	write("2026-10-13T23:00:00Z") // the same day: nothing new
+	write("2026-10-12T10:00:00Z") // further back
+	write("2026-10-13T10:00:00Z") // partly recovered, still behind: nothing new
+	write("2026-10-12T20:00:00Z") // not further back than what was reported: nothing new
+	write("2026-10-11T10:00:00Z") // further back again
+	requireClockLines(t, logs, "clock_behind", "clock_further_behind", "clock_further_behind")
+
+	write("2026-10-14T11:00:00Z") // the day of the segment: recovered
+	write("2026-10-14T12:00:00Z")
+	requireClockLines(t, logs, "clock_behind", "clock_further_behind", "clock_further_behind", "clock_recovered")
+
+	write("2026-10-13T10:00:00Z") // a new stretch is warned again
+	lines := requireClockLines(t, logs, "clock_behind", "clock_further_behind", "clock_further_behind", "clock_recovered", "clock_behind")
+	if got := logField(lines[4], "clock_day"); got != "20261013" {
+		t.Fatalf("clock_day of the new stretch = %q, want 20261013", got)
+	}
+	if got := segmentNames(t, root); len(got) != 1 || got[0] != "20261014-01" {
+		t.Fatalf("segments = %v, want only 20261014-01", got)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+}
+
+func TestAClockThatRecoversToALaterDayIsNotWarnedAndTheDayRotates(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-14T10:00:00Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 2, 4)
+	clock.Set("2026-10-13T10:00:00Z")
+	populate(t, store, 4, 6)
+	clock.Set("2026-10-15T10:00:00Z")
+	populate(t, store, 6, 8)
+	requireClockLines(t, logs, "clock_behind", "clock_recovered")
+	if got := segmentNames(t, root); len(got) != 2 || got[1] != "20261015-01" {
+		t.Fatalf("segments = %v, want the day of the clock after it recovered", got)
+	}
+}
+
+func TestAJumpForwardAndBackIsWarnedOnTheWayBackAndNotOnTheWayForward(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-13T10:00:00Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 2, 4)
+
+	clock.Set("2026-10-20T10:00:00Z") // a week ahead: an ordinary rotation, indistinguishable from an idle week
+	populate(t, store, 4, 6)
+	requireClockLines(t, logs)
+	if got := segmentNames(t, root); len(got) != 2 || got[1] != "20261020-01" {
+		t.Fatalf("segments after the jump = %v, want 20261020-01 added", got)
+	}
+
+	clock.Set("2026-10-13T12:00:00Z")
+	populate(t, store, 6, 9)
+	lines := requireClockLines(t, logs, "clock_behind")
+	if logField(lines[0], "segment") != "20261020-01" || logField(lines[0], "clock_day") != "20261013" {
+		t.Fatalf("WARN on the way back names the wrong state: %q", lines[0])
+	}
+	if got := segmentNames(t, root); len(got) != 2 {
+		t.Fatalf("segments after the clock came back = %v, want no new segment", got)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+}
+
+// A writer reads the clock, then the segment. When another writer rotates in
+// between, the reading is older than the segment although the clock is right.
+func TestAnOlderReadingOfTheClockThanTheSegmentIsNotAClockBehind(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-13T23:59:59Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 2, 4)
+	clock.Set("2026-10-14T00:00:01Z")
+	populate(t, store, 4, 6) // rotates to 20261014-01
+
+	stale, err := time.Parse(time.RFC3339, "2026-10-13T23:59:59Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name, _ := store.rotationTarget(stale); name != "" {
+		t.Fatalf("an older reading of the clock selected the segment %s", name)
+	}
+	requireClockLines(t, logs)
+}
+
+func TestAClockBehindAtStartIsWarnedByTheFirstWriteOfThatRun(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-14T10:00:00Z")
+	stageOneStore(t, root, 2)
+	first := openRotating(t, root, clock, 0, nil)
+	populate(t, first, 2, 4)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := captureLog(t)
+	clock.Set("2026-10-13T09:00:00Z")
+	second := openRotating(t, root, clock, 0, nil)
+	requireClockLines(t, logs) // opening and reading say nothing
+	if _, err := second.GetTask(context.Background(), indexedTestTask(0, indexTestNow).TaskID); err != nil {
+		t.Fatal(err)
+	}
+	requireClockLines(t, logs)
+	populate(t, second, 4, 7)
+	requireClockLines(t, logs, "clock_behind")
+}
+
+func TestManyWritersUnderABehindClockWarnOnce(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-14T10:00:00Z")
+	stageOneStore(t, root, 2)
+	logs := captureLog(t)
+	store := openRotating(t, root, clock, 0, nil)
+	populate(t, store, 2, 4)
+	clock.Set("2026-10-12T10:00:00Z")
+	ctx := context.Background()
+	const writers, perWriter = 8, 12
+	var wg sync.WaitGroup
+	errs := make(chan error, writers*perWriter)
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				n := 2000 + w*perWriter + i
+				if err := store.SaveTask(ctx, indexedTestTask(n, indexTestNow.Add(time.Duration(n)*time.Second))); err != nil {
+					errs <- err
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("a write failed under a clock that is behind: %v", err)
+	}
+	requireClockLines(t, logs, "clock_behind")
 }
 
 func TestATaskKeepsItsWholeHistoryAcrossSegments(t *testing.T) {

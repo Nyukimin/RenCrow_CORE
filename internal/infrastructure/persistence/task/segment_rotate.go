@@ -52,6 +52,7 @@ type rotationState struct {
 	mu          sync.Mutex // guards the fields below
 	retryAt     time.Time
 	warnedLimit bool
+	behindDay   string // the lowest clock day reported while the clock is behind the newest segment; "" when it is not
 }
 
 func newRotationState(opts OpenOptions) *rotationState {
@@ -109,13 +110,51 @@ func (r *rotationState) succeeded() {
 	r.retryAt = time.Time{}
 }
 
+// observeClock bounds what the log says about a clock that is behind the newest
+// segment (spec 5.3, 6.6). The store keeps writing to that segment and never goes
+// back to an earlier one, so nothing else shows that the clock is wrong. One
+// stretch of the clock being behind produces: a WARN when it is first seen
+// (clock_behind); another each time it is seen further back than any day reported
+// in the stretch (clock_further_behind); a line that is not a warning when it is
+// no longer behind (clock_recovered). A partial recovery that is still behind says
+// nothing, and neither does any number of writes in an unchanged state. The state
+// is the process's: a restart under a clock that is still behind warns again at
+// its first write. It is judged and updated under one lock, so concurrent writers
+// log one line between them; the log itself is written outside the lock.
+func (r *rotationState) observeClock(segment, segmentDay, clockDay string) {
+	var reason string
+	r.mu.Lock()
+	switch {
+	case clockDay >= segmentDay:
+		if r.behindDay != "" {
+			r.behindDay, reason = "", "clock_recovered"
+		}
+	case r.behindDay == "":
+		r.behindDay, reason = clockDay, "clock_behind"
+	case clockDay < r.behindDay:
+		r.behindDay, reason = clockDay, "clock_further_behind"
+	}
+	r.mu.Unlock()
+	switch reason {
+	case "":
+	case "clock_recovered":
+		log.Printf("[TaskStore] the clock is no longer behind the newest segment segment=%s segment_day=%s clock_day=%s reason=%s", segment, segmentDay, clockDay, reason)
+	default:
+		log.Printf("[TaskStore] WARN the clock is behind the newest segment; writes stay in it and never go to an earlier one segment=%s segment_day=%s clock_day=%s reason=%s", segment, segmentDay, clockDay, reason)
+	}
+}
+
 // rotationTarget says which segment the next write belongs to, when that is not
 // the current one: a later UTC day starts that day's first segment; a current
 // segment whose files have outgrown the size valve is followed by the next
 // segment of its day. The size is that of the six files together, because the
 // prefix hash jsonlbatch takes at every append grows with the files the
 // transaction appends to. A clock that has gone back never selects an earlier
-// segment: the day only ever moves forward from the segment that exists.
+// segment: the day only ever moves forward from the segment that exists. A clock
+// that is behind the segment is logged by observeClock, which judges it on a
+// reading of the clock taken after the segment was read: the caller's now may be
+// older than a rotation another writer has just made, which would look like a
+// clock that is behind.
 func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 	ix := s.idx
 	ix.mu.RLock()
@@ -129,6 +168,7 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 		size += info.Size()
 	}
 	day, sequence := segmentDay(cur.name), segmentSequence(cur.name)
+	s.rot.observeClock(cur.name, day, utcDay(s.rot.now()))
 	if today := utcDay(now); today > day {
 		return formatSegmentName(today, 1), "day"
 	}
