@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"sort"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -672,7 +673,7 @@ func decodeSegmentTable(d *sidecarDecoder, h *sidecarHeader) ([]segInfo, error) 
 			if seg.name != segmentLegacyName {
 				return nil, sidecarCorruptf("segment 0 is named %q", seg.name)
 			}
-		} else if !segmentNamePattern.MatchString(seg.name) || seg.name <= previous {
+		} else if !segmentname.IsName(seg.name) || seg.name <= previous {
 			return nil, sidecarCorruptf("segment %d is named %q, which does not follow %q", i, seg.name, previous)
 		}
 		for _, v := range seg.size {
@@ -690,7 +691,7 @@ func decodeSegmentTable(d *sidecarDecoder, h *sidecarHeader) ([]segInfo, error) 
 		}
 		segs = append(segs, seg)
 	}
-	if !segmentNamePattern.MatchString(h.OwnName) || (previous != "" && h.OwnName <= previous) {
+	if !segmentname.IsName(h.OwnName) || (previous != "" && h.OwnName <= previous) {
 		return nil, sidecarCorruptf("the open segment is named %q after %q", h.OwnName, previous)
 	}
 	return segs, nil

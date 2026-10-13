@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestLayoutRoundTripsAndRefusesAnythingElse(t *testing.T) {
@@ -84,12 +83,8 @@ func TestSegmentNamesAndOrder(t *testing.T) {
 	if err != nil || len(refs) != 4 || refs[0].name != segmentLegacyName || refs[0].dir != root || refs[3].ord != 3 || refs[3].name != "20261014-01" {
 		t.Fatalf("listSegments = %+v, %v", refs, err)
 	}
-	if segmentDay("20261013-02") != "20261013" || segmentSequence("20261013-02") != 2 {
-		t.Fatal("segment name parsing")
-	}
-	if utcDay(time.Date(2026, 10, 13, 23, 59, 59, 0, time.FixedZone("JST", 9*3600))) != "20261013" {
-		t.Fatal("utcDay must convert to UTC (23:59 JST is 14:59 UTC)")
-	}
+	// The naming rule (Day, Sequence, Format, UTCDay) is pinned by golden tests in
+	// segmentname; here only the listing the Task store builds on it is checked.
 }
 
 func TestADirectoryWithDataButNoLayoutIsRefused(t *testing.T) {

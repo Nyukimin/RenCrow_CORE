@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 )
 
 // rotationRetryAfter is how long a store waits after a rotation that failed
@@ -167,10 +168,10 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 	if info, err := os.Stat(filepath.Join(cur.dir, taskExecutionFenceFilename)); err == nil {
 		size += info.Size()
 	}
-	day, sequence := segmentDay(cur.name), segmentSequence(cur.name)
-	s.rot.observeClock(cur.name, day, utcDay(s.rot.now()))
-	if today := utcDay(now); today > day {
-		return formatSegmentName(today, 1), "day"
+	day, sequence := segmentname.Day(cur.name), segmentname.Sequence(cur.name)
+	s.rot.observeClock(cur.name, day, segmentname.UTCDay(s.rot.now()))
+	if today := segmentname.UTCDay(now); today > day {
+		return segmentname.Format(today, 1), "day"
 	}
 	if size > s.rot.valve {
 		if sequence >= maxSegmentsPerDay {
@@ -183,7 +184,7 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 			}
 			return "", ""
 		}
-		return formatSegmentName(day, sequence+1), "size"
+		return segmentname.Format(day, sequence+1), "size"
 	}
 	return "", ""
 }
@@ -474,7 +475,7 @@ func firstSegment(root string, now time.Time) (segmentRef, error) {
 	}
 	switch len(names) {
 	case 0:
-		name := formatSegmentName(utcDay(now), 1)
+		name := segmentname.Format(segmentname.UTCDay(now), 1)
 		return segmentRef{ord: 1, name: name, dir: segmentDir(root, name)}, nil
 	case 1:
 		if empty, err := segmentHoldsNoData(segmentDir(root, names[0])); err != nil {

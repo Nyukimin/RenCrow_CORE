@@ -8,11 +8,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 )
 
 // rolledBackLogsPrefix and rolledBackLayoutPrefix name what a concat sets aside.
@@ -97,7 +97,7 @@ func concatTaskLayout(ctx context.Context, root string, apply bool, failpoint fu
 	// Where the segments are: under logs/, or, when an earlier concat stopped after
 	// it renamed logs/, under the directory it was renamed to.
 	segBase := logsDir(root)
-	names, err := listSegmentDirsIn(segBase)
+	names, err := segmentname.ListDirs(segBase)
 	if err != nil {
 		return report, err
 	}
@@ -111,7 +111,7 @@ func concatTaskLayout(ctx context.Context, root string, apply bool, failpoint fu
 			return report, fmt.Errorf("%w: LAYOUT v2 is present but there is no segment to concatenate", ErrSegmentMissing)
 		}
 		segBase = filepath.Join(root, rolled)
-		if names, err = listSegmentDirsIn(segBase); err != nil {
+		if names, err = segmentname.ListDirs(segBase); err != nil {
 			return report, err
 		}
 		finishOnly, report.Resumed = true, true
@@ -211,26 +211,6 @@ func concatTaskLayout(ctx context.Context, root string, apply bool, failpoint fu
 	report.State = "done"
 	report.DurationMs = time.Since(started).Milliseconds()
 	return report, nil
-}
-
-// listSegmentDirsIn is listSegmentDirs for a directory that holds segment
-// directories (logs/, or the directory a concat renamed it to).
-func listSegmentDirsIn(base string) ([]string, error) {
-	entries, err := os.ReadDir(base)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var names []string
-	for _, entry := range entries {
-		if entry.IsDir() && segmentNamePattern.MatchString(entry.Name()) {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	return names, nil
 }
 
 // newestRolledBackLogs is the most recent directory a concat renamed logs/ to.

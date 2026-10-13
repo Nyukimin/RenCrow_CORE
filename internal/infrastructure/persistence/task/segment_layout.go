@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 )
 
 // Layout v2 splits the log into segments (spec 3, 4.1-4.2): the six files in the
@@ -68,8 +66,6 @@ var (
 	ErrSealedSegmentChanged = errors.New("task store sealed segment changed")
 	// ErrSegmentMissing means a segment the store knows of has no directory.
 	ErrSegmentMissing = errors.New("task store segment is missing")
-
-	segmentNamePattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{2}$`)
 )
 
 // layoutInfo is what LAYOUT says. The zero value is layout v1 (no LAYOUT file).
@@ -201,38 +197,15 @@ func logsDir(root string) string { return filepath.Join(root, logsDirName) }
 
 func segmentDir(root, name string) string { return filepath.Join(logsDir(root), name) }
 
-// segmentDay is the UTC day (YYYYMMDD) of a segment name; segmentSequence its NN.
-func segmentDay(name string) string { return name[:8] }
-
-func segmentSequence(name string) int {
-	n, _ := strconv.Atoi(name[9:])
-	return n
-}
-
-func formatSegmentName(day string, sequence int) string {
-	return fmt.Sprintf("%s-%02d", day, sequence)
-}
-
-func utcDay(t time.Time) string { return t.UTC().Format("20060102") }
-
 // listSegmentDirs returns the names of the segment directories under logs/, in
 // ordinal (= lexical) order. Entries that are not segment directories are
-// ignored.
+// ignored. The naming rule itself (segmentname) is shared with the other stores
+// that keep segments.
 func listSegmentDirs(root string) ([]string, error) {
-	entries, err := os.ReadDir(logsDir(root))
+	names, err := segmentname.ListDirs(logsDir(root))
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("list task store segments: %w", err)
 	}
-	var names []string
-	for _, entry := range entries {
-		if entry.IsDir() && segmentNamePattern.MatchString(entry.Name()) {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
 	return names, nil
 }
 
