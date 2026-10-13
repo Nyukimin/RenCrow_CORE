@@ -96,6 +96,32 @@
 `utterance_id`の無い旧Viewerと`scripts/stt_e2e_probe.py`は、`start`／binary／`stop`／`final`待ちのまま動く。Viewerの`final`処理は空textを無視する。
 `draft`はもう送らない。最小長により、旧来の「3200 byteを1回送って`final_pending`」は`too_short`の空`final`になる。
 
+## 資源上限（security review の resource-exhaustion 指摘への対応）
+
+`/stt`は認証が無く（後述）、クライアントが量を決められるものは次の経路で資源を使えた。調べた経路と結果:
+
+| 経路 | 結果 | 対応 |
+|---|---|---|
+| 1 frameの大きさ。x/net/websocketは`Conn.MaxPayloadBytes`未設定だと1 frameを32 MiBまで丸ごとメモリに読み、readerのchannelが64件のバッファを持つため最悪64×32 MiB | **当たり**（8 MiBのframeを受理して接続を維持することを試験で確認） | `MaxPayloadBytes`を最大発話長のPCM＋8 KiBにし、超えるframeは読まずに接続を閉じる。channelは2件 |
+| job queue。音声を持つjobだけを8件で数え、error / cancelled / 空のfinalは無制限に積めた。認識待ちの間に不正な`start`／`stop`／`cancel`／形式不正のWAVを連打すると増え続ける | **当たり**（変異試験で、上限を外すと500件の連打に接続が閉じないことを確認） | 種類を問わない未送信終端eventを1接続64件に制限し、超えたら接続を閉じる |
+| WAV headerの値での確保 | **外れ**。`WAVToPCM16`はheaderの値を確保に使わず、入力の部分sliceを返すだけ。`fmt`／RIFF／不明chunkが4 GiBを主張しても安全であることを試験で固定した | 追加で、`data`長が実byte数を超える（ストリーミング標識以外）WAVを拒否する |
+| 制御messageの長さ | **当たり**（frame上限まで`json.Unmarshal`していた） | 4096 byte超はJSONとして解釈しない |
+| `utterance_id`の長さ・`byID`の大きさ | **外れ**。IDは64 byteで既に制限され、`byID`は認識待ち・認識中の発話（8件）だけを持つ | 変更なし（試験で固定） |
+| 同時接続数・接続のidle | **当たり**（どちらも無制限） | 同時16本（超過はupgrade前に503）、受信も進行中の仕事も無い接続は5分で閉じる |
+| frame・制御の毎秒レート | 制限しない。処理はbyteに線形でCPUはネットワーク律速、jobの数は上のqueue上限で有界。送信は10秒のwrite deadlineで止まらない | 不要と判断 |
+| HTTPの`/stt/file`・`/stt/chat-input`。`ParseMultipartForm`に本文の上限が無く、メモリ予算64 MiBを超える分は一時fileに溢れる | **当たり**（同じ資源枯渇の類。WebSocketではない） | `http.MaxBytesReader`で64 MiBに制限し、超過は413 |
+
+値の根拠: frameは「1フレームで運ぶ最大のものは最大長の発話のWAV」であり、Viewerの100 ms（3.2 KB）と`stt_e2e_probe.py`の200 msは桁違いに下回る。
+30秒を1 frameで送る試験と、300 frameを一気に送る試験で、正規の利用が上限に当たらないことを確認した。queue 64は、認識待ちの上限8の8倍で、
+認識が60秒（`timeout_ms`）止まった間に人が話し続けても届かない数。接続16はViewer・PORTAL・probeが同時に使う本数の余裕。idle 5分は、
+将来Viewerが1本のWSを持ち続けても、無音の間は切れないための長さ。1接続の最悪メモリは、受信中1発話（約1 MB）＋認識待ち8発話のWAV（約8 MB）＋frame
+（約3 MB）で約12 MB、16接続で約190 MB。
+
+認証の状態: **`/stt`に認証は無い**。他のViewer routeと同じく、待受（既定`0.0.0.0`）に届くネットワークを信頼している。Tailscaleのhost
+（`.ts.net`）では、インターネット発のFunnel要求だけを拒否する。WebSocketのhandshakeは`Origin`ヘッダの有無しか検査せず、他のoriginのWebページからも接続できる。
+今回は直さない（Origin許可リストや接続時トークンは、PORTALとTailscale Serve経由の挙動への影響確認が要る）。上限により資源の暴走は防ぐが、接続枠
+（16本）を占有して正規の利用者を締め出すことは、認証を入れるまで残る。
+
 ## Failure Knowledge
 
 ### Failure
@@ -159,6 +185,9 @@ frameごとにTask・Run・Actionが作られた。
   30秒を超えた発話の残りは捨てられる（無音による自動終了の経路は影響しない）。必要ならViewerで`max_length`のfinalは`finalReceived`を立てない。
 - `scripts/stt_e2e_probe.py`は、空text（`too_short`等）の`final`を「timed out」ではなく`empty final (<empty_reason>)`の失敗として報告するようにした。
 - RenCrow_STT側: whisper-serverの応答`text`に改行が入るため、RenCrow_STTで整形する（CORE側では整形しない）。
+- 認証の無い`/stt`の接続枠占有（上記）。`http.Server`に`ReadHeaderTimeout`が無いこと（slowloris）はSTTに限らない別件。ブラウザが大きな送信を分割（continuation frame）すると、
+  x/net/websocketが1 frameずつ別messageとして返すため、JSONの制御messageが壊れる（既存の制約。上限とは独立）。HTTPの`/stt/file`は同時リクエスト数に上限が無く、
+  1本あたり最大64 MiBをメモリに持つ。
 - 1セッション内の直列待ち（CORE側）は`timeout_ms`に含まれない。HTTP要求を出してからの時間だけが対象で、engineの直列待ちはそこに含まれる。
   複数セッションを同時に使うと、engineの直列待ちが積み上がって`timeout_ms`を超えうる。
 

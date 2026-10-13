@@ -146,7 +146,7 @@ CORE → クライアント（すべてのeventに、セッション内で単調
 | `session_info`, `ready` | 接続直後。`ready`は`sample_rate`、`protocol`、`max_utterance_ms`を持つ |
 | `speech_start` | 発話が始まった（`start`受理、または最初の音あるframe）。前の発話の終端eventより先に届くことがある |
 | `final` | 発話の終端。`text`、`end_reason`（`stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`）を持つ |
-| `error` | 発話の終端。`code`（`stt_busy` / `unsupported_audio_format` / `stt_provider_error` / RenCrow_STTのerror code / `stt_failed`）と`error` |
+| `error` | 発話の終端。`code`（`stt_busy` / `stt_limit_exceeded` / `unsupported_audio_format` / `stt_provider_error` / RenCrow_STTのerror code / `stt_failed`）と`error` |
 | `cancelled` | `cancel`で捨てた発話の終端 |
 | `partial` | **予約**。途中結果（Bで追加）。同じ`utterance_id`の中で`seq`が大きいものが前のpartialを置き換え、`final`が全てを確定する。Aでは送らない（`draft`も送らない） |
 
@@ -167,6 +167,24 @@ CORE → クライアント（すべてのeventに、セッション内で単調
 - 認識結果が空、またはモデル制御token・LLM定型文の混入、または**発話全体が**既知の定型句（無音・雑音で生成されがちな
   「ご視聴ありがとうございました」等。`stt.noise_phrases`で追加できる）に一致する場合は空の`final`（`empty_reason=no_speech` / `filtered`）にする。
   部分一致では捨てない。「ありがとうございました」単独のように、本当に発話されうる語は既定の一覧に入れない。
+
+資源の上限（クライアントが量を決められるものは、すべて上限を持つ）:
+
+| 対象 | 上限 | 超えたとき |
+|---|---|---|
+| 1 WebSocket frame | `max_utterance_ms`分のPCM（16 kHz mono PCM16、32000 byte/s）＋8 KiB。下限64 KiB。既定では約0.96 MB | frameを読まずに接続を閉じる（下記） |
+| 制御message（JSON） | 4096 byte | JSONとして解釈せず、音声として扱う |
+| 認識待ち・認識中の発話（音声を持つもの） | 1接続8件 | その発話は`code=stt_busy`の`error`で終わる。接続は維持 |
+| 未送信の終端event（種類を問わない） | 1接続64件 | 接続を閉じる（下記） |
+| `utterance_id` | 64文字 | 無視してCOREが採番する |
+| WAV frameの`data`長 | 実際のbyte数以内（`0`と`0xFFFFFFFF`はストリーミング標識として残り全部を取る） | frameを`unsupported_audio_format`で拒否する。headerの値でメモリを確保しない |
+| 同時接続 | 16本 | upgrade前にHTTP 503 |
+| 接続のidle | 5分（受信が無く、進行中の発話も、未送信のeventも、認識中の要求も無い） | 接続を閉じる |
+
+上限を超えて接続を閉じるときも「各発話に終端eventをちょうど1つ」は守る。COREは、終端eventを持たないすべての発話
+（受信中のもの、認識待ちのもの、認識中のもの）に`code=stt_limit_exceeded`の`error`を1つずつ、発話の順に送り、
+その後で接続を閉じる。認識待ちの発話はエンジンへ送らず、認識中の要求は中断する。すでに`cancel`で`cancelled`が決まった
+発話には`error`を重ねない。5秒たっても送りきれなければ強制的に閉じる。閉じた後の入力は読まない。
 
 互換性: `utterance_id`の無い旧Viewerと`scripts/stt_e2e_probe.py`は、`start`／binary／`stop`／`final`待ちのまま動く。
 旧クライアントが`final`と`draft`の両方を待つ実装であっても、`draft`は送らない。Viewerは発話ごとに新しいWSを開き、
