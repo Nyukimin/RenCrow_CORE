@@ -167,7 +167,7 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 		return "", err
 	}
 	// 履歴の `[speaker] msg` を真似た先頭の Agent 名ラベルを、返却・保存の前に取り除く。
-	response := conversation.StripLeadingSpeakerLabels(resp.Content)
+	response := conversation.StripLeadingSpeakerLabels(resp.Content, conversation.SpeakerShiro)
 	if s.lightMemory != nil {
 		s.lightMemory.Record(t.SessionID(), t.MessageText(), response)
 	}

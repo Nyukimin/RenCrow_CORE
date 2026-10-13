@@ -46,22 +46,28 @@ func AgentLabelNames() []string {
 
 // StripLeadingSpeakerLabels は、応答の先頭にある既知の Agent 名の角括弧ラベルの連続
 // （例 `[midori] `、`[midori] [shiro]: `）と、その直後の区切りを取り除く。自分以外の
-// Agent 名も対象とする。前後の空白も取り除く。
+// Agent 名も対象とする。前後の空白も取り除く。self は応答を生成した Agent。
 //
-// ラベルを取り除くのは、直後に区切り（半角空白・全角空白・タブ・改行・コロン（半角／全角））が
-// ある場合と、本文がそのラベルだけの場合に限る。履歴の形式 `[speaker] msg` は空白で区切るため、
-// modelが真似たラベルはこの条件を満たす。区切りが無いもの（`[shiro]からの報告です`、
-// `[mio]は…`）は、他Agentの報告を中継する言い方などの本文として残す。本文の途中にある
-// ラベルと、既知でない角括弧（`[注]`）も変えない。
-func StripLeadingSpeakerLabels(content string) string {
+// ラベルごとに、先頭から順に次のとおり判定する。
+//   - 生成した Agent 自身の名前のラベル（self）: 区切りが無くても取り除く。直後の空白・コロンも
+//     取り除く（`[mio]こんにちは` は `こんにちは`）。
+//   - 他の既知の Agent 名のラベル: 直後に区切り（半角空白・全角空白・タブ・改行・コロン（半角／
+//     全角））がある場合と、本文がそのラベルだけの場合に限って取り除く。履歴の形式 `[speaker] msg`
+//     は空白で区切るため、modelが真似たラベルはこの条件を満たす。区切りが無いもの
+//     （`[shiro]からの報告です`）は、他Agentの報告を中継する言い方などの本文として残し、
+//     そこで判定を止める。
+//
+// 本文の途中にあるラベルと、既知でない角括弧（`[注]`）は変えない。
+func StripLeadingSpeakerLabels(content string, self Speaker) string {
+	selfName := selfLabelName(self)
 	rest := strings.TrimLeftFunc(content, unicode.IsSpace)
 	for {
-		n := leadingLabelLen(rest)
+		n, isSelf := leadingLabel(rest, selfName)
 		if n == 0 {
 			break
 		}
 		after := rest[n:]
-		if after != "" {
+		if !isSelf && after != "" {
 			r, _ := utf8.DecodeRuneInString(after)
 			if !isLabelSeparator(r) {
 				break
@@ -70,6 +76,15 @@ func StripLeadingSpeakerLabels(content string) string {
 		rest = strings.TrimLeftFunc(after, isLabelSeparator)
 	}
 	return strings.TrimSpace(rest)
+}
+
+// selfLabelName は、生成した Agent の speaker から、自分のラベルに使う小文字の名前を返す。
+// 旧別名（heavy／wild）は Agent identity（kuro／midori）に直す。
+func selfLabelName(speaker Speaker) string {
+	if canonical, ok := CanonicalChatAgentSpeaker(speaker); ok {
+		speaker = canonical
+	}
+	return strings.ToLower(strings.TrimSpace(string(speaker)))
 }
 
 // isLabelSeparator はラベルの直後に置かれる区切り。半角空白・全角空白・タブ・改行・
@@ -82,24 +97,42 @@ func isLabelSeparator(r rune) bool {
 	return false
 }
 
-// leadingLabelLen は text の先頭が既知ラベルならそのバイト長、そうでなければ0を返す。
-func leadingLabelLen(text string) int {
-	for _, label := range agentLabels {
-		if len(text) >= len(label) && equalFoldASCII(text[:len(label)], label) {
-			return len(label)
+// leadingLabel は text の先頭が既知ラベル（または self のラベル）ならそのバイト長と、
+// それが self のラベルかを返す。先頭がラベルでなければ0を返す。selfName は小文字（空は無し）。
+func leadingLabel(text, selfName string) (n int, isSelf bool) {
+	if selfName != "" {
+		if label := "[" + selfName + "]"; hasLabelPrefix(text, label) {
+			return len(label), true
 		}
 	}
-	return 0
+	for _, label := range agentLabels {
+		if hasLabelPrefix(text, label) {
+			return len(label), false
+		}
+	}
+	return 0, false
 }
 
-// isLeadingLabelPrefix は text が、まだ完結していない既知ラベルの先頭部分かを返す。
-func isLeadingLabelPrefix(text string) bool {
+// isLeadingLabelPrefix は text が、まだ完結していない既知ラベル（または self のラベル）の
+// 先頭部分かを返す。
+func isLeadingLabelPrefix(text, selfName string) bool {
+	if selfName != "" {
+		if label := "[" + selfName + "]"; len(text) < len(label) && equalFoldASCII(text, label[:len(text)]) {
+			return true
+		}
+	}
 	for _, label := range agentLabels {
 		if len(text) < len(label) && equalFoldASCII(text, label[:len(text)]) {
 			return true
 		}
 	}
 	return false
+}
+
+// hasLabelPrefix は text が label（小文字の `[name]`）で始まるかを、ASCII の大文字小文字を
+// 無視して返す。
+func hasLabelPrefix(text, label string) bool {
+	return len(text) >= len(label) && equalFoldASCII(text[:len(label)], label)
 }
 
 // equalFoldASCII は ASCII の大文字小文字だけを無視して比較する。Unicode の
@@ -122,8 +155,9 @@ func equalFoldASCII(a, b string) bool {
 
 // speakerLabelStream は stream の先頭にある Agent 名ラベルだけを取り除く。
 type speakerLabelStream struct {
-	mu   sync.Mutex
-	next llm.StreamCallback
+	mu       sync.Mutex
+	next     llm.StreamCallback
+	selfName string
 	// head は、まだ流すか捨てるかを決めていない先頭部分。
 	head string
 	// afterLabel は、ラベルを1つ以上捨てた後であること（直後のコロンも捨てる）。
@@ -134,19 +168,20 @@ type speakerLabelStream struct {
 
 // NewSpeakerLabelStreamFilter は next を包み、stream の先頭にある既知の Agent 名ラベルの
 // 連続（delta に分割されて届いてもよい）を取り除く callback と、完了時に呼ぶ flush を返す。
-// StripLeadingSpeakerLabels と同じ規則で、ラベルの直後に区切りがある場合と、ラベルだけで終わる
-// 場合に限って取り除く。
-// 保留するのは、先頭が `[` で始まり、既知ラベルの先頭部分である間と、既知ラベルが閉じた直後の
-// 1文字（区切りかどうかが決まるまで）だけ。区切りならラベルを捨て、区切りでなければ保留分を
-// ラベルごと流す。既知ラベルでないと分かった時点でも保留分をまとめて流す。確定後の delta は
+// self は応答を生成した Agent。StripLeadingSpeakerLabels と同じ規則で、self のラベルは区切りが
+// 無くても取り除き、他のラベルは直後に区切りがある場合と、ラベルだけで終わる場合に限って
+// 取り除く。
+// 保留するのは、先頭が `[` で始まり、既知ラベルの先頭部分である間と、self 以外の既知ラベルが
+// 閉じた直後の1文字（区切りかどうかが決まるまで）だけ。区切りならラベルを捨て、区切りでなければ
+// 保留分をラベルごと流す。既知ラベルでないと分かった時点でも保留分をまとめて流す。確定後の delta は
 // 保留しない。flush は、判定の途中で stream が終わった場合に処理する（冪等）。ラベルで終わった
 // stream はラベルだけの応答として捨て、ラベルの先頭部分で終わった stream は流す。
 // next が nil のときは nil と何もしない flush を返し、呼び出し側の非streamの経路を保つ。
-func NewSpeakerLabelStreamFilter(next llm.StreamCallback) (llm.StreamCallback, func()) {
+func NewSpeakerLabelStreamFilter(next llm.StreamCallback, self Speaker) (llm.StreamCallback, func()) {
 	if next == nil {
 		return nil, func() {}
 	}
-	s := &speakerLabelStream{next: next}
+	s := &speakerLabelStream{next: next, selfName: selfLabelName(self)}
 	return s.write, s.flush
 }
 
@@ -176,22 +211,29 @@ func (s *speakerLabelStream) flush() {
 
 // decide は先頭部分を評価する。final は stream の終了後であること。
 //
-// 先頭が `[` で既知ラベルとして閉じた後は、次の1文字で区切りかどうかが決まる。区切りなら
-// ラベルを捨てて続きを評価し、区切りでなければラベルごと流す。ラベルで終わった stream
-// （final）は、ラベルだけの応答として捨てる。
+// self のラベルは閉じた時点で捨てる。self 以外の既知ラベルが閉じた後は、次の1文字で区切りか
+// どうかが決まる。区切りならラベルを捨てて続きを評価し、区切りでなければラベルごと流す。
+// ラベルで終わった stream（final）は、ラベルだけの応答として捨てる。
 func (s *speakerLabelStream) decide(final bool) {
 	for !s.passthrough {
 		s.head = strings.TrimLeftFunc(s.head, s.isSkippable)
 		if s.head == "" {
 			return
 		}
+		if !final && !utf8.FullRuneInString(s.head) {
+			return // 先頭の rune が delta をまたいでいる
+		}
 		if s.head[0] == '[' {
-			if n := leadingLabelLen(s.head); n > 0 {
+			if n, isSelf := leadingLabel(s.head, s.selfName); n > 0 {
 				rest := s.head[n:]
+				if isSelf {
+					s.head = rest
+					s.afterLabel = true
+					continue
+				}
 				if rest == "" {
 					if final {
 						s.head = ""
-						return
 					}
 					return // 閉じたラベル。次の delta で区切りかどうかが決まる
 				}
@@ -203,7 +245,7 @@ func (s *speakerLabelStream) decide(final bool) {
 					s.afterLabel = true
 					continue
 				}
-			} else if !final && isLeadingLabelPrefix(s.head) {
+			} else if !final && isLeadingLabelPrefix(s.head, s.selfName) {
 				return
 			}
 		}

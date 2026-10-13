@@ -351,7 +351,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		currentUserMessage,
 	)
 
-	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx))
+	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), currentSpeaker)
 	req := m.generationRequest(messages, onToken)
 
 	resp, err := m.llmProvider.Generate(ctx, req)
@@ -360,7 +360,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	}
 	flushLabels()
 
-	response := conversation.StripLeadingSpeakerLabels(resp.Content)
+	response := conversation.StripLeadingSpeakerLabels(resp.Content, currentSpeaker)
 	finalGeneration := resp
 	if violatesAttributionInChat(response, latestOther) {
 		retryMessages := append([]llm.Message{}, messages...)
@@ -368,18 +368,18 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 			Role:    "user",
 			Content: "直前の返答は発言帰属が曖昧です。誰のアイデアかを明示して1回だけ言い直してください。",
 		})
-		retryOnToken, flushRetryLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx))
+		retryOnToken, flushRetryLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), currentSpeaker)
 		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, retryOnToken))
 		if retryErr == nil {
 			flushRetryLabels()
 		}
 		if retryErr == nil && strings.TrimSpace(retryResp.Content) != "" {
-			response = conversation.StripLeadingSpeakerLabels(retryResp.Content)
+			response = conversation.StripLeadingSpeakerLabels(retryResp.Content, currentSpeaker)
 			finalGeneration = retryResp
 		}
 	}
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
-	response = conversation.StripLeadingSpeakerLabels(response)
+	response = conversation.StripLeadingSpeakerLabels(response, currentSpeaker)
 	m.rememberExpression(response)
 	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
 		onMetrics(llm.GenerationMetrics{

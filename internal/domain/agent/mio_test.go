@@ -514,23 +514,26 @@ func (e *legacyOnlyConversationEngine) ResetSession(ctx context.Context, session
 
 // Mio の先頭ラベル除去は、全 Agent 共通の conversation.StripLeadingSpeakerLabels /
 // NewSpeakerLabelStreamFilter に移した。以下は Mio の既存の回帰 test（8/11 commit 4afbd194）を、
-// 共通ヘルパに対して保ったもの。他 Agent 名のラベルは、区切りが無ければ本文として残す
-// （他Agentの報告を中継する言い方）。区切りがある `[midori] ` は別 Agent 名でも除去する。
+// 共通ヘルパに対して保ったもの（全ケース）。生成した Agent 自身のラベルは区切りが無くても取り除き、
+// 他 Agent 名のラベルは、直後に区切りがある場合と本文がラベルだけの場合に限って取り除く
+// （他Agentの報告を中継する言い方 `[shiro]からの報告です` は本文として残す）。
 func TestStripLeadingAgentSelfLabel(t *testing.T) {
 	tests := []struct {
 		name    string
 		content string
+		speaker conversation.Speaker
 		want    string
 	}{
-		{name: "plain label", content: "[mio] こんにちは", want: "こんにちは"},
-		{name: "case and colon", content: " [MIO]：こんにちは ", want: "こんにちは"},
-		{name: "other speaker is content", content: "[shiro]からの報告です", want: "[shiro]からの報告です"},
-		{name: "embedded label", content: "引用: [mio] こんにちは", want: "引用: [mio] こんにちは"},
-		{name: "other speaker with a separator is removed", content: "[midori] [midori] こんにちは", want: "こんにちは"},
+		{name: "plain label", content: "[mio] こんにちは", speaker: conversation.SpeakerMio, want: "こんにちは"},
+		{name: "case and colon", content: " [MIO]：こんにちは ", speaker: conversation.SpeakerMio, want: "こんにちは"},
+		{name: "other speaker is content", content: "[shiro]からの報告です", speaker: conversation.SpeakerMio, want: "[shiro]からの報告です"},
+		{name: "embedded label", content: "引用: [mio] こんにちは", speaker: conversation.SpeakerMio, want: "引用: [mio] こんにちは"},
+		{name: "own label without a separator", content: "[mio]こんにちは", speaker: conversation.SpeakerMio, want: "こんにちは"},
+		{name: "other speaker with a separator is removed", content: "[midori] [midori] こんにちは", speaker: conversation.SpeakerShiro, want: "こんにちは"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := conversation.StripLeadingSpeakerLabels(tt.content); got != tt.want {
+			if got := conversation.StripLeadingSpeakerLabels(tt.content, tt.speaker); got != tt.want {
 				t.Fatalf("StripLeadingSpeakerLabels() = %q, want %q", got, tt.want)
 			}
 		})
@@ -539,7 +542,7 @@ func TestStripLeadingAgentSelfLabel(t *testing.T) {
 
 func TestFilterLeadingAgentSelfLabel(t *testing.T) {
 	var got strings.Builder
-	callback, flush := conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) })
+	callback, flush := conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
 	for _, token := range []string{" [", "mi", "o]", "：", " こん", "にちは"} {
 		callback(token)
 	}
@@ -549,13 +552,23 @@ func TestFilterLeadingAgentSelfLabel(t *testing.T) {
 	}
 
 	got.Reset()
-	callback, flush = conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) })
+	callback, flush = conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
 	for _, token := range []string{"[shiro]", "からの報告"} {
 		callback(token)
 	}
 	flush()
 	if got.String() != "[shiro]からの報告" {
 		t.Fatalf("other speaker stream = %q", got.String())
+	}
+
+	got.Reset()
+	callback, flush = conversation.NewSpeakerLabelStreamFilter(func(token string) { got.WriteString(token) }, conversation.SpeakerMio)
+	for _, token := range []string{"[mi", "o]", "こんにちは"} {
+		callback(token)
+	}
+	flush()
+	if got.String() != "こんにちは" {
+		t.Fatalf("own label without a separator = %q, want %q", got.String(), "こんにちは")
 	}
 }
 

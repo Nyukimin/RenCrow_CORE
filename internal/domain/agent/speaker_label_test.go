@@ -22,6 +22,17 @@ type labelCase struct {
 	tokens    []string
 	content   string
 	wantBody  string
+	// wantFor は、応答を生成した Agent によって期待が変わるケースの上書き。生成した Agent
+	// 自身のラベルは区切りが無くても取り除き、他のラベルは区切りがある場合に限って取り除く。
+	wantFor map[conversation.Speaker]string
+}
+
+// want は、speaker が生成した応答の期待本文。
+func (c labelCase) want(speaker conversation.Speaker) string {
+	if body, ok := c.wantFor[speaker]; ok {
+		return body
+	}
+	return c.wantBody
 }
 
 func labelCases() []labelCase {
@@ -51,24 +62,42 @@ func labelCases() []labelCase {
 			content:  "[shiro]：からの報告です",
 			wantBody: "からの報告です",
 		},
-		// 区切りが無いラベルは本文として残す（Mio の旧 test が固定した、他Agentの報告を中継する言い方）。
+		// 他の Agent 名のラベルは、区切りが無ければ本文として残す（Mio の旧 test が固定した、
+		// 他Agentの報告を中継する言い方）。生成した Agent 自身のラベルは、区切りが無くても取り除く。
 		{
-			name:     "relay phrase stays (other agent, no separator)",
+			name:     "relay phrase of another agent stays; own label is removed",
 			tokens:   []string{"[shiro]", "からの報告です"},
 			content:  "[shiro]からの報告です",
 			wantBody: "[shiro]からの報告です",
+			wantFor:  map[conversation.Speaker]string{conversation.SpeakerShiro: "からの報告です"},
 		},
 		{
-			name:     "relay phrase stays (self, no separator)",
+			name:     "mio label glued to body: removed only for mio",
 			tokens:   []string{"[mio", "]", "は次のとおり答えました"},
 			content:  "[mio]は次のとおり答えました",
 			wantBody: "[mio]は次のとおり答えました",
+			wantFor:  map[conversation.Speaker]string{conversation.SpeakerMio: "は次のとおり答えました"},
 		},
 		{
-			name:     "label glued to body stays",
+			name:     "old Mio regression: glued own label",
+			tokens:   []string{"[mi", "o]", "こんにちは"},
+			content:  "[mio]こんにちは",
+			wantBody: "[mio]こんにちは",
+			wantFor:  map[conversation.Speaker]string{conversation.SpeakerMio: "こんにちは"},
+		},
+		{
+			name:     "label glued to body: removed only for midori",
 			tokens:   []string{"[midori]", "夕焼け"},
 			content:  "[midori]夕焼け",
 			wantBody: "[midori]夕焼け",
+			wantFor:  map[conversation.Speaker]string{conversation.SpeakerMidori: "夕焼け"},
+		},
+		{
+			name:     "glued doubled label: removed only for midori",
+			tokens:   []string{"[mid", "ori][mid", "ori]", " 本文"},
+			content:  "[midori][midori] 本文",
+			wantBody: "[midori][midori] 本文",
+			wantFor:  map[conversation.Speaker]string{conversation.SpeakerMidori: "本文"},
 		},
 		{
 			name:     "full width space",
@@ -148,18 +177,19 @@ func (o *labelObservation) context() context.Context {
 
 func assertLabelFree(t *testing.T, obs *labelObservation, response string, tc labelCase, wantSpeaker conversation.Speaker, checkStream bool) {
 	t.Helper()
-	if response != tc.wantBody {
-		t.Errorf("response = %q, want %q", response, tc.wantBody)
+	want := tc.want(wantSpeaker)
+	if response != want {
+		t.Errorf("response = %q, want %q", response, want)
 	}
-	if len(obs.stored) != 1 || obs.stored[0] != tc.wantBody {
-		t.Errorf("stored history = %q, want [%q]", obs.stored, tc.wantBody)
+	if len(obs.stored) != 1 || obs.stored[0] != want {
+		t.Errorf("stored history = %q, want [%q]", obs.stored, want)
 	}
 	if len(obs.speakers) == 1 && obs.speakers[0] != wantSpeaker {
 		t.Errorf("stored speaker = %q, want %q", obs.speakers[0], wantSpeaker)
 	}
 	if checkStream {
-		if got := strings.TrimSpace(obs.streamed); got != tc.wantBody {
-			t.Errorf("streamed text = %q, want %q", got, tc.wantBody)
+		if got := strings.TrimSpace(obs.streamed); got != want {
+			t.Errorf("streamed text = %q, want %q", got, want)
 		}
 	}
 }

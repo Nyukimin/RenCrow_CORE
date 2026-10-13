@@ -31,34 +31,42 @@ Midori／Kuro／Shiroには無かった。全Agent共通の1つの規則（先�
 - 正本は`internal/domain/conversation/speaker_label.go`。履歴の`[speaker] msg`を作る`recall_pack.go`と同じ
   packageが、その逆変換（`StripLeadingSpeakerLabels`）とstream用（`NewSpeakerLabelStreamFilter`）を持つ。
 - 除去するのは、応答の先頭にある既知Agent名（`mio`／`shiro`／`kuro`／`midori`／`aka`／`ao`／`kin`／`gin`。
-  応答Agent自身以外の名前も含む）の`[name]`の連続と、直後の区切り。大文字小文字は無視する。
-  **区切りを必須とする**: ラベルを取り除くのは、直後に区切り（半角空白・全角空白・タブ・改行・コロン（半角／全角））が
-  ある場合と、本文がそのラベルだけの場合に限る。履歴の`[speaker] msg`は空白で区切るため、modelが真似た
-  ラベル（`[midori] `、`[midori] [midori] `）は全て取り除ける。
-  区切りが無いものは本文として残す。`[shiro]からの報告です`と`[mio]は…`は、他Agentの報告を中継する言い方で、
-  Mioの旧testが本文として残すと固定していた意図した仕様（最初の実装は区切りなしでも除去して、これを壊した。
-  後続のfixで区切り必須に直した）。
-  本文の途中のラベルと、既知でない角括弧（`[注]`）も変えない。
-- 区切りの判定でラベルが残るケース: ラベルの直後が区切りでない（`[midori]本文`、`[shiro]からの報告です`、
-  `[mio]は…`）、ラベル同士が区切りなしで続く（`[midori][midori] 本文`は先頭の`[midori]`の直後が`[`のため残る）、
-  ラベルの直後が区切りでない空白類（NBSPなど）、本文の途中、既知でない角括弧、ラベルの先頭部分で終わる応答（`[mid`）。
-  `[midori] [midori]本文`は先頭だけ除かれ`[midori]本文`になる。
-- stream: 先頭が`[`で、かつ既知ラベルの先頭部分である間と、既知ラベルが閉じた直後の1文字（区切りかどうかが
-  決まるまで）だけ保留する。区切りならラベルを捨てて続きを判定し、区切りでなければラベルごと流す。既知でないと
-  分かった時点でも保留分をまとめて流す。確定後のdeltaは保留しない。ラベルで終わったstreamはラベルだけの応答として
-  捨てる。`Generate`の完了直後に`flush`を呼び、判定の途中で終わったstreamの保留分を処理する（生成が失敗したときは
-  流さない）。Mioのattribution retryは生成ごとに新しいfilterを使う。
+  応答Agent自身以外の名前も含む）の`[name]`の連続。大文字小文字は無視する。ヘルパは応答を生成したAgent
+  （speaker）を受け取り、各Agentは自分のspeakerを渡す。先頭から順に、ラベルごとに次のとおり判定する。
+  - **生成したAgent自身の名前のラベル**: 区切りが無くても除去する。直後の空白・コロンも除去する
+    （`[mio]こんにちは`は`こんにちは`）。旧Mio（8/11 commit 4afbd194）と同じ挙動を全Agentへ適用する。
+  - **他の既知Agent名のラベル**: 直後に区切り（半角空白・全角空白・タブ・改行・コロン（半角／全角））が
+    ある場合と、本文がそのラベルだけの場合に限って除去する。履歴の`[speaker] msg`は空白で区切るため、
+    modelが真似た`[midori] `と`[midori] [midori] `は全て取り除ける。区切りが無いものは本文として残し、
+    そこで判定を止める。`[shiro]からの報告です`は、他Agentの報告を中継する言い方で、Mioの旧testが本文として
+    残すと固定していた意図した仕様（最初の実装は区切りなしで除去してこれを壊し、次のfixで区切り必須にした。
+    その時点で旧Mioの「自分のラベルは区切りなしでも除去」が失われたため、次のfixで自分のラベルを戻した）。
+  例: midoriの生成で`[midori][midori] 本文`は`本文`、shiroの生成で`[midori] [midori] 本文`は`本文`、
+  mioの生成で`[shiro]からの報告です`はそのまま、mioの生成で`[mio]こんにちは`は`こんにちは`。
+  本文の途中のラベルと、既知でない角括弧（`[注]`）も変えない。旧別名（`wild`／`heavy`）のspeakerは
+  `midori`／`kuro`として扱う。
+- 判定でラベルが残るケース: 他のAgent名のラベルの直後が区切りでない（mioの生成で`[midori]本文`、
+  `[shiro]からの報告です`、shiroの生成で`[mio]は…`）、他のAgent名のラベル同士が区切りなしで続く
+  （mioの生成で`[midori][midori] 本文`は先頭の`[midori]`の直後が`[`のため全体が残る）、先頭が他のAgent名の
+  ラベルで次に自分のラベルが区切りなしで続く（`[shiro][mio]本文`）、本文の途中、既知でない角括弧、ラベルの先頭部分で
+  終わる応答（`[mid`）。`[midori] [midori]本文`をmioが生成した場合は先頭だけ除かれ`[midori]本文`になる。
+  自分のラベルの直後が区切りでない空白類（NBSPなど）は、前後の空白除去で取り除かれる。
+- stream: 非streamと同じ判定にする。先頭が`[`で、かつ既知ラベル（または自分のラベル）の先頭部分である間と、
+  自分以外の既知ラベルが閉じた直後の1文字（区切りかどうかが決まるまで）だけ保留する。自分のラベルは閉じた時点で
+  捨て、他のラベルは区切りならラベルを捨てて続きを判定し、区切りでなければラベルごと流す。既知でないと分かった
+  時点でも保留分をまとめて流す。確定後のdeltaは保留しない。ラベルで終わったstreamはラベルだけの応答として
+  捨てる。`Generate`の完了直後に`flush`を呼び、判定の途中で終わったstreamの保留分を処理する（生成が失敗した
+  ときは流さない）。Mioのattribution retryは生成ごとに新しいfilterを使う。
 - 適用先: `MioAgent.Chat`（Mio／Shiro CHAT／PLAN）のstreamと本文、`WildAgent.Generate`（Midori）のstreamと本文、
   `HeavyAgent.Generate`（Kuro、streamなし）の本文、`ShiroAgent.Execute`のpromptに履歴を入れる生成経路の本文。
   各Agentは返す値とcommitする値を同じ無ラベルの本文にする（`commitConversationTurn`は純粋なまま）。
   ctxにstream callbackが無いときは従来どおり非streamのまま（Wildは従来どおり常にstream要求）。
 - TTS: 読み上げ文はAgentが返した本文とstreamから作られるため、上記で無ラベルになる。`FilterSpeakableText`は
   chunk単位で呼ばれ、本文中のラベルを誤って消すため、ここでは除去しない。
-- Mioの既存の自己ラベル除去（8/11 commit 4afbd194）は共通ヘルパに置き換えた。旧testの回帰ケース
+- Mioの既存の自己ラベル除去（8/11 commit 4afbd194）は共通ヘルパに置き換えた。旧testの全ケース
   （`[mio] こんにちは`、`[MIO]：`、`[shiro]からの報告です`を本文として残す、本文中の`[mio]`を残す、分割delta）は
-  `mio_test.go`の`TestStripLeadingAgentSelfLabel`／`TestFilterLeadingAgentSelfLabel`として共通ヘルパに対して保っている。
-  変更点は1つで、区切りのある他Agent名のラベル（本番で観測した`[midori] [midori] `）も除去する。
-  旧Mioは、自分のラベルに限り区切りが無くても除去していた（`[mio]こんにちは`）。これは区切り必須に揃えたため残る。
+  `mio_test.go`の`TestStripLeadingAgentSelfLabel`／`TestFilterLeadingAgentSelfLabel`として共通ヘルパに対して
+  保っている。変更点は1つで、区切りのある他Agent名のラベル（本番で観測した`[midori] [midori] `）も除去する。
 - 対象外（意図的）: Shiroのcodex／subagent／native coding経路（promptに履歴の`[speaker]`形式が入らず、
   出力もmodelのchat本文ではない）、旧別名`heavy`／`wild`（履歴のラベルはcanonical名になる）、IdleChat
   （別の`[from]: content`形式を持つ）。
@@ -70,18 +78,22 @@ Midori／Kuro／Shiroには無かった。全Agent共通の1つの規則（先�
   Mioだけが自分の名前の分を持っていた（Semantic Duplication、かつ他Agent名と重なりを想定していなかった）。
 - Lesson: 入力の形式を作るownerが、その逆変換も持つ。除去規則は1か所に置き、非stream・stream・保存・読み上げで
   同じ規則を使う。streamは先頭だけを短く保留して判定する。除去の条件は、直すべき症状（履歴の形式を真似た
-  `[name] `）に必要な範囲に絞る。区切りの無い`[name]本文`は、報告を中継する言い方と区別できず、除くと本文を
-  壊す（最初の実装がこれを壊した）。既存testが固定していた意図を、新しい要件で上書きする前に確認する。
+  `[name] `）に必要な範囲に絞る。他Agentの区切りの無い`[name]本文`は、報告を中継する言い方と区別できず、
+  除くと本文を壊す。一方、動作確認済みの旧挙動（自分のラベルは区切りなしでも除去）は、規則を一般化する
+  ときに落とさない。既存testが固定していた意図を、新しい要件で上書きする前に確認する。判定は「誰が生成したか」
+  に依存するため、ヘルパは生成したAgentを受け取る。
 - Invariant: どのAgentの応答（本文・stream delta・保存する履歴・読み上げ文）も、先頭にAgent名ラベルを持たない。
-  除去は先頭の既知Agent名のラベルの連続のうち、直後に区切りがあるものとラベルだけの本文に限る。区切りが無い
-  `[shiro]からの報告です`、本文中のラベル、既知でない角括弧は変えない。
+  除去は先頭の既知Agent名のラベルの連続を先頭から順に判定し、生成したAgent自身のラベルは区切りなしでも、
+  他のAgent名のラベルは直後に区切りがある場合とラベルだけの本文に限って行う。区切りが無い他Agentのラベル
+  （mioの生成で`[shiro]からの報告です`）、本文中のラベル、既知でない角括弧は変えない。
 - Enforcement: `conversation.AgentLabelNames`が除去対象の唯一の一覧で、`agentprofile.Catalog`のAgent IDと
   一致することをtestが双方向に強制する（Agentを追加するとtestが失敗する）。履歴の`[speaker] msg`形式との
   逆変換関係もtestで固定する。
 - Tests: `internal/domain/conversation/speaker_label_test.go`（非stream、分割delta、重なり、他Agent名、途中、
-  未知の角括弧、ラベルのみ（区切りなしで終わる場合を含む）、空、全角空白、区切りの種類、区切りなしで残るケース、
-  `]`と区切りが別deltaのケース、区切りがrune境界で割れるケース、保留の上限、flush、非streamとstreamの一致、
-  履歴形式の逆変換）、`internal/domain/agent/mio_test.go`（Mioの旧回帰test）、
+  未知の角括弧、ラベルのみ（区切りなしで終わる場合を含む）、空、全角空白、区切りの種類、自分のラベルと他のラベルの
+  順次判定（判定の4例を含む）、区切りなしで残るケース、`]`と区切りが別deltaのケース、区切りがrune境界で割れるケース、
+  保留の上限、flush、生成したAgentごとの非streamとstreamの一致、履歴形式の逆変換）、
+  `internal/domain/agent/mio_test.go`（Mioの旧回帰testの全ケース）、
   `internal/domain/agent/speaker_label_test.go`（Mio／Shiro CHAT／Midori／Kuro／Shiro OPSの本文・保存・stream、
   Mio retry、flush、stream callback無しの非stream維持）、
   `internal/application/orchestrator/speaker_label_invariant_test.go`（`ProcessMessage`経由で`agent.thinking`、

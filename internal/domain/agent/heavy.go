@@ -75,7 +75,7 @@ func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (st
 	if err != nil {
 		return "", err
 	}
-	response := conversation.StripLeadingSpeakerLabels(resp.Content)
+	response := conversation.StripLeadingSpeakerLabels(resp.Content, conversation.SpeakerKuro)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	if h.conversationEngine != nil {
 		if err := commitConversationTurn(ctx, h.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
