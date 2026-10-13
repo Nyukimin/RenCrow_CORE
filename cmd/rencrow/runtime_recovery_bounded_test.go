@@ -218,16 +218,23 @@ func testRecoverActionRunsResolvesRuns(t *testing.T, indexed bool) {
 	if recovered != 1 {
 		t.Fatalf("recovered=%d, want 1 (the stale Run is closed once)", recovered)
 	}
+	// The recovery acts on the Actions of a running Run, so it asks the Task owner
+	// for the running Runs and resolves the Run of each Action it acts on: the stale
+	// Run's two Actions. The Action of the Run that finished before the restart is
+	// not one of them (its Run is not running), so its Run is not read at all.
+	runningOnly := domaintask.RunFilter{Status: domaintask.RunStatusRunning}
 	if indexed {
-		// With the ID index each Action's Run is read by ID; nothing lists the history.
-		if len(runtime.spy.runFilters) != 0 || len(runtime.spy.getRuns) != 3 {
-			t.Fatalf("indexed recovery listed Runs %+v and read %d Runs by ID, want no list and one read per Action", runtime.spy.runFilters, len(runtime.spy.getRuns))
+		// With the ID index each such Action's Run is read by ID; the only list is
+		// the running Runs.
+		if len(runtime.spy.runFilters) != 1 || runtime.spy.runFilters[0] != runningOnly || len(runtime.spy.getRuns) != 2 {
+			t.Fatalf("indexed recovery listed Runs %+v and read %d Runs by ID, want only the running Runs listed and one read per Action it acts on", runtime.spy.runFilters, len(runtime.spy.getRuns))
 		}
 	} else {
 		// Without it reading Runs one by one would fold the whole history for each
-		// Action, so the Task owner makes exactly one pass and no by-ID reads.
-		if len(runtime.spy.runFilters) != 1 || runtime.spy.runFilters[0] != (domaintask.RunFilter{}) || len(runtime.spy.getRuns) != 0 {
-			t.Fatalf("default-store recovery listed Runs %+v and read %d Runs by ID, want one pass and no by-ID reads", runtime.spy.runFilters, len(runtime.spy.getRuns))
+		// Action, so the Task owner makes exactly one pass for them and no by-ID
+		// reads.
+		if len(runtime.spy.runFilters) != 2 || runtime.spy.runFilters[0] != runningOnly || runtime.spy.runFilters[1] != (domaintask.RunFilter{}) || len(runtime.spy.getRuns) != 0 {
+			t.Fatalf("default-store recovery listed Runs %+v and read %d Runs by ID, want the running Runs and then one pass, and no by-ID reads", runtime.spy.runFilters, len(runtime.spy.getRuns))
 		}
 	}
 
@@ -243,9 +250,12 @@ func testRecoverActionRunsResolvesRuns(t *testing.T, indexed bool) {
 	}
 }
 
-// A reference to a Run that no Task owns is data corruption: the recovery
-// keeps failing on it, as it did when it held every Run in a map, and the
-// error still matches ErrNotFound.
+// A reference to a Run that no Task owns is data corruption. The recovery keeps
+// failing on it for an Action it acts on (one still open), with an error that
+// matches ErrNotFound and names the Action and the Run, as it did when it held
+// every Run in a map. A finished Action it has nothing to settle for is not looked
+// at any more (action_store.verify_run_references_at_start and
+// "rencrow actions verify --check-runs" check those).
 func TestRecoverActionRunsAfterRestartFailsOnActionWithoutRun(t *testing.T) {
 	for _, indexed := range []bool{false, true} {
 		t.Run(indexModeName(indexed), func(t *testing.T) { testRecoverActionRunsFailsOnActionWithoutRun(t, indexed) })
@@ -257,12 +267,17 @@ func testRecoverActionRunsFailsOnActionWithoutRun(t *testing.T, indexed bool) {
 	runtime := newRestartedSpyRuntime(t, indexed)
 	dangling := domaintask.Task{TaskID: modulecore.NewTaskID()}
 	danglingRun := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: dangling.TaskID}
-	action := runtime.terminalAction(t, dangling, danglingRun, domainaction.StatusSucceeded)
+	action, _, err := runtime.actions.CreateAction(ctx, actionmanager.CreateInput{
+		TaskID: dangling.TaskID, RunID: danglingRun.RunID, Kind: domainaction.KindLLM, Name: "llm.worker.generate",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtime.reopen(t)
 
 	recovered, err := recoverActionRunsAfterRestart(ctx, runtime.actions, runtime.second)
 	if err == nil {
-		t.Fatal("an Action whose Run does not exist was accepted")
+		t.Fatal("an open Action whose Run does not exist was accepted")
 	}
 	if !errors.Is(err, domaintask.ErrNotFound) {
 		t.Fatalf("error = %v, want errors.Is(ErrNotFound)", err)
@@ -272,5 +287,29 @@ func testRecoverActionRunsFailsOnActionWithoutRun(t *testing.T, indexed bool) {
 	}
 	if recovered != 0 {
 		t.Fatalf("recovered=%d, want 0", recovered)
+	}
+}
+
+func TestRecoverActionRunsAfterRestartIgnoresAFinishedActionWithoutRun(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		t.Run(indexModeName(indexed), func(t *testing.T) {
+			ctx := context.Background()
+			runtime := newRestartedSpyRuntime(t, indexed)
+			dangling := domaintask.Task{TaskID: modulecore.NewTaskID()}
+			danglingRun := domaintask.Run{RunID: modulecore.NewRunID(), TaskID: dangling.TaskID}
+			runtime.terminalAction(t, dangling, danglingRun, domainaction.StatusSucceeded)
+			runtime.reopen(t)
+
+			recovered, err := recoverActionRunsAfterRestart(ctx, runtime.actions, runtime.second)
+			if err != nil || recovered != 0 {
+				t.Fatalf("recovery over a finished Action with an unknown Run = %d, %v; want it left alone", recovered, err)
+			}
+			if len(runtime.spy.getRuns) != 0 {
+				t.Fatalf("the recovery read %d Runs for an Action it has nothing to settle for", len(runtime.spy.getRuns))
+			}
+			if err := verifyActionRunReferences(ctx, runtime.actions, runtime.second); err == nil || !errors.Is(err, domaintask.ErrNotFound) && !strings.Contains(err.Error(), "1 Run reference") {
+				t.Fatalf("the whole-history check = %v, want it to find the reference", err)
+			}
+		})
 	}
 }

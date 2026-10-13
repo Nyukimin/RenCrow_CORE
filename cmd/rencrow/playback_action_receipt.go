@@ -32,12 +32,14 @@ func (r *playbackActionRecorder) Record(ctx context.Context, ack ttsPlaybackAckR
 		return errors.New("public_playback_ref is required")
 	}
 	name := "playback_receipt:" + publicRef + ":" + strings.TrimSpace(ack.UtteranceID) + ":" + strconv.Itoa(ack.ChunkIndex)
-	existing, err := r.actions.ListActions(ctx, domainaction.Filter{})
+	// A receipt is recorded once. Ask for the Actions of this Kind and exact name,
+	// not for the history to search it: only a finished one counts as recorded.
+	existing, err := r.actions.ListActions(ctx, domainaction.Filter{Kind: domainaction.KindPlayback, Name: name})
 	if err != nil {
 		return err
 	}
 	for _, action := range existing {
-		if action.Kind == domainaction.KindPlayback && action.Name == name && domainaction.IsTerminal(action.Status) {
+		if domainaction.IsTerminal(action.Status) {
 			return nil
 		}
 	}

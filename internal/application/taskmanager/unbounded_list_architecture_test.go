@@ -44,6 +44,11 @@ var unboundedTaskListAllowlist = map[string]string{
 	// running: bounded by the active set, not by the history (F-1).
 	"cmd/rencrow/runtime_run_recovery.go:recoverOrphanTaskRunsAfterRestart:ListRuns{Status}": "running Runs only; the active set is small",
 
+	// Startup recovery of Actions reads the running Runs to find the Actions it
+	// acts on (the Actions of a Run that is still running), by RunID, instead of
+	// resolving the Run of every Action in the history. Bounded by the active set.
+	"cmd/rencrow/runtime_action_recovery.go:recoverActionRunsAfterRestart:ListRuns{Status}": "running Runs only; the active set is small",
+
 	// Manager.List / ListRuns forward the caller's filter to the store. The
 	// callers are checked at their own call sites and interfaces.
 	"internal/application/taskmanager/manager.go:List:ListTasks(arg)":    "forwards the caller's filter",

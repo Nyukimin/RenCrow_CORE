@@ -28,20 +28,19 @@ func recoverOrphanTaskRunsAfterRestart(ctx context.Context, actions *actionmanag
 	if actions == nil || tasks == nil {
 		return 0, errors.New("Action and Task owners are required for orphan Run restart recovery")
 	}
-	storedActions, err := actions.ListActions(ctx, domainaction.Filter{})
-	if err != nil {
-		return 0, err
-	}
-	actionOwned := make(map[modulecore.RunID]struct{}, len(storedActions))
-	for _, action := range storedActions {
-		actionOwned[action.RunID] = struct{}{}
-	}
 	// Only running Runs can be orphans. Reading the whole Run history here would
 	// decode every Run ever written on each start; the store narrows the read to
 	// the running ones, and the status check below keeps the result identical.
 	activeRuns, err := tasks.ListRuns(ctx, domaintask.RunFilter{Status: domaintask.RunStatusRunning})
 	if err != nil {
 		return 0, fmt.Errorf("list running canonical runs for orphan Run restart recovery: %w", err)
+	}
+	// Whether an Action belongs to a Run is asked of each running Run, in one read
+	// of the Action store: listing every Action to collect their Runs read the
+	// whole Action history at every start.
+	actionOwned, err := runsWithActions(ctx, actions, activeRuns)
+	if err != nil {
+		return 0, err
 	}
 	recovered := 0
 	for _, run := range activeRuns {
@@ -81,4 +80,26 @@ func recoverOrphanTaskRunsAfterRestart(ctx context.Context, actions *actionmanag
 		}
 	}
 	return recovered, nil
+}
+
+// runsWithActions returns the Runs among runs that have at least one Action. One
+// read transaction answers all of them.
+func runsWithActions(ctx context.Context, actions *actionmanager.Manager, runs []domaintask.Run) (map[modulecore.RunID]struct{}, error) {
+	owned := make(map[modulecore.RunID]struct{}, len(runs))
+	err := actions.ReadTransaction(ctx, func(tx domainaction.Store) error {
+		for _, run := range runs {
+			found, err := tx.ListActions(ctx, domainaction.Filter{RunID: run.RunID, Limit: 1})
+			if err != nil {
+				return err
+			}
+			if len(found) > 0 {
+				owned[run.RunID] = struct{}{}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("look up the Actions of running Runs for orphan Run restart recovery: %w", err)
+	}
+	return owned, nil
 }

@@ -405,6 +405,27 @@ func (m *Manager) ListActions(ctx context.Context, filter domainaction.Filter) (
 	return m.store.ListActions(ctx, filter)
 }
 
+// ReadTransaction runs fn against one consistent, read-only view of the Action
+// store. A caller that needs several lookups to agree (the restart recoveries ask
+// for the open Actions, the native delegations and the Actions of each running
+// Run) asks them inside one, so a store that reads its history in full pays for
+// that once, not once per lookup. fn must only read; acting on what it found
+// belongs after it returns, because an action takes the Manager's write lock.
+func (m *Manager) ReadTransaction(ctx context.Context, fn func(Store) error) error {
+	if err := validateContext(ctx); err != nil {
+		return err
+	}
+	if fn == nil {
+		return errors.New("action read transaction callback is nil")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if err := validateContext(ctx); err != nil {
+		return err
+	}
+	return m.store.ReadTransaction(ctx, fn)
+}
+
 func (m *Manager) ListAttempts(ctx context.Context, filter domainaction.AttemptFilter) ([]domainaction.Attempt, error) {
 	if err := validateContext(ctx); err != nil {
 		return nil, err
