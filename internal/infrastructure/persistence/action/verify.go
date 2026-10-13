@@ -2,6 +2,7 @@ package action
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,7 +20,11 @@ import (
 type VerifyReport struct {
 	// OK is true only when the logs are valid under the full read, the snapshot
 	// built from them is valid, and the two hold the same records.
-	OK           bool     `json:"ok"`
+	OK bool `json:"ok"`
+	// Layout is "v1" (the logs in the store root) or "v2" (segments), and Segments
+	// how many segments the check read.
+	Layout       string   `json:"layout"`
+	Segments     int      `json:"segments"`
 	Actions      int      `json:"actions"`
 	Attempts     int      `json:"attempts"`
 	ActionBytes  int64    `json:"action_bytes"`
@@ -61,10 +66,13 @@ func VerifyActionStore(ctx context.Context, root string) (VerifyReport, error) {
 // snapshot the way a store opened with OpenOptions.Index does, reads the logs in
 // full the way every transaction of a store without it does, and compares the two
 // record by record, field by field, and the snapshot's lookups against the
-// records. It holds the store's OS lock for the whole check, which waits for a
-// running CORE's transaction and blocks the next; run it on a copy of a store in
-// use. A store with an unsettled WAL is an error: nothing can be said about it
-// until a writer has repaired it.
+// records. On a store with segments it reads every segment, oldest first, as the
+// writer does, and holds each closed segment to the size recorded when it was
+// closed; a segment that is not that size is a finding, not a failure to run. It
+// holds the lock of the newest segment (the store's OS lock) for the whole check,
+// which waits for a running CORE's transaction and blocks the next; run it on a
+// copy of a store in use. A store with an unsettled WAL is an error: nothing can
+// be said about it until a writer has repaired it.
 func VerifyActionStoreWithOptions(ctx context.Context, root string, options VerifyOptions) (VerifyReport, error) {
 	started := time.Now()
 	var report VerifyReport
@@ -77,21 +85,44 @@ func VerifyActionStoreWithOptions(ctx context.Context, root string, options Veri
 	} else if !info.IsDir() {
 		return report, fmt.Errorf("action store %q is not a directory", root)
 	}
-	batch, err := jsonlbatch.OpenReader(abs, []string{actionFilename, attemptFilename})
+	layout, err := readLayout(abs)
+	if err != nil {
+		return report, err
+	}
+	refs, err := listSegments(abs, layout.v2)
+	if err != nil {
+		return report, err
+	}
+	if layout.v2 && len(refs) < 2 {
+		return report, fmt.Errorf("%w: LAYOUT v2 is present but there is no segment under %s", ErrSegmentMissing, logsDirName)
+	}
+	report.Layout, report.Segments = "v1", len(refs)
+	if layout.v2 {
+		report.Layout = "v2"
+	}
+	newest := refs[len(refs)-1]
+	batch, err := jsonlbatch.OpenReader(newest.dir, logFilenames[:])
 	if err != nil {
 		return report, fmt.Errorf("open the action store as a reader: %w", err)
 	}
-	actionPath, attemptPath := filepath.Join(abs, actionFilename), filepath.Join(abs, attemptFilename)
 	err = batch.Read(ctx, func() error {
 		buildStarted := time.Now()
-		st, buildErr := buildSnapState(ctx, actionPath, attemptPath)
+		st, buildErr := buildSnapState(ctx, layout, refs)
 		report.BuildMs = time.Since(buildStarted).Milliseconds()
+		if errors.Is(buildErr, ErrUnknownLayout) {
+			return buildErr
+		}
 
 		readStarted := time.Now()
-		actions, readErr := loadActionsFrom(ctx, actionPath)
+		actionPaths, attemptPaths := make([]string, len(refs)), make([]string, len(refs))
+		for i, ref := range refs {
+			paths := ref.paths()
+			actionPaths[i], attemptPaths[i] = paths[fileAction], paths[fileAttempt]
+		}
+		actions, readErr := loadActionsFrom(ctx, actionPaths...)
 		var attempts []domainaction.Attempt
 		if readErr == nil {
-			attempts, readErr = loadAttemptsFrom(ctx, attemptPath)
+			attempts, readErr = loadAttemptsFrom(ctx, attemptPaths...)
 		}
 		if readErr == nil {
 			readErr = validateSnapshot(actions, attempts)
@@ -99,6 +130,8 @@ func VerifyActionStoreWithOptions(ctx context.Context, root string, options Veri
 		report.FullReadMs = time.Since(readStarted).Milliseconds()
 
 		switch {
+		case errors.Is(buildErr, ErrSealedSegmentChanged):
+			report.problem("%s", firstLine(buildErr))
 		case buildErr != nil && readErr != nil:
 			report.problem("the logs are not valid: the full read refuses them (%v) and so does the snapshot build", firstLine(readErr))
 		case buildErr != nil:
@@ -107,7 +140,8 @@ func VerifyActionStoreWithOptions(ctx context.Context, root string, options Veri
 			report.problem("the snapshot build accepts the logs but the full read refuses them: %v", firstLine(readErr))
 		default:
 			report.Actions, report.Attempts = len(st.actions.latest), len(st.attempts.latest)
-			report.ActionBytes, report.AttemptBytes = st.applied[fileAction], st.applied[fileAttempt]
+			report.ActionBytes = st.closed[fileAction] + st.applied[fileAction]
+			report.AttemptBytes = st.closed[fileAttempt] + st.applied[fileAttempt]
 			for _, line := range st.check(actions, attempts) {
 				report.problem("%s", line)
 			}

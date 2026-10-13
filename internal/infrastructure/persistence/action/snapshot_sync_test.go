@@ -166,7 +166,7 @@ func TestHookThatCannotAbsorbACommitMarksTheSnapshotBroken(t *testing.T) {
 	seedPairs(t, store, 2)
 
 	// An append that does not continue the covered prefix cannot be applied.
-	ix.onCommit(ctx, []jsonlbatch.CommittedAppend{{Name: actionFilename, Offset: 1, Payload: []byte("{}\n")}})
+	ix.onCommit(ctx, 0, []jsonlbatch.CommittedAppend{{Name: actionFilename, Offset: 1, Payload: []byte("{}\n")}})
 	if stats, _ := store.IndexStats(); !stats.Broken {
 		t.Fatal("the snapshot is not marked broken after a commit it could not absorb")
 	}

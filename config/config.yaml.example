@@ -187,6 +187,13 @@ task_store:
 action_store:
   index:
     enabled: false
+  # 書込み先をUTC日ごとのsegment（state/actions/logs/<YYYYMMDD>-<NN>/）へ分ける（段階2）。既定はfalse。
+  # 初めてtrueで開くとstate/actions直下のfileが読取専用に凍結される。有効化は配備時の判断で、index.enabledが前提。
+  # 戻すにはCOREを止めて `rencrow actions layout concat --apply`。
+  rotation:
+    enabled: false
+    # 同じ日の次のsegmentへ切り替える大きさ（byte）。0は8 MiB。
+    size_valve_bytes: 0
   # trueにすると、再起動時の回復が全Actionについて、参照するRunがTask storeに存在することを確かめる
   # （存在しなければ起動しない）。既定のfalseでは回復が作用するAction（open、native委譲、runningなRunのAction）だけを
   # 確かめる。全件の確認は `rencrow actions verify --check-runs` で行える。

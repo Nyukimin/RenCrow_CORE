@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
@@ -36,13 +38,26 @@ var (
 // JSONLStore persists Action and Attempt records under one owner-local WAL.
 // The in-process mutex protects one instance; jsonlbatch supplies the OS lock
 // shared by every instance using the same root.
+//
+// On layout v2 the records are in segments (segment_layout.go) and each segment
+// has a WAL of its own: batch is the Store of the current segment, replaced by a
+// rotation while mu is held for writing and, for the readers that do not take mu,
+// while the snapshot's segMu is.
 type JSONLStore struct {
-	mu          sync.RWMutex
-	root        string
+	mu   sync.RWMutex
+	root string
+	// actionPath and attemptPath are the logs in the root: all of the store on the
+	// plain layout, segment 0 on layout v2.
 	actionPath  string
 	attemptPath string
 	batch       *jsonlbatch.Store
 	txObserver  *txobserve.Observer
+	// hot is the pair of files the transaction observer sizes: the current
+	// segment's.
+	hot atomic.Pointer[[fileCount]string]
+	// rot is the rotation policy and bookkeeping; nil when the store was opened
+	// without a snapshot.
+	rot *rotationState
 	// idx is the in-memory snapshot of both logs; nil when the store was opened
 	// without OpenOptions.Index, in which case every transaction reads the logs
 	// in full.
@@ -56,6 +71,20 @@ type OpenOptions struct {
 	// of truth: the snapshot is built from it at open and followed after every
 	// commit, and a store opened without Index reads the same files.
 	Index bool
+
+	// Rotation writes to daily segments (layout v2: the files in the root become
+	// segment 0 and are frozen, writes go to logs/<YYYYMMDD>-<NN>/). The first
+	// open with it moves a store on the plain layout to segments. It requires
+	// Index: the segments are only joined by the snapshot.
+	Rotation bool
+	// RotationSizeValve is the size of a segment's logs beyond which the next
+	// write starts another segment of the same UTC day; 0 selects the default.
+	RotationSizeValve int64
+
+	// Seams for tests.
+	now           func() time.Time
+	failpoint     func(stage string)
+	rotationPause func(time.Duration)
 }
 
 // defaultIndexOption is what NewJSONLStore uses. It is false in every build
@@ -81,33 +110,51 @@ func newJSONLStore(root string, options OpenOptions, tune func(*txobserve.Option
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("action store root is required")
 	}
+	if options.Rotation && !options.Index {
+		return nil, errors.New("action store option Rotation requires Index")
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, fmt.Errorf("resolve action store root: %w", err)
 	}
-	batch, err := jsonlbatch.New(absRoot, []string{actionFilename, attemptFilename})
+	// Every opener goes through openLayout, so none of them sees a history that is
+	// not the one that was recorded (segment 0 frozen at its recorded size).
+	layout, refs, err := openLayout(absRoot)
+	if err != nil {
+		return nil, err
+	}
+	if layout.v2 {
+		// A store on layout v2 cannot be read without its snapshot: the segments
+		// are only joined by it.
+		options.Index = true
+	}
+	batch, refs, err := openWriterBatch(absRoot, layout, refs, options.now, options.failpoint)
 	if err != nil {
 		return nil, err
 	}
 	if err := batch.Recover(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover action store: %w", err)
 	}
+	current := refs[len(refs)-1]
 	store := &JSONLStore{
 		root:        absRoot,
 		actionPath:  filepath.Join(absRoot, actionFilename),
 		attemptPath: filepath.Join(absRoot, attemptFilename),
 		batch:       batch,
+		rot:         newRotationState(options),
 	}
+	hot := current.paths()
+	store.hot.Store(&hot)
 	// Observing starts with the open's own validation read, so a slow start shows
 	// up as op=Open instead of being invisible until the first request.
-	opts := txObserverOptions(store.actionPath, store.attemptPath)
+	opts := txObserverOptions(func() [fileCount]string { return *store.hot.Load() })
 	if tune != nil {
 		tune(&opts)
 	}
 	store.txObserver = txobserve.New(opts)
 	batch.SetTxObserver(store.txObserver.Observe)
 	if options.Index {
-		ix := newSnapshot(store.actionPath, store.attemptPath)
+		ix := newSnapshot(layout, refs)
 		if err := batch.Read(withTxLabel(context.Background(), txOpOpen), func() error {
 			return ix.build(context.Background())
 		}); err != nil {
@@ -116,7 +163,19 @@ func newJSONLStore(root string, options OpenOptions, tune func(*txobserve.Option
 		store.idx = ix
 		// From here on the snapshot follows every commit of this Store, under the
 		// same OS lock as the writer.
-		batch.SetPostCommitHook(ix.onCommit)
+		batch.SetPostCommitHook(ix.onCommitFor(current.ord))
+		if layout.v2 && !store.rot.enabled {
+			log.Printf("[ActionStore] WARN the store is on layout v2 but rotation is off: writes stay in segment %s and its commit time grows with it (action_store.rotation.enabled)", current.name)
+		}
+		if store.rot.enabled && !layout.v2 {
+			if err := store.migrateToSegments(context.Background()); err != nil {
+				var aborted *migrationAborted
+				if !errors.As(err, &aborted) {
+					return nil, err
+				}
+				log.Printf("[ActionStore] WARN segment migration did not start; the store stays on layout v1: %v", aborted.cause)
+			}
+		}
 		return store, nil
 	}
 	if err := batch.Read(withTxLabel(context.Background(), txOpOpen), func() error {
@@ -156,6 +215,9 @@ func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(d
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.idx != nil {
+		if err := s.rotateIfDue(ctx); err != nil {
+			return err
+		}
 		return s.snapshotTransaction(ctx, op, callback)
 	}
 	return s.batch.Write(withTxLabel(ctx, op), func() (map[string][]byte, error) {
@@ -187,6 +249,9 @@ func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(d
 func (s *JSONLStore) snapshotTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
 	err := s.batch.Write(withTxLabel(ctx, op), func() (map[string][]byte, error) {
 		if err := s.idx.ensureSynced(ctx); err != nil {
+			return nil, err
+		}
+		if err := s.requireOpenSegment(); err != nil {
 			return nil, err
 		}
 		// Held while the callback runs and released when it returns, before the
@@ -252,6 +317,10 @@ func (s *JSONLStore) readTransaction(ctx context.Context, op string, callback fu
 // writer's post-commit hook takes for writing, and from a writer in another
 // handle or process by the length check and the OS lock behind it.
 func (s *JSONLStore) snapshotReadTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
+	// The segment the snapshot follows does not change between the freshness check
+	// and the answer: a rotation switches it holding segMu for writing.
+	s.idx.segMu.RLock()
+	defer s.idx.segMu.RUnlock()
 	started := time.Now()
 	stale, err := s.idx.stale()
 	if err != nil {
@@ -878,19 +947,33 @@ func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Att
 }
 
 func (s *JSONLStore) loadActions(ctx context.Context) ([]domainaction.Action, error) {
-	return loadActionsFrom(ctx, s.actionPath)
+	return loadActionsFrom(ctx, s.logPaths(fileAction)...)
 }
 
 func (s *JSONLStore) loadAttempts(ctx context.Context) ([]domainaction.Attempt, error) {
-	return loadAttemptsFrom(ctx, s.attemptPath)
+	return loadAttemptsFrom(ctx, s.logPaths(fileAttempt)...)
+}
+
+// logPaths lists the files of one log, one per segment, in the order they are
+// read: the file in the root on the plain layout.
+func (s *JSONLStore) logPaths(kind int) []string {
+	if s.idx != nil {
+		return s.idx.logPaths(kind)
+	}
+	return []string{filepath.Join(s.root, logFilenames[kind])}
 }
 
 // loadActionsFrom is the full read of an Action log: every line decoded and held
-// to the rules of the fold, the latest version of each Action returned.
-func loadActionsFrom(ctx context.Context, path string) ([]domainaction.Action, error) {
-	items, err := readJSONLLines[domainaction.Action](ctx, path)
-	if err != nil {
-		return nil, err
+// to the rules of the fold, the latest version of each Action returned. The paths
+// are the log of each segment, oldest first, read as one log.
+func loadActionsFrom(ctx context.Context, paths ...string) ([]domainaction.Action, error) {
+	var items []domainaction.Action
+	for _, path := range paths {
+		more, err := readJSONLLines[domainaction.Action](ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, more...)
 	}
 	fold := newActionFold(len(items))
 	for index, item := range items {
@@ -906,10 +989,14 @@ func loadActionsFrom(ctx context.Context, path string) ([]domainaction.Action, e
 }
 
 // loadAttemptsFrom is loadActionsFrom for an Attempt log.
-func loadAttemptsFrom(ctx context.Context, path string) ([]domainaction.Attempt, error) {
-	items, err := readJSONLLines[domainaction.Attempt](ctx, path)
-	if err != nil {
-		return nil, err
+func loadAttemptsFrom(ctx context.Context, paths ...string) ([]domainaction.Attempt, error) {
+	var items []domainaction.Attempt
+	for _, path := range paths {
+		more, err := readJSONLLines[domainaction.Attempt](ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, more...)
 	}
 	fold := newAttemptFold(len(items))
 	for index, item := range items {

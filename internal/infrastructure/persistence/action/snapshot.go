@@ -15,6 +15,12 @@ import (
 // is changed only by applying bytes that were appended to them, so it is always
 // the decoding of some prefix of the logs. What that prefix is (applied) is what
 // every freshness check compares with the files.
+//
+// On layout v2 the logs are those of every segment, read in segment order and
+// folded as one: a record in a later segment replaces the version in an earlier
+// one exactly as a later line replaces an earlier one in a single file. Only the
+// current segment is ever appended to, so only its files are compared with the
+// snapshot after the open.
 
 // Log files, in the order their bytes are applied: an Attempt line may name an
 // Action line of the same commit, so Actions go first whatever order the commit
@@ -42,9 +48,12 @@ type snapState struct {
 	// attemptsOf lists the Attempts of an Action in the order of their first line.
 	attemptsOf map[modulecore.ActionID][]modulecore.AttemptID
 
-	// applied is how many bytes of each log the content decodes, and records how
-	// many records of each it has folded.
+	// applied is how many bytes of each log of the current segment the content
+	// decodes, closed is how many bytes of each log the closed segments hold (all
+	// of which it decodes), and records how many records of each it has folded in
+	// all. On the plain layout there is one segment and closed is zero.
 	applied [fileCount]int64
+	closed  [fileCount]int64
 	records [fileCount]int64
 
 	// enums holds one copy of each value of the enumerated fields (Kind, Status,

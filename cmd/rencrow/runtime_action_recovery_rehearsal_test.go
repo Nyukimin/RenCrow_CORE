@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 )
 
 // TestRehearseRestartRecoveryOnACopyOfTheWorkspace times what a start does with
@@ -41,7 +43,7 @@ func TestRehearseRestartRecoveryOnACopyOfTheWorkspace(t *testing.T) {
 			t.Cleanup(func() { _ = deps.taskStore.(interface{ Close() error }).Close() })
 
 			started = time.Now()
-			actions, err := newRuntimeActionManager(workspace, mode.index)
+			actions, err := newRuntimeActionManager(workspace, actionpersistence.OpenOptions{Index: mode.index})
 			if err != nil {
 				t.Fatalf("open the Action store: %v", err)
 			}

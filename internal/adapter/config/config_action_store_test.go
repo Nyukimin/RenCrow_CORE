@@ -62,3 +62,76 @@ func TestConfigExampleKeepsTheActionStoreSnapshotDisabled(t *testing.T) {
 		t.Fatal("config.yaml.example must not enable the Action store snapshot or the startup reference check")
 	}
 }
+
+// action_store.rotation.enabled moves the Action store to daily segments. It is
+// off unless the operator turns it on, it needs the snapshot (the segments are
+// only joined by it), and its valve is bounded.
+func TestActionStoreRotationIsDisabledByDefaultAndRequiresTheSnapshot(t *testing.T) {
+	cfg := &Config{Server: ServerConfig{Port: 8080}}
+	cfg.setDefaults()
+	if cfg.ActionStore.Rotation.Enabled || cfg.ActionStore.Rotation.SizeValveBytes != 0 {
+		t.Fatalf("action_store.rotation defaults = %+v, want off with the default valve", cfg.ActionStore.Rotation)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("default config rejected: %v", err)
+	}
+	cfg.ActionStore.Rotation.Enabled = true
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("action_store.rotation.enabled without action_store.index.enabled was accepted")
+	}
+	cfg.ActionStore.Index.Enabled = true
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("rotation with the snapshot rejected: %v", err)
+	}
+}
+
+func TestActionStoreRotationValveIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		valve int64
+		ok    bool
+	}{
+		{0, true}, {MinActionStoreRotationSizeValve, true}, {8 << 20, true},
+		{1, false}, {MinActionStoreRotationSizeValve - 1, false}, {-1, false},
+	} {
+		cfg := &Config{Server: ServerConfig{Port: 8080}}
+		cfg.setDefaults()
+		cfg.ActionStore.Index.Enabled = true
+		cfg.ActionStore.Rotation.Enabled = true
+		cfg.ActionStore.Rotation.SizeValveBytes = tc.valve
+		if err := cfg.Validate(); (err == nil) != tc.ok {
+			t.Errorf("size_valve_bytes=%d: Validate = %v, want ok=%v", tc.valve, err, tc.ok)
+		}
+	}
+}
+
+func TestActionStoreRotationLoadsFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rotation.yaml")
+	body := "server:\n  port: 8080\naction_store:\n  index:\n    enabled: true\n  rotation:\n    enabled: true\n    size_valve_bytes: 4194304\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if !cfg.ActionStore.Rotation.Enabled || cfg.ActionStore.Rotation.SizeValveBytes != 4194304 {
+		t.Fatalf("action_store.rotation = %+v", cfg.ActionStore.Rotation)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.yaml")
+	if err := os.WriteFile(bad, []byte("server:\n  port: 8080\naction_store:\n  rotation:\n    enabled: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfig(bad); err == nil {
+		t.Fatal("LoadConfig accepted rotation without the snapshot")
+	}
+}
+
+func TestConfigExampleKeepsTheActionStoreRotationDisabled(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join("..", "..", "..", "config", "config.yaml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ActionStore.Rotation.Enabled {
+		t.Fatal("config.yaml.example must not enable the Action store rotation")
+	}
+}

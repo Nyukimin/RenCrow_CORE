@@ -31,6 +31,7 @@ import (
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -150,7 +151,7 @@ func newLegacyOPSRealShiro(t *testing.T, provider *legacyOPSProvider, ledger *le
 	t.Helper()
 	// Production gives the Subagent loop an Action owner (cfg.Subagent.Enabled);
 	// a loop bound to a Task/Run refuses to start without one.
-	actions, err := newRuntimeActionManager(t.TempDir(), false)
+	actions, err := newRuntimeActionManager(t.TempDir(), actionpersistence.OpenOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

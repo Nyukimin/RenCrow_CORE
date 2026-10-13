@@ -496,7 +496,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
 		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
-	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir, cfg.ActionStore.Index.Enabled)
+	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore))
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
 	}

@@ -17,19 +17,28 @@ import (
 )
 
 // The storage-level subcommands of `rencrow actions`. They work on the Action
-// store files, not through the Action Manager, and none of them writes:
+// store files, not through the Action Manager, and none of them writes except
+// `layout concat --apply`:
 //
 //	verify [--check-runs] [--compact]
 //	        check the in-memory snapshot against the full read of the logs (read
 //	        only): the snapshot is built the way a store opened with
 //	        action_store.index.enabled builds it, the logs are read in full the way
 //	        a store without it reads them for every transaction, and the two must
-//	        hold the same records, field by field. The report has counts and
-//	        sizes, never a record or an ID. It holds the store's OS lock for the
-//	        whole check; on a running production store run it on a copy.
-//	        --check-runs also asks the Task store (read only) whether a Task owns
-//	        every Run the Actions name, which a start no longer checks for the
-//	        Actions it has nothing to settle for.
+//	        hold the same records, field by field. On a store with segments it reads
+//	        every segment and holds each closed one to the size recorded when it
+//	        was closed. The report has counts and sizes, never a record or an ID.
+//	        It holds the store's OS lock for the whole check; on a running
+//	        production store run it on a copy. --check-runs also asks the Task
+//	        store (read only) whether a Task owns every Run the Actions name,
+//	        which a start no longer checks for the Actions it has nothing to settle
+//	        for.
+//	layout show [--compact]
+//	        what layout the store is on (plain files, or segments) and what it is
+//	        made of. Takes no lock and writes nothing.
+//	layout concat [--apply] [--compact]
+//	        return a store with segments to the plain layout, while CORE is
+//	        stopped. Without --apply it only says what it would do.
 
 func cmdActions() {
 	cfg, err := config.LoadConfig(getConfigPath())
@@ -54,14 +63,22 @@ func defaultActionStorePath(workspaceDir string) string {
 // (and, for --check-runs, the Task store at taskRoot) and returns the exit
 // status. Output is JSON on out; the reason for a failure goes to errOut.
 func runActionsCommand(args []string, actionRoot, taskRoot string, out io.Writer, errOut io.Writer) int {
-	const usage = "usage: rencrow actions verify [--check-runs] [--compact]"
+	const usage = "usage: rencrow actions verify [--check-runs] [--compact] | layout show | layout concat [--apply]"
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, usage)
 		return 1
 	}
-	if strings.ToLower(strings.TrimSpace(args[0])) != "verify" {
+	sub := strings.ToLower(strings.TrimSpace(args[0]))
+	if sub != "verify" && sub != "layout" {
 		fmt.Fprintf(errOut, "unknown actions subcommand: %s\n%s\n", args[0], usage)
 		return 1
+	}
+	if sub == "layout" {
+		if strings.TrimSpace(actionRoot) == "" {
+			fmt.Fprintln(errOut, "the action store location is unknown: workspace_dir is not configured")
+			return 1
+		}
+		return runActionLayoutCommand(context.Background(), args[1:], actionRoot, out, errOut)
 	}
 	pretty, checkRuns := true, false
 	for _, arg := range args[1:] {
@@ -115,4 +132,51 @@ func runActionsCommand(args []string, actionRoot, taskRoot string, out io.Writer
 		return 1
 	}
 	return 0
+}
+
+// runActionLayoutCommand runs `rencrow actions layout <show|concat>`.
+func runActionLayoutCommand(ctx context.Context, args []string, root string, out io.Writer, errOut io.Writer) int {
+	const usage = "usage: rencrow actions layout show [--compact] | rencrow actions layout concat [--apply] [--compact]"
+	if len(args) == 0 {
+		fmt.Fprintln(errOut, usage)
+		return 1
+	}
+	sub := strings.ToLower(strings.TrimSpace(args[0]))
+	pretty, apply := true, false
+	for _, arg := range args[1:] {
+		switch {
+		case arg == "--compact":
+			pretty = false
+		case arg == "--apply" && sub == "concat":
+			apply = true
+		default:
+			fmt.Fprintf(errOut, "unexpected argument %q\n%s\n", arg, usage)
+			return 1
+		}
+	}
+	switch sub {
+	case "show":
+		report, err := actionpersistence.InspectActionLayout(root)
+		if err != nil {
+			fmt.Fprintf(errOut, "failed to inspect the action store layout: %v\n", err)
+			return 1
+		}
+		writeJSONCLI(out, report, pretty)
+		return 0
+	case "concat":
+		report, err := actionpersistence.ConcatActionLayout(ctx, root, apply)
+		if err != nil {
+			if errors.Is(err, actionpersistence.ErrStoreBusy) {
+				fmt.Fprintf(errOut, "failed to concatenate the action store layout: %v (stop the running CORE first)\n", err)
+			} else {
+				fmt.Fprintf(errOut, "failed to concatenate the action store layout: %v\n", err)
+			}
+			writeJSONCLI(out, report, pretty)
+			return 1
+		}
+		writeJSONCLI(out, report, pretty)
+		return 0
+	}
+	fmt.Fprintf(errOut, "unknown layout subcommand: %s\n%s\n", args[0], usage)
+	return 1
 }

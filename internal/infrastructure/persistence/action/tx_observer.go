@@ -19,6 +19,10 @@ const (
 
 	// txOpOpen labels the validation read that opens the store.
 	txOpOpen = "Open"
+	// txOpRotate and txOpMigrate label the read that makes the snapshot current
+	// before a rotation closes a segment, or before the move to segments.
+	txOpRotate  = "Rotate"
+	txOpMigrate = "Migrate"
 	// The entry points that open a batch transaction. The single-record methods
 	// are labelled separately from the generic Transaction / ReadTransaction so
 	// that a slow line says which kind of call was slow.
@@ -40,14 +44,16 @@ func withTxLabel(ctx context.Context, op string) context.Context {
 }
 
 // txObserverOptions are the options the Action store's observer is built from:
-// it sizes the two files every transaction decodes.
-func txObserverOptions(actionPath, attemptPath string) txobserve.Options {
+// it sizes the two files every transaction decodes, which are those of the
+// current segment (hot says which they are now).
+func txObserverOptions(hot func() [fileCount]string) txobserve.Options {
 	return txobserve.Options{
 		Prefix: txLogPrefix,
 		Hot: func() txobserve.HotSizes {
+			paths := hot()
 			return txobserve.SizeFiles(
-				txobserve.HotPath{Name: txHotActionName, Path: actionPath},
-				txobserve.HotPath{Name: txHotAttemptName, Path: attemptPath},
+				txobserve.HotPath{Name: txHotActionName, Path: paths[fileAction]},
+				txobserve.HotPath{Name: txHotAttemptName, Path: paths[fileAttempt]},
 			)
 		},
 	}

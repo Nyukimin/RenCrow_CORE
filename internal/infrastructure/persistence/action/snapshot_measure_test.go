@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -33,6 +34,14 @@ import (
 // calls measured per mode. The numbers are logged with t.Logf, one line per mode;
 // run it with -v. Measure on the host the store lives on, with the host's usual
 // load: the criteria are ratios to the same host's full read.
+//
+// The "rotation" mode opens the copy with Rotation, which moves it to segments
+// (the open then includes the migration), and measures the writes into the new,
+// empty segment. When ACTIDX_MEASURE_SEGMENT_FILL_BYTES is set, the
+// "rotation_loaded" mode measures the writes into a segment that already holds
+// about that many bytes (up to the 8 MiB valve), which is what a commit costs late
+// in a busy day. Both rotation modes end with a rotation by day and report how
+// long it stopped the store.
 func TestMeasureActionStoreAcceptance(t *testing.T) {
 	src := os.Getenv("ACTIDX_MEASURE_ROOT")
 	if src == "" {
@@ -51,21 +60,37 @@ func TestMeasureActionStoreAcceptance(t *testing.T) {
 		}
 		rounds = n
 	}
-	for _, mode := range []struct {
-		name  string
-		index bool
-	}{{"full", false}, {"snapshot", true}} {
+	type measureMode struct {
+		name     string
+		index    bool
+		rotation bool
+		fill     int64
+	}
+	modes := []measureMode{{"full", false, false, 0}, {"snapshot", true, false, 0}, {"rotation", true, true, 0}}
+	if v := os.Getenv("ACTIDX_MEASURE_SEGMENT_FILL_BYTES"); v != "" {
+		fill, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || fill < 1 || fill >= DefaultRotationSizeValve {
+			t.Fatalf("ACTIDX_MEASURE_SEGMENT_FILL_BYTES = %q; want a size under the %d byte valve", v, DefaultRotationSizeValve)
+		}
+		modes = append(modes, measureMode{"rotation_loaded", true, true, fill})
+	}
+	for _, mode := range modes {
 		t.Run(mode.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "actions")
+			t.Cleanup(func() { makeAllWritable(dir) })
 			if err := os.MkdirAll(dir, 0o700); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range []string{actionFilename, attemptFilename} {
 				copyFileForMeasure(t, filepath.Join(src, name), filepath.Join(dir, name))
 			}
+			if mode.fill > 0 {
+				prepareLoadedSegment(t, dir, mode.fill)
+			}
 			heapBefore := heapAlloc()
 			openStarted := time.Now()
-			store, err := newJSONLStore(dir, OpenOptions{Index: mode.index}, nil)
+			var pauses []time.Duration
+			store, err := newJSONLStore(dir, OpenOptions{Index: mode.index, Rotation: mode.rotation, rotationPause: func(d time.Duration) { pauses = append(pauses, d) }}, nil)
 			if err != nil {
 				t.Fatalf("open the copy: %v", err)
 			}
@@ -151,16 +176,57 @@ func TestMeasureActionStoreAcceptance(t *testing.T) {
 			if s, ok := store.IndexStats(); ok {
 				stats = s
 			}
+			segmentBytes := int64(0)
+			if mode.rotation {
+				segmentBytes = store.idx.currentBytes()
+				// A rotation by day: the clock says it is tomorrow, and the next write
+				// closes the segment. The pause is how long the store was stopped.
+				tomorrow := time.Now().Add(26 * time.Hour)
+				store.rot.now = func() time.Time { return tomorrow }
+				if _, _, err := manager.CreateAction(ctx, actionmanager.CreateInput{TaskID: task, RunID: run, Kind: domainaction.KindTool, Name: "measure"}); err != nil {
+					t.Fatal(err)
+				}
+				if len(pauses) != 1 {
+					t.Fatalf("the day rotation happened %d times", len(pauses))
+				}
+			}
 			writeWall := append(append([]time.Duration(nil), createWall...), completeWall...)
 			t.Logf("MEASURE mode=%s action_lines=%s action_bytes=%d attempt_bytes=%d open=%v heap_delta=%.1fMB "+
-				"write_wall_p50=%v write_total_p50=%v write_exec_p50=%v write_commit_p50=%v read_tx_p50=%v get_action_p50=%v tool_call_p50=%v list_open_p50=%v list_native_p50=%v list_run_p50=%v list_kind_name_p50=%v build=%v rebuilds=%d rounds=%d",
+				"write_wall_p50=%v write_total_p50=%v write_exec_p50=%v write_commit_p50=%v read_tx_p50=%v get_action_p50=%v tool_call_p50=%v list_open_p50=%v list_native_p50=%v list_run_p50=%v list_kind_name_p50=%v build=%v rebuilds=%d rounds=%d segments=%d segment_bytes=%d rotate_pause=%v",
 				mode.name, countLines(t, filepath.Join(src, actionFilename)), fileSizeForMeasure(t, filepath.Join(src, actionFilename)), fileSizeForMeasure(t, filepath.Join(src, attemptFilename)),
 				opened.Round(time.Millisecond), float64(int64(heapAfter)-int64(heapBefore))/(1<<20),
-				p50(writeWall), p50(totals), p50(execs), p50(commits), p50(checkWall), p50(getWall), p50(toolCall), listOpen, listNative, listRun, listKindName, stats.BuildDuration.Round(time.Millisecond), stats.Rebuilds, rounds)
+				p50(writeWall), p50(totals), p50(execs), p50(commits), p50(checkWall), p50(getWall), p50(toolCall), listOpen, listNative, listRun, listKindName, stats.BuildDuration.Round(time.Millisecond), stats.Rebuilds, rounds, stats.Segments, segmentBytes, firstOrZero(pauses))
 			if mode.index {
 				requireSnapshotEqualsLog(t, store)
 			}
 		})
+	}
+}
+
+func firstOrZero(values []time.Duration) time.Duration {
+	if len(values) == 0 {
+		return 0
+	}
+	return values[0].Round(time.Microsecond)
+}
+
+// prepareLoadedSegment turns the plain store in dir into a store on layout v2 whose
+// only segment already holds about fill bytes of synthetic records: segment 0 is
+// recorded and frozen as it is, and the segment of today is written by the same
+// generator the synthetic store uses.
+func prepareLoadedSegment(t *testing.T, dir string, fill int64) {
+	t.Helper()
+	frozen, err := segmentFileSizes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segDir := segmentDir(dir, segmentname.Format(segmentname.UTCDay(time.Now()), 1))
+	writeSyntheticStore(t, segDir, int(fill/1375)+1) // about 1.4 KB of the two logs per Action
+	if _, err := writeFileAtomically(layoutPath(dir), formatSizeRecord(layoutVersionLine, layoutFrozenWord, frozen), nil, "layout"); err != nil {
+		t.Fatal(err)
+	}
+	if err := freezeSegmentZero(dir); err != nil {
+		t.Fatal(err)
 	}
 }
 
