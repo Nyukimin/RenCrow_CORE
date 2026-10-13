@@ -17,6 +17,7 @@ import (
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/txobserve"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -40,7 +41,8 @@ type JSONLStore struct {
 	lifecycle         *taskStoreLifecycle
 	executionFence    *taskExecutionFence
 	batch             *jsonlbatch.Store
-	txObserver        *txObserver
+	txObserver        *txobserve.Observer
+	txHot             *txHotPaths
 	rot               *rotationState // segment rotation (nil for a reader)
 	idx               *taskIndex     // optional in-memory index (OpenOptions.Index); nil keeps the original path
 	root              string
@@ -140,8 +142,9 @@ func openJSONLStore(root string, readOnly bool, opts OpenOptions) (*JSONLStore, 
 	store.rot = newRotationState(opts)
 	// Only the writer observes transaction timing; short-lived read-only handles
 	// (CLI) stay silent.
-	store.txObserver = newTxObserver(store.statePath, store.runPath)
-	batch.SetTxObserver(store.txObserver.observe)
+	store.txHot = newTxHotPaths(store.statePath, store.runPath)
+	store.txObserver = newTxObserver(store.txHot)
+	batch.SetTxObserver(store.txObserver.Observe)
 	if err := batch.Recover(context.Background()); err != nil {
 		return nil, fmt.Errorf("recover task store batch: %w", err)
 	}

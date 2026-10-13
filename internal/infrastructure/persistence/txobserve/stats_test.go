@@ -1,4 +1,4 @@
-package task
+package txobserve
 
 import (
 	"errors"
@@ -10,6 +10,10 @@ import (
 )
 
 func ms(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+
+// testPrefix is the task store's prefix: the format tests pin the exact lines the
+// task store has always written, so moving the code here changed none of them.
+const testPrefix = "[TaskStore]"
 
 func TestPercentileUsesNearestRank(t *testing.T) {
 	ten := make([]time.Duration, 10)
@@ -58,36 +62,36 @@ func TestStatOfSortsACopyAndReportsEmpty(t *testing.T) {
 	}
 }
 
-func TestTxRingKeepsTheLatestSamplesOldestFirst(t *testing.T) {
-	ring := newTxRing(3)
+func TestRingKeepsTheLatestSamplesOldestFirst(t *testing.T) {
+	ring := newRing(3)
 	if got := ring.samples(); len(got) != 0 {
 		t.Fatalf("empty ring samples = %v", got)
 	}
 	base := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
 	for i := 1; i <= 5; i++ {
-		ring.add(txSample{At: base.Add(time.Duration(i) * time.Second), Exec: ms(i)})
+		ring.add(sample{At: base.Add(time.Duration(i) * time.Second), Exec: ms(i)})
 	}
 	got := ring.samples()
 	if len(got) != 3 || got[0].Exec != ms(3) || got[1].Exec != ms(4) || got[2].Exec != ms(5) {
 		t.Fatalf("ring samples = %+v, want the last three oldest first", got)
 	}
-	ring.add(txSample{Exec: ms(6)})
+	ring.add(sample{Exec: ms(6)})
 	if got := ring.samples(); len(got) != 3 || got[0].Exec != ms(4) || got[2].Exec != ms(6) {
 		t.Fatalf("ring samples after wrap = %+v", got)
 	}
 }
 
-func TestTxRingCapacityBoundsMemory(t *testing.T) {
-	ring := newTxRing(txRingCapacity)
-	for i := 0; i < txRingCapacity*3+7; i++ {
-		ring.add(txSample{Exec: ms(i)})
+func TestRingCapacityBoundsMemory(t *testing.T) {
+	ring := newRing(ringCapacity)
+	for i := 0; i < ringCapacity*3+7; i++ {
+		ring.add(sample{Exec: ms(i)})
 	}
-	if got := len(ring.samples()); got != txRingCapacity {
-		t.Fatalf("ring holds %d samples, want %d", got, txRingCapacity)
+	if got := len(ring.samples()); got != ringCapacity {
+		t.Fatalf("ring holds %d samples, want %d", got, ringCapacity)
 	}
 }
 
-func TestNewTxSampleClassifiesPopulations(t *testing.T) {
+func TestNewSampleClassifiesPopulations(t *testing.T) {
 	at := time.Date(2026, 10, 10, 1, 2, 3, 0, time.UTC)
 	cases := []struct {
 		name         string
@@ -105,18 +109,18 @@ func TestNewTxSampleClassifiesPopulations(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := newTxSample(tc.tx, at)
+			got := newSample(tc.tx, at)
 			if got.Write != tc.wantWrite || got.Acquired != tc.wantAcquired || got.Appended != tc.wantAppended || got.result() != tc.wantResult || !got.At.Equal(at) {
-				t.Fatalf("newTxSample = %+v result=%s, want write=%v acquired=%v appended=%v result=%s",
+				t.Fatalf("newSample = %+v result=%s, want write=%v acquired=%v appended=%v result=%s",
 					got, got.result(), tc.wantWrite, tc.wantAcquired, tc.wantAppended, tc.wantResult)
 			}
 		})
 	}
 }
 
-func TestSummarizeTxSeparatesKindsAndPopulations(t *testing.T) {
+func TestSummarizeSeparatesKindsAndPopulations(t *testing.T) {
 	now := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
-	samples := []txSample{
+	samples := []sample{
 		{At: now.Add(-9 * time.Minute), Write: true, Acquired: true, Appended: true, LockWait: ms(10), Settle: ms(1), Exec: ms(100), Commit: ms(20)},
 		{At: now.Add(-8 * time.Minute), Write: true, Acquired: true, Appended: true, LockWait: ms(30), Settle: ms(3), Exec: ms(300), Commit: ms(40)},
 		// A write whose callback failed: it held the lock and decoded, but never committed.
@@ -126,7 +130,7 @@ func TestSummarizeTxSeparatesKindsAndPopulations(t *testing.T) {
 		{At: now.Add(-5 * time.Minute), Acquired: true, LockWait: ms(5), Settle: ms(1), Exec: ms(70)},
 		{At: now.Add(-1 * time.Minute), Acquired: true, LockWait: ms(15), Settle: ms(2), Exec: ms(90)},
 	}
-	sum := summarizeTx(samples, now)
+	sum := summarize(samples, now)
 	if sum.Window != 9*time.Minute {
 		t.Fatalf("Window = %v, want the age of the oldest sample", sum.Window)
 	}
@@ -152,44 +156,44 @@ func TestSummarizeTxSeparatesKindsAndPopulations(t *testing.T) {
 	}
 }
 
-func TestSummarizeTxOfNothingIsZero(t *testing.T) {
-	if sum := summarizeTx(nil, time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)); sum.Write.N != 0 || sum.Read.N != 0 || sum.Window != 0 {
+func TestSummarizeOfNothingIsZero(t *testing.T) {
+	if sum := summarize(nil, time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)); sum.Write.N != 0 || sum.Read.N != 0 || sum.Window != 0 {
 		t.Fatalf("summary of no samples = %+v, want zero", sum)
 	}
 }
 
-func TestIsSlowTxThresholds(t *testing.T) {
+func TestIsSlowThresholds(t *testing.T) {
 	const execCommit, lockWait = 5 * time.Second, 10 * time.Second
 	tests := []struct {
 		name   string
-		sample txSample
+		sample sample
 		want   bool
 	}{
-		{"exec plus commit at the limit", txSample{Exec: 3 * time.Second, Commit: 2 * time.Second}, false},
-		{"exec plus commit over the limit", txSample{Exec: 3 * time.Second, Commit: 2*time.Second + 1}, true},
-		{"exec alone over the limit", txSample{Exec: 5*time.Second + 1}, true},
-		{"lock wait at the limit", txSample{LockWait: lockWait}, false},
-		{"lock wait over the limit", txSample{LockWait: lockWait + 1}, true},
-		{"settle is not part of the rule", txSample{Settle: time.Minute}, false},
-		{"unacquired lock waited long", txSample{LockWait: 11 * time.Second}, true},
-		{"fast", txSample{LockWait: ms(1), Exec: ms(10), Commit: ms(5)}, false},
+		{"exec plus commit at the limit", sample{Exec: 3 * time.Second, Commit: 2 * time.Second}, false},
+		{"exec plus commit over the limit", sample{Exec: 3 * time.Second, Commit: 2*time.Second + 1}, true},
+		{"exec alone over the limit", sample{Exec: 5*time.Second + 1}, true},
+		{"lock wait at the limit", sample{LockWait: lockWait}, false},
+		{"lock wait over the limit", sample{LockWait: lockWait + 1}, true},
+		{"settle is not part of the rule", sample{Settle: time.Minute}, false},
+		{"unacquired lock waited long", sample{LockWait: 11 * time.Second}, true},
+		{"fast", sample{LockWait: ms(1), Exec: ms(10), Commit: ms(5)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isSlowTx(tt.sample, execCommit, lockWait); got != tt.want {
-				t.Fatalf("isSlowTx(%+v) = %v, want %v", tt.sample, got, tt.want)
+			if got := isSlow(tt.sample, execCommit, lockWait); got != tt.want {
+				t.Fatalf("isSlow(%+v) = %v, want %v", tt.sample, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestTxConstantsMatchTheSpecifiedThresholds(t *testing.T) {
-	if txSlowExecCommit != 5*time.Second || txSlowLockWait != 10*time.Second || txSummaryInterval != 10*time.Minute || txRingCapacity != 512 {
-		t.Fatalf("thresholds = %v/%v/%v/%d, want 5s/10s/10m/512", txSlowExecCommit, txSlowLockWait, txSummaryInterval, txRingCapacity)
+func TestConstantsMatchTheSpecifiedThresholds(t *testing.T) {
+	if slowExecCommit != 5*time.Second || slowLockWait != 10*time.Second || summaryInterval != 10*time.Minute || ringCapacity != 512 {
+		t.Fatalf("thresholds = %v/%v/%v/%d, want 5s/10s/10m/512", slowExecCommit, slowLockWait, summaryInterval, ringCapacity)
 	}
 }
 
-func TestTxSummaryDue(t *testing.T) {
+func TestSummaryDue(t *testing.T) {
 	last := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name string
@@ -204,47 +208,47 @@ func TestTxSummaryDue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := txSummaryDue(last, tt.now, txSummaryInterval); got != tt.want {
-				t.Fatalf("txSummaryDue(now=%v) = %v, want %v", tt.now.Sub(last), got, tt.want)
+			if got := summaryDue(last, tt.now, summaryInterval); got != tt.want {
+				t.Fatalf("summaryDue(now=%v) = %v, want %v", tt.now.Sub(last), got, tt.want)
 			}
 		})
 	}
 }
 
-func TestFormatTxSlowLine(t *testing.T) {
-	sample := txSample{Write: true, Acquired: true, Appended: true, LockWait: 1234 * time.Millisecond, Settle: 3 * time.Millisecond, Exec: 5600 * time.Millisecond, Commit: 1200 * time.Millisecond}
-	hot := hotSizes{state: 66200000, run: 29000000, ok: true}
-	got := formatTxSlowLine(sample, txLabel{op: "TaskTransaction", taskID: "tsk_1"}, []string{"task_run.jsonl", "task_state.jsonl"}, hot)
+func TestFormatSlowLine(t *testing.T) {
+	slow := sample{Write: true, Acquired: true, Appended: true, LockWait: 1234 * time.Millisecond, Settle: 3 * time.Millisecond, Exec: 5600 * time.Millisecond, Commit: 1200 * time.Millisecond}
+	hot := HotSizes{Files: []HotFile{{Name: "task_state", Bytes: 66200000}, {Name: "task_run", Bytes: 29000000}}, OK: true}
+	got := formatSlowLine(testPrefix, slow, Label{Op: "TaskTransaction", ScopeKey: "task_id", ScopeValue: "tsk_1"}, []string{"task_run.jsonl", "task_state.jsonl"}, hot)
 	want := "[TaskStore] tx slow kind=write op=TaskTransaction task_id=tsk_1 result=ok lock_wait=1.234s settle=3ms exec=5.6s commit=1.2s files=task_run.jsonl+task_state.jsonl hot_bytes=95200000"
 	if got != want {
 		t.Fatalf("slow line =\n%s\nwant\n%s", got, want)
 	}
 
-	read := txSample{Acquired: true, LockWait: ms(1), Exec: 6 * time.Second}
-	got = formatTxSlowLine(read, txLabel{}, nil, hotSizes{})
+	read := sample{Acquired: true, LockWait: ms(1), Exec: 6 * time.Second}
+	got = formatSlowLine(testPrefix, read, Label{}, nil, HotSizes{})
 	want = "[TaskStore] tx slow kind=read op=unlabeled result=ok lock_wait=1ms settle=0s exec=6s commit=0s hot_bytes=unknown"
 	if got != want {
 		t.Fatalf("slow line without label/task/files/hot =\n%s\nwant\n%s", got, want)
 	}
 
-	failed := txSample{Write: true, LockWait: 11 * time.Second}
-	got = formatTxSlowLine(failed, txLabel{op: "Transaction"}, nil, hot)
+	failed := sample{Write: true, LockWait: 11 * time.Second}
+	got = formatSlowLine(testPrefix, failed, Label{Op: "Transaction"}, nil, hot)
 	want = "[TaskStore] tx slow kind=write op=Transaction result=lock_failed lock_wait=11s settle=0s exec=0s commit=0s hot_bytes=95200000"
 	if got != want {
 		t.Fatalf("slow line for an unacquired lock =\n%s\nwant\n%s", got, want)
 	}
 }
 
-func TestFormatTxSummaryLine(t *testing.T) {
+func TestFormatSummaryLine(t *testing.T) {
 	stat := func(p50, p95 int) durationStat {
 		return durationStat{N: 3, P50: ms(p50), P95: ms(p95)}
 	}
-	sum := txSummary{
+	sum := summary{
 		Window: 9*time.Minute + 58*time.Second + 400*time.Millisecond,
-		Write:  txKindSummary{N: 312, LockWait: stat(1, 2), Settle: stat(3, 4), Exec: stat(5, 6), Commit: stat(7, 8)},
-		Read:   txKindSummary{N: 40, LockWait: stat(9, 10), Settle: stat(11, 12), Exec: stat(13, 14)},
+		Write:  kindSummary{N: 312, LockWait: stat(1, 2), Settle: stat(3, 4), Exec: stat(5, 6), Commit: stat(7, 8)},
+		Read:   kindSummary{N: 40, LockWait: stat(9, 10), Settle: stat(11, 12), Exec: stat(13, 14)},
 	}
-	got := formatTxSummaryLine(sum, hotSizes{state: 66200000, run: 29000000, ok: true})
+	got := formatSummaryLine(testPrefix, sum, HotSizes{Files: []HotFile{{Name: "task_state", Bytes: 66200000}, {Name: "task_run", Bytes: 29000000}}, OK: true})
 	want := "[TaskStore] tx summary window=9m58s" +
 		" write_n=312 write_lock_wait_p50=1ms write_lock_wait_p95=2ms write_settle_p50=3ms write_settle_p95=4ms" +
 		" write_exec_p50=5ms write_exec_p95=6ms write_commit_p50=7ms write_commit_p95=8ms" +
@@ -255,7 +259,7 @@ func TestFormatTxSummaryLine(t *testing.T) {
 		t.Fatalf("summary line =\n%s\nwant\n%s", got, want)
 	}
 
-	empty := formatTxSummaryLine(txSummary{Window: time.Minute, Write: txKindSummary{N: 1, LockWait: durationStat{N: 1, P50: ms(1), P95: ms(1)}}}, hotSizes{})
+	empty := formatSummaryLine(testPrefix, summary{Window: time.Minute, Write: kindSummary{N: 1, LockWait: durationStat{N: 1, P50: ms(1), P95: ms(1)}}}, HotSizes{})
 	for _, token := range []string{" write_exec_p50=-", " write_commit_p95=-", " read_n=0", " read_exec_p50=-", " hot_bytes=unknown"} {
 		if !strings.Contains(empty, token) {
 			t.Fatalf("summary line %q lacks %q", empty, token)

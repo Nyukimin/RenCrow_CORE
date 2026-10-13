@@ -2,156 +2,72 @@ package task
 
 import (
 	"context"
-	"log"
-	"os"
 	"sync"
-	"time"
 
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/txobserve"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// txLabel names the store entry point (and the Task, when scoped to one) that
-// started a batch transaction. The store knows nothing about the Manager-level
-// operation (Create / Start / Succeed), so op is the store method name.
-type txLabel struct {
-	op     string
-	taskID modulecore.TaskID
-}
+// The task store's transaction timing observation is the shared txobserve
+// package; this file supplies only what is the task store's own: the log prefix,
+// the task_id label scope, and the two hot files (which move on rotation).
+const (
+	// txLogPrefix tags every line this observation writes.
+	txLogPrefix = "[TaskStore]"
+	// txScopeTaskID is the label key the Task scope is printed under.
+	txScopeTaskID = "task_id"
+	// The hot file names the summary line reports sizes under
+	// (task_state_bytes, task_run_bytes).
+	txHotStateName = "task_state"
+	txHotRunName   = "task_run"
+)
 
-type txLabelKey struct{}
-
-// withTxLabel attaches the label that txObserver reads back from the context
-// jsonlbatch hands it. A nil context is returned unchanged (the transaction is
-// then reported as unlabeled).
+// withTxLabel attaches the label that the observer reads back from the context
+// jsonlbatch hands it. The store knows nothing about the Manager-level operation
+// (Create / Start / Succeed), so op is the store method name. A nil context is
+// returned unchanged (the transaction is then reported as unlabeled).
 func withTxLabel(ctx context.Context, op string, taskID modulecore.TaskID) context.Context {
-	if ctx == nil {
-		return nil
-	}
-	return context.WithValue(ctx, txLabelKey{}, txLabel{op: op, taskID: taskID})
+	return txobserve.WithLabel(ctx, txobserve.Label{Op: op, ScopeKey: txScopeTaskID, ScopeValue: string(taskID)})
 }
 
-func txLabelFrom(ctx context.Context) txLabel {
-	if ctx == nil {
-		return txLabel{}
-	}
-	label, _ := ctx.Value(txLabelKey{}).(txLabel)
-	return label
+// txHotPaths are the two files every task transaction decodes. A rotation points
+// it at the files of the new segment; the observer may size them from the
+// goroutine of any transaction that finishes, so access is guarded.
+type txHotPaths struct {
+	mu    sync.RWMutex
+	state string
+	run   string
 }
 
-// txObserverDeps are the effects txObserver needs; tests replace them.
-type txObserverDeps struct {
-	now      func() time.Time
-	logf     func(format string, args ...any)
-	statSize func(path string) (int64, error)
+func newTxHotPaths(statePath, runPath string) *txHotPaths {
+	return &txHotPaths{state: statePath, run: runPath}
 }
 
-func fileSize(path string) (int64, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0, err
-	}
-	return info.Size(), nil
+// set points the sizing at the two hot files of another segment.
+func (p *txHotPaths) set(statePath, runPath string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.state, p.run = statePath, runPath
 }
 
-// txObserver turns jsonlbatch observations into the slow-transaction line and
-// the periodic summary line. It starts no goroutine and no timer: both lines are
-// written from observe, on the goroutine of the transaction that just finished.
-type txObserver struct {
-	pathsMu            sync.RWMutex // guards statePath and runPath, which a rotation changes
-	statePath, runPath string
-	now                func() time.Time
-	logf               func(format string, args ...any)
-	statSize           func(path string) (int64, error)
+// sizes stats the two hot files. It never decodes them.
+func (p *txHotPaths) sizes() txobserve.HotSizes {
+	p.mu.RLock()
+	statePath, runPath := p.state, p.run
+	p.mu.RUnlock()
+	return txobserve.SizeFiles(
+		txobserve.HotPath{Name: txHotStateName, Path: statePath},
+		txobserve.HotPath{Name: txHotRunName, Path: runPath},
+	)
+}
 
-	// Thresholds default to the package constants. They are fields only so tests
-	// can force the slow path; they are not configuration.
-	slowExecCommit  time.Duration
-	slowLockWait    time.Duration
-	summaryInterval time.Duration
-
-	mu          sync.Mutex
-	ring        *txRing
-	lastSummary time.Time
+// txObserverOptions are the options the task store's observer is built from.
+// Tests change a copy to capture the log or force the slow path.
+func txObserverOptions(hot *txHotPaths) txobserve.Options {
+	return txobserve.Options{Prefix: txLogPrefix, Hot: hot.sizes}
 }
 
 // newTxObserver builds the production observer for the two hot files.
-func newTxObserver(statePath, runPath string) *txObserver {
-	return newTxObserverWith(statePath, runPath, txObserverDeps{})
-}
-
-func newTxObserverWith(statePath, runPath string, deps txObserverDeps) *txObserver {
-	if deps.now == nil {
-		deps.now = time.Now
-	}
-	if deps.logf == nil {
-		deps.logf = log.Printf
-	}
-	if deps.statSize == nil {
-		deps.statSize = fileSize
-	}
-	return &txObserver{
-		statePath:       statePath,
-		runPath:         runPath,
-		now:             deps.now,
-		logf:            deps.logf,
-		statSize:        deps.statSize,
-		slowExecCommit:  txSlowExecCommit,
-		slowLockWait:    txSlowLockWait,
-		summaryInterval: txSummaryInterval,
-		ring:            newTxRing(txRingCapacity),
-		// The first summary comes one interval after the store opened, so it
-		// never covers a handful of start-up transactions.
-		lastSummary: deps.now(),
-	}
-}
-
-// observe is the jsonlbatch.TxObserver. jsonlbatch calls it after releasing the
-// OS lock, so the stat and log calls here never lengthen the lock hold time.
-func (o *txObserver) observe(ctx context.Context, tx jsonlbatch.TxObservation) {
-	now := o.now()
-	sample := newTxSample(tx, now)
-	slow := isSlowTx(sample, o.slowExecCommit, o.slowLockWait)
-
-	var summarySamples []txSample
-	o.mu.Lock()
-	o.ring.add(sample)
-	due := txSummaryDue(o.lastSummary, now, o.summaryInterval)
-	if due {
-		// Claim the summary under the mutex so concurrent finishers print it once.
-		o.lastSummary = now
-		summarySamples = o.ring.samples()
-	}
-	o.mu.Unlock()
-
-	if !slow && !due {
-		return
-	}
-	hot := o.hotSizes()
-	if slow {
-		o.logf("%s", formatTxSlowLine(sample, txLabelFrom(ctx), tx.Files, hot))
-	}
-	if due {
-		o.logf("%s", formatTxSummaryLine(summarizeTx(summarySamples, now), hot))
-	}
-}
-
-// setPaths points the observer at the two hot files of another segment.
-func (o *txObserver) setPaths(statePath, runPath string) {
-	o.pathsMu.Lock()
-	defer o.pathsMu.Unlock()
-	o.statePath, o.runPath = statePath, runPath
-}
-
-// hotSizes stats the two hot files. It never decodes them.
-func (o *txObserver) hotSizes() hotSizes {
-	o.pathsMu.RLock()
-	statePath, runPath := o.statePath, o.runPath
-	o.pathsMu.RUnlock()
-	state, stateErr := o.statSize(statePath)
-	run, runErr := o.statSize(runPath)
-	if stateErr != nil || runErr != nil {
-		return hotSizes{}
-	}
-	return hotSizes{state: state, run: run, ok: true}
+func newTxObserver(hot *txHotPaths) *txobserve.Observer {
+	return txobserve.New(txObserverOptions(hot))
 }

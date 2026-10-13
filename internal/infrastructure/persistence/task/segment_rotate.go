@@ -356,7 +356,7 @@ func (s *JSONLStore) installSegment(next *jsonlbatch.Store, ref segmentRef) erro
 	if err := s.idx.closeCurrentSegment(ref); err != nil {
 		return fmt.Errorf("close the current segment in the index: %w", err)
 	}
-	next.SetTxObserver(s.txObserver.observe)
+	next.SetTxObserver(s.txObserver.Observe)
 	next.SetPostCommitHook(s.idx.onCommitFor(ref.ord))
 	s.batch.SetPostCommitHook(nil)
 	s.batch = next
@@ -364,7 +364,7 @@ func (s *JSONLStore) installSegment(next *jsonlbatch.Store, ref segmentRef) erro
 	s.runPath = filepath.Join(ref.dir, runFilename)
 	s.contextPath = filepath.Join(ref.dir, contextFilename)
 	s.notificationsPath = filepath.Join(ref.dir, notificationsFilename)
-	s.txObserver.setPaths(s.statePath, s.runPath)
+	s.txHot.set(s.statePath, s.runPath)
 	return nil
 }
 

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
 )
 
 // benchObserverTaskCount is how many Task/Run pairs the store holds before the
@@ -98,37 +97,5 @@ func BenchmarkTaskStoreTransactionObserver(b *testing.B) {
 				}
 			}
 		})
-	}
-}
-
-// BenchmarkTxObserverObserve measures the observer's own work for a fast
-// transaction (ring insert and threshold checks), the cost added to every tx.
-func BenchmarkTxObserverObserve(b *testing.B) {
-	observer := newTxObserver("task_state.jsonl", "task_run.jsonl")
-	observer.logf = func(string, ...any) {}
-	tx := jsonlbatch.TxObservation{Kind: jsonlbatch.TxKindWrite, Acquired: true, LockWait: time.Millisecond, Exec: 20 * time.Millisecond, Commit: 5 * time.Millisecond, Files: []string{"task_state.jsonl"}}
-	ctx := withTxLabel(context.Background(), "TaskTransaction", "tsk_bench")
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		observer.observe(ctx, tx)
-	}
-}
-
-// BenchmarkSummarizeTx measures the once-per-interval aggregation over a full ring.
-func BenchmarkSummarizeTx(b *testing.B) {
-	ring := newTxRing(txRingCapacity)
-	now := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
-	for i := 0; i < txRingCapacity; i++ {
-		ring.add(txSample{At: now.Add(time.Duration(i) * time.Second), Write: i%3 != 0, Acquired: true, Appended: i%3 != 0,
-			LockWait: time.Duration(i) * time.Millisecond, Exec: time.Duration(i*7) * time.Millisecond, Commit: time.Duration(i) * time.Millisecond})
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		sum := summarizeTx(ring.samples(), now.Add(time.Hour))
-		if sum.Write.N == 0 {
-			b.Fatal("empty summary")
-		}
 	}
 }

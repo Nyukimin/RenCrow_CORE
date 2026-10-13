@@ -12,202 +12,14 @@ import (
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
-	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/txobserve"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// txHarness drives a txObserver with a fake clock, a fake stat and a captured log.
-type txHarness struct {
-	mu        sync.Mutex
-	now       time.Time
-	lines     []string
-	statCalls int
-	observer  *txObserver
-}
-
-func newTxHarness(t *testing.T) *txHarness {
-	t.Helper()
-	h := &txHarness{now: time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)}
-	h.observer = newTxObserverWith("state.jsonl", "run.jsonl", txObserverDeps{
-		now: func() time.Time {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			return h.now
-		},
-		logf: func(format string, args ...any) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			h.lines = append(h.lines, fmt.Sprintf(format, args...))
-		},
-		statSize: func(path string) (int64, error) {
-			h.mu.Lock()
-			defer h.mu.Unlock()
-			h.statCalls++
-			if path == "state.jsonl" {
-				return 1000, nil
-			}
-			return 234, nil
-		},
-	})
-	return h
-}
-
-func (h *txHarness) advance(d time.Duration) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.now = h.now.Add(d)
-}
-
-func (h *txHarness) logged() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]string(nil), h.lines...)
-}
-
-func (h *txHarness) stats() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.statCalls
-}
-
-func fastWrite() jsonlbatch.TxObservation {
-	return jsonlbatch.TxObservation{Kind: jsonlbatch.TxKindWrite, Acquired: true, LockWait: ms(1), Exec: ms(20), Commit: ms(5), Files: []string{"task_state.jsonl"}}
-}
-
-func TestTxObserverStaysSilentAndSkipsStatForFastTransactions(t *testing.T) {
-	h := newTxHarness(t)
-	for i := 0; i < 50; i++ {
-		h.observer.observe(context.Background(), fastWrite())
-		h.advance(time.Second)
-	}
-	if lines := h.logged(); len(lines) != 0 {
-		t.Fatalf("fast transactions logged %v, want nothing before the summary interval", lines)
-	}
-	if h.stats() != 0 {
-		t.Fatalf("stat called %d times for fast transactions, want 0 (only slow lines and summaries stat)", h.stats())
-	}
-}
-
-func TestTxObserverLogsOneSlowLinePerSlowTransaction(t *testing.T) {
-	h := newTxHarness(t)
-	ctx := withTxLabel(context.Background(), "TaskTransaction", modulecore.TaskID("tsk_slow"))
-	slow := fastWrite()
-	slow.Exec = 5 * time.Second
-	slow.Commit = time.Second
-	h.observer.observe(ctx, slow)
-	h.observer.observe(ctx, fastWrite())
-	lockSlow := fastWrite()
-	lockSlow.LockWait = 11 * time.Second
-	h.observer.observe(withTxLabel(context.Background(), "Transaction", ""), lockSlow)
-
-	lines := h.logged()
-	if len(lines) != 2 {
-		t.Fatalf("lines = %v, want one line per slow transaction", lines)
-	}
-	want := "[TaskStore] tx slow kind=write op=TaskTransaction task_id=tsk_slow result=ok lock_wait=1ms settle=0s exec=5s commit=1s files=task_state.jsonl hot_bytes=1234"
-	if lines[0] != want {
-		t.Fatalf("slow line =\n%s\nwant\n%s", lines[0], want)
-	}
-	if !strings.Contains(lines[1], "op=Transaction ") || strings.Contains(lines[1], "task_id=") || !strings.Contains(lines[1], "lock_wait=11s") {
-		t.Fatalf("lock-wait slow line = %q", lines[1])
-	}
-}
-
-func TestTxObserverSlowLineWithoutLabelIsMarkedUnlabeled(t *testing.T) {
-	h := newTxHarness(t)
-	slow := fastWrite()
-	slow.Exec = 6 * time.Second
-	h.observer.observe(context.Background(), slow)
-	lines := h.logged()
-	if len(lines) != 1 || !strings.Contains(lines[0], "op=unlabeled") {
-		t.Fatalf("lines = %v, want one unlabeled slow line", lines)
-	}
-}
-
-func TestTxObserverSummaryIsEmittedAtMostOncePerInterval(t *testing.T) {
-	h := newTxHarness(t)
-	h.observer.observe(context.Background(), fastWrite())
-	h.advance(txSummaryInterval - time.Second)
-	h.observer.observe(context.Background(), fastWrite())
-	if lines := h.logged(); len(lines) != 0 {
-		t.Fatalf("lines before the interval = %v, want none", lines)
-	}
-
-	h.advance(time.Second)
-	h.observer.observe(context.Background(), jsonlbatch.TxObservation{Kind: jsonlbatch.TxKindRead, Acquired: true, Exec: ms(40)})
-	lines := h.logged()
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "[TaskStore] tx summary window=10m0s write_n=2 ") || !strings.Contains(lines[0], " read_n=1 ") || !strings.HasSuffix(lines[0], " hot_bytes=1234 task_state_bytes=1000 task_run_bytes=234") {
-		t.Fatalf("summary lines = %v", lines)
-	}
-
-	// Within the next interval nothing more is printed, however many transactions finish.
-	for i := 0; i < 20; i++ {
-		h.advance(10 * time.Second)
-		h.observer.observe(context.Background(), fastWrite())
-	}
-	if lines := h.logged(); len(lines) != 1 {
-		t.Fatalf("lines inside the second interval = %d, want still 1", len(lines))
-	}
-
-	h.advance(txSummaryInterval)
-	h.observer.observe(context.Background(), fastWrite())
-	if lines := h.logged(); len(lines) != 2 {
-		t.Fatalf("lines after the second interval = %d, want 2", len(lines))
-	}
-}
-
-func TestTxObserverPrintsNothingWhileNoTransactionFinishes(t *testing.T) {
-	h := newTxHarness(t)
-	h.observer.observe(context.Background(), fastWrite())
-	// A long quiet period must not produce output by itself: there is no timer.
-	h.advance(24 * time.Hour)
-	if lines := h.logged(); len(lines) != 0 {
-		t.Fatalf("lines during a quiet period = %v, want none", lines)
-	}
-	h.observer.observe(context.Background(), fastWrite())
-	if lines := h.logged(); len(lines) != 1 || !strings.Contains(lines[0], "tx summary") {
-		t.Fatalf("lines after the next transaction = %v, want one summary", lines)
-	}
-}
-
-func TestTxObserverSummaryCoversOnlyTheLastRingCapacitySamples(t *testing.T) {
-	h := newTxHarness(t)
-	for i := 0; i < txRingCapacity+100; i++ {
-		h.observer.observe(context.Background(), fastWrite())
-	}
-	h.advance(txSummaryInterval)
-	h.observer.observe(context.Background(), fastWrite())
-	lines := h.logged()
-	if len(lines) != 1 || !strings.Contains(lines[0], fmt.Sprintf(" write_n=%d ", txRingCapacity)) {
-		t.Fatalf("lines = %v, want a summary over exactly %d samples", lines, txRingCapacity)
-	}
-}
-
-func TestTxObserverClaimsTheSummaryOnceUnderConcurrency(t *testing.T) {
-	h := newTxHarness(t)
-	h.advance(txSummaryInterval)
-	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			h.observer.observe(context.Background(), fastWrite())
-		}()
-	}
-	wg.Wait()
-	if lines := h.logged(); len(lines) != 1 {
-		t.Fatalf("summary lines under concurrency = %d, want exactly 1: %v", len(lines), lines)
-	}
-}
-
-func TestTxObserverReportsLockFailureAsSlowWithoutPhases(t *testing.T) {
-	h := newTxHarness(t)
-	h.observer.observe(context.Background(), jsonlbatch.TxObservation{Kind: jsonlbatch.TxKindWrite, LockWait: 12 * time.Second, Err: context.DeadlineExceeded})
-	lines := h.logged()
-	if len(lines) != 1 || !strings.Contains(lines[0], "result=lock_failed") || strings.Contains(lines[0], "DeadlineExceeded") || strings.Contains(lines[0], "deadline") {
-		t.Fatalf("lines = %v, want a lock_failed line that carries no error text", lines)
-	}
-}
+// The timing arithmetic, the thresholds and both line formats are tested in
+// txobserve. These tests cover what the task store adds: that every entry point
+// is labelled, that the two hot files are sized (and followed on rotation), and
+// that a read-only handle stays silent.
 
 // labeledStoreHarness opens a real writer store whose observer treats every
 // transaction as slow, so each store entry point leaves one labelled line. It
@@ -221,18 +33,21 @@ func labeledStoreHarness(t *testing.T) (*JSONLStore, func() []string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if store.txObserver == nil {
+	if store.txObserver == nil || store.txHot == nil {
 		t.Fatal("writer store has no tx observer installed")
 	}
 	var mu sync.Mutex
 	var lines []string
-	store.txObserver.logf = func(format string, args ...any) {
+	opts := txObserverOptions(store.txHot)
+	opts.Logf = func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		lines = append(lines, fmt.Sprintf(format, args...))
 	}
-	store.txObserver.slowExecCommit = -1
-	store.txObserver.slowLockWait = -1
+	opts.SlowExecCommit = -1
+	opts.SlowLockWait = -1
+	store.txObserver = txobserve.New(opts)
+	store.batch.SetTxObserver(store.txObserver.Observe)
 	return store, func() []string {
 		mu.Lock()
 		defer mu.Unlock()
@@ -356,16 +171,97 @@ func TestReaderStoreHasNoTxObserver(t *testing.T) {
 	}
 }
 
-func TestWithTxLabelTolerantOfNilContext(t *testing.T) {
+func TestWithTxLabelCarriesTheOpAndTheTaskScope(t *testing.T) {
 	var nilCtx context.Context // a nil ctx must degrade to "unlabeled", not panic
-	if got := txLabelFrom(withTxLabel(nilCtx, "Transaction", "")); got != (txLabel{}) {
+	if got := txobserve.LabelFrom(withTxLabel(nilCtx, "Transaction", "")); got != (txobserve.Label{}) {
 		t.Fatalf("label from a nil context = %+v, want zero", got)
 	}
 	ctx := withTxLabel(context.Background(), "ReadTransaction", "tsk_x")
-	if got := txLabelFrom(ctx); got.op != "ReadTransaction" || got.taskID != "tsk_x" {
+	if got := txobserve.LabelFrom(ctx); got != (txobserve.Label{Op: "ReadTransaction", ScopeKey: "task_id", ScopeValue: "tsk_x"}) {
 		t.Fatalf("label = %+v", got)
 	}
-	if got := txLabelFrom(nilCtx); got != (txLabel{}) {
-		t.Fatalf("label from nil = %+v, want zero", got)
+}
+
+// The hot files are reported under the names the task store's summary has always
+// used, and a rotation moves the sizing to the new segment's files.
+func TestTxHotPathsNameTheFilesAndFollowARotation(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, size int) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, make([]byte, size), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	hot := newTxHotPaths(write("state-a", 1000), write("run-a", 234))
+
+	got := hot.sizes()
+	want := txobserve.HotSizes{Files: []txobserve.HotFile{{Name: "task_state", Bytes: 1000}, {Name: "task_run", Bytes: 234}}, OK: true}
+	if !got.OK || len(got.Files) != 2 || got.Files[0] != want.Files[0] || got.Files[1] != want.Files[1] {
+		t.Fatalf("sizes = %+v, want %+v", got, want)
+	}
+
+	hot.set(write("state-b", 70), write("run-b", 5))
+	got = hot.sizes()
+	if !got.OK || got.Files[0].Bytes != 70 || got.Files[1].Bytes != 5 {
+		t.Fatalf("sizes after the rotation = %+v, want the new segment's files", got)
+	}
+
+	hot.set(filepath.Join(dir, "missing-state"), filepath.Join(dir, "run-b"))
+	if got := hot.sizes(); got.OK || len(got.Files) != 0 {
+		t.Fatalf("sizes with an unreadable file = %+v, want unknown", got)
+	}
+}
+
+// The summary line a real store writes carries the real size of each hot file
+// under the task store's key names.
+func TestJSONLStoreSummaryReportsRealHotFileSizes(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	var mu sync.Mutex
+	var lines []string
+	opts := txObserverOptions(store.txHot)
+	opts.Logf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	opts.SummaryInterval = time.Nanosecond
+	store.txObserver = txobserve.New(opts)
+	store.batch.SetTxObserver(store.txObserver.Observe)
+
+	task := snapshotTestTask(time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC))
+	task.Status = domaintask.StatusQueued
+	task.StartedAt = nil
+	task.DependencyTaskIDs = nil
+	if err := store.SaveTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.SaveTask(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := os.Stat(filepath.Join(store.root, stateFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := os.Stat(filepath.Join(store.root, runFilename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) == 0 {
+		t.Fatal("no summary line was written")
+	}
+	last := lines[len(lines)-1]
+	want := fmt.Sprintf(" hot_bytes=%d task_state_bytes=%d task_run_bytes=%d", state.Size()+run.Size(), state.Size(), run.Size())
+	if !strings.HasPrefix(last, "[TaskStore] tx summary window=") || !strings.HasSuffix(last, want) {
+		t.Fatalf("summary line = %q, want a [TaskStore] summary ending with%s", last, want)
 	}
 }
