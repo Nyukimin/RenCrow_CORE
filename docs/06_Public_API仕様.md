@@ -84,7 +84,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・人物の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
-| `WS /stt` | Viewerの同一origin音声入力。COREが音声chunkをRenCrow_STTのHTTP公開APIへ中継する |
+| `WS /stt` | Viewerの同一origin音声入力。COREが発話ごとに音声を貯め、RenCrow_STTのHTTP公開APIへ発話につき1回だけ渡す（[WS /stt](#ws-stt)） |
 | `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
@@ -117,6 +117,60 @@ Step 08のdurable Task ownerは`internal/domain/task`である。`GET /viewer/ta
 `/viewer/task/detail?task_id=...`、Orchestrator Eventは`/viewer/logs?task_id=...`または
 `/viewer/logs?event_id=...`で参照します。routingとAgent assignmentはEventIDを持つ
 Canonical EventとしてTaskから逆参照できます。
+
+### WS /stt
+
+`WS /stt`は、Viewerの同一originから受けた音声をCOREが**発話単位**で貯め、RenCrow_STTの
+`POST /v1/audio/transcriptions`へ発話につき1回だけ渡すSTT routeです。発話の終わりを決めるのは
+クライアントのVADと`stop`制御であり、COREは音声のエネルギーで発話を区切りません。COREが持つのは
+最大長と無通信時間の安全弁だけです。`ready`の`protocol="utterance.v1"`がこの契約を示します。
+
+CORE → RenCrow_STTの契約は変わりません。multipartの`file`（`audio.wav`、16 kHz mono PCM16）と
+`response_format=json`だけを送り、`model`／`language`／`prompt`はRenCrow_STTとtargetが所有します。
+`NO_SPEECH_DETECTED`相当の空textは空の`final`になります。
+
+クライアント → CORE（text frameはJSON、binary frameは音声）:
+
+| message | 内容 |
+|---|---|
+| `{"type":"start","utterance_id":"…","sample_rate":16000,"channels":1,"format":"pcm_s16le"}` | 発話の開始。`utterance_id`は任意（64文字以下の印字可能文字。無い・不正ならCOREが`srv-<n>`を割り当て、`speech_start`で通知する）。音声形式の項目は省略できる。16 kHz mono `pcm_s16le`以外は`error`（`code=unsupported_audio_format`）で、拒否した`start`は進行中の発話に影響せず、そのerrorは生きている発話の`utterance_id`を使わない。発話中の（受理された）`start`は先の発話を`end_reason=restart`で閉じてから新しい発話を始める |
+| binary frame | PCM16LE mono 16 kHz。WAV（RIFF）frameも受理し、PCMだけを取り出す。奇数byteの端は次のframeへ繰り越す。16 kHz mono PCM16でないWAV frameは、進行中の発話をその発話の`error`（`unsupported_audio_format`）で終える。`start`が無くても、音のあるframeが来れば発話を始める（無音だけのframeは捨てる） |
+| `{"type":"stop","utterance_id":"…"}` | 発話の終わり。`final_pending`は旧名の別名。`utterance_id`を省略すると進行中の発話に適用し、進行中の発話が無ければ`empty_reason=no_active_utterance`の空`final`を返す（`final`を待つクライアントを止めない）。進行中でない`utterance_id`を指す`stop`は何もしない。最大長で分割された続きの発話は、元の`utterance_id`でも`stop`／`cancel`できる |
+| `{"type":"cancel","utterance_id":"…"}` | 進行中の発話を認識せず捨てる。認識待ち・認識中の発話は、名前を指定すると中断する（RenCrow_STTへの要求も中断する）。結果は`cancelled` |
+| その他（`config`等） | 無視する |
+
+CORE → クライアント（すべてのeventに、セッション内で単調増加する`seq`が付く。発話に属するeventは`utterance_id`を持つ）:
+
+| event | 内容 |
+|---|---|
+| `session_info`, `ready` | 接続直後。`ready`は`sample_rate`、`protocol`、`max_utterance_ms`を持つ |
+| `speech_start` | 発話が始まった（`start`受理、または最初の音あるframe）。前の発話の終端eventより先に届くことがある |
+| `final` | 発話の終端。`text`、`end_reason`（`stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`）を持つ |
+| `error` | 発話の終端。`code`（`stt_busy` / `unsupported_audio_format` / `stt_provider_error` / RenCrow_STTのerror code / `stt_failed`）と`error` |
+| `cancelled` | `cancel`で捨てた発話の終端 |
+| `partial` | **予約**。途中結果（Bで追加）。同じ`utterance_id`の中で`seq`が大きいものが前のpartialを置き換え、`final`が全てを確定する。Aでは送らない（`draft`も送らない） |
+
+保証:
+
+- 各発話は`final`／`error`／`cancelled`のどれかをちょうど1つ受け取る。認識しなかった発話も空の`final`で終わり、
+  クライアントが`final`を待ち続けることはない。
+- 終端eventは発話の順に届く。1セッションの発話はCOREが直列に認識するため、続けて話しても前の`final`は捨てられない。
+  同時に認識待ち・認識中にできる発話は8件までで、超えた発話は`code=stt_busy`の`error`で終わる（順序は保つ）。
+- 接続が切れると、認識中の要求を中断し、待っている発話を捨てる（結果は誰にも送らない）。
+
+安全弁と判定（`stt`設定、既定値）:
+
+- `max_utterance_ms`（30000）を超えたら`end_reason=max_length`の`final`を返し、続きを新しい発話（新しい`utterance_id`）として受ける。
+- `idle_timeout_ms`（2000）の間frameが届かなければ`end_reason=idle_timeout`の`final`を返す（`stop`が来ない場合の安全弁）。
+- 発話の有声長（20 msの窓で平均絶対値が`STT_SILENCE_ABS_THRESHOLD`（既定220）以上の窓の合計）が`min_speech_ms`（150）未満なら
+  RenCrow_STTを呼ばず、`empty_reason=silent`（有声0）または`too_short`の空`final`を返す。100 msの断片はこの下限で認識されない。
+- 認識結果が空、またはモデル制御token・LLM定型文の混入、または**発話全体が**既知の定型句（無音・雑音で生成されがちな
+  「ご視聴ありがとうございました」等。`stt.noise_phrases`で追加できる）に一致する場合は空の`final`（`empty_reason=no_speech` / `filtered`）にする。
+  部分一致では捨てない。「ありがとうございました」単独のように、本当に発話されうる語は既定の一覧に入れない。
+
+互換性: `utterance_id`の無い旧Viewerと`scripts/stt_e2e_probe.py`は、`start`／binary／`stop`／`final`待ちのまま動く。
+旧クライアントが`final`と`draft`の両方を待つ実装であっても、`draft`は送らない。Viewerは発話ごとに新しいWSを開き、
+`start`に`utterance_id`を付け、VADの発火前の約300 msをプリロールとして先頭に付ける。
 
 ### WS /voice-chat
 

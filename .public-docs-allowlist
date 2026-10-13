@@ -113,6 +113,7 @@ docs/調査/20261012_230400_Tool終端保存の予算不足によるOPS失敗_Fa
 docs/調査/20261012_231547_Run開始後の早期失敗でRunを閉じない_FailureKnowledge.md
 docs/調査/20261013_083424_Agent名ラベル除去_FailureKnowledge.md
 docs/調査/20261013_115300_ActionStore全件読み_設計案.md
+docs/調査/20261013_171543_STT発話単位認識_設計とFailureKnowledge.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md
 docs/調査/identity-remediation-ledger.json

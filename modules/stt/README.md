@@ -13,7 +13,8 @@ Responsibilities:
 - CORE-side timeout, busy policy, and debug planning.
 - Busy policy normalization and execution-mode planning.
 - WebSocket handler selection, route paths, and text/binary frame classification rules.
-- WebSocket control-message parsing, PCM16/WAV payload normalization, silence detection, draft/final session rules, draft state update/reset rules, session event payloads, timeout error classification, and adaptive timeout/cooldown state rules.
+- WebSocket control-message parsing (`start` / `stop` / `cancel`, `utterance_id`), PCM16/WAV payload normalization, and the utterance rules: `UtteranceBuffer` (accumulation, max length, voiced-length minimum, WAV output), `UtteranceLimits`, whole-utterance noise-phrase filtering, transcript classification, and the `utterance.v1` session event payloads (`final`, `error`, `cancelled`, `speech_start`, `ready`, event stamping with `utterance_id` and `seq`).
+- Timeout error classification and adaptive timeout/cooldown state rules.
 - Diagnostics snapshot policy and provider unavailable message.
 - Audio input and transcription request payloads.
 - Request copy semantics for mutable audio buffers before provider calls.
@@ -39,7 +40,7 @@ Boundary note:
 
 STT owns Gateway readiness, Gateway URL normalization, busy policy planning,
 CORE same-origin WebSocket input policy, audio/control-message normalization
-rules, draft/final session rules, request copy semantics, normalized results,
+rules, utterance accumulation and final/error/cancelled event rules, request copy semantics, normalized results,
 HTTP result/envelope policy, and reusable Viewer input health/reporting rules.
 RenCrow_STT owns target selection and target-specific provider configuration.
 Chat/Viewer integration owns microphone UI rendering, final transcript
