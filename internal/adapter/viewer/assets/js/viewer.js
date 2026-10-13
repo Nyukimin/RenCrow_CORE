@@ -5648,6 +5648,9 @@ const sttState = {
   pendingSpeechRestart: false,
   pendingSpeechRestartInterrupted: false,
   streamReady: false,
+  prerollBuffer: null,    // Last STT_PREROLL_MS of audio while no utterance is active
+  utteranceID: '',
+  utteranceCounter: 0,
   sampleRate: 16000,
   inputSampleRate: 48000,
   chunkBuffer: [],
@@ -5741,6 +5744,7 @@ const STT_SILENCE_END_MS = 700;
 const STT_STOP_TAIL_SILENCE_MS = 300;
 const STT_VAD_START_LEVEL = 12;
 const STT_VAD_END_LEVEL = 8;
+const STT_PREROLL_MS = 300;
 const VDS_SILENCE_END_MS = 500;
 const VDS_COOLDOWN_MS = 900;
 const VDS_MIN_SPEECH_MS = 250;
@@ -7090,6 +7094,9 @@ async function startSTT() {
     sttState.vadLastVoiceAt = 0;
     sttState.pendingSpeechRestart = false;
     sttState.pendingSpeechRestartInterrupted = false;
+    sttState.prerollBuffer = typeof createSTTPrerollBuffer === 'function'
+      ? createSTTPrerollBuffer({ sampleRate: 16000, preRollMs: STT_PREROLL_MS })
+      : null;
     if (typeof clearSTTFinalWaitTimer === 'function') clearSTTFinalWaitTimer();
     if (typeof updateSTTCaption === 'function') updateSTTCaption();
     if (typeof updateSTTInputLevel === 'function') updateSTTInputLevel(0);
@@ -7126,8 +7133,13 @@ async function startSTT() {
         sttState.draftBuffer.push(...pcm16);
         sttState.capturePCM.push(...pcm16);
         sendSTTAudioChunk(pcm16);
-      } else if (sttState.isStopping) {
-        sttState.capturePCM.push(...pcm16);
+      } else {
+        // Frames outside an utterance feed the preroll. The VAD has already seen
+        // this frame, so the frame that starts an utterance is not in the preroll.
+        if (sttState.prerollBuffer) sttState.prerollBuffer.push(pcm16);
+        if (sttState.isStopping) {
+          sttState.capturePCM.push(...pcm16);
+        }
       }
       const maxDraftSamples = sttState.sampleRate;
       if (sttState.draftBuffer.length > maxDraftSamples) {
@@ -7414,6 +7426,16 @@ function resetSTTUtteranceState() {
 function beginSTTUtterance(reason) {
   if (!sttState.isRecording || sttState.isStopping || sttState.vadSpeechActive) return false;
   resetSTTUtteranceState();
+  sttState.utteranceCounter = (sttState.utteranceCounter || 0) + 1;
+  sttState.utteranceID = typeof createSTTUtteranceID === 'function'
+    ? createSTTUtteranceID(Date.now(), sttState.utteranceCounter)
+    : '';
+  // The VAD fires after speech has begun; start the utterance STT_PREROLL_MS earlier.
+  const preroll = sttState.prerollBuffer ? sttState.prerollBuffer.take() : null;
+  if (preroll && preroll.length > 0) {
+    sttState.chunkBuffer.push(...preroll);
+    sttState.capturePCM.push(...preroll);
+  }
   sttState.vadSpeechActive = true;
   sttState.vadSilenceStartedAt = 0;
   sttState.vadLastVoiceAt = Date.now();
@@ -7527,6 +7549,7 @@ function sendSTTStartControl() {
     channels: 1,
     format: 'pcm_s16le',
   };
+  if (sttState.utteranceID) control.utterance_id = sttState.utteranceID;
   sttState.ws.send(JSON.stringify(control));
   recordSTTCaptureEvent('start', `${sampleRate}Hz pcm_s16le mono`);
   return true;

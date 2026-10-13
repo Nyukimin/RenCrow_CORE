@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
 
 test('viewer STT websocket can be configured for Mac streaming endpoint', () => {
   const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
@@ -362,4 +363,103 @@ test('viewer exposes Ops test recording mode that trims silence and saves Latest
   assert.match(js, /テスト録音中は通常マイクを使えません/);
   assert.doesNotMatch(js.slice(js.indexOf('function startSTTTestRecording()'), js.indexOf('async function stopSTTTestRecordingAndSave()')), /connectSTTWebSocket/);
   assert.doesNotMatch(js.slice(js.indexOf('function startSTTTestRecording()'), js.indexOf('async function stopSTTTestRecordingAndSave()')), /handleSTTVADFrame/);
+});
+
+// --- utterance-level recognition: preroll and utterance_id ---------------------------------
+
+function sliceFunctions(js, from, to) {
+  const start = js.indexOf(`function ${from}(`);
+  const end = js.indexOf(`function ${to}(`, start);
+  assert.ok(start >= 0 && end > start, `${from}..${to} not found`);
+  return js.slice(start, end);
+}
+
+function loadSTTUtils() {
+  const sandbox = {};
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/stt_utterance_utils.js', 'utf8'), sandbox);
+  return sandbox;
+}
+
+test('viewer loads the utterance utils before viewer.js', () => {
+  const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
+  assert.match(html, /stt_utterance_utils\.js/);
+  assert.ok(html.indexOf('stt_utterance_utils.js') < html.indexOf('/viewer/assets/js/viewer.js?v='), 'utils must load before viewer.js');
+});
+
+test('viewer keeps a 300 ms preroll that excludes the VAD trigger frame and is prepended on utterance start', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  assert.match(js, /const STT_PREROLL_MS = 300;/);
+  assert.match(js, /prerollBuffer:\s*null/);
+  assert.match(js, /createSTTPrerollBuffer\(\{\s*sampleRate:\s*16000,\s*preRollMs:\s*STT_PREROLL_MS\s*\}\)/);
+
+  const procStart = js.indexOf('sttState.scriptNode.onaudioprocess = (e) => {');
+  const procEnd = js.indexOf('sttState.isRecording = true;', procStart);
+  assert.ok(procStart >= 0 && procEnd > procStart, 'onaudioprocess block not found');
+  const proc = js.slice(procStart, procEnd);
+  const vadAt = proc.indexOf('handleSTTVADFrame(pcm16, level)');
+  const prerollAt = proc.indexOf('sttState.prerollBuffer.push(pcm16)');
+  assert.ok(vadAt >= 0 && prerollAt > vadAt, 'the VAD must see the frame before it enters the preroll, so the trigger frame is not sent twice');
+  assert.match(proc, /\} else \{[^}]*?if \(sttState\.prerollBuffer\) sttState\.prerollBuffer\.push\(pcm16\);/, 'only frames outside an active utterance feed the preroll');
+});
+
+test('beginSTTUtterance prepends the preroll after the utterance state is reset and assigns an utterance id', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const source = sliceFunctions(js, 'resetSTTUtteranceState', 'handleSTTVADFrame');
+  const utils = loadSTTUtils();
+  const preroll = utils.createSTTPrerollBuffer({ sampleRate: 16000, preRollMs: 300 });
+  const earlier = Int16Array.from({ length: 6400 }, (_, i) => i); // 400 ms, 100 ms older than the limit
+  preroll.push(earlier);
+
+  const sttState = {
+    isRecording: true, isStopping: false, vadSpeechActive: false, vadSilenceStartedAt: 0, vadLastVoiceAt: 0,
+    pendingSpeechRestart: false, pendingSpeechRestartInterrupted: false,
+    chunkBuffer: [], capturePCM: [], draftBuffer: [], sentAudioSamples: 0, captureSessionID: '(unknown)',
+    prerollBuffer: preroll, utteranceID: '', utteranceCounter: 0,
+  };
+  const events = [];
+  const context = {
+    sttState,
+    createSTTUtteranceID: utils.createSTTUtteranceID,
+    interruptChatOutputForUserInput() {}, interruptIdleChatForUserInput() {},
+    recordLatencyMetric() {}, recordSTTCaptureEvent(kind, detail) { events.push([kind, detail]); },
+    connectSTTWebSocket() {}, updateSTTInputIndicators() {}, nowLatencyMS: () => 1,
+    Date, console,
+  };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nthis.beginSTTUtterance = beginSTTUtterance;`, context);
+
+  assert.equal(context.beginSTTUtterance('vad_voice'), true);
+  assert.equal(sttState.vadSpeechActive, true);
+  assert.equal(sttState.chunkBuffer.length, 4800, 'the utterance starts with the last 300 ms, not the whole backlog');
+  assert.equal(sttState.chunkBuffer[0], 6400 - 4800);
+  assert.equal(sttState.chunkBuffer[4799], 6399);
+  assert.equal(sttState.capturePCM.length, 4800, 'the saved debug WAV must contain the same audio that was sent');
+  assert.equal(preroll.length, 0, 'taking the preroll empties it');
+  assert.match(sttState.utteranceID, /^[A-Za-z0-9_-]{1,64}$/);
+  const first = sttState.utteranceID;
+
+  sttState.vadSpeechActive = false;
+  context.beginSTTUtterance('vad_voice');
+  assert.notEqual(sttState.utteranceID, first, 'each utterance gets its own id');
+});
+
+test('viewer start control announces the utterance id while stop stays id-less for the active utterance', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const source = sliceFunctions(js, 'sendSTTStartControl', 'sendSTTStopControl');
+  const sent = [];
+  const context = {
+    sttState: { ws: { readyState: 1, send(data) { sent.push(JSON.parse(data)); } }, sampleRate: 16000, utteranceID: 'v1-1' },
+    WebSocket: { OPEN: 1 }, recordSTTCaptureEvent() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(`${source}\nthis.sendSTTStartControl = sendSTTStartControl;`, context);
+  assert.equal(context.sendSTTStartControl(), true);
+  assert.deepEqual(sent[0], { type: 'start', utterance_id: 'v1-1', sample_rate: 16000, channels: 1, format: 'pcm_s16le' });
+
+  context.sttState.utteranceID = '';
+  context.sendSTTStartControl();
+  assert.equal('utterance_id' in sent[1], false, 'no id is sent when none was assigned (CORE assigns one)');
+
+  assert.match(js, /sttState\.ws\.send\(JSON\.stringify\(\{ type: 'stop' \}\)\)/, 'stop applies to the active utterance and needs no id');
 });
