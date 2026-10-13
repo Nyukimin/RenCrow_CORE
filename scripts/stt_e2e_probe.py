@@ -113,6 +113,13 @@ def run_ws_bench(ws_url: str, wav_path: Path, rounds: int, wait_s: float, chunk_
                     rec["final"] = str(obj["text"])[:140]
                     rec["ok"] = True
                     break
+                if ev_type == "final":
+                    # utterance.v1: every utterance ends with exactly one terminal event; an
+                    # unrecognised one is a final with empty text and an empty_reason.
+                    final_at = time.time()
+                    reason = str(obj.get("empty_reason", "") or "no text")
+                    rec["err"] = f"empty final ({reason})"
+                    break
                 if ev_type == "error":
                     rec["err"] = compact.get("message") or compact.get("error") or "stt error"
                     break
