@@ -19,6 +19,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/jsonlbatch"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/txobserve"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -41,11 +42,19 @@ type JSONLStore struct {
 	actionPath  string
 	attemptPath string
 	batch       *jsonlbatch.Store
+	txObserver  *txobserve.Observer
 }
 
 // NewJSONLStore opens the Action files, repairs a pending WAL as a writer, and
 // rejects malformed persisted state before returning a usable store.
 func NewJSONLStore(root string) (*JSONLStore, error) {
+	return newJSONLStore(root, nil)
+}
+
+// newJSONLStore is NewJSONLStore with a seam for tests: tune may change the
+// observer options (to capture the log or force the slow path) before the
+// observer is built.
+func newJSONLStore(root string, tune func(*txobserve.Options)) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("action store root is required")
 	}
@@ -66,7 +75,15 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 		attemptPath: filepath.Join(absRoot, attemptFilename),
 		batch:       batch,
 	}
-	if err := batch.Read(context.Background(), func() error {
+	// Observing starts with the open's own validation read, so a slow start shows
+	// up as op=Open instead of being invisible until the first request.
+	opts := txObserverOptions(store.actionPath, store.attemptPath)
+	if tune != nil {
+		tune(&opts)
+	}
+	store.txObserver = txobserve.New(opts)
+	batch.SetTxObserver(store.txObserver.Observe)
+	if err := batch.Read(withTxLabel(context.Background(), txOpOpen), func() error {
 		actions, err := store.loadActions(context.Background())
 		if err != nil {
 			return fmt.Errorf("validate action state: %w", err)
@@ -88,6 +105,12 @@ func NewJSONLStore(root string) (*JSONLStore, error) {
 // Transaction executes one callback against a disk-plus-pending overlay. The
 // overlay is encoded and committed only when the callback returns nil.
 func (s *JSONLStore) Transaction(ctx context.Context, callback func(domainaction.Store) error) error {
+	return s.transaction(ctx, txOpTransaction, callback)
+}
+
+// transaction is Transaction labelled with the store method that called it, so a
+// slow-transaction line names the entry point.
+func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
 	if err := validateStoreContext(ctx); err != nil {
 		return err
 	}
@@ -96,7 +119,7 @@ func (s *JSONLStore) Transaction(ctx context.Context, callback func(domainaction
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.batch.Write(ctx, func() (map[string][]byte, error) {
+	return s.batch.Write(withTxLabel(ctx, op), func() (map[string][]byte, error) {
 		actions, err := s.loadActions(ctx)
 		if err != nil {
 			return nil, err
@@ -120,6 +143,11 @@ func (s *JSONLStore) Transaction(ctx context.Context, callback func(domainaction
 // ReadTransaction runs against one OS-locked, committed snapshot. Its
 // callback receives a read-only transaction store and cannot write state.
 func (s *JSONLStore) ReadTransaction(ctx context.Context, callback func(domainaction.Store) error) error {
+	return s.readTransaction(ctx, txOpReadTransaction, callback)
+}
+
+// readTransaction is ReadTransaction labelled with the store method that called it.
+func (s *JSONLStore) readTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
 	if err := validateStoreContext(ctx); err != nil {
 		return err
 	}
@@ -128,7 +156,7 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, callback func(domainac
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.batch.Read(ctx, func() error {
+	return s.batch.Read(withTxLabel(ctx, op), func() error {
 		actions, err := s.loadActions(ctx)
 		if err != nil {
 			return err
@@ -147,7 +175,7 @@ func (s *JSONLStore) ReadTransaction(ctx context.Context, callback func(domainac
 }
 
 func (s *JSONLStore) SaveAction(ctx context.Context, value domainaction.Action) error {
-	return s.Transaction(ctx, func(tx domainaction.Store) error {
+	return s.transaction(ctx, txOpSaveAction, func(tx domainaction.Store) error {
 		return tx.SaveAction(ctx, value)
 	})
 }
@@ -157,7 +185,7 @@ func (s *JSONLStore) GetAction(ctx context.Context, actionID modulecore.ActionID
 		return domainaction.Action{}, err
 	}
 	var result domainaction.Action
-	err := s.ReadTransaction(ctx, func(tx domainaction.Store) error {
+	err := s.readTransaction(ctx, txOpGetAction, func(tx domainaction.Store) error {
 		var err error
 		result, err = tx.GetAction(ctx, actionID)
 		return err
@@ -170,7 +198,7 @@ func (s *JSONLStore) GetAction(ctx context.Context, actionID modulecore.ActionID
 
 func (s *JSONLStore) ListActions(ctx context.Context, filter domainaction.Filter) ([]domainaction.Action, error) {
 	var result []domainaction.Action
-	err := s.ReadTransaction(ctx, func(tx domainaction.Store) error {
+	err := s.readTransaction(ctx, txOpListActions, func(tx domainaction.Store) error {
 		var err error
 		result, err = tx.ListActions(ctx, filter)
 		return err
@@ -179,7 +207,7 @@ func (s *JSONLStore) ListActions(ctx context.Context, filter domainaction.Filter
 }
 
 func (s *JSONLStore) SaveAttempt(ctx context.Context, value domainaction.Attempt) error {
-	return s.Transaction(ctx, func(tx domainaction.Store) error {
+	return s.transaction(ctx, txOpSaveAttempt, func(tx domainaction.Store) error {
 		return tx.SaveAttempt(ctx, value)
 	})
 }
@@ -189,7 +217,7 @@ func (s *JSONLStore) GetAttempt(ctx context.Context, attemptID modulecore.Attemp
 		return domainaction.Attempt{}, err
 	}
 	var result domainaction.Attempt
-	err := s.ReadTransaction(ctx, func(tx domainaction.Store) error {
+	err := s.readTransaction(ctx, txOpGetAttempt, func(tx domainaction.Store) error {
 		var err error
 		result, err = tx.GetAttempt(ctx, attemptID)
 		return err
@@ -202,7 +230,7 @@ func (s *JSONLStore) GetAttempt(ctx context.Context, attemptID modulecore.Attemp
 
 func (s *JSONLStore) ListAttempts(ctx context.Context, filter domainaction.AttemptFilter) ([]domainaction.Attempt, error) {
 	var result []domainaction.Attempt
-	err := s.ReadTransaction(ctx, func(tx domainaction.Store) error {
+	err := s.readTransaction(ctx, txOpListAttempts, func(tx domainaction.Store) error {
 		var err error
 		result, err = tx.ListAttempts(ctx, filter)
 		return err
