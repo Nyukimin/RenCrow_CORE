@@ -31,10 +31,33 @@ const (
 	sttErrorFailed       = "stt_failed"
 	sttErrorProvider     = "stt_provider_error"
 	sttErrorUnsupported  = "unsupported_audio_format"
+	sttErrorLimit        = "stt_limit_exceeded"
 	sttMaxIdleCheckEvery = 250 * time.Millisecond
 	sttMinIdleCheckEvery = 10 * time.Millisecond
 	// A peer that stops reading must not stall the session loop and its idle check.
 	sttWriteTimeout = 10 * time.Second
+
+	// Resource limits of /stt. Every one bounds something a client controls.
+	//
+	// A frame carries at most one maximum-length utterance (PCM at 32000 B/s) plus
+	// a container header and a control message of slack; 30 s is about 0.96 MB.
+	sttFrameSlackBytes = 8 * 1024
+	sttMinFrameBytes   = 64 * 1024
+	// Unsent terminal events per session, whatever their kind. Each is a few
+	// hundred bytes; transcription jobs hold audio and are counted separately by
+	// QueueDepth.
+	defaultSTTMaxQueuedEvents = 64
+	// Concurrent /stt connections. The Viewer opens one per utterance.
+	defaultSTTMaxConnections = 16
+	// A connection with nothing active, queued or received for this long is dropped.
+	defaultSTTConnIdleTimeout = 5 * time.Minute
+	// After a limit is exceeded the session flushes the terminal events it owes,
+	// then closes; this bounds how long a stuck recognition can delay that.
+	sttCloseGrace = 5 * time.Second
+	// Messages the reader may hand to the session loop ahead of processing.
+	sttInboundBuffer = 2
+
+	sttLimitMessage = "the session exceeded a resource limit and is closed"
 )
 
 // sttSessionConfig bounds one /stt WebSocket session.
@@ -44,6 +67,16 @@ type sttSessionConfig struct {
 	// QueueDepth bounds the utterances of one session that wait for or are in
 	// recognition. Beyond it an utterance ends with an explicit stt_busy error.
 	QueueDepth int
+	// MaxFrameBytes bounds one WebSocket frame; a larger one closes the session.
+	// Zero means sttMaxFrameBytes(Limits).
+	MaxFrameBytes int
+	// MaxQueuedEvents bounds the unsent terminal events of one session; one more
+	// closes the session.
+	MaxQueuedEvents int
+	// MaxConnections bounds concurrent /stt connections; more are refused with 503.
+	MaxConnections int
+	// ConnIdleTimeout drops a connection that has nothing to do and sends nothing.
+	ConnIdleTimeout time.Duration
 }
 
 func (c sttSessionConfig) withDefaults() sttSessionConfig {
@@ -51,7 +84,30 @@ func (c sttSessionConfig) withDefaults() sttSessionConfig {
 	if c.QueueDepth <= 0 {
 		c.QueueDepth = defaultSTTQueueDepth
 	}
+	if c.MaxFrameBytes <= 0 {
+		c.MaxFrameBytes = sttMaxFrameBytes(c.Limits)
+	}
+	if c.MaxQueuedEvents <= 0 {
+		c.MaxQueuedEvents = defaultSTTMaxQueuedEvents
+	}
+	if c.MaxConnections <= 0 {
+		c.MaxConnections = defaultSTTMaxConnections
+	}
+	if c.ConnIdleTimeout <= 0 {
+		c.ConnIdleTimeout = defaultSTTConnIdleTimeout
+	}
 	return c
+}
+
+// sttMaxFrameBytes is the largest WebSocket frame accepted: one maximum-length
+// utterance of 16 kHz PCM16 plus slack for a WAV header or a control message.
+func sttMaxFrameBytes(limits modulestt.UtteranceLimits) int {
+	limits = limits.WithDefaults()
+	pcmBytes := int(limits.MaxLength * modulestt.DefaultSampleRate * 2 / time.Second)
+	if frame := pcmBytes + sttFrameSlackBytes; frame > sttMinFrameBytes {
+		return frame
+	}
+	return sttMinFrameBytes
 }
 
 func mustJSON(v any) string {
@@ -69,13 +125,26 @@ func handleSTTWebSocketProvider(provider sttinfra.Provider) http.Handler {
 func handleSTTWebSocketProviderWithConfig(provider sttinfra.Provider, cfg sttSessionConfig) http.Handler {
 	cfg = cfg.withDefaults()
 	filter := modulestt.NewNoisePhraseFilter(cfg.NoisePhrases)
-	return websocket.Handler(func(conn *websocket.Conn) {
+	upgrade := websocket.Handler(func(conn *websocket.Conn) {
 		defer conn.Close()
+		// The library default is 32 MiB per frame, read whole into memory.
+		conn.MaxPayloadBytes = cfg.MaxFrameBytes
 		if provider == nil {
 			_ = sendSTTError(conn, "stt provider is not configured")
 			return
 		}
 		newSTTSession(conn, provider, cfg, filter).run()
+	})
+	slots := make(chan struct{}, cfg.MaxConnections)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			http.Error(w, "too many STT connections", http.StatusServiceUnavailable)
+			return
+		}
+		upgrade.ServeHTTP(w, r)
 	})
 }
 
@@ -97,7 +166,10 @@ const (
 	sttJobFinal                 // terminal final without recognition (empty_reason set)
 	sttJobError
 	sttJobCancelled
+	sttJobClose // last job of an aborted session: every terminal event before it has been sent
 )
+
+type sttCloseInfo struct{ code, message string }
 
 // sttJob is one terminal event owed to the client. Every utterance ends in a
 // job, and jobs are worked in order, so terminals never overtake each other.
@@ -134,6 +206,10 @@ type sttSession struct {
 
 	mu   sync.Mutex
 	byID map[string]*sttJob // transcription jobs queued or in flight
+	// closeInfo is set once when the session is aborted for exceeding a limit.
+	closeInfo   *sttCloseInfo
+	closeTimer  *time.Timer
+	lastInbound time.Time // owned by the session loop
 
 	// Owned by the session loop.
 	active  *sttUtterance
@@ -154,17 +230,31 @@ func newSTTSession(conn *websocket.Conn, provider sttinfra.Provider, cfg sttSess
 	}
 }
 
+// sttInbound is one thing the reader hands to the session loop: a message, or
+// the reason the stream can no longer be read (an oversized frame).
+type sttInbound struct {
+	payload []byte
+	err     error
+}
+
 func (s *sttSession) run() {
 	defer func() {
-		// Disconnect or a failed send: cancel in-flight and queued recognition.
+		// Disconnect, a failed send, or the end of an aborted session: cancel
+		// in-flight and queued recognition.
 		s.cancel()
+		s.mu.Lock()
+		if s.closeTimer != nil {
+			s.closeTimer.Stop()
+		}
+		s.mu.Unlock()
 		s.wg.Wait()
 	}()
 	s.send(modulestt.BuildSessionInfoEvent(s.provider.Name()), "")
 	s.send(modulestt.BuildReadyEvent(s.cfg.Limits.MaxLength), "")
 
-	messages := make(chan []byte, 64)
-	go s.readLoop(messages)
+	s.lastInbound = time.Now()
+	inbound := make(chan sttInbound, sttInboundBuffer)
+	go s.readLoop(inbound)
 	s.wg.Add(1)
 	go s.worker()
 
@@ -172,11 +262,19 @@ func (s *sttSession) run() {
 	defer idleTick.Stop()
 	for {
 		select {
-		case payload, ok := <-messages:
+		case in, ok := <-inbound:
 			if !ok {
-				return
+				if !s.closing() {
+					return // the peer is gone
+				}
+				inbound = nil // aborted: keep running until the owed terminals are sent
+				continue
 			}
-			s.handle(payload)
+			if in.err != nil {
+				s.abort(sttErrorLimit, "a frame exceeded the size limit; "+sttLimitMessage)
+				continue
+			}
+			s.handle(in.payload)
 		case now := <-idleTick.C:
 			s.closeIfIdle(now)
 		case <-s.ctx.Done():
@@ -198,15 +296,25 @@ func (s *sttSession) idleCheckInterval() time.Duration {
 
 // readLoop has no read deadline: a deadline that fires mid-frame can corrupt
 // the stream. Silence is handled by the session loop's idle check instead.
-func (s *sttSession) readLoop(messages chan<- []byte) {
-	defer close(messages)
+// A frame over MaxFrameBytes is not read off the wire: the loop reports it and
+// stops, and the connection is closed rather than draining what the peer sends.
+func (s *sttSession) readLoop(inbound chan<- sttInbound) {
+	defer close(inbound)
 	for {
 		var payload []byte
-		if err := websocket.Message.Receive(s.conn, &payload); err != nil {
+		err := websocket.Message.Receive(s.conn, &payload)
+		if errors.Is(err, websocket.ErrFrameTooLarge) {
+			select {
+			case inbound <- sttInbound{err: err}:
+			case <-s.ctx.Done():
+			}
+			return
+		}
+		if err != nil {
 			return
 		}
 		select {
-		case messages <- payload:
+		case inbound <- sttInbound{payload: payload}:
 		case <-s.ctx.Done():
 			return
 		}
@@ -214,6 +322,10 @@ func (s *sttSession) readLoop(messages chan<- []byte) {
 }
 
 func (s *sttSession) handle(payload []byte) {
+	if s.closing() {
+		return // an aborted session takes no more input
+	}
+	s.lastInbound = time.Now()
 	if len(payload) == 0 {
 		return
 	}
@@ -245,7 +357,7 @@ func (s *sttSession) handleStart(control modulestt.Control) {
 		if s.idInUse(id) {
 			id = ""
 		}
-		s.queue.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: message})
+		s.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: message})
 		return
 	}
 	if s.active != nil {
@@ -262,7 +374,7 @@ func (s *sttSession) handleStop(control modulestt.Control) {
 	if s.active == nil && control.UtteranceID == "" {
 		// A client waiting for its final must never hang: the utterance it wants
 		// to stop was already closed (idle timeout, max length) or never began.
-		s.queue.push(&sttJob{kind: sttJobFinal, endReason: modulestt.EndReasonStop, emptyReason: modulestt.EmptyReasonNoActiveUtterance})
+		s.push(&sttJob{kind: sttJobFinal, endReason: modulestt.EndReasonStop, emptyReason: modulestt.EmptyReasonNoActiveUtterance})
 	}
 	// A stop that names an already-finished utterance has nothing left to do.
 }
@@ -271,7 +383,7 @@ func (s *sttSession) handleCancel(control modulestt.Control) {
 	if s.addressesActive(control.UtteranceID) {
 		id := s.active.id
 		s.active = nil
-		s.queue.push(&sttJob{kind: sttJobCancelled, id: id})
+		s.push(&sttJob{kind: sttJobCancelled, id: id})
 		return
 	}
 	if control.UtteranceID == "" {
@@ -298,7 +410,7 @@ func (s *sttSession) handleAudio(payload []byte) {
 				id = s.active.id
 				s.active = nil
 			}
-			s.queue.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: err.Error()})
+			s.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: err.Error()})
 			return
 		}
 	}
@@ -379,8 +491,16 @@ func (s *sttSession) begin(requestedID string) {
 }
 
 func (s *sttSession) closeIfIdle(now time.Time) {
+	if s.closing() {
+		return
+	}
 	if s.active != nil && now.Sub(s.active.lastAt) >= s.cfg.Limits.IdleTimeout {
 		s.finalize(modulestt.EndReasonIdleTimeout)
+	}
+	// Nothing active, nothing owed and nothing received: the peer holds a slot
+	// (and a goroutine) for no reason.
+	if s.active == nil && s.queue.outstanding() == 0 && now.Sub(s.lastInbound) >= s.cfg.ConnIdleTimeout {
+		s.cancel()
 	}
 }
 
@@ -393,14 +513,18 @@ func (s *sttSession) finalize(endReason string) {
 	if reason := u.buf.EmptyReason(); reason != "" {
 		job.kind = sttJobFinal
 		job.emptyReason = reason
-		s.queue.push(job)
+		s.push(job)
+		return
+	}
+	if s.queueFull() {
+		s.overLimit(job) // before admit: nothing to give back
 		return
 	}
 	if !s.queue.admit(s.cfg.QueueDepth) {
 		job.kind = sttJobError
 		job.errCode = sttErrorBusy
 		job.errMessage = "too many utterances are waiting for recognition"
-		s.queue.push(job)
+		s.push(job)
 		return
 	}
 	job.kind = sttJobTranscribe
@@ -412,6 +536,79 @@ func (s *sttSession) finalize(endReason string) {
 	s.queue.push(job)
 }
 
+// queueFull reports whether the session already owes MaxQueuedEvents events.
+func (s *sttSession) queueFull() bool {
+	return s.queue.outstanding() >= s.cfg.MaxQueuedEvents
+}
+
+// push queues a terminal event, or ends the session when the queue is full. A
+// client cannot make the queue grow without bound by repeating controls that
+// each owe an answer while a recognition is in progress.
+func (s *sttSession) push(job *sttJob) {
+	if s.queueFull() {
+		s.overLimit(job)
+		return
+	}
+	s.queue.push(job)
+}
+
+// overLimit turns the job that did not fit into the error that explains the
+// close, so its utterance still gets its one terminal event, then aborts.
+func (s *sttSession) overLimit(job *sttJob) {
+	job.kind = sttJobError
+	job.errCode = sttErrorLimit
+	job.errMessage = "too many unanswered events; " + sttLimitMessage
+	job.wav = nil
+	s.queue.push(job)
+	s.abort(sttErrorLimit, job.errMessage)
+}
+
+func (s *sttSession) closing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeInfo != nil
+}
+
+func (s *sttSession) closeReason() (sttCloseInfo, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closeInfo == nil {
+		return sttCloseInfo{}, false
+	}
+	return *s.closeInfo, true
+}
+
+// abort ends the session because a limit was exceeded. Every utterance that has
+// no terminal event yet gets exactly one error that names the limit: the one
+// being received, the queued ones (never sent to the engine) and the one in
+// recognition (its request is cancelled). The loop then ignores input, the
+// worker sends those events in utterance order, and the last job closes the
+// connection; sttCloseGrace bounds the wait.
+func (s *sttSession) abort(code, message string) {
+	s.mu.Lock()
+	if s.closeInfo != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.closeInfo = &sttCloseInfo{code: code, message: message}
+	s.closeTimer = time.AfterFunc(sttCloseGrace, s.cancel)
+	pending := make([]*sttJob, 0, len(s.byID))
+	for _, job := range s.byID {
+		pending = append(pending, job)
+	}
+	s.mu.Unlock()
+
+	if s.active != nil {
+		id := s.active.id
+		s.active = nil
+		s.queue.push(&sttJob{kind: sttJobError, id: id, errCode: code, errMessage: message})
+	}
+	for _, job := range pending {
+		job.cancel() // reportCancellation answers it with the close reason
+	}
+	s.queue.push(&sttJob{kind: sttJobClose})
+}
+
 func (s *sttSession) worker() {
 	defer s.wg.Done()
 	for {
@@ -420,6 +617,7 @@ func (s *sttSession) worker() {
 			return // the session ended: queued utterances are dropped, not sent
 		}
 		s.runJob(job)
+		s.queue.done()
 	}
 }
 
@@ -433,6 +631,8 @@ func (s *sttSession) runJob(job *sttJob) {
 		s.send(modulestt.BuildCancelledEvent(), job.id)
 	case sttJobTranscribe:
 		s.transcribe(job)
+	case sttJobClose:
+		s.cancel()
 	}
 }
 
@@ -464,11 +664,17 @@ func (s *sttSession) transcribe(job *sttJob) {
 	s.sendFinal(job, outcome.Text, outcome.EmptyReason)
 }
 
-// reportCancellation answers a cancel control. When the session itself ended
-// there is nobody left to tell.
+// reportCancellation gives a cancelled recognition its one terminal event: a
+// cancel control is answered with cancelled, an abort with the close reason.
+// Both are set by the session loop alone, so they cannot both apply. When the
+// peer simply went away there is nobody left to tell.
 func (s *sttSession) reportCancellation(job *sttJob) {
 	if job.userCancelled.Load() {
 		s.send(modulestt.BuildCancelledEvent(), job.id)
+		return
+	}
+	if reason, ok := s.closeReason(); ok {
+		s.send(modulestt.BuildErrorEventWithCode(reason.code, reason.message), job.id)
 	}
 }
 
@@ -505,10 +711,11 @@ func (s *sttSession) send(event map[string]any, utteranceID string) bool {
 // sttJobQueue is an unbounded in-order queue of terminal-event jobs. Memory is
 // bounded by admit: only jobs that hold audio count against the depth.
 type sttJobQueue struct {
-	mu      sync.Mutex
-	items   []*sttJob
-	pending int
-	wake    chan struct{}
+	mu         sync.Mutex
+	items      []*sttJob
+	pending    int // transcription jobs holding audio
+	unfinished int // jobs pushed and not yet fully handled by the worker
+	wake       chan struct{}
 }
 
 func newSTTJobQueue() *sttJobQueue {
@@ -531,9 +738,24 @@ func (q *sttJobQueue) release() {
 	q.mu.Unlock()
 }
 
+// outstanding is the number of terminal events queued or being sent.
+func (q *sttJobQueue) outstanding() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.unfinished
+}
+
+// done marks the job the worker has just finished.
+func (q *sttJobQueue) done() {
+	q.mu.Lock()
+	q.unfinished--
+	q.mu.Unlock()
+}
+
 func (q *sttJobQueue) push(job *sttJob) {
 	q.mu.Lock()
 	q.items = append(q.items, job)
+	q.unfinished++
 	q.mu.Unlock()
 	select {
 	case q.wake <- struct{}{}:

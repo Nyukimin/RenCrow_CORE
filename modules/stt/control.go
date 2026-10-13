@@ -9,6 +9,10 @@ import (
 
 const maxUtteranceIDLength = 64
 
+// MaxControlMessageBytes bounds a JSON control message. Real ones are a few
+// hundred bytes; a larger payload is audio (or abuse) and is never parsed as JSON.
+const MaxControlMessageBytes = 4096
+
 // Control is a decoded WebSocket control message. Every field except Type is
 // optional so that clients written before the utterance protocol keep working.
 type Control struct {
@@ -23,7 +27,7 @@ type Control struct {
 // object with a non-empty string "type" is audio, not control. A malformed
 // optional field is dropped rather than turning the frame into audio.
 func ParseControl(payload []byte) (Control, bool) {
-	if len(payload) == 0 || payload[0] != '{' {
+	if len(payload) == 0 || len(payload) > MaxControlMessageBytes || payload[0] != '{' {
 		return Control{}, false
 	}
 	var obj map[string]any

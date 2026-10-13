@@ -194,8 +194,10 @@ func IsVoicedPCM(pcm []byte, absThreshold int) bool {
 }
 
 // WAVToPCM16 extracts the PCM payload of a RIFF/WAVE chunk. Only 16 kHz mono
-// 16-bit PCM is accepted. A data size of 0 or 0xFFFFFFFF followed by bytes is
-// treated as a streaming header and takes the rest of the payload.
+// 16-bit PCM is accepted. Header sizes are checked against the bytes actually
+// present and never used to allocate: a data size of 0 or 0xFFFFFFFF is the
+// streaming marker (the writer could not seek back) and takes the rest of the
+// payload; any other data size larger than the payload is rejected.
 func WAVToPCM16(wav []byte) ([]byte, error) {
 	if !IsWAV(wav) {
 		return nil, ErrUnsupportedAudioFormat
@@ -223,8 +225,11 @@ func WAVToPCM16(wav []byte) ([]byte, error) {
 				return nil, ErrUnsupportedAudioFormat
 			}
 			end := int64(body) + size
-			if size == 0 || end > int64(len(wav)) {
+			switch {
+			case size == 0 || size == 0xFFFFFFFF:
 				end = int64(len(wav))
+			case end > int64(len(wav)):
+				return nil, ErrUnsupportedAudioFormat
 			}
 			length := (int(end) - body) &^ 1
 			return wav[body : body+length], nil

@@ -12,6 +12,11 @@ import (
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
+// maxUploadBytes caps a multipart upload to /stt/file and /stt/chat-input.
+// ParseMultipartForm keeps this much in memory and spills the rest to temporary
+// files, so without a cap on the body a client could fill the disk.
+const maxUploadBytes = 64 << 20
+
 type Handler struct {
 	Provider Provider
 }
@@ -38,6 +43,7 @@ func (h *Handler) File(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	result, status := h.transcribeMultipart(r.Context(), r)
 	writeJSON(w, status, result)
 }
@@ -47,6 +53,7 @@ func (h *Handler) ChatInput(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	result, status := h.transcribeMultipart(r.Context(), r)
 	if status >= 400 {
 		writeJSON(w, status, result)
@@ -67,6 +74,10 @@ func (h *Handler) transcribeMultipart(ctx context.Context, r *http.Request) (Res
 	}
 	wav, err := readMultipartWAV(r)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return Result{ErrorCode: ErrorInvalidAudio, Message: "音声ファイルが大きすぎます。"}, http.StatusRequestEntityTooLarge
+		}
 		return Result{ErrorCode: ErrorInvalidAudio, Message: "音声ファイル形式が不正です。"}, http.StatusBadRequest
 	}
 	started := time.Now()
