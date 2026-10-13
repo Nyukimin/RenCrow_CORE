@@ -117,3 +117,42 @@ Tool実行後に Action／Attempt を終端する書き込み（`actionmanager.M
    専用statusやRetry-Afterの追加は公開API契約（`docs/06_Public_API仕様.md`）とCMDの変更を伴うため、別途判断する。
 8. **API仕様と実装の差**: `docs/06_Public_API仕様.md` は枠満杯の503を「作成したTaskをfailedに閉じ」と書くが、
    実装と試験（`TestAgentOpsLegacyOPSParallelLimitReturns503AndLeavesNoQueuedTask`）はTaskを1件も永続しない。
+
+## 追記 2026-10-13: 全件読みの根治（Action storeのsnapshot）
+
+「残るリスク」の1（Action store の全件読み）に、`docs/調査/20261013_115300_ActionStore全件読み_設計案.md` のIU-3・IU-4で対処した。
+予算の延長（上の Invariant 1）は緩和のまま残し、遅延の根を別の不変条件で押さえる。実測と判断の詳細は設計案の7章。
+
+- **Failure**: Action store の全 `Transaction`／`ReadTransaction`（本番規模で約2〜5秒）と、起動時の回復3件（全Actionを列挙して Run と突き合わせる）が、
+  履歴の量に比例して遅くなり、Tool 1回の終端保存が予算を超えて OPS 要求が HTTP 500 になった。
+- **Problem**: 毎回の全件decode・全件検証は、触るrecordが1件でも履歴全体を読む。起動時の回復は、1件の「存在しないRun参照」が
+  起動の失敗になる経路でもあった。
+- **Cause**: store が「ID で引く」「Run で引く」「open のものを引く」という問合せの形を持たず、呼出し元（回復の3箇所）が全件を列挙して
+  自分で結合していた。履歴の大半（約95%）は空振りの Memory Promotion が作っていた（IU-1で止めた）。
+- **Lesson**: 履歴が増え続ける store に対する全件の列挙は、既定にせず、理由のある例外にする。派生物（メモリ上の snapshot）は
+  ログの先頭からの decode 結果であり続けるように、ログに追記された bytes だけで変える。増分検証は、旧来の全件検証との等価性を
+  状態単位（任意の状態で受理・拒否が一致）とtx単位（同じ列で受理・拒否・全問合せ・ログのbytesが一致）の両方で示す。
+- **Invariant**:
+  1. 本番コードは Action を無制限に列挙しない。許可された場所（開いている Action だけ、全件確認のopt-in、Manager の転送、
+     test 支援、interface の宣言）以外で `ListActions` が Run・Task・Limit・Kind+Name のいずれも持たない filter で呼ばれない。
+  2. snapshot は常に「ログの先頭から `applied` byte までを、全件読みと同じ fold で decode した結果」と全 field で等しい。
+     各 tx・各読取りの前に2つのログの長さと `applied` を照合し、不一致・commit の成否不明・適用の未完（panic を含む）では、
+     次の操作の前にログ全体を読み直す。ログが規則違反なら操作は失敗し続ける（fail closed）。
+  3. tx は、触った Action とその Attempt の群、および Task Run ごとの native 委譲の一意性だけを検査する。
+     この検査は、全件の規則 `validateSnapshot` と任意の状態で受理・拒否が一致する。
+  4. 再起動時の回復は、まだ open の Action、native 委譲、running な Run の Action にだけ作用し、その Run を解決する。
+     範囲外の全 Action の Run 参照の確認は、`action_store.verify_run_references_at_start` と `rencrow actions verify --check-runs` に置く。
+- **Enforcement**:
+  - `internal/application/actionmanager/unbounded_list_architecture_test.go`（無制限 `ListActions` の禁止と許可リスト。staleな許可も失敗にする）、
+    `internal/application/taskmanager/unbounded_list_architecture_test.go`（回復が列挙する Run は running のみ）。
+  - `internal/infrastructure/persistence/action/`: `fold.go`（旧loaderとsnapshotが共有する畳み込み規則）、`group_validate.go`
+    （tx が使う規則。`validateSnapshot` が旧経路のoracle）、`snapshot_sync.go`（長さの照合・再構築・hook）。
+  - 設定 `action_store.index.enabled`（既定 false）。false で旧経路。
+- **Tests**:
+  - `group_validate_test.go`: 任意の状態4万件で、全件の規則とgroupの規則の受理・拒否が一致する。
+  - `snapshot_oracle_test.go`: 12 seed × 80 tx のランダム列（不正を含む）を旧経路とsnapshotに流し、受理・拒否、全問合せの全 field、
+    ログのbytesが一致し、再構築が0回である。意図的な破壊（対象の漏れ、native一意の省略、規則の一部省略）で失敗することを確認した。
+  - `snapshot_fault_test.go`: 子プロセスの強制終了（callback、hook 開始、適用の途中、適用後）と、WAL の形（prepare のみ、追記のみ、commit 済み、
+    commit の欠け）の後に開き直して、欠落が0で snapshot = 全件読み。
+  - `snapshot_sync_test.go`: 別handleの書込み、ログ外の追記、短くなったログ、`ErrCommitUncertain` の各形、hook の panic。
+  - `snapshot_concurrency_test.go`（`-race`）、`verify_test.go`、`cmd/rencrow/actions_restart_scope_test.go`（回復3箇所の置換前後の結果が旗の有無で同じ）。
