@@ -47,6 +47,7 @@ Commands:
   logs      Show logs (use --follow to stream)
   evidence  List/show/summarize execution evidence
   tasks     Manage canonical Tasks and interrupt notifications
+  actions   Verify the canonical Action store (actions verify)
   source-registry  List/register L1 source registry entries
   web-gather  Fetch public web pages into pending L1 staging
   browser-actor  Operate an allowlisted browser session from JSON

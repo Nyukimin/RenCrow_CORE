@@ -43,18 +43,41 @@ type JSONLStore struct {
 	attemptPath string
 	batch       *jsonlbatch.Store
 	txObserver  *txobserve.Observer
+	// idx is the in-memory snapshot of both logs; nil when the store was opened
+	// without OpenOptions.Index, in which case every transaction reads the logs
+	// in full.
+	idx *snapshot
 }
+
+// OpenOptions selects optional behavior of the Action store. The zero value is
+// the behavior this package has always had.
+type OpenOptions struct {
+	// Index keeps a snapshot of both logs in memory. The log stays the only source
+	// of truth: the snapshot is built from it at open and followed after every
+	// commit, and a store opened without Index reads the same files.
+	Index bool
+}
+
+// defaultIndexOption is what NewJSONLStore uses. It is false in every build
+// except one made with the actionindexdefault tag, which exists so the consumers'
+// tests can run against the snapshot (see snapshot_default_on.go).
+var defaultIndexOption = false
 
 // NewJSONLStore opens the Action files, repairs a pending WAL as a writer, and
 // rejects malformed persisted state before returning a usable store.
 func NewJSONLStore(root string) (*JSONLStore, error) {
-	return newJSONLStore(root, nil)
+	return newJSONLStore(root, OpenOptions{Index: defaultIndexOption}, nil)
 }
 
-// newJSONLStore is NewJSONLStore with a seam for tests: tune may change the
-// observer options (to capture the log or force the slow path) before the
-// observer is built.
-func newJSONLStore(root string, tune func(*txobserve.Options)) (*JSONLStore, error) {
+// NewJSONLStoreWithOptions is NewJSONLStore with optional behavior selected.
+func NewJSONLStoreWithOptions(root string, opts OpenOptions) (*JSONLStore, error) {
+	return newJSONLStore(root, opts, nil)
+}
+
+// newJSONLStore is NewJSONLStoreWithOptions with a seam for tests: tune may
+// change the observer options (to capture the log or force the slow path) before
+// the observer is built.
+func newJSONLStore(root string, options OpenOptions, tune func(*txobserve.Options)) (*JSONLStore, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, fmt.Errorf("action store root is required")
 	}
@@ -83,6 +106,19 @@ func newJSONLStore(root string, tune func(*txobserve.Options)) (*JSONLStore, err
 	}
 	store.txObserver = txobserve.New(opts)
 	batch.SetTxObserver(store.txObserver.Observe)
+	if options.Index {
+		ix := newSnapshot(store.actionPath, store.attemptPath)
+		if err := batch.Read(withTxLabel(context.Background(), txOpOpen), func() error {
+			return ix.build(context.Background())
+		}); err != nil {
+			return nil, fmt.Errorf("validate action store: %w", err)
+		}
+		store.idx = ix
+		// From here on the snapshot follows every commit of this Store, under the
+		// same OS lock as the writer.
+		batch.SetPostCommitHook(ix.onCommit)
+		return store, nil
+	}
 	if err := batch.Read(withTxLabel(context.Background(), txOpOpen), func() error {
 		actions, err := store.loadActions(context.Background())
 		if err != nil {
@@ -119,6 +155,9 @@ func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(d
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.idx != nil {
+		return s.snapshotTransaction(ctx, op, callback)
+	}
 	return s.batch.Write(withTxLabel(ctx, op), func() (map[string][]byte, error) {
 		actions, err := s.loadActions(ctx)
 		if err != nil {
@@ -140,6 +179,31 @@ func (s *JSONLStore) transaction(ctx context.Context, op string, callback func(d
 	})
 }
 
+// snapshotTransaction is transaction for a store with a snapshot: the callback
+// runs on the snapshot with only its own writes on top, and the transaction is
+// held to the group rule for what it touched. s.mu is held. Once the commit is
+// durable, the post-commit hook applies the bytes to the snapshot under the same
+// OS lock; a write that ends without a known commit boundary marks it dirty.
+func (s *JSONLStore) snapshotTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
+	err := s.batch.Write(withTxLabel(ctx, op), func() (map[string][]byte, error) {
+		if err := s.idx.ensureSynced(ctx); err != nil {
+			return nil, err
+		}
+		// Held while the callback runs and released when it returns, before the
+		// commit: the hook that follows needs the write lock.
+		s.idx.mu.RLock()
+		defer s.idx.mu.RUnlock()
+		tx := newSnapshotTransaction(s.idx.st, false)
+		defer tx.invalidate()
+		if err := callback(tx); err != nil {
+			return nil, err
+		}
+		return tx.finalize()
+	})
+	s.idx.noteWriteResult(err)
+	return err
+}
+
 // ReadTransaction runs against one OS-locked, committed snapshot. Its
 // callback receives a read-only transaction store and cannot write state.
 func (s *JSONLStore) ReadTransaction(ctx context.Context, callback func(domainaction.Store) error) error {
@@ -153,6 +217,9 @@ func (s *JSONLStore) readTransaction(ctx context.Context, op string, callback fu
 	}
 	if callback == nil {
 		return fmt.Errorf("action read transaction callback is nil")
+	}
+	if s.idx != nil {
+		return s.snapshotReadTransaction(ctx, op, callback)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -172,6 +239,45 @@ func (s *JSONLStore) readTransaction(ctx context.Context, op string, callback fu
 		defer tx.invalidate()
 		return callback(tx)
 	})
+}
+
+// snapshotReadTransaction is readTransaction for a store with a snapshot. When
+// the snapshot is current (no mark is set and both logs are as long as it
+// covers) the read takes no OS lock and touches no file but for two stat calls;
+// otherwise it first brings the snapshot up to the logs under the OS lock, which
+// also fails closed while the WAL is not settled.
+//
+// It does not take s.mu: that lock serializes the writers of one store. A reader
+// is excluded from a writer's change to the snapshot by snapshot.mu, which the
+// writer's post-commit hook takes for writing, and from a writer in another
+// handle or process by the length check and the OS lock behind it.
+func (s *JSONLStore) snapshotReadTransaction(ctx context.Context, op string, callback func(domainaction.Store) error) error {
+	started := time.Now()
+	stale, err := s.idx.stale()
+	if err != nil {
+		return err
+	}
+	if stale {
+		if err := s.batch.Read(withTxLabel(ctx, op), func() error { return s.idx.ensureSynced(ctx) }); err != nil {
+			return err
+		}
+		started = time.Now()
+	}
+	err = func() error {
+		s.idx.mu.RLock()
+		defer s.idx.mu.RUnlock()
+		tx := newSnapshotTransaction(s.idx.st, true)
+		defer tx.invalidate()
+		return callback(tx)
+	}()
+	if !stale {
+		// jsonlbatch saw none of this read; the observer is told, so the summary
+		// line still counts reads and their time.
+		s.txObserver.Observe(withTxLabel(ctx, op), jsonlbatch.TxObservation{
+			Kind: jsonlbatch.TxKindRead, Acquired: true, Exec: time.Since(started), Err: err,
+		})
+	}
+	return err
 }
 
 func (s *JSONLStore) SaveAction(ctx context.Context, value domainaction.Action) error {
@@ -238,11 +344,18 @@ func (s *JSONLStore) ListAttempts(ctx context.Context, filter domainaction.Attem
 	return result, err
 }
 
+// transactionStore is the Store a transaction callback works on. It has two
+// shapes. Built from a full read (base is nil), actions and attempts are the whole
+// store. Built on a snapshot (base is set), they hold only the records this
+// transaction saved, and every other record is read from base, which nothing
+// changes while the transaction runs. Both shapes answer the same questions the
+// same way; the second never copies the store.
 type transactionStore struct {
 	lifecycle       sync.RWMutex
 	dataMu          sync.Mutex
 	active          bool
 	readOnly        bool
+	base            *snapState
 	actions         map[modulecore.ActionID]domainaction.Action
 	attempts        map[modulecore.AttemptID]domainaction.Attempt
 	pendingActions  []domainaction.Action
@@ -265,6 +378,42 @@ func newTransactionStore(actions []domainaction.Action, attempts []domainaction.
 	return tx
 }
 
+// newSnapshotTransaction is a transaction on the snapshot content base. The
+// caller keeps the snapshot's read lock (and, for a write, the OS lock) for the
+// life of the transaction.
+func newSnapshotTransaction(base *snapState, readOnly bool) *transactionStore {
+	return &transactionStore{
+		active:   true,
+		readOnly: readOnly,
+		base:     base,
+		actions:  make(map[modulecore.ActionID]domainaction.Action),
+		attempts: make(map[modulecore.AttemptID]domainaction.Attempt),
+	}
+}
+
+// lookupAction finds an Action as this transaction sees it: its own write first,
+// then the snapshot. dataMu must be held.
+func (tx *transactionStore) lookupAction(id modulecore.ActionID) (domainaction.Action, bool) {
+	if item, ok := tx.actions[id]; ok {
+		return item, true
+	}
+	if tx.base != nil {
+		return tx.base.action(id)
+	}
+	return domainaction.Action{}, false
+}
+
+// lookupAttempt is lookupAction for Attempts.
+func (tx *transactionStore) lookupAttempt(id modulecore.AttemptID) (domainaction.Attempt, bool) {
+	if item, ok := tx.attempts[id]; ok {
+		return item, true
+	}
+	if tx.base != nil {
+		return tx.base.attempt(id)
+	}
+	return domainaction.Attempt{}, false
+}
+
 func (tx *transactionStore) validateSnapshot() error {
 	return tx.withActive(context.Background(), false, func() error {
 		return tx.validateSnapshotLocked()
@@ -275,6 +424,9 @@ func (tx *transactionStore) validateSnapshot() error {
 // finalizer calls this under the exclusive lifecycle lock so no operation can
 // append to the pending overlay after validation or payload extraction.
 func (tx *transactionStore) validateSnapshotLocked() error {
+	if tx.base != nil {
+		return tx.validateTouchedLocked()
+	}
 	actions := make([]domainaction.Action, 0, len(tx.actions))
 	for _, item := range tx.actions {
 		actions = append(actions, item)
@@ -325,7 +477,7 @@ func (tx *transactionStore) SaveAction(ctx context.Context, value domainaction.A
 		if err := value.Validate(); err != nil {
 			return err
 		}
-		if existing, ok := tx.actions[value.ActionID]; ok {
+		if existing, ok := tx.lookupAction(value.ActionID); ok {
 			if existing.TaskID != value.TaskID || existing.RunID != value.RunID || existing.Kind != value.Kind || !existing.CreatedAt.Equal(value.CreatedAt) {
 				return fmt.Errorf("action identity fields are immutable")
 			}
@@ -351,7 +503,7 @@ func (tx *transactionStore) GetAction(ctx context.Context, actionID modulecore.A
 		if err := actionID.Validate(); err != nil {
 			return err
 		}
-		item, ok := tx.actions[actionID]
+		item, ok := tx.lookupAction(actionID)
 		if !ok {
 			return domainaction.ErrNotFound
 		}
@@ -367,19 +519,7 @@ func (tx *transactionStore) ListActions(ctx context.Context, filter domainaction
 		if err := validateActionFilter(filter); err != nil {
 			return err
 		}
-		result = make([]domainaction.Action, 0, len(tx.actions))
-		for _, item := range tx.actions {
-			if filter.TaskID != "" && item.TaskID != filter.TaskID {
-				continue
-			}
-			if filter.RunID != "" && item.RunID != filter.RunID {
-				continue
-			}
-			if filter.Status != "" && item.Status != filter.Status {
-				continue
-			}
-			result = append(result, cloneAction(item))
-		}
+		result = tx.selectActions(filter)
 		sort.SliceStable(result, func(i, j int) bool {
 			if result[i].CreatedAt.Equal(result[j].CreatedAt) {
 				return string(result[i].ActionID) < string(result[j].ActionID)
@@ -399,14 +539,14 @@ func (tx *transactionStore) SaveAttempt(ctx context.Context, value domainaction.
 		if err := value.Validate(); err != nil {
 			return err
 		}
-		if _, ok := tx.actions[value.ActionID]; !ok {
+		action, ok := tx.lookupAction(value.ActionID)
+		if !ok {
 			return fmt.Errorf("attempt action is unavailable: %w", domainaction.ErrNotFound)
 		}
-		action := tx.actions[value.ActionID]
 		if value.NativeDelegation != nil && !isNativeDelegationAction(action) {
 			return fmt.Errorf("typed native delegation state requires its canonical action")
 		}
-		existing, exists := tx.attempts[value.AttemptID]
+		existing, exists := tx.lookupAttempt(value.AttemptID)
 		if exists {
 			if existing.ActionID != value.ActionID || existing.StartReason != value.StartReason || !existing.StartedAt.Equal(value.StartedAt) {
 				return fmt.Errorf("attempt identity and start fields are immutable")
@@ -422,7 +562,7 @@ func (tx *transactionStore) SaveAttempt(ctx context.Context, value domainaction.
 			return fmt.Errorf("typed native delegation state requires its canonical action")
 		}
 		if value.Status == domainaction.AttemptStatusRunning {
-			for _, item := range tx.attempts {
+			for _, item := range tx.attemptsOfAction(value.ActionID) {
 				if item.ActionID == value.ActionID && item.Status == domainaction.AttemptStatusRunning && item.AttemptID != value.AttemptID {
 					return fmt.Errorf("action already has active attempt %s", item.AttemptID)
 				}
@@ -441,7 +581,7 @@ func (tx *transactionStore) GetAttempt(ctx context.Context, attemptID modulecore
 		if err := attemptID.Validate(); err != nil {
 			return err
 		}
-		item, ok := tx.attempts[attemptID]
+		item, ok := tx.lookupAttempt(attemptID)
 		if !ok {
 			return domainaction.ErrNotFound
 		}
@@ -457,16 +597,7 @@ func (tx *transactionStore) ListAttempts(ctx context.Context, filter domainactio
 		if err := validateAttemptFilter(filter); err != nil {
 			return err
 		}
-		result = make([]domainaction.Attempt, 0, len(tx.attempts))
-		for _, item := range tx.attempts {
-			if filter.ActionID != "" && item.ActionID != filter.ActionID {
-				continue
-			}
-			if filter.Status != "" && item.Status != filter.Status {
-				continue
-			}
-			result = append(result, cloneAttempt(item))
-		}
+		result = tx.selectAttempts(filter)
 		sort.SliceStable(result, func(i, j int) bool {
 			if result[i].StartedAt.Equal(result[j].StartedAt) {
 				return string(result[i].AttemptID) < string(result[j].AttemptID)
@@ -634,6 +765,9 @@ func validateActionFilter(filter domainaction.Filter) error {
 	if filter.Status != "" && !domainaction.ValidStatus(filter.Status) {
 		return fmt.Errorf("invalid action status: %s", filter.Status)
 	}
+	if filter.Kind != "" && !domainaction.ValidKind(filter.Kind) {
+		return fmt.Errorf("invalid action kind: %s", filter.Kind)
+	}
 	return nil
 }
 
@@ -744,82 +878,47 @@ func validateSnapshot(actions []domainaction.Action, attempts []domainaction.Att
 }
 
 func (s *JSONLStore) loadActions(ctx context.Context) ([]domainaction.Action, error) {
-	items, err := readJSONLLines[domainaction.Action](ctx, s.actionPath)
+	return loadActionsFrom(ctx, s.actionPath)
+}
+
+func (s *JSONLStore) loadAttempts(ctx context.Context) ([]domainaction.Attempt, error) {
+	return loadAttemptsFrom(ctx, s.attemptPath)
+}
+
+// loadActionsFrom is the full read of an Action log: every line decoded and held
+// to the rules of the fold, the latest version of each Action returned.
+func loadActionsFrom(ctx context.Context, path string) ([]domainaction.Action, error) {
+	items, err := readJSONLLines[domainaction.Action](ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	latest := make(map[modulecore.ActionID]domainaction.Action, len(items))
-	nativeByTaskRun := make(map[[2]string]modulecore.ActionID)
+	fold := newActionFold(len(items))
 	for index, item := range items {
-		if err := item.Validate(); err != nil {
-			return nil, fmt.Errorf("action record %d is invalid: %w", index, err)
+		if err := fold.apply(index, item); err != nil {
+			return nil, err
 		}
-		if previous, ok := latest[item.ActionID]; ok {
-			if previous.TaskID != item.TaskID || previous.RunID != item.RunID || previous.Kind != item.Kind || !previous.CreatedAt.Equal(item.CreatedAt) {
-				return nil, fmt.Errorf("action record %d changes immutable identity fields", index)
-			}
-			if isNativeDelegationAction(previous) {
-				if !isNativeDelegationAction(item) || previous.Name != item.Name || previous.CurrentAttemptID != item.CurrentAttemptID {
-					return nil, fmt.Errorf("action record %d changes immutable native delegation identity", index)
-				}
-				if !previous.IsOpen() && item.Status != previous.Status {
-					return nil, fmt.Errorf("action record %d reopens or changes a terminal native delegation", index)
-				}
-			}
-		}
-		if isNativeDelegationAction(item) {
-			key := [2]string{string(item.TaskID), string(item.RunID)}
-			if previous, ok := nativeByTaskRun[key]; ok && previous != item.ActionID {
-				return nil, fmt.Errorf("action record %d duplicates native delegation for Task Run %s/%s", index, item.TaskID, item.RunID)
-			}
-			nativeByTaskRun[key] = item.ActionID
-		}
-		latest[item.ActionID] = item
 	}
-	result := make([]domainaction.Action, 0, len(latest))
-	for _, item := range latest {
+	result := make([]domainaction.Action, 0, len(fold.latest))
+	for _, item := range fold.latest {
 		result = append(result, item)
 	}
 	return result, nil
 }
 
-func (s *JSONLStore) loadAttempts(ctx context.Context) ([]domainaction.Attempt, error) {
-	items, err := readJSONLLines[domainaction.Attempt](ctx, s.attemptPath)
+// loadAttemptsFrom is loadActionsFrom for an Attempt log.
+func loadAttemptsFrom(ctx context.Context, path string) ([]domainaction.Attempt, error) {
+	items, err := readJSONLLines[domainaction.Attempt](ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	latest := make(map[modulecore.AttemptID]domainaction.Attempt, len(items))
-	activeByAction := make(map[modulecore.ActionID]modulecore.AttemptID)
+	fold := newAttemptFold(len(items))
 	for index, item := range items {
-		if err := item.Validate(); err != nil {
-			return nil, fmt.Errorf("attempt record %d is invalid: %w", index, err)
+		if err := fold.apply(index, item); err != nil {
+			return nil, err
 		}
-		previous, exists := latest[item.AttemptID]
-		if !exists && item.NativeDelegation != nil {
-			if err := validateInitialNativeAttemptShape(item); err != nil {
-				return nil, fmt.Errorf("attempt record %d has invalid initial native state: %w", index, err)
-			}
-		}
-		if exists {
-			if previous.ActionID != item.ActionID || previous.StartReason != item.StartReason || !previous.StartedAt.Equal(item.StartedAt) {
-				return nil, fmt.Errorf("attempt record %d changes immutable identity or start fields", index)
-			}
-			if err := validateAttemptRecordTransition(previous, item); err != nil {
-				return nil, fmt.Errorf("attempt record %d: %w", index, err)
-			}
-		}
-		if item.Status == domainaction.AttemptStatusRunning {
-			if activeID, ok := activeByAction[item.ActionID]; ok && activeID != item.AttemptID {
-				return nil, fmt.Errorf("action %s has multiple active attempts", item.ActionID)
-			}
-			activeByAction[item.ActionID] = item.AttemptID
-		} else if activeID, ok := activeByAction[item.ActionID]; ok && activeID == item.AttemptID {
-			delete(activeByAction, item.ActionID)
-		}
-		latest[item.AttemptID] = item
 	}
-	result := make([]domainaction.Attempt, 0, len(latest))
-	for _, item := range latest {
+	result := make([]domainaction.Attempt, 0, len(fold.latest))
+	for _, item := range fold.latest {
 		result = append(result, item)
 	}
 	return result, nil
@@ -1023,51 +1122,75 @@ func isNativeDelegationAction(value domainaction.Action) bool {
 	return value.Kind == domainaction.KindDelegation && domainaction.NormalizeName(value.Name) == domainaction.NativeDelegationActionName
 }
 
+// readJSONLLines decodes every non-blank line of the file at path. A missing
+// file holds no lines.
 func readJSONLLines[T any](ctx context.Context, path string) ([]T, error) {
-	if err := validateStoreContext(ctx); err != nil {
+	var items []T
+	_, _, err := scanJSONLFile(ctx, path, func(line []byte) error {
+		var item T
+		if unmarshalErr := json.Unmarshal(line, &item); unmarshalErr != nil {
+			return unmarshalErr
+		}
+		items = append(items, item)
+		return nil
+	})
+	if err != nil {
 		return nil, err
+	}
+	return items, nil
+}
+
+// scanJSONLFile calls fn with every non-blank line of the file at path, trimmed
+// of surrounding space; fn must not keep the slice. It returns how many bytes it
+// read and whether the last line ended with a newline (a file that ends without
+// one was not written by the append path). A missing file holds no lines. A
+// record over jsonlbatch.MaxJSONLRecordBytes (its line ending excluded) fails the
+// scan, as does any error fn returns.
+func scanJSONLFile(ctx context.Context, path string, fn func(line []byte) error) (int64, bool, error) {
+	if err := validateStoreContext(ctx); err != nil {
+		return 0, false, err
 	}
 	file, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return 0, true, nil
 		}
-		return nil, err
+		return 0, false, err
 	}
 	defer file.Close()
 	reader := bufio.NewReaderSize(file, jsonlbatch.MaxJSONLReadBufferSize)
-	var items []T
+	var read int64
+	terminated := true
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return read, terminated, err
 		}
 		line, err := reader.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
-			return nil, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
+			return read, terminated, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
 		}
 		if len(line) > 0 {
+			read += int64(len(line))
 			recordBytes := len(line)
-			if line[len(line)-1] == '\n' {
+			terminated = line[len(line)-1] == '\n'
+			if terminated {
 				recordBytes--
 			}
 			if recordBytes > jsonlbatch.MaxJSONLRecordBytes {
-				return nil, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
+				return read, terminated, fmt.Errorf("jsonl record exceeds maximum allowed %d bytes", jsonlbatch.MaxJSONLRecordBytes)
 			}
-			trimmed := strings.TrimSpace(string(line))
-			if trimmed != "" {
-				var item T
-				if unmarshalErr := json.Unmarshal([]byte(trimmed), &item); unmarshalErr != nil {
-					return nil, unmarshalErr
+			if trimmed := bytes.TrimSpace(line); len(trimmed) > 0 {
+				if fnErr := fn(trimmed); fnErr != nil {
+					return read, terminated, fnErr
 				}
-				items = append(items, item)
 			}
 		}
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return read, terminated, err
 		}
 	}
-	return items, nil
+	return read, terminated, nil
 }

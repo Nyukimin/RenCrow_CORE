@@ -9,6 +9,7 @@ type Config struct {
 	Storage      StorageConfig      `yaml:"storage"`
 	DurableStore DurableStoreConfig `yaml:"durable_store"`
 	TaskStore    TaskStoreConfig    `yaml:"task_store"`
+	ActionStore  ActionStoreConfig  `yaml:"action_store"`
 	Backup       BackupConfig       `yaml:"backup"`
 	Worker       WorkerConfig       `yaml:"worker"`
 	Line         LineConfig         `yaml:"line"`

@@ -150,7 +150,7 @@ func newLegacyOPSRealShiro(t *testing.T, provider *legacyOPSProvider, ledger *le
 	t.Helper()
 	// Production gives the Subagent loop an Action owner (cfg.Subagent.Enabled);
 	// a loop bound to a Task/Run refuses to start without one.
-	actions, err := newRuntimeActionManager(t.TempDir())
+	actions, err := newRuntimeActionManager(t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -61,12 +61,20 @@ type Action struct {
 	Summary          string               `json:"summary,omitempty"`
 }
 
-// Filter selects persisted Actions. Results are returned chronologically.
+// Filter selects persisted Actions. Results are returned chronologically. Every
+// field that is set must match; the zero Filter selects the whole history, which
+// is a decision a caller makes explicitly (see the unbounded-list architecture
+// test), not a default.
 type Filter struct {
 	TaskID modulecore.TaskID
 	RunID  modulecore.RunID
 	Status Status
-	Limit  int
+	// Kind selects Actions of one Kind.
+	Kind Kind
+	// Name selects Actions whose Name is exactly this string. The comparison is
+	// not normalized: it is the stored Name, as written by the Action owner.
+	Name  string
+	Limit int
 }
 
 func (a Action) Validate() error {

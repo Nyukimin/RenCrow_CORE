@@ -23,7 +23,7 @@ func observedStore(t *testing.T, tune func(*txobserve.Options)) (*JSONLStore, fu
 	t.Helper()
 	var mu sync.Mutex
 	var lines []string
-	store, err := newJSONLStore(filepath.Join(t.TempDir(), "actions"), func(o *txobserve.Options) {
+	store, err := newJSONLStore(filepath.Join(t.TempDir(), "actions"), OpenOptions{Index: defaultIndexOption}, func(o *txobserve.Options) {
 		o.Logf = func(format string, args ...any) {
 			mu.Lock()
 			defer mu.Unlock()

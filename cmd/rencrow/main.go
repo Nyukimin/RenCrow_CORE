@@ -67,6 +67,8 @@ func main() {
 		cmdEvidence()
 	case "tasks":
 		cmdTasks()
+	case "actions":
+		cmdActions()
 	case "source-registry":
 		cmdSourceRegistry()
 	case "web-gather":

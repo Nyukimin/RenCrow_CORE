@@ -309,7 +309,7 @@ func buildToolRuntimeWithCapabilities(
 
 	var actionManager *actionmanager.Manager
 	if cfg.Security.Enabled || cfg.Subagent.Enabled {
-		manager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+		manager, err := newRuntimeActionManager(cfg.WorkspaceDir, cfg.ActionStore.Index.Enabled)
 		if err != nil {
 			log.Fatalf("Failed to initialize action store: %v", err)
 		}

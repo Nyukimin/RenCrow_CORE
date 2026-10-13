@@ -496,7 +496,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
 		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
-	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir)
+	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir, cfg.ActionStore.Index.Enabled)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
 	}
@@ -504,6 +504,14 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical transport receipt owner: %v", err)
+	}
+	if cfg.ActionStore.VerifyRunReferencesAtStart {
+		// Opt-in: every Action's Run must be owned by a Task. The restart recovery
+		// below checks only the Actions it acts on.
+		if err := verifyActionRunReferences(context.Background(), runtimeActionManager, deps.taskManager); err != nil {
+			log.Fatalf("Failed to verify the Run reference of every Action: %v", err)
+		}
+		log.Printf("Verified the Run reference of every Action")
 	}
 	recoveredActionRuns, err := recoverActionRunsAfterRestart(context.Background(), runtimeActionManager, deps.taskManager)
 	if err != nil {

@@ -182,6 +182,16 @@ task_store:
     # 同じ日の次のsegmentへ切り替える大きさ（byte）。0は8 MiB。
     size_valve_bytes: 0
 
+# canonical Action store（state/actions）のメモリ上のsnapshot（ログが唯一の正本で、falseに戻せば従来の読み方になる）。
+# 有効にすると、起動時にログ全体を1回だけ読み、以後のtxと読取りは触るrecordだけを扱う。既定はfalse。
+action_store:
+  index:
+    enabled: false
+  # trueにすると、再起動時の回復が全Actionについて、参照するRunがTask storeに存在することを確かめる
+  # （存在しなければ起動しない）。既定のfalseでは回復が作用するAction（open、native委譲、runningなRunのAction）だけを
+  # 確かめる。全件の確認は `rencrow actions verify --check-runs` で行える。
+  verify_run_references_at_start: false
+
 # Long-running Agent Runはdurable checkpointから同一run/job identityで再開する。
 superagent_harness:
   run_queue_scheduler_enabled: true
