@@ -14,6 +14,7 @@ import (
 
 type Store interface {
 	ClaimProfilePromotionBatch(context.Context, int, int, time.Duration, time.Time) (*domainmemory.ProfilePromotionBatch, error)
+	HasClaimableProfilePromotionJob(context.Context, int, time.Time) (bool, error)
 	ListProfilePromotionProjection(context.Context, string, int) ([]domainmemory.UserMemory, error)
 	CompleteProfilePromotionBatch(context.Context, domainmemory.ProfilePromotionBatch, []domainmemory.ProfileCandidate, string, time.Time) (int, error)
 	DeferProfilePromotionBatch(context.Context, domainmemory.ProfilePromotionBatch, time.Time) error
@@ -57,6 +58,22 @@ func NewService(store Store, extractor domconv.ProfileExtractor, options Options
 		options.UserID = "ren"
 	}
 	return &Service{store: store, extractor: extractor, options: options}
+}
+
+// HasClaimable reports, without changing anything, whether RunOne could find
+// work now: it asks the store the same question the claim answers, with the
+// attempt limit and clock RunOne passes to the claim. A caller that would open an
+// execution subject for RunOne asks this first and skips the run when it is false.
+// An error is returned as is; it is never read as "nothing to do".
+func (s *Service) HasClaimable(ctx context.Context) (bool, error) {
+	if s == nil || s.store == nil {
+		return false, errors.New("profile promotion service is unavailable")
+	}
+	claimable, err := s.store.HasClaimableProfilePromotionJob(ctx, s.options.MaxAttempts, s.options.Now().UTC())
+	if err != nil {
+		return false, err
+	}
+	return claimable, nil
 }
 
 func (s *Service) RunOne(ctx context.Context) (RunResult, error) {

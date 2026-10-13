@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	memorypromotionapp "github.com/Nyukimin/RenCrow_CORE/internal/application/memorypromotion"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager/taskmanagertest"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -25,6 +28,23 @@ type memoryPromotionActionRunnerStub struct {
 	actionBound   bool
 	// err, when set, is what the inner run ends with.
 	err error
+	// idle makes the claim probe answer "nothing to claim". The zero value is the
+	// state every lifecycle test below assumes: work is waiting.
+	idle bool
+	// probeErr, when set, is what the claim probe fails with.
+	probeErr error
+	probes   int
+	// claimsNothing makes RunOne claim nothing (Processed=false) although the
+	// probe said there was work: the false positive the probe is allowed to have.
+	claimsNothing bool
+}
+
+func (s *memoryPromotionActionRunnerStub) HasClaimable(context.Context) (bool, error) {
+	s.probes++
+	if s.probeErr != nil {
+		return false, s.probeErr
+	}
+	return !s.idle, nil
 }
 
 func (s *memoryPromotionActionRunnerStub) RunOne(ctx context.Context) (memorypromotionapp.RunResult, error) {
@@ -34,6 +54,9 @@ func (s *memoryPromotionActionRunnerStub) RunOne(ctx context.Context) (memorypro
 	s.identityBound = identityErr == nil
 	if s.err != nil {
 		return memorypromotionapp.RunResult{}, s.err
+	}
+	if s.claimsNothing {
+		return memorypromotionapp.RunResult{}, nil
 	}
 	return memorypromotionapp.RunResult{Processed: true, MessageCount: 1, CandidateCount: 1}, nil
 }
@@ -387,5 +410,287 @@ func TestActionMemoryPromotionRunnerMarksRunNotClosedWhenFinalWriteFailsAfterCan
 	task, run := fixture.onlyTaskAndRun(t)
 	if task.Status != domaintask.StatusRunning || run.Status != domaintask.RunStatusRunning {
 		t.Fatalf("Task/Run = %s/%s, want running because the final write was refused", task.Status, run.Status)
+	}
+}
+
+// assertNothingCreated checks that a RunOne that found nothing to claim left no
+// trace in either owner: no Task transaction ran, and no Task, Run or Action exists.
+func (f *memoryPromotionFixture) assertNothingCreated(t *testing.T) {
+	t.Helper()
+	f.taskFault.mu.Lock()
+	calls := f.taskFault.calls
+	f.taskFault.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("%d Task transaction(s) ran although nothing was claimable", calls)
+	}
+	tasks, err := f.tasks.List(context.Background(), domaintask.Filter{})
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("tasks=%d err=%v, want none", len(tasks), err)
+	}
+	actions, err := f.actions.ListActions(context.Background(), domainaction.Filter{})
+	if err != nil || len(actions) != 0 {
+		t.Fatalf("actions=%d err=%v, want none", len(actions), err)
+	}
+}
+
+func TestActionMemoryPromotionRunnerCreatesNothingWhenNothingIsClaimable(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	fixture.inner.idle = true
+
+	result, err := fixture.runner.RunOne(context.Background())
+
+	if err != nil || result.Processed {
+		t.Fatalf("RunOne result=%#v err=%v, want an unprocessed run without error", result, err)
+	}
+	if fixture.inner.called {
+		t.Fatal("the inner runner ran although the probe found nothing to claim")
+	}
+	fixture.assertNothingCreated(t)
+}
+
+func TestActionMemoryPromotionRunnerKeepsCreatingTheLifecycleWhenAJobIsClaimable(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+
+	result, err := fixture.runner.RunOne(context.Background())
+
+	if err != nil || !result.Processed || !fixture.inner.identityBound || !fixture.inner.actionBound {
+		t.Fatalf("RunOne result=%#v identity_bound=%v action_bound=%v err=%v", result, fixture.inner.identityBound, fixture.inner.actionBound, err)
+	}
+	if fixture.inner.probes != 1 {
+		t.Fatalf("probe ran %d times, want once per RunOne", fixture.inner.probes)
+	}
+	task, run := fixture.onlyTaskAndRun(t)
+	if task.Status != domaintask.StatusSucceeded || run.Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("Task/Run = %s/%s, want succeeded", task.Status, run.Status)
+	}
+}
+
+// The probe may say "work" when the claim then finds none. That costs the old
+// behaviour, nothing worse: the Task, Run, Action and Attempt are created and then
+// closed by the shared terminal path, and the single long-research slot is free.
+func TestActionMemoryPromotionRunnerClosesEverythingWhenTheProbeWasAFalsePositive(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	fixture.inner.claimsNothing = true
+
+	result, err := fixture.runner.RunOne(context.Background())
+
+	if err != nil || result.Processed {
+		t.Fatalf("RunOne result=%#v err=%v, want an unprocessed run without error", result, err)
+	}
+	if !fixture.inner.called {
+		t.Fatal("the inner runner did not run although the probe found work")
+	}
+	task, run := fixture.onlyTaskAndRun(t)
+	if task.Status != domaintask.StatusSucceeded || run.Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("Task/Run = %s/%s, want succeeded", task.Status, run.Status)
+	}
+	actions, err := fixture.actions.ListActions(context.Background(), domainaction.Filter{})
+	if err != nil || len(actions) != 1 || actions[0].Status != domainaction.StatusSucceeded {
+		t.Fatalf("actions=%#v err=%v, want one succeeded Action", actions, err)
+	}
+	attempts, err := fixture.actions.ListAttempts(context.Background(), domainaction.AttemptFilter{ActionID: actions[0].ActionID})
+	if err != nil || len(attempts) != 1 || attempts[0].Status != domainaction.AttemptStatusSucceeded {
+		t.Fatalf("attempts=%#v err=%v, want one succeeded Attempt", attempts, err)
+	}
+	next, nextRun, err := fixture.tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+		Title: "next Memory Promotion", Route: domaintask.RouteResearch, OwnerID: "midori", Assignee: "midori",
+	}, domaintask.SharedRoleContext{})
+	if err != nil || next.Status != domaintask.StatusRunning || nextRun.Status != domaintask.RunStatusRunning {
+		t.Fatalf("the execution slot is not free after the false positive: task=%#v run=%#v err=%v", next, nextRun, err)
+	}
+}
+
+func TestActionMemoryPromotionRunnerReturnsTheProbeErrorWithoutCreatingAnything(t *testing.T) {
+	probeErr := errors.New("probe failed")
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	fixture.inner.probeErr = probeErr
+
+	result, err := fixture.runner.RunOne(context.Background())
+
+	if !errors.Is(err, probeErr) || result.Processed {
+		t.Fatalf("RunOne result=%#v err=%v, want the probe error", result, err)
+	}
+	if memoryPromotionRunLeftOpen(err) {
+		t.Fatalf("RunOne error = %v, claims a run was left open although none was created", err)
+	}
+	if fixture.inner.called {
+		t.Fatal("the inner runner ran although the probe failed")
+	}
+	fixture.assertNothingCreated(t)
+}
+
+// A cancellation reaching the probe must stay a cancellation: the worker does not
+// report it as a job failure.
+func TestActionMemoryPromotionRunnerKeepsTheCancellationFromTheProbe(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	fixture.inner.probeErr = context.Canceled
+
+	_, err := fixture.runner.RunOne(context.Background())
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunOne error = %v, want context.Canceled preserved", err)
+	}
+	fixture.assertNothingCreated(t)
+}
+
+// statsHarness drives memoryPromotionRunStats with a fake clock and captures its lines.
+type statsHarness struct {
+	stats *memoryPromotionRunStats
+	now   time.Time
+	lines []string
+}
+
+func newStatsHarness() *statsHarness {
+	h := &statsHarness{now: time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)}
+	h.stats = newMemoryPromotionRunStats(
+		func() time.Time { return h.now },
+		func(format string, args ...any) { h.lines = append(h.lines, fmt.Sprintf(format, args...)) },
+	)
+	return h
+}
+
+func TestMemoryPromotionRunStatsWritesNothingBeforeTheIntervalEnds(t *testing.T) {
+	h := newStatsHarness()
+	for i := 0; i < 500; i++ {
+		h.stats.idle()
+		h.now = h.now.Add(time.Second)
+	}
+	if len(h.lines) != 0 {
+		t.Fatalf("lines before the interval = %q, want none", h.lines)
+	}
+}
+
+func TestMemoryPromotionRunStatsWritesOneSummaryPerIntervalAndResets(t *testing.T) {
+	h := newStatsHarness()
+	for i := 0; i < 3; i++ {
+		h.stats.idle()
+	}
+	h.stats.worked(true, nil)
+	h.stats.worked(false, nil)
+	h.stats.probeFailed()
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+
+	h.stats.idle()
+
+	want := "Memory ProfilePromotion run summary window=10m0s idle=4 started=2 refused=0 processed=1 probe_errors=1"
+	if len(h.lines) != 1 || h.lines[0] != want {
+		t.Fatalf("lines = %q, want exactly %q", h.lines, want)
+	}
+
+	h.stats.idle()
+	if len(h.lines) != 1 {
+		t.Fatalf("lines after more runs in the same window = %q, want still one", h.lines)
+	}
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	h.stats.idle()
+	wantNext := "Memory ProfilePromotion run summary window=10m0s idle=2 started=0 refused=0 processed=0 probe_errors=0"
+	if len(h.lines) != 2 || h.lines[1] != wantNext {
+		t.Fatalf("second summary = %q, want %q (counts restart each window)", h.lines, wantNext)
+	}
+}
+
+func TestMemoryPromotionRunStatsNeverLogsTaskOrRecordIdentifiers(t *testing.T) {
+	h := newStatsHarness()
+	h.stats.worked(true, nil)
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	h.stats.idle()
+	if len(h.lines) != 1 || strings.Contains(h.lines[0], "task_") || strings.Contains(h.lines[0], "run_") {
+		t.Fatalf("summary line = %q, want counts only", h.lines)
+	}
+}
+
+// Through the wrapper: idle runs are counted, one summary line per interval, and
+// no line per run.
+func TestActionMemoryPromotionRunnerCountsIdleRunsInOneSummaryPerInterval(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	fixture.inner.idle = true
+	h := newStatsHarness()
+	fixture.runner.(*actionMemoryPromotionRunner).stats = h.stats
+
+	for i := 0; i < 6; i++ {
+		if _, err := fixture.runner.RunOne(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(h.lines) != 0 {
+		t.Fatalf("lines for six idle runs = %q, want none", h.lines)
+	}
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	if _, err := fixture.runner.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Memory ProfilePromotion run summary window=10m0s idle=7 started=0 refused=0 processed=0 probe_errors=0"
+	if len(h.lines) != 1 || h.lines[0] != want {
+		t.Fatalf("lines = %q, want exactly %q", h.lines, want)
+	}
+	fixture.assertNothingCreated(t)
+}
+
+func TestActionMemoryPromotionRunnerCountsStartedAndFailedProbeRuns(t *testing.T) {
+	fixture := newMemoryPromotionFixture(t, memoryPromotionFixtureOptions{})
+	h := newStatsHarness()
+	fixture.runner.(*actionMemoryPromotionRunner).stats = h.stats
+
+	if _, err := fixture.runner.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fixture.inner.probeErr = errors.New("probe failed")
+	if _, err := fixture.runner.RunOne(context.Background()); err == nil {
+		t.Fatal("RunOne error = nil, want the probe error")
+	}
+	fixture.inner.probeErr = nil
+	fixture.inner.idle = true
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	if _, err := fixture.runner.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Memory ProfilePromotion run summary window=10m0s idle=1 started=1 refused=0 processed=1 probe_errors=1"
+	if len(h.lines) != 1 || h.lines[0] != want {
+		t.Fatalf("lines = %q, want exactly %q", h.lines, want)
+	}
+}
+
+// A refusal for lack of execution capacity opened no subject: it is counted as
+// refused, not as started.
+func TestMemoryPromotionRunStatsCountsACapacityRefusalSeparately(t *testing.T) {
+	h := newStatsHarness()
+	h.stats.worked(false, fmt.Errorf("start run: %w", taskmanager.ErrParallelLimit))
+	h.stats.worked(true, nil)
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	h.stats.idle()
+
+	want := "Memory ProfilePromotion run summary window=10m0s idle=1 started=1 refused=1 processed=1 probe_errors=0"
+	if len(h.lines) != 1 || h.lines[0] != want {
+		t.Fatalf("lines = %q, want exactly %q", h.lines, want)
+	}
+}
+
+// Through the wrapper: a run refused for lack of execution capacity counts as
+// refused, and the refusal still reaches the worker as ErrParallelLimit so its
+// capacity backoff keeps working.
+func TestActionMemoryPromotionRunnerCountsACapacityRefusalAsRefused(t *testing.T) {
+	saturated := taskmanagertest.NewSaturated(t)
+	inner := &memoryPromotionActionRunnerStub{}
+	runner, err := newActionMemoryPromotionRunner(inner, newCapacityTestActionOwner(t), saturated.Manager, "midori")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newStatsHarness()
+	runner.(*actionMemoryPromotionRunner).stats = h.stats
+
+	if _, err := runner.RunOne(context.Background()); !errors.Is(err, taskmanager.ErrParallelLimit) {
+		t.Fatalf("RunOne error=%v, want ErrParallelLimit", err)
+	}
+	inner.idle = true
+	h.now = h.now.Add(memoryPromotionRunSummaryInterval)
+	if _, err := runner.RunOne(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Memory ProfilePromotion run summary window=10m0s idle=1 started=0 refused=1 processed=0 probe_errors=0"
+	if len(h.lines) != 1 || h.lines[0] != want {
+		t.Fatalf("lines = %q, want exactly %q", h.lines, want)
 	}
 }

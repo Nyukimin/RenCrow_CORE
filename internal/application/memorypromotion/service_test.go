@@ -22,6 +22,22 @@ type promotionStoreStub struct {
 	deferred        bool
 	failed          bool
 	failureText     string
+
+	// claimable is what the read-only claim probe answers; claimableErr, when set,
+	// is returned instead. probes records every call.
+	claimable    bool
+	claimableErr error
+	probes       []claimProbeCall
+}
+
+type claimProbeCall struct {
+	maxAttempts int
+	now         time.Time
+}
+
+func (s *promotionStoreStub) HasClaimableProfilePromotionJob(_ context.Context, maxAttempts int, now time.Time) (bool, error) {
+	s.probes = append(s.probes, claimProbeCall{maxAttempts: maxAttempts, now: now})
+	return s.claimable, s.claimableErr
 }
 
 func (s *promotionStoreStub) ClaimProfilePromotionBatch(context.Context, int, int, time.Duration, time.Time) (*domainmemory.ProfilePromotionBatch, error) {
@@ -291,5 +307,69 @@ func TestServiceRunOneBoundsValidProjectionByTotalRunes(t *testing.T) {
 	}
 	if len(extractor.existing.Facts) != domainmemory.ProfilePromotionProjectionTotalMax/domainmemory.ProfilePromotionProjectionStatementMax {
 		t.Fatalf("bounded facts=%d", len(extractor.existing.Facts))
+	}
+}
+
+func TestServiceHasClaimableAsksTheStoreWithTheLimitAndClockTheClaimUses(t *testing.T) {
+	now := time.Date(2026, 10, 13, 21, 0, 0, 0, time.FixedZone("JST", 9*60*60))
+	store := &promotionStoreStub{claimable: true}
+	service := NewService(store, promotionExtractorStub{}, Options{MaxAttempts: 3, Now: func() time.Time { return now }})
+
+	got, err := service.HasClaimable(context.Background())
+	if err != nil || !got {
+		t.Fatalf("HasClaimable = %v err=%v, want true", got, err)
+	}
+	if len(store.probes) != 1 || store.probes[0].maxAttempts != 3 || !store.probes[0].now.Equal(now) || store.probes[0].now.Location() != time.UTC {
+		t.Fatalf("probe calls = %+v, want one call with maxAttempts=3 and the UTC form of the service clock", store.probes)
+	}
+}
+
+func TestServiceHasClaimableUsesTheDefaultLimitLikeRunOne(t *testing.T) {
+	store := &promotionStoreStub{}
+	service := NewService(store, promotionExtractorStub{}, Options{})
+
+	got, err := service.HasClaimable(context.Background())
+	if err != nil || got {
+		t.Fatalf("HasClaimable = %v err=%v, want false", got, err)
+	}
+	if len(store.probes) != 1 || store.probes[0].maxAttempts != 5 {
+		t.Fatalf("probe calls = %+v, want the default limit 5", store.probes)
+	}
+}
+
+func TestServiceHasClaimableReturnsTheStoreError(t *testing.T) {
+	probeErr := errors.New("probe failed")
+	store := &promotionStoreStub{claimable: true, claimableErr: probeErr}
+	service := NewService(store, promotionExtractorStub{}, Options{})
+
+	got, err := service.HasClaimable(context.Background())
+	if !errors.Is(err, probeErr) || got {
+		t.Fatalf("HasClaimable = %v err=%v, want false and the store error", got, err)
+	}
+}
+
+func TestServiceHasClaimableRejectsAnUnavailableService(t *testing.T) {
+	var service *Service
+	if got, err := service.HasClaimable(context.Background()); err == nil || got {
+		t.Fatalf("nil service HasClaimable = %v err=%v, want an error", got, err)
+	}
+	if got, err := NewService(nil, promotionExtractorStub{}, Options{}).HasClaimable(context.Background()); err == nil || got {
+		t.Fatalf("service without a store HasClaimable = %v err=%v, want an error", got, err)
+	}
+}
+
+// The probe and the claim are the same question: HasClaimable never starts the
+// extractor and never changes a job.
+func TestServiceHasClaimableNeverRunsTheBatch(t *testing.T) {
+	store := &promotionStoreStub{claimable: true, batch: testPromotionBatch()}
+	extractor := &observingPromotionExtractor{result: &domconv.ProfileExtractionResult{}}
+	service := NewService(store, extractor, Options{})
+
+	if _, err := service.HasClaimable(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if extractor.called || store.deferred || store.failed || len(store.completed) != 0 || store.projectionReads != 0 {
+		t.Fatalf("HasClaimable ran work: extractor=%v deferred=%v failed=%v completed=%d projection_reads=%d",
+			extractor.called, store.deferred, store.failed, len(store.completed), store.projectionReads)
 	}
 }

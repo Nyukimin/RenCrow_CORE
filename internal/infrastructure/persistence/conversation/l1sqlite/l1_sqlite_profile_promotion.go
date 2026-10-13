@@ -17,6 +17,13 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+// ClaimProfilePromotionBatch recovers expired leases and due retries, closes jobs
+// at the attempt limit, and leases one batch of pending jobs.
+//
+// HasClaimableProfilePromotionJob answers "could this do anything" for a caller
+// that must not open an execution subject for a run that would find nothing. It
+// repeats the selection of the four steps below; a change to which jobs a step
+// reads or rewrites must change that predicate too (its test compares both).
 func (s *L1SQLiteStore) ClaimProfilePromotionBatch(
 	ctx context.Context,
 	limit int,
@@ -148,6 +155,52 @@ WHERE evidence_event_id = ? AND state = ?
 		ThreadKind: threadKind,
 		Messages:   messages,
 	}, nil
+}
+
+// HasClaimableProfilePromotionJob reports whether ClaimProfilePromotionBatch,
+// called with the same maxAttempts and now, could act: return a batch or rewrite
+// any job. It is read-only and answers from the read pool, so a caller can skip
+// the claim (and the execution subject it would open) when nothing is waiting.
+//
+// It is never narrower than the claim, which acts in four steps: free running
+// jobs whose lease expired (1), free retry_wait jobs whose next attempt is due
+// (2), close pending/retry_wait jobs at the attempt limit as failed (3), and take
+// one pending job below the limit that still has its evidence event (4). The
+// predicate is the union of what those steps select:
+//
+//   - pending at the attempt limit (step 3), or pending with its evidence event
+//     (step 4). A pending job below the limit whose event is gone is neither
+//     taken nor closed by the claim, so it is not claimable here either; counting
+//     it would keep the answer true forever.
+//   - retry_wait that is due (step 2) or at the attempt limit (step 3).
+//   - running whose lease has expired (step 1).
+//
+// The time comparisons are written as the claim writes them, with now bound as
+// the same UTC value (stored times compare as text, so both sides must be UTC),
+// which makes NULL handling and boundary equality agree.
+func (s *L1SQLiteStore) HasClaimableProfilePromotionJob(ctx context.Context, maxAttempts int, now time.Time) (bool, error) {
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	now = now.UTC()
+	var claimable bool
+	if err := s.readDB.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM l1_profile_promotion_job j
+	WHERE (j.state = ? AND (j.attempt_count >= ? OR EXISTS (SELECT 1 FROM l1_memory_event e WHERE e.id = j.evidence_event_id)))
+	   OR (j.state = ? AND ((j.next_attempt_at IS NOT NULL AND j.next_attempt_at <= ?) OR j.attempt_count >= ?))
+	   OR (j.state = ? AND j.lease_expires_at IS NOT NULL AND j.lease_expires_at <= ?)
+)`,
+		domainmemory.ProfilePromotionPending, maxAttempts,
+		domainmemory.ProfilePromotionRetryWait, now, maxAttempts,
+		domainmemory.ProfilePromotionRunning, now,
+	).Scan(&claimable); err != nil {
+		return false, fmt.Errorf("check claimable profile promotion jobs: %w", err)
+	}
+	return claimable, nil
 }
 
 // ListProfilePromotionProjection returns the bounded owner-scoped projection
