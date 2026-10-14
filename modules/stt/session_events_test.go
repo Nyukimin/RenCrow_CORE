@@ -18,28 +18,7 @@ func TestBuildReadyEventAnnouncesUtteranceProtocolAndLimit(t *testing.T) {
 	}
 }
 
-func TestBuildUtteranceFinalEvent(t *testing.T) {
-	ev := BuildUtteranceFinalEvent(" こんにちは ", EndReasonStop, "", 1500*time.Millisecond)
-	if ev["type"] != WebSocketEventTypeFinal || ev["text"] != "こんにちは" {
-		t.Fatalf("final event = %#v", ev)
-	}
-	if ev["end_reason"] != EndReasonStop || ev["audio_ms"] != int64(1500) {
-		t.Fatalf("final event metadata = %#v", ev)
-	}
-	if _, ok := ev["empty_reason"]; ok {
-		t.Fatalf("a recognised final must not carry empty_reason: %#v", ev)
-	}
-
-	empty := BuildUtteranceFinalEvent("", EndReasonIdleTimeout, EmptyReasonTooShort, 80*time.Millisecond)
-	if empty["text"] != "" || empty["empty_reason"] != EmptyReasonTooShort || empty["end_reason"] != EndReasonIdleTimeout {
-		t.Fatalf("empty final = %#v", empty)
-	}
-}
-
-func TestBuildCancelledAndCodedErrorEvents(t *testing.T) {
-	if ev := BuildCancelledEvent(); ev["type"] != WebSocketEventTypeCancelled {
-		t.Fatalf("cancelled event = %#v", ev)
-	}
+func TestBuildCodedErrorEvent(t *testing.T) {
 	ev := BuildErrorEventWithCode(" stt_busy ", " too many utterances ")
 	if ev["type"] != WebSocketEventTypeError || ev["code"] != "stt_busy" || ev["error"] != "too many utterances" {
 		t.Fatalf("coded error event = %#v", ev)
@@ -47,15 +26,15 @@ func TestBuildCancelledAndCodedErrorEvents(t *testing.T) {
 }
 
 func TestStampUtteranceEventAddsIDAndSequenceWithoutMutatingInput(t *testing.T) {
-	base := BuildSpeechStartEvent()
+	base := BuildErrorEventWithCode("stt_busy", "busy")
 	stamped := StampUtteranceEvent(base, "u1", 7)
-	if stamped["utterance_id"] != "u1" || stamped["seq"] != int64(7) || stamped["type"] != WebSocketEventTypeSpeechStart {
+	if stamped["utterance_id"] != "u1" || stamped["seq"] != int64(7) || stamped["type"] != WebSocketEventTypeError {
 		t.Fatalf("stamped event = %#v", stamped)
 	}
 	if _, ok := base["seq"]; ok {
 		t.Fatalf("StampUtteranceEvent mutated its input: %#v", base)
 	}
-	noID := StampUtteranceEvent(BuildCancelledEvent(), "", 8)
+	noID := StampUtteranceEvent(BuildErrorEvent("x"), "", 8)
 	if _, ok := noID["utterance_id"]; ok || noID["seq"] != int64(8) {
 		t.Fatalf("an event without an utterance must carry seq only: %#v", noID)
 	}

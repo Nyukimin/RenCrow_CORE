@@ -16,15 +16,6 @@ func TestHTTPTimeoutFromMilliseconds(t *testing.T) {
 	}
 }
 
-func TestSilenceAbsThreshold(t *testing.T) {
-	if got := SilenceAbsThreshold(0); got != DefaultSilenceAbsThreshold {
-		t.Fatalf("SilenceAbsThreshold(0) = %d", got)
-	}
-	if got := SilenceAbsThreshold(123); got != 123 {
-		t.Fatalf("SilenceAbsThreshold(123) = %d", got)
-	}
-}
-
 func TestParseControlMessage(t *testing.T) {
 	got, ok := ParseControlMessage([]byte(`{"type":"final_pending"}`))
 	if !ok || got != "final_pending" {
@@ -42,33 +33,16 @@ func TestParseControlMessage(t *testing.T) {
 	}
 }
 
-func TestNormalizeAudioPayloadWrapsPCM16AsWAV(t *testing.T) {
-	pcm := []byte{0x10, 0x01, 0x20, 0x02, 0xff}
-	got := NormalizeAudioPayload(pcm)
-	if !IsWAV(got) {
-		t.Fatalf("NormalizeAudioPayload() did not create WAV header")
+func TestIsWAVRecognisesARIFFWAVEHeader(t *testing.T) {
+	wav := make([]byte, 44)
+	copy(wav[0:4], "RIFF")
+	copy(wav[8:12], "WAVE")
+	if !IsWAV(wav) {
+		t.Fatal("a RIFF/WAVE header must be recognised: /stt refuses such a frame")
 	}
-	if len(got) != 44+4 {
-		t.Fatalf("NormalizeAudioPayload() len = %d, want %d", len(got), 48)
-	}
-}
-
-func TestNormalizeAudioPayloadKeepsWAV(t *testing.T) {
-	wav := PCM16LEToWAV([]byte{0x10, 0x01}, 16000)
-	got := NormalizeAudioPayload(wav)
-	if &got[0] != &wav[0] {
-		t.Fatalf("NormalizeAudioPayload() should preserve existing WAV slice")
-	}
-}
-
-func TestIsLikelySilentWAV(t *testing.T) {
-	silent := PCM16LEToWAV([]byte{0x00, 0x00, 0x01, 0x00}, 16000)
-	if !IsLikelySilentWAV(silent, 220) {
-		t.Fatal("silent wav should be detected")
-	}
-	loud := PCM16LEToWAV([]byte{0x10, 0x01, 0x20, 0x02}, 16000)
-	if IsLikelySilentWAV(loud, 220) {
-		t.Fatal("loud wav should not be detected as silent")
+	pcm := make([]byte, 64)
+	if IsWAV(pcm) || IsWAV(wav[:43]) || IsWAV(nil) {
+		t.Fatal("PCM, a truncated header and nothing are not WAV")
 	}
 }
 

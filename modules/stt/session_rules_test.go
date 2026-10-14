@@ -5,53 +5,6 @@ import (
 	"time"
 )
 
-func TestNormalizeTranscriptText(t *testing.T) {
-	if got := NormalizeTranscriptText("  hello  "); got != "hello" {
-		t.Fatalf("NormalizeTranscriptText() = %q", got)
-	}
-	if got := NormalizeTranscriptText("  <|channel>thought\n<channel|> "); got != "" {
-		t.Fatalf("NormalizeTranscriptText() should drop channel leaks, got %q", got)
-	}
-	if got := NormalizeTranscriptText("申し訳ございませんが、音声ファイルが添付されていないため、書き起こしを行うことができません。"); got != "" {
-		t.Fatalf("NormalizeTranscriptText() should drop attachment boilerplate, got %q", got)
-	}
-}
-
-func TestIsProviderErrorTranscriptText(t *testing.T) {
-	if !IsProviderErrorTranscriptText("申し訳ございませんが、音声ファイルが添付されていないようです。") {
-		t.Fatal("expected attachment boilerplate to be classified as provider error")
-	}
-	if IsProviderErrorTranscriptText("<|channel>thought\n<channel|>") {
-		t.Fatal("channel leak should be transcript noise, not provider error")
-	}
-	if IsProviderErrorTranscriptText("こんにちは") {
-		t.Fatal("ordinary transcript should not be classified as provider error")
-	}
-}
-
-func TestIsUsableProvisionalFinalText(t *testing.T) {
-	tests := []struct {
-		name            string
-		text            string
-		audioDurationMS int
-		want            bool
-	}{
-		{name: "ordinary transcript", text: "And so", audioDurationMS: 1000, want: true},
-		{name: "empty", text: " ", audioDurationMS: 1000, want: false},
-		{name: "provider error phrase", text: "申し訳ございませんが、音声ファイルが添付されていないようです。", audioDurationMS: 1000, want: false},
-		{name: "short noise", text: "はい", audioDurationMS: 1000, want: false},
-		{name: "too short for long audio", text: "abc", audioDurationMS: 6000, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := IsUsableProvisionalFinalText(tt.text, time.Duration(tt.audioDurationMS)*time.Millisecond)
-			if got != tt.want {
-				t.Fatalf("IsUsableProvisionalFinalText() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildWebSocketEvents(t *testing.T) {
 	session := BuildSessionInfoEvent(" http ")
 	if session["type"] != WebSocketEventTypeSessionInfo || session["provider"] != "http" {
@@ -60,15 +13,9 @@ func TestBuildWebSocketEvents(t *testing.T) {
 	if _, ok := session["session_id"]; ok {
 		t.Fatalf("session event must not invent a conversation session: %#v", session)
 	}
-	ready := BuildReadyEvent(DefaultMaxUtterance)
+	ready := BuildReadyEvent(30 * time.Second)
 	if ready["type"] != WebSocketEventTypeReady || ready["sample_rate"] != WebSocketReadySampleRate {
 		t.Fatalf("ready event = %#v", ready)
-	}
-	if got := BuildSpeechStartEvent(); got["type"] != WebSocketEventTypeSpeechStart {
-		t.Fatalf("speech start event = %#v", got)
-	}
-	if got := BuildFinalEvent(" final "); got["type"] != WebSocketEventTypeFinal || got["text"] != "final" {
-		t.Fatalf("final event = %#v", got)
 	}
 	if got := BuildTimeoutStatusEvent(); got["type"] != WebSocketEventTypeStatus || got["text"] != ProviderTimeoutStatusText {
 		t.Fatalf("status event = %#v", got)

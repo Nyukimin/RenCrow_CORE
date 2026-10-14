@@ -50,12 +50,6 @@ func TestBuildRuntimeProviderPlanAppliesProviderDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultProviderTimeoutCoversTheLongestUtterance(t *testing.T) {
-	if DefaultProviderTimeout < 2*DefaultMaxUtterance {
-		t.Fatalf("DefaultProviderTimeout %s must be at least twice DefaultMaxUtterance %s", DefaultProviderTimeout, DefaultMaxUtterance)
-	}
-}
-
 func TestApplyProviderDefaultsTrimsExplicitValues(t *testing.T) {
 	got := ApplyProviderDefaults(ProviderDefaultsConfig{
 		Provider:   " rencrow_stt ",
