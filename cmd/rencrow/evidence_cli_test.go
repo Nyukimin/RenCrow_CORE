@@ -355,3 +355,20 @@ func TestRunEvidenceCommand_SummaryInvalidErrorKind(t *testing.T) {
 		t.Fatalf("unexpected err output: %s", errOut.String())
 	}
 }
+
+func TestRunEvidenceCommand_WithoutArgumentsListsInsteadOfPanicking(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	store := &fakeEvidenceStore{items: []domainexecution.ExecutionReport{{
+		TaskID:    taskID,
+		Goal:      "no-argument list",
+		Status:    "passed",
+		CreatedAt: time.Now().UTC(),
+	}}}
+	for _, args := range [][]string{nil, {}} {
+		var out, errOut bytes.Buffer
+		code := runEvidenceCommand(args, store, &out, &errOut)
+		if code != 0 || errOut.Len() != 0 || !strings.Contains(out.String(), taskID.String()) {
+			t.Fatalf("args %v: exit=%d stdout=%q stderr=%q, want the list (the default subcommand)", args, code, out.String(), errOut.String())
+		}
+	}
+}

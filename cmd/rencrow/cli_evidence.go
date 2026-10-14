@@ -35,16 +35,18 @@ type evidenceStore interface {
 }
 
 func runEvidenceCommand(args []string, store evidenceStore, out io.Writer, errOut io.Writer) int {
-	subcmd := "list"
+	// With no arguments the subcommand is "list" and it has no arguments of its own.
+	subcmd, listArgs := "list", []string(nil)
 	if len(args) > 0 {
 		subcmd = strings.ToLower(strings.TrimSpace(args[0]))
+		listArgs = args[1:]
 	}
 	compact := hasFlag(args, "--compact")
 	pretty := !compact
 
 	switch subcmd {
 	case "list":
-		limit, jsonOut, statusFilter, errorKindFilter, sinceHours, parseErr := parseEvidenceListArgs(args[1:])
+		limit, jsonOut, statusFilter, errorKindFilter, sinceHours, parseErr := parseEvidenceListArgs(listArgs)
 		if parseErr != nil {
 			fmt.Fprintf(errOut, "%v\n", parseErr)
 			return 1
