@@ -1,5 +1,17 @@
 # STT発話単位認識の設計とFailure Knowledge（2026-10-13）
 
+## Superseded（2026-10-14）
+
+**この文書のCOREの中の発話の蓄積・区切り・定型句除去・最小長／最大長の設計は、置き換えられた。** 話し終わりの判定をRenCrow_STTへ移し、COREの`/stt`は
+RenCrow_STTの音声ストリームへの中継になった。現行の設計・Invariant・Enforcementは
+`docs/調査/20261014_194143_STT_CORE中継化_設計とFailureKnowledge.md`にある（commit `7c6fc835`の決定を覆すADR相当の記録を含む）。
+
+置き換えられたもの: 下記のInvariant 1・4・5（現行のInvariantで置き換え）、「発話の終わりの判定」「最小長・最大長・プリロール」「final を捨てない busy」「幻覚フィルタ」
+「設定」「資源上限」のうちCOREが持つ部分（蓄積、job queue、未送信event上限、`min_speech_ms`等の4 key、環境変数`STT_SILENCE_ABS_THRESHOLD`）。
+削除されたコードと試験の名前は、以下に記録として残す。当時の欠陥の分析（なぜ100 msごとの認識が壊れていたか）と、Invariant 2・3は現行のまま有効。
+
+以下は2026-10-13の記録であり、書き換えない。
+
 ## 文書情報
 
 - 日付: 2026-10-13 JST

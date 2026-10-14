@@ -119,3 +119,4 @@ docs/調査/20261014_091000_CORE主要storeが毎日のbackupの外にあった_
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md
 docs/調査/identity-remediation-ledger.json
+docs/調査/20261014_194143_STT_CORE中継化_設計とFailureKnowledge.md

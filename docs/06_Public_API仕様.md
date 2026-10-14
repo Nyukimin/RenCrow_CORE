@@ -84,7 +84,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/movie-catalog?action=cards` | 映画・人物ViewerのD0/D1派生カード投影 |
 | `POST /viewer/movie-catalog/preference` | 映画・人物の認知・好み評価を保存 |
 | `/viewer/active-control`, `/viewer/tts/*`, `/viewer/stt/*` | audio/control bridge |
-| `WS /stt` | Viewerの同一origin音声入力。COREが発話ごとに音声を貯め、RenCrow_STTのHTTP公開APIへ発話につき1回だけ渡す（[WS /stt](#ws-stt)） |
+| `WS /stt` | Viewer・PORTAL・probeの音声入力。COREは音声を貯めず、RenCrow_STTの音声ストリーム（`GET /v1/audio/stream`）へ接続ごとに1本中継し、話し終わりの判定と認識はRenCrow_STTが行う（[WS /stt](#ws-stt)） |
 | `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
@@ -120,75 +120,100 @@ Canonical EventとしてTaskから逆参照できます。
 
 ### WS /stt
 
-`WS /stt`は、Viewerの同一originから受けた音声をCOREが**発話単位**で貯め、RenCrow_STTの
-`POST /v1/audio/transcriptions`へ発話につき1回だけ渡すSTT routeです。発話の終わりを決めるのは
-クライアントのVADと`stop`制御であり、COREは音声のエネルギーで発話を区切りません。COREが持つのは
-最大長と無通信時間の安全弁だけです。`ready`の`protocol="utterance.v1"`がこの契約を示します。
+`WS /stt`は、Viewer・PORTAL・`scripts/stt_e2e_probe.py`の音声入力を、RenCrow_STTの音声ストリーム
+（`GET /v1/audio/stream`、protocol `stt.stream.v1`）へ**中継**するSTT routeです。COREは音声を貯めず、
+無音で発話を区切らず、認識要求も出しません。話し終わりの判定、最小有声長、最大長、無通信の打切り、定型句（幻覚）の除去、
+認識engineの呼出しはRenCrow_STTが持ちます（そのstt.jsonのstream節）。COREのconfigにそれらを決めるkeyはありません。
+`ready`の`protocol="utterance.v1"`がclient側の契約を示します。
 
-CORE → RenCrow_STTの契約は変わりません。multipartの`file`（`audio.wav`、16 kHz mono PCM16）と
-`response_format=json`だけを送り、`model`／`language`／`prompt`はRenCrow_STTとtargetが所有します。
-`NO_SPEECH_DETECTED`相当の空textは空の`final`になります。
+1接続は、1本のRenCrow_STTストリームに対応します。COREは接続を受けると、先にストリームを開き（TCP 3秒、
+handshakeと`session_ready`の待ちは合わせて5秒）、`session_ready`を検証してから`session_info`と`ready`を返します。
+その前にclientが送った音声と制御はsocketに溜まり、読まれません（Viewerは`ready`を待たずに送ります）。
 
-クライアント → CORE（text frameはJSON、binary frameは音声）:
+クライアント → CORE:
 
-| message | 内容 |
+| frame | 内容 |
 |---|---|
-| `{"type":"start","utterance_id":"…","sample_rate":16000,"channels":1,"format":"pcm_s16le"}` | 発話の開始。`utterance_id`は任意（64文字以下の印字可能文字。無い・不正ならCOREが`srv-<n>`を割り当て、`speech_start`で通知する）。音声形式の項目は省略できる。16 kHz mono `pcm_s16le`以外は`error`（`code=unsupported_audio_format`）で、拒否した`start`は進行中の発話に影響せず、そのerrorは生きている発話の`utterance_id`を使わない。発話中の（受理された）`start`は先の発話を`end_reason=restart`で閉じてから新しい発話を始める |
-| binary frame | PCM16LE mono 16 kHz。WAV（RIFF）frameも受理し、PCMだけを取り出す。奇数byteの端は次のframeへ繰り越す。16 kHz mono PCM16でないWAV frameは、進行中の発話をその発話の`error`（`unsupported_audio_format`）で終える。`start`が無くても、音のあるframeが来れば発話を始める（無音だけのframeは捨てる） |
-| `{"type":"stop","utterance_id":"…"}` | 発話の終わり。`final_pending`は旧名の別名。`utterance_id`を省略すると進行中の発話に適用し、進行中の発話が無ければ`empty_reason=no_active_utterance`の空`final`を返す（`final`を待つクライアントを止めない）。進行中でない`utterance_id`を指す`stop`は何もしない。最大長で分割された続きの発話は、元の`utterance_id`でも`stop`／`cancel`できる |
-| `{"type":"cancel","utterance_id":"…"}` | 進行中の発話を認識せず捨てる。認識待ち・認識中の発話は、名前を指定すると中断する（RenCrow_STTへの要求も中断する）。結果は`cancelled` |
-| その他（`config`等） | 無視する |
+| text frame（JSON、4096 byte以下） | 制御message。frameの**種別**だけで制御か音声かが決まり、内容では決めない |
+| binary frame | PCM16LE mono 16 kHzの生PCM。奇数byteの端はRenCrow_STTが次のframeへ繰り越す。WAV（`RIFF....WAVE`で始まるframe）は受け付けず、idなしのsession単位の`unsupported_audio_format`の`error`を返してそのframeだけを捨てる（接続と進行中の発話は維持。RenCrow_STT自身の形と同じ）。`session_ready.limits.max_frame_bytes`（既定64 KiB）を超えるframeは、COREが上限以下に分け直して順に送る |
 
-CORE → クライアント（すべてのeventに、セッション内で単調増加する`seq`が付く。発話に属するeventは`utterance_id`を持つ）:
+制御message（text frame）:
+
+| message | CORE → RenCrow_STT |
+|---|---|
+| `{"type":"start","utterance_id":"…","sample_rate":16000,"channels":1,"format":"pcm_s16le"}` | `utterance_id`があれば`utterance.start{utterance_id}`として転送する（Viewer型）。16 kHz mono `pcm_s16le`以外は、idなしのsession単位の`error`（`code=unsupported_audio_format`）で拒否し、転送しない。**`utterance_id`の無い`start`は転送しない**（PORTAL型。ストリームが音声から発話を自動で開くので不要で、転送すると接続直後に空の発話が開く） |
+| `{"type":"stop","utterance_id":"…"}` | `utterance.stop`。`final_pending`は旧名の別名。`utterance_id`が無ければ、直近の`start`のidを補って転送する。補うidは、転送した`start`に対応する最初の`speech_start`の`utterance_id`で1回だけ確定する（RenCrow_STTがidを置き換えた場合も宛先がずれない）。`start`が無いPORTAL型のidなしの`stop`は、そのまま進行中の発話を閉じる |
+| `{"type":"cancel","utterance_id":"…"}` | `utterance.cancel`（`stop`と同じくidを補う） |
+| その他（`config`等）、JSONでない・4096 byteを超えるtext frame | 転送せず捨てる（ログに残す）。binary frameの中身がJSONでも制御としては扱わない |
+
+CORE → クライアント（すべてのeventに、**COREが採番する**、接続内で単調増加する`seq`が付く。発話に属するeventは`utterance_id`を持つ。
+RenCrow_STTの`seq`はhop内の順序の検査にだけ使い、転送しない）:
 
 | event | 内容 |
 |---|---|
-| `session_info`, `ready` | 接続直後。`ready`は`sample_rate`、`protocol`、`max_utterance_ms`を持つ |
-| `speech_start` | 発話が始まった（`start`受理、または最初の音あるframe）。前の発話の終端eventより先に届くことがある |
-| `final` | 発話の終端。`text`、`end_reason`（`stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`）を持つ |
-| `error` | 発話の終端。`code`（`stt_busy` / `stt_limit_exceeded` / `unsupported_audio_format` / `stt_provider_error` / RenCrow_STTのerror code / `stt_failed`）と`error` |
+| `session_info`, `ready` | ストリームを開いて`session_ready`を検証した後。`session_info.provider`は`session_ready.provider`。`ready`は`sample_rate`、`protocol`、`max_utterance_ms`（`session_ready.limits`の値）を持つ |
+| `speech_start` | 発話が始まった。`offset_ms`（接続の先頭から数えた先頭の位置）を持つ。自動開始では有声が最小有声長に達した時点、明示`start`では即座。**次の発話の`speech_start`は前の発話の終端より先に届くことがある**（RenCrow_STTは認識を1つずつ行う） |
+| `partial` | 途中結果。RenCrow_STT側でオプトインされた場合だけ届く（既定は届かない）。同じ`utterance_id`の中で`seq`が大きいものが前を置き換え、`final`が確定する |
+| `final` | 発話の終端。`text`、`end_reason`（`silence` / `stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`（**認識に渡した長さ**。末尾の無音を削った後。認識しなかった場合は貯めた全長）、`offset_ms`、`end_offset_ms`、診断用の`queue_ms`・`processing_ms`、`target_called`（RenCrow_STTが認識targetへ要求を送ったか）。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`） |
+| `error` | `utterance_id`があれば**発話単位**の終端、無ければ**session単位**の異常。`code`は`stt_busy`・`stt_limit_exceeded`・`unsupported_audio_format`・`stt_provider_error`・`STT_TARGET_UNAVAILABLE`・`STT_TARGET_FAILED`・`stt_deadline_exceeded`・`stt_shutting_down`・`protocol_violation`等（RenCrow_STTの値をそのまま写す）と、COREが補う`stt_failed` |
 | `cancelled` | `cancel`で捨てた発話の終端 |
-| `partial` | **予約**。途中結果（Bで追加）。同じ`utterance_id`の中で`seq`が大きいものが前のpartialを置き換え、`final`が全てを確定する。Aでは送らない（`draft`も送らない） |
+
+クライアントは`utterance_id`の有無で、発話単位の異常（その発話だけが失敗）とsession単位の異常（接続を使い続けられない）を区別します。
+PORTALは発話単位の`error`ではマイクを止めず、session単位の`error`で止めます。
+
+COREの旧実装（発話を貯めてHTTPで1回認識する）からの語彙の変更:
+
+| 項目 | 旧 | 新 |
+|---|---|---|
+| `final.end_reason` | `stop` / `max_length` / `idle_timeout` / `restart` | `silence`が加わる（RenCrow_STTが無音で閉じた） |
+| `final.audio_ms` | 貯めた音声の長さ | 認識に渡した長さ（末尾を削った後） |
+| 追加のfield | なし | `offset_ms`、`end_offset_ms`、`target_called`、`queue_ms`、`processing_ms`（未知のfieldは無視される） |
+| `error.code` | `PROVIDER_FAILURE` / `PROVIDER_TIMEOUT` / `PROVIDER_BUSY` | `STT_TARGET_UNAVAILABLE` / `STT_TARGET_FAILED` / `stt_deadline_exceeded`等 |
+| 発話の開始 | `start`か、音のあるframe | RenCrow_STTの自動開始。`start`が無くても音声から発話が開く |
+| `start`（`utterance_id`なし） | 先の発話を`restart`で閉じて新しい発話を開く | 転送しない（形式の検証だけ） |
+| WAV frame | 受理してPCMを取り出す | 拒否（`unsupported_audio_format`） |
+| JSONらしいbinary frame | 制御として扱った | 常に音声。制御はtext frameで送る |
 
 保証:
 
-- 各発話は`final`／`error`／`cancelled`のどれかをちょうど1つ受け取る。認識しなかった発話も空の`final`で終わり、
-  クライアントが`final`を待ち続けることはない。
-- 終端eventは発話の順に届く。1セッションの発話はCOREが直列に認識するため、続けて話しても前の`final`は捨てられない。
-  同時に認識待ち・認識中にできる発話は8件までで、超えた発話は`code=stt_busy`の`error`で終わる（順序は保つ）。
-- 接続が切れると、認識中の要求を中断し、待っている発話を捨てる（結果は誰にも送らない）。
+- RenCrow_STTが`speech_start`を出した発話は、`final`／`error`／`cancelled`の**どれかをちょうど1つ**受け取る。**COREが中継の境界で強制する**:
+  終端を待つ発話のid表（上限64）を持ち、同じidの2つ目の終端と、終端の後のeventは捨てる。
+- 終端eventはRenCrow_STTが発話を開始した順に届く。
+- ストリームが切れた・1011で閉じた・30秒の間1 byteも届かない・契約を破った（seqが戻る、text以外のframe等）・
+  終端の約束の期限（`speech_start`から`max_utterance_ms`＋`terminal_deadline_ms`＋60秒。`stop`を転送した発話は転送から`terminal_deadline_ms`＋60秒）を過ぎた場合は、
+  COREが終端のない発話ごとに`error`（`code=stt_failed`、`utterance_id`付き）を発話の開始順に返し、続けてsession単位の`error`（`stt_failed`）を返して接続を閉じる。
+  RenCrow_STTが接続を閉じる直前にsession単位の`error`（`protocol_violation` / `invalid_session_start` / `invalid_option` / `stt_failed`）を返していた場合は、COREは重ねない
+  （接続を維持するsession単位の`error`、たとえば`unknown_message_type`の後の異常には、COREが自分のsession単位の`error`を返す）。再送は作らない（clientが再接続する）。
+- ストリームを開けない場合は、`ready`の前にsession単位の`error`を返して閉じる。RenCrow_STTが接続の上限（HTTP 503）なら`stt_busy`、それ以外（旧RenCrow_STT・無効・Origin拒否・timeout・protocol違い）は`stt_failed`。
+- clientが先に切れると、COREはストリームを閉じる。RenCrow_STTは閉じられたストリームに何も返さない（認識中の要求は中断される）。
 
-安全弁と判定（`stt`設定、既定値）:
-
-- `max_utterance_ms`（30000）を超えたら`end_reason=max_length`の`final`を返し、続きを新しい発話（新しい`utterance_id`）として受ける。
-- `idle_timeout_ms`（2000）の間frameが届かなければ`end_reason=idle_timeout`の`final`を返す（`stop`が来ない場合の安全弁）。
-- 発話の有声長（20 msの窓で平均絶対値が`STT_SILENCE_ABS_THRESHOLD`（既定220）以上の窓の合計）が`min_speech_ms`（150）未満なら
-  RenCrow_STTを呼ばず、`empty_reason=silent`（有声0）または`too_short`の空`final`を返す。100 msの断片はこの下限で認識されない。
-- 認識結果が空、またはモデル制御token・LLM定型文の混入、または**発話全体が**既知の定型句（無音・雑音で生成されがちな
-  「ご視聴ありがとうございました」等。`stt.noise_phrases`で追加できる）に一致する場合は空の`final`（`empty_reason=no_speech` / `filtered`）にする。
-  部分一致では捨てない。「ありがとうございました」単独のように、本当に発話されうる語は既定の一覧に入れない。
+記録: 認識targetが呼ばれた発話（終端の`target_called`が`true`。欠けていれば記録する側に倒してWARNと計数）ごとに、COREは**終端をclientへ転送した後に**、
+短命なTask／Run／Actionを非同期で記録します（Action名`stt.stream:<request_id>:<utterance_id>`、要約に`audio_ms`・`queue_ms`・`processing_ms`・`target_called`）。
+Run admissionは発話に先行しません。並列枠に左右されるのは記録の側で、記録が落ちても認識は止まりません。記録は有界（queue 32、満杯はdropして計数、
+`ErrParallelLimit`だけ有限回の再試行、shutdownは有界のflush）で、drop・失敗の数は`/viewer/modules/health`の`stt.stream`のmetadataに出ます。
+終端の前にclientが切れた発話は「clientの切断で中断」のActionとして記録し、`target_called`は`unknown`と書きます。
+COREが補った終端（`stt_failed`）は記録しません。transport receiptは作りません（相関はActionの`request_id`と`utterance_id`）。
 
 資源の上限（クライアントが量を決められるものは、すべて上限を持つ）:
 
 | 対象 | 上限 | 超えたとき |
 |---|---|---|
-| 1 WebSocket frame | `max_utterance_ms`分のPCM（16 kHz mono PCM16、32000 byte/s）＋8 KiB。下限64 KiB。既定では約0.96 MB | frameを読まずに接続を閉じる（下記） |
-| 制御message（JSON） | 4096 byte | JSONとして解釈せず、音声として扱う |
-| 認識待ち・認識中の発話（音声を持つもの） | 1接続8件 | その発話は`code=stt_busy`の`error`で終わる。接続は維持 |
-| 未送信の終端event（種類を問わない） | 1接続64件 | 接続を閉じる（下記） |
-| `utterance_id` | 64文字 | 無視してCOREが採番する |
-| WAV frameの`data`長 | 実際のbyte数以内（`0`と`0xFFFFFFFF`はストリーミング標識として残り全部を取る） | frameを`unsupported_audio_format`で拒否する。headerの値でメモリを確保しない |
-| 同時接続 | 16本 | upgrade前にHTTP 503 |
-| 接続のidle | 5分（受信が無く、進行中の発話も、未送信のeventも、認識中の要求も無い） | 接続を閉じる |
+| 1 WebSocket frame（client → CORE） | 最大長の発話のPCM（30秒、32000 byte/s）＋8 KiB、約0.96 MB | frameを読まずに、終端のない発話へ`stt_limit_exceeded`の`error`を返して接続を閉じる |
+| 制御message（text frame） | 4096 byte | 転送せず捨てる |
+| 終端を待つ発話（接続ごと） | 64 | RenCrow_STTの異常として閉じる（WARNを出す。通常はRenCrow_STTの待ち8件で届かない） |
+| 同時接続 | 16本（RenCrow_STTは32） | upgrade前にHTTP 503 |
+| 接続のidle | 5分（clientからのframeが無く、**終端を待つ発話も無い**） | 閉じる。終端を待つ間は数えない |
+| client・上流への書込み | 10秒 | 読まないclientはCOREが切る。書込みの期限は書いた後に外す |
+| 死活 | 上流へ10秒ごとにping、最後の受信から30秒 | 上流の異常として扱う |
 
-上限を超えて接続を閉じるときも「各発話に終端eventをちょうど1つ」は守る。COREは、終端eventを持たないすべての発話
-（受信中のもの、認識待ちのもの、認識中のもの）に`code=stt_limit_exceeded`の`error`を1つずつ、発話の順に送り、
-その後で接続を閉じる。認識待ちの発話はエンジンへ送らず、認識中の要求は中断する。すでに`cancel`で`cancelled`が決まった
-発話には`error`を重ねない。5秒たっても送りきれなければ強制的に閉じる。閉じた後の入力は読まない。
+`/viewer/modules/health`に`stt.stream`のreportを足します（`/health`と`/health/ready`は変えません）。RenCrow_STTの`/health`の`stream`
+を約10秒キャッシュして読み（singleflight、2秒のtimeout）、`ready` / `blocked`（`stream_unreachable` / `stream_not_supported` /
+`stream_disabled` / `protocol_mismatch`） / `live`（`fail_fast`）を返します。RenCrow_STTが落ちていてもCOREの起動は失敗しません。
 
-互換性: `utterance_id`の無い旧Viewerと`scripts/stt_e2e_probe.py`は、`start`／binary／`stop`／`final`待ちのまま動く。
-旧クライアントが`final`と`draft`の両方を待つ実装であっても、`draft`は送らない。Viewerは発話ごとに新しいWSを開き、
-`start`に`utterance_id`を付け、VADの発火前の約300 msをプリロールとして先頭に付ける。
+互換性: `utterance_id`の無い旧Viewerと`scripts/stt_e2e_probe.py`は、`start`／binary／`stop`／`final`待ちのまま動きます。
+Viewerは発話ごとに新しいWSを開き、`start`に`utterance_id`を付け、VADの発火前の約300 msをプリロールとして先頭に付けます。
+RenCrow_STTが先に発話を閉じてfinalがViewerの`stop`より先に届く場合、Viewerは発話中にfinal（`max_length`以外）・error・予期しないcloseを受けたら
+発話を終えてsocketを閉じ（`stop`は送らない）、次の発話を新しい接続で受けます。
 
 ### WS /voice-chat
 
