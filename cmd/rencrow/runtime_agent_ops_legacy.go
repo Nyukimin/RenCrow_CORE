@@ -96,7 +96,7 @@ func (h *agentOpsHandler) serveLegacyOPS(w http.ResponseWriter, parentContext co
 	if err != nil {
 		logAgentOpsLegacy("admission failed", requestID, taskID, err)
 		if errors.Is(err, taskmanager.ErrParallelLimit) {
-			writeAgentOpsError(w, http.StatusServiceUnavailable, "runtime_unavailable")
+			writeAgentOpsCapacityError(w)
 		} else {
 			writeAgentOpsError(w, http.StatusInternalServerError, "runtime_unavailable")
 		}

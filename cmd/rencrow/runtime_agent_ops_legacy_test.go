@@ -386,8 +386,23 @@ func TestAgentOpsLegacyOPSParallelLimitReturns503AndLeavesNoQueuedTask(t *testin
 	handler := newLegacyOPSHandler(t, owner, executor, &legacyOPSLedger{})
 
 	rec := postLegacyOPS(handler, "req-legacy-limit")
-	if rec.Code != http.StatusServiceUnavailable || strings.TrimSpace(rec.Body.String()) != `{"error":"runtime_unavailable"}` {
+	// A full operations slot has its own code, a message and Retry-After, so that
+	// a client can tell "full, try again" from "not running".
+	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
+	}
+	var refusal map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &refusal); err != nil {
+		t.Fatalf("body is not a JSON object of strings: %v\n%s", err, rec.Body.String())
+	}
+	if refusal["error"] != "operations_task_limit" || strings.TrimSpace(refusal["message"]) == "" || len(refusal) != 2 {
+		t.Fatalf("body=%q, want exactly error=operations_task_limit and a message", rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Fatalf("Retry-After=%q, want 10 (seconds)", got)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Fatalf("Content-Type=%q", got)
 	}
 	if executor.calls != 0 {
 		t.Fatalf("executor ran %d times although admission was refused", executor.calls)

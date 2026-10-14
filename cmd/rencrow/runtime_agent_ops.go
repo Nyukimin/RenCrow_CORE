@@ -11,8 +11,10 @@ import (
 	"os"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -34,6 +36,24 @@ const (
 	agentOpsMaxBodyBytes       = 64 << 10
 	agentOpsMaxRequestIDBytes  = 128
 	agentOpsMinTokenBytes      = 32
+)
+
+// The refusal of an OPS request because the operations execution slot is full
+// (the Task owner refused the admission with taskmanager.ErrParallelLimit and
+// persisted nothing). It has its own code, a message and Retry-After, so a
+// client can tell "full, try again" from "not running" (runtime_unavailable).
+//
+// agentOpsCapacityRetryAfter is a hint, not a promise that a slot will be free
+// (a slot held by a stuck Task stays full much longer). It is the first delay of
+// the capacity backoff the Memory Promotion worker uses after the same refusal:
+// its idle grace, 10 seconds by default, which then doubles up to
+// memoryPromotionCapacityBackoffMax. It is the shortest wait the runtime itself
+// already applies to this refusal, so a client that retries at this pace asks no
+// more often than the runtime's own workers do.
+const (
+	agentOpsCapacityErrorCode    = "operations_task_limit"
+	agentOpsCapacityErrorMessage = "operations execution capacity is full; retry later"
+	agentOpsCapacityRetryAfter   = 10 * time.Second
 )
 
 var agentOpsRequestIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -107,6 +127,9 @@ type agentOpsResponse struct {
 
 type agentOpsErrorResponse struct {
 	Error string `json:"error"`
+	// Message is set only by the responses that explain themselves (the capacity
+	// refusal); every other error body is the code alone.
+	Message string `json:"message,omitempty"`
 }
 
 // newAgentOpsHandler validates enabled startup configuration, reads the
@@ -392,4 +415,14 @@ func isAgentOpsBodyTooLarge(err error) bool {
 
 func writeAgentOpsError(w http.ResponseWriter, status int, code string) {
 	writeJSONStatus(w, status, agentOpsErrorResponse{Error: code})
+}
+
+// writeAgentOpsCapacityError answers HTTP 503 for a full operations slot. The
+// message is fixed text: it carries no count, limit or Task identity.
+func writeAgentOpsCapacityError(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(agentOpsCapacityRetryAfter/time.Second)))
+	writeJSONStatus(w, http.StatusServiceUnavailable, agentOpsErrorResponse{
+		Error:   agentOpsCapacityErrorCode,
+		Message: agentOpsCapacityErrorMessage,
+	})
 }
