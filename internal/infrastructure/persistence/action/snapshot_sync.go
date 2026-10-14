@@ -28,9 +28,17 @@ type IndexStats struct {
 	ActionBytes   int64
 	AttemptBytes  int64
 	BuildDuration time.Duration
+	// CurrentSegment is the name of the segment writes go to ("legacy" on the plain
+	// layout).
+	CurrentSegment string
 	// Rebuilds counts the times the snapshot was rebuilt from the logs after it
 	// was opened. A store that is the only writer of its logs never rebuilds.
-	Rebuilds int64
+	// LastRebuildReason and LastRebuildAt say why and when the latest one was done
+	// (empty and zero until there is one); the reason is the one the log line
+	// carries.
+	Rebuilds          int64
+	LastRebuildReason string
+	LastRebuildAt     time.Time
 	// Dirty means a write ended without a known commit boundary; Broken means a
 	// change to the snapshot may have been left half done. Either way the next
 	// operation settles the question against the logs before it answers.
@@ -71,6 +79,11 @@ type snapshot struct {
 	broken   atomic.Bool
 	rebuilds atomic.Int64
 	buildNs  atomic.Int64
+
+	// lastRebuildReason and lastRebuildAt describe the latest rebuild; mu guards
+	// them with the content they belong to.
+	lastRebuildReason string
+	lastRebuildAt     time.Time
 
 	// hookFault is a seam for tests: called at the named points of the hook, with
 	// the marks and the lock in the state a real stop would leave them in.
@@ -138,11 +151,14 @@ func (ix *snapshot) stats() IndexStats {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	stats := IndexStats{
-		Segments:      len(ix.segs),
-		BuildDuration: time.Duration(ix.buildNs.Load()),
-		Rebuilds:      ix.rebuilds.Load(),
-		Dirty:         ix.dirty.Load(),
-		Broken:        ix.broken.Load(),
+		Segments:          len(ix.segs),
+		CurrentSegment:    ix.segs[len(ix.segs)-1].name,
+		BuildDuration:     time.Duration(ix.buildNs.Load()),
+		Rebuilds:          ix.rebuilds.Load(),
+		LastRebuildReason: ix.lastRebuildReason,
+		LastRebuildAt:     ix.lastRebuildAt,
+		Dirty:             ix.dirty.Load(),
+		Broken:            ix.broken.Load(),
 	}
 	if ix.st != nil {
 		stats.Actions = len(ix.st.actions.latest)
@@ -380,6 +396,8 @@ func (ix *snapshot) rebuild(ctx context.Context, reason string) error {
 	}
 	ix.mu.Lock()
 	ix.st = st
+	ix.lastRebuildReason = reason
+	ix.lastRebuildAt = time.Now().UTC()
 	ix.mu.Unlock()
 	elapsed := time.Since(started)
 	ix.buildNs.Store(int64(elapsed))

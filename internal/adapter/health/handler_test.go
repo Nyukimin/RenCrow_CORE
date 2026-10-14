@@ -201,3 +201,37 @@ func TestHandleHealth_JSONStructure(t *testing.T) {
 		t.Errorf("expected check name 'mock', got %s", body.Checks[0].Name)
 	}
 }
+
+// A check may attach structured details (counts, names), which /health returns
+// under "details"; a check without any keeps the shape it always had.
+func TestHandleHealth_ReturnsCheckDetailsOnlyWhenTheCheckHasThem(t *testing.T) {
+	runner := &stubCheckRunner{report: domainhealth.HealthReport{
+		Status: domainhealth.StatusOK,
+		Checks: []domainhealth.CheckResult{
+			{Name: "plain", Status: domainhealth.StatusOK, Message: "ok", Duration: time.Millisecond},
+			{Name: "detailed", Status: domainhealth.StatusOK, Duration: time.Millisecond,
+				Details: map[string]any{"segments": 3, "layout": "v2"}},
+		},
+		Timestamp: time.Now(),
+	}}
+	h := NewHandler(runner)
+	w := httptest.NewRecorder()
+	h.HandleHealth(w, httptest.NewRequest("GET", "/health", nil))
+
+	var body struct {
+		Checks []map[string]any `json:"checks"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if len(body.Checks) != 2 {
+		t.Fatalf("checks = %v", body.Checks)
+	}
+	if _, present := body.Checks[0]["details"]; present {
+		t.Errorf("a check with no details returned a details key: %v", body.Checks[0])
+	}
+	details, _ := body.Checks[1]["details"].(map[string]any)
+	if details["layout"] != "v2" || details["segments"] != float64(3) {
+		t.Errorf("details = %v", body.Checks[1]["details"])
+	}
+}

@@ -53,7 +53,10 @@ func loadEvidenceSummary(cfg *config.Config) (map[string]map[string]int, error) 
 	return store.Summary(context.Background())
 }
 
-func buildHealthService(cfg *config.Config) *healthapp.HealthService {
+// buildHealthService builds the health checks from the configuration. extra are the
+// checks of what the calling process has open (the runtime's Action store); the
+// CLI commands pass none.
+func buildHealthService(cfg *config.Config, extra ...domainhealth.Check) *healthapp.HealthService {
 	var checks []domainhealth.Check
 	apiKey := ""
 	if cfg.LLMGateway.APIKeyEnv != "" {
@@ -79,6 +82,7 @@ func buildHealthService(cfg *config.Config) *healthapp.HealthService {
 		}
 	}
 
+	checks = append(checks, extra...)
 	return healthapp.NewHealthService(checks...)
 }
 

@@ -40,6 +40,27 @@ func TestValidateManifestAndRegistryCollisions(t *testing.T) {
 	}
 }
 
+// The Task store and the Action store live under workspace_dir, not under the
+// owner module's subtree, so the Manifest cannot describe them without declaring
+// a root they do not have (design: ActionStore全件読み IU-6, Manifest). The
+// validator is what keeps them out until their storage moves; their backup is
+// not decided here (BKP-1..7 in the Failure Knowledge).
+func TestValidateManifestRejectsARootOutsideTheOwnerSubtree(t *testing.T) {
+	for _, root := range []string{
+		"/srv/rencrow/workspace/state/actions",
+		"/srv/rencrow/db/core/state/actions",
+		"/srv/rencrow/db",
+		"state/actions",
+	} {
+		m := validManifest()
+		m.Stores = append([]StoreManifest(nil), m.Stores...)
+		m.Stores[0].ProductionRootTemplate = root
+		if err := ValidateManifest(m); err == nil {
+			t.Errorf("a store whose production root is %q was accepted", root)
+		}
+	}
+}
+
 func TestClassifyRequirement(t *testing.T) {
 	m := validManifest()
 	tests := []struct {

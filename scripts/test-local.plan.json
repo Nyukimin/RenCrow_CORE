@@ -545,6 +545,70 @@
       ],
       "safetyGate": true,
       "alwaysRun": true
+    },
+    {
+      "name": "action-store-snapshot-default",
+      "workingDirectory": ".",
+      "filePath": "go",
+      "arguments": [
+        "test",
+        "-tags",
+        "actionindexdefault",
+        "-timeout",
+        "15m",
+        "./cmd/rencrow",
+        "./internal/adapter/nativeharnessclient/delegation",
+        "./internal/adapter/viewer",
+        "./internal/application/actionmanager",
+        "./internal/application/backlog",
+        "./internal/application/dci",
+        "./internal/application/sandbox",
+        "./internal/application/subagent",
+        "./internal/application/taskmanager/taskmanagertest",
+        "./internal/application/toolloop",
+        "./internal/application/transportmanager",
+        "./internal/infrastructure/health",
+        "./internal/infrastructure/llm/middleware",
+        "./internal/infrastructure/persistence/action",
+        "./internal/infrastructure/security",
+        "./internal/infrastructure/stt",
+        "./internal/infrastructure/vision"
+      ],
+      "testFiles": [
+        "*_test.go"
+      ],
+      "tier": "related",
+      "impact": {
+        "paths": [
+          "internal/domain/action/**"
+        ],
+        "packages": [
+          "./cmd/rencrow",
+          "./internal/adapter/nativeharnessclient/delegation",
+          "./internal/adapter/viewer",
+          "./internal/application/actionmanager",
+          "./internal/application/backlog",
+          "./internal/application/dci",
+          "./internal/application/sandbox",
+          "./internal/application/subagent",
+          "./internal/application/taskmanager/taskmanagertest",
+          "./internal/application/toolloop",
+          "./internal/application/transportmanager",
+          "./internal/infrastructure/health",
+          "./internal/infrastructure/llm/middleware",
+          "./internal/infrastructure/persistence/action",
+          "./internal/infrastructure/security",
+          "./internal/infrastructure/stt",
+          "./internal/infrastructure/vision"
+        ],
+        "globalPaths": []
+      },
+      "resourceLocks": [],
+      "timeoutSeconds": 900,
+      "platform": [
+        "linux",
+        "darwin"
+      ]
     }
   ],
   "impact": {

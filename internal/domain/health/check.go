@@ -26,6 +26,9 @@ type CheckResult struct {
 	Status   Status        `json:"status"`
 	Message  string        `json:"message,omitempty"`
 	Duration time.Duration `json:"duration_ms"`
+	// Details is structured state a check chooses to expose (counts, names, flags).
+	// It must carry no secret, ID or record content, and is omitted when empty.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // HealthReport は全チェック結果の集約

@@ -57,6 +57,8 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		Status     string  `json:"status"`
 		Message    string  `json:"message,omitempty"`
 		DurationMs float64 `json:"duration_ms"`
+		// Details is the structured state a check exposes; omitted when it has none.
+		Details map[string]any `json:"details,omitempty"`
 	}
 	type reportJSON struct {
 		OK        bool        `json:"ok"`
@@ -80,6 +82,7 @@ func (h *Handler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			Status:     string(c.Status),
 			Message:    c.Message,
 			DurationMs: float64(c.Duration.Milliseconds()),
+			Details:    c.Details,
 		})
 	}
 

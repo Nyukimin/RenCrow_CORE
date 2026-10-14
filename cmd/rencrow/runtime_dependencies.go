@@ -52,6 +52,7 @@ import (
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	gmailinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/gmailintake"
+	infrahealth "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/health"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/mcp"
 	aiworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/aiworkflow"
 	browsertracepersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/browsertrace"
@@ -114,6 +115,7 @@ type Dependencies struct {
 	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
+	actionStoreHealth              infrahealth.ActionStoreReporter             // the store actionManager writes through, for /health
 	nativeCoding                   *delegation.Runtime                         // shiro_native_coding_v1 admission and delegate (nil unless the profile is enabled)
 	transportManager               *transportmanager.Manager                   // shared canonical Request Response receipt owner
 	playbackRecorder               *playbackActionRecorder                     // canonical actual-playback receipt owner
@@ -496,11 +498,13 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
 		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)
 	}
-	runtimeActionManager, err := newRuntimeActionManager(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore))
+	runtimeActionOwner, err := newRuntimeActionOwner(cfg.WorkspaceDir, actionStoreOptions(cfg.ActionStore))
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical Action lifecycle owner: %v", err)
 	}
+	runtimeActionManager := runtimeActionOwner.manager
 	deps.actionManager = runtimeActionManager
+	deps.actionStoreHealth = runtimeActionOwner.store
 	deps.transportManager, err = newRuntimeTransportManager(cfg.WorkspaceDir, runtimeActionManager)
 	if err != nil {
 		log.Fatalf("Failed to initialize canonical transport receipt owner: %v", err)
