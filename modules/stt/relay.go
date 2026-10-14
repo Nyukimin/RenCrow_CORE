@@ -256,8 +256,11 @@ func jsonMillis(payload map[string]any, key string) int64 {
 type ControlDecision struct {
 	Upstream    map[string]any
 	ClientEvent map[string]any
-	// Stop is set when Upstream is a stop. StopUtteranceID names the utterance it
-	// addresses, "" when it addresses whichever is active.
+	// Stop is set when Upstream is a stop. StopUtteranceID is the utterance CORE
+	// expects the stop to close, for CORE's own bookkeeping (the watchdog, the
+	// timing trace): the id the client named, else lastStartID. It is not what
+	// Upstream carries: an id-less stop goes upstream id-less. "" when CORE cannot
+	// tell, which makes it treat every waiting utterance as addressed.
 	Stop            bool
 	StopUtteranceID string
 }
@@ -328,10 +331,13 @@ type RelayTable struct {
 	order    []string // announcement order
 	deadline map[string]time.Time
 
-	// lastStartID is the id CORE adds to a stop or cancel the client sent without
-	// one (the Viewer's). It is empty on a connection that sent no start (PORTAL),
-	// whose id-less stop passes as it is. After a start it holds the client's id
-	// until STT announces an utterance, then always the id STT announced last.
+	// lastStartID is the id CORE uses where it needs an utterance id of its own
+	// (contract 3.7 j. (3)): the utterance it expects an id-less stop to close. It
+	// is never put on a stop or cancel sent upstream: STT applies an id-less one to
+	// the utterance in progress, and an id CORE added would name an utterance that
+	// may have closed since (the stop would be ignored). It is empty on a connection
+	// that sent no start (PORTAL). After a start it holds the client's id until STT
+	// announces an utterance, then always the id of the last speech_start.
 	lastStartID string
 
 	lastSeq int64
@@ -354,10 +360,12 @@ func (t *RelayTable) NoteSessionReady(seq int64) {
 
 // MapControl decides what a client control message becomes. Only start, stop
 // (and its legacy name final_pending) and cancel are relayed; everything else
-// is dropped. The Viewer's stop carries no utterance id, so CORE adds the id of
-// the utterance STT announced last (contract 5.1 and 3.7 j.), not the id of the
-// client's start: STT splits an utterance at a breath, and the continuation does
-// not inherit the client's id (3.7 i.).
+// is dropped. A stop or cancel goes upstream with the id the client gave it and
+// without one if it gave none (contract 5.1, 3.7 j.): CORE never adds an id, so
+// STT applies it to the utterance it announced that is in progress. STT splits
+// an utterance at a breath and the continuation does not inherit the client's id
+// (3.7 i.), so any id CORE could add may name an utterance that is finished by
+// the time the stop arrives.
 func (t *RelayTable) MapControl(c Control, now time.Time) ControlDecision {
 	switch {
 	case c.Type == "start":
@@ -373,17 +381,19 @@ func (t *RelayTable) MapControl(c Control, now time.Time) ControlDecision {
 		t.lastStartID = c.UtteranceID
 		return ControlDecision{Upstream: map[string]any{"type": streamMessageUtteranceStart, "utterance_id": c.UtteranceID}}
 	case IsFinalizeControl(c.Type):
-		id := t.controlTarget(c)
-		t.shortenWatchdog(id, now.Add(t.limits.TerminalDeadline+RelayWatchdogSlack))
-		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceStop, id), Stop: true, StopUtteranceID: id}
+		expected := t.expectedStopTarget(c)
+		t.shortenWatchdog(expected, now.Add(t.limits.TerminalDeadline+RelayWatchdogSlack))
+		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceStop, c.UtteranceID), Stop: true, StopUtteranceID: expected}
 	case c.Type == "cancel":
-		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceCancel, t.controlTarget(c))}
+		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceCancel, c.UtteranceID)}
 	default:
 		return ControlDecision{}
 	}
 }
 
-func (t *RelayTable) controlTarget(c Control) string {
+// expectedStopTarget is the utterance CORE expects a stop to close, for its own
+// bookkeeping only (see lastStartID).
+func (t *RelayTable) expectedStopTarget(c Control) string {
 	if c.UtteranceID != "" {
 		return c.UtteranceID
 	}
@@ -400,7 +410,8 @@ func namedUtteranceMessage(messageType, id string) map[string]any {
 
 // shortenWatchdog moves the deadline of the named utterance (every waiting one
 // when id is empty: an id-less stop closes whichever utterance is active, which
-// CORE cannot tell) to d, never later than it already is.
+// CORE cannot tell on a connection that sent no start) to d, never later than it
+// already is.
 func (t *RelayTable) shortenWatchdog(id string, d time.Time) {
 	for _, waiting := range t.order {
 		if (id == "" || waiting == id) && d.Before(t.deadline[waiting]) {
@@ -451,13 +462,13 @@ func (t *RelayTable) handleSpeechStart(ev UpstreamEvent, now time.Time) EventDec
 	t.order = append(t.order, ev.UtteranceID)
 	t.deadline[ev.UtteranceID] = now.Add(t.limits.MaxUtterance + t.limits.TerminalDeadline + RelayWatchdogSlack)
 	if t.lastStartID != "" {
-		// The connection sent a start, so its id-less stop gets an id. Every
-		// accepted speech_start moves it: the one answering the start (STT may have
-		// replaced the client's id), an automatic one, the continuation of a
-		// max-length split, and the continuation after a split by silence. That
-		// last one is what the stop of a Viewer that sent its stop first must reach.
-		// An id that has been closed is harmless: STT ignores a stop that names a
-		// finished utterance (contract 3.5, 3.7 j.).
+		// The connection sent a start, so CORE keeps the id of the utterance it
+		// expects an id-less stop to close. Every accepted speech_start moves it: the
+		// one answering the start (STT may have replaced the client's id), an
+		// automatic one, the continuation of a max-length split, and the
+		// continuation after a split by silence (contract 3.7 j. (3)). It stays
+		// CORE's own: it picks the watchdog's target and the timing trace, and is
+		// never sent upstream (see MapControl).
 		t.lastStartID = ev.UtteranceID
 	}
 	return t.forward(ev, false)

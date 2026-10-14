@@ -208,3 +208,21 @@ test('the decision is made once: a second event for the same utterance finds it 
   assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'close' }, actions), false);
   assert.deepEqual(actions.calls, ['closeWS']);
 });
+
+// Silence-first (contract 3.5, 9.3): STT closed the utterance before the Viewer's
+// stop reached it, so STT answers the stop with a final that has no
+// utterance_id and empty_reason no_active_utterance. It is not the end of any
+// utterance: it only answers a stop, so a client that waits is not left waiting.
+test('the answer to a stop with nothing in progress is told apart from the final of an utterance', () => {
+  const utils = loadUtils();
+  const answer = { type: 'final', text: '', empty_reason: 'no_active_utterance', end_reason: 'stop', target_called: false };
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance(answer), true);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance({ ...answer, utterance_id: '' }), true);
+  // An utterance's own final is never taken for it, whatever its text or reason.
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance({ ...answer, utterance_id: 'v1-1' }), false);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance({ type: 'final', text: 'こんにちは', end_reason: 'silence' }), false);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance({ type: 'final', text: '', empty_reason: 'too_short', end_reason: 'silence' }), false);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance({ ...answer, type: 'error' }), false);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance(null), false);
+  assert.equal(utils.isSTTStopAnswerWithoutUtterance(undefined), false);
+});

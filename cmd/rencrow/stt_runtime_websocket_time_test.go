@@ -205,7 +205,8 @@ func TestSTTRelayEndsTheSessionWhenAnUpstreamWriteFails(t *testing.T) {
 
 func TestSTTRelayAnEarlyTerminalForAStoppedUtteranceIsRelayedAndRecorded(t *testing.T) {
 	// The Viewer sends stop after STT closed the utterance by silence: the final
-	// arrives first and stop then names an utterance that is gone.
+	// arrives first. The stop reaches STT id-less (contract 3.7 j.), so it names no
+	// finished utterance; STT decides what it addresses.
 	r := startTimedRelay(t, nil)
 	r.client.Control(map[string]any{"type": "start", "utterance_id": "v1"})
 	waitUntil(t, "start", func() bool { return len(r.up.Sent()) == 1 })
@@ -216,7 +217,7 @@ func TestSTTRelayAnEarlyTerminalForAStoppedUtteranceIsRelayedAndRecorded(t *test
 	r.client.Control(map[string]any{"type": "stop"})
 	waitUntil(t, "stop", func() bool { return len(r.up.Sent()) == 2 })
 	sent := r.up.Sent()[1]
-	if sent.Kind != sttinfra.FrameText || string(sent.Data) != `{"type":"utterance.stop","utterance_id":"v1"}` {
-		t.Fatalf("the stop must name the finished utterance so STT ignores it: %q", sent.Data)
+	if sent.Kind != sttinfra.FrameText || string(sent.Data) != `{"type":"utterance.stop"}` {
+		t.Fatalf("the stop must reach STT id-less: %q", sent.Data)
 	}
 }

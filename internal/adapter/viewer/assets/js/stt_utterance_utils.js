@@ -105,8 +105,22 @@
     return true;
   }
 
+  // The Viewer sends stop without an utterance_id, so RenCrow_STT applies it to
+  // the utterance it announced that is in progress. When STT already closed that
+  // utterance (silence-first), nothing is left to close, and STT answers the stop
+  // with a final that has no utterance_id and empty_reason no_active_utterance,
+  // behind the final of the closed utterance. That answer ends no utterance: it
+  // only tells a client that waits for the stop's final that nothing is coming.
+  // A final that names an utterance is never this answer.
+  function isSTTStopAnswerWithoutUtterance(event) {
+    if (!event || event.type !== 'final') return false;
+    if (event.utterance_id) return false;
+    return String(event.empty_reason || '') === 'no_active_utterance';
+  }
+
   root.createSTTPrerollBuffer = createSTTPrerollBuffer;
   root.createSTTUtteranceID = createSTTUtteranceID;
   root.shouldEndSTTUtteranceOnServerEvent = shouldEndSTTUtteranceOnServerEvent;
   root.endSTTUtteranceFromServer = endSTTUtteranceFromServer;
+  root.isSTTStopAnswerWithoutUtterance = isSTTStopAnswerWithoutUtterance;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -153,78 +153,157 @@ func TestSTTRelayRelaysAViewerUtteranceWithItsKindsIntact(t *testing.T) {
 	if frame.Kind != sttinfra.FrameBinary || string(frame.Data) != string(audio) {
 		t.Fatalf("audio must cross as the same binary frame: kind %d, %d bytes", frame.Kind, len(frame.Data))
 	}
-	// The Viewer's stop has no id: CORE adds the id of the last start.
-	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
+	// The Viewer's stop has no id and CORE adds none: STT applies it to the
+	// utterance it announced that is in progress (contract 3.7 j.).
+	msg := conn.NextControl(t)
+	if msg["type"] != "utterance.stop" {
 		t.Fatalf("stop = %#v", msg)
+	}
+	if _, has := msg["utterance_id"]; has {
+		t.Fatalf("an id-less stop must reach STT id-less: %#v", msg)
 	}
 }
 
 // The defect of the isolated E2E (stop-first): the Viewer sends start{id}, STT
 // splits the utterance at a breath (closes it and goes on with a continuation it
-// names itself), and the Viewer's id-less stop was given the id of the finished
-// first utterance. STT ignores such a stop, so the continuation ended by
-// idle_timeout about 2 s later. The id CORE adds is the last one STT announced.
-func TestSTTRelayAnIDLessStopNamesTheContinuationSTTAnnouncedAfterASplit(t *testing.T) {
+// names itself), and the Viewer's id-less stop was given an id by CORE that named
+// the finished first utterance. STT ignores such a stop, so the continuation
+// ended by idle_timeout about 2 s later. CORE adds no id (contract 3.7 j.): the
+// stop reaches STT id-less and STT applies it to the continuation. The split
+// happens at STT while the stop is on its way, so CORE has not yet seen the
+// continuation's speech_start when it relays the stop; no id CORE could add at
+// that moment would be right, which is why none is added.
+func TestSTTRelayAnIDLessStopOrCancelReachesTheContinuationOfASplitMadeWhileItWasOnItsWay(t *testing.T) {
 	for _, stopType := range []string{"stop", "final_pending", "cancel"} {
 		t.Run(stopType, func(t *testing.T) {
 			fake := startFakeSTTServer(t)
 			client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
 			conn := fake.Accept()
+			stt := newContractSTT(conn)
 			client.ExpectReady()
 
 			client.Control(map[string]any{"type": "start", "utterance_id": "v1-1", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"})
-			if msg := conn.NextControl(t); msg["type"] != "utterance.start" || msg["utterance_id"] != "v1-1" {
-				t.Fatalf("start = %#v", msg)
+			start := conn.NextControl(t)
+			if start["type"] != "utterance.start" || start["utterance_id"] != "v1-1" {
+				t.Fatalf("start = %#v", start)
 			}
-			conn.Send(`{"type":"speech_start","utterance_id":"v1-1","offset_ms":0}`)
-			client.Audio(pcmTone(100))
-			conn.Next(t)
-			// A breath longer than the silence window: STT closes v1-1 and goes on
-			// with a continuation that carries no id of the client.
-			conn.Send(`{"type":"final","utterance_id":"v1-1","text":"first","target_called":true,"end_reason":"silence"}`)
-			conn.Send(`{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`)
-			events := client.Events(3)
-			if events[1]["type"] != "final" || events[1]["utterance_id"] != "v1-1" || events[2]["utterance_id"] != "srv-2" {
-				t.Fatalf("events = %#v", events)
-			}
+			stt.Handle(start)
+			client.Expect("speech_start")
 
+			// The Viewer's stop leaves before CORE has heard of the split.
 			client.Control(map[string]any{"type": stopType})
+			msg := conn.NextControl(t)
 			want := "utterance.stop"
 			if stopType == "cancel" {
 				want = "utterance.cancel"
 			}
-			msg := conn.NextControl(t)
-			if msg["type"] != want || msg["utterance_id"] != "srv-2" {
-				t.Fatalf("the id-less %s must name the continuation, not the finished v1-1: %#v", stopType, msg)
+			if msg["type"] != want {
+				t.Fatalf("%s = %#v", stopType, msg)
 			}
-			// STT answers with the continuation's terminal: one per utterance.
-			conn.Send(`{"type":"final","utterance_id":"srv-2","text":"second","target_called":true,"end_reason":"stop"}`)
-			final := client.Expect("final")
-			if final["utterance_id"] != "srv-2" {
-				t.Fatalf("final = %#v", final)
+			if id, has := msg["utterance_id"]; has {
+				t.Fatalf("the id-less %s must reach STT id-less, CORE added %v (the finished first utterance, which STT ignores): %#v", stopType, id, msg)
 			}
-			client.NoEvent(100 * time.Millisecond)
+
+			// STT had split at a breath before it read the stop (silence, then the
+			// continuation it names itself), then applies the stop it received.
+			stt.CloseBySilence("first")
+			stt.Announce("srv-2")
+			stt.Handle(msg)
+
+			events := client.Events(3)
+			if events[0]["type"] != "final" || events[0]["utterance_id"] != "v1-1" ||
+				events[1]["type"] != "speech_start" || events[1]["utterance_id"] != "srv-2" {
+				t.Fatalf("events = %#v", events)
+			}
+			wantTerminal := "final"
+			if stopType == "cancel" {
+				wantTerminal = "cancelled"
+			}
+			if events[2]["type"] != wantTerminal || events[2]["utterance_id"] != "srv-2" {
+				t.Fatalf("the stop must end the continuation srv-2 (%s): %#v", wantTerminal, events)
+			}
 		})
 	}
 }
 
-// Silence-first: STT closed the utterance before the stop arrived. The stop
-// names the finished utterance, which STT ignores, so no second terminal.
-func TestSTTRelayAnIDLessStopAfterSTTClosedTheLastUtteranceNamesTheClosedOne(t *testing.T) {
+// Silence-first: STT closed the utterance before the stop arrived, so nothing is
+// left for the id-less stop to close. STT answers with a final that has no
+// utterance_id (contract 3.5): CORE relays it as it is, to unblock a client that
+// waits, without an id of its own on it, without a record, and without disturbing
+// the utterance that comes after.
+func TestSTTRelayAnIDLessStopAfterSTTClosedTheUtteranceGetsTheEmptyFinalRelayedAsItIs(t *testing.T) {
 	fake := startFakeSTTServer(t)
-	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+	sink := &recordSink{}
+	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, sink, nil)))
 	conn := fake.Accept()
+	stt := newContractSTT(conn)
 	client.ExpectReady()
 
 	client.Control(map[string]any{"type": "start", "utterance_id": "v1-1"})
-	conn.NextControl(t)
-	conn.Send(`{"type":"speech_start","utterance_id":"v1-1","offset_ms":0}`)
-	conn.Send(`{"type":"final","utterance_id":"v1-1","text":"x","target_called":true,"end_reason":"silence"}`)
-	client.Events(2)
+	stt.Handle(conn.NextControl(t))
+	stt.CloseBySilence("x")
+	if events := client.Events(2); events[0]["type"] != "speech_start" || events[1]["type"] != "final" || events[1]["utterance_id"] != "v1-1" {
+		t.Fatalf("events = %#v", events)
+	}
 
 	client.Control(map[string]any{"type": "stop"})
-	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
-		t.Fatalf("the stop must name the finished utterance so that STT does nothing: %#v", msg)
+	msg := conn.NextControl(t)
+	if _, has := msg["utterance_id"]; has || msg["type"] != "utterance.stop" {
+		t.Fatalf("the stop must reach STT id-less: %#v", msg)
+	}
+	stt.Handle(msg)
+
+	empty := client.Expect("final")
+	if empty["empty_reason"] != "no_active_utterance" || empty["text"] != "" || empty["target_called"] != false {
+		t.Fatalf("the empty final is relayed with STT's payload: %#v", empty)
+	}
+	if id, has := empty["utterance_id"]; has {
+		t.Fatalf("CORE must not put an utterance id on it, it ends no utterance: %v", id)
+	}
+	if empty["seq"] == nil {
+		t.Fatalf("it is stamped with CORE's own seq like every event: %#v", empty)
+	}
+	client.NoEvent(100 * time.Millisecond)
+
+	// The connection goes on: the next utterance is announced, ended and recorded
+	// once, and nothing was recorded for the empty final (it called no target).
+	stt.Announce("srv-3")
+	stt.CloseBySilence("next")
+	if events := client.Events(2); events[0]["utterance_id"] != "srv-3" || events[1]["type"] != "final" || events[1]["utterance_id"] != "srv-3" {
+		t.Fatalf("the relay must keep serving after the empty final: %#v", events)
+	}
+	records := sink.WaitFor(t, 2)
+	time.Sleep(50 * time.Millisecond)
+	if records = sink.All(); len(records) != 2 || records[0].UtteranceID != "v1-1" || records[1].UtteranceID != "srv-3" {
+		t.Fatalf("only the two utterances are recorded, not the empty final: %+v", records)
+	}
+}
+
+// Silence-first with the next utterance already in progress: the stop meant for
+// the finished one is id-less, so STT closes the one in progress (it cannot tell
+// which the Viewer meant). CORE relays that final like any other.
+func TestSTTRelayAnIDLessStopAfterASilenceFinalClosesTheNextUtteranceInProgress(t *testing.T) {
+	fake := startFakeSTTServer(t)
+	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+	conn := fake.Accept()
+	stt := newContractSTT(conn)
+	client.ExpectReady()
+
+	client.Control(map[string]any{"type": "start", "utterance_id": "v1-1"})
+	stt.Handle(conn.NextControl(t))
+	stt.CloseBySilence("first")
+	stt.Announce("srv-2")
+	client.Events(3)
+
+	client.Control(map[string]any{"type": "stop"})
+	msg := conn.NextControl(t)
+	if _, has := msg["utterance_id"]; has {
+		t.Fatalf("the stop must reach STT id-less: %#v", msg)
+	}
+	stt.Handle(msg)
+	final := client.Expect("final")
+	if final["utterance_id"] != "srv-2" || final["end_reason"] != "stop" {
+		t.Fatalf("final = %#v", final)
 	}
 	client.NoEvent(100 * time.Millisecond)
 }

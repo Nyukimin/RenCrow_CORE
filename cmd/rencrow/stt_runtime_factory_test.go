@@ -118,7 +118,9 @@ func TestBuildSTTRuntimeRelaysAnUtteranceThroughTheRenCrowSTTStream(t *testing.T
 	if audioBytes != frames*len(rawPCM16Chunk()) {
 		t.Fatalf("audio reached STT as %d bytes, want %d: CORE must not cut, drop or add audio", audioBytes, frames*len(rawPCM16Chunk()))
 	}
-	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
+	// The Viewer's stop is id-less and stays so: STT applies it to the utterance
+	// it announced that is in progress (contract 3.7 j.).
+	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != nil {
 		t.Fatalf("stop = %#v", msg)
 	}
 

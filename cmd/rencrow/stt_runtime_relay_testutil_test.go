@@ -237,6 +237,103 @@ func (c *fakeSTTConn) Disconnected() bool {
 	}
 }
 
+// contractSTT answers the controls CORE relays the way the stream contract says
+// RenCrow_STT does (3.5 table, 3.7 d., e., i. and j.). It is not the segmenter:
+// the test says when an utterance is announced and when silence closes it, and
+// the model decides what a start, a stop or a cancel addresses and what STT
+// sends back for it. That is the part a relay bug can change the outcome of:
+//
+//   - an id-less stop or cancel addresses the utterance in progress that STT
+//     announced; with none, a stop is answered by a final that has no
+//     utterance_id (empty_reason no_active_utterance) and a cancel by nothing,
+//   - a stop or cancel that names an utterance addresses it only while it is the
+//     one in progress (or its origin: the id the client gave); the id of a
+//     finished utterance, or of another one, is ignored,
+//   - the continuation after a split by silence is a new utterance named by STT
+//     (srv-<n>) that does not inherit the id of the client.
+type contractSTT struct {
+	conn *fakeSTTConn
+
+	mu     sync.Mutex
+	active string            // the announced utterance in progress, "" when none
+	origin map[string]string // utterance id -> the id the client gave it
+	nextID int
+}
+
+func newContractSTT(conn *fakeSTTConn) *contractSTT {
+	return &contractSTT{conn: conn, origin: map[string]string{}, nextID: 1}
+}
+
+// Announce opens an utterance by itself (STT's own start, or the continuation
+// after a split) and sends its speech_start. id "" makes STT name it.
+func (m *contractSTT) Announce(id string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.announceLocked(id, "")
+}
+
+func (m *contractSTT) announceLocked(id, clientID string) string {
+	if id == "" || strings.HasPrefix(id, "srv-") && clientID != "" {
+		m.nextID++
+		id = fmt.Sprintf("srv-%d", m.nextID)
+	}
+	m.active = id
+	m.origin[id] = clientID
+	m.conn.Send(fmt.Sprintf(`{"type":"speech_start","utterance_id":%q,"offset_ms":0}`, id))
+	return id
+}
+
+// CloseBySilence ends the utterance in progress by silence and sends its final.
+func (m *contractSTT) CloseBySilence(text string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closeLocked("silence", text)
+}
+
+func (m *contractSTT) closeLocked(endReason, text string) {
+	m.conn.Send(fmt.Sprintf(`{"type":"final","utterance_id":%q,"text":%q,"end_reason":%q,"audio_ms":900,"target_called":true}`, m.active, text, endReason))
+	m.active = ""
+}
+
+// Active is the utterance in progress, "" when none.
+func (m *contractSTT) Active() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.active
+}
+
+func (m *contractSTT) names(id string) bool {
+	return m.active != "" && (id == m.active || (m.origin[m.active] != "" && id == m.origin[m.active]))
+}
+
+// Handle applies one control CORE sent upstream.
+func (m *contractSTT) Handle(msg map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, _ := msg["utterance_id"].(string)
+	switch msg["type"] {
+	case "utterance.start":
+		if m.active != "" {
+			m.closeLocked("restart", "")
+		}
+		m.announceLocked(id, id)
+	case "utterance.stop":
+		switch {
+		case id == "" && m.active != "":
+			m.closeLocked("stop", "stopped")
+		case id == "":
+			m.conn.Send(`{"type":"final","text":"","empty_reason":"no_active_utterance","end_reason":"stop","audio_ms":0,"target_called":false}`)
+		case m.names(id):
+			m.closeLocked("stop", "stopped")
+		}
+	case "utterance.cancel":
+		if (id == "" && m.active != "") || m.names(id) {
+			m.conn.Send(fmt.Sprintf(`{"type":"cancelled","utterance_id":%q,"target_called":false}`, m.active))
+			m.active = ""
+		}
+	}
+}
+
 // relayClient is a /stt client: the Viewer, PORTAL or the probe.
 type relayClient struct {
 	t  *testing.T

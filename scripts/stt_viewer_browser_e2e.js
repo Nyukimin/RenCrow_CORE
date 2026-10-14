@@ -20,6 +20,8 @@ function parseArgs(argv) {
     requireTTSInterrupt: false,
     // V6: stand in for the /stt relay and make the server end the utterance first.
     fakeSttEarlyFinal: false,
+    // V6b: the stop's answer (a final without utterance_id) follows the final of the utterance.
+    fakeSttStopAnswer: false,
     executablePath: '',
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -38,6 +40,7 @@ function parseArgs(argv) {
     else if (a === '--headless') args.headless = true;
     else if (a === '--require-tts-interrupt') args.requireTTSInterrupt = true;
     else if (a === '--fake-stt-early-final') args.fakeSttEarlyFinal = true;
+    else if (a === '--fake-stt-stop-answer') args.fakeSttStopAnswer = true;
     else if (a === '--executable-path') args.executablePath = argv[++i];
     else throw new Error(`unknown arg: ${a}`);
   }
@@ -132,8 +135,10 @@ function writeToneWAV(file, bursts, toneMs, silenceMs) {
   fs.writeFileSync(file, Buffer.concat([header, data]));
 }
 
-async function runFakeSTTEarlyFinal(args) {
-  const wav = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stt-early-final-')), 'tone.wav');
+// Opens the Viewer in a browser whose fake microphone plays tone bursts, so the
+// Viewer's VAD fires again and again, with the permissions the Viewer needs.
+async function openFakeMicViewer(args, tmpPrefix) {
+  const wav = path.join(fs.mkdtempSync(path.join(os.tmpdir(), tmpPrefix)), 'tone.wav');
   writeToneWAV(wav, 1, 1500, 3000);
   const launchArgs = [
     '--use-fake-ui-for-media-stream',
@@ -146,6 +151,11 @@ async function runFakeSTTEarlyFinal(args) {
   const browser = await chromium.launch(launchOptions);
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
   await page.context().grantPermissions(['microphone'], { origin: originOf(args.url) });
+  return { browser, page };
+}
+
+async function runFakeSTTEarlyFinal(args) {
+  const { browser, page } = await openFakeMicViewer(args, 'stt-early-final-');
 
   const connections = [];
   const consoleLines = [];
@@ -232,9 +242,135 @@ async function runFakeSTTEarlyFinal(args) {
   process.exit(result.ok ? 0 : 2);
 }
 
+// ---------------------------------------------------------------------------
+// V6b (contract 3.5, 9.3, 9.8): the answer to a stop STT had nothing to close for.
+//
+// When the Viewer's id-less stop reaches STT and no announced utterance is in
+// progress, STT answers it with a final that has no utterance_id (empty_reason
+// no_active_utterance). That final ends no utterance. The case that reaches the
+// Viewer with its socket still open: an utterance hit the maximum length and its
+// final (end_reason max_length) was relayed while the user went on speaking; the
+// speech then ended before the rest reached the minimum length STT announces, so
+// the stop finds nothing to close. The Viewer must not lose the text of the
+// final it already has (caption, recorded capture), and the answer must end its
+// wait for a final. This mode stands in for /stt with page.routeWebSocket and
+// checks: the text reached chat once, the caption still shows it after the
+// socket closed, the socket closed without the 90 s wait, the stop carried no
+// utterance_id, and the next utterance is taken on a new connection.
+// ---------------------------------------------------------------------------
+async function runFakeSTTStopAnswer(args) {
+  const { browser, page } = await openFakeMicViewer(args, 'stt-stop-answer-');
+  const recognized = '確認テスト（最大長で区切られた前半）';
+  const connections = [];
+  const sends = [];
+  const consoleLines = [];
+  page.on('console', msg => consoleLines.push(`${msg.type()}: ${msg.text()}`));
+  page.on('pageerror', err => consoleLines.push(`pageerror: ${err.message}`));
+  await page.route('**/viewer/stt/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }));
+  await page.route('**/viewer/send', route => {
+    sends.push(route.request().postData() || '');
+    return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+  });
+
+  await page.routeWebSocket(/\/stt(\?|$)/, ws => {
+    const conn = { frames: [], closed: false, utteranceID: '', stopAt: 0 };
+    connections.push(conn);
+    ws.send(JSON.stringify({ type: 'session_info', provider: 'rencrow_stt', seq: 1 }));
+    ws.send(JSON.stringify({ type: 'ready', sample_rate: 16000, protocol: 'utterance.v1', max_utterance_ms: 30000, seq: 2 }));
+    let binaryFrames = 0;
+    ws.onMessage(message => {
+      if (typeof message === 'string') {
+        let parsed = {};
+        try { parsed = JSON.parse(message); } catch (_) { /* not JSON */ }
+        conn.frames.push({ kind: 'text', type: parsed.type || '', hasID: Boolean(parsed.utterance_id) });
+        if (parsed.type === 'start' && parsed.utterance_id) conn.utteranceID = parsed.utterance_id;
+        if (parsed.type === 'stop' && !conn.stopAt) {
+          conn.stopAt = Date.now();
+          // Nothing announced is in progress: STT answers the stop without an utterance_id.
+          ws.send(JSON.stringify({ type: 'final', text: '', empty_reason: 'no_active_utterance', end_reason: 'stop', audio_ms: 0, target_called: false, seq: 5 }));
+        }
+        return;
+      }
+      conn.frames.push({ kind: 'binary' });
+      binaryFrames += 1;
+      const id = conn.utteranceID || 'srv-1';
+      if (binaryFrames === 1) {
+        ws.send(JSON.stringify({ type: 'speech_start', utterance_id: id, offset_ms: 0, seq: 3 }));
+      } else if (binaryFrames === 5) {
+        // The utterance hit the maximum length: the Viewer goes on.
+        ws.send(JSON.stringify({ type: 'final', utterance_id: id, text: recognized, end_reason: 'max_length', audio_ms: 30000, target_called: true, seq: 4 }));
+      }
+    });
+    // A route that handles the page's close must complete it, or the page's onclose never fires.
+    ws.onClose(() => {
+      conn.closed = true;
+      conn.closedAt = Date.now();
+      ws.close();
+    });
+  });
+
+  await page.goto(args.url, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('body[data-viewer-tab="timeline"]', { timeout: 10000 });
+  await page.click('#micBtn');
+  await page.waitForFunction(() => document.querySelector('#micState')?.textContent?.includes('on'), null, { timeout: 10000 });
+
+  // The first utterance ends with the answer above. The next utterance clears the
+  // caption, so it is read right after the first socket closed, before that.
+  const caption = () => page.textContent('#sttCaption').then(t => String(t || '').replace(/\s+/g, ' ').trim()).catch(() => '');
+  const captionSamples = [];
+  const deadline = Date.now() + args.finalTimeoutMs;
+  while (Date.now() < deadline && !(connections[0] && connections[0].closed)) await page.waitForTimeout(50);
+  const first = connections[0] || { frames: [], closed: false };
+  if (first.closedAt) {
+    const wait = Math.max(0, first.closedAt + 400 - Date.now());
+    if (wait > 0) await page.waitForTimeout(wait);
+    captionSamples.push(await caption());
+  }
+  // The next utterance comes on a new connection.
+  let moved = false;
+  while (Date.now() < deadline && !moved) {
+    moved = connections.length >= 2;
+    if (!moved) await page.waitForTimeout(200);
+  }
+  const state = await page.evaluate(() => ({
+    isStopping: sttState.isStopping,
+    session: document.querySelector('#sttSessionState')?.textContent || '',
+  }));
+  const sentMessages = sends.map(body => { try { return JSON.parse(body).message || ''; } catch (_) { return ''; } });
+  const stopFrames = first.frames.filter(f => f.kind === 'text' && f.type === 'stop');
+  const failures = [];
+  if (stopFrames.length === 0) failures.push('the Viewer sent no stop, so the race under test did not happen');
+  if (stopFrames.some(f => f.hasID)) failures.push('the Viewer named an utterance in its stop');
+  if (!moved) failures.push('the Viewer did not move on to a second utterance');
+  if (!first.closed) failures.push('the Viewer did not close the socket after the answer to its stop');
+  if (first.closedAt && first.stopAt && first.closedAt - first.stopAt > 5000) failures.push('the socket was closed late after the answer to the stop');
+  if (sentMessages.filter(m => m === recognized).length !== 1) failures.push(`the recognized text must reach chat exactly once, got ${JSON.stringify(sentMessages)}`);
+  if (!captionSamples.some(c => c.includes(recognized))) failures.push(`the caption lost the recognized text: ${JSON.stringify(captionSamples)}`);
+  if (/timed out waiting for final/.test(state.session) || captionSamples.some(c => /timed out waiting for final/.test(c))) failures.push('the 90 s final wait expired');
+  if (consoleLines.some(line => line.startsWith('pageerror:'))) failures.push('the page raised an error');
+  const result = {
+    ok: failures.length === 0,
+    mode: 'fake-stt-stop-answer',
+    url: args.url,
+    connections: connections.length,
+    first_connection_closed_by_viewer: Boolean(first.closed),
+    first_connection_ms_stop_to_close: first.closedAt && first.stopAt ? first.closedAt - first.stopAt : null,
+    stop_frames_sent: stopFrames.length,
+    chat_messages: sentMessages,
+    caption_after_close: captionSamples,
+    viewer_state: state,
+    failures,
+    recent_console: consoleLines.slice(-12),
+  };
+  console.log(JSON.stringify(result, null, 2));
+  await browser.close();
+  process.exit(result.ok ? 0 : 2);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.fakeSttEarlyFinal) return runFakeSTTEarlyFinal(args);
+  if (args.fakeSttStopAnswer) return runFakeSTTStopAnswer(args);
   const repo = process.cwd();
   const launchArgs = ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'];
   if (!args.realMic) {

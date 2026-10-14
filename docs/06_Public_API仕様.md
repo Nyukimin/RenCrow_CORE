@@ -142,8 +142,8 @@ handshakeと`session_ready`の待ちは合わせて5秒）、`session_ready`を�
 | message | CORE → RenCrow_STT |
 |---|---|
 | `{"type":"start","utterance_id":"…","sample_rate":16000,"channels":1,"format":"pcm_s16le"}` | `utterance_id`があれば`utterance.start{utterance_id}`として転送する（Viewer型）。16 kHz mono `pcm_s16le`以外は、idなしのsession単位の`error`（`code=unsupported_audio_format`）で拒否し、転送しない。**`utterance_id`の無い`start`は転送しない**（PORTAL型。ストリームが音声から発話を自動で開くので不要で、転送すると接続直後に空の発話が開く） |
-| `{"type":"stop","utterance_id":"…"}` | `utterance.stop`。`final_pending`は旧名の別名。`utterance_id`が無く、その接続で`start{utterance_id}`を転送していれば、**RenCrow_STTが最後に通知した`speech_start`の`utterance_id`**を補って転送する（`speech_start`のたびに更新する。自動開始、最大長の続き、無音で割れた後の続きを含む）。`speech_start`の前は、`start`のidを仮に使う。RenCrow_STTがidを置き換えた場合も宛先がずれない。**`start`のidを固定して補わない**: 息継ぎが無音の閾値（700ms）を超えるとRenCrow_STTは発話を無音で閉じ、続きを`srv-<n>`の別の発話として開く。続きは`start`のidを引き継がないので、`start`のidを補うと終わった発話を指して`stop`が無視され、続きの`final`が約2秒遅れる（所見A）。最後に通知された発話がすでに閉じていれば、補ったidは終わった発話を指し、RenCrow_STTは`stop`で何もしない（`final`は先に届いている）。`utterance_id`を付けた`stop`は、そのidのまま転送する。`start`が無いPORTAL型のidなしの`stop`は、idなしのまま進行中の発話を閉じる |
-| `{"type":"cancel","utterance_id":"…"}` | `utterance.cancel`（`stop`と同じ規則でidを補う） |
+| `{"type":"stop","utterance_id":"…"}` | `utterance.stop`。`final_pending`は旧名の別名。**`utterance_id`が無ければ、COREは補わず、idなしのまま転送する**。RenCrow_STTが、進行中で通知済みの発話にidなしの`stop`を当てる（契約第3.5版の3.7のe.・j.）。`utterance_id`を付けた`stop`は、そのidのまま転送する。**COREがidを補わない理由**: 息継ぎが無音の閾値（700ms）を超えるとRenCrow_STTは発話を無音で閉じ、続きを`srv-<n>`の別の発話として開く。続きは`start`のidを引き継がないので、COREが補ったidは、終わった発話を指しうる（`start`のid、最後に知っている`speech_start`のid、のどちらでも）。RenCrow_STTは終わった発話を指す`stop`で何もしないので、続きの`final`が約2秒遅れる（所見A）。idなしなら、続きの発話に当たる。COREは、自分の側でidを要する場面（終端の期限の短縮の対象、timingの記録）にだけ、`speech_start`のたびに更新する`lastStartID`（RenCrow_STTが最後に通知した`speech_start`の`utterance_id`）を持つ。上流へ送る`stop`には使わない |
+| `{"type":"cancel","utterance_id":"…"}` | `utterance.cancel`（`stop`と同じく、idを補わない。`utterance_id`が無ければidなしのまま転送し、RenCrow_STTが進行中で通知済みの発話に当てる） |
 | その他（`config`等）、JSONでない・4096 byteを超えるtext frame | 転送せず捨てる（ログに残す）。binary frameの中身がJSONでも制御としては扱わない |
 
 CORE → クライアント（すべてのeventに、**COREが採番する**、接続内で単調増加する`seq`が付く。発話に属するeventは`utterance_id`を持つ。
@@ -154,7 +154,7 @@ RenCrow_STTの`seq`はhop内の順序の検査にだけ使い、転送しない�
 | `session_info`, `ready` | ストリームを開いて`session_ready`を検証した後。`session_info.provider`は`session_ready.provider`。`ready`は`sample_rate`、`protocol`、`max_utterance_ms`（`session_ready.limits`の値）を持つ |
 | `speech_start` | 発話が始まった。`offset_ms`（接続の先頭から数えた先頭の位置）を持つ。自動開始では有声が最小有声長に達した時点、明示`start`では即座。**次の発話の`speech_start`は前の発話の終端より先に届くことがある**（RenCrow_STTは認識を1つずつ行う） |
 | `partial` | 途中結果。RenCrow_STT側でオプトインされた場合だけ届く（既定は届かない）。同じ`utterance_id`の中で`seq`が大きいものが前を置き換え、`final`が確定する |
-| `final` | 発話の終端。`text`、`end_reason`（`silence` / `stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`（**認識に渡した長さ**。末尾の無音を削った後。認識しなかった場合は貯めた全長）、`offset_ms`、`end_offset_ms`、診断用の`queue_ms`・`processing_ms`、`target_called`（RenCrow_STTが認識targetへ要求を送ったか）。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`） |
+| `final` | 発話の終端。`text`、`end_reason`（`silence` / `stop` / `max_length` / `idle_timeout` / `restart`）、`audio_ms`（**認識に渡した長さ**。末尾の無音を削った後。認識しなかった場合は貯めた全長）、`offset_ms`、`end_offset_ms`、診断用の`queue_ms`・`processing_ms`、`target_called`（RenCrow_STTが認識targetへ要求を送ったか）。認識しなかった場合は`text=""`と`empty_reason`（`no_audio` / `silent` / `too_short` / `filtered` / `no_speech` / `no_active_utterance`）。**`empty_reason=no_active_utterance`の`final`は`utterance_id`を持たない**: `stop`を受けたときRenCrow_STTに進行中で通知済みの発話が無い場合（先に`silence`で閉じた後に`stop`が届いた場合など）に、待っているclientを止めるために返す応答で、どの発話の終端でもない。COREは**そのまま転送する**（`utterance_id`を付けない。終端として数えず、記録せず、終端を待つ発話に触れない）。Viewerは、これを受けても既に受けた`final`の認識文を上書きせず、`stop`の`final`待ちを終える |
 | `error` | `utterance_id`があれば**発話単位**の終端、無ければ**session単位**の異常。`code`は`stt_busy`・`stt_limit_exceeded`・`unsupported_audio_format`・`stt_provider_error`・`STT_TARGET_UNAVAILABLE`・`STT_TARGET_FAILED`・`stt_deadline_exceeded`・`stt_shutting_down`・`protocol_violation`等（RenCrow_STTの値をそのまま写す）と、COREが補う`stt_failed` |
 | `cancelled` | `cancel`で捨てた発話の終端 |
 
@@ -214,6 +214,7 @@ COREが補った終端（`stt_failed`）は記録しません。transport receip
 Viewerは発話ごとに新しいWSを開き、`start`に`utterance_id`を付け、VADの発火前の約300 msをプリロールとして先頭に付けます。
 RenCrow_STTが先に発話を閉じてfinalがViewerの`stop`より先に届く場合、Viewerは発話中にfinal（`max_length`以外）・error・予期しないcloseを受けたら
 発話を終えてsocketを閉じ（`stop`は送らない）、次の発話を新しい接続で受けます。
+Viewerの`stop`が先に閉じた発話に届いた場合のidなしの`no_active_utterance`の`final`は、`final`の後に届いてもsocketを閉じる契機にだけなり、既に受けた認識文と字幕を空で上書きしません（`max_length`で区切った前半の`final`の後に、続きが短すぎて通知されないまま`stop`が届いた場合も同じ）。
 
 ### WS /voice-chat
 

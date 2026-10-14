@@ -44,7 +44,7 @@ func itoa(n int) string {
 	return string(digits)
 }
 
-func TestRelayTableForwardsAStartWithAnIDAndKeepsItForTheStop(t *testing.T) {
+func TestRelayTableForwardsAStartWithAnIDAndPassesTheIDLessStopAsItIs(t *testing.T) {
 	table := newTestRelayTable()
 	got := table.MapControl(Control{Type: "start", UtteranceID: "v1-1", SampleRate: 16000, Channels: 1, Format: "pcm_s16le"}, relayEpoch)
 	if got.ClientEvent != nil {
@@ -53,21 +53,32 @@ func TestRelayTableForwardsAStartWithAnIDAndKeepsItForTheStop(t *testing.T) {
 	if got.Upstream["type"] != "utterance.start" || got.Upstream["utterance_id"] != "v1-1" {
 		t.Fatalf("start must map to utterance.start with the client's id: %#v", got.Upstream)
 	}
-	// The Viewer's stop carries no id: CORE adds the id of the last start.
+	// The Viewer's stop carries no id and CORE does not add one: STT applies it to
+	// the utterance it announced that is in progress (contract 3.7 e. and j.).
 	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
-	if stop.Upstream["type"] != "utterance.stop" || stop.Upstream["utterance_id"] != "v1-1" {
-		t.Fatalf("an id-less stop must name the last start: %#v", stop.Upstream)
+	if stop.Upstream["type"] != "utterance.stop" {
+		t.Fatalf("stop must map to utterance.stop: %#v", stop.Upstream)
 	}
+	if _, has := stop.Upstream["utterance_id"]; has {
+		t.Fatalf("an id-less stop must reach STT id-less, CORE adds no id: %#v", stop.Upstream)
+	}
+	// CORE keeps the id for its own bookkeeping (the watchdog, the timing trace).
 	if !stop.Stop || stop.StopUtteranceID != "v1-1" {
-		t.Fatalf("the decision says which utterance the stop addresses: %#v", stop)
+		t.Fatalf("the decision says which utterance CORE expects the stop to close: %#v", stop)
 	}
 	legacy := table.MapControl(Control{Type: "final_pending"}, relayEpoch)
 	if legacy.Upstream["type"] != "utterance.stop" || !legacy.Stop {
 		t.Fatalf("final_pending is the legacy name of stop: %#v", legacy.Upstream)
 	}
+	if _, has := legacy.Upstream["utterance_id"]; has {
+		t.Fatalf("an id-less final_pending must reach STT id-less: %#v", legacy.Upstream)
+	}
 	cancel := table.MapControl(Control{Type: "cancel"}, relayEpoch)
-	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Upstream["utterance_id"] != "v1-1" || cancel.Stop {
-		t.Fatalf("an id-less cancel must name the last start: %#v", cancel)
+	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Stop {
+		t.Fatalf("cancel = %#v", cancel)
+	}
+	if _, has := cancel.Upstream["utterance_id"]; has {
+		t.Fatalf("an id-less cancel must reach STT id-less: %#v", cancel.Upstream)
 	}
 }
 
@@ -115,10 +126,10 @@ func TestRelayTableRejectsAnUnsupportedFormatAsASessionLevelError(t *testing.T) 
 	if _, has := got.ClientEvent["utterance_id"]; has {
 		t.Fatalf("the rejection must not borrow an utterance id: %#v", got.ClientEvent)
 	}
-	// The rejected start left the last-start id alone.
+	// The rejected start never began anything: no id for the stop, upstream or in CORE.
 	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
-	if _, has := stop.Upstream["utterance_id"]; has {
-		t.Fatalf("a rejected start must not become the stop's target: %#v", stop.Upstream)
+	if _, has := stop.Upstream["utterance_id"]; has || stop.StopUtteranceID != "" {
+		t.Fatalf("a rejected start must not become the stop's target: %#v", stop)
 	}
 }
 
@@ -131,61 +142,78 @@ func TestRelayTableIgnoresUnknownControls(t *testing.T) {
 	}
 }
 
-func TestRelayTableAnIDLessStopFollowsTheLastAnnouncedSpeechStart(t *testing.T) {
+// The id CORE adds for itself (lastStartID) follows the last speech_start STT
+// announced. It is what CORE expects an id-less stop to close; it never goes
+// upstream (contract 3.7 j. (3)).
+func TestRelayTableTheIDCoreKeepsForAStopFollowsTheLastAnnouncedSpeechStart(t *testing.T) {
 	table := newTestRelayTable()
 	table.MapControl(Control{Type: "start", UtteranceID: "srv-looking"}, relayEpoch)
-	// STT replaced the id (a reserved prefix): the stop must follow STT's id.
+	if stop := table.MapControl(Control{Type: "stop"}, relayEpoch); stop.StopUtteranceID != "srv-looking" {
+		t.Fatalf("before STT announces anything the client's id stands: %#v", stop)
+	}
+	// STT replaced the id (a reserved prefix): CORE's own id follows STT's.
 	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
-	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
-	if stop.Upstream["utterance_id"] != "srv-1" {
-		t.Fatalf("the id STT announced replaces the client's: %#v", stop.Upstream)
+	if stop := table.MapControl(Control{Type: "stop"}, relayEpoch); stop.StopUtteranceID != "srv-1" {
+		t.Fatalf("the id STT announced replaces the client's: %#v", stop)
 	}
 	// A breath longer than the silence window: STT closes srv-1 and goes on with a
 	// continuation that carries no id of the client (contract 3.7 i.). Every later
-	// speech_start moves the id, so the stop reaches the utterance in progress and
-	// not the finished one (the stop-first defect of the isolated E2E).
+	// speech_start moves the id, whatever closed the previous utterance.
 	table.HandleUpstream(upstream(t, 2, `{"type":"final","utterance_id":"srv-1","text":"a","target_called":true}`), relayEpoch)
 	table.HandleUpstream(upstream(t, 3, `{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`), relayEpoch)
 	for _, typ := range []string{"stop", "final_pending"} {
-		stop = table.MapControl(Control{Type: typ}, relayEpoch)
-		if stop.Upstream["utterance_id"] != "srv-2" || stop.StopUtteranceID != "srv-2" {
-			t.Fatalf("%s must name the last announced utterance: %#v", typ, stop)
+		stop := table.MapControl(Control{Type: typ}, relayEpoch)
+		if stop.StopUtteranceID != "srv-2" {
+			t.Fatalf("%s: CORE expects the last announced utterance to close: %#v", typ, stop)
+		}
+		if _, has := stop.Upstream["utterance_id"]; has {
+			t.Fatalf("%s must stay id-less upstream, whatever CORE keeps for itself: %#v", typ, stop.Upstream)
 		}
 	}
 	cancel := table.MapControl(Control{Type: "cancel"}, relayEpoch)
-	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Upstream["utterance_id"] != "srv-2" {
-		t.Fatalf("cancel gets its id the same way as stop: %#v", cancel.Upstream)
+	if _, has := cancel.Upstream["utterance_id"]; has {
+		t.Fatalf("an id-less cancel stays id-less: %#v", cancel.Upstream)
 	}
 	// The continuation of a max-length split is announced too.
 	table.HandleUpstream(upstream(t, 4, `{"type":"speech_start","utterance_id":"srv-3","offset_ms":30000}`), relayEpoch)
-	stop = table.MapControl(Control{Type: "stop"}, relayEpoch)
-	if stop.Upstream["utterance_id"] != "srv-3" {
-		t.Fatalf("a max-length continuation is announced too: %#v", stop.Upstream)
+	if stop := table.MapControl(Control{Type: "stop"}, relayEpoch); stop.StopUtteranceID != "srv-3" {
+		t.Fatalf("a max-length continuation is announced too: %#v", stop)
 	}
 }
 
-func TestRelayTableAStopAfterTheLastAnnouncedUtteranceClosedNamesTheClosedOne(t *testing.T) {
+// Silence-first (contract 3.5): STT closed the utterance before the stop reached
+// it. CORE must not name the closed utterance: STT ignores a stop that names a
+// finished utterance, and the id-less stop is the one that reaches the
+// continuation STT may already be on.
+func TestRelayTableAnIDLessStopAfterTheLastAnnouncedUtteranceClosedStaysIDLess(t *testing.T) {
 	table := newTestRelayTable()
 	table.MapControl(Control{Type: "start", UtteranceID: "v1"}, relayEpoch)
 	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"v1","offset_ms":0}`), relayEpoch)
 	// STT closed it by silence before the Viewer's stop arrived (silence-first).
 	table.HandleUpstream(upstream(t, 2, `{"type":"final","utterance_id":"v1","text":"a","target_called":true}`), relayEpoch)
-	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
-	// The id names a finished utterance, which STT ignores: no second terminal.
-	if stop.Upstream["utterance_id"] != "v1" {
-		t.Fatalf("the stop must name the finished utterance so that STT does nothing: %#v", stop.Upstream)
+	for _, typ := range []string{"stop", "final_pending", "cancel"} {
+		got := table.MapControl(Control{Type: typ}, relayEpoch)
+		if id, has := got.Upstream["utterance_id"]; has {
+			t.Fatalf("an id-less %s must not name the finished utterance (%v): STT would ignore it and a continuation would stay open: %#v", typ, id, got.Upstream)
+		}
 	}
 }
 
-func TestRelayTableNeverAddsAnIDOnAConnectionThatSentNoStart(t *testing.T) {
-	table := newTestRelayTable()
-	// PORTAL sends no start: STT opens utterances by itself and the mic-off stop
-	// closes whichever is in progress (or answers with the empty final).
-	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
-	for _, typ := range []string{"stop", "cancel"} {
-		got := table.MapControl(Control{Type: typ}, relayEpoch)
-		if _, has := got.Upstream["utterance_id"]; has {
-			t.Fatalf("an id-less %s of a connection with no start must stay id-less: %#v", typ, got.Upstream)
+func TestRelayTableNeverAddsAnIDToAStopOrCancelTheClientSentWithoutOne(t *testing.T) {
+	// A connection that sent no start (PORTAL): STT opens utterances by itself and
+	// the mic-off stop closes whichever is in progress (or answers with the empty final).
+	portal := newTestRelayTable()
+	portal.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
+	// A connection that did (Viewer), with STT's own id taking over from the client's.
+	viewer := newTestRelayTable()
+	viewer.MapControl(Control{Type: "start", UtteranceID: "v1"}, relayEpoch)
+	viewer.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
+	for name, table := range map[string]*RelayTable{"portal": portal, "viewer": viewer} {
+		for _, typ := range []string{"stop", "final_pending", "cancel"} {
+			got := table.MapControl(Control{Type: typ}, relayEpoch)
+			if _, has := got.Upstream["utterance_id"]; has {
+				t.Fatalf("%s: an id-less %s must stay id-less: %#v", name, typ, got.Upstream)
+			}
 		}
 	}
 }
@@ -246,6 +274,41 @@ func TestRelayTableForwardsTerminalsWithoutAnIDWithoutTrackingThem(t *testing.T)
 	sessionErr := table.HandleUpstream(upstream(t, 2, `{"type":"error","code":"unknown_message_type","error":"x"}`), relayEpoch)
 	if !sessionErr.Forward || sessionErr.Terminal {
 		t.Fatalf("a session-level error ends no utterance: %#v", sessionErr)
+	}
+}
+
+// Silence-first (contract 3.5, 9.3): the Viewer's stop reaches STT after the
+// utterance closed, and STT answers it with a final that has no utterance_id.
+// It is a second final the Viewer did not ask a recognition for, not the
+// terminal of any utterance: CORE relays it as it is (no id of its own is put on
+// it), does not count it as a terminal, does not record it, and leaves the
+// utterances that wait for their terminal alone.
+func TestRelayTableTheIDLessEmptyFinalIsRelayedAsItIsAndEndsNoUtterance(t *testing.T) {
+	table := newTestRelayTable()
+	table.MapControl(Control{Type: "start", UtteranceID: "v1"}, relayEpoch)
+	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"v1","offset_ms":0}`), relayEpoch)
+	table.HandleUpstream(upstream(t, 2, `{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`), relayEpoch)
+
+	empty := table.HandleUpstream(upstream(t, 3, `{"type":"final","text":"","empty_reason":"no_active_utterance","end_reason":"stop","audio_ms":0,"target_called":false}`), relayEpoch)
+	if !empty.Forward || empty.Terminal || empty.Record != nil || empty.Drop != "" || empty.Violation != "" || empty.EndsSession {
+		t.Fatalf("the empty final is relayed, and is neither a terminal nor recorded: %#v", empty)
+	}
+	if empty.UtteranceID != "" {
+		t.Fatalf("CORE must not give it an utterance id (lastStartID is for CORE's own use): %#v", empty)
+	}
+	if _, has := empty.Event["utterance_id"]; has {
+		t.Fatalf("the relayed event stays without an utterance_id: %#v", empty.Event)
+	}
+	if empty.Event["empty_reason"] != "no_active_utterance" || empty.Event["text"] != "" {
+		t.Fatalf("the relayed event keeps STT's payload: %#v", empty.Event)
+	}
+	if pending := table.Pending(); len(pending) != 2 || pending[0] != "v1" || pending[1] != "srv-2" {
+		t.Fatalf("the empty final must not complete any waiting utterance: %v", pending)
+	}
+	// The utterances still get their own single terminal.
+	final := table.HandleUpstream(upstream(t, 4, `{"type":"final","utterance_id":"v1","text":"a","target_called":true}`), relayEpoch)
+	if !final.Forward || !final.Terminal || final.Record == nil {
+		t.Fatalf("v1 still ends with its own final: %#v", final)
 	}
 }
 
@@ -425,6 +488,23 @@ func TestRelayTableAnIDLessStopShortensEveryWaitingUtterance(t *testing.T) {
 	expired := table.Expired(stopAt.Add(135 * time.Second))
 	if len(expired) != 2 {
 		t.Fatalf("an id-less stop closes whichever utterance is active, which CORE cannot tell: Expired() = %v", expired)
+	}
+}
+
+func TestRelayTableAnIDLessStopOfAConnectionThatSentAStartShortensTheLastAnnouncedUtterance(t *testing.T) {
+	table := newTestRelayTable()
+	table.MapControl(Control{Type: "start", UtteranceID: "u1"}, relayEpoch)
+	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"u1"}`), relayEpoch)
+	table.HandleUpstream(upstream(t, 2, `{"type":"speech_start","utterance_id":"u2"}`), relayEpoch)
+	stopAt := relayEpoch.Add(10 * time.Second)
+	stop := table.MapControl(Control{Type: "stop"}, stopAt)
+	if _, has := stop.Upstream["utterance_id"]; has {
+		t.Fatalf("the stop stays id-less upstream: %#v", stop.Upstream)
+	}
+	// The id CORE keeps for itself picks the watchdog's target: u2 only.
+	expired := table.Expired(stopAt.Add(135 * time.Second))
+	if len(expired) != 1 || expired[0] != "u2" {
+		t.Fatalf("Expired() = %v, want only u2", expired)
 	}
 }
 

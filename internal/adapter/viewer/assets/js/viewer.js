@@ -7262,6 +7262,16 @@ function connectSTTWebSocket() {
 	            if (finalEndsUtterance) endSTTUtteranceFromServer(sttState, msg, sttServerEndActions);
 	            return;
 	          }
+	          if (sttState.finalReceived && isSTTStopAnswerWithoutUtterance(msg)) {
+	            // The answer to a stop STT had nothing to close for (contract 3.5): it ends
+	            // no utterance, so it must not replace the text of a final already received
+	            // (the max_length part of a long speech, for one). It still ends the wait.
+	            clearSTTFinalWaitTimer();
+	            if (sttState.isStopping && sttState.ws && sttState.ws.readyState === WebSocket.OPEN) {
+	              sttState.ws.close();
+	            }
+	            return;
+	          }
 	          sttState.lastRecognitionText = String(msg.text || '').trim();
           sttState.lastRecognitionType = 'final';
           sttState.finalReceived = true;

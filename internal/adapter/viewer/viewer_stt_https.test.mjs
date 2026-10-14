@@ -530,8 +530,8 @@ test('a connection that closes while the Viewer is speaking ends the utterance i
 
 test('viewer.html changes the version of the scripts that changed, so a cached Viewer cannot keep the old decision', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
-  assert.match(html, /stt_utterance_utils\.js\?v=20261014-stt-relay/);
-  assert.match(html, /viewer\.js\?v=[^"]*stt-relay/);
+  assert.match(html, /stt_utterance_utils\.js\?v=20261015-stt-relay-align35"/);
+  assert.match(html, /viewer\.js\?v=[^"]*stt-relay-align35"/);
 });
 
 // The decision in stt_utterance_utils.js is tested on its own; this drives the
@@ -542,7 +542,7 @@ function runSTTHandlers(stateOverrides, extra) {
   const log = [];
   const source = `
 var WebSocket = class { static OPEN = 1; static CONNECTING = 0; constructor() { globalThis.__ws = this; this.readyState = 1; }
-  send() {} close() { __log.push('ws.close'); } };
+  send() {} close() { __log.push('ws.close'); this.readyState = 2; } };
 var sttState = Object.assign({
   ws: null, isRecording: true, isStopping: false, keepSessionChannel: false, vadSpeechActive: true,
   reconnecting: false, finalReceived: false, captureActionError: '', captureSessionID: 's1', voiceBridgeURL: 'ws://x/stt',
@@ -556,10 +556,10 @@ function short(v) { return String(v || ''); }
 function recordSTTCaptureEvent() {}
 function updateSTTCaption() {}
 function setSTTCaptionError() {}
-function clearSTTFinalWaitTimer() {}
+function clearSTTFinalWaitTimer() { globalThis.__waitCleared = (globalThis.__waitCleared || 0) + 1; }
 function scheduleSTTReconnect() { __log.push('reconnect'); }
 function completeSTTStop() { __log.push('completeSTTStop'); }
-function handleSTTFinalText(text) { __log.push('chat:' + text); if (globalThis.__chatThrows) throw new Error('chat failed'); }
+function handleSTTFinalText(text) { if (!String(text || '').trim()) return; __log.push('chat:' + text); if (globalThis.__chatThrows) throw new Error('chat failed'); }
 function isThisViewerActiveInput() { return globalThis.__active !== false; }
 function describeSTTActionError(a, b) { return a + ': ' + b; }
 var document = { getElementById() { return null; } };
@@ -575,7 +575,7 @@ globalThis.__state = sttState;
   vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/stt_utterance_utils.js', 'utf8'), context);
   vm.runInContext(source, context);
   context.__connect();
-  return { context, log, ws: context.__ws, state: context.__state };
+  return { context, log, ws: context.__ws, state: context.__state, waitCleared: () => context.__waitCleared || 0 };
 }
 
 test('the real handler: a final that closes the utterance sends the text to chat first, then closes the socket', () => {
@@ -638,4 +638,82 @@ test('the real handler: a close while the Viewer is idle still reconnects when t
   const { ws, log } = runSTTHandlers({ keepSessionChannel: true, vadSpeechActive: false });
   ws.onclose();
   assert.deepEqual(log, ['reconnect']);
+});
+
+// Silence-first (contract 3.5, 9.3): the Viewer's stop reached STT after STT had
+// closed the utterance, so STT answers it with a final that has no utterance_id
+// and empty_reason no_active_utterance. It is a second final the Viewer asked no
+// recognition for: only an answer to the stop.
+const NO_ACTIVE_FINAL = { type: 'final', text: '', empty_reason: 'no_active_utterance', end_reason: 'stop', audio_ms: 0, target_called: false };
+
+test('the real handler: the answer to a stop with nothing in progress ends the wait for the final, with nothing sent to chat', () => {
+  // The Viewer sent stop and waits; this is the only thing STT has to say.
+  const { ws, state, log, waitCleared } = runSTTHandlers({});
+  state.isStopping = true;
+  state.vadSpeechActive = false;
+  ws.onmessage({ data: JSON.stringify(NO_ACTIVE_FINAL) });
+  assert.deepEqual(log, ['ws.close'], 'no chat send for an empty text; the socket closes so that the stop completes');
+  assert.equal(state.finalReceived, true);
+  assert.equal(waitCleared() >= 1, true, 'the 90 s wait for the final is cancelled');
+  assert.equal(state.errorCaptionText, '', 'it is not an error');
+  assert.equal(state.captureActionError, '');
+  ws.onclose();
+  assert.deepEqual(log, ['ws.close', 'completeSTTStop']);
+});
+
+test('the real handler: the answer to a stop that comes after the final of the utterance leaves the recognized text alone', () => {
+  // Browsers drop a message that arrives after close() (Chromium and Firefox do),
+  // but the handler does not rely on it: the final went first (it is ahead in
+  // STT's order), the Viewer closed the socket, and the answer to the same stop
+  // follows. It must not erase what was recognized.
+  const { ws, state, log } = runSTTHandlers({});
+  state.isStopping = true;
+  state.vadSpeechActive = false;
+  ws.onmessage({ data: JSON.stringify({ type: 'final', utterance_id: 'v1-1', text: 'こんにちは', end_reason: 'silence', target_called: true }) });
+  ws.onmessage({ data: JSON.stringify(NO_ACTIVE_FINAL) });
+  assert.deepEqual(log, ['chat:こんにちは', 'ws.close'], 'the text goes to chat once and the socket is closed once');
+  assert.equal(state.lastRecognitionText, 'こんにちは');
+  assert.equal(state.finalCaptionText, 'こんにちは');
+  assert.equal(state.errorCaptionText, '');
+});
+
+test('the real handler: the answer to a stop that comes after the final still closes a socket the Viewer had left open', () => {
+  // The final was a part of a long speech (max_length): the Viewer kept the
+  // socket. Then it sent stop, and STT had nothing announced in progress to
+  // close (the rest was too short to be announced). This is the case that
+  // reaches a Viewer whose socket is still open, in every browser.
+  const { ws, state, log } = runSTTHandlers({});
+  ws.onmessage({ data: JSON.stringify({ type: 'final', utterance_id: 'v1-1', text: 'part', end_reason: 'max_length', target_called: true }) });
+  state.isStopping = true; // the Viewer's own silence: it sent stop
+  state.vadSpeechActive = false;
+  ws.onmessage({ data: JSON.stringify(NO_ACTIVE_FINAL) });
+  assert.deepEqual(log, ['chat:part', 'ws.close'], 'otherwise the Viewer would wait 90 seconds for a final that STT will not send');
+  assert.equal(state.lastRecognitionText, 'part');
+  assert.equal(state.finalCaptionText, 'part');
+});
+
+test('the real handler: V7, the answer to a stop reaches a Viewer that is not the active input without a chat send', () => {
+  const { ws, state, log } = runSTTHandlers({}, { active: false });
+  state.isStopping = true;
+  state.vadSpeechActive = false;
+  ws.onmessage({ data: JSON.stringify(NO_ACTIVE_FINAL) });
+  assert.deepEqual(log, [], 'an inactive Viewer ignores the final; it was not speaking, so there is nothing to end');
+});
+
+test('the answer to a stop with nothing in progress is checked after the V7 decision and before the recognized text is replaced', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const handler = sttMessageHandlerSource(js);
+  const finalStart = handler.indexOf("} else if (msg.type === 'final') {");
+  const finalEnd = handler.indexOf("} else if (msg.type === 'reply_reset')", finalStart);
+  const finalBranch = handler.slice(finalStart, finalEnd);
+  const decisionAt = finalBranch.indexOf('shouldEndSTTUtteranceOnServerEvent(');
+  const ignoredAt = finalBranch.indexOf("recordSTTCaptureEvent('final_ignored'");
+  const guardAt = finalBranch.indexOf('sttState.finalReceived && isSTTStopAnswerWithoutUtterance(msg)');
+  const replaceAt = finalBranch.indexOf('sttState.lastRecognitionText = String(msg.text');
+  assert.ok(decisionAt >= 0 && ignoredAt > decisionAt, 'the V7 decision comes first');
+  assert.ok(guardAt > ignoredAt, 'the guard sits after the inactive-Viewer return, which already ignores the text');
+  assert.ok(replaceAt > guardAt, 'the guard must come before the recognized text is replaced');
+  const guardBlock = finalBranch.slice(guardAt, replaceAt);
+  assert.ok(guardAt >= 0, 'it applies only after a final was received');
+  assert.match(guardBlock, /ws\.close\(\)/, 'it still closes the socket of a Viewer that waits for the stop');
 });
