@@ -115,8 +115,10 @@ Tool実行後に Action／Attempt を終端する書き込み（`actionmanager.M
 7. **時間切れ専用のstatusが無い**: Shiro実行の失敗は一律 HTTP 500 `execution_failed` で、`rencrowctl ops`（CMD）は
    HTTP statusだけを表示する。503 の理由（実行枠満杯）と 500 の理由（実行失敗）は利用者から見分けにくい。
    専用statusやRetry-Afterの追加は公開API契約（`docs/06_Public_API仕様.md`）とCMDの変更を伴うため、別途判断する。
+   -> 2026-10-14 一部対応: 枠満杯でTaskを永続せず拒否した503だけに、専用code `operations_task_limit`・固定message・`Retry-After: 10`を付けた（`/v1/agent/ops`のnative profile無効の経路。他の503は従来どおり）。時間切れ専用のstatusは未対応。
 8. **API仕様と実装の差**: `docs/06_Public_API仕様.md` は枠満杯の503を「作成したTaskをfailedに閉じ」と書くが、
    実装と試験（`TestAgentOpsLegacyOPSParallelLimitReturns503AndLeavesNoQueuedTask`）はTaskを1件も永続しない。
+   -> 2026-10-14 解消: 実装と正本の不変条件が正しいので、`docs/06_Public_API仕様.md` を実装に合わせて直した。
 
 ## 追記 2026-10-13: 全件読みの根治（Action storeのsnapshot）
 

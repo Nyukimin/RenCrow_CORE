@@ -692,7 +692,7 @@ migrationだけが行い、移行namespaceは`6570d821-e63e-592d-a51f-8cf4b43cdb
 ```
 
 不正JSON／未知field／trailing JSON／request ID不正は400、非JSONは415、上限超過は413、
-Shiro実行失敗または空出力は500です。error responseはsafe codeだけを返し、token、入力本文、内部errorを
+Shiro実行失敗または空出力は500です。error responseはsafe code（枠満杯の503だけは固定の`message`を加えます）だけを返し、token、入力本文、内部errorを
 含めません。`POST /viewer/send`の観測用`user_id`はこの認証契約の代替になりません。
 
 native profileが無効な通常messageも、他のShiro実行経路と同じくTask ownerが発行したTaskとRunの上で実行します。
@@ -701,7 +701,11 @@ Taskは`route=OPS`、Owner／Assigneeは`shiro`で、titleとcontextは固定文
 （`lead_agent.started`とContextPack。Goalは固定文）を記録し、そのrun contextをShiroとSubagentへ渡して、Subagentの記録を同じTask／Runへ相関します。
 終端（成功、失敗、client cancel、panic）では、Lead Agent runとTask Runをrequest contextから切り離した60秒の予算で閉じます。
 台帳の書き込みが失敗した場合もRunをfailedで閉じ、operations実行枠を残しません。operations実行枠（`DestructiveTasks=1`）が空いていない場合は、
-作成したTaskをfailedに閉じ、executorを呼ばずにHTTP 503 `runtime_unavailable`を返します。このため同時に実行できる通常messageはoperations実行枠の数までです。
+executorを呼ばずにHTTP 503を返し、bodyは`{"error":"operations_task_limit","message":"operations execution capacity is full; retry later"}`、headerは`Retry-After: 10`（秒）です。
+Taskと最初のRunの作成は`CreateAndStartRun`の一つのtransactionなので、この拒否はTask、共有context、Run、通知を何も永続しません（Runを持たない`queued`もfailedのTaskも残しません）。このため同時に実行できる通常messageはoperations実行枠の数までです。
+`operations_task_limit`は、この枠不足でTaskを1件も永続せずに拒否した場合だけの専用codeです。clientは「枠が満杯で、待てば通る可能性がある」ことを、それ以外の利用不能を表す`runtime_unavailable`と区別できます。
+`message`は固定文で、件数、上限、Task IDを含みません。`Retry-After`は再試行の目安であり、枠が空く保証ではありません（Memory Promotion workerが同じ拒否に使うbackoffの最初の待ち、idle graceの既定10秒に合わせています）。
+ほかの503は従来どおり`runtime_unavailable`のcodeだけを返し、`Retry-After`を付けません。native coding profileが有効な通常messageの枠不足は`claim_status=blocked`の503応答のままで、この専用codeの対象外です。
 Task／Runの作成と終端書き込み、Lead Agent run記録の失敗はHTTP 500 `runtime_unavailable`、Shiro実行の失敗と空出力はHTTP 500 `execution_failed`です。
 実行の失敗は`[AgentOps]`のlogへ、request ID、task ID、長さを制限したerror文字列として1行残します（request messageは含みません）。
 

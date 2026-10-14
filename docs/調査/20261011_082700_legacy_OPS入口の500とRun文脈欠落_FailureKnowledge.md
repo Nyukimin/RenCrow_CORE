@@ -43,7 +43,7 @@
      Lead Agent runは同じ `task_id` / `run_id` / `trace_id` に相関する。
   3. 受け付けたRunは、成功・失敗・client cancel・panic・台帳書込み失敗のいずれでも終端する (operations実行枠を残さない)。
      終端書込みはrequest contextから切り離した60秒の予算で行う。
-  4. 実行枠が空いていないときは、作成したTaskをfailedで閉じ、executorを呼ばずに503 `runtime_unavailable` を返す。
+  4. 実行枠が空いていないときは、executorを呼ばずに503を返す (2026-10-14以降のcodeは `operations_task_limit`、`Retry-After`付き。当初は `runtime_unavailable`)。Taskは1件も永続しない (`CreateAndStartRun` は拒否時に何も残さない。2026-10-14訂正: 当初は「作成したTaskをfailedで閉じる」と書いていたが、現在の実装と試験はTaskを残さない。`docs/06_Public_API仕様.md` も同日に実装へ合わせた)。
   5. request messageはTask、台帳 (Goalは固定文)、logへ保存しない。
 - **Enforcement**:
   - `RecordLeadAgentRunStarted/Finished` を値型 `LeadAgentRunInput` の公開APIにして、入口ごとの手書きと偽の
