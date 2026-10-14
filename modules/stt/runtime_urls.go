@@ -20,6 +20,35 @@ func GatewayTranscriptionURL(baseURL string) string {
 	return base + "/v1/audio/transcriptions"
 }
 
+// StreamPath is the fixed path of the RenCrow_STT audio stream (stt.stream.v1).
+const StreamPath = "/v1/audio/stream"
+
+// GatewayStreamURL is the WebSocket URL of the RenCrow_STT audio stream for a
+// Gateway base URL: the scheme becomes ws (wss for https) and the fixed
+// StreamPath is appended the way GatewayTranscriptionURL appends its own. It
+// returns "" for a base that is not an absolute http(s) URL, so the caller can
+// report a configuration error instead of dialling something else.
+func GatewayStreamURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		base = "http://127.0.0.1:8766"
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	case "https":
+		u.Scheme = "wss"
+	default:
+		return ""
+	}
+	u.RawQuery, u.Fragment = "", ""
+	return strings.TrimRight(u.String(), "/") + StreamPath
+}
+
 type RuntimeURLConfig struct {
 	Provider       string
 	GatewayHTTPURL string
