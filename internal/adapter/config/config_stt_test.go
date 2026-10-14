@@ -19,92 +19,74 @@ func writeSTTTestConfig(t *testing.T, stt string) string {
 	return path
 }
 
-func TestSTTDefaultsSuitUtteranceRecognition(t *testing.T) {
+// /stt is a relay to the RenCrow_STT audio stream, and everything about where an
+// utterance ends belongs to RenCrow_STT. What stays in CORE's stt section serves
+// the stream's address and the HTTP route (/stt/file, /stt/chat-input).
+func TestSTTDefaultsServeTheGatewayAndTheHTTPRoute(t *testing.T) {
 	cfg, err := LoadConfig(writeSTTTestConfig(t, "  enabled: true\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	stt := cfg.STT
-	if stt.TimeoutMS != 60000 {
-		t.Fatalf("timeout_ms default = %d; it must cover a %d ms utterance plus engine queueing", stt.TimeoutMS, 30000)
-	}
-	if stt.BusyPolicy != "direct" {
-		t.Fatalf("busy_policy default = %q; queue_latest would drop finals of consecutive utterances", stt.BusyPolicy)
-	}
-	if stt.MinSpeechMS != 150 || stt.MaxUtteranceMS != 30000 || stt.IdleTimeoutMS != 2000 {
-		t.Fatalf("utterance limits = %+v", stt)
-	}
-	if stt.NoisePhrases != nil {
-		t.Fatalf("noise_phrases extends the built-in list and defaults to none: %v", stt.NoisePhrases)
-	}
-}
-
-func TestSTTUtteranceSettingsAreReadFromConfig(t *testing.T) {
-	cfg, err := LoadConfig(writeSTTTestConfig(t, `  enabled: true
-  timeout_ms: 45000
-  min_speech_ms: 200
-  max_utterance_ms: 20000
-  idle_timeout_ms: 1500
-  noise_phrases:
-    - "また見てね"
-    - "おやすみなさい"
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stt := cfg.STT
-	if stt.TimeoutMS != 45000 || stt.MinSpeechMS != 200 || stt.MaxUtteranceMS != 20000 || stt.IdleTimeoutMS != 1500 {
+	if stt.GatewayBaseURL != "http://127.0.0.1:8766" || stt.EndpointPath != "/stt" {
 		t.Fatalf("stt = %+v", stt)
 	}
-	if len(stt.NoisePhrases) != 2 || stt.NoisePhrases[0] != "また見てね" {
-		t.Fatalf("noise_phrases = %v", stt.NoisePhrases)
+	if stt.TimeoutMS != 60000 {
+		t.Fatalf("timeout_ms default = %d; the HTTP route sends a whole file", stt.TimeoutMS)
+	}
+	if stt.BusyPolicy != "direct" {
+		t.Fatalf("busy_policy default = %q; queue_latest would drop requests", stt.BusyPolicy)
 	}
 }
 
-func TestSTTUtteranceValidation(t *testing.T) {
-	tests := []struct {
-		name string
-		stt  string
-		want string
-	}{
-		{"max too small", "  enabled: true\n  max_utterance_ms: 500\n", "stt.max_utterance_ms"},
-		{"max too large", "  enabled: true\n  max_utterance_ms: 300000\n", "stt.max_utterance_ms"},
-		{"idle too small", "  enabled: true\n  idle_timeout_ms: 50\n", "stt.idle_timeout_ms"},
-		{"min not below max", "  enabled: true\n  min_speech_ms: 5000\n  max_utterance_ms: 4000\n", "stt.min_speech_ms"},
+// The four keys that moved to RenCrow_STT (stream.endpoint in its stt.json) are
+// no longer CORE settings. A deployed config still carries them, so they are
+// reported like every other key CORE does not read, by name only, and ignored.
+func TestSTTKeysThatMovedToRenCrowSTTAreIgnoredAndReportedByName(t *testing.T) {
+	var out bytes.Buffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	cfg, err := LoadConfig(writeSTTTestConfig(t, `  enabled: true
+  min_speech_ms: 200
+  max_utterance_ms: 500
+  idle_timeout_ms: 50
+  noise_phrases:
+    - "また見てね"
+`))
+	if err != nil {
+		t.Fatalf("keys that moved away must not stop CORE at its first restart: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := LoadConfig(writeSTTTestConfig(t, tt.stt))
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("LoadConfig error = %v, want it to name %s", err, tt.want)
-			}
-		})
+	if !cfg.STT.Enabled {
+		t.Fatal("stt must stay enabled")
+	}
+	logged := out.String()
+	for _, key := range []string{"stt.min_speech_ms", "stt.max_utterance_ms", "stt.idle_timeout_ms", "stt.noise_phrases"} {
+		if !strings.Contains(logged, key+" is not a CORE setting") {
+			t.Fatalf("startup log must name the ignored key %s:\n%s", key, logged)
+		}
+	}
+	if strings.Contains(logged, "また見てね") {
+		t.Fatalf("the warning names keys, never values:\n%s", logged)
 	}
 }
 
-// Deployed configs carry timeout_ms: 8000. Rejecting them would stop CORE at
-// the first restart, so a timeout shorter than the longest utterance is reported
-// and left to the operator.
-func TestSTTTimeoutShorterThanMaxUtteranceIsWarnedNotRejected(t *testing.T) {
+// Deployed configs carry timeout_ms: 8000 or 60000. The timeout serves the HTTP
+// route only, so no comparison with an utterance length is left to warn about.
+func TestSTTTimeoutIsKeptAndNeverCompared(t *testing.T) {
 	var out bytes.Buffer
 	log.SetOutput(&out)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
 	cfg, err := LoadConfig(writeSTTTestConfig(t, "  enabled: true\n  timeout_ms: 8000\n"))
 	if err != nil {
-		t.Fatalf("an existing 8000 ms timeout must still load: %v", err)
+		t.Fatalf("an existing 8000 ms timeout must load: %v", err)
 	}
 	if cfg.STT.TimeoutMS != 8000 {
 		t.Fatalf("explicit timeout_ms must be kept, got %d", cfg.STT.TimeoutMS)
 	}
-	if !strings.Contains(out.String(), "stt.timeout_ms") || !strings.Contains(out.String(), "max_utterance_ms") {
-		t.Fatalf("startup log must warn about the short timeout:\n%s", out.String())
-	}
-}
-
-func TestSTTDisabledSkipsUtteranceValidation(t *testing.T) {
-	if _, err := LoadConfig(writeSTTTestConfig(t, "  enabled: false\n  max_utterance_ms: 500\n")); err != nil {
-		t.Fatalf("a disabled stt section must not block startup: %v", err)
+	if strings.Contains(out.String(), "stt.timeout_ms") {
+		t.Fatalf("nothing in CORE compares timeout_ms with an utterance any more:\n%s", out.String())
 	}
 }
 
@@ -162,7 +144,7 @@ func TestConfigExampleHasNoUnknownSTTKeys(t *testing.T) {
 	if strings.Contains(out.String(), "ignored") && strings.Contains(out.String(), "stt.") {
 		t.Fatalf("config.yaml.example carries stt keys CORE ignores:\n%s", out.String())
 	}
-	if cfg.STT.BusyPolicy != "direct" || cfg.STT.TimeoutMS < 2*cfg.STT.MaxUtteranceMS {
+	if cfg.STT.BusyPolicy != "direct" || cfg.STT.TimeoutMS <= 0 {
 		t.Fatalf("config.yaml.example stt = %+v", cfg.STT)
 	}
 }

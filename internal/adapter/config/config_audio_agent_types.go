@@ -38,6 +38,11 @@ type TTSPronunciationCheckConfig struct {
 	TimeoutMinutes        int    `yaml:"timeout_minutes"`
 }
 
+// STTConfig is CORE's side of the speech-to-text integration: where the
+// RenCrow_STT Gateway is, and the settings of the HTTP route (/stt/file,
+// /stt/chat-input). /stt itself relays to the Gateway's audio stream, and where
+// an utterance ends, its length limits and the phrases that are dropped belong
+// to RenCrow_STT (its stt.json, stream section).
 type STTConfig struct {
 	Enabled        bool           `yaml:"enabled"`
 	GatewayBaseURL string         `yaml:"gateway_base_url"`
@@ -45,11 +50,6 @@ type STTConfig struct {
 	BusyPolicy     string         `yaml:"busy_policy"`
 	EndpointPath   string         `yaml:"endpoint_path"`
 	Debug          STTDebugConfig `yaml:"debug"`
-
-	MinSpeechMS    int      `yaml:"min_speech_ms"`
-	MaxUtteranceMS int      `yaml:"max_utterance_ms"`
-	IdleTimeoutMS  int      `yaml:"idle_timeout_ms"`
-	NoisePhrases   []string `yaml:"noise_phrases"`
 }
 
 type STTDebugConfig struct {

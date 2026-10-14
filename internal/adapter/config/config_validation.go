@@ -185,15 +185,6 @@ func (c *Config) Validate() error {
 		if c.STT.TimeoutMS < 1 {
 			return fmt.Errorf("stt.timeout_ms must be >= 1")
 		}
-		if c.STT.MaxUtteranceMS < 1000 || c.STT.MaxUtteranceMS > 120000 {
-			return fmt.Errorf("stt.max_utterance_ms must be between 1000 and 120000")
-		}
-		if c.STT.IdleTimeoutMS < 200 {
-			return fmt.Errorf("stt.idle_timeout_ms must be >= 200")
-		}
-		if c.STT.MinSpeechMS >= c.STT.MaxUtteranceMS {
-			return fmt.Errorf("stt.min_speech_ms must be below stt.max_utterance_ms")
-		}
 	}
 	if c.TTS.PronunciationCheck.Enabled {
 		parsed, err := url.Parse(c.TTS.PronunciationCheck.ToolBaseURL)
