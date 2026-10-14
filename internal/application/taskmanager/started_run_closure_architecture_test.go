@@ -84,6 +84,7 @@ var startedRunLedger = map[string]startedRunEntry{
 	"internal/infrastructure/llm/middleware/action.go:begin":                  {startedRunClosesViaSharedAPI, "GENERAL; TestActionProviderClosesTheRunItStarted"},
 	"internal/infrastructure/vision/action_analyzer.go:executionContext":      {startedRunClosesViaSharedAPI, "CHAT; Analyze closes on CreateAction and binding failures; TestActionAnalyzerClosesTheRunItStarted"},
 	"internal/infrastructure/stt/action_provider.go:executionContext":         {startedRunClosesViaSharedAPI, "CHAT; Transcribe closes on CreateAction and binding failures; TestActionProviderClosesTheRunItStarted"},
+	"internal/infrastructure/stt/utterance_recorder.go:Record":                {startedRunClosesViaSharedAPI, "CHAT; the post-hoc record of one relayed STT utterance closes on CreateAction failure and on every outcome; TestUtteranceRecorderClosesTheRunItStarted"},
 	"internal/adapter/viewer/dci_handler.go:ServeHTTP":                        {startedRunClosesViaSharedAPI, "RESEARCH, the slot Memory Promotion holds; every path closes through closeDCIRun with the 60s budget (it was 10s, below the observed Task store latency); TestDCISearchHandler*"},
 
 	// Closed by the function's own means: classified by reading the code, with no
