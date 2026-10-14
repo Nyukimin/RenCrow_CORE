@@ -409,3 +409,124 @@ func TestStreamClientCloseIsIdempotentAndUnblocksReceive(t *testing.T) {
 		t.Fatal("Close did not unblock Receive")
 	}
 }
+
+// tcpTap forwards one TCP connection to target and counts the bytes that flow
+// from the client to the target, so a test can see what the client wrote even
+// when the library writes it by itself (a pong).
+type tcpTap struct {
+	Addr     string
+	fromSide atomic.Int64
+}
+
+func startTCPTap(t *testing.T, target string) *tcpTap {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tap := &tcpTap{Addr: listener.Addr().String()}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := net.Dial("tcp", target)
+			if err != nil {
+				client.Close()
+				return
+			}
+			go func() {
+				buf := make([]byte, 4096)
+				for {
+					n, err := client.Read(buf)
+					if n > 0 {
+						tap.fromSide.Add(int64(n))
+						if _, werr := upstream.Write(buf[:n]); werr != nil {
+							break
+						}
+					}
+					if err != nil {
+						break
+					}
+				}
+				upstream.Close()
+				client.Close()
+			}()
+			go func() {
+				_, _ = copyAll(client, upstream)
+				client.Close()
+				upstream.Close()
+			}()
+		}
+	}()
+	return tap
+}
+
+func copyAll(dst, src net.Conn) (int64, error) {
+	buf := make([]byte, 4096)
+	var total int64
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return total, werr
+			}
+			total += int64(n)
+		}
+		if err != nil {
+			return total, err
+		}
+	}
+}
+
+// x/net/websocket answers a ping with a pong from inside Receive, using the
+// write deadline that is current on the connection. A deadline left behind by
+// an earlier Send would have expired by then and the pong would fail silently,
+// so Send must remove its deadline once the frame is written.
+func TestStreamClientAnswersAPingLongAfterItsLastSend(t *testing.T) {
+	var serverConn atomic.Pointer[websocket.Conn]
+	fake := startFakeStreamServer(t, echoReady(func(ws *websocket.Conn) {
+		serverConn.Store(ws)
+		for {
+			if _, err := ReceiveFrame(ws); err != nil {
+				return
+			}
+		}
+	}))
+	tap := startTCPTap(t, strings.TrimSuffix(strings.TrimPrefix(fake.URL, "ws://"), "/v1/audio/stream"))
+	client := testStreamClient("ws://" + tap.Addr + "/v1/audio/stream")
+	client.WriteTimeout = 100 * time.Millisecond
+	conn, _, err := client.Open(context.Background(), []byte(testSessionStart))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	go func() {
+		for {
+			if _, err := conn.Receive(); err != nil {
+				return
+			}
+		}
+	}()
+	if err := conn.Send(StreamFrame{Kind: FrameBinary, Data: []byte{1}}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond) // well past the write timeout
+
+	before := tap.fromSide.Load()
+	deadline := time.Now().Add(2 * time.Second)
+	for serverConn.Load() == nil && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := SendFrame(serverConn.Load(), StreamFrame{Kind: FramePing}); err != nil {
+		t.Fatalf("server ping: %v", err)
+	}
+	for tap.fromSide.Load() == before {
+		if time.Now().After(deadline) {
+			t.Fatal("the client never answered the ping: the write deadline of the last Send is still set")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

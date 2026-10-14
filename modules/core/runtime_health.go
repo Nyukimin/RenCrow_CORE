@@ -13,13 +13,15 @@ type RuntimeHealthProviders struct {
 	TTSPlayback    HealthProvider
 	STT            HealthProvider
 	STTViewerInput HealthProvider
+	// STTStream reports whether a /stt connection can be relayed to the RenCrow_STT audio stream.
+	STTStream HealthProvider
 }
 
 func BuildRuntimeHealthReports(ctx context.Context, providers RuntimeHealthProviders, checkedAt time.Time) []HealthReport {
 	if checkedAt.IsZero() {
 		checkedAt = time.Now().UTC()
 	}
-	reports := make([]HealthReport, 0, len(providers.LLMReports)+6)
+	reports := make([]HealthReport, 0, len(providers.LLMReports)+7)
 	reports = append(reports, providers.LLMReports...)
 	reports = append(reports, ProviderHealth(ctx, "chat", providers.Chat, checkedAt))
 	reports = append(reports, ProviderHealth(ctx, "worker", providers.Worker, checkedAt))
@@ -27,6 +29,7 @@ func BuildRuntimeHealthReports(ctx context.Context, providers RuntimeHealthProvi
 	reports = append(reports, ProviderHealth(ctx, "tts.playback", providers.TTSPlayback, checkedAt))
 	reports = append(reports, ProviderHealth(ctx, "stt", providers.STT, checkedAt))
 	reports = append(reports, ProviderHealth(ctx, "stt.viewer_input", providers.STTViewerInput, checkedAt))
+	reports = append(reports, ProviderHealth(ctx, "stt.stream", providers.STTStream, checkedAt))
 	return reports
 }
 

@@ -264,7 +264,8 @@ type StreamConn struct {
 }
 
 // Send writes one frame, giving up after the write timeout. A frame kind other
-// than text, binary or ping is refused before it reaches the wire.
+// than text, binary or ping is refused before it reaches the wire. The write
+// deadline is removed again once the frame is written.
 func (c *StreamConn) Send(frame StreamFrame) error {
 	switch frame.Kind {
 	case FrameText, FrameBinary, FramePing:
@@ -274,7 +275,12 @@ func (c *StreamConn) Send(frame StreamFrame) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
 	_ = c.ws.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	return SendFrame(c.ws, frame)
+	err := SendFrame(c.ws, frame)
+	// The deadline belongs to this write. The library answers a ping or a close
+	// from inside Receive, with whatever deadline is current; one left behind
+	// would have expired and that answer would fail without anyone noticing.
+	_ = c.ws.SetWriteDeadline(time.Time{})
+	return err
 }
 
 // Ping sends a WebSocket ping. STT answers with a pong, which LastReceived counts.

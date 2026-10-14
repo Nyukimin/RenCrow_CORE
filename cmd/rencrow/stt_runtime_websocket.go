@@ -5,135 +5,194 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 	"golang.org/x/net/websocket"
 )
 
-// The Viewer endpoints speech with its own VAD and sends one utterance as
-// start, PCM16 frames, stop. This session accumulates the frames of an
-// utterance and calls the provider once for the whole utterance. It owns no
-// speech detection: MaxLength and IdleTimeout are safety valves only.
+// /stt relays a client connection to the RenCrow_STT audio stream.
 //
-// Protocol "utterance.v1" (docs/06_Public_API仕様.md): every utterance gets
-// exactly one terminal event (final, error or cancelled), in utterance order.
-// Clients that predate utterance_id keep working: CORE assigns the id.
+// CORE no longer detects speech or accumulates utterances: the Viewer, PORTAL
+// and the probe stream PCM16 audio (and, for the Viewer, start / stop), CORE
+// forwards it to one stream of RenCrow_STT per connection (protocol
+// stt.stream.v1), and RenCrow_STT decides where an utterance ends and returns
+// speech_start / partial / final / error / cancelled. The wire form of the
+// client side (protocol "utterance.v1") is in docs/06_Public_API仕様.md.
+//
+// What this file owns is the boundary:
+//
+//   - which client messages become which stream messages, and which events come
+//     back with which seq (modulestt.RelayTable holds the rules; this file
+//     does no JSON building of its own beyond marshalling them),
+//   - the invariant that every announced utterance ends with exactly one
+//     terminal event, even when the stream dies, goes silent, or the client
+//     leaves,
+//   - liveness, the ping and the watchdog, with a replaceable clock,
+//   - handing the evidence of each recognition to the recorder.
+//
+// One goroutine (the session loop) owns all state and does every write, so the
+// order in which events are stamped is the order in which they are sent, and a
+// client disconnect racing an upstream failure resolves to whichever the loop
+// handles first. The two readers only move frames into channels.
 
 const (
-	defaultSTTQueueDepth = 8
+	// Concurrent /stt connections. STT allows twice as many (32), so a slot CORE
+	// has released is never still counted on the STT side.
+	sttRelayDefaultMaxConnections = 16
+	// A client frame carries at most one maximum-length utterance (PCM at 32000
+	// B/s, 30 s) plus slack. The Viewer sends what it gathered while connecting as
+	// one frame, so this stays far above STT's own 64 KiB; the relay splits it.
+	sttRelayMaxClientFrameBytes = 30*16000*2 + 8*1024
+	// A connection with no client frame and no waiting utterance for this long is dropped.
+	sttRelayDefaultConnIdleTimeout = 5 * time.Minute
+	// A peer that stops reading must not stall the session loop.
+	sttRelayDefaultWriteTimeout = 10 * time.Second
+	sttRelayDefaultPingInterval = 10 * time.Second
+	// The stream is given up on when no byte arrived from it for this long. A
+	// false alarm loses terminals and a late alarm only delays them.
+	sttRelayDefaultLivenessTimeout = 30 * time.Second
+	sttRelayDefaultTickInterval    = time.Second
+	// Messages a reader may hand to the session loop ahead of processing.
+	sttRelayInboundBuffer = 2
+	// The close frame is a courtesy and must not wait for a client that stopped reading.
+	sttRelayCloseWriteTimeout = time.Second
 
-	sttErrorBusy         = "stt_busy"
-	sttErrorFailed       = "stt_failed"
-	sttErrorProvider     = "stt_provider_error"
-	sttErrorUnsupported  = "unsupported_audio_format"
-	sttErrorLimit        = "stt_limit_exceeded"
-	sttMaxIdleCheckEvery = 250 * time.Millisecond
-	sttMinIdleCheckEvery = 10 * time.Millisecond
-	// A peer that stops reading must not stall the session loop and its idle check.
-	sttWriteTimeout = 10 * time.Second
-
-	// Resource limits of /stt. Every one bounds something a client controls.
-	//
-	// A frame carries at most one maximum-length utterance (PCM at 32000 B/s) plus
-	// a container header and a control message of slack; 30 s is about 0.96 MB.
-	sttFrameSlackBytes = 8 * 1024
-	sttMinFrameBytes   = 64 * 1024
-	// Unsent terminal events per session, whatever their kind. Each is a few
-	// hundred bytes; transcription jobs hold audio and are counted separately by
-	// QueueDepth.
-	defaultSTTMaxQueuedEvents = 64
-	// Concurrent /stt connections. The Viewer opens one per utterance.
-	defaultSTTMaxConnections = 16
-	// A connection with nothing active, queued or received for this long is dropped.
-	defaultSTTConnIdleTimeout = 5 * time.Minute
-	// After a limit is exceeded the session flushes the terminal events it owes,
-	// then closes; this bounds how long a stuck recognition can delay that.
-	sttCloseGrace = 5 * time.Second
-	// Messages the reader may hand to the session loop ahead of processing.
-	sttInboundBuffer = 2
-
-	sttLimitMessage = "the session exceeded a resource limit and is closed"
+	sttRelayUnavailableMessage = "speech recognition is unavailable"
+	sttRelayBusyMessage        = "speech recognition is busy"
+	sttRelayFailedMessage      = "the speech recognition stream failed"
+	sttRelayWAVMessage         = "WAV frames are not accepted: send raw 16 kHz mono PCM16"
+	sttRelayLimitMessage       = "a frame exceeded the size limit; the session is closed"
 )
 
-// sttSessionConfig bounds one /stt WebSocket session.
-type sttSessionConfig struct {
-	Limits       modulestt.UtteranceLimits
-	NoisePhrases []string
-	// QueueDepth bounds the utterances of one session that wait for or are in
-	// recognition. Beyond it an utterance ends with an explicit stt_busy error.
-	QueueDepth int
-	// MaxFrameBytes bounds one WebSocket frame; a larger one closes the session.
-	// Zero means sttMaxFrameBytes(Limits).
-	MaxFrameBytes int
-	// MaxQueuedEvents bounds the unsent terminal events of one session; one more
-	// closes the session.
-	MaxQueuedEvents int
-	// MaxConnections bounds concurrent /stt connections; more are refused with 503.
-	MaxConnections int
-	// ConnIdleTimeout drops a connection that has nothing to do and sends nothing.
-	ConnIdleTimeout time.Duration
+// sttUpstream is the RenCrow_STT stream as the relay uses it.
+// *sttinfra.StreamConn is the implementation; tests replace it.
+type sttUpstream interface {
+	Send(sttinfra.StreamFrame) error
+	Receive() (sttinfra.StreamFrame, error)
+	Ping() error
+	LastReceived() time.Time
+	Close() error
 }
 
-func (c sttSessionConfig) withDefaults() sttSessionConfig {
-	c.Limits = c.Limits.WithDefaults()
-	if c.QueueDepth <= 0 {
-		c.QueueDepth = defaultSTTQueueDepth
+// sttUpstreamOpener opens the stream, sends sessionStart and returns the first
+// text frame back (session_ready).
+type sttUpstreamOpener func(ctx context.Context, sessionStart []byte) (sttUpstream, []byte, error)
+
+// streamClientOpener adapts the WebSocket client to the relay's seam.
+func streamClientOpener(client sttinfra.StreamClient) sttUpstreamOpener {
+	return func(ctx context.Context, sessionStart []byte) (sttUpstream, []byte, error) {
+		conn, ready, err := client.Open(ctx, sessionStart)
+		if err != nil {
+			return nil, nil, err
+		}
+		return conn, ready, nil
 	}
-	if c.MaxFrameBytes <= 0 {
-		c.MaxFrameBytes = sttMaxFrameBytes(c.Limits)
-	}
-	if c.MaxQueuedEvents <= 0 {
-		c.MaxQueuedEvents = defaultSTTMaxQueuedEvents
-	}
+}
+
+// sttTerminalRecorder takes the record of a terminal without ever blocking.
+type sttTerminalRecorder interface {
+	Submit(sttinfra.UtteranceRecord) bool
+}
+
+// relayClock is the time the session loop lives by. Tests move it by hand.
+type relayClock interface {
+	Now() time.Time
+	NewTicker(d time.Duration) (<-chan time.Time, func())
+}
+
+type realRelayClock struct{}
+
+func (realRelayClock) Now() time.Time { return time.Now() }
+
+func (realRelayClock) NewTicker(d time.Duration) (<-chan time.Time, func()) {
+	ticker := time.NewTicker(d)
+	return ticker.C, ticker.Stop
+}
+
+// sttRelayConfig bounds and wires the /stt relay. The zero value of every limit
+// means its default.
+type sttRelayConfig struct {
+	// Enabled is false when stt.enabled is off: the connection is told so and closed.
+	Enabled bool
+	// Open opens the stream. Required when Enabled.
+	Open sttUpstreamOpener
+	// Recorder receives the record of each terminal. nil records nothing.
+	Recorder sttTerminalRecorder
+	// RequestID makes the correlation id sent in session.start.
+	RequestID func() string
+	Clock     relayClock
+	Logf      func(format string, args ...any)
+
+	MaxConnections int
+	// MaxPending bounds the utterances without a terminal event (default 64).
+	MaxPending int
+	// MaxClientFrameBytes bounds one client frame.
+	MaxClientFrameBytes int
+	// ConnIdleTimeout drops a connection with nothing waiting and nothing received.
+	ConnIdleTimeout time.Duration
+	WriteTimeout    time.Duration
+	PingInterval    time.Duration
+	// LivenessTimeout is how long the stream may go without delivering a byte.
+	LivenessTimeout time.Duration
+	TickInterval    time.Duration
+}
+
+func (c sttRelayConfig) withDefaults() sttRelayConfig {
 	if c.MaxConnections <= 0 {
-		c.MaxConnections = defaultSTTMaxConnections
+		c.MaxConnections = sttRelayDefaultMaxConnections
+	}
+	if c.MaxPending <= 0 {
+		c.MaxPending = modulestt.DefaultRelayMaxPending
+	}
+	if c.MaxClientFrameBytes <= 0 {
+		c.MaxClientFrameBytes = sttRelayMaxClientFrameBytes
 	}
 	if c.ConnIdleTimeout <= 0 {
-		c.ConnIdleTimeout = defaultSTTConnIdleTimeout
+		c.ConnIdleTimeout = sttRelayDefaultConnIdleTimeout
+	}
+	if c.WriteTimeout <= 0 {
+		c.WriteTimeout = sttRelayDefaultWriteTimeout
+	}
+	if c.PingInterval <= 0 {
+		c.PingInterval = sttRelayDefaultPingInterval
+	}
+	if c.LivenessTimeout <= 0 {
+		c.LivenessTimeout = sttRelayDefaultLivenessTimeout
+	}
+	if c.TickInterval <= 0 {
+		c.TickInterval = sttRelayDefaultTickInterval
+	}
+	if c.RequestID == nil {
+		c.RequestID = func() string { return "stt-" + uuid.NewString() }
+	}
+	if c.Clock == nil {
+		c.Clock = realRelayClock{}
+	}
+	if c.Logf == nil {
+		c.Logf = log.Printf
 	}
 	return c
 }
 
-// sttMaxFrameBytes is the largest WebSocket frame accepted: one maximum-length
-// utterance of 16 kHz PCM16 plus slack for a WAV header or a control message.
-func sttMaxFrameBytes(limits modulestt.UtteranceLimits) int {
-	limits = limits.WithDefaults()
-	pcmBytes := int(limits.MaxLength * modulestt.DefaultSampleRate * 2 / time.Second)
-	if frame := pcmBytes + sttFrameSlackBytes; frame > sttMinFrameBytes {
-		return frame
-	}
-	return sttMinFrameBytes
-}
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return ""
-	}
-	return string(b)
-}
-
-func handleSTTWebSocketProvider(provider sttinfra.Provider) http.Handler {
-	return handleSTTWebSocketProviderWithConfig(provider, sttSessionConfig{})
-}
-
-func handleSTTWebSocketProviderWithConfig(provider sttinfra.Provider, cfg sttSessionConfig) http.Handler {
+// newSTTRelayHandler serves /stt.
+func newSTTRelayHandler(cfg sttRelayConfig) http.Handler {
 	cfg = cfg.withDefaults()
-	filter := modulestt.NewNoisePhraseFilter(cfg.NoisePhrases)
 	upgrade := websocket.Handler(func(conn *websocket.Conn) {
 		defer conn.Close()
 		// The library default is 32 MiB per frame, read whole into memory.
-		conn.MaxPayloadBytes = cfg.MaxFrameBytes
-		if provider == nil {
-			_ = sendSTTError(conn, "stt provider is not configured")
+		conn.MaxPayloadBytes = cfg.MaxClientFrameBytes
+		if !cfg.Enabled || cfg.Open == nil {
+			_ = sendSTTEvent(conn, modulestt.BuildErrorEvent("stt provider is not configured"))
 			return
 		}
-		newSTTSession(conn, provider, cfg, filter).run()
+		newSTTRelaySession(conn, cfg).run()
 	})
 	slots := make(chan struct{}, cfg.MaxConnections)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -148,651 +207,414 @@ func handleSTTWebSocketProviderWithConfig(provider sttinfra.Provider, cfg sttSes
 	})
 }
 
-// sttUtterance is the utterance being received. Only the session loop touches it.
-type sttUtterance struct {
-	id string
-	// origin is the id the client chose. A continuation created by the max-length
-	// split keeps it, so stop/cancel naming the original id still reach it.
-	origin string
-	buf    *modulestt.UtteranceBuffer
-	lastAt time.Time
-	trace  *sttTimingTrace
+func sendSTTEvent(conn *websocket.Conn, event map[string]any) error {
+	body, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return sttinfra.SendFrame(conn, sttinfra.StreamFrame{Kind: sttinfra.FrameText, Data: body})
 }
 
-type sttJobKind int
-
-const (
-	sttJobTranscribe sttJobKind = iota
-	sttJobFinal                 // terminal final without recognition (empty_reason set)
-	sttJobError
-	sttJobCancelled
-	sttJobClose // last job of an aborted session: every terminal event before it has been sent
-)
-
-type sttCloseInfo struct{ code, message string }
-
-// sttJob is one terminal event owed to the client. Every utterance ends in a
-// job, and jobs are worked in order, so terminals never overtake each other.
-type sttJob struct {
-	kind        sttJobKind
-	id          string
-	endReason   string
-	audio       time.Duration
-	emptyReason string
-	errCode     string
-	errMessage  string
-	trace       *sttTimingTrace
-
-	wav           []byte
-	ctx           context.Context
-	cancel        context.CancelFunc
-	userCancelled atomic.Bool
+type sttClientItem struct {
+	frame sttinfra.StreamFrame
+	err   error
 }
 
-type sttSession struct {
-	conn     *websocket.Conn
-	provider sttinfra.Provider
-	cfg      sttSessionConfig
-	filter   *modulestt.NoisePhraseFilter
+type sttUpstreamItem struct {
+	frame sttinfra.StreamFrame
+	err   error
+}
+
+// sttRelaySession is one /stt connection and its stream. Only run's goroutine
+// touches its fields, apart from the two readers, which only use conn, up and
+// the channels.
+type sttRelaySession struct {
+	conn *websocket.Conn
+	cfg  sttRelayConfig
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	sendMu sync.Mutex
-	seq    int64
+	up        sttUpstream
+	requestID string
+	ready     modulestt.SessionReady
+	table     *modulestt.RelayTable
 
-	queue *sttJobQueue
+	clientIn chan sttClientItem
+	upIn     chan sttUpstreamItem
 
-	mu   sync.Mutex
-	byID map[string]*sttJob // transcription jobs queued or in flight
-	// closeInfo is set once when the session is aborted for exceeding a limit.
-	closeInfo   *sttCloseInfo
-	closeTimer  *time.Timer
-	lastInbound time.Time // owned by the session loop
-
-	// Owned by the session loop.
-	active  *sttUtterance
-	counter int
+	seq        int64
+	clientDown bool
+	ended      bool
+	// sessionErrorRelayed is set once STT's own session-level error went to the
+	// client: it ended the session with a reason, so CORE adds none of its own.
+	sessionErrorRelayed bool
+	lastInbound         time.Time
+	lastPing            time.Time
+	traces              map[string]*sttTimingTrace
 }
 
-func newSTTSession(conn *websocket.Conn, provider sttinfra.Provider, cfg sttSessionConfig, filter *modulestt.NoisePhraseFilter) *sttSession {
+func newSTTRelaySession(conn *websocket.Conn, cfg sttRelayConfig) *sttRelaySession {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &sttSession{
-		conn:     conn,
-		provider: provider,
-		cfg:      cfg,
-		filter:   filter,
-		ctx:      ctx,
-		cancel:   cancel,
-		queue:    newSTTJobQueue(),
-		byID:     make(map[string]*sttJob),
+	return &sttRelaySession{
+		conn: conn, cfg: cfg, ctx: ctx, cancel: cancel,
+		clientIn: make(chan sttClientItem, sttRelayInboundBuffer),
+		upIn:     make(chan sttUpstreamItem, sttRelayInboundBuffer),
+		traces:   make(map[string]*sttTimingTrace),
 	}
 }
 
-// sttInbound is one thing the reader hands to the session loop: a message, or
-// the reason the stream can no longer be read (an oversized frame).
-type sttInbound struct {
-	payload []byte
-	err     error
-}
+func (s *sttRelaySession) run() {
+	defer s.shutdown()
+	if !s.openUpstream() {
+		return
+	}
+	// Only now, with the stream open and validated, does the client hear ready.
+	// What the Viewer sends before that waits in the socket, unread.
+	s.send(modulestt.BuildSessionInfoEvent(s.ready.Provider), "")
+	s.send(modulestt.BuildReadyEvent(s.ready.Limits.MaxUtterance), "")
+	if s.clientDown {
+		return
+	}
+	now := s.cfg.Clock.Now()
+	s.lastInbound, s.lastPing = now, now
 
-func (s *sttSession) run() {
-	defer func() {
-		// Disconnect, a failed send, or the end of an aborted session: cancel
-		// in-flight and queued recognition.
-		s.cancel()
-		s.mu.Lock()
-		if s.closeTimer != nil {
-			s.closeTimer.Stop()
-		}
-		s.mu.Unlock()
-		s.wg.Wait()
-	}()
-	s.send(modulestt.BuildSessionInfoEvent(s.provider.Name()), "")
-	s.send(modulestt.BuildReadyEvent(s.cfg.Limits.MaxLength), "")
+	s.wg.Add(2)
+	go s.readClient()
+	go s.readUpstream()
+	tick, stopTick := s.cfg.Clock.NewTicker(s.cfg.TickInterval)
+	defer stopTick()
 
-	s.lastInbound = time.Now()
-	inbound := make(chan sttInbound, sttInboundBuffer)
-	go s.readLoop(inbound)
-	s.wg.Add(1)
-	go s.worker()
-
-	idleTick := time.NewTicker(s.idleCheckInterval())
-	defer idleTick.Stop()
-	for {
+	for !s.ended {
 		select {
-		case in, ok := <-inbound:
-			if !ok {
-				if !s.closing() {
-					return // the peer is gone
-				}
-				inbound = nil // aborted: keep running until the owed terminals are sent
-				continue
-			}
-			if in.err != nil {
-				s.abort(sttErrorLimit, "a frame exceeded the size limit; "+sttLimitMessage)
-				continue
-			}
-			s.handle(in.payload)
-		case now := <-idleTick.C:
-			s.closeIfIdle(now)
-		case <-s.ctx.Done():
-			return
+		case item := <-s.clientIn:
+			s.onClient(item)
+		case item := <-s.upIn:
+			s.onUpstream(item)
+		case <-tick:
+			s.onTick()
+		}
+		if s.clientDown && !s.ended {
+			s.clientGone(errors.New("write to the client failed"))
 		}
 	}
 }
 
-func (s *sttSession) idleCheckInterval() time.Duration {
-	interval := s.cfg.Limits.IdleTimeout / 4
-	if interval > sttMaxIdleCheckEvery {
-		interval = sttMaxIdleCheckEvery
+// shutdown closes both ends, in the order that unblocks both readers, and waits
+// for them. It runs once, when the loop ends.
+func (s *sttRelaySession) shutdown() {
+	s.cancel()
+	if s.up != nil {
+		_ = s.up.Close()
 	}
-	if interval < sttMinIdleCheckEvery {
-		interval = sttMinIdleCheckEvery
-	}
-	return interval
+	_ = s.conn.SetWriteDeadline(time.Now().Add(sttRelayCloseWriteTimeout))
+	_ = s.conn.Close()
+	s.wg.Wait()
 }
 
-// readLoop has no read deadline: a deadline that fires mid-frame can corrupt
-// the stream. Silence is handled by the session loop's idle check instead.
-// A frame over MaxFrameBytes is not read off the wire: the loop reports it and
-// stops, and the connection is closed rather than draining what the peer sends.
-func (s *sttSession) readLoop(inbound chan<- sttInbound) {
-	defer close(inbound)
+func (s *sttRelaySession) openUpstream() bool {
+	s.requestID = s.cfg.RequestID()
+	if !modulestt.ValidStreamRequestID(s.requestID) {
+		s.cfg.Logf("[STT][relay] ERROR the generated request id is not valid for the STT stream")
+		s.sendSessionError(modulestt.ErrorCodeSTTFailed, sttRelayUnavailableMessage)
+		return false
+	}
+	start, err := json.Marshal(modulestt.BuildSessionStartMessage(s.requestID))
+	if err != nil {
+		s.cfg.Logf("[STT][relay] ERROR could not build session.start: %v", err)
+		s.sendSessionError(modulestt.ErrorCodeSTTFailed, sttRelayUnavailableMessage)
+		return false
+	}
+	up, readyFrame, err := s.cfg.Open(s.ctx, start)
+	if err != nil {
+		s.cfg.Logf("[STT][relay] WARN could not open the STT stream: %v", err)
+		var openErr *sttinfra.StreamOpenError
+		if errors.As(err, &openErr) && openErr.Status == http.StatusServiceUnavailable {
+			// STT is at its connection limit: nothing was started, and a retry may succeed.
+			s.sendSessionError(modulestt.ErrorCodeSTTBusy, sttRelayBusyMessage)
+		} else {
+			s.sendSessionError(modulestt.ErrorCodeSTTFailed, sttRelayUnavailableMessage)
+		}
+		return false
+	}
+	ready, err := modulestt.ParseSessionReady(readyFrame, s.requestID)
+	if err != nil {
+		_ = up.Close()
+		s.cfg.Logf("[STT][relay] WARN the STT stream is not usable: %v", err)
+		s.sendSessionError(modulestt.ErrorCodeSTTFailed, sttRelayUnavailableMessage)
+		return false
+	}
+	s.up, s.ready = up, ready
+	s.table = modulestt.NewRelayTable(ready.Limits, s.cfg.MaxPending)
+	s.table.NoteSessionReady(ready.Seq)
+	return true
+}
+
+func (s *sttRelaySession) readClient() {
+	defer s.wg.Done()
 	for {
-		var payload []byte
-		err := websocket.Message.Receive(s.conn, &payload)
-		if errors.Is(err, websocket.ErrFrameTooLarge) {
-			select {
-			case inbound <- sttInbound{err: err}:
-			case <-s.ctx.Done():
-			}
+		frame, err := sttinfra.ReceiveFrame(s.conn)
+		select {
+		case s.clientIn <- sttClientItem{frame: frame, err: err}:
+		case <-s.ctx.Done():
 			return
 		}
 		if err != nil {
 			return
 		}
+	}
+}
+
+func (s *sttRelaySession) readUpstream() {
+	defer s.wg.Done()
+	for {
+		frame, err := s.up.Receive()
 		select {
-		case inbound <- sttInbound{payload: payload}:
+		case s.upIn <- sttUpstreamItem{frame: frame, err: err}:
 		case <-s.ctx.Done():
 			return
 		}
+		if err != nil {
+			return
+		}
 	}
 }
 
-func (s *sttSession) handle(payload []byte) {
-	if s.closing() {
-		return // an aborted session takes no more input
-	}
-	s.lastInbound = time.Now()
-	if len(payload) == 0 {
+// onClient handles one frame from the client. A text frame is a control
+// message and a binary frame is audio; the kind alone decides, never the content.
+func (s *sttRelaySession) onClient(item sttClientItem) {
+	if item.err != nil {
+		s.clientGone(item.err)
 		return
 	}
-	if control, ok := modulestt.ParseControl(payload); ok {
-		s.handleControl(control)
-		return
+	s.lastInbound = s.cfg.Clock.Now()
+	switch item.frame.Kind {
+	case sttinfra.FrameText:
+		s.onClientControl(item.frame.Data)
+	case sttinfra.FrameBinary:
+		s.onClientAudio(item.frame.Data)
 	}
-	s.handleAudio(payload)
 }
 
-func (s *sttSession) handleControl(control modulestt.Control) {
+func (s *sttRelaySession) onClientControl(data []byte) {
+	control, ok := modulestt.ParseControl(data)
+	if !ok {
+		s.cfg.Logf("[STT][relay] dropped a text frame that is not a control message (%d bytes)", len(data))
+		return
+	}
+	decision := s.table.MapControl(control, s.cfg.Clock.Now())
+	if decision.ClientEvent != nil {
+		s.send(decision.ClientEvent, "")
+	}
+	if decision.Upstream == nil {
+		if decision.ClientEvent == nil {
+			s.cfg.Logf("[STT][relay] dropped the control message %q: it is not relayed", control.Type)
+		}
+		return
+	}
+	body, err := json.Marshal(decision.Upstream)
+	if err != nil {
+		s.cfg.Logf("[STT][relay] ERROR could not marshal a control message: %v", err)
+		return
+	}
+	if s.sendUpstream(sttinfra.StreamFrame{Kind: sttinfra.FrameText, Data: body}) && decision.Stop {
+		s.noteStop(decision.StopUtteranceID)
+	}
+}
+
+func (s *sttRelaySession) onClientAudio(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	if modulestt.IsWAV(data) {
+		// A WAV header played as PCM is a burst of noise, so it is refused. CORE
+		// does not follow utterances, so the error names none.
+		s.send(modulestt.BuildErrorEventWithCode(modulestt.ErrorCodeUnsupportedAudioFormat, sttRelayWAVMessage), "")
+		return
+	}
+	for _, part := range modulestt.SplitStreamFrames(data, s.ready.Limits.MaxFrameBytes) {
+		if !s.sendUpstream(sttinfra.StreamFrame{Kind: sttinfra.FrameBinary, Data: part}) {
+			return
+		}
+	}
+}
+
+// sendUpstream writes one frame to the stream. A failed write means the stream
+// is gone, and ends the session through the completion path.
+func (s *sttRelaySession) sendUpstream(frame sttinfra.StreamFrame) bool {
+	if err := s.up.Send(frame); err != nil {
+		s.failUpstream("write to the STT stream failed: " + err.Error())
+		return false
+	}
+	return true
+}
+
+// onUpstream handles one frame from the stream.
+func (s *sttRelaySession) onUpstream(item sttUpstreamItem) {
+	if item.err != nil {
+		s.failUpstream("the STT stream ended: " + item.err.Error())
+		return
+	}
+	if item.frame.Kind != sttinfra.FrameText {
+		s.failUpstream("the STT stream sent a frame that is not text")
+		return
+	}
+	event, err := modulestt.ParseUpstreamEvent(item.frame.Data)
+	if err != nil {
+		s.failUpstream(err.Error())
+		return
+	}
+	now := s.cfg.Clock.Now()
+	decision := s.table.HandleUpstream(event, now)
 	switch {
-	case control.Type == "start":
-		s.handleStart(control)
-	case modulestt.IsFinalizeControl(control.Type):
-		s.handleStop(control)
-	case control.Type == "cancel":
-		s.handleCancel(control)
-	default:
-		// "config" and other legacy messages carry nothing CORE needs.
-	}
-}
-
-func (s *sttSession) handleStart(control modulestt.Control) {
-	if message := control.AudioFormatError(); message != "" {
-		// The rejected start never began an utterance and leaves the active one
-		// alone, so its error must not borrow the id of a live utterance.
-		id := control.UtteranceID
-		if s.idInUse(id) {
-			id = ""
+	case decision.Violation != "":
+		s.failUpstream(decision.Violation)
+	case decision.Forward:
+		s.send(decision.Event, decision.UtteranceID)
+		if decision.UtteranceID == "" && event.Type == modulestt.WebSocketEventTypeError {
+			s.sessionErrorRelayed = true
 		}
-		s.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: message})
-		return
-	}
-	if s.active != nil {
-		s.finalize(modulestt.EndReasonRestart)
-	}
-	s.begin(control.UtteranceID)
-}
-
-func (s *sttSession) handleStop(control modulestt.Control) {
-	if s.addressesActive(control.UtteranceID) {
-		s.finalize(modulestt.EndReasonStop)
-		return
-	}
-	if s.active == nil && control.UtteranceID == "" {
-		// A client waiting for its final must never hang: the utterance it wants
-		// to stop was already closed (idle timeout, max length) or never began.
-		s.push(&sttJob{kind: sttJobFinal, endReason: modulestt.EndReasonStop, emptyReason: modulestt.EmptyReasonNoActiveUtterance})
-	}
-	// A stop that names an already-finished utterance has nothing left to do.
-}
-
-func (s *sttSession) handleCancel(control modulestt.Control) {
-	if s.addressesActive(control.UtteranceID) {
-		id := s.active.id
-		s.active = nil
-		s.push(&sttJob{kind: sttJobCancelled, id: id})
-		return
-	}
-	if control.UtteranceID == "" {
-		return
-	}
-	s.mu.Lock()
-	job := s.byID[control.UtteranceID]
-	s.mu.Unlock()
-	if job != nil {
-		job.userCancelled.Store(true)
-		job.cancel()
+		s.traceUpstream(event.Type, decision.UtteranceID, now)
+		if decision.Record != nil {
+			// The record is decided by the terminal STT sent, not by whether the
+			// client could be told; the target was called either way.
+			s.submit(sttinfra.RecordFromTerminal(s.requestID, *decision.Record))
+		}
+	case decision.Drop != "":
+		s.cfg.Logf("[STT][relay] dropped an STT event of type %q: %s", event.Type, decision.Drop)
 	}
 }
 
-func (s *sttSession) handleAudio(payload []byte) {
-	pcm := payload
-	if modulestt.IsWAV(payload) {
-		var err error
-		if pcm, err = modulestt.WAVToPCM16(payload); err != nil {
-			// Audio CORE cannot use ends the utterance it belonged to, with that
-			// utterance's single terminal event.
-			id := ""
-			if s.active != nil {
-				id = s.active.id
-				s.active = nil
-			}
-			s.push(&sttJob{kind: sttJobError, id: id, errCode: sttErrorUnsupported, errMessage: err.Error()})
+// onTick runs the checks that depend on time: the ping, the liveness of the
+// stream, the watchdog of terminal events, and the idle limit.
+func (s *sttRelaySession) onTick() {
+	now := s.cfg.Clock.Now()
+	if now.Sub(s.lastPing) >= s.cfg.PingInterval {
+		s.lastPing = now
+		if err := s.up.Ping(); err != nil {
+			s.failUpstream("ping to the STT stream failed: " + err.Error())
 			return
 		}
 	}
-	if s.active == nil {
-		// Without a start control only audible audio opens an utterance, so a
-		// client streaming silence does not produce empty utterances.
-		if !modulestt.IsVoicedPCM(pcm, s.cfg.Limits.SilenceAbsThreshold) {
-			return
-		}
-		s.begin("")
+	if silent := now.Sub(s.up.LastReceived()); silent > s.cfg.LivenessTimeout {
+		s.failUpstream(fmt.Sprintf("no byte from the STT stream for %s", silent.Round(time.Second)))
+		return
 	}
-	s.append(pcm, time.Now())
-}
-
-func (s *sttSession) append(pcm []byte, now time.Time) {
-	s.active.lastAt = now
-	s.active.trace.markAudio(now)
-	rest := s.active.buf.Append(pcm)
-	for len(rest) > 0 {
-		origin := s.active.origin
-		s.finalize(modulestt.EndReasonMaxLength)
-		s.begin("")
-		s.active.origin = origin
-		s.active.lastAt = now
-		next := s.active.buf.Append(rest)
-		if len(next) >= len(rest) {
-			return // no progress; drop the remainder rather than spin
-		}
-		rest = next
+	if overdue := s.table.Expired(now); len(overdue) > 0 {
+		s.failUpstream(fmt.Sprintf("%d utterance(s) are past the time STT promised a terminal event", len(overdue)))
+		return
+	}
+	if len(s.table.Pending()) == 0 && now.Sub(s.lastInbound) >= s.cfg.ConnIdleTimeout {
+		s.ended = true // nothing is owed and nothing arrives: the peer holds a slot for no reason
 	}
 }
 
-// idInUse reports whether id names the active utterance or one still waiting
-// for or in recognition. Terminal events are matched to utterances by id, so a
-// live id is never reused.
-func (s *sttSession) idInUse(id string) bool {
-	if id == "" {
-		return false
+// failUpstream ends the session because the stream cannot be relied on any
+// more (it ended, went silent, broke the protocol, or an utterance is overdue).
+// Every utterance without a terminal event gets exactly one error, in the order
+// it was announced, then the session ends with a session-level error. STT keeps
+// no state, so nothing is retried: the client reconnects. These terminals are
+// CORE's own and are not recorded.
+func (s *sttRelaySession) failUpstream(reason string) {
+	if s.ended {
+		return
 	}
-	if s.active != nil && s.active.id == id {
-		return true
+	waiting := s.table.Drain()
+	s.cfg.Logf("[STT][relay] WARN the STT stream failed with %d utterance(s) waiting: %s", len(waiting), reason)
+	for _, id := range waiting {
+		s.send(modulestt.BuildErrorEventWithCode(modulestt.ErrorCodeSTTFailed, sttRelayFailedMessage), id)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, taken := s.byID[id]
-	return taken
+	if !s.sessionErrorRelayed {
+		s.send(modulestt.BuildErrorEventWithCode(modulestt.ErrorCodeSTTFailed, sttRelayFailedMessage), "")
+	}
+	s.ended = true
 }
 
-// addressesActive reports whether a control naming id (or naming none) applies
-// to the active utterance.
-func (s *sttSession) addressesActive(id string) bool {
-	if s.active == nil {
-		return false
+// clientGone ends the session because the client left (or sent a frame over the
+// limit, or could not be written to). Closing the stream aborts whatever STT was
+// doing, and STT answers nothing to a closed stream, so each waiting utterance is
+// recorded as interrupted by the disconnect. target_called is not known.
+func (s *sttRelaySession) clientGone(cause error) {
+	if s.ended {
+		return
 	}
-	return id == "" || id == s.active.id || (s.active.origin != "" && id == s.active.origin)
-}
-
-func (s *sttSession) begin(requestedID string) {
-	id, origin := requestedID, requestedID
-	if id == "" || s.idInUse(id) {
-		origin = ""
-		for {
-			s.counter++
-			id = fmt.Sprintf("srv-%d", s.counter)
-			if !s.idInUse(id) {
-				break
-			}
+	waiting := s.table.Drain()
+	if errors.Is(cause, websocket.ErrFrameTooLarge) {
+		s.cfg.Logf("[STT][relay] WARN a client frame exceeded the size limit; closing with %d utterance(s) waiting", len(waiting))
+		for _, id := range waiting {
+			s.send(modulestt.BuildErrorEventWithCode(modulestt.ErrorCodeLimitExceeded, sttRelayLimitMessage), id)
 		}
 	}
-	s.active = &sttUtterance{
-		id:     id,
-		origin: origin,
-		buf:    modulestt.NewUtteranceBuffer(s.cfg.Limits),
-		lastAt: time.Now(),
-		trace:  newSTTTimingTrace("utterance"),
+	for _, id := range waiting {
+		s.submit(sttinfra.AbortedRecord(s.requestID, id))
 	}
-	s.send(modulestt.BuildSpeechStartEvent(), id)
+	s.ended = true
 }
 
-func (s *sttSession) closeIfIdle(now time.Time) {
-	if s.closing() {
+func (s *sttRelaySession) submit(rec sttinfra.UtteranceRecord) {
+	if s.cfg.Recorder != nil {
+		s.cfg.Recorder.Submit(rec) // never blocks; a loss is counted and logged by the recorder
+	}
+}
+
+func (s *sttRelaySession) sendSessionError(code, message string) {
+	s.send(modulestt.BuildErrorEventWithCode(code, message), "")
+}
+
+// send stamps the event with the session's own seq and writes it to the client
+// as a text frame. A failed write marks the client down; the loop then ends the
+// session.
+func (s *sttRelaySession) send(event map[string]any, utteranceID string) {
+	if s.clientDown {
 		return
 	}
-	if s.active != nil && now.Sub(s.active.lastAt) >= s.cfg.Limits.IdleTimeout {
-		s.finalize(modulestt.EndReasonIdleTimeout)
-	}
-	// Nothing active, nothing owed and nothing received: the peer holds a slot
-	// (and a goroutine) for no reason.
-	if s.active == nil && s.queue.outstanding() == 0 && now.Sub(s.lastInbound) >= s.cfg.ConnIdleTimeout {
-		s.cancel()
-	}
-}
-
-// finalize closes the active utterance and queues its terminal event.
-func (s *sttSession) finalize(endReason string) {
-	u := s.active
-	s.active = nil
-	u.trace.markVoice(time.Now())
-	job := &sttJob{id: u.id, endReason: endReason, audio: u.buf.Duration(), trace: u.trace}
-	if reason := u.buf.EmptyReason(); reason != "" {
-		job.kind = sttJobFinal
-		job.emptyReason = reason
-		s.push(job)
-		return
-	}
-	if s.queueFull() {
-		s.overLimit(job) // before admit: nothing to give back
-		return
-	}
-	if !s.queue.admit(s.cfg.QueueDepth) {
-		job.kind = sttJobError
-		job.errCode = sttErrorBusy
-		job.errMessage = "too many utterances are waiting for recognition"
-		s.push(job)
-		return
-	}
-	job.kind = sttJobTranscribe
-	job.wav = u.buf.WAV()
-	job.ctx, job.cancel = context.WithCancel(s.ctx)
-	s.mu.Lock()
-	s.byID[job.id] = job
-	s.mu.Unlock()
-	s.queue.push(job)
-}
-
-// queueFull reports whether the session already owes MaxQueuedEvents events.
-func (s *sttSession) queueFull() bool {
-	return s.queue.outstanding() >= s.cfg.MaxQueuedEvents
-}
-
-// push queues a terminal event, or ends the session when the queue is full. A
-// client cannot make the queue grow without bound by repeating controls that
-// each owe an answer while a recognition is in progress.
-func (s *sttSession) push(job *sttJob) {
-	if s.queueFull() {
-		s.overLimit(job)
-		return
-	}
-	s.queue.push(job)
-}
-
-// overLimit turns the job that did not fit into the error that explains the
-// close, so its utterance still gets its one terminal event, then aborts.
-func (s *sttSession) overLimit(job *sttJob) {
-	job.kind = sttJobError
-	job.errCode = sttErrorLimit
-	job.errMessage = "too many unanswered events; " + sttLimitMessage
-	job.wav = nil
-	s.queue.push(job)
-	s.abort(sttErrorLimit, job.errMessage)
-}
-
-func (s *sttSession) closing() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closeInfo != nil
-}
-
-func (s *sttSession) closeReason() (sttCloseInfo, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closeInfo == nil {
-		return sttCloseInfo{}, false
-	}
-	return *s.closeInfo, true
-}
-
-// abort ends the session because a limit was exceeded. Every utterance that has
-// no terminal event yet gets exactly one error that names the limit: the one
-// being received, the queued ones (never sent to the engine) and the one in
-// recognition (its request is cancelled). The loop then ignores input, the
-// worker sends those events in utterance order, and the last job closes the
-// connection; sttCloseGrace bounds the wait.
-func (s *sttSession) abort(code, message string) {
-	s.mu.Lock()
-	if s.closeInfo != nil {
-		s.mu.Unlock()
-		return
-	}
-	s.closeInfo = &sttCloseInfo{code: code, message: message}
-	s.closeTimer = time.AfterFunc(sttCloseGrace, s.cancel)
-	pending := make([]*sttJob, 0, len(s.byID))
-	for _, job := range s.byID {
-		pending = append(pending, job)
-	}
-	s.mu.Unlock()
-
-	if s.active != nil {
-		id := s.active.id
-		s.active = nil
-		s.queue.push(&sttJob{kind: sttJobError, id: id, errCode: code, errMessage: message})
-	}
-	for _, job := range pending {
-		job.cancel() // reportCancellation answers it with the close reason
-	}
-	s.queue.push(&sttJob{kind: sttJobClose})
-}
-
-func (s *sttSession) worker() {
-	defer s.wg.Done()
-	for {
-		job, ok := s.queue.pop(s.ctx)
-		if !ok || s.ctx.Err() != nil {
-			return // the session ended: queued utterances are dropped, not sent
-		}
-		s.runJob(job)
-		s.queue.done()
-	}
-}
-
-func (s *sttSession) runJob(job *sttJob) {
-	switch job.kind {
-	case sttJobFinal:
-		s.sendFinal(job, "", job.emptyReason)
-	case sttJobError:
-		s.send(modulestt.BuildErrorEventWithCode(job.errCode, job.errMessage), job.id)
-	case sttJobCancelled:
-		s.send(modulestt.BuildCancelledEvent(), job.id)
-	case sttJobTranscribe:
-		s.transcribe(job)
-	case sttJobClose:
-		s.cancel()
-	}
-}
-
-func (s *sttSession) transcribe(job *sttJob) {
-	defer s.finishTranscription(job)
-	if job.ctx.Err() != nil {
-		s.reportCancellation(job)
-		return
-	}
-	result, err := s.provider.Transcribe(job.ctx, job.wav)
-	if job.ctx.Err() != nil {
-		s.reportCancellation(job)
-		return
-	}
-	if err != nil {
-		code := sttErrorFailed
-		var sttErr *sttinfra.Error
-		if errors.As(err, &sttErr) && sttErr.Code != "" {
-			code = sttErr.Code
-		}
-		s.send(modulestt.BuildErrorEventWithCode(code, "stt inference failed: "+err.Error()), job.id)
-		return
-	}
-	outcome := modulestt.ClassifyTranscript(result.Text, s.filter)
-	if outcome.ProviderError {
-		s.send(modulestt.BuildErrorEventWithCode(sttErrorProvider, modulestt.ProviderTranscriptErrorMessage), job.id)
-		return
-	}
-	s.sendFinal(job, outcome.Text, outcome.EmptyReason)
-}
-
-// reportCancellation gives a cancelled recognition its one terminal event: a
-// cancel control is answered with cancelled, an abort with the close reason.
-// Both are set by the session loop alone, so they cannot both apply. When the
-// peer simply went away there is nobody left to tell.
-func (s *sttSession) reportCancellation(job *sttJob) {
-	if job.userCancelled.Load() {
-		s.send(modulestt.BuildCancelledEvent(), job.id)
-		return
-	}
-	if reason, ok := s.closeReason(); ok {
-		s.send(modulestt.BuildErrorEventWithCode(reason.code, reason.message), job.id)
-	}
-}
-
-func (s *sttSession) finishTranscription(job *sttJob) {
-	job.cancel()
-	s.mu.Lock()
-	if s.byID[job.id] == job {
-		delete(s.byID, job.id)
-	}
-	s.mu.Unlock()
-	s.queue.release()
-}
-
-func (s *sttSession) sendFinal(job *sttJob, text, emptyReason string) {
-	if s.send(modulestt.BuildUtteranceFinalEvent(text, job.endReason, emptyReason, job.audio), job.id) && job.trace != nil {
-		job.trace.logFinal("session", job.endReason, text)
-	}
-}
-
-// send stamps the event with the session sequence and writes it. A failed
-// write ends the session: the peer is gone.
-func (s *sttSession) send(event map[string]any, utteranceID string) bool {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
 	s.seq++
-	_ = s.conn.SetWriteDeadline(time.Now().Add(sttWriteTimeout))
-	if err := sendSTTEvent(s.conn, modulestt.StampUtteranceEvent(event, utteranceID, s.seq)); err != nil {
-		s.cancel()
-		return false
-	}
-	return true
-}
-
-// sttJobQueue is an unbounded in-order queue of terminal-event jobs. Memory is
-// bounded by admit: only jobs that hold audio count against the depth.
-type sttJobQueue struct {
-	mu         sync.Mutex
-	items      []*sttJob
-	pending    int // transcription jobs holding audio
-	unfinished int // jobs pushed and not yet fully handled by the worker
-	wake       chan struct{}
-}
-
-func newSTTJobQueue() *sttJobQueue {
-	return &sttJobQueue{wake: make(chan struct{}, 1)}
-}
-
-func (q *sttJobQueue) admit(depth int) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.pending >= depth {
-		return false
-	}
-	q.pending++
-	return true
-}
-
-func (q *sttJobQueue) release() {
-	q.mu.Lock()
-	q.pending--
-	q.mu.Unlock()
-}
-
-// outstanding is the number of terminal events queued or being sent.
-func (q *sttJobQueue) outstanding() int {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.unfinished
-}
-
-// done marks the job the worker has just finished.
-func (q *sttJobQueue) done() {
-	q.mu.Lock()
-	q.unfinished--
-	q.mu.Unlock()
-}
-
-func (q *sttJobQueue) push(job *sttJob) {
-	q.mu.Lock()
-	q.items = append(q.items, job)
-	q.unfinished++
-	q.mu.Unlock()
-	select {
-	case q.wake <- struct{}{}:
-	default:
-	}
-}
-
-func (q *sttJobQueue) pop(ctx context.Context) (*sttJob, bool) {
-	for {
-		if ctx.Err() != nil {
-			return nil, false
-		}
-		q.mu.Lock()
-		if len(q.items) > 0 {
-			job := q.items[0]
-			q.items[0] = nil
-			q.items = q.items[1:]
-			q.mu.Unlock()
-			return job, true
-		}
-		q.mu.Unlock()
-		select {
-		case <-q.wake:
-		case <-ctx.Done():
-			return nil, false
-		}
-	}
-}
-
-func sendSTTEvent(conn *websocket.Conn, event map[string]any) error {
-	b, err := json.Marshal(event)
+	body, err := json.Marshal(modulestt.StampUtteranceEvent(event, utteranceID, s.seq))
 	if err != nil {
-		return err
+		s.cfg.Logf("[STT][relay] ERROR could not marshal an event for the client: %v", err)
+		return
 	}
-	return websocket.Message.Send(conn, string(b))
+	_ = s.conn.SetWriteDeadline(time.Now().Add(s.cfg.WriteTimeout))
+	err = sttinfra.SendFrame(s.conn, sttinfra.StreamFrame{Kind: sttinfra.FrameText, Data: body})
+	// The deadline belongs to this write. The library answers a ping from inside
+	// the client reader with whatever deadline is current; one left behind would
+	// have expired and the answer would fail without anyone noticing.
+	_ = s.conn.SetWriteDeadline(time.Time{})
+	if err != nil {
+		s.clientDown = true
+	}
 }
 
-func sendSTTError(conn *websocket.Conn, message string) error {
-	return sendSTTEvent(conn, modulestt.BuildErrorEvent(message))
+// noteStop feeds the timing trace (STT_TIMING_TRACE) with the one moment the
+// relay can observe: when stop went to STT.
+func (s *sttRelaySession) noteStop(utteranceID string) {
+	if !sttTimingTraceEnabled() {
+		return
+	}
+	now := s.cfg.Clock.Now()
+	if utteranceID != "" {
+		if trace := s.traces[utteranceID]; trace != nil {
+			trace.markStop(now)
+		}
+		return
+	}
+	for _, trace := range s.traces {
+		trace.markStop(now)
+	}
+}
+
+func (s *sttRelaySession) traceUpstream(eventType, utteranceID string, now time.Time) {
+	if !sttTimingTraceEnabled() || utteranceID == "" {
+		return
+	}
+	switch eventType {
+	case modulestt.WebSocketEventTypeSpeechStart:
+		s.traces[utteranceID] = newSTTTimingTrace("relay", now)
+	case modulestt.WebSocketEventTypeFinal, modulestt.WebSocketEventTypeError, modulestt.WebSocketEventTypeCancelled:
+		if trace := s.traces[utteranceID]; trace != nil {
+			trace.logTerminal(eventType, now)
+		}
+		delete(s.traces, utteranceID)
+	}
 }

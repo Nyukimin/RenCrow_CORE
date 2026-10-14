@@ -341,6 +341,7 @@ type Dependencies struct {
 	moduleSTTViewerInput           modulestt.ViewerInputObserver               // module contract view of Viewer STT input state
 	moduleWorkerExecutor           moduleworker.Executor                       // module contract view of Worker executor
 	moduleHealth                   http.HandlerFunc                            // module boundary health API
+	sttRecorderClose               func(context.Context) error                 // flushes the STT utterance recorder at shutdown (nil until /stt is wired)
 	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
 	llmGatewayProcess              *os.Process                                 // local RenCrow_LLM process started by CORE
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
@@ -358,6 +359,15 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.sttRecorderClose != nil {
+		// The records of utterances that were just relayed are the evidence of an
+		// external effect; give them a bounded moment to reach the stores.
+		ctx, cancel := context.WithTimeout(context.Background(), sttRecorderShutdownFlush)
+		if err := d.sttRecorderClose(ctx); err != nil {
+			log.Printf("STT utterance recorder: %v", err)
+		}
+		cancel()
+	}
 	closeNativeCodingRuntime(d.nativeCoding)
 	if d.llmGatewayProcess != nil {
 		if err := d.llmGatewayProcess.Kill(); err != nil && !strings.Contains(strings.ToLower(err.Error()), "already finished") {

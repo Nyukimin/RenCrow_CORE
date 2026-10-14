@@ -58,13 +58,16 @@ func TestRelayTableForwardsAStartWithAnIDAndKeepsItForTheStop(t *testing.T) {
 	if stop.Upstream["type"] != "utterance.stop" || stop.Upstream["utterance_id"] != "v1-1" {
 		t.Fatalf("an id-less stop must name the last start: %#v", stop.Upstream)
 	}
+	if !stop.Stop || stop.StopUtteranceID != "v1-1" {
+		t.Fatalf("the decision says which utterance the stop addresses: %#v", stop)
+	}
 	legacy := table.MapControl(Control{Type: "final_pending"}, relayEpoch)
-	if legacy.Upstream["type"] != "utterance.stop" {
+	if legacy.Upstream["type"] != "utterance.stop" || !legacy.Stop {
 		t.Fatalf("final_pending is the legacy name of stop: %#v", legacy.Upstream)
 	}
 	cancel := table.MapControl(Control{Type: "cancel"}, relayEpoch)
-	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Upstream["utterance_id"] != "v1-1" {
-		t.Fatalf("an id-less cancel must name the last start: %#v", cancel.Upstream)
+	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Upstream["utterance_id"] != "v1-1" || cancel.Stop {
+		t.Fatalf("an id-less cancel must name the last start: %#v", cancel)
 	}
 }
 

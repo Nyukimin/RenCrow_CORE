@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -16,72 +13,23 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
+	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
-	"golang.org/x/net/websocket"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
-	const frames = 10 // one second of Viewer-sized 100 ms frames
-	requestSeen := make(chan struct{}, frames)
-	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/audio/transcriptions" {
-			http.NotFound(w, r)
-			return
-		}
-		if err := r.ParseMultipartForm(2 << 20); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// CORE -> RenCrow_STT contract: file (audio.wav) + response_format=json only.
-		if r.MultipartForm.Value["response_format"] == nil || r.MultipartForm.Value["response_format"][0] != "json" ||
-			len(r.MultipartForm.Value) != 1 || len(r.MultipartForm.File) != 1 || r.Header.Get("X-RenCrow-Request-ID") == "" {
-			http.Error(w, "CORE changed the RenCrow_STT request contract", http.StatusBadRequest)
-			return
-		}
-		file, header, err := r.FormFile("file")
-		if err == nil && header.Filename != "audio.wav" {
-			err = io.ErrUnexpectedEOF
-		}
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		payload, err := io.ReadAll(file)
-		_ = file.Close()
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if len(payload) < 44 || !bytes.Equal(payload[:4], []byte("RIFF")) || !bytes.Equal(payload[8:12], []byte("WAVE")) {
-			http.Error(w, "CORE did not normalize Viewer PCM to WAV", http.StatusBadRequest)
-			return
-		}
-		// One request carries the whole utterance as 16 kHz mono PCM16.
-		if payload[22] != 1 || payload[24] != 0x80 || payload[25] != 0x3e || payload[34] != 16 ||
-			len(payload) != 44+frames*len(rawPCM16Chunk()) {
-			http.Error(w, "CORE did not send the whole utterance as one 16 kHz mono PCM16 WAV", http.StatusBadRequest)
-			return
-		}
-		requestSeen <- struct{}{}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"text":          "音声経路OK",
-			"language":      "ja",
-			"provider":      "test-rencrow-stt",
-			"duration":      1.0,
-			"processing_ms": 10,
-		})
-	}))
-	defer gateway.Close()
+type sttFactoryOwners struct {
+	tasks      *taskmanager.Manager
+	actions    *actionmanager.Manager
+	transports *transportmanager.Manager
+}
 
-	cfg := &config.Config{}
-	cfg.STT.Enabled = true
-	cfg.STT.GatewayBaseURL = gateway.URL
-	cfg.STT.TimeoutMS = 5000
-	cfg.STT.BusyPolicy = "queue_latest"
+func newSTTFactoryOwners(t *testing.T) sttFactoryOwners {
+	t.Helper()
 	taskStore, err := taskpersistence.NewJSONLStore(filepath.Join(t.TempDir(), "tasks"))
 	if err != nil {
 		t.Fatal(err)
@@ -100,74 +48,159 @@ func TestBuildSTTRuntimeWebSocketUsesRenCrowSTTHTTPContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transports := transportmanager.New(transportStore, actions)
-	runtime := buildSTTRuntime(
-		cfg,
-		taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()),
-		actions,
-		transports,
-	)
+	return sttFactoryOwners{
+		tasks:      taskmanager.New(taskStore, taskmanager.DefaultParallelLimits()),
+		actions:    actions,
+		transports: transportmanager.New(transportStore, actions),
+	}
+}
+
+// The production wiring of /stt: buildSTTRuntime from the real config shape,
+// the route registered as in production, and a stand-in for RenCrow_STT's
+// stream. It pins what CORE sends to RenCrow_STT (session.start, the fixed
+// Origin, audio and control as their own frame kinds), that the stand-in's
+// HTTP transcription route is never called for an utterance (the stand-in fails
+// the test if it is), and that the evidence of the recognition is recorded.
+func TestBuildSTTRuntimeRelaysAnUtteranceThroughTheRenCrowSTTStream(t *testing.T) {
+	fake := startFakeSTTServer(t)
+	cfg := &config.Config{}
+	cfg.STT.Enabled = true
+	cfg.STT.GatewayBaseURL = fake.HTTPBase()
+	cfg.STT.TimeoutMS = 5000
+	cfg.STT.BusyPolicy = "queue_latest"
+	owners := newSTTFactoryOwners(t)
+	runtime := buildSTTRuntime(cfg, owners.tasks, owners.actions, owners.transports)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := runtime.CloseRecorder(ctx); err != nil {
+			t.Errorf("CloseRecorder() = %v", err)
+		}
+	})
 
 	mux := http.NewServeMux()
 	registerSTTRuntimeRoutes(mux, runtime)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	conn, err := websocket.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/stt", "", "http://localhost/")
-	if err != nil {
-		t.Fatalf("dial CORE stt websocket: %v", err)
-	}
-	defer conn.Close()
+	client := dialRelay(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/stt")
+	conn := fake.Accept()
 
-	if err := websocket.Message.Send(conn, `{"type":"start","sample_rate":16000,"channels":1,"format":"pcm_s16le"}`); err != nil {
-		t.Fatalf("send start: %v", err)
+	start := fake.SessionStarts()[0]
+	requestID, _ := start["request_id"].(string)
+	if start["type"] != "session.start" || start["protocol"] != "stt.stream.v1" || start["format"] != "pcm_s16le" ||
+		start["sample_rate"] != float64(16000) || start["channels"] != float64(1) || !strings.HasPrefix(requestID, "stt-") {
+		t.Fatalf("session.start = %#v", start)
 	}
+	if _, has := start["options"]; has {
+		t.Fatalf("CORE sends no options: %#v", start)
+	}
+	if origins := fake.Origins(); len(origins) != 1 || origins[0] != "http://rencrow-core.invalid" {
+		t.Fatalf("Origin = %v, want the fixed Origin of the contract", origins)
+	}
+
+	client.ExpectReady()
+	client.Control(map[string]any{"type": "start", "utterance_id": "v1-1", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"})
+	const frames = 10 // one second of Viewer-sized 100 ms frames
 	for i := 0; i < frames; i++ {
-		if err := websocket.Message.Send(conn, rawPCM16Chunk()); err != nil {
-			t.Fatalf("send raw pcm: %v", err)
-		}
+		client.Audio(rawPCM16Chunk())
 	}
-	if err := websocket.Message.Send(conn, `{"type":"stop"}`); err != nil {
-		t.Fatalf("send stop: %v", err)
+	client.Control(map[string]any{"type": "stop"})
+
+	if msg := conn.NextControl(t); msg["type"] != "utterance.start" || msg["utterance_id"] != "v1-1" {
+		t.Fatalf("start = %#v", msg)
+	}
+	audioBytes := 0
+	for i := 0; i < frames; i++ {
+		frame := conn.Next(t)
+		audioBytes += len(frame.Data)
+	}
+	if audioBytes != frames*len(rawPCM16Chunk()) {
+		t.Fatalf("audio reached STT as %d bytes, want %d: CORE must not cut, drop or add audio", audioBytes, frames*len(rawPCM16Chunk()))
+	}
+	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
+		t.Fatalf("stop = %#v", msg)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(deadline)
-		var raw string
-		if err := websocket.Message.Receive(conn, &raw); err != nil {
-			t.Fatalf("receive CORE stt event: %v", err)
-		}
-		var event map[string]any
-		if err := json.Unmarshal([]byte(raw), &event); err != nil {
-			t.Fatalf("decode CORE stt event %q: %v", raw, err)
-		}
-		if event["type"] != "final" {
-			continue
-		}
-		if event["text"] != "音声経路OK" {
-			t.Fatalf("unexpected final event: %+v", event)
-		}
-		select {
-		case <-requestSeen:
-			if len(requestSeen) != 0 {
-				t.Fatalf("RenCrow_STT was called %d times for one utterance, want 1", len(requestSeen)+1)
-			}
-			requests, err := transports.ListRequests(context.Background(), domaintransport.RequestFilter{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			responses, err := transports.ListResponses(context.Background(), domaintransport.ResponseFilter{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(requests) != 1 || len(responses) != 1 || responses[0].RequestID != requests[0].RequestID {
-				t.Fatalf("STT transport receipts requests=%#v responses=%#v", requests, responses)
-			}
-			return
-		default:
-			t.Fatal("RenCrow_STT HTTP transcription contract was not called")
-		}
+	conn.Send(`{"type":"speech_start","utterance_id":"v1-1","offset_ms":0}`)
+	conn.Send(`{"type":"final","utterance_id":"v1-1","text":"音声経路OK","end_reason":"stop","audio_ms":1000,"queue_ms":1,"processing_ms":120,"target_called":true}`)
+	client.Expect("speech_start")
+	final := client.Expect("final")
+	if final["text"] != "音声経路OK" || final["utterance_id"] != "v1-1" {
+		t.Fatalf("final = %#v", final)
 	}
-	t.Fatal("timed out waiting for final STT event")
+
+	// The record is made after the final was relayed.
+	var recorded []domainaction.Action
+	waitUntil(t, "the Action of the utterance", func() bool {
+		actions, err := owners.actions.ListActions(context.Background(), domainaction.Filter{Kind: domainaction.KindSTT})
+		recorded = actions
+		return err == nil && len(recorded) == 1 && domainaction.IsTerminal(recorded[0].Status)
+	})
+	if want := "stt.stream:" + requestID + ":v1-1"; recorded[0].Name != want || recorded[0].Status != domainaction.StatusSucceeded {
+		t.Fatalf("Action = %+v, want name %q succeeded", recorded[0], want)
+	}
+	tasks, err := owners.tasks.List(context.Background(), domaintask.Filter{Limit: 100})
+	if err != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusSucceeded {
+		t.Fatalf("Tasks=%v err=%v: one short-lived Task per utterance, closed", tasks, err)
+	}
+	// A transport receipt needs a Run and an Action bound before the request, and
+	// nothing precedes an utterance; the Action carries the correlation instead.
+	requests, err := owners.transports.ListRequests(context.Background(), domaintransport.RequestFilter{})
+	if err != nil || len(requests) != 0 {
+		t.Fatalf("the stream must not make transport receipts: requests=%v err=%v", requests, err)
+	}
+}
+
+func TestBuildSTTRuntimeReportsTheStreamThroughItsOwnHealthProvider(t *testing.T) {
+	fake := startFakeSTTServer(t)
+	cfg := &config.Config{}
+	cfg.STT.Enabled = true
+	cfg.STT.GatewayBaseURL = fake.HTTPBase()
+	owners := newSTTFactoryOwners(t)
+	runtime := buildSTTRuntime(cfg, owners.tasks, owners.actions, owners.transports)
+	t.Cleanup(func() { _ = runtime.CloseRecorder(context.Background()) })
+
+	report := runtime.StreamHealth.Health(context.Background())
+	if report.Status != modulecore.HealthReady || !report.Ready {
+		t.Fatalf("report = %#v", report)
+	}
+	if _, ok := report.Metadata["recorder_dropped"]; !ok {
+		t.Fatalf("a lost record must be visible next to the stream: %#v", report.Metadata)
+	}
+}
+
+func TestBuildSTTRuntimeWithSTTDisabledServesNoStream(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.STT.Enabled = false
+	owners := newSTTFactoryOwners(t)
+	runtime := buildSTTRuntime(cfg, owners.tasks, owners.actions, owners.transports)
+	if runtime.Recorder != nil {
+		t.Fatal("a disabled STT records nothing")
+	}
+	if err := runtime.CloseRecorder(context.Background()); err != nil {
+		t.Fatalf("CloseRecorder() on a disabled runtime = %v", err)
+	}
+	mux := http.NewServeMux()
+	registerSTTRuntimeRoutes(mux, runtime)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	client := dialRelay(t, "ws"+strings.TrimPrefix(server.URL, "http")+"/stt")
+	event := client.Expect("error")
+	if event["error"] != "stt provider is not configured" {
+		t.Fatalf("error = %#v", event)
+	}
+	if report := runtime.StreamHealth.Health(context.Background()); report.Ready {
+		t.Fatalf("a disabled STT has no relayable stream: %#v", report)
+	}
+}
+
+func TestSTTRelayConfigFollowsTheGatewayBaseURL(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.STT.GatewayBaseURL = "https://stt.example.invalid:8766/"
+	relay := sttRelayConfigFromAppConfig(cfg, true, nil)
+	if !relay.Enabled || relay.Open == nil || relay.Recorder != nil {
+		t.Fatalf("relay config = %+v", relay)
+	}
 }

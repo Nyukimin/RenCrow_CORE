@@ -52,16 +52,16 @@ func TestBuildModuleHealthSnapshotOrdersLLMRolesAndIncludesAudioModules(t *testi
 	snapshot := buildModuleHealthSnapshot(context.Background(), map[string]modulellm.Provider{
 		"worker": fakeModuleLLMProvider{name: "worker-provider"},
 		"chat":   fakeModuleLLMProvider{name: "chat-provider"},
-	}, fakeModuleHealthProvider{module: "chat", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "tts", status: modulecore.HealthLive}, fakeModuleHealthProvider{module: "tts.playback", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.viewer_input", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "worker", status: modulecore.HealthReady}, testModuleHealthTime())
+	}, fakeModuleHealthProvider{module: "chat", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "tts", status: modulecore.HealthLive}, fakeModuleHealthProvider{module: "tts.playback", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.viewer_input", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.stream", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "worker", status: modulecore.HealthReady}, testModuleHealthTime())
 
 	reports := snapshot.Modules
-	if len(reports) != 8 {
-		t.Fatalf("expected 8 reports, got %+v", reports)
+	if len(reports) != 9 {
+		t.Fatalf("expected 9 reports, got %+v", reports)
 	}
 	if reports[0].Module != "llm:chat" || reports[1].Module != "llm:worker" {
 		t.Fatalf("llm reports were not role-sorted: %+v", reports)
 	}
-	if reports[2].Module != "chat" || reports[3].Module != "worker" || reports[4].Module != "tts" || reports[5].Module != "tts.playback" || reports[6].Module != "stt" || reports[7].Module != "stt.viewer_input" {
+	if reports[2].Module != "chat" || reports[3].Module != "worker" || reports[4].Module != "tts" || reports[5].Module != "tts.playback" || reports[6].Module != "stt" || reports[7].Module != "stt.viewer_input" || reports[8].Module != "stt.stream" {
 		t.Fatalf("module reports missing: %+v", reports)
 	}
 	if snapshot.UpdatedAt != "2026-05-30T01:02:03Z" {
@@ -72,7 +72,7 @@ func TestBuildModuleHealthSnapshotOrdersLLMRolesAndIncludesAudioModules(t *testi
 func TestHandleModuleHealthReturnsJSON(t *testing.T) {
 	handler := handleModuleHealth(map[string]modulellm.Provider{
 		"chat": fakeModuleLLMProvider{name: "chat-provider"},
-	}, fakeModuleHealthProvider{module: "chat", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "tts", status: modulecore.HealthLive}, fakeModuleHealthProvider{module: "tts.playback", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.viewer_input", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "worker", status: modulecore.HealthReady})
+	}, fakeModuleHealthProvider{module: "chat", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "tts", status: modulecore.HealthLive}, fakeModuleHealthProvider{module: "tts.playback", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.viewer_input", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "stt.stream", status: modulecore.HealthReady}, fakeModuleHealthProvider{module: "worker", status: modulecore.HealthReady})
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/viewer/modules/health", nil)
@@ -85,7 +85,7 @@ func TestHandleModuleHealthReturnsJSON(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &snapshot); err != nil {
 		t.Fatalf("invalid json: %v", err)
 	}
-	if len(snapshot.Modules) != 7 {
+	if len(snapshot.Modules) != 8 {
 		t.Fatalf("unexpected snapshot: %+v", snapshot)
 	}
 	if snapshot.Status != modulecore.HealthLive || !snapshot.Ready {

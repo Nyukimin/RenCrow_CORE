@@ -8,31 +8,24 @@ import (
 	"time"
 )
 
+// sttTimingTrace measures one relayed utterance (STT_TIMING_TRACE=1). The relay
+// cannot see speech, only the moments it forwards: when STT announced the
+// utterance, when stop went to STT (the Viewer sends one) and when the terminal
+// event came back.
 type sttTimingTrace struct {
-	mode               string
-	startedAt          time.Time
-	firstAudioAt       time.Time
-	firstVoiceAt       time.Time
-	firstProvisionalAt time.Time
-	lastVoiceAt        time.Time
-	finalAt            time.Time
+	mode      string
+	startedAt time.Time
+	stopAt    time.Time
 }
 
 type sttTimingSnapshot struct {
-	Mode               string
-	FirstAudioMS       string
-	FirstVoiceMS       string
-	FirstProvisionalMS string
-	SilenceToFinalMS   string
-	TotalMS            string
+	Mode          string
+	StopToFinalMS string
+	TotalMS       string
 }
 
-func newSTTTimingTrace(mode string) *sttTimingTrace {
-	now := time.Now()
-	return &sttTimingTrace{
-		mode:      strings.TrimSpace(mode),
-		startedAt: now,
-	}
+func newSTTTimingTrace(mode string, startedAt time.Time) *sttTimingTrace {
+	return &sttTimingTrace{mode: strings.TrimSpace(mode), startedAt: startedAt}
 }
 
 func sttTimingTraceEnabled() bool {
@@ -40,55 +33,26 @@ func sttTimingTraceEnabled() bool {
 	return raw != "" && raw != "0" && !strings.EqualFold(raw, "false")
 }
 
-func (t *sttTimingTrace) markAudio(at time.Time) {
-	if t.firstAudioAt.IsZero() {
-		t.firstAudioAt = at
+// markStop records the first stop forwarded to STT.
+func (t *sttTimingTrace) markStop(at time.Time) {
+	if t.stopAt.IsZero() {
+		t.stopAt = at
 	}
 }
 
-func (t *sttTimingTrace) markVoice(at time.Time) {
-	if t.firstVoiceAt.IsZero() {
-		t.firstVoiceAt = at
-	}
-	t.lastVoiceAt = at
-}
-
-func (t *sttTimingTrace) markProvisional(at time.Time) {
-	if t.firstProvisionalAt.IsZero() {
-		t.firstProvisionalAt = at
-	}
-}
-
-func (t *sttTimingTrace) snapshot(finalAt time.Time) sttTimingSnapshot {
+func (t *sttTimingTrace) snapshot(terminalAt time.Time) sttTimingSnapshot {
 	return sttTimingSnapshot{
-		Mode:               t.mode,
-		FirstAudioMS:       sttTimingMillis(t.startedAt, t.firstAudioAt),
-		FirstVoiceMS:       sttTimingMillis(t.startedAt, t.firstVoiceAt),
-		FirstProvisionalMS: sttTimingMillis(t.startedAt, t.firstProvisionalAt),
-		SilenceToFinalMS:   sttTimingMillis(t.lastVoiceAt, finalAt),
-		TotalMS:            sttTimingMillis(t.startedAt, finalAt),
+		Mode:          t.mode,
+		StopToFinalMS: sttTimingMillis(t.stopAt, terminalAt),
+		TotalMS:       sttTimingMillis(t.startedAt, terminalAt),
 	}
 }
 
-func (t *sttTimingTrace) logFinal(source, reason, text string) {
-	if !sttTimingTraceEnabled() {
-		return
-	}
-	finalAt := time.Now()
-	t.finalAt = finalAt
-	snap := t.snapshot(finalAt)
-	log.Printf(
-		"[STT][timing] mode=%s source=%s reason=%s first_audio_ms=%s first_voice_ms=%s first_provisional_ms=%s silence_to_final_ms=%s total_ms=%s text_len=%d",
-		snap.Mode,
-		strings.TrimSpace(source),
-		strings.TrimSpace(reason),
-		snap.FirstAudioMS,
-		snap.FirstVoiceMS,
-		snap.FirstProvisionalMS,
-		snap.SilenceToFinalMS,
-		snap.TotalMS,
-		len(strings.TrimSpace(text)),
-	)
+// logTerminal logs the utterance's timings. It never carries the text.
+func (t *sttTimingTrace) logTerminal(eventType string, terminalAt time.Time) {
+	snap := t.snapshot(terminalAt)
+	log.Printf("[STT][timing] mode=%s event=%s stop_to_final_ms=%s total_ms=%s",
+		snap.Mode, strings.TrimSpace(eventType), snap.StopToFinalMS, snap.TotalMS)
 }
 
 func sttTimingMillis(start, end time.Time) string {

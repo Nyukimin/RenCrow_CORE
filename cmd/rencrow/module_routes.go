@@ -34,6 +34,7 @@ func registerModuleRoutes(mux *http.ServeMux, dependencies *Dependencies, sttRun
 		dependencies.moduleTTSPlayback,
 		sttRuntime.Module,
 		dependencies.moduleSTTViewerInput,
+		sttRuntime.StreamHealth,
 		dependencies.moduleWorkerExecutor,
 	)
 	corefeature.RegisterRoutes(mux, corefeature.Dependencies{Routes: corefeature.Routes{

@@ -256,6 +256,10 @@ func jsonMillis(payload map[string]any, key string) int64 {
 type ControlDecision struct {
 	Upstream    map[string]any
 	ClientEvent map[string]any
+	// Stop is set when Upstream is a stop. StopUtteranceID names the utterance it
+	// addresses, "" when it addresses whichever is active.
+	Stop            bool
+	StopUtteranceID string
 }
 
 // TerminalRecord is a terminal event that must be recorded as an Action.
@@ -350,7 +354,7 @@ func (t *RelayTable) MapControl(c Control, now time.Time) ControlDecision {
 	case IsFinalizeControl(c.Type):
 		id := t.controlTarget(c)
 		t.shortenWatchdog(id, now.Add(t.limits.TerminalDeadline+RelayWatchdogSlack))
-		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceStop, id)}
+		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceStop, id), Stop: true, StopUtteranceID: id}
 	case c.Type == "cancel":
 		return ControlDecision{Upstream: namedUtteranceMessage(streamMessageUtteranceCancel, t.controlTarget(c))}
 	default:

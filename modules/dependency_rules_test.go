@@ -474,6 +474,15 @@ func TestModuleBridgeUsesModuleRequestCopySemantics(t *testing.T) {
 	}
 }
 
+// /stt is a relay: RenCrow_STT decides where an utterance ends and what it said,
+// and CORE only forwards. The relay handler therefore must not build the events
+// or messages of the protocols itself, nor decide which client control becomes
+// which stream message or which upstream event is relayed; modules/stt owns
+// those rules (ParseControl and RelayTable.MapControl for the client side,
+// ParseUpstreamEvent and RelayTable.HandleUpstream for the stream side) and the
+// event builders (BuildSessionInfoEvent, BuildReadyEvent, BuildErrorEvent[WithCode],
+// StampUtteranceEvent). Two copies of those rules would drift, and the invariant
+// "every announced utterance gets exactly one terminal event" lives in RelayTable.
 func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 	path := filepath.Join("..", "cmd", "rencrow", "stt_runtime_websocket.go")
 	content, err := os.ReadFile(path)
@@ -483,42 +492,69 @@ func TestCompositionRuntimeUsesModuleSTTSessionRules(t *testing.T) {
 	text := string(content)
 	for _, want := range []string{
 		"ParseControl",
-		"IsFinalizeControl",
-		"NewUtteranceBuffer",
-		"IsVoicedPCM",
-		"WAVToPCM16",
-		"ClassifyTranscript",
-		"NewNoisePhraseFilter",
-		"BuildUtteranceFinalEvent",
-		"BuildSpeechStartEvent",
+		"MapControl",
+		"NewRelayTable",
+		"NoteSessionReady",
+		"HandleUpstream",
+		"ParseUpstreamEvent",
+		"ParseSessionReady",
+		"BuildSessionStartMessage",
+		"SplitStreamFrames",
+		"IsWAV",
 		"BuildSessionInfoEvent",
 		"BuildReadyEvent",
 		"BuildErrorEvent",
-		"BuildCancelledEvent",
+		"BuildErrorEventWithCode",
 		"StampUtteranceEvent",
+		"RecordFromTerminal",
+		"AbortedRecord",
 	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("%s must delegate STT session rule %q to modules/stt", path, want)
+			t.Fatalf("%s must delegate STT relay rule %q to modules/stt", path, want)
 		}
 	}
 	for _, forbidden := range []string{
-		"strings.TrimSpace(result.Text)",
-		"strings.TrimSpace(lastDraft)",
+		// events of the client protocol
 		`"type": "final"`,
-		`"type": "draft"`,
 		`"type": "speech_start"`,
+		`"type": "partial"`,
+		`"type": "draft"`,
 		`"type": "status"`,
 		`"type": "error"`,
 		`"type": "cancelled"`,
+		`"type": "ready"`,
+		`"type": "session_info"`,
+		`"type":"final"`,
+		`"type":"error"`,
+		`"type":"cancelled"`,
+		// field names of events and of the stream messages
 		`"utterance_id"`,
 		`"end_reason"`,
 		`"empty_reason"`,
 		`"max_utterance_ms"`,
-		`"sample_rate": 16000`,
+		`"target_called"`,
+		`"sample_rate"`,
+		`"request_id"`,
+		// stream message types and the words that decide what is relayed
+		`"session.start"`,
+		`"session_ready"`,
+		`"utterance.start"`,
+		`"utterance.stop"`,
+		`"utterance.cancel"`,
+		`"final_pending"`,
+		`"cancel"`,
+		// recognition and segmentation belong to RenCrow_STT
+		"strings.TrimSpace(result.Text)",
+		"UtteranceBuffer",
+		"NoisePhraseFilter",
+		"ClassifyTranscript",
+		"IsVoicedPCM",
+		"WAVToPCM16",
+		"PCM16LEToWAV",
 		"DraftState",
 	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("%s owns STT utterance/session rule containing %q; keep it in modules/stt", path, forbidden)
+			t.Fatalf("%s owns STT relay rule containing %q; keep it in modules/stt", path, forbidden)
 		}
 	}
 }

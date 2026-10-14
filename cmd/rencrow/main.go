@@ -135,6 +135,7 @@ func cmdRun() {
 
 	// Live Viewer
 	sttRuntime := buildSTTRuntime(cfg, dependencies.taskManager, dependencies.actionManager, dependencies.transportManager)
+	dependencies.sttRecorderClose = sttRuntime.CloseRecorder
 	voiceChatRuntime := buildVoiceChatRuntime(cfg, dependencies.voiceDirectHandler, dependencies.idleChatOrch, voiceChatExecutionOwners{
 		actions: dependencies.actionManager, tasks: dependencies.taskManager, transport: dependencies.transportManager,
 	})

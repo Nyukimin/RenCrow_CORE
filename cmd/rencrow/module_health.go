@@ -17,6 +17,7 @@ func handleModuleHealth(
 	ttsPlayback namedHealthProvider,
 	sttProvider namedHealthProvider,
 	sttViewerInput namedHealthProvider,
+	sttStream namedHealthProvider,
 	workerExecutor namedHealthProvider,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +27,7 @@ func handleModuleHealth(
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 		defer cancel()
 
-		_ = modulecore.WriteJSON(w, buildModuleHealthSnapshot(ctx, llmProviders, chatService, ttsProvider, ttsPlayback, sttProvider, sttViewerInput, workerExecutor, time.Now().UTC()))
+		_ = modulecore.WriteJSON(w, buildModuleHealthSnapshot(ctx, llmProviders, chatService, ttsProvider, ttsPlayback, sttProvider, sttViewerInput, sttStream, workerExecutor, time.Now().UTC()))
 	}
 }
 
@@ -38,6 +39,7 @@ func buildModuleHealthSnapshot(
 	ttsPlayback namedHealthProvider,
 	sttProvider namedHealthProvider,
 	sttViewerInput namedHealthProvider,
+	sttStream namedHealthProvider,
 	workerExecutor namedHealthProvider,
 	updatedAt time.Time,
 ) modulecore.HealthSnapshot {
@@ -50,6 +52,7 @@ func buildModuleHealthSnapshot(
 		TTSPlayback:    ttsPlayback,
 		STT:            sttProvider,
 		STTViewerInput: sttViewerInput,
+		STTStream:      sttStream,
 	}, updatedAt)
 }
 

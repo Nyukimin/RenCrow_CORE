@@ -2,7 +2,6 @@ package main
 
 import (
 	"strings"
-	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	sttinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/stt"
@@ -69,20 +68,17 @@ func sttRuntimeConfigFromAppConfig(cfg *config.Config) modulestt.RuntimeConfig {
 	}
 }
 
-// sttSessionConfigFromAppConfig maps the CORE-side /stt input settings. The
-// energy threshold stays an environment knob (STT_SILENCE_ABS_THRESHOLD).
-func sttSessionConfigFromAppConfig(cfg *config.Config) sttSessionConfig {
-	session := sttSessionConfig{
-		Limits: modulestt.UtteranceLimits{SilenceAbsThreshold: sttSilenceAbsThresholdFromEnv()},
+// sttRelayConfigFromAppConfig maps the CORE-side /stt settings. The stream is
+// the Gateway's base URL with the scheme swapped to ws and the fixed stream
+// path. Everything about utterances (where one ends, the length limits, the
+// phrases that are dropped) belongs to RenCrow_STT, so CORE has no setting for
+// it. enabled is false when the STT provider is off.
+func sttRelayConfigFromAppConfig(cfg *config.Config, enabled bool, recorder sttTerminalRecorder) sttRelayConfig {
+	return sttRelayConfig{
+		Enabled:  enabled,
+		Open:     streamClientOpener(sttinfra.StreamClient{URL: modulestt.GatewayStreamURL(inferSTTBaseURLFromConfig(cfg))}),
+		Recorder: recorder,
 	}
-	if cfg == nil {
-		return session
-	}
-	session.Limits.MinSpeech = time.Duration(cfg.STT.MinSpeechMS) * time.Millisecond
-	session.Limits.MaxLength = time.Duration(cfg.STT.MaxUtteranceMS) * time.Millisecond
-	session.Limits.IdleTimeout = time.Duration(cfg.STT.IdleTimeoutMS) * time.Millisecond
-	session.NoisePhrases = cfg.STT.NoisePhrases
-	return session
 }
 
 func sttRuntimeURLConfigFromAppConfig(cfg *config.Config, ttsBaseURL string) modulestt.RuntimeURLConfig {
