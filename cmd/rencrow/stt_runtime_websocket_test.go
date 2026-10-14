@@ -677,3 +677,21 @@ func TestSTTRelayStillAnswersAPingLongAfterItsLastWriteToTheClient(t *testing.T)
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+func TestSTTRelayStillCompletesWhenSTTSentASessionErrorThatKeptTheConnection(t *testing.T) {
+	// unknown_message_type keeps the stream open. A crash after it is a new failure
+	// the client has not been told about, so CORE says it.
+	fake := startFakeSTTServer(t)
+	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+	conn := fake.Accept()
+	client.ExpectReady()
+
+	conn.Send(`{"type":"error","code":"unknown_message_type","error":"x"}`)
+	client.Expect("error")
+	conn.Drop()
+
+	events := client.WaitClosed()
+	if len(events) != 1 || events[0]["code"] != "stt_failed" || events[0]["utterance_id"] != nil {
+		t.Fatalf("events = %v, want CORE's own session error after the crash", events)
+	}
+}

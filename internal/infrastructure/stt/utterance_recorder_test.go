@@ -421,3 +421,64 @@ func closeAndWait(t *testing.T, recorder *UtteranceRecorder) {
 		t.Fatalf("Close() = %v", err)
 	}
 }
+
+// A Run that was started must be closed before the process exits. At shutdown the
+// flush deadline tells the worker to stop, but a record that already started its
+// Run closes it with writes that are detached from that stop, and Close must
+// wait for them rather than leave the Run started.
+func TestUtteranceRecorderCloseWaitsForARunItAlreadyStarted(t *testing.T) {
+	c := taskmanagertest.NewClosure(t, taskmanagertest.ClosureOptions{})
+	recorder := newTestRecorder(t, c.Actions, c.Tasks, RecorderConfig{})
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	recorder.recordFn = func(ctx context.Context, rec UtteranceRecord) error {
+		recorder.activeRuns.Add(1) // what Record does once CreateAndStartRun succeeded
+		defer recorder.activeRuns.Add(-1)
+		close(started)
+		time.Sleep(1500 * time.Millisecond) // closing the Run takes longer than the usual grace
+		close(finished)
+		return nil
+	}
+	recorder.Submit(UtteranceRecord{RequestID: "r", UtteranceID: "u", Outcome: OutcomeFinal, TargetCalled: TargetCalledTrue})
+	<-started
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := recorder.Close(ctx)
+	select {
+	case <-finished:
+	default:
+		t.Fatal("Close returned while a started Run was still being closed; the process would exit and leave it started")
+	}
+	if err == nil {
+		t.Fatal("the flush deadline was missed and Close must say so")
+	}
+	if stats := recorder.Stats(); stats.Recorded != 1 {
+		t.Fatalf("the record that was being closed finished and counts as recorded: %+v", stats)
+	}
+}
+
+func TestUtteranceRecorderCloseDoesNotWaitLongWhenNoRunWasStarted(t *testing.T) {
+	c := taskmanagertest.NewClosure(t, taskmanagertest.ClosureOptions{})
+	recorder := newTestRecorder(t, c.Actions, c.Tasks, RecorderConfig{})
+	hold := make(chan struct{})
+	started := make(chan struct{})
+	recorder.recordFn = func(ctx context.Context, rec UtteranceRecord) error {
+		close(started) // stuck before any Run exists (an admission that never answers)
+		select {
+		case <-hold:
+		case <-ctx.Done():
+		}
+		return ctx.Err()
+	}
+	defer close(hold)
+	recorder.Submit(UtteranceRecord{RequestID: "r", UtteranceID: "u", Outcome: OutcomeFinal, TargetCalled: TargetCalledTrue})
+	<-started
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	_ = recorder.Close(ctx)
+	if elapsed := time.Since(began); elapsed > 3*time.Second {
+		t.Fatalf("Close took %v with no Run to close", elapsed)
+	}
+}

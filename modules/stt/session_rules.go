@@ -50,7 +50,8 @@ func BuildSessionInfoEvent(provider string) map[string]any {
 }
 
 // BuildReadyEvent announces the utterance protocol and the longest utterance
-// CORE accepts before it closes one and continues in a new utterance.
+// RenCrow_STT accepts (session_ready.limits.max_utterance_ms) before it closes
+// one and continues in a new utterance.
 func BuildReadyEvent(maxUtterance time.Duration) map[string]any {
 	event := map[string]any{
 		"type":        WebSocketEventTypeReady,

@@ -19,7 +19,7 @@ import (
 )
 
 // Failure knowledge: docs/調査/*Run開始後の早期失敗でRunを閉じない_FailureKnowledge.md and
-// docs/調査/20261014_*STT_CORE中継化*.md.
+// docs/調査/20261014_194143_STT_CORE中継化_設計とFailureKnowledge.md.
 //
 // Recording the utterances of /stt.
 //
@@ -133,6 +133,10 @@ const (
 	// After the flush deadline the worker is told to stop; Close waits this long
 	// for it to count what it could not finish.
 	recorderStopGrace = time.Second
+	// A record that already started its Run closes it with writes that outlast the
+	// stop (detached, up to StartedRunTerminalWriteTimeout each). Close waits for
+	// them, because a Run left started holds an execution slot until the next restart.
+	recorderRunCloseGrace = taskmanager.StartedRunTerminalWriteTimeout + time.Second
 )
 
 // ErrRecorderFlushIncomplete is returned by Close when the queue was not empty
@@ -184,6 +188,8 @@ type UtteranceRecorder struct {
 	done    chan struct{}
 
 	recorded, dropped, failed, missing atomic.Int64
+	// activeRuns is the number of Runs started and not yet closed by Record (0 or 1: one worker).
+	activeRuns atomic.Int32
 }
 
 // NewUtteranceRecorder starts a recorder with its single worker.
@@ -323,11 +329,30 @@ func (r *UtteranceRecorder) Close(ctx context.Context) error {
 	case <-ctx.Done():
 	}
 	r.stop()
-	select {
-	case <-r.done:
-	case <-time.After(recorderStopGrace):
-	}
+	r.awaitStop()
 	return ErrRecorderFlushIncomplete
+}
+
+// awaitStop waits for the worker after it was told to stop: briefly when it
+// holds no Run, and as long as the Run needs to be closed when it does.
+func (r *UtteranceRecorder) awaitStop() {
+	began := time.Now()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-r.done:
+			return
+		case <-tick.C:
+		}
+		waited := time.Since(began)
+		if r.activeRuns.Load() == 0 && waited >= recorderStopGrace {
+			return
+		}
+		if waited >= recorderRunCloseGrace {
+			return
+		}
+	}
 }
 
 // Record stores one utterance as a Task, a Run and an Action, all closed. It is
@@ -360,6 +385,8 @@ func (r *UtteranceRecorder) Record(ctx context.Context, rec UtteranceRecord) err
 	if err != nil {
 		return err
 	}
+	r.activeRuns.Add(1)
+	defer r.activeRuns.Add(-1)
 	// From here on the Run holds an execution slot, so every path that ends the
 	// call closes it: the failed Action creation here, the outcome below.
 	action, attempt, err := r.actions.CreateAction(ctx, actionmanager.CreateInput{

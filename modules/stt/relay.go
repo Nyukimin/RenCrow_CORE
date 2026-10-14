@@ -295,6 +295,22 @@ type EventDecision struct {
 	// Violation is set when STT broke the stream contract badly enough that the
 	// relay must be closed and its waiting utterances completed.
 	Violation string
+	// EndsSession is set on a session-level error that STT sends just before it
+	// closes the connection (see sessionEndingErrorCodes). The client has been told
+	// why the session ends, so CORE adds no session error of its own when the
+	// close follows.
+	EndsSession bool
+}
+
+// sessionEndingErrorCodes are the session-level error codes after which STT
+// closes the connection (contract 4.5 and 4.6). A session-level error that keeps
+// the connection (an unknown message type, a WAV frame in the middle) is not in
+// the list: a failure that follows it still needs CORE's own session error.
+var sessionEndingErrorCodes = map[string]bool{
+	"protocol_violation":    true,
+	"invalid_session_start": true,
+	"invalid_option":        true,
+	ErrorCodeSTTFailed:      true,
 }
 
 // RelayTable is the bookkeeping of one relayed connection. It is owned by the
@@ -444,7 +460,9 @@ func (t *RelayTable) handleTerminal(ev UpstreamEvent) EventDecision {
 	if ev.UtteranceID == "" {
 		// A session-level error, or the empty final of a stop with nothing to
 		// stop: no utterance to close, nothing to record.
-		return t.forward(ev, false)
+		decision := t.forward(ev, false)
+		decision.EndsSession = ev.Type == WebSocketEventTypeError && sessionEndingErrorCodes[jsonString(ev.payload, "code")]
+		return decision
 	}
 	if !t.waiting(ev.UtteranceID) {
 		return EventDecision{Drop: "a second terminal event, or one of an utterance that is not waiting"}

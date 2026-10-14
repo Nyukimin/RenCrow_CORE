@@ -91,7 +91,7 @@ func intField(v any) int {
 }
 
 // sanitizeUtteranceID keeps a client-chosen id only when it is short printable
-// text; otherwise CORE assigns one and reports it in speech_start.
+// text; otherwise RenCrow_STT assigns one and reports it in speech_start.
 func sanitizeUtteranceID(id string) string {
 	id = strings.TrimSpace(id)
 	if id == "" || len(id) > maxUtteranceIDLength {

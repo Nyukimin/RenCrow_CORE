@@ -479,3 +479,35 @@ func TestSplitStreamFramesKeepsEveryByteUnderTheLimit(t *testing.T) {
 		t.Fatalf("nothing to send: %d parts", len(got))
 	}
 }
+
+func TestRelayTableMarksTheSessionLevelErrorsThatEndTheSession(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  string
+		wantEnds bool
+	}{
+		{"protocol violation closes the connection", `{"type":"error","code":"protocol_violation","error":"x"}`, true},
+		{"invalid session start closes it", `{"type":"error","code":"invalid_session_start","error":"x"}`, true},
+		{"invalid option closes it", `{"type":"error","code":"invalid_option","error":"x"}`, true},
+		{"an internal failure closes it", `{"type":"error","code":"stt_failed","error":"x"}`, true},
+		// These keep the connection: a later upstream failure still needs CORE's own session error.
+		{"an unknown message type keeps the connection", `{"type":"error","code":"unknown_message_type","error":"x"}`, false},
+		{"a WAV frame in the middle keeps the connection", `{"type":"error","code":"unsupported_audio_format","error":"x"}`, false},
+		{"an error without a code does not say it ends anything", `{"type":"error","error":"x"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			table := newTestRelayTable()
+			got := table.HandleUpstream(upstream(t, 2, tc.payload), relayEpoch)
+			if !got.Forward || got.EndsSession != tc.wantEnds {
+				t.Fatalf("decision = %#v, want EndsSession=%t", got, tc.wantEnds)
+			}
+		})
+	}
+	table := newTestRelayTable()
+	table.HandleUpstream(upstream(t, 2, `{"type":"speech_start","utterance_id":"u1"}`), relayEpoch)
+	got := table.HandleUpstream(upstream(t, 3, `{"type":"error","utterance_id":"u1","code":"protocol_violation","error":"x","target_called":false}`), relayEpoch)
+	if got.EndsSession {
+		t.Fatalf("an utterance-level error does not end the session: %#v", got)
+	}
+}

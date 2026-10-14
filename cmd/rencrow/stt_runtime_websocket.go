@@ -247,8 +247,9 @@ type sttRelaySession struct {
 	seq        int64
 	clientDown bool
 	ended      bool
-	// sessionErrorRelayed is set once STT's own session-level error went to the
-	// client: it ended the session with a reason, so CORE adds none of its own.
+	// sessionErrorRelayed is set once a session-level error of STT's that precedes
+	// its closing the connection went to the client: the session ended with a
+	// reason, so CORE adds none of its own.
 	sessionErrorRelayed bool
 	lastInbound         time.Time
 	lastPing            time.Time
@@ -408,7 +409,9 @@ func (s *sttRelaySession) onClientControl(data []byte) {
 		s.send(decision.ClientEvent, "")
 	}
 	if decision.Upstream == nil {
-		if decision.ClientEvent == nil {
+		// A start without an utterance id is absorbed on purpose (PORTAL sends one
+		// per connection); any other control that goes nowhere is worth a line.
+		if decision.ClientEvent == nil && control.Type != "start" {
 			s.cfg.Logf("[STT][relay] dropped the control message %q: it is not relayed", control.Type)
 		}
 		return
@@ -472,7 +475,7 @@ func (s *sttRelaySession) onUpstream(item sttUpstreamItem) {
 		s.failUpstream(decision.Violation)
 	case decision.Forward:
 		s.send(decision.Event, decision.UtteranceID)
-		if decision.UtteranceID == "" && event.Type == modulestt.WebSocketEventTypeError {
+		if decision.EndsSession {
 			s.sessionErrorRelayed = true
 		}
 		s.traceUpstream(event.Type, decision.UtteranceID, now)
