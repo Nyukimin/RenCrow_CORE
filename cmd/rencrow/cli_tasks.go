@@ -18,6 +18,14 @@ import (
 )
 
 func cmdTasks() {
+	// A request for help, or no subcommand at all, is answered before the config
+	// file or any store is opened.
+	if status, done := tasksPreflight(os.Args[2:], os.Stdout, os.Stderr); done {
+		if status != 0 {
+			os.Exit(status)
+		}
+		return
+	}
 	if isTasksReapSubcommand(os.Args[2:]) {
 		// reap-queued opens the store itself: a read-only handle for the dry-run,
 		// the writer for --apply.
@@ -61,12 +69,14 @@ type taskCommandStore interface {
 }
 
 func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, errOut io.Writer) int {
+	// Help and a missing subcommand never reach the store. The check also makes
+	// args[0] below safe: it is not empty once --compact is removed.
+	if status, done := tasksPreflight(args, out, errOut); done {
+		return status
+	}
 	compact := hasFlag(args, "--compact")
 	args = removeTaskFlag(args, "--compact")
-	subcommand := "list"
-	if len(args) > 0 {
-		subcommand = strings.ToLower(strings.TrimSpace(args[0]))
-	}
+	subcommand := strings.ToLower(strings.TrimSpace(args[0]))
 	pretty := !compact
 	switch subcommand {
 	case "list":
@@ -93,7 +103,7 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 		}
 		return 0
 	case "show":
-		taskID, err := parseTaskIDArg(args, 1, "usage: rencrow tasks show <task_id>")
+		taskID, err := parseTaskIDArg(args, 1, tasksUsageShow)
 		if err != nil {
 			fmt.Fprintln(errOut, err)
 			return 1
@@ -130,10 +140,10 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 	case "queue", "start", "wait", "block", "resume", "succeed", "fail", "cancel", "supersede":
 		return runTaskTransition(subcommand, args[1:], manager, out, errOut, pretty)
 	case "status":
-		taskID, err := parseTaskIDArg(args, 1, "usage: rencrow tasks status <task_id> <status> [--summary text] [--reason text]")
+		taskID, err := parseTaskIDArg(args, 1, tasksUsageStatus)
 		if err != nil || len(args) < 3 {
 			if err == nil {
-				err = fmt.Errorf("usage: rencrow tasks status <task_id> <status> [--summary text] [--reason text]")
+				err = errors.New(tasksUsageStatus)
 			}
 			fmt.Fprintln(errOut, err)
 			return 1
@@ -167,7 +177,7 @@ func runTasksCommand(args []string, manager taskCommandStore, out io.Writer, err
 		return 0
 	default:
 		fmt.Fprintf(errOut, "unknown tasks subcommand: %s\n", subcommand)
-		fmt.Fprintln(errOut, "usage: rencrow tasks [list|show|create|queue|start|wait|block|resume|succeed|fail|cancel|supersede|status|notifications|history|verify|rebuild-index|reap-queued]")
+		fmt.Fprintln(errOut, tasksUsageSummary())
 		return 1
 	}
 }

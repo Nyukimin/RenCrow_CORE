@@ -32,7 +32,8 @@ import (
 // is never selected. The output is one JSON document of counts, digests and
 // operation IDs; no title, context or Task ID is printed. Exit status:
 //
-//	0  candidates were found (dry-run) or handled (apply)
+//	0  candidates were found (dry-run) or handled (apply); also --help / -h,
+//	   which prints the usage and reads and writes nothing
 //	1  failure (the JSON "error" is a class; the reason is on stderr)
 //	2  invalid command line
 //	3  no candidates
@@ -118,11 +119,14 @@ func parseTasksReapArgs(args []string) (tasksReapOptions, error) {
 // exit status. The JSON document goes to out; reasons go to errOut.
 func runTasksReapCommand(args []string, root string, out io.Writer, errOut io.Writer) int {
 	options, err := parseTasksReapArgs(args)
+	if errors.Is(err, flag.ErrHelp) {
+		// -h, -help and --help are a request for the usage, not a bad command line.
+		fmt.Fprintln(out, tasksUsageReap)
+		return reapExitOK
+	}
 	if err != nil {
-		if !errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(errOut, err)
-		}
-		fmt.Fprintln(errOut, "usage: rencrow tasks reap-queued --created-before <RFC3339> [--min-age 24h] [--batch-size 2000] [--apply] [--compact]")
+		fmt.Fprintln(errOut, err)
+		fmt.Fprintln(errOut, tasksUsageReap)
 		return reapExitUsage
 	}
 	fail := func(class string, info *tasksReapStoreInfo, report *taskmanager.ReapReport, format string, a ...any) int {

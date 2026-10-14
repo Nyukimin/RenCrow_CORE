@@ -41,6 +41,13 @@ import (
 //	        stopped. Without --apply it only says what it would do.
 
 func cmdActions() {
+	// A request for help is answered before the config file or any store is opened.
+	if status, done := actionsPreflight(os.Args[2:], os.Stdout); done {
+		if status != 0 {
+			os.Exit(status)
+		}
+		return
+	}
 	cfg, err := config.LoadConfig(getConfigPath())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
@@ -63,7 +70,10 @@ func defaultActionStorePath(workspaceDir string) string {
 // (and, for --check-runs, the Task store at taskRoot) and returns the exit
 // status. Output is JSON on out; the reason for a failure goes to errOut.
 func runActionsCommand(args []string, actionRoot, taskRoot string, out io.Writer, errOut io.Writer) int {
-	const usage = "usage: rencrow actions verify [--check-runs] [--compact] | layout show | layout concat [--apply]"
+	const usage = actionsUsageSummary
+	if status, done := actionsPreflight(args, out); done {
+		return status
+	}
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, usage)
 		return 1
@@ -136,7 +146,7 @@ func runActionsCommand(args []string, actionRoot, taskRoot string, out io.Writer
 
 // runActionLayoutCommand runs `rencrow actions layout <show|concat>`.
 func runActionLayoutCommand(ctx context.Context, args []string, root string, out io.Writer, errOut io.Writer) int {
-	const usage = "usage: rencrow actions layout show [--compact] | rencrow actions layout concat [--apply] [--compact]"
+	const usage = actionsUsageLayout
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, usage)
 		return 1

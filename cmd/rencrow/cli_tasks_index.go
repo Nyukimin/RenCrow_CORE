@@ -61,7 +61,7 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 	pretty := !hasFlag(args, "--compact")
 	args = removeTaskFlag(args, "--compact")
 	if len(args) == 0 {
-		fmt.Fprintln(errOut, "usage: rencrow tasks [history <task_id>|verify|rebuild-index|layout show|layout concat [--apply]]")
+		fmt.Fprintln(errOut, tasksUsageSummary())
 		return 1
 	}
 	if strings.TrimSpace(root) == "" {
@@ -97,7 +97,7 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 	case "layout":
 		return runTaskLayoutCommand(ctx, args[1:], root, pretty, out, errOut)
 	case "history":
-		taskID, err := parseTaskIDArg(args, 1, "usage: rencrow tasks history <task_id>")
+		taskID, err := parseTaskIDArg(args, 1, tasksUsageHistory)
 		if err != nil {
 			fmt.Fprintln(errOut, err)
 			return 1
@@ -126,7 +126,7 @@ func runTaskStorageCommand(args []string, root string, out io.Writer, errOut io.
 
 // runTaskLayoutCommand runs `rencrow tasks layout <show|concat>`.
 func runTaskLayoutCommand(ctx context.Context, args []string, root string, pretty bool, out io.Writer, errOut io.Writer) int {
-	usage := "usage: rencrow tasks layout show | rencrow tasks layout concat [--apply]"
+	usage := tasksUsageLayout
 	if len(args) == 0 {
 		fmt.Fprintln(errOut, usage)
 		return 1
