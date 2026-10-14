@@ -193,6 +193,8 @@ recipient=mio
 
 依存を含む総合状態は従来どおり`GET /health`、受付可能状態は`GET /ready`を使います。外部LLM停止を理由にCOREを再起動してはいけません。
 
+`GET /health`の`checks`にはAction storeの`action_store`も出ます（layout、segment数と書込み先、snapshotの件数・構築時間・作り直しの回数と理由。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)）。このcheckの`status`は常に`ok`で、`/ready`を落としません。backupの再開後の確認や起動確認で`/health/ready`が`ready=true`にならない原因を、このcheckに求めないでください。`details.attention`が空でなければ、`rencrow actions verify`をコピーに対して実行します。
+
 ## 事故台帳
 
 事故台帳は`~/.rencrow/resilience/incidents/<signature>/`に置きます。

@@ -40,7 +40,7 @@ path、Config、secret、validator内部errorを開示しない。
 | --- | --- |
 | `GET /health/live` | COREのHTTPイベントループ自身のliveness。外部依存を確認しない |
 | `GET /health/ready` | CORE capabilityのreadiness。未ready時は503と`status=unavailable`を返す |
-| `GET /health` | COREと設定済み依存serviceの総合health |
+| `GET /health` | COREと設定済み依存serviceの総合health。`checks[]`のcheckは任意の`details`（件数・名前・フラグ。IDや本文を含まない）を持てる。Action storeを開いたprocessは名前`action_store`のcheckを返す（`status`は常に`ok`で`/health/ready`を落とさない。[設定リファレンス](05_設定リファレンス.md#action-storeのsnapshotaction_store)） |
 | `GET /ready` | request受付可否 |
 | `POST /viewer/send`, `GET /viewer/events` | PORTAL／CMD等のmessage・添付送信とSSE event購読。購読開始位置は「Viewer event streamの購読開始位置」に従う（`?from=now`は接続時点以降のliveだけ） |
 | `POST /v1/agent/ops` | loopback・Bearer認証済みRenCrow_CMDからShiro／Worker OPSを実行、または同じnative OPS Taskの明示Resumeを要求 |

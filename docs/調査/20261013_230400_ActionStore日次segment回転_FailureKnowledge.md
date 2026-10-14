@@ -3,7 +3,8 @@
 記録日: 2026-10-13 (JST)。対象: `RenCrow_CORE` のAction store（`<workspace>/state/actions/`）。設計案は
 `20261013_115300_ActionStore全件読み_設計案.md`（実装単位IU-5。実装commitと仕様との差は7章・7.3、実測は7.4）。
 task storeの同種の記録は `20261012_192124_TaskStore日次segment回転_FailureKnowledge.md`。本書はIU-5で確定した不変条件と、
-その強制・試験を残す。health、Check Plan、Manifest（IU-6）は含まない。
+その強制・試験を残す。本書の上半分（ARC-1〜9）は IU-5 の範囲で、health、Check Plan、Manifest（IU-6）の不変条件は
+末尾の「IU-6: 運用の不変条件」に分けて書く。
 
 ## Failure
 
@@ -66,3 +67,66 @@ segmentごとの不変fileに、次のsegmentを作る前に書く。そうす�
   `go vet`とcross buildまでで、実機未検証。
 - 旧版の`rencrow actions verify`は回転後のstoreのsegment 0しか読まず`ok`と報告する。
 - 本番での`run`による実起動のM1〜M5は未予行（`NewJSONLStoreWithOptions`をharnessで本番コピーに対して実行した範囲）。
+
+## IU-6: 運用の不変条件（health、Check Plan、Manifest）
+
+記録日: 2026-10-14 (JST)。設計案の実装単位IU-6（実装commitと仕様との差は設計案7.6）。ARC-1〜9を、稼働中のprocessから見える形にし、
+試験の経路を本番の開き方に揃える。
+
+### Failure
+
+IU-3〜5が本番に入った後も、(1) 稼働中のprocessが自分のstoreの状態（layout、segment、snapshotの作り直し）を外から見られる場所が無く、
+作り直しや閉じたsegmentの改変は、ログ行を探すか`verify`を実行するまで分からなかった。(2) 本番はsnapshotつき・回転つきでstoreを開くが、
+Canonical Test Planの`go test ./...`は既定のタグで走るため、storeを使う側のpackage（Manager、回復、Viewer、Tool実行）の試験は、
+snapshotを使わない旧い開き方でだけ通っていた。ビルドタグ`actionindexdefault`でsnapshotを既定にする仕組みは、手元で実行しただけで、
+どのplanにもCIにも載っていなかった。
+
+### Problem
+
+「storeの状態が見えない」「試験が本番と別の経路を通る」は、どちらも、実装が正しいことを示す証拠が本番の経路と食い違うという同じ問題である。
+healthは、見えるようにするほど、`/ready`という別の契約（backupの再開確認、core-verify）に影響を持ち込む危険がある。
+
+### Cause
+
+1. 旗（`action_store.index.enabled`）の既定が`false`のまま、本番だけが`true`で動く構成にした。試験の既定は旗の既定に従う。
+2. `/health`の`IsReady`は「全checkが`ok`」で、`degraded`は即`/ready`の503になる。checkの重さ（情報か、受付不能か）を区別する場所が無い。
+
+### Lesson
+
+- 旗を本番だけ変えるなら、その旗でstoreを使う側の試験も走らせる経路を、旗を変えたのと同じ変更単位で用意する。
+- 状態を見せるcheckは、readinessの意味を変えてはいけない。情報として見せる事実と、受付不能の事実を、別の道具で扱う。
+- 試験の経路を揃える変更は、「揃っていること」を保つ試験（計画が対象を全て含むか）まで入れる。含めるpackageの一覧は放っておくと古くなる。
+
+### Invariant / Enforcement / Tests
+
+| ID | Invariant | Enforcement | Tests |
+| --- | --- | --- | --- |
+| HLT-1 | `/health`の`action_store`は、件数・大きさ・segment名・固定の語だけを返す。ID、recordの本文、path、errorの文を出さない | `StoreHealth`の文字列は`Layout`・`CurrentSegment`・`LastRebuildReason`だけ（後者は固定の4語）。読めない理由は`InspectFailed`の真偽に落とし、errorの文を持たない。checkはkeyの固定されたmapを組む | `TestHealthCarriesNoIDAndNoRecordText`、`TestActionStoreCheckOnARealStoreCarriesNoIDNoTextNoPath`（実storeのHTTP応答に、各ID・distinctな名前・storeのpathが無い） |
+| HLT-2 | `action_store`のstatusは常に`ok`。`dirty`・`broken`・作り直し・記録との不一致・layoutが読めない、のどれでも`/health/ready`・`/ready`を落とさない | `ActionStoreCheck.Run`はstatusを固定で返す（事実は`details`と`attention`）。変えるには、先に`HealthService`で「readinessに効くcheck」と「効かないcheck」を分ける変更が要る | `TestActionStoreCheckNeverTakesTheProcessOutOfReady`（7つの状態を`IsReady`に通す）、`TestActionStoreCheckNamesWhatAPersonShouldLookAt` |
+| HLT-3 | healthの読みはOS lockを取らず、何も書かない。書き手を待たない | `Health()`はsnapshotの読み取りlockと`InspectActionLayout`（stat、`LAYOUT` / `SEALED`の小さな読み）だけを使う。logの内容を読まず、hashもしない | `TestHealthDoesNotWaitForAWriterAndWritesNothing`（別handleがOS lockを保持している間に5秒以内に返り、storeのfileの内容が変わらない） |
+| HLT-4 | 記録との照合は閉じたsegmentだけで、書込み先のsegmentは数えない。外から触られた閉じたsegment（segment 0を含む）は`record_mismatches`に出る。最新のsegmentが封印済みで後続が無い状態（回転が途中で止まった。書込みが失敗する）は別に`current_segment_sealed`に出る | `InspectActionLayout`が書込み先（記録の無い最新）を`open`とし、それ以外を記録と照合する | `TestHealthOfARotatedStoreNamesTheSegmentsAndChecksTheRecords`（書込み先が伸びても不一致0）、`TestHealthSaysWhenTheSegmentWritesGoToIsAlreadySealed`（封印済みで後続の無い最新segmentを`current_segment_sealed`に出し、不一致には数えない）、`TestHealthSeesAClosedSegmentThatDoesNotMatchItsRecord`、`TestHealthSeesSegmentZeroThatDoesNotMatchLayout`、`TestHealthReportsAnUnreadableLayoutAsInspectFailed` |
+| HLT-5 | `/health`が見るstoreは、Action ownerが書き込むstoreそのもの | `newRuntimeActionOwner`がmanagerとstoreを一組で返し、`Dependencies.actionStoreHealth`はそのstore。共有するときは組ごと共有する | `TestRuntimeActionOwnerCarriesTheStoreItsManagerUses`、`TestHealthChecksOfTheRuntimeIncludeTheActionStoreOnlyWhenItIsOpen`、`TestBuildHealthServiceRunsTheChecksItIsGiven` |
+| CHK-1 | storeを使う側のpackageの試験は、本番と同じsnapshotつきの開き方でも走る | Canonical Test Planの`action-store-snapshot-default`が`go test -tags actionindexdefault`を、`persistence/action`をimportするpackage全てに対して実行する。import元の一覧は計画の`arguments`と`impact.packages`の両方が持つ | `TestCanonicalTestPlanRunsTheActionStoreConsumersWithTheSnapshotOn`（import元が計画に無ければ失敗する。1つ外すと失敗することを確かめた） |
+| CHK-2 | 上のstepで失敗するpackageを、計画から外して通さない。外すなら、原因をFailure Knowledgeに`Failure`として記録し、直す単位を切る | CHK-1の試験が、import元の全てを計画に含めることを要求する（外すとCHK-1が失敗する）。本書がタグ付きの失敗の事実を残す（下の「確認した事実」） | 同上 |
+| OPS-1 | layout v2のstoreは、旗に関わらずsnapshotつきで開く。旗を外すことは戻し方ではない（戻し方は`layout concat`かbinaryを戻すこと） | `newJSONLStore`が`layout.v2`のとき`Index=true`にする。docs/05に、旗を外すとruntimeがstoreを共有せず2つ開く害（snapshotが2つ、片方のcommitのたびにもう片方が作り直す）を明記 | `TestAStoreOnLayoutV2IsOpenedWithTheSnapshotWhateverTheOptionsSay`。**害そのものは未強制**（旗の削除はIU-7） |
+| MNF-1 | Durable Store Manifestには、物理配置が所有moduleのsubtreeの外にあるstoreを登録しない。Action storeのbackup範囲はManifestではなくBKP-1〜7が強制する | `ValidateManifest`が`production_root_template`を所有moduleのsubtreeと等しいことに限る。backupは`rencrow config backup-values`（`defaultActionStorePath`）から導く | `TestValidateManifestRejectsARootOutsideTheOwnerSubtree`（`workspace_dir`配下の形の root を拒否する）、BKP-1〜7の試験 |
+
+### 確認した事実（タグ付きの試験。2026-10-14）
+
+`-tags actionindexdefault`で、`persistence/action`をimportする17 packageを、サンドボックスの外（loopback可）で実行した。`cmd/rencrow`は
+タグあり・なしのどちらも通った。`internal/application/sandbox`と`internal/infrastructure/security`の一部は、**タグの有無に関わらず**
+開発機（macOS）で失敗する: 試験の一時directoryが`/private/var/...`・`/private/tmp/...`の下になり、sandbox guardが`private`を含むpathを
+拒否するため（`safeSandboxPathName`）。LinuxのCIでは起きない [推定: CIのmacOS runnerでの結果は未確認]。本件の原因ではなく、
+Action storeとは無関係な既存の差である。
+
+### 残るリスク・未確認
+
+- **healthの照合は、segmentの数に線形**（segmentごとにstat 2回と`SEALED`の読み。logの内容は読まず、hashもしない）。日ごとに1つ増える。
+  開発機（macOS、APFS、`Health()`をp50で50回）で、11 segment 約0.9ms、101 segment 約6.4ms、401 segment 約25.5ms（最大30ms）。約1年で25ms、
+  5年で約130ms [推定。線形に延長]。`/health`の期限（3秒）には遠く、checkは他のcheckと並行に走る。外部のprobeが頻繁に叩く構成になったら、
+  閉じたsegmentの照合結果を短い期間キャッシュする（閉じたsegmentは増えるだけで書き換わらない）。**この上限を強制する試験は無い**（測定のみ）。
+- `rebuilds`・`last_rebuild_*`は**processの再起動で消える**。「14日間、作り直し0回」のような証拠はログ（`[ActionStore] WARN index rebuilt`）の集計で取る。
+- Windowsでの実行は未検証のまま。`go-regression`も新しいstepも`platform`がlinux・darwinで、Windowsは`go vet`とcross buildだけ。0444・renameの
+  Windows固有の挙動の保証は主張しない。
+- Task storeのhealth（仕様案12章の`task_store`）は未実装。本書のcheckの形（`Details`、常に`ok`）に合わせる場合は、同じ理由でreadinessを落とさない。
+- 旗を外した（`index.enabled=false`）layout v2のstoreの害（共有されず、snapshotが2つになって作り直しが常態化）は、運用では起こさない約束と文書だけで守っている（OPS-1）。
