@@ -444,6 +444,33 @@
       "timeoutSeconds": 300
     },
     {
+      "name": "storage-backup-stores",
+      "workingDirectory": ".",
+      "filePath": "bash",
+      "arguments": [
+        "scripts/tests/storage_backup_stores_contract_test.sh"
+      ],
+      "testFiles": [
+        "scripts/tests/storage_backup_stores_contract_test.sh"
+      ],
+      "tier": "heavy",
+      "impact": {
+        "paths": [
+          "scripts/tests/**",
+          "scripts/rencrow-storage-backup",
+          "scripts/rencrow-storage-restore-check",
+          "cmd/rencrow/**"
+        ],
+        "packages": [],
+        "globalPaths": []
+      },
+      "resourceLocks": [
+        "storage",
+        "systemd"
+      ],
+      "timeoutSeconds": 900
+    },
+    {
       "name": "storage-configure",
       "workingDirectory": ".",
       "filePath": "bash",

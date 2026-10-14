@@ -91,8 +91,8 @@ assert_contains "${backup_runner}" \
   '! mountpoint -q "${mount_target}"' \
   "unmounted paths must remain rejected"
 assert_contains "${backup_runner}" \
-  'if (( ${#backup_config[@]} != 21 )); then' \
-  "backup-values must contain the raw source cohort field"
+  'if (( ${#backup_config[@]} != 24 )); then' \
+  "backup-values must contain the raw source cohort field and the workspace store roots"
 assert_contains "${backup_runner}" \
   'core_port=${backup_config[20]}' \
   "backup must derive CORE readiness port from canonical config"

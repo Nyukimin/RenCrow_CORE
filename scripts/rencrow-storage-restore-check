@@ -20,10 +20,15 @@ esac
 
 python_bin=${RENCROW_TEST_PYTHON:-python3}
 sqlite_integrity_timeout=${RENCROW_SQLITE_INTEGRITY_TIMEOUT_SEC:-600}
+store_verify_timeout=${RENCROW_STORE_VERIFY_TIMEOUT_SEC:-900}
 umask 077
 
 if [[ ! ${sqlite_integrity_timeout} =~ ^[1-9][0-9]*$ ]] || (( sqlite_integrity_timeout > 3600 )); then
   echo "[NG] SQLite integrity timeout must be 1..3600 seconds" >&2
+  exit 2
+fi
+if [[ ! ${store_verify_timeout} =~ ^[1-9][0-9]*$ ]] || (( store_verify_timeout > 3600 )); then
+  echo "[NG] store verification timeout must be 1..3600 seconds" >&2
   exit 2
 fi
 
@@ -59,6 +64,9 @@ conversation_archive_relative=$(manifest_value conversation_archive_relative)
 redis_export=$(manifest_value redis_export)
 qdrant_export=$(manifest_value qdrant_export)
 qdrant_sha256=$(manifest_value qdrant_sha256)
+workspace_stores_archive=$(manifest_value workspace_stores_archive)
+task_store_relative=$(manifest_value task_store_relative)
+action_store_relative=$(manifest_value action_store_relative)
 
 if [[ ( ${format_version} != 2 && ${format_version} != 3 && ${format_version} != 4 ) || -z ${core_name} || ${core_name} == */* ]]; then
   echo "[NG] unsupported or unsafe snapshot manifest" >&2
@@ -102,6 +110,56 @@ for raw in sys.stdin:
         raise SystemExit("unsafe archive path: " + name)
 '
 
+# A cohort that names a store archive must carry it, cover it with SHA256SUMS
+# (sha256sum -c above only checks what the list names) and keep it a plain archive
+# of two directories. A cohort made before the stores were backed up names none.
+workspace_stores_path=
+if [[ -n ${workspace_stores_archive} ]]; then
+  if [[ ${workspace_stores_archive} != workspace-stores.tar.gz ]]; then
+    echo "[NG] unsupported workspace store archive name" >&2
+    exit 1
+  fi
+  workspace_stores_path=${snapshot_dir}/${workspace_stores_archive}
+  if [[ ! -f ${workspace_stores_path} ]]; then
+    echo "[NG] required snapshot file is missing: ${workspace_stores_path}" >&2
+    exit 1
+  fi
+  if ! awk -v name="${workspace_stores_archive}" '{file = $2; sub(/^\*/, "", file); if (file == name) found = 1} END {exit found ? 0 : 1}' "${checksums}"; then
+    echo "[NG] workspace store archive is not covered by SHA256SUMS" >&2
+    exit 1
+  fi
+  for relative in "${task_store_relative}" "${action_store_relative}"; do
+    if ! safe_relative "${relative}" || [[ ${relative} == . ]]; then
+      echo "[NG] unsafe workspace store directory in manifest" >&2
+      exit 1
+    fi
+  done
+  if [[ ${task_store_relative} == "${action_store_relative}" || ${task_store_relative} == "${action_store_relative}"/* || \
+        ${action_store_relative} == "${task_store_relative}"/* ]]; then
+    echo "[NG] workspace store directories overlap in manifest" >&2
+    exit 1
+  fi
+  # The same binary reads the config in the runner; the verification below needs
+  # it, so a missing one fails here, before any archive is extracted.
+  stores_binary=${RENCROW_BINARY:-${HOME}/.local/bin/rencrow}
+  if [[ ! -x ${stores_binary} ]]; then
+    echo "[NG] rencrow binary for workspace store verification is not executable" >&2
+    exit 1
+  fi
+  gzip -t "${workspace_stores_path}"
+  tar -tzf "${workspace_stores_path}" | "${python_bin}" -c '
+import sys
+for raw in sys.stdin:
+    name = raw.strip()
+    parts = [part for part in name.split("/") if part not in ("", ".")]
+    if name.startswith("/") or ".." in parts:
+        raise SystemExit("unsafe archive path: " + name)
+'
+elif [[ -n ${task_store_relative} || -n ${action_store_relative} ]]; then
+  echo "[NG] incomplete workspace store keys in manifest" >&2
+  exit 1
+fi
+
 restore_root=$(mktemp -d "${snapshot_dir}/.restore.XXXXXX")
 sqlite_supervision_marker=${restore_root}/.sqlite-integrity-supervision-active
 cleanup() {
@@ -112,6 +170,8 @@ cleanup() {
       echo "[NG] owned SQLite worker teardown is unconfirmed; restore scratch was retained at ${restore_root}" >&2
       restore_root=
     else
+      # The extracted stores keep their read-only frozen segments.
+      chmod -R u+w "${restore_root}" 2>/dev/null || true
       rm -rf -- "${restore_root}"
     fi
   fi
@@ -1128,6 +1188,101 @@ try:
 except (sqlite3.Error, OSError, TypeError, ValueError):
     fail()
 PY
+fi
+
+native_path() {
+  case ${OSTYPE:-} in
+    msys*|cygwin*|mingw*) cygpath -m "$1" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+# Runs one owner CLI (rencrow tasks verify, rencrow actions verify) on the copy
+# that was extracted from the cohort. The CLI reads workspace_dir from a config
+# that points at the scratch workspace, HOME and the working directory are the
+# scratch too, and a deadline bounds the run without GNU timeout. Its report
+# names record IDs when something is wrong, so only counts are printed.
+run_store_verifier() {
+  local kind=$1 label=$2
+  shift 2
+  local report=${restore_root}/stores-${kind}.json
+  local status
+  set +e
+  HOME="${stores_home}" USERPROFILE="$(native_path "${stores_home}")" \
+    RENCROW_CONFIG="$(native_path "${stores_config}")" \
+    "${python_bin}" -I - "${store_verify_timeout}" "${report}" "${stores_home}" "${stores_binary}" "$@" <<'PY'
+import subprocess
+import sys
+
+timeout, report, cwd, *command = sys.argv[1:]
+try:
+    with open(report, "wb") as out, open(report + ".err", "wb") as err:
+        completed = subprocess.run(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out, stderr=err, timeout=int(timeout), check=False)
+except subprocess.TimeoutExpired:
+    open(report + ".timeout", "w").close()
+    raise SystemExit(1)
+except OSError:
+    raise SystemExit(126)
+raise SystemExit(completed.returncode)
+PY
+  status=$?
+  set -e
+  if [[ -e ${report}.timeout ]]; then
+    echo "[NG] store verification timed out after ${store_verify_timeout}s (${label})" >&2
+    exit 1
+  fi
+  if (( status != 0 )); then
+    echo "[NG] ${label} verification failed (exit ${status}); the report names record IDs and is not printed, run the verifier on a copy of the store for the details" >&2
+    "${python_bin}" -I - "${report}" <<'PY' >&2 || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = json.load(handle)
+    print("[INFO] mismatches=%d" % int(value["mismatches"]))
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+PY
+    exit 1
+  fi
+  "${python_bin}" -I - "${report}" "${label}" <<'PY' || { echo "[NG] ${label} verification report is not valid" >&2; exit 1; }
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    value = json.load(handle)
+if value.get("ok") is not True or value.get("mismatches") != 0:
+    raise SystemExit(1)
+parts = []
+for key in ("layout", "segments", "tasks", "runs", "actions", "attempts", "sidecar", "mismatches"):
+    item = value.get(key)
+    if isinstance(item, bool) or not isinstance(item, (int, str)) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", str(item)):
+        continue
+    parts.append("%s=%s" % (key, item))
+print("[OK] %s verified: %s" % (sys.argv[2], " ".join(parts)))
+PY
+}
+
+if [[ -n ${workspace_stores_archive} ]]; then
+  stores_workspace=${restore_root}/stores-workspace
+  stores_home=${restore_root}/stores-home
+  stores_config=${restore_root}/stores-config.yaml
+  mkdir -p "${stores_workspace}" "${stores_home}"
+  tar -xzf "${workspace_stores_path}" -C "${stores_workspace}"
+  for relative in "${task_store_relative}" "${action_store_relative}"; do
+    if [[ ! -d ${stores_workspace}/${relative} ]]; then
+      echo "[NG] workspace store is missing from the archive: ${relative}" >&2
+      exit 1
+    fi
+  done
+  printf 'workspace_dir: "%s"\nserver:\n  port: 18790\n' "$(native_path "${stores_workspace}")" > "${stores_config}"
+  run_store_verifier tasks "Task store" tasks verify --compact
+  run_store_verifier actions "Action store" actions verify --compact
+  echo "[OK] workspace stores verified"
+else
+  echo "[INFO] snapshot has no workspace stores (made before the Task and Action stores were backed up)"
 fi
 
 if [[ ${redis_export} != disabled ]]; then

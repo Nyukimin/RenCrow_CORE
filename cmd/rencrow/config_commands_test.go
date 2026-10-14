@@ -1,7 +1,9 @@
 package main
 
 import (
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -41,6 +43,7 @@ func TestBackupConfigValues(t *testing.T) {
 		ConversationArchive: "/state/memory_archive.db",
 	}
 	server := config.ServerConfig{Port: 18790}
+	workspaceDir := filepath.Join(string(filepath.Separator), "workspace")
 	want := []string{
 		"/state",
 		"/backup/snapshots",
@@ -63,8 +66,42 @@ func TestBackupConfigValues(t *testing.T) {
 		"/state/l1_memory.db",
 		"/state/memory_archive.db",
 		"18790",
+		// The Task store and the Action store live under workspace_dir, at the
+		// places the runtime and the CLIs open them (not under backup.core_source).
+		workspaceDir,
+		defaultTaskStorePath(workspaceDir),
+		defaultActionStorePath(workspaceDir),
 	}
-	if got := backupConfigValues(backup, memory, databases, server); !reflect.DeepEqual(got, want) {
+	if got := backupConfigValues(backup, memory, databases, server, workspaceDir); !reflect.DeepEqual(got, want) {
 		t.Fatalf("backupConfigValues() = %#v, want %#v", got, want)
+	}
+}
+
+// The backup runner reads these three values by position and archives the two
+// stores as a mirror of their place under workspace_dir, so the stores must stay
+// inside it, one directory each.
+func TestBackupConfigValuesPlaceBothStoresUnderWorkspaceDir(t *testing.T) {
+	workspaceDir := filepath.Join(string(filepath.Separator), "srv", "workspace")
+	values := backupConfigValues(config.BackupConfig{}, config.MemoryStorageConfig{}, config.DatabasePathsConfig{}, config.ServerConfig{}, workspaceDir)
+	if len(values) != 24 {
+		t.Fatalf("backup-values has %d values, the backup runner expects 24", len(values))
+	}
+	for _, store := range values[22:] {
+		relative, err := filepath.Rel(values[21], store)
+		if err != nil || relative == "." || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			t.Fatalf("store %q is not strictly inside workspace_dir %q", store, values[21])
+		}
+	}
+	if values[22] == values[23] {
+		t.Fatalf("the Task store and the Action store share a root: %q", values[22])
+	}
+}
+
+// An unset workspace_dir has no stores: the values stay empty so that the
+// backup runner stops before it touches CORE, instead of archiving a guess.
+func TestBackupConfigValuesLeaveStoresEmptyWithoutWorkspaceDir(t *testing.T) {
+	values := backupConfigValues(config.BackupConfig{}, config.MemoryStorageConfig{}, config.DatabasePathsConfig{}, config.ServerConfig{}, "")
+	if len(values) != 24 || values[21] != "" || values[22] != "" || values[23] != "" {
+		t.Fatalf("workspace values = %#v, want three empty values", values[21:])
 	}
 }

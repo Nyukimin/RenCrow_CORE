@@ -28,7 +28,7 @@
 7. writer停止後の最終disk snapshotとprivate HOME cohortのいずれかがない。
 8. data媒体とbackup媒体のlabel／UUIDを一意に対応させられない。
 
-2026-10-03 19:58:07 UTCに完了した定時backupは、`Result=success`、`ExecMainStatus=0`、`inactive/dead`、snapshot `/srv/rencrow/backup/snapshots/core/recent/20261004-030243`の検証まで確認済みである。ただしHOMEのTask等は含まないため、これだけで移動を開始しない。
+2026-10-03 19:58:07 UTCに完了した定時backupは、`Result=success`、`ExecMainStatus=0`、`inactive/dead`、snapshot `/srv/rencrow/backup/snapshots/core/recent/20261004-030243`の検証まで確認済みである。ただしHOMEのTask等は含まないため、これだけで移動を開始しない。（2026-10-14追記: この定時backupは、Task store（`<workspace_dir>/tasks/`）とAction store（`<workspace_dir>/state/actions/`）を別archive`workspace-stores.tar.gz`として含めるようになった。ただし他のHOME root（`~/.rencrow/config`、`workspace/logs`、credential等）は依然として含まない。配備後の最初の成功backupを確かめるまでは、上の記述どおりTask storeの写しは別に取る。）
 
 2026-10-03 22:08 UTCにwriter停止下の最終cohortを`/home/<user>/RenCrow/RenCrow_CORE/Tmp/test-runtime/_storage-e2e/cohort-20261004/db-core`へ固定した。`cold-finalization-receipt.json`はsource停止前後metadata一致・final rsync RC 0・user-visible holderなし・24 HOME roots／Task `.writer.lock`を記録し、SHA-256は`488a4d7f034dcec3f2a07803b2800512b56604e5e366c26126e6ca78f3a0a39e`である。private HOME archive `/srv/rencrow/db/migration-private/20261003-220804/private-home-cohort.tar.gz`はSHA-256 `5bdc93f2aed8eb1ca53ed1b967b09b28be9158f98cc58045281aa48aaae175a6`で、隔離restoreの全regular-file SHA／size／mtime・symbolic-link metadataが一致した。20 SQLiteのread-only `PRAGMA quick_check` receipt SHA-256は`6ee82aee34fa9e4ed3954c3424a6eff239c75e1e053a5d65c815d696946d3507`で全PASS。これらはE2E用のcoherent cohortとrollback入力の準備証拠であり、rootが所有するopen-fileの否定、物理移動、新sourceのAgent E2E、または新binary配備成功の代替ではない。
 
@@ -198,6 +198,14 @@ Windows CORE検証はnative processで行い、official `scripts/test-local.ps1`
 `tasks/`直下の6 fileと`.jsonlbatch.wal`が読取専用のsegment 0になり、書込み先は`tasks/logs/<YYYYMMDD>-<NN>/`、版標識は
 `tasks/LAYOUT`、索引は`tasks/index/`（派生物）になります。backupでは`logs/`と`LAYOUT`が正本の増分（閉じたsegmentは不変）で、
 `index/`は派生物（無くても起動時に作り直す）です。
+
+毎日の定時backup（2026-10-14〜）は、COREを止めた停止窓の中で`tasks/`と`state/actions/`を別archive`workspace-stores.tar.gz`に写します。
+`index/`だけを除き、`LAYOUT`、凍結segmentと閉じたsegment、WAL、lock、`.writer.lock`（世代counter。除外しない）は読取専用modeと
+mtimeごと含めます。cohortの検査は、隔離したコピーに`rencrow tasks verify`と`rencrow actions verify`を実行します。
+**stores archiveからの復元**: COREを止め、残process無し・`:18790`のlisten無しを確かめ、現在の`tasks/`と`state/actions/`を別directoryへ
+退避してから、`tar -xpzf workspace-stores.tar.gz -C <workspace_dir>`で戻します（`-p`で読取専用modeを保つ）。起動前に
+`rencrow tasks verify`と`rencrow actions verify`で確かめ、起動後に索引が再構築されたこと（`rencrow tasks layout show`）、
+復元前後のID・件数・最大generationが対応することを確認します。段階2のstoreを旧版binaryで起動してはいけません（下の禁止事項）。
 
 1. 切替前の停止: `rules/task-rules.md`の停止手順（service停止、残process停止、`:18790`のlisten無し、`/health`無応答）。
    `tasks/`全体（`.writer.lock`、WAL、6 file、`index/`）を別directoryへコピーし、全fileを`cmp`で照合してから切り替える。

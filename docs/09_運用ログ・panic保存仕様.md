@@ -10,7 +10,7 @@ RenCrow_COREを止めたままにせず、異常停止、応答停止、再起�
 - journalと日別アーカイブ: 直近7日間の連続した運用ログを保持する
 - Go製`rencrow resilience`: 異常証拠の集約、生存監視、修復、再発確認、解決済み証拠のGCを行う
 - CORE Repair: 再起動後に事故証拠を読み、実ファイルへの最小修正とtestを行う
-- storage backup timer: JST 03:00から1日1回、COREと記憶backendを一つの復旧単位として保存・検査する
+- storage backup timer: JST 03:00から1日1回、COREと記憶backend、Task store、Action storeを一つの復旧単位として保存・検査する
 
 COREプロセス自身だけに再起動責務を持たせません。panicやデッドロック後はプロセス内コードを実行できないため、外部supervisorを必須とします。
 
@@ -103,7 +103,9 @@ journalctl --user -u rencrow-storage-backup.service --since "24 hours ago"
 systemctl --user list-timers rencrow-storage-backup.timer
 ```
 
-Redis、Qdrant、mount、圧縮、checksum、復元検証のどれかが失敗した場合、serviceはnon-zeroで終了します。失敗途中のstagingは削除し、取得済みQdrant server snapshotもcleanupし、停止前にCOREがactiveだった場合はCOREを再開します。直前の検証済み世代は削除しません。timerの次回実行を待つだけにせず、原因解消後に`make storage-backup-run-once`を実行し、新しい検証済み世代が作られたことを確認します。
+Redis、Qdrant、mount、圧縮、checksum、復元検証、Task store・Action storeのarchiveと検証のどれかが失敗した場合、serviceはnon-zeroで終了します。失敗途中のstagingは削除し、取得済みQdrant server snapshotもcleanupし、停止前にCOREがactiveだった場合はCOREを再開します。直前の検証済み世代は削除しません。timerの次回実行を待つだけにせず、原因解消後に`make storage-backup-run-once`を実行し、新しい検証済み世代が作られたことを確認します。
+
+Task storeとAction storeは、COREを止めた同じ停止窓の中で別archive`workspace-stores.tar.gz`に保存します。journalには、restore checkが隔離したコピーに対して`rencrow tasks verify`と`rencrow actions verify`を実行した結果が、件数だけで出ます（`[OK] Task store verified: layout=v2 segments=… mismatches=0`、続けて`[OK] Action store verified: …`、最後に`[OK] workspace stores verified`）。この最後の行が無いcohortはpublishされません。失敗時、不一致の詳細は記録IDを含むためjournalに出さず、`[NG] Task store verification failed`のように対象と件数だけを出します。詳細はstoreのコピーに対して同じCLIを実行して確かめます。仕様は`docs/05_設定リファレンス.md`の「Task storeとAction storeのbackup」です。
 
 backup windowはrunnerが`RENCROW_BACKUP`をmountして所有し、終了時に元のunmount状態へ戻します。整合snapshot中は
 `rencrow.service`をruntime maskし、deploy、手動restart、resilienceを含む別経路からのstartを失敗させます。

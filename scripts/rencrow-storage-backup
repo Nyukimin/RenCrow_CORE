@@ -45,7 +45,7 @@ if [[ ! -x ${rencrow_binary} ]]; then
 fi
 
 mapfile -t backup_config < <(RENCROW_CONFIG="${config_file}" "${rencrow_binary}" config backup-values)
-if (( ${#backup_config[@]} != 21 )); then
+if (( ${#backup_config[@]} != 24 )); then
   echo "[NG] failed to load complete backup config from ${config_file}" >&2
   exit 1
 fi
@@ -71,6 +71,11 @@ qdrant_base_url=${backup_config[17]%/}
 conversation_l1=${backup_config[18]}
 conversation_archive=${backup_config[19]}
 core_port=${backup_config[20]}
+workspace_dir=${backup_config[21]}
+workspace_dir=${workspace_dir%/}
+task_store_root=${backup_config[22]}
+action_store_root=${backup_config[23]}
+workspace_stores_name=workspace-stores.tar.gz
 lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
 backup_mount=/srv/rencrow/backup
 module_snapshot_root=${backup_mount}/snapshots/modules
@@ -138,6 +143,7 @@ if [[ ${mode} == config ]]; then
     "knowledge_versions=${knowledge_versions}" \
     "memory=session:${session_dir},operation:${operation_memory_dir},cold:${cold_export_dir}" \
     "raw_source=${raw_source_dir}" \
+    "workspace_stores=task:${task_store_root},action:${action_store_root}" \
     "redis=enabled:${redis_enabled},container:${redis_container}" \
     "qdrant=enabled:${qdrant_enabled},base_url:${qdrant_base_url}" \
     "retention=recent:${recent_keep},daily:${daily_keep},weekly:${weekly_keep},monthly:${monthly_keep}"
@@ -147,6 +153,32 @@ fi
 if [[ ! -d ${raw_source_dir} ]]; then
   echo "[NG] configured Common Raw source directory is missing: ${raw_source_dir}" >&2
   exit 1
+fi
+
+# The Task store and the Action store sit under workspace_dir, outside
+# backup.core_source, and the store archive mirrors that place. Both must be there
+# before CORE is stopped: a missing store is a configuration error to fix, not a
+# backup to skip. CORE-only migration export does not carry them.
+relative_to_workspace() {
+  local path=$1
+  if [[ ${workspace_dir} != /* || ${path} != "${workspace_dir}/"* ]]; then
+    return 1
+  fi
+  printf '%s\n' "${path#"${workspace_dir}/"}"
+}
+
+task_store_relative=
+action_store_relative=
+if [[ ${core_export} != true ]]; then
+  task_store_relative=$(relative_to_workspace "${task_store_root}") || task_store_relative=
+  action_store_relative=$(relative_to_workspace "${action_store_root}") || action_store_relative=
+  if [[ -z ${task_store_relative} || -z ${action_store_relative} || \
+        ${task_store_relative} == "${action_store_relative}" || \
+        ! -d ${workspace_dir}/${task_store_relative} || ! -d ${workspace_dir}/${action_store_relative} || \
+        -L ${workspace_dir}/${task_store_relative} || -L ${workspace_dir}/${action_store_relative} ]]; then
+    echo "[NG] workspace stores are missing or outside workspace_dir: task=${task_store_root} action=${action_store_root}" >&2
+    exit 1
+  fi
 fi
 
 mkdir -p /home/nyukimi/.cache
@@ -357,7 +389,7 @@ if [[ ${mode} == check ]]; then
     exit 1
   fi
   echo "[OK] all storage mounts and memory backends are available"
-  du -sh "${core_root}" "${knowledge_root}" "${module_roots[@]}"
+  du -sh "${core_root}" "${knowledge_root}" "${module_roots[@]}" "${task_store_root}" "${action_store_root}"
   rsync -rtn \
     --safe-links \
     --modify-window=1 \
@@ -464,6 +496,35 @@ assert value.get("tool_revision")
   done
 }
 
+# Archives the Task store and the Action store as a mirror of their place under
+# workspace_dir, so extracting the archive into a workspace puts both back where
+# the runtime opens them. The Task store index is derived from the log (a missing
+# one is rebuilt at the next start) and stays out. Everything else is kept as it
+# is: the frozen segments with their read-only mode, the WALs, the lock files and
+# the writer-generation file, which a restored Task store needs to fence a stale
+# writer. It only runs while CORE is stopped. Portable tar options only, so that
+# the contract test runs this very function on every supported OS.
+archive_workspace_stores() {
+  local workspace=$1 archive=$2 task_store_relative=$3 action_store_relative=$4
+  # CORE being stopped is not the only thing that keeps a writer out: the Task
+  # store CLIs that write (tasks create, reap-queued --apply, rebuild-index, layout
+  # concat --apply) are refused only while CORE runs, so they can open the store
+  # inside this window. The Task store writer takes this same OS lock, and the
+  # archive holds it from the first byte to the last. The Action store has no
+  # writer lock of its own, so its only guard is that CORE is stopped.
+  (
+    flock -n 8 || { echo "[NG] the Task store writer lock is held; a writer is running" >&2; exit 1; }
+    tar \
+      --numeric-owner \
+      --exclude="${task_store_relative}/index" \
+      -C "${workspace}" \
+      -czf "${archive}" \
+      "${task_store_relative}" \
+      "${action_store_relative}" || exit 1
+    gzip -t "${archive}" || exit 1
+  ) 8>>"${workspace}/${task_store_relative}/.writer.lock" || return 1
+}
+
 cleanup_qdrant_snapshot() {
   if [[ -n ${qdrant_snapshot_name} ]]; then
     curl -fsS -X DELETE "${qdrant_base_url}/snapshots/${qdrant_snapshot_name}" >/dev/null || true
@@ -542,6 +603,16 @@ if [[ ${qdrant_enabled} == true ]]; then
     | sha256sum -c -
 fi
 
+# The stores are small next to CORE, so a failure to archive them ends the window
+# before the long CORE archive. Any failure here is a failed backup: the cleanup
+# trap restarts CORE and no cohort is published.
+stores_included=false
+if [[ ${core_export} != true ]]; then
+  archive_workspace_stores "${workspace_dir}" "${staging}/${workspace_stores_name}" \
+    "${task_store_relative}" "${action_store_relative}"
+  stores_included=true
+fi
+
 core_parent=$(dirname "${core_root}")
 core_name=$(basename "${core_root}")
 archive="${staging}/rencrow-state.tar.gz"
@@ -577,9 +648,14 @@ fi
 candidate_dir="${staging}/snapshot"
 mkdir -p "${candidate_dir}"
 mv "${archive}" "${candidate_dir}/rencrow-state.tar.gz"
+cohort_files=(rencrow-state.tar.gz)
+if [[ ${stores_included} == true ]]; then
+  mv "${staging}/${workspace_stores_name}" "${candidate_dir}/${workspace_stores_name}"
+  cohort_files+=("${workspace_stores_name}")
+fi
 (
   cd "${candidate_dir}"
-  sha256sum rencrow-state.tar.gz > SHA256SUMS
+  sha256sum "${cohort_files[@]}" > SHA256SUMS
 )
 printf '%s\n' \
   "format_version=${snapshot_format_version}" \
@@ -597,8 +673,22 @@ printf '%s\n' \
   "qdrant_sha256=$([[ ${qdrant_enabled} == true ]] && printf '%s' "${qdrant_snapshot_checksum}" || printf 'disabled')" \
   'restore_format=tar.gz' \
   > "${candidate_dir}/manifest.txt"
+if [[ ${stores_included} == true ]]; then
+  printf '%s\n' \
+    "workspace_stores_archive=${workspace_stores_name}" \
+    "task_store_relative=${task_store_relative}" \
+    "action_store_relative=${action_store_relative}" \
+    >> "${candidate_dir}/manifest.txt"
+fi
 
-"${restore_checker}" "${candidate_dir}"
+# The restore check must say that it verified the stores. A checker that predates
+# the stores would pass this cohort without looking at them, so its silence is a
+# failure of the backup, not a pass.
+RENCROW_BINARY="${rencrow_binary}" "${restore_checker}" "${candidate_dir}" | tee "${staging}/restore-check.out"
+if [[ ${stores_included} == true ]] && ! grep -Fqx '[OK] workspace stores verified' "${staging}/restore-check.out"; then
+  echo "[NG] the restore check did not verify the workspace stores" >&2
+  exit 1
+fi
 if [[ ${core_export} == true ]]; then
   "${migration_packager}" --snapshot-dir "${candidate_dir}" --output-dir "${migration_output_dir}" >/dev/null
   sync "${migration_output_dir}"
@@ -608,8 +698,10 @@ fi
 snapshot_dir="${core_snapshot_root}/recent/${timestamp}"
 core_snapshot_partial_parent=$(mktemp -d "${core_snapshot_root}/recent/.${timestamp}.partial.XXXXXX")
 mv "${candidate_dir}" "${core_snapshot_partial_parent}/snapshot"
-sync "${core_snapshot_partial_parent}/snapshot/rencrow-state.tar.gz" \
-  "${core_snapshot_partial_parent}/snapshot/SHA256SUMS" \
+for cohort_file in "${cohort_files[@]}"; do
+  sync "${core_snapshot_partial_parent}/snapshot/${cohort_file}"
+done
+sync "${core_snapshot_partial_parent}/snapshot/SHA256SUMS" \
   "${core_snapshot_partial_parent}/snapshot/manifest.txt"
 sync "${core_snapshot_partial_parent}/snapshot" "${core_snapshot_partial_parent}"
 mv "${core_snapshot_partial_parent}/snapshot" "${snapshot_dir}"
