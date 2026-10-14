@@ -159,6 +159,92 @@ func TestSTTRelayRelaysAViewerUtteranceWithItsKindsIntact(t *testing.T) {
 	}
 }
 
+// The defect of the isolated E2E (stop-first): the Viewer sends start{id}, STT
+// splits the utterance at a breath (closes it and goes on with a continuation it
+// names itself), and the Viewer's id-less stop was given the id of the finished
+// first utterance. STT ignores such a stop, so the continuation ended by
+// idle_timeout about 2 s later. The id CORE adds is the last one STT announced.
+func TestSTTRelayAnIDLessStopNamesTheContinuationSTTAnnouncedAfterASplit(t *testing.T) {
+	for _, stopType := range []string{"stop", "final_pending", "cancel"} {
+		t.Run(stopType, func(t *testing.T) {
+			fake := startFakeSTTServer(t)
+			client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+			conn := fake.Accept()
+			client.ExpectReady()
+
+			client.Control(map[string]any{"type": "start", "utterance_id": "v1-1", "sample_rate": 16000, "channels": 1, "format": "pcm_s16le"})
+			if msg := conn.NextControl(t); msg["type"] != "utterance.start" || msg["utterance_id"] != "v1-1" {
+				t.Fatalf("start = %#v", msg)
+			}
+			conn.Send(`{"type":"speech_start","utterance_id":"v1-1","offset_ms":0}`)
+			client.Audio(pcmTone(100))
+			conn.Next(t)
+			// A breath longer than the silence window: STT closes v1-1 and goes on
+			// with a continuation that carries no id of the client.
+			conn.Send(`{"type":"final","utterance_id":"v1-1","text":"first","target_called":true,"end_reason":"silence"}`)
+			conn.Send(`{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`)
+			events := client.Events(3)
+			if events[1]["type"] != "final" || events[1]["utterance_id"] != "v1-1" || events[2]["utterance_id"] != "srv-2" {
+				t.Fatalf("events = %#v", events)
+			}
+
+			client.Control(map[string]any{"type": stopType})
+			want := "utterance.stop"
+			if stopType == "cancel" {
+				want = "utterance.cancel"
+			}
+			msg := conn.NextControl(t)
+			if msg["type"] != want || msg["utterance_id"] != "srv-2" {
+				t.Fatalf("the id-less %s must name the continuation, not the finished v1-1: %#v", stopType, msg)
+			}
+			// STT answers with the continuation's terminal: one per utterance.
+			conn.Send(`{"type":"final","utterance_id":"srv-2","text":"second","target_called":true,"end_reason":"stop"}`)
+			final := client.Expect("final")
+			if final["utterance_id"] != "srv-2" {
+				t.Fatalf("final = %#v", final)
+			}
+			client.NoEvent(100 * time.Millisecond)
+		})
+	}
+}
+
+// Silence-first: STT closed the utterance before the stop arrived. The stop
+// names the finished utterance, which STT ignores, so no second terminal.
+func TestSTTRelayAnIDLessStopAfterSTTClosedTheLastUtteranceNamesTheClosedOne(t *testing.T) {
+	fake := startFakeSTTServer(t)
+	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+	conn := fake.Accept()
+	client.ExpectReady()
+
+	client.Control(map[string]any{"type": "start", "utterance_id": "v1-1"})
+	conn.NextControl(t)
+	conn.Send(`{"type":"speech_start","utterance_id":"v1-1","offset_ms":0}`)
+	conn.Send(`{"type":"final","utterance_id":"v1-1","text":"x","target_called":true,"end_reason":"silence"}`)
+	client.Events(2)
+
+	client.Control(map[string]any{"type": "stop"})
+	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
+		t.Fatalf("the stop must name the finished utterance so that STT does nothing: %#v", msg)
+	}
+	client.NoEvent(100 * time.Millisecond)
+}
+
+func TestSTTRelayAnIDedStopReachesSTTWithItsOwnID(t *testing.T) {
+	fake := startFakeSTTServer(t)
+	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))
+	conn := fake.Accept()
+	client.ExpectReady()
+
+	client.Control(map[string]any{"type": "start", "utterance_id": "v1-1"})
+	conn.NextControl(t)
+	conn.Send(`{"type":"speech_start","utterance_id":"srv-2","offset_ms":0}`)
+	client.Expect("speech_start")
+	client.Control(map[string]any{"type": "stop", "utterance_id": "v1-1"})
+	if msg := conn.NextControl(t); msg["type"] != "utterance.stop" || msg["utterance_id"] != "v1-1" {
+		t.Fatalf("an id the client chose reaches STT as it is, even when STT announced another: %#v", msg)
+	}
+}
+
 func TestSTTRelayRelaysAPortalStreamWithoutAnyStart(t *testing.T) {
 	fake := startFakeSTTServer(t)
 	client := dialRelay(t, serveRelay(t, realStreamConfig(fake, nil, nil)))

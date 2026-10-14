@@ -4,11 +4,12 @@
 
 - 日付: 2026-10-14 JST
 - owner: RenCrow_CORE STT入力境界（`modules/stt`、`internal/infrastructure/stt`、`cmd/rencrow/stt_runtime_*`）
-- 契約正本: RenCrow_STTの「CORE-STTストリーム契約」第3.2版（RenCrow_STT repositoryのcommit `ee91243`。実装は第3.1版の`1bbce60`を基に始め、第3.2版に合わせた）と、CORE側のレビュー結果（同契約の13節に対応表）。
+- 契約正本: RenCrow_STTの「CORE-STTストリーム契約」第3.3版（RenCrow_STT repositoryのcommit `81750f7`。実装は第3.1版の`1bbce60`を基に始め、第3.2版（`ee91243`）に合わせ、
+  所見A（Failure Knowledge 2）で第3.3版の`lastStartID`の定義に合わせた）と、CORE側のレビュー結果（同契約の13節に対応表）。
   client側の契約は `docs/06_Public_API仕様.md`「WS /stt」、設定は `docs/05_設定リファレンス.md`の`stt`、経路は `docs/04_アーキテクチャ概要.md`のSTT経路
 - 置き換えるもの: `docs/調査/20261013_171543_STT発話単位認識_設計とFailureKnowledge.md`（Invariant 1・4・5と、CORE内の蓄積・区切りの設計。同文書に「Superseded」の見出しを付けて残す）
-- 状態: source実装済み・試験済み（Go、Viewerのnode試験、実ブラウザ1本）。**本番へは未配備**。本物のRenCrow_STTのストリーム口を通した正規経路のE2Eは未実施
-  （隔離したCOREで行う。配備手順は配備前の作業で別に書く）。
+- 状態: source実装済み・試験済み（Go、Viewerのnode試験、実ブラウザ1本）。**本番へは未配備**。本物のRenCrow_STTのストリーム口を通した正規経路のE2Eは、隔離したCOREで実施済み
+  （契約9.4節）で、所見A（Failure Knowledge 2）の修正後の再測定が残る。
 
 ## 概要
 
@@ -95,6 +96,10 @@ VADを持たないPORTALでは発話が終わらなかった。
   「clientの切断で中断」のActionとして記録し、`target_called`は`unknown`と書く。
 - transport receiptは作らない。receiptはRun・Action・Attemptの束縛を要求するが、dialの時点ではActionが無く、接続単位のRunも発話に先行するRunも禁じられている。
   相関は、Action名`stt.stream:<request_id>:<utterance_id>`と要約に載せる`request_id`・`utterance_id`で取る。
+- **id無しの`stop`／`cancel`に補うid（`lastStartID`）**: その接続で`start{utterance_id}`を転送していれば、補うidは**RenCrow_STTが最後に通知した`speech_start`の`utterance_id`**で、
+  `speech_start`のたびに更新する（契約5.1・3.7のj.）。`start`のidは、最初の`speech_start`までの仮の値にすぎない。`utterance_id`を付けた`stop`はそのidのまま転送し、
+  `start`を転送していない接続（PORTAL）のid無しの`stop`は、id無しのまま進行中の発話を閉じる。最後に通知された発話がすでに閉じていれば、補ったidは終わった発話を指し、STTは何もしない
+  （silence-firstで`final`が先に届いたViewerに、2つ目の`final`が出ない）。
 - `seq`の空間のownerはCOREに一つだけ置く。STTの`seq`はhop内の単調増加の検査にだけ使い、転送しない。
 - 死活はアプリ層（ping 10秒ごと、最後の受信から30秒）で判定する。SSHトンネル越しのTCP keepaliveは死活の検知にならない。
 - Viewerは、発話中に終端（`max_length`以外の`final`、`error`）か予期しない`close`を受けたら、`stop`を送らずに発話を終えてsocketを閉じる（判定は`stt_utterance_utils.js`の純関数）。
@@ -163,6 +168,59 @@ CORE側にしかなかった不変条件（Viewerだけが発話を区切る）�
 - `modules/core`: `runtime_health_test.go`（`stt.stream`）。`internal/adapter/config`: `config_stt_test.go`（移した4 keyが無視され、名前だけが警告に出る）
 - Viewer: `internal/adapter/viewer/stt_utterance_utils.test.mjs`、`viewer_stt_https.test.mjs`、`viewer_memory_panel.test.mjs`、`scripts/stt_viewer_browser_e2e.js`
 
+## Failure Knowledge 2: id無しの`stop`が割れた後の続きの発話に届かない（所見A。2026-10-14の隔離E2E）
+
+### Failure
+
+隔離したCOREでViewer型（`start{id}`、音声、先に`stop`を送る）を流すと、息継ぎが700msを超えてRenCrow_STTが1つの発話を無音で2つに割った場合だけ、最後の`final`が`end_reason=idle_timeout`で閉じ、
+`stop`から`final`まで約2.2秒かかった。割れなかった発話は、`stop`から`final`までp50 163msだった。
+
+### Problem
+
+Viewerの`stop`は`utterance_id`を持たず、COREが`lastStartID`を補って転送する。補うidが、息継ぎで先に閉じた発話を指していた。RenCrow_STTは「終わった発話を指す`stop`は何もしない」ので、
+`stop`は無視され、続きの発話は無音の判定かidle_timeoutまで閉じなかった。
+
+### Cause
+
+`lastStartID`を、転送した`start`に対応する最初の`speech_start`のidで1回だけ確定し、以後は更新しない規則にしていた（契約第3.2版の5.1節のとおり）。
+その前提は「続きは元のidでも宛先になる」で、これは最大長（`max_length`）の分割の続きにだけ成り立つ。無音で割れた後の続きは自動開始の別の発話で、元のクライアントのidを引き継がない
+（契約第3.3版の3.7のi.）。COREは、STTが分割の種類で続きのidの扱いを変えることを知らずに、1つの規則で両方を扱えると仮定した。
+当初のCOREの試験は、STTの代役が`stop`の宛先を見ないため、補ったidが終わった発話を指しても失敗しなかった。
+
+### Lesson
+
+- 補うidのような「相手の状態の写し」は、相手が最後に知らせた値に追随させる。クライアントが付けた値を固定して持たない。
+- 相手が「宛先が違えば何もしない」と定めている操作では、宛先のずれが失敗として見えない（遅延として現れる）。代役の試験は、宛先を検査する。
+- 実機の隔離E2Eで、分割（息継ぎが閾値を超える素材）とstop-firstの順序を両方流すまで、この欠陥は見えなかった。
+
+### Invariant
+
+1. COREがid無しの`stop`／`cancel`に補うidは、その接続でRenCrow_STTが最後に通知した`speech_start`の`utterance_id`である。`start`のidを固定して補わない。
+2. `utterance_id`を付けた`stop`／`cancel`は、そのidのまま転送する（補うのはid無しだけ）。
+3. `start`を転送していない接続のid無しの`stop`／`cancel`は、id無しのまま転送する。
+4. 最後に通知された発話がすでに閉じていれば、補ったidは終わった発話を指し、STTは何もしない。COREは2つ目の終端を作らず、抑止もしない（意味判断を持たない）。
+
+### Enforcement
+
+- `modules/stt/relay_test.go`: `TestRelayTableAnIDLessStopFollowsTheLastAnnouncedSpeechStart`（STTがidを置き換えた場合、無音で割れた後の続き、最大長の続き。stop・final_pending・cancel）、
+  `TestRelayTableAStopAfterTheLastAnnouncedUtteranceClosedNamesTheClosedOne`、`TestRelayTableNeverAddsAnIDOnAConnectionThatSentNoStart`、
+  `TestRelayTableAnIDTheClientChoseIsNeverReplacedByTheAnnouncedOne`
+- `cmd/rencrow/stt_runtime_websocket_test.go`: `TestSTTRelayAnIDLessStopNamesTheContinuationSTTAnnouncedAfterASplit`（実WebSocketの代役のSTTに、`start{id}`→`speech_start`→音声→先に閉じる`final`→続きの`speech_start`→
+  id無しの`stop`／`final_pending`／`cancel`を流し、上流へ届く制御の宛先が続きであること、終端が発話ごとに1つであること）、
+  `TestSTTRelayAnIDLessStopAfterSTTClosedTheLastUtteranceNamesTheClosedOne`（silence-first）、`TestSTTRelayAnIDedStopReachesSTTWithItsOwnID`
+- 隔離したCOREでのE2E（`stop-first`と`silence-first`のViewer型）。割れた発話の`stop`から`final`、silence-firstで2つ目の`final`が出ないこと。
+
+### Tests
+
+上記。変更前の実装で、`TestRelayTableAnIDLessStopFollowsTheLastAnnouncedSpeechStart`と`TestSTTRelayAnIDLessStopNamesTheContinuationSTTAnnouncedAfterASplit`が、
+続きの`srv-2`ではなく終わった`v1-1`が補われることで失敗することを確かめてから直した。
+
+### 既知の挙動（契約第3.3版の範囲）
+
+- 新しい`speech_start`が出た直後に、それを知らないCOREが`stop`を上流へ送る往復1回分の隙は残る。COREは埋めない（契約第3.3版の3.7のj.が定める範囲）。
+- silence-firstで、`final`が先に届いた後の`stop`は終わった発話を指して何もしない。補わない場合に出る`no_active_utterance`の空`final`（2つ目の終端）は出ない。
+- 契約の3.7のe.（id無しの`stop`は進行中の通知済みの発話に当たる）と5.1節（COREが補う）は、第3.2版では食い違っていた。第3.3版で、補うidの定義を改めて整合した。
+
 ## 資源上限
 
 2026-10-13の表のうち、COREが持つ上限は次のとおり。蓄積・認識待ち・未送信eventの上限はRenCrow_STTへ移った（STTは接続ごとに認識待ち8、送信待ち64、同時接続32）。
@@ -183,14 +241,15 @@ CORE側にしかなかった不変条件（Viewerだけが発話を区切る）�
 
 ## 未解決・要判断
 
-- **本物のRenCrow_STTのストリーム口を通した正規経路のE2E**: 未実施。隔離したCOREで、Viewer型とPORTAL型の両方を、無音を挟んで1本のWebSocketに続けて流す試験を含めて行う。
+- **本物のRenCrow_STTのストリーム口を通した正規経路のE2E**: 隔離したCOREで2026-10-14に実施済み（結果は契約9.4節。順序違反0・意図しない`error`0。所見Aは終端の遅延で、不変条件の違反ではない）。
+  所見Aの修正後の再測定（Viewer型のstop-firstとsilence-first）は未実施。
 - **契約が暫定とする値の確定**: `target_timeout`（30秒）と`terminal_deadline`（75秒）は、GPU共有時の長い発話の`processing_ms`と、PORTALとViewer同時使用時の`queue_ms`の実測で確定する
   （契約の9.4節）。極端に遅いtargetでは`queue_depth`の末尾が`stt_deadline_exceeded`になる。
 - **契約の曖昧さ・STTへの問い合わせ（記録のみ。CORE側は契約どおりに実装した）**:
-  1. 転送した`start`に対応する`speech_start`の取り違え。自動開始の`speech_start`が、明示`start`の`speech_start`より先に届くと、CORE
-     の`lastStartID`が自動開始の発話のidで確定し、以後のid無し`stop`が別の発話を指す（害は有界: 本来の発話は無音で閉じる）。STT側が`speech_start`に要求されたidを載せれば一意に解決できる。
-  2. `lastStartID`は終端の後も残る。同じ接続で`start{id}`→終端→自動区切りの発話→id無し`stop`と続くclientでは、`stop`が終わった発話を指す。現行のclient
-     （Viewerは1接続1発話、PORTALは`start`を送らない）では起きない。終端で消すなら、`max_length`の続きが元のidでも宛先になる規則との整合を契約で決める必要がある。
+  1. 〔解消: 第3.3版の定義と所見Aの修正で〕転送した`start`に対応する`speech_start`の取り違え。`lastStartID`を「最初の`speech_start`で1回だけ確定」にしていたため、自動開始の`speech_start`が先に
+     届くと別の発話のidで確定し、以後のid無し`stop`が別の発話を指すおそれがあった。契約第3.3版は「STTが最後に通知した`speech_start`のid」に改めたので、取り違えの余地が無い。
+  2. 〔解消: 同上〕`lastStartID`が終端の後も残り、`stop`が終わった発話を指す。契約第3.3版では、閉じ済みの発話を指す`stop`はSTTが何もしないと明記された（3.7のj.）。これは仕様で、
+     silence-firstで2つ目の`final`を出さないために必要。実害は逆の場合（所見A）で、`start`のidを固定したために、無音で割れた後の続きの発話に`stop`が届かなかった。
   3. 「id付きの終端は必ず`speech_start`の後」を契約に明文化してほしい。CORE（`RelayTable`）は、待っていないidの終端を重複として捨てるので、STTが`utterance.start`を拒否して
      `speech_start`なしにid付きの`error`を返す経路があると、Viewerはその`error`を受け取れない。
   4. 接続の途中のWAV frame（S14）: CORE入口の拒否の形は、STT自身の形（session単位の`unsupported_audio_format`、そのframeだけ捨てて接続を維持）に揃えた。

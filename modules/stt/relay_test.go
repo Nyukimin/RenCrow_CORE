@@ -131,21 +131,73 @@ func TestRelayTableIgnoresUnknownControls(t *testing.T) {
 	}
 }
 
-func TestRelayTableConfirmsLastStartIDFromTheFirstSpeechStartOnly(t *testing.T) {
+func TestRelayTableAnIDLessStopFollowsTheLastAnnouncedSpeechStart(t *testing.T) {
 	table := newTestRelayTable()
 	table.MapControl(Control{Type: "start", UtteranceID: "srv-looking"}, relayEpoch)
 	// STT replaced the id (a reserved prefix): the stop must follow STT's id.
 	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
 	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
 	if stop.Upstream["utterance_id"] != "srv-1" {
-		t.Fatalf("lastStartID must be overwritten by STT's id: %#v", stop.Upstream)
+		t.Fatalf("the id STT announced replaces the client's: %#v", stop.Upstream)
 	}
-	// A later speech_start (an automatic one, or the continuation of a max-length split)
-	// does not move it: the continuation still answers to the original id.
-	table.HandleUpstream(upstream(t, 2, `{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`), relayEpoch)
+	// A breath longer than the silence window: STT closes srv-1 and goes on with a
+	// continuation that carries no id of the client (contract 3.7 i.). Every later
+	// speech_start moves the id, so the stop reaches the utterance in progress and
+	// not the finished one (the stop-first defect of the isolated E2E).
+	table.HandleUpstream(upstream(t, 2, `{"type":"final","utterance_id":"srv-1","text":"a","target_called":true}`), relayEpoch)
+	table.HandleUpstream(upstream(t, 3, `{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`), relayEpoch)
+	for _, typ := range []string{"stop", "final_pending"} {
+		stop = table.MapControl(Control{Type: typ}, relayEpoch)
+		if stop.Upstream["utterance_id"] != "srv-2" || stop.StopUtteranceID != "srv-2" {
+			t.Fatalf("%s must name the last announced utterance: %#v", typ, stop)
+		}
+	}
+	cancel := table.MapControl(Control{Type: "cancel"}, relayEpoch)
+	if cancel.Upstream["type"] != "utterance.cancel" || cancel.Upstream["utterance_id"] != "srv-2" {
+		t.Fatalf("cancel gets its id the same way as stop: %#v", cancel.Upstream)
+	}
+	// The continuation of a max-length split is announced too.
+	table.HandleUpstream(upstream(t, 4, `{"type":"speech_start","utterance_id":"srv-3","offset_ms":30000}`), relayEpoch)
 	stop = table.MapControl(Control{Type: "stop"}, relayEpoch)
-	if stop.Upstream["utterance_id"] != "srv-1" {
-		t.Fatalf("only the speech_start answering the start confirms the id: %#v", stop.Upstream)
+	if stop.Upstream["utterance_id"] != "srv-3" {
+		t.Fatalf("a max-length continuation is announced too: %#v", stop.Upstream)
+	}
+}
+
+func TestRelayTableAStopAfterTheLastAnnouncedUtteranceClosedNamesTheClosedOne(t *testing.T) {
+	table := newTestRelayTable()
+	table.MapControl(Control{Type: "start", UtteranceID: "v1"}, relayEpoch)
+	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"v1","offset_ms":0}`), relayEpoch)
+	// STT closed it by silence before the Viewer's stop arrived (silence-first).
+	table.HandleUpstream(upstream(t, 2, `{"type":"final","utterance_id":"v1","text":"a","target_called":true}`), relayEpoch)
+	stop := table.MapControl(Control{Type: "stop"}, relayEpoch)
+	// The id names a finished utterance, which STT ignores: no second terminal.
+	if stop.Upstream["utterance_id"] != "v1" {
+		t.Fatalf("the stop must name the finished utterance so that STT does nothing: %#v", stop.Upstream)
+	}
+}
+
+func TestRelayTableNeverAddsAnIDOnAConnectionThatSentNoStart(t *testing.T) {
+	table := newTestRelayTable()
+	// PORTAL sends no start: STT opens utterances by itself and the mic-off stop
+	// closes whichever is in progress (or answers with the empty final).
+	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"srv-1","offset_ms":0}`), relayEpoch)
+	for _, typ := range []string{"stop", "cancel"} {
+		got := table.MapControl(Control{Type: typ}, relayEpoch)
+		if _, has := got.Upstream["utterance_id"]; has {
+			t.Fatalf("an id-less %s of a connection with no start must stay id-less: %#v", typ, got.Upstream)
+		}
+	}
+}
+
+func TestRelayTableAnIDTheClientChoseIsNeverReplacedByTheAnnouncedOne(t *testing.T) {
+	table := newTestRelayTable()
+	table.MapControl(Control{Type: "start", UtteranceID: "a"}, relayEpoch)
+	table.HandleUpstream(upstream(t, 1, `{"type":"speech_start","utterance_id":"a","offset_ms":0}`), relayEpoch)
+	table.HandleUpstream(upstream(t, 2, `{"type":"speech_start","utterance_id":"srv-2","offset_ms":900}`), relayEpoch)
+	stop := table.MapControl(Control{Type: "stop", UtteranceID: "a"}, relayEpoch)
+	if stop.Upstream["utterance_id"] != "a" || stop.StopUtteranceID != "a" {
+		t.Fatalf("an id the client chose reaches STT as it is: %#v", stop)
 	}
 }
 

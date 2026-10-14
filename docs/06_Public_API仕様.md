@@ -142,8 +142,8 @@ handshakeと`session_ready`の待ちは合わせて5秒）、`session_ready`を�
 | message | CORE → RenCrow_STT |
 |---|---|
 | `{"type":"start","utterance_id":"…","sample_rate":16000,"channels":1,"format":"pcm_s16le"}` | `utterance_id`があれば`utterance.start{utterance_id}`として転送する（Viewer型）。16 kHz mono `pcm_s16le`以外は、idなしのsession単位の`error`（`code=unsupported_audio_format`）で拒否し、転送しない。**`utterance_id`の無い`start`は転送しない**（PORTAL型。ストリームが音声から発話を自動で開くので不要で、転送すると接続直後に空の発話が開く） |
-| `{"type":"stop","utterance_id":"…"}` | `utterance.stop`。`final_pending`は旧名の別名。`utterance_id`が無ければ、直近の`start`のidを補って転送する。補うidは、転送した`start`に対応する最初の`speech_start`の`utterance_id`で1回だけ確定する（RenCrow_STTがidを置き換えた場合も宛先がずれない）。`start`が無いPORTAL型のidなしの`stop`は、そのまま進行中の発話を閉じる |
-| `{"type":"cancel","utterance_id":"…"}` | `utterance.cancel`（`stop`と同じくidを補う） |
+| `{"type":"stop","utterance_id":"…"}` | `utterance.stop`。`final_pending`は旧名の別名。`utterance_id`が無く、その接続で`start{utterance_id}`を転送していれば、**RenCrow_STTが最後に通知した`speech_start`の`utterance_id`**を補って転送する（`speech_start`のたびに更新する。自動開始、最大長の続き、無音で割れた後の続きを含む）。`speech_start`の前は、`start`のidを仮に使う。RenCrow_STTがidを置き換えた場合も宛先がずれない。**`start`のidを固定して補わない**: 息継ぎが無音の閾値（700ms）を超えるとRenCrow_STTは発話を無音で閉じ、続きを`srv-<n>`の別の発話として開く。続きは`start`のidを引き継がないので、`start`のidを補うと終わった発話を指して`stop`が無視され、続きの`final`が約2秒遅れる（所見A）。最後に通知された発話がすでに閉じていれば、補ったidは終わった発話を指し、RenCrow_STTは`stop`で何もしない（`final`は先に届いている）。`utterance_id`を付けた`stop`は、そのidのまま転送する。`start`が無いPORTAL型のidなしの`stop`は、idなしのまま進行中の発話を閉じる |
+| `{"type":"cancel","utterance_id":"…"}` | `utterance.cancel`（`stop`と同じ規則でidを補う） |
 | その他（`config`等）、JSONでない・4096 byteを超えるtext frame | 転送せず捨てる（ログに残す）。binary frameの中身がJSONでも制御としては扱わない |
 
 CORE → クライアント（すべてのeventに、**COREが採番する**、接続内で単調増加する`seq`が付く。発話に属するeventは`utterance_id`を持つ。

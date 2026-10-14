@@ -328,8 +328,11 @@ type RelayTable struct {
 	order    []string // announcement order
 	deadline map[string]time.Time
 
-	lastStartID  string
-	startPending bool
+	// lastStartID is the id CORE adds to a stop or cancel the client sent without
+	// one (the Viewer's). It is empty on a connection that sent no start (PORTAL),
+	// whose id-less stop passes as it is. After a start it holds the client's id
+	// until STT announces an utterance, then always the id STT announced last.
+	lastStartID string
 
 	lastSeq int64
 	haveSeq bool
@@ -351,8 +354,10 @@ func (t *RelayTable) NoteSessionReady(seq int64) {
 
 // MapControl decides what a client control message becomes. Only start, stop
 // (and its legacy name final_pending) and cancel are relayed; everything else
-// is dropped. The client's start is the only message CORE has to remember: the
-// Viewer's stop carries no utterance id, so CORE adds the id of the last start.
+// is dropped. The Viewer's stop carries no utterance id, so CORE adds the id of
+// the utterance STT announced last (contract 5.1 and 3.7 j.), not the id of the
+// client's start: STT splits an utterance at a breath, and the continuation does
+// not inherit the client's id (3.7 i.).
 func (t *RelayTable) MapControl(c Control, now time.Time) ControlDecision {
 	switch {
 	case c.Type == "start":
@@ -365,7 +370,7 @@ func (t *RelayTable) MapControl(c Control, now time.Time) ControlDecision {
 			// forwarding would open an empty utterance right after the connection.
 			return ControlDecision{}
 		}
-		t.lastStartID, t.startPending = c.UtteranceID, true
+		t.lastStartID = c.UtteranceID
 		return ControlDecision{Upstream: map[string]any{"type": streamMessageUtteranceStart, "utterance_id": c.UtteranceID}}
 	case IsFinalizeControl(c.Type):
 		id := t.controlTarget(c)
@@ -445,13 +450,15 @@ func (t *RelayTable) handleSpeechStart(ev UpstreamEvent, now time.Time) EventDec
 	}
 	t.order = append(t.order, ev.UtteranceID)
 	t.deadline[ev.UtteranceID] = now.Add(t.limits.MaxUtterance + t.limits.TerminalDeadline + RelayWatchdogSlack)
-	if t.startPending {
-		// The first speech_start after a forwarded start answers it. STT may have
-		// replaced the client's id (a reserved or taken one), so the stop must
-		// follow STT's id. Later speech_starts (automatic ones, the continuation of
-		// a max-length split) never move it: the continuation still answers to the
-		// original id.
-		t.lastStartID, t.startPending = ev.UtteranceID, false
+	if t.lastStartID != "" {
+		// The connection sent a start, so its id-less stop gets an id. Every
+		// accepted speech_start moves it: the one answering the start (STT may have
+		// replaced the client's id), an automatic one, the continuation of a
+		// max-length split, and the continuation after a split by silence. That
+		// last one is what the stop of a Viewer that sent its stop first must reach.
+		// An id that has been closed is harmless: STT ignores a stop that names a
+		// finished utterance (contract 3.5, 3.7 j.).
+		t.lastStartID = ev.UtteranceID
 	}
 	return t.forward(ev, false)
 }
