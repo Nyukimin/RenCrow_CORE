@@ -7161,6 +7161,23 @@ async function startSTT() {
   }
 }
 
+// The server ends an utterance before the Viewer's own VAD does (RenCrow_STT
+// decides where an utterance ends; see endSTTUtteranceFromServer in
+// stt_utterance_utils.js). Closing the socket completes the stop through onclose;
+// with no socket, completeSTTStop is called directly.
+const sttServerEndActions = {
+  closeWS() {
+    try {
+      if (sttState.ws) sttState.ws.close();
+    } catch (err) {
+      console.warn('[STT] close after the end of the utterance failed:', err);
+    }
+  },
+  completeStop() {
+    completeSTTStop();
+  },
+};
+
 function connectSTTWebSocket() {
   if (sttState.isStopping) return;
   if (!sttState.keepSessionChannel && !sttState.isRecording) return;
@@ -7236,9 +7253,13 @@ function connectSTTWebSocket() {
           updateSTTCaption();
           console.log('[STT] Draft:', draftText);
 	        } else if (msg.type === 'final') {
+	          // Decided before anything below can return or change the state: a final
+	          // the inactive Viewer ignores still ends the utterance it was speaking.
+	          const finalEndsUtterance = shouldEndSTTUtteranceOnServerEvent(sttState, msg);
 	          if (!isThisViewerActiveInput()) {
 	            recordSTTCaptureEvent('final_ignored', 'inactive input viewer');
 	            updateSTTInputIndicators();
+	            if (finalEndsUtterance) endSTTUtteranceFromServer(sttState, msg, sttServerEndActions);
 	            return;
 	          }
 	          sttState.lastRecognitionText = String(msg.text || '').trim();
@@ -7266,11 +7287,17 @@ function connectSTTWebSocket() {
           sttState.errorCaptionText = '';
           updateSTTCaption();
           console.log('[STT] Final:', msg.text);
-          handleSTTFinalText(sttState.lastRecognitionText);
-          // Clear buffer for next utterance (server-side VAD detected end)
-          sttState.draftBuffer = [];
-          if (sttState.isStopping && sttState.ws && sttState.ws.readyState === WebSocket.OPEN) {
-            sttState.ws.close();
+          try {
+            handleSTTFinalText(sttState.lastRecognitionText);
+          } finally {
+            // The text went to chat first; ending the utterance does not depend on that.
+            // Clear buffer for next utterance (server-side VAD detected end)
+            sttState.draftBuffer = [];
+            if (endSTTUtteranceFromServer(sttState, msg, sttServerEndActions)) {
+              // The utterance ended with the server's final; the socket is closing.
+            } else if (sttState.isStopping && sttState.ws && sttState.ws.readyState === WebSocket.OPEN) {
+              sttState.ws.close();
+            }
           }
         } else if (msg.type === 'reply_reset') {
           console.log('[STT] LLM reply starting...');
@@ -7283,11 +7310,14 @@ function connectSTTWebSocket() {
         } else if (msg.type === 'empty') {
           console.log('[STT] Empty result');
         } else if (msg.type === 'error') {
+          // Decided before the early return below, which used to leave the Viewer waiting 90 seconds.
+          const errorEndsUtterance = shouldEndSTTUtteranceOnServerEvent(sttState, msg);
           const sttErrorText = extractSTTMessageText(msg) || 'unknown error';
           if (sttState.finalReceived) {
             recordSTTCaptureEvent('error', 'ignored after final: ' + sttErrorText);
             console.warn('[STT] Error ignored after final:', msg.error || msg.message);
             updateSTTInputIndicators();
+            if (errorEndsUtterance) endSTTUtteranceFromServer(sttState, msg, sttServerEndActions);
             return;
           }
           sttState.finalReceived = true;
@@ -7305,7 +7335,9 @@ function connectSTTWebSocket() {
           updateSTTInputIndicators();
           console.error('[STT] Error:', msg.error || msg.message);
           showToast('認識エラー', 'error');
-          if (sttState.isStopping && sttState.ws && sttState.ws.readyState === WebSocket.OPEN) {
+          if (endSTTUtteranceFromServer(sttState, msg, sttServerEndActions)) {
+            // The utterance ended with the server's error; the socket is closing.
+          } else if (sttState.isStopping && sttState.ws && sttState.ws.readyState === WebSocket.OPEN) {
             sttState.ws.close();
           }
         }
@@ -7335,6 +7367,10 @@ function connectSTTWebSocket() {
       completeSTTStop();
       return;
     }
+    // A close the Viewer did not ask for while it was speaking (CORE completes the
+    // waiting utterances and closes the connection when the stream to STT fails):
+    // the utterance is over, and reconnecting would only open a socket for nobody.
+    if (endSTTUtteranceFromServer(sttState, { type: 'close' }, sttServerEndActions)) return;
     if (!sttState.isStopping && sttState.keepSessionChannel) scheduleSTTReconnect();
   };
 }

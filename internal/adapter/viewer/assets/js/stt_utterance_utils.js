@@ -63,6 +63,50 @@
     return 'v' + Math.max(0, Math.floor(Number(nowMs) || 0)).toString(36) + '-' + Math.max(0, Math.floor(Number(counter) || 0)).toString(36);
   }
 
+  // RenCrow_STT decides where an utterance ends, so its final can reach the
+  // Viewer while the Viewer's own VAD still believes the user is speaking and
+  // before the Viewer sent stop. The Viewer then has nothing to wait for: STT
+  // closed the utterance and a stop would name one that is gone. This is the one
+  // decision for the three ways the server ends it:
+  //   - a final (except one that only continues a long utterance: max_length),
+  //   - an error (a session-level error ends the connection, an utterance-level
+  //     one ends the utterance, and the Viewer has one utterance per connection),
+  //   - the connection closing (CORE completes the waiting utterances and closes
+  //     it when the stream to STT fails).
+  // state: { isStopping, vadSpeechActive }. event: { type: 'final' | 'error' | 'close', end_reason }.
+  function shouldEndSTTUtteranceOnServerEvent(state, event) {
+    if (!state || !event || state.isStopping || !state.vadSpeechActive) return false;
+    switch (event.type) {
+      case 'close':
+      case 'error':
+        return true;
+      case 'final':
+        return String(event.end_reason || '') !== 'max_length';
+      default:
+        return false;
+    }
+  }
+
+  // Ends the utterance when shouldEndSTTUtteranceOnServerEvent says so and
+  // returns whether it did. isStopping is set first because completeSTTStop
+  // returns at once without it. With a websocket the utterance is completed by
+  // closing it (onclose reaches completeSTTStop); without one, directly.
+  // actions: { closeWS(), completeStop() }.
+  function endSTTUtteranceFromServer(state, event, actions) {
+    if (!shouldEndSTTUtteranceOnServerEvent(state, event)) return false;
+    state.isStopping = true;
+    state.vadSpeechActive = false;
+    const act = actions || {};
+    if (state.ws) {
+      if (typeof act.closeWS === 'function') act.closeWS();
+    } else if (typeof act.completeStop === 'function') {
+      act.completeStop();
+    }
+    return true;
+  }
+
   root.createSTTPrerollBuffer = createSTTPrerollBuffer;
   root.createSTTUtteranceID = createSTTUtteranceID;
+  root.shouldEndSTTUtteranceOnServerEvent = shouldEndSTTUtteranceOnServerEvent;
+  root.endSTTUtteranceFromServer = endSTTUtteranceFromServer;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

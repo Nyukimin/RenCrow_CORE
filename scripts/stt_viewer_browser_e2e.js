@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 const { chromium } = require('playwright');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 function parseArgs(argv) {
@@ -16,6 +18,9 @@ function parseArgs(argv) {
     finalTimeoutMs: 70000,
     headless: true,
     requireTTSInterrupt: false,
+    // V6: stand in for the /stt relay and make the server end the utterance first.
+    fakeSttEarlyFinal: false,
+    executablePath: '',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
@@ -32,6 +37,8 @@ function parseArgs(argv) {
     else if (a === '--headed') args.headless = false;
     else if (a === '--headless') args.headless = true;
     else if (a === '--require-tts-interrupt') args.requireTTSInterrupt = true;
+    else if (a === '--fake-stt-early-final') args.fakeSttEarlyFinal = true;
+    else if (a === '--executable-path') args.executablePath = argv[++i];
     else throw new Error(`unknown arg: ${a}`);
   }
   if (args.realMic && args.speakMs <= 0) args.manualStop = true;
@@ -78,8 +85,156 @@ function parseJSONFrames(frames) {
 
 const SILENT_WAV_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAAAA';
 
+
+// ---------------------------------------------------------------------------
+// V6 (docs/06 WS /stt, Viewer): the server ends the utterance before the Viewer.
+//
+// RenCrow_STT decides where an utterance ends. When it closes one before the
+// Viewer's own VAD does (noise that fooled the VAD, a short silence_end) the
+// final reaches the Viewer before the Viewer sent stop, and STT never sends a
+// second one for the stop that follows. The Viewer used to send stop anyway and
+// wait 90 seconds for that final. This mode stands in for /stt with
+// page.routeWebSocket, so no STT and no relay is needed, and checks that the
+// Viewer ends the utterance, closes the socket, sends no stop, and takes the
+// next utterance on a new connection without waiting.
+//
+// The page still has to be served by a CORE (--url); see docs/調査 for how to
+// start an isolated one.
+// ---------------------------------------------------------------------------
+
+// Writes a 16 kHz mono PCM16 WAV of tone bursts separated by silence. Chromium's
+// fake capture device loops it, so the Viewer's VAD fires again and again.
+function writeToneWAV(file, bursts, toneMs, silenceMs) {
+  const rate = 16000;
+  const samples = [];
+  for (let b = 0; b < bursts; b += 1) {
+    const toneSamples = Math.round(rate * toneMs / 1000);
+    for (let i = 0; i < toneSamples; i += 1) {
+      samples.push(Math.round(9000 * Math.sin(2 * Math.PI * 220 * i / rate) + 5000 * Math.sin(2 * Math.PI * 660 * i / rate)));
+    }
+    for (let i = 0; i < Math.round(rate * silenceMs / 1000); i += 1) samples.push(0);
+  }
+  const data = Buffer.alloc(samples.length * 2);
+  samples.forEach((v, i) => data.writeInt16LE(Math.max(-32768, Math.min(32767, v)), i * 2));
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  fs.writeFileSync(file, Buffer.concat([header, data]));
+}
+
+async function runFakeSTTEarlyFinal(args) {
+  const wav = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'stt-early-final-')), 'tone.wav');
+  writeToneWAV(wav, 1, 1500, 3000);
+  const launchArgs = [
+    '--use-fake-ui-for-media-stream',
+    '--autoplay-policy=no-user-gesture-required',
+    '--use-fake-device-for-media-stream',
+    `--use-file-for-fake-audio-capture=${wav}`,
+  ];
+  const launchOptions = { headless: args.headless, args: launchArgs };
+  if (args.executablePath) launchOptions.executablePath = args.executablePath;
+  const browser = await chromium.launch(launchOptions);
+  const page = await browser.newPage({ viewport: { width: 1366, height: 900 } });
+  await page.context().grantPermissions(['microphone'], { origin: originOf(args.url) });
+
+  const connections = [];
+  const consoleLines = [];
+  page.on('console', msg => consoleLines.push(`${msg.type()}: ${msg.text()}`));
+  page.on('pageerror', err => consoleLines.push(`pageerror: ${err.message}`));
+  // Persisting the capture and the autotest are not what is under test, and the
+  // autotest would send the same audio to a real /stt.
+  await page.route('**/viewer/stt/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }));
+  await page.route('**/viewer/send', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }));
+
+  await page.routeWebSocket(/\/stt(\?|$)/, ws => {
+    const conn = { opened: Date.now(), frames: [], closed: false, utteranceID: '' };
+    connections.push(conn);
+    ws.send(JSON.stringify({ type: 'session_info', provider: 'rencrow_stt', seq: 1 }));
+    ws.send(JSON.stringify({ type: 'ready', sample_rate: 16000, protocol: 'utterance.v1', max_utterance_ms: 30000, seq: 2 }));
+    let announced = false;
+    ws.onMessage(message => {
+      if (typeof message === 'string') {
+        let parsed = {};
+        try { parsed = JSON.parse(message); } catch (_) { /* not JSON */ }
+        conn.frames.push({ kind: 'text', type: parsed.type || '' });
+        if (parsed.type === 'start' && parsed.utterance_id) conn.utteranceID = parsed.utterance_id;
+        return;
+      }
+      conn.frames.push({ kind: 'binary' });
+      if (announced) return;
+      announced = true;
+      // STT closes the utterance by itself and says nothing of recognition: an
+      // empty final that reaches the Viewer before any stop of its own.
+      const id = conn.utteranceID || 'srv-1';
+      ws.send(JSON.stringify({ type: 'speech_start', utterance_id: id, offset_ms: 0, seq: 3 }));
+      ws.send(JSON.stringify({ type: 'final', utterance_id: id, text: '', end_reason: 'silence', empty_reason: 'too_short', audio_ms: 200, target_called: false, seq: 4 }));
+      conn.finalSentAt = Date.now();
+    });
+    // A route that handles the page's close must complete it, or the page's onclose never fires.
+    ws.onClose(() => {
+      conn.closed = true;
+      conn.closedAt = Date.now();
+      ws.close();
+    });
+  });
+
+  await page.goto(args.url, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('body[data-viewer-tab="timeline"]', { timeout: 10000 });
+  await page.click('#micBtn');
+  await page.waitForFunction(() => document.querySelector('#micState')?.textContent?.includes('on'), null, { timeout: 10000 });
+
+  // Two utterances, each ended by the server. The wait is far below the Viewer's 90 s final wait.
+  let gotTwo = false;
+  const deadline = Date.now() + args.finalTimeoutMs;
+  while (Date.now() < deadline && !gotTwo) {
+    gotTwo = connections.length >= 2 && connections[0].closed;
+    if (!gotTwo) await page.waitForTimeout(200);
+  }
+
+  const state = await page.evaluate(() => ({
+    isStopping: sttState.isStopping,
+    vadSpeechActive: sttState.vadSpeechActive,
+    session: document.querySelector('#sttSessionState')?.textContent || '',
+    caption: document.querySelector('#sttCaption')?.textContent || '',
+  }));
+  const first = connections[0] || { frames: [], closed: false };
+  const stopFrames = connections.reduce((n, c) => n + c.frames.filter(f => f.kind === 'text' && f.type === 'stop').length, 0);
+  const failures = [];
+  if (!gotTwo) failures.push('the Viewer did not move on to a second utterance after the server ended the first');
+  if (!first.closed) failures.push('the Viewer did not close the socket of the utterance the server ended');
+  if (first.frames.some(f => f.kind === 'text' && f.type === 'stop')) failures.push('the Viewer sent stop for an utterance that was already over');
+  if (/timed out waiting for final/.test(state.session) || /timed out waiting for final/.test(state.caption)) failures.push('the 90 s final wait expired');
+  if (consoleLines.some(line => line.startsWith('pageerror:'))) failures.push('the page raised an error');
+  const result = {
+    ok: failures.length === 0,
+    mode: 'fake-stt-early-final',
+    url: args.url,
+    connections: connections.length,
+    first_connection_closed_by_viewer: Boolean(first.closed),
+    first_connection_ms_to_close: first.closedAt && first.finalSentAt ? first.closedAt - first.finalSentAt : null,
+    stop_frames_sent: stopFrames,
+    viewer_state: state,
+    failures,
+    recent_console: consoleLines.slice(-20),
+  };
+  console.log(JSON.stringify(result, null, 2));
+  await browser.close();
+  process.exit(result.ok ? 0 : 2);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (args.fakeSttEarlyFinal) return runFakeSTTEarlyFinal(args);
   const repo = process.cwd();
   const launchArgs = ['--use-fake-ui-for-media-stream', '--autoplay-policy=no-user-gesture-required'];
   if (!args.realMic) {

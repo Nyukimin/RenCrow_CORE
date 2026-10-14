@@ -95,3 +95,116 @@ test('utterance ids are short printable and unique per counter', () => {
     assert.match(id, /^[A-Za-z0-9_-]{1,64}$/, 'must satisfy CORE utterance id rules (printable, at most 64 chars)');
   }
 });
+
+// RenCrow_STT decides where an utterance ends. Its final (or an error, or the
+// close CORE makes after an upstream failure) can therefore reach the Viewer
+// while the Viewer's own VAD still believes the user is speaking and before
+// the Viewer sent stop. Nothing used to end the utterance in that case: the
+// Viewer sent stop on its own VAD silence and then waited 90 seconds for a
+// final that STT, having closed the utterance already, never sent again.
+
+function speakingState(overrides) {
+  return { isStopping: false, vadSpeechActive: true, ws: { id: 'ws' }, ...overrides };
+}
+
+function recordingActions() {
+  const calls = [];
+  return { calls, closeWS() { calls.push('closeWS'); }, completeStop() { calls.push('completeStop'); } };
+}
+
+test('V1: a final that closes the utterance while the Viewer is speaking ends it and closes the websocket', () => {
+  const utils = loadUtils();
+  for (const endReason of ['silence', 'idle_timeout', 'stop', 'restart', '', undefined]) {
+    const state = speakingState();
+    const actions = recordingActions();
+    const ended = utils.endSTTUtteranceFromServer(state, { type: 'final', text: '', end_reason: endReason }, actions);
+    assert.equal(ended, true, `end_reason=${endReason}`);
+    assert.equal(state.isStopping, true);
+    assert.equal(state.vadSpeechActive, false);
+    assert.deepEqual(actions.calls, ['closeWS'], 'closing the socket lets onclose reach completeSTTStop; it is not called directly');
+  }
+});
+
+test('V1: without a websocket the utterance is completed directly', () => {
+  const utils = loadUtils();
+  const state = speakingState({ ws: null });
+  const actions = recordingActions();
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'final', end_reason: 'silence' }, actions), true);
+  assert.deepEqual(actions.calls, ['completeStop']);
+  assert.equal(state.isStopping, true, 'completeSTTStop returns at once unless isStopping is set first');
+});
+
+test('V2: a final that ends only because the utterance hit the maximum length lets the Viewer go on', () => {
+  const utils = loadUtils();
+  const state = speakingState();
+  const actions = recordingActions();
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'final', text: 'long speech', end_reason: 'max_length' }, actions), false);
+  assert.deepEqual(state, speakingState());
+  assert.deepEqual(actions.calls, []);
+});
+
+test('V3: an error while the Viewer is speaking ends the utterance as well', () => {
+  const utils = loadUtils();
+  const state = speakingState();
+  const actions = recordingActions();
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'error', code: 'stt_failed', utterance_id: 'v1' }, actions), true);
+  assert.equal(state.isStopping, true);
+  assert.equal(state.vadSpeechActive, false);
+  assert.deepEqual(actions.calls, ['closeWS']);
+
+  const sessionLevel = speakingState();
+  assert.equal(utils.endSTTUtteranceFromServer(sessionLevel, { type: 'error', code: 'stt_failed' }, recordingActions()), true);
+});
+
+test('V4: a close the Viewer did not ask for, while it is speaking, completes the stop', () => {
+  const utils = loadUtils();
+  // CORE closes the connection after it completed the waiting utterances because
+  // the stream failed; onclose has already set ws to null.
+  const state = speakingState({ ws: null });
+  const actions = recordingActions();
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'close' }, actions), true);
+  assert.equal(state.isStopping, true);
+  assert.equal(state.vadSpeechActive, false);
+  assert.deepEqual(actions.calls, ['completeStop']);
+});
+
+test('V5: while the Viewer is already stopping, or not speaking, nothing is closed twice', () => {
+  const utils = loadUtils();
+  const events = [
+    { type: 'final', end_reason: 'silence' },
+    { type: 'final', end_reason: 'stop' },
+    { type: 'error', code: 'x' },
+    { type: 'close' },
+  ];
+  for (const state of [speakingState({ isStopping: true, vadSpeechActive: false }), speakingState({ isStopping: true }), speakingState({ vadSpeechActive: false })]) {
+    for (const event of events) {
+      const actions = recordingActions();
+      const before = { ...state };
+      assert.equal(utils.endSTTUtteranceFromServer(state, event, actions), false, JSON.stringify([before, event]));
+      assert.deepEqual(state, before);
+      assert.deepEqual(actions.calls, []);
+    }
+  }
+});
+
+test('events that carry no end of the utterance never end it', () => {
+  const utils = loadUtils();
+  for (const type of ['partial', 'draft', 'speech_start', 'ready', 'session_info', 'cancelled', 'status', '', undefined]) {
+    const state = speakingState();
+    const actions = recordingActions();
+    assert.equal(utils.endSTTUtteranceFromServer(state, { type }, actions), false, String(type));
+    assert.deepEqual(actions.calls, []);
+  }
+  assert.equal(utils.shouldEndSTTUtteranceOnServerEvent(null, { type: 'final' }), false);
+  assert.equal(utils.shouldEndSTTUtteranceOnServerEvent(speakingState(), null), false);
+});
+
+test('the decision is made once: a second event for the same utterance finds it already ending', () => {
+  const utils = loadUtils();
+  const state = speakingState();
+  const actions = recordingActions();
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'final', end_reason: 'silence' }, actions), true);
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'error', code: 'x' }, actions), false);
+  assert.equal(utils.endSTTUtteranceFromServer(state, { type: 'close' }, actions), false);
+  assert.deepEqual(actions.calls, ['closeWS']);
+});

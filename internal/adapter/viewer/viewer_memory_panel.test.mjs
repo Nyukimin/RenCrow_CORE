@@ -4304,9 +4304,10 @@ function renderDebugPanels() {}
 function handleSTTFinalText() {}
 function clearSTTFinalWaitTimer() {}
 function scheduleSTTReconnect() {}
+function completeSTTStop() {}
 var document = {getElementById() { return null; }};
 ` + sourceBetween(viewerJs, 'function describeSTTActionError', 'function copySTTCaptureLog') +
-sourceBetween(viewerJs, 'function connectSTTWebSocket', 'function resampleToPCM16') + `
+sourceBetween(viewerJs, 'const sttServerEndActions', 'function resampleToPCM16') + `
 globalThis.__connectSTTWebSocket = connectSTTWebSocket;
 globalThis.__wsInstances = wsInstances;
 `;
@@ -4316,6 +4317,8 @@ globalThis.__wsInstances = wsInstances;
     __toasts: [],
     console: {error() {}, warn() {}, log() {}},
   });
+  // viewer.html loads the utterance utils before viewer.js; the message handler uses them.
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/stt_utterance_utils.js', 'utf8'), context);
   vm.runInContext(source, context);
 
   context.__connectSTTWebSocket();

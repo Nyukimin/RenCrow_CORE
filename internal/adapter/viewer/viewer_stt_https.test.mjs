@@ -463,3 +463,179 @@ test('viewer start control announces the utterance id while stop stays id-less f
 
   assert.match(js, /sttState\.ws\.send\(JSON\.stringify\(\{ type: 'stop' \}\)\)/, 'stop applies to the active utterance and needs no id');
 });
+
+// The Viewer ends its utterance when the server does (stt_utterance_utils.js
+// decides; stt_utterance_utils.test.mjs tests the decision). These tests pin
+// where viewer.js applies it, because the two paths that used to swallow the
+// event (final_ignored, and the finalReceived early return of error) would
+// still stop the Viewer for 90 seconds if the decision came after them.
+
+function sttMessageHandlerSource(js) {
+  const start = js.indexOf('sttState.ws.onmessage = (event) => {');
+  const end = js.indexOf('sttState.ws.onerror =', start);
+  assert.ok(start >= 0 && end > start, 'STT onmessage block not found');
+  return js.slice(start, end);
+}
+
+test('V7: the decision to end the utterance is made before final_ignored and before the error early return', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const handler = sttMessageHandlerSource(js);
+
+  const finalStart = handler.indexOf("} else if (msg.type === 'final') {");
+  const finalEnd = handler.indexOf("} else if (msg.type === 'reply_reset')", finalStart);
+  assert.ok(finalStart >= 0 && finalEnd > finalStart, 'final branch not found');
+  const finalBranch = handler.slice(finalStart, finalEnd);
+  const finalIgnoredAt = finalBranch.indexOf("recordSTTCaptureEvent('final_ignored'");
+  assert.ok(finalIgnoredAt >= 0, 'final_ignored path not found');
+  const finalDecisionAt = finalBranch.indexOf('shouldEndSTTUtteranceOnServerEvent(');
+  assert.ok(finalDecisionAt >= 0 && finalDecisionAt < finalIgnoredAt, 'the final decision must be taken before the inactive-viewer return');
+  const ignoredBlock = finalBranch.slice(finalIgnoredAt, finalBranch.indexOf('return;', finalIgnoredAt));
+  assert.match(ignoredBlock, /endSTTUtteranceFromServer\(/, 'a final the inactive Viewer ignores must still end its utterance');
+
+  const errorStart = handler.indexOf("} else if (msg.type === 'error') {");
+  assert.ok(errorStart >= 0, 'error branch not found');
+  const errorBranch = handler.slice(errorStart);
+  const errorDecisionAt = errorBranch.indexOf('shouldEndSTTUtteranceOnServerEvent(');
+  const earlyReturnAt = errorBranch.indexOf('if (sttState.finalReceived)');
+  assert.ok(errorDecisionAt >= 0 && earlyReturnAt >= 0 && errorDecisionAt < earlyReturnAt, 'the error decision must be taken before the finalReceived early return');
+  const afterFinalBlock = errorBranch.slice(earlyReturnAt, errorBranch.indexOf('return;', earlyReturnAt));
+  assert.match(afterFinalBlock, /endSTTUtteranceFromServer\(/, 'an error after a final must still end the utterance');
+});
+
+test('the final text goes to chat before the utterance is closed, and the close does not depend on the chat send', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const handler = sttMessageHandlerSource(js);
+  const finalStart = handler.indexOf("} else if (msg.type === 'final') {");
+  const finalEnd = handler.indexOf("} else if (msg.type === 'reply_reset')", finalStart);
+  const finalBranch = handler.slice(finalStart, finalEnd);
+  const sendAt = finalBranch.indexOf('handleSTTFinalText(sttState.lastRecognitionText)');
+  const endAt = finalBranch.lastIndexOf('endSTTUtteranceFromServer(');
+  assert.ok(sendAt >= 0 && endAt > sendAt, 'handleSTTFinalText must come first');
+  const between = finalBranch.slice(sendAt, endAt);
+  assert.match(between, /finally\s*\{/, 'the close must run even if handleSTTFinalText throws');
+});
+
+test('a connection that closes while the Viewer is speaking ends the utterance instead of reconnecting', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const start = js.indexOf('sttState.ws.onclose = () => {');
+  const end = js.indexOf('function buildSTTWebSocketURL()', start);
+  assert.ok(start >= 0 && end > start, 'STT onclose block not found');
+  const onclose = js.slice(start, end);
+  const nulledAt = onclose.indexOf('sttState.ws = null;');
+  const decisionAt = onclose.indexOf("endSTTUtteranceFromServer(sttState, { type: 'close' }");
+  const reconnectAt = onclose.indexOf('scheduleSTTReconnect()');
+  assert.ok(nulledAt >= 0 && decisionAt > nulledAt, 'ws must be null before the decision, so that it completes the stop directly');
+  assert.ok(reconnectAt > decisionAt, 'the decision comes before the reconnect branch');
+});
+
+test('viewer.html changes the version of the scripts that changed, so a cached Viewer cannot keep the old decision', () => {
+  const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
+  assert.match(html, /stt_utterance_utils\.js\?v=20261014-stt-relay/);
+  assert.match(html, /viewer\.js\?v=[^"]*stt-relay/);
+});
+
+// The decision in stt_utterance_utils.js is tested on its own; this drives the
+// real onmessage and onclose of viewer.js with the utils loaded as the page
+// loads them, to pin what the handlers do with it.
+function runSTTHandlers(stateOverrides, extra) {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
+  const log = [];
+  const source = `
+var WebSocket = class { static OPEN = 1; static CONNECTING = 0; constructor() { globalThis.__ws = this; this.readyState = 1; }
+  send() {} close() { __log.push('ws.close'); } };
+var sttState = Object.assign({
+  ws: null, isRecording: true, isStopping: false, keepSessionChannel: false, vadSpeechActive: true,
+  reconnecting: false, finalReceived: false, captureActionError: '', captureSessionID: 's1', voiceBridgeURL: 'ws://x/stt',
+  draftBuffer: [], chunkBuffer: [], lastRecognitionText: '', partialCaptionText: '', finalCaptionText: '', errorCaptionText: '',
+}, globalThis.__stateOverrides);
+function updateSTTInputIndicators() {}
+function showToast() {}
+function ftime() { return ''; }
+function pushDebugTrace() {}
+function short(v) { return String(v || ''); }
+function recordSTTCaptureEvent() {}
+function updateSTTCaption() {}
+function setSTTCaptionError() {}
+function clearSTTFinalWaitTimer() {}
+function scheduleSTTReconnect() { __log.push('reconnect'); }
+function completeSTTStop() { __log.push('completeSTTStop'); }
+function handleSTTFinalText(text) { __log.push('chat:' + text); if (globalThis.__chatThrows) throw new Error('chat failed'); }
+function isThisViewerActiveInput() { return globalThis.__active !== false; }
+function describeSTTActionError(a, b) { return a + ': ' + b; }
+var document = { getElementById() { return null; } };
+` + js.slice(js.indexOf('const sttServerEndActions = {'), js.indexOf('function connectSTTWebSocket')) +
+    js.slice(js.indexOf('function connectSTTWebSocket'), js.indexOf('function resampleToPCM16')) + `
+globalThis.__connect = connectSTTWebSocket;
+globalThis.__state = sttState;
+`;
+  const context = vm.createContext({
+    __log: log, __stateOverrides: stateOverrides, console: { error() {}, warn() {}, log() {} },
+    __active: extra && extra.active, __chatThrows: extra && extra.chatThrows,
+  });
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/stt_utterance_utils.js', 'utf8'), context);
+  vm.runInContext(source, context);
+  context.__connect();
+  return { context, log, ws: context.__ws, state: context.__state };
+}
+
+test('the real handler: a final that closes the utterance sends the text to chat first, then closes the socket', () => {
+  const { ws, state, log } = runSTTHandlers({});
+  ws.onmessage({ data: JSON.stringify({ type: 'final', text: 'こんにちは', end_reason: 'silence' }) });
+  assert.deepEqual(log, ['chat:こんにちは', 'ws.close']);
+  assert.equal(state.isStopping, true);
+  assert.equal(state.vadSpeechActive, false);
+  ws.onclose();
+  assert.deepEqual(log, ['chat:こんにちは', 'ws.close', 'completeSTTStop'], 'closing the socket reaches completeSTTStop through onclose');
+});
+
+test('the real handler: V7, an inactive Viewer sends nothing to chat but still ends the utterance', () => {
+  const { ws, state, log } = runSTTHandlers({}, { active: false });
+  ws.onmessage({ data: JSON.stringify({ type: 'final', text: 'ignored', end_reason: 'silence' }) });
+  assert.deepEqual(log, ['ws.close']);
+  assert.equal(state.isStopping, true);
+  assert.equal(state.vadSpeechActive, false);
+});
+
+test('the real handler: V7, an error that arrives after a final still ends the utterance', () => {
+  const { ws, state, log } = runSTTHandlers({ finalReceived: true });
+  ws.onmessage({ data: JSON.stringify({ type: 'error', code: 'stt_failed', error: 'x' }) });
+  assert.deepEqual(log, ['ws.close']);
+  assert.equal(state.isStopping, true);
+});
+
+test('the real handler: a long utterance that only reached the maximum length is not ended', () => {
+  const { ws, state, log } = runSTTHandlers({});
+  ws.onmessage({ data: JSON.stringify({ type: 'final', text: 'part', end_reason: 'max_length' }) });
+  assert.deepEqual(log, ['chat:part']);
+  assert.equal(state.isStopping, false);
+  assert.equal(state.vadSpeechActive, true);
+});
+
+test('the real handler: the utterance ends even when sending the text to chat throws', () => {
+  const { ws, state, log } = runSTTHandlers({}, { chatThrows: true });
+  ws.onmessage({ data: JSON.stringify({ type: 'final', text: 'x', end_reason: 'silence' }) });
+  assert.deepEqual(log, ['chat:x', 'ws.close']);
+  assert.equal(state.isStopping, true);
+});
+
+test('the real handler: a final while the Viewer is already stopping behaves as before and closes once', () => {
+  const { ws, state, log } = runSTTHandlers({});
+  state.isStopping = true; // the Viewer sent stop and is waiting for the final
+  state.vadSpeechActive = false;
+  ws.onmessage({ data: JSON.stringify({ type: 'final', text: 'a', end_reason: 'stop' }) });
+  assert.deepEqual(log, ['chat:a', 'ws.close']);
+});
+
+test('the real handler: V4, a close nobody asked for while speaking completes the stop and does not reconnect', () => {
+  const { ws, state, log } = runSTTHandlers({ keepSessionChannel: true });
+  ws.onclose();
+  assert.deepEqual(log, ['completeSTTStop']);
+  assert.equal(state.isStopping, true);
+  assert.equal(state.vadSpeechActive, false);
+});
+
+test('the real handler: a close while the Viewer is idle still reconnects when the channel is kept', () => {
+  const { ws, log } = runSTTHandlers({ keepSessionChannel: true, vadSpeechActive: false });
+  ws.onclose();
+  assert.deepEqual(log, ['reconnect']);
+});
