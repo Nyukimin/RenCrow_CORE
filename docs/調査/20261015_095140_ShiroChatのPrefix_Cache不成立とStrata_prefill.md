@@ -118,7 +118,21 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
     追記した2回目`reused=10,197`・0.4秒、入力の末尾が違う3回目`reused=10,185`・0.3秒。失敗0件。
     CodexのClient側が先頭に何かを足す場合は、このsha256の変化で検知できる（fallback経路では`stable_prefix_changed`は出ないため、ログの目視比較になる）。
 
-次はMidori、Mio、開発用routeへの展開（個別に確認が必要）。
+11. `midori_wild`（08:17Zに`single_leading_stable`へ切替）: Midoriの実体はStrataではなく別hostのllama.cpp（b11429、1 slot、host prompt cache 8 GiB、
+    再帰checkpointを256 tokenごと、context 65,536）。Strataの会話キャッシュとは無関係。CORE経由のChat（内容違いの3回）で、
+    切替前後の「評価した新規token」（llama.cppの`prompt eval`のtoken数。再利用分は含まない）を比べた。
+
+    | | 1回目 | 2回目 | 3回目 |
+    |---|---|---|---|
+    | 切替前（`single_leading_instruction`） | 568 | 519 | 366 |
+    | 切替後（`single_leading_stable`） | 4,749（全量、6.9秒） | 464 | 469 |
+
+    切替後は`stable_layout`が3回とも`applied=true`、先頭Systemのsha256は3回で同一、応答は正常、失敗0件。
+    判断: Midoriのlast turn以外の履歴は短い（CORE→Gatewayのmessage数は13〜18で、大半はSystemのブロック）ため、切替前も評価は約500 tokenで済んでおり、
+    切替後との差は出ていない。履歴が長くなるほど、Recall・時刻より後ろの履歴まで読み直す旧配置との差が開く見込みだが、長い履歴での比較は未測定。
+    切替直後の1回目だけ全量を評価した理由（先頭Systemの末尾が変わったことによるcheckpointの扱い）は未確認。
+
+次はMio、開発用routeへの展開（個別に確認が必要）。
 
 ## 調査上の副作用
 
