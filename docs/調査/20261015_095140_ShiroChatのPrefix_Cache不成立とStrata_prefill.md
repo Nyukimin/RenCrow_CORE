@@ -1,7 +1,7 @@
 ---
 title: 調査 — Shiro ChatのPrefix Cache不成立とStrata prefill
 date: 2026-10-15 09:51 JST
-status: open（提案と検証待ち。CORE・RenCrow_LLMのコードは変更していない）
+status: 対応中（案A2を実装済み。2026-10-15時点でデプロイと実トラフィックの確認が残る）
 skill: debug-investigate
 symptom: Shiro Chat 1回のStrata処理は約12秒で、その約8割（約9.5秒）がprefill。毎回約5K tokenのpromptを丸ごと読み直している（reused=0）
 frequency: 実経路4回、および直近12回のprompt receiptの全てで再現
@@ -64,6 +64,25 @@ CORE側のprompt配置は、Character、Stable、Recall、Variable（現在時�
 - 実経路のShiro Chatで、異なる質問を連続4回送る。Strata logの`N reused + M read`で、`reused`が固定prefixのtoken数に近いこと（目安: 固定prefix − chunk幅）を確認する。
 - 目標: Chat 1回のStrata処理時間（現在約12秒）が、prefill 2秒以下を含む5秒前後に下がること。
 - 退行: 案Aでは、冷キャッシュのprefill速度（約5K、30K、96Kの3点）とdecode速度が5%以上悪化しないこと。悪化する場合は案Bを検討する。
+
+## 対応（2026-10-15）
+
+提案のうち、案Aは不採用、案Bは未着手とし、**案A2（配置）**を採用して実装した。
+
+- 案A（Strataの起動引数）は不採用。`--prefill auto:N`は2GPU構成でチャンク幅を変えず（起動logは常に`auto: 8192`）、
+  再利用は0のままだった。固定の`--prefill N`と`--prompt-cache-every N`は再利用できるが、冷キャッシュのprefillが大きく悪化した
+  （約5K tokenで7.9秒に対して2048で13.0秒、1024で20.0秒、512で22.4秒。約30K tokenで24.1秒に対して61.0〜128.8秒）。
+  チャンク設定はStrata全体に共通で、Codexなど長い入力も悪化するため採用しない。
+- 案A2（配置）は、エンジン設定を変えずに先頭Systemを固定部分だけにし、Recallと現在時刻を最後のuser turnへ移す。合成promptでの測定は、
+  固定部分が約90%のとき2回目のprefillが約3.4秒（再利用4,542 / 5,144 token）、約60%のとき約6.0秒（2,878 token）。
+  固定部分が2,048 token未満では再利用0（Strataのsystem終端checkpointは2,048 token以上が条件）。初回は約+3秒。
+- 実装: RenCrow_LLMのGatewayに`system_message_mode=single_leading_stable`を追加した。COREが送る`rencrow.prompt_context_blocks`で
+  Character／Stableだけを先頭Systemに置き、Recall／Variableを最後のuser messageの封筒へ移す。使えない要求は
+  `single_leading_instruction`として扱う。COREでは、Shiroの応答言語ルールとペルソナ文（定数）をVariableからStableへ直し、
+  ReAct経路の平坦化をやめて型付きPrompt Contextを渡し、`assemblePromptContext`がStable blockをRecallより前に集約する。
+  不変条件と検証はdocs/04の「KVキャッシュとViewer」と「必須検証」に記載した。
+- 残り: デプロイ（Gateway、CORE、`shiro_worker`、`shiro_chatworker`の順）、実トラフィックでの再利用と応答品質の確認、
+  Midori、Mio、開発用routeへの展開、prompt receiptへの種別ごとの大きさと静的prefixのhashの追加。
 
 ## 調査上の副作用
 
