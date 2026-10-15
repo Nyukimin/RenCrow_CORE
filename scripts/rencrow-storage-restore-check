@@ -930,15 +930,28 @@ def run_windows_owned_worker(worker_command):
                 else:
                     active_marker_created = False
         elif cleanup_proven:
+            worker_input_removed = True
             if worker_input_path is not None:
-                try:
-                    os.unlink(worker_input_path)
-                except FileNotFoundError:
-                    pass
-                except OSError as error:
-                    requested_status = 125
-                    diagnostics.append(f"temporary worker input could not be removed: {error}")
-            if active_marker_created:
+                worker_input_delete_attempts = 5 if os.name == "nt" else 1
+                for attempt in range(worker_input_delete_attempts):
+                    try:
+                        os.unlink(worker_input_path)
+                        break
+                    except FileNotFoundError:
+                        break
+                    except OSError as error:
+                        if (
+                            os.name == "nt"
+                            and getattr(error, "winerror", None) == 32
+                            and attempt + 1 < worker_input_delete_attempts
+                        ):
+                            time.sleep(0.1)
+                            continue
+                        worker_input_removed = False
+                        requested_status = 125
+                        diagnostics.append(f"temporary worker input could not be removed: {error}")
+                        break
+            if active_marker_created and worker_input_removed:
                 try:
                     os.unlink(supervision_marker)
                 except FileNotFoundError:
