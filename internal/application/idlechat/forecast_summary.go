@@ -92,7 +92,7 @@ func (o *IdleChatOrchestrator) summarizeByForecastLLM(domain ForecastDomain, top
 	}
 	body := strings.Join(transcript, "\n")
 	messages := []llm.Message{
-		{Role: "system", Content: "あなたは未来予測・社会分析の専門家です。議論を的確に要約し、さらに深掘りすべき論点を提示してください。"},
+		{Role: "system", Content: "あなたは未来予測・社会分析の専門家です。議論を的確に要約し、さらに深掘りすべき論点を提示してください。", Type: llm.PromptContextStable},
 		{Role: "user", Content: fmt.Sprintf(`以下は「%s」分野の未来展望ディスカッションです。
 
 話題: %s
@@ -153,7 +153,7 @@ func (o *IdleChatOrchestrator) extractCoveredThemes(domain ForecastDomain, topic
 	}
 
 	messages := []llm.Message{
-		{Role: "system", Content: "あなたは議論の進行管理者です。既出論点を正確に記録します。"},
+		{Role: "system", Content: "あなたは議論の進行管理者です。既出論点を正確に記録します。", Type: llm.PromptContextStable},
 		{Role: "user", Content: fmt.Sprintf(`以下は「%s」の議論（直近%dターン）です。
 
 話題: %s

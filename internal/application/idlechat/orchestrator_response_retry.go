@@ -31,7 +31,7 @@ func buildIdleCompactRetryMessagesWithPolicy(speaker, topic, latestOther, purpos
 		content += "\n狙い: " + strings.TrimSpace(purpose)
 	}
 	return []llm.Message{
-		{Role: "system", Content: "/no_think\n最終回答の本文だけを自然な日本語で返す。英語だけの応答、英語の見出し、英語での説明は禁止。"},
+		{Role: "system", Content: "/no_think\n最終回答の本文だけを自然な日本語で返す。英語だけの応答、英語の見出し、英語での説明は禁止。", Type: llm.PromptContextStable},
 		{Role: "user", Content: content},
 	}
 }

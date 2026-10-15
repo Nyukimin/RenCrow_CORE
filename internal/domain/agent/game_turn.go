@@ -19,11 +19,11 @@ func (m *MioAgent) DecideGameTurn(ctx context.Context, prompt string, recipient 
 	}
 	messages := []llm.Message{}
 	if systemPrompt := m.systemPromptForViewerRecipient(recipient); systemPrompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt})
+		messages = append(messages, llm.Message{Role: "system", Content: systemPrompt, Type: llm.PromptContextCharacter})
 	}
 	messages = append(messages,
-		llm.Message{Role: "system", Content: gameTurnBoundaryPrompt},
-		llm.Message{Role: "user", Content: prompt},
+		llm.Message{Role: "system", Content: gameTurnBoundaryPrompt, Type: llm.PromptContextStable, Metadata: map[string]string{"runtime_context_kind": "game_turn_boundary"}},
+		llm.Message{Role: "user", Content: prompt, Type: llm.PromptContextUser},
 	)
 	request := m.generationRequest(messages, nil)
 	request.MaxTokens = gameTurnMaxTokens

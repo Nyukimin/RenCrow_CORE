@@ -14,6 +14,16 @@ func (o *IdleChatOrchestrator) generateResponse(speaker, target, sessionID strin
 	return response, err
 }
 
+// idleVariableContext はターンやセッションで変わる system 文脈を Variable として包む。
+func idleVariableContext(kind, content string) llm.Message {
+	return llm.Message{
+		Role:     "system",
+		Content:  content,
+		Type:     llm.PromptContextVariable,
+		Metadata: map[string]string{"runtime_context_kind": kind},
+	}
+}
+
 func (o *IdleChatOrchestrator) generateResponseWithRaw(speaker, target, sessionID string, turn int, segmentTurns int, topic string) (string, string, error) {
 	return o.generateResponseWithRawForGeneration(speaker, target, sessionID, turn, segmentTurns, topic, 0)
 }
@@ -25,14 +35,17 @@ func (o *IdleChatOrchestrator) generateResponseWithRawForGeneration(speaker, tar
 
 	// 履歴は浅めにして、古いテンプレが自己強化しないようにする。
 	recentEntries := o.memory.GetUnifiedView(12)
+	// 先頭の system は人格・セッション文脈・語彙メモで、同じ会話のターン間では変わらない
+	// （Character）。ターンごとに変わる対話方針（直前の発話・ターン計画を含む）は
+	// 先頭へ連結せず Variable の別 message にする。Gateway はそれを最後の user の封筒へ移し、
+	// 先頭 system を固定する。連結すると先頭がターンごとに変わり、prefix cache が崩れる。
 	messages := []llm.Message{
-		{Role: "system", Content: systemPrompt},
+		{Role: "system", Content: systemPrompt, Type: llm.PromptContextCharacter},
 	}
 	selfCtx, otherCtx := splitSpeakerContexts(recentEntries, sessionID, speaker, 2)
 	latestOther := latestOtherUtterance(recentEntries, sessionID, speaker)
 	latestSelf := latestSelfUtterance(recentEntries, sessionID, speaker)
 
-	// Gateway contractではsystem messageを先頭へ置くため、
 	// 追加の system 文脈は履歴や user 指示より前に集約する。
 	o.mu.Lock()
 	sc := o.sessionContext
@@ -41,15 +54,15 @@ func (o *IdleChatOrchestrator) generateResponseWithRawForGeneration(speaker, tar
 	if sc != "" {
 		messages[0].Content += "\n\n" + sc
 	}
-	if dialoguePrompt != "" {
-		messages[0].Content += "\n\n" + dialoguePrompt
-	}
 	if o.recentTopics != nil {
 		if glossaryTopics, err := o.recentTopics(o.ctx, 5); err != nil {
 			log.Printf("[IdleChat] glossary context failed: %v", err)
 		} else if len(glossaryTopics) > 0 {
 			messages[0].Content += "\n\n最近語彙メモ:\n- " + strings.Join(glossaryTopics, "\n- ") + "\n最近語彙は会話の種としてだけ使い、詳細断言はしないでください。"
 		}
+	}
+	if dialoguePrompt != "" {
+		messages = append(messages, idleVariableContext("idlechat_dialogue", dialoguePrompt))
 	}
 
 	sessionEntries := make([]session.ConversationEntry, 0, 4)

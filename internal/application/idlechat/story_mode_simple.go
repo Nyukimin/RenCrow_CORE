@@ -171,7 +171,7 @@ func (o *IdleChatOrchestrator) RunSimpleStorySession() {
 	storyUtteranceSeq := 0
 
 	messages := []llm.Message{
-		{Role: "system", Content: simpleStorySystemPrompt},
+		{Role: "system", Content: simpleStorySystemPrompt, Type: llm.PromptContextStable},
 		{Role: "user", Content: simpleStoryUserPrompt(tale, protagonist)},
 	}
 

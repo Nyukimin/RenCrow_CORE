@@ -681,7 +681,7 @@ func analyzeDailySourceBodies(ctx context.Context, provider llm.LLMProvider, inp
 		var batch []dailyArticleAnalysisItem
 		_, err = generateDailyLLMWithValidation(requestCtx, provider, llm.GenerateRequest{
 			Messages: []llm.Message{
-				{Role: "system", Content: "あなたはShiroです。一次情報の翻訳、用語、要約、見解を一度の構造化分析で分離し、確認できない内容を推測しません。"},
+				{Role: "system", Content: "あなたはShiroです。一次情報の翻訳、用語、要約、見解を一度の構造化分析で分離し、確認できない内容を推測しません。", Type: llm.PromptContextStable},
 				{Role: "user", Content: prompt},
 			},
 			MaxTokens:       dailyTranslationMaxTokens,
@@ -741,7 +741,7 @@ func translateDailySourceBodies(ctx context.Context, provider llm.LLMProvider, i
 		var batch []dailyTranslationItem
 		_, err = generateDailyLLMWithValidation(requestCtx, provider, llm.GenerateRequest{
 			Messages: []llm.Message{
-				{Role: "system", Content: "あなたはShiroです。特定URLから直接取得した原文を忠実に日本語へ翻訳し、確認できない内容を追加しません。"},
+				{Role: "system", Content: "あなたはShiroです。特定URLから直接取得した原文を忠実に日本語へ翻訳し、確認できない内容を追加しません。", Type: llm.PromptContextStable},
 				{Role: "user", Content: prompt},
 			},
 			MaxTokens:       dailyTranslationMaxTokens,
@@ -874,7 +874,7 @@ func generateDailyBriefLLMWithValidation(ctx context.Context, provider llm.LLMPr
 	})
 	return generateDailyLLMWithValidation(requestCtx, provider, llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: "あなたはShiroです。一次情報の原文翻訳、サマリ、見解、用語補足を明確に分離し、確認できない内容は推測しません。利用者向け本文はすべて日本語で記述します。"},
+			{Role: "system", Content: "あなたはShiroです。一次情報の原文翻訳、サマリ、見解、用語補足を明確に分離し、確認できない内容は推測しません。利用者向け本文はすべて日本語で記述します。", Type: llm.PromptContextStable},
 			{Role: "user", Content: prompt},
 		},
 		MaxTokens:       dailySeedEnrichmentMaxTokens,

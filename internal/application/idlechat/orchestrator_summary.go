@@ -258,7 +258,7 @@ func (o *IdleChatOrchestrator) summarizeByWorker(topic string, transcript []stri
 		summaryContext = "\n\n対話の内部メタ（要約の観点として使い、内部用語は出さない）:\n" + summaryContext
 	}
 	messages := []llm.Message{
-		{Role: "system", Content: o.getSystemPrompt("shiro")},
+		{Role: "system", Content: o.getSystemPrompt("shiro"), Type: llm.PromptContextCharacter},
 		{Role: "user", Content: fmt.Sprintf("次のidleChatを要約してください。硬い報告書ではなく、読んで雰囲気が分かる短い要約にしてください。1. いちばん面白かった点 2. 何が話を前に進めたか 3. 次に広がりそうな観点、の順にし、各項目は見出しを含め45文字以内の完結した1文にしてください。前置き、補足、Markdown装飾は不要です。\n話題: %s%s\n\n%s", topic, summaryContext, body)},
 	}
 	req := llm.GenerateRequest{Messages: messages, MaxTokens: 800, Temperature: 0.4}
@@ -282,7 +282,7 @@ func (o *IdleChatOrchestrator) summarizeByWorker(topic string, transcript []stri
 	log.Printf("[IdleChat] summary exceeds TTS budget; retrying bounded compression: chunks=%d max=%d", idleSummaryTTSChunkCount(summary), idleChatSummaryMaxTTSChunks)
 	compactRequest := llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: o.getSystemPrompt("shiro")},
+			{Role: "system", Content: o.getSystemPrompt("shiro"), Type: llm.PromptContextCharacter},
 			{Role: "user", Content: fmt.Sprintf("次の3点要約を意味と順序を保って短くしてください。各項目は見出しを含め45文字以内の完結した1文にし、1. 2. 3. の3行だけを返してください。Markdown装飾、前置き、補足は禁止です。\n\n%s", summary)},
 		},
 		MaxTokens:   320,

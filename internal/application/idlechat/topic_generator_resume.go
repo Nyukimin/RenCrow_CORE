@@ -63,7 +63,7 @@ func (g *TopicGenerator) GenerateInterestingTopicResumable(
 			}
 			resp, err := g.llm.Generate(ctx, llm.GenerateRequest{
 				Messages: []llm.Message{
-					{Role: "system", Content: topicGeneratorSystemPrompt()},
+					{Role: "system", Content: topicGeneratorSystemPrompt(), Type: llm.PromptContextStable},
 					{Role: "user", Content: prompt},
 				},
 				MaxTokens:       900,

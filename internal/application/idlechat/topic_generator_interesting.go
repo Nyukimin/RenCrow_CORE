@@ -112,7 +112,7 @@ func (g *TopicGenerator) GenerateInterestingTopic(ctx context.Context, category 
 		}
 		resp, err := g.llm.Generate(ctx, llm.GenerateRequest{
 			Messages: []llm.Message{
-				{Role: "system", Content: topicGeneratorSystemPrompt()},
+				{Role: "system", Content: topicGeneratorSystemPrompt(), Type: llm.PromptContextStable},
 				{Role: "user", Content: prompt},
 			},
 			MaxTokens:       900,
@@ -242,7 +242,7 @@ func (g *TopicGenerator) JudgeCandidates(ctx context.Context, category TopicCate
 	}
 	resp, err := g.llm.Generate(ctx, llm.GenerateRequest{
 		Messages: []llm.Message{
-			{Role: "system", Content: topicJudgeSystemPrompt()},
+			{Role: "system", Content: topicJudgeSystemPrompt(), Type: llm.PromptContextStable},
 			{Role: "user", Content: prompt},
 		},
 		MaxTokens:       900,

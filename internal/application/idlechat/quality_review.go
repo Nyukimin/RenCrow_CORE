@@ -32,7 +32,7 @@ func (o *IdleChatOrchestrator) reviewSessionEndWithProvider(provider llm.LLMProv
 		loopReasonForPrompt = "なし（会話は規定ターンまで完了。打ち切りとして扱わない）"
 	}
 	messages := []llm.Message{
-		{Role: "system", Content: "あなたはIdleChatの聞き手体験を編集する脚本編集者です。退屈さを検出するだけでなく、会話に残っていた面白さの芽を言語化し、次回は短く効くように補正してください。"},
+		{Role: "system", Content: "あなたはIdleChatの聞き手体験を編集する脚本編集者です。退屈さを検出するだけでなく、会話に残っていた面白さの芽を言語化し、次回は短く効くように補正してください。", Type: llm.PromptContextStable},
 		{Role: "user", Content: fmt.Sprintf(`次のIdleChat終了ログを評価してください。
 
 観点:

@@ -136,8 +136,8 @@ func subagentChatMessages(task agent.SubagentTask) []llm.ChatMessage {
 			systemPrompt = defaultSystemPrompt
 		}
 		return []llm.ChatMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: task.Instruction},
+			{Role: "system", Content: systemPrompt, Type: llm.PromptContextCharacter},
+			{Role: "user", Content: task.Instruction, Type: llm.PromptContextUser},
 		}
 	}
 	messages := make([]llm.ChatMessage, 0, len(task.PromptContext)+1)

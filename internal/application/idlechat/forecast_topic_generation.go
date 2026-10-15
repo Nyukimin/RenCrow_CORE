@@ -289,7 +289,7 @@ func (o *IdleChatOrchestrator) extractForecastKeywordWithProvider(ctx context.Co
 - 一般的すぎる語（「技術」「問題」等）は避ける`, domain.Name, strings.Join(headlines, "\n"))
 
 	messages := []llm.Message{
-		{Role: "system", Content: "あなたはニュース分析の専門家です。"},
+		{Role: "system", Content: "あなたはニュース分析の専門家です。", Type: llm.PromptContextStable},
 		{Role: "user", Content: prompt},
 	}
 	resp, providerLabel, err := o.generateForecastLLMWithProvider(ctx, "keyword", domain.Name, llm.GenerateRequest{
