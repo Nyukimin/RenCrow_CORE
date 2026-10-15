@@ -81,8 +81,8 @@ CORE側のprompt配置は、Character、Stable、Recall、Variable（現在時�
   `single_leading_instruction`として扱う。COREでは、Shiroの応答言語ルールとペルソナ文（定数）をVariableからStableへ直し、
   ReAct経路の平坦化をやめて型付きPrompt Contextを渡し、`assemblePromptContext`がStable blockをRecallより前に集約する。
   不変条件と検証はdocs/04の「KVキャッシュとViewer」と「必須検証」に記載した。
-- 残り: `shiro_codex`、Midori、Mio、開発用routeへの展開、割り込み要求によるcache失効の解消（次節）、
-  prompt receiptへの種別ごとの大きさと静的prefixのhashの追加。
+- 残り: prompt receiptへの種別ごとの大きさと静的prefixのhashの追加。
+  （`shiro_codex`・Midori・Mio・開発用routeへの展開と、割り込み要求によるcache失効の解消は、次節以降に記録した。）
 
 ## 本番反映後の実測（2026-10-15）
 
@@ -149,7 +149,34 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       因果は未確認。Gatewayのログに失敗の理由が出ない。
     - 診断のため、Gatewayのプロンプト記録を3回のチャットの間だけ一時的に有効にした（構造の数値だけを比較、記録ファイルは削除、設定は無効へ戻した）。
 
-次は開発用routeへの展開（個別に確認が必要）。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+13. 開発用route（coder1〜coder4。`sera14b`・`ministral3_14b`・`qwen36_35b_a3b`。別hostのllama.cpp b10603、Vulkan、各1 slot）。
+    - 利用実績: Gateway経由は8月17日以降で計30件で、全てalias smokeと再起動確認。COREのCoder提案は直近7日で0件。実リクエストでの比較はできないため、
+      COREのCoderと同形の合成リクエスト（型付きブロック。Character+Stable約3.5K token、履歴、時刻のVariable）をGateway経由で6回ずつ送り、
+      backendの`prompt eval`のtoken数から再利用量を出した。
+    - COREの組み立て: 提案（`GenerateProposal`・`GenerateWithPrompt`）はCharacter → Stable → 履歴 → Variable（時刻）→ userで、型が付いている。
+      CoderLoop（`GenerateWithContext`）は先頭のsystem promptだけ型が無かった（`code_executor_loop.go`）。
+    - **既存の不具合（`preserve`）**: COREと同形の要求を`preserve`で送ると、`ministral3_14b`（chat templateが
+      「Only user, assistant and tool roles are supported」）と`qwen36_35b_a3b`（同「System message must be at the beginning」）がHTTP 500を返す。
+      先頭以外のsystem（Variableの時刻、2件目のStable）をtemplateが拒否するため。`sera14b`は200。smokeはsystemが1件だったため見逃されていた。
+      つまりcoder2〜4は、COREからは今まで使えない状態だった。
+    - `single_leading_stable`への切替結果（合成、6回目の値。評価=evaluated token、再利用=reused token）:
+
+      | target | 型付きの形（提案・修正後のCoderLoop） | 型なしのCoderLoop（修正前） | `preserve` |
+      |---|---|---|---|
+      | `sera14b` | 4.1秒、評価1,609、再利用7,907、先頭sha固定 | 14.0秒、評価5,860、再利用3,568、shaが毎回変わる | 4.0秒、評価1,590、再利用7,846 |
+      | `ministral3_14b` | 4.2秒、評価1,631、再利用8,057、先頭sha固定 | 13.5秒、評価5,936、再利用3,649 | HTTP 500 |
+      | `qwen36_35b_a3b` | 1.7秒、評価1,615、再利用7,895、先頭sha固定 | 3.8秒、評価5,890、再利用3,539 | HTTP 500 |
+
+      提案の形（履歴が窓でずれる）も、`sera14b`の`preserve`と`stable`で再利用・所要時間が同等（5回目以降は固定部分の約3.6K tokenのみ再利用）。
+    - **COREの不具合**: 先頭のsystem promptに型が無いと、Gatewayは`instruction_without_block`でfallbackする。fallbackは時刻のVariableも先頭Systemへ畳み込むため、
+      先頭のsha256が毎ターン変わり、履歴の再利用が消える（上表の「型なしのCoderLoop」）。`code_executor_loop.go`で先頭systemをCharacterとして型付けする
+      （テスト`TestCoderLoopLeadingSystemPromptIsTypedCharacter`）。
+    - 判断: `ministral3_14b`と`qwen36_35b_a3b`は`preserve`が全件500のため`single_leading_stable`へ切り替えた（型なしのCoderLoopはfallbackで動くが遅い。COREの修正で解消する）。
+      `sera14b`は`preserve`のまま。COREの修正が本番へ反映される前に切り替えるとCoderLoopが約3.5倍遅くなるため、反映後に切り替える。
+    - 付随する観測: Gatewayのfallback理由のうち、`shiro_worker`の`instruction_without_block`3件は`x_bookmark.external_summary`（用途ごとの単発system promptを持つ補助呼び出し）で、会話の先頭固定とは無関係。
+    - 未測定: 実際のCoder提案・CoderLoopでの応答品質、thinkingを有効にした要求。
+
+次はCOREの修正（CoderLoopの先頭systemの型付け）の本番反映と、その後の`sera14b`の切替。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
