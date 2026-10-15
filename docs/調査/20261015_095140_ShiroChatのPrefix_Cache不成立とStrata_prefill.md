@@ -1,7 +1,7 @@
 ---
 title: 調査 — Shiro ChatのPrefix Cache不成立とStrata prefill
 date: 2026-10-15 09:51 JST
-status: 対応中（案A2を実装済み。2026-10-15時点でデプロイと実トラフィックの確認が残る）
+status: 対応中（案A2を実装し、Shiro WorkerとChatworkerへ本番反映済み。要約など別要求の割り込みはStrataの会話キャッシュで解消。他agentへの展開が残る）
 skill: debug-investigate
 symptom: Shiro Chat 1回のStrata処理は約12秒で、その約8割（約9.5秒）がprefill。毎回約5K tokenのpromptを丸ごと読み直している（reused=0）
 frequency: 実経路4回、および直近12回のprompt receiptの全てで再現
@@ -81,8 +81,38 @@ CORE側のprompt配置は、Character、Stable、Recall、Variable（現在時�
   `single_leading_instruction`として扱う。COREでは、Shiroの応答言語ルールとペルソナ文（定数）をVariableからStableへ直し、
   ReAct経路の平坦化をやめて型付きPrompt Contextを渡し、`assemblePromptContext`がStable blockをRecallより前に集約する。
   不変条件と検証はdocs/04の「KVキャッシュとViewer」と「必須検証」に記載した。
-- 残り: デプロイ（Gateway、CORE、`shiro_worker`、`shiro_chatworker`の順）、実トラフィックでの再利用と応答品質の確認、
-  Midori、Mio、開発用routeへの展開、prompt receiptへの種別ごとの大きさと静的prefixのhashの追加。
+- 残り: `shiro_codex`、Midori、Mio、開発用routeへの展開、割り込み要求によるcache失効の解消（次節）、
+  prompt receiptへの種別ごとの大きさと静的prefixのhashの追加。
+
+## 本番反映後の実測（2026-10-15）
+
+Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_worker`（03:13Z）と`shiro_chatworker`（06:10Z）を
+`single_leading_stable`へ切り替えた。巻き戻しは`llm.json`のmodeを`single_leading_instruction`へ戻すだけ。
+
+1. OPS 2回（質問と時刻が異なる）: Gatewayの`stable_layout`は3件とも`applied=true`、先頭Systemのsha256は全て同一、`stable_prefix_changed`は0件。
+   Strataは、1回目が6,939 token・`reused=0`・prefill 10.3秒（旧配置からの切替直後で冷えている）、同じ処理の2回目の呼び出し（ツール結果の追記）が
+   7,450 token・`reused=6,934`・3.1秒、別の質問のOPSが6,937 token・`reused=6,857`（98.8%）・1.5秒。時刻は新配置でも正しく渡った。
+2. Shiro Chat 2回: `applied=true`、先頭Systemのsha256は2回で同一、応答は正常。しかしStrataは5,338 tokenと5,124 tokenのどちらも`reused=0`で、
+   prefillは12.4秒と12.2秒。旧配置の約9.2秒より約3秒遅い（root checkpointを作る分の初回コスト）。
+3. 原因（事実）: 各Chatの直後に`conversation.thread`の要約呼び出し（userメッセージ1件、約380 token）が同じStrataを使い、cacheが失効する。
+   Strataへ直接送る合成測定（約5.1K token、固定部分90%）: 割り込みなしは2回目が`reused=4,539`・prefill 3.4秒、403 tokenの別要求を挟むと
+   `reused=0`・10.5秒。割り込み側に`"strata_checkpoint": false`を付けても`reused=0`で、防げない。
+4. 頻度: 直近24時間のGatewayログ（試験を含む）でStrata行きの`shiro_*`は66件。`shiro_chatworker` 15件のうち、直前も同じChatだったのは3件で、
+   12件は直前が別の呼び出し（`conversation.thread`の要約が8件）。`rencrowctl chat`は実行ごとにthreadを閉じて要約を走らせるため、
+   Viewerでの連続利用では割り込みがもっと少ない可能性がある（未測定）。
+5. Gatewayの`stable_layout_fallback`（`no_static_blocks`、WARN）が要約呼び出しごとに出る。要約はuserメッセージ1件のみで、固定部分が存在しない。
+
+**対応（2026-10-15、ユーザー指示）**: Strata hostの起動引数に`--conversation-cache-mib 8192 --conversation-cache-slots 4`を追加して再起動した
+（upstreamのdocsでは、要求が交互に来る複数の会話をhost RAMへ退避する機能）。構成Bのレイヤー分割でも動作した。
+
+6. 合成測定（割り込みを挟む）: 有効前は`reused=0`・10.5秒だったのが、有効後は`reused=4,539`・3.5秒。冷えた1回目の速度（約10.6秒）は変わらない。
+7. 実Chat 2回（間に要約が入る）: 1回目は4,960 token・`reused=0`・11.5秒（再起動直後で冷えている）、2回目は4,955 token・`reused=4,060`・4.7秒
+   （有効前は2回目も`reused=0`・12.2秒）。先頭Systemのsha256は両方同一、応答は正常（地球の直径12742、月までの距離384400）。
+8. 制約（未測定）: 長時間運転での挙動と、4会話では足りなくなる場合（Chat、要約、OPS、Codex、X Bookmark要約が交互に来る）の再利用率。
+   要約の`no_static_blocks`フォールバック（WARN）は、固定部分を持たない呼び出しなので残る。
+9. Strata hostの設定と手順は、RenCrow_Qwen38_Strataの`docs/operations.md`（会話キャッシュの節と、外す手順）に記録した。
+
+次は`shiro_codex`、Midori、Mio、開発用routeへの展開（個別に確認が必要）。
 
 ## 調査上の副作用
 
