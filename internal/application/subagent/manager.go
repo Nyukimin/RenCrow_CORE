@@ -123,6 +123,33 @@ func (m *Manager) SetSuperAgentRecorder(recorder SuperAgentRecorder) {
 	m.superAgentRecorder = recorder
 }
 
+// subagentChatMessages builds the first messages of the tool loop. A typed
+// PromptContext is passed through unchanged (role, content, type and metadata),
+// so the Gateway can tell the static Character/Stable blocks from the per-turn
+// Recall/Variable blocks and keep the leading system message stable across
+// turns and across tool-loop iterations. Without a PromptContext the legacy
+// pair of SystemPrompt and Instruction is used.
+func subagentChatMessages(task agent.SubagentTask) []llm.ChatMessage {
+	if len(task.PromptContext) == 0 {
+		systemPrompt := task.SystemPrompt
+		if systemPrompt == "" {
+			systemPrompt = defaultSystemPrompt
+		}
+		return []llm.ChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: task.Instruction},
+		}
+	}
+	messages := make([]llm.ChatMessage, 0, len(task.PromptContext)+1)
+	for _, message := range task.PromptContext {
+		messages = append(messages, llm.ChatMessage{Role: message.Role, Content: message.Content, Type: message.Type, Metadata: message.Metadata})
+	}
+	if last := messages[len(messages)-1]; last.Role != "user" {
+		messages = append(messages, llm.ChatMessage{Role: "user", Content: task.Instruction, Type: llm.PromptContextUser})
+	}
+	return messages
+}
+
 // RunSync はサブエージェントタスクを同期実行する
 func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.SubagentResult, error) {
 	if task.Instruction == "" {
@@ -153,15 +180,7 @@ func (m *Manager) RunSync(ctx context.Context, task agent.SubagentTask) (agent.S
 		}
 	}
 
-	systemPrompt := task.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = defaultSystemPrompt
-	}
-
-	messages := []llm.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: task.Instruction},
-	}
+	messages := subagentChatMessages(task)
 
 	mergedDefs := m.mergeToolDefs(ctx)
 	loopCfg := m.loopConfig

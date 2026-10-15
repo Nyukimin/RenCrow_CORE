@@ -153,8 +153,10 @@ func TestShiroAgentExecute(t *testing.T) {
 			if len(req.Messages) == 0 || req.Messages[0].Content != "test prompt" || req.Messages[0].Type != llm.PromptContextCharacter {
 				t.Errorf("unexpected Character SystemPrompt: %#v", req.Messages)
 			}
-			if !hasPromptContextMessage(req.Messages, llm.PromptContextVariable, "必ず自然な日本語で応答") {
-				t.Errorf("Shiro variable context should force Japanese response: %#v", req.Messages)
+			// The Japanese-response rule never changes, so it belongs to the static
+			// prefix (Stable); only the time line is Variable.
+			if !hasPromptContextMessage(req.Messages, llm.PromptContextStable, "必ず自然な日本語で応答") {
+				t.Errorf("Shiro stable context should force Japanese response: %#v", req.Messages)
 			}
 			if !hasPromptContextMessage(req.Messages, llm.PromptContextVariable, "現在時刻（JST）: ") {
 				t.Errorf("Shiro variable context should contain current JST time: %#v", req.Messages)
@@ -368,8 +370,11 @@ func TestShiroAgentExecuteUsesLightMemory(t *testing.T) {
 	if len(captured) != 6 {
 		t.Fatalf("messages=%#v", captured)
 	}
-	if captured[1].Role != "user" || captured[1].Content != "first worker task" ||
-		captured[2].Role != "assistant" || captured[2].Content != "first worker response" ||
+	// Character, then the constant Japanese-response rule (Stable, part of the
+	// static prefix), then the LightMemory history, then the per-turn blocks.
+	if captured[1].Type != llm.PromptContextStable || !strings.Contains(captured[1].Content, "必ず自然な日本語で応答") ||
+		captured[2].Role != "user" || captured[2].Content != "first worker task" ||
+		captured[3].Role != "assistant" || captured[3].Content != "first worker response" ||
 		captured[len(captured)-1].Content != "second worker task" {
 		t.Fatalf("LightMemory messages not injected in order: %#v", captured)
 	}

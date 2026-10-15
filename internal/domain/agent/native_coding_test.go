@@ -246,7 +246,12 @@ func TestShiroNativeCoding_DelegateReceivesTypedContextNotFlattenedText(t *testi
 		previous = position
 		seen[message.Type] = true
 	}
+	// Variable is optional here: the Japanese-response rule is constant, so it is a
+	// Stable block, and this path adds no per-turn state of its own.
 	for kind := range rank {
+		if kind == llm.PromptContextVariable {
+			continue
+		}
 		if !seen[kind] {
 			t.Fatalf("type %s is missing from the typed messages: %#v", kind, messages)
 		}

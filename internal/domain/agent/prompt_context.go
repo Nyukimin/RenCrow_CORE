@@ -106,8 +106,17 @@ func assemblePromptContext(characterPrompt, stableRuntimeContext string, dynamic
 	messages := make([]llm.Message, 0, 8+len(dynamic))
 	messages = append(messages, characterPromptMessages(characterPrompt)...)
 	messages = append(messages, stableRuntimeContextMessage(stableRuntimeContext)...)
+	// A caller may pass constant instructions among the dynamic messages. They
+	// belong to the static prefix, so they come before every Recall block, in
+	// the order given. This keeps the static-first order a property of the
+	// single assembly path instead of a convention of each caller.
 	for _, message := range dynamic {
-		if message.Type == llm.PromptContextVariable {
+		if message.Type == llm.PromptContextStable {
+			messages = append(messages, message)
+		}
+	}
+	for _, message := range dynamic {
+		if message.Type == llm.PromptContextVariable || message.Type == llm.PromptContextStable {
 			continue
 		}
 		if message.Type == "" {

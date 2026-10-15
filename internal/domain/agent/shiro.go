@@ -94,13 +94,18 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 		// character bundle remains the canonical Character SystemPrompt.
 		characterPrompt = s.systemPrompt
 	}
+	// The Japanese-response rule and the persona text are constant instructions,
+	// so they are Stable: the Gateway keeps Stable blocks in the leading system
+	// message and moves the per-turn Recall and Variable blocks out of it. Typing
+	// a constant instruction as Variable would move it into the user turn and
+	// weaken it.
 	dynamic := []llm.Message{{
 		Role: "system", Content: ensureShiroJapaneseResponsePrompt(""),
-		Type:     llm.PromptContextVariable,
+		Type:     llm.PromptContextStable,
 		Metadata: map[string]string{"runtime_context_kind": "response_language"},
 	}}
 	if s.persona != nil {
-		dynamic = append(dynamic, llm.Message{Role: "system", Content: s.persona.BuildSystemPrompt(""), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "legacy_persona"}})
+		dynamic = append(dynamic, llm.Message{Role: "system", Content: s.persona.BuildSystemPrompt(""), Type: llm.PromptContextStable, Metadata: map[string]string{"runtime_context_kind": "legacy_persona"}})
 	}
 
 	// A turn that the admission step selected for shiro_native_coding_v1 is
@@ -123,11 +128,12 @@ func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (str
 	// SubagentManager が設定されている場合は ReActLoop を使用
 	if s.subagentManager != nil {
 		assembled := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{Messages: assemblePromptContext(characterPrompt, currentRuntimeContext(ctx, s.runtimeContextProvider, "shiro", s.stableRuntimeContext), dynamic, llm.Message{Role: "user", Content: t.MessageText()})})
-		systemPrompt := renderSystemMessages(assembled.Messages)
+		// The typed blocks travel as they are. Flattening them into one system
+		// string would hide which parts are constant from the Gateway.
 		result, err := s.runSubagentSafely(ctx, SubagentTask{
-			AgentName:    "shiro",
-			Instruction:  t.MessageText(),
-			SystemPrompt: systemPrompt,
+			AgentName:     "shiro",
+			Instruction:   t.MessageText(),
+			PromptContext: assembled.Messages,
 		})
 		if err != nil {
 			return "", err
