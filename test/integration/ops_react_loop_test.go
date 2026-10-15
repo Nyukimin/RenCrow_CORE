@@ -120,15 +120,19 @@ func TestOPSRoute_WithoutSubagentManager_UsesFallback(t *testing.T) {
 			if len(req.Messages) == 0 || req.Messages[0].Role != "system" || req.Messages[0].Type != llm.PromptContextCharacter || !strings.Contains(req.Messages[0].Content, "You are a worker") {
 				t.Errorf("Expected Character SystemPrompt to contain 'You are a worker', got %#v", req.Messages)
 			}
+			// 日本語応答ルールは毎ターン同一の定数なので、Variableではなく先頭側の
+			// Stableに置く（Variableに置くとprefix cacheの境界が手前に動く）。
 			japaneseGuardFound := false
 			for _, message := range req.Messages {
-				if message.Type == llm.PromptContextVariable && strings.Contains(message.Content, "必ず自然な日本語で応答") {
+				if strings.Contains(message.Content, "必ず自然な日本語で応答") {
+					if message.Type != llm.PromptContextStable {
+						t.Errorf("Expected the Japanese response rule in stable runtime context, got type %q", message.Type)
+					}
 					japaneseGuardFound = true
-					break
 				}
 			}
 			if !japaneseGuardFound {
-				t.Errorf("Expected variable runtime context to require Japanese response, got %#v", req.Messages)
+				t.Errorf("Expected stable runtime context to require Japanese response, got %#v", req.Messages)
 			}
 
 			return llm.GenerateResponse{Content: "Fallback: file list retrieved"}, nil
