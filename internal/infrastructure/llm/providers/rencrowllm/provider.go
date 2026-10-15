@@ -483,9 +483,13 @@ func promptContextBlockMetadataFromChat(request llm.ChatRequest) []map[string]an
 }
 
 func promptContextBlockMetadata(request llm.GenerateRequest) []map[string]any {
-	blocks := make([]map[string]any, 0, len(request.Messages))
+	blocks := make([]map[string]any, 0, len(request.Messages)+1)
 	messageIndex := 0
 	if request.SystemPrompt != "" {
+		// convertMessages は SystemPrompt を index 0 の system へ変換する。固定の指示なので
+		// Stable として申告する。申告が無いと Gateway は instruction_without_block で
+		// fallback し、時刻などの Variable を先頭 system へ畳み込んで先頭固定が崩れる。
+		blocks = append(blocks, map[string]any{"message_index": messageIndex, "type": string(llm.PromptContextStable)})
 		messageIndex++
 	}
 	for _, message := range request.Messages {
