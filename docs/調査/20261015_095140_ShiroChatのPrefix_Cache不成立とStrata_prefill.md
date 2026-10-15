@@ -112,7 +112,13 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
    要約の`no_static_blocks`フォールバック（WARN）は、固定部分を持たない呼び出しなので残る。
 9. Strata hostの設定と手順は、RenCrow_Qwen38_Strataの`docs/operations.md`（会話キャッシュの節と、外す手順）に記録した。
 
-次は`shiro_codex`、Midori、Mio、開発用routeへの展開（個別に確認が必要）。
+10. `shiro_codex`（07:06Zに`single_leading_stable`へ切替）: Codex系のrequestはCOREの型付きブロックを持たないため、`no_blocks`（INFO）で従来の
+    `single_leading_instruction`配置のまま通り、並びは変わらない。切替で得られるのは、`stable_layout_fallback`ログに先頭Systemのsha256が残ること。
+    Responses API形式の追記型3回（指示は共通、約10.2K token）の実測は、先頭sha256が3回とも同一、Strataは1回目`reused=0`・14.3秒、
+    追記した2回目`reused=10,197`・0.4秒、入力の末尾が違う3回目`reused=10,185`・0.3秒。失敗0件。
+    CodexのClient側が先頭に何かを足す場合は、このsha256の変化で検知できる（fallback経路では`stable_prefix_changed`は出ないため、ログの目視比較になる）。
+
+次はMidori、Mio、開発用routeへの展開（個別に確認が必要）。
 
 ## 調査上の副作用
 
