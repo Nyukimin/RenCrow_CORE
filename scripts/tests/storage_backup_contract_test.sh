@@ -728,7 +728,16 @@ if (( timeout_status == 0 || timeout_elapsed >= 5 )); then
   echo "[NG] SQLite deadline was not enforced promptly (status=${timeout_status}, elapsed=${timeout_elapsed}s)" >&2
   exit 1
 fi
-grep -Fq 'SQLite integrity check timed out' "${test_root}/timeout.out"
+if ! grep -Fq 'SQLite integrity check timed out' "${test_root}/timeout.out"; then
+  echo "[NG] SQLite timeout output omitted the expected marker (status=${timeout_status}, elapsed=${timeout_elapsed}s)" >&2
+  if [[ -f ${test_root}/timeout.out ]]; then
+    head -c 4096 "${test_root}/timeout.out" >&2
+    printf '\n' >&2
+  else
+    echo "[NG] SQLite timeout output file is missing: ${test_root}/timeout.out" >&2
+  fi
+  exit 1
+fi
 if grep -Fq '[OK] snapshot is checksum-valid' "${test_root}/timeout.out"; then
   echo "[NG] timed-out SQLite validation emitted the final success marker" >&2
   exit 1

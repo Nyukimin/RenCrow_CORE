@@ -38,6 +38,11 @@ func startTimedRelay(t *testing.T, tweak func(*sttRelayConfig)) *timedRelay {
 	}
 	client := dialRelay(t, serveRelay(t, cfg))
 	client.ExpectReady()
+	waitUntil(t, "relay clock ticker registration", func() bool {
+		clock.mu.Lock()
+		defer clock.mu.Unlock()
+		return len(clock.tickers) > 0
+	})
 	return &timedRelay{t: t, clock: clock, up: up, client: client, sink: sink, seq: 1}
 }
 
