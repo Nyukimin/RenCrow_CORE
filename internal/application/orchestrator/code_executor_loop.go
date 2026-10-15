@@ -105,7 +105,7 @@ func (e *CoderLoopExecutor) Execute(ctx context.Context, req CodeExecutionReques
 func (e *CoderLoopExecutor) runLoop(ctx context.Context, req CodeExecutionRequest) (*LoopResult, error) {
 	// 会話履歴初期化
 	messages := []llm.Message{
-		{Role: "system", Content: e.systemPrompt},
+		{Role: "system", Content: e.systemPrompt, Type: llm.PromptContextCharacter},
 		{Role: "user", Content: req.Input.MessageText()},
 	}
 
