@@ -173,10 +173,52 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       （テスト`TestCoderLoopLeadingSystemPromptIsTypedCharacter`）。
     - 判断: `ministral3_14b`と`qwen36_35b_a3b`は`preserve`が全件500のため`single_leading_stable`へ切り替えた（型なしのCoderLoopはfallbackで動くが遅い。COREの修正で解消する）。
       `sera14b`は`preserve`のまま。COREの修正が本番へ反映される前に切り替えるとCoderLoopが約3.5倍遅くなるため、反映後に切り替える。
-    - 付随する観測: Gatewayのfallback理由のうち、`shiro_worker`の`instruction_without_block`3件は`x_bookmark.external_summary`（用途ごとの単発system promptを持つ補助呼び出し）で、会話の先頭固定とは無関係。
+    - 付随する観測: Gatewayのfallback理由のうち、`shiro_worker`の`instruction_without_block`は`x_bookmark.external_summary`（`SystemPrompt`欄を使う補助呼び出し）。型なしsystemの全体調査は項目14。
     - 未測定: 実際のCoder提案・CoderLoopでの応答品質、thinkingを有効にした要求。
+    - 本番反映と切替（2026-10-15 21:58Z）: 本番のCOREは別作業者のビルド（`38f87d02`＋未コミット差分）で既に`d2cbaa5a`の修正を含んでいたため、入れ替えずに`sera14b`を`single_leading_stable`へ切り替えた。
+      合成のCoderLoop（型付き）は6回とも`applied=true`、先頭sha固定、6回目4.1秒・再利用7,907 token。実のCoderLoop要求での確認は未了（本番では7日で0件）。
 
-次はCOREの修正（CoderLoopの先頭systemの型付け）の本番反映と、その後の`sera14b`の切替。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+14. 型が無いsystemを作る他の箇所（`SystemPrompt`欄は修正済み。個別の箇所は未対応）。
+    - 方法: 非テストのGoで`Role: "system"`のリテラル51件を、囲む構造体リテラルの`Type`の有無で分類した。型なしは20件（idlechat 15、`game_turn.go` 2、`subagent/manager.go` 1、
+      および`SystemPrompt`欄の変換`rencrowllm/messages.go`と観測用の`middleware/promptreceipt.go`）。さらに、`GenerateRequest.SystemPrompt`欄は
+      `rencrowllm`の`convertMessages`（`messages.go`）でindex 0の型なしsystemに変換され、`promptContextBlockMetadata`（`provider.go`）はindex 0のブロックを出さない。
+      このため、`SystemPrompt`欄を使う呼び出しは全て型なしの先頭systemになる（`ChatRequest`には`SystemPrompt`欄が無い）。
+    - 影響する条件: 宛先がGatewayの`single_leading_stable`対象（`shiro_chatworker`・`shiro_worker`・`shiro_codex`・`midori_wild`・`coder1〜4`の各target）で、
+      要求に型なしsystemが1件でもあるとき。Gatewayは`instruction_without_block`でfallbackし、`DateTimeProvider`が差し込む時刻のVariable（秒単位）を先頭Systemへ畳み込む。
+      先頭のsha256が要求ごとに変わるため、先頭固定は成立しない。`mio_chat`（指定なし）と`kuro_codex`（codex_cli）は対象外で影響しない。
+    - 実トラフィック（Gatewayログ、本日03:13Z以降）: `shiro_worker`の`x_bookmark.external_summary`は10件で先頭shaが10種、観測contextの無い呼び出し（caller=`core.unattributed`）は5件で5種。
+      外部リンク要約のsystem promptは約1.3KB（約350 token）で、1件あたりの再prefillの損失は小さい。ただし不変条件（先頭が毎回同一）は満たしていない。
+    - 型なしの箇所:
+
+      | 区分 | 箇所 | 宛先（配線） | 本番での利用 |
+      |---|---|---|---|
+      | `SystemPrompt`欄 | `knowledge/external_link_summary.go:295` | Worker（`shiro_worker`） | あり（72時間で64件） |
+      | `SystemPrompt`欄 | `xbookmarkworkflow/service.go:242,293` | Worker | 未観測（呼び出し元が無印の可能性） |
+      | `SystemPrompt`欄 | `backlog/revalidation_evaluator.go:330`、`gmailintake/gmail_evaluator.go:418` | Worker | 未観測（無印の5件のいずれかの可能性。呼び出し元は特定できていない） |
+      | `SystemPrompt`欄 | `routing/llm_classifier.go:34` | Chat | 72時間のGatewayに分類の呼び出しなし |
+      | `SystemPrompt`欄 | `domain/agent/game_turn.go:45,63`（Heavy、Wild） | Heavy、Wild（`midori_wild`） | なし（ゲーム） |
+      | `SystemPrompt`欄 | `viewer/game_autoplay.go:363`、`cmd/rencrow/voice_chat_runtime_input_audio.go:262`、`cmd/rencrow/runtime_person_related_summary_translation.go:30` | 未確認 | 未確認 |
+      | 型なしのMessage | `domain/agent/game_turn.go:22,25`（Mio） | `mio_chat`（指定なし） | 影響なし（`preserve`） |
+      | 型なしのMessage | `application/subagent/manager.go:139`（`PromptContext`が空のときの従来の組） | Worker（`tools/subagent.go:41`の`worker`サブエージェント） | 未観測 |
+      | 型なしのMessage | `application/idlechat/`の15件 | 各話者のprovider | 本番では停止中（再起動後0件、72時間のGatewayに0件） |
+
+      Shiro OPS（`shiro.go`）は`PromptContext`を型付きのまま渡しており、`agent.shiro`/`execute_ops_task`は`applied=true`（問題なし）。`middleware/promptreceipt.go:172`は観測用でwireに出ない。
+    - 合成確認（同形の要求: 定数system約1.3KB＋時刻Variable＋user、`worker`宛、3回ずつ）: index 0を型なしで送ると3回とも`instruction_without_block`で先頭shaが3種。
+      index 0を`stable`と申告すると3回とも`applied=true`で先頭shaが同一。
+    - 修正（`SystemPrompt`欄、`rencrowllm/provider.go`の`promptContextBlockMetadata`）: `SystemPrompt`が空でないときにindex 0を`stable`のブロックとして出す。
+      1箇所で`SystemPrompt`欄の全caller（Worker宛のexternal_link_summary・xbookmark・Atlas再検証・Gmail評価、Heavy・Wild宛のゲームなど）が直る。
+      テスト`provider_system_prompt_block_test.go`（index 0のブロック、`SystemPrompt`が無いときは出さない、`Generate`が送るbodyでmessages[0]とブロックのindexが揃う）。
+      Red（ブロックが2件）を確認してから実装した。
+    - 修正の検証: 別hostのスクラッチ（GitHub mainの浅いクローン＋パッチ）で`go vet`と`go test ./...`（251パッケージ ok）、タグ付き`-tags actionindexdefault`（68パッケージ ok）が成功。
+      実際の外部リンク要約と同形の要求（実のsystem prompt、400文字のsource_spans、`json_object`）を`worker`宛にGateway経由で5件ずつ送り、COREの`decodeExternalLinkSummaryResponse`と同じ規則
+      （フィールドが`summary`と`evidence_ids`だけ、summaryは空でなく2000文字以内、evidence_idsは1〜3個で既存ID）で検証した。型なし（現状）は5件、型付き（修正後）も5件が有効で、選ばれたevidence_idsも同じ。
+      修正後はGatewayが`applied=true`となり、先頭systemの末尾にContextDataNoticeが加わり、時刻はuserメッセージ先頭の封筒へ移る。本番COREへは未反映（反映後に`x_bookmark.external_summary`等のfallbackが消えることを確認する）。
+    - 個別の箇所（未対応）: `game_turn.go`のMio、`subagent/manager.go`の従来の組、`idlechat`。
+      `idlechat`の主要生成（`orchestrator_response_generation.go`）は、先頭systemのcontentへセッション文脈・対話方針・語彙メモを連結しているため、型付けだけでは足りない。
+      人格はCharacter、可変部分はVariableまたはRecallの別messageに分ける必要がある。
+    - 付随する観測: 本番COREで、5分ごとのbacklog runnerが`superagent runtime context is required when recorder is configured`で毎回失敗している（再起動後43回、LLM呼び出しの前に落ちるためGatewayには届かない）。型の問題ではなく、既知のOPS不具合（10月9日記録）と同じ系統。
+
+次は、`SystemPrompt`欄の修正の本番反映と、残る個別箇所（`game_turn.go`のMio、`subagent`の従来の組、`idlechat`）の扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
