@@ -132,7 +132,24 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
     切替後との差は出ていない。履歴が長くなるほど、Recall・時刻より後ろの履歴まで読み直す旧配置との差が開く見込みだが、長い履歴での比較は未測定。
     切替直後の1回目だけ全量を評価した理由（先頭Systemの末尾が変わったことによるcheckpointの扱い）は未確認。
 
-次はMio、開発用routeへの展開（個別に確認が必要）。
+12. `mio_chat`（別hostのllama.cpp b11429、Gemma4 12B、1 slot）は、`single_leading_stable`へ切り替えて**元の指定なし（`preserve`）へ戻した**。
+    - Gemma4のchat templateは、先頭のsystemを専用のsystem turnとして出力し、後続のsystemも独立したturnにする。systemを最初のuserへ併合する挙動ではない。
+    - CORE→Gatewayの実リクエストは、systemが13件（うち6件がRecall・Variable）、assistantが1件、userが2件。新配置の実チャット（計9回）では
+      Gatewayの`stable_layout`が毎回`applied=true`、先頭Systemのsha256は全て同一（8,890文字）。連続する2回のbodyは履歴のuserメッセージの先頭で食い違い、
+      共通部分は全体の約76%で設計どおりだった。
+    - それでもMioのbackendは全回で約4.7K tokenを全量評価した（再利用ゼロ、TTFT約3.0秒）。`preserve`では1回目が約3.0秒、2回目以降が0.8〜0.9秒
+      （約3.5K tokenを再利用）。切替で約3倍遅くなるため戻した。
+    - 同じbackendへ直接送る合成プロンプト（固定部分を実物の大きさに合わせ、履歴が1ターンずつずれる、補助呼び出しが割り込む）と、Gateway経由で
+      CORE同様の型付きブロック・`tools`・推論フラグを付けた合成リクエストは、いずれも新配置で再利用された（約3,250〜5,900 token、TTFT約0.5秒）。
+      したがって配置・テンプレート・エンジンの組合せ自体は問題なく、実リクエストの内容で再利用が崩れる原因は特定できていない。
+    - `preserve`でも、先頭Systemの最初のブロックはCharacterで毎回同一、続くStableも同一で、Recall・Variableはその後ろに並ぶため、
+      先頭固定の不変条件はこの形で保たれている。Midoriと違い、systemを1件に統合しない。
+    - 付随する観測: 新配置の稼働中だけ、CORE→Gatewayのプロファイル抽出（`memory.profile_promotion`、userメッセージ1件）が7件中2件失敗した
+      （それ以前の72時間は50件中0件）。新配置のfallback経路は、userメッセージ1件の要求では並びを変えないはずで、合成の同形リクエスト10件は全て成功したため、
+      因果は未確認。Gatewayのログに失敗の理由が出ない。
+    - 診断のため、Gatewayのプロンプト記録を3回のチャットの間だけ一時的に有効にした（構造の数値だけを比較、記録ファイルは削除、設定は無効へ戻した）。
+
+次は開発用routeへの展開（個別に確認が必要）。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
