@@ -178,7 +178,7 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
     - 本番反映と切替（2026-10-15 21:58Z）: 本番のCOREは別作業者のビルド（`38f87d02`＋未コミット差分）で既に`d2cbaa5a`の修正を含んでいたため、入れ替えずに`sera14b`を`single_leading_stable`へ切り替えた。
       合成のCoderLoop（型付き）は6回とも`applied=true`、先頭sha固定、6回目4.1秒・再利用7,907 token。実のCoderLoop要求での確認は未了（本番では7日で0件）。
 
-14. 型が無いsystemを作る他の箇所（`SystemPrompt`欄は修正済み。個別の箇所は未対応）。
+14. 型が無いsystemを作る他の箇所（`SystemPrompt`欄と個別の箇所を修正済み）。
     - 方法: 非テストのGoで`Role: "system"`のリテラル51件を、囲む構造体リテラルの`Type`の有無で分類した。型なしは20件（idlechat 15、`game_turn.go` 2、`subagent/manager.go` 1、
       および`SystemPrompt`欄の変換`rencrowllm/messages.go`と観測用の`middleware/promptreceipt.go`）。さらに、`GenerateRequest.SystemPrompt`欄は
       `rencrowllm`の`convertMessages`（`messages.go`）でindex 0の型なしsystemに変換され、`promptContextBlockMetadata`（`provider.go`）はindex 0のブロックを出さない。
@@ -213,12 +213,23 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       実際の外部リンク要約と同形の要求（実のsystem prompt、400文字のsource_spans、`json_object`）を`worker`宛にGateway経由で5件ずつ送り、COREの`decodeExternalLinkSummaryResponse`と同じ規則
       （フィールドが`summary`と`evidence_ids`だけ、summaryは空でなく2000文字以内、evidence_idsは1〜3個で既存ID）で検証した。型なし（現状）は5件、型付き（修正後）も5件が有効で、選ばれたevidence_idsも同じ。
       修正後はGatewayが`applied=true`となり、先頭systemの末尾にContextDataNoticeが加わり、時刻はuserメッセージ先頭の封筒へ移る。本番COREへは未反映（反映後に`x_bookmark.external_summary`等のfallbackが消えることを確認する）。
-    - 個別の箇所（未対応）: `game_turn.go`のMio、`subagent/manager.go`の従来の組、`idlechat`。
-      `idlechat`の主要生成（`orchestrator_response_generation.go`）は、先頭systemのcontentへセッション文脈・対話方針・語彙メモを連結しているため、型付けだけでは足りない。
-      人格はCharacter、可変部分はVariableまたはRecallの別messageに分ける必要がある。
+    - 個別の箇所（修正済み）:
+      - `game_turn.go`のMio: 人格をCharacter、`gameTurnBoundaryPrompt`をStable、観測をUserにした（`ShiroChat`もこの経路で`shiro_chatworker`へ行くため、宛先が`mio_chat`だけではない）。
+      - `subagent/manager.go`の従来の組（`PromptContext`が空のとき）: systemをCharacter、instructionをUserにした。
+      - `idlechat`の定数のsystem 12件と`getSystemPrompt`由来の2件: Stable／Characterを付けた。
+      - `idlechat`の主要生成（`orchestrator_response_generation.go`）: 先頭systemは人格・セッション文脈・語彙メモ（同じ会話のターン間で不変、Character）のままにし、
+        ターンごとに変わる対話方針（`BuildDialoguePrompt`。直前の発話とターン計画を含む）だけを、先頭へ連結せずVariableの別messageにした。
+        セッション文脈と語彙メモを先頭に置くのは既存の判断（`TestGenerateResponseKeepsPersistentContextInFirstSystem`）で、変えていない。
+        語彙メモは会話中に変わりうる（変わると先頭が1回変わる）。
+    - 強制: `internal/domain/llm/untyped_system_architecture_test.go`が、非テストのGoで`llm.Message`・`llm.ChatMessage`をRole `"system"`かつ`Type`なしで作るリテラルを検出して失敗する
+      （許可リストは空）。修正前は上の18箇所を報告してRed、修正後はGreen。文字列リテラルでないRoleと、`GenerateRequest.SystemPrompt`欄（providerがStableを付ける）は対象外。
+    - 追加したテスト: `TestSubagentChatMessagesLegacyPairIsTyped`、`TestMioDecideGameTurnTypesEverySystemMessage`、
+      `TestGenerateResponseKeepsLeadingSystemStableAndTypesDialogueOrder`。いずれも変更前のコードでRedを確認した。
+    - 未確認: IdleChatは本番で停止中のため、実際のIdleChat会話での再利用と応答品質は未測定。対話方針をsystemの末尾から封筒（`single_leading_stable`の対象のとき）へ移すため、
+      文面の強さが変わりうる。
     - 付随する観測: 本番COREで、5分ごとのbacklog runnerが`superagent runtime context is required when recorder is configured`で毎回失敗している（再起動後43回、LLM呼び出しの前に落ちるためGatewayには届かない）。型の問題ではなく、既知のOPS不具合（10月9日記録）と同じ系統。
 
-次は、`SystemPrompt`欄の修正の本番反映と、残る個別箇所（`game_turn.go`のMio、`subagent`の従来の組、`idlechat`）の扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+次は、型付けの修正（項目14）の本番反映と、反映後のGatewayログでfallbackが消えることの確認。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
