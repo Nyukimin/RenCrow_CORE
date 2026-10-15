@@ -1775,11 +1775,27 @@ average maturation days、backlog growthをItem履歴から決定的に投影し
 `reason_code`、`invalidated_from_stage`、変更軸を保持し、過去stageを上書きしません。
 
 `BLOCKED`では失敗終端、Queue Freeze、Lease解放結果を同一closure receiptへ束縛します。Freeze解除は
-`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`に限定します。bodyは`request_id`、
+`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`に限定します。通常のreplacement bodyは`action_id`、
 `expected_freeze_revision`、事前Adoption済みの`replacement_unit_id`、旧`supersedes_unit_id`、
 `blocker_resolution_refs`を必須とします。COREが旧UnitのBLOCKED、supersedes完全一致、blocker解消、dependency、
 他Lease不在を同じdecisionで検証し、成功時だけFreeze解除receiptとreplacement Lease取得を冪等に確定します。
-同一request IDのpayload違いはconflictとし、再起動やLease不在を解除requestとして扱いません。
+同一`action_id`の異なるpayloadはconflictとし、再起動やLease不在を解除requestとして扱いません。
+
+同じendpointは、認証済みSystem Ownerがretryを撤回する独立requestとして`disposition=cancelled`も受け付けます。
+bodyは`action_id`、`expected_freeze_revision`、`disposition=cancelled`、`blocked_unit_id`、`blocked_revision`、
+`reason`を必須とし、`expected_missing_transition_event_ids[]`をoptionalで受け付けます。COREはItemの
+`ADOPTED / BLOCKED / revision`、active Freezeの対象unit・revisionと`QUEUED`起点のTransition Event参照、
+completedな`BLOCKED` stage receiptと記録済み失敗内容、held Leaseなし、
+pending replacementなしを検証します。成功時は対象Freezeを`resolved`として取消disposition、reason、action、
+payload hash、`observed_missing_transition_event_ids[]`をowner storeにatomic・idempotentに保存し、Leaseを取得しません。
+Stage receiptとFreezeのTransition EventIDはcanonical・distinctでなければなりません。Event readerが`found=false`かつerrorなしを
+返したIDだけが欠落観測となり、欠落がある場合は2つの参照IDから成る実観測setと完全一致するcanonical・重複なし・昇順の
+`expected_missing_transition_event_ids[]`をrequestで明示します。全Eventが存在する場合はこのfieldを省略または空配列にできます。
+reader unavailable／error、malformed ID、identity不一致、未申告または異なる欠落setはfail closedです。記録された欠落setは取消時点の
+観測であり、Event修復や再試行成功を意味しません。元の`BLOCKED`履歴とEvidence、
+他のFreezeは維持します。同じ`action_id`／同じpayloadは同じreceipt、異なるpayloadはconflictとし、証拠欠落、未知disposition、
+Lease競合その他の不一致はfail closedです。これはretry撤回であり、修復成功を意味しません。
+暫定test outputやspecification Evidenceは修復Evidenceになりません。
 
 `POST /v1/atlas/intake`はSchema v2 Design Cardの次のoptional fieldをそのまま保存します。
 `feature_id`、`problem`、`idea`、`background`、`expected_effect[]`、`relation_refs[]`、
@@ -1793,12 +1809,10 @@ Revision 2の`revise`は`request_id`、`expected_revision`、target stage、Evid
 `passed=true`はclaimのままで、fixed owner verifierの成功結果だけをverified projectionとstage receiptへ反映します。
 stage receiptのidempotency keyは`unit + implementation_revision + target_stage`です。
 
-Freezeの読み取りは`GET /viewer/atlas/queue-freezes`、解除は固定の
-`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`です。RenCrow_CMDのtransport facadeはそれぞれ
-`atlas queue-freezes`、`atlas resolve-freeze`へ1 requestで対応し、後者は
-`--freeze-id --request-id --expected-freeze-revision --replacement-unit-id --supersedes-unit-id`と、
-blocker Evidence group（stage/kind/ref、任意のrepository/revision/sha256/observed-at）を要求します。
-ID、revision、Evidence、replacement、atomicity、receiptの意味はCOREだけが決定します。
+Freezeの読み取りは`GET /viewer/atlas/queue-freezes`、resolveは固定の
+`POST /v1/atlas/queue-freezes/{freeze_id}/resolve`です。RenCrow_CMDのtransport facadeは別moduleの契約に従い、
+このCORE契約は`disposition=cancelled`のCLI mappingやcommand/flagを定義しません。
+ID、revision、Evidence、disposition、atomicity、receiptの意味はCOREだけが決定します。
 
 ## LLM Ops Viewer API
 
@@ -1843,3 +1857,62 @@ POST /viewer/llm-ops/refresh
   `ttft_ms`。未取得はnull、`0`と区別）、`estimate_confidence`を別fieldで返す。
 - `POST /viewer/llm-ops/refresh`は再取得だけを行い、llmfitの設定変更、モデルロード、Benchmark実行を
   行いません。失敗ノードは直前のcacheを保持し、以後の応答で`stale`として返します。
+
+## R04 Mock World read bridge PoC
+
+このPoCはCOREのViewer adapterに注入する読み取り専用Mock World readerです。World service、DB、
+runtime route登録を使いません。production CORE routeには未登録で、ここに記載するAPIは稼働runtimeで
+公開されません。PORTALはPoC flagが明示的に有効な場合（既定OFF）に限り、GET-only proxyでtest CORE
+stubへ接続できます。production CORE service routeを公開するものではありません。
+
+許可するmethodとpathは次の2つだけです。
+
+```text
+GET /viewer/world/snapshot
+GET /viewer/world/stream?after_revision=N
+```
+
+Readerは固定fixtureを返し、GETで`world_revision`を進めません。Readerを作成した時点の
+`captured_at`を同じfixtureに保持し、同一Readerへの繰り返しGETは同じsnapshotとrevisionを返します。
+`world_revision`はこのPoCにおける唯一の順序正本で、fixtureの初期値は`1`です。
+`captured_at`はRFC3339で、現在時刻から5分を超えて未来の値はreader contract違反として502にします。
+
+snapshotは次のshapeを返します。`position`は未検証のため常に`null`、`actors`は常に配列です。
+
+```json
+{
+  "schema_version": "r04.mock.v1",
+  "source": "mock",
+  "world_id": "r04-house",
+  "world_revision": 1,
+  "captured_at": "2026-10-15T00:00:00Z",
+  "spatial_revision": "unverified",
+  "spatial_ready": false,
+  "actors": [
+    {
+      "actor_id": "mio",
+      "presence": "present",
+      "floor_id": "1f",
+      "room_id": "r04-room-1f",
+      "position": null,
+      "activity_id": "idle"
+    }
+  ]
+}
+```
+
+`actor_id=mio`はCOREの既存Agent identityを参照し、別personaや別identityを作りません。
+このfixtureは実測座標、仕事の達成、会話を表しません。Actor projectionはhandlerへ明示注入する
+view scopeの`actor_id` allowlistだけを返します。空scopeは全Actorを隠し、hidden payloadを送らずに
+stream cursorだけを進めます。
+
+`stream`は有限のSSE catch-upです。`after_revision`は必須のcanonical unsigned decimalで、
+cursorより後の連続したrevisionを`id:`にしてsnapshot eventを送った後、必ず`event: caught_up`を1件送って閉じます。
+`caught_up`のpayloadはschema/source/worldとsnapshotの`world_revision`だけを持つ最小cursorです。
+追加revisionは進めず、`after_revision`がsnapshot revisionと同じ場合も`caught_up`だけを送ります。scope内に
+表示可能Actorがないrevisionは`event: cursor`と最小のschema/source/world/revisionだけを送り、
+Actor payloadを送りません。GETはWorld stateを変更しません。
+
+不正なquery／cursorは400、現在revisionより先のcursorまたはevent gap／sequence不一致は409、
+reader unavailableは503、unknown schema／source／worldやrevision 0などreader contract違反は502を返します。
+どのエラーでもsnapshotやevent payloadを部分送信しません。

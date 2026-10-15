@@ -581,6 +581,39 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 	}
 }
 
+func TestCmdControlAtlasQueueFreezeResolveRouteIsExactPostOnly(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := withInteractionProfileGuard(next)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		want   int
+	}{
+		{name: "cmd control can resolve one queue freeze", method: http.MethodPost, path: "/v1/atlas/queue-freezes/freeze-1/resolve", want: http.StatusNoContent},
+		{name: "cannot get queue freeze resolve route", method: http.MethodGet, path: "/v1/atlas/queue-freezes/freeze-1/resolve", want: http.StatusForbidden},
+		{name: "cannot post another freeze operation", method: http.MethodPost, path: "/v1/atlas/queue-freezes/freeze-1/cancel", want: http.StatusForbidden},
+		{name: "cannot post with empty freeze id", method: http.MethodPost, path: "/v1/atlas/queue-freezes//resolve", want: http.StatusForbidden},
+		{name: "cannot post expanded resolve path", method: http.MethodPost, path: "/v1/atlas/queue-freezes/freeze-1/resolve/extra", want: http.StatusForbidden},
+		{name: "cannot post trailing slash resolve path", method: http.MethodPost, path: "/v1/atlas/queue-freezes/freeze-1/resolve/", want: http.StatusForbidden},
+		{name: "cannot use dot freeze id", method: http.MethodPost, path: "/v1/atlas/queue-freezes/../resolve", want: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.Header.Set("X-RenCrow-Client", "RenCrow_CMD")
+			req.Header.Set(interactionProfileHeader, "cmd-control")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
 func TestCmdControlKnowledgeNewsRoutesAreExactPostOnly(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

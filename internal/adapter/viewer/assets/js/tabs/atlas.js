@@ -926,6 +926,17 @@ function atlasRenderPipelineRecords(entry) {
   }
   freezes.forEach((freeze) => {
     const state = atlasField(freeze, ['status', 'state'], 'active');
+    const disposition = atlasField(freeze, ['resolution_disposition', 'resolutionDisposition'], '');
+    if (disposition === 'cancelled') {
+      const failureReason = atlasField(freeze, ['reason_code', 'reasonCode', 'invalidated_from_stage'], 'Unavailable');
+      const cancellationReason = atlasField(freeze, ['cancellation_reason', 'cancellationReason'], 'Unavailable');
+      const missingTransitionEventIDs = atlasList(atlasField(freeze, ['observed_missing_transition_event_ids', 'observedMissingTransitionEventIDs'], []));
+      const missingEventDetails = missingTransitionEventIDs.length
+        ? '<details class="atlas-freeze-missing-events"><summary>Missing transition event IDs (' + atlasEscape(String(missingTransitionEventIDs.length)) + ')</summary><ul>' + missingTransitionEventIDs.map((eventID) => '<li>' + atlasEscape(eventID) + '</li>').join('') + '</ul></details>'
+        : '<span>Missing transition event IDs: 0</span>';
+      records.push('<div class="atlas-pipeline-record atlas-pipeline-freeze"><strong>Queue freeze: ' + atlasEscape(state) + '</strong><span>Original failure: ' + atlasEscape(failureReason) + '</span><strong>Retry withdrawn (not fixed)</strong><span>Cancellation reason: ' + atlasEscape(cancellationReason) + '</span><span>replacement: none (retry withdrawn)</span>' + missingEventDetails + '</div>');
+      return;
+    }
     records.push('<div class="atlas-pipeline-record atlas-pipeline-freeze"><strong>Queue freeze: ' + atlasEscape(state) + '</strong><span>' + atlasEscape(atlasField(freeze, ['reason_code', 'reasonCode', 'invalidated_from_stage'], 'Unavailable')) + '</span><span>replacement: ' + atlasEscape(atlasField(freeze, ['replacement_unit_id', 'replacementUnitID'], 'Unavailable')) + '</span></div>');
   });
   closures.forEach((closure) => {

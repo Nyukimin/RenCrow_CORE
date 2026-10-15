@@ -5132,6 +5132,72 @@ test('Atlas Current renders implementation revision and counts evidence refs', (
   assert.match(html, /<td>2<\/td>/);
 });
 
+function renderAtlasPipelineRecordsForTest(entry) {
+  const atlasJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/atlas.js', 'utf8');
+  const document = {
+    getElementById: () => null,
+    createElement: () => {
+      const node = {innerHTML: ''};
+      Object.defineProperty(node, 'textContent', {
+        set(value) {
+          node.innerHTML = String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        },
+      });
+      return node;
+    },
+  };
+  const context = vm.createContext({document});
+  vm.runInContext(atlasJs + `
+    globalThis.__renderPipelineRecords = function(entry) {
+      return atlasRenderPipelineRecords(entry);
+    };
+  `, context);
+  context.entry = entry;
+  return vm.runInContext('__renderPipelineRecords(entry)', context);
+}
+
+test('Atlas cancelled freeze reports withdrawn retry, failure context, and escaped missing events', () => {
+  const maliciousFailure = '<img src=x onerror=alert(1)>';
+  const maliciousReason = '<script>alert(1)</script>';
+  const maliciousEventID = '<svg onload=alert(1)>';
+  const html = renderAtlasPipelineRecordsForTest({
+    queue_freezes: [{
+      status: 'resolved',
+      resolution_disposition: 'cancelled',
+      reason_code: maliciousFailure,
+      cancellation_reason: maliciousReason,
+      observed_missing_transition_event_ids: [maliciousEventID, 'evt_00000000-0000-7000-8000-000000000001'],
+      replacement_unit_id: '',
+    }],
+  });
+
+  assert.match(html, /Retry withdrawn \(not fixed\)/);
+  assert.match(html, /Original failure: &lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(html, /Cancellation reason: &lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /Missing transition event IDs \(2\)/);
+  assert.match(html, /&lt;svg onload=alert\(1\)&gt;/);
+  assert.match(html, /replacement: none \(retry withdrawn\)/);
+  assert.doesNotMatch(html, /<img src=x|<script>|<svg onload=/);
+});
+
+test('Atlas cancellation rendering preserves ordinary active and replacement freeze displays', () => {
+  const html = renderAtlasPipelineRecordsForTest({
+    queue_freezes: [
+      {status: 'active', reason_code: 'stage_failed', replacement_unit_id: ''},
+      {status: 'resolved', reason_code: 'stage_failed', replacement_unit_id: 'unit-replacement'},
+    ],
+  });
+
+  assert.match(html, /Queue freeze: active/);
+  assert.match(html, /replacement: Unavailable/);
+  assert.match(html, /Queue freeze: resolved/);
+  assert.match(html, /replacement: unit-replacement/);
+  assert.doesNotMatch(html, /Retry withdrawn \(not fixed\)/);
+});
+
 test('Task notifications keep canonical task identity through the Viewer projection', () => {
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8').replace(/\r\n/g, '\n');

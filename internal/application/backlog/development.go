@@ -83,6 +83,10 @@ type DevelopmentEventSink interface {
 	AppendDevelopmentEvent(context.Context, DevelopmentEvent) error
 }
 
+type DevelopmentEventReader interface {
+	GetDevelopmentEvent(context.Context, modulecore.EventID) (DevelopmentEvent, bool, error)
+}
+
 func (s *Service) emitDevelopmentTransition(ctx context.Context, eventType string, item domainbacklog.Item, target, requestID, reason string) error {
 	if s.developmentEvents == nil || strings.TrimSpace(item.ImplementationUnit) == "" {
 		return nil
@@ -112,7 +116,7 @@ func (s *Service) appendTransitionCompanionEvent(ctx context.Context, eventType 
 	if unitID == "" {
 		unitID = string(item.BacklogItemID)
 	}
-	artifactID := strings.Join([]string{"transition", boundedDevelopmentArtifactSegment(unitID), boundedDevelopmentArtifactSegment(stage), boundedDevelopmentArtifactSegment(recordID)}, ":")
+	artifactID := transitionCompanionArtifactID(unitID, stage, recordID)
 	if fields == nil {
 		fields = map[string]any{}
 	}
@@ -128,6 +132,15 @@ func (s *Service) appendTransitionCompanionEvent(ctx context.Context, eventType 
 		CreatedAt:  s.now(),
 		Fields:     fields,
 	})
+}
+
+func transitionCompanionArtifactID(unitID, stage, recordID string) string {
+	return strings.Join([]string{
+		"transition",
+		boundedDevelopmentArtifactSegment(unitID),
+		boundedDevelopmentArtifactSegment(stage),
+		boundedDevelopmentArtifactSegment(recordID),
+	}, ":")
 }
 
 type DevelopmentProjection struct {

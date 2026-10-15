@@ -114,25 +114,28 @@ type ImplementationLease struct {
 // intentionally lives in the existing Workstream store but keeps the
 // backlog-owned EvidenceRef shape so owner evidence is not flattened.
 type QueueFreeze struct {
-	FreezeID              string                      `json:"freeze_id"`
-	BlockedUnitID         string                      `json:"blocked_unit_id"`
-	BlockedRevision       int                         `json:"blocked_revision"`
-	FreezeRevision        int                         `json:"freeze_revision,omitempty"`
-	ReasonCode            string                      `json:"reason_code"`
-	InvalidatedFromStage  string                      `json:"invalidated_from_stage"`
-	EvidenceRefs          []domainbacklog.EvidenceRef `json:"evidence_refs,omitempty"`
-	Status                string                      `json:"status,omitempty"`
-	ActionID              modulecore.ActionID         `json:"action_id,omitempty"`
-	TransitionEventID     modulecore.EventID          `json:"transition_event_id,omitempty"`
-	ReplacementUnitID     string                      `json:"replacement_unit_id,omitempty"`
-	ReplacementLease      ImplementationLease         `json:"replacement_lease,omitempty"`
-	ResolutionAcquired    bool                        `json:"resolution_acquired,omitempty"`
-	SupersedesUnitID      string                      `json:"supersedes_unit_id,omitempty"`
-	BlockerResolutionRefs []domainbacklog.EvidenceRef `json:"blocker_resolution_refs,omitempty"`
-	ResolutionPayloadHash string                      `json:"resolution_payload_hash,omitempty"`
-	CreatedAt             time.Time                   `json:"created_at"`
-	UpdatedAt             time.Time                   `json:"updated_at,omitempty"`
-	ResolvedAt            time.Time                   `json:"resolved_at,omitempty"`
+	FreezeID                          string                      `json:"freeze_id"`
+	BlockedUnitID                     string                      `json:"blocked_unit_id"`
+	BlockedRevision                   int                         `json:"blocked_revision"`
+	FreezeRevision                    int                         `json:"freeze_revision,omitempty"`
+	ReasonCode                        string                      `json:"reason_code"`
+	InvalidatedFromStage              string                      `json:"invalidated_from_stage"`
+	EvidenceRefs                      []domainbacklog.EvidenceRef `json:"evidence_refs,omitempty"`
+	Status                            string                      `json:"status,omitempty"`
+	ActionID                          modulecore.ActionID         `json:"action_id,omitempty"`
+	TransitionEventID                 modulecore.EventID          `json:"transition_event_id,omitempty"`
+	ReplacementUnitID                 string                      `json:"replacement_unit_id,omitempty"`
+	ReplacementLease                  ImplementationLease         `json:"replacement_lease,omitempty"`
+	ResolutionAcquired                bool                        `json:"resolution_acquired,omitempty"`
+	ResolutionDisposition             string                      `json:"resolution_disposition,omitempty"`
+	CancellationReason                string                      `json:"cancellation_reason,omitempty"`
+	ObservedMissingTransitionEventIDs []modulecore.EventID        `json:"observed_missing_transition_event_ids,omitempty"`
+	SupersedesUnitID                  string                      `json:"supersedes_unit_id,omitempty"`
+	BlockerResolutionRefs             []domainbacklog.EvidenceRef `json:"blocker_resolution_refs,omitempty"`
+	ResolutionPayloadHash             string                      `json:"resolution_payload_hash,omitempty"`
+	CreatedAt                         time.Time                   `json:"created_at"`
+	UpdatedAt                         time.Time                   `json:"updated_at,omitempty"`
+	ResolvedAt                        time.Time                   `json:"resolved_at,omitempty"`
 }
 
 // QueueFreezeResolution is the complete, already CORE-verified resolution
@@ -149,9 +152,20 @@ type QueueFreezeResolution struct {
 	ResolutionPayloadHash  string                      `json:"resolution_payload_hash"`
 }
 
+type QueueFreezeCancellation struct {
+	ActionID                          modulecore.ActionID  `json:"action_id"`
+	ExpectedFreezeRevision            int                  `json:"expected_freeze_revision"`
+	BlockedUnitID                     string               `json:"blocked_unit_id"`
+	BlockedRevision                   int                  `json:"blocked_revision"`
+	Reason                            string               `json:"reason"`
+	ResolutionPayloadHash             string               `json:"resolution_payload_hash"`
+	ExpectedMissingTransitionEventIDs []modulecore.EventID `json:"expected_missing_transition_event_ids,omitempty"`
+}
+
 const (
-	QueueFreezeActive   = "active"
-	QueueFreezeResolved = "resolved"
+	QueueFreezeActive               = "active"
+	QueueFreezeResolved             = "resolved"
+	QueueFreezeDispositionCancelled = "cancelled"
 )
 
 var (
@@ -259,6 +273,66 @@ func ValidateQueueFreezeResolution(item QueueFreezeResolution, replacement Imple
 		return fmt.Errorf("replacement lease holder does not match replacement unit")
 	}
 	return nil
+}
+
+func ValidateQueueFreezeCancellation(item QueueFreezeCancellation) error {
+	if item.ExpectedFreezeRevision < 1 {
+		return fmt.Errorf("expected_freeze_revision is required")
+	}
+	if err := item.ActionID.Validate(); err != nil {
+		return fmt.Errorf("queue freeze cancellation action_id is required: %w", err)
+	}
+	if strings.TrimSpace(item.BlockedUnitID) == "" || item.BlockedRevision < 1 {
+		return fmt.Errorf("queue freeze cancellation blocked identity is required")
+	}
+	if strings.TrimSpace(item.Reason) == "" {
+		return fmt.Errorf("queue freeze cancellation reason is required")
+	}
+	if strings.TrimSpace(item.ResolutionPayloadHash) == "" {
+		return fmt.Errorf("queue freeze cancellation payload hash is required")
+	}
+	for index, eventID := range item.ExpectedMissingTransitionEventIDs {
+		if err := eventID.Validate(); err != nil {
+			return fmt.Errorf("queue freeze cancellation missing transition event id is invalid: %w", err)
+		}
+		if index > 0 && item.ExpectedMissingTransitionEventIDs[index-1] >= eventID {
+			return fmt.Errorf("queue freeze cancellation missing transition event ids must be unique and sorted")
+		}
+	}
+	return nil
+}
+
+func (item QueueFreeze) HasPendingReplacementResolution() bool {
+	return item.ActionID != "" || item.ReplacementUnitID != "" || item.ReplacementLease != (ImplementationLease{}) || item.ResolutionAcquired || item.SupersedesUnitID != "" || len(item.BlockerResolutionRefs) > 0 || item.ResolutionPayloadHash != ""
+}
+
+func (item QueueFreeze) MatchesCancellation(cancellation QueueFreezeCancellation) bool {
+	return item.Status == QueueFreezeResolved &&
+		item.ResolutionDisposition == QueueFreezeDispositionCancelled &&
+		item.ActionID == cancellation.ActionID &&
+		item.FreezeRevision == cancellation.ExpectedFreezeRevision &&
+		item.BlockedUnitID == cancellation.BlockedUnitID &&
+		item.BlockedRevision == cancellation.BlockedRevision &&
+		item.CancellationReason == cancellation.Reason &&
+		item.ResolutionPayloadHash == cancellation.ResolutionPayloadHash &&
+		equalEventIDs(item.ObservedMissingTransitionEventIDs, cancellation.ExpectedMissingTransitionEventIDs) &&
+		item.ReplacementUnitID == "" &&
+		item.ReplacementLease == (ImplementationLease{}) &&
+		!item.ResolutionAcquired &&
+		item.SupersedesUnitID == "" &&
+		len(item.BlockerResolutionRefs) == 0
+}
+
+func equalEventIDs(left, right []modulecore.EventID) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // MatchesResolution reports whether a persisted freeze carries the exact

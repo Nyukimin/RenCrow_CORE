@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -196,4 +197,147 @@ func TestDevelopmentEventSinkKeepsNonCanonicalAgentActorRejected(t *testing.T) {
 	if len(store.captured) != 0 {
 		t.Fatalf("non-canonical agent actor persisted anyway: %+v", store.captured)
 	}
+}
+
+type developmentEventReadbackReader interface {
+	GetDevelopmentEvent(context.Context, modulecore.EventID) (backlogapp.DevelopmentEvent, bool, error)
+}
+
+type developmentEventReadbackStore struct {
+	*developmentCapturingStore
+	override *modulecore.EventEnvelope
+	missing  bool
+}
+
+func (s *developmentEventReadbackStore) GetByID(ctx context.Context, eventID modulecore.EventID) (modulecore.EventEnvelope, bool, error) {
+	if s.missing {
+		return modulecore.EventEnvelope{}, false, nil
+	}
+	if s.override != nil {
+		return *s.override, true, nil
+	}
+	for _, event := range s.captured {
+		if event.EventID == eventID {
+			return event, true, nil
+		}
+	}
+	return modulecore.EventEnvelope{}, false, nil
+}
+
+func TestDevelopmentEventSinkReadsBackCanonicalEvent(t *testing.T) {
+	store := &developmentEventReadbackStore{developmentCapturingStore: &developmentCapturingStore{}}
+	sink, err := newDevelopmentEventReadbackSink(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 15, 16, 45, 12, 345678900, time.FixedZone("source", 3*60*60))
+	want := backlogapp.DevelopmentEvent{
+		EventID: modulecore.NewEventID(), Type: backlogapp.DevelopmentEventQueueFreezeTransition,
+		UnitID: "unit-readback", ArtifactID: "transition:unit-readback:blocked:req-readback", RequestID: "req-readback",
+		CreatedAt: createdAt.UTC(), Fields: map[string]any{"target_stage": "BLOCKED", "accepted": true, "ratio": 1.5},
+	}
+	if err := sink.AppendDevelopmentEvent(context.Background(), want); err != nil {
+		t.Fatalf("AppendDevelopmentEvent() error = %v", err)
+	}
+	reader := requireDevelopmentEventReadbackReader(t, sink)
+	got, found, err := reader.GetDevelopmentEvent(context.Background(), want.EventID)
+	if err != nil || !found {
+		t.Fatalf("GetDevelopmentEvent() found=%v error=%v", found, err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("GetDevelopmentEvent() = %#v, want %#v", got, want)
+	}
+}
+
+func TestDevelopmentEventSinkReadbackFailsClosed(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		prepare func(*developmentEventReadbackStore)
+		missing bool
+	}{
+		{
+			name: "missing canonical event",
+			prepare: func(store *developmentEventReadbackStore) {
+				store.missing = true
+			},
+			missing: true,
+		},
+		{
+			name: "malformed canonical content",
+			prepare: func(store *developmentEventReadbackStore) {
+				event := store.captured[0]
+				event.Payload["content"] = "{"
+				store.override = &event
+			},
+		},
+		{
+			name: "canonical content missing fields",
+			prepare: func(store *developmentEventReadbackStore) {
+				event := store.captured[0]
+				event.Payload["content"] = `{"unit_id":"unit-readback","artifact_id":"artifact-readback","request_id":"req-readback"}`
+				store.override = &event
+			},
+		},
+		{
+			name: "invalid canonical timestamp",
+			prepare: func(store *developmentEventReadbackStore) {
+				event := store.captured[0]
+				event.Payload["timestamp"] = "not-a-time"
+				store.override = &event
+			},
+		},
+		{
+			name: "mismatched canonical event id",
+			prepare: func(store *developmentEventReadbackStore) {
+				event := store.captured[0]
+				event.EventID = modulecore.NewEventID()
+				store.override = &event
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := &developmentEventReadbackStore{developmentCapturingStore: &developmentCapturingStore{}}
+			sink, err := newDevelopmentEventReadbackSink(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requested := modulecore.NewEventID()
+			if err := sink.AppendDevelopmentEvent(context.Background(), backlogapp.DevelopmentEvent{
+				EventID: requested, Type: backlogapp.DevelopmentEventQueueFreezeTransition,
+				UnitID: "unit-readback", ArtifactID: "transition:unit-readback:blocked:req-readback", RequestID: "req-readback",
+				CreatedAt: time.Now().UTC(), Fields: map[string]any{"target_stage": "BLOCKED"},
+			}); err != nil {
+				t.Fatalf("AppendDevelopmentEvent() error = %v", err)
+			}
+			testCase.prepare(store)
+			reader := requireDevelopmentEventReadbackReader(t, sink)
+			_, found, err := reader.GetDevelopmentEvent(context.Background(), requested)
+			if testCase.missing {
+				if err != nil || found {
+					t.Fatalf("missing GetDevelopmentEvent() found=%v error=%v, want not found", found, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("invalid GetDevelopmentEvent() found=%v error=%v, want error", found, err)
+			}
+		})
+	}
+}
+
+func newDevelopmentEventReadbackSink(store *developmentEventReadbackStore) (developmentEventLogSink, error) {
+	archive, err := viewer.NewCanonicalEventLog(store)
+	if err != nil {
+		return developmentEventLogSink{}, err
+	}
+	return developmentEventLogSink{store: archive, canonicalActorID: atlasExecutionActorID}, nil
+}
+
+func requireDevelopmentEventReadbackReader(t *testing.T, sink developmentEventLogSink) developmentEventReadbackReader {
+	t.Helper()
+	reader, ok := any(sink).(developmentEventReadbackReader)
+	if !ok {
+		t.Fatal("developmentEventLogSink does not implement GetDevelopmentEvent")
+	}
+	return reader
 }

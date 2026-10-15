@@ -165,6 +165,9 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	if method != http.MethodPost {
 		return false
 	}
+	if atlasQueueFreezeResolveInteractionAllowed(method, path) {
+		return true
+	}
 	if path == "/v1/memory/user/propose" || strings.HasPrefix(path, "/v1/memory/user/") {
 		return true
 	}
@@ -196,6 +199,20 @@ func cmdControlInteractionAllowed(method, path string) bool {
 	default:
 		return strings.HasPrefix(path, "/v1/atlas/items/")
 	}
+}
+
+func atlasQueueFreezeResolveInteractionAllowed(method, path string) bool {
+	if method != http.MethodPost {
+		return false
+	}
+	parts := strings.Split(path, "/")
+	return len(parts) == 6 &&
+		parts[0] == "" &&
+		parts[1] == "v1" &&
+		parts[2] == "atlas" &&
+		parts[3] == "queue-freezes" &&
+		parts[4] != "" && parts[4] != "." && parts[4] != ".." &&
+		parts[5] == "resolve"
 }
 
 func portalIdleChatInteractionAllowed(method, path string) bool {

@@ -61,20 +61,30 @@ type LifecycleStore interface {
 	ResolveQueueFreezeAndAcquireLease(context.Context, string, domainworkstream.QueueFreezeResolution, domainworkstream.ImplementationLease) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error)
 }
 
+type QueueFreezeCancellationStore interface {
+	CancelQueueFreeze(context.Context, string, domainworkstream.QueueFreezeCancellation) (domainworkstream.QueueFreeze, error)
+}
+
 var (
-	ErrEvidenceVerifierUnavailable = errors.New("atlas evidence verifier unavailable")
-	ErrLifecycleStoreUnavailable   = errors.New("atlas lifecycle store unavailable")
-	ErrLifecycleConflict           = errors.New("atlas lifecycle idempotency conflict")
+	ErrEvidenceVerifierUnavailable             = errors.New("atlas evidence verifier unavailable")
+	ErrLifecycleStoreUnavailable               = errors.New("atlas lifecycle store unavailable")
+	ErrLifecycleConflict                       = errors.New("atlas lifecycle idempotency conflict")
+	ErrQueueFreezeCancellationStoreUnavailable = errors.New("atlas queue freeze cancellation store unavailable")
 )
 
 // ResolveQueueFreezeRequest is the owner request used to replace a blocked
 // unit. ActionID is the canonical resolution action identity and idempotency key.
 type ResolveQueueFreezeRequest struct {
-	ActionID               modulecore.ActionID         `json:"action_id"`
-	ExpectedFreezeRevision int                         `json:"expected_freeze_revision"`
-	ReplacementUnitID      string                      `json:"replacement_unit_id"`
-	SupersedesUnitID       string                      `json:"supersedes_unit_id"`
-	BlockerResolutionRefs  []domainbacklog.EvidenceRef `json:"blocker_resolution_refs"`
+	Disposition                       string                      `json:"disposition,omitempty"`
+	ActionID                          modulecore.ActionID         `json:"action_id"`
+	ExpectedFreezeRevision            int                         `json:"expected_freeze_revision"`
+	BlockedUnitID                     string                      `json:"blocked_unit_id,omitempty"`
+	BlockedRevision                   int                         `json:"blocked_revision,omitempty"`
+	Reason                            string                      `json:"reason,omitempty"`
+	ExpectedMissingTransitionEventIDs []modulecore.EventID        `json:"expected_missing_transition_event_ids,omitempty"`
+	ReplacementUnitID                 string                      `json:"replacement_unit_id"`
+	SupersedesUnitID                  string                      `json:"supersedes_unit_id"`
+	BlockerResolutionRefs             []domainbacklog.EvidenceRef `json:"blocker_resolution_refs"`
 }
 
 // AcquireRunnableResult is returned by the dispatcher-facing service method.

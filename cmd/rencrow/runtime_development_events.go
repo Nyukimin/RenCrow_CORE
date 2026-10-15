@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	backlogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/backlog"
@@ -34,6 +35,8 @@ type developmentEventLogSink struct {
 	// "execution actor_kind must be \"agent\"" (Step18 production E2E).
 	canonicalActorID string
 }
+
+var _ backlogapp.DevelopmentEventReader = developmentEventLogSink{}
 
 // canonicalDevelopmentEventID adopts the EventID that an Atlas lifecycle
 // transition event already claims.  A receipt stores that EventID as its
@@ -100,4 +103,71 @@ func (s developmentEventLogSink) AppendDevelopmentEvent(ctx context.Context, eve
 	}
 	outgoing.Content = string(content)
 	return s.store.Append(outgoing)
+}
+
+func (s developmentEventLogSink) GetDevelopmentEvent(ctx context.Context, eventID modulecore.EventID) (backlogapp.DevelopmentEvent, bool, error) {
+	if s.store == nil {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("development canonical event store is required")
+	}
+	if ctx == nil {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("development event context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return backlogapp.DevelopmentEvent{}, false, err
+	}
+	if err := eventID.Validate(); err != nil {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("development event_id is invalid: %w", err)
+	}
+	event, found, err := s.store.GetByEventID(ctx, eventID)
+	if err != nil {
+		return backlogapp.DevelopmentEvent{}, false, err
+	}
+	if !found {
+		return backlogapp.DevelopmentEvent{}, found, err
+	}
+	if event.EventID != eventID {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event_id does not match requested event_id")
+	}
+	if strings.TrimSpace(event.Type) == "" {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event type is required")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+	if err != nil || createdAt.IsZero() {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event timestamp is invalid")
+	}
+	var contentFields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(event.Content), &contentFields); err != nil || contentFields == nil {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event content is invalid")
+	}
+	if len(contentFields) != 4 {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event content fields are incomplete")
+	}
+	for _, key := range []string{"unit_id", "artifact_id", "request_id", "fields"} {
+		if _, ok := contentFields[key]; !ok {
+			return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event content is missing %s", key)
+		}
+	}
+	for _, key := range []string{"unit_id", "artifact_id", "request_id"} {
+		if strings.TrimSpace(string(contentFields[key])) == "null" {
+			return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event content %s is invalid", key)
+		}
+	}
+	var content struct {
+		UnitID     string         `json:"unit_id"`
+		ArtifactID string         `json:"artifact_id"`
+		RequestID  string         `json:"request_id"`
+		Fields     map[string]any `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(event.Content), &content); err != nil {
+		return backlogapp.DevelopmentEvent{}, false, fmt.Errorf("canonical development event content is invalid: %w", err)
+	}
+	return backlogapp.DevelopmentEvent{
+		EventID:    event.EventID,
+		Type:       event.Type,
+		UnitID:     content.UnitID,
+		ArtifactID: content.ArtifactID,
+		RequestID:  content.RequestID,
+		CreatedAt:  createdAt.UTC(),
+		Fields:     content.Fields,
+	}, true, nil
 }

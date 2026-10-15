@@ -774,6 +774,31 @@ Implementation Queueは再起動後も停止する。
 置換revision、blocker解消Evidence、dependency成立をCOREが同期検証できた場合だけ行う。
 このrequestは停止中artifactに判を付けるものではなく、新しい事実と実行目的を持つ独立requestである。
 
+現行replacement resolveは従来どおり維持する。同じresolve APIでretry撤回を明示する場合だけ、
+`disposition=cancelled`を指定する。この取消は認証済みSystem Ownerが実装retryを撤回する独立requestであり、
+`BLOCKED`の修復・成功・解決可能化を意味しない。`disposition`省略時は従来replacement契約を適用し、
+明示された未知の値はfail closedとする。
+
+取消requestは`action_id`、`expected_freeze_revision`、`disposition=cancelled`、`blocked_unit_id`、
+`blocked_revision`、`reason`を必須とし、`expected_missing_transition_event_ids[]`をoptionalで受け付ける。COREは対象Itemが
+`ADOPTED / BLOCKED`かつ指定revisionと完全一致すること、対象Freezeがactiveで、`QUEUED`からの元Transition Event参照と
+同一unit・revisionを指すこと、
+completedな`BLOCKED` stage receiptと記録済み失敗内容が存在すること、held Leaseおよびpending replacementがないことを
+同じowner decisionで検証する。Stage receiptとFreezeの2つのTransition EventIDはcanonical・distinctでなければならず、
+Event readerが`found=false`かつerrorなしを返したIDだけを欠落と観測する。欠落があるrequestは、その2 IDから成る実観測setと
+完全一致するcanonical・重複なし・昇順の`expected_missing_transition_event_ids[]`を必須とする。全Eventが存在する場合はこのfieldを
+省略または空配列にできる。reader unavailable／error、malformed ID、identity不一致、未申告または異なる欠落setはfail closed。
+暫定test outputやspecification Evidenceを修復Evidenceとして扱わない。
+
+検証と保存はowner storeの一つのatomic・idempotent operationとし、対象Freezeだけを`resolved`にして
+`resolution_disposition=cancelled`、`cancellation_reason`、`action_id`、request payload hash、実際に観測した
+`observed_missing_transition_event_ids[]`を保存する。この欠落setは取消時点の観測結果を記録するだけであり、Eventの修復や
+再試行成功を意味しない。Leaseを取得せず、
+元の`BLOCKED`履歴とEvidence、他のFreezeを変更しない。同じpayloadの再送は同じreceiptを返し、同一`action_id`での
+異なるpayloadはconflictとする。未知のdisposition、必須記録の欠落、pending replacement、Lease競合、
+revision不一致その他の検証失敗ではFreezeを解除せずfail closedにする。この汎用契約の現在の用途は、
+過去のtest-only Freeze 5件のcleanupである。
+
 解除requestが`rejected`／`blocked`ならFreezeを維持する。単なるCORE再起動、Lease不在、priority変更、
 Agentの自然言語報告ではFreezeを解除しない。
 
@@ -783,12 +808,12 @@ Agentの自然言語報告ではFreezeを解除しない。
 POST /v1/atlas/queue-freezes/{freeze_id}/resolve
 ```
 
-requestは`request_id`、`expected_freeze_revision`、`replacement_unit_id`、`supersedes_unit_id`、
+replacement requestは`action_id`、`expected_freeze_revision`、`replacement_unit_id`、`supersedes_unit_id`、
 `blocker_resolution_refs`を必須とする。replacement Unitは事前に認証済みAdoptionを完了した`ADOPTED / QUEUED`
 でなければならず、Freeze中のAdoptionはUnitとQueue recordを作成できるがLeaseを取得しない。
 COREは旧Unitが`BLOCKED`、supersedes関係が完全一致、blocker Evidenceがowner verifier合格、dependency成立、
 他Leaseなしを同じdecision内で検証する。成功時はFreeze解除receiptとreplacement UnitのLease取得を一つの
-冪等operationとして確定する。同じ`request_id`／同じpayloadは同じreceiptを返し、payload違いはconflictとする。
+冪等operationとして確定する。同じ`action_id`／同じpayloadは同じreceiptを返し、payload違いはconflictとする。
 
 ---
 

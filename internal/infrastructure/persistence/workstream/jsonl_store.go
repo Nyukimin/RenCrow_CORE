@@ -14,6 +14,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type JSONLStore struct {
@@ -137,6 +138,29 @@ func latestQueueFreezes(items []domainworkstream.QueueFreeze, limit int) []domai
 		}
 	}
 	return out
+}
+
+func (s *JSONLStore) queueFreezeActionIDUsedLocked(excludeFreezeID string, actionID modulecore.ActionID) (bool, error) {
+	latestActionIDs := make(map[string]modulecore.ActionID)
+	if err := readJSONL(s.queueFreezePath, func(line []byte) error {
+		var item struct {
+			FreezeID string              `json:"freeze_id"`
+			ActionID modulecore.ActionID `json:"action_id"`
+		}
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		latestActionIDs[item.FreezeID] = item.ActionID
+		return nil
+	}); err != nil {
+		return false, err
+	}
+	for otherFreezeID, existingActionID := range latestActionIDs {
+		if otherFreezeID != excludeFreezeID && existingActionID == actionID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *JSONLStore) latestActiveQueueFreezeLocked() (domainworkstream.QueueFreeze, bool, error) {
@@ -305,6 +329,98 @@ func (s *JSONLStore) AcquireImplementationLease(ctx context.Context, item domain
 	return acquired, err
 }
 
+func (s *JSONLStore) CancelQueueFreeze(_ context.Context, freezeID string, cancellation domainworkstream.QueueFreezeCancellation) (domainworkstream.QueueFreeze, error) {
+	if strings.TrimSpace(freezeID) == "" {
+		return domainworkstream.QueueFreeze{}, fmt.Errorf("freeze_id is required")
+	}
+	if err := domainworkstream.ValidateQueueFreezeCancellation(cancellation); err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	freeze, found, err := s.getQueueFreezeLocked(freezeID)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	if !found {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ErrQueueFreezeNotFound
+	}
+	if freeze.Status == domainworkstream.QueueFreezeResolved {
+		if freeze.MatchesCancellation(cancellation) {
+			return freeze, nil
+		}
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	actionIDInUse, err := s.queueFreezeActionIDUsedLocked(freezeID, cancellation.ActionID)
+	if err != nil {
+		return freeze, err
+	}
+	if actionIDInUse {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.Status != domainworkstream.QueueFreezeActive && strings.TrimSpace(freeze.Status) != "" {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.FreezeRevision != cancellation.ExpectedFreezeRevision {
+		return freeze, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, cancellation.ExpectedFreezeRevision, freeze.FreezeRevision)
+	}
+	if freeze.BlockedUnitID != cancellation.BlockedUnitID || freeze.BlockedRevision != cancellation.BlockedRevision {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.HasPendingReplacementResolution() || freeze.ResolutionDisposition != "" || freeze.CancellationReason != "" {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if err := s.ensureNoHeldImplementationLeaseLocked(); err != nil {
+		return freeze, err
+	}
+
+	now := time.Now().UTC()
+	freeze.Status = domainworkstream.QueueFreezeResolved
+	freeze.ResolutionDisposition = domainworkstream.QueueFreezeDispositionCancelled
+	freeze.ActionID = cancellation.ActionID
+	freeze.CancellationReason = cancellation.Reason
+	freeze.ObservedMissingTransitionEventIDs = append([]modulecore.EventID(nil), cancellation.ExpectedMissingTransitionEventIDs...)
+	freeze.ReplacementUnitID = ""
+	freeze.ReplacementLease = domainworkstream.ImplementationLease{}
+	freeze.ResolutionAcquired = false
+	freeze.SupersedesUnitID = ""
+	freeze.BlockerResolutionRefs = nil
+	freeze.ResolutionPayloadHash = cancellation.ResolutionPayloadHash
+	freeze.UpdatedAt = now
+	freeze.ResolvedAt = now
+	if err := s.saveQueueFreezeLocked(freeze); err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	return freeze, nil
+}
+
+func (s *JSONLStore) ensureNoHeldImplementationLeaseLocked() error {
+	heldByLease := make(map[string]string)
+	if err := readJSONL(s.leasePath, func(line []byte) error {
+		var item struct {
+			LeaseName    string `json:"lease_name"`
+			HolderUnitID string `json:"holder_unit_id"`
+		}
+		if err := json.Unmarshal(line, &item); err != nil {
+			return err
+		}
+		if strings.TrimSpace(item.LeaseName) == "" {
+			return fmt.Errorf("implementation lease record has no lease_name")
+		}
+		heldByLease[item.LeaseName] = item.HolderUnitID
+		return nil
+	}); err != nil {
+		return err
+	}
+	for _, holder := range heldByLease {
+		if strings.TrimSpace(holder) != "" {
+			return domainworkstream.ErrImplementationLeaseHeld
+		}
+	}
+	return nil
+}
+
 // ResolveQueueFreezeAndAcquireLease resolves one exact active freeze and
 // acquires the replacement lease while holding the same lifecycle mutex.
 func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freezeID string, resolution domainworkstream.QueueFreezeResolution, replacement domainworkstream.ImplementationLease) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error) {
@@ -332,6 +448,13 @@ func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freeze
 			return freeze, freeze.ReplacementLease, true, nil
 		}
 		return freeze, domainworkstream.ImplementationLease{}, false, nil
+	}
+	actionIDInUse, err := s.queueFreezeActionIDUsedLocked(freezeID, resolution.ActionID)
+	if err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	if actionIDInUse {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
 	}
 	if freeze.Status != domainworkstream.QueueFreezeActive && strings.TrimSpace(freeze.Status) != "" {
 		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict

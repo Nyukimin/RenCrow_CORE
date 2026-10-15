@@ -607,9 +607,10 @@ func writeAtlasQueueFreezeError(w http.ResponseWriter, err error) {
 		errors.Is(err, domainbacklog.ErrInvalidTransition),
 		errors.Is(err, domainbacklog.ErrEvidenceRequired):
 		status = http.StatusConflict
-	case errors.Is(err, domainworkstream.ErrQueueFrozen) || strings.Contains(strings.ToLower(err.Error()), "blocked"):
-		// A blocked/frozen queue is an explicit resource state, not a malformed
-		// request. HTTP 423 keeps that distinction visible to owner clients.
+	case errors.Is(err, domainworkstream.ErrImplementationLeaseHeld):
+		status = http.StatusLocked
+	case errors.Is(err, domainworkstream.ErrQueueFrozen):
+		// A frozen queue is an explicit resource state, not a malformed request.
 		status = http.StatusLocked
 	}
 	writeAtlasError(w, status, err.Error())

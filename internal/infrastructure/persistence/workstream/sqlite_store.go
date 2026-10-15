@@ -12,6 +12,7 @@ import (
 
 	domainbacklog "github.com/Nyukimin/RenCrow_CORE/internal/domain/backlog"
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	_ "modernc.org/sqlite"
 )
 
@@ -233,6 +234,110 @@ func (s *SQLiteStore) AcquireImplementationLease(ctx context.Context, item domai
 	return acquired, err
 }
 
+func (s *SQLiteStore) CancelQueueFreeze(ctx context.Context, freezeID string, cancellation domainworkstream.QueueFreezeCancellation) (domainworkstream.QueueFreeze, error) {
+	if strings.TrimSpace(freezeID) == "" {
+		return domainworkstream.QueueFreeze{}, fmt.Errorf("freeze_id is required")
+	}
+	if err := domainworkstream.ValidateQueueFreezeCancellation(cancellation); err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	if s == nil || s.db == nil {
+		return domainworkstream.QueueFreeze{}, fmt.Errorf("workstream sqlite store is closed")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var indexedBlockedUnitID string
+	var indexedBlockedRevision int
+	var payload string
+	err = tx.QueryRowContext(ctx, `SELECT blocked_unit_id, blocked_revision, payload FROM queue_freeze WHERE freeze_id = ?`, freezeID).Scan(&indexedBlockedUnitID, &indexedBlockedRevision, &payload)
+	if err == sql.ErrNoRows {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ErrQueueFreezeNotFound
+	}
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	var freeze domainworkstream.QueueFreeze
+	if err := json.Unmarshal([]byte(payload), &freeze); err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	if indexedBlockedUnitID != freeze.BlockedUnitID || indexedBlockedRevision != freeze.BlockedRevision {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.Status == domainworkstream.QueueFreezeResolved {
+		if freeze.MatchesCancellation(cancellation) {
+			if err := tx.Commit(); err != nil {
+				return freeze, err
+			}
+			return freeze, nil
+		}
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	actionIDInUse, err := queueFreezeActionIDUsedTx(ctx, tx, freezeID, cancellation.ActionID)
+	if err != nil {
+		return freeze, err
+	}
+	if actionIDInUse {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.Status != domainworkstream.QueueFreezeActive && freeze.Status != "" {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.FreezeRevision != cancellation.ExpectedFreezeRevision {
+		return freeze, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, cancellation.ExpectedFreezeRevision, freeze.FreezeRevision)
+	}
+	if freeze.BlockedUnitID != cancellation.BlockedUnitID || freeze.BlockedRevision != cancellation.BlockedRevision {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if freeze.HasPendingReplacementResolution() || freeze.ResolutionDisposition != "" || freeze.CancellationReason != "" {
+		return freeze, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	var heldLeaseCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM implementation_lease WHERE TRIM(holder_unit_id) <> ''`).Scan(&heldLeaseCount); err != nil {
+		return freeze, err
+	}
+	if heldLeaseCount > 0 {
+		return freeze, domainworkstream.ErrImplementationLeaseHeld
+	}
+
+	now := time.Now().UTC()
+	freeze.Status = domainworkstream.QueueFreezeResolved
+	freeze.ResolutionDisposition = domainworkstream.QueueFreezeDispositionCancelled
+	freeze.ActionID = cancellation.ActionID
+	freeze.CancellationReason = cancellation.Reason
+	freeze.ObservedMissingTransitionEventIDs = append([]modulecore.EventID(nil), cancellation.ExpectedMissingTransitionEventIDs...)
+	freeze.ReplacementUnitID = ""
+	freeze.ReplacementLease = domainworkstream.ImplementationLease{}
+	freeze.ResolutionAcquired = false
+	freeze.SupersedesUnitID = ""
+	freeze.BlockerResolutionRefs = nil
+	freeze.ResolutionPayloadHash = cancellation.ResolutionPayloadHash
+	freeze.UpdatedAt = now
+	freeze.ResolvedAt = now
+	resolvedPayload, err := json.Marshal(freeze)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE queue_freeze SET payload = ? WHERE freeze_id = ? AND blocked_unit_id = ? AND blocked_revision = ?`, string(resolvedPayload), freeze.FreezeID, freeze.BlockedUnitID, freeze.BlockedRevision)
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	if rowsAffected != 1 {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return domainworkstream.QueueFreeze{}, err
+	}
+	return freeze, nil
+}
+
 // ResolveQueueFreezeAndAcquireLease resolves one exact active freeze and
 // acquires the replacement lease in one SQLite transaction.
 func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLease(ctx context.Context, freezeID string, resolution domainworkstream.QueueFreezeResolution, replacement domainworkstream.ImplementationLease) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error) {
@@ -271,6 +376,13 @@ func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLease(ctx context.Context, fre
 			return freeze, domainworkstream.ImplementationLease{}, false, err
 		}
 		return freeze, freeze.ReplacementLease, freeze.ResolutionAcquired, nil
+	}
+	actionIDInUse, err := queueFreezeActionIDUsedTx(ctx, tx, freezeID, resolution.ActionID)
+	if err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	}
+	if actionIDInUse {
+		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
 	}
 	if freeze.Status != domainworkstream.QueueFreezeActive && freeze.Status != "" {
 		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
@@ -658,6 +770,30 @@ func listSQLiteItems[T any](ctx context.Context, s *SQLiteStore, table string, l
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+func queueFreezeActionIDUsedTx(ctx context.Context, tx *sql.Tx, excludeFreezeID string, actionID modulecore.ActionID) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM queue_freeze WHERE freeze_id <> ?`, excludeFreezeID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rawPayload string
+		if err := rows.Scan(&rawPayload); err != nil {
+			return false, err
+		}
+		var payload struct {
+			ActionID modulecore.ActionID `json:"action_id"`
+		}
+		if err := json.Unmarshal([]byte(rawPayload), &payload); err != nil {
+			return false, err
+		}
+		if payload.ActionID == actionID {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func activeQueueFreezeTx(ctx context.Context, tx *sql.Tx) (bool, error) {
