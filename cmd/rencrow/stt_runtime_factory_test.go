@@ -142,9 +142,14 @@ func TestBuildSTTRuntimeRelaysAnUtteranceThroughTheRenCrowSTTStream(t *testing.T
 	if want := "stt.stream:" + requestID + ":v1-1"; recorded[0].Name != want || recorded[0].Status != domainaction.StatusSucceeded {
 		t.Fatalf("Action = %+v, want name %q succeeded", recorded[0], want)
 	}
-	tasks, err := owners.tasks.List(context.Background(), domaintask.Filter{Limit: 100})
-	if err != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusSucceeded {
-		t.Fatalf("Tasks=%v err=%v: one short-lived Task per utterance, closed", tasks, err)
+	var tasks []domaintask.Task
+	var taskErr error
+	waitUntil(t, "the Task of the utterance", func() bool {
+		tasks, taskErr = owners.tasks.List(context.Background(), domaintask.Filter{Limit: 100})
+		return taskErr == nil && len(tasks) == 1 && domaintask.IsTerminal(tasks[0].Status)
+	})
+	if taskErr != nil || len(tasks) != 1 || tasks[0].Status != domaintask.StatusSucceeded {
+		t.Fatalf("Tasks=%v err=%v: one short-lived Task per utterance, closed", tasks, taskErr)
 	}
 	// A transport receipt needs a Run and an Action bound before the request, and
 	// nothing precedes an utterance; the Action carries the correlation instead.
