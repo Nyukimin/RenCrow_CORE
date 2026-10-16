@@ -128,6 +128,8 @@ type Service struct {
 	// runnerExecution is an in-process admission claim held from before Task
 	// creation until the heartbeat runner has finalized that Task.
 	runnerExecution *runnerExecutionClaim
+	// runnerExecutionNonce is a Service-lifetime serial protected by lifecycleMu.
+	runnerExecutionNonce uint64
 
 	catalog  []map[string]any
 	features []map[string]any

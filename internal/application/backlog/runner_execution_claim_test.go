@@ -240,6 +240,25 @@ func TestRunnerExecutionClaimDuplicateAndStaleEndCannotClearNewerClaim(t *testin
 	}
 }
 
+func TestRunnerExecutionClaimNonceOverflowFailsClosed(t *testing.T) {
+	fixture := newRejectedCancellationFixture(nil)
+	fixture.service.runnerExecutionNonce = ^uint64(0)
+
+	token, err := runnerClaimAPI(t, fixture.service).BeginRunnerExecution(backlogActionContext(t), fixture.item)
+	if !errors.Is(err, ErrLifecycleConflict) {
+		t.Fatalf("BeginRunnerExecution at nonce overflow error=%v, want ErrLifecycleConflict", err)
+	}
+	if token != "" {
+		t.Fatalf("BeginRunnerExecution at nonce overflow token=%q, want empty", token)
+	}
+	if fixture.service.runnerExecution != nil {
+		t.Fatalf("BeginRunnerExecution at nonce overflow created claim: %+v", fixture.service.runnerExecution)
+	}
+	if fixture.service.runnerExecutionNonce != ^uint64(0) {
+		t.Fatalf("BeginRunnerExecution at nonce overflow wrapped nonce to %d", fixture.service.runnerExecutionNonce)
+	}
+}
+
 func TestRunnerExecutionClaimGuardsAdmissionAndRecoverCleanup(t *testing.T) {
 	fixture := newRejectedCancellationFixture(nil)
 	token := beginRunnerClaim(t, fixture.service, fixture.item)

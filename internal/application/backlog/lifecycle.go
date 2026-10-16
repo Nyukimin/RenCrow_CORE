@@ -142,7 +142,11 @@ func (s *Service) BeginRunnerExecution(ctx context.Context, selected domainbackl
 		}
 	}
 
-	token := string(modulecore.NewActionID())
+	if s.runnerExecutionNonce == ^uint64(0) {
+		return "", fmt.Errorf("%w: runner execution claim nonce exhausted", ErrLifecycleConflict)
+	}
+	s.runnerExecutionNonce++
+	token := strconv.FormatUint(s.runnerExecutionNonce, 10)
 	s.runnerExecution = &runnerExecutionClaim{
 		token: token, itemID: itemID, unitID: item.ImplementationUnit,
 		revision: item.ImplementationRevision, workstreamID: item.WorkstreamID,
