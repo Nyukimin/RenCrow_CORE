@@ -2,10 +2,12 @@ package workstream
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,8 @@ import (
 	domainworkstream "github.com/Nyukimin/RenCrow_CORE/internal/domain/workstream"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+const maxJSONLRecordBytes = 1 << 20
 
 type JSONLStore struct {
 	workstreamPath  string
@@ -30,10 +34,9 @@ type JSONLStore struct {
 	queueFreezePath string
 	stageRunPath    string
 	closurePath     string
-	// lifecycleMu protects the check-and-append sequences for both the
-	// singleton implementation lease and queue-freeze resolution.  JSONL has
-	// no transaction primitive, so all owner lifecycle decisions share this
-	// mutex.
+	// lifecycleMu protects check-and-append sequences for the singleton
+	// implementation lease, queue-freeze resolution, and closure receipt writes.
+	// JSONL has no transaction primitive, so owner lifecycle decisions share it.
 	lifecycleMu sync.Mutex
 	// resolutionAppendHook is a test-only fault seam.  It is intentionally
 	// unexported so production callers cannot alter the lifecycle protocol.
@@ -241,13 +244,15 @@ func (s *JSONLStore) SaveClosureReceipt(_ context.Context, item domainworkstream
 	if err := domainworkstream.ValidateClosureReceipt(item); err != nil {
 		return err
 	}
-	return appendJSONL(s.closurePath, item)
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	return appendJSONLBounded(s.closurePath, item, maxJSONLRecordBytes)
 }
 
 func (s *JSONLStore) FindClosureReceipt(_ context.Context, key string) (domainworkstream.ClosureReceipt, bool, error) {
 	var found domainworkstream.ClosureReceipt
 	matched := false
-	err := readJSONL(s.closurePath, func(line []byte) error {
+	err := readJSONLUnbounded(s.closurePath, func(line []byte) error {
 		var item domainworkstream.ClosureReceipt
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
@@ -266,7 +271,7 @@ func (s *JSONLStore) GetClosureReceipt(ctx context.Context, key string) (domainw
 
 func (s *JSONLStore) ListClosureReceipts(_ context.Context, limit int) ([]domainworkstream.ClosureReceipt, error) {
 	var items []domainworkstream.ClosureReceipt
-	if err := readJSONL(s.closurePath, func(line []byte) error {
+	if err := readJSONLUnbounded(s.closurePath, func(line []byte) error {
 		var item domainworkstream.ClosureReceipt
 		if err := json.Unmarshal(line, &item); err != nil {
 			return err
@@ -295,6 +300,42 @@ func (s *JSONLStore) ListClosureReceipts(_ context.Context, limit int) ([]domain
 	return out, nil
 }
 
+func (s *JSONLStore) blockingClosureReceiptLocked() (domainworkstream.ClosureReceipt, string, bool, error) {
+	receipts := make([]domainworkstream.ClosureReceipt, 0)
+	if err := readJSONLUnbounded(s.closurePath, func(line []byte) error {
+		var receipt domainworkstream.ClosureReceipt
+		if err := json.Unmarshal(line, &receipt); err != nil {
+			return err
+		}
+		receipts = append(receipts, receipt)
+		return nil
+	}); err != nil {
+		return domainworkstream.ClosureReceipt{}, "", false, err
+	}
+	seen := make(map[string]struct{}, len(receipts))
+	for index := len(receipts) - 1; index >= 0; index-- {
+		receipt := receipts[index]
+		key := receipt.IdempotencyKey
+		if key == "" {
+			key = string(receipt.ReceiptID)
+		}
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		reason, err := closureReceiptLeaseBlockReason(receipt)
+		if err != nil {
+			return domainworkstream.ClosureReceipt{}, "", false, err
+		}
+		if reason != "" {
+			return receipt, reason, true, nil
+		}
+	}
+	return domainworkstream.ClosureReceipt{}, "", false, nil
+}
+
 // AcquireImplementationLeaseIfUnfrozen performs the freeze check and
 // singleton lease check under the same JSONL lifecycle mutex.
 func (s *JSONLStore) AcquireImplementationLeaseIfUnfrozen(_ context.Context, item domainworkstream.ImplementationLease) (bool, string, error) {
@@ -303,10 +344,19 @@ func (s *JSONLStore) AcquireImplementationLeaseIfUnfrozen(_ context.Context, ite
 	}
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
-	if _, frozen, err := s.latestActiveQueueFreezeLocked(); err != nil {
+	_, frozen, err := s.latestActiveQueueFreezeLocked()
+	if err != nil {
 		return false, "", err
-	} else if frozen {
+	}
+	_, reason, blocked, err := s.blockingClosureReceiptLocked()
+	if err != nil {
+		return false, "", err
+	}
+	if frozen {
 		return false, domainworkstream.ErrQueueFrozen.Error(), nil
+	}
+	if blocked {
+		return false, reason, nil
 	}
 	current, ok, err := s.latestImplementationLeaseLocked()
 	if err != nil {
@@ -465,6 +515,11 @@ func (s *JSONLStore) ResolveQueueFreezeAndAcquireLease(_ context.Context, freeze
 	pendingResolution := freeze.ActionID != ""
 	if pendingResolution && !freeze.MatchesResolution(resolution) {
 		return freeze, domainworkstream.ImplementationLease{}, false, domainworkstream.ErrQueueFreezeResolutionConflict
+	}
+	if _, reason, blocked, err := s.blockingClosureReceiptLocked(); err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	} else if blocked {
+		return freeze, domainworkstream.ImplementationLease{}, false, closureLeaseGateError(reason)
 	}
 	current, leaseFound, err := s.latestImplementationLeaseLocked()
 	if err != nil {
@@ -835,6 +890,25 @@ func latestVaultUpdateLogs(items []domainworkstream.VaultUpdateLog, limit int) [
 }
 
 func appendJSONL(path string, value any) error {
+	line, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return appendJSONLBytes(path, line)
+}
+
+func appendJSONLBounded(path string, value any, maxRecordBytes int) error {
+	line, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if len(line) > maxRecordBytes {
+		return fmt.Errorf("JSONL record exceeds %d bytes", maxRecordBytes)
+	}
+	return appendJSONLBytes(path, line)
+}
+
+func appendJSONLBytes(path string, line []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
@@ -843,11 +917,7 @@ func appendJSONL(path string, value any) error {
 		return err
 	}
 	defer f.Close()
-	line, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(append(line, '\n'))
+	_, err = f.Write(append(append([]byte(nil), line...), '\n'))
 	return err
 }
 
@@ -867,6 +937,34 @@ func readJSONL(path string, fn func([]byte) error) error {
 		}
 	}
 	return scanner.Err()
+}
+
+func readJSONLUnbounded(path string, fn func([]byte) error) error {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer f.Close()
+	reader := bufio.NewReader(f)
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			line = bytes.TrimSuffix(line, []byte{'\n'})
+			line = bytes.TrimSuffix(line, []byte{'\r'})
+			if err := fn(line); err != nil {
+				return err
+			}
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return nil
+			}
+			return readErr
+		}
+	}
 }
 
 func reverseLimit[T any](items []T, limit int) []T {

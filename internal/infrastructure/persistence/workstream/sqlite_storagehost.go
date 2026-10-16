@@ -43,6 +43,7 @@ type WorkstreamFreezeLeaseResult struct {
 	Freeze   domainworkstream.QueueFreeze         `json:"freeze"`
 	Lease    domainworkstream.ImplementationLease `json:"lease"`
 	Acquired bool                                 `json:"acquired"`
+	Reason   string                               `json:"reason,omitempty"`
 }
 
 type WorkstreamLeaseMutationEffect struct {
@@ -50,6 +51,8 @@ type WorkstreamLeaseMutationEffect struct {
 	LeaseFound     bool                                 `json:"lease_found"`
 	RequestedLease domainworkstream.ImplementationLease `json:"requested_lease,omitempty"`
 	QueueFrozen    bool                                 `json:"queue_frozen,omitempty"`
+	ClosurePending bool                                 `json:"closure_pending,omitempty"`
+	ClosureReceipt *domainworkstream.ClosureReceipt     `json:"closure_receipt,omitempty"`
 	Freeze         domainworkstream.QueueFreeze         `json:"freeze,omitempty"`
 	FreezeFound    bool                                 `json:"freeze_found,omitempty"`
 }
@@ -286,15 +289,18 @@ func validateWorkstreamCustomReceiptProof(operation, resultJSON, effectJSON, eff
 			return errors.New("workstream lease acquire receipt proof is malformed")
 		}
 		if result.Acquired {
-			if result.Reason != "" || effect.QueueFrozen || !effect.LeaseFound || effect.Lease != effect.RequestedLease {
+			if result.Reason != "" || effect.QueueFrozen || effect.ClosurePending || effect.ClosureReceipt != nil || !effect.LeaseFound || effect.Lease != effect.RequestedLease {
 				return errors.New("workstream lease acquire result differs from its effect proof")
 			}
 			return nil
 		}
-		if result.Reason == domainworkstream.ErrQueueFrozen.Error() && effect.QueueFrozen {
+		if result.Reason == domainworkstream.ErrCancellationPending.Error() && !effect.QueueFrozen && validCancellationClosureProof(effect) {
 			return nil
 		}
-		if result.Reason == domainworkstream.ErrImplementationLeaseHeld.Error() && !effect.QueueFrozen && effect.LeaseFound && effect.Lease.HolderUnitID != "" && effect.Lease.HolderUnitID != effect.RequestedLease.HolderUnitID {
+		if result.Reason == domainworkstream.ErrQueueFrozen.Error() && effect.QueueFrozen && (!effect.ClosurePending && effect.ClosureReceipt == nil || validCancellationClosureProof(effect)) {
+			return nil
+		}
+		if result.Reason == domainworkstream.ErrImplementationLeaseHeld.Error() && !effect.QueueFrozen && !effect.ClosurePending && effect.ClosureReceipt == nil && effect.LeaseFound && effect.Lease.HolderUnitID != "" && effect.Lease.HolderUnitID != effect.RequestedLease.HolderUnitID {
 			return nil
 		}
 		return errors.New("workstream lease acquire result differs from its effect proof")
@@ -307,7 +313,16 @@ func validateWorkstreamCustomReceiptProof(operation, resultJSON, effectJSON, eff
 		if !result.Acquired {
 			freezeJSON, freezeErr := json.Marshal(result.Freeze)
 			effectFreezeJSON, effectFreezeErr := json.Marshal(effect.Freeze)
-			if freezeErr != nil || effectFreezeErr != nil || !bytes.Equal(freezeJSON, effectFreezeJSON) || effect.Freeze.Status != domainworkstream.QueueFreezeActive && effect.Freeze.Status != "" || !effect.LeaseFound || effect.Lease.LeaseName != effect.RequestedLease.LeaseName || effect.Lease.HolderUnitID == "" || effect.Lease.HolderUnitID == effect.RequestedLease.HolderUnitID || result.Lease != (domainworkstream.ImplementationLease{}) {
+			if freezeErr != nil || effectFreezeErr != nil || !bytes.Equal(freezeJSON, effectFreezeJSON) || effect.Freeze.Status != domainworkstream.QueueFreezeActive && effect.Freeze.Status != "" || result.Lease != (domainworkstream.ImplementationLease{}) {
+				return errors.New("workstream freeze resolution result differs from its effect proof")
+			}
+			if result.Reason == domainworkstream.ErrCancellationPending.Error() {
+				if effect.QueueFrozen || !validCancellationClosureProof(effect) || effect.LeaseFound && effect.Lease.LeaseName != effect.RequestedLease.LeaseName || !effect.LeaseFound && effect.Lease != (domainworkstream.ImplementationLease{}) {
+					return errors.New("workstream freeze resolution cancellation proof differs from its effect")
+				}
+				return nil
+			}
+			if result.Reason != "" || effect.QueueFrozen || effect.ClosurePending || effect.ClosureReceipt != nil || !effect.LeaseFound || effect.Lease.LeaseName != effect.RequestedLease.LeaseName || effect.Lease.HolderUnitID == "" || effect.Lease.HolderUnitID == effect.RequestedLease.HolderUnitID {
 				return errors.New("workstream freeze resolution result differs from its effect proof")
 			}
 			return nil
@@ -316,7 +331,7 @@ func validateWorkstreamCustomReceiptProof(operation, resultJSON, effectJSON, eff
 		effectFreezeJSON, effectFreezeErr := json.Marshal(effect.Freeze)
 		leaseJSON, leaseErr := json.Marshal(result.Lease)
 		effectLeaseJSON, effectLeaseErr := json.Marshal(effect.Lease)
-		if freezeErr != nil || effectFreezeErr != nil || leaseErr != nil || effectLeaseErr != nil || !bytes.Equal(freezeJSON, effectFreezeJSON) || !bytes.Equal(leaseJSON, effectLeaseJSON) || !effect.LeaseFound || effect.Lease != effect.RequestedLease || effect.Freeze.Status != domainworkstream.QueueFreezeResolved || !effect.Freeze.ResolutionAcquired || effect.Freeze.ReplacementLease != effect.RequestedLease {
+		if result.Reason != "" || effect.QueueFrozen || effect.ClosurePending || effect.ClosureReceipt != nil || freezeErr != nil || effectFreezeErr != nil || leaseErr != nil || effectLeaseErr != nil || !bytes.Equal(freezeJSON, effectFreezeJSON) || !bytes.Equal(leaseJSON, effectLeaseJSON) || !effect.LeaseFound || effect.Lease != effect.RequestedLease || effect.Freeze.Status != domainworkstream.QueueFreezeResolved || !effect.Freeze.ResolutionAcquired || effect.Freeze.ReplacementLease != effect.RequestedLease {
 			return errors.New("workstream freeze resolution result differs from its effect proof")
 		}
 		return nil
@@ -338,6 +353,14 @@ func validateWorkstreamCustomReceiptProof(operation, resultJSON, effectJSON, eff
 		}
 		return nil
 	}
+}
+
+func validCancellationClosureProof(effect WorkstreamLeaseMutationEffect) bool {
+	if !effect.ClosurePending || effect.ClosureReceipt == nil || domainworkstream.ValidateClosureReceipt(*effect.ClosureReceipt) != nil {
+		return false
+	}
+	reason, err := closureReceiptLeaseBlockReason(*effect.ClosureReceipt)
+	return err == nil && reason == domainworkstream.ErrCancellationPending.Error()
 }
 
 func (s *SQLiteStore) LookupWorkstreamStorageHostOperationResult(ctx context.Context, identity WorkstreamStorageHostOperationIdentity, table, idColumn, effectID string) (json.RawMessage, bool, error) {
@@ -595,8 +618,18 @@ func (s *SQLiteStore) AcquireImplementationLeaseIfUnfrozenForStorageHostOperatio
 			return nil, nil, err
 		}
 		result := WorkstreamLeaseAcquireResult{}
+		var closureReceipt *domainworkstream.ClosureReceipt
+		pendingReceipt, pendingReason, pending, err := blockingClosureReceiptTx(ctx, tx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if pending && pendingReason == domainworkstream.ErrCancellationPending.Error() {
+			closureReceipt = &pendingReceipt
+		}
 		if frozen {
 			result.Reason = domainworkstream.ErrQueueFrozen.Error()
+		} else if pending {
+			result.Reason = pendingReason
 		} else {
 			var holder string
 			err = tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, item.LeaseName).Scan(&holder)
@@ -622,7 +655,10 @@ func (s *SQLiteStore) AcquireImplementationLeaseIfUnfrozenForStorageHostOperatio
 		if err != nil {
 			return nil, nil, err
 		}
-		return result, WorkstreamLeaseMutationEffect{Lease: lease, LeaseFound: found, RequestedLease: item, QueueFrozen: frozen}, nil
+		return result, WorkstreamLeaseMutationEffect{
+			Lease: lease, LeaseFound: found, RequestedLease: item,
+			QueueFrozen: frozen, ClosurePending: closureReceipt != nil, ClosureReceipt: closureReceipt,
+		}, nil
 	})
 	if err != nil {
 		return WorkstreamLeaseAcquireResult{}, err
@@ -673,6 +709,22 @@ func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLeaseForStorageHostOperation(c
 		}
 		if freeze.FreezeRevision != resolution.ExpectedFreezeRevision {
 			return nil, nil, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, resolution.ExpectedFreezeRevision, freeze.FreezeRevision)
+		}
+		closureReceipt, reason, blocked, err := blockingClosureReceiptTx(ctx, tx)
+		if err != nil {
+			return nil, nil, err
+		}
+		if blocked {
+			lease, found, err := implementationLeaseTx(ctx, tx, replacement.LeaseName)
+			if err != nil {
+				return nil, nil, err
+			}
+			result := WorkstreamFreezeLeaseResult{Freeze: freeze, Reason: reason}
+			effect := WorkstreamLeaseMutationEffect{
+				Freeze: freeze, FreezeFound: true, Lease: lease, LeaseFound: found,
+				RequestedLease: replacement, ClosurePending: true, ClosureReceipt: &closureReceipt,
+			}
+			return result, effect, nil
 		}
 		var holder string
 		leaseErr := tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, replacement.LeaseName).Scan(&holder)

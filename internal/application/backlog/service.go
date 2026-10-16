@@ -23,6 +23,10 @@ type ItemStore interface {
 	Save(context.Context, domainbacklog.Item) error
 }
 
+type exactItemFinder interface {
+	FindByID(context.Context, string) (domainbacklog.Item, bool, error)
+}
+
 type WorkstreamCreator interface {
 	SaveWorkstream(context.Context, domainworkstream.Workstream) error
 	SaveGoal(context.Context, domainworkstream.Goal) error
@@ -118,6 +122,12 @@ type Service struct {
 	actionActorID     string
 	developmentEvents DevelopmentEventSink
 	developmentMu     sync.Mutex
+	// lifecycleMu serializes lifecycle entrypoints on one Service instance so
+	// queue acquisition cannot observe a partially prepared cancellation.
+	lifecycleMu sync.Mutex
+	// runnerExecution is an in-process admission claim held from before Task
+	// creation until the heartbeat runner has finalized that Task.
+	runnerExecution *runnerExecutionClaim
 
 	catalog  []map[string]any
 	features []map[string]any
@@ -191,13 +201,43 @@ func (s *Service) list(ctx context.Context) ([]domainbacklog.Item, error) {
 	return items, nil
 }
 
+// listAll is an owner consistency scan. It deliberately uses the store's
+// unbounded-list contract; public/UI list behavior remains capped in list.
+func (s *Service) listAll(ctx context.Context) ([]domainbacklog.Item, error) {
+	if s == nil || s.items == nil {
+		return nil, errors.New("atlas backlog store unavailable")
+	}
+	items, err := s.items.List(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	for index := range items {
+		items[index] = domainbacklog.ProjectLegacy(items[index])
+	}
+	return items, nil
+}
+
 func (s *Service) find(ctx context.Context, id string) (domainbacklog.Item, error) {
-	items, err := s.list(ctx)
+	if s == nil || s.items == nil {
+		return domainbacklog.Item{}, errors.New("atlas backlog store unavailable")
+	}
+	id = strings.TrimSpace(id)
+	if finder, ok := s.items.(exactItemFinder); ok {
+		item, found, err := finder.FindByID(ctx, id)
+		if err != nil {
+			return domainbacklog.Item{}, err
+		}
+		if !found {
+			return domainbacklog.Item{}, fmt.Errorf("atlas item %q not found", id)
+		}
+		return domainbacklog.ProjectLegacy(item), nil
+	}
+	items, err := s.listAll(ctx)
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
 	for _, item := range items {
-		if string(item.BacklogItemID) == strings.TrimSpace(id) {
+		if string(item.BacklogItemID) == id {
 			return item, nil
 		}
 	}
@@ -209,7 +249,7 @@ func (s *Service) findByUnit(ctx context.Context, unitID string) (domainbacklog.
 	if unitID == "" {
 		return domainbacklog.Item{}, errors.New("implementation unit id is required")
 	}
-	items, err := s.list(ctx)
+	items, err := s.listAll(ctx)
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
@@ -400,8 +440,16 @@ func (s *Service) changeConcept(ctx context.Context, id, target, reason string) 
 }
 
 func (s *Service) Adopt(ctx context.Context, id, reason string) (AdoptionResult, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution != nil {
+		return AdoptionResult{}, fmt.Errorf("%w: runner execution is active", ErrLifecycleConflict)
+	}
 	if strings.TrimSpace(reason) == "" {
 		return AdoptionResult{}, errors.New("adoption reason is required")
+	}
+	if _, _, err := s.resumeRejectedCancellation(ctx); err != nil {
+		return AdoptionResult{}, err
 	}
 	item, err := s.find(ctx, id)
 	if err != nil {
@@ -488,6 +536,20 @@ func safeSegment(value string) string {
 }
 
 func (s *Service) Revise(ctx context.Context, id string, request ReviseRequest) (result domainbacklog.Item, resultErr error) {
+	if strings.EqualFold(strings.TrimSpace(request.TargetDeliveryState), domainbacklog.DeliveryRejected) {
+		if strings.TrimSpace(request.Reason) == "" {
+			return domainbacklog.Item{}, errors.New("rejected delivery reason is required")
+		}
+		if request.ExpectedRevision < 1 {
+			return domainbacklog.Item{}, errors.New("expected revision is required for rejected delivery")
+		}
+		request.Reason = strings.TrimSpace(request.Reason)
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if strings.EqualFold(strings.TrimSpace(request.TargetDeliveryState), domainbacklog.DeliveryRejected) && s.runnerExecution != nil {
+		return domainbacklog.Item{}, fmt.Errorf("%w: runner execution is active", ErrLifecycleConflict)
+	}
 	ownedCtx, finish, err := s.beginAction(ctx, "atlas_revise")
 	if err != nil {
 		return domainbacklog.Item{}, err
@@ -524,6 +586,44 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 	if target == "" {
 		return domainbacklog.Item{}, errors.New("target delivery state is required")
 	}
+	if target != domainbacklog.DeliveryRejected {
+		if err := s.rejectCompetingTargetForPendingCancellation(ctx, item); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	} else {
+		// Validate caller evidence and exact item binding before resuming a
+		// rejected stage. The resume path preflights the lease before any event
+		// or state write when closure work remains.
+		replayRequest := request
+		replayRequest.EvidenceRefs = append([]domainbacklog.EvidenceRef(nil), request.EvidenceRefs...)
+		for index, ref := range replayRequest.EvidenceRefs {
+			if err := domainbacklog.ValidateEvidenceRef(ref); err != nil {
+				return domainbacklog.Item{}, err
+			}
+			normalized, normalizeErr := normalizeEvidenceRefStage(clearVerification(ref), target)
+			if normalizeErr != nil {
+				return domainbacklog.Item{}, normalizeErr
+			}
+			replayRequest.EvidenceRefs[index] = normalized
+		}
+		replayKey := stageRunKey(unitID, revision, target)
+		replayReceipt, replayFound, replayErr := s.findStageReceipt(ctx, replayKey)
+		if replayErr != nil {
+			return domainbacklog.Item{}, replayErr
+		}
+		if replayFound {
+			if err := validateRejectedStageItemBinding(replayReceipt, item); err != nil {
+				return domainbacklog.Item{}, err
+			}
+			if replayReceipt.PayloadHash != stagePayloadHash(replayRequest) {
+				return domainbacklog.Item{}, fmt.Errorf("%w: stage %s", ErrLifecycleConflict, replayKey)
+			}
+			return s.resumeRejectedCancellationStage(ctx, replayReceipt)
+		}
+		if err := s.preflightRejectedCancellationLease(ctx, item); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
 	if target == domainbacklog.DeliveryLiveVerified || target == domainbacklog.DeliveryDone {
 		if _, err := s.validateClosureActionBinding(ctx, unitID, revision); err != nil {
 			return domainbacklog.Item{}, err
@@ -557,10 +657,18 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 		return domainbacklog.Item{}, lookupErr
 	}
 	if receiptFound {
+		if target == domainbacklog.DeliveryRejected {
+			if err := validateRejectedStageItemBinding(existingReceipt, item); err != nil {
+				return domainbacklog.Item{}, err
+			}
+		}
 		if existingReceipt.PayloadHash != payloadHash {
 			return domainbacklog.Item{}, fmt.Errorf("%w: stage %s", ErrLifecycleConflict, key)
 		}
 		if existingReceipt.Status == domainworkstream.StageRunCompleted && strings.TrimSpace(existingReceipt.ResultJSON) != "" {
+			if target == domainbacklog.DeliveryRejected {
+				return s.resumeRejectedCancellationStage(ctx, existingReceipt)
+			}
 			var original domainbacklog.Item
 			if err := json.Unmarshal([]byte(existingReceipt.ResultJSON), &original); err != nil {
 				return domainbacklog.Item{}, fmt.Errorf("decode stage receipt result: %w", err)
@@ -575,6 +683,9 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 		// if the target state is already present, only finalize its receipt.
 		if existingReceipt.Status != domainworkstream.StageRunPrepared {
 			return domainbacklog.Item{}, fmt.Errorf("atlas stage receipt %s has status %q", key, existingReceipt.Status)
+		}
+		if target == domainbacklog.DeliveryRejected {
+			return s.resumeRejectedCancellationStage(ctx, existingReceipt)
 		}
 		if strings.EqualFold(item.DeliveryState, target) && strings.TrimSpace(existingReceipt.ResultJSON) != "" {
 			var original domainbacklog.Item
@@ -627,6 +738,11 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 	if err != nil {
 		return domainbacklog.Item{}, err
 	}
+	if next.DeliveryState == domainbacklog.DeliveryRejected {
+		if err := s.preflightRejectedCancellationLease(ctx, item); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
 	if strings.TrimSpace(request.Reason) != "" {
 		next.Implementation = request.Reason
 	}
@@ -666,6 +782,16 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 	if err := s.saveStageReceipt(ctx, preparedReceipt); err != nil {
 		return domainbacklog.Item{}, err
 	}
+	if next.DeliveryState == domainbacklog.DeliveryRejected {
+		result, err := s.resumeRejectedCancellationStage(ctx, preparedReceipt)
+		if err != nil {
+			return domainbacklog.Item{}, err
+		}
+		if err := s.emitDevelopmentTransition(ctx, "state_transition_accepted", result, target, request.RequestID, ""); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		return result, nil
+	}
 
 	var result domainbacklog.Item
 	switch next.DeliveryState {
@@ -676,14 +802,6 @@ func (s *Service) revise(ctx context.Context, id string, request ReviseRequest) 
 		result = next
 	case domainbacklog.DeliveryBlocked:
 		if err := s.completeBlocked(ctx, item, next, request); err != nil {
-			return domainbacklog.Item{}, err
-		}
-		result = next
-	case domainbacklog.DeliveryRejected:
-		if err := s.releaseLease(ctx, domainbacklog.ImplementationLeaseName, next.ImplementationUnit); err != nil {
-			return domainbacklog.Item{}, err
-		}
-		if err := s.save(ctx, next); err != nil {
 			return domainbacklog.Item{}, err
 		}
 		result = next
@@ -978,6 +1096,11 @@ func (s *Service) resumeLiveVerifiedClosureForItem(ctx context.Context, item dom
 // Recover removes terminal/orphaned durable leases. It intentionally does not
 // start work; heartbeat may only observe the resulting active projection.
 func (s *Service) Recover(ctx context.Context) error {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution != nil {
+		return fmt.Errorf("%w: runner execution is active", ErrLifecycleConflict)
+	}
 	ownedCtx, finish, err := s.beginAction(ctx, "atlas_recover")
 	if err != nil {
 		return err
@@ -986,6 +1109,9 @@ func (s *Service) Recover(ctx context.Context) error {
 }
 
 func (s *Service) recover(ctx context.Context) error {
+	if _, _, err := s.resumeRejectedCancellation(ctx); err != nil {
+		return err
+	}
 	lease, ok, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
 	if err != nil || !ok {
 		if err != nil {
@@ -1008,7 +1134,16 @@ func (s *Service) recover(ctx context.Context) error {
 		}
 		return s.releaseLease(ctx, lease.LeaseName, lease.HolderUnitID)
 	}
-	if item.DeliveryState == domainbacklog.DeliveryDone || item.DeliveryState == domainbacklog.DeliveryRejected {
+	if item.DeliveryState == domainbacklog.DeliveryRejected {
+		if err := validateRejectedLeaseHolder(lease, item); err != nil {
+			return err
+		}
+		if _, _, resumeErr := s.resumeRejectedCancellationForItem(ctx, item); resumeErr != nil {
+			return resumeErr
+		}
+		return s.releaseLease(ctx, lease.LeaseName, lease.HolderUnitID)
+	}
+	if item.DeliveryState == domainbacklog.DeliveryDone {
 		return s.releaseLease(ctx, lease.LeaseName, lease.HolderUnitID)
 	}
 	return nil

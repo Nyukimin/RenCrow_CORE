@@ -59,6 +59,8 @@ type BacklogStore interface {
 // never mutates v2 lifecycle state directly or invents success evidence.
 type AtlasRunnerService interface {
 	AcquireRunnable(context.Context) (backlogapp.AcquireRunnableResult, error)
+	BeginRunnerExecution(context.Context, domainbacklog.Item) (string, error)
+	EndRunnerExecution(context.Context, string) error
 	Revise(context.Context, string, backlogapp.ReviseRequest) (domainbacklog.Item, error)
 }
 
@@ -903,6 +905,24 @@ func (s *HeartbeatService) runRevision2BacklogRunner(ctx context.Context, now ti
 	if target == "" {
 		report.Skipped = len(items)
 		return report, nil
+	}
+	claimCtx := ctx
+	claimToken, err := s.atlasService.BeginRunnerExecution(claimCtx, item)
+	if err != nil {
+		report.Failed++
+		s.emitEvent("backlog.runner.error", fmt.Sprintf("%s runner execution admission failed: %v", item.BacklogItemID, err))
+		return report, fmt.Errorf("backlog runner execution admission failed: %w", err)
+	}
+	defer func() {
+		if endErr := s.atlasService.EndRunnerExecution(claimCtx, claimToken); endErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("backlog runner execution claim release failed: %w", endErr))
+			resultReport.Failed++
+			resultReport.Started = 0
+		}
+	}()
+	if strings.TrimSpace(claimToken) == "" {
+		report.Failed++
+		return report, errors.New("backlog runner execution admission returned an empty claim token")
 	}
 
 	ctx, input, finish, err := s.beginWorker(ctx, backlogRunnerMessageForTarget(item, target), "backlog-runner", "heartbeat")

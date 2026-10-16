@@ -727,6 +727,24 @@ lease解放失敗を無視して`DONE`を保存してはならない。
 
 その後、次のADOPTED itemを開始可能にする。
 
+## 取消終端: REJECTED
+
+構想の不採用（Concept State `REJECTED`）と、採用済みImplementation Unitの取消
+（Delivery State `REJECTED`）を混同しない。後者のowner requestは理由と対象revisionを必須とし、
+成功Evidenceや`DONE`を生成しない。
+
+取消は同じunit/revisionのStageRunReceiptと`target_delivery_state=REJECTED`のClosureReceiptを結び、
+Workstream／Goal／Artifactを成功の`completed`ではなく`archived`へ更新し、該当unitのLeaseだけを解放する。
+ClosureReceiptの既存の空`target_delivery_state`は`DONE`専用の旧recordとして解釈する。
+未完の取消receiptがある間は、Queue Freezeが無くても次unitのLease取得を拒否する。再起動時は
+prepared phaseと旧実装の取消済みrecordをownerが照合してからclosureを再開し、旧recordを
+成功した実装として捏造しない。全ての未完取消が閉じる前に次unitを開始しない。
+
+Runnerが選択済みitemからWorkerを起動する直前にも、COREはitem／revision／Leaseを再照合する。
+実行中のWorkerがある場合、取消は待機させず副作用前に拒否し、Workerが終了するまで新unitの
+admissionを行わない。現行の実行claimは単一CORE Service instance内だけで有効であり、
+複数instanceや旧processの生存を許す配備には共有の実行fenceと停止証拠が別途必要である。
+
 ---
 
 # 8. 失敗時の扱い

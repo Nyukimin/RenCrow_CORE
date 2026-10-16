@@ -444,7 +444,7 @@ func validateWorkstreamAcquireLeaseResult(request domainworkstream.Implementatio
 		}
 		return nil
 	}
-	if result.Reason != domainworkstream.ErrQueueFrozen.Error() && result.Reason != domainworkstream.ErrImplementationLeaseHeld.Error() {
+	if result.Reason != domainworkstream.ErrQueueFrozen.Error() && result.Reason != domainworkstream.ErrImplementationLeaseHeld.Error() && result.Reason != domainworkstream.ErrCancellationPending.Error() {
 		return errors.New("workstream acquire result has an unknown rejection reason")
 	}
 	return nil
@@ -455,13 +455,16 @@ func validateWorkstreamResolveFreezeResult(request workstreamResolveFreezePayloa
 		return errors.New("workstream freeze resolution result is not bound to its request")
 	}
 	if result.Acquired {
-		if result.Freeze.Status != domainworkstream.QueueFreezeResolved || !result.Freeze.ResolutionAcquired || result.Freeze.ReplacementLease != request.Replacement || result.Lease != request.Replacement {
+		if result.Reason != "" || result.Freeze.Status != domainworkstream.QueueFreezeResolved || !result.Freeze.ResolutionAcquired || result.Freeze.ReplacementLease != request.Replacement || result.Lease != request.Replacement {
 			return errors.New("workstream freeze resolution success differs from its request")
 		}
 		return nil
 	}
 	if result.Freeze.Status == domainworkstream.QueueFreezeResolved || result.Freeze.ResolutionAcquired || result.Lease != (domainworkstream.ImplementationLease{}) {
 		return errors.New("workstream freeze resolution failure differs from its request")
+	}
+	if result.Reason != "" && result.Reason != domainworkstream.ErrCancellationPending.Error() {
+		return errors.New("workstream freeze resolution has an unknown rejection reason")
 	}
 	return nil
 }
@@ -719,6 +722,9 @@ func (client *WorkstreamClient) ResolveQueueFreezeAndAcquireLease(ctx context.Co
 	var result persistworkstream.WorkstreamFreezeLeaseResult
 	if err := client.client.Do(ctx, client.NewResolveQueueFreezeAndAcquireLeaseOperation(requestID, freezeID, resolution, replacement), &result); err != nil {
 		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
+	}
+	if result.Reason == domainworkstream.ErrCancellationPending.Error() {
+		return result.Freeze, result.Lease, false, domainworkstream.ErrCancellationPending
 	}
 	return result.Freeze, result.Lease, result.Acquired, nil
 }

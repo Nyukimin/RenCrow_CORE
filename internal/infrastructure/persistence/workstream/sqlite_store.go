@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -196,11 +197,21 @@ func (s *SQLiteStore) AcquireImplementationLeaseIfUnfrozen(ctx context.Context, 
 	if err != nil {
 		return false, "", err
 	}
+	_, reason, blocked, err := blockingClosureReceiptTx(ctx, tx)
+	if err != nil {
+		return false, "", err
+	}
 	if frozen {
 		if err := tx.Commit(); err != nil {
 			return false, "", err
 		}
 		return false, domainworkstream.ErrQueueFrozen.Error(), nil
+	}
+	if blocked {
+		if err := tx.Commit(); err != nil {
+			return false, "", err
+		}
+		return false, reason, nil
 	}
 	var holder string
 	err = tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, item.LeaseName).Scan(&holder)
@@ -389,6 +400,11 @@ func (s *SQLiteStore) ResolveQueueFreezeAndAcquireLease(ctx context.Context, fre
 	}
 	if freeze.FreezeRevision != resolution.ExpectedFreezeRevision {
 		return freeze, domainworkstream.ImplementationLease{}, false, fmt.Errorf("%w: expected %d current %d", domainworkstream.ErrQueueFreezeRevisionConflict, resolution.ExpectedFreezeRevision, freeze.FreezeRevision)
+	}
+	if _, reason, blocked, err := blockingClosureReceiptTx(ctx, tx); err != nil {
+		return freeze, domainworkstream.ImplementationLease{}, false, err
+	} else if blocked {
+		return freeze, domainworkstream.ImplementationLease{}, false, closureLeaseGateError(reason)
 	}
 	var holder string
 	leaseErr := tx.QueryRowContext(ctx, `SELECT holder_unit_id FROM implementation_lease WHERE lease_name = ?`, replacement.LeaseName).Scan(&holder)
@@ -816,6 +832,84 @@ func activeQueueFreezeTx(ctx context.Context, tx *sql.Tx) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+func closureReceiptLeaseBlockReason(item domainworkstream.ClosureReceipt) (string, error) {
+	if err := domainworkstream.ValidateClosureReceipt(item); err != nil {
+		return "", fmt.Errorf("invalid closure receipt in lease gate: %w", err)
+	}
+	target := strings.ToUpper(strings.TrimSpace(item.TargetDeliveryState))
+	if target == "" {
+		target = domainbacklog.DeliveryDone
+	}
+	if target == domainbacklog.DeliveryDone {
+		return "", nil
+	}
+	if target != domainbacklog.DeliveryRejected {
+		return "", fmt.Errorf("closure receipt has unsupported target delivery state %q", target)
+	}
+	if item.Status == domainworkstream.ClosureStatusCompleted &&
+		item.Phase == domainworkstream.ClosurePhaseDone &&
+		item.ActionID.Validate() == nil &&
+		item.LeaseReleased &&
+		!item.CompletedAt.IsZero() &&
+		item.Error == "" {
+		return "", nil
+	}
+	return domainworkstream.ErrCancellationPending.Error(), nil
+}
+
+func closureLeaseGateError(reason string) error {
+	if reason == domainworkstream.ErrCancellationPending.Error() {
+		return domainworkstream.ErrCancellationPending
+	}
+	return errors.New(reason)
+}
+
+func blockingClosureReceiptTx(ctx context.Context, tx *sql.Tx) (domainworkstream.ClosureReceipt, string, bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT payload FROM closure_receipt ORDER BY rowid DESC`)
+	if err != nil {
+		return domainworkstream.ClosureReceipt{}, "", false, err
+	}
+	defer rows.Close()
+	seen := make(map[string]struct{})
+	var pendingReceipt domainworkstream.ClosureReceipt
+	pendingReason := ""
+	for rows.Next() {
+		var rawPayload string
+		if err := rows.Scan(&rawPayload); err != nil {
+			return domainworkstream.ClosureReceipt{}, "", false, err
+		}
+		var receipt domainworkstream.ClosureReceipt
+		if err := json.Unmarshal([]byte(rawPayload), &receipt); err != nil {
+			return domainworkstream.ClosureReceipt{}, "", false, err
+		}
+		key := receipt.IdempotencyKey
+		if key == "" {
+			key = string(receipt.ReceiptID)
+		}
+		if key != "" {
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		reason, err := closureReceiptLeaseBlockReason(receipt)
+		if err != nil {
+			return domainworkstream.ClosureReceipt{}, "", false, err
+		}
+		if reason != "" && pendingReason == "" {
+			pendingReceipt = receipt
+			pendingReason = reason
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return domainworkstream.ClosureReceipt{}, "", false, err
+	}
+	if pendingReason != "" {
+		return pendingReceipt, pendingReason, true, nil
+	}
+	return domainworkstream.ClosureReceipt{}, "", false, nil
 }
 
 const timeFormatRFC3339Nano = "2006-01-02T15:04:05.999999999Z07:00"

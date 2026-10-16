@@ -16,6 +16,10 @@ type heartbeatMaturationStub struct {
 func (s *heartbeatMaturationStub) AcquireRunnable(context.Context) (backlogapp.AcquireRunnableResult, error) {
 	return backlogapp.AcquireRunnableResult{}, nil
 }
+func (s *heartbeatMaturationStub) BeginRunnerExecution(context.Context, domainbacklog.Item) (string, error) {
+	return "maturation-stub-claim", nil
+}
+func (s *heartbeatMaturationStub) EndRunnerExecution(context.Context, string) error { return nil }
 func (s *heartbeatMaturationStub) Revise(context.Context, string, backlogapp.ReviseRequest) (domainbacklog.Item, error) {
 	return domainbacklog.Item{}, nil
 }

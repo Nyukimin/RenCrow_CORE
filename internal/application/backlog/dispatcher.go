@@ -44,6 +44,11 @@ func (s *Service) ActiveQueueFreeze(ctx context.Context) (domainworkstream.Queue
 // CORE before delegating the freeze resolution and replacement lease check to
 // one atomic owner-store operation.
 func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, request ResolveQueueFreezeRequest) (domainworkstream.QueueFreeze, domainworkstream.ImplementationLease, bool, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, fmt.Errorf("%w: runner execution is active", ErrLifecycleConflict)
+	}
 	store, ok := s.workstream.(LifecycleStore)
 	if !ok {
 		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, ErrLifecycleStoreUnavailable
@@ -119,6 +124,9 @@ func (s *Service) ResolveQueueFreeze(ctx context.Context, freezeID string, reque
 	}
 	if request.SupersedesUnitID != freeze.BlockedUnitID {
 		return freeze, domainworkstream.ImplementationLease{}, false, fmt.Errorf("replacement supersedes %q, want blocked unit %q", request.SupersedesUnitID, freeze.BlockedUnitID)
+	}
+	if _, _, err := s.resumeRejectedCancellation(ctx); err != nil {
+		return domainworkstream.QueueFreeze{}, domainworkstream.ImplementationLease{}, false, err
 	}
 
 	items, err := s.list(ctx)
@@ -317,6 +325,11 @@ func (s *Service) cancelQueueFreeze(ctx context.Context, lifecycleStore Lifecycl
 // Only when no lease exists does it select a dependency-eligible queued item.
 // Queue freezes are a normal no-item result, not a fallback to another item.
 func (s *Service) AcquireRunnable(ctx context.Context) (result AcquireRunnableResult, resultErr error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution != nil {
+		return AcquireRunnableResult{}, fmt.Errorf("%w: runner execution is active", ErrLifecycleConflict)
+	}
 	ownedCtx, finish, err := s.beginAction(ctx, "atlas_acquire_runnable")
 	if err != nil {
 		return AcquireRunnableResult{}, err
@@ -336,6 +349,12 @@ func (s *Service) acquireRunnable(ctx context.Context) (AcquireRunnableResult, e
 	if !ok {
 		return AcquireRunnableResult{}, ErrLifecycleStoreUnavailable
 	}
+	if rejected, resumed, err := s.resumeRejectedCancellation(ctx); err != nil || resumed {
+		if err != nil {
+			return AcquireRunnableResult{}, err
+		}
+		return AcquireRunnableResult{Item: rejected, Reason: "REJECTED cancellation closure resumed"}, nil
+	}
 	if currentLease, held, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName); err != nil {
 		return AcquireRunnableResult{}, err
 	} else if held {
@@ -352,7 +371,19 @@ func (s *Service) acquireRunnable(ctx context.Context) (AcquireRunnableResult, e
 				return AcquireRunnableResult{}, err
 			}
 			return AcquireRunnableResult{Reason: domainworkstream.ErrQueueFrozen.Error()}, nil
-		case domainbacklog.DeliveryDone, domainbacklog.DeliveryRejected:
+		case domainbacklog.DeliveryRejected:
+			if err := validateRejectedLeaseHolder(currentLease, holder); err != nil {
+				return AcquireRunnableResult{}, err
+			}
+			result, _, resumeErr := s.resumeRejectedCancellationForItem(ctx, holder)
+			if resumeErr != nil {
+				return AcquireRunnableResult{}, resumeErr
+			}
+			if err := s.releaseLease(ctx, currentLease.LeaseName, currentLease.HolderUnitID); err != nil {
+				return AcquireRunnableResult{}, err
+			}
+			return AcquireRunnableResult{Item: result, Reason: "REJECTED cancellation closure resumed"}, nil
+		case domainbacklog.DeliveryDone:
 			if err := s.releaseLease(ctx, currentLease.LeaseName, currentLease.HolderUnitID); err != nil {
 				return AcquireRunnableResult{}, err
 			}

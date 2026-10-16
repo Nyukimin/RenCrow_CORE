@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +73,110 @@ var (
 	ErrLifecycleConflict                       = errors.New("atlas lifecycle idempotency conflict")
 	ErrQueueFreezeCancellationStoreUnavailable = errors.New("atlas queue freeze cancellation store unavailable")
 )
+
+type runnerExecutionClaim struct {
+	token         string
+	itemID        string
+	unitID        string
+	revision      int
+	workstreamID  string
+	deliveryState string
+}
+
+// BeginRunnerExecution claims one exact Atlas selection before the heartbeat
+// runner creates its Task or invokes the Worker. The claim is process-local:
+// the existing lifecycle mutex orders it with cancellation and admission,
+// while the durable lease remains the authority for implementation ownership.
+func (s *Service) BeginRunnerExecution(ctx context.Context, selected domainbacklog.Item) (string, error) {
+	if s == nil {
+		return "", fmt.Errorf("%w: Atlas service unavailable", ErrLifecycleConflict)
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution != nil {
+		return "", fmt.Errorf("%w: a runner execution is already active", ErrLifecycleConflict)
+	}
+	if ctx == nil {
+		return "", errors.New("runner execution context is required")
+	}
+
+	selected = domainbacklog.ProjectLegacy(selected)
+	itemID := strings.TrimSpace(string(selected.BacklogItemID))
+	if itemID == "" {
+		return "", fmt.Errorf("%w: selected runner item has no backlog id", ErrLifecycleConflict)
+	}
+	item, err := s.find(ctx, itemID)
+	if err != nil {
+		return "", fmt.Errorf("%w: selected runner item is unavailable: %v", ErrLifecycleConflict, err)
+	}
+	item = domainbacklog.ProjectLegacy(item)
+	if !reflect.DeepEqual(item, selected) {
+		return "", fmt.Errorf("%w: selected runner item changed before execution", ErrLifecycleConflict)
+	}
+	if item.SchemaVersion != domainbacklog.SchemaVersion2 || item.ConceptState != domainbacklog.ConceptAdopted || !runnerExecutionStage(item.DeliveryState) {
+		return "", fmt.Errorf("%w: Atlas item %s is not runnable at delivery state %q", ErrLifecycleConflict, itemID, item.DeliveryState)
+	}
+	if strings.TrimSpace(item.ImplementationUnit) == "" || strings.TrimSpace(item.WorkstreamID) == "" || item.ImplementationRevision < 1 {
+		return "", fmt.Errorf("%w: Atlas item %s has incomplete implementation binding", ErrLifecycleConflict, itemID)
+	}
+	if _, frozen, err := s.ActiveQueueFreeze(ctx); err != nil {
+		return "", err
+	} else if frozen {
+		return "", fmt.Errorf("%w: Atlas queue is frozen", ErrLifecycleConflict)
+	}
+	if err := s.rejectCompetingTargetForPendingCancellation(ctx, item); err != nil {
+		return "", err
+	}
+	lease, held, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
+	if err != nil {
+		return "", err
+	}
+	if !held || lease.LeaseName != domainbacklog.ImplementationLeaseName ||
+		lease.HolderUnitID != item.ImplementationUnit || lease.HolderWorkstreamID != item.WorkstreamID {
+		return "", fmt.Errorf("%w: selected runner item does not own the implementation lease", ErrLifecycleConflict)
+	}
+	if lease.Revision != "" {
+		leaseRevision, parseErr := strconv.Atoi(strings.TrimSpace(lease.Revision))
+		if parseErr != nil || leaseRevision != item.ImplementationRevision {
+			return "", fmt.Errorf("%w: selected runner item revision does not match the implementation lease", ErrLifecycleConflict)
+		}
+	}
+
+	token := string(modulecore.NewActionID())
+	s.runnerExecution = &runnerExecutionClaim{
+		token: token, itemID: itemID, unitID: item.ImplementationUnit,
+		revision: item.ImplementationRevision, workstreamID: item.WorkstreamID,
+		deliveryState: item.DeliveryState,
+	}
+	return token, nil
+}
+
+// EndRunnerExecution releases only the claim represented by token. A stale
+// End cannot clear a newer execution claim.
+func (s *Service) EndRunnerExecution(_ context.Context, token string) error {
+	if s == nil {
+		return ErrLifecycleConflict
+	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.runnerExecution == nil || strings.TrimSpace(token) == "" || s.runnerExecution.token != token {
+		return fmt.Errorf("%w: runner execution claim token does not match", ErrLifecycleConflict)
+	}
+	s.runnerExecution = nil
+	return nil
+}
+
+func runnerExecutionStage(stage string) bool {
+	switch strings.ToUpper(strings.TrimSpace(stage)) {
+	case domainbacklog.DeliveryQueued, domainbacklog.DeliverySpec, domainbacklog.DeliveryTDDRed,
+		domainbacklog.DeliveryTDDGreen, domainbacklog.DeliveryRefactor, domainbacklog.DeliveryE2EPredeploy,
+		domainbacklog.DeliveryBuild, domainbacklog.DeliveryDeploy, domainbacklog.DeliveryRestart,
+		domainbacklog.DeliveryPostDeployVerify:
+		return true
+	default:
+		return false
+	}
+}
 
 // ResolveQueueFreezeRequest is the owner request used to replace a blocked
 // unit. ActionID is the canonical resolution action identity and idempotency key.
@@ -299,6 +405,707 @@ func (s *Service) saveClosureReceipt(ctx context.Context, receipt domainworkstre
 		return ErrLifecycleStoreUnavailable
 	}
 	return store.SaveClosureReceipt(ctx, receipt)
+}
+
+type rejectedCancellationResourceReader interface {
+	ListWorkstreams(context.Context, int) ([]domainworkstream.Workstream, error)
+	FindGoalByID(context.Context, string) (domainworkstream.Goal, bool, error)
+	ListArtifacts(context.Context, int) ([]domainworkstream.Artifact, error)
+}
+
+const rejectedCancellationResourceReadLimit = 1 << 20
+
+func validateRejectedStageItemBinding(stage domainworkstream.StageRunReceipt, item domainbacklog.Item) error {
+	if stage.TargetStage != domainbacklog.DeliveryRejected || stage.BacklogItemID != item.BacklogItemID ||
+		stage.UnitID != item.ImplementationUnit || stage.ImplementationRevision != item.ImplementationRevision {
+		return fmt.Errorf("%w: rejected stage %q does not belong to backlog item %q", ErrLifecycleConflict, stage.IdempotencyKey, item.BacklogItemID)
+	}
+	return nil
+}
+
+func (s *Service) rejectCompetingTargetForPendingCancellation(ctx context.Context, item domainbacklog.Item) error {
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	if unitID == "" {
+		return nil
+	}
+	revision := item.ImplementationRevision
+	if revision < 1 {
+		revision = 1
+	}
+	key := stageRunKey(unitID, revision, domainbacklog.DeliveryRejected)
+	stage, found, err := s.findStageReceipt(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if _, err := validateRejectedStageReceipt(stage); err != nil {
+		return err
+	}
+	if err := validateRejectedStageItemBinding(stage, item); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: rejected cancellation stage %q already fences this implementation revision", ErrLifecycleConflict, key)
+}
+
+func (s *Service) preflightRejectedCancellationLease(ctx context.Context, item domainbacklog.Item) error {
+	unitID := strings.TrimSpace(item.ImplementationUnit)
+	workstreamID := strings.TrimSpace(item.WorkstreamID)
+	if unitID == "" || workstreamID == "" {
+		return fmt.Errorf("%w: rejected cancellation has no implementation unit/workstream binding", ErrLifecycleConflict)
+	}
+	lease, held, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
+	if err != nil {
+		return err
+	}
+	if held {
+		if err := validateRejectedLeaseHolder(lease, item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) preflightLegacyRejectedCancellationLease(ctx context.Context, item domainbacklog.Item) (bool, error) {
+	lease, held, err := s.getLease(ctx, domainbacklog.ImplementationLeaseName)
+	if err != nil {
+		return false, err
+	}
+	return s.validateLegacyRejectedCancellationLease(ctx, item, lease, held)
+}
+
+// validateLegacyRejectedCancellationLease returns true only when the lease is
+// still held by the legacy cancellation's own unit and must be released. A
+// different, independently bound unit/workstream pair belongs to a newer
+// active operation and must be preserved.
+func (s *Service) validateLegacyRejectedCancellationLease(ctx context.Context, item domainbacklog.Item, lease domainworkstream.ImplementationLease, held bool) (bool, error) {
+	if !held {
+		return false, nil
+	}
+	if lease.LeaseName != domainbacklog.ImplementationLeaseName {
+		return false, fmt.Errorf("%w: legacy rejected cancellation found an unexpected lease name", ErrLifecycleConflict)
+	}
+	itemUnit := strings.TrimSpace(item.ImplementationUnit)
+	itemWorkstream := strings.TrimSpace(item.WorkstreamID)
+	leaseUnit := strings.TrimSpace(lease.HolderUnitID)
+	leaseWorkstream := strings.TrimSpace(lease.HolderWorkstreamID)
+	sameUnit := leaseUnit == itemUnit
+	sameWorkstream := leaseWorkstream == itemWorkstream
+	if sameUnit && sameWorkstream {
+		return true, nil
+	}
+	if sameUnit || sameWorkstream || leaseUnit == "" || leaseWorkstream == "" {
+		return false, fmt.Errorf("%w: legacy rejected cancellation lease partially matches its implementation unit/workstream", ErrLifecycleConflict)
+	}
+	items, err := s.listAll(ctx)
+	if err != nil {
+		return false, err
+	}
+	var holder domainbacklog.Item
+	matches := 0
+	for _, candidate := range items {
+		if candidate.ImplementationUnit == leaseUnit {
+			holder = candidate
+			matches++
+		}
+	}
+	if matches != 1 || holder.ConceptState != domainbacklog.ConceptAdopted ||
+		holder.ImplementationUnit != leaseUnit || holder.WorkstreamID != leaseWorkstream {
+		return false, fmt.Errorf("%w: foreign legacy-cancellation lease is not bound to one adopted item", ErrLifecycleConflict)
+	}
+	return false, nil
+}
+
+func validateRejectedLeaseHolder(lease domainworkstream.ImplementationLease, item domainbacklog.Item) error {
+	if lease.LeaseName != domainbacklog.ImplementationLeaseName || lease.HolderUnitID != strings.TrimSpace(item.ImplementationUnit) ||
+		lease.HolderWorkstreamID != strings.TrimSpace(item.WorkstreamID) {
+		return fmt.Errorf("%w: rejected cancellation lease does not match implementation unit/workstream", ErrLifecycleConflict)
+	}
+	return nil
+}
+
+func validateRejectedStageReceipt(stage domainworkstream.StageRunReceipt) (domainbacklog.Item, error) {
+	return validateRejectedStageReceiptWithEmptyImplementation(stage, false)
+}
+
+func validateRejectedStageReceiptForRecovery(stage domainworkstream.StageRunReceipt) (domainbacklog.Item, error) {
+	if stage.Status == domainworkstream.StageRunPrepared || stage.Status == domainworkstream.StageRunCompleted {
+		// Pre-change REJECTED receipts could have an empty reason, which was
+		// persisted as an empty Implementation string. Recovery permits decoding
+		// it here, then requires an exact recognized write-boundary state below.
+		return validateRejectedStageReceiptWithEmptyImplementation(stage, true)
+	}
+	return validateRejectedStageReceipt(stage)
+}
+
+func exactLegacyPreparedQueuedRejectedResult(current, result domainbacklog.Item, payloadHash string) bool {
+	if current.DeliveryState != domainbacklog.DeliveryQueued || current.CheckOK ||
+		result.DeliveryState != domainbacklog.DeliveryRejected || strings.TrimSpace(result.Implementation) != "" ||
+		current.BacklogItemID != result.BacklogItemID || current.ConceptState != result.ConceptState ||
+		current.ImplementationUnit != result.ImplementationUnit || current.ImplementationRevision != result.ImplementationRevision ||
+		current.WorkstreamID != result.WorkstreamID || len(current.EvidenceRefs) > len(result.EvidenceRefs) {
+		return false
+	}
+	for index, ref := range current.EvidenceRefs {
+		if ref != result.EvidenceRefs[index] {
+			return false
+		}
+	}
+	request := ReviseRequest{
+		TargetDeliveryState: domainbacklog.DeliveryRejected,
+		EvidenceRefs:        append([]domainbacklog.EvidenceRef(nil), result.EvidenceRefs[len(current.EvidenceRefs):]...),
+	}
+	payloadMatches := false
+	// Before the reason/revision gate was added, Revise accepted an omitted
+	// ExpectedRevision (zero) as well as the current revision. A positive
+	// mismatch could not reach persistence because the old service rejected it.
+	for _, expectedRevision := range []int{0, current.ImplementationRevision} {
+		request.ExpectedRevision = expectedRevision
+		if stagePayloadHash(request) == payloadHash {
+			payloadMatches = true
+			break
+		}
+	}
+	if !payloadMatches {
+		return false
+	}
+	// TransitionDelivery changes only these projection fields. Requiring every
+	// other field to match prevents a stale prepared receipt from replacing a
+	// newer edit to the item while reconciling the old QUEUED write boundary.
+	expected := current
+	expected.SchemaVersion = result.SchemaVersion
+	expected.DeliveryState = result.DeliveryState
+	expected.ImplementationRevision = result.ImplementationRevision
+	expected.EvidenceRefs = result.EvidenceRefs
+	expected.Status = result.Status
+	expected.CheckOK = result.CheckOK
+	return reflect.DeepEqual(expected, result)
+}
+
+func validateRejectedStageReceiptWithEmptyImplementation(stage domainworkstream.StageRunReceipt, allowEmptyImplementation bool) (domainbacklog.Item, error) {
+	key := stageRunKey(stage.UnitID, stage.ImplementationRevision, domainbacklog.DeliveryRejected)
+	if stage.IdempotencyKey != key || stage.TargetStage != domainbacklog.DeliveryRejected ||
+		stage.DeliveryState != domainbacklog.DeliveryRejected || stage.UnitID == "" || stage.BacklogItemID == "" ||
+		stage.ImplementationRevision < 1 || !validSHA256(stage.PayloadHash) || stage.ActionID.Validate() != nil {
+		return domainbacklog.Item{}, fmt.Errorf("%w: rejected stage receipt %q has inconsistent identity", ErrLifecycleConflict, stage.IdempotencyKey)
+	}
+	if stage.Status != domainworkstream.StageRunPrepared && stage.Status != domainworkstream.StageRunCompleted {
+		return domainbacklog.Item{}, fmt.Errorf("%w: rejected stage receipt %q has status %q", ErrLifecycleConflict, key, stage.Status)
+	}
+	if stage.Status == domainworkstream.StageRunCompleted && stage.CompletedAt.IsZero() {
+		return domainbacklog.Item{}, fmt.Errorf("%w: completed rejected stage receipt %q has no completion time", ErrLifecycleConflict, key)
+	}
+	var item domainbacklog.Item
+	if err := json.Unmarshal([]byte(stage.ResultJSON), &item); err != nil {
+		return domainbacklog.Item{}, fmt.Errorf("decode rejected stage receipt result: %w", err)
+	}
+	if item.BacklogItemID != stage.BacklogItemID || item.ImplementationUnit != stage.UnitID ||
+		item.ImplementationRevision != stage.ImplementationRevision || item.ConceptState != domainbacklog.ConceptAdopted ||
+		item.DeliveryState != domainbacklog.DeliveryRejected || item.CheckOK || (!allowEmptyImplementation && strings.TrimSpace(item.Implementation) == "") {
+		return domainbacklog.Item{}, fmt.Errorf("%w: rejected stage receipt %q result is inconsistent", ErrLifecycleConflict, key)
+	}
+	for _, ref := range item.EvidenceRefs {
+		if err := domainbacklog.ValidateEvidenceRef(ref); err != nil {
+			return domainbacklog.Item{}, fmt.Errorf("%w: rejected stage receipt %q has invalid evidence: %v", ErrLifecycleConflict, key, err)
+		}
+	}
+	return item, nil
+}
+
+func validateRejectedTerminalItem(stage domainworkstream.StageRunReceipt, stageItem, current domainbacklog.Item) error {
+	if current.BacklogItemID != stage.BacklogItemID || current.ConceptState != domainbacklog.ConceptAdopted ||
+		current.DeliveryState != domainbacklog.DeliveryRejected || current.ImplementationUnit != stage.UnitID ||
+		current.ImplementationRevision != stage.ImplementationRevision || current.WorkstreamID != stageItem.WorkstreamID ||
+		current.CheckOK || current.Implementation != stageItem.Implementation || !sameEvidenceRefs(current.EvidenceRefs, stageItem.EvidenceRefs) {
+		return fmt.Errorf("%w: rejected stage %q does not match the terminal item", ErrLifecycleConflict, stage.IdempotencyKey)
+	}
+	return nil
+}
+
+// preparedRejectedTerminalItemMatches tolerates the backlog owner's
+// NormalizeForSave timestamp update while keeping every other persisted field
+// bound to the prepared stage result. Status and CheckOK are already canonical
+// for this v2 transition and remain part of the exact comparison.
+func preparedRejectedTerminalItemMatches(current, prepared domainbacklog.Item) bool {
+	current.UpdatedAt = prepared.UpdatedAt
+	return reflect.DeepEqual(current, prepared)
+}
+
+func validateRejectedClosureReceipt(stage domainworkstream.StageRunReceipt, item domainbacklog.Item, receipt domainworkstream.ClosureReceipt) error {
+	key := stageRunKey(stage.UnitID, stage.ImplementationRevision, domainbacklog.DeliveryRejected)
+	goalID := "goal_atlas_" + safeSegment(string(item.BacklogItemID))
+	artifactID := "artifact_atlas_" + safeSegment(string(item.BacklogItemID))
+	if err := receipt.ReceiptID.Validate(); err != nil || receipt.IdempotencyKey != key || receipt.ActionID.Validate() != nil || receipt.CreatedAt.IsZero() ||
+		receipt.ActionID != stage.ActionID || receipt.UnitID != stage.UnitID || receipt.BacklogItemID != stage.BacklogItemID ||
+		receipt.ImplementationRevision != stage.ImplementationRevision || receipt.TargetDeliveryState != domainbacklog.DeliveryRejected ||
+		receipt.WorkstreamID == "" || receipt.WorkstreamID != item.WorkstreamID || receipt.GoalID != goalID ||
+		receipt.ArtifactID != artifactID || receipt.LeaseName != domainbacklog.ImplementationLeaseName {
+		return fmt.Errorf("%w: rejected closure receipt %q has inconsistent identity", ErrLifecycleConflict, key)
+	}
+	switch receipt.Phase {
+	case domainworkstream.ClosurePhasePrepared:
+		if receipt.LeaseReleased {
+			return fmt.Errorf("%w: prepared rejected closure %q claims a released lease", ErrLifecycleConflict, key)
+		}
+	case domainworkstream.ClosurePhaseResources:
+		if receipt.LeaseReleased {
+			return fmt.Errorf("%w: resources-complete rejected closure %q claims a released lease", ErrLifecycleConflict, key)
+		}
+	case domainworkstream.ClosurePhaseLease, domainworkstream.ClosurePhaseDone:
+		if !receipt.LeaseReleased {
+			return fmt.Errorf("%w: rejected closure %q advanced without releasing its lease", ErrLifecycleConflict, key)
+		}
+	default:
+		return fmt.Errorf("%w: rejected closure %q has phase %q", ErrLifecycleConflict, key, receipt.Phase)
+	}
+	if receipt.Status == domainworkstream.ClosureStatusCompleted {
+		if receipt.Phase != domainworkstream.ClosurePhaseDone || !receipt.LeaseReleased || receipt.Error != "" || receipt.CompletedAt.IsZero() {
+			return fmt.Errorf("%w: completed rejected closure %q is incomplete", ErrLifecycleConflict, key)
+		}
+		return nil
+	}
+	if receipt.Status != domainworkstream.ClosureStatusPrepared && receipt.Status != domainworkstream.ClosureStatusFailed {
+		return fmt.Errorf("%w: rejected closure %q has status %q", ErrLifecycleConflict, key, receipt.Status)
+	}
+	if receipt.Phase == domainworkstream.ClosurePhaseDone {
+		return fmt.Errorf("%w: unfinished rejected closure %q is already in done phase", ErrLifecycleConflict, key)
+	}
+	return nil
+}
+
+func (s *Service) readRejectedCancellationResources(ctx context.Context, receipt domainworkstream.ClosureReceipt, item domainbacklog.Item) (domainworkstream.Workstream, domainworkstream.Goal, domainworkstream.Artifact, error) {
+	reader, ok := s.workstream.(rejectedCancellationResourceReader)
+	if !ok {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, errors.New("Atlas rejected cancellation resource readers unavailable")
+	}
+	if strings.TrimSpace(item.WorkstreamID) == "" || receipt.WorkstreamID != item.WorkstreamID {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("%w: rejected cancellation workstream binding is inconsistent", ErrLifecycleConflict)
+	}
+	workstreams, err := reader.ListWorkstreams(ctx, rejectedCancellationResourceReadLimit)
+	if err != nil {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("read rejected cancellation workstream: %w", err)
+	}
+	var workstream domainworkstream.Workstream
+	workstreamFound := false
+	for _, candidate := range workstreams {
+		if candidate.WorkstreamID == receipt.WorkstreamID {
+			workstream, workstreamFound = candidate, true
+			break
+		}
+	}
+	if !workstreamFound || workstream.WorkstreamID != item.WorkstreamID {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("%w: rejected cancellation workstream %q not found", ErrLifecycleConflict, receipt.WorkstreamID)
+	}
+	goal, found, err := reader.FindGoalByID(ctx, receipt.GoalID)
+	if err != nil {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("read rejected cancellation goal: %w", err)
+	}
+	if !found || goal.GoalID != receipt.GoalID || goal.WorkstreamID != item.WorkstreamID {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("%w: rejected cancellation goal %q missing or associated with another workstream", ErrLifecycleConflict, receipt.GoalID)
+	}
+	artifacts, err := reader.ListArtifacts(ctx, rejectedCancellationResourceReadLimit)
+	if err != nil {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("read rejected cancellation artifact: %w", err)
+	}
+	var artifact domainworkstream.Artifact
+	artifactFound := false
+	for _, candidate := range artifacts {
+		if candidate.ArtifactID == receipt.ArtifactID {
+			artifact, artifactFound = candidate, true
+			break
+		}
+	}
+	if !artifactFound || artifact.ArtifactID != receipt.ArtifactID || artifact.WorkstreamID != item.WorkstreamID {
+		return domainworkstream.Workstream{}, domainworkstream.Goal{}, domainworkstream.Artifact{}, fmt.Errorf("%w: rejected cancellation artifact %q missing or associated with another workstream", ErrLifecycleConflict, receipt.ArtifactID)
+	}
+	return workstream, goal, artifact, nil
+}
+
+func (s *Service) archiveRejectedCancellationResources(ctx context.Context, receipt domainworkstream.ClosureReceipt, item domainbacklog.Item) error {
+	workstream, goal, artifact, err := s.readRejectedCancellationResources(ctx, receipt, item)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	workstream.Status = domainworkstream.StatusArchived
+	workstream.UpdatedAt = now
+	goal.Status = domainworkstream.StatusArchived
+	artifact.Status = domainworkstream.StatusArchived
+	artifact.UpdatedAt = now
+	if err := s.workstream.SaveWorkstream(ctx, workstream); err != nil {
+		return fmt.Errorf("archive rejected cancellation workstream: %w", err)
+	}
+	if err := s.workstream.SaveGoal(ctx, goal); err != nil {
+		return fmt.Errorf("archive rejected cancellation goal: %w", err)
+	}
+	if err := s.workstream.SaveArtifact(ctx, artifact); err != nil {
+		return fmt.Errorf("archive rejected cancellation artifact: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) resumeRejectedCancellationStage(ctx context.Context, stage domainworkstream.StageRunReceipt) (domainbacklog.Item, error) {
+	next, err := validateRejectedStageReceiptForRecovery(stage)
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	key := stageRunKey(stage.UnitID, stage.ImplementationRevision, domainbacklog.DeliveryRejected)
+	current, err := s.find(ctx, string(stage.BacklogItemID))
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if current.BacklogItemID != stage.BacklogItemID || current.ConceptState != domainbacklog.ConceptAdopted || current.ImplementationUnit != stage.UnitID ||
+		current.ImplementationRevision != stage.ImplementationRevision || current.WorkstreamID != next.WorkstreamID || current.DeliveryState == domainbacklog.DeliveryDone ||
+		current.DeliveryState == domainbacklog.DeliveryBlocked || current.DeliveryState == domainbacklog.DeliveryLiveVerified {
+		return domainbacklog.Item{}, fmt.Errorf("%w: rejected stage %q no longer matches its item", ErrLifecycleConflict, key)
+	}
+	legacyPreparedQueued := stage.Status == domainworkstream.StageRunPrepared && current.DeliveryState == domainbacklog.DeliveryQueued && strings.TrimSpace(next.Implementation) == ""
+	legacyPreparedTerminal := stage.Status == domainworkstream.StageRunPrepared && current.DeliveryState == domainbacklog.DeliveryRejected
+	if legacyPreparedQueued && !exactLegacyPreparedQueuedRejectedResult(current, next, stage.PayloadHash) {
+		return domainbacklog.Item{}, fmt.Errorf("%w: prepared legacy rejected stage %q does not match its queued item", ErrLifecycleConflict, key)
+	}
+	if legacyPreparedTerminal && !preparedRejectedTerminalItemMatches(current, next) {
+		return domainbacklog.Item{}, fmt.Errorf("%w: prepared legacy rejected stage %q does not match its terminal item", ErrLifecycleConflict, key)
+	}
+	if stage.Status == domainworkstream.StageRunPrepared && strings.TrimSpace(next.Implementation) == "" && !legacyPreparedQueued && !legacyPreparedTerminal {
+		return domainbacklog.Item{}, fmt.Errorf("%w: empty-implementation prepared rejected stage %q is outside a recognized legacy write boundary", ErrLifecycleConflict, key)
+	}
+	if current.DeliveryState == domainbacklog.DeliveryRejected &&
+		(current.CheckOK || current.Implementation != next.Implementation || !sameEvidenceRefs(current.EvidenceRefs, next.EvidenceRefs)) {
+		return domainbacklog.Item{}, fmt.Errorf("%w: rejected item %q differs from its stage result", ErrLifecycleConflict, key)
+	}
+
+	receipt, found, err := s.findClosureReceipt(ctx, key)
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	legacyCleanup := legacyPreparedQueued || current.DeliveryState == domainbacklog.DeliveryRejected &&
+		(stage.Status == domainworkstream.StageRunCompleted || legacyPreparedTerminal)
+	legacyReconciliation := legacyCleanup || legacyPreparedQueued
+	if !found {
+		if legacyCleanup {
+			if _, err := s.preflightLegacyRejectedCancellationLease(ctx, current); err != nil {
+				return domainbacklog.Item{}, err
+			}
+			if _, _, _, err := s.readRejectedCancellationResources(ctx, domainworkstream.ClosureReceipt{
+				WorkstreamID: next.WorkstreamID,
+				GoalID:       "goal_atlas_" + safeSegment(string(next.BacklogItemID)),
+				ArtifactID:   "artifact_atlas_" + safeSegment(string(next.BacklogItemID)),
+			}, next); err != nil {
+				return domainbacklog.Item{}, err
+			}
+		} else if err := s.preflightRejectedCancellationLease(ctx, current); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		receipt = domainworkstream.ClosureReceipt{
+			ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: key, ActionID: stage.ActionID,
+			TransitionEventID: transitionEventID(""), UnitID: stage.UnitID, BacklogItemID: stage.BacklogItemID,
+			ImplementationRevision: stage.ImplementationRevision, TargetDeliveryState: domainbacklog.DeliveryRejected,
+			Phase: domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
+			WorkstreamID: next.WorkstreamID, GoalID: "goal_atlas_" + safeSegment(string(next.BacklogItemID)),
+			ArtifactID: "artifact_atlas_" + safeSegment(string(next.BacklogItemID)), LeaseName: domainbacklog.ImplementationLeaseName,
+			CreatedAt: s.now(), UpdatedAt: s.now(),
+		}
+		eventFields := map[string]any{
+			"idempotency_key": key, "payload_hash": stage.PayloadHash,
+		}
+		if legacyReconciliation {
+			eventFields["legacy_reconciliation"] = true
+			eventFields["historical_stage_receipt_id"] = string(stage.ReceiptID)
+			eventFields["historical_stage_idempotency_key"] = stage.IdempotencyKey
+			switch {
+			case legacyPreparedQueued:
+				eventFields["legacy_reconciliation_boundary"] = "prepared_before_item_save"
+			case legacyPreparedTerminal:
+				eventFields["legacy_reconciliation_boundary"] = "prepared_after_item_save"
+			default:
+				eventFields["legacy_reconciliation_boundary"] = "completed_stage_without_closure"
+			}
+		}
+		if err := s.appendTransitionCompanionEvent(ctx, DevelopmentEventClosureTransition, receipt.TransitionEventID, next, domainbacklog.DeliveryRejected, key, "", eventFields); err != nil {
+			return domainbacklog.Item{}, err
+		}
+		if err := s.saveClosureReceipt(ctx, receipt); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
+	if err := validateRejectedClosureReceipt(stage, next, receipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if receipt.Status == domainworkstream.ClosureStatusCompleted {
+		if current.DeliveryState != domainbacklog.DeliveryRejected {
+			return domainbacklog.Item{}, fmt.Errorf("%w: completed rejected closure %q has no rejected item", ErrLifecycleConflict, key)
+		}
+		if stage.Status == domainworkstream.StageRunPrepared {
+			stage.Status = domainworkstream.StageRunCompleted
+			stage.DeliveryState = domainbacklog.DeliveryRejected
+			stage.CompletedAt = s.now()
+			if err := s.saveStageReceipt(ctx, stage); err != nil {
+				return domainbacklog.Item{}, err
+			}
+		}
+		return next, nil
+	}
+	if legacyCleanup {
+		if _, err := s.preflightLegacyRejectedCancellationLease(ctx, current); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	} else if err := s.preflightRejectedCancellationLease(ctx, current); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if legacyCleanup {
+		if _, _, _, err := s.readRejectedCancellationResources(ctx, receipt, next); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
+	if stage.Status == domainworkstream.StageRunCompleted && !legacyCleanup {
+		return domainbacklog.Item{}, fmt.Errorf("%w: completed rejected stage %q has unfinished closure", ErrLifecycleConflict, key)
+	}
+	if receipt.Status == domainworkstream.ClosureStatusFailed {
+		receipt.Status = domainworkstream.ClosureStatusPrepared
+		receipt.Error = ""
+		receipt.UpdatedAt = s.now()
+		if err := s.saveClosureReceipt(ctx, receipt); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
+	if receipt.Phase == domainworkstream.ClosurePhasePrepared {
+		if err := s.archiveRejectedCancellationResources(ctx, receipt, next); err != nil {
+			return domainbacklog.Item{}, s.failClosure(ctx, receipt, err)
+		}
+		receipt.Phase = domainworkstream.ClosurePhaseResources
+		receipt.Status = domainworkstream.ClosureStatusPrepared
+		receipt.Error = ""
+		receipt.UpdatedAt = s.now()
+		if err := s.saveClosureReceipt(ctx, receipt); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
+	lease, held, err := s.getLease(ctx, receipt.LeaseName)
+	if err != nil {
+		return domainbacklog.Item{}, err
+	}
+	shouldRelease := held
+	if legacyCleanup {
+		shouldRelease, err = s.validateLegacyRejectedCancellationLease(ctx, current, lease, held)
+		if err != nil {
+			return domainbacklog.Item{}, err
+		}
+	} else if held {
+		if lease.LeaseName != receipt.LeaseName || lease.HolderUnitID != receipt.UnitID || lease.HolderWorkstreamID != receipt.WorkstreamID {
+			return domainbacklog.Item{}, fmt.Errorf("%w: rejected closure %q found a different lease holder", ErrLifecycleConflict, key)
+		}
+	}
+	if shouldRelease {
+		if err := s.releaseLease(ctx, receipt.LeaseName, receipt.UnitID); err != nil {
+			return domainbacklog.Item{}, s.failClosure(ctx, receipt, err)
+		}
+	}
+	receipt.LeaseReleased = true
+	receipt.Phase = domainworkstream.ClosurePhaseLease
+	receipt.Status = domainworkstream.ClosureStatusPrepared
+	receipt.Error = ""
+	receipt.UpdatedAt = s.now()
+	if err := s.saveClosureReceipt(ctx, receipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if current.DeliveryState != domainbacklog.DeliveryRejected {
+		if err := s.save(ctx, next); err != nil {
+			return domainbacklog.Item{}, s.failClosure(ctx, receipt, err)
+		}
+	}
+	receipt.Phase = domainworkstream.ClosurePhaseDone
+	receipt.Status = domainworkstream.ClosureStatusCompleted
+	receipt.Error = ""
+	receipt.CompletedAt = s.now()
+	receipt.UpdatedAt = receipt.CompletedAt
+	if err := s.saveClosureReceipt(ctx, receipt); err != nil {
+		return domainbacklog.Item{}, err
+	}
+	if stage.Status == domainworkstream.StageRunPrepared {
+		stage.Status = domainworkstream.StageRunCompleted
+		stage.DeliveryState = domainbacklog.DeliveryRejected
+		stage.CompletedAt = s.now()
+		if err := s.saveStageReceipt(ctx, stage); err != nil {
+			return domainbacklog.Item{}, err
+		}
+	}
+	return next, nil
+}
+
+func (s *Service) resumeRejectedCancellationForItem(ctx context.Context, item domainbacklog.Item) (domainbacklog.Item, bool, error) {
+	if item.DeliveryState != domainbacklog.DeliveryRejected {
+		return domainbacklog.Item{}, false, nil
+	}
+	if item.ConceptState != domainbacklog.ConceptAdopted || strings.TrimSpace(item.ImplementationUnit) == "" {
+		return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item has no adopted implementation identity", ErrLifecycleConflict)
+	}
+	key := stageRunKey(item.ImplementationUnit, item.ImplementationRevision, domainbacklog.DeliveryRejected)
+	stage, found, err := s.findStageReceipt(ctx, key)
+	if err != nil {
+		return domainbacklog.Item{}, false, err
+	}
+	if !found {
+		return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item %q has no stage receipt", ErrLifecycleConflict, key)
+	}
+	result, err := s.resumeRejectedCancellationStage(ctx, stage)
+	return result, true, err
+}
+
+func (s *Service) resumeRejectedCancellation(ctx context.Context) (domainbacklog.Item, bool, error) {
+	items, err := s.listAll(ctx)
+	if err != nil {
+		return domainbacklog.Item{}, false, err
+	}
+	for _, item := range items {
+		if item.ConceptState == domainbacklog.ConceptRejected {
+			continue
+		}
+		if item.DeliveryState != domainbacklog.DeliveryRejected {
+			continue
+		}
+		if item.ConceptState != domainbacklog.ConceptAdopted || strings.TrimSpace(item.ImplementationUnit) == "" || item.ImplementationRevision < 1 {
+			return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item has no valid adopted implementation identity", ErrLifecycleConflict)
+		}
+	}
+	store, ok := s.workstream.(LifecycleStore)
+	if !ok {
+		for _, item := range items {
+			if item.ConceptState != domainbacklog.ConceptRejected && item.DeliveryState == domainbacklog.DeliveryRejected {
+				return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item has no lifecycle store", ErrLifecycleStoreUnavailable)
+			}
+		}
+		return domainbacklog.Item{}, false, nil
+	}
+	const stageRunReceiptScanLimit = 1 << 20
+	stages, err := store.ListStageRunReceipts(ctx, stageRunReceiptScanLimit)
+	if err != nil {
+		return domainbacklog.Item{}, false, err
+	}
+	if len(stages) >= stageRunReceiptScanLimit {
+		return domainbacklog.Item{}, false, fmt.Errorf("%w: rejected cancellation stage receipt scan reached the %d-row limit and may be truncated", ErrLifecycleConflict, stageRunReceiptScanLimit)
+	}
+	byKey := make(map[string]domainworkstream.StageRunReceipt)
+	preparedPending := make([]domainworkstream.StageRunReceipt, 0, 1)
+	legacyPending := make([]domainworkstream.StageRunReceipt, 0, 1)
+	for _, stage := range stages {
+		if stage.TargetStage != domainbacklog.DeliveryRejected && stage.DeliveryState != domainbacklog.DeliveryRejected {
+			continue
+		}
+		stageItem, validateErr := validateRejectedStageReceiptForRecovery(stage)
+		if validateErr != nil {
+			return domainbacklog.Item{}, false, validateErr
+		}
+		key := stageRunKey(stage.UnitID, stage.ImplementationRevision, domainbacklog.DeliveryRejected)
+		byKey[key] = stage
+		current, findErr := s.find(ctx, string(stage.BacklogItemID))
+		if findErr != nil {
+			return domainbacklog.Item{}, false, findErr
+		}
+		if current.BacklogItemID != stage.BacklogItemID || current.ConceptState != domainbacklog.ConceptAdopted || current.ImplementationUnit != stage.UnitID ||
+			current.ImplementationRevision != stage.ImplementationRevision || current.WorkstreamID != stageItem.WorkstreamID || current.DeliveryState == domainbacklog.DeliveryDone ||
+			current.DeliveryState == domainbacklog.DeliveryBlocked || current.DeliveryState == domainbacklog.DeliveryLiveVerified {
+			return domainbacklog.Item{}, false, fmt.Errorf("%w: rejected stage %q no longer matches its item", ErrLifecycleConflict, key)
+		}
+		if stage.Status == domainworkstream.StageRunPrepared {
+			closure, found, closureErr := s.findClosureReceipt(ctx, key)
+			if closureErr != nil {
+				return domainbacklog.Item{}, false, closureErr
+			}
+			if found {
+				if err := validateRejectedClosureReceipt(stage, stageItem, closure); err != nil {
+					return domainbacklog.Item{}, false, err
+				}
+			}
+			if current.DeliveryState == domainbacklog.DeliveryRejected {
+				if err := validateRejectedTerminalItem(stage, stageItem, current); err != nil || !preparedRejectedTerminalItemMatches(current, stageItem) {
+					if err != nil {
+						return domainbacklog.Item{}, false, err
+					}
+					return domainbacklog.Item{}, false, fmt.Errorf("%w: prepared rejected stage %q does not match its terminal item", ErrLifecycleConflict, key)
+				}
+				legacyPending = append(legacyPending, stage)
+				continue
+			}
+			if strings.TrimSpace(stageItem.Implementation) == "" && !exactLegacyPreparedQueuedRejectedResult(current, stageItem, stage.PayloadHash) {
+				return domainbacklog.Item{}, false, fmt.Errorf("%w: empty-implementation prepared rejected stage %q is outside a recognized legacy write boundary", ErrLifecycleConflict, key)
+			}
+			if strings.TrimSpace(stageItem.Implementation) == "" {
+				// This is a fully bound legacy prepared result at the old QUEUED
+				// write boundary. Drain it with terminal historical cancellations;
+				// it is not a competing active intent from the current protocol.
+				legacyPending = append(legacyPending, stage)
+				continue
+			}
+			preparedPending = append(preparedPending, stage)
+			continue
+		}
+		closure, found, closureErr := s.findClosureReceipt(ctx, key)
+		if closureErr != nil {
+			return domainbacklog.Item{}, false, closureErr
+		}
+		if !found {
+			if stage.Status != domainworkstream.StageRunCompleted {
+				return domainbacklog.Item{}, false, fmt.Errorf("%w: rejected stage %q has no closure receipt", ErrLifecycleConflict, key)
+			}
+			if err := validateRejectedTerminalItem(stage, stageItem, current); err != nil {
+				return domainbacklog.Item{}, false, err
+			}
+			legacyPending = append(legacyPending, stage)
+			continue
+		}
+		if err := validateRejectedClosureReceipt(stage, stageItem, closure); err != nil {
+			return domainbacklog.Item{}, false, err
+		}
+		if err := validateRejectedTerminalItem(stage, stageItem, current); err != nil {
+			return domainbacklog.Item{}, false, err
+		}
+		if closure.Status != domainworkstream.ClosureStatusCompleted {
+			if stage.Status != domainworkstream.StageRunCompleted {
+				return domainbacklog.Item{}, false, fmt.Errorf("%w: rejected stage %q has unfinished closure", ErrLifecycleConflict, key)
+			}
+			// A completed legacy stage can be reconciled only when its exact
+			// rejected Item and the new cleanup receipt remain bound above.
+			legacyPending = append(legacyPending, stage)
+		}
+	}
+	for _, item := range items {
+		if item.ConceptState == domainbacklog.ConceptRejected {
+			continue
+		}
+		if item.DeliveryState != domainbacklog.DeliveryRejected {
+			continue
+		}
+		key := stageRunKey(item.ImplementationUnit, item.ImplementationRevision, domainbacklog.DeliveryRejected)
+		stage, found := byKey[key]
+		if !found {
+			return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item %q has no stage receipt", ErrLifecycleConflict, key)
+		}
+		if stage.BacklogItemID != item.BacklogItemID || stage.UnitID != item.ImplementationUnit || stage.ImplementationRevision != item.ImplementationRevision {
+			return domainbacklog.Item{}, false, fmt.Errorf("%w: terminal rejected item %q does not match its stage receipt binding", ErrLifecycleConflict, key)
+		}
+	}
+	if len(preparedPending) > 1 {
+		return domainbacklog.Item{}, false, fmt.Errorf("%w: multiple prepared rejected cancellations found", ErrLifecycleConflict)
+	}
+	if len(legacyPending) == 0 && len(preparedPending) == 0 {
+		return domainbacklog.Item{}, false, nil
+	}
+	var result domainbacklog.Item
+	for _, stage := range legacyPending {
+		result, err = s.resumeRejectedCancellationStage(ctx, stage)
+		if err != nil {
+			return domainbacklog.Item{}, true, err
+		}
+	}
+	for _, stage := range preparedPending {
+		result, err = s.resumeRejectedCancellationStage(ctx, stage)
+		if err != nil {
+			return domainbacklog.Item{}, true, err
+		}
+	}
+	return result, true, nil
 }
 
 func (s *Service) saveFreeze(ctx context.Context, freeze domainworkstream.QueueFreeze) error {

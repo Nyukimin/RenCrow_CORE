@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
@@ -479,6 +480,284 @@ func TestWorkstreamAcquireHeldLeaseReplaysOriginalFailureAfterCanonicalChange(t 
 	if _, found, err := store.GetImplementationLease(ctx, foreign.LeaseName); err != nil || found {
 		t.Errorf("current canonical lease found=%v err=%v, want still released", found, err)
 	}
+}
+
+func TestWorkstreamAcquireLeaseReportsCancellationPendingAcrossStorageHost(t *testing.T) {
+	root := t.TempDir()
+	store, handler, client := newWorkstreamStorageHostInProcessFixture(t, root)
+	defer handler.Close()
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	closure := domainworkstream.ClosureReceipt{
+		ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: "unit-cancelled:1:closure",
+		UnitID: "unit-cancelled", ImplementationRevision: 1,
+		TargetDeliveryState: domainbacklog.DeliveryRejected,
+		Phase:               domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
+		CreatedAt: now,
+	}
+	if err := store.SaveClosureReceipt(ctx, closure); err != nil {
+		t.Fatalf("seed pending cancellation closure: %v", err)
+	}
+	lease := domainworkstream.ImplementationLease{
+		LeaseName: "atlas_implementation", HolderUnitID: "unit-next", HolderWorkstreamID: "ws-next",
+		Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now,
+	}
+	acquired, reason, err := client.AcquireImplementationLeaseIfUnfrozen(ctx, "lease-pending-cancellation", lease)
+	if err != nil || acquired || reason != "cancellation closure is pending" {
+		t.Fatalf("storage-host acquire=%v reason=%q err=%v, want distinct cancellation-pending reason", acquired, reason, err)
+	}
+	operation := client.NewAcquireImplementationLeaseIfUnfrozenOperation("lease-pending-cancellation", lease)
+	generation := client.client.Generation()
+	identity, err := workstreamOperationIdentity(MutationMetadata{
+		OpID: operation.OpID, Payload: operation.payload,
+		RequestGeneration: generation, JournalGeneration: generation,
+	}, workstreamOpAcquireImplementationLease)
+	if err != nil {
+		t.Fatalf("derive acquire proof identity: %v", err)
+	}
+	proof, found, err := store.LookupWorkstreamStorageHostOperationProof(ctx, identity, lease.LeaseName)
+	var storedResult persistworkstream.WorkstreamLeaseAcquireResult
+	if err != nil || !found || json.Unmarshal(proof, &storedResult) != nil || storedResult.Reason != "cancellation closure is pending" {
+		t.Fatalf("lookup acquire proof=%s found=%v result=%+v err=%v", proof, found, storedResult, err)
+	}
+	effectJSON := workstreamStorageHostEffectJSON(t, root, operation.OpID)
+	var effect persistworkstream.WorkstreamLeaseMutationEffect
+	if err := json.Unmarshal([]byte(effectJSON), &effect); err != nil {
+		t.Fatalf("decode acquire effect proof: %v", err)
+	}
+	if !effect.ClosurePending || effect.QueueFrozen || effect.ClosureReceipt == nil || *effect.ClosureReceipt != closure {
+		t.Fatalf("acquire effect=%+v, want exact closure evidence without QueueFrozen", effect)
+	}
+}
+
+func TestWorkstreamAcquireLeaseProofRecordsBothActiveFreezeAndPendingClosure(t *testing.T) {
+	root := t.TempDir()
+	store, handler, client := newWorkstreamStorageHostInProcessFixture(t, root)
+	defer handler.Close()
+	defer store.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	if err := store.SaveQueueFreeze(ctx, domainworkstream.QueueFreeze{
+		FreezeID: "freeze-and-cancellation", BlockedUnitID: "unit-blocked", BlockedRevision: 2,
+		FreezeRevision: 4, Status: domainworkstream.QueueFreezeActive, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed active queue freeze: %v", err)
+	}
+	closure := domainworkstream.ClosureReceipt{
+		ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: "unit-cancelled:1:closure",
+		UnitID: "unit-cancelled", ImplementationRevision: 1,
+		TargetDeliveryState: domainbacklog.DeliveryRejected,
+		Phase:               domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
+		CreatedAt: now,
+	}
+	if err := store.SaveClosureReceipt(ctx, closure); err != nil {
+		t.Fatalf("seed pending cancellation closure: %v", err)
+	}
+	lease := domainworkstream.ImplementationLease{
+		LeaseName: "atlas_implementation", HolderUnitID: "unit-next", HolderWorkstreamID: "ws-next",
+		Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now,
+	}
+	const requestID = "lease-freeze-priority-with-pending-closure"
+	acquired, reason, err := client.AcquireImplementationLeaseIfUnfrozen(ctx, requestID, lease)
+	if err != nil || acquired || reason != domainworkstream.ErrQueueFrozen.Error() {
+		t.Fatalf("storage-host acquire=%v reason=%q err=%v, want queue-frozen priority", acquired, reason, err)
+	}
+	operation := client.NewAcquireImplementationLeaseIfUnfrozenOperation(requestID, lease)
+	generation := client.client.Generation()
+	identity, err := workstreamOperationIdentity(MutationMetadata{
+		OpID: operation.OpID, Payload: operation.payload,
+		RequestGeneration: generation, JournalGeneration: generation,
+	}, workstreamOpAcquireImplementationLease)
+	if err != nil {
+		t.Fatalf("derive acquire proof identity: %v", err)
+	}
+	if _, found, err := store.LookupWorkstreamStorageHostOperationProof(ctx, identity, lease.LeaseName); err != nil || !found {
+		t.Fatalf("lookup queue-frozen acquire proof found=%v err=%v", found, err)
+	}
+	effectJSON := workstreamStorageHostEffectJSON(t, root, operation.OpID)
+	var effect persistworkstream.WorkstreamLeaseMutationEffect
+	if err := json.Unmarshal([]byte(effectJSON), &effect); err != nil {
+		t.Fatalf("decode acquire effect proof: %v", err)
+	}
+	if !effect.QueueFrozen || !effect.ClosurePending || effect.ClosureReceipt == nil || *effect.ClosureReceipt != closure {
+		t.Fatalf("acquire effect=%+v, want truthful freeze and closure evidence", effect)
+	}
+}
+
+func TestWorkstreamResolveFreezeKeepsFreezeActiveWhileCancellationClosureIsPending(t *testing.T) {
+	root := t.TempDir()
+	store, handler, client := newWorkstreamStorageHostInProcessFixture(t, root)
+	defer func() {
+		if handler != nil {
+			_ = handler.Close()
+		}
+		if store != nil {
+			_ = store.Close()
+		}
+	}()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	freeze := domainworkstream.QueueFreeze{
+		FreezeID: "freeze-pending-cancellation", BlockedUnitID: "unit-blocked", BlockedRevision: 2,
+		FreezeRevision: 4, Status: domainworkstream.QueueFreezeActive, CreatedAt: now,
+	}
+	if err := store.SaveQueueFreeze(ctx, freeze); err != nil {
+		t.Fatalf("seed active queue freeze: %v", err)
+	}
+	closure := domainworkstream.ClosureReceipt{
+		ReceiptID: modulecore.NewReceiptID(), IdempotencyKey: "unit-cancelled:1:closure",
+		UnitID: "unit-cancelled", ImplementationRevision: 1,
+		TargetDeliveryState: domainbacklog.DeliveryRejected,
+		Phase:               domainworkstream.ClosurePhasePrepared, Status: domainworkstream.ClosureStatusPrepared,
+		CreatedAt: now,
+	}
+	if err := store.SaveClosureReceipt(ctx, closure); err != nil {
+		t.Fatalf("seed pending cancellation closure: %v", err)
+	}
+	replacement := domainworkstream.ImplementationLease{
+		LeaseName: "atlas_implementation", HolderUnitID: "unit-replacement", HolderWorkstreamID: "ws-replacement",
+		Stage: "QUEUED", AcquiredAt: now, HeartbeatAt: now,
+	}
+	resolution := domainworkstream.QueueFreezeResolution{
+		ExpectedFreezeRevision: 4,
+		ActionID:               modulecore.ActionID("act_00000000-0000-5000-8000-000000000007"),
+		ReplacementUnitID:      replacement.HolderUnitID,
+		SupersedesUnitID:       freeze.BlockedUnitID,
+		BlockerResolutionRefs: []domainbacklog.EvidenceRef{{
+			Kind: "fix", Ref: "fix-proof", Verified: true,
+			VerificationResult: domainbacklog.EvidenceVerificationVerified,
+		}},
+		ResolutionPayloadHash: "resolution-hash",
+	}
+	freezeResult, leaseResult, acquired, err := client.ResolveQueueFreezeAndAcquireLease(ctx, "lease-resolve-pending-cancellation", freeze.FreezeID, resolution, replacement)
+	if acquired || err != domainworkstream.ErrCancellationPending {
+		t.Fatalf("storage-host resolve acquired=%v freeze=%+v lease=%+v err=%v, want cancellation-pending rejection", acquired, freezeResult, leaseResult, err)
+	}
+	if freezeResult.Status != domainworkstream.QueueFreezeActive || freezeResult.ResolutionAcquired || leaseResult != (domainworkstream.ImplementationLease{}) {
+		t.Fatalf("storage-host resolve changed active freeze or exposed lease: freeze=%+v lease=%+v", freezeResult, leaseResult)
+	}
+	operation := client.NewResolveQueueFreezeAndAcquireLeaseOperation("lease-resolve-pending-cancellation", freeze.FreezeID, resolution, replacement)
+	generation := client.client.Generation()
+	identity, err := workstreamOperationIdentity(MutationMetadata{
+		OpID: operation.OpID, Payload: operation.payload,
+		RequestGeneration: generation, JournalGeneration: generation,
+	}, workstreamOpResolveQueueFreeze)
+	if err != nil {
+		t.Fatalf("derive resolve proof identity: %v", err)
+	}
+	proof, found, err := store.LookupWorkstreamStorageHostOperationProof(ctx, identity, freeze.FreezeID)
+	var storedResult persistworkstream.WorkstreamFreezeLeaseResult
+	if err != nil || !found || json.Unmarshal(proof, &storedResult) != nil || storedResult.Reason != "cancellation closure is pending" {
+		t.Fatalf("lookup resolve proof=%s found=%v result=%+v err=%v", proof, found, storedResult, err)
+	}
+	effectJSON := workstreamStorageHostEffectJSON(t, root, operation.OpID)
+	var effect persistworkstream.WorkstreamLeaseMutationEffect
+	if err := json.Unmarshal([]byte(effectJSON), &effect); err != nil {
+		t.Fatalf("decode resolve effect proof: %v", err)
+	}
+	if !effect.ClosurePending || effect.QueueFrozen || effect.ClosureReceipt == nil || *effect.ClosureReceipt != closure {
+		t.Fatalf("resolve effect=%+v, want exact closure evidence without QueueFrozen", effect)
+	}
+	completedClosure := closure
+	completedClosure.ActionID = modulecore.ActionID("act_00000000-0000-5000-8000-000000000008")
+	completedClosure.Phase = domainworkstream.ClosurePhaseDone
+	completedClosure.Status = domainworkstream.ClosureStatusCompleted
+	completedClosure.LeaseReleased = true
+	completedClosure.CompletedAt = now.Add(time.Minute)
+	if err := store.SaveClosureReceipt(ctx, completedClosure); err != nil {
+		t.Fatalf("complete closure after recorded operation: %v", err)
+	}
+	if err := handler.Close(); err != nil {
+		t.Fatalf("close storagehost before recovery: %v", err)
+	}
+	handler = nil
+	if err := store.Close(); err != nil {
+		t.Fatalf("close owner before recovery: %v", err)
+	}
+	store = nil
+	store, handler, client = newWorkstreamStorageHostInProcessFixture(t, root)
+	freezeResult, leaseResult, acquired, err = client.ResolveQueueFreezeAndAcquireLease(ctx, "lease-resolve-pending-cancellation", freeze.FreezeID, resolution, replacement)
+	if acquired || err != domainworkstream.ErrCancellationPending || freezeResult.Status != domainworkstream.QueueFreezeActive || leaseResult != (domainworkstream.ImplementationLease{}) {
+		t.Fatalf("exact operation replay after recovery re-evaluated completed closure: acquired=%v freeze=%+v lease=%+v err=%v", acquired, freezeResult, leaseResult, err)
+	}
+	canonicalFreeze, found, err := store.GetQueueFreeze(ctx, freeze.FreezeID)
+	if err != nil || !found || canonicalFreeze.Status != domainworkstream.QueueFreezeActive || canonicalFreeze.ResolutionAcquired {
+		t.Fatalf("canonical freeze after exact replay=%+v found=%v err=%v, want active and unresolved", canonicalFreeze, found, err)
+	}
+	canonicalLease, found, err := store.GetImplementationLease(ctx, replacement.LeaseName)
+	if err != nil || found {
+		t.Fatalf("canonical lease after exact replay=%+v found=%v err=%v, want no exposed lease", canonicalLease, found, err)
+	}
+	freezeResult, leaseResult, acquired, err = client.ResolveQueueFreezeAndAcquireLease(ctx, "lease-resolve-after-cancellation-closure", freeze.FreezeID, resolution, replacement)
+	if !acquired || err != nil || freezeResult.Status != domainworkstream.QueueFreezeResolved || !freezeResult.ResolutionAcquired || leaseResult != replacement {
+		t.Fatalf("fresh operation after completed cancellation acquired=%v freeze=%+v lease=%+v err=%v, want resolved freeze and replacement lease", acquired, freezeResult, leaseResult, err)
+	}
+	canonicalFreeze, found, err = store.GetQueueFreeze(ctx, freeze.FreezeID)
+	if err != nil || !found || canonicalFreeze.Status != domainworkstream.QueueFreezeResolved || !canonicalFreeze.ResolutionAcquired || canonicalFreeze.ReplacementLease != replacement {
+		t.Fatalf("canonical freeze after fresh operation=%+v found=%v err=%v, want resolved with replacement lease", canonicalFreeze, found, err)
+	}
+	canonicalLease, found, err = store.GetImplementationLease(ctx, replacement.LeaseName)
+	if err != nil || !found || canonicalLease != replacement {
+		t.Fatalf("canonical lease after fresh operation=%+v found=%v err=%v, want replacement lease %+v", canonicalLease, found, err, replacement)
+	}
+}
+
+type workstreamInProcessTransport struct {
+	handler http.Handler
+}
+
+func (transport workstreamInProcessTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	transport.handler.ServeHTTP(recorder, request)
+	return recorder.Result(), nil
+}
+
+func newWorkstreamStorageHostInProcessFixture(t *testing.T, root string) (*persistworkstream.SQLiteStore, *Handler, *WorkstreamClient) {
+	t.Helper()
+	store, err := persistworkstream.NewSQLiteStore(filepath.Join(root, "workstream.sqlite"))
+	if err != nil {
+		t.Fatalf("open workstream owner: %v", err)
+	}
+	handler, err := NewHandler(HandlerConfig{Token: testToken, JournalDir: filepath.Join(root, "journal")})
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("open storagehost: %v", err)
+	}
+	if err := RegisterWorkstreamGroup(handler, store); err != nil {
+		_ = handler.Close()
+		_ = store.Close()
+		t.Fatalf("register workstream group: %v", err)
+	}
+	base, err := NewClient(ClientConfig{
+		Endpoint: "http://workstream-storagehost.test", Token: testToken,
+		HTTPClient: &http.Client{Transport: workstreamInProcessTransport{handler: handler}},
+	})
+	if err != nil {
+		_ = handler.Close()
+		_ = store.Close()
+		t.Fatalf("open storagehost client: %v", err)
+	}
+	if err := base.Handshake(context.Background()); err != nil {
+		_ = handler.Close()
+		_ = store.Close()
+		t.Fatalf("storagehost handshake: %v", err)
+	}
+	return store, handler, NewWorkstreamClient(base)
+}
+
+func workstreamStorageHostEffectJSON(t *testing.T, root, opID string) string {
+	t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(root, "workstream.sqlite"))
+	if err != nil {
+		t.Fatalf("open workstream proof database: %v", err)
+	}
+	defer database.Close()
+	var effectJSON string
+	if err := database.QueryRow(`SELECT effect_json FROM workstream_storagehost_operation_receipt WHERE op_id = ?`, opID).Scan(&effectJSON); err != nil {
+		t.Fatalf("read workstream effect proof: %v", err)
+	}
+	return effectJSON
 }
 
 func TestWorkstreamResolveLeaseRehashedFailureIsRejectedAfterReopen(t *testing.T) {

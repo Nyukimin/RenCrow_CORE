@@ -20,11 +20,58 @@ type revision2AtlasRunnerFake struct {
 	reviseItemID []string
 	reviseErr    error
 	reviseCtx    context.Context
+	beginCalls   int
+	beginItems   []domainbacklog.Item
+	beginErr     error
+	endCalls     int
+	endTokens    []string
+	endErr       error
+	endCalled    chan struct{}
+	events       chan string
+	beginCheck   func(domainbacklog.Item) error
+	endCheck     func(string) error
 }
 
 func (f *revision2AtlasRunnerFake) AcquireRunnable(_ context.Context) (appbacklog.AcquireRunnableResult, error) {
 	f.acquireCalls++
+	if f.events != nil {
+		f.events <- "acquire"
+	}
 	return f.result, f.acquireErr
+}
+
+func (f *revision2AtlasRunnerFake) BeginRunnerExecution(_ context.Context, item domainbacklog.Item) (string, error) {
+	f.beginCalls++
+	f.beginItems = append(f.beginItems, item)
+	if f.events != nil {
+		f.events <- "begin"
+	}
+	if f.beginErr != nil {
+		return "", f.beginErr
+	}
+	if f.beginCheck != nil {
+		if err := f.beginCheck(item); err != nil {
+			return "", err
+		}
+	}
+	return "runner-claim-token", nil
+}
+
+func (f *revision2AtlasRunnerFake) EndRunnerExecution(_ context.Context, token string) error {
+	f.endCalls++
+	f.endTokens = append(f.endTokens, token)
+	if f.endCalled != nil {
+		f.endCalled <- struct{}{}
+	}
+	if f.events != nil {
+		f.events <- "end"
+	}
+	if f.endCheck != nil {
+		if err := f.endCheck(token); err != nil {
+			return err
+		}
+	}
+	return f.endErr
 }
 
 func (f *revision2AtlasRunnerFake) Revise(ctx context.Context, itemID string, request appbacklog.ReviseRequest) (domainbacklog.Item, error) {

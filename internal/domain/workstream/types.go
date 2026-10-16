@@ -174,6 +174,7 @@ var (
 	ErrQueueFreezeResolutionConflict = errors.New("queue freeze resolution request conflict")
 	ErrImplementationLeaseHeld       = errors.New("implementation lease is held by another unit")
 	ErrQueueFrozen                   = errors.New("implementation queue is frozen")
+	ErrCancellationPending           = errors.New("cancellation closure is pending")
 )
 
 // StageRunReceipt records one idempotent unit/revision/stage execution.
@@ -202,7 +203,7 @@ const (
 	StageRunFailed    = "failed"
 )
 
-// ClosureReceipt is the durable phase marker for LIVE_VERIFIED -> DONE.
+// ClosureReceipt is the durable phase marker for a terminal delivery closure.
 // Prepared receipts are intentionally replayable after a process restart.
 type ClosureReceipt struct {
 	ReceiptID              modulecore.ReceiptID     `json:"receipt_id"`
@@ -212,6 +213,7 @@ type ClosureReceipt struct {
 	UnitID                 string                   `json:"unit_id"`
 	BacklogItemID          modulecore.BacklogItemID `json:"backlog_item_id,omitempty"`
 	ImplementationRevision int                      `json:"implementation_revision"`
+	TargetDeliveryState    string                   `json:"target_delivery_state,omitempty"`
 	Phase                  string                   `json:"phase"`
 	Status                 string                   `json:"status"`
 	WorkstreamID           string                   `json:"workstream_id,omitempty"`
