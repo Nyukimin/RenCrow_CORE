@@ -259,10 +259,21 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       - 未確認: Gmail検証passの実測（取得本文とAtlas snapshotを要する）、実際のメールでの判断の一致、X Bookmark workflowの実データでの一致。
       - 本番反映後の確認（2026-10-16 03:27Z、COREを`736e6a71`でビルドして入れ替え。健全まで約165秒、restarts 0）: 起動の約3分後にAtlas再検証が
         `caller=atlas.revalidation purpose=evaluate_maturation initiator=shiro`として記録され（以前は`core.unattributed`）、36.0秒で完了した。失敗とupstream errorは0。
-        Atlas再検証は元からlowなので時間は変わらない。GmailとX Bookmark workflowの評価は、反映後にまだ実トラフィックが無い（メール受信とViewerの操作で動く）。
+        Atlas再検証は元からlowなので時間は変わらない。X Bookmark workflowの評価は、反映後にまだ実トラフィックが無い（Viewerの操作で動く）。Gmailは下の項目のとおり、認証が切れて動いていなかった。
     - 本番反映後の結果（2026-10-16 01:08Z、COREを`44bf3fbf`でビルドして入れ替え。健全まで約180秒、restarts 0）: 再起動の約2分後にX Bookmarkの要約が28件動き、
       全件が完了（失敗0、upstream error 0、queue待ち0）。生成時間は5.2〜19.9秒（中央値は約10.6秒）で、反映前の21〜77秒と失敗から改善した。全件が`applied=true`で先頭shaは同一。
       別Gemma4だった10月14日（2〜7秒）よりはまだ遅い（実入力は合成より長い）。
+
+    - Gmail取り込みの停止と復旧（2026-10-16）: Gmailの取り込みは、Heartbeatが30分ごとに外部CLI（`rencrow-gmail collect`、OAuthのcredentialsとtokenのファイル）で収集して動く。
+      直近7日の344回の実行がすべて`heartbeat.gmail.error`で、最後に成功したのは9月16日だった（受信記録58件は9月14〜16日のもの）。LLM評価まで届かないため、Gatewayに`gmail`の呼び出しが無かった。
+      - 診断（収集コマンドを1回実行、出力は構造だけ確認）: 終了コード4の`PROVIDER_HTTP_ERROR`で0.2秒。外部への通信は正常で、access tokenの期限は9月16日。
+        401・403以外のHTTPエラー（refresh tokenの拒否と考えられる）。原因は、Google CloudのOAuthアプリの公開ステータスが「テスト中」で、refresh tokenが7日で失効することとみられる。
+      - 復旧: 公開ステータスを「本番環境」へ変更し、同じclientで再認証した。「アプリを公開」はグレーで押せなかったが（IAMはオーナー、検証センターに手がかり無し、新規プロジェクトでも同じ、
+        制限付きスコープの登録の有無も無関係）、ブランディングの「アプリのホームページ」と「プライバシーポリシー」に実在の公開ページのURLを入れると押せた。表示される「アプリの検証が必要です」は、
+        個人用の未確認アプリでは申請せずに使える（利用者100人の上限）。再認証は、`authorize`が一時portで待ち受けるため、実行するhostと別のhostのブラウザで同意する場合はSSHのport転送が要る。待ち時間は5分で、2回間に合わず失敗した。
+      - 復旧後の確認: 収集コマンドは終了コード0でメール1通を取得し、tokenは0600でrefresh tokenあり。次のHeartbeatは成功した（3秒、受信記録`complete`、Atlas backlog 1件を作成）。
+        この1通はdaily briefではなくBacklogのメールで、評価のLLM呼び出しは起きていない。**Gmail評価（話題抽出・検証）のlow effortと呼び出し元の記録`gmail.daily_brief`は、daily briefのメールが処理されるまで本番で未確認。**
+      - 未確認: 本番環境にしたtokenが7日を超えて失効しないこと（2026-10-23以降にGmailのHeartbeatにerrorが出ないか見る）。
 
 次は、上の対応（Gmail・X Bookmark workflowの評価のreasoning effort、Atlas再検証・Gmailの呼び出し元の記録）の本番反映と、反映後のGatewayログでの確認。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
