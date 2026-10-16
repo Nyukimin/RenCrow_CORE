@@ -212,7 +212,7 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
     - 修正の検証: 別hostのスクラッチ（GitHub mainの浅いクローン＋パッチ）で`go vet`と`go test ./...`（251パッケージ ok）、タグ付き`-tags actionindexdefault`（68パッケージ ok）が成功。
       実際の外部リンク要約と同形の要求（実のsystem prompt、400文字のsource_spans、`json_object`）を`worker`宛にGateway経由で5件ずつ送り、COREの`decodeExternalLinkSummaryResponse`と同じ規則
       （フィールドが`summary`と`evidence_ids`だけ、summaryは空でなく2000文字以内、evidence_idsは1〜3個で既存ID）で検証した。型なし（現状）は5件、型付き（修正後）も5件が有効で、選ばれたevidence_idsも同じ。
-      修正後はGatewayが`applied=true`となり、先頭systemの末尾にContextDataNoticeが加わり、時刻はuserメッセージ先頭の封筒へ移る。本番COREへは未反映（反映後に`x_bookmark.external_summary`等のfallbackが消えることを確認する）。
+      修正後はGatewayが`applied=true`となり、先頭systemの末尾にContextDataNoticeが加わり、時刻はuserメッセージ先頭の封筒へ移る。本番COREへの反映後の確認は下の「本番反映後の確認」。
     - 個別の箇所（修正済み）:
       - `game_turn.go`のMio: 人格をCharacter、`gameTurnBoundaryPrompt`をStable、観測をUserにした（`ShiroChat`もこの経路で`shiro_chatworker`へ行くため、宛先が`mio_chat`だけではない）。
       - `subagent/manager.go`の従来の組（`PromptContext`が空のとき）: systemをCharacter、instructionをUserにした。
@@ -229,7 +229,22 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       文面の強さが変わりうる。
     - 付随する観測: 本番COREで、5分ごとのbacklog runnerが`superagent runtime context is required when recorder is configured`で毎回失敗している（再起動後43回、LLM呼び出しの前に落ちるためGatewayには届かない）。型の問題ではなく、既知のOPS不具合（10月9日記録）と同じ系統。
 
-次は、型付けの修正（項目14）の本番反映と、反映後のGatewayログでfallbackが消えることの確認。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+    - 本番反映後の確認（2026-10-16 00:00Z、COREを`cd9b781a`でビルドして入れ替え。バックアップ付きの原子的入れ替え、健全になるまで約175秒、restarts 0）:
+      - 反映直後にX Bookmarkの要約が実際に動き、`x_bookmark.external_summary`の3件が`applied=true`、先頭shaが同一（反映前は10件が10種）。`SystemPrompt`欄の修正が実トラフィックで効いている。
+      - 実チャット（`shiro`2回、`mio`、`midori`）は正常に応答し、`shiro_chatworker`は`applied=true`で先頭shaが固定、`midori_wild`は`applied=true`（先頭shaは従来と同じ）。
+        補助呼び出し（`conversation.thread`の要約）は固定部分が無く`no_static_blocks`のまま。
+    - 付随する観測（今回の変更とは無関係）: `x_bookmark.external_summary`の生成時間は、10月14日21時までは2〜7秒（当時のworkerの実体は別のGemma4）、10月15日03時以降（実体がStrataのQwenへ変更）は21〜77秒になった。
+      反映後の2件は`structured output was incomplete (finish_reason=length)`で失敗した。要約の呼び出しがthinkingを無効にしておらず、出力予算（4096 token）を思考で使い切るとみられる。
+      このバーストの間、同じworkerへの`conversation.thread`の要約2件が24.7秒のqueue待ちで失敗し、チャットの応答も長くなった（shiro 66〜94秒。再起動直後の冷えも含む）。
+      同じ問題は、`SystemPrompt`欄を使うWorkerの他の補助呼び出し（`caller=core.unattributed`。完了した10件が23〜61秒）にも見える。
+    - 対応（X Bookmarkの外部リンク要約、`knowledge/external_link_summary.go`）: 要約の全呼び出し（初回と根拠の修復）に`think:false`と
+      `chat_template_kwargs.enable_thinking:false`を渡す。Workerのrole policyはthinkingを許したままにしている（OPSの思考を保つため）ので、呼び出し側で止める。
+      実測（Gateway経由、実のsystem prompt、`json_object`、2〜5個のsource_spans、各3件）: 既定は11〜27秒・出力375〜1,246 token、`think:false`だけは8〜18秒・418〜954 token（ほぼ効かない）、
+      `chat_template_kwargs`も指定すると6〜7秒・108〜127 tokenで、いずれも有効なJSON。要約の文面は同等で、選ばれるevidence_idsは一部が異なる（どちらも有効）。
+      テスト`TestExternalLinkSummaryRequestsDisableThinkingForEveryCall`（変更前にRed）。
+      未対応: `core.unattributed`の呼び出し元（X Bookmark workflowの評価、Atlas再検証、Gmail評価）は判断の質に思考が効く可能性があり、品質の確認なしには変えない。
+
+次は、X Bookmark要約の修正の本番反映と、`core.unattributed`の他の補助呼び出しのthinkingの扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
