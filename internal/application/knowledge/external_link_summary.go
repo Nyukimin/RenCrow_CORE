@@ -294,6 +294,12 @@ func (s *ExternalLinkSummarizer) generateExternalLinkCall(ctx context.Context, i
 			Temperature:    0,
 			SystemPrompt:   externalLinkSummarySystemPrompt,
 			ResponseFormat: llm.ResponseFormatJSONObject,
+			// 短い構造化JSONを返す仕事で、thinkingは不要。思考が出力予算を使い切ると
+			// finish_reason=length で失敗し、同じWorkerを使う他の呼び出しも塞ぐ。
+			ProviderOptions: map[string]any{
+				"think":                false,
+				"chat_template_kwargs": map[string]any{"enable_thinking": false},
+			},
 		})
 	}
 	response, err := generate([]llm.Message{{Role: "user", Type: llm.PromptContextUser, Content: prompt}})
