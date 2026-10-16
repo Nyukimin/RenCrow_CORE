@@ -242,12 +242,26 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       実測（Gateway経由、実のsystem prompt、`json_object`、2〜5個のsource_spans、各3件）: 既定は11〜27秒・出力375〜1,246 token、`think:false`だけは8〜18秒・418〜954 token（ほぼ効かない）、
       `chat_template_kwargs`も指定すると6〜7秒・108〜127 tokenで、いずれも有効なJSON。要約の文面は同等で、選ばれるevidence_idsは一部が異なる（どちらも有効）。
       テスト`TestExternalLinkSummaryRequestsDisableThinkingForEveryCall`（変更前にRed）。
-      未対応: `core.unattributed`の呼び出し元（X Bookmark workflowの評価、Atlas再検証、Gmail評価）は判断の質に思考が効く可能性があり、品質の確認なしには変えない。
+    - 裏で動くLLM呼び出し（会話の応答ではないWorkerの呼び出し）の残りの調査と対応:
+      - `caller=core.unattributed`（呼び出し元の記録が無い）の正体: CORE起動のたびに約1分後に1件出て、約35秒かかる。起動ログに「Atlas maturation revalidation evaluator enabled」があり、Atlas再検証と判断した。
+        失敗は無い。Atlas再検証は`ReasoningEffortLow`を明示した設計で、変えない。Gmailの呼び出しは72時間で観測されない。X Bookmark workflowの評価は`x_bookmark.workflow`を記録している。
+      - プロジェクトの慣例は、Workerの意味判断のthinkingを止めずlowにすること（Atlas再検証、idlechatの日次要約、toolloop、会話の要約、プロフィール抽出。idlechatとtoolloopはテストで固定）。
+        Gmailの話題抽出・検証とX Bookmark workflowの評価2種（画像prompt抽出、AI Tips評価）だけが、reasoning effortを指定していなかった。
+      - 実測（Gateway経由、各呼び出しの実のsystem prompt、同形の入力6件×3設定。Gmail 8項目と3項目、AI Tips 2件、画像prompt 2件）:
+        既定は10.6〜74.6秒・392〜3,550 token（AI Tipsは予算4096の87%、画像promptは予算1024の87%まで使い、長い入力では`finish_reason=length`で失敗しうる）、
+        lowは8.7〜24.8秒・264〜1,051 token、offは4.7〜18.8秒・82〜842 token。全設定で有効なJSONと期待どおりの分類・判断だったが、
+        **offだけがAI Tips評価の判断を変えた（既定とlowはconditional、offはvaluable）**。判断を伴う仕事はlowが適切（既定と同じ判断で2〜3.5倍速い）。
+      - 対応: Gmail（話題抽出と検証の両pass）とX Bookmark workflowの評価2種に`ReasoningEffortLow`を付けた。Gmailの`ProviderOptions`は、モデル出力から外部効果を作れないよう
+        空のまま保つ（既存の制約）。Atlas再検証とGmailに呼び出し元の記録（`atlas.revalidation`、`gmail.daily_brief`。上流のtrace・task・sessionは上書きしない）を付け、
+        Gatewayで`core.unattributed`にならないようにした。テスト: `TestWorkflowEvaluationsUseLowReasoningEffort`、
+        `TestGmailBriefEvaluatorRequestsUseLowReasoningAndAreAttributed`、`TestLLMRevalidationEvaluatorAttributesItsLLMCall`（いずれも変更前にRed）。
+      - 外部リンク要約（要約のみで判断を伴わない）は`off`のままにする。lowも測ると8.8〜11.0秒・263〜338 tokenで、offの5.7〜7.1秒・108〜127 tokenより遅い。
+      - 未確認: Gmail検証passの実測（取得本文とAtlas snapshotを要する）、実際のメールでの判断の一致、X Bookmark workflowの実データでの一致。
     - 本番反映後の結果（2026-10-16 01:08Z、COREを`44bf3fbf`でビルドして入れ替え。健全まで約180秒、restarts 0）: 再起動の約2分後にX Bookmarkの要約が28件動き、
       全件が完了（失敗0、upstream error 0、queue待ち0）。生成時間は5.2〜19.9秒（中央値は約10.6秒）で、反映前の21〜77秒と失敗から改善した。全件が`applied=true`で先頭shaは同一。
       別Gemma4だった10月14日（2〜7秒）よりはまだ遅い（実入力は合成より長い）。
 
-次は、`core.unattributed`の他の補助呼び出しのthinkingの扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+次は、上の対応（Gmail・X Bookmark workflowの評価のreasoning effort、Atlas再検証・Gmailの呼び出し元の記録）の本番反映と、反映後のGatewayログでの確認。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
