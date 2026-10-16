@@ -243,8 +243,11 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
       `chat_template_kwargs`も指定すると6〜7秒・108〜127 tokenで、いずれも有効なJSON。要約の文面は同等で、選ばれるevidence_idsは一部が異なる（どちらも有効）。
       テスト`TestExternalLinkSummaryRequestsDisableThinkingForEveryCall`（変更前にRed）。
       未対応: `core.unattributed`の呼び出し元（X Bookmark workflowの評価、Atlas再検証、Gmail評価）は判断の質に思考が効く可能性があり、品質の確認なしには変えない。
+    - 本番反映後の結果（2026-10-16 01:08Z、COREを`44bf3fbf`でビルドして入れ替え。健全まで約180秒、restarts 0）: 再起動の約2分後にX Bookmarkの要約が28件動き、
+      全件が完了（失敗0、upstream error 0、queue待ち0）。生成時間は5.2〜19.9秒（中央値は約10.6秒）で、反映前の21〜77秒と失敗から改善した。全件が`applied=true`で先頭shaは同一。
+      別Gemma4だった10月14日（2〜7秒）よりはまだ遅い（実入力は合成より長い）。
 
-次は、X Bookmark要約の修正の本番反映と、`core.unattributed`の他の補助呼び出しのthinkingの扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
+次は、`core.unattributed`の他の補助呼び出しのthinkingの扱いの判断。Mioは、再利用が崩れる原因（実リクエストのbodyをbackendへ再送して調べる案）を特定してから再試行する。
 
 ## 調査上の副作用
 
