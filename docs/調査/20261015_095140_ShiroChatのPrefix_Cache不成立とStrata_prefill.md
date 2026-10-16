@@ -257,6 +257,9 @@ Gateway（RenCrow_LLM `8ac4c87`）とCORE（`a1823be2`）を反映し、`shiro_w
         `TestGmailBriefEvaluatorRequestsUseLowReasoningAndAreAttributed`、`TestLLMRevalidationEvaluatorAttributesItsLLMCall`（いずれも変更前にRed）。
       - 外部リンク要約（要約のみで判断を伴わない）は`off`のままにする。lowも測ると8.8〜11.0秒・263〜338 tokenで、offの5.7〜7.1秒・108〜127 tokenより遅い。
       - 未確認: Gmail検証passの実測（取得本文とAtlas snapshotを要する）、実際のメールでの判断の一致、X Bookmark workflowの実データでの一致。
+      - 本番反映後の確認（2026-10-16 03:27Z、COREを`736e6a71`でビルドして入れ替え。健全まで約165秒、restarts 0）: 起動の約3分後にAtlas再検証が
+        `caller=atlas.revalidation purpose=evaluate_maturation initiator=shiro`として記録され（以前は`core.unattributed`）、36.0秒で完了した。失敗とupstream errorは0。
+        Atlas再検証は元からlowなので時間は変わらない。GmailとX Bookmark workflowの評価は、反映後にまだ実トラフィックが無い（メール受信とViewerの操作で動く）。
     - 本番反映後の結果（2026-10-16 01:08Z、COREを`44bf3fbf`でビルドして入れ替え。健全まで約180秒、restarts 0）: 再起動の約2分後にX Bookmarkの要約が28件動き、
       全件が完了（失敗0、upstream error 0、queue待ち0）。生成時間は5.2〜19.9秒（中央値は約10.6秒）で、反映前の21〜77秒と失敗から改善した。全件が`applied=true`で先頭shaは同一。
       別Gemma4だった10月14日（2〜7秒）よりはまだ遅い（実入力は合成より長い）。
