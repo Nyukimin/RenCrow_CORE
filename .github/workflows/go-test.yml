@@ -3,6 +3,12 @@ name: Canonical Test Plan
 on:
   push:
     branches: [main]
+    # docs だけの変更では実行しない（Go のテストは repository の docs/ を読まない）。
+    # pull_request には付けない（必須チェックが pending のままマージできなくなるのを避ける）。
+    # 週次の cron、workflow_dispatch、workflow_call は従来どおり全件を実行する。
+    paths-ignore:
+      - 'docs/**'
+      - '.public-docs-allowlist'
   pull_request:
   workflow_dispatch:
   workflow_call:

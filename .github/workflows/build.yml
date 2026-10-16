@@ -3,6 +3,10 @@ name: build
 on:
   push:
     branches: ["main"]
+    # docs だけの変更はビルド結果に影響しない（docs/ は go:embed の対象外）。docs の公開規約は Public Docs Guard が検査する。
+    paths-ignore:
+      - 'docs/**'
+      - '.public-docs-allowlist'
 
 jobs:
   build:
