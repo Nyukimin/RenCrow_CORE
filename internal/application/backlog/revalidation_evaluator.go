@@ -326,6 +326,10 @@ func (e *LLMRevalidationEvaluator) Evaluate(ctx context.Context, input Revalidat
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	// 呼び出し元を記録しないとGatewayではcore.unattributedになる。上流が付けた識別は上書きしない。
+	requestCtx = domainllm.WithExecutionObservationDefaults(requestCtx, domainllm.ExecutionObservation{
+		Initiator: e.reviewer, Caller: "atlas.revalidation", Purpose: "evaluate_maturation",
+	})
 	response, err := e.provider.Generate(requestCtx, domainllm.GenerateRequest{
 		SystemPrompt: "You evaluate one RenCrow Atlas Backlog item after maturation. Return exactly one JSON object and no prose. Evaluate all seven required dimensions: necessity, duplication, mergeability, architectural_consistency, technology_validity, implementation_value, timing. decision must be PROMOTE, MERGE, HOLD, or DROP. MERGE requires merged_into naming an existing related item. HOLD requires next_review_trigger. Use only supplied evidence; state uncertainty explicitly. Do not execute, adopt, implement, or mutate anything.",
 		Messages:     []domainllm.Message{{Role: "user", Type: domainllm.PromptContextUser, Content: string(encoded)}},

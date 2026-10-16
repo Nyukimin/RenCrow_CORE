@@ -234,7 +234,7 @@ func (e *gmailBriefEvaluator) EvaluateBrief(ctx context.Context, message GmailMe
 		return gmailBriefBlocked("メール話題の入力が評価コンテキストの上限を超えています"), fmt.Errorf("gmail brief extraction input exceeds %d bytes", gmailBriefMaxModelBytes)
 	}
 
-	extractionResponse, err := e.generate(ctx, gmailBriefExtractionSystemPrompt, string(extractionPayload))
+	extractionResponse, err := e.generate(ctx, "extract_topics", gmailBriefExtractionSystemPrompt, string(extractionPayload))
 	if err != nil {
 		return gmailBriefBlocked("メール話題の抽出を完了できませんでした"), fmt.Errorf("extract Gmail brief topics: %w", err)
 	}
@@ -327,7 +327,7 @@ func (e *gmailBriefEvaluator) EvaluateBrief(ctx context.Context, message GmailMe
 			outcomes = append(outcomes, outcome)
 			continue
 		}
-		assessmentResponse, generateErr := e.generate(ctx, gmailBriefAssessmentSystemPrompt, string(assessmentPayload))
+		assessmentResponse, generateErr := e.generate(ctx, "assess_topic", gmailBriefAssessmentSystemPrompt, string(assessmentPayload))
 		if generateErr != nil {
 			return gmailBriefBlocked(fmt.Sprintf("話題%dの検証・関連性評価を完了できませんでした", topicIndex+1)), fmt.Errorf("assess Gmail brief topic %d: %w", topicIndex+1, generateErr)
 		}
@@ -411,15 +411,21 @@ func validateGmailBriefExecution(ctx context.Context) error {
 	return nil
 }
 
-func (e *gmailBriefEvaluator) generate(ctx context.Context, systemPrompt, input string) (domainllm.GenerateResponse, error) {
+func (e *gmailBriefEvaluator) generate(ctx context.Context, purpose, systemPrompt, input string) (domainllm.GenerateResponse, error) {
 	requestContext, cancel := context.WithTimeout(ctx, gmailBriefLLMTimeout)
 	defer cancel()
+	// 呼び出し元を記録しないとGatewayではcore.unattributedになる。上流が付けた識別は上書きしない。
+	requestContext = domainllm.WithExecutionObservationDefaults(requestContext, domainllm.ExecutionObservation{
+		Initiator: "shiro", Caller: "gmail.daily_brief", Purpose: purpose,
+	})
 	response, err := e.provider.Generate(requestContext, domainllm.GenerateRequest{
 		SystemPrompt:   systemPrompt,
 		Messages:       []domainllm.Message{{Role: "user", Type: domainllm.PromptContextUser, Content: input}},
 		MaxTokens:      4096,
 		Temperature:    0,
 		ResponseFormat: domainllm.ResponseFormatJSONObject,
+		// 判断は止めず、思考を絞る。既定のままだと出力予算を思考で使い切りやすい。
+		ReasoningEffort: domainllm.ReasoningEffortLow,
 		// Generate has no tool field. Keep provider options and callbacks empty so
 		// this semantic pass cannot turn model output into an external effect.
 		ProviderOptions: nil,
