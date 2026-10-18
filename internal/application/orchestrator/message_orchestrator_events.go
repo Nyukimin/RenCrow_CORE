@@ -3,15 +3,57 @@ package orchestrator
 import (
 	"fmt"
 	"log"
+	"strings"
+	"sync"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
+
+type eventTimingBindings struct {
+	mu      sync.Mutex
+	byTrace map[modulecore.TraceID]*turntiming.Recorder
+}
+
+func newEventTimingBindings() *eventTimingBindings {
+	return &eventTimingBindings{byTrace: make(map[modulecore.TraceID]*turntiming.Recorder)}
+}
+
+func (b *eventTimingBindings) Bind(traceID modulecore.TraceID, recorder *turntiming.Recorder) {
+	if b == nil || traceID.Validate() != nil || recorder == nil {
+		return
+	}
+	b.mu.Lock()
+	b.byTrace[traceID] = recorder
+	b.mu.Unlock()
+}
+
+func (b *eventTimingBindings) Take(traceID modulecore.TraceID) *turntiming.Recorder {
+	if b == nil || traceID.Validate() != nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	recorder := b.byTrace[traceID]
+	delete(b.byTrace, traceID)
+	return recorder
+}
+
+func (b *eventTimingBindings) Release(traceID modulecore.TraceID) {
+	if b == nil || traceID.Validate() != nil {
+		return
+	}
+	b.mu.Lock()
+	delete(b.byTrace, traceID)
+	b.mu.Unlock()
+}
 
 type messageEventPort struct {
 	listener            EventListener
 	identities          *conversationIdentityTracker
 	traces              *eventTraceBindings
+	timings             *eventTimingBindings
 	executionIdentities *eventExecutionIdentityBindings
 	publicationFail     *eventPublicationFailureTracker
 }
@@ -21,6 +63,7 @@ func newMessageEventPort(listener EventListener) *messageEventPort {
 		listener:            listener,
 		identities:          newConversationIdentityTracker(),
 		traces:              newEventTraceBindings(),
+		timings:             newEventTimingBindings(),
 		executionIdentities: newEventExecutionIdentityBindings(),
 		publicationFail:     newEventPublicationFailureTracker(),
 	}
@@ -53,6 +96,18 @@ func (p *messageEventPort) BindTrace(taskID string, traceID modulecore.TraceID) 
 
 func (p *messageEventPort) ReleaseTrace(taskID string) {
 	p.traces.Release(taskID)
+}
+
+func (p *messageEventPort) BindTiming(traceID modulecore.TraceID, recorder *turntiming.Recorder) {
+	if p != nil {
+		p.timings.Bind(traceID, recorder)
+	}
+}
+
+func (p *messageEventPort) ReleaseTiming(traceID modulecore.TraceID) {
+	if p != nil {
+		p.timings.Release(traceID)
+	}
 }
 
 func (p *messageEventPort) BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error {
@@ -89,6 +144,13 @@ func (p *messageEventPort) emitWithMessageID(ev OrchestratorEvent, messageID str
 	if p.listener == nil {
 		log.Printf("[MessageOrch] emit SKIPPED: no listener (eventType=%s from=%s to=%s)", ev.Type, ev.From, ev.To)
 		return ev, nil
+	}
+	if ev.Type == "agent.response" && strings.EqualFold(strings.TrimSpace(ev.To), "user") {
+		if recorder := p.timings.Take(traceID); recorder != nil {
+			recorder.Mark(turntiming.PointResponsePublicationStarted)
+			snapshot := recorder.Snapshot()
+			ev.Timing = &snapshot
+		}
 	}
 	log.Printf("[MessageOrch] emit: eventType=%s from=%s to=%s route=%s taskID=%s", ev.Type, ev.From, ev.To, ev.Route, ev.TaskID)
 	if err := p.listener.OnEvent(ev); err != nil {

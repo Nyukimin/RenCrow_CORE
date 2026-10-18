@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -132,7 +133,9 @@ func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t
 		emitted = append(emitted, eventType+":"+content)
 	})
 
-	ctx := llm.ContextWithStreamCallback(context.Background(), func(token string) {
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+	ctx = llm.ContextWithStreamCallback(ctx, func(token string) {
 		previous = append(previous, token)
 	})
 	streamCtx, bundle := lifecycle.WithStreamHooks(ctx, routing.RouteCHAT, "mio", "tsk_00000000-0000-5000-8000-000000000023", "sess-1", "line", "U123", "")
@@ -144,12 +147,21 @@ func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t
 	if callback == nil {
 		t.Fatal("expected stream callback")
 	}
+	callback("")
+	callback(" \t")
+	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; ok {
+		t.Fatal("empty or whitespace-only callback should not mark first visible text")
+	}
 	callback("tok")
+	callback("en")
 
-	if len(previous) != 1 || previous[0] != "tok" {
+	if len(previous) != 4 || previous[0] != "" || previous[1] != " \t" || previous[2] != "tok" || previous[3] != "en" {
 		t.Fatalf("expected previous callback to receive token, got %#v", previous)
 	}
-	if len(emitted) != 1 || emitted[0] != "agent.thinking:tok" {
+	if len(emitted) != 4 || emitted[0] != "agent.thinking:" || emitted[1] != "agent.thinking: \t" || emitted[2] != "agent.thinking:tok" || emitted[3] != "agent.thinking:en" {
 		t.Fatalf("expected thinking event for token, got %#v", emitted)
+	}
+	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; !ok {
+		t.Fatal("first non-empty text callback was not timed")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -125,6 +126,10 @@ func TestCanonicalEventLogAppendUsesCanonicalEnvelopeAndPreservesPayload(t *test
 		Channel:        "web",
 		ChannelAddress: "chat-1",
 		Timestamp:      "2026-08-29T12:34:56.789+09:00",
+		Timing: &turntiming.Snapshot{
+			SchemaVersion: turntiming.SchemaVersion,
+			PointsMS:      map[string]float64{"handler_received": 0, "response_publication_started": 20.5},
+		},
 	}
 
 	persisted, err := log.AppendSequenced(event)

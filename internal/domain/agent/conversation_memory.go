@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 )
 
 var exactSharedRecallLiteralPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9_-]{7,}`)
@@ -101,6 +102,7 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 	if !ok {
 		return conversation.ErrConversationTurnUnavailable
 	}
+	turntiming.Mark(ctx, turntiming.PointConversationCommitStarted)
 	result, err := committer.CommitConversationTurn(ctx, conversation.ConversationTurnRequest{
 		TurnID:           t.TurnID(),
 		TraceID:          t.TraceID(),
@@ -113,6 +115,7 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 		AgentSpeaker:     speaker,
 		RecallTraceItems: pack.ToTraceItems(),
 	})
+	turntiming.Mark(ctx, turntiming.PointConversationCommitEnded)
 	if result.Status == conversation.ConversationTurnPartial {
 		log.Printf("[ConversationTurn] partial outcome turn_id=%s pending_targets=%v error_code=%s",
 			result.TurnID, result.PendingTargets, result.ErrorCode)

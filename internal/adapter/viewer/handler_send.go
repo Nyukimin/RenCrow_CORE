@@ -13,12 +13,13 @@ import (
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type MessageHandler func(ctx context.Context, req SendRequest) (string, error)
-type MessageErrorHandler func(req SendRequest, err error)
+type MessageErrorHandler func(ctx context.Context, req SendRequest, err error)
 type SessionIDResolver func(ctx context.Context) (modulecore.SessionID, error)
 
 type AudioOutputIntent string
@@ -54,6 +55,7 @@ type SendRequest struct {
 type viewerSendRequest struct {
 	ViewerClientID string `json:"viewer_client_id,omitempty"`
 	AudioOutput    string `json:"audio_output,omitempty"`
+	Timings        bool   `json:"timings,omitempty"`
 	InputSource    string `json:"input_source,omitempty"`
 	UserID         string `json:"user_id,omitempty"`
 	DeviceName     string `json:"device_name,omitempty"`
@@ -79,6 +81,7 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 // session_id identical to the Session repository owner used by orchestration.
 func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
 			log.Printf("[Viewer] HandleSend: method not allowed: %s", r.Method)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -95,6 +98,10 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 			log.Printf("[Viewer] HandleSend: empty message and no attachments")
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
+		}
+		var timing *turntiming.Recorder
+		if req.Timings {
+			timing = turntiming.New(handlerReceivedAt)
 		}
 		recipient, err := modulechat.NormalizeViewerRecipient(req.To)
 		if err != nil {
@@ -158,17 +165,24 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 		log.Printf("[Viewer] HandleSend: accepted root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
 			rootTaskID, traceID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
+		if timing != nil {
+			timing.Mark(turntiming.PointAccepted)
+		}
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
+			if timing != nil {
+				ctx = turntiming.WithRecorder(ctx, timing)
+				timing.Mark(turntiming.PointAsyncStart)
+			}
 			log.Printf("[Viewer] HandleSend: async start root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields())
 			response, err := handler(ctx, sendReq)
 			if err != nil {
 				log.Printf("[Viewer] HandleSend: async error root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s %s err=%v", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, provenance.LogFields(), err)
 				if onError != nil {
-					onError(sendReq, err)
+					onError(ctx, sendReq, err)
 				}
 			} else {
 				log.Printf("[Viewer] HandleSend: async complete root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s response_len=%d %s", rootTaskID, traceID, messageID, req.ViewerClientID, recipient, len(response), provenance.LogFields())
@@ -257,6 +271,15 @@ func parseViewerMultipartSendRequest(r *http.Request, saver AttachmentSaver) (vi
 		DeviceName:     r.FormValue("device_name"),
 		Message:        r.FormValue("message"),
 		To:             r.FormValue("to"),
+	}
+	timingValue := strings.TrimSpace(r.FormValue("timings"))
+	switch timingValue {
+	case "":
+	case "true":
+		req.Timings = true
+	case "false":
+	default:
+		return viewerSendRequest{}, nil, fmt.Errorf("invalid timings value")
 	}
 
 	files, err := incomingViewerFiles(r.MultipartForm)

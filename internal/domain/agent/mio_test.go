@@ -14,6 +14,7 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -628,6 +629,58 @@ func TestMioAgent_Chat_WithConversationEngine(t *testing.T) {
 	for _, message := range capturedReq.Messages {
 		if strings.Contains(message.Content, "You are Mio.") {
 			t.Fatalf("RecallPack Persona SystemPrompt was reinjected: %#v", capturedReq.Messages)
+		}
+	}
+}
+
+func TestMioAgentChatRecordsConversationGenerationAndCommitTiming(t *testing.T) {
+	engine := &mockConversationEngine{
+		beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+			return &conversation.RecallPack{
+				ShortContext: []conversation.Message{{Speaker: conversation.SpeakerShiro, Msg: "prior"}},
+			}, nil
+		},
+	}
+	var generationContexts []bool
+	calls := 0
+	provider := &mockLLMProvider{
+		generateFunc: func(ctx context.Context, _ llm.GenerateRequest) (llm.GenerateResponse, error) {
+			calls++
+			generationContexts = append(generationContexts, turntiming.IsBodyGenerationContext(ctx))
+			if calls == 1 {
+				return llm.GenerateResponse{Content: "prior"}, nil
+			}
+			return llm.GenerateResponse{Content: "timed response"}, nil
+		},
+	}
+	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+
+	if _, err := mio.Chat(ctx, newAgentTurnInput(t, "hello", "line", "U123")); err != nil {
+		t.Fatalf("Chat failed: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("provider calls=%d, want initial generation and attribution retry", calls)
+	}
+	for i, marked := range generationContexts {
+		if !marked {
+			t.Errorf("provider call %d did not receive body-generation context", i+1)
+		}
+	}
+	points := recorder.Snapshot().PointsMS
+	for _, point := range []turntiming.Point{
+		turntiming.PointBeginTurnStarted,
+		turntiming.PointBeginTurnEnded,
+		turntiming.PointPromptPreparationStarted,
+		turntiming.PointPromptPreparationEnded,
+		turntiming.PointGenerationProviderStart,
+		turntiming.PointGenerationProviderEnd,
+		turntiming.PointConversationCommitStarted,
+		turntiming.PointConversationCommitEnded,
+	} {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("timing point %q missing: %#v", point, points)
 		}
 	}
 }

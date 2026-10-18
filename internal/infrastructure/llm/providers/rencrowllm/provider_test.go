@@ -13,6 +13,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -126,6 +127,70 @@ func TestGatewayProviderGenerateOwnsCanonicalTransportRequestAndResponse(t *test
 	}
 	if owner.responses[0].ExternalRef != "provider-request-1" {
 		t.Fatalf("provider external ref=%q", owner.responses[0].ExternalRef)
+	}
+}
+
+func TestGatewayProviderTimingMarksHTTPBoundaryOnlyForBodyGeneration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(3 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer server.Close()
+	provider := NewGatewayProviderWithOptions("", "mio", server.URL, time.Second)
+	request := llm.GenerateRequest{Messages: []llm.Message{{Role: "user", Content: "hello"}}}
+	recorder := turntiming.New(time.Now().Add(-time.Second).Round(0))
+	ctx := turntiming.WithBodyGenerationContext(turntiming.WithRecorder(context.Background(), recorder))
+
+	if _, err := provider.Generate(ctx, request); err != nil {
+		t.Fatalf("first Generate() error = %v", err)
+	}
+	first := recorder.Snapshot()
+	requestStarted, startedOK := first.PointsMS[string(turntiming.PointGatewayRequestStarted)]
+	responseHeaders, headersOK := first.PointsMS[string(turntiming.PointGatewayResponseHeaders)]
+	if !startedOK || !headersOK {
+		t.Fatalf("gateway HTTP points missing: %#v", first.PointsMS)
+	}
+	if responseHeaders <= requestStarted {
+		t.Fatalf("gateway response headers %.6fms must follow request start %.6fms", responseHeaders, requestStarted)
+	}
+	if _, err := provider.Generate(ctx, request); err != nil {
+		t.Fatalf("retry Generate() error = %v", err)
+	}
+	second := recorder.Snapshot().PointsMS
+	if second[string(turntiming.PointGatewayRequestStarted)] != requestStarted || second[string(turntiming.PointGatewayResponseHeaders)] != responseHeaders {
+		t.Fatalf("gateway points moved to retry request: first=%#v second=%#v", first.PointsMS, second)
+	}
+
+	untimedRecorder := turntiming.New(time.Now())
+	untimedCtx := turntiming.WithRecorder(context.Background(), untimedRecorder)
+	if _, err := provider.Generate(untimedCtx, request); err != nil {
+		t.Fatalf("routing-style Generate() error = %v", err)
+	}
+	untimed := untimedRecorder.Snapshot().PointsMS
+	if _, ok := untimed[string(turntiming.PointGatewayRequestStarted)]; ok {
+		t.Fatalf("non-body-generation request recorded gateway timing: %#v", untimed)
+	}
+}
+
+func TestGatewayTimingPayloadPreservesFractionalMilliseconds(t *testing.T) {
+	snapshot := turntiming.Snapshot{
+		SchemaVersion: turntiming.SchemaVersion,
+		PointsMS: map[string]float64{
+			string(turntiming.PointGatewayRequestStarted):  1.25,
+			string(turntiming.PointGatewayResponseHeaders): 2.75,
+		},
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded turntiming.Snapshot
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.PointsMS[string(turntiming.PointGatewayRequestStarted)] != 1.25 || decoded.PointsMS[string(turntiming.PointGatewayResponseHeaders)] != 2.75 {
+		t.Fatalf("fractional gateway offsets were truncated: %s => %#v", encoded, decoded.PointsMS)
 	}
 }
 

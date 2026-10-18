@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -261,6 +262,7 @@ type OrchestratorEvent struct {
 	Channel            string                `json:"channel,omitempty"`         // channel identifier
 	ChannelAddress     string                `json:"channel_address,omitempty"` // external channel address (canonical replacement for legacy chat id)
 	Timestamp          string                `json:"timestamp"`
+	Timing             *turntiming.Snapshot  `json:"timing,omitempty"`
 }
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp

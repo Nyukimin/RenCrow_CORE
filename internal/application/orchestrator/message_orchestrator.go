@@ -28,6 +28,7 @@ import (
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainverification "github.com/Nyukimin/RenCrow_CORE/internal/domain/verification"
 	domainvision "github.com/Nyukimin/RenCrow_CORE/internal/domain/vision"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -517,6 +518,10 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
+	if timing := turntiming.FromContext(ctx); timing != nil {
+		o.events.BindTiming(traceID, timing)
+		defer o.events.ReleaseTiming(traceID)
+	}
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.message")
 	o.events.BindTrace(rootTaskID.String(), modulecore.TraceID(req.TraceID))
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
@@ -658,6 +663,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	dailyBriefRequested := isDailyNewsBriefRequest(req.UserMessage)
 	if dailyBriefRequested {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=daily news brief intent"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
@@ -675,6 +681,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		}
 		return activatedTaskID, activateErr
 	}
+	if dailyBriefRequested {
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
+	}
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, rootTaskID, ttsSessionID, activateDailyShiro); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
@@ -687,9 +696,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	explicitDCI := shouldHandleExplicitDCI(o.dciSearcher, req.UserMessage)
 	if explicitDCI {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteRESEARCH, taskLifecycleShiro, "confidence 100% evidence=explicit DCI trigger"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
+	}
+	if explicitDCI {
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input.WithRoute(routing.RouteRESEARCH), taskID, explicitDCI); err != nil {
 		return ProcessMessageResponse{}, err
@@ -703,12 +716,14 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
 	if durableHandled {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=durable store workflow"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
 		if durableErr != nil {
 			return ProcessMessageResponse{}, durableErr
 		}
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 		resp, err := o.completeDurableStore(ctx, req, sess, input, taskID, durableResult)
 		if err != nil {
 			return ProcessMessageResponse{}, err
@@ -728,6 +743,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointRouteDecided)
 	actor, err := actualCoreActorForRequest(decision.Route, req)
 	if err != nil {
 		return ProcessMessageResponse{}, err
@@ -786,6 +802,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {

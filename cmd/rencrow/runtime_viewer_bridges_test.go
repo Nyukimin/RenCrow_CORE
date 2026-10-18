@@ -14,12 +14,15 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	sessionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 type viewerBridgeErrorProcessor struct{}
 
-func (viewerBridgeErrorProcessor) ProcessMessage(context.Context, orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+func (viewerBridgeErrorProcessor) ProcessMessage(ctx context.Context, _ orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	turntiming.Mark(ctx, turntiming.PointRouteDecided)
+	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	return orchestrator.ProcessMessageResponse{}, errors.New("viewer processing failed")
 }
 
@@ -98,7 +101,7 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	factories := buildViewerBridgeHandlers(&config.Config{}, deps, "", ttsEntryRuntime{}, sessionpersistence.NewJSONSessionRepository(t.TempDir()))
 	handler := factories.ViewerSendFromOrch(viewerBridgeErrorProcessor{})
 
-	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","timings":true}`))
 	response := httptest.NewRecorder()
 	handler(response, req)
 
@@ -142,5 +145,24 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	}
 	if event.TraceID != modulecore.TraceID(accepted.TraceID) {
 		t.Fatalf("canonical envelope trace_id = %q, want accepted trace_id %q", event.TraceID, accepted.TraceID)
+	}
+	timing, ok := event.Payload["timing"].(map[string]any)
+	if !ok {
+		t.Fatalf("viewer.error timing = %#v, want partial timing snapshot", event.Payload["timing"])
+	}
+	if timing["schema_version"] != float64(turntiming.SchemaVersion) {
+		t.Fatalf("viewer.error timing schema_version = %#v", timing["schema_version"])
+	}
+	points, ok := timing["points_ms"].(map[string]any)
+	if !ok {
+		t.Fatalf("viewer.error timing points_ms = %#v", timing["points_ms"])
+	}
+	for _, point := range []string{"handler_received", "accepted", "async_start", "route_decided", "dispatch_started"} {
+		if _, ok := points[point]; !ok {
+			t.Errorf("viewer.error timing missing partial point %q: %#v", point, points)
+		}
+	}
+	if _, ok := points[string(turntiming.PointResponsePublicationStarted)]; ok {
+		t.Fatalf("failed turn must not invent response_publication_started: %#v", points)
 	}
 }

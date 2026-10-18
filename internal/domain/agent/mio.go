@@ -12,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 )
 
 // KBManager はKB保存用のインターフェース（Phase 4.2）
@@ -209,7 +210,9 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	var recallPack *conversation.RecallPack
 	if m.conversationEngine != nil {
 		var err error
+		turntiming.Mark(ctx, turntiming.PointBeginTurnStarted)
 		recallPack, err = m.conversationEngine.BeginTurn(ctx, t.SessionID(), userMessage)
+		turntiming.Mark(ctx, turntiming.PointBeginTurnEnded)
 		if err != nil {
 			fmt.Printf("WARN: BeginTurn failed: %v\n", err)
 		}
@@ -234,7 +237,11 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		}
 		return response, nil
 	}
+	turntiming.Mark(ctx, turntiming.PointPromptPreparationStarted)
 	if m.conversationEngine == nil {
+		if m.userMemoryManager != nil {
+			turntiming.Mark(ctx, turntiming.PointUserMemoryStarted)
+		}
 		if userMemoryPrompt, err := m.userMemoryPrompt(ctx); err != nil {
 			log.Printf("[Mio] user memory recall failed: %v", err)
 		} else if userMemoryPrompt != "" {
@@ -243,6 +250,9 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 				Content: userMemoryPrompt,
 				Type:    llm.PromptContextRecall,
 			})
+		}
+		if m.userMemoryManager != nil {
+			turntiming.Mark(ctx, turntiming.PointUserMemoryEnded)
 		}
 	}
 
@@ -350,12 +360,16 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		messages,
 		currentUserMessage,
 	)
+	turntiming.Mark(ctx, turntiming.PointPromptPreparationEnded)
 
 	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), currentSpeaker)
 	req := m.generationRequest(messages, onToken)
 
-	resp, err := m.llmProvider.Generate(ctx, req)
+	generationCtx := turntiming.WithBodyGenerationContext(ctx)
+	turntiming.Mark(ctx, turntiming.PointGenerationProviderStart)
+	resp, err := m.llmProvider.Generate(generationCtx, req)
 	if err != nil {
+		turntiming.Mark(ctx, turntiming.PointGenerationProviderEnd)
 		return "", err
 	}
 	flushLabels()
@@ -369,7 +383,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 			Content: "直前の返答は発言帰属が曖昧です。誰のアイデアかを明示して1回だけ言い直してください。",
 		})
 		retryOnToken, flushRetryLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), currentSpeaker)
-		retryResp, retryErr := m.llmProvider.Generate(ctx, m.generationRequest(retryMessages, retryOnToken))
+		retryResp, retryErr := m.llmProvider.Generate(generationCtx, m.generationRequest(retryMessages, retryOnToken))
 		if retryErr == nil {
 			flushRetryLabels()
 		}
@@ -378,6 +392,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 			finalGeneration = retryResp
 		}
 	}
+	turntiming.Mark(ctx, turntiming.PointGenerationProviderEnd)
 	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
 	response = conversation.StripLeadingSpeakerLabels(response, currentSpeaker)
 	m.rememberExpression(response)

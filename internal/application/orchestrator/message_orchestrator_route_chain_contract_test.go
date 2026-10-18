@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
@@ -13,6 +14,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/patch"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -50,6 +52,60 @@ func TestMessageOrchestrator_RouteChainContract_RoutingDecisionBeforeDispatch(t 
 	}
 	if !strings.Contains(rec.events[decisionIdx].Content, "evidence=rule_dictionary:matched:CHAT") {
 		t.Fatalf("routing.decision event should include structured evidence: %#v", rec.events[decisionIdx])
+	}
+}
+
+func TestMessageOrchestratorOptInTimingIsInlineOnTerminalResponse(t *testing.T) {
+	repo := newMockSessionRepository()
+	mio := &mockMioAgent{
+		decision: routing.NewDecision(routing.RouteCHAT, 1, "timing contract"),
+		response: "timing response",
+	}
+	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
+	attachCanonicalTestTaskOwner(t, orch)
+	rec := &recordingEventListener{}
+	orch.SetEventListener(rec)
+
+	ctx := turntiming.WithRecorder(context.Background(), turntiming.New(time.Now()))
+	if _, err := orch.ProcessMessage(ctx, defaultReq()); err != nil {
+		t.Fatalf("ProcessMessage failed: %v", err)
+	}
+
+	timingEvents := 0
+	for _, event := range rec.events {
+		encoded, err := json.Marshal(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(encoded, &payload); err != nil {
+			t.Fatal(err)
+		}
+		timing, hasTiming := payload["timing"]
+		if event.Type == "agent.response" && event.To == "user" {
+			if !hasTiming {
+				t.Fatalf("terminal user-facing response has no timing snapshot: %#v", payload)
+			}
+			timingEvents++
+			snapshot, ok := timing.(map[string]any)
+			if !ok {
+				t.Fatalf("timing has type %T, want object", timing)
+			}
+			points, ok := snapshot["points_ms"].(map[string]any)
+			if !ok {
+				t.Fatalf("timing.points_ms has type %T, want object", snapshot["points_ms"])
+			}
+			for _, point := range []string{"route_decided", "dispatch_started", "response_publication_started"} {
+				if _, ok := points[point]; !ok {
+					t.Errorf("timing point %q missing from terminal response: %#v", point, points)
+				}
+			}
+		} else if hasTiming {
+			t.Errorf("timing snapshot leaked onto non-terminal event %s->%s: %#v", event.From, event.To, payload)
+		}
+	}
+	if timingEvents != 1 {
+		t.Fatalf("terminal events with timing=%d, want one; events=%#v", timingEvents, rec.events)
 	}
 }
 

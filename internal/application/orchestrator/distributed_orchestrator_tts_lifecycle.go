@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
@@ -99,6 +101,9 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] TTS push degraded:")
 	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[DistributedOrch] VTuber push degraded:")
 	return llm.ContextWithStreamCallback(ctx, func(token string) {
+		if strings.TrimSpace(token) != "" {
+			turntiming.Mark(ctx, turntiming.PointFirstTextCallback)
+		}
 		if prev != nil {
 			prev(token)
 		}

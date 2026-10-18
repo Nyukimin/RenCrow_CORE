@@ -3,8 +3,10 @@ package orchestrator
 import (
 	"fmt"
 	"log"
+	"strings"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -12,6 +14,7 @@ type distributedEventPort struct {
 	listener            EventListener
 	identities          *conversationIdentityTracker
 	traces              *eventTraceBindings
+	timings             *eventTimingBindings
 	executionIdentities *eventExecutionIdentityBindings
 	publicationFail     *eventPublicationFailureTracker
 }
@@ -21,6 +24,7 @@ func newDistributedEventPort(listener EventListener) *distributedEventPort {
 		listener:            listener,
 		identities:          newConversationIdentityTracker(),
 		traces:              newEventTraceBindings(),
+		timings:             newEventTimingBindings(),
 		executionIdentities: newEventExecutionIdentityBindings(),
 		publicationFail:     newEventPublicationFailureTracker(),
 	}
@@ -57,6 +61,18 @@ func (p *distributedEventPort) ReleaseTrace(taskID string) {
 	p.traces.Release(taskID)
 }
 
+func (p *distributedEventPort) BindTiming(traceID modulecore.TraceID, recorder *turntiming.Recorder) {
+	if p != nil {
+		p.timings.Bind(traceID, recorder)
+	}
+}
+
+func (p *distributedEventPort) ReleaseTiming(traceID modulecore.TraceID) {
+	if p != nil {
+		p.timings.Release(traceID)
+	}
+}
+
 func (p *distributedEventPort) BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error {
 	if p == nil {
 		return fmt.Errorf("distributed event port is unavailable")
@@ -90,6 +106,13 @@ func (p *distributedEventPort) emitWithMessageID(ev OrchestratorEvent, messageID
 	p.identities.Assign(&ev, messageID)
 	if p.listener == nil {
 		return ev, nil
+	}
+	if ev.Type == "agent.response" && strings.EqualFold(strings.TrimSpace(ev.To), "user") {
+		if recorder := p.timings.Take(traceID); recorder != nil {
+			recorder.Mark(turntiming.PointResponsePublicationStarted)
+			snapshot := recorder.Snapshot()
+			ev.Timing = &snapshot
+		}
 	}
 	if err := p.listener.OnEvent(ev); err != nil {
 		if p.publicationFail != nil {

@@ -290,7 +290,7 @@ func TestHandleSendLogsCorrelationFields(t *testing.T) {
 	completed := make(chan struct{})
 	h := HandleSend(func(_ context.Context, req SendRequest) (string, error) {
 		return "", errors.New("test failure")
-	}, func(req SendRequest, err error) {
+	}, func(_ context.Context, req SendRequest, err error) {
 		close(completed)
 	})
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{

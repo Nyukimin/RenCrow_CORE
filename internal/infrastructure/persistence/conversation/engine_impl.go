@@ -10,6 +10,7 @@ import (
 	domainmemory "github.com/Nyukimin/RenCrow_CORE/internal/domain/memory"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 
 	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 )
@@ -114,7 +115,9 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	}
 
 	// Recall（想起）
+	turntiming.Mark(ctx, turntiming.PointRecallStarted)
 	recallMessages, err := e.manager.Recall(ctx, sessionID, userMessage, 3)
+	turntiming.Mark(ctx, turntiming.PointRecallEnded)
 	if err != nil {
 		log.Printf("[ConversationEngine] WARN: Recall failed: %v", err)
 		pack.RejectedTraceItems = append(pack.RejectedTraceItems, domconv.RecallTraceItem{
@@ -165,6 +168,7 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	categoryL1KnowledgeSummaries := map[string]struct{}{}
 	failedCategoryL1KnowledgeRecordIDs := map[string]struct{}{}
 	if e.categoryRecallRegistry != nil {
+		turntiming.Mark(ctx, turntiming.PointCategoryStarted)
 		scope := strings.TrimSpace(e.categoryRecallScope)
 		if scope == "" {
 			scope = strings.TrimSpace(e.userID)
@@ -212,6 +216,7 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 				}
 			}
 		}
+		turntiming.Mark(ctx, turntiming.PointCategoryEnded)
 	}
 
 	// Knowledge Base / SearchCache は、外部情報要求が明確な発話だけに使う。
@@ -338,6 +343,8 @@ func (e *RealConversationEngine) loadSharedUserMemory(ctx context.Context, query
 	if e.userMemoryStore == nil || pack == nil || e.userID == "" {
 		return nil
 	}
+	turntiming.Mark(ctx, turntiming.PointUserMemoryStarted)
+	defer turntiming.Mark(ctx, turntiming.PointUserMemoryEnded)
 	// Scan only supply-eligible states. A recency-ordered scan across all
 	// states lets a growing candidate backlog crowd every confirmed/pinned
 	// memory out of the bounded window, so nothing ever reaches the prompt.

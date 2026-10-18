@@ -15,6 +15,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -89,12 +90,17 @@ func buildViewerBridgeHandlers(
 			}
 			log.Printf("[main] viewerSendFromOrch: complete task_id=%s root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s route=%s %s", resp.TaskID, resp.RootTaskID, resp.TraceID, resp.MessageID, req.ViewerClientID, req.To, resp.Route, req.Provenance.LogFields())
 			return resp.Response, nil
-		}, func(req viewer.SendRequest, err error) {
+		}, func(ctx context.Context, req viewer.SendRequest, err error) {
 			if deps.eventRelay != nil {
-				if publishErr := deps.eventRelay.OnEvent(orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
+				event := orchestrator.NewEventWithTraceID(modulecore.TraceID(req.TraceID),
 					"viewer.error", "system", "viewer", err.Error(),
 					"", req.RootTaskID, req.SessionID, "viewer", "viewer-user",
-				)); publishErr != nil {
+				)
+				if recorder := turntiming.FromContext(ctx); recorder != nil {
+					snapshot := recorder.Snapshot()
+					event.Timing = &snapshot
+				}
+				if publishErr := deps.eventRelay.OnEvent(event); publishErr != nil {
 					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 				}
 			}

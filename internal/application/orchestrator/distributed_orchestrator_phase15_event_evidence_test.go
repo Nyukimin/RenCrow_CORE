@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -57,6 +58,35 @@ func TestPhase15DistributedEventPortAssignsStableConversationIdentity(t *testing
 	}
 	if string(listener.events[1].TraceID) == listener.events[1].TaskID.String() {
 		t.Fatalf("trace_id must not reuse task_id: %#v", listener.events[1])
+	}
+}
+
+func TestDistributedEventPortPublishesTimingOnlyOnTerminalUserResponse(t *testing.T) {
+	listener := &distRecordingEventListener{}
+	port := newDistributedEventPort(listener)
+	traceID := modulecore.NewTraceID()
+	recorder := turntiming.New(time.Now())
+	port.BindTrace(phase15TaskID, traceID)
+	port.BindTiming(traceID, recorder)
+	defer port.ReleaseTrace(phase15TaskID)
+	defer port.ReleaseTiming(traceID)
+
+	port.Emit("agent.thinking", "mio", "user", "partial", "CHAT", phase15TaskID, "session-1", "line", "chat-1")
+	port.Emit("agent.response", "mio", "shiro", "internal", "CHAT", phase15TaskID, "session-1", "line", "chat-1")
+	port.Emit("agent.response", "shiro", "user", "complete", "CHAT", phase15TaskID, "session-1", "line", "chat-1")
+
+	if len(listener.events) != 3 {
+		t.Fatalf("event count = %d, want 3", len(listener.events))
+	}
+	if listener.events[0].Timing != nil || listener.events[1].Timing != nil {
+		t.Fatalf("timing leaked onto non-terminal events: %#v", listener.events[:2])
+	}
+	got := listener.events[2].Timing
+	if got == nil || got.SchemaVersion != turntiming.SchemaVersion {
+		t.Fatalf("terminal timing = %#v, want schema version %d", got, turntiming.SchemaVersion)
+	}
+	if _, ok := got.PointsMS[string(turntiming.PointResponsePublicationStarted)]; !ok {
+		t.Fatalf("terminal timing missing response_publication_started: %#v", got.PointsMS)
 	}
 }
 

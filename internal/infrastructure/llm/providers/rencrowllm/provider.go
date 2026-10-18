@@ -12,6 +12,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -178,7 +179,11 @@ func (p *GatewayProvider) Generate(ctx context.Context, req llm.GenerateRequest)
 	}
 
 	// リクエスト実行
+	turntiming.MarkGatewayRequestStarted(ctx)
 	resp, err := p.client.Do(httpReq)
+	if resp != nil {
+		turntiming.MarkGatewayResponseHeaders(ctx)
+	}
 	if err != nil {
 		if receiptErr := failLLMTransport(ctx, receiptOwner, requestID, err); receiptErr != nil {
 			return llm.GenerateResponse{}, receiptErr

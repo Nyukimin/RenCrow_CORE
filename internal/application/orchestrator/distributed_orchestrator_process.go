@@ -12,6 +12,7 @@ import (
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -50,6 +51,10 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 	traceID := modulecore.TraceID(req.TraceID)
 	ctx = contextWithCanonicalTrace(ctx, traceID)
+	if timing := turntiming.FromContext(ctx); timing != nil {
+		o.events.BindTiming(traceID, timing)
+		defer o.events.ReleaseTiming(traceID)
+	}
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.distributed")
 	o.events.BindTrace(rootTaskID.String(), traceID)
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
@@ -167,6 +172,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 	dailyBriefRequested := isDailyNewsBriefRequest(req.UserMessage)
 	if dailyBriefRequested {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=daily news brief intent"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
@@ -184,6 +190,9 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		}
 		return activatedTaskID, activateErr
 	}
+	if dailyBriefRequested {
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
+	}
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, rootTaskID, activateDailyShiro); err != nil {
 		return ProcessMessageResponse{}, err
 	} else if handled {
@@ -194,9 +203,13 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 	explicitDCI := shouldHandleExplicitDCI(o.dciSearcher, req.UserMessage)
 	if explicitDCI {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteRESEARCH, taskLifecycleShiro, "confidence 100% evidence=explicit DCI trigger"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
+	}
+	if explicitDCI {
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input, taskID, explicitDCI); err != nil {
 		return ProcessMessageResponse{}, err
@@ -208,12 +221,14 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
 	if durableHandled {
+		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=durable store workflow"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
 		if durableErr != nil {
 			return ProcessMessageResponse{}, durableErr
 		}
+		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 		resp, err := o.completeDurableStore(ctx, req, sess, input, taskID, durableResult)
 		if err != nil {
 			return ProcessMessageResponse{}, err
@@ -266,6 +281,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 			}
 		}
 	}
+	turntiming.Mark(ctx, turntiming.PointRouteDecided)
 	actor, err := actualCoreActorForRequest(decision.Route, req)
 	if err != nil {
 		return ProcessMessageResponse{}, err
@@ -323,6 +339,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	}
 
 	// 4. ルートに応じてTransport経由で実行
+	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	response, err := o.executeDistributed(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {

@@ -14,6 +14,7 @@ import (
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	categoryrecall "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/categoryrecall"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/conversation/l1sqlite"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -244,6 +245,33 @@ func TestBeginTurn_CategoryRecallRunsForRelatedNormalUtterance(t *testing.T) {
 	}
 	if len(mgr.userMemories) != 0 {
 		t.Fatalf("category recall must not store history: %#v", mgr.userMemories)
+	}
+}
+
+func TestBeginTurnRecordsApplicableMemoryRecallAndCategoryTiming(t *testing.T) {
+	manager := &mockManager{}
+	registry := &categoryRecallRegistryStub{result: domconv.CategoryRecallResult{}}
+	engine := NewRealConversationEngine(manager, domconv.PersonaState{}).
+		WithUserMemoryStore(manager, "ren").
+		WithCategoryRecallRegistry(registry)
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+
+	if _, err := engine.BeginTurn(ctx, "session", "映画について話そう"); err != nil {
+		t.Fatalf("BeginTurn() error = %v", err)
+	}
+	points := recorder.Snapshot().PointsMS
+	for _, point := range []turntiming.Point{
+		turntiming.PointUserMemoryStarted,
+		turntiming.PointUserMemoryEnded,
+		turntiming.PointRecallStarted,
+		turntiming.PointRecallEnded,
+		turntiming.PointCategoryStarted,
+		turntiming.PointCategoryEnded,
+	} {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("timing point %q missing: %#v", point, points)
+		}
 	}
 }
 

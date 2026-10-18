@@ -16,6 +16,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -147,6 +148,25 @@ func TestHandleSSE_FromNowDeliversTransientLiveEventsWithoutID(t *testing.T) {
 	}
 	if got := strings.Count(body, "id: "); got != 1 || !strings.Contains(body, "id: 5\n") {
 		t.Fatalf("only the durable event may carry an id line, got %d id lines: %q", got, body)
+	}
+}
+
+func TestHandleSSE_ProjectsOptInTimingOnTerminalResponse(t *testing.T) {
+	hub := NewEventHub(10)
+	event := sequencedEvent("agent.response", "LIVE-TIMED", 1)
+	event.Timing = &turntiming.Snapshot{
+		SchemaVersion: turntiming.SchemaVersion,
+		PointsMS:      map[string]float64{"handler_received": 0, "response_publication_started": 12.5},
+	}
+	publishOnConnect(hub, event)
+
+	rec := serveTail(t, hub, "/viewer/events?from=now", "", 2)
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"agent.response"`) {
+		t.Fatalf("SSE stream is missing terminal response event: %s", body)
+	}
+	if !strings.Contains(body, `"timing":{"schema_version":1,"points_ms":{"handler_received":0,"response_publication_started":12.5}}`) {
+		t.Fatalf("SSE terminal response is missing timing projection: %s", body)
 	}
 }
 
