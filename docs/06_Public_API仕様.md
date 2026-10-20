@@ -1934,3 +1934,13 @@ Actor payloadを送りません。GETはWorld stateを変更しません。
 不正なquery／cursorは400、現在revisionより先のcursorまたはevent gap／sequence不一致は409、
 reader unavailableは503、unknown schema／source／worldやrevision 0などreader contract違反は502を返します。
 どのエラーでもsnapshotやevent payloadを部分送信しません。
+
+## WORLD v1.4 projection／read bridge（計画・未実装）
+
+この節はWORLD v1.4の接続目標です。R04 Mock World read bridge PoCのfixture／routeを本番WORLD接続へ昇格したり、以下の目標APIが現在稼働しているとみなしたりしません。COREのproduction route登録、WORLD認証API、永続Store、runtime acceptanceは未実装です。
+
+接続時はCORE内部の認証済みowner clientがLifePolicyと既存WorkSet v2をWORLDへ投影し、CORE起点でWORLDのSnapshot／Event／Streamを読みます。CORE projection要求には宛先World／Timeline／`timeline_epoch` scopeを必須としますが、投影の最終route pathとDTOはCORE／WORLD両owner間で未確定です。WORLD v1.4資料にあるprojection route表記は暫定案であり、Timeline scopeを省略するpathを現行契約として採用しません。WORLDのSnapshot／Event／Stream route表記も目標形であり、COREの現行Public APIではありません。公開名とDTOは既存sourceとの衝突確認後、両ownerの合意を経て実装時に確定します。COREにWORLD書込みの利用者向けrouteを追加せず、write policyとOutboxをCORE owner境界内に保ちます。
+
+PORTAL/browserはWORLDへ直接接続せず、COREの認証・利用者scopeに従うread bridgeだけを利用します。WORLD reader credential、DB path、private Memory参照をbrowserへ渡しません。WORLDからCOREへのcallbackも行いません。現在記載されている`GET /viewer/world/snapshot`と`GET /viewer/world/stream`は前節のR04 Mock PoC専用であり、本番routeとして公開されません。
+
+本番read bridgeはSnapshotと連続したEvent/Stream cursorを同じscopeで返します。cursorの欠落、期限切れ、順序飛び、scopeまたはTimeline epochの不一致では部分状態を継続せず、最新Snapshotから再同期します。WORLDが返す観測・活動・受理candidateはCOREの認知やMemory確定ではありません。会話・思考・Task/Runの結果をWORLD側で捏造せず、実仕事の終端はCOREのTask/RunとそのReceiptで照合します。
