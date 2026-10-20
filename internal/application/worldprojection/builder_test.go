@@ -1,0 +1,207 @@
+package worldprojection
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	domainprojection "github.com/Nyukimin/RenCrow_CORE/internal/domain/worldprojection"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+)
+
+func activeTask(id modulecore.TaskID, status domaintask.Status) domaintask.Task {
+	now := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	return domaintask.Task{
+		TaskID:          id,
+		Title:           "assigned work",
+		Route:           domaintask.RouteGeneral,
+		Status:          status,
+		Priority:        domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked,
+		CreatedAt:       now,
+		UpdatedAt:       now.Add(time.Minute),
+	}
+}
+
+func runningRun(taskID modulecore.TaskID, runID modulecore.RunID) domaintask.Run {
+	return domaintask.Run{
+		RunID:       runID,
+		TaskID:      taskID,
+		StartReason: domaintask.RunStartReasonFirst,
+		Status:      domaintask.RunStatusRunning,
+		StartedAt:   time.Date(2026, 10, 20, 9, 1, 0, 0, time.UTC),
+	}
+}
+
+func validBuildInput() BuildWorkSetInput {
+	return BuildWorkSetInput{
+		WorldID:        "world-house",
+		ActorID:        "mio",
+		SourceEpoch:    "core-epoch-1",
+		SourceRevision: 3,
+		ValidUntil:     time.Date(2026, 10, 20, 13, 0, 0, 0, time.UTC),
+	}
+}
+
+func TestBuildWorkSetProjectsActiveTasksAndExcludesTerminal(t *testing.T) {
+	queuedID := modulecore.NewTaskID()
+	runningID := modulecore.NewTaskID()
+	waitingID := modulecore.NewTaskID()
+	blockedID := modulecore.NewTaskID()
+	succeededID := modulecore.NewTaskID()
+	failedID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+
+	waiting := activeTask(waitingID, domaintask.StatusWaiting)
+	waiting.WaitingReason = "waiting for user"
+	input := validBuildInput()
+	input.Tasks = []domaintask.Task{
+		activeTask(queuedID, domaintask.StatusQueued),
+		activeTask(runningID, domaintask.StatusRunning),
+		waiting,
+		activeTask(blockedID, domaintask.StatusBlocked),
+		activeTask(succeededID, domaintask.StatusSucceeded),
+		activeTask(failedID, domaintask.StatusFailed),
+	}
+	input.Runs = []domaintask.Run{runningRun(runningID, runID)}
+	input.RequiresHousePresence = map[modulecore.TaskID]bool{runningID: true}
+	input.ClassificationReasonCodes = map[modulecore.TaskID]string{blockedID: "dependency_blocked"}
+
+	workSet, err := BuildWorkSet(input)
+	if err != nil {
+		t.Fatalf("BuildWorkSet() error = %v", err)
+	}
+	if len(workSet.ActiveWork) != 4 {
+		t.Fatalf("active work count = %d, want 4: %+v", len(workSet.ActiveWork), workSet.ActiveWork)
+	}
+	byTask := make(map[string]domainprojection.WorkItem, len(workSet.ActiveWork))
+	for _, item := range workSet.ActiveWork {
+		byTask[item.TaskID] = item
+	}
+	if got := byTask[string(queuedID)]; got.ExecutionState != domainprojection.ExecutionQueued || got.RunID != "" {
+		t.Fatalf("queued item = %+v", got)
+	}
+	if got := byTask[string(runningID)]; got.ExecutionState != domainprojection.ExecutionRunning ||
+		got.RunID != string(runID) || !got.RequiresHousePresence {
+		t.Fatalf("running item = %+v", got)
+	}
+	if got := byTask[string(waitingID)]; got.ExecutionState != domainprojection.ExecutionWaiting || got.RunID != "" {
+		t.Fatalf("waiting item = %+v", got)
+	}
+	if got := byTask[string(blockedID)]; got.ExecutionState != domainprojection.ExecutionBlocked ||
+		got.ClassificationReasonCode != "dependency_blocked" {
+		t.Fatalf("blocked item = %+v", got)
+	}
+	for _, terminal := range []modulecore.TaskID{succeededID, failedID} {
+		if _, exists := byTask[string(terminal)]; exists {
+			t.Fatalf("terminal task %s was projected", terminal)
+		}
+	}
+}
+
+func TestBuildWorkSetRunningRequiresOneConfirmedRun(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	input := validBuildInput()
+	input.Tasks = []domaintask.Task{activeTask(taskID, domaintask.StatusRunning)}
+	if _, err := BuildWorkSet(input); err == nil {
+		t.Fatal("BuildWorkSet() accepted running work without a run")
+	}
+	input.Runs = []domaintask.Run{
+		runningRun(taskID, modulecore.NewRunID()),
+		runningRun(taskID, modulecore.NewRunID()),
+	}
+	if _, err := BuildWorkSet(input); err == nil {
+		t.Fatal("BuildWorkSet() accepted running work with two active runs")
+	}
+}
+
+func TestBuildWorkSetEmptyFullSetIsNonNil(t *testing.T) {
+	workSet, err := BuildWorkSet(validBuildInput())
+	if err != nil {
+		t.Fatalf("BuildWorkSet() error = %v", err)
+	}
+	if workSet.ActiveWork == nil || len(workSet.ActiveWork) != 0 {
+		t.Fatalf("active_work = %#v, want non-nil empty slice", workSet.ActiveWork)
+	}
+}
+
+func TestBuildWorkSetRejectsDuplicateTaskIDs(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	input := validBuildInput()
+	input.Tasks = []domaintask.Task{
+		activeTask(taskID, domaintask.StatusQueued),
+		activeTask(taskID, domaintask.StatusBlocked),
+	}
+	if _, err := BuildWorkSet(input); err == nil {
+		t.Fatal("BuildWorkSet() accepted duplicate task ids")
+	}
+}
+
+type fakeTaskRunSource struct {
+	tasks []domaintask.Task
+	runs  []domaintask.Run
+}
+
+func (s fakeTaskRunSource) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	var result []domaintask.Task
+	for _, task := range s.tasks {
+		if filter.Status == "" || task.Status == filter.Status {
+			result = append(result, task)
+		}
+	}
+	return result, nil
+}
+
+func (s fakeTaskRunSource) ListRuns(ctx context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	var result []domaintask.Run
+	for _, run := range s.runs {
+		if filter.Status == "" || run.Status == filter.Status {
+			result = append(result, run)
+		}
+	}
+	return result, nil
+}
+
+func TestBuildFullWorkSetReadsCanonicalStore(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	runID := modulecore.NewRunID()
+	source := fakeTaskRunSource{
+		tasks: []domaintask.Task{activeTask(taskID, domaintask.StatusRunning)},
+		runs:  []domaintask.Run{runningRun(taskID, runID)},
+	}
+	input := validBuildInput()
+	input.RequiresHousePresence = map[modulecore.TaskID]bool{taskID: true}
+	workSet, err := BuildFullWorkSet(context.Background(), source, input)
+	if err != nil {
+		t.Fatalf("BuildFullWorkSet() error = %v", err)
+	}
+	if len(workSet.ActiveWork) != 1 || workSet.ActiveWork[0].RunID != string(runID) {
+		t.Fatalf("active work = %+v", workSet.ActiveWork)
+	}
+}
+
+func TestBuildLifePolicyValidatesFallbackSubset(t *testing.T) {
+	input := BuildLifePolicyInput{
+		WorldID:                        "world-house",
+		ActorID:                        "mio",
+		SourceEpoch:                    "core-epoch-1",
+		SourceRevision:                 2,
+		ValidUntil:                     time.Date(2026, 10, 20, 13, 0, 0, 0, time.UTC),
+		PersonaRevision:                "persona-r1",
+		ConditionProfileRef:            "condition-r1",
+		AllowedNonCognitiveActivityIDs: []string{"read", "rest", "walk"},
+		ExpiredFallbackActivityIDs:     []string{"rest"},
+	}
+	policy, err := BuildLifePolicy(input)
+	if err != nil {
+		t.Fatalf("BuildLifePolicy() error = %v", err)
+	}
+	if policy.PersonaRevision != "persona-r1" || len(policy.AllowedNonCognitiveActivityIDs) != 3 {
+		t.Fatalf("policy = %+v", policy)
+	}
+	input.ExpiredFallbackActivityIDs = []string{"run"}
+	if _, err := BuildLifePolicy(input); err == nil {
+		t.Fatal("BuildLifePolicy() accepted a fallback outside allowed activities")
+	}
+}
