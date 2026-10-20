@@ -18,6 +18,7 @@ import (
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domaindci "github.com/Nyukimin/RenCrow_CORE/internal/domain/dci"
 	domaindurablestore "github.com/Nyukimin/RenCrow_CORE/internal/domain/durablestore"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	domainnews "github.com/Nyukimin/RenCrow_CORE/internal/domain/newsbrief"
 	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/proposal"
@@ -781,6 +782,13 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	input = input.WithRoute(decision.Route)
 	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
+	}
+	if o.ttsBridge != nil && ttsSessionID != "" {
+		boundCtx, bindErr := domainexecution.WithIdentity(ctx, taskID, leadRunID, input.TraceID())
+		if bindErr != nil {
+			return ProcessMessageResponse{}, fmt.Errorf("bind TTS execution identity: %w", bindErr)
+		}
+		ctx = boundCtx
 	}
 	if !o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID) {
 		// A TTS session that did not start (unresolved speaker or start failure)

@@ -235,15 +235,11 @@ func (b *actionTTSBridge) sessionContext(ctx context.Context, sessionID string) 
 	if !ok {
 		return ttsActionSession{}, nil, errors.New("TTS Action session is unavailable")
 	}
-	ownedCtx := ctx
-	if _, err := domainexecution.IdentityFromContext(ownedCtx); err != nil {
-		var bindErr error
-		ownedCtx, bindErr = domainexecution.WithIdentity(ownedCtx, session.identity.TaskID, session.identity.RunID, session.identity.TraceID)
-		if bindErr != nil {
-			return ttsActionSession{}, nil, bindErr
-		}
+	ownedCtx, err := domainexecution.WithIdentity(ctx, session.identity.TaskID, session.identity.RunID, session.identity.TraceID)
+	if err != nil {
+		return ttsActionSession{}, nil, err
 	}
-	ownedCtx, err := domainexecution.WithChildBoundActionAttempt(ownedCtx, session.action.ActionID, session.attempt.AttemptID)
+	ownedCtx, err = domainexecution.WithChildBoundActionAttempt(ownedCtx, session.action.ActionID, session.attempt.AttemptID)
 	if err == nil {
 		ownedCtx, err = domaintransport.WithReceiptOwner(ownedCtx, b.transport)
 	}
