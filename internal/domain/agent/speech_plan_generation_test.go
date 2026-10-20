@@ -261,10 +261,10 @@ func TestMioSpeechPlanGenerationFailureReportsValidationAsUnavailable(t *testing
 	}
 }
 
-func TestMioSpeechPlanKeepsRecoverableTextWhenPlanIsNotVoiceable(t *testing.T) {
-	const invalidPlanJSON = `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"本文は表示する。"}],"delivery":{"tone":"neutral","attitude":"neutral","energy":"medium","pace":"normal","mode":"dialogue"},"pause_after_ms":0}],"voice_id":"forbidden"}`
+func TestMioSpeechPlanRecoversUnknownFieldsAsNeutralPlan(t *testing.T) {
+	const unknownFieldPlanJSON = `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"本文は表示する。","before":[{"kind":"surprise","strength":"strong"}]}],"delivery":{"tone":"amused","attitude":"teasing","energy":"high","pace":"fast","mode":"narration"},"pause_after_ms":500}],"voice_id":"forbidden","caption":"happy","model":"untrusted-model"}`
 	provider := &mockLLMProvider{generateFunc: func(_ context.Context, req llm.GenerateRequest) (llm.GenerateResponse, error) {
-		return llm.GenerateResponse{Content: invalidPlanJSON}, nil
+		return llm.GenerateResponse{Content: unknownFieldPlanJSON}, nil
 	}}
 	engine := &mockConversationEngine{}
 	mio := NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine)
@@ -278,8 +278,21 @@ func TestMioSpeechPlanKeepsRecoverableTextWhenPlanIsNotVoiceable(t *testing.T) {
 	if response != "本文は表示する。" {
 		t.Fatalf("response = %q, want recoverable display text", response)
 	}
-	if got.Valid {
-		t.Fatal("plan with a forbidden provider field must not be voiceable")
+	if !got.Valid {
+		t.Fatalf("plan with unknown fields was not recovered: %s", got.FallbackReason)
+	}
+	if got.FallbackReason != speech.FallbackUnknownField {
+		t.Fatalf("FallbackReason = %q, want %q", got.FallbackReason, speech.FallbackUnknownField)
+	}
+	if len(got.Plan.Utterances) != 1 {
+		t.Fatalf("recovered plan utterances = %#v", got.Plan.Utterances)
+	}
+	utterance := got.Plan.Utterances[0]
+	if utterance.Delivery != (speech.Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"}) {
+		t.Fatalf("recovered delivery = %#v, want neutral defaults", utterance.Delivery)
+	}
+	if utterance.PauseAfterMS != 0 || len(utterance.Segments[0].Before) != 0 || len(utterance.Segments[0].After) != 0 {
+		t.Fatalf("recovered plan retained performance cues or pause: %#v", utterance)
 	}
 	if len(engine.commitRequests) != 1 || engine.commitRequests[0].AgentMessage != response {
 		t.Fatalf("committed conversation turns = %#v", engine.commitRequests)

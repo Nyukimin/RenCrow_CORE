@@ -202,7 +202,20 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 			}},
 		},
 	}
-	invalidPlan := speech.Result{DisplayText: "不正な演技指定でも本文は表示する。", FallbackReason: "speech_plan_unknown_field"}
+	recoveredPlan := speech.Result{
+		Valid:          true,
+		DisplayText:    validPlan.DisplayText,
+		FallbackReason: speech.FallbackUnknownField,
+		Plan: speech.SpeechPlan{
+			SchemaVersion: speech.SchemaVersion,
+			Utterances: []speech.Utterance{{
+				Segments:     []speech.Segment{{Text: validPlan.DisplayText}},
+				Delivery:     speech.Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"},
+				PauseAfterMS: 0,
+			}},
+		},
+	}
+	invalidPlan := speech.Result{DisplayText: "不正な演技指定でも本文は表示する。", FallbackReason: speech.FallbackUnsupportedEmoji}
 
 	for _, tc := range []struct {
 		name               string
@@ -216,8 +229,9 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 		wantFallbackReason string
 	}{
 		{name: "valid plan", plan: &validPlan, speechPlanEnabled: true, emitLegacyToken: true, wantPlanPush: true},
+		{name: "recovered unknown-field plan", plan: &recoveredPlan, speechPlanEnabled: true, emitLegacyToken: true, wantPlanPush: true, wantPlanValid: true, wantFallbackReason: speech.FallbackUnknownField},
 		{name: "gateway rejection does not fall back to legacy audio", plan: &validPlan, speechPlanEnabled: true, emitLegacyToken: true, wantPlanPush: true, rejectHandoff: true, wantPlanValid: true, wantFallbackReason: speechPlanHandoffFailed},
-		{name: "invalid plan keeps display only", plan: &invalidPlan, speechPlanEnabled: true, emitLegacyToken: true, wantFallbackReason: speech.FallbackUnknownField},
+		{name: "invalid plan keeps display only", plan: &invalidPlan, speechPlanEnabled: true, emitLegacyToken: true, wantFallbackReason: speech.FallbackUnsupportedEmoji},
 		{name: "disabled deterministic shortcut keeps legacy path", emitLegacyToken: true, wantLegacyTTS: true},
 		{name: "enabled route without callback keeps display and fails closed", speechPlanEnabled: true, emitLegacyToken: true, wantFallbackReason: "speech_plan_callback_unavailable"},
 	} {
@@ -270,6 +284,9 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 				}
 				if len(gotPlan.Utterances) != 1 || gotPlan.Utterances[0].Segments[0].Text != "表示する本文。" {
 					t.Errorf("SpeechPlan handoff = %#v", gotPlan)
+				}
+				if tc.wantFallbackReason == speech.FallbackUnknownField && gotPlan.Utterances[0].Delivery != (speech.Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"}) {
+					t.Errorf("recovered SpeechPlan handoff delivery = %#v, want neutral", gotPlan.Utterances[0].Delivery)
 				}
 				if tc.rejectHandoff {
 					return errors.New("Gateway rejected SpeechPlan")
