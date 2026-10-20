@@ -181,7 +181,7 @@
           <textarea id="imageNegativePrompt" class="daily-desk-input image-negative-prompt" rows="2" maxlength="8000"></textarea>
           <label for="imageSeed">Seed</label>
           <input id="imageSeed" class="desk-input" type="number" value="-1" step="1">
-          <p class="image-profile-note">解像度・steps・CFGは現在のプロファイル設定を使用します。MOSSプロファイル（CFG=1）ではNegative promptは効果がありません。</p>
+          <p class="image-profile-note">解像度・stepsは現在のプロファイル設定を使用します。MOSSではDMD8（CFG=1）で初回生成し、FaceDetailerがraw MOSS（CFG=3）で顔を再処理します。Negative promptはこの2回目に適用されます。</p>
           <button id="imageGenerateBtn" class="desk-primary-btn" type="button">Generate</button>
         </section>
       </aside>
