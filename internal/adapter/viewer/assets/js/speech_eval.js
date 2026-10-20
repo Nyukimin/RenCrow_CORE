@@ -2,8 +2,10 @@
   'use strict';
 
   const MANIFEST_URL = '/viewer/tts/audio?path=speech-eval/manifest.json';
+  const DIAGNOSTIC_MANIFEST_URL = '/viewer/tts/audio?path=speech-eval/diagnostic.json';
   const AUDIO_PATH = '/viewer/tts/audio';
   const MANIFEST_SCHEMA = 'rencrow.speech-eval/1';
+  const DIAGNOSTIC_SCHEMA = 'rencrow.speech-diagnostic/1';
   const RESULTS_SCHEMA = 'rencrow.speech-eval-results/1';
   const STORAGE_PREFIX = 'rencrow.speech-eval.v1:';
   const CASE_COUNT = 20;
@@ -14,6 +16,8 @@
     { key: 'cue_position_fit', label: 'キューの位置と自然さ', allowNA: true },
     { key: 'overall_adoption', label: '全体としての採用意向' },
   ];
+  const DIAGNOSTIC_GROUP_IDS = ['neutral', 'expressive'];
+  const DIAGNOSTIC_CLIP_IDS = ['original', 'gain-6db', 'legacy'];
 
   function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -121,6 +125,67 @@
     return { schema_version: MANIFEST_SCHEMA, set_id: manifest.set_id, items };
   }
 
+  function validateDiagnosticAudioURL(rawURL, origin, setID) {
+    const validatedURL = validateAudioURL(rawURL, origin, setID);
+    const path = new URL(validatedURL, origin).searchParams.get('path');
+    const filename = path.slice(`speech-eval/${setID}/`.length);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.wav$/i.test(filename)) {
+      throw new Error('診断音声ファイル名に安全でない文字が含まれています。');
+    }
+
+    return validatedURL;
+  }
+
+  function validateDiagnosticManifest(manifest, origin) {
+    if (!isRecord(manifest) || manifest.schema_version !== DIAGNOSTIC_SCHEMA) {
+      throw new Error(`診断セットのschema_versionは${DIAGNOSTIC_SCHEMA}である必要があります。`);
+    }
+    if (
+      typeof manifest.set_id !== 'string' ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(manifest.set_id)
+    ) {
+      throw new Error('診断セットのset_idは安全なpath要素で指定してください。');
+    }
+    if (typeof manifest.text !== 'string' || manifest.text.trim() === '' || manifest.text.length > 2000) {
+      throw new Error('診断セットには2000文字以内の比較文を指定してください。');
+    }
+    if (!Array.isArray(manifest.groups) || manifest.groups.length !== DIAGNOSTIC_GROUP_IDS.length) {
+      throw new Error('診断セットにはneutralとexpressiveの2グループを指定してください。');
+    }
+
+    const groups = manifest.groups.map((group, groupIndex) => {
+      const expectedGroupID = DIAGNOSTIC_GROUP_IDS[groupIndex];
+      if (!isRecord(group) || group.id !== expectedGroupID) {
+        throw new Error(`診断グループ${groupIndex + 1}は${expectedGroupID}である必要があります。`);
+      }
+      if (typeof group.label !== 'string' || group.label.trim() === '' || group.label.length > 80) {
+        throw new Error(`診断グループ${expectedGroupID}のlabelが正しくありません。`);
+      }
+      if (!Array.isArray(group.clips) || group.clips.length !== DIAGNOSTIC_CLIP_IDS.length) {
+        throw new Error(`診断グループ${expectedGroupID}には音声を3件指定してください。`);
+      }
+
+      const clips = group.clips.map((clip, clipIndex) => {
+        const expectedClipID = DIAGNOSTIC_CLIP_IDS[clipIndex];
+        if (!isRecord(clip) || clip.id !== expectedClipID) {
+          throw new Error(`診断グループ${expectedGroupID}の音声${clipIndex + 1}は${expectedClipID}である必要があります。`);
+        }
+        if (typeof clip.label !== 'string' || clip.label.trim() === '' || clip.label.length > 120) {
+          throw new Error(`診断音声${expectedClipID}のlabelが正しくありません。`);
+        }
+        return {
+          id: expectedClipID,
+          label: clip.label,
+          url: validateDiagnosticAudioURL(clip.url, origin, manifest.set_id),
+        };
+      });
+
+      return { id: expectedGroupID, label: group.label, clips };
+    });
+
+    return { schema_version: DIAGNOSTIC_SCHEMA, set_id: manifest.set_id, text: manifest.text, groups };
+  }
+
   function isValidRating(value, field) {
     if (Number.isInteger(value) && value >= 1 && value <= 5) return true;
     return field.key === 'cue_position_fit' && value === 'N/A';
@@ -209,6 +274,9 @@
       next: document.getElementById('speechEvalNext'),
       exportJSON: document.getElementById('speechEvalExportJson'),
       exportCSV: document.getElementById('speechEvalExportCsv'),
+      diagnosticPanel: document.getElementById('speechEvalDiagnosticPanel'),
+      diagnosticText: document.getElementById('speechEvalDiagnosticText'),
+      diagnosticGroups: document.getElementById('speechEvalDiagnosticGroups'),
     };
     if (Object.values(ui).some((element) => !element)) return Promise.resolve(null);
 
@@ -247,14 +315,27 @@
 
     function stopCurrentAudio() {
       for (const audio of activeAudios) {
-        try {
-          audio.pause();
-          audio.currentTime = 0;
-        } catch {
-          // The browser can reject seeking while a media resource is changing.
-        }
+        pauseAudio(audio);
       }
-      activeAudios = [];
+      activeAudios = Array.from(ui.diagnosticGroups.querySelectorAll('audio'));
+    }
+
+    function pauseAudio(audio) {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {
+        // The browser can reject seeking while a media resource is changing.
+      }
+    }
+
+    function registerAudio(audio) {
+      audio.addEventListener('play', () => {
+        for (const other of activeAudios) {
+          if (other !== audio) pauseAudio(other);
+        }
+      });
+      activeAudios.push(audio);
     }
 
     function addOption(select, value, label) {
@@ -325,14 +406,7 @@
       audio.preload = 'none';
       audio.src = url;
       audio.setAttribute('aria-label', `音声${clip === 'a' ? 'A' : 'B'}`);
-      audio.addEventListener('play', () => {
-        for (const other of activeAudios) {
-          if (other === audio) continue;
-          other.pause();
-          other.currentTime = 0;
-        }
-      });
-      activeAudios.push(audio);
+      registerAudio(audio);
 
       const ratings = document.createElement('div');
       ratings.className = 'speech-eval__ratings';
@@ -342,6 +416,71 @@
       section.appendChild(audio);
       section.appendChild(ratings);
       return section;
+    }
+
+    function renderDiagnosticClip(group, clip) {
+      const card = document.createElement('article');
+      card.className = 'speech-eval__diagnostic-clip';
+
+      const label = document.createElement('h4');
+      label.className = 'speech-eval__diagnostic-clip-label';
+      label.textContent = clip.label;
+
+      const audio = document.createElement('audio');
+      audio.className = 'speech-eval__diagnostic-audio';
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = clip.url;
+      audio.setAttribute('aria-label', `${group.label} · ${clip.label}`);
+      registerAudio(audio);
+
+      card.appendChild(label);
+      card.appendChild(audio);
+      return card;
+    }
+
+    function renderDiagnostic(manifest) {
+      ui.diagnosticText.textContent = manifest.text;
+      const groups = manifest.groups.map((group) => {
+        const section = document.createElement('section');
+        section.className = 'speech-eval__diagnostic-group';
+
+        const heading = document.createElement('h3');
+        heading.className = 'speech-eval__diagnostic-group-title';
+        heading.textContent = group.label;
+
+        const clips = document.createElement('div');
+        clips.className = 'speech-eval__diagnostic-clips';
+        for (const clip of group.clips) clips.appendChild(renderDiagnosticClip(group, clip));
+
+        section.appendChild(heading);
+        section.appendChild(clips);
+        return section;
+      });
+      ui.diagnosticGroups.replaceChildren(...groups);
+      ui.diagnosticPanel.hidden = false;
+    }
+
+    function loadDiagnosticManifest() {
+      ui.diagnosticPanel.hidden = true;
+      ui.diagnosticText.textContent = '';
+      ui.diagnosticGroups.replaceChildren();
+      return Promise.resolve()
+        .then(() => browserWindow.fetch(DIAGNOSTIC_MANIFEST_URL, { cache: 'no-store', credentials: 'omit' }))
+        .then((response) => {
+          if (!response || !response.ok) return null;
+          return response.json();
+        })
+        .then((rawManifest) => {
+          if (!rawManifest) return;
+          const diagnosticManifest = validateDiagnosticManifest(rawManifest, browserWindow.location.origin);
+          renderDiagnostic(diagnosticManifest);
+        })
+        .catch(() => {
+          ui.diagnosticPanel.hidden = true;
+          ui.diagnosticText.textContent = '';
+          ui.diagnosticGroups.replaceChildren();
+        });
     }
 
     function renderCurrentCase() {
@@ -492,13 +631,16 @@
         } else {
           setStatus(`${CASE_COUNT}件のケースを読み込みました · セット ${manifest.set_id}`, 'ready');
         }
-        return Object.freeze({
+        const app = Object.freeze({
           setRating,
           setPreference,
           navigate,
           exportJSON,
           exportCSV,
         });
+        const query = new URLSearchParams(browserWindow.location.search || '');
+        if (query.get('diagnostic') !== 'mio') return app;
+        return loadDiagnosticManifest().then(() => app);
       })
       .catch((error) => {
         setStatus(error instanceof Error ? error.message : '音声評価セットを読み込めませんでした。', 'error');
@@ -506,7 +648,7 @@
       });
   }
 
-  const speechEvaluation = { initialize, validateManifest };
+  const speechEvaluation = { initialize, validateDiagnosticManifest, validateManifest };
   if (typeof module !== 'undefined' && module.exports) module.exports = speechEvaluation;
   if (typeof window !== 'undefined' && window.document) void initialize(window);
 })();

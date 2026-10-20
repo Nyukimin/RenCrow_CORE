@@ -3,7 +3,9 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 
 const require = createRequire(import.meta.url);
-const { initialize, validateManifest } = require('./speech_eval.js');
+const { initialize, validateDiagnosticManifest, validateManifest } = require('./speech_eval.js');
+
+const DIAGNOSTIC_SET_ID = 'diagnostic-20261020-mio';
 
 function manifestFixture() {
   return {
@@ -22,6 +24,27 @@ function manifestFixture() {
   };
 }
 
+function diagnosticManifestFixture() {
+  const variants = [
+    { id: 'original', label: '原音' },
+    { id: 'gain-6db', label: '<img src=x onerror=alert(1)>' },
+    { id: 'legacy', label: '旧経路の後処理' },
+  ];
+  return {
+    schema_version: 'rencrow.speech-diagnostic/1',
+    set_id: DIAGNOSTIC_SET_ID,
+    text: '大丈夫です。ここで一緒に整理していきましょう。',
+    groups: ['neutral', 'expressive'].map((id) => ({
+      id,
+      label: id === 'neutral' ? '通常' : '感情表現',
+      clips: variants.map((variant) => ({
+        ...variant,
+        url: `/viewer/tts/audio?path=speech-eval/${DIAGNOSTIC_SET_ID}/case01-${id}-${variant.id}.wav`,
+      })),
+    })),
+  };
+}
+
 class FakeElement {
   constructor(tagName = 'div', id = '') {
     this.tagName = tagName.toUpperCase();
@@ -33,6 +56,10 @@ class FakeElement {
     this.classList = { add() {}, remove() {}, toggle() {} };
     this.value = '';
     this.disabled = false;
+    this.hidden = false;
+    this.controls = false;
+    this.preload = '';
+    this.src = '';
     this.currentTime = 0;
     this.pauseCount = 0;
     this._textContent = '';
@@ -118,9 +145,15 @@ class FakeDocument {
       'speechEvalNext',
       'speechEvalExportJson',
       'speechEvalExportCsv',
+      'speechEvalDiagnosticPanel',
+      'speechEvalDiagnosticText',
+      'speechEvalDiagnosticGroups',
     ]) {
       this.elements.set(id, new FakeElement('div', id));
     }
+    this.elements.get('speechEvalDiagnosticPanel').hidden = true;
+    this.elements.get('speechEvalDiagnosticPanel').appendChild(this.elements.get('speechEvalDiagnosticText'));
+    this.elements.get('speechEvalDiagnosticPanel').appendChild(this.elements.get('speechEvalDiagnosticGroups'));
     this.downloads = [];
   }
 
@@ -135,7 +168,7 @@ class FakeDocument {
   }
 }
 
-function fakeBrowser(manifest, storage = new Map()) {
+function fakeBrowser(manifest, storage = new Map(), diagnosticResponse = null, search = '') {
   const blobs = new Map();
   let blobIndex = 0;
   const document = new FakeDocument();
@@ -150,8 +183,9 @@ function fakeBrowser(manifest, storage = new Map()) {
   const browser = {
     document,
     localStorage: storageAPI,
-    location: { origin: 'http://localhost:18790' },
+    location: { origin: 'http://localhost:18790', search },
     Blob,
+    requests: [],
     URL: {
       createObjectURL(blob) {
         const url = `blob:test-${blobIndex++}`;
@@ -161,13 +195,33 @@ function fakeBrowser(manifest, storage = new Map()) {
       revokeObjectURL() {},
     },
     async fetch(url, options) {
-      browser.manifestRequest = { url, options };
-      return { ok: true, async json() { return manifest; } };
+      const request = { url, options };
+      browser.requests.push(request);
+      if (url === '/viewer/tts/audio?path=speech-eval/manifest.json') {
+        browser.manifestRequest = request;
+        return { ok: true, async json() { return manifest; } };
+      }
+      if (url === '/viewer/tts/audio?path=speech-eval/diagnostic.json') {
+        browser.diagnosticRequest = request;
+        if (!diagnosticResponse || !diagnosticResponse.ok) return diagnosticResponse || { ok: false, status: 404 };
+        return { ok: true, async json() { return diagnosticResponse.manifest; } };
+      }
+      return { ok: false, status: 404 };
     },
   };
   browser.blobs = blobs;
   browser.storage = storage;
   return browser;
+}
+
+function countElements(root, tagName) {
+  let count = 0;
+  const visit = (element) => {
+    if (element.tagName === tagName) count += 1;
+    for (const child of element.children) visit(child);
+  };
+  visit(root);
+  return count;
 }
 
 test('manifest validation requires the public 20-item schema and safe local audio paths', () => {
@@ -207,6 +261,99 @@ test('manifest validation requires the public 20-item schema and safe local audi
   const hintWithoutCue = manifestFixture();
   hintWithoutCue.items[1].cue_hint = 'キューのヒント';
   assert.throws(() => validateManifest(hintWithoutCue, 'http://localhost:18790'), /cue_hint/i);
+});
+
+test('diagnostic comparison validates its fixed groups and renders native audio players separately', async () => {
+  assert.equal(typeof validateDiagnosticManifest, 'function', 'diagnostic schema validation should be available');
+  const rawDiagnostic = diagnosticManifestFixture();
+  const normalized = validateDiagnosticManifest(rawDiagnostic, 'http://localhost:18790');
+  assert.equal(normalized.groups.length, 2);
+  assert.deepEqual(normalized.groups.map((group) => group.id), ['neutral', 'expressive']);
+  assert.equal(normalized.groups[0].clips.length, 3);
+  assert.equal(normalized.groups[0].clips[0].url, `/viewer/tts/audio?path=speech-eval/${DIAGNOSTIC_SET_ID}/case01-neutral-original.wav`);
+
+  const browser = fakeBrowser(manifestFixture(), new Map(), { ok: true, manifest: rawDiagnostic }, '?diagnostic=mio');
+  const app = await initialize(browser);
+  const panel = browser.document.getElementById('speechEvalDiagnosticPanel');
+  const groups = browser.document.getElementById('speechEvalDiagnosticGroups');
+  const diagnosticAudios = groups.querySelectorAll('audio');
+  const pairAudios = browser.document.getElementById('speechEvalPair').querySelectorAll('audio');
+
+  assert.equal(browser.diagnosticRequest.url, '/viewer/tts/audio?path=speech-eval/diagnostic.json');
+  assert.equal(browser.diagnosticRequest.options.credentials, 'omit');
+  assert.equal(panel.hidden, false);
+  assert.equal(groups.children.length, 2);
+  assert.equal(diagnosticAudios.length, 6);
+  assert.equal(diagnosticAudios.every((audio) => audio.controls), true);
+  assert.ok(panel.textContent.includes(rawDiagnostic.text));
+  assert.ok(panel.textContent.includes('<img src=x onerror=alert(1)>'));
+  assert.equal(countElements(panel, 'IMG'), 0, 'labels should be inserted as text, not parsed as HTML');
+
+  await diagnosticAudios[0].play();
+  await diagnosticAudios[1].play();
+  assert.ok(diagnosticAudios[0].pauseCount > 0, 'diagnostic playback should stop another diagnostic clip');
+  await pairAudios[0].play();
+  assert.ok(diagnosticAudios[1].pauseCount > 0, 'A/B playback should stop diagnostic playback');
+  assert.equal(diagnosticAudios[1].currentTime, 0);
+
+  app.navigate(1);
+  assert.ok(pairAudios[0].pauseCount > 0, 'A/B navigation should continue to stop previous A/B playback');
+  const nextPairAudio = browser.document.getElementById('speechEvalPair').querySelectorAll('audio')[0];
+  await diagnosticAudios[2].play();
+  assert.ok(nextPairAudio.pauseCount > 0, 'diagnostic playback should still stop A/B after navigation');
+});
+
+test('diagnostic manifest rejects external, traversal, cross-set, and non-WAV audio URLs', () => {
+  assert.equal(typeof validateDiagnosticManifest, 'function', 'diagnostic schema validation should be available');
+  const external = diagnosticManifestFixture();
+  external.groups[0].clips[0].url = 'https://other.example/audio.wav';
+  assert.throws(() => validateDiagnosticManifest(external, 'http://localhost:18790'), /audio|音声/i);
+
+  const traversal = diagnosticManifestFixture();
+  traversal.groups[0].clips[0].url = `/viewer/tts/audio?path=speech-eval/${DIAGNOSTIC_SET_ID}/../secret.wav`;
+  assert.throws(() => validateDiagnosticManifest(traversal, 'http://localhost:18790'), /audio|音声/i);
+
+  const crossSet = diagnosticManifestFixture();
+  crossSet.groups[0].clips[0].url = '/viewer/tts/audio?path=speech-eval/another-set/case01.wav';
+  assert.throws(() => validateDiagnosticManifest(crossSet, 'http://localhost:18790'), /audio|音声/i);
+
+  const extraParameter = diagnosticManifestFixture();
+  extraParameter.groups[0].clips[0].url += '&download=1';
+  assert.throws(() => validateDiagnosticManifest(extraParameter, 'http://localhost:18790'), /audio|音声/i);
+
+  const wrongExtension = diagnosticManifestFixture();
+  wrongExtension.groups[0].clips[0].url = `/viewer/tts/audio?path=speech-eval/${DIAGNOSTIC_SET_ID}/case01-neutral-original.mp3`;
+  assert.throws(() => validateDiagnosticManifest(wrongExtension, 'http://localhost:18790'), /audio|音声/i);
+
+  const scriptPath = diagnosticManifestFixture();
+  scriptPath.groups[0].clips[0].url = `/viewer/tts/audio?path=speech-eval/${DIAGNOSTIC_SET_ID}/%3Cscript%3E.wav`;
+  assert.throws(() => validateDiagnosticManifest(scriptPath, 'http://localhost:18790'), /audio|音声/i);
+});
+
+test('missing optional diagnostic manifest hides only the comparison and preserves the 20-case page', async () => {
+  const browser = fakeBrowser(manifestFixture(), new Map(), { ok: false, status: 404 }, '?diagnostic=mio');
+  await initialize(browser);
+
+  assert.equal(browser.diagnosticRequest?.url, '/viewer/tts/audio?path=speech-eval/diagnostic.json');
+  assert.equal(browser.document.getElementById('speechEvalDiagnosticPanel').hidden, true);
+  assert.equal(browser.document.getElementById('speechEvalDiagnosticGroups').children.length, 0);
+  assert.equal(browser.document.getElementById('speechEvalText').textContent, 'Evaluation prompt 1');
+  assert.equal(browser.document.getElementById('speechEvalPair').querySelectorAll('audio').length, 2);
+  assert.equal(browser.document.getElementById('speechEvalProgress').textContent, '0 / 20 件評価済み');
+  assert.match(browser.document.getElementById('speechEvalStatus').textContent, /20件のケースを読み込みました/);
+});
+
+test('standard 20-case page does not request the optional diagnostic manifest', async () => {
+  const browser = fakeBrowser(manifestFixture());
+  await initialize(browser);
+
+  assert.equal(browser.document.getElementById('speechEvalDiagnosticPanel').hidden, true);
+  assert.equal(browser.requests.length, 1);
+  assert.equal(browser.requests[0].url, '/viewer/tts/audio?path=speech-eval/manifest.json');
+  assert.equal(browser.diagnosticRequest, undefined);
+  assert.equal(browser.document.getElementById('speechEvalText').textContent, 'Evaluation prompt 1');
+  assert.equal(browser.document.getElementById('speechEvalPair').querySelectorAll('audio').length, 2);
+  assert.match(browser.document.getElementById('speechEvalStatus').textContent, /20件のケースを読み込みました/);
 });
 
 test('ratings persist per set, case navigation stops old audio, and reload restores saved scores', async () => {

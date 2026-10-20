@@ -62,6 +62,17 @@
         <button id="speechEvalNext" type="button" disabled>次のケース</button>
       </nav>
     </section>
+
+    <section id="speechEvalDiagnosticPanel" class="speech-eval__diagnostic" aria-labelledby="speechEvalDiagnosticHeading" hidden>
+      <div class="speech-eval__diagnostic-heading">
+        <div>
+          <h2 id="speechEvalDiagnosticHeading">Mio 音声品質の診断比較</h2>
+          <p>この比較は診断用です。20ケースの評価・スコアには含まれません。</p>
+        </div>
+      </div>
+      <p id="speechEvalDiagnosticText" class="speech-eval__diagnostic-text"></p>
+      <div id="speechEvalDiagnosticGroups" class="speech-eval__diagnostic-groups"></div>
+    </section>
     <noscript>評価セットの読み込みと評価の保存にはJavaScriptが必要です。</noscript>
   </main>
 </body>
