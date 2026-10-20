@@ -266,6 +266,21 @@ test('tts playback url uses same-origin proxy for absolute audio urls', () => {
   assert.equal(got, '/viewer/tts/audio?url=http%3A%2F%2F192.168.1.207%3A7870%2Faudio%2Fsample.wav');
 });
 
+test('tts playback url preserves same-origin root-relative audio urls', () => {
+  const {harness} = loadAudioHarness();
+  const localAudioURL = '/viewer/tts/audio?path=voices/cache/sample.wav';
+
+  assert.equal(harness.resolveTTSPlaybackURL(localAudioURL, ''), localAudioURL);
+});
+
+test('tts playback url proxies protocol-relative remote audio urls', () => {
+  const {harness} = loadAudioHarness();
+
+  const got = harness.resolveTTSPlaybackURL('//192.168.1.207:7870/audio/sample.wav', '');
+
+  assert.equal(got, '/viewer/tts/audio?url=http%3A%2F%2F192.168.1.207%3A7870%2Faudio%2Fsample.wav');
+});
+
 test('speaker button can turn ready audio off without stopping central chat fallback', async () => {
   const {harness, elements, timers} = loadAudioHarness();
   const audioBtn = elements.get('audioBtn');
