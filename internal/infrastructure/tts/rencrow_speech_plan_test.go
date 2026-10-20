@@ -837,10 +837,14 @@ func TestRenCrowTTSBridgeCompletesReceiptForEachSpeechUtterance(t *testing.T) {
 
 type speechPlanReceiptOwner struct {
 	begun, completed, failed int
+	beginErr                 error
 }
 
 func (o *speechPlanReceiptOwner) BeginRequest(_ context.Context, operation string) (domaintransport.Request, error) {
 	o.begun++
+	if o.beginErr != nil {
+		return domaintransport.Request{}, o.beginErr
+	}
 	return domaintransport.Request{RequestID: modulecore.NewRequestID(), Operation: operation, Sequence: o.begun}, nil
 }
 
@@ -1042,6 +1046,109 @@ func TestRenCrowTTSBridgeWritesNullForUnavailableOptionalMetrics(t *testing.T) {
 	}
 }
 
+func TestRenCrowTTSBridgeLogsReceiptBeginFailureStageWithoutSendingRequest(t *testing.T) {
+	var logs bytes.Buffer
+	oldWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(oldWriter)
+
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requestCount++
+	}))
+	defer server.Close()
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: server.URL, OutputDir: t.TempDir()})
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-receipt-begin-failure", CharacterID: "mio", VoiceID: "mio"}); err != nil {
+		t.Fatal(err)
+	}
+	owner := &speechPlanReceiptOwner{beginErr: errors.New("private receipt failure detail")}
+	ctx, err := domaintransport.WithReceiptOwner(context.Background(), owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx = speech.WithPlaybackProgress(ctx, immediatePlaybackProgress{})
+	turnID := string(modulecore.NewTurnID())
+	err = bridge.PushSpeechPlan(ctx, "tts-receipt-begin-failure", string(modulecore.NewSessionID()), turnID, "mio", speech.SpeechPlan{
+		SchemaVersion: speech.SchemaVersion,
+		Utterances:    []speech.Utterance{{Segments: []speech.Segment{{Text: "private speech text"}}}},
+	})
+	if err == nil {
+		t.Fatal("PushSpeechPlan() error = nil, want receipt begin failure")
+	}
+	if requestCount != 0 {
+		t.Fatalf("Gateway request count = %d, want 0 when receipt begin fails", requestCount)
+	}
+	var observation map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &observation); err != nil {
+		t.Fatalf("decode receipt failure observation JSON %q: %v", logs.String(), err)
+	}
+	if observation["turn_id"] != turnID || observation["utterance_index"] != float64(0) {
+		t.Errorf("failure correlation = turn_id=%#v utterance_index=%#v", observation["turn_id"], observation["utterance_index"])
+	}
+	if observation["failure_stage"] != "receipt_begin" {
+		t.Errorf("failure_stage = %#v, want receipt_begin", observation["failure_stage"])
+	}
+	if observation["fallback_reason"] != speechPlanFallbackTransport {
+		t.Errorf("fallback_reason = %#v, want %q", observation["fallback_reason"], speechPlanFallbackTransport)
+	}
+	for _, forbidden := range []string{"private receipt failure detail", "private speech text", server.URL} {
+		if strings.Contains(logs.String(), forbidden) {
+			t.Errorf("receipt failure observation leaked %q: %s", forbidden, logs.String())
+		}
+	}
+}
+
+func TestRenCrowTTSBridgeLogsGatewayStatusFailureStageAndStatus(t *testing.T) {
+	var logs bytes.Buffer
+	oldWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(oldWriter)
+
+	const privateBody = "private gateway response detail"
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount++
+		http.Error(w, privateBody, http.StatusBadRequest)
+	}))
+	defer server.Close()
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: server.URL, OutputDir: t.TempDir()})
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-gateway-status-failure", CharacterID: "mio", VoiceID: "mio"}); err != nil {
+		t.Fatal(err)
+	}
+	turnID := string(modulecore.NewTurnID())
+	err := bridge.PushSpeechPlan(speech.WithPlaybackProgress(context.Background(), immediatePlaybackProgress{}), "tts-gateway-status-failure", string(modulecore.NewSessionID()), turnID, "mio", speech.SpeechPlan{
+		SchemaVersion: speech.SchemaVersion,
+		Utterances:    []speech.Utterance{{Segments: []speech.Segment{{Text: "private speech text"}}}},
+	})
+	if err == nil {
+		t.Fatal("PushSpeechPlan() error = nil, want Gateway status failure")
+	}
+	if requestCount != 1 {
+		t.Fatalf("Gateway request count = %d, want 1", requestCount)
+	}
+	var observation map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &observation); err != nil {
+		t.Fatalf("decode Gateway failure observation JSON %q: %v", logs.String(), err)
+	}
+	if observation["turn_id"] != turnID || observation["utterance_index"] != float64(0) {
+		t.Errorf("failure correlation = turn_id=%#v utterance_index=%#v", observation["turn_id"], observation["utterance_index"])
+	}
+	if observation["failure_stage"] != "gateway_status" {
+		t.Errorf("failure_stage = %#v, want gateway_status", observation["failure_stage"])
+	}
+	if observation["gateway_status"] != float64(http.StatusBadRequest) {
+		t.Errorf("gateway_status = %#v, want %d", observation["gateway_status"], http.StatusBadRequest)
+	}
+	if observation["fallback_reason"] != speechPlanFallbackTransport {
+		t.Errorf("fallback_reason = %#v, want %q", observation["fallback_reason"], speechPlanFallbackTransport)
+	}
+	for _, forbidden := range []string{privateBody, "private speech text", server.URL} {
+		if strings.Contains(logs.String(), forbidden) {
+			t.Errorf("Gateway failure observation leaked %q: %s", forbidden, logs.String())
+		}
+	}
+}
+
 func TestRenCrowTTSBridgeLogsBoundedSpeechPlanTransportAndPlaybackMetrics(t *testing.T) {
 	var logs bytes.Buffer
 	oldWriter := log.Writer()
@@ -1127,6 +1234,9 @@ func TestRenCrowTTSBridgeLogsBoundedSpeechPlanTransportAndPlaybackMetrics(t *tes
 	}
 	if fallback, ok := observation["fallback_reason"]; !ok || fallback != nil {
 		t.Errorf("fallback_reason = %#v, want JSON null on success", fallback)
+	}
+	if _, ok := observation["failure_stage"]; ok {
+		t.Errorf("failure_stage = %#v, want omitted on success", observation["failure_stage"])
 	}
 	for _, forbidden := range []string{"この本文", server.URL, bridge.cfg.OutputDir, "Authorization"} {
 		if strings.Contains(logs.String(), forbidden) {

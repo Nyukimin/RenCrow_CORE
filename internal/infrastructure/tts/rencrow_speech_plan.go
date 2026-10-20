@@ -47,6 +47,8 @@ type speechPlanSynthesisResponse struct {
 	IrodoriSeed     *uint64
 	SynthesisMS     *uint64
 	QueueWait       time.Duration
+	FailureStage    string
+	GatewayStatus   *int
 }
 
 type speechPlanResponseMetadata struct {
@@ -69,6 +71,8 @@ type speechPlanTransportObservation struct {
 	FirstAudioMS         *int64  `json:"first_audio_ms"`
 	PlaybackDurationMS   *int64  `json:"playback_duration_ms"`
 	FallbackReason       *string `json:"fallback_reason"`
+	FailureStage         *string `json:"failure_stage,omitempty"`
+	GatewayStatus        *int    `json:"gateway_status,omitempty"`
 }
 
 const (
@@ -80,6 +84,13 @@ const (
 	speechPlanFallbackTransport = "speech_transport_failed"
 	speechPlanFallbackAudioSave = "speech_audio_save_failed"
 	speechPlanFallbackPlayback  = "speech_playback_failed"
+
+	speechPlanFailureStageRequestBuild       = "request_build"
+	speechPlanFailureStageReceiptBegin       = "receipt_begin"
+	speechPlanFailureStageHTTPTransport      = "http_transport"
+	speechPlanFailureStageGatewayStatus      = "gateway_status"
+	speechPlanFailureStageResponseValidation = "response_validation"
+	speechPlanFailureStageResponseReceipt    = "response_receipt"
 )
 
 // PushSpeechPlan sends each selected utterance to the canonical Gateway route
@@ -187,6 +198,11 @@ func (b *RenCrowTTSBridge) PushSpeechPlan(ctx context.Context, ttsSessionID, con
 		result, err := b.synthesizeSpeechPlanUtterance(turnCtx, reqBody, utteranceIndex)
 		observations[utteranceIndex].TTSQueueWaitMS = milliseconds(result.QueueWait)
 		if err != nil {
+			if result.FailureStage != "" {
+				failureStage := result.FailureStage
+				observations[utteranceIndex].FailureStage = &failureStage
+			}
+			observations[utteranceIndex].GatewayStatus = result.GatewayStatus
 			setSpeechPlanFallbackReason(observations, utteranceIndex, speechPlanFailureReason(err, speechPlanFallbackTransport))
 			return speechPlanProgressFailure(progress, utteranceIndex, err)
 		}
@@ -392,14 +408,14 @@ func (b *RenCrowTTSBridge) postSpeechPlanUtterance(ctx context.Context, body []b
 	if owned {
 		receipt, err := owner.BeginRequest(ctx, "tts.synthesis")
 		if err != nil {
-			return speechPlanSynthesisResponse{}, fmt.Errorf("begin TTS transport request: %w", err)
+			return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageReceiptBegin}, fmt.Errorf("begin TTS transport request: %w", err)
 		}
 		requestID = receipt.RequestID
 	}
 	requestURL := normalizeSynthesisURL(b.cfg.HTTPBaseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("build SpeechPlan Gateway request: %w", err))
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageRequestBuild}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("build SpeechPlan Gateway request: %w", err))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "audio/wav")
@@ -411,48 +427,50 @@ func (b *RenCrowTTSBridge) postSpeechPlanUtterance(ctx context.Context, body []b
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan Gateway request failed: %w", err))
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageHTTPTransport}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan Gateway request failed: %w", err))
 	}
 	defer resp.Body.Close()
 	if err := validateSpeechPlanResponseOrigin(req, resp); err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 		if err := b.completeSpeechPlanResponse(ctx, owner, owned, requestID, ttsHTTPExternalRef(resp)); err != nil {
-			return speechPlanSynthesisResponse{}, err
+			status := resp.StatusCode
+			return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseReceipt, GatewayStatus: &status}, err
 		}
 		code, message := parseSynthesisError(responseBody)
-		return speechPlanSynthesisResponse{}, fmt.Errorf("SpeechPlan Gateway failed status=%d code=%s message=%s", resp.StatusCode, code, message)
+		status := resp.StatusCode
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageGatewayStatus, GatewayStatus: &status}, fmt.Errorf("SpeechPlan Gateway failed status=%d code=%s message=%s", resp.StatusCode, code, message)
 	}
 	metadata, err := validateSpeechPlanResponseHeaders(resp.Header, string(requestID), utteranceIndex)
 	if err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
 	}
 	if resp.ContentLength > maxSpeechPlanWAVBytes {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan WAV exceeds %d bytes", maxSpeechPlanWAVBytes))
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan WAV exceeds %d bytes", maxSpeechPlanWAVBytes))
 	}
 	wav, err := io.ReadAll(io.LimitReader(resp.Body, maxSpeechPlanWAVBytes+1))
 	if err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("read SpeechPlan WAV response: %w", err))
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("read SpeechPlan WAV response: %w", err))
 	}
 	if int64(len(wav)) > maxSpeechPlanWAVBytes {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan WAV exceeds %d bytes", maxSpeechPlanWAVBytes))
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, fmt.Errorf("SpeechPlan WAV exceeds %d bytes", maxSpeechPlanWAVBytes))
 	}
 	if err := validateWAVBytes(wav); err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
 	}
 	if err := ctx.Err(); err != nil {
-		return speechPlanSynthesisResponse{}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
+		return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseValidation}, b.failSpeechPlanRequest(ctx, owner, owned, requestID, err)
 	}
 	responseID := modulecore.NewResponseID()
 	if owned {
 		receipt, err := owner.CompleteResponse(context.WithoutCancel(ctx), requestID, ttsHTTPExternalRef(resp))
 		if err != nil {
-			return speechPlanSynthesisResponse{}, fmt.Errorf("persist TTS transport response: %w", err)
+			return speechPlanSynthesisResponse{FailureStage: speechPlanFailureStageResponseReceipt}, fmt.Errorf("persist TTS transport response: %w", err)
 		}
 		responseID = receipt.ResponseID
 	}
