@@ -204,6 +204,7 @@ func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
 func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
 	userMessage := t.MessageText()
 	currentSpeaker := conversationSpeakerForViewerRecipient(t.ViewerRecipient(), conversation.SpeakerMio)
+	speechPlanMode := SpeechPlanCallbackFromContext(ctx) != nil
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	var messages []llm.Message
@@ -351,6 +352,9 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	if attributionPrompt != "" {
 		messages = append(messages, llm.Message{Role: "system", Content: attributionPrompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "attribution_state"}})
 	}
+	if speechPlanMode {
+		messages = append(messages, llm.Message{Role: "system", Content: speechPlanInstruction(), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "speech_plan_contract"}})
+	}
 
 	// ユーザーメッセージを最後に追加
 	currentUserMessage := userMessageWithAttachments(userMessage, t.Attachments())
@@ -362,21 +366,35 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	)
 	turntiming.Mark(ctx, turntiming.PointPromptPreparationEnded)
 
-	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), currentSpeaker)
+	var streamCallback llm.StreamCallback
+	if !speechPlanMode {
+		streamCallback = llm.StreamCallbackFromContext(ctx)
+	}
+	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(streamCallback, currentSpeaker)
 	req := m.generationRequest(messages, onToken)
+	if speechPlanMode {
+		req.ResponseFormat = llm.ResponseFormatJSONObject
+		// Structured JSON output is non-streaming by contract. Do not expose
+		// provider tokens to the legacy TTS or Avatar stream hooks.
+		req.OnToken = nil
+	}
 
 	generationCtx := turntiming.WithBodyGenerationContext(ctx)
 	turntiming.Mark(ctx, turntiming.PointGenerationProviderStart)
-	resp, err := m.llmProvider.Generate(generationCtx, req)
+	resp, generationDuration, err := generateSpeechPlanResponse(generationCtx, m.llmProvider, req, speechPlanMode)
 	if err != nil {
 		turntiming.Mark(ctx, turntiming.PointGenerationProviderEnd)
 		return "", err
 	}
 	flushLabels()
 
+	planResult, structuredSpeechPlan := parseSpeechPlan(ctx, resp.Content, generationDuration)
 	response := conversation.StripLeadingSpeakerLabels(resp.Content, currentSpeaker)
+	if structuredSpeechPlan {
+		response = planResult.DisplayText
+	}
 	finalGeneration := resp
-	if violatesAttributionInChat(response, latestOther) {
+	if !structuredSpeechPlan && violatesAttributionInChat(response, latestOther) {
 		retryMessages := append([]llm.Message{}, messages...)
 		retryMessages = append(retryMessages, llm.Message{
 			Role:    "user",
@@ -393,15 +411,12 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		}
 	}
 	turntiming.Mark(ctx, turntiming.PointGenerationProviderEnd)
-	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
-	response = conversation.StripLeadingSpeakerLabels(response, currentSpeaker)
-	m.rememberExpression(response)
-	if onMetrics := llm.GenerationMetricsCallbackFromContext(ctx); onMetrics != nil && (finalGeneration.TokensUsed > 0 || finalGeneration.TokensPerSecond > 0) {
-		onMetrics(llm.GenerationMetrics{
-			CompletionTokens: finalGeneration.TokensUsed,
-			TokensPerSecond:  finalGeneration.TokensPerSecond,
-		})
+	if !structuredSpeechPlan {
+		response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+		response = conversation.StripLeadingSpeakerLabels(response, currentSpeaker)
 	}
+	m.rememberExpression(response)
+	reportGenerationMetrics(ctx, finalGeneration)
 
 	// Canonical atomic EndTurn commit.
 	if m.conversationEngine != nil {

@@ -42,7 +42,7 @@ func buildTTSClientBridge(
 		player := ttsinfra.NewCommandPlayer(cmds)
 		sink = ttsinfra.NewAsyncAudioSink(ttsinfra.NewPlaybackAudioSink(player, ""))
 	}
-	onChunkFn := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
+	publishChunk := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL, turnID string, pauseAfterMS int, playbackOutput string) {
 		if isStaleTTSPublicSession(sessionID) {
 			log.Printf("[TTS] dropping stale idlechat chunk session=%s public_playback_ref=%s chunk=%d", sessionID, publicPlaybackRef, chunkIndex)
 			return
@@ -60,9 +60,12 @@ func buildTTSClientBridge(
 			SessionID:         publicSessionID,
 			PublicPlaybackRef: publicPlaybackRef,
 			MessageID:         messageID,
+			TurnID:            turnID,
+			PlaybackOutput:    playbackOutput,
 			TurnIndex:         turnIndex,
 			UtteranceID:       utteranceID,
 			ChunkIndex:        publicChunkIndex,
+			PauseAfterMS:      pauseAfterMS,
 			CharacterID:       characterID,
 			SpeechText:        text,
 			DisplayText:       displayText,
@@ -96,6 +99,12 @@ func buildTTSClientBridge(
 		event.MessageID = modulecore.MessageID(payload.MessageID)
 		event.TurnIndex = payload.TurnIndex
 		onChunk(event)
+	}
+	onChunkFn := func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string) {
+		publishChunk(sessionID, publicPlaybackRef, traceID, chunkIndex, characterID, text, displayText, audioPath, audioURL, "", 0, "")
+	}
+	onSpeechChunkFn := func(chunk ttsinfra.SpeechPlanChunkReady) {
+		publishChunk(chunk.TTSSessionID, chunk.PublicPlaybackRef, chunk.TraceID, chunk.UtteranceIndex, chunk.SpeakerID, chunk.SpeechText, chunk.DisplayText, chunk.AudioPath, chunk.AudioURL, chunk.TurnID, chunk.PauseAfterMS, chunk.PlaybackOutput)
 	}
 	onSessionDoneFn := func(sessionID, traceID, characterID string) {
 		if isStaleTTSPublicSession(sessionID) {
@@ -148,6 +157,7 @@ func buildTTSClientBridge(
 		DownloadAudio:      len(cmds) > 0,
 		Sink:               sink,
 		OnChunkReady:       onChunkFn,
+		OnSpeechChunkReady: onSpeechChunkFn,
 		OnSessionCompleted: onSessionDoneFn,
 	})
 	log.Printf("TTS RenCrow_TTS Gateway bridge enabled (/api/tts base=%s)", gatewayBaseURL)

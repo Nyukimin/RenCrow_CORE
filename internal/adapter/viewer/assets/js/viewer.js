@@ -413,6 +413,11 @@ const ttsPlayback = {
   currentSessionId: '',
   currentChunkIndex: -1,
   currentUtteranceId: '',
+  currentTurnId: '',
+  currentPlaybackOutput: '',
+  currentPauseAfterMs: null,
+  currentSpeechProgressState: null,
+  currentSpeechProgressTurnState: null,
   currentPublicPlaybackRef: '',
   currentMessageId: '',
   currentTurnIndex: -1,
@@ -425,6 +430,14 @@ const ttsPlayback = {
   seq: 0,
   preloadedAudio: new Map(),
 };
+// The accepted speech turn owns its opaque cancel capability. Keep capabilities in memory only.
+// Failed requests remain pending and are retried on the next user interruption.
+let speechCancelGeneration = 0;
+let speechCancelCapabilitySequence = 0;
+let activeSpeechCancelCapability = null;
+const pendingSpeechCancelCapabilities = new Map();
+const speechCancelRequestsInFlight = new Set();
+let speechCancelError = '';
 const viewerControl = {
   clientId: loadViewerClientID(),
   activeAudioViewerId: '',
@@ -447,6 +460,8 @@ const centralTTSSpeech = {
   characterId: '',
   sessionId: '',
   publicPlaybackRef: '',
+  messageId: '',
+  turnId: '',
   bubbleKind: '',
   active: false,
   preRendered: false,
@@ -917,20 +932,20 @@ function isIdleChatSessionId(sessionId) {
   return sid.indexOf('idle-') === 0 || sid.indexOf('forecast-') === 0 || sid.indexOf('story-') === 0 || sid.indexOf('story-simple-') === 0;
 }
 
-function setCentralTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex) {
+function setCentralTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex, turnId) {
   const target = isIdleChatSessionId(sessionId) ? 'idle' : 'central';
-  setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex);
+  setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex, turnId);
 }
 
-function setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex) {
+function setTTSSpeechText(target, characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex, turnId) {
   if (target === 'idle') {
     renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnIndex);
     return;
   }
-  renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef);
+  renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnId);
 }
 
-function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef) {
+function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utteranceId, publicPlaybackRef, messageId, turnId) {
   const normalizedText = String(text || '').trim();
   if (!normalizedText) {
     resetTTSSpeechBubble(centralTTSSpeech);
@@ -942,6 +957,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
   const sid = String(sessionId || '').trim();
   const normalizedChunkIndex = Number.isFinite(chunkIndex) ? chunkIndex : -1;
   const rid = String(publicPlaybackRef || '').trim();
+  const tid = String(turnId || '').trim();
   const speech = centralTTSSpeech;
   const bubbleKind = ttsBubbleKind(speech, normalizedText, sid, normalizedChunkIndex, id);
   const f = ag(id || 'mio');
@@ -961,6 +977,8 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.characterId = id;
     speech.sessionId = sid;
     speech.publicPlaybackRef = rid;
+    speech.messageId = String(messageId || '').trim();
+    speech.turnId = tid;
     speech.bubbleKind = bubbleKind;
     speech.active = true;
     speech.preRendered = false;
@@ -974,6 +992,8 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     speech.el.classList.toggle('shiro', id === 'shiro');
     speech.sessionId = sid;
     if (rid) speech.publicPlaybackRef = rid;
+    if (messageId) speech.messageId = String(messageId).trim();
+    if (tid) speech.turnId = tid;
     speech.active = true;
   }
   if (speech.chunkKeys.has(key)) {
@@ -1160,6 +1180,14 @@ function ttsChunkIdentityKey(sessionId, utteranceId, chunkIndex, fallbackIndex) 
   const sid = String(sessionId || '').trim();
   const fallback = Number.isFinite(fallbackIndex) ? fallbackIndex : 0;
   return sid + ':' + String(normalizedChunkIndex >= 0 ? normalizedChunkIndex : fallback);
+}
+
+function normalizeOptionalPauseAfterMs(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.floor(parsed);
 }
 
 function ttsBubbleKind(speech, text, sessionId, chunkIndex, characterId) {
@@ -3785,6 +3813,7 @@ function createChatAudioSync() {
   //   synthesis completed, browser WAV fetch completed, and playback ACK completed.
   // - completedPublicPlaybacks / publicPlaybackCounts / publicPlaybackResults / seenAudioPublicPlaybacks form one response-level ACK lifecycle.
   // - seenUtterances and blockedAckKeys are chunk-level local dedupe guards for this tab only.
+  // - speechProgressTurns serializes progress requests by accepted turn, independent of audio playback timing.
   const completedSessions = new Set();
   const completedPublicPlaybacks = new Set();
   const acknowledgedPublicPlaybacks = new Set();
@@ -3793,8 +3822,10 @@ function createChatAudioSync() {
   const seenAudioPublicPlaybacks = new Set();
   const seenUtterances = new Set();
   const blockedAckKeys = new Set();
+  const speechProgressTurns = new Map();
   const interruptedChatSessions = new Set();
   const interruptedChatPublicPlaybacks = new Set();
+  const interruptedChatTurns = new Set();
 
   const module = {
     state,
@@ -3822,6 +3853,7 @@ function createChatAudioSync() {
     markSessionCompleted,
     resetCurrent: resetCurrentInternal,
     resetChat: resetChatInternal,
+    interruptTurn: interruptSpeechTurnInternal,
     resetIdleChat: resetIdleChatInternal,
     startTextFallback: startTextFallbackInternal,
     playNext: playNextInternal,
@@ -3873,6 +3905,9 @@ function createChatAudioSync() {
     const displayText = String(payload.display_text || payload.viewer_text || payload.text || '').trim();
     const publicPlaybackRef = String(payload.public_playback_ref || '').trim();
     const messageId = String(payload.message_id || '').trim();
+    const turnId = String(payload.turn_id || '').trim();
+    const playbackOutput = String(payload.playback_output || '').trim();
+    const pauseAfterMs = normalizeOptionalPauseAfterMs(payload.pause_after_ms);
     const utteranceId = String(payload.utterance_id || '').trim() || (sessionId + ':' + String(chunkIndex));
     const errorCode = String(payload.error_code || '').trim();
     const error = String(payload.error || '').trim();
@@ -3892,6 +3927,9 @@ function createChatAudioSync() {
       publicPlaybackRef,
       utteranceId,
       messageId,
+      turnId,
+      playbackOutput,
+      pauseAfterMs,
       turnIndex,
       errorCode,
       error,
@@ -3917,6 +3955,10 @@ function createChatAudioSync() {
       return;
     }
     if (!isThisViewerActiveAudio()) return;
+    if (chunk.playbackOutput === 'local') {
+      renderLocalSpeechTextInternal(chunk);
+      return;
+    }
     if (!chunk.url) {
       if (chunk.displayText) enqueueDisplayFallbackInternal(chunk);
       return;
@@ -3928,17 +3970,58 @@ function createChatAudioSync() {
   }
 
   function normalizeChunk(chunk) {
+    const publicPlaybackRef = String((chunk && chunk.publicPlaybackRef) || '').trim();
+    const turnId = String((chunk && chunk.turnId) || '').trim();
+    const chunkIndex = Number.isFinite(chunk && chunk.chunkIndex) ? Math.floor(chunk.chunkIndex) : -1;
+    let speechProgressTurnState = chunk && chunk.speechProgressTurnState;
+    if (!speechProgressTurnState && publicPlaybackRef && turnId) {
+      const turnKey = turnId;
+      speechProgressTurnState = speechProgressTurns.get(turnKey);
+      if (!speechProgressTurnState) {
+        speechProgressTurnState = {
+          phases: [],
+          activeEvent: null,
+          activePhase: '',
+          attempts: 0,
+          inFlight: false,
+          retryTimer: null,
+          abandoned: false,
+        };
+        speechProgressTurns.set(turnKey, speechProgressTurnState);
+      }
+    }
+    let speechProgressState = chunk && chunk.speechProgressState;
+    if (speechProgressTurnState && chunkIndex >= 0) {
+      if (!speechProgressTurnState.utterances) speechProgressTurnState.utterances = new Map();
+      if (!speechProgressState) speechProgressState = speechProgressTurnState.utterances.get(chunkIndex);
+      if (!speechProgressState) {
+        speechProgressState = {started: false, terminal: false, cancelled: false, abandoned: false};
+      }
+      speechProgressTurnState.utterances.set(chunkIndex, speechProgressState);
+    }
     const normalized = {
       url: String((chunk && chunk.url) || ''),
       characterId: String((chunk && chunk.characterId) || '').trim().toLowerCase(),
       sessionId: String((chunk && chunk.sessionId) || '').trim(),
       track: String((chunk && chunk.track) || 'default').trim() || 'default',
-      chunkIndex: Number.isFinite(chunk && chunk.chunkIndex) ? chunk.chunkIndex : -1,
+      chunkIndex,
       text: String((chunk && chunk.text) || ''),
       displayText: String((chunk && (chunk.displayText || chunk.text)) || ''),
-      publicPlaybackRef: String((chunk && chunk.publicPlaybackRef) || ''),
+      publicPlaybackRef,
       utteranceId: String((chunk && chunk.utteranceId) || ''),
       messageId: String((chunk && chunk.messageId) || ''),
+      turnId,
+      playbackOutput: String((chunk && chunk.playbackOutput) || '').trim(),
+      pauseAfterMs: normalizeOptionalPauseAfterMs(chunk && chunk.pauseAfterMs),
+      speechProgressState: (speechProgressState && typeof speechProgressState === 'object')
+        ? speechProgressState
+        : {
+          started: false,
+          terminal: false,
+          cancelled: false,
+          abandoned: false,
+        },
+      speechProgressTurnState: speechProgressTurnState || null,
       turnIndex: Number.isFinite(chunk && chunk.turnIndex) ? chunk.turnIndex : -1,
       errorCode: String((chunk && chunk.errorCode) || ''),
       error: String((chunk && chunk.error) || ''),
@@ -3950,6 +4033,15 @@ function createChatAudioSync() {
       normalized.utteranceId = normalized.sessionId + ':' + String(normalized.chunkIndex >= 0 ? normalized.chunkIndex : state.seq + 1);
     }
     return normalized;
+  }
+
+  function renderLocalSpeechTextInternal(chunk) {
+    const normalized = normalizeChunk(chunk);
+    if (!normalized.displayText || isInterruptedChatOutput(normalized)) return;
+    const chunkKey = ttsChunkIdentityKey(normalized.sessionId, normalized.utteranceId, normalized.chunkIndex, state.seq + 1);
+    if (chunkKey && seenUtterances.has(chunkKey)) return;
+    if (chunkKey) seenUtterances.add(chunkKey);
+    showFallbackChunkInternal(normalized);
   }
 
   function enqueueAudioChunkInternal(chunk) {
@@ -4165,6 +4257,11 @@ function createChatAudioSync() {
     state.currentSessionId = '';
     state.currentChunkIndex = -1;
     state.currentUtteranceId = '';
+    state.currentTurnId = '';
+    state.currentPlaybackOutput = '';
+    state.currentPauseAfterMs = null;
+    state.currentSpeechProgressState = null;
+    state.currentSpeechProgressTurnState = null;
     state.currentPublicPlaybackRef = '';
     state.currentMessageId = '';
     state.currentTurnIndex = -1;
@@ -4178,7 +4275,9 @@ function createChatAudioSync() {
     if (!item || isIdleChatPlaybackItem(item)) return;
     const sid = String(item.sessionId || '').trim();
     const rid = String(item.publicPlaybackRef || '').trim();
-    if (sid) interruptedChatSessions.add(sid);
+    const tid = String(item.turnId || '').trim();
+    if (tid) interruptedChatTurns.add(tid);
+    else if (sid) interruptedChatSessions.add(sid);
     if (rid) {
       interruptedChatPublicPlaybacks.add(rid);
       clearPublicPlaybackLifecycle(rid);
@@ -4190,17 +4289,25 @@ function createChatAudioSync() {
     if (!item || isIdleChatPlaybackItem(item)) return false;
     const sid = String(item.sessionId || '').trim();
     const rid = String(item.publicPlaybackRef || '').trim();
+    const tid = String(item.turnId || '').trim();
+    if (tid) return interruptedChatTurns.has(tid);
     return Boolean((sid && interruptedChatSessions.has(sid)) || (rid && interruptedChatPublicPlaybacks.has(rid)));
   }
 
-  function resetChatInternal(reason) {
+  function resetChatInternal(reason, interruptedTurnId) {
+    const interruptedTurnID = String(interruptedTurnId || '').trim();
+    if (interruptedTurnID) interruptedChatTurns.add(interruptedTurnID);
     const current = currentAudioItemInternal();
     const currentIsChat = state.currentSessionId && !isIdleChatSessionId(state.currentSessionId);
-    if (currentIsChat) rememberInterruptedChatOutput(current);
-    if (centralTTSSpeech && (centralTTSSpeech.sessionId || centralTTSSpeech.publicPlaybackRef)) {
+    if (currentIsChat) {
+      reportSpeechProgressInternal(current, 'cancelled');
+      rememberInterruptedChatOutput(current);
+    }
+    if (centralTTSSpeech && (centralTTSSpeech.sessionId || centralTTSSpeech.publicPlaybackRef || centralTTSSpeech.turnId)) {
       rememberInterruptedChatOutput({
         sessionId: centralTTSSpeech.sessionId,
         publicPlaybackRef: centralTTSSpeech.publicPlaybackRef,
+        turnId: centralTTSSpeech.turnId,
       });
     }
     state.queue = state.queue.filter((item) => {
@@ -4227,6 +4334,35 @@ function createChatAudioSync() {
     state.blockedFallbackUtteranceId = '';
     clearTTSAudioError();
     updateAudioButton();
+  }
+
+  function interruptSpeechTurnInternal(turnId) {
+    const interruptedTurnID = String(turnId || '').trim();
+    if (!interruptedTurnID) return;
+    interruptedChatTurns.add(interruptedTurnID);
+    const currentMatches = state.currentTurnId === interruptedTurnID;
+    if (currentMatches) {
+      const current = currentAudioItemInternal();
+      reportSpeechProgressInternal(current, 'cancelled');
+      rememberInterruptedChatOutput(current);
+    }
+    state.queue = state.queue.filter((item) => {
+      if (isIdleChatPlaybackItem(item) || String(item.turnId || '').trim() !== interruptedTurnID) return true;
+      rememberInterruptedChatOutput(item);
+      return false;
+    });
+    if (currentMatches) {
+      if (state.audio) {
+        try { state.audio.pause(); } catch (_) {}
+        try { state.audio.removeAttribute('src'); } catch (_) {}
+        try { state.audio.load(); } catch (_) {}
+      }
+      resetCurrentInternal();
+    }
+    if (centralTTSSpeech && centralTTSSpeech.turnId === interruptedTurnID) resetTTSSpeechBubble(centralTTSSpeech);
+    preloadQueuedAudioInternal();
+    updateAudioButton();
+    if (currentMatches) playNextInternal();
   }
 
   function resetIdleChatInternal() {
@@ -4263,7 +4399,11 @@ function createChatAudioSync() {
         publicPlaybackRef: state.currentPublicPlaybackRef,
         messageId: state.currentMessageId,
         turnIndex: state.currentTurnIndex,
+        turnId: state.currentTurnId,
       });
+    }
+    if (state.playing && state.currentSessionId && !isIdleChatSessionId(state.currentSessionId)) {
+      reportSpeechProgressInternal(currentAudioItemInternal(), 'error');
     }
     if (state.audio) {
       try { state.audio.pause(); } catch (_) {}
@@ -4330,8 +4470,14 @@ function createChatAudioSync() {
       state.audio.preload = 'auto';
       if (typeof prepareMobileInlineAudio === 'function') prepareMobileInlineAudio(state.audio);
       if (typeof attachPlaybackAudioElement === 'function') attachPlaybackAudioElement(state.audio);
-      state.audio.addEventListener('playing', markAudioStarted);
-      state.audio.addEventListener('timeupdate', markAudioStarted);
+      state.audio.addEventListener('playing', function() {
+        reportSpeechProgressInternal(currentAudioItemInternal(), 'started');
+        markAudioStarted();
+      });
+      state.audio.addEventListener('timeupdate', function() {
+        reportSpeechProgressInternal(currentAudioItemInternal(), 'started');
+        markAudioStarted();
+      });
       state.audio.addEventListener('ended', function() {
         completeCurrentAudioPlaybackInternal();
       });
@@ -4367,6 +4513,7 @@ function createChatAudioSync() {
       publicPlaybackRef: state.currentPublicPlaybackRef,
       messageId: state.currentMessageId,
       turnIndex: state.currentTurnIndex,
+      turnId: state.currentTurnId,
     });
   }
 
@@ -4384,7 +4531,8 @@ function createChatAudioSync() {
       String((item && item.utteranceId) || ''),
       String((item && item.publicPlaybackRef) || ''),
       String((item && item.messageId) || ''),
-      Number.isFinite(item && item.turnIndex) ? item.turnIndex : -1
+      Number.isFinite(item && item.turnIndex) ? item.turnIndex : -1,
+      String((item && item.turnId) || '')
     );
   }
 
@@ -4435,6 +4583,7 @@ function createChatAudioSync() {
       renderIdlePlaybackErrorInternal(next, next && next.errorCode ? next.errorCode : (next && next.displayOnly ? 'TTS_AUDIO_MISSING' : 'TTS_AUDIO_DISABLED'), next && next.error ? next.error : (next && next.displayOnly ? 'TTS audio chunk did not include a playable audio URL.' : 'IdleChat audio playback was disabled before this chunk could be spoken.'));
       recordPublicPlaybackResult(next, 'error', fallbackErr);
     } else {
+      reportSpeechProgressInternal(next, 'error');
       showFallbackChunkInternal(next);
     }
     if (state.fallbackTimer) clearTimeout(state.fallbackTimer);
@@ -4454,6 +4603,7 @@ function createChatAudioSync() {
 
   function showBlockedAudioTextFallbackInternal(item) {
     if (!item) return;
+    reportSpeechProgressInternal(item, 'error');
     const key = String(item.utteranceId || item.sessionId + ':' + String(item.chunkIndex) || item.seq || '');
     if (key && state.blockedFallbackUtteranceId === key) return;
     state.blockedFallbackUtteranceId = key;
@@ -4485,14 +4635,174 @@ function createChatAudioSync() {
       sessionId: state.currentSessionId || String((fallback && fallback.sessionId) || ''),
       chunkIndex: state.currentChunkIndex >= 0 ? state.currentChunkIndex : (Number.isFinite(fallback && fallback.chunkIndex) ? fallback.chunkIndex : -1),
       utteranceId: state.currentUtteranceId || String((fallback && fallback.utteranceId) || ''),
+      turnId: state.currentTurnId || String((fallback && fallback.turnId) || ''),
+      playbackOutput: state.currentPlaybackOutput || String((fallback && fallback.playbackOutput) || ''),
+      pauseAfterMs: state.currentPauseAfterMs !== null ? state.currentPauseAfterMs : normalizeOptionalPauseAfterMs(fallback && fallback.pauseAfterMs),
+      speechProgressState: state.currentSpeechProgressState || (fallback && fallback.speechProgressState) || null,
+      speechProgressTurnState: state.currentSpeechProgressTurnState || (fallback && fallback.speechProgressTurnState) || null,
       publicPlaybackRef: state.currentPublicPlaybackRef || String((fallback && fallback.publicPlaybackRef) || ''),
       messageId: state.currentMessageId || String((fallback && fallback.messageId) || ''),
       turnIndex: state.currentTurnIndex >= 0 ? state.currentTurnIndex : (Number.isFinite(fallback && fallback.turnIndex) ? fallback.turnIndex : -1),
     };
   }
 
+  function reportSpeechProgressInternal(item, phase) {
+    if (!item || isIdleChatPlaybackItem(item)) return;
+    const publicPlaybackRef = String(item.publicPlaybackRef || '').trim();
+    const turnId = String(item.turnId || '').trim();
+    const utteranceIndex = Number(item.chunkIndex);
+    const progressState = item.speechProgressState;
+    const turnProgressState = item.speechProgressTurnState;
+    if (item.playbackOutput === 'local' || !publicPlaybackRef || !turnId || !Number.isFinite(utteranceIndex) || utteranceIndex < 0 || !progressState || !turnProgressState) return;
+    if (progressState.abandoned || turnProgressState.abandoned) return;
+    const normalizedPhase = String(phase || '').trim();
+
+    if (normalizedPhase === 'started' && (progressState.started || progressState.terminal || progressState.cancelled || progressState.abandoned)) return;
+    if ((normalizedPhase === 'ended' || normalizedPhase === 'error') && progressState.terminal) return;
+    if (normalizedPhase === 'cancelled') {
+      if (!progressState.started) return;
+      progressState.cancelled = true;
+      const activeEvent = turnProgressState.activeEvent;
+      if (turnProgressState.retryTimer !== null && activeEvent && activeEvent.speechProgressState === progressState && activeEvent.phase === 'started') {
+        clearTimeout(turnProgressState.retryTimer);
+        turnProgressState.retryTimer = null;
+      }
+      if (progressState.terminal) {
+        drainSpeechProgressInternal(turnProgressState);
+        return;
+      }
+    }
+    if (!isThisViewerActiveAudio()) {
+      if (normalizedPhase === 'cancelled') drainSpeechProgressInternal(turnProgressState);
+      else if (normalizedPhase === 'started'
+        && !turnProgressState.inFlight
+        && turnProgressState.retryTimer === null
+        && turnProgressState.phases.length === 0) return;
+      else {
+        abandonSpeechProgressTurnInternal(turnProgressState);
+      }
+      return;
+    }
+
+    if (normalizedPhase === 'started') {
+      if (progressState.started || progressState.terminal || progressState.cancelled || progressState.abandoned) return;
+      progressState.started = true;
+    } else if (normalizedPhase === 'ended' || normalizedPhase === 'error' || normalizedPhase === 'cancelled') {
+      if (normalizedPhase === 'cancelled' && !progressState.started) return;
+      if (progressState.terminal) {
+        drainSpeechProgressInternal(turnProgressState);
+        return;
+      }
+      progressState.terminal = true;
+    } else {
+      return;
+    }
+
+    const payload = {
+      public_playback_ref: publicPlaybackRef,
+      turn_id: turnId,
+      utterance_index: Math.floor(utteranceIndex),
+      phase: normalizedPhase,
+      viewer_client_id: viewerControl.clientId,
+    };
+    turnProgressState.phases.push({phase: normalizedPhase, payload, speechProgressState: progressState});
+    drainSpeechProgressInternal(turnProgressState);
+  }
+
+  function abandonSpeechProgressTurnInternal(turnProgressState) {
+    if (!turnProgressState) return;
+    turnProgressState.abandoned = true;
+    if (turnProgressState.retryTimer !== null) clearTimeout(turnProgressState.retryTimer);
+    turnProgressState.retryTimer = null;
+    turnProgressState.activeEvent = null;
+    turnProgressState.activePhase = '';
+    turnProgressState.attempts = 0;
+    turnProgressState.phases.forEach((phaseEvent) => {
+      if (phaseEvent.speechProgressState) phaseEvent.speechProgressState.abandoned = true;
+    });
+    turnProgressState.phases = [];
+  }
+
+  function drainSpeechProgressInternal(turnProgressState) {
+    if (!turnProgressState || turnProgressState.inFlight || turnProgressState.retryTimer !== null || turnProgressState.abandoned) return;
+    if (!isThisViewerActiveAudio()) {
+      abandonSpeechProgressTurnInternal(turnProgressState);
+      return;
+    }
+    const phaseEvent = Array.isArray(turnProgressState.phases) ? turnProgressState.phases[0] : null;
+    if (!phaseEvent) return;
+    if (phaseEvent.speechProgressState && phaseEvent.speechProgressState.cancelled && phaseEvent.phase === 'started') {
+      turnProgressState.phases.shift();
+      turnProgressState.activeEvent = null;
+      turnProgressState.activePhase = '';
+      turnProgressState.attempts = 0;
+      drainSpeechProgressInternal(turnProgressState);
+      return;
+    }
+    if (turnProgressState.activePhase !== phaseEvent.phase) {
+      turnProgressState.activePhase = phaseEvent.phase;
+      turnProgressState.attempts = 0;
+    }
+    turnProgressState.attempts += 1;
+    turnProgressState.activeEvent = phaseEvent;
+    turnProgressState.inFlight = true;
+
+    let progressRequest;
+    try {
+      if (typeof fetch !== 'function') throw new Error('fetch unavailable');
+      progressRequest = fetch('/viewer/tts/progress', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(phaseEvent.payload),
+        cache: 'no-store',
+        keepalive: true,
+      });
+    } catch (_) {
+      progressRequest = Promise.reject(new Error('speech progress request failed'));
+    }
+
+    Promise.resolve(progressRequest).then((response) => {
+      if (!response || (response.ok !== true && response.status !== 204)) {
+        throw new Error('speech progress request failed');
+      }
+    }).then(() => {
+      turnProgressState.inFlight = false;
+      turnProgressState.phases.shift();
+      turnProgressState.activeEvent = null;
+      turnProgressState.activePhase = '';
+      turnProgressState.attempts = 0;
+      if (phaseEvent.phase === 'error' || phaseEvent.phase === 'cancelled') {
+        abandonSpeechProgressTurnInternal(turnProgressState);
+        return;
+      }
+      drainSpeechProgressInternal(turnProgressState);
+    }).catch(() => {
+      turnProgressState.inFlight = false;
+      if (turnProgressState.abandoned) return;
+      if (phaseEvent.speechProgressState && phaseEvent.speechProgressState.cancelled && phaseEvent.phase === 'started') {
+        turnProgressState.phases.shift();
+        turnProgressState.activeEvent = null;
+        turnProgressState.activePhase = '';
+        turnProgressState.attempts = 0;
+        drainSpeechProgressInternal(turnProgressState);
+        return;
+      }
+      if (turnProgressState.attempts < 3) {
+        const retryDelayMs = turnProgressState.attempts === 1 ? 100 : 300;
+        turnProgressState.retryTimer = setTimeout(() => {
+          turnProgressState.retryTimer = null;
+          drainSpeechProgressInternal(turnProgressState);
+        }, retryDelayMs);
+        return;
+      }
+      console.warn('[TTS] speech progress report failed');
+      abandonSpeechProgressTurnInternal(turnProgressState);
+    });
+  }
+
   function handleCurrentAudioFailureInternal(err, fallback) {
     const item = currentAudioItemInternal(fallback);
+    reportSpeechProgressInternal(item, 'error');
     stopLipSyncInternal(item.characterId);
     if (!state.currentShown) {
       if (isIdleChatPlaybackItem(item)) {
@@ -4528,6 +4838,7 @@ function createChatAudioSync() {
 
   function completeCurrentAudioPlaybackInternal() {
     const finished = currentAudioItemInternal();
+    reportSpeechProgressInternal(finished, 'ended');
     stopLipSyncInternal(finished.characterId);
     state.playing = false;
     state.currentCharacterId = '';
@@ -4536,6 +4847,11 @@ function createChatAudioSync() {
     state.currentSessionId = '';
     state.currentChunkIndex = -1;
     state.currentUtteranceId = '';
+    state.currentTurnId = '';
+    state.currentPlaybackOutput = '';
+    state.currentPauseAfterMs = null;
+    state.currentSpeechProgressState = null;
+    state.currentSpeechProgressTurnState = null;
     state.currentPublicPlaybackRef = '';
     state.currentShown = false;
     state.blockedFallbackUtteranceId = '';
@@ -4586,6 +4902,11 @@ function createChatAudioSync() {
     state.currentSessionId = String((next && next.sessionId) || '');
     state.currentChunkIndex = Number.isFinite(next && next.chunkIndex) ? next.chunkIndex : -1;
     state.currentUtteranceId = String((next && next.utteranceId) || '');
+    state.currentTurnId = String((next && next.turnId) || '').trim();
+    state.currentPlaybackOutput = String((next && next.playbackOutput) || '').trim();
+    state.currentPauseAfterMs = normalizeOptionalPauseAfterMs(next && next.pauseAfterMs);
+    state.currentSpeechProgressState = (next && next.speechProgressState) || {started: false, terminal: false, cancelled: false, abandoned: false};
+    state.currentSpeechProgressTurnState = (next && next.speechProgressTurnState) || null;
     state.currentPublicPlaybackRef = String((next && next.publicPlaybackRef) || '');
     state.currentMessageId = String((next && next.messageId) || '');
     state.currentTurnIndex = Number.isFinite(next && next.turnIndex) ? next.turnIndex : -1;
@@ -4774,6 +5095,12 @@ function ttsTextFallbackDelay(item) {
 }
 
 function ttsPlaybackTailGap(finished, next) {
+  const finishedTurnID = String((finished && finished.turnId) || '').trim();
+  const pauseAfterMs = normalizeOptionalPauseAfterMs(finished && finished.pauseAfterMs);
+  const nextTurnID = String((next && next.turnId) || '').trim();
+  if (finishedTurnID && pauseAfterMs !== null && !isIdleChatSessionId(finished && finished.sessionId) && (!next || nextTurnID === finishedTurnID)) {
+    return pauseAfterMs;
+  }
   if (!next) return 180;
   const finishedSpeaker = String((finished && finished.characterId) || '');
   const nextSpeaker = String((next && next.characterId) || '');
@@ -4909,11 +5236,83 @@ function interruptIdleChatForUserInput(reason) {
     console.warn('[IdleChat] stop failed:', err);
   });
 }
+function acceptSpeechCancelCapability(payload, requestGeneration) {
+  const token = String((payload && payload.speech_cancel_token) || '').trim();
+  if (!token) return;
+  const capability = {
+    token,
+    turnId: String((payload && payload.turn_id) || '').trim(),
+    generation: requestGeneration,
+    sequence: ++speechCancelCapabilitySequence,
+  };
+  if (requestGeneration !== speechCancelGeneration) {
+    if (capability.turnId && typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.interruptTurn === 'function') {
+      chatAudioSync.interruptTurn(capability.turnId);
+    }
+    pendingSpeechCancelCapabilities.set(capability.sequence, capability);
+    requestSpeechTurnCancellation(capability);
+    return;
+  }
+  if (activeSpeechCancelCapability) {
+    pendingSpeechCancelCapabilities.set(activeSpeechCancelCapability.sequence, activeSpeechCancelCapability);
+    requestSpeechTurnCancellation(activeSpeechCancelCapability);
+  }
+  activeSpeechCancelCapability = capability;
+}
+
+function requestSpeechTurnCancellation(capability) {
+  if (!capability || !capability.token) return;
+  pendingSpeechCancelCapabilities.set(capability.sequence, capability);
+  if (speechCancelRequestsInFlight.has(capability.sequence)) return;
+  if (typeof fetch !== 'function') {
+    speechCancelError = 'fetch is unavailable';
+    console.warn('[TTS] speech turn cancellation failed: ' + speechCancelError);
+    return;
+  }
+  speechCancelRequestsInFlight.add(capability.sequence);
+  let cancellationRequest;
+  try {
+    cancellationRequest = fetch('/viewer/tts/cancel', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({speech_cancel_token: capability.token}),
+      cache: 'no-store',
+      keepalive: true,
+    });
+  } catch (_) {
+    cancellationRequest = Promise.reject(new Error('request failed'));
+  }
+  Promise.resolve(cancellationRequest).then((response) => {
+    if (!response || (response.ok !== true && response.status !== 204)) {
+      throw new Error('request failed');
+    }
+    pendingSpeechCancelCapabilities.delete(capability.sequence);
+    speechCancelError = '';
+  }).catch(() => {
+    speechCancelError = 'request failed';
+    console.warn('[TTS] speech turn cancellation failed: ' + speechCancelError);
+  }).finally(() => {
+    speechCancelRequestsInFlight.delete(capability.sequence);
+  });
+}
+
+function retryPendingSpeechCancellations() {
+  pendingSpeechCancelCapabilities.forEach((capability) => requestSpeechTurnCancellation(capability));
+}
+
 function interruptChatOutputForUserInput(reason) {
+  speechCancelGeneration += 1;
+  const capability = activeSpeechCancelCapability;
+  activeSpeechCancelCapability = null;
   if (typeof chatAudioSync !== 'undefined' && chatAudioSync && typeof chatAudioSync.resetChat === 'function') {
-    chatAudioSync.resetChat(reason || 'user_input');
+    chatAudioSync.resetChat(reason || 'user_input', capability && capability.turnId);
   }
   Object.keys(thinkingBubbles).forEach((jid) => removeThinking(jid));
+  if (capability) {
+    pendingSpeechCancelCapabilities.set(capability.sequence, capability);
+    requestSpeechTurnCancellation(capability);
+  }
+  retryPendingSpeechCancellations();
 }
 function handleChatInputIntent(reason) {
   if (suppressInputInterrupt) return;
@@ -5375,6 +5774,7 @@ function send() {
 }
 
 async function sendViewerMessage(message, attachments = []) {
+  const requestGeneration = speechCancelGeneration;
   const body = buildViewerSendRequest(message);
   if (!body.message && (!attachments || attachments.length === 0)) throw new Error('message or attachment is required');
   let request;
@@ -5411,6 +5811,13 @@ async function sendViewerMessage(message, attachments = []) {
   if (!r.ok) {
     const text = await r.text();
     throw new Error('HTTP ' + String(r.status) + ': ' + (text || r.statusText || 'send failed'));
+  }
+  let accepted = null;
+  if (typeof r.json === 'function') {
+    try { accepted = await r.json(); } catch (_) {}
+  }
+  if (accepted && typeof accepted === 'object') {
+    acceptSpeechCancelCapability(accepted, requestGeneration);
   }
   return {ok: true};
 }

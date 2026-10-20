@@ -300,6 +300,7 @@ func NewMessageOrchestrator(
 		orch.ttsLifecycle.WithStreamHooks,
 		orch.ttsLifecycle.Push,
 	)
+	orch.routeDispatcher.SetSpeechPlanPusher(orch.ttsLifecycle.PushSpeechPlan)
 	orch.autonomousExecutions = newAutonomousExecutionCoordinator(nil, orch.maxRepairOrDefault, orch.events.Emit, orch.routeDispatcher.executeDirectForContext)
 	orch.routeDispatcher.SetAutonomousExecutor(orch.autonomousExecutions.Execute)
 	return orch
@@ -468,6 +469,13 @@ func (o *MessageOrchestrator) SetTTSBridge(b TTSBridge) {
 	o.ttsBridge = b
 	if o.ttsLifecycle != nil {
 		o.ttsLifecycle.SetTTSBridge(b)
+	}
+}
+
+// SetSpeechPlanEnabled opts CHAT into the typed SpeechPlan generation path.
+func (o *MessageOrchestrator) SetSpeechPlanEnabled(enabled bool) {
+	if o.routeDispatcher != nil {
+		o.routeDispatcher.SetSpeechPlanEnabled(enabled)
 	}
 }
 

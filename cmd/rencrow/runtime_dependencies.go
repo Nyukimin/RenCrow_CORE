@@ -123,6 +123,8 @@ type Dependencies struct {
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
+	viewerSpeechCancel             http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
+	viewerSpeechProgress           http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
 	agentOps                       http.HandlerFunc                            // local authenticated Agent OPS ingress
 	viewerGamesStatus              http.HandlerFunc                            // RenCrow_GAMES bridge status API
 	viewerGamesResult              http.HandlerFunc                            // RenCrow_GAMES result callback API

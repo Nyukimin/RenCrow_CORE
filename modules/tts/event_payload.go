@@ -13,9 +13,12 @@ type AudioChunkEventPayloadInput struct {
 	SessionID         string
 	PublicPlaybackRef string
 	MessageID         string
+	TurnID            string
+	PlaybackOutput    string
 	TurnIndex         int
 	UtteranceID       string
 	ChunkIndex        int
+	PauseAfterMS      int
 	CharacterID       string
 	SpeechText        string
 	DisplayText       string
@@ -28,9 +31,12 @@ type AudioChunkEventPayload struct {
 	SessionID         string `json:"session_id"`
 	PublicPlaybackRef string `json:"public_playback_ref"`
 	MessageID         string `json:"message_id,omitempty"`
+	TurnID            string `json:"turn_id,omitempty"`
+	PlaybackOutput    string `json:"playback_output,omitempty"`
 	TurnIndex         int    `json:"turn_index"`
 	UtteranceID       string `json:"utterance_id"`
 	ChunkIndex        int    `json:"chunk_index"`
+	PauseAfterMS      *int   `json:"pause_after_ms,omitempty"`
 	CharacterID       string `json:"character_id"`
 	SpeechText        string `json:"speech_text"`
 	Text              string `json:"text"`
@@ -72,13 +78,21 @@ func BuildAudioChunkEventPayload(input AudioChunkEventPayloadInput) AudioChunkEv
 	if track == "" {
 		track = DefaultTrack
 	}
+	var pauseAfterMS *int
+	if strings.TrimSpace(input.TurnID) != "" || input.PauseAfterMS != 0 {
+		value := input.PauseAfterMS
+		pauseAfterMS = &value
+	}
 	return AudioChunkEventPayload{
 		SessionID:         strings.TrimSpace(input.SessionID),
 		PublicPlaybackRef: strings.TrimSpace(input.PublicPlaybackRef),
 		MessageID:         strings.TrimSpace(input.MessageID),
+		TurnID:            strings.TrimSpace(input.TurnID),
+		PlaybackOutput:    strings.TrimSpace(input.PlaybackOutput),
 		TurnIndex:         input.TurnIndex,
 		UtteranceID:       strings.TrimSpace(input.UtteranceID),
 		ChunkIndex:        input.ChunkIndex,
+		PauseAfterMS:      pauseAfterMS,
 		CharacterID:       strings.TrimSpace(input.CharacterID),
 		SpeechText:        input.SpeechText,
 		Text:              input.SpeechText,

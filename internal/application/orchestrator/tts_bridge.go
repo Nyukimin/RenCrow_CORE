@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
@@ -34,4 +35,10 @@ type TTSBridge interface {
 // to the LLM/user-facing wording.
 type TTSDisplayBridge interface {
 	PushTextWithDisplay(ctx context.Context, sessionID string, speechText string, displayText string, emotion *moduletts.EmotionState) error
+}
+
+// SpeechPlanTTSBridge accepts one normalized CHAT SpeechPlan for Gateway-owned
+// voice compilation. Legacy TTSBridge callers keep their text contract.
+type SpeechPlanTTSBridge interface {
+	PushSpeechPlan(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error
 }

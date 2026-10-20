@@ -2,11 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -32,6 +34,26 @@ func (l *messageTTSLifecycle) SetTTSBridge(ttsBridge TTSBridge) {
 
 func (l *messageTTSLifecycle) SetVTuberBridge(vtuberBridge VTuberBridge) {
 	l.vtuberBridge = vtuberBridge
+}
+
+// PushSpeechPlan sends one complete CHAT SpeechPlan through the optional
+// bridge seam while the caller's Action, Run, and receipt context remain live.
+func (l *messageTTSLifecycle) PushSpeechPlan(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error {
+	if ctx == nil {
+		return errors.New("SpeechPlan context is required")
+	}
+	sessionID := strings.TrimSpace(conversationSessionID)
+	turnID = strings.TrimSpace(turnID)
+	if modulecore.SessionID(sessionID).Validate() != nil || modulecore.TurnID(turnID).Validate() != nil {
+		return errors.New("SpeechPlan conversation session_id or turn_id is invalid")
+	}
+	pusher, ok := l.ttsBridge.(SpeechPlanTTSBridge)
+	if !ok {
+		return errors.New("TTS bridge does not support SpeechPlan synthesis")
+	}
+	speechCtx, done := SpeechSynthesisContext(ctx)
+	defer done()
+	return pusher.PushSpeechPlan(speechCtx, ttsSessionID, sessionID, turnID, speakerID, plan)
 }
 
 // StartSessionForRoute starts the turn's TTS session with the voice of the Agent

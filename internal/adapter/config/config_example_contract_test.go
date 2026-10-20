@@ -19,6 +19,9 @@ func TestConfigExampleLoadsForPhase25E2E(t *testing.T) {
 	if cfg.TTS.GatewayBaseURL == "" {
 		t.Fatal("config.yaml.example should use RenCrow_TTS Gateway as the production path")
 	}
+	if cfg.TTS.SpeechPlanEnabled {
+		t.Fatal("config.yaml.example must leave CHAT SpeechPlan disabled until Gateway VoiceProfiles are ready")
+	}
 	if !cfg.Vision.Enabled || cfg.Vision.BaseURL == "" {
 		t.Fatal("config.yaml.example should use RenCrow_Vision as the production image recognition path")
 	}

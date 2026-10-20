@@ -120,6 +120,14 @@ class FakeAudio {
 FakeAudio.playOutcomes = [];
 FakeAudio.instances = [];
 
+function sourceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0, `start marker not found: ${startMarker}`);
+  assert.ok(end > start, `end marker not found: ${endMarker}`);
+  return source.slice(start, end);
+}
+
 function loadAudioHarness(options = {}) {
   FakeAudio.playOutcomes = [...(options.playOutcomes || [])];
   FakeAudio.instances = [];
@@ -131,12 +139,14 @@ function loadAudioHarness(options = {}) {
   const end = js.indexOf('let sending = false;');
   assert.ok(start > 0, 'ttsPlayback block not found');
   assert.ok(end > start, 'audio handler block end not found');
+  const chatInterruption = sourceBetween(js, 'function acceptSpeechCancelCapability(payload, requestGeneration) {', 'function handleChatInputIntent(reason)');
+  const sendViewerMessage = sourceBetween(js, 'async function sendViewerMessage(message, attachments = []) {', 'async function requestRepairFromChat()');
   const audioBlock = js.slice(start, end);
-  const source = memoryJs + '\n' + timelineJs + '\n' + idleJs + '\n' + audioBlock + `
-	globalThis.__viewerAudioHarness = {
-	  state,
-	  ttsPlayback,
-	  viewerControl,
+  const source = memoryJs + '\n' + timelineJs + '\n' + idleJs + '\n' + audioBlock + '\n' + chatInterruption + '\n' + sendViewerMessage + `
+globalThis.__viewerAudioHarness = {
+  state,
+  ttsPlayback,
+  viewerControl,
   updateAudioButton,
   enqueueTTSAudio,
   toggleTTSAudio,
@@ -145,6 +155,8 @@ function loadAudioHarness(options = {}) {
   addIdleSummaryToTimeline,
   idleLiveRenderTarget,
   chatAudioSync,
+  interruptChatOutputForUserInput,
+  sendViewerMessage,
   resolveTTSPlaybackURL,
   handleViewerActiveControlEvent,
   isIdleChatActiveForTTS,
@@ -182,6 +194,8 @@ function loadAudioHarness(options = {}) {
     },
     navigator: {maxTouchPoints: options.mobile ? 1 : 0},
     fetch: options.fetch,
+    buildViewerSendRequest: (message) => ({message: String(message || ''), session_id: 'viewer-test-session'}),
+    short: (value, limit) => String(value || '').slice(0, limit),
     localStorage: {
       getItem: (key) => localStore.get(key) || null,
       setItem: (key, value) => localStore.set(key, String(value)),
@@ -489,6 +503,791 @@ test('natural audio end waits for tail gap before starting next tts chunk', asyn
   assert.equal(harness.ttsPlayback.audio.src, '/audio/second.wav');
   assert.equal(harness.ttsPlayback.queue.length, 0);
   assert.ok(String(elements.get('chat').children.at(-1)._mc.textContent || '').includes('二つ目です。'));
+});
+
+test('SpeechPlan utterances play in order with the requested pause_after_ms', async () => {
+  const {harness, timers} = loadAudioHarness();
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const publishChunk = (chunkIndex, pauseAfterMs) => harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/speech-plan-' + chunkIndex + '.wav',
+      session_id: 'chat-speech-plan-session',
+      public_playback_ref: 'speech-plan-response',
+      turn_id: 'turn-speech-plan',
+      pause_after_ms: pauseAfterMs,
+      utterance_id: 'speech-plan-utterance-' + chunkIndex,
+      chunk_index: chunkIndex,
+      character_id: 'mio',
+      text: 'speech ' + chunkIndex,
+      display_text: '発話 ' + chunkIndex + '。',
+    }),
+  });
+
+  publishChunk(0, 150);
+  publishChunk(1, 0);
+  await Promise.resolve();
+
+  assert.equal(harness.ttsPlayback.currentChunkIndex, 0);
+  assert.ok(harness.ttsPlayback.audio.src.endsWith('speech-plan-0.wav'));
+  assert.equal(harness.ttsPlayback.queue.length, 1);
+
+  harness.ttsPlayback.audio.listeners.ended();
+  assert.equal(timers.at(-1).ms, 150, 'SpeechPlan pause overrides the legacy punctuation gap');
+  timers.pop()();
+  await Promise.resolve();
+
+  assert.equal(harness.ttsPlayback.currentChunkIndex, 1);
+  assert.ok(harness.ttsPlayback.audio.src.endsWith('speech-plan-1.wav'));
+  assert.equal(harness.ttsPlayback.queue.length, 0);
+});
+
+test('SpeechPlan pause_after_ms zero overrides the legacy punctuation gap', async () => {
+  const {harness, timers} = loadAudioHarness();
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const publishChunk = (chunkIndex) => harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/speech-plan-zero-' + chunkIndex + '.wav',
+      session_id: 'chat-speech-plan-zero-session',
+      public_playback_ref: 'speech-plan-zero-response',
+      turn_id: 'turn-speech-plan-zero',
+      pause_after_ms: 0,
+      utterance_id: 'speech-plan-zero-utterance-' + chunkIndex,
+      chunk_index: chunkIndex,
+      character_id: 'mio',
+      text: 'speech ' + chunkIndex,
+      display_text: '発話 ' + chunkIndex + '。',
+    }),
+  });
+  publishChunk(0);
+  publishChunk(1);
+  await Promise.resolve();
+
+  harness.ttsPlayback.audio.listeners.ended();
+
+  assert.equal(timers.at(-1).ms, 0);
+  timers.pop()();
+  await Promise.resolve();
+  assert.equal(harness.ttsPlayback.currentChunkIndex, 1);
+});
+
+test('SpeechPlan progress reports one started and one natural ended for the active audio viewer', async () => {
+  const calls = [];
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const speechProgressCalls = () => calls.filter((call) => call.url === '/viewer/tts/progress');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/progress-turn.wav',
+      session_id: 'chat-progress-session',
+      public_playback_ref: 'progress-response',
+      turn_id: 'progress-turn',
+      utterance_id: 'progress-utterance',
+      chunk_index: 3,
+      character_id: 'mio',
+      text: 'progress text',
+      display_text: '進捗の音声です。',
+    }),
+  });
+  await Promise.resolve();
+
+  assert.equal(speechProgressCalls().length, 0, 'play() promise resolution alone is not an actual playback event');
+  harness.ttsPlayback.audio.listeners.playing();
+  harness.ttsPlayback.audio.listeners.timeupdate();
+  harness.ttsPlayback.audio.listeners.timeupdate();
+  harness.ttsPlayback.audio.listeners.ended();
+  harness.ttsPlayback.audio.listeners.ended();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(speechProgressCalls().length, 2);
+  const progress = speechProgressCalls().map((call) => JSON.parse(call.init.body));
+  assert.deepEqual(progress.map((item) => item.phase), ['started', 'ended']);
+  progress.forEach((item) => assert.deepEqual(item, {
+    public_playback_ref: 'progress-response',
+    turn_id: 'progress-turn',
+    utterance_index: 3,
+    phase: item.phase,
+    viewer_client_id: harness.viewerControl.clientId,
+  }));
+});
+
+test('SpeechPlan audio error reports error while preserving Viewer fallback behavior', async () => {
+  const calls = [];
+  const {harness, elements} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const speechProgressCalls = () => calls.filter((call) => call.url === '/viewer/tts/progress');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/error-progress-turn.wav',
+      session_id: 'chat-error-progress-session',
+      public_playback_ref: 'error-progress-response',
+      turn_id: 'error-progress-turn',
+      utterance_id: 'error-progress-utterance',
+      chunk_index: 1,
+      character_id: 'mio',
+      text: 'fallback text',
+      display_text: '音声失敗時もテキストを表示します。',
+    }),
+  });
+  await Promise.resolve();
+
+  harness.ttsPlayback.audio.listeners.error();
+
+  assert.equal(speechProgressCalls().length, 1);
+  assert.deepEqual(JSON.parse(speechProgressCalls()[0].init.body), {
+    public_playback_ref: 'error-progress-response',
+    turn_id: 'error-progress-turn',
+    utterance_index: 1,
+    phase: 'error',
+    viewer_client_id: harness.viewerControl.clientId,
+  });
+  assert.ok(elements.get('chat').children.some((el) => el.querySelector('.mc').textContent.includes('音声失敗時もテキスト')));
+});
+
+test('SpeechPlan text fallback reports error for the active utterance', () => {
+  const calls = [];
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const speechProgressCalls = () => calls.filter((call) => call.url === '/viewer/tts/progress');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      session_id: 'chat-text-fallback-session',
+      public_playback_ref: 'text-fallback-response',
+      turn_id: 'text-fallback-turn',
+      utterance_id: 'text-fallback-utterance',
+      chunk_index: 2,
+      character_id: 'mio',
+      text: 'fallback text',
+      display_text: '音声なしのテキストfallbackです。',
+    }),
+  });
+
+  assert.equal(speechProgressCalls().length, 1);
+  assert.deepEqual(JSON.parse(speechProgressCalls()[0].init.body), {
+    public_playback_ref: 'text-fallback-response',
+    turn_id: 'text-fallback-turn',
+    utterance_index: 2,
+    phase: 'error',
+    viewer_client_id: harness.viewerControl.clientId,
+  });
+});
+
+test('same-turn user interruption reports cancelled once for the current SpeechPlan utterance', async () => {
+  const calls = [];
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const speechProgressCalls = () => calls.filter((call) => call.url === '/viewer/tts/progress');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/cancelled-progress-turn.wav',
+      session_id: 'chat-cancelled-progress-session',
+      public_playback_ref: 'cancelled-progress-response',
+      turn_id: 'cancelled-progress-turn',
+      utterance_id: 'cancelled-progress-utterance',
+      chunk_index: 4,
+      character_id: 'mio',
+      text: 'interrupt me',
+      display_text: '割り込み対象の発話です。',
+    }),
+  });
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+
+  harness.interruptChatOutputForUserInput('user_input');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.equal(speechProgressCalls().length, 2);
+  assert.deepEqual(speechProgressCalls().map((call) => JSON.parse(call.init.body).phase), ['started', 'cancelled']);
+  const cancellation = JSON.parse(speechProgressCalls()[1].init.body);
+  assert.equal(cancellation.turn_id, 'cancelled-progress-turn');
+  assert.equal(cancellation.utterance_index, 4);
+});
+
+test('SpeechPlan progress is sent only while this tab owns audio playback', async () => {
+  const calls = [];
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const speechProgressCalls = () => calls.filter((call) => call.url === '/viewer/tts/progress');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio-other-owner.wav',
+      session_id: 'chat-other-owner-session',
+      public_playback_ref: 'other-owner-response',
+      turn_id: 'other-owner-turn',
+      utterance_id: 'other-owner-utterance',
+      chunk_index: 5,
+      character_id: 'mio',
+      text: 'owner switched',
+      display_text: '所有者が切り替わります。',
+    }),
+  });
+  await Promise.resolve();
+
+  harness.viewerControl.activeAudioViewerId = 'another-viewer';
+  harness.ttsPlayback.audio.listeners.playing();
+  assert.equal(speechProgressCalls().length, 0);
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  harness.ttsPlayback.audio.listeners.timeupdate();
+  harness.viewerControl.activeAudioViewerId = 'another-viewer';
+  harness.ttsPlayback.audio.listeners.ended();
+
+  assert.deepEqual(speechProgressCalls().map((call) => JSON.parse(call.init.body).phase), ['started']);
+});
+
+test('SpeechPlan progress request failures do not interrupt playback or text rendering', async () => {
+  const progressCalls = [];
+  const {harness, elements, timers} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url === '/viewer/tts/progress') {
+        progressCalls.push({url, init});
+        return Promise.reject(new Error('progress route unavailable'));
+      }
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/progress-unavailable.wav',
+      session_id: 'chat-progress-unavailable-session',
+      public_playback_ref: 'progress-unavailable-response',
+      turn_id: 'progress-unavailable-turn',
+      utterance_id: 'progress-unavailable-utterance',
+      chunk_index: 6,
+      character_id: 'mio',
+      text: 'still plays',
+      display_text: '進捗APIが失敗しても音声を再生します。',
+    }),
+  });
+  await Promise.resolve();
+
+  harness.ttsPlayback.audio.listeners.playing();
+  harness.ttsPlayback.audio.listeners.ended();
+  await new Promise((resolve) => setImmediate(resolve));
+  const retryDelays = [];
+  while (true) {
+    const retryIndex = timers.findIndex((timer) => timer.ms === 100 || timer.ms === 300);
+    if (retryIndex < 0) break;
+    const retry = timers.splice(retryIndex, 1)[0];
+    retryDelays.push(retry.ms);
+    retry();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.deepEqual(progressCalls.map((call) => JSON.parse(call.init.body).phase), [
+    'started', 'started', 'started',
+  ]);
+  assert.deepEqual(retryDelays, [100, 300]);
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.ok(elements.get('chat').children.some((el) => el.querySelector('.mc').textContent.includes('進捗APIが失敗しても音声')));
+});
+
+test('SpeechPlan progress phases are serialized and retries use bounded backoff', async () => {
+  const calls = [];
+  let startedAttempts = 0;
+  const {harness, timers} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url !== '/viewer/tts/progress') return Promise.resolve({ok: true, status: 204});
+      const payload = JSON.parse(init.body);
+      calls.push(payload);
+      if (payload.phase === 'started' && ++startedAttempts < 3) return Promise.reject(new Error('started unavailable'));
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/ordered-progress.wav',
+      session_id: 'chat-ordered-progress-session',
+      public_playback_ref: 'ordered-progress-response',
+      turn_id: 'ordered-progress-turn',
+      utterance_id: 'ordered-progress-utterance',
+      chunk_index: 7,
+      character_id: 'mio',
+      text: 'ordered phases',
+      display_text: '開始後に終了を通知します。',
+    }),
+  });
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  harness.ttsPlayback.audio.listeners.ended();
+  assert.deepEqual(calls.map((item) => item.phase), ['started'], 'terminal must wait for the started request');
+  assert.equal(harness.ttsPlayback.playing, false, 'audio completion must not wait for the network');
+
+  const retryDelays = [];
+  for (const expectedDelay of [100, 300]) {
+    await new Promise((resolve) => setImmediate(resolve));
+    const retryIndex = timers.findIndex((timer) => timer.ms === expectedDelay);
+    assert.notEqual(retryIndex, -1, 'expected bounded retry delay ' + expectedDelay + 'ms');
+    const retry = timers.splice(retryIndex, 1)[0];
+    retryDelays.push(retry.ms);
+    retry();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(retryDelays, [100, 300]);
+  assert.deepEqual(calls.map((item) => item.phase), ['started', 'started', 'started', 'ended']);
+  assert.equal(harness.ttsPlayback.playing, false, 'network retries must not hold up audio completion');
+});
+
+test('SpeechPlan progress orders adjacent utterances by accepted terminal phase', async () => {
+  const calls = [];
+  let resolveEndedZero;
+  const endedZero = new Promise((resolve) => {
+    resolveEndedZero = resolve;
+  });
+  const {harness, timers} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url !== '/viewer/tts/progress') return Promise.resolve({ok: true, status: 204});
+      const payload = JSON.parse(init.body);
+      calls.push(payload);
+      if (payload.phase === 'ended' && payload.utterance_index === 0) return endedZero;
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  for (const index of [0, 1]) {
+    harness.chatAudioSync.handleEvent({
+      type: 'tts.audio_chunk',
+      content: JSON.stringify({
+        audio_url: '/audio/ordered-turn-' + index + '.wav',
+        session_id: 'chat-ordered-turn-session',
+        public_playback_ref: 'ordered-turn-response',
+        turn_id: 'ordered-turn-id',
+        pause_after_ms: 0,
+        utterance_id: 'ordered-turn-utterance-' + index,
+        chunk_index: index,
+        character_id: 'mio',
+        text: 'utterance ' + index,
+        display_text: '発話' + index,
+      }),
+    });
+  }
+  await Promise.resolve();
+
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.map((item) => [item.utterance_index, item.phase]), [[0, 'started']]);
+
+  harness.ttsPlayback.audio.listeners.ended();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.map((item) => [item.utterance_index, item.phase]), [[0, 'started'], [0, 'ended']]);
+
+  const tailTimer = timers.at(-1);
+  assert.equal(tailTimer.ms, 0, 'the next utterance is ready without an extra delay');
+  tailTimer();
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(
+    calls.map((item) => [item.utterance_index, item.phase]),
+    [[0, 'started'], [0, 'ended']],
+    'started(1) must wait until ended(0) is accepted',
+  );
+
+  resolveEndedZero({ok: true, status: 204});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.map((item) => [item.utterance_index, item.phase]), [
+    [0, 'started'], [0, 'ended'], [1, 'started'],
+  ]);
+});
+
+test('SpeechPlan progress stops later utterances after an earlier phase exhausts retries', async () => {
+  const calls = [];
+  const {harness, timers} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url !== '/viewer/tts/progress') return Promise.resolve({ok: true, status: 204});
+      const payload = JSON.parse(init.body);
+      calls.push(payload);
+      return payload.phase === 'ended' && payload.utterance_index === 0
+        ? Promise.reject(new Error('ended unavailable'))
+        : Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  for (const index of [0, 1]) {
+    harness.chatAudioSync.handleEvent({
+      type: 'tts.audio_chunk',
+      content: JSON.stringify({
+        audio_url: '/audio/retry-turn-' + index + '.wav',
+        session_id: 'chat-retry-turn-session',
+        public_playback_ref: 'retry-turn-response',
+        turn_id: 'retry-turn-id',
+        pause_after_ms: 0,
+        utterance_id: 'retry-turn-utterance-' + index,
+        chunk_index: index,
+        character_id: 'mio',
+        text: 'utterance ' + index,
+        display_text: '再試行' + index,
+      }),
+    });
+  }
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.ttsPlayback.audio.listeners.ended();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const tailTimerIndex = timers.findIndex((timer) => timer.ms === 0);
+  assert.notEqual(tailTimerIndex, -1, 'the next utterance remains playable while progress retries');
+  timers.splice(tailTimerIndex, 1)[0]();
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  for (const expectedDelay of [100, 300]) {
+    const retryIndex = timers.findIndex((timer) => timer.ms === expectedDelay);
+    assert.notEqual(retryIndex, -1, 'expected bounded retry delay ' + expectedDelay + 'ms');
+    timers.splice(retryIndex, 1)[0]();
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  harness.ttsPlayback.audio.listeners.ended();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.map((item) => [item.utterance_index, item.phase]), [
+    [0, 'started'], [0, 'ended'], [0, 'ended'], [0, 'ended'],
+  ]);
+  assert.equal(harness.ttsPlayback.playing, false, 'progress failure does not hold up playback');
+});
+
+test('a pending cancelled turn does not block progress for a later turn in the same response', async () => {
+  const calls = [];
+  let resolveTurnACancel;
+  const turnACancel = new Promise((resolve) => {
+    resolveTurnACancel = resolve;
+  });
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url !== '/viewer/tts/progress') return Promise.resolve({ok: true, status: 204});
+      const payload = JSON.parse(init.body);
+      calls.push(payload);
+      if (payload.turn_id === 'turn-a' && payload.phase === 'cancelled') return turnACancel;
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  for (const turnID of ['turn-a', 'turn-b']) {
+    harness.chatAudioSync.handleEvent({
+      type: 'tts.audio_chunk',
+      content: JSON.stringify({
+        audio_url: '/audio/' + turnID + '.wav',
+        session_id: 'chat-shared-response-session',
+        public_playback_ref: 'shared-response-ref',
+        turn_id: turnID,
+        utterance_id: turnID + '-utterance',
+        chunk_index: 0,
+        character_id: 'mio',
+        text: turnID,
+        display_text: turnID,
+      }),
+    });
+  }
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  harness.chatAudioSync.interruptTurn('turn-a');
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls.map((item) => [item.turn_id, item.phase]), [
+    ['turn-a', 'started'], ['turn-a', 'cancelled'], ['turn-b', 'started'],
+  ]);
+  resolveTurnACancel({ok: true, status: 204});
+});
+
+test('local SpeechPlan chunks render text without entering Viewer audio or progress', async () => {
+  const calls = [];
+  const {harness, elements} = loadAudioHarness({
+    fetch: (url, init) => {
+      calls.push({url, init});
+      return Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/local-only.wav',
+      session_id: 'chat-local-output-session',
+      public_playback_ref: 'local-output-response',
+      turn_id: 'local-output-turn',
+      playback_output: 'local',
+      utterance_id: 'local-output-utterance',
+      chunk_index: 0,
+      character_id: 'mio',
+      speech_text: 'ローカル再生中の本文',
+      display_text: 'ローカル再生中の本文',
+    }),
+  });
+  await Promise.resolve();
+
+  assert.equal(harness.ttsPlayback.queue.length, 0, 'local output must not enter the Viewer audio queue');
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.ok(elements.get('chat').children.some((el) => el.querySelector('.mc').textContent.includes('ローカル再生中の本文')));
+  assert.equal(calls.some((call) => call.url === '/viewer/tts/progress'), false, 'local output must not report Viewer playback progress');
+});
+
+test('same-turn cancellation stops a pending SpeechPlan progress retry', async () => {
+  const calls = [];
+  const {harness, timers} = loadAudioHarness({
+    fetch: (url, init) => {
+      if (url !== '/viewer/tts/progress') return Promise.resolve({ok: true, status: 204});
+      const payload = JSON.parse(init.body);
+      calls.push(payload);
+      return payload.phase === 'started'
+        ? Promise.reject(new Error('started unavailable'))
+        : Promise.resolve({ok: true, status: 204});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/cancel-progress-retry.wav',
+      session_id: 'chat-cancel-progress-retry-session',
+      public_playback_ref: 'cancel-progress-retry-response',
+      turn_id: 'cancel-progress-retry-turn',
+      utterance_id: 'cancel-progress-retry-utterance',
+      chunk_index: 8,
+      character_id: 'mio',
+      text: 'cancel retry',
+      display_text: '取消後は再試行しません。',
+    }),
+  });
+  await Promise.resolve();
+  harness.ttsPlayback.audio.listeners.playing();
+  await new Promise((resolve) => setImmediate(resolve));
+  const retryIndex = timers.findIndex((timer) => timer.ms === 100);
+  assert.notEqual(retryIndex, -1, 'started failure should schedule its first bounded retry');
+
+  harness.interruptChatOutputForUserInput('user_input');
+  await new Promise((resolve) => setImmediate(resolve));
+  const cancelledRetry = timers.splice(retryIndex, 1)[0];
+  cancelledRetry();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls.map((item) => item.phase), ['started', 'cancelled']);
+  assert.equal(harness.ttsPlayback.playing, false);
+});
+
+test('user input rejects a late SpeechPlan chunk with the interrupted turn ID', async () => {
+  const fetchCalls = [];
+  const cancelToken = 'secret-speech-cancel-capability';
+  const {harness, elements} = loadAudioHarness({
+    fetch: (url, init) => {
+      fetchCalls.push({url, init});
+      if (url === '/viewer/send') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({turn_id: 'turn-interrupted-by-input', speech_cancel_token: cancelToken}),
+        });
+      }
+      if (url === '/viewer/tts/cancel') return Promise.resolve({ok: true, status: 204});
+      return Promise.resolve({ok: true, status: 200});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  await harness.sendViewerMessage('new user input');
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/interrupted-turn.wav',
+      session_id: 'chat-interrupted-original-session',
+      public_playback_ref: 'response-before-input',
+      turn_id: 'turn-interrupted-by-input',
+      pause_after_ms: 300,
+      utterance_id: 'interrupted-turn-utterance-0',
+      chunk_index: 0,
+      character_id: 'mio',
+      text: 'already playing',
+      display_text: '入力前の音声です。',
+    }),
+  });
+  await Promise.resolve();
+  assert.equal(harness.ttsPlayback.playing, true);
+  const chatMessagesBeforeInput = elements.get('chat').children.length;
+
+  harness.interruptChatOutputForUserInput('user_input');
+
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.equal(harness.ttsPlayback.audio.src, '');
+  const cancelRequest = fetchCalls.find((call) => call.url === '/viewer/tts/cancel');
+  assert.ok(cancelRequest, 'user input should cancel the accepted SpeechPlan turn');
+  assert.deepEqual(JSON.parse(cancelRequest.init.body), {speech_cancel_token: cancelToken});
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/late-same-turn.wav',
+      session_id: 'chat-interrupted-new-session',
+      public_playback_ref: 'response-after-input',
+      turn_id: 'turn-interrupted-by-input',
+      pause_after_ms: 0,
+      utterance_id: 'interrupted-turn-utterance-late',
+      chunk_index: 1,
+      character_id: 'mio',
+      text: 'must not play',
+      display_text: '入力後に届いた古い音声です。',
+    }),
+  });
+
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.equal(harness.ttsPlayback.queue.length, 0);
+  assert.equal(harness.ttsPlayback.audio.src, '');
+  assert.equal(elements.get('chat').children.length, chatMessagesBeforeInput);
+});
+
+test('SpeechPlan turn IDs allow a new turn in the same session and reject the interrupted turn', async () => {
+  const {harness} = loadAudioHarness();
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+  const publishChunk = (turnId, utteranceId, chunkIndex) => harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/' + utteranceId + '.wav',
+      session_id: 'shared-daily-chat-session',
+      public_playback_ref: 'shared-chat-response',
+      turn_id: turnId,
+      pause_after_ms: 0,
+      utterance_id: utteranceId,
+      chunk_index: chunkIndex,
+      character_id: 'mio',
+      text: utteranceId,
+      display_text: utteranceId,
+    }),
+  });
+
+  publishChunk('interrupted-turn', 'first-turn-utterance', 0);
+  await Promise.resolve();
+  assert.equal(harness.ttsPlayback.currentTurnId, 'interrupted-turn');
+  harness.interruptChatOutputForUserInput('user_input');
+  assert.equal(harness.ttsPlayback.playing, false);
+
+  publishChunk('next-turn', 'next-turn-utterance', 0);
+  await Promise.resolve();
+  assert.equal(harness.ttsPlayback.playing, true, 'a different turn must play despite sharing the session and playback ref');
+  assert.equal(harness.ttsPlayback.currentTurnId, 'next-turn');
+  assert.equal(harness.ttsPlayback.queue.length, 0);
+
+  publishChunk('interrupted-turn', 'late-first-turn-utterance', 1);
+  assert.equal(harness.ttsPlayback.currentTurnId, 'next-turn');
+  assert.equal(harness.ttsPlayback.queue.length, 0, 'late chunks from the interrupted exact turn must be rejected');
+});
+
+test('a send receipt arriving after user input is cancelled immediately', async () => {
+  const fetchCalls = [];
+  let resolveSend;
+  const cancelToken = 'secret-late-speech-cancel-capability';
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      fetchCalls.push({url, init});
+      if (url === '/viewer/send') return new Promise((resolve) => { resolveSend = resolve; });
+      if (url === '/viewer/tts/cancel') return Promise.resolve({ok: true, status: 204});
+      return Promise.resolve({ok: true, status: 200});
+    },
+  });
+  harness.viewerControl.activeAudioViewerId = harness.viewerControl.clientId;
+
+  const sendPromise = harness.sendViewerMessage('request still in flight');
+  harness.interruptChatOutputForUserInput('user_input');
+  resolveSend({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({turn_id: 'turn-late-receipt', speech_cancel_token: cancelToken}),
+  });
+  await sendPromise;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const cancelRequest = fetchCalls.find((call) => call.url === '/viewer/tts/cancel');
+  assert.ok(cancelRequest, 'late acceptance must trigger cancellation without another input event');
+  assert.deepEqual(JSON.parse(cancelRequest.init.body), {speech_cancel_token: cancelToken});
+  harness.chatAudioSync.handleEvent({
+    type: 'tts.audio_chunk',
+    content: JSON.stringify({
+      audio_url: '/audio/late-accepted-turn.wav',
+      session_id: 'chat-late-accepted-session',
+      public_playback_ref: 'late-accepted-response',
+      turn_id: 'turn-late-receipt',
+      pause_after_ms: 0,
+      utterance_id: 'late-accepted-utterance',
+      chunk_index: 0,
+      character_id: 'mio',
+      text: 'cancelled turn audio',
+      display_text: '取消済みの遅延音声です。',
+    }),
+  });
+  assert.equal(harness.ttsPlayback.playing, false);
+  assert.equal(harness.ttsPlayback.queue.length, 0);
+});
+
+test('failed speech cancellation retains its token for a later interrupt retry', async () => {
+  const fetchCalls = [];
+  const cancelToken = 'secret-retry-speech-cancel-capability';
+  let cancelAttempts = 0;
+  const {harness} = loadAudioHarness({
+    fetch: (url, init) => {
+      fetchCalls.push({url, init});
+      if (url === '/viewer/send') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({turn_id: 'turn-retry-cancel', speech_cancel_token: cancelToken}),
+        });
+      }
+      if (url === '/viewer/tts/cancel') {
+        cancelAttempts += 1;
+        return Promise.resolve(cancelAttempts === 1 ? {ok: false, status: 503} : {ok: true, status: 204});
+      }
+      return Promise.resolve({ok: true, status: 200});
+    },
+  });
+  await harness.sendViewerMessage('retry cancellation');
+
+  harness.interruptChatOutputForUserInput('user_input');
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.interruptChatOutputForUserInput('user_input_again');
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const cancelRequests = fetchCalls.filter((call) => call.url === '/viewer/tts/cancel');
+  assert.equal(cancelRequests.length, 2, 'a later interruption should retry the retained failed cancellation');
+  cancelRequests.forEach((call) => assert.deepEqual(JSON.parse(call.init.body), {speech_cancel_token: cancelToken}));
 });
 
 test('natural audio end uses a longer tail gap when next tts speaker changes', async () => {

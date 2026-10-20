@@ -30,7 +30,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
 				(method == http.MethodPost &&
-					(path == "/viewer/send" || path == "/stt/chat-input"))
+					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/stt/chat-input"))
 		},
 	},
 	"cmd-idlechat": {
@@ -62,7 +62,7 @@ var interactionProfilePolicies = map[string]interactionProfilePolicy{
 		allow: func(method, path string) bool {
 			return (method == http.MethodGet && path == "/viewer/events") ||
 				(method == http.MethodPost &&
-					(path == "/viewer/send" || path == "/internal/assistant/notifications/line"))
+					(path == "/viewer/send" || path == "/viewer/tts/cancel" || path == "/viewer/tts/progress" || path == "/internal/assistant/notifications/line"))
 		},
 	},
 }
@@ -250,6 +250,8 @@ func portalChatInteractionAllowed(method, path string) bool {
 	}
 	switch path {
 	case "/viewer/send",
+		"/viewer/tts/cancel",
+		"/viewer/tts/progress",
 		"/viewer/recipient-selection",
 		"/viewer/active-control",
 		"/viewer/tts/playback-ack",

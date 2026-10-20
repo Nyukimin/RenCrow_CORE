@@ -27,8 +27,33 @@ type RenCrowTTSBridgeConfig struct {
 	DownloadAudio      bool
 	Sink               AudioSink
 	OnChunkReady       func(sessionID, publicPlaybackRef, traceID string, chunkIndex int, characterID, text, displayText, audioPath, audioURL string)
+	OnSpeechChunkReady func(chunk SpeechPlanChunkReady)
 	OnSessionCompleted func(sessionID, traceID, characterID string)
 }
+
+// SpeechPlanChunkReady carries turn-scoped metadata for one completed
+// utterance. The legacy OnChunkReady callback remains unchanged.
+type SpeechPlanChunkReady struct {
+	TTSSessionID          string
+	ConversationSessionID string
+	TurnID                string
+	SpeakerID             string
+	PublicPlaybackRef     string
+	TraceID               string
+	UtteranceIndex        int
+	PlaybackOutput        string
+	PauseAfterMS          int
+	ProfileRevision       int
+	SpeechText            string
+	DisplayText           string
+	AudioPath             string
+	AudioURL              string
+}
+
+const (
+	SpeechPlaybackOutputViewer = "viewer"
+	SpeechPlaybackOutputLocal  = "local"
+)
 
 type renCrowTTSSession struct {
 	characterID       string
@@ -59,10 +84,11 @@ type renCrowTTSPlanResult struct {
 }
 
 type RenCrowTTSBridge struct {
-	cfg      RenCrowTTSBridgeConfig
-	client   *http.Client
-	mu       sync.Mutex
-	sessions map[string]*renCrowTTSSession
+	cfg            RenCrowTTSBridgeConfig
+	client         *http.Client
+	mu             sync.Mutex
+	sessions       map[string]*renCrowTTSSession
+	speechPlanGate chan struct{}
 }
 
 func NewRenCrowTTSBridge(cfg RenCrowTTSBridgeConfig) *RenCrowTTSBridge {
@@ -77,9 +103,10 @@ func NewRenCrowTTSBridge(cfg RenCrowTTSBridgeConfig) *RenCrowTTSBridge {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	return &RenCrowTTSBridge{
-		cfg:      cfg,
-		client:   &http.Client{Timeout: cfg.RequestTimeout, Transport: transport},
-		sessions: make(map[string]*renCrowTTSSession),
+		cfg:            cfg,
+		client:         &http.Client{Timeout: cfg.RequestTimeout, Transport: transport},
+		sessions:       make(map[string]*renCrowTTSSession),
+		speechPlanGate: make(chan struct{}, 1),
 	}
 }
 

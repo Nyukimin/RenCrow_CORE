@@ -8,6 +8,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 )
 
 // 不変条件: どの Agent の応答も、先頭に Agent 名ラベル（`[midori] `、重なった
@@ -40,6 +41,30 @@ func productionLabeledProvider() labeledStreamProvider {
 		tokens:  []string{"[mid", "ori", "] [mid", "ori] ", "夕焼けが", "きれい", "です。"},
 		content: "[midori] [midori] " + labelFreeBody,
 	}
+}
+
+func productionChatSpeechPlanProvider() labeledStreamProvider {
+	return labeledStreamProvider{
+		tokens:  []string{"{\"schema_version\":", "\"rencrow.speech/1.0\"}"},
+		content: `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"夕焼けがきれいです。","before":[],"after":[]}],"delivery":{"tone":"warm","attitude":"gentle","energy":"medium","pace":"normal","mode":"dialogue"},"pause_after_ms":0}]}`,
+	}
+}
+
+// speechPlanRecordingTTSBridge adapts typed CHAT plans to the text observations
+// used by this invariant test while retaining the plan for contract assertions.
+type speechPlanRecordingTTSBridge struct {
+	*mockTTSBridge
+	plans []speech.SpeechPlan
+}
+
+func (b *speechPlanRecordingTTSBridge) PushSpeechPlan(_ context.Context, _, _, _, _ string, plan speech.SpeechPlan) error {
+	b.plans = append(b.plans, plan)
+	for _, utterance := range plan.Utterances {
+		for _, segment := range utterance.Segments {
+			b.pushes = append(b.pushes, segment.Text)
+		}
+	}
+	return nil
 }
 
 func assertNoSpeakerLabel(t *testing.T, where, text string) {
@@ -92,7 +117,7 @@ func assertLabelFreeTurn(t *testing.T, listener *recordingEventListener, bridge 
 func TestProcessMessageRemovesAgentLabelsFromEventsAndSpeech(t *testing.T) {
 	for _, recipient := range []string{"mio", "shiro", "midori", "kuro"} {
 		t.Run(recipient, func(t *testing.T) {
-			provider := productionLabeledProvider()
+			provider := productionChatSpeechPlanProvider()
 			newMio := func() *mockMioAgent {
 				real := agent.NewMioAgent(provider, nil, nil, nil, nil, nil)
 				return &mockMioAgent{
@@ -101,11 +126,12 @@ func TestProcessMessageRemovesAgentLabelsFromEventsAndSpeech(t *testing.T) {
 				}
 			}
 			orch := NewMessageOrchestrator(newMockSessionRepository(), newMio(), &mockShiroAgent{response: "unused"}, nil, nil, nil, nil, nil)
+			orch.SetSpeechPlanEnabled(true)
 			attachCanonicalTestTaskOwner(t, orch)
 			orch.SetShiroChatAgent(newMio())
 			orch.SetWildAgent(agent.NewWildAgent(provider, "creative system"))
 			orch.SetHeavyAgent(agent.NewHeavyAgent(provider, "heavy system"))
-			bridge := &mockTTSBridge{}
+			bridge := &speechPlanRecordingTTSBridge{mockTTSBridge: &mockTTSBridge{}}
 			orch.SetTTSBridge(bridge)
 			listener := &recordingEventListener{}
 			orch.SetEventListener(listener)
@@ -120,8 +146,19 @@ func TestProcessMessageRemovesAgentLabelsFromEventsAndSpeech(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ProcessMessage: %v", err)
 			}
-			// Kuro の LLM 呼び出しは stream しない。本文と読み上げ文だけを検証する。
-			assertLabelFreeTurn(t, listener, bridge, recipient != "kuro")
+			assertLabelFreeTurn(t, listener, bridge.mockTTSBridge, false)
+			if len(bridge.plans) != 1 {
+				t.Fatalf("SpeechPlan count = %d, want one typed CHAT handoff", len(bridge.plans))
+			}
+			var planned strings.Builder
+			for _, utterance := range bridge.plans[0].Utterances {
+				for _, segment := range utterance.Segments {
+					planned.WriteString(segment.Text)
+				}
+			}
+			if planned.String() != labelFreeBody {
+				t.Fatalf("SpeechPlan text = %q, want label-free body %q", planned.String(), labelFreeBody)
+			}
 		})
 	}
 }

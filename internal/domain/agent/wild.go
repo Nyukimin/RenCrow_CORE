@@ -90,6 +90,7 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		}
 		return response, nil
 	}
+	speechPlanMode := SpeechPlanCallbackFromContext(ctx) != nil
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
 	if w.conversationEngine != nil {
@@ -114,9 +115,16 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		}
 		return response, nil
 	}
+	if speechPlanMode {
+		messages = append(messages, llm.Message{Role: "system", Content: speechPlanInstruction(), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "speech_plan_contract"}})
+	}
 	messages = assemblePromptContext(w.systemPrompt, currentRuntimeContext(ctx, w.runtimeContextProvider, "midori", w.stableRuntimeContext), messages, userMessageWithAttachments(userMessage, t.Attachments()))
-	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(llm.StreamCallbackFromContext(ctx), conversation.SpeakerMidori)
-	if onToken == nil {
+	var streamCallback llm.StreamCallback
+	if !speechPlanMode {
+		streamCallback = llm.StreamCallbackFromContext(ctx)
+	}
+	onToken, flushLabels := conversation.NewSpeakerLabelStreamFilter(streamCallback, conversation.SpeakerMidori)
+	if onToken == nil && !speechPlanMode {
 		onToken = func(string) {}
 	}
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
@@ -125,13 +133,23 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		Temperature: 0.8,
 		OnToken:     onToken,
 	})
-	resp, err := w.llmProvider.Generate(ctx, req)
+	if speechPlanMode {
+		req.ResponseFormat = llm.ResponseFormatJSONObject
+		req.OnToken = nil
+	}
+	resp, generationDuration, err := generateSpeechPlanResponse(ctx, w.llmProvider, req, speechPlanMode)
 	if err != nil {
 		return "", err
 	}
 	flushLabels()
+	planResult, structuredSpeechPlan := parseSpeechPlan(ctx, resp.Content, generationDuration)
 	response := conversation.StripLeadingSpeakerLabels(resp.Content, conversation.SpeakerMidori)
-	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+	if structuredSpeechPlan {
+		response = planResult.DisplayText
+		reportGenerationMetrics(ctx, resp)
+	} else {
+		response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+	}
 	if w.conversationEngine != nil {
 		if err := commitConversationTurn(ctx, w.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {
 			return response, err

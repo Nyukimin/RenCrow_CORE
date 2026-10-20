@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,8 +14,10 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	ttsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tts"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 func TestBuildTTSClientBridge_Disabled(t *testing.T) {
@@ -51,6 +54,127 @@ func TestBuildTTSClientBridgeLoadsOwnerTokenAndAuthenticatesSynthesis(t *testing
 	if authorization != "Bearer owner-test-token" {
 		t.Fatalf("Authorization = %q, want owner bearer", authorization)
 	}
+}
+
+func TestBuildTTSClientBridgePublishesOneSpeechPlanEventPerUtterance(t *testing.T) {
+	resetTTSPublicSessionStateForTest()
+	t.Cleanup(resetTTSPublicSessionStateForTest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tts" {
+			t.Errorf("Gateway request = %s %s, want POST /api/tts", r.Method, r.URL.Path)
+		}
+		var request struct {
+			UtteranceIndex int `json:"utterance_index"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode SpeechPlan request: %v", err)
+			return
+		}
+		requestID := r.Header.Get("X-RenCrow-TTS-Request-Id")
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("X-RenCrow-TTS-Gateway-Service", "tts-gateway")
+		w.Header().Set("X-RenCrow-TTS-Request-Id", requestID)
+		w.Header().Set("X-RenCrow-TTS-Profile-Revision", "2")
+		w.Header().Set("X-RenCrow-TTS-Utterance-Index", fmt.Sprint(request.UtteranceIndex))
+		_, _ = w.Write(ttsClientTestWAV())
+	}))
+	defer server.Close()
+
+	sessionID := modulecore.NewSessionID()
+	turnID := modulecore.NewTurnID()
+	taskID := modulecore.NewTaskID()
+	messageID := modulecore.NewMessageID()
+	registerTTSPublicSessionWithMessage("tts-speech-plan-event", string(sessionID), taskID.String(), string(messageID), 3)
+	var events []orchestrator.OrchestratorEvent
+	playback := orchestrator.NewSpeechTurnCancellation()
+	bridge := buildTTSClientBridge(&config.Config{TTS: config.TTSConfig{
+		Enabled: true, GatewayBaseURL: server.URL, VoiceID: "mio", TimeoutMS: 10000, OutputDir: t.TempDir(),
+	}}, func(ev orchestrator.OrchestratorEvent) {
+		events = append(events, ev)
+		if ev.Type != "tts.audio_chunk" {
+			return
+		}
+		var payload moduletts.AudioChunkEventPayload
+		if err := json.Unmarshal([]byte(ev.Content), &payload); err != nil {
+			t.Errorf("decode audio chunk event for playback progress: %v", err)
+			return
+		}
+		if err := playback.MarkStarted(payload.ChunkIndex); err != nil {
+			t.Errorf("MarkStarted(%d): %v", payload.ChunkIndex, err)
+			return
+		}
+		if err := playback.MarkEnded(payload.ChunkIndex); err != nil {
+			t.Errorf("MarkEnded(%d): %v", payload.ChunkIndex, err)
+		}
+	}, nil, nil)
+	if bridge == nil {
+		t.Fatal("TTS bridge unavailable")
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{
+		SessionID: "tts-speech-plan-event", PublicPlaybackRef: taskID.String(), TraceID: string(modulecore.NewTraceID()), CharacterID: "mio", VoiceID: "mio",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pusher, ok := bridge.(orchestrator.SpeechPlanTTSBridge)
+	if !ok {
+		t.Fatal("client bridge does not expose SpeechPlan transport")
+	}
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{
+		{Segments: []speech.Segment{{Text: "一つ目。"}}, PauseAfterMS: 150},
+		{Segments: []speech.Segment{{Text: "二つ目。"}}, PauseAfterMS: 500},
+	}}
+	ctx := orchestrator.WithSpeechTurnCancellation(context.Background(), playback)
+	if err := pusher.PushSpeechPlan(ctx, "tts-speech-plan-event", string(sessionID), string(turnID), "mio", plan); err != nil {
+		t.Fatalf("PushSpeechPlan() error = %v", err)
+	}
+	var chunks []moduletts.AudioChunkEventPayload
+	for _, event := range events {
+		if event.Type != "tts.audio_chunk" {
+			continue
+		}
+		var payload moduletts.AudioChunkEventPayload
+		if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
+			t.Fatalf("decode audio chunk event: %v", err)
+		}
+		chunks = append(chunks, payload)
+	}
+	if len(chunks) != 2 {
+		t.Fatalf("SpeechPlan audio event count = %d, want 2: %#v", len(chunks), chunks)
+	}
+	for index, chunk := range chunks {
+		if chunk.TurnID != string(turnID) || chunk.ChunkIndex != index {
+			t.Errorf("chunk[%d] identity/index = turn=%q index=%d", index, chunk.TurnID, chunk.ChunkIndex)
+		}
+		if want := []int{150, 500}[index]; chunk.PauseAfterMS == nil || *chunk.PauseAfterMS != want {
+			t.Errorf("chunk[%d] pause_after_ms = %v, want %d", index, chunk.PauseAfterMS, want)
+		}
+		if chunk.PlaybackOutput != "viewer" {
+			t.Errorf("chunk[%d] playback_output = %q, want viewer for browser-only mode", index, chunk.PlaybackOutput)
+		}
+	}
+}
+
+func ttsClientTestWAV() []byte {
+	const samples = 160
+	dataSize := samples * 2
+	wav := make([]byte, 44+dataSize)
+	copy(wav[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-8))
+	copy(wav[8:12], "WAVE")
+	copy(wav[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1)
+	binary.LittleEndian.PutUint16(wav[22:24], 1)
+	binary.LittleEndian.PutUint32(wav[24:28], 16000)
+	binary.LittleEndian.PutUint32(wav[28:32], 32000)
+	binary.LittleEndian.PutUint16(wav[32:34], 2)
+	binary.LittleEndian.PutUint16(wav[34:36], 16)
+	copy(wav[36:40], "data")
+	binary.LittleEndian.PutUint32(wav[40:44], uint32(dataSize))
+	for index := 0; index < samples; index++ {
+		binary.LittleEndian.PutUint16(wav[44+index*2:46+index*2], uint16(1000+index%3))
+	}
+	return wav
 }
 
 func TestTTSPublicSessionRouteMarksOldIdleChatRoutesStaleOnReset(t *testing.T) {

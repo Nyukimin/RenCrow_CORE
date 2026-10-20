@@ -1210,6 +1210,22 @@ TTSの声も同じ応答Agentに従います。`POST /viewer/send`が`audio_outp
 TTSの`tts.audio_chunk`と`tts.session_completed`は同じ`session_id`、`response_id`を持ちます。clientは全chunkの再生終了とsession完了の両方を確認してから、response単位で`POST /viewer/tts/playback-ack`を1回だけ送ります。
 `GET /viewer/tts/audio?url=...`が取得できるremote音声は、COREのTTS設定にあるbase URLと同一hostのものだけです。
 
+通常ChatのSpeechPlan v1.0では、`/viewer/send`の受付responseが発話専用の
+`speech_cancel_token`を返します。ユーザー割り込み時の`POST /viewer/tts/cancel`は
+`{"speech_cancel_token":"..."}`を受け、同じturnの再生中音声・未再生queue・未送信合成を
+止めます。受付tokenは公開event、log、URLへ載せません。成功、重複、期限切れのtokenは
+同じ204を返し、invalid JSONは400、POST以外は405とします。
+
+同じ通常ChatのViewerは、完成したutteranceの再生開始・自然終了・失敗・取消を
+`POST /viewer/tts/progress`へ`{"public_playback_ref":"tsk_...","turn_id":"turn_...","utterance_index":0,"phase":"started","viewer_client_id":"..."}`
+で通知します。`phase`は`started`／`ended`／`error`／`cancelled`です。COREは現在の
+audio owner、受付時のroot Task／turn、完成済みutterance indexを照合し、次の1発話の
+先読み許可だけに使用します。無効なbodyは400、失効／不一致の通知は204で無視します。
+`playback_output=local`の発話はローカル再生ownerが進捗を記録し、Viewerは音声を再生しません。
+この場合のViewer progress通知も204で無視します。
+この通知は認証credentialや実再生の終端receiptではありません。既存の
+`/viewer/tts/playback-ack`が再生結果の終端観測を所有します。
+
 IdleChat episodeのTTS先読みでは、`playback-ack`は再生結果、再生位置、cache解放の観測に使います。
 同じepisodeの次発話をTTSへ送る条件にはせず、ACK欠落を理由に先読みqueueを直列停止しません。
 PORTALは`turn_index`順に音声chunkを再生し、browserの`ended`でlocal queueを進めます。bufferが

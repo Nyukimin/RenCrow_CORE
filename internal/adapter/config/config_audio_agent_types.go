@@ -10,6 +10,7 @@ type VerificationConfig struct {
 // TTSConfig configures the single RenCrow_TTS Gateway route and playback.
 type TTSConfig struct {
 	Enabled            bool                        `yaml:"enabled"`
+	SpeechPlanEnabled  bool                        `yaml:"speech_plan_enabled"`
 	OutputDir          string                      `yaml:"output_dir"`
 	GatewayBaseURL     string                      `yaml:"gateway_base_url"`
 	AuthTokenFile      string                      `yaml:"auth_token_file"`

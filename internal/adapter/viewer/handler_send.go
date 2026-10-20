@@ -12,6 +12,7 @@ import (
 	"time"
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
@@ -80,6 +81,12 @@ func HandleSendWithAttachments(handler MessageHandler, onError MessageErrorHandl
 // before accepting an asynchronous Viewer turn. This keeps the accepted
 // session_id identical to the Session repository owner used by orchestration.
 func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver) http.HandlerFunc {
+	return HandleSendWithSpeechCancellation(handler, onError, saver, resolveSessionID, nil)
+}
+
+// HandleSendWithSpeechCancellation accepts asynchronous Viewer turns with a
+// per-turn speech cancellation capability owned by the shared registry.
+func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
@@ -143,6 +150,18 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 		agentMessageID := string(modulecore.NewMessageID())
 		turnID := string(modulecore.NewTurnID())
 		traceID := string(modulecore.NewTraceID())
+		var speechCancellation *orchestrator.SpeechTurnCancellation
+		speechCancelToken := ""
+		var releaseSpeechCancellation func()
+		if cancellations != nil {
+			speechCancellation = orchestrator.NewSpeechTurnCancellation()
+			speechCancelToken, releaseSpeechCancellation, err = cancellations.RegisterTurn(rootTaskID, turnID, speechCancellation)
+			if err != nil {
+				log.Printf("[Viewer] HandleSend: speech cancellation registration failed turn_id=%s: %v", turnID, err)
+				http.Error(w, "speech cancellation unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		sendReq := SendRequest{
 			SessionID:      sessionID,
 			MessageID:      messageID,
@@ -171,8 +190,12 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
+			if releaseSpeechCancellation != nil {
+				defer releaseSpeechCancellation()
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
+			ctx = orchestrator.WithSpeechTurnCancellation(ctx, speechCancellation)
 			if timing != nil {
 				ctx = turntiming.WithRecorder(ctx, timing)
 				timing.Mark(turntiming.PointAsyncStart)
@@ -189,29 +212,32 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 			}
 		}()
 
+		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		resp := struct {
-			OK             bool   `json:"ok"`
-			SessionID      string `json:"session_id"`
-			MessageID      string `json:"message_id"`
-			AgentMessageID string `json:"agent_message_id"`
-			TurnID         string `json:"turn_id"`
-			TraceID        string `json:"trace_id"`
-			RootTaskID     string `json:"root_task_id"`
-			ViewerClientID string `json:"viewer_client_id,omitempty"`
-			Recipient      string `json:"recipient"`
-			Attachments    int    `json:"attachment_count"`
+			OK                bool   `json:"ok"`
+			SessionID         string `json:"session_id"`
+			MessageID         string `json:"message_id"`
+			AgentMessageID    string `json:"agent_message_id"`
+			TurnID            string `json:"turn_id"`
+			SpeechCancelToken string `json:"speech_cancel_token,omitempty"`
+			TraceID           string `json:"trace_id"`
+			RootTaskID        string `json:"root_task_id"`
+			ViewerClientID    string `json:"viewer_client_id,omitempty"`
+			Recipient         string `json:"recipient"`
+			Attachments       int    `json:"attachment_count"`
 		}{
-			OK:             true,
-			SessionID:      sessionID,
-			MessageID:      messageID,
-			AgentMessageID: agentMessageID,
-			TurnID:         turnID,
-			TraceID:        traceID,
-			RootTaskID:     rootTaskID,
-			ViewerClientID: req.ViewerClientID,
-			Recipient:      string(recipient),
-			Attachments:    len(attachments),
+			OK:                true,
+			SessionID:         sessionID,
+			MessageID:         messageID,
+			AgentMessageID:    agentMessageID,
+			TurnID:            turnID,
+			SpeechCancelToken: speechCancelToken,
+			TraceID:           traceID,
+			RootTaskID:        rootTaskID,
+			ViewerClientID:    req.ViewerClientID,
+			Recipient:         string(recipient),
+			Attachments:       len(attachments),
 		}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			log.Printf("[Viewer] HandleSend: response encode error: %v", err)

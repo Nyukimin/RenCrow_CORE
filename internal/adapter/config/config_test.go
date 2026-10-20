@@ -2067,6 +2067,32 @@ tts:
 	}
 }
 
+func TestLoadConfig_TTSSpeechPlanActivation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		setting string
+		want    bool
+	}{
+		{name: "default disabled", want: false},
+		{name: "explicitly enabled", setting: "  speech_plan_enabled: true\n", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "tts-speech-plan.yaml")
+			content := "server:\n  port: 8080\ntts:\n" + tc.setting
+			if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			cfg, err := LoadConfig(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if got := cfg.TTS.SpeechPlanEnabled; got != tc.want {
+				t.Fatalf("tts.speech_plan_enabled = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestTTSGatewayValidationRejectsPhysicalTargetStyleURL(t *testing.T) {
 	cfg := &Config{
 		Server:  ServerConfig{Port: 8080},

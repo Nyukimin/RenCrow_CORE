@@ -25,6 +25,8 @@ type canonicalViewerSessionRepository interface {
 
 type viewerBridgeFactories struct {
 	ViewerSendFromOrch   func(messageProcessor) http.HandlerFunc
+	SpeechCancel         http.HandlerFunc
+	SpeechProgress       http.HandlerFunc
 	EntryFromOrch        func(messageProcessor) http.HandlerFunc
 	ChromeBridgeFromOrch func(messageProcessor) (http.HandlerFunc, http.HandlerFunc, http.HandlerFunc)
 }
@@ -36,6 +38,7 @@ func buildViewerBridgeHandlers(
 	ttsRuntime ttsEntryRuntime,
 	sessionRepo orchestrator.SessionRepository,
 ) viewerBridgeFactories {
+	speechCancellationRegistry := viewer.NewSpeechCancellationRegistry()
 	viewerSendFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		attachmentStore := newRuntimeAttachmentStore(cfg)
 		resolveSessionID := func(ctx context.Context) (modulecore.SessionID, error) {
@@ -58,7 +61,7 @@ func buildViewerBridgeHandlers(
 			}
 			return sessionID, nil
 		}
-		return viewer.HandleSendWithAttachmentsAndSessionResolver(func(ctx context.Context, req viewer.SendRequest) (string, error) {
+		return viewer.HandleSendWithSpeechCancellation(func(ctx context.Context, req viewer.SendRequest) (string, error) {
 			// Viewer metadata may identify a user for correlation, but it is not
 			// an authentication claim. The trusted orchestrator route therefore
 			// grants only reviewed public Knowledge projections here. A future
@@ -104,7 +107,7 @@ func buildViewerBridgeHandlers(
 					log.Printf("[Viewer] error event publication failed task=%s: %v", req.RootTaskID, publishErr)
 				}
 			}
-		}, attachmentStore, resolveSessionID)
+		}, attachmentStore, resolveSessionID, speechCancellationRegistry)
 	}
 	entryFromOrch := func(proc messageProcessor) http.HandlerFunc {
 		return entryadapter.HandleWithObserver(
@@ -172,6 +175,8 @@ func buildViewerBridgeHandlers(
 	}
 	return viewerBridgeFactories{
 		ViewerSendFromOrch:   viewerSendFromOrch,
+		SpeechCancel:         speechCancellationRegistry.HandleCancel(),
+		SpeechProgress:       speechCancellationRegistry.HandleProgress(activeViewerControl.IsActiveAudio),
 		EntryFromOrch:        entryFromOrch,
 		ChromeBridgeFromOrch: chromeBridgeFromOrch,
 	}

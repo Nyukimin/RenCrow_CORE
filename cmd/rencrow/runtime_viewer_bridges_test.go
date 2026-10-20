@@ -13,9 +13,11 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	sessionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/session"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
+	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type viewerBridgeErrorProcessor struct{}
@@ -65,6 +67,167 @@ func TestViewerBridgeResolvesProductionCanonicalSessionBeforeAcceptance(t *testi
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("processor did not receive the accepted request")
+	}
+}
+
+type viewerBridgeSpeechGateProcessor struct {
+	start  chan struct{}
+	result chan error
+}
+
+func (p viewerBridgeSpeechGateProcessor) ProcessMessage(ctx context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	<-p.start
+	speechCtx, done := orchestrator.SpeechSynthesisContext(ctx)
+	defer done()
+	p.result <- speechCtx.Err()
+	return orchestrator.ProcessMessageResponse{SessionID: req.SessionID}, nil
+}
+
+func TestViewerBridgeCancellationUsesSharedRegistryAndLatchesBeforeSpeechStart(t *testing.T) {
+	processor := viewerBridgeSpeechGateProcessor{
+		start:  make(chan struct{}),
+		result: make(chan error, 1),
+	}
+	factories := buildViewerBridgeHandlers(
+		&config.Config{},
+		&Dependencies{},
+		"",
+		ttsEntryRuntime{},
+		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
+	)
+	handler := factories.ViewerSendFromOrch(processor)
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
+	req.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q want=no-store", got)
+	}
+	var accepted struct {
+		TurnID            string `json:"turn_id"`
+		SpeechCancelToken string `json:"speech_cancel_token"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.TurnID == "" || accepted.SpeechCancelToken == "" {
+		t.Fatalf("accepted response missing turn cancellation identity: %+v", accepted)
+	}
+
+	cancelBody, err := json.Marshal(map[string]string{"speech_cancel_token": accepted.SpeechCancelToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelResponse := httptest.NewRecorder()
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/viewer/tts/cancel", strings.NewReader(string(cancelBody)))
+	factories.SpeechCancel.ServeHTTP(cancelResponse, cancelRequest)
+	if cancelResponse.Code != http.StatusNoContent {
+		t.Fatalf("cancel status=%d want=%d body=%s", cancelResponse.Code, http.StatusNoContent, cancelResponse.Body.String())
+	}
+
+	close(processor.start)
+	select {
+	case err := <-processor.result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("speech context error=%v want=%v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("speech processor did not complete")
+	}
+}
+
+type viewerBridgePlaybackProgressProcessor struct {
+	ready   chan struct{}
+	started chan error
+}
+
+func (p viewerBridgePlaybackProgressProcessor) ProcessMessage(ctx context.Context, req orchestrator.ProcessMessageRequest) (orchestrator.ProcessMessageResponse, error) {
+	progress := speech.PlaybackProgressFromContext(ctx)
+	if progress == nil {
+		p.started <- errors.New("Viewer playback progress was not attached to accepted turn")
+		return orchestrator.ProcessMessageResponse{}, errors.New("Viewer playback progress is unavailable")
+	}
+	if err := progress.MarkReady(0); err != nil {
+		p.started <- err
+		return orchestrator.ProcessMessageResponse{}, err
+	}
+	close(p.ready)
+	err := progress.WaitStarted(ctx, 0)
+	p.started <- err
+	return orchestrator.ProcessMessageResponse{SessionID: req.SessionID}, nil
+}
+
+func TestViewerBridgePlaybackProgressUsesAcceptedTurnAndActiveAudioOwner(t *testing.T) {
+	resetActiveViewerControlForTest()
+	defer resetActiveViewerControlForTest()
+	activeViewerControl.Claim(moduletts.ViewerActiveKindAudio, "audio-owner")
+	processor := viewerBridgePlaybackProgressProcessor{
+		ready:   make(chan struct{}),
+		started: make(chan error, 1),
+	}
+	factories := buildViewerBridgeHandlers(
+		&config.Config{},
+		&Dependencies{},
+		"",
+		ttsEntryRuntime{},
+		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
+	)
+	handler := factories.ViewerSendFromOrch(processor)
+	request := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio","viewer_client_id":"untrusted-send-id"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	handler(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("send status=%d body=%s", response.Code, response.Body.String())
+	}
+	var accepted struct {
+		RootTaskID string `json:"root_task_id"`
+		TurnID     string `json:"turn_id"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.RootTaskID == "" || accepted.TurnID == "" {
+		t.Fatalf("accepted response lacks progress identity: %+v", accepted)
+	}
+	select {
+	case <-processor.ready:
+	case <-time.After(time.Second):
+		t.Fatal("turn did not mark utterance ready")
+	}
+
+	for _, viewerClientID := range []string{"untrusted-send-id", "audio-owner"} {
+		body, err := json.Marshal(map[string]any{
+			"public_playback_ref": accepted.RootTaskID,
+			"turn_id":             accepted.TurnID,
+			"utterance_index":     0,
+			"phase":               "started",
+			"viewer_client_id":    viewerClientID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		progressResponse := httptest.NewRecorder()
+		progressRequest := httptest.NewRequest(http.MethodPost, "/viewer/tts/progress", strings.NewReader(string(body)))
+		factories.SpeechProgress.ServeHTTP(progressResponse, progressRequest)
+		if progressResponse.Code != http.StatusNoContent {
+			t.Fatalf("viewer=%s progress status=%d want=%d body=%s", viewerClientID, progressResponse.Code, http.StatusNoContent, progressResponse.Body.String())
+		}
+		if got := progressResponse.Header().Get("Cache-Control"); got != "no-store" {
+			t.Fatalf("Cache-Control=%q want=no-store", got)
+		}
+	}
+	select {
+	case err := <-processor.started:
+		if err != nil {
+			t.Fatalf("accepted turn did not receive selected active audio progress: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("speech progress did not wake the accepted turn")
 	}
 }
 

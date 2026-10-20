@@ -41,6 +41,7 @@ func (h *HeavyAgent) WithStableRuntimeContext(content string) *HeavyAgent {
 
 func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
 	userMessage := stripHeavyCommand(t.MessageText())
+	speechPlanMode := SpeechPlanCallbackFromContext(ctx) != nil
 	messages := []llm.Message{}
 	var recallPack *conversation.RecallPack
 	if h.conversationEngine != nil {
@@ -65,18 +66,30 @@ func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (st
 		}
 		return response, nil
 	}
+	if speechPlanMode {
+		messages = append(messages, llm.Message{Role: "system", Content: speechPlanInstruction(), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "speech_plan_contract"}})
+	}
 	messages = assemblePromptContext(h.systemPrompt, currentRuntimeContext(ctx, h.runtimeContextProvider, "kuro", h.stableRuntimeContext), messages, userMessageWithAttachments(userMessage, t.Attachments()))
 	req := llm.WithCurrentJSTTimeNow(llm.GenerateRequest{
 		Messages:    messages,
 		MaxTokens:   2048,
 		Temperature: 0.4,
 	})
-	resp, err := h.llmProvider.Generate(ctx, req)
+	if speechPlanMode {
+		req.ResponseFormat = llm.ResponseFormatJSONObject
+	}
+	resp, generationDuration, err := generateSpeechPlanResponse(ctx, h.llmProvider, req, speechPlanMode)
 	if err != nil {
 		return "", err
 	}
+	planResult, structuredSpeechPlan := parseSpeechPlan(ctx, resp.Content, generationDuration)
 	response := conversation.StripLeadingSpeakerLabels(resp.Content, conversation.SpeakerKuro)
-	response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+	if structuredSpeechPlan {
+		response = planResult.DisplayText
+		reportGenerationMetrics(ctx, resp)
+	} else {
+		response = enforceExactSharedRecallAnswer(userMessage, response, recallPack)
+	}
 	if h.conversationEngine != nil {
 		if err := commitConversationTurn(ctx, h.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {
 			return response, err

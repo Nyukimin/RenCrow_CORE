@@ -27,6 +27,74 @@ func TestBuildAudioChunkEventPayloadNormalizesDisplayAndTrack(t *testing.T) {
 	if got.Track != DefaultTrack || got.AudioPath != "/tmp/a.wav" {
 		t.Fatalf("track/audio = %+v", got)
 	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyWire map[string]any
+	if err := json.Unmarshal(raw, &legacyWire); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := legacyWire["turn_id"]; ok {
+		t.Fatalf("legacy payload gained turn_id: %s", raw)
+	}
+	if _, ok := legacyWire["pause_after_ms"]; ok {
+		t.Fatalf("legacy payload gained pause_after_ms: %s", raw)
+	}
+	if _, ok := legacyWire["playback_output"]; ok {
+		t.Fatalf("legacy payload gained playback_output: %s", raw)
+	}
+}
+
+func TestBuildAudioChunkEventPayloadCarriesSpeechPlanMetadata(t *testing.T) {
+	got := BuildAudioChunkEventPayload(AudioChunkEventPayloadInput{
+		SessionID:         "tts-speech",
+		PublicPlaybackRef: "task-ref",
+		TurnID:            "turn_abc",
+		PlaybackOutput:    "local",
+		PauseAfterMS:      300,
+		ChunkIndex:        1,
+		SpeechText:        "続きます。",
+	})
+	if got.TurnID != "turn_abc" || got.PlaybackOutput != "local" || got.PauseAfterMS == nil || *got.PauseAfterMS != 300 {
+		t.Fatalf("SpeechPlan metadata = %+v", got)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["turn_id"] != "turn_abc" || wire["playback_output"] != "local" || wire["pause_after_ms"] != float64(300) {
+		t.Fatalf("SpeechPlan wire metadata = %#v", wire)
+	}
+	zeroPause, err := json.Marshal(BuildAudioChunkEventPayload(AudioChunkEventPayloadInput{TurnID: "turn_zero", PauseAfterMS: 0}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var zeroWire map[string]any
+	if err := json.Unmarshal(zeroPause, &zeroWire); err != nil {
+		t.Fatal(err)
+	}
+	if zeroWire["pause_after_ms"] != float64(0) {
+		t.Fatalf("explicit zero pause was omitted: %s", zeroPause)
+	}
+}
+
+func TestBuildAudioChunkEventPayloadOmitsPlaybackOutputForLegacyChunks(t *testing.T) {
+	raw, err := json.Marshal(BuildAudioChunkEventPayload(AudioChunkEventPayloadInput{SpeechText: "legacy"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := wire["playback_output"]; ok {
+		t.Fatalf("legacy payload gained playback_output: %s", raw)
+	}
 }
 
 func TestBuildSessionCompletedEventPayloadTrimsIdentity(t *testing.T) {

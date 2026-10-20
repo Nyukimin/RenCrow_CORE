@@ -2,11 +2,16 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
@@ -22,16 +27,40 @@ type messageStreamHook func(ctx context.Context, route routing.Route, speaker, t
 // produced the text (the turn's responding Agent), never inferred from route.
 type messageTTSPusher func(ctx context.Context, sessionID string, route routing.Route, speaker, eventType, text string)
 
+// messageSpeechPlanPusher hands one normalized CHAT plan to its TTS owner.
+// Conversation session, TTS session, and canonical turn IDs remain explicit.
+type messageSpeechPlanPusher func(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error
+
+type speechPlanRouteObservation struct {
+	Event            string `json:"event"`
+	TurnID           string `json:"turn_id"`
+	SpeakerID        string `json:"speaker_id"`
+	SpeechPlanValid  bool   `json:"speech_plan_valid"`
+	UtteranceCount   int    `json:"utterance_count"`
+	CueCount         int    `json:"cue_count"`
+	LLMGenerationMS  *int64 `json:"llm_generation_ms"`
+	PlanValidationMS *int64 `json:"plan_validation_ms"`
+	FallbackReason   string `json:"fallback_reason"`
+}
+
+const (
+	speechPlanHandoffUnavailable = "speech_plan_tts_handoff_unavailable"
+	speechPlanHandoffFailed      = "speech_plan_tts_handoff_failed"
+	speechPlanDisplayUnavailable = "speech_plan_display_unavailable"
+)
+
 type messageRouteDispatcher struct {
 	mio               MioAgent
 	shiroChat         MioAgent
 	shiro             ShiroAgent
 	wild              WildAgent
 	heavy             HeavyAgent
+	speechPlanEnabled bool
 	codeExecutor      CodeExecutor
 	emit              messageEventEmitter
 	withStreamHooks   messageStreamHook
 	pushTTS           messageTTSPusher
+	pushSpeechPlan    messageSpeechPlanPusher
 	executeAutonomous autonomousRouteExecutor
 	canonicalEvents   CanonicalEventRecorder
 	nativeCoding      NativeCodingAdmission
@@ -65,6 +94,16 @@ func (d *messageRouteDispatcher) SetHeavyAgent(heavy HeavyAgent) {
 
 func (d *messageRouteDispatcher) SetShiroChatAgent(chat MioAgent) {
 	d.shiroChat = chat
+}
+
+// SetSpeechPlanPusher installs the typed CHAT-to-TTS handoff. The message
+// orchestrator lifecycle owns wiring this seam to its active TTS bridge.
+func (d *messageRouteDispatcher) SetSpeechPlanPusher(pusher messageSpeechPlanPusher) {
+	d.pushSpeechPlan = pusher
+}
+
+func (d *messageRouteDispatcher) SetSpeechPlanEnabled(enabled bool) {
+	d.speechPlanEnabled = enabled
 }
 
 func (d *messageRouteDispatcher) SetAutonomousExecutor(execute autonomousRouteExecutor) {
@@ -151,12 +190,44 @@ func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input dom
 	speaker := chatSpeakerForTurnInput(input)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", taskIDText, sessionID, channel, chatID)
 	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
-	resp, err := d.generateChatResponse(streamCtx, input, speaker)
-	if err == nil {
-		d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)
-		ttsStream.Finalize(ctx, resp)
+	var speechPlanResult *speech.Result
+	if d.speechPlanEnabled {
+		streamCtx = domainagent.ContextWithSpeechPlanCallback(streamCtx, func(result speech.Result) {
+			captured := result
+			speechPlanResult = &captured
+		})
 	}
-	return resp, err
+	resp, err := d.generateChatResponse(streamCtx, input, speaker)
+	if err != nil {
+		if speechPlanResult != nil {
+			d.logSpeechPlanObservation(string(input.TurnID()), speaker, *speechPlanResult, "")
+		}
+		return resp, err
+	}
+	d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)
+	if speechPlanResult == nil {
+		// Deterministic shortcuts return before Main LLM generation and keep
+		// their existing text-only stream behavior.
+		ttsStream.Finalize(ctx, resp)
+		return resp, nil
+	}
+
+	// Close and drain legacy forwarders without sending the JSON plan or its
+	// display text through the old TTS/Avatar text path.
+	ttsStream.Finalize(ctx, "")
+	result := *speechPlanResult
+	routeFallbackReason := ""
+	if result.Valid {
+		if strings.TrimSpace(result.DisplayText) == "" {
+			routeFallbackReason = speechPlanDisplayUnavailable
+		} else if d.pushSpeechPlan == nil {
+			routeFallbackReason = speechPlanHandoffUnavailable
+		} else if pushErr := d.pushSpeechPlan(ctx, ttsSessionID, sessionID, string(input.TurnID()), speaker, result.Plan); pushErr != nil {
+			routeFallbackReason = speechPlanHandoffFailed
+		}
+	}
+	d.logSpeechPlanObservation(string(input.TurnID()), speaker, result, routeFallbackReason)
+	return resp, nil
 }
 
 func (d *messageRouteDispatcher) generateChatResponse(ctx context.Context, input domainconversation.TurnInput, speaker string) (string, error) {
@@ -189,6 +260,80 @@ func chatSpeakerForTurnInput(input domainconversation.TurnInput) string {
 		return string(modulechat.DefaultViewerRecipient)
 	}
 	return recipient
+}
+
+func (d *messageRouteDispatcher) logSpeechPlanObservation(turnID, speakerID string, result speech.Result, routeFallbackReason string) {
+	fallbackReason := routeFallbackReason
+	if fallbackReason == "" {
+		fallbackReason = result.FallbackReason
+	}
+	fallbackReason = boundedSpeechPlanFallbackReason(fallbackReason, result.Valid)
+
+	observation := speechPlanRouteObservation{
+		Event:            "speech.plan.observed",
+		TurnID:           turnID,
+		SpeakerID:        speakerID,
+		SpeechPlanValid:  result.Valid,
+		UtteranceCount:   boundedSpeechPlanUtteranceCount(result.Plan),
+		CueCount:         boundedSpeechPlanCueCount(result.Plan),
+		LLMGenerationMS:  result.LLMGenerationMS,
+		PlanValidationMS: result.PlanValidationMS,
+		FallbackReason:   fallbackReason,
+	}
+	encoded, err := json.Marshal(observation)
+	if err != nil {
+		return
+	}
+	log.New(log.Writer(), "", 0).Print(string(encoded))
+}
+
+func boundedSpeechPlanFallbackReason(reason string, valid bool) string {
+	switch reason {
+	case "":
+		if valid {
+			return ""
+		}
+		return "speech_plan_unavailable"
+	case speech.FallbackSpeechPlanLimitExceeded,
+		speech.FallbackUnknownField,
+		speech.FallbackInvalidJSON,
+		speech.FallbackPlainText,
+		speech.FallbackInvalidSchema,
+		speech.FallbackInvalidStructure,
+		speech.FallbackInvalidSegmentText,
+		speech.FallbackUnsupportedEmoji,
+		speech.FallbackGenerationFailed,
+		speechPlanHandoffUnavailable,
+		speechPlanHandoffFailed,
+		speechPlanDisplayUnavailable:
+		return reason
+	default:
+		return "speech_plan_unavailable"
+	}
+}
+
+func boundedSpeechPlanUtteranceCount(plan speech.SpeechPlan) int {
+	if len(plan.Utterances) > speech.MaxUtterances {
+		return speech.MaxUtterances
+	}
+	return len(plan.Utterances)
+}
+
+func boundedSpeechPlanCueCount(plan speech.SpeechPlan) int {
+	count := 0
+	for utteranceIndex, utterance := range plan.Utterances {
+		if utteranceIndex == speech.MaxUtterances {
+			break
+		}
+		for segmentIndex, segment := range utterance.Segments {
+			if segmentIndex == speech.MaxSegmentsPerUtterance {
+				break
+			}
+			count += min(len(segment.Before), speech.MaxCuesPerPosition)
+			count += min(len(segment.After), speech.MaxCuesPerPosition)
+		}
+	}
+	return count
 }
 
 func (d *messageRouteDispatcher) executeOPSRoute(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, ttsSessionID string) (string, error) {

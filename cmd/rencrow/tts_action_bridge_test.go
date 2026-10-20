@@ -11,17 +11,42 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	actionpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/action"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
 	transportpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/transport"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
 type actionTTSBridgeStub struct {
 	pushErr      error
 	receiptBound bool
+}
+
+type actionSpeechPlanBridgeStub struct {
+	actionTTSBridgeStub
+	pushCalls        int
+	gotPlan          speech.SpeechPlan
+	gotTTSSessionID  string
+	gotSessionID     string
+	gotTurnID        string
+	gotSpeakerID     string
+	receiptBoundPlan bool
+}
+
+func (s *actionSpeechPlanBridgeStub) PushSpeechPlan(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error {
+	s.pushCalls++
+	_, s.receiptBoundPlan = domaintransport.ReceiptOwnerFromContext(ctx)
+	s.gotTTSSessionID = ttsSessionID
+	s.gotSessionID = conversationSessionID
+	s.gotTurnID = turnID
+	s.gotSpeakerID = speakerID
+	s.gotPlan = plan
+	return s.pushErr
 }
 
 func (s *actionTTSBridgeStub) StartSession(context.Context, orchestrator.TTSSessionStart) error {
@@ -57,6 +82,138 @@ func TestActionTTSBridgeCompletesSessionTaskRunActionAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusSucceeded, domainaction.AttemptStatusSucceeded, domaintask.StatusSucceeded)
+}
+
+func TestActionTTSBridgeForwardsSpeechPlanWithTransportReceiptOwner(t *testing.T) {
+	tasks, actions := newTTSActionTestOwners(t)
+	inner := &actionSpeechPlanBridgeStub{}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-speech-plan"}); err != nil {
+		t.Fatal(err)
+	}
+	pusher, ok := bridge.(interface {
+		PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+	})
+	if !ok {
+		t.Fatal("actionTTSBridge does not forward optional PushSpeechPlan")
+	}
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "契約確認。"}}}}}
+	if err := pusher.PushSpeechPlan(context.Background(), "tts-speech-plan", "ses_0123456789abcdef0123456789abcdef", "turn_0123456789abcdef0123456789abcdef", "mio", plan); err != nil {
+		t.Fatalf("PushSpeechPlan() error = %v", err)
+	}
+	if !inner.receiptBoundPlan {
+		t.Fatal("TTS transport receipt owner was not bound to SpeechPlan synthesis context")
+	}
+	if inner.gotTTSSessionID != "tts-speech-plan" || inner.gotSessionID != "ses_0123456789abcdef0123456789abcdef" || inner.gotTurnID != "turn_0123456789abcdef0123456789abcdef" || inner.gotSpeakerID != "mio" {
+		t.Fatalf("SpeechPlan identity changed by decorator: tts=%q session=%q turn=%q speaker=%q", inner.gotTTSSessionID, inner.gotSessionID, inner.gotTurnID, inner.gotSpeakerID)
+	}
+	if len(inner.gotPlan.Utterances) != 1 || inner.gotPlan.Utterances[0].Segments[0].Text != "契約確認。" {
+		t.Fatalf("SpeechPlan changed by decorator: %#v", inner.gotPlan)
+	}
+	if err := bridge.EndSession(context.Background(), "tts-speech-plan"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActionTTSBridgeClosesSpeechPlanFailureAtSessionEnd(t *testing.T) {
+	tasks, actions := newTTSActionTestOwners(t)
+	sentinel := errors.New("SpeechPlan synthesis canceled")
+	inner := &actionSpeechPlanBridgeStub{actionTTSBridgeStub: actionTTSBridgeStub{pushErr: sentinel}}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-speech-plan-failure"}); err != nil {
+		t.Fatal(err)
+	}
+	pusher := bridge.(interface {
+		PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+	})
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "途中で止める。"}}}}}
+	if err := pusher.PushSpeechPlan(context.Background(), "tts-speech-plan-failure", string(modulecore.NewSessionID()), string(modulecore.NewTurnID()), "mio", plan); !errors.Is(err, sentinel) {
+		t.Fatalf("PushSpeechPlan error = %v, want %v", err, sentinel)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusFailed, domainaction.AttemptStatusFailed, domaintask.StatusFailed)
+	if err := bridge.EndSession(context.Background(), "tts-speech-plan-failure"); err != nil {
+		t.Fatalf("EndSession repeated SpeechPlan close: %v", err)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusFailed, domainaction.AttemptStatusFailed, domaintask.StatusFailed)
+}
+
+func TestActionTTSBridgeCancelsSpeechPlanAttemptBeforeProcessReturns(t *testing.T) {
+	tasks, actions := newTTSActionTestOwners(t)
+	inner := &actionSpeechPlanBridgeStub{actionTTSBridgeStub: actionTTSBridgeStub{pushErr: context.Canceled}}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.StartSession(context.Background(), orchestrator.TTSSessionStart{SessionID: "tts-speech-plan-cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	pusher := bridge.(interface {
+		PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+	})
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "取消する。"}}}}}
+	if err := pusher.PushSpeechPlan(context.Background(), "tts-speech-plan-cancel", string(modulecore.NewSessionID()), string(modulecore.NewTurnID()), "mio", plan); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PushSpeechPlan cancellation = %v, want context.Canceled", err)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusCancelled, domainaction.AttemptStatusCancelled, domaintask.StatusCancelled)
+	if err := bridge.EndSession(context.Background(), "tts-speech-plan-cancel"); err != nil {
+		t.Fatalf("EndSession repeated cancellation close: %v", err)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusCancelled, domainaction.AttemptStatusCancelled, domaintask.StatusCancelled)
+}
+
+func TestActionTTSBridgePreCanceledSpeechPlanClosesAttemptWithoutStartingSynthesis(t *testing.T) {
+	tasks, actions := newTTSActionTestOwners(t)
+	inner := &actionSpeechPlanBridgeStub{}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, run, err := tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+		Title:    "Chat turn",
+		Route:    domaintask.RouteCHAT,
+		OwnerID:  "mio",
+		Assignee: "mio",
+		ReadOnly: true,
+	}, domaintask.SharedRoleContext{CurrentPlan: "respond while speech is canceled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	processCtx, err := domainexecution.WithIdentity(context.Background(), task.TaskID, run.RunID, modulecore.NewTraceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bridge.StartSession(processCtx, orchestrator.TTSSessionStart{SessionID: "tts-speech-plan-pre-cancel"}); err != nil {
+		t.Fatal(err)
+	}
+	pusher := bridge.(interface {
+		PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+	})
+	speechCtx, cancelSpeech := context.WithCancel(processCtx)
+	cancelSpeech()
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "合成を開始しない。"}}}}}
+	err = pusher.PushSpeechPlan(speechCtx, "tts-speech-plan-pre-cancel", string(modulecore.NewSessionID()), string(modulecore.NewTurnID()), "mio", plan)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-canceled PushSpeechPlan error = %v, want context.Canceled", err)
+	}
+	if inner.pushCalls != 0 {
+		t.Fatalf("pre-canceled synthesis calls = %d, want 0", inner.pushCalls)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusCancelled, domainaction.AttemptStatusCancelled, domaintask.StatusRunning)
+	if err := bridge.EndSession(processCtx, "tts-speech-plan-pre-cancel"); err != nil {
+		t.Fatalf("EndSession after pre-canceled SpeechPlan: %v", err)
+	}
+	if processCtx.Err() != nil {
+		t.Fatalf("speech cancellation canceled the ProcessMessage context: %v", processCtx.Err())
+	}
+	if err := tasks.CloseStartedRun(context.Background(), task.TaskID, run.RunID, "mio", taskmanager.RunOutcome{Status: domaintask.StatusSucceeded, Summary: "Chat turn completed"}, nil); err != nil {
+		t.Fatalf("close still-live Chat Run: %v", err)
+	}
 }
 
 func TestActionTTSBridgeClosesFailureDuringPush(t *testing.T) {

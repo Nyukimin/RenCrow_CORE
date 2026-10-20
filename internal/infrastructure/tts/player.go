@@ -24,6 +24,12 @@ type Player interface {
 	Play(ctx context.Context, audioPath string) (PlaybackResult, error)
 }
 
+// PlaybackStartNotifier optionally reports the process start boundary while
+// keeping the legacy Player interface available to existing callers.
+type PlaybackStartNotifier interface {
+	PlayWithStart(ctx context.Context, audioPath string, onStarted func()) (PlaybackResult, error)
+}
+
 // CommandPlayer executes configured playback commands.
 type CommandPlayer struct {
 	commands []CommandSpec
@@ -34,12 +40,21 @@ func NewCommandPlayer(commands []CommandSpec) *CommandPlayer {
 }
 
 func (p *CommandPlayer) Play(ctx context.Context, audioPath string) (PlaybackResult, error) {
+	return p.play(ctx, audioPath, nil)
+}
+
+func (p *CommandPlayer) PlayWithStart(ctx context.Context, audioPath string, onStarted func()) (PlaybackResult, error) {
+	return p.play(ctx, audioPath, onStarted)
+}
+
+func (p *CommandPlayer) play(ctx context.Context, audioPath string, onStarted func()) (PlaybackResult, error) {
 	if len(p.commands) == 0 {
 		return PlaybackResult{}, ErrCommandNotFound
 	}
 
 	var lastErr error
 	last := PlaybackResult{}
+	started := false
 
 	for _, spec := range p.commands {
 		args := make([]string, 0, len(spec.Args))
@@ -47,7 +62,14 @@ func (p *CommandPlayer) Play(ctx context.Context, audioPath string) (PlaybackRes
 			args = append(args, strings.ReplaceAll(a, "{audio}", audioPath))
 		}
 		cmd := exec.CommandContext(ctx, spec.Name, args...)
-		err := cmd.Run()
+		err := cmd.Start()
+		if err == nil {
+			if onStarted != nil && !started {
+				onStarted()
+				started = true
+			}
+			err = cmd.Wait()
+		}
 		exitCode := 0
 		if err != nil {
 			if ee, ok := err.(*exec.ExitError); ok {

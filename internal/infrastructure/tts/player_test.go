@@ -28,6 +28,21 @@ func TestCommandPlayer_PlaySuccess(t *testing.T) {
 	}
 }
 
+func TestCommandPlayerPlayWithStartNotifiesAtFirstCommandStart(t *testing.T) {
+	p := NewCommandPlayer([]CommandSpec{testCommand("exit 7"), testCommand("exit 0")})
+	started := 0
+	result, err := p.PlayWithStart(context.Background(), "audio.wav", func() { started++ })
+	if err != nil {
+		t.Fatalf("PlayWithStart() error = %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("PlayWithStart() exit code = %d, want 0", result.ExitCode)
+	}
+	if started != 1 {
+		t.Fatalf("start notifications = %d, want one per playback", started)
+	}
+}
+
 func TestCommandPlayer_PlayFailure(t *testing.T) {
 	p := NewCommandPlayer([]CommandSpec{
 		testCommand("exit 7"),

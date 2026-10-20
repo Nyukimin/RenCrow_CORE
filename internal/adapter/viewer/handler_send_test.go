@@ -14,6 +14,7 @@ import (
 	"time"
 
 	appattachment "github.com/Nyukimin/RenCrow_CORE/internal/application/attachment"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domainattachment "github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -65,6 +66,96 @@ func TestHandleSendPreservesAudioOutputIntent(t *testing.T) {
 				t.Fatal("handler was not called")
 			}
 		})
+	}
+}
+
+func TestHandleSendAcceptanceIsNotCacheable(t *testing.T) {
+	started := make(chan struct{}, 1)
+	h := HandleSend(func(context.Context, SendRequest) (string, error) {
+		started <- struct{}{}
+		return "ok", nil
+	}, nil)
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q want=no-store", got)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler was not called")
+	}
+}
+
+func TestHandleSendCancellationCanLatchBeforeSpeechStarts(t *testing.T) {
+	registry := NewSpeechCancellationRegistry()
+	processingStarted := make(chan struct{}, 1)
+	startSpeech := make(chan struct{})
+	speechResult := make(chan error, 1)
+	h := HandleSendWithSpeechCancellation(func(ctx context.Context, _ SendRequest) (string, error) {
+		<-startSpeech
+		processingStarted <- struct{}{}
+		speechCtx, done := orchestrator.SpeechSynthesisContext(ctx)
+		defer done()
+		speechResult <- speechCtx.Err()
+		return "ok", nil
+	}, nil, nil, nil, registry)
+
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control=%q want=no-store", got)
+	}
+	var accepted struct {
+		TurnID            string `json:"turn_id"`
+		RootTaskID        string `json:"root_task_id"`
+		SpeechCancelToken string `json:"speech_cancel_token"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.TurnID == "" || accepted.SpeechCancelToken == "" {
+		t.Fatalf("acceptance missing turn or cancellation capability: %+v", accepted)
+	}
+	registry.mu.Lock()
+	registeredEntry := registry.entries[accepted.SpeechCancelToken]
+	registry.mu.Unlock()
+	if registeredEntry == nil || registeredEntry.turnID != accepted.TurnID || registeredEntry.rootTaskID != accepted.RootTaskID {
+		t.Fatalf("capability was not bound to accepted turn: acceptance=%+v entry=%+v", accepted, registeredEntry)
+	}
+	cancelBody, err := json.Marshal(map[string]string{"speech_cancel_token": accepted.SpeechCancelToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelRec := httptest.NewRecorder()
+	cancelReq := httptest.NewRequest(http.MethodPost, "/viewer/tts/cancel", strings.NewReader(string(cancelBody)))
+	registry.HandleCancel().ServeHTTP(cancelRec, cancelReq)
+	if cancelRec.Code != http.StatusNoContent {
+		t.Fatalf("cancel status=%d want=%d body=%s", cancelRec.Code, http.StatusNoContent, cancelRec.Body.String())
+	}
+	close(startSpeech)
+	select {
+	case <-processingStarted:
+	case <-time.After(time.Second):
+		t.Fatal("async message handler did not start after release")
+	}
+	select {
+	case err := <-speechResult:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("speech context error=%v want=%v", err, context.Canceled)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("speech context was not created")
 	}
 }
 

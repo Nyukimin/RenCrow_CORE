@@ -31,6 +31,8 @@ func buildOrchestratorRuntime(
 	bridges viewerBridgeFactories,
 	verificationRuntime verificationRuntime,
 ) {
+	deps.viewerSpeechCancel = bridges.SpeechCancel
+	deps.viewerSpeechProgress = bridges.SpeechProgress
 	newsCollector := appnewsbrief.NewToolCollectorWithProvider(agents.WorkerTools, configuredNewsSearchProvider(cfg))
 	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg, deps.taskManager, deps.actionManager, deps.transportManager)
 	if err != nil {
@@ -92,6 +94,7 @@ func buildOrchestratorRuntime(
 	)
 	orch.SetVisionAnalyzer(visionAnalyzer, visionOptions)
 	orch.SetDurableStoreWorkflow(deps.durableStoreWorkflow)
+	orch.SetSpeechPlanEnabled(cfg.TTS.SpeechPlanEnabled)
 	if nativeCoding != nil {
 		// The profile is selected by configuration only: the same runtime is the
 		// admission that selects new OPS turns and the delegate Shiro hands them to.

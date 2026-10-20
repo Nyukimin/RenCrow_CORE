@@ -13,6 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	domainaction "github.com/Nyukimin/RenCrow_CORE/internal/domain/action"
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintransport "github.com/Nyukimin/RenCrow_CORE/internal/domain/transport"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -36,10 +37,12 @@ type actionTTSDisplayBridge struct {
 }
 
 type ttsActionSession struct {
-	identity domainexecution.Identity
-	action   domainaction.Action
-	attempt  domainaction.Attempt
-	ownsRun  bool
+	identity     domainexecution.Identity
+	action       domainaction.Action
+	attempt      domainaction.Attempt
+	ownsRun      bool
+	operationErr error
+	completed    bool
 }
 
 func newActionTTSBridge(inner orchestrator.TTSBridge, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager, actorID string) (orchestrator.TTSBridge, error) {
@@ -129,6 +132,44 @@ func (b *actionTTSBridge) PushText(ctx context.Context, sessionID string, text s
 	return nil
 }
 
+func (b *actionTTSBridge) PushSpeechPlan(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error {
+	session, ownedCtx, err := b.sessionContext(ctx, ttsSessionID)
+	if err != nil {
+		return err
+	}
+	err = ownedCtx.Err()
+	if err == nil {
+		pusher, ok := b.inner.(orchestrator.SpeechPlanTTSBridge)
+		if !ok {
+			err = errors.New("TTS bridge does not support SpeechPlan synthesis")
+		} else {
+			err = pusher.PushSpeechPlan(ownedCtx, ttsSessionID, conversationSessionID, turnID, speakerID, plan)
+		}
+	}
+	if err != nil {
+		b.recordSessionError(ttsSessionID, session, err)
+		b.mu.Lock()
+		if current, ok := b.sessions[strings.TrimSpace(ttsSessionID)]; ok && current.action.ActionID == session.action.ActionID && current.attempt.AttemptID == session.attempt.AttemptID {
+			session = current
+		}
+		b.mu.Unlock()
+		closed, completionErr := b.completeOwned(context.WithoutCancel(ctx), session, session.operationErr)
+		if closed {
+			b.mu.Lock()
+			if current, ok := b.sessions[strings.TrimSpace(ttsSessionID)]; ok && current.action.ActionID == session.action.ActionID && current.attempt.AttemptID == session.attempt.AttemptID {
+				current.completed = true
+				b.sessions[strings.TrimSpace(ttsSessionID)] = current
+			}
+			b.mu.Unlock()
+		}
+		if completionErr != nil {
+			return completionErr
+		}
+		return err
+	}
+	return err
+}
+
 func (b *actionTTSDisplayBridge) PushTextWithDisplay(ctx context.Context, sessionID string, speechText string, displayText string, emotion *moduletts.EmotionState) error {
 	session, ownedCtx, err := b.sessionContext(ctx, sessionID)
 	if err != nil {
@@ -147,7 +188,22 @@ func (b *actionTTSBridge) EndSession(ctx context.Context, sessionID string) erro
 		return err
 	}
 	b.deleteSession(sessionID)
-	return b.complete(ctx, session, b.inner.EndSession(ownedCtx, sessionID))
+	endErr := b.inner.EndSession(ownedCtx, sessionID)
+	if session.completed {
+		return endErr
+	}
+	return b.complete(ctx, session, errors.Join(session.operationErr, endErr))
+}
+
+func (b *actionTTSBridge) recordSessionError(sessionID string, session ttsActionSession, operationErr error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	current, ok := b.sessions[strings.TrimSpace(sessionID)]
+	if !ok || current.action.ActionID != session.action.ActionID || current.attempt.AttemptID != session.attempt.AttemptID {
+		return
+	}
+	current.operationErr = errors.Join(current.operationErr, operationErr)
+	b.sessions[strings.TrimSpace(sessionID)] = current
 }
 
 func (b *actionTTSBridge) executionContext(ctx context.Context) (context.Context, domainexecution.Identity, bool, error) {
@@ -203,12 +259,20 @@ func (b *actionTTSBridge) deleteSession(sessionID string) {
 // complete closes the Attempt and Action of a session, and the Run when the
 // session started it. If the Attempt cannot be closed the Run stays open with it.
 func (b *actionTTSBridge) complete(ctx context.Context, session ttsActionSession, operationErr error) error {
+	_, err := b.completeOwned(ctx, session, operationErr)
+	return err
+}
+
+func (b *actionTTSBridge) completeOwned(ctx context.Context, session ttsActionSession, operationErr error) (bool, error) {
 	const completed = "TTS session completed"
 	if closed, err := b.actions.CloseAttempt(ctx, session.action.ActionID, session.attempt.AttemptID, actionmanager.AttemptOutcomeOf(operationErr, completed), operationErr); !closed {
-		return err
+		return false, err
 	}
 	if !session.ownsRun {
-		return operationErr
+		return true, operationErr
 	}
-	return b.tasks.CloseStartedRun(ctx, session.identity.TaskID, session.identity.RunID, b.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr)
+	if err := b.tasks.CloseStartedRun(ctx, session.identity.TaskID, session.identity.RunID, b.actorID, taskmanager.RunOutcomeOf(operationErr, completed), operationErr); err != nil {
+		return true, err
+	}
+	return true, operationErr
 }

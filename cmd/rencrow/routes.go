@@ -327,7 +327,9 @@ func registerGovernanceSecurityReportRoutes(mux *http.ServeMux, dependencies *De
 
 func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies) {
 	chatfeature.RegisterRoutes(mux, chatfeature.Dependencies{Routes: chatfeature.Routes{
-		Send: dependencies.viewerSend,
+		Send:           dependencies.viewerSend,
+		SpeechCancel:   dependencies.viewerSpeechCancel,
+		SpeechProgress: dependencies.viewerSpeechProgress,
 	}})
 	gamesfeature.RegisterRoutes(mux, gamesfeature.Dependencies{Routes: gamesfeature.Routes{
 		Status:        dependencies.viewerGamesStatus,
