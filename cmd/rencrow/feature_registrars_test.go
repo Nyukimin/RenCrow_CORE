@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -125,13 +126,15 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 	)
 
 	tests := []struct {
-		name   string
-		method string
-		path   string
-		want   int
+		name     string
+		method   string
+		path     string
+		want     int
+		contains string
 	}{
 		{name: "channel webhook", method: http.MethodGet, path: "/webhook/line", want: http.StatusNoContent},
 		{name: "viewer page", method: http.MethodGet, path: "/viewer", want: http.StatusOK},
+		{name: "viewer speech evaluation page", method: http.MethodGet, path: "/viewer/tts/evaluation", want: http.StatusOK, contains: "SpeechPlan A/B 音声評価"},
 		{name: "X Bookmark page", method: http.MethodGet, path: "/viewer/x-bookmarks", want: http.StatusOK},
 		{name: "viewer runtime config", method: http.MethodGet, path: "/viewer/runtime-config", want: http.StatusOK},
 		{name: "viewer backlog", method: http.MethodGet, path: "/viewer/backlog", want: http.StatusOK},
@@ -183,6 +186,9 @@ func TestRegisterFeatureRoutesKeepsExistingRouteGroups(t *testing.T) {
 			mux.ServeHTTP(rec, req)
 			if rec.Code != tt.want {
 				t.Fatalf("%s %s status=%d want=%d body=%s", tt.method, tt.path, rec.Code, tt.want, rec.Body.String())
+			}
+			if tt.contains != "" && !strings.Contains(rec.Body.String(), tt.contains) {
+				t.Fatalf("%s %s body missing %q", tt.method, tt.path, tt.contains)
 			}
 		})
 	}

@@ -295,6 +295,53 @@ func TestRenCrowTTSBridgePushSpeechPlanPostsAndPublishesUtterancesInOrder(t *tes
 	}
 }
 
+func TestRenCrowTTSBridgeSynthesizeSpeechPlanUtteranceUsesCanonicalGatewayMetadata(t *testing.T) {
+	conversationSessionID := string(modulecore.NewSessionID())
+	turnID := string(modulecore.NewTurnID())
+	var got gatewaySpeechPlanRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tts" {
+			t.Errorf("request = %s %s, want POST /api/tts", r.Method, r.URL.Path)
+		}
+		if gotToken := r.Header.Get("Authorization"); gotToken != "Bearer test-owner-token" {
+			t.Errorf("Authorization = %q, want configured owner token", gotToken)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		requestID := r.Header.Get("X-RenCrow-TTS-Request-Id")
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("X-RenCrow-TTS-Gateway-Service", "tts-gateway")
+		w.Header().Set("X-RenCrow-TTS-Request-Id", requestID)
+		w.Header().Set("X-RenCrow-TTS-Profile-Revision", "1")
+		w.Header().Set("X-RenCrow-TTS-Utterance-Index", "0")
+		w.Header().Set("X-RenCrow-TTS-Irodori-Seed", "12345")
+		w.Header().Set("X-RenCrow-TTS-Synthesis-Ms", "321")
+		_, _ = w.Write(speechPlanTestWAV())
+	}))
+	defer server.Close()
+	bridge := NewRenCrowTTSBridge(RenCrowTTSBridgeConfig{HTTPBaseURL: server.URL, AuthToken: "test-owner-token"})
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{
+		Segments: []speech.Segment{{Text: "同じ文章を同じ条件で比較します。"}},
+		Delivery: speech.Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"},
+	}}}
+	gotResult, err := bridge.SynthesizeSpeechPlanUtterance(context.Background(), SpeechPlanSynthesisRequest{
+		SessionID: conversationSessionID, TurnID: turnID, SpeakerID: "mio", UtteranceIndex: 0, Plan: plan,
+	})
+	if err != nil {
+		t.Fatalf("SynthesizeSpeechPlanUtterance() error = %v", err)
+	}
+	if got.SpeakerID != "mio" || got.SessionID != conversationSessionID || got.TurnID != turnID || got.UtteranceIndex != 0 {
+		t.Fatalf("Gateway request identity = %#v", got)
+	}
+	if got.SpeechPlan.SchemaVersion != speech.SchemaVersion || len(got.SpeechPlan.Utterances) != 1 {
+		t.Fatalf("Gateway request plan = %#v", got.SpeechPlan)
+	}
+	if !bytes.Equal(gotResult.WAV, speechPlanTestWAV()) || gotResult.ProfileRevision != 1 || gotResult.IrodoriSeed == nil || *gotResult.IrodoriSeed != 12345 || gotResult.SynthesisMS == nil || *gotResult.SynthesisMS != 321 {
+		t.Fatalf("synthesis result = %#v", gotResult)
+	}
+}
+
 func TestRenCrowTTSBridgeUsesLocalPlaybackSinkForSpeechPlan(t *testing.T) {
 	var requestMu sync.Mutex
 	var requests int

@@ -57,6 +57,81 @@ type speechPlanResponseMetadata struct {
 	SynthesisMS     *uint64
 }
 
+// SpeechPlanSynthesisRequest identifies one utterance sent through the
+// canonical RenCrow_TTS Gateway SpeechPlan route.
+type SpeechPlanSynthesisRequest struct {
+	SessionID      string
+	TurnID         string
+	SpeakerID      string
+	UtteranceIndex int
+	Plan           speech.SpeechPlan
+}
+
+// SpeechPlanSynthesisResult contains the validated Gateway audio response and
+// private measurement metadata for the request.
+type SpeechPlanSynthesisResult struct {
+	WAV             []byte
+	ProfileRevision int
+	IrodoriSeed     *uint64
+	SynthesisMS     *uint64
+	QueueWait       time.Duration
+}
+
+// SynthesizeSpeechPlanUtterance returns one validated Gateway WAV without
+// entering Viewer playback. It shares the same request contract and transport
+// used by PushSpeechPlan.
+func (b *RenCrowTTSBridge) SynthesizeSpeechPlanUtterance(ctx context.Context, request SpeechPlanSynthesisRequest) (SpeechPlanSynthesisResult, error) {
+	if b == nil {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("RenCrow_TTS bridge is unavailable")
+	}
+	if ctx == nil {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan context is required")
+	}
+	request.SessionID = strings.TrimSpace(request.SessionID)
+	request.TurnID = strings.TrimSpace(request.TurnID)
+	request.SpeakerID = strings.ToLower(strings.TrimSpace(request.SpeakerID))
+	if err := modulecore.SessionID(request.SessionID).Validate(); err != nil {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan session_id is invalid: %w", err)
+	}
+	if err := modulecore.TurnID(request.TurnID).Validate(); err != nil {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan turn_id is invalid: %w", err)
+	}
+	if request.UtteranceIndex < 0 {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan utterance_index must be non-negative")
+	}
+	if _, _, ok := moduletts.VoiceForAgent(request.SpeakerID); !ok {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan speaker_id is unresolved")
+	}
+	normalized := speech.Normalize(request.Plan)
+	if !normalized.Valid || len(normalized.Plan.Utterances) != 1 {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("SpeechPlan evaluation request must contain exactly one valid utterance")
+	}
+	if err := ctx.Err(); err != nil {
+		return SpeechPlanSynthesisResult{}, err
+	}
+	body, err := json.Marshal(gatewaySpeechPlanRequest{
+		SpeakerID:      request.SpeakerID,
+		SessionID:      request.SessionID,
+		TurnID:         request.TurnID,
+		UtteranceIndex: request.UtteranceIndex,
+		SpeechPlan:     normalized.Plan,
+	})
+	if err != nil {
+		return SpeechPlanSynthesisResult{}, fmt.Errorf("marshal SpeechPlan Gateway request: %w", err)
+	}
+	result, err := b.synthesizeSpeechPlanUtterance(ctx, body, request.UtteranceIndex)
+	if err != nil {
+		return SpeechPlanSynthesisResult{}, err
+	}
+	return SpeechPlanSynthesisResult{
+		WAV:             result.WAV,
+		ProfileRevision: result.ProfileRevision,
+		IrodoriSeed:     result.IrodoriSeed,
+		SynthesisMS:     result.SynthesisMS,
+		QueueWait:       result.QueueWait,
+	}, nil
+}
+
 type speechPlanTransportObservation struct {
 	SchemaVersion        int     `json:"schema_version"`
 	Tag                  string  `json:"tag"`

@@ -13,6 +13,11 @@ func HandleXBookmarksPage(w http.ResponseWriter, r *http.Request) {
 	serveEmbeddedPage(w, "x_bookmarks.html", "X Bookmark page not found")
 }
 
+// HandleSpeechEvaluationPage serves the local SpeechPlan A/B evaluation workbench.
+func HandleSpeechEvaluationPage(w http.ResponseWriter, r *http.Request) {
+	serveEmbeddedPage(w, "speech_eval.html", "Speech evaluation page not found")
+}
+
 func serveEmbeddedPage(w http.ResponseWriter, name, errorMessage string) {
 	data, err := viewerFS.ReadFile(name)
 	if err != nil {

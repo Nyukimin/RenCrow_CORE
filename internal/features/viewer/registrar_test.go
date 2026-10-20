@@ -11,6 +11,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 	RegisterBaseRoutes(mux, Dependencies{Base: BaseRoutes{
 		Page:                        statusHandler(http.StatusOK),
 		XBookmarksPage:              statusHandler(http.StatusPartialContent),
+		SpeechEvaluationPage:        statusHandler(http.StatusCreated),
 		Asset:                       statusHandler(http.StatusCreated),
 		RuntimeConfig:               statusHandler(http.StatusAccepted),
 		Events:                      statusHandler(http.StatusNoContent),
@@ -28,6 +29,7 @@ func TestRegisterBaseRoutesRegistersViewerBasePaths(t *testing.T) {
 	}{
 		{path: "/viewer", want: http.StatusOK},
 		{path: "/viewer/x-bookmarks", want: http.StatusPartialContent},
+		{path: "/viewer/tts/evaluation", want: http.StatusCreated},
 		{path: "/viewer/assets/js/viewer.js", want: http.StatusCreated},
 		{path: "/viewer/runtime-config", want: http.StatusAccepted},
 		{path: "/viewer/events", want: http.StatusNoContent},

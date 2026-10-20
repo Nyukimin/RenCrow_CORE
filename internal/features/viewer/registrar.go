@@ -17,6 +17,7 @@ type Dependencies struct {
 type BaseRoutes struct {
 	Page                         http.HandlerFunc
 	XBookmarksPage               http.HandlerFunc
+	SpeechEvaluationPage         http.HandlerFunc
 	Asset                        http.HandlerFunc
 	RuntimeConfig                http.HandlerFunc
 	Logo                         http.HandlerFunc
@@ -76,6 +77,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	base := deps.Base
 	registerRoute(mux, "/viewer", base.Page)
 	registerRoute(mux, "/viewer/x-bookmarks", base.XBookmarksPage)
+	registerRoute(mux, "/viewer/tts/evaluation", base.SpeechEvaluationPage)
 	registerRoute(mux, "/viewer/assets/", base.Asset)
 	registerRoute(mux, "/viewer/runtime-config", base.RuntimeConfig)
 	registerRoute(mux, "/viewer/logo.png", base.Logo)
