@@ -31,8 +31,8 @@ CORE のローカル音声 URL は Viewer でそのまま取得する。リモ�
 |---|---|
 | SpeechPlan と Gateway 合成 | 有効。Mio WAV と `tts.audio_chunk` を確認 |
 | Viewer 音声取得 | 修正前は 404、実再生失敗 |
-| 修正後の実画面 E2E | この記録時点では未確認 |
+| 修正後の実画面 E2E | CORE `747fee5c` でローカル音声取得は HTTP 206（WAV の Range 応答）。3.36 秒の実音声で `playing`／`ended` を確認し、CORE の `playback_duration_ms=3428`、`fallback_reason=null` |
 
 ## 未確認
 
-配備後の Viewer 音声取得 200、実再生、再生 ACK、利用者割り込み後の遅延音声破棄は実経路で確認する。
+2 発話 turn `turn_01a1587d-2bc3-7e32-9f17-673bb763c8fd` でも両 WAV の `ended` と CORE の再生時間 2565／4773 ms、`fallback_reason=null` を確認した。割り込み turn `turn_01a1587b-8e8b-7812-8c6a-615f84beb934` では cancel API 204 の後に未再生の 2 発話目は再生されなかった。別ブラウザや他 OS の実画面結果は未確認。

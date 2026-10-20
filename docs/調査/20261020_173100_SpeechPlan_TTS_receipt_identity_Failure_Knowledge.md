@@ -32,8 +32,8 @@ CORE は両オーケストレーターの TTS 開始前に選択済み identity 
 | SpeechPlan 検証 | 有効。Mio の本文と utterance を保持 |
 | 206→207 Gateway 直接合成 | 認証済み要求で WAV 200 |
 | Viewer 正規経路 | `receipt_begin` で停止。Gateway 到達前 |
-| 修正後の実画面 E2E | この記録時点では未確認 |
+| 修正後の実画面 E2E | CORE `747fee5c`／207 Irodori MF で Mio の実 WAV 再生を確認。`turn_01a1587d-2bc3-7e32-9f17-673bb763c8fd` は 2 発話とも `fallback_reason=null`、再生時間 2565／4773 ms |
 
 ## 未確認
 
-修正配備後の Viewer 実再生、複数 utterance の先読み、利用者割り込み後の遅延音声破棄は、配備後 E2E で確認する。
+別 turn `turn_01a1587b-8e8b-7812-8c6a-615f84beb934` では 1 発話目の再生中に Viewer から割り込み、cancel API 204、2 発話目は `speech_cancelled` で再生されなかった。別 GPU や他の話者での同等結果は未確認。
