@@ -227,8 +227,10 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		}
 	}
 	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
-		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
-			onToken(response)
+		if !reportDeterministicSpeechPlan(ctx, response) {
+			if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+				onToken(response)
+			}
 		}
 		m.rememberExpression(response)
 		if m.conversationEngine != nil {

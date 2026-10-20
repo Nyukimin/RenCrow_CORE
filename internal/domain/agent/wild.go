@@ -105,8 +105,10 @@ func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (str
 		}
 	}
 	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
-		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
-			onToken(response)
+		if !reportDeterministicSpeechPlan(ctx, response) {
+			if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+				onToken(response)
+			}
 		}
 		if w.conversationEngine != nil {
 			if err := commitConversationTurn(ctx, w.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerMidori, recallPack); err != nil {

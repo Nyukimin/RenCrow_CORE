@@ -14,6 +14,86 @@ import (
 
 const testSpeechPlanJSON = `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"hello"}],"delivery":{"tone":"warm","attitude":"gentle","energy":"medium","pace":"normal","mode":"dialogue"},"pause_after_ms":0}]}`
 
+func TestExactSharedRecallSpeechPlanForDeterministicShortcuts(t *testing.T) {
+	const token = "RC_CTX_20260803_1328_L1S4"
+	for _, tc := range []struct {
+		name  string
+		input string
+		build func(llm.LLMProvider, *mockConversationEngine) func(context.Context, conversation.TurnInput) (string, error)
+	}{
+		{
+			name:  "mio",
+			input: "/chat 合言葉を英数字だけでそのまま教えて。",
+			build: func(provider llm.LLMProvider, engine *mockConversationEngine) func(context.Context, conversation.TurnInput) (string, error) {
+				return NewMioAgent(provider, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, engine).Chat
+			},
+		},
+		{
+			name:  "heavy",
+			input: "/heavy 合言葉を英数字だけでそのまま教えて。",
+			build: func(provider llm.LLMProvider, engine *mockConversationEngine) func(context.Context, conversation.TurnInput) (string, error) {
+				return NewHeavyAgent(provider, "heavy").WithConversationEngine(engine).Generate
+			},
+		},
+		{
+			name:  "wild",
+			input: "/wild 合言葉を英数字だけでそのまま教えて。",
+			build: func(provider llm.LLMProvider, engine *mockConversationEngine) func(context.Context, conversation.TurnInput) (string, error) {
+				return NewWildAgent(provider, "wild").WithConversationEngine(engine).Generate
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			providerCalls := 0
+			provider := &mockLLMProvider{generateFunc: func(context.Context, llm.GenerateRequest) (llm.GenerateResponse, error) {
+				providerCalls++
+				return llm.GenerateResponse{Content: "must not rewrite exact recall"}, nil
+			}}
+			engine := &mockConversationEngine{beginTurnFunc: func(context.Context, string, string) (*conversation.RecallPack, error) {
+				return &conversation.RecallPack{ShortContext: []conversation.Message{{
+					Speaker: conversation.SpeakerUser,
+					Msg:     "この会話固有の合言葉は " + token + " です",
+				}}}, nil
+			}}
+			generate := tc.build(provider, engine)
+			var result speech.Result
+			callbackCalls := 0
+			var streamed []string
+			ctx := llm.ContextWithStreamCallback(context.Background(), func(value string) { streamed = append(streamed, value) })
+			ctx = ContextWithSpeechPlanCallback(ctx, func(got speech.Result) {
+				callbackCalls++
+				result = got
+			})
+
+			got, err := generate(ctx, newAgentTurnInput(t, tc.input, "viewer", "viewer-user"))
+			if err != nil {
+				t.Fatalf("generate exact recall: %v", err)
+			}
+			if got != token {
+				t.Fatalf("exact recall = %q, want %q", got, token)
+			}
+			if providerCalls != 0 {
+				t.Fatalf("LLM calls = %d, want 0 for deterministic recall", providerCalls)
+			}
+			if callbackCalls != 1 {
+				t.Fatalf("SpeechPlan callback calls = %d, want 1", callbackCalls)
+			}
+			if len(streamed) != 0 {
+				t.Fatalf("legacy token stream = %#v, want none in SpeechPlan mode", streamed)
+			}
+			if !result.Valid || result.DisplayText != token || result.FallbackReason != "" {
+				t.Fatalf("neutral SpeechPlan result = %#v", result)
+			}
+			if len(result.Plan.Utterances) != 1 || len(result.Plan.Utterances[0].Segments) != 1 || result.Plan.Utterances[0].Segments[0].Text != token {
+				t.Fatalf("neutral SpeechPlan body = %#v", result.Plan)
+			}
+			if result.Plan.Utterances[0].Delivery != (speech.Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"}) {
+				t.Fatalf("deterministic SpeechPlan delivery = %#v, want neutral", result.Plan.Utterances[0].Delivery)
+			}
+		})
+	}
+}
+
 func TestChatSpeechPlanGenerationProjectsBeforeMemoryCommit(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

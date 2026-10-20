@@ -11,6 +11,7 @@ import (
 
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -204,16 +205,21 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 	invalidPlan := speech.Result{DisplayText: "不正な演技指定でも本文は表示する。", FallbackReason: "speech_plan_unknown_field"}
 
 	for _, tc := range []struct {
-		name          string
-		plan          *speech.Result
-		wantLegacyTTS bool
-		wantPlanPush  bool
-		rejectHandoff bool
+		name               string
+		plan               *speech.Result
+		speechPlanEnabled  bool
+		emitLegacyToken    bool
+		wantLegacyTTS      bool
+		wantPlanPush       bool
+		rejectHandoff      bool
+		wantPlanValid      bool
+		wantFallbackReason string
 	}{
-		{name: "valid plan", plan: &validPlan, wantPlanPush: true},
-		{name: "gateway rejection does not fall back to legacy audio", plan: &validPlan, wantPlanPush: true, rejectHandoff: true},
-		{name: "invalid plan keeps display only", plan: &invalidPlan},
-		{name: "deterministic shortcut keeps legacy path", wantLegacyTTS: true},
+		{name: "valid plan", plan: &validPlan, speechPlanEnabled: true, emitLegacyToken: true, wantPlanPush: true},
+		{name: "gateway rejection does not fall back to legacy audio", plan: &validPlan, speechPlanEnabled: true, emitLegacyToken: true, wantPlanPush: true, rejectHandoff: true, wantPlanValid: true, wantFallbackReason: speechPlanHandoffFailed},
+		{name: "invalid plan keeps display only", plan: &invalidPlan, speechPlanEnabled: true, emitLegacyToken: true, wantFallbackReason: speech.FallbackUnknownField},
+		{name: "disabled deterministic shortcut keeps legacy path", emitLegacyToken: true, wantLegacyTTS: true},
+		{name: "enabled route without callback keeps display and fails closed", speechPlanEnabled: true, emitLegacyToken: true, wantFallbackReason: "speech_plan_callback_unavailable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			logOutput := captureSpeechPlanLogs(t)
@@ -226,6 +232,11 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 			}
 			dispatcher := newMessageRouteDispatcher(
 				&mockMioAgent{chatFunc: func(ctx context.Context, _ conversation.TurnInput) (string, error) {
+					if tc.emitLegacyToken {
+						if stream := llm.StreamCallbackFromContext(ctx); stream != nil {
+							stream("legacy stream token")
+						}
+					}
 					if tc.plan != nil {
 						callback := domainagent.SpeechPlanCallbackFromContext(ctx)
 						if callback == nil {
@@ -242,9 +253,7 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 				lifecycle.WithStreamHooks,
 				func(context.Context, string, routing.Route, string, string, string) {},
 			)
-			if tc.plan != nil {
-				dispatcher.SetSpeechPlanEnabled(true)
-			}
+			dispatcher.SetSpeechPlanEnabled(tc.speechPlanEnabled)
 			planPushes := 0
 			var wantTurnID string
 			var taskID modulecore.TaskID
@@ -301,8 +310,17 @@ func TestMessageRouteHandsOffOnlyVoiceableSpeechPlan(t *testing.T) {
 			if tc.wantLegacyTTS && len(bridge.pushes) == 0 {
 				t.Fatal("deterministic shortcut did not retain legacy TTS finalization")
 			}
-			if tc.plan == nil && logOutput.Len() != 0 {
+			if !tc.speechPlanEnabled && logOutput.Len() != 0 {
 				t.Fatalf("non-SpeechPlan path emitted a SpeechPlan observation: %q", logOutput.String())
+			}
+			if tc.wantFallbackReason != "" {
+				var observation map[string]any
+				if err := json.Unmarshal(bytes.TrimSpace(logOutput.Bytes()), &observation); err != nil {
+					t.Fatalf("SpeechPlan fallback observation is not structured JSON: %v; output=%q", err, logOutput.String())
+				}
+				if observation["fallback_reason"] != tc.wantFallbackReason || observation["speech_plan_valid"] != tc.wantPlanValid {
+					t.Fatalf("SpeechPlan fallback observation = %#v", observation)
+				}
 			}
 			if !tc.wantLegacyTTS && len(bridge.pushes) != 0 {
 				t.Fatalf("SpeechPlan path leaked text into legacy TTS: %#v", bridge.pushes)

@@ -17,6 +17,9 @@ import (
 
 // Validate は設定の妥当性を検証
 func (c *Config) Validate() error {
+	if c.Distributed.Enabled && c.TTS.SpeechPlanEnabled {
+		return fmt.Errorf("tts.speech_plan_enabled=true is not supported when distributed.enabled=true")
+	}
 	workerConfigured := c.PersonRelatedCatalog.SummaryWorker.Enabled != nil || c.PersonRelatedCatalog.SummaryWorker.Interval != "" || c.PersonRelatedCatalog.SummaryWorker.BatchSize != 0 || c.PersonRelatedCatalog.SummaryWorker.Lease != "" || c.PersonRelatedCatalog.SummaryWorker.MaxAttempts != 0
 	if workerConfigured && c.PersonRelatedCatalog.SummaryWorker.IsEnabled() {
 		worker := c.PersonRelatedCatalog.SummaryWorker
