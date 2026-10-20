@@ -1,13 +1,13 @@
+body[data-viewer-tab="image"] .input-bar {
+  display: none;
+}
+
 .image-workspace {
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
 }
 
 .image-side {
   gap: var(--space-4, 16px);
-}
-
-.image-character {
-  min-height: 132px;
 }
 
 .image-prompt-card {
@@ -22,25 +22,20 @@
 }
 
 .image-prompt {
-  min-height: 150px;
+  min-height: 132px;
   resize: vertical;
 }
 
-.image-options {
-  border-top: 1px solid var(--rc-border-muted, #202633);
-  padding-top: var(--space-3, 12px);
+.image-negative-prompt {
+  min-height: 68px;
+  resize: vertical;
 }
 
-.image-options summary {
+.image-profile-note {
   color: var(--rc-text-muted, #a6afbf);
-  cursor: pointer;
-  font-size: 12px;
-  margin-bottom: var(--space-3, 12px);
-}
-
-.image-options[open] {
-  display: grid;
-  gap: var(--space-2, 8px);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 0;
 }
 
 .image-main {
@@ -66,6 +61,7 @@
 .image-error {
   border-color: var(--rc-accent-rose, #ff5f7a);
   color: var(--rc-accent-rose, #ff5f7a);
+  overflow-wrap: anywhere;
 }
 
 .image-result {
@@ -104,6 +100,10 @@
 
   .image-prompt {
     min-height: 112px;
+  }
+
+  .image-negative-prompt {
+    min-height: 60px;
   }
 
   .image-result img {
