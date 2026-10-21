@@ -29,13 +29,17 @@ type actionTTSBridgeStub struct {
 
 type actionSpeechPlanBridgeStub struct {
 	actionTTSBridgeStub
-	pushCalls        int
-	gotPlan          speech.SpeechPlan
-	gotTTSSessionID  string
-	gotSessionID     string
-	gotTurnID        string
-	gotSpeakerID     string
-	receiptBoundPlan bool
+	pushCalls         int
+	transport         *transportmanager.Manager
+	transportRequest  domaintransport.Request
+	transportResponse domaintransport.Response
+	transportErr      error
+	gotPlan           speech.SpeechPlan
+	gotTTSSessionID   string
+	gotSessionID      string
+	gotTurnID         string
+	gotSpeakerID      string
+	receiptBoundPlan  bool
 }
 
 func (s *actionSpeechPlanBridgeStub) PushSpeechPlan(ctx context.Context, ttsSessionID, conversationSessionID, turnID, speakerID string, plan speech.SpeechPlan) error {
@@ -46,6 +50,20 @@ func (s *actionSpeechPlanBridgeStub) PushSpeechPlan(ctx context.Context, ttsSess
 	s.gotTurnID = turnID
 	s.gotSpeakerID = speakerID
 	s.gotPlan = plan
+	if s.transport != nil {
+		request, err := s.transport.BeginRequest(ctx, "tts.speech_plan")
+		if err != nil {
+			s.transportErr = err
+			return err
+		}
+		s.transportRequest = request
+		response, err := s.transport.CompleteResponse(ctx, request.RequestID, "tts-response")
+		if err != nil {
+			s.transportErr = err
+			return err
+		}
+		s.transportResponse = response
+	}
 	return s.pushErr
 }
 
@@ -115,6 +133,149 @@ func TestActionTTSBridgeForwardsSpeechPlanWithTransportReceiptOwner(t *testing.T
 	}
 	if err := bridge.EndSession(context.Background(), "tts-speech-plan"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestActionTTSBridgeSpeechPlanTransportUsesMatchingExecutionIdentity(t *testing.T) {
+	tasks, actions := newTTSActionTestOwners(t)
+	transport := newTTSTransportTestOwner(t, actions)
+	inner := &actionSpeechPlanBridgeStub{transport: transport}
+	bridge, err := newActionTTSBridge(inner, actions, tasks, transport, "mio")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, run, err := tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+		Title:    "canonical chat turn",
+		Route:    domaintask.RouteCHAT,
+		OwnerID:  "mio",
+		Assignee: "mio",
+		ReadOnly: true,
+	}, domaintask.SharedRoleContext{CurrentPlan: "synthesize the response"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	traceID := modulecore.NewTraceID()
+	processCtx, err := domainexecution.WithIdentity(context.Background(), task.TaskID, run.RunID, traceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ttsSessionID = "tts-canonical-speech-plan"
+	if err := bridge.StartSession(processCtx, orchestrator.TTSSessionStart{SessionID: ttsSessionID}); err != nil {
+		t.Fatalf("StartSession(): %v", err)
+	}
+	pusher := bridge.(interface {
+		PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+	})
+	plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "canonical transport lineage"}}}}}
+	conversationSessionID := string(modulecore.NewSessionID())
+	turnID := string(modulecore.NewTurnID())
+	if err := pusher.PushSpeechPlan(processCtx, ttsSessionID, conversationSessionID, turnID, "mio", plan); err != nil {
+		t.Fatalf("PushSpeechPlan(): %v", err)
+	}
+	if inner.transportErr != nil {
+		t.Fatalf("TTS transport request/response: %v", inner.transportErr)
+	}
+	request := inner.transportRequest
+	response := inner.transportResponse
+	if request.TaskID != task.TaskID || request.RunID != run.RunID || request.TraceID != traceID {
+		t.Fatalf("transport request identity = task=%s run=%s trace=%s, want task=%s run=%s trace=%s", request.TaskID, request.RunID, request.TraceID, task.TaskID, run.RunID, traceID)
+	}
+	if request.Operation != "tts.speech_plan" || request.ActionID == "" || request.AttemptID == "" {
+		t.Fatalf("transport request lineage = %#v", request)
+	}
+	if response.RequestID != request.RequestID || response.TaskID != task.TaskID || response.RunID != run.RunID || response.TraceID != traceID || response.ActionID != request.ActionID || response.AttemptID != request.AttemptID {
+		t.Fatalf("transport response lineage = %#v, request=%#v", response, request)
+	}
+	if err := bridge.EndSession(processCtx, ttsSessionID); err != nil {
+		t.Fatalf("EndSession(): %v", err)
+	}
+	assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusSucceeded, domainaction.AttemptStatusSucceeded, domaintask.StatusRunning)
+	if err := tasks.CloseStartedRun(context.Background(), task.TaskID, run.RunID, "mio", taskmanager.RunOutcome{Status: domaintask.StatusSucceeded, Summary: "chat completed"}, nil); err != nil {
+		t.Fatalf("close canonical chat run: %v", err)
+	}
+}
+
+func TestActionTTSBridgeRejectsMismatchedSpeechPlanIdentityWithoutClosingSession(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(modulecore.TaskID, modulecore.RunID, modulecore.TraceID) (modulecore.TaskID, modulecore.RunID, modulecore.TraceID)
+	}{
+		{
+			name: "task",
+			edit: func(taskID modulecore.TaskID, runID modulecore.RunID, traceID modulecore.TraceID) (modulecore.TaskID, modulecore.RunID, modulecore.TraceID) {
+				return modulecore.NewTaskID(), runID, traceID
+			},
+		},
+		{
+			name: "run",
+			edit: func(taskID modulecore.TaskID, _ modulecore.RunID, traceID modulecore.TraceID) (modulecore.TaskID, modulecore.RunID, modulecore.TraceID) {
+				return taskID, modulecore.NewRunID(), traceID
+			},
+		},
+		{
+			name: "trace",
+			edit: func(taskID modulecore.TaskID, runID modulecore.RunID, _ modulecore.TraceID) (modulecore.TaskID, modulecore.RunID, modulecore.TraceID) {
+				return taskID, runID, modulecore.NewTraceID()
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tasks, actions := newTTSActionTestOwners(t)
+			inner := &actionSpeechPlanBridgeStub{}
+			bridge, err := newActionTTSBridge(inner, actions, tasks, newTTSTransportTestOwner(t, actions), "mio")
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, run, err := tasks.CreateAndStartRun(context.Background(), domaintask.Task{
+				Title:    "canonical chat turn",
+				Route:    domaintask.RouteCHAT,
+				OwnerID:  "mio",
+				Assignee: "mio",
+				ReadOnly: true,
+			}, domaintask.SharedRoleContext{CurrentPlan: "synthesize the response"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			traceID := modulecore.NewTraceID()
+			processCtx, err := domainexecution.WithIdentity(context.Background(), task.TaskID, run.RunID, traceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const ttsSessionID = "tts-reject-mismatch"
+			if err := bridge.StartSession(processCtx, orchestrator.TTSSessionStart{SessionID: ttsSessionID}); err != nil {
+				t.Fatalf("StartSession(): %v", err)
+			}
+			pusher := bridge.(interface {
+				PushSpeechPlan(context.Context, string, string, string, string, speech.SpeechPlan) error
+			})
+			wrongTaskID, wrongRunID, wrongTraceID := tc.edit(task.TaskID, run.RunID, traceID)
+			foreignCtx, err := domainexecution.WithIdentity(context.Background(), wrongTaskID, wrongRunID, wrongTraceID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan := speech.SpeechPlan{SchemaVersion: speech.SchemaVersion, Utterances: []speech.Utterance{{Segments: []speech.Segment{{Text: "foreign lineage rejected"}}}}}
+			conversationSessionID := string(modulecore.NewSessionID())
+			turnID := string(modulecore.NewTurnID())
+			if err := pusher.PushSpeechPlan(foreignCtx, ttsSessionID, conversationSessionID, turnID, "mio", plan); err == nil {
+				t.Fatal("PushSpeechPlan() error = nil, want mismatched execution identity rejection")
+			}
+			if inner.pushCalls != 0 {
+				t.Fatalf("inner synthesis calls after rejection = %d, want 0", inner.pushCalls)
+			}
+			if err := pusher.PushSpeechPlan(processCtx, ttsSessionID, conversationSessionID, turnID, "mio", plan); err != nil {
+				t.Fatalf("valid PushSpeechPlan() after rejection: %v", err)
+			}
+			if inner.pushCalls != 1 {
+				t.Fatalf("inner synthesis calls after valid retry = %d, want 1", inner.pushCalls)
+			}
+			if err := bridge.EndSession(processCtx, ttsSessionID); err != nil {
+				t.Fatalf("EndSession() after valid retry: %v", err)
+			}
+			assertTTSActionLifecycle(t, tasks, actions, domainaction.StatusSucceeded, domainaction.AttemptStatusSucceeded, domaintask.StatusRunning)
+			if err := tasks.CloseStartedRun(context.Background(), task.TaskID, run.RunID, "mio", taskmanager.RunOutcome{Status: domaintask.StatusSucceeded, Summary: "chat completed"}, nil); err != nil {
+				t.Fatalf("close canonical chat run: %v", err)
+			}
+		})
 	}
 }
 

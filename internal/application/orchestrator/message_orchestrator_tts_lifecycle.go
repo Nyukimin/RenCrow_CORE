@@ -20,6 +20,17 @@ type messageTTSLifecycle struct {
 	emit         messageEventEmitter
 }
 
+type speechPlanStreamModeKey struct{}
+
+func withSpeechPlanStreamMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, speechPlanStreamModeKey{}, true)
+}
+
+func speechPlanStreamModeFromContext(ctx context.Context) bool {
+	enabled, _ := ctx.Value(speechPlanStreamModeKey{}).(bool)
+	return enabled
+}
+
 func newMessageTTSLifecycle(ttsBridge TTSBridge, vtuberBridge VTuberBridge, emit messageEventEmitter) *messageTTSLifecycle {
 	return &messageTTSLifecycle{
 		ttsBridge:    ttsBridge,
@@ -126,8 +137,12 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 	prev := llm.StreamCallbackFromContext(ctx)
 	previousMetrics := llm.GenerationMetricsCallbackFromContext(ctx)
 	latency := latencyTraceFromContext(ctx)
-	ttsStream := newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] TTS push degraded:")
-	vtuberStream := newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] VTuber push degraded:")
+	var ttsStream *ttsStreamForwarder
+	var vtuberStream *vtuberStreamForwarder
+	if !speechPlanStreamModeFromContext(ctx) {
+		ttsStream = newTTSStreamForwarder(l.ttsBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] TTS push degraded:")
+		vtuberStream = newVTuberStreamForwarder(l.vtuberBridge, ttsSessionID, route, speaker, "agent.response", "[MessageOrch] VTuber push degraded:")
+	}
 	streamCtx := llm.ContextWithStreamCallback(ctx, func(token string) {
 		if strings.TrimSpace(token) != "" {
 			turntiming.Mark(ctx, turntiming.PointFirstTextCallback)

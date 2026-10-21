@@ -223,8 +223,10 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
 	recallPack, messages := m.beginChatRecall(ctx, t, userMessage)
 	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
-		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
-			onToken(response)
+		if !reportDeterministicSpeechPlan(ctx, response) {
+			if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+				onToken(response)
+			}
 		}
 		m.rememberExpression(response)
 		if m.conversationEngine != nil {

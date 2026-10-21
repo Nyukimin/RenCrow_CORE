@@ -121,6 +121,8 @@ docs/調査/20261014_194143_STT_CORE中継化_設計とFailureKnowledge.md
 docs/調査/20261015_095140_ShiroChatのPrefix_Cache不成立とStrata_prefill.md
 docs/調査/20261016_220021_COREの本番host切替_外付けHDD物理移動による例外経路.md
 docs/調査/20261018_125801_CMD対話応答遅延_調査.md
+docs/調査/20261020_173100_SpeechPlan_TTS_receipt_identity_Failure_Knowledge.md
+docs/調査/20261020_174000_Viewer音声URL二重proxy_Failure_Knowledge.md
 docs/調査/20261020_220205_CMD_Mio応答遅延40試行_実測と考察.md
 docs/調査/RenCrow_Atlas_Backlog_Implementation_Lifecycle_実装仕様.md
 docs/調査/RenCrow_llmfit_Ops統合_実装仕様.md

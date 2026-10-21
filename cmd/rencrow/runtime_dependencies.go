@@ -118,6 +118,9 @@ type Dependencies struct {
 	taskStoreSizeValve             int64                                       // task_store.rotation.size_valve_bytes (0: default)
 	taskStore                      domaintask.Store                            // shared canonical Task persistence owner
 	taskManager                    *taskmanager.Manager                        // shared canonical Task lifecycle owner
+	worldProjectionCancel          context.CancelFunc                          // stops the outbound WORLD projection loop
+	worldProjectionDone            <-chan struct{}                             // closed when the projection loop exits
+	worldProjectionClose           func() error                                // closes the projection outbox after the loop exits
 	actionManager                  *actionmanager.Manager                      // shared canonical Action lifecycle owner
 	actionStoreHealth              infrahealth.ActionStoreReporter             // the store actionManager writes through, for /health
 	nativeCoding                   *delegation.Runtime                         // shiro_native_coding_v1 admission and delegate (nil unless the profile is enabled)
@@ -383,6 +386,21 @@ func (d *Dependencies) Shutdown() {
 	if d.classifierShadowCancel != nil {
 		d.classifierShadowCancel()
 	}
+	if d.worldProjectionCancel != nil {
+		d.worldProjectionCancel()
+		if d.worldProjectionDone != nil {
+			select {
+			case <-d.worldProjectionDone:
+			case <-time.After(5 * time.Second):
+				log.Printf("WORLD projection loop did not stop before shutdown timeout")
+			}
+		}
+	}
+	if d.worldProjectionClose != nil {
+		if err := d.worldProjectionClose(); err != nil {
+			log.Printf("Failed to close WORLD projection outbox: %v", err)
+		}
+	}
 	if d.sttRecorderClose != nil {
 		// The records of utterances that were just relayed are the evidence of an
 		// external effect; give them a bounded moment to reach the stores.
@@ -536,6 +554,9 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 	}
 	if err := initializeRuntimeTaskOwnerWithCriteriaRevision(deps, cfg.WorkspaceDir, expectedCriteriaRevision, storageOwners.TaskStore); err != nil {
 		log.Fatalf("Failed to initialize canonical Task lifecycle owner: %v", err)
+	}
+	if err := startWorldProjection(cfg, deps); err != nil {
+		log.Fatalf("Failed to start WORLD projection: %v", err)
 	}
 	if err := runtimeStorageHostOwnerCoverageError(storageOwners); err != nil {
 		log.Fatalf("Failed to initialize storage host owner coverage: %v", err)

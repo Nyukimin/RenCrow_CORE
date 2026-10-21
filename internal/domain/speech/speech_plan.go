@@ -1,7 +1,9 @@
 package speech
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"unicode/utf8"
 )
@@ -88,6 +90,19 @@ func Parse(raw string) Result {
 		return Result{FallbackReason: FallbackInvalidJSON}
 	}
 	displayText := stripIrodoriControlEmoji(displayTextFromJSON(decoded))
+	hasAlias, err := hasCanonicalFieldAliasJSON(data)
+	if err != nil {
+		return Result{
+			DisplayText:    displayText,
+			FallbackReason: FallbackInvalidJSON,
+		}
+	}
+	if hasAlias {
+		return Result{
+			DisplayText:    displayText,
+			FallbackReason: FallbackUnknownField,
+		}
+	}
 
 	var plan SpeechPlan
 	if err := json.Unmarshal(data, &plan); err != nil {
@@ -102,10 +117,32 @@ func Parse(raw string) Result {
 		result.DisplayText = displayText
 	}
 	if result.Valid && hasUnknownFields(decoded) {
-		result.Valid = false
-		result.FallbackReason = FallbackUnknownField
+		recovered := Normalize(neutralSpeechPlan(result.Plan))
+		if recovered.Valid {
+			recovered.FallbackReason = FallbackUnknownField
+		}
+		return recovered
 	}
 	return result
+}
+
+func neutralSpeechPlan(plan SpeechPlan) SpeechPlan {
+	neutral := SpeechPlan{
+		SchemaVersion: plan.SchemaVersion,
+		Utterances:    make([]Utterance, len(plan.Utterances)),
+	}
+	for i, utterance := range plan.Utterances {
+		segments := make([]Segment, len(utterance.Segments))
+		for j, segment := range utterance.Segments {
+			segments[j] = Segment{Text: segment.Text}
+		}
+		neutral.Utterances[i] = Utterance{
+			Segments:     segments,
+			Delivery:     Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"},
+			PauseAfterMS: 0,
+		}
+	}
+	return neutral
 }
 
 // Normalize returns a copy of plan with v1.0 defaults and bounded cues applied.
@@ -266,6 +303,71 @@ func displayTextFromJSON(root any) string {
 		utterances[i] = text.String()
 	}
 	return strings.Join(utterances, DisplayUtteranceSeparator)
+}
+
+// hasCanonicalFieldAliasJSON scans the token stream because decoding JSON into
+// maps collapses duplicate object members before alias detection can see them.
+func hasCanonicalFieldAliasJSON(data []byte) (bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	return hasCanonicalFieldAliasJSONValue(decoder)
+}
+
+func hasCanonicalFieldAliasJSONValue(decoder *json.Decoder) (bool, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return false, err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return false, nil
+	}
+	switch delimiter {
+	case '{':
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return false, err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return false, errors.New("JSON object member name is not a string")
+			}
+			if isCanonicalFieldAlias(key) {
+				return true, nil
+			}
+			found, err := hasCanonicalFieldAliasJSONValue(decoder)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return false, err
+		}
+	case '[':
+		for decoder.More() {
+			found, err := hasCanonicalFieldAliasJSONValue(decoder)
+			if err != nil || found {
+				return found, err
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
+func isCanonicalFieldAlias(key string) bool {
+	for _, canonical := range []string{
+		"schema_version", "utterances", "segments", "delivery", "pause_after_ms",
+		"text", "before", "after", "tone", "attitude", "energy", "pace", "mode",
+		"kind", "strength",
+	} {
+		if key != canonical && strings.EqualFold(key, canonical) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasUnknownFields(root any) bool {

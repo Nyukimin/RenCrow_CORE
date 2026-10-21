@@ -3861,6 +3861,7 @@ function isIdleChatActiveForTTS(sessionId) {
 function resolveTTSPlaybackURL(audioURL, audioPath) {
   const url = String(audioURL || '').trim();
   if (url) {
+    if (url.startsWith('/') && !url.startsWith('//')) return url;
     try {
       const parsed = new URL(url, window.location.href);
       if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {

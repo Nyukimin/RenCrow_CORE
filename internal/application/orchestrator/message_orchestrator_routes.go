@@ -44,9 +44,10 @@ type speechPlanRouteObservation struct {
 }
 
 const (
-	speechPlanHandoffUnavailable = "speech_plan_tts_handoff_unavailable"
-	speechPlanHandoffFailed      = "speech_plan_tts_handoff_failed"
-	speechPlanDisplayUnavailable = "speech_plan_display_unavailable"
+	speechPlanHandoffUnavailable  = "speech_plan_tts_handoff_unavailable"
+	speechPlanHandoffFailed       = "speech_plan_tts_handoff_failed"
+	speechPlanDisplayUnavailable  = "speech_plan_display_unavailable"
+	speechPlanCallbackUnavailable = "speech_plan_callback_unavailable"
 )
 
 type messageRouteDispatcher struct {
@@ -199,7 +200,11 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationStarted)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", taskIDText, sessionID, channel, chatID)
 	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationEnded)
-	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
+	streamHookCtx := ctx
+	if d.speechPlanEnabled {
+		streamHookCtx = withSpeechPlanStreamMode(streamHookCtx)
+	}
+	streamCtx, ttsStream := d.withStreamHooks(streamHookCtx, routing.RouteCHAT, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 	var speechPlanResult *speech.Result
 	if d.speechPlanEnabled {
 		streamCtx = domainagent.ContextWithSpeechPlanCallback(streamCtx, func(result speech.Result) {
@@ -224,14 +229,22 @@ func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, 
 	if err != nil {
 		if speechPlanResult != nil {
 			d.logSpeechPlanObservation(string(input.TurnID()), speaker, *speechPlanResult, "")
+		} else if d.speechPlanEnabled {
+			ttsStream.Finalize(ctx, "")
+			d.logSpeechPlanObservation(string(input.TurnID()), speaker, speech.Result{FallbackReason: speechPlanCallbackUnavailable}, "")
 		}
 		ttsStream.Finalize(ctx, "")
 		return resp, err
 	}
 	d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)
 	if speechPlanResult == nil {
-		// Deterministic shortcuts return before Main LLM generation and keep
-		// their existing text-only stream behavior.
+		if d.speechPlanEnabled {
+			ttsStream.Finalize(ctx, "")
+			d.logSpeechPlanObservation(string(input.TurnID()), speaker, speech.Result{FallbackReason: speechPlanCallbackUnavailable}, "")
+			return resp, nil
+		}
+		// SpeechPlan is disabled, so deterministic shortcuts keep the existing
+		// text-only stream behavior.
 		ttsStream.Finalize(ctx, resp)
 		return resp, nil
 	}
@@ -329,7 +342,8 @@ func boundedSpeechPlanFallbackReason(reason string, valid bool) string {
 		speech.FallbackGenerationFailed,
 		speechPlanHandoffUnavailable,
 		speechPlanHandoffFailed,
-		speechPlanDisplayUnavailable:
+		speechPlanDisplayUnavailable,
+		speechPlanCallbackUnavailable:
 		return reason
 	default:
 		return "speech_plan_unavailable"

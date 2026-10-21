@@ -314,17 +314,24 @@ func TestParseKeepsFullDisplayWhenSpeechPlanExceeds600Chars(t *testing.T) {
 	}
 }
 
-func TestParseRejectsForeignFieldsAndDoesNotRenderCueSymbols(t *testing.T) {
+func TestParseRecoversForeignFieldsNeutrallyAndDoesNotRenderCueSymbols(t *testing.T) {
 	raw := `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"びっくりしました。","before":[{"kind":"surprise","strength":"light"}]}],"delivery":{"tone":"surprised","attitude":"neutral","energy":"medium","pace":"normal","mode":"dialogue"},"voice_id":"female_01","caption":"happy","model":"model-name"}]}`
 	result := Parse(raw)
-	if result.Valid {
-		t.Fatal("Parse() accepted voice/model/caption fields outside SpeechPlan v1.0")
+	if !result.Valid {
+		t.Fatalf("Parse() did not recover valid text from voice/model/caption fields: %s", result.FallbackReason)
 	}
 	if result.FallbackReason != FallbackUnknownField {
 		t.Fatalf("FallbackReason = %q", result.FallbackReason)
 	}
 	if result.DisplayText != "びっくりしました。" {
 		t.Fatalf("DisplayText = %q", result.DisplayText)
+	}
+	utterance := result.Plan.Utterances[0]
+	if utterance.Delivery != (Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"}) {
+		t.Fatalf("recovered delivery = %#v, want neutral defaults", utterance.Delivery)
+	}
+	if utterance.PauseAfterMS != 0 || len(utterance.Segments[0].Before) != 0 || len(utterance.Segments[0].After) != 0 {
+		t.Fatalf("recovered plan retained performance cues or pause: %#v", utterance)
 	}
 	if strings.ContainsAny(result.DisplayText, "😮🎤") {
 		t.Fatalf("cue control symbols leaked into display: %q", result.DisplayText)
@@ -338,6 +345,159 @@ func TestParseRejectsForeignFieldsAndDoesNotRenderCueSymbols(t *testing.T) {
 			t.Errorf("Gateway plan serialization contains forbidden field %q: %s", forbidden, serialized)
 		}
 	}
+}
+
+func TestParseRecoversUnknownFieldsAtEveryPlanLevelAsNeutral(t *testing.T) {
+	for _, location := range []string{"top-level", "utterance", "delivery", "segment", "cue"} {
+		t.Run(location, func(t *testing.T) {
+			result := Parse(speechPlanJSONWithUnknownField(t, location))
+			if !result.Valid || result.FallbackReason != FallbackUnknownField {
+				t.Fatalf("Parse() result = valid:%t reason:%q, want recovered unknown-field plan", result.Valid, result.FallbackReason)
+			}
+			if result.DisplayText != "第一発話。 第二発話。" {
+				t.Fatalf("DisplayText = %q, want utterance and segment order preserved", result.DisplayText)
+			}
+			if len(result.Plan.Utterances) != 2 {
+				t.Fatalf("utterance count = %d, want 2", len(result.Plan.Utterances))
+			}
+			wantTexts := [][]string{{"第一", "発話。"}, {"第二発話。"}}
+			for i, utterance := range result.Plan.Utterances {
+				if got, want := len(utterance.Segments), len(wantTexts[i]); got != want {
+					t.Fatalf("utterance %d segment count = %d, want %d", i, got, want)
+				}
+				for j, segment := range utterance.Segments {
+					if segment.Text != wantTexts[i][j] {
+						t.Errorf("utterance %d segment %d text = %q, want %q", i, j, segment.Text, wantTexts[i][j])
+					}
+					if len(segment.Before) != 0 || len(segment.After) != 0 {
+						t.Errorf("utterance %d segment %d retained cues: %#v", i, j, segment)
+					}
+				}
+				if utterance.Delivery != (Delivery{Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue"}) {
+					t.Errorf("utterance %d delivery = %#v, want neutral defaults", i, utterance.Delivery)
+				}
+				if utterance.PauseAfterMS != 0 {
+					t.Errorf("utterance %d pause_after_ms = %d, want 0", i, utterance.PauseAfterMS)
+				}
+			}
+			serialized, err := json.Marshal(result.Plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"voice_id", "caption", "model", "unknown"} {
+				if strings.Contains(string(serialized), forbidden) {
+					t.Errorf("recovered plan propagated unknown field %q: %s", forbidden, serialized)
+				}
+			}
+		})
+	}
+}
+
+func TestParseRejectsCaseInsensitiveCanonicalFieldAliases(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		raw         string
+		wantDisplay string
+	}{
+		{
+			name:        "segment text alias alongside canonical text",
+			raw:         `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"bad🙂","Text":"safe"}]}]}`,
+			wantDisplay: "bad🙂",
+		},
+		{
+			name:        "schema alias supplies missing canonical schema",
+			raw:         `{"SCHEMA_VERSION":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"canonical utterance text"}]}]}`,
+			wantDisplay: "canonical utterance text",
+		},
+		{
+			name:        "alias nested in unknown object",
+			raw:         `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"canonical nested text"}]}],"extra":{"nested":[{"Text":"untrusted"}]}}`,
+			wantDisplay: "canonical nested text",
+		},
+		{
+			name:        "earlier duplicate object contains alias",
+			raw:         `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"duplicate delivery canonical text"}],"delivery":{"Mode":"narration"},"delivery":{}}]}`,
+			wantDisplay: "duplicate delivery canonical text",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := Parse(tc.raw)
+			if result.Valid {
+				t.Fatal("Parse() accepted a case-insensitive alias for a canonical SpeechPlan field")
+			}
+			if result.FallbackReason != FallbackUnknownField {
+				t.Fatalf("FallbackReason = %q, want %q", result.FallbackReason, FallbackUnknownField)
+			}
+			if result.DisplayText != tc.wantDisplay {
+				t.Fatalf("DisplayText = %q, want exact canonical-key text %q", result.DisplayText, tc.wantDisplay)
+			}
+		})
+	}
+}
+
+func TestParseDoesNotRecoverUnknownFieldPlansWithInvalidSpeechText(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		text           string
+		fallbackReason string
+	}{
+		{name: "empty text", text: "", fallbackReason: FallbackInvalidSegmentText},
+		{name: "unsupported emoji", text: "本文💯", fallbackReason: FallbackUnsupportedEmoji},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := `{"schema_version":"rencrow.speech/1.0","utterances":[{"segments":[{"text":"` + tc.text + `"}],"voice_id":"untrusted"}]}`
+			result := Parse(raw)
+			if result.Valid {
+				t.Fatal("Parse() recovered an unknown-field plan with invalid speech text")
+			}
+			if result.FallbackReason != tc.fallbackReason {
+				t.Fatalf("FallbackReason = %q, want %q", result.FallbackReason, tc.fallbackReason)
+			}
+		})
+	}
+}
+
+func speechPlanJSONWithUnknownField(t *testing.T, location string) string {
+	t.Helper()
+	firstCue := map[string]any{"kind": "surprise", "strength": "strong"}
+	firstSegment := map[string]any{
+		"text":   "第一",
+		"before": []any{firstCue},
+		"after":  []any{map[string]any{"kind": "chuckle", "strength": "light"}},
+	}
+	firstDelivery := map[string]any{"tone": "amused", "attitude": "teasing", "energy": "high", "pace": "fast", "mode": "narration"}
+	firstUtterance := map[string]any{
+		"segments":       []any{firstSegment, map[string]any{"text": "発話。"}},
+		"delivery":       firstDelivery,
+		"pause_after_ms": 500,
+	}
+	secondUtterance := map[string]any{
+		"segments":       []any{map[string]any{"text": "第二発話。", "before": []any{map[string]any{"kind": "whisper", "strength": "normal"}}}},
+		"delivery":       map[string]any{"tone": "warm", "attitude": "gentle", "energy": "medium", "pace": "slow", "mode": "dialogue"},
+		"pause_after_ms": 300,
+	}
+	root := map[string]any{"schema_version": SchemaVersion, "utterances": []any{firstUtterance, secondUtterance}}
+	switch location {
+	case "top-level":
+		root["voice_id"] = "female_01"
+		root["caption"] = "happy"
+		root["model"] = "untrusted-model"
+	case "utterance":
+		firstUtterance["speaker"] = "untrusted-speaker"
+	case "delivery":
+		firstDelivery["caption"] = "happy"
+	case "segment":
+		firstSegment["instruction"] = "whisper"
+	case "cue":
+		firstCue["voice_id"] = "female_01"
+	default:
+		t.Fatalf("unknown test location %q", location)
+	}
+	encoded, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func TestParseOnlyRepairsMissingClosingDelimiters(t *testing.T) {

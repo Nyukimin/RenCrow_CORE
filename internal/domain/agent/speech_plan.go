@@ -27,6 +27,29 @@ func SpeechPlanCallbackFromContext(ctx context.Context) SpeechPlanCallback {
 	return callback
 }
 
+// reportDeterministicSpeechPlan projects known CHAT text into a neutral typed
+// plan without asking another model to reinterpret it. It returns true when
+// SpeechPlan mode is active, including when normalization suppresses synthesis.
+func reportDeterministicSpeechPlan(ctx context.Context, text string) bool {
+	callback := SpeechPlanCallbackFromContext(ctx)
+	if callback == nil {
+		return false
+	}
+	validationStarted := time.Now()
+	result := speech.Normalize(speech.SpeechPlan{
+		SchemaVersion: speech.SchemaVersion,
+		Utterances: []speech.Utterance{{
+			Segments: []speech.Segment{{Text: text}},
+			Delivery: speech.Delivery{
+				Tone: "neutral", Attitude: "neutral", Energy: "medium", Pace: "normal", Mode: "dialogue",
+			},
+		}},
+	})
+	result.PlanValidationMS = durationMilliseconds(time.Since(validationStarted))
+	callback(result)
+	return true
+}
+
 func speechPlanInstruction() string {
 	return `通常のChat応答を、rencrow.speech/1.0 のSpeechPlanとして一度だけ生成してください。
 出力は追加文・Markdown fence・説明のない単一JSON objectにしてください。次のschema以外のfieldを追加しないでください。

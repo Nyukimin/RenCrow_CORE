@@ -56,8 +56,10 @@ func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (st
 		}
 	}
 	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
-		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
-			onToken(response)
+		if !reportDeterministicSpeechPlan(ctx, response) {
+			if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
+				onToken(response)
+			}
 		}
 		if h.conversationEngine != nil {
 			if err := commitConversationTurn(ctx, h.conversationEngine, t, t.SessionID(), userMessage, response, conversation.SpeakerKuro, recallPack); err != nil {

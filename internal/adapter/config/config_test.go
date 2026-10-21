@@ -2443,6 +2443,48 @@ func TestConfig_Validate_Distributed(t *testing.T) {
 			t.Errorf("Expected valid config, got error: %v", err)
 		}
 	})
+
+	t.Run("SpeechPlan activation is rejected for distributed mode independent of TTS", func(t *testing.T) {
+		for _, tc := range []struct {
+			name              string
+			ttsEnabled        bool
+			speechPlanEnabled bool
+			wantErr           bool
+		}{
+			{name: "TTS disabled and SpeechPlan disabled"},
+			{name: "TTS enabled and SpeechPlan disabled", ttsEnabled: true},
+			{name: "TTS disabled and SpeechPlan enabled", speechPlanEnabled: true, wantErr: true},
+			{name: "TTS enabled and SpeechPlan enabled", ttsEnabled: true, speechPlanEnabled: true, wantErr: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := base()
+				cfg.Distributed.Enabled = true
+				cfg.Distributed.Transports = map[string]TransportConfig{"mio": {Type: "local"}}
+				cfg.TTS.Enabled = tc.ttsEnabled
+				cfg.TTS.SpeechPlanEnabled = tc.speechPlanEnabled
+				if tc.ttsEnabled {
+					cfg.TTS.GatewayBaseURL = "http://127.0.0.1:7870"
+					cfg.TTS.TimeoutMS = 120000
+				}
+
+				err := cfg.Validate()
+				if (err != nil) != tc.wantErr {
+					t.Fatalf("Validate() error = %v, wantErr %t", err, tc.wantErr)
+				}
+				if tc.wantErr && !strings.Contains(err.Error(), "tts.speech_plan_enabled") {
+					t.Fatalf("Validate() error = %v, want SpeechPlan/distributed boundary error", err)
+				}
+			})
+		}
+	})
+
+	t.Run("local SpeechPlan activation remains allowed", func(t *testing.T) {
+		cfg := base()
+		cfg.TTS.SpeechPlanEnabled = true
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("local SpeechPlan config should remain valid: %v", err)
+		}
+	})
 }
 
 func TestConfig_Validate_IdleChat(t *testing.T) {

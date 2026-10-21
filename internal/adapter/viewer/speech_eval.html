@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SpeechPlan A/B 音声評価 | RenCrow</title>
+  <link rel="stylesheet" href="/viewer/assets/css/speech_eval.css">
+  <script defer src="/viewer/assets/js/speech_eval.js"></script>
+</head>
+<body>
+  <main class="speech-eval">
+    <header class="speech-eval__header">
+      <div>
+        <p class="speech-eval__eyebrow">RenCrow · SpeechPlan</p>
+        <h1>SpeechPlan A/B 音声評価</h1>
+        <p class="speech-eval__lede">セリフと意図を確認しながら音声を聴き、よりよい読み上げを評価してください。</p>
+        <p class="speech-eval__scope-note">固定のSpeechPlanテスト用20行を評価します。Main LLMとのライブ会話は評価対象ではありません。</p>
+      </div>
+      <a class="speech-eval__back" href="/viewer">Viewer に戻る</a>
+    </header>
+
+    <section class="speech-eval__toolbar" aria-label="評価の進捗と書き出し">
+      <p id="speechEvalStatus" class="speech-eval__status" role="status" aria-live="polite">評価セットを読み込んでいます…</p>
+      <p id="speechEvalProgress" class="speech-eval__progress">0 / 20 件評価済み</p>
+      <div class="speech-eval__exports">
+        <button id="speechEvalExportJson" type="button" disabled>JSONを書き出す</button>
+        <button id="speechEvalExportCsv" type="button" disabled>CSVを書き出す</button>
+      </div>
+    </section>
+
+    <section class="speech-eval__workbench" aria-label="現在の音声評価ケース">
+      <article class="speech-eval__prompt">
+        <div class="speech-eval__case-heading">
+          <h2>ケース <span id="speechEvalCaseNumber">—</span></h2>
+          <span class="speech-eval__blind-label">A/Bの割り当ては伏せています</span>
+        </div>
+        <p id="speechEvalText" class="speech-eval__text">ここに評価するセリフが表示されます。</p>
+        <p class="speech-eval__intent"><span>意図</span><span id="speechEvalIntent">—</span></p>
+        <p class="speech-eval__cue-hint"><span>キューのヒント</span><span id="speechEvalCueHint">—</span></p>
+      </article>
+
+      <p class="speech-eval__scale-help">
+        すべての評価は「5がよい、1がよくない」です。過剰な演技は、抑えられているほど高得点です。
+        キューがないケースでは、キューの位置と自然さを「該当なし（N/A）」として評価対象から外します。
+      </p>
+
+      <div id="speechEvalPair" class="speech-eval__pair" aria-live="polite"></div>
+
+      <section class="speech-eval__decision" aria-label="A/Bの比較">
+        <label for="speechEvalPreference">採用するならどちらですか？</label>
+        <select id="speechEvalPreference" disabled>
+          <option value="">聴き比べて選択</option>
+          <option value="a">Aを採用</option>
+          <option value="tie">同程度</option>
+          <option value="b">Bを採用</option>
+        </select>
+      </section>
+
+      <nav class="speech-eval__navigation" aria-label="評価ケースの移動">
+        <button id="speechEvalPrevious" type="button" disabled>前のケース</button>
+        <button id="speechEvalNext" type="button" disabled>次のケース</button>
+      </nav>
+    </section>
+
+    <section id="speechEvalDiagnosticPanel" class="speech-eval__diagnostic" aria-labelledby="speechEvalDiagnosticHeading" hidden>
+      <div class="speech-eval__diagnostic-heading">
+        <div>
+          <h2 id="speechEvalDiagnosticHeading">Mio 音声品質の診断比較</h2>
+          <p>この比較は診断用です。20ケースの評価・スコアには含まれません。</p>
+        </div>
+      </div>
+      <p id="speechEvalDiagnosticText" class="speech-eval__diagnostic-text"></p>
+      <div id="speechEvalDiagnosticGroups" class="speech-eval__diagnostic-groups"></div>
+    </section>
+    <noscript>評価セットの読み込みと評価の保存にはJavaScriptが必要です。</noscript>
+  </main>
+</body>
+</html>

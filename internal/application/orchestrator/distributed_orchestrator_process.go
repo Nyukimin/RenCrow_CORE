@@ -10,6 +10,7 @@ import (
 
 	appsubagent "github.com/Nyukimin/RenCrow_CORE/internal/application/subagent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
+	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
@@ -313,6 +314,13 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 	input = input.WithRoute(decision.Route)
 	if err := recordRouteSkillBootstrap(ctx, o.skillBootstrap, req, decision.Route); err != nil {
 		return ProcessMessageResponse{}, err
+	}
+	if o.ttsBridge != nil && ttsAllowedForRequest(req) {
+		boundCtx, bindErr := domainexecution.WithIdentity(ctx, taskID, leadRunID, input.TraceID())
+		if bindErr != nil {
+			return ProcessMessageResponse{}, fmt.Errorf("bind TTS execution identity: %w", bindErr)
+		}
+		ctx = boundCtx
 	}
 	ttsSessionID := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision)
 	leadRunInput := leadAgentRunInputFromRequest(req)

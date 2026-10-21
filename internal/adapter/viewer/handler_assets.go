@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-//go:embed viewer.html x_bookmarks.html assets
+//go:embed viewer.html x_bookmarks.html speech_eval.html assets
 var viewerFS embed.FS
 
 // HandleLogo serves the RenCrow logo image.
