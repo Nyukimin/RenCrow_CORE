@@ -13,9 +13,10 @@ import (
 )
 
 type fakeProjectorOutbox struct {
-	enqueued  []OutboxRecord
-	latest    OutboxRecord
-	hasLatest bool
+	enqueued     []OutboxRecord
+	latest       OutboxRecord
+	hasLatest    bool
+	latestByKind map[string]OutboxRecord
 }
 
 func (f *fakeProjectorOutbox) Enqueue(_ context.Context, record OutboxRecord, _ time.Time) error {
@@ -36,7 +37,10 @@ func (f *fakeProjectorOutbox) Fail(context.Context, string, time.Time, bool, str
 	return nil
 }
 
-func (f *fakeProjectorOutbox) Latest(context.Context, domainprojection.Target, string) (OutboxRecord, bool, error) {
+func (f *fakeProjectorOutbox) Latest(_ context.Context, _ domainprojection.Target, kind string) (OutboxRecord, bool, error) {
+	if record, ok := f.latestByKind[kind]; ok {
+		return record, true, nil
+	}
 	return f.latest, f.hasLatest, nil
 }
 
@@ -249,4 +253,121 @@ func TestProjectorValidatesLatestEnvelope(t *testing.T) {
 	if _, err := projector.Sync(context.Background()); !errors.Is(err, domainprojection.ErrInvalidProjection) {
 		t.Fatalf("Sync() error = %v, want ErrInvalidProjection", err)
 	}
+}
+
+func TestProjectorEnqueuesDerivedLifePolicyAndSkipsCurrentContent(t *testing.T) {
+	source := &fakeTaskRunSource{}
+	projector, outbox, revisions := newTestProjector(t, source)
+	projector.LifePolicySource = &fakeLifePolicySource{snapshot: LifePolicySnapshot{
+		PersonaRevision:                "persona-sha256:one",
+		ConditionProfileRef:            "agent-profile-sha256:one",
+		AllowedNonCognitiveActivityIDs: []string{"idle", "rest", "walk"},
+		ExpiredFallbackActivityIDs:     []string{"idle", "rest"},
+	}}
+	result, err := projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(first) error = %v", err)
+	}
+	if result.Enqueued != 1 || result.LifePoliciesEnqueued != 1 || len(outbox.enqueued) != 2 || revisions.calls != 2 {
+		t.Fatalf("result = %+v, enqueued = %d, revisions = %+v", result, len(outbox.enqueued), revisions)
+	}
+	policyRecord := findEnqueued(t, outbox, domainprojection.KindLifePolicy)
+	policy, err := decodeLifePolicyRecord(policyRecord)
+	if err != nil {
+		t.Fatalf("decodeLifePolicyRecord() error = %v", err)
+	}
+	if policy.PersonaRevision != "persona-sha256:one" ||
+		len(policy.AllowedNonCognitiveActivityIDs) != 3 ||
+		policy.ActorID != "mio" {
+		t.Fatalf("policy = %+v", policy)
+	}
+
+	outbox.latestByKind = map[string]OutboxRecord{
+		domainprojection.KindWorkSet:    findEnqueued(t, outbox, domainprojection.KindWorkSet),
+		domainprojection.KindLifePolicy: policyRecord,
+	}
+	for kind, record := range outbox.latestByKind {
+		record.Status = OutboxSent
+		outbox.latestByKind[kind] = record
+	}
+	result, err = projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(second) error = %v", err)
+	}
+	if result.Enqueued != 0 || result.Skipped != 1 || result.LifePoliciesEnqueued != 0 ||
+		result.LifePoliciesSkipped != 1 || revisions.calls != 2 {
+		t.Fatalf("second result = %+v, revisions = %+v", result, revisions)
+	}
+}
+
+func TestProjectorEnqueuesNewLifePolicyRevisionWhenPermissionsChange(t *testing.T) {
+	source := &fakeTaskRunSource{}
+	projector, outbox, revisions := newTestProjector(t, source)
+	lifeSource := &fakeLifePolicySource{snapshot: LifePolicySnapshot{
+		PersonaRevision:                "persona-sha256:one",
+		ConditionProfileRef:            "agent-profile-sha256:one",
+		AllowedNonCognitiveActivityIDs: []string{"idle", "rest", "walk"},
+		ExpiredFallbackActivityIDs:     []string{"idle", "rest"},
+	}}
+	projector.LifePolicySource = lifeSource
+	if _, err := projector.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync(first) error = %v", err)
+	}
+	first := findEnqueued(t, outbox, domainprojection.KindLifePolicy)
+	first.Status = OutboxSent
+	outbox.latestByKind = map[string]OutboxRecord{
+		domainprojection.KindWorkSet:    sentRecord(findEnqueued(t, outbox, domainprojection.KindWorkSet)),
+		domainprojection.KindLifePolicy: first,
+	}
+
+	lifeSource.snapshot.AllowedNonCognitiveActivityIDs = []string{"idle", "rest", "sit", "walk"}
+	result, err := projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(second) error = %v", err)
+	}
+	if result.Enqueued != 0 || result.Skipped != 1 || result.LifePoliciesEnqueued != 1 || revisions.calls != 3 {
+		t.Fatalf("result = %+v, revisions = %+v", result, revisions)
+	}
+	second := findEnqueued(t, outbox, domainprojection.KindLifePolicy, 2)
+	policy, err := decodeLifePolicyRecord(second)
+	if err != nil {
+		t.Fatalf("decodeLifePolicyRecord(second) error = %v", err)
+	}
+	if len(policy.AllowedNonCognitiveActivityIDs) != 4 {
+		t.Fatalf("second policy = %+v", policy)
+	}
+}
+
+type fakeLifePolicySource struct {
+	snapshot LifePolicySnapshot
+	err      error
+}
+
+func (f *fakeLifePolicySource) Snapshot(context.Context, ProjectionActor) (LifePolicySnapshot, error) {
+	return f.snapshot, f.err
+}
+
+func findEnqueued(t *testing.T, outbox *fakeProjectorOutbox, kind string, occurrence ...int) OutboxRecord {
+	t.Helper()
+	want := 1
+	if len(occurrence) > 0 {
+		want = occurrence[0]
+	}
+	seen := 0
+	for _, record := range outbox.enqueued {
+		if record.Kind != kind {
+			continue
+		}
+		seen++
+		if seen == want {
+			return record
+		}
+	}
+	t.Fatalf("no %s record #%d in %d enqueued records", kind, want, len(outbox.enqueued))
+	return OutboxRecord{}
+}
+
+func sentRecord(record OutboxRecord) OutboxRecord {
+	record.Status = OutboxSent
+	return record
 }

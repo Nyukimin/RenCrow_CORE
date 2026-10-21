@@ -911,6 +911,7 @@ type LLMFitNodeConfig struct {
 // and is never stored in YAML.
 type WorldProjectionConfig struct {
 	Enabled              bool                         `yaml:"enabled"`
+	LifePolicyEnabled    *bool                        `yaml:"life_policy_enabled"`
 	BaseURL              string                       `yaml:"base_url"`
 	TokenEnv             string                       `yaml:"token_env"`
 	OutboxPath           string                       `yaml:"outbox_path"`
@@ -923,6 +924,14 @@ type WorldProjectionConfig struct {
 	RefreshBeforeSeconds int                          `yaml:"refresh_before_seconds"`
 	TimeoutSeconds       int                          `yaml:"timeout_seconds"`
 	Actors               []WorldProjectionActorConfig `yaml:"actors"`
+}
+
+// IsLifePolicyEnabled reports whether CORE also projects LifePolicy. The
+// default is enabled so an enabled world_projection cannot silently omit the
+// life-permission half of the contract. A deployment that intentionally wants
+// WorkSet-only behaviour must set life_policy_enabled: false.
+func (c WorldProjectionConfig) IsLifePolicyEnabled() bool {
+	return c.LifePolicyEnabled == nil || *c.LifePolicyEnabled
 }
 
 // WorldProjectionActorConfig maps one WORLD Actor to CORE's Task.assignee.

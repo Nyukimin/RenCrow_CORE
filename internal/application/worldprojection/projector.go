@@ -45,25 +45,30 @@ type ProjectionActor struct {
 // durable outbox record, and only then allocates a new source revision. A
 // crash between a Task update and this call is recovered by the next snapshot.
 type Projector struct {
-	Source        TaskRunSource
-	Outbox        Outbox
-	History       OutboxHistory
-	Revisions     SourceRevisionStore
-	Actors        []ProjectionActor
-	WorldID       string
-	TimelineID    string
-	TimelineEpoch string
-	SourceEpoch   string
-	ValidFor      time.Duration
-	RefreshBefore time.Duration
-	Now           func() time.Time
+	Source           TaskRunSource
+	LifePolicySource LifePolicySource
+	Outbox           Outbox
+	History          OutboxHistory
+	Revisions        SourceRevisionStore
+	Actors           []ProjectionActor
+	WorldID          string
+	TimelineID       string
+	TimelineEpoch    string
+	SourceEpoch      string
+	ValidFor         time.Duration
+	RefreshBefore    time.Duration
+	Now              func() time.Time
 }
 
-// SyncResult reports one full projection pass.
+// SyncResult reports one full projection pass. Enqueued/Skipped count WorkSet
+// records only; LifePolicy records are reported separately so a caller cannot
+// mistake one projection kind for the other.
 type SyncResult struct {
-	Actors   int
-	Enqueued int
-	Skipped  int
+	Actors               int
+	Enqueued             int
+	Skipped              int
+	LifePoliciesEnqueued int
+	LifePoliciesSkipped  int
 }
 
 // Sync reads and projects every configured Actor. It never mutates Task/Run
@@ -128,42 +133,109 @@ func (p *Projector) Sync(ctx context.Context) (SyncResult, error) {
 		}
 		if skip {
 			result.Skipped++
-			continue
+		} else {
+			revision, err := p.Revisions.NextSourceRevision(ctx, target, domainprojection.KindWorkSet, p.SourceEpoch, now)
+			if err != nil {
+				return result, fmt.Errorf("world projection: allocate %s revision: %w", actor.ActorID, err)
+			}
+			workSet, err := domainprojection.NewWorkSet(p.WorldID, actor.ActorID, p.SourceEpoch,
+				revision, validUntil, candidate.ActiveWork)
+			if err != nil {
+				return result, err
+			}
+			envelope, err := domainprojection.NewEnvelope(target, domainprojection.KindWorkSet, workSet)
+			if err != nil {
+				return result, err
+			}
+			raw, err := envelope.Marshal()
+			if err != nil {
+				return result, err
+			}
+			record := OutboxRecord{
+				ID:             projectionRecordID(target, domainprojection.KindWorkSet, revision),
+				Target:         target,
+				Kind:           domainprojection.KindWorkSet,
+				Envelope:       raw,
+				Digest:         envelope.Digest,
+				SourceEpoch:    p.SourceEpoch,
+				SourceRevision: revision,
+				CreatedAt:      now,
+			}
+			if err := p.Outbox.Enqueue(ctx, record, now); err != nil {
+				return result, fmt.Errorf("world projection: enqueue %s revision %d: %w", actor.ActorID, revision, err)
+			}
+			result.Enqueued++
 		}
 
-		revision, err := p.Revisions.NextSourceRevision(ctx, target, domainprojection.KindWorkSet, p.SourceEpoch, now)
-		if err != nil {
-			return result, fmt.Errorf("world projection: allocate %s revision: %w", actor.ActorID, err)
+		if p.LifePolicySource != nil {
+			enqueued, err := p.syncLifePolicy(ctx, target, actor, now, validUntil, refreshBefore)
+			if err != nil {
+				return result, err
+			}
+			if enqueued {
+				result.LifePoliciesEnqueued++
+			} else {
+				result.LifePoliciesSkipped++
+			}
 		}
-		workSet, err := domainprojection.NewWorkSet(p.WorldID, actor.ActorID, p.SourceEpoch,
-			revision, validUntil, candidate.ActiveWork)
-		if err != nil {
-			return result, err
-		}
-		envelope, err := domainprojection.NewEnvelope(target, domainprojection.KindWorkSet, workSet)
-		if err != nil {
-			return result, err
-		}
-		raw, err := envelope.Marshal()
-		if err != nil {
-			return result, err
-		}
-		record := OutboxRecord{
-			ID:             projectionRecordID(target, domainprojection.KindWorkSet, revision),
-			Target:         target,
-			Kind:           domainprojection.KindWorkSet,
-			Envelope:       raw,
-			Digest:         envelope.Digest,
-			SourceEpoch:    p.SourceEpoch,
-			SourceRevision: revision,
-			CreatedAt:      now,
-		}
-		if err := p.Outbox.Enqueue(ctx, record, now); err != nil {
-			return result, fmt.Errorf("world projection: enqueue %s revision %d: %w", actor.ActorID, revision, err)
-		}
-		result.Enqueued++
 	}
 	return result, nil
+}
+
+func (p *Projector) syncLifePolicy(ctx context.Context, target domainprojection.Target, actor ProjectionActor, now, validUntil time.Time, refreshBefore time.Duration) (bool, error) {
+	snapshot, err := p.LifePolicySource.Snapshot(ctx, actor)
+	if err != nil {
+		return false, fmt.Errorf("world projection: build %s life policy: %w", actor.ActorID, err)
+	}
+	candidate, err := domainprojection.NewLifePolicy(p.WorldID, actor.ActorID, p.SourceEpoch, 1, validUntil,
+		snapshot.PersonaRevision, snapshot.ConditionProfileRef,
+		snapshot.AllowedNonCognitiveActivityIDs, snapshot.ExpiredFallbackActivityIDs)
+	if err != nil {
+		return false, fmt.Errorf("world projection: validate %s life policy: %w", actor.ActorID, err)
+	}
+	contentDigest, err := domainprojection.LifePolicyContentDigest(candidate)
+	if err != nil {
+		return false, err
+	}
+	skip, err := p.isCurrentLifePolicy(ctx, target, contentDigest, now, refreshBefore)
+	if err != nil {
+		return false, err
+	}
+	if skip {
+		return false, nil
+	}
+	revision, err := p.Revisions.NextSourceRevision(ctx, target, domainprojection.KindLifePolicy, p.SourceEpoch, now)
+	if err != nil {
+		return false, fmt.Errorf("world projection: allocate %s life policy revision: %w", actor.ActorID, err)
+	}
+	policy, err := domainprojection.NewLifePolicy(p.WorldID, actor.ActorID, p.SourceEpoch, revision, validUntil,
+		snapshot.PersonaRevision, snapshot.ConditionProfileRef,
+		snapshot.AllowedNonCognitiveActivityIDs, snapshot.ExpiredFallbackActivityIDs)
+	if err != nil {
+		return false, err
+	}
+	envelope, err := domainprojection.NewEnvelope(target, domainprojection.KindLifePolicy, policy)
+	if err != nil {
+		return false, err
+	}
+	raw, err := envelope.Marshal()
+	if err != nil {
+		return false, err
+	}
+	record := OutboxRecord{
+		ID:             projectionRecordID(target, domainprojection.KindLifePolicy, revision),
+		Target:         target,
+		Kind:           domainprojection.KindLifePolicy,
+		Envelope:       raw,
+		Digest:         envelope.Digest,
+		SourceEpoch:    p.SourceEpoch,
+		SourceRevision: revision,
+		CreatedAt:      now,
+	}
+	if err := p.Outbox.Enqueue(ctx, record, now); err != nil {
+		return false, fmt.Errorf("world projection: enqueue %s life policy revision %d: %w", actor.ActorID, revision, err)
+	}
+	return true, nil
 }
 
 func (p *Projector) target(actor ProjectionActor) (domainprojection.Target, error) {
@@ -206,7 +278,7 @@ func (p *Projector) isCurrent(ctx context.Context, target domainprojection.Targe
 	case OutboxPending, OutboxInFlight:
 		// An exact-content delivery is already queued; allocating another
 		// revision would only create avoidable work.
-		return latestContentDigest(latest) == contentDigest, nil
+		return latestWorkSetContentDigest(latest) == contentDigest, nil
 	case OutboxSent:
 		workSet, err := decodeWorkSetRecord(latest)
 		if err != nil {
@@ -229,12 +301,59 @@ func (p *Projector) isCurrent(ctx context.Context, target domainprojection.Targe
 	}
 }
 
-func latestContentDigest(record OutboxRecord) string {
+func (p *Projector) isCurrentLifePolicy(ctx context.Context, target domainprojection.Target, contentDigest string, now time.Time, refreshBefore time.Duration) (bool, error) {
+	if p.History == nil {
+		return false, nil
+	}
+	latest, ok, err := p.History.Latest(ctx, target, domainprojection.KindLifePolicy)
+	if err != nil {
+		return false, fmt.Errorf("world projection: read %s life policy outbox head: %w", target.ActorID, err)
+	}
+	if !ok {
+		return false, nil
+	}
+	switch latest.Status {
+	case OutboxPending, OutboxInFlight:
+		return latestLifePolicyContentDigest(latest) == contentDigest, nil
+	case OutboxSent:
+		policy, err := decodeLifePolicyRecord(latest)
+		if err != nil {
+			return false, fmt.Errorf("world projection: decode sent %s life policy: %w", target.ActorID, err)
+		}
+		if latest.SourceEpoch != p.SourceEpoch {
+			return false, nil
+		}
+		digest, err := domainprojection.LifePolicyContentDigest(policy)
+		if err != nil {
+			return false, err
+		}
+		if digest != contentDigest {
+			return false, nil
+		}
+		return policy.ValidUntil.After(now.Add(refreshBefore)), nil
+	default:
+		return false, nil
+	}
+}
+
+func latestWorkSetContentDigest(record OutboxRecord) string {
 	workSet, err := decodeWorkSetRecord(record)
 	if err != nil {
 		return ""
 	}
 	digest, err := domainprojection.WorkSetContentDigest(workSet)
+	if err != nil {
+		return ""
+	}
+	return digest
+}
+
+func latestLifePolicyContentDigest(record OutboxRecord) string {
+	policy, err := decodeLifePolicyRecord(record)
+	if err != nil {
+		return ""
+	}
+	digest, err := domainprojection.LifePolicyContentDigest(policy)
 	if err != nil {
 		return ""
 	}
@@ -259,6 +378,26 @@ func decodeWorkSetRecord(record OutboxRecord) (domainprojection.WorkSet, error) 
 		return domainprojection.WorkSet{}, err
 	}
 	return workSet, nil
+}
+
+func decodeLifePolicyRecord(record OutboxRecord) (domainprojection.LifePolicy, error) {
+	if record.Kind != domainprojection.KindLifePolicy {
+		return domainprojection.LifePolicy{}, errors.New("world projection: record is not a life policy")
+	}
+	var wire struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(record.Envelope, &wire); err != nil {
+		return domainprojection.LifePolicy{}, fmt.Errorf("world projection: envelope is invalid: %w", err)
+	}
+	var policy domainprojection.LifePolicy
+	if err := json.Unmarshal(wire.Payload, &policy); err != nil {
+		return domainprojection.LifePolicy{}, fmt.Errorf("world projection: payload is invalid: %w", err)
+	}
+	if err := policy.Validate(); err != nil {
+		return domainprojection.LifePolicy{}, err
+	}
+	return policy, nil
 }
 
 func projectionRecordID(target domainprojection.Target, kind string, revision uint64) string {

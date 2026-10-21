@@ -67,3 +67,44 @@ func TestPayloadDigestRejectsNonIntegerNumberAndTrailingData(t *testing.T) {
 		}
 	}
 }
+
+func TestLifePolicyContentDigestIgnoresRevisionAndValidity(t *testing.T) {
+	allowed := []string{"idle", "rest", "walk"}
+	fallback := []string{"idle", "rest"}
+	first, err := NewLifePolicy("world", "mio", "epoch", 1,
+		time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC),
+		"persona-sha256:one", "agent-profile-sha256:one", allowed, fallback)
+	if err != nil {
+		t.Fatalf("NewLifePolicy(first) error = %v", err)
+	}
+	second, err := NewLifePolicy("world", "mio", "epoch", 9,
+		time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC),
+		"persona-sha256:one", "agent-profile-sha256:one", allowed, fallback)
+	if err != nil {
+		t.Fatalf("NewLifePolicy(second) error = %v", err)
+	}
+	left, err := LifePolicyContentDigest(first)
+	if err != nil {
+		t.Fatalf("LifePolicyContentDigest(first) error = %v", err)
+	}
+	right, err := LifePolicyContentDigest(second)
+	if err != nil {
+		t.Fatalf("LifePolicyContentDigest(second) error = %v", err)
+	}
+	if left != right {
+		t.Fatalf("content digests differ: %s != %s", left, right)
+	}
+	changed, err := NewLifePolicy("world", "mio", "epoch", 1,
+		time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC),
+		"persona-sha256:two", "agent-profile-sha256:one", allowed, fallback)
+	if err != nil {
+		t.Fatalf("NewLifePolicy(changed) error = %v", err)
+	}
+	changedDigest, err := LifePolicyContentDigest(changed)
+	if err != nil {
+		t.Fatalf("LifePolicyContentDigest(changed) error = %v", err)
+	}
+	if changedDigest == left {
+		t.Fatal("content digest did not change with persona revision")
+	}
+}

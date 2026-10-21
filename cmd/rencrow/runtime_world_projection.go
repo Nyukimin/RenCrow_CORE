@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
+	appagentprofile "github.com/Nyukimin/RenCrow_CORE/internal/application/agentprofile"
 	appprojection "github.com/Nyukimin/RenCrow_CORE/internal/application/worldprojection"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/worldoutbox"
+	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 )
 
 const (
@@ -64,6 +66,14 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 			CoreAssignee:     actor.CoreAssignee,
 		})
 	}
+	var lifePolicySource appprojection.LifePolicySource
+	if settings.IsLifePolicyEnabled() {
+		var err error
+		lifePolicySource, err = buildWorldProjectionLifePolicySource(cfg, actors)
+		if err != nil {
+			return err
+		}
+	}
 	outboxPath, err := worldProjectionOutboxPath(cfg.WorkspaceDir, settings.OutboxPath)
 	if err != nil {
 		return err
@@ -78,17 +88,18 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 		return err
 	}
 	projector := &appprojection.Projector{
-		Source:        deps.taskStore,
-		Outbox:        store,
-		History:       store,
-		Revisions:     store,
-		Actors:        actors,
-		WorldID:       settings.WorldID,
-		TimelineID:    settings.TimelineID,
-		TimelineEpoch: settings.TimelineEpoch,
-		SourceEpoch:   settings.SourceEpoch,
-		ValidFor:      worldProjectionDuration(settings.ValidForSeconds, defaultWorldProjectionValidFor),
-		RefreshBefore: worldProjectionDuration(settings.RefreshBeforeSeconds, defaultWorldProjectionRefreshBefore),
+		Source:           deps.taskStore,
+		LifePolicySource: lifePolicySource,
+		Outbox:           store,
+		History:          store,
+		Revisions:        store,
+		Actors:           actors,
+		WorldID:          settings.WorldID,
+		TimelineID:       settings.TimelineID,
+		TimelineEpoch:    settings.TimelineEpoch,
+		SourceEpoch:      settings.SourceEpoch,
+		ValidFor:         worldProjectionDuration(settings.ValidForSeconds, defaultWorldProjectionValidFor),
+		RefreshBefore:    worldProjectionDuration(settings.RefreshBeforeSeconds, defaultWorldProjectionRefreshBefore),
 	}
 	worker := &appprojection.Worker{Outbox: store, Publisher: publisher, HeadReader: publisher}
 	notify := make(chan struct{}, 1)
@@ -133,9 +144,36 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 			log.Printf("WORLD projection loop stopped: %v", err)
 		}
 	}()
-	log.Printf("WORLD projection loop started destination=%s/%s actors=%d commit_observer=%t",
-		settings.WorldID, settings.TimelineID, len(actors), observerAttached)
+	log.Printf("WORLD projection loop started destination=%s/%s actors=%d life_policy=%t commit_observer=%t",
+		settings.WorldID, settings.TimelineID, len(actors), lifePolicySource != nil, observerAttached)
 	return nil
+}
+
+func buildWorldProjectionLifePolicySource(cfg *config.Config, actors []appprojection.ProjectionActor) (appprojection.LifePolicySource, error) {
+	characterRoot := strings.TrimSpace(cfg.PersonaArchitecture.CharacterRoot)
+	if characterRoot == "" {
+		characterRoot = strings.TrimSpace(cfg.WorkspaceDir)
+	}
+	if characterRoot == "" {
+		return nil, errors.New("WORLD projection: life_policy requires persona_architecture.character_root or workspace_dir")
+	}
+	characters, err := personainfra.LoadCharacters(characterRoot)
+	if err != nil {
+		return nil, fmt.Errorf("WORLD projection: load persona characters: %w", err)
+	}
+	if len(characters) == 0 {
+		return nil, fmt.Errorf("WORLD projection: life_policy requires character bundles under %s/characters", characterRoot)
+	}
+	source := &appprojection.CatalogLifePolicySource{
+		Profiles: appagentprofile.NewStaticCatalog(),
+		Personas: characters,
+	}
+	for _, actor := range actors {
+		if _, err := source.Snapshot(context.Background(), actor); err != nil {
+			return nil, fmt.Errorf("WORLD projection: actor %s life policy: %w", actor.ActorID, err)
+		}
+	}
+	return source, nil
 }
 
 func worldProjectionOutboxPath(workspace, configured string) (string, error) {

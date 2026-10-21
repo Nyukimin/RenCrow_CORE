@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	appagentprofile "github.com/Nyukimin/RenCrow_CORE/internal/application/agentprofile"
 	appprojection "github.com/Nyukimin/RenCrow_CORE/internal/application/worldprojection"
+	domainpersona "github.com/Nyukimin/RenCrow_CORE/internal/domain/persona"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainprojection "github.com/Nyukimin/RenCrow_CORE/internal/domain/worldprojection"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/worldoutbox"
@@ -179,6 +181,127 @@ func TestRealWorldProjectorEnqueuesAndRefreshesFullWorkSet(t *testing.T) {
 	if err != nil || !ok || second.Status != appprojection.OutboxSent || second.SourceRevision != 2 {
 		t.Fatalf("second latest = %+v, ok = %v, err = %v", second, ok, err)
 	}
+}
+
+func TestRealWorldProjectorProjectsDerivedLifePolicy(t *testing.T) {
+	bin := strings.TrimSpace(os.Getenv("RENCROW_WORLD_BIN"))
+	if bin == "" {
+		t.Skip("RENCROW_WORLD_BIN is not set")
+	}
+	baseURL, stop := startRealWorld(t, bin)
+	defer stop()
+
+	source := &realWorldSource{tasks: []domaintask.Task{realWorldTask("mio")}}
+	store, err := worldoutbox.NewSQLiteStore(filepath.Join(t.TempDir(), "life-policy.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	publisher, err := appprojection.NewHTTPPublisher(baseURL, "core-e2e-token", 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPPublisher() error = %v", err)
+	}
+	personas := map[string]domainpersona.CharacterProfile{
+		"mio": {CharacterID: "mio", Persona: map[string]string{"self": "first persona"}},
+	}
+	projector := &appprojection.Projector{
+		Source: source, Outbox: store, History: store, Revisions: store,
+		LifePolicySource: &appprojection.CatalogLifePolicySource{
+			Profiles: appagentprofile.NewStaticCatalog(),
+			Personas: personas,
+		},
+		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-e2e",
+		SourceEpoch: "core-epoch-e2e",
+		Actors: []appprojection.ProjectionActor{{
+			ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
+		}},
+		ValidFor: time.Hour,
+		Now:      func() time.Time { return now },
+	}
+	target := domainprojection.Target{
+		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-e2e",
+		ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
+	}
+	result, err := projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(first) error = %v", err)
+	}
+	if result.Enqueued != 1 || result.LifePoliciesEnqueued != 1 {
+		t.Fatalf("first Sync() = %+v", result)
+	}
+	worker := &appprojection.Worker{Outbox: store, Publisher: publisher, HeadReader: publisher, Now: func() time.Time { return now }}
+	if drained, err := worker.Drain(context.Background()); err != nil || drained.Sent != 2 {
+		t.Fatalf("Drain(first) = %+v, err = %v", drained, err)
+	}
+	first, ok, err := store.Latest(context.Background(), target, domainprojection.KindLifePolicy)
+	if err != nil || !ok || first.Status != appprojection.OutboxSent || first.SourceRevision != 1 {
+		t.Fatalf("first life policy = %+v, ok = %v, err = %v", first, ok, err)
+	}
+	head, err := publisher.ReadHead(context.Background(), target, domainprojection.KindLifePolicy)
+	if err != nil {
+		t.Fatalf("ReadHead(life policy) error = %v", err)
+	}
+	if head.SourceRevision != first.SourceRevision || head.Digest != first.Digest {
+		t.Fatalf("life policy head = %+v, record = %+v", head, first)
+	}
+	policy := decodeLifePolicyPayload(t, first)
+	if policy.ActorID != "mio" || len(policy.AllowedNonCognitiveActivityIDs) != 8 ||
+		len(policy.ExpiredFallbackActivityIDs) != 3 ||
+		!strings.HasPrefix(policy.PersonaRevision, "persona-sha256:") ||
+		!strings.HasPrefix(policy.ConditionProfileRef, "agent-profile-sha256:") {
+		t.Fatalf("life policy payload = %+v", policy)
+	}
+
+	result, err = projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(second) error = %v", err)
+	}
+	if result.Enqueued != 0 || result.Skipped != 1 || result.LifePoliciesEnqueued != 0 || result.LifePoliciesSkipped != 1 {
+		t.Fatalf("second Sync() = %+v", result)
+	}
+
+	personas["mio"] = domainpersona.CharacterProfile{CharacterID: "mio", Persona: map[string]string{"self": "second persona"}}
+	result, err = projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(third) error = %v", err)
+	}
+	if result.Enqueued != 0 || result.Skipped != 1 || result.LifePoliciesEnqueued != 1 {
+		t.Fatalf("third Sync() = %+v", result)
+	}
+	if drained, err := worker.Drain(context.Background()); err != nil || drained.Sent != 1 {
+		t.Fatalf("Drain(second) = %+v, err = %v", drained, err)
+	}
+	second, ok, err := store.Latest(context.Background(), target, domainprojection.KindLifePolicy)
+	if err != nil || !ok || second.Status != appprojection.OutboxSent || second.SourceRevision != 2 {
+		t.Fatalf("second life policy = %+v, ok = %v, err = %v", second, ok, err)
+	}
+	secondPayload := decodeLifePolicyPayload(t, second)
+	if secondPayload.PersonaRevision == policy.PersonaRevision {
+		t.Fatal("persona revision did not change after persona content change")
+	}
+	secondHead, err := publisher.ReadHead(context.Background(), target, domainprojection.KindLifePolicy)
+	if err != nil {
+		t.Fatalf("ReadHead(second life policy) error = %v", err)
+	}
+	if secondHead.SourceRevision != 2 || secondHead.Digest != second.Digest {
+		t.Fatalf("second life policy head = %+v, record = %+v", secondHead, second)
+	}
+}
+
+func decodeLifePolicyPayload(t *testing.T, record appprojection.OutboxRecord) domainprojection.LifePolicy {
+	t.Helper()
+	var wire struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(record.Envelope, &wire); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	var policy domainprojection.LifePolicy
+	if err := json.Unmarshal(wire.Payload, &policy); err != nil {
+		t.Fatalf("decode life policy payload: %v", err)
+	}
+	return policy
 }
 
 func buildEnvelope(t *testing.T, target domainprojection.Target, validUntil time.Time, revision uint64, work []domainprojection.WorkItem) domainprojection.Envelope {

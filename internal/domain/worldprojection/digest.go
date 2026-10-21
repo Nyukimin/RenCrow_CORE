@@ -62,6 +62,38 @@ func WorkSetContentDigest(workSet WorkSet) (string, error) {
 	return PayloadDigest(raw)
 }
 
+// LifePolicyContentDigest identifies the permission content independent of the
+// delivery revision and validity horizon. A projector can extend validity
+// without spending a new source revision when the permissions are unchanged.
+func LifePolicyContentDigest(policy LifePolicy) (string, error) {
+	content := struct {
+		ContractVersion                string   `json:"contract_version"`
+		WorldID                        string   `json:"world_id"`
+		ActorID                        string   `json:"actor_id"`
+		SourceOwner                    string   `json:"source_owner"`
+		SourceEpoch                    string   `json:"source_epoch"`
+		PersonaRevision                string   `json:"persona_revision"`
+		ConditionProfileRef            string   `json:"condition_profile_ref"`
+		AllowedNonCognitiveActivityIDs []string `json:"allowed_non_cognitive_activity_ids"`
+		ExpiredFallbackActivityIDs     []string `json:"expired_fallback_activity_ids"`
+	}{
+		ContractVersion:                policy.ContractVersion,
+		WorldID:                        policy.WorldID,
+		ActorID:                        policy.ActorID,
+		SourceOwner:                    policy.SourceOwner,
+		SourceEpoch:                    policy.SourceEpoch,
+		PersonaRevision:                policy.PersonaRevision,
+		ConditionProfileRef:            policy.ConditionProfileRef,
+		AllowedNonCognitiveActivityIDs: policy.AllowedNonCognitiveActivityIDs,
+		ExpiredFallbackActivityIDs:     policy.ExpiredFallbackActivityIDs,
+	}
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return "", fmt.Errorf("%w: life policy content is not encodable", ErrInvalidProjection)
+	}
+	return PayloadDigest(raw)
+}
+
 func writeCanonical(buf *bytes.Buffer, value any) error {
 	switch v := value.(type) {
 	case nil:

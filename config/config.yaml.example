@@ -186,6 +186,10 @@ task_store:
 # The credential is read from token_env and must never be written here.
 world_projection:
   enabled: false
+  # When enabled, CORE also projects the LifePolicy derived from each Actor's
+  # AgentProfile and loaded Persona CharacterProfile. life_policy requires the
+  # characters/<actor>/ bundle under persona_architecture.character_root.
+  life_policy_enabled: true
   base_url: "https://world.example.invalid"
   token_env: "RENCROW_WORLD_PROJECTION_TOKEN"
   # Relative paths are resolved against workspace_dir.
