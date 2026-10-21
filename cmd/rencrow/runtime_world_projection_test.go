@@ -104,24 +104,48 @@ func TestStartWorldProjectionRunsProjectorAndDrain(t *testing.T) {
 		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-1",
 		ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
 	}
-	var record appprojection.OutboxRecord
-	var ok bool
+	record := waitForSentOutbox(t, outbox, target, 1)
+	if record.AckStatus != "accepted" {
+		t.Fatalf("latest outbox = %+v", record)
+	}
+
+	// A committed Task write must wake the loop immediately; the configured
+	// interval is one hour, so a second delivery within the test deadline proves
+	// the commit observer is connected.
+	second := domaintask.Task{Title: "project me too", Route: domaintask.RouteGeneral, Assignee: "mio"}
+	second.ApplyDefaults(time.Now().UTC())
+	if err := store.SaveTask(t.Context(), second); err != nil {
+		t.Fatalf("SaveTask(second) error = %v", err)
+	}
+	select {
+	case request := <-requests:
+		if request == "" {
+			t.Fatal("empty second projection request")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second projection request was not sent after a committed Task write")
+	}
+	record = waitForSentOutbox(t, outbox, target, 2)
+	deps.Shutdown()
+	if record.AckStatus != "accepted" {
+		t.Fatalf("second outbox = %+v", record)
+	}
+}
+
+func waitForSentOutbox(t *testing.T, outbox *worldoutbox.SQLiteStore, target domainprojection.Target, wantRevision uint64) appprojection.OutboxRecord {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		record, ok, err = outbox.Latest(t.Context(), target, domainprojection.KindWorkSet)
+		record, ok, err := outbox.Latest(t.Context(), target, domainprojection.KindWorkSet)
 		if err != nil {
 			t.Fatalf("Latest() error = %v", err)
 		}
-		if ok && record.Status == appprojection.OutboxSent {
-			break
+		if ok && record.Status == appprojection.OutboxSent && record.SourceRevision == wantRevision {
+			return record
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("latest outbox did not reach sent: %+v", record)
+			t.Fatalf("latest outbox did not reach sent revision %d: %+v", wantRevision, record)
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	deps.Shutdown()
-	if record.AckStatus != "accepted" {
-		t.Fatalf("latest outbox = %+v", record)
 	}
 }

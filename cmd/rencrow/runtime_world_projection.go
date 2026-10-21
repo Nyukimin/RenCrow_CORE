@@ -91,26 +91,50 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 		RefreshBefore: worldProjectionDuration(settings.RefreshBeforeSeconds, defaultWorldProjectionRefreshBefore),
 	}
 	worker := &appprojection.Worker{Outbox: store, Publisher: publisher, HeadReader: publisher}
+	notify := make(chan struct{}, 1)
 	service := &appprojection.Service{
 		Projector: projector,
 		Worker:    worker,
 		Interval:  worldProjectionDuration(settings.IntervalSeconds, defaultWorldProjectionInterval),
+		Notify:    notify,
 		OnError: func(err error) {
 			log.Printf("WORLD projection pass failed: %v", err)
 		},
+	}
+	// A committed Task write is the source event. The observer only wakes the
+	// loop; the outbox record is still derived by the full-set projector, so a
+	// crash between the Task commit and this notification is repaired by the
+	// startup pass and the content comparison.
+	observerAttached := false
+	if notifier, ok := interface{}(deps.taskStore).(interface{ SetCommitObserver(func()) }); ok {
+		notifier.SetCommitObserver(func() {
+			select {
+			case notify <- struct{}{}:
+			default:
+			}
+		})
+		observerAttached = true
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	deps.worldProjectionCancel = cancel
 	deps.worldProjectionDone = done
-	deps.worldProjectionClose = store.Close
+	deps.worldProjectionClose = func() error {
+		if observerAttached {
+			if notifier, ok := interface{}(deps.taskStore).(interface{ SetCommitObserver(func()) }); ok {
+				notifier.SetCommitObserver(nil)
+			}
+		}
+		return store.Close()
+	}
 	go func() {
 		defer close(done)
 		if err := service.Run(ctx); err != nil {
 			log.Printf("WORLD projection loop stopped: %v", err)
 		}
 	}()
-	log.Printf("WORLD projection loop started destination=%s/%s actors=%d", settings.WorldID, settings.TimelineID, len(actors))
+	log.Printf("WORLD projection loop started destination=%s/%s actors=%d commit_observer=%t",
+		settings.WorldID, settings.TimelineID, len(actors), observerAttached)
 	return nil
 }
 

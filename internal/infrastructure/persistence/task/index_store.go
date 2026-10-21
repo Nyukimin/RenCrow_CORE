@@ -80,8 +80,19 @@ func (s *JSONLStore) IndexStats() (IndexStats, bool) {
 // produced so a record the index would refuse never reaches the log, and records
 // a write that ended without a known commit boundary.
 func (s *JSONLStore) writeBatch(ctx context.Context, callback func() (map[string][]byte, error)) error {
+	wrote := false
 	if s.idx == nil {
-		return s.batch.Write(ctx, callback)
+		err := s.batch.Write(ctx, func() (map[string][]byte, error) {
+			payloads, err := callback()
+			if err == nil && len(payloads) > 0 {
+				wrote = true
+			}
+			return payloads, err
+		})
+		if err == nil && wrote {
+			s.notifyCommit()
+		}
+		return err
 	}
 	err := s.batch.Write(ctx, func() (map[string][]byte, error) {
 		if err := s.idx.ensureSynced(); err != nil {
@@ -95,10 +106,14 @@ func (s *JSONLStore) writeBatch(ctx context.Context, callback func() (map[string
 			if err := s.idx.validateAppend(payloads); err != nil {
 				return nil, err
 			}
+			wrote = true
 		}
 		return payloads, nil
 	})
 	s.idx.noteWriteResult(err)
+	if err == nil && wrote {
+		s.notifyCommit()
+	}
 	return err
 }
 
