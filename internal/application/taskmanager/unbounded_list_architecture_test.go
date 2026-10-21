@@ -61,6 +61,14 @@ var unboundedTaskListAllowlist = map[string]string{
 	"internal/application/taskmanager/read_task_runs.go:readTaskRunsInOnePass:ListRuns{}":  "one pass for a store without an ID index",
 	"internal/application/taskmanager/read_task_runs.go:RunResolver:ListRuns{}":            "one pass for a store without an ID index",
 
+	// The WORLD full-actor WorkSet is a complete active snapshot. It lists only
+	// the four active Task statuses and running Runs, so the bound is the active
+	// set rather than the Task/Run history.
+	"internal/application/worldprojection/builder.go:BuildFullWorkSet:ListTasks{Assignee,Status}": "full active WorkSet snapshot for one exact CORE assignee; active set is small",
+	"internal/application/worldprojection/builder.go:BuildFullWorkSet:ListRuns{Status}":           "running Runs only; active set is small",
+	"internal/application/worldprojection/builder.go:interface:TaskRunSource:ListTasks":           "full active WorkSet snapshot owner interface",
+	"internal/application/worldprojection/builder.go:interface:TaskRunSource:ListRuns":            "running Runs owner interface",
+
 	// The one-shot reaper of Run-less queued Tasks (reap_queued.go). A reference
 	// to a Task can come from any Task of the history and there is no reverse
 	// lookup, so it reads the latest version of every Task once per dry-run and

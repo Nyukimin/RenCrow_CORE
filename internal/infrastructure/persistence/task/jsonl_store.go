@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
@@ -50,6 +51,28 @@ type JSONLStore struct {
 	runPath           string
 	contextPath       string
 	notificationsPath string
+	commitObserver    atomic.Pointer[func()]
+}
+
+// SetCommitObserver registers a callback that runs after a successful Task
+// store write batch. It observes a committed change; it cannot veto or extend
+// the transaction. The callback must not block or call back into the store.
+// A nil observer removes the previous registration.
+func (s *JSONLStore) SetCommitObserver(observer func()) {
+	if s == nil {
+		return
+	}
+	if observer == nil {
+		s.commitObserver.Store(nil)
+		return
+	}
+	s.commitObserver.Store(&observer)
+}
+
+func (s *JSONLStore) notifyCommit() {
+	if observer := s.commitObserver.Load(); observer != nil {
+		(*observer)()
+	}
 }
 
 func NewJSONLStore(root string) (*JSONLStore, error) {

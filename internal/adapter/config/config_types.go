@@ -4,19 +4,20 @@ import "github.com/Nyukimin/RenCrow_CORE/internal/adapter/config/agentcontrol"
 
 // Config はアプリケーション全体の設定
 type Config struct {
-	Server       ServerConfig       `yaml:"server"`
-	Session      SessionConfig      `yaml:"session"`
-	Storage      StorageConfig      `yaml:"storage"`
-	DurableStore DurableStoreConfig `yaml:"durable_store"`
-	TaskStore    TaskStoreConfig    `yaml:"task_store"`
-	ActionStore  ActionStoreConfig  `yaml:"action_store"`
-	Backup       BackupConfig       `yaml:"backup"`
-	Worker       WorkerConfig       `yaml:"worker"`
-	Line         LineConfig         `yaml:"line"`
-	Telegram     TelegramConfig     `yaml:"telegram"`
-	Discord      DiscordConfig      `yaml:"discord"`
-	Slack        SlackConfig        `yaml:"slack"`
-	Log          LogConfig          `yaml:"log"`
+	Server          ServerConfig          `yaml:"server"`
+	Session         SessionConfig         `yaml:"session"`
+	Storage         StorageConfig         `yaml:"storage"`
+	DurableStore    DurableStoreConfig    `yaml:"durable_store"`
+	TaskStore       TaskStoreConfig       `yaml:"task_store"`
+	WorldProjection WorldProjectionConfig `yaml:"world_projection"`
+	ActionStore     ActionStoreConfig     `yaml:"action_store"`
+	Backup          BackupConfig          `yaml:"backup"`
+	Worker          WorkerConfig          `yaml:"worker"`
+	Line            LineConfig            `yaml:"line"`
+	Telegram        TelegramConfig        `yaml:"telegram"`
+	Discord         DiscordConfig         `yaml:"discord"`
+	Slack           SlackConfig           `yaml:"slack"`
+	Log             LogConfig             `yaml:"log"`
 
 	// === v4.0 追加フィールド ===
 	Distributed DistributedConfig `yaml:"distributed"`
@@ -903,4 +904,40 @@ type LLMFitNodeConfig struct {
 	ID       string `yaml:"id"`       // unique node id shown in the viewer
 	Mode     string `yaml:"mode"`     // http | cli
 	Endpoint string `yaml:"endpoint"` // llmfit serve base URL; required for http, must be empty for cli
+}
+
+// WorldProjectionConfig configures CORE's outbound WORLD v1.4 projection loop.
+// It is disabled by default. The credential is read from TokenEnv at startup
+// and is never stored in YAML.
+type WorldProjectionConfig struct {
+	Enabled              bool                         `yaml:"enabled"`
+	LifePolicyEnabled    *bool                        `yaml:"life_policy_enabled"`
+	BaseURL              string                       `yaml:"base_url"`
+	TokenEnv             string                       `yaml:"token_env"`
+	OutboxPath           string                       `yaml:"outbox_path"`
+	WorldID              string                       `yaml:"world_id"`
+	TimelineID           string                       `yaml:"timeline_id"`
+	TimelineEpoch        string                       `yaml:"timeline_epoch"`
+	SourceEpoch          string                       `yaml:"source_epoch"`
+	IntervalSeconds      int                          `yaml:"interval_seconds"`
+	ValidForSeconds      int                          `yaml:"valid_for_seconds"`
+	RefreshBeforeSeconds int                          `yaml:"refresh_before_seconds"`
+	TimeoutSeconds       int                          `yaml:"timeout_seconds"`
+	Actors               []WorldProjectionActorConfig `yaml:"actors"`
+}
+
+// IsLifePolicyEnabled reports whether CORE also projects LifePolicy. The
+// default is enabled so an enabled world_projection cannot silently omit the
+// life-permission half of the contract. A deployment that intentionally wants
+// WorkSet-only behaviour must set life_policy_enabled: false.
+func (c WorldProjectionConfig) IsLifePolicyEnabled() bool {
+	return c.LifePolicyEnabled == nil || *c.LifePolicyEnabled
+}
+
+// WorldProjectionActorConfig maps one WORLD Actor to CORE's Task.assignee.
+type WorldProjectionActorConfig struct {
+	ActorID          string `yaml:"actor_id"`
+	ActorInstanceID  string `yaml:"actor_instance_id"`
+	ActorTransportID string `yaml:"actor_transport_id"`
+	CoreAssignee     string `yaml:"core_assignee"`
 }

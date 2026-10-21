@@ -59,3 +59,20 @@ func TestStaticCatalogKuroCanRecommendStop(t *testing.T) {
 		t.Fatal("Kuro should be able to recommend_stop")
 	}
 }
+
+func TestStaticCatalogCoreActorsHaveValidNonCognitiveEnvelopes(t *testing.T) {
+	catalog := NewStaticCatalog()
+	for _, id := range []string{"mio", "shiro", "kuro", "midori"} {
+		profile, err := catalog.MustGet(id)
+		if err != nil {
+			t.Fatalf("MustGet(%q) failed: %v", id, err)
+		}
+		envelope, err := profile.NonCognitive.Normalized()
+		if err != nil {
+			t.Fatalf("%s NonCognitive.Normalized() error = %v", id, err)
+		}
+		if len(envelope.Allowed) == 0 || len(envelope.ExpiredFallback) == 0 {
+			t.Fatalf("%s envelope = %#v", id, envelope)
+		}
+	}
+}

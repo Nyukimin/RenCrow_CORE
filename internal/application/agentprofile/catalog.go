@@ -74,6 +74,7 @@ func staticProfiles() []agentprofile.Profile {
 				ActAllowed: []string{"respond", "route_task", "external_send", "memory_promote"},
 				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
+			NonCognitive: residentNonCognitiveEnvelope(),
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "conversation", Weight: 1.0},
 				{Topic: "routing", Weight: 0.9},
@@ -102,6 +103,7 @@ func staticProfiles() []agentprofile.Profile {
 				ActAllowed: []string{"read_file", "run_test", "apply_safe_patch", "restart_service", "write_config", "git_push", "external_send"},
 				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
+			NonCognitive: residentNonCognitiveEnvelope(),
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "execution", Weight: 1.0},
 				{Topic: "testing", Weight: 0.9},
@@ -132,6 +134,7 @@ func staticProfiles() []agentprofile.Profile {
 				ActAllowed: []string{"read_file", "read_log", "write_risk_report", "restart_service", "write_config", "git_push"},
 				Forbidden:  []string{"delete_production_data", "expose_secret", "bypass_policy"},
 			},
+			NonCognitive: residentNonCognitiveEnvelope(),
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "risk", Weight: 1.0},
 				{Topic: "quality", Weight: 0.9},
@@ -157,6 +160,7 @@ func staticProfiles() []agentprofile.Profile {
 				ActAllowed: []string{"draft", "summarize", "generate_prompt", "external_publish", "paid_api_use"},
 				Forbidden:  []string{"expose_secret", "bypass_policy"},
 			},
+			NonCognitive: residentNonCognitiveEnvelope(),
 			KnowledgeAffinity: []agentprofile.KnowledgeAffinity{
 				{Topic: "story", Weight: 1.0},
 				{Topic: "visual", Weight: 0.8},
@@ -205,5 +209,17 @@ func commonUtility(success, userValue, riskPenalty float64) agentprofile.Utility
 		ReworkPenalty:     0.15,
 		RiskPenalty:       riskPenalty,
 		ReputationPenalty: 0.2,
+	}
+}
+
+// residentNonCognitiveEnvelope is the explicit CORE permission set for the
+// four CORE-managed Actors. The IDs are abstract WORLD life activities; WORLD
+// owns their concrete motion, posture, and occupancy mapping. The same set is
+// used for all four residents until a Persona-specific decision is made, so
+// this helper does not infer preferences from Persona text.
+func residentNonCognitiveEnvelope() agentprofile.NonCognitiveEnvelope {
+	return agentprofile.NonCognitiveEnvelope{
+		Allowed:         []string{"change_clothes", "exercise", "idle", "read", "rest", "sit", "sleep", "walk"},
+		ExpiredFallback: []string{"idle", "rest", "sleep"},
 	}
 }
