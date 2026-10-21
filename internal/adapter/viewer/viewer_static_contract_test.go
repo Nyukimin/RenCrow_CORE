@@ -1401,6 +1401,10 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 		`id="videoProgress"`,
 		`id="videoResult" controls`,
 		`id="videoDownload"`,
+		`id="videoAuthPanel"`,
+		`id="videoCredential" class="desk-input" type="password"`,
+		`id="videoLoginForm"`,
+		`id="videoLogoutButton"`,
 		`0.2 MP・5秒・8 steps`,
 	} {
 		if !strings.Contains(html, needle) {
@@ -1409,6 +1413,7 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 	}
 	for _, needle := range []string{
 		`/viewer/image/video/generations`,
+		`/viewer/image/video/session`,
 		`/viewer/image/video/${id}.mp4`,
 		`rencrow.image.video.lastJobId`,
 		`localStorage.setItem(savedVideoJobKey, id)`,
@@ -1418,6 +1423,18 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 		if !strings.Contains(js, needle) {
 			t.Fatalf("video UI is missing %q", needle)
 		}
+	}
+	loginStart := strings.Index(js, "async function signInVideo(event)")
+	logoutStart := strings.Index(js, "async function signOutVideo()")
+	if loginStart < 0 || logoutStart <= loginStart {
+		t.Fatal("video UI must provide a browser credential sign-in flow")
+	}
+	login := js[loginStart:logoutStart]
+	if strings.Contains(login, "localStorage") || strings.Contains(login, "sessionStorage") || strings.Contains(login, "console.") {
+		t.Fatal("video browser credential must not be persisted or logged")
+	}
+	if !strings.Contains(login, "credentials: 'same-origin'") || !strings.Contains(login, "videoCredential.value = ''") {
+		t.Fatal("video sign-in must use same-origin credentials and clear the credential field")
 	}
 	if strings.Contains(js, "X-RenCrow-Actor-ID") || strings.Contains(js, "/v1/videos/") || strings.Contains(js, "127.0.0.1:8780") {
 		t.Fatal("video UI must use same-origin CORE routes and never set actor identity or call Image directly")

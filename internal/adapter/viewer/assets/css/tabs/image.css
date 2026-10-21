@@ -42,6 +42,42 @@ body[data-viewer-tab="image"] .input-bar {
   min-width: 0;
 }
 
+.video-auth {
+  align-items: start;
+  display: grid;
+  gap: var(--space-3, 12px);
+  margin-bottom: var(--space-3, 12px);
+}
+
+.video-auth[hidden] {
+  display: none !important;
+}
+
+.video-auth-form {
+  display: grid;
+  gap: var(--space-2, 8px);
+  max-width: 420px;
+}
+
+.video-auth-form[hidden] {
+  display: none !important;
+}
+
+.video-auth-form label {
+  color: var(--rc-text-muted, #a6afbf);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.video-auth-actions {
+  display: flex;
+  gap: var(--space-2, 8px);
+}
+
+.video-auth-logout {
+  background: transparent;
+}
+
 .image-empty,
 .image-error {
   align-items: center;

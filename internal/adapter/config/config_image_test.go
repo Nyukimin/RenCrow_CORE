@@ -60,10 +60,12 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 	valid := ImageConfig{
 		Enabled: true,
 		VideoBrowser: ImageVideoBrowserConfig{
-			Enabled:               true,
-			Host:                  "llm-rx6800.tailb07d8d.ts.net:8444",
-			Origin:                "https://llm-rx6800.tailb07d8d.ts.net:8444",
-			AllowedTailscaleLogin: "ren@example.com",
+			Enabled:          true,
+			Host:             "llm-rx6800.tailb07d8d.ts.net:8444",
+			Origin:           "https://llm-rx6800.tailb07d8d.ts.net:8444",
+			ActorID:          "user:yukimi",
+			CredentialSHA256: strings.Repeat("a", 64),
+			CookieHMACKeyHex: strings.Repeat("b", 64),
 		},
 	}
 	if err := validateImageVideoBrowserConfig(valid); err != nil {
@@ -77,8 +79,11 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 		{name: "host origin mismatch", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "https://other.tailb07d8d.ts.net:8444" }},
 		{name: "http origin", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "http://llm-rx6800.tailb07d8d.ts.net:8444" }},
 		{name: "non tailscale host", edit: func(c *ImageConfig) { c.VideoBrowser.Host = "example.com:8444" }},
-		{name: "multiple logins", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedTailscaleLogin = "ren@example.com,other@example.com" }},
-		{name: "empty login", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedTailscaleLogin = "" }},
+		{name: "invalid actor kind", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "tailscale:yukimi" }},
+		{name: "empty actor", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "" }},
+		{name: "invalid credential verifier", edit: func(c *ImageConfig) { c.VideoBrowser.CredentialSHA256 = "not-a-sha256" }},
+		{name: "missing cookie key", edit: func(c *ImageConfig) { c.VideoBrowser.CookieHMACKeyHex = "" }},
+		{name: "short cookie key", edit: func(c *ImageConfig) { c.VideoBrowser.CookieHMACKeyHex = strings.Repeat("b", 62) }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,8 +96,11 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadConfigImageVideoBrowserReadsAllowedLogin(t *testing.T) {
-	t.Setenv("RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN", "ren@example.com")
+func TestLoadConfigImageVideoBrowserReadsCredentialSessionConfig(t *testing.T) {
+	credentialHash := strings.Repeat("a", 64)
+	cookieKey := strings.Repeat("b", 64)
+	t.Setenv("RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256", credentialHash)
+	t.Setenv("RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX", cookieKey)
 	configPath := filepath.Join(t.TempDir(), "image-video.yaml")
 	content := `
 server:
@@ -106,7 +114,9 @@ image:
     allow_generation: true
     host: "llm-rx6800.tailb07d8d.ts.net:8444"
     origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
-    allowed_tailscale_login: "${RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN}"
+    actor_id: "user:yukimi"
+    credential_sha256: "${RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256}"
+    cookie_hmac_key_hex: "${RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX}"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -115,13 +125,15 @@ image:
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration || cfg.Image.VideoBrowser.AllowedTailscaleLogin != "ren@example.com" {
-		t.Fatalf("unexpected video browser config: %+v", cfg.Image.VideoBrowser)
+	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration || cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
+		cfg.Image.VideoBrowser.CredentialSHA256 != credentialHash || cfg.Image.VideoBrowser.CookieHMACKeyHex != cookieKey {
+		t.Fatal("video browser credential session config was not loaded")
 	}
 }
 
 func TestLoadConfigImageVideoGenerationPermissionDefaultsClosed(t *testing.T) {
-	t.Setenv("RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN", "ren@example.com")
+	t.Setenv("RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256", strings.Repeat("a", 64))
+	t.Setenv("RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX", strings.Repeat("b", 64))
 	configPath := filepath.Join(t.TempDir(), "image-video-policy.yaml")
 	content := `
 server:
@@ -134,7 +146,9 @@ image:
     enabled: true
     host: "llm-rx6800.tailb07d8d.ts.net:8444"
     origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
-    allowed_tailscale_login: "${RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN}"
+    actor_id: "user:yukimi"
+    credential_sha256: "${RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256}"
+    cookie_hmac_key_hex: "${RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX}"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)

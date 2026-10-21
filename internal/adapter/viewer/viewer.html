@@ -215,6 +215,23 @@
           </div>
           <div id="imageResultMeta" class="daily-desk-muted" aria-live="polite"></div>
         </div>
+        <section id="videoAuthPanel" class="daily-desk-card video-auth" aria-label="動画利用者認証" hidden>
+          <div>
+            <strong>動画の利用者認証</strong>
+            <p class="image-profile-note">認証情報はこの画面のメモリだけで扱います。Cookieの期限は12時間です。</p>
+          </div>
+          <form id="videoLoginForm" class="video-auth-form">
+            <label for="videoCredential">Browser credential</label>
+            <input id="videoCredential" class="desk-input" type="password" autocomplete="off" minlength="32" maxlength="512" spellcheck="false" required>
+            <div class="video-auth-actions">
+              <button id="videoLoginButton" class="desk-primary-btn" type="submit">Sign in</button>
+            </div>
+          </form>
+          <div class="video-auth-actions">
+            <button id="videoLogoutButton" class="desk-primary-btn video-auth-logout" type="button" hidden>Sign out</button>
+          </div>
+          <p id="videoAuthStatus" class="image-profile-note" role="status" aria-live="polite">動画を使うには認証してください。</p>
+        </section>
         <div id="imageResultEmpty" class="daily-desk-card image-empty">
           プロンプトを書いてGenerateを押すと、生成結果をここに表示します。
         </div>

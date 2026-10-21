@@ -88,7 +88,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
-| `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | tailnet-only Tailscale Serveを通る、Actor-scoped動画生成・状態poll・Range対応MP4 proxy |
+| `POST /viewer/image/video/session`, `GET /viewer/image/video/session`, `DELETE /viewer/image/video/session`, `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | tailnet-only Tailscale Serve上のbrowser session、Actor-scoped動画生成・状態poll・Range対応MP4 proxy |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
 | `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
@@ -1202,17 +1202,23 @@ responseのopaqueなimage IDだけを保持して
 ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
 RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
-Videoパネルでは`POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、
-`seed`とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`とCOREが確定した
-`X-RenCrow-Actor-ID: tailscale:<lowercase-login>`をImage Gatewayへ送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。
+Videoパネルは`POST /viewer/image/video/session`でJSON `{credential}`を送ってbrowser sessionを作り、
+`GET`でsession確認、`DELETE`でlogoutします。成功時は12時間有効なSecure、HttpOnly、SameSite=Strict、host-only
+cookieをPath `/viewer/image/video`へ設定します。credential verifierと独立したcookie HMAC keyはprotected CORE configに
+置き、credentialはURLやbrowser storageへ保存しません。sessionは明示設定した`user:yukimi` Actorに結び付きます。
+
+`POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、
+`seed`とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`とCOREが確定したActor IDをImage Gatewayへ
+送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。
 `GET /viewer/image/video/generations/{id}`は`queued|running|succeeded|failed`と、成功時のvideo metadataまたは
 安全なerrorを返します。Image ownerのMP4 URLはCORE内の`/viewer/image/video/{id}.mp4`へ書き換えます。
 MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。全video routeはloopback
-socket、完全一致Host、設定済みの単一Tailscale loginを要求し、POSTはさらに完全一致HTTPS Originを要求します。
+socket、完全一致Host、valid sessionを要求し、POST/DELETEはさらに単一の完全一致HTTPS Originを要求します。
 COREは認証前にupstreamへforwardせず、actor scopeを状態照会とMP4 Range取得にも適用します。新規生成は
 認証のほか`image.video_browser.allow_generation=true`も必要です。現行Global Policy routeはstatusとdecision記録の
-projectionであり、Tailscale user単位の動画生成authorizationを評価しません。BrowserはActor headerを送らず、
-Serveが注入する`Tailscale-User-Login`をCOREだけが検証します。
+projectionであり、動画browser credential単位の動画生成authorizationを評価しません。BrowserはActor headerを送らず、
+tag/device identityをActorへ変換しません。`:8444`はtailnet-only Serve専用でFunnelを無効にします。`:8443` Funnelは
+`/webhook/line`だけを公開します。`Tailscale-Funnel-Request`があれば拒否しますが、このheaderはServe経由の証明ではありません。
 
 `POST /viewer/send`で`to=midori`を指定した画像生成依頼も、同じCORE-to-RenCrow_Image contractを
 使用します。成功時はMidoriの利用者向け`agent.response`へ

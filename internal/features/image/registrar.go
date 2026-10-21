@@ -5,6 +5,7 @@ import "net/http"
 type Routes struct {
 	Generate      http.HandlerFunc
 	Result        http.HandlerFunc
+	VideoSession  http.HandlerFunc
 	VideoGenerate http.HandlerFunc
 	VideoStatus   http.HandlerFunc
 	VideoResult   http.HandlerFunc
@@ -19,6 +20,9 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.Result != nil {
 		mux.HandleFunc("/viewer/image/result", routes.Result)
+	}
+	if routes.VideoSession != nil {
+		mux.HandleFunc("/viewer/image/video/session", routes.VideoSession)
 	}
 	if routes.VideoGenerate != nil {
 		mux.HandleFunc("/viewer/image/video/generations", routes.VideoGenerate)

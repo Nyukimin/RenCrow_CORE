@@ -3,6 +3,8 @@ package viewer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -10,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 )
@@ -17,8 +20,8 @@ import (
 const (
 	videoTestHost   = "llm-rx6800.tailb07d8d.ts.net:8444"
 	videoTestOrigin = "https://llm-rx6800.tailb07d8d.ts.net:8444"
-	videoTestLogin  = "ren@example.com"
-	videoTestActor  = "tailscale:ren@example.com"
+	videoTestToken  = "video-test-credential-0123456789abcdef"
+	videoTestActor  = "user:yukimi"
 )
 
 type fakeVideoGateway struct {
@@ -55,7 +58,12 @@ func (g *fakeVideoGateway) OpenVideo(_ context.Context, _ string, actorID, range
 }
 
 func videoAuthConfig() VideoBrowserAuthConfig {
-	return VideoBrowserAuthConfig{Enabled: true, AllowGeneration: true, Host: videoTestHost, Origin: videoTestOrigin, AllowedTailscaleLogin: videoTestLogin}
+	credentialHash := sha256.Sum256([]byte(videoTestToken))
+	return VideoBrowserAuthConfig{
+		Enabled: true, AllowGeneration: true, Host: videoTestHost, Origin: videoTestOrigin,
+		ActorID: videoTestActor, CredentialSHA256: hex.EncodeToString(credentialHash[:]),
+		CookieHMACKeyHex: strings.Repeat("b", 64),
+	}
 }
 
 func videoRequest(t *testing.T, mode string, image []byte) (*http.Request, string) {
@@ -84,11 +92,16 @@ func videoRequest(t *testing.T, mode string, image []byte) (*http.Request, strin
 	return req, body.String()
 }
 
-func authenticatedVideoRequest(req *http.Request) *http.Request {
+func authenticatedVideoRequest(t *testing.T, req *http.Request) *http.Request {
+	t.Helper()
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Host = videoTestHost
 	req.Header.Set("Origin", videoTestOrigin)
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
+	cookie, err := videoAuthConfig().newSessionCookie(time.Now())
+	if err != nil {
+		t.Fatalf("create test session cookie: %v", err)
+	}
+	req.AddCookie(cookie)
 	req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
 	return req
 }
@@ -96,7 +109,7 @@ func authenticatedVideoRequest(req *http.Request) *http.Request {
 func TestHandleVideoGenerateAcceptsExistingIdempotentJobStatus(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_existing", Status: "running"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	rec := httptest.NewRecorder()
 	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 	var accepted domainimage.VideoGenerationAccepted
@@ -109,7 +122,7 @@ func TestHandleVideoGenerateAcceptsBoundedPNGForI2V(t *testing.T) {
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 'I', 'H', 'D', 'R'}
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_i2v", Status: "queued"}}
 	req, _ := videoRequest(t, "i2v", png)
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	rec := httptest.NewRecorder()
 	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 {
@@ -140,7 +153,7 @@ func TestHandleVideoGenerateRejectsOversizedImageBeforeGateway(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/generations", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	gateway := &fakeVideoGateway{}
 	rec := httptest.NewRecorder()
 	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
@@ -152,7 +165,7 @@ func TestHandleVideoGenerateRejectsOversizedImageBeforeGateway(t *testing.T) {
 func TestHandleVideoGenerateUsesCOREAuthenticatedActorAndIdempotencyKey(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	rec := httptest.NewRecorder()
 	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 
@@ -178,15 +191,13 @@ func TestHandleVideoGenerateRejectsUntrustedRequestsBeforeGateway(t *testing.T) 
 		{name: "null origin", edit: func(r *http.Request) { r.Header.Set("Origin", "null") }},
 		{name: "spoofed funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
 		{name: "duplicate origin", edit: func(r *http.Request) { r.Header.Add("Origin", videoTestOrigin) }},
-		{name: "missing login", edit: func(r *http.Request) { r.Header.Del("Tailscale-User-Login") }},
-		{name: "duplicate login", edit: func(r *http.Request) { r.Header.Add("Tailscale-User-Login", videoTestLogin) }},
-		{name: "wrong login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "other@example.com") }},
+		{name: "missing session", edit: func(r *http.Request) { r.Header.Del("Cookie") }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 			req, _ := videoRequest(t, "t2v", nil)
-			tt.edit(authenticatedVideoRequest(req))
+			tt.edit(authenticatedVideoRequest(t, req))
 			rec := httptest.NewRecorder()
 			HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 			if rec.Code != http.StatusNotFound || gateway.createCalls != 0 {
@@ -210,7 +221,7 @@ func TestHandleVideoGenerateValidatesModeSpecificInputs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 			req, _ := videoRequest(t, tt.mode, tt.image)
-			authenticatedVideoRequest(req)
+			authenticatedVideoRequest(t, req)
 			rec := httptest.NewRecorder()
 			HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 			if rec.Code != http.StatusBadRequest || gateway.createCalls != 0 {
@@ -227,9 +238,7 @@ func TestHandleVideoStatusRewritesUpstreamMediaURL(t *testing.T) {
 		Video: &domainimage.VideoArtifact{URL: "/v1/videos/vid_abc.mp4", SHA256: strings.Repeat("a", 64), SizeBytes: 12, ContentType: "video/mp4"},
 	}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/generations/vid_abc", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
-	req.Host = videoTestHost
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
+	authenticatedVideoRequest(t, req)
 	rec := httptest.NewRecorder()
 	HandleVideoStatus(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 
@@ -252,9 +261,7 @@ func TestHandleVideoResultForwardsActorAndRange(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader("video")),
 	}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/vid_abc.mp4", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
-	req.Host = videoTestHost
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
+	authenticatedVideoRequest(t, req)
 	req.Header.Set("Range", "bytes=0-4")
 	rec := httptest.NewRecorder()
 	HandleVideoResult(gateway, videoAuthConfig()).ServeHTTP(rec, req)
@@ -270,7 +277,7 @@ func TestHandleVideoResultForwardsActorAndRange(t *testing.T) {
 func TestHandleVideoGenerateRequiresExplicitCOREPermission(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	rec := httptest.NewRecorder()
 	auth := videoAuthConfig()
 	auth.AllowGeneration = false
@@ -280,7 +287,7 @@ func TestHandleVideoGenerateRequiresExplicitCOREPermission(t *testing.T) {
 	}
 
 	req, _ = videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(req)
+	authenticatedVideoRequest(t, req)
 	req.Header.Add("Idempotency-Key", "second")
 	rec = httptest.NewRecorder()
 	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
@@ -293,9 +300,7 @@ func TestHandleVideoStatusRejectsCrossOriginAndInvalidID(t *testing.T) {
 	for _, path := range []string{"/viewer/image/video/generations/../secret", "/viewer/image/video/generations/vid_abc/extra"} {
 		gateway := &fakeVideoGateway{}
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.RemoteAddr = "127.0.0.1:43210"
-		req.Host = videoTestHost
-		req.Header.Set("Tailscale-User-Login", videoTestLogin)
+		authenticatedVideoRequest(t, req)
 		req.Header.Set("Origin", "https://attacker.example")
 		rec := httptest.NewRecorder()
 		HandleVideoStatus(gateway, videoAuthConfig()).ServeHTTP(rec, req)

@@ -1080,6 +1080,11 @@ func validateNonEmptyList(name string, values []string) error {
 	return nil
 }
 
+var (
+	videoBrowserActorIDPattern   = regexp.MustCompile(`^user:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+	videoBrowserSecretHexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
 func validateImageVideoBrowserConfig(image ImageConfig) error {
 	video := image.VideoBrowser
 	if !video.Enabled {
@@ -1102,15 +1107,14 @@ func validateImageVideoBrowserConfig(image ImageConfig) error {
 		origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return fmt.Errorf("image.video_browser.origin must exactly match host over HTTPS")
 	}
-	login := video.AllowedTailscaleLogin
-	if login == "" || strings.TrimSpace(login) != login || len(login) > 255 ||
-		strings.ContainsAny(login, ",\r\n") {
-		return fmt.Errorf("image.video_browser.allowed_tailscale_login must be one exact login")
+	if !videoBrowserActorIDPattern.MatchString(video.ActorID) {
+		return fmt.Errorf("image.video_browser.actor_id must be one canonical user actor ID")
 	}
-	for _, character := range login {
-		if character < 0x20 || character == 0x7f {
-			return fmt.Errorf("image.video_browser.allowed_tailscale_login must be one exact login")
-		}
+	if !videoBrowserSecretHexPattern.MatchString(video.CredentialSHA256) {
+		return fmt.Errorf("image.video_browser.credential_sha256 must be 64 lowercase hexadecimal characters")
+	}
+	if !videoBrowserSecretHexPattern.MatchString(video.CookieHMACKeyHex) {
+		return fmt.Errorf("image.video_browser.cookie_hmac_key_hex must be 64 lowercase hexadecimal characters")
 	}
 	return nil
 }

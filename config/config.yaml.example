@@ -550,14 +550,16 @@ image:
   enabled: true
   base_url: "http://127.0.0.1:8780"
   timeout_ms: 600000
-  # Enable only behind the authenticated Tailscale Serve HTTPS route.
-  # Keep the allowed login in the protected runtime environment, not in Git.
+  # Enable only on tailnet-only Serve :8444; Funnel must be disabled on this port.
+  # Keep the verifier and independent cookie key in protected runtime config.
   video_browser:
     enabled: false
     allow_generation: false
     host: "llm-rx6800.tailb07d8d.ts.net:8444"
     origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
-    allowed_tailscale_login: "${RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN}"
+    actor_id: "user:yukimi"
+    credential_sha256: "${RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256}"
+    cookie_hmac_key_hex: "${RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX}"
 
 vtuber:
   enabled: false

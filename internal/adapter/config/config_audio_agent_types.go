@@ -79,11 +79,13 @@ type ImageConfig struct {
 }
 
 type ImageVideoBrowserConfig struct {
-	Enabled               bool   `yaml:"enabled"`
-	AllowGeneration       bool   `yaml:"allow_generation"`
-	Host                  string `yaml:"host"`
-	Origin                string `yaml:"origin"`
-	AllowedTailscaleLogin string `yaml:"allowed_tailscale_login"`
+	Enabled          bool   `yaml:"enabled"`
+	AllowGeneration  bool   `yaml:"allow_generation"`
+	Host             string `yaml:"host"`
+	Origin           string `yaml:"origin"`
+	ActorID          string `yaml:"actor_id"`
+	CredentialSHA256 string `yaml:"credential_sha256"`
+	CookieHMACKeyHex string `yaml:"cookie_hmac_key_hex"`
 }
 
 type TTSCommandConfig struct {

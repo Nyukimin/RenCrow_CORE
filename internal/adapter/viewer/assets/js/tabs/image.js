@@ -26,6 +26,12 @@
   const videoProgress = document.getElementById('videoProgress');
   const video = document.getElementById('videoResult');
   const download = document.getElementById('videoDownload');
+  const videoAuthPanel = document.getElementById('videoAuthPanel');
+  const videoLoginForm = document.getElementById('videoLoginForm');
+  const videoCredential = document.getElementById('videoCredential');
+  const videoLoginButton = document.getElementById('videoLoginButton');
+  const videoLogoutButton = document.getElementById('videoLogoutButton');
+  const videoAuthStatus = document.getElementById('videoAuthStatus');
   if (!prompt || !generateButton || !status || !image || !outputKind) return;
 
   const savedVideoJobKey = 'rencrow.image.video.lastJobId';
@@ -35,6 +41,8 @@
   let currentVideoID = '';
   let pollTimer = 0;
   let videoSubmitBusy = false;
+  let videoAuthenticated = false;
+  let videoAuthRevision = 0;
 
   function setStatus(value, isLive) {
     status.textContent = value;
@@ -69,6 +77,115 @@
     resultKicker.textContent = isVideo ? 'Generated video' : 'Generated image';
     if (resultMain) resultMain.classList.toggle('is-video-output', isVideo);
     videoPanel.hidden = !isVideo;
+    if (videoAuthPanel) videoAuthPanel.hidden = !isVideo;
+  }
+
+  function renderVideoAuth() {
+    if (videoLoginForm) videoLoginForm.hidden = videoAuthenticated;
+    if (videoLoginButton) videoLoginButton.disabled = videoAuthenticated;
+    if (videoLogoutButton) videoLogoutButton.hidden = !videoAuthenticated;
+  }
+
+  async function checkVideoSession() {
+    const revision = videoAuthRevision;
+    let authenticated = false;
+    let message = '認証状態を確認できません。COREのServe経由で接続してください。';
+    try {
+      const response = await fetch('/viewer/image/video/session', {
+        method: 'GET',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'},
+      });
+      const payload = await response.json().catch(() => ({}));
+      authenticated = response.ok && payload.authenticated === true;
+      message = authenticated
+        ? '動画を利用できます。'
+        : response.status === 401
+          ? '動画を使うには認証してください。'
+          : '認証状態を確認できません。COREのServe経由で接続してください。';
+    } catch (_) {
+      authenticated = false;
+    }
+    if (revision !== videoAuthRevision) return videoAuthenticated;
+    videoAuthenticated = authenticated;
+    if (videoAuthStatus) videoAuthStatus.textContent = message;
+    renderVideoAuth();
+    return videoAuthenticated;
+  }
+
+  function hasSavedVideoState() {
+    try {
+      return Boolean(window.localStorage.getItem(savedVideoJobKey) || loadPendingVideoRequest());
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function signInVideo(event) {
+    event.preventDefault();
+    if (!videoCredential || !videoCredential.value) {
+      if (videoAuthStatus) videoAuthStatus.textContent = 'Browser credentialを入力してください。';
+      return;
+    }
+    videoAuthRevision += 1;
+    const credential = videoCredential.value;
+    if (videoLoginButton) videoLoginButton.disabled = true;
+    if (videoAuthStatus) videoAuthStatus.textContent = '認証しています…';
+    try {
+      const response = await fetch('/viewer/image/video/session', {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+        body: JSON.stringify({credential}),
+      });
+      const payload = await response.json().catch(() => ({}));
+      videoAuthenticated = response.ok && payload.authenticated === true;
+      if (!videoAuthenticated) {
+        if (videoAuthStatus) videoAuthStatus.textContent = response.status === 401
+          ? '認証情報が正しくありません。'
+          : '認証できませんでした。COREのServe経由で接続してください。';
+        return;
+      }
+      if (videoAuthStatus) videoAuthStatus.textContent = '動画を利用できます。';
+      renderVideoAuth();
+      resumeSavedVideoState();
+    } catch (_) {
+      videoAuthenticated = false;
+      if (videoAuthStatus) videoAuthStatus.textContent = '認証できませんでした。接続を確認して再試行してください。';
+    } finally {
+      videoAuthRevision += 1;
+      // Never keep the browser credential in a field or browser storage.
+      videoCredential.value = '';
+      renderVideoAuth();
+    }
+  }
+
+  async function signOutVideo() {
+    videoAuthRevision += 1;
+    let signedOut = false;
+    try {
+      const response = await fetch('/viewer/image/video/session', {
+        method: 'DELETE',
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {'Accept': 'application/json'},
+      });
+      signedOut = response.ok;
+    } catch (_) {
+      signedOut = false;
+    } finally {
+      videoAuthRevision += 1;
+      window.clearTimeout(pollTimer);
+      currentVideoID = '';
+      videoAuthenticated = false;
+      resetVideoPlayer();
+      if (videoAuthStatus) videoAuthStatus.textContent = signedOut
+        ? 'サインアウトしました。認証すると保存した動画ジョブを再開できます。'
+        : 'サインアウトできませんでした。接続を確認してください。';
+      renderVideoAuth();
+    }
   }
 
   function makeIdempotencyKey() {
@@ -174,11 +291,19 @@
       const response = await fetch(`/viewer/image/video/generations/${encodeURIComponent(id)}`, {
         method: 'GET',
         cache: 'no-store',
+        credentials: 'same-origin',
         headers: {'Accept': 'application/json'},
       });
       const payload = await response.json().catch(() => ({}));
       if (id !== currentVideoID) return;
       if (response.status === 404) {
+        if (!await checkVideoSession()) {
+          currentVideoID = '';
+          window.clearTimeout(pollTimer);
+          videoStatus.textContent = 'ログインすると保存した動画ジョブを再開できます。';
+          setStatus('authentication required', false);
+          return;
+        }
         currentVideoID = '';
         clearSavedVideoJob(id);
         resetVideoPlayer();
@@ -213,7 +338,13 @@
         videoProgress.hidden = true;
         videoStatus.textContent = 'succeeded';
         video.onerror = function onVideoError() {
-          showError('生成したMP4を再生できませんでした。');
+          checkVideoSession().then((authenticated) => {
+            if (!authenticated) {
+              showError('ログインすると保存した動画を再生できます。');
+              return;
+            }
+            showError('生成したMP4を再生できませんでした。');
+          });
         };
         video.src = expectedURL;
         video.hidden = false;
@@ -273,6 +404,20 @@
     return true;
   }
 
+  function resumeSavedVideoState() {
+    if (!videoAuthenticated) return false;
+    if (!resumePendingVideoRequest()) resumeSavedVideoJob();
+    return true;
+  }
+
+  function startVideoGeneration() {
+    if (videoSubmitBusy) return;
+    videoSubmitBusy = true;
+    generateVideo()
+      .catch(() => showError('動画生成を開始できませんでした。'))
+      .finally(() => { videoSubmitBusy = false; });
+  }
+
   async function generateImage() {
     const promptText = prompt.value.trim();
     if (!promptText) {
@@ -317,6 +462,12 @@
   }
 
   async function generateVideo() {
+    if (!await checkVideoSession()) {
+      if (videoAuthPanel) videoAuthPanel.hidden = false;
+      if (videoCredential) videoCredential.focus();
+      videoStatus.textContent = '認証すると動画を生成できます。';
+      return;
+    }
     const promptText = prompt.value.trim();
     if (!promptText) {
       showError('プロンプトを入力してください。');
@@ -348,7 +499,6 @@
     }
 
     error.hidden = true;
-    videoSubmitBusy = true;
     setBusy(true, 'Preparing...');
     videoStatus.textContent = '動画リクエストを準備しています…';
     videoPanel.hidden = false;
@@ -379,6 +529,7 @@
       requestSubmitted = true;
       const response = await fetch('/viewer/image/video/generations', {
         method: 'POST',
+        credentials: 'same-origin',
         headers: {
           'Accept': 'application/json',
           'Idempotency-Key': pending.key,
@@ -403,26 +554,37 @@
         ? '応答を確認できませんでした。同じリクエストを再送すると同じジョブを確認できます。'
         : '送信前に停止しました。入力を確認してから再試行してください。';
     } finally {
-      videoSubmitBusy = false;
       setBusy(false);
     }
   }
 
   generateButton.addEventListener('click', () => {
-    if (videoSubmitBusy) return;
-    if (outputKind.value === 'video') generateVideo();
+    if (outputKind.value === 'video') startVideoGeneration();
     else generateImage();
   });
+  if (videoLoginForm) videoLoginForm.addEventListener('submit', signInVideo);
+  if (videoLogoutButton) videoLogoutButton.addEventListener('click', signOutVideo);
   outputKind.addEventListener('change', setOutputKind);
   videoMode.addEventListener('change', setOutputKind);
   prompt.addEventListener('keydown', function onPromptKeydown(event) {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       event.preventDefault();
-      if (outputKind.value === 'video') generateVideo();
+      if (outputKind.value === 'video') startVideoGeneration();
       else generateImage();
     }
   });
 
   setOutputKind();
-  if (!resumePendingVideoRequest()) resumeSavedVideoJob();
+  checkVideoSession().then((authenticated) => {
+    if (authenticated) {
+      resumeSavedVideoState();
+      return;
+    }
+    if (hasSavedVideoState()) {
+      outputKind.value = 'video';
+      setOutputKind();
+      videoPanel.hidden = false;
+      videoStatus.textContent = '認証すると保存した動画の状態を再開します。';
+    }
+  });
 })();

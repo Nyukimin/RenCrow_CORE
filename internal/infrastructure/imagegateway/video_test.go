@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	videoClientTestActor = "tailscale:ren@example.com"
+	videoClientTestActor = "user:yukimi"
 	videoClientTestKey   = "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1"
 )
 

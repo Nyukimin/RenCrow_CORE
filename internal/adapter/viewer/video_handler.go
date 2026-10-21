@@ -7,7 +7,6 @@ import (
 	"io"
 	"mime"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -43,11 +42,13 @@ type VideoGateway interface {
 }
 
 type VideoBrowserAuthConfig struct {
-	Enabled               bool
-	AllowGeneration       bool
-	Host                  string
-	Origin                string
-	AllowedTailscaleLogin string
+	Enabled          bool
+	AllowGeneration  bool
+	Host             string
+	Origin           string
+	ActorID          string
+	CredentialSHA256 string
+	CookieHMACKeyHex string
 }
 
 func HandleVideoGenerate(gateway VideoGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
@@ -219,44 +220,6 @@ func HandleVideoResult(gateway VideoGateway, auth VideoBrowserAuthConfig) http.H
 			writeVideoError(w, http.StatusBadGateway, "VIDEO_UNAVAILABLE", "Video result is unavailable.")
 		}
 	}
-}
-
-func (c VideoBrowserAuthConfig) videoActorID(r *http.Request) (string, bool) {
-	if r == nil || !c.Enabled || c.Host == "" || c.Origin == "" || c.AllowedTailscaleLogin == "" {
-		return "", false
-	}
-	if !videoLoopbackRemoteAddr(r.RemoteAddr) || r.Host != c.Host {
-		return "", false
-	}
-	if hasHeaderName(r.Header, "Tailscale-Funnel-Request") {
-		return "", false
-	}
-	originValues := headerValuesCaseInsensitive(r.Header, "Origin")
-	if r.Method == http.MethodPost {
-		if len(originValues) != 1 || originValues[0] == "null" || originValues[0] != c.Origin {
-			return "", false
-		}
-	} else if len(originValues) > 0 && (len(originValues) != 1 || originValues[0] == "null" || originValues[0] != c.Origin) {
-		return "", false
-	}
-	loginValues := headerValuesCaseInsensitive(r.Header, "Tailscale-User-Login")
-	if len(loginValues) != 1 || loginValues[0] != c.AllowedTailscaleLogin {
-		return "", false
-	}
-	return "tailscale:" + strings.ToLower(c.AllowedTailscaleLogin), true
-}
-
-func videoLoopbackRemoteAddr(raw string) bool {
-	host, port, err := net.SplitHostPort(raw)
-	if err != nil || host == "" {
-		return false
-	}
-	portNumber, err := strconv.ParseUint(port, 10, 16)
-	if err != nil || portNumber == 0 {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 func singleHeaderValue(header http.Header, name string) (string, bool) {
