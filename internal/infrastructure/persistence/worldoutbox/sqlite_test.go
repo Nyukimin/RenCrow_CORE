@@ -172,6 +172,34 @@ func TestSourceRevisionIsMonotonicAndPersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestSourceRevisionRecoversFromLatestOutboxWhenCounterIsMissing(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().UTC()
+	first, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-1", now)
+	if err != nil || first != 1 {
+		t.Fatalf("first revision = %d, err = %v", first, err)
+	}
+	if err := store.Enqueue(context.Background(), testRecord("one", first, ""), now); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if _, err := store.db.Exec(`DELETE FROM world_projection_source_revision
+		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
+		testTarget().WorldID, testTarget().TimelineID, testTarget().TimelineEpoch,
+		testTarget().ActorID, domainprojection.KindWorkSet); err != nil {
+		t.Fatalf("delete counter row: %v", err)
+	}
+	if _, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-2", now); !errors.Is(err, appprojection.ErrEpochChangeRequiresReconcile) {
+		t.Fatalf("epoch change after recovery error = %v", err)
+	}
+	next, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-1", now)
+	if err != nil {
+		t.Fatalf("NextSourceRevision() after delete error = %v", err)
+	}
+	if next != 2 {
+		t.Fatalf("revision after delete = %d, want 2", next)
+	}
+}
+
 func TestOutboxLatestReturnsNewestRecord(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now().UTC()

@@ -329,32 +329,40 @@ func (s *SQLiteStore) NextSourceRevision(ctx context.Context, target domainproje
 		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
 		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
 		Scan(&currentEpoch, &currentRevision)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-		if _, err := tx.ExecContext(ctx, `INSERT INTO world_projection_source_revision
-			(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
-			target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind,
-			sourceEpoch, formatTime(now)); err != nil {
-			return 0, err
+	if errors.Is(err, sql.ErrNoRows) {
+		// The outbox is the committed delivery history; recover from its newest
+		// revision if the counter row is missing (a partially applied migration or
+		// a repaired database). This can only move forward.
+		err = tx.QueryRowContext(ctx, `SELECT source_epoch, source_revision
+			FROM world_projection_outbox
+			WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?
+			ORDER BY source_revision DESC, rowid DESC LIMIT 1`,
+			target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
+			Scan(&currentEpoch, &currentRevision)
+		if errors.Is(err, sql.ErrNoRows) {
+			currentEpoch = sourceEpoch
+			currentRevision = 0
+			err = nil
 		}
-		if err := tx.Commit(); err != nil {
-			return 0, err
-		}
-		return 1, nil
-	case err != nil:
+	}
+	if err != nil {
 		return 0, err
-	case currentEpoch != sourceEpoch:
+	}
+	if currentEpoch != sourceEpoch {
 		return 0, appprojection.ErrEpochChangeRequiresReconcile
-	case currentRevision >= domainprojection.MaxSourceRevision:
+	}
+	if currentRevision >= domainprojection.MaxSourceRevision {
 		return 0, errors.New("world projection outbox: source revision exhausted")
 	}
 	next := currentRevision + 1
-	if _, err := tx.ExecContext(ctx, `UPDATE world_projection_source_revision
-		SET source_revision = ?, updated_at = ?
-		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
-		next, formatTime(now), target.WorldID, target.TimelineID, target.TimelineEpoch,
-		target.ActorID, kind); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO world_projection_source_revision
+		(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(world_id, timeline_id, timeline_epoch, actor_id, kind)
+		DO UPDATE SET source_epoch = excluded.source_epoch, source_revision = excluded.source_revision,
+			updated_at = excluded.updated_at`,
+		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind,
+		sourceEpoch, next, formatTime(now)); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
