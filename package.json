@@ -1,7 +1,8 @@
 {
   "scripts": {
     "test:e2e:viewer:to-be": "bash test/e2e/browser/run_to_be_ops_e2e.sh",
-    "test:e2e:viewer:to-be:firefox": "RENCROW_E2E_BROWSERS=firefox bash test/e2e/browser/run_to_be_ops_e2e.sh"
+    "test:e2e:viewer:to-be:firefox": "RENCROW_E2E_BROWSERS=firefox bash test/e2e/browser/run_to_be_ops_e2e.sh",
+    "test:e2e:viewer:image-video-idempotency": "node test/e2e/browser/image_video_idempotency.mjs"
   },
   "devDependencies": {
     "playwright": "^1.59.1"

@@ -1381,3 +1381,49 @@ func TestViewerAtlasCapturesOwnerInputBeforeBusyRender(t *testing.T) {
 		t.Fatal("owner input must be captured before atlasRender replaces the form controls")
 	}
 }
+
+func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/image.js")
+	if err != nil {
+		t.Fatalf("read image.js: %v", err)
+	}
+	html, js := string(htmlData), string(jsData)
+	for _, needle := range []string{
+		`id="imageOutputKind"`,
+		`<option value="t2v">`,
+		`<option value="i2v">`,
+		`id="videoInputImage"`,
+		`accept="image/png,image/jpeg`,
+		`id="videoProgress"`,
+		`id="videoResult" controls`,
+		`id="videoDownload"`,
+		`0.2 MP・5秒・8 steps`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("video UI is missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`/viewer/image/video/generations`,
+		`/viewer/image/video/${id}.mp4`,
+		`rencrow.image.video.lastJobId`,
+		`localStorage.setItem(savedVideoJobKey, id)`,
+		`payload.status === 'succeeded'`,
+		`payload.status === 'failed'`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("video UI is missing %q", needle)
+		}
+	}
+	if strings.Contains(js, "X-RenCrow-Actor-ID") || strings.Contains(js, "/v1/videos/") || strings.Contains(js, "127.0.0.1:8780") {
+		t.Fatal("video UI must use same-origin CORE routes and never set actor identity or call Image directly")
+	}
+	videoSubmit := js[strings.Index(js, "async function generateVideo()"):strings.Index(js, "generateButton.addEventListener")]
+	if strings.Contains(videoSubmit, "negative_prompt") || strings.Contains(videoSubmit, "negativePrompt") {
+		t.Fatal("video UI must not submit the image negative prompt")
+	}
+}

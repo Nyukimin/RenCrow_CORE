@@ -550,6 +550,14 @@ image:
   enabled: true
   base_url: "http://127.0.0.1:8780"
   timeout_ms: 600000
+  # Enable only behind the authenticated Tailscale Serve HTTPS route.
+  # Keep the allowed login in the protected runtime environment, not in Git.
+  video_browser:
+    enabled: false
+    allow_generation: false
+    host: "llm-rx6800.tailb07d8d.ts.net:8444"
+    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    allowed_tailscale_login: "${RENCROW_VIDEO_ALLOWED_TAILSCALE_LOGIN}"
 
 vtuber:
   enabled: false

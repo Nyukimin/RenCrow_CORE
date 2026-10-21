@@ -3,8 +3,11 @@ package image
 import "net/http"
 
 type Routes struct {
-	Generate http.HandlerFunc
-	Result   http.HandlerFunc
+	Generate      http.HandlerFunc
+	Result        http.HandlerFunc
+	VideoGenerate http.HandlerFunc
+	VideoStatus   http.HandlerFunc
+	VideoResult   http.HandlerFunc
 }
 
 func RegisterRoutes(mux *http.ServeMux, routes Routes) {
@@ -16,5 +19,14 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.Result != nil {
 		mux.HandleFunc("/viewer/image/result", routes.Result)
+	}
+	if routes.VideoGenerate != nil {
+		mux.HandleFunc("/viewer/image/video/generations", routes.VideoGenerate)
+	}
+	if routes.VideoStatus != nil {
+		mux.HandleFunc("/viewer/image/video/generations/", routes.VideoStatus)
+	}
+	if routes.VideoResult != nil {
+		mux.HandleFunc("/viewer/image/video/", routes.VideoResult)
 	}
 }

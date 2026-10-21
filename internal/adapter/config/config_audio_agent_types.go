@@ -72,9 +72,18 @@ type VisionConfig struct {
 // ImageConfig configures the RenCrow_Image service boundary.
 // ForgeNeo, model and generation settings intentionally belong to RenCrow_Image.
 type ImageConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	BaseURL   string `yaml:"base_url"`
-	TimeoutMS int    `yaml:"timeout_ms"`
+	Enabled      bool                    `yaml:"enabled"`
+	BaseURL      string                  `yaml:"base_url"`
+	TimeoutMS    int                     `yaml:"timeout_ms"`
+	VideoBrowser ImageVideoBrowserConfig `yaml:"video_browser"`
+}
+
+type ImageVideoBrowserConfig struct {
+	Enabled               bool   `yaml:"enabled"`
+	AllowGeneration       bool   `yaml:"allow_generation"`
+	Host                  string `yaml:"host"`
+	Origin                string `yaml:"origin"`
+	AllowedTailscaleLogin string `yaml:"allowed_tailscale_login"`
 }
 
 type TTSCommandConfig struct {

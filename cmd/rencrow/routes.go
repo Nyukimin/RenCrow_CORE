@@ -356,17 +356,42 @@ func registerViewerDynamicRoutes(mux *http.ServeMux, dependencies *Dependencies)
 }
 
 func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
-	gateway := newConfiguredImageGateway(cfg)
-	if gateway != nil {
+	client := newConfiguredImageClient(cfg)
+	var imageGateway viewer.ImageGateway
+	var videoGateway viewer.VideoGateway
+	if client != nil {
 		log.Printf("RenCrow_Image Gateway -> %s", strings.TrimRight(cfg.Image.BaseURL, "/"))
+		imageGateway = client
+		videoGateway = client
+	}
+	videoAuth := viewer.VideoBrowserAuthConfig{}
+	if cfg != nil {
+		videoAuth = viewer.VideoBrowserAuthConfig{
+			Enabled:               cfg.Image.VideoBrowser.Enabled,
+			AllowGeneration:       cfg.Image.VideoBrowser.AllowGeneration,
+			Host:                  cfg.Image.VideoBrowser.Host,
+			Origin:                cfg.Image.VideoBrowser.Origin,
+			AllowedTailscaleLogin: cfg.Image.VideoBrowser.AllowedTailscaleLogin,
+		}
 	}
 	imagefeature.RegisterRoutes(mux, imagefeature.Routes{
-		Generate: viewer.HandleImageGenerate(gateway),
-		Result:   viewer.HandleImageResult(gateway),
+		Generate:      viewer.HandleImageGenerate(imageGateway),
+		Result:        viewer.HandleImageResult(imageGateway),
+		VideoGenerate: viewer.HandleVideoGenerate(videoGateway, videoAuth),
+		VideoStatus:   viewer.HandleVideoStatus(videoGateway, videoAuth),
+		VideoResult:   viewer.HandleVideoResult(videoGateway, videoAuth),
 	})
 }
 
 func newConfiguredImageGateway(cfg *config.Config) viewer.ImageGateway {
+	client := newConfiguredImageClient(cfg)
+	if client == nil {
+		return nil
+	}
+	return client
+}
+
+func newConfiguredImageClient(cfg *config.Config) *imagegateway.Client {
 	if cfg == nil || !cfg.Image.Enabled {
 		return nil
 	}

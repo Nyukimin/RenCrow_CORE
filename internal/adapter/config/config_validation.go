@@ -231,6 +231,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("image.timeout_ms must be >= 1")
 		}
 	}
+	if err := validateImageVideoBrowserConfig(c.Image); err != nil {
+		return err
+	}
 	if c.WebwrightFetch.Enabled {
 		if strings.TrimSpace(c.WebwrightFetch.RunnerPath) == "" {
 			return fmt.Errorf("webwright_fetch.runner_path is required when webwright_fetch.enabled=true")
@@ -1072,6 +1075,41 @@ func validateNonEmptyList(name string, values []string) error {
 	for i, value := range values {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s[%d] must not be empty", name, i)
+		}
+	}
+	return nil
+}
+
+func validateImageVideoBrowserConfig(image ImageConfig) error {
+	video := image.VideoBrowser
+	if !video.Enabled {
+		return nil
+	}
+	if !image.Enabled {
+		return fmt.Errorf("image.video_browser.enabled requires image.enabled=true")
+	}
+	if video.Host == "" || strings.TrimSpace(video.Host) != video.Host {
+		return fmt.Errorf("image.video_browser.host must be an exact HTTPS Serve host")
+	}
+	hostURL, err := url.Parse("//" + video.Host)
+	if err != nil || hostURL.Host != video.Host || hostURL.User != nil ||
+		hostURL.Path != "" || hostURL.RawQuery != "" || hostURL.Fragment != "" ||
+		hostURL.Port() == "" || !strings.HasSuffix(strings.ToLower(hostURL.Hostname()), ".ts.net") {
+		return fmt.Errorf("image.video_browser.host must be an exact Tailscale Serve host with a port")
+	}
+	origin, err := url.Parse(video.Origin)
+	if err != nil || origin.Scheme != "https" || origin.Host != video.Host ||
+		origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return fmt.Errorf("image.video_browser.origin must exactly match host over HTTPS")
+	}
+	login := video.AllowedTailscaleLogin
+	if login == "" || strings.TrimSpace(login) != login || len(login) > 255 ||
+		strings.ContainsAny(login, ",\r\n") {
+		return fmt.Errorf("image.video_browser.allowed_tailscale_login must be one exact login")
+	}
+	for _, character := range login {
+		if character < 0x20 || character == 0x7f {
+			return fmt.Errorf("image.video_browser.allowed_tailscale_login must be one exact login")
 		}
 	}
 	return nil

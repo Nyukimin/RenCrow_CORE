@@ -168,38 +168,68 @@
 
   <section id="panel-image" class="panel">
     <div class="desk-screen desk-workspace image-workspace">
-      <aside class="desk-side image-side" aria-label="Image generation controls">
+      <aside class="desk-side image-side" aria-label="Image and video generation controls">
         <div class="desk-brand">
           <div class="desk-kicker">RenCrow Image</div>
-          <h2 class="daily-desk-title">RenCrow_Imageで描く</h2>
+          <h2 class="daily-desk-title">画像・動画を生成</h2>
         </div>
         <div id="imageStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">ready</div>
         <section class="daily-desk-card image-prompt-card">
+          <label for="imageOutputKind">Output</label>
+          <select id="imageOutputKind" class="desk-select">
+            <option value="image">Image</option>
+            <option value="video">Video</option>
+          </select>
           <label for="imagePrompt">Prompt</label>
-          <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="描きたい画像を入力"></textarea>
-          <label for="imageNegativePrompt">Negative prompt</label>
-          <textarea id="imageNegativePrompt" class="daily-desk-input image-negative-prompt" rows="2" maxlength="8000"></textarea>
-          <label for="imageSeed">Seed</label>
-          <input id="imageSeed" class="desk-input" type="number" value="-1" step="1">
-          <p class="image-profile-note">解像度・stepsは現在のプロファイル設定を使用します。MOSSではDMD8（CFG=1）で初回生成し、FaceDetailerがraw MOSS（CFG=3）で顔を再処理します。Negative promptはこの2回目に適用されます。</p>
-          <button id="imageGenerateBtn" class="desk-primary-btn" type="button">Generate</button>
+          <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="描きたい画像・動画を入力"></textarea>
+          <div id="imageOnlyOptions">
+            <label for="imageNegativePrompt">Negative prompt</label>
+            <textarea id="imageNegativePrompt" class="daily-desk-input image-negative-prompt" rows="2" maxlength="8000"></textarea>
+            <label for="imageSeed">Seed</label>
+            <input id="imageSeed" class="desk-input" type="number" value="-1" step="1">
+            <p class="image-profile-note">画像生成は現在のプロファイル設定を使用します。</p>
+          </div>
+          <div id="videoOptions" class="video-options" hidden>
+            <label for="videoMode">Video mode</label>
+            <select id="videoMode" class="desk-select">
+              <option value="t2v">Text to video</option>
+              <option value="i2v">Image to video</option>
+            </select>
+            <div id="videoInputImageRow" class="video-input-image-row" hidden>
+              <label for="videoInputImage">Starting image (PNG or JPEG)</label>
+              <input id="videoInputImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+              <span class="image-profile-note">最大20 MiB</span>
+            </div>
+            <label for="videoSeed">Seed</label>
+            <input id="videoSeed" class="desk-input" type="number" value="42" min="0" max="9007199254740991" step="1">
+            <p class="image-profile-note">動画設定: 0.2 MP・5秒・8 steps。Negative promptは使用しません。</p>
+          </div>
+          <button id="imageGenerateBtn" class="desk-primary-btn" type="button">Generate image</button>
         </section>
       </aside>
       <section class="desk-main image-main" aria-labelledby="imageResultTitle">
         <div class="desk-head compact">
           <div>
-            <div class="desk-kicker">Generated image</div>
+            <div class="desk-kicker" id="imageResultKicker">Generated image</div>
             <h3 id="imageResultTitle">生成結果</h3>
           </div>
           <div id="imageResultMeta" class="daily-desk-muted" aria-live="polite"></div>
         </div>
         <div id="imageResultEmpty" class="daily-desk-card image-empty">
-          プロンプトを書いてGenerateを押すと、生成画像をここに表示します。
+          プロンプトを書いてGenerateを押すと、生成結果をここに表示します。
         </div>
         <figure id="imageResultFigure" class="image-result" aria-live="polite" hidden>
           <img id="imageResult" alt="RenCrow_Imageで生成した画像">
           <figcaption id="imageResultPrompt"></figcaption>
         </figure>
+        <section id="videoResultPanel" class="video-result" aria-live="polite" hidden>
+          <div class="daily-desk-card video-progress-card">
+            <div id="videoJobStatus">ready</div>
+            <progress id="videoProgress" max="100" aria-label="動画生成の進捗" hidden></progress>
+          </div>
+          <video id="videoResult" controls preload="metadata" playsinline aria-label="生成した動画" hidden></video>
+          <a id="videoDownload" class="desk-primary-btn video-download" href="#" download hidden>Download MP4</a>
+        </section>
         <div id="imageError" class="daily-desk-card image-error" role="alert" hidden></div>
       </section>
     </div>
@@ -1726,7 +1756,7 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
-<script src="/viewer/assets/js/tabs/image.js?v=20260728-image-mvp" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20261021-image-video" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35" defer></script>
