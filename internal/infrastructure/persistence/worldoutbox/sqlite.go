@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	schemaVersion = 1
+	schemaVersion = 2
 	timeFormat    = "2006-01-02T15:04:05.000000000Z07:00"
 	claimLease    = 5 * time.Minute
 )
@@ -82,7 +82,7 @@ func (s *SQLiteStore) migrate() error {
 	if version == schemaVersion {
 		return nil
 	}
-	if version != 0 {
+	if version != 0 && version != 1 {
 		return fmt.Errorf("world projection outbox: unsupported schema version %d", version)
 	}
 	tx, err := s.db.BeginTx(context.Background(), nil)
@@ -120,10 +120,77 @@ func (s *SQLiteStore) migrate() error {
 		ON world_projection_outbox(status, next_attempt_at)`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS world_projection_source_revision (
+		world_id TEXT NOT NULL,
+		timeline_id TEXT NOT NULL,
+		timeline_epoch TEXT NOT NULL,
+		actor_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		source_epoch TEXT NOT NULL,
+		source_revision INTEGER NOT NULL,
+		updated_at TEXT NOT NULL,
+		PRIMARY KEY(world_id, timeline_id, timeline_epoch, actor_id, kind)
+	)`); err != nil {
+		return err
+	}
+	if version == 1 {
+		if err := seedSourceRevisions(tx); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// seedSourceRevisions carries the durable source ordering forward when a v1
+// outbox is opened by a v2 store. Every destination continues from its highest
+// existing revision, so an upgrade cannot reuse or regress a revision.
+func seedSourceRevisions(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT world_id, timeline_id, timeline_epoch, actor_id, kind,
+		source_epoch, source_revision, updated_at
+		FROM world_projection_outbox o
+		WHERE rowid = (
+			SELECT o2.rowid FROM world_projection_outbox o2
+			WHERE o2.world_id = o.world_id AND o2.timeline_id = o.timeline_id
+			  AND o2.timeline_epoch = o.timeline_epoch AND o2.actor_id = o.actor_id
+			  AND o2.kind = o.kind
+			ORDER BY o2.source_revision DESC, o2.rowid DESC LIMIT 1
+		)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type seed struct {
+		worldID, timelineID, timelineEpoch, actorID, kind, sourceEpoch, updatedAt string
+		revision                                                                  uint64
+	}
+	var seeds []seed
+	for rows.Next() {
+		var value seed
+		if err := rows.Scan(&value.worldID, &value.timelineID, &value.timelineEpoch,
+			&value.actorID, &value.kind, &value.sourceEpoch, &value.revision, &value.updatedAt); err != nil {
+			return err
+		}
+		seeds = append(seeds, value)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, value := range seeds {
+		if _, err := tx.Exec(`INSERT INTO world_projection_source_revision
+			(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			value.worldID, value.timelineID, value.timelineEpoch, value.actorID, value.kind,
+			value.sourceEpoch, value.revision, value.updatedAt); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Enqueue records one projection with CORE-side ordering. The same
@@ -201,6 +268,99 @@ func (s *SQLiteStore) Enqueue(ctx context.Context, record appprojection.OutboxRe
 		return err
 	}
 	return tx.Commit()
+}
+
+// Latest returns the most recently enqueued record for a destination/kind.
+// It includes failed and superseded records because the projector must not
+// mistake an old accepted snapshot for a current one.
+func (s *SQLiteStore) Latest(ctx context.Context, target domainprojection.Target, kind string) (appprojection.OutboxRecord, bool, error) {
+	if s == nil || s.db == nil {
+		return appprojection.OutboxRecord{}, false, errors.New("world projection outbox: store is closed")
+	}
+	if err := target.Validate(); err != nil {
+		return appprojection.OutboxRecord{}, false, err
+	}
+	if kind != domainprojection.KindWorkSet && kind != domainprojection.KindLifePolicy {
+		return appprojection.OutboxRecord{}, false, errors.New("world projection outbox: unsupported projection kind")
+	}
+	ctx = defaultContext(ctx)
+	record, err := scanRecord(s.db.QueryRowContext(ctx, `SELECT `+columns+`
+		FROM world_projection_outbox
+		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?
+		ORDER BY rowid DESC LIMIT 1`,
+		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind))
+	if errors.Is(err, sql.ErrNoRows) {
+		return appprojection.OutboxRecord{}, false, nil
+	}
+	if err != nil {
+		return appprojection.OutboxRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+// NextSourceRevision allocates the next monotonic source revision for one
+// destination/kind/epoch. The counter is durable in the same store as the
+// outbox so a restart cannot reuse a revision. An epoch change is rejected
+// here; it requires the explicit WORLD reconcile path.
+func (s *SQLiteStore) NextSourceRevision(ctx context.Context, target domainprojection.Target, kind, sourceEpoch string, now time.Time) (uint64, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("world projection outbox: store is closed")
+	}
+	if err := target.Validate(); err != nil {
+		return 0, err
+	}
+	if kind != domainprojection.KindWorkSet && kind != domainprojection.KindLifePolicy {
+		return 0, errors.New("world projection outbox: unsupported projection kind")
+	}
+	if !validText(sourceEpoch) {
+		return 0, errors.New("world projection outbox: source epoch is required")
+	}
+	ctx = defaultContext(ctx)
+	now = utcNow(now)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var currentEpoch string
+	var currentRevision uint64
+	err = tx.QueryRowContext(ctx, `SELECT source_epoch, source_revision
+		FROM world_projection_source_revision
+		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
+		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
+		Scan(&currentEpoch, &currentRevision)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.ExecContext(ctx, `INSERT INTO world_projection_source_revision
+			(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, 1, ?)`,
+			target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind,
+			sourceEpoch, formatTime(now)); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+		return 1, nil
+	case err != nil:
+		return 0, err
+	case currentEpoch != sourceEpoch:
+		return 0, appprojection.ErrEpochChangeRequiresReconcile
+	case currentRevision >= domainprojection.MaxSourceRevision:
+		return 0, errors.New("world projection outbox: source revision exhausted")
+	}
+	next := currentRevision + 1
+	if _, err := tx.ExecContext(ctx, `UPDATE world_projection_source_revision
+		SET source_revision = ?, updated_at = ?
+		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
+		next, formatTime(now), target.WorldID, target.TimelineID, target.TimelineEpoch,
+		target.ActorID, kind); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return next, nil
 }
 
 func (s *SQLiteStore) Claim(ctx context.Context, now time.Time, limit int) ([]appprojection.OutboxRecord, error) {

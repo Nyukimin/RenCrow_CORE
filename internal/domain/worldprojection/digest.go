@@ -35,6 +35,33 @@ func PayloadDigest(raw []byte) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// WorkSetContentDigest identifies the active work content independent of the
+// delivery revision and validity horizon. A projector can compare it with the
+// last accepted snapshot and avoid spending a new source revision when nothing
+// changed.
+func WorkSetContentDigest(workSet WorkSet) (string, error) {
+	content := struct {
+		ContractVersion string     `json:"contract_version"`
+		WorldID         string     `json:"world_id"`
+		ActorID         string     `json:"actor_id"`
+		SourceOwner     string     `json:"source_owner"`
+		SourceEpoch     string     `json:"source_epoch"`
+		ActiveWork      []WorkItem `json:"active_work"`
+	}{
+		ContractVersion: workSet.ContractVersion,
+		WorldID:         workSet.WorldID,
+		ActorID:         workSet.ActorID,
+		SourceOwner:     workSet.SourceOwner,
+		SourceEpoch:     workSet.SourceEpoch,
+		ActiveWork:      workSet.ActiveWork,
+	}
+	raw, err := json.Marshal(content)
+	if err != nil {
+		return "", fmt.Errorf("%w: work set content is not encodable", ErrInvalidProjection)
+	}
+	return PayloadDigest(raw)
+}
+
 func writeCanonical(buf *bytes.Buffer, value any) error {
 	switch v := value.(type) {
 	case nil:

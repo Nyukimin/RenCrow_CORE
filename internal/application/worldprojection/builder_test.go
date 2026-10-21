@@ -121,6 +121,23 @@ func TestBuildWorkSetFiltersToExactActorAssignee(t *testing.T) {
 	}
 }
 
+func TestBuildWorkSetSeparatesWorldActorFromCoreAssignee(t *testing.T) {
+	taskID := modulecore.NewTaskID()
+	task := activeTask(taskID, domaintask.StatusQueued)
+	task.Assignee = "Mio"
+	input := validBuildInput()
+	input.ActorID = "mio"
+	input.Assignee = "Mio"
+	input.Tasks = []domaintask.Task{task}
+	workSet, err := BuildWorkSet(input)
+	if err != nil {
+		t.Fatalf("BuildWorkSet() error = %v", err)
+	}
+	if workSet.ActorID != "mio" || len(workSet.ActiveWork) != 1 || workSet.ActiveWork[0].TaskID != string(taskID) {
+		t.Fatalf("work set = %+v", workSet)
+	}
+}
+
 func TestBuildWorkSetRunningRequiresOneConfirmedRun(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	input := validBuildInput()

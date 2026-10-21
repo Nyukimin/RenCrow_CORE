@@ -3,6 +3,7 @@ package worldoutbox
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -128,6 +129,117 @@ func TestOutboxEpochChangeRequiresReconcileAndSupersedesOldPending(t *testing.T)
 	}
 	if len(claimed) != 1 || claimed[0].ID != "new" {
 		t.Fatalf("claimed = %+v", claimed)
+	}
+}
+
+func TestSourceRevisionIsMonotonicAndPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "world-outbox.sqlite")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	for want := uint64(1); want <= 3; want++ {
+		got, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-1", now)
+		if err != nil {
+			t.Fatalf("NextSourceRevision() error = %v", err)
+		}
+		if got != want {
+			t.Fatalf("revision = %d, want %d", got, want)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	store, err = NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("reopen NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	got, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-1", now)
+	if err != nil {
+		t.Fatalf("NextSourceRevision() after reopen error = %v", err)
+	}
+	if got != 4 {
+		t.Fatalf("revision after reopen = %d, want 4", got)
+	}
+	err = func() error {
+		_, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-2", now)
+		return err
+	}()
+	if !errors.Is(err, appprojection.ErrEpochChangeRequiresReconcile) {
+		t.Fatalf("epoch change error = %v, want ErrEpochChangeRequiresReconcile", err)
+	}
+}
+
+func TestOutboxLatestReturnsNewestRecord(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now().UTC()
+	if err := store.Enqueue(context.Background(), testRecord("one", 1, ""), now); err != nil {
+		t.Fatalf("Enqueue(one) error = %v", err)
+	}
+	if err := store.Enqueue(context.Background(), testRecord("two", 2, ""), now); err != nil {
+		t.Fatalf("Enqueue(two) error = %v", err)
+	}
+	record, ok, err := store.Latest(context.Background(), testTarget(), domainprojection.KindWorkSet)
+	if err != nil {
+		t.Fatalf("Latest() error = %v", err)
+	}
+	if !ok || record.ID != "two" || record.SourceRevision != 2 {
+		t.Fatalf("Latest() = %+v, ok = %v", record, ok)
+	}
+	if _, ok, err := store.Latest(context.Background(), testTarget(), domainprojection.KindLifePolicy); err != nil || ok {
+		t.Fatalf("Latest(LifePolicy) ok = %v, err = %v", ok, err)
+	}
+}
+
+func TestSourceRevisionMigratesFromV1Outbox(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "world-outbox.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE world_projection_outbox (
+		id TEXT PRIMARY KEY NOT NULL, world_id TEXT NOT NULL, timeline_id TEXT NOT NULL,
+		timeline_epoch TEXT NOT NULL, actor_id TEXT NOT NULL, actor_instance_id TEXT NOT NULL,
+		actor_transport_id TEXT NOT NULL, kind TEXT NOT NULL, source_epoch TEXT NOT NULL,
+		source_revision INTEGER NOT NULL, digest TEXT NOT NULL, envelope BLOB NOT NULL,
+		reconcile INTEGER NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+		next_attempt_at TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
+		ack_status TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+		sent_at TEXT NOT NULL DEFAULT '',
+		UNIQUE(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision))`); err != nil {
+		t.Fatalf("create v1 outbox: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO world_projection_outbox
+		(id, world_id, timeline_id, timeline_epoch, actor_id, actor_instance_id, actor_transport_id,
+		 kind, source_epoch, source_revision, digest, envelope, reconcile, status, created_at, updated_at)
+		VALUES ('old', 'world-house', 'timeline-main', 'epoch-1', 'mio', 'instance-mio', 'mio',
+		 'full_actor_work_set', 'core-epoch-1', 5, 'digest', '{}', 0, 'sent',
+		 '2026-10-20T00:00:00.000000000Z', '2026-10-20T00:00:00.000000000Z')`); err != nil {
+		t.Fatalf("insert v1 row: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+		t.Fatalf("set v1 version: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore(v1) error = %v", err)
+	}
+	defer store.Close()
+	record, ok, err := store.Latest(context.Background(), testTarget(), domainprojection.KindWorkSet)
+	if err != nil || !ok || record.ID != "old" {
+		t.Fatalf("Latest() = %+v, ok = %v, err = %v", record, ok, err)
+	}
+	got, err := store.NextSourceRevision(context.Background(), testTarget(), domainprojection.KindWorkSet, "core-epoch-1", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("NextSourceRevision() error = %v", err)
+	}
+	if got != 6 {
+		t.Fatalf("revision = %d, want 6", got)
 	}
 }
 

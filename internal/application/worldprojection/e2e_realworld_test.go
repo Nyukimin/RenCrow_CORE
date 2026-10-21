@@ -19,8 +19,10 @@ import (
 	"time"
 
 	appprojection "github.com/Nyukimin/RenCrow_CORE/internal/application/worldprojection"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainprojection "github.com/Nyukimin/RenCrow_CORE/internal/domain/worldprojection"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/worldoutbox"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestRealWorldEpochUnchangedRequiresMatchingHead(t *testing.T) {
@@ -61,6 +63,121 @@ func TestRealWorldEpochUnchangedRequiresMatchingHead(t *testing.T) {
 	mismatch := drainOne(t, publisher, target, "mismatch", revision2, true, now)
 	if mismatch.Status != appprojection.OutboxFailed || !strings.Contains(mismatch.LastError, "head verification failed") {
 		t.Fatalf("mismatched epoch_unchanged record = %+v", mismatch)
+	}
+}
+
+type realWorldSource struct {
+	tasks []domaintask.Task
+	runs  []domaintask.Run
+}
+
+func (s *realWorldSource) ListTasks(_ context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
+	var result []domaintask.Task
+	for _, task := range s.tasks {
+		if (filter.Status == "" || task.Status == filter.Status) &&
+			(filter.Assignee == "" || task.Assignee == filter.Assignee) {
+			result = append(result, task)
+		}
+	}
+	return result, nil
+}
+
+func (s *realWorldSource) ListRuns(_ context.Context, filter domaintask.RunFilter) ([]domaintask.Run, error) {
+	var result []domaintask.Run
+	for _, run := range s.runs {
+		if filter.Status == "" || run.Status == filter.Status {
+			result = append(result, run)
+		}
+	}
+	return result, nil
+}
+
+func realWorldTask(assignee string) domaintask.Task {
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	return domaintask.Task{
+		TaskID: modulecore.NewTaskID(), Title: "projected work", Route: domaintask.RouteGeneral,
+		Assignee: assignee, Status: domaintask.StatusQueued, Priority: domaintask.PriorityNormal,
+		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func TestRealWorldProjectorEnqueuesAndRefreshesFullWorkSet(t *testing.T) {
+	bin := strings.TrimSpace(os.Getenv("RENCROW_WORLD_BIN"))
+	if bin == "" {
+		t.Skip("RENCROW_WORLD_BIN is not set")
+	}
+	baseURL, stop := startRealWorld(t, bin)
+	defer stop()
+
+	source := &realWorldSource{tasks: []domaintask.Task{realWorldTask("mio")}}
+	store, err := worldoutbox.NewSQLiteStore(filepath.Join(t.TempDir(), "projector.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteStore() error = %v", err)
+	}
+	defer store.Close()
+	now := time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
+	publisher, err := appprojection.NewHTTPPublisher(baseURL, "core-e2e-token", 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPPublisher() error = %v", err)
+	}
+	projector := &appprojection.Projector{
+		Source: source, Outbox: store, History: store, Revisions: store,
+		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-e2e",
+		SourceEpoch: "core-epoch-e2e",
+		Actors: []appprojection.ProjectionActor{{
+			ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
+		}},
+		ValidFor: time.Hour,
+		Now:      func() time.Time { return now },
+	}
+	result, err := projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(first) error = %v", err)
+	}
+	if result.Enqueued != 1 {
+		t.Fatalf("first Sync() = %+v", result)
+	}
+	worker := &appprojection.Worker{Outbox: store, Publisher: publisher, HeadReader: publisher, Now: func() time.Time { return now }}
+	if drained, err := worker.Drain(context.Background()); err != nil || drained.Sent != 1 {
+		t.Fatalf("Drain(first) = %+v, err = %v", drained, err)
+	}
+	first, ok, err := store.Latest(context.Background(), domainprojection.Target{
+		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-e2e",
+		ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
+	}, domainprojection.KindWorkSet)
+	if err != nil || !ok || first.Status != appprojection.OutboxSent || first.SourceRevision != 1 {
+		t.Fatalf("first latest = %+v, ok = %v, err = %v", first, ok, err)
+	}
+	head, err := publisher.ReadHead(context.Background(), first.Target, domainprojection.KindWorkSet)
+	if err != nil {
+		t.Fatalf("ReadHead(first) error = %v", err)
+	}
+	if head.SourceRevision != first.SourceRevision || head.Digest != first.Digest {
+		t.Fatalf("head = %+v, record = %+v", head, first)
+	}
+
+	result, err = projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(second) error = %v", err)
+	}
+	if result.Enqueued != 0 || result.Skipped != 1 {
+		t.Fatalf("second Sync() = %+v", result)
+	}
+
+	source.tasks = append(source.tasks, realWorldTask("mio"))
+	result, err = projector.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync(third) error = %v", err)
+	}
+	if result.Enqueued != 1 {
+		t.Fatalf("third Sync() = %+v", result)
+	}
+	if drained, err := worker.Drain(context.Background()); err != nil || drained.Sent != 1 {
+		t.Fatalf("Drain(second) = %+v, err = %v", drained, err)
+	}
+	second, ok, err := store.Latest(context.Background(), first.Target, domainprojection.KindWorkSet)
+	if err != nil || !ok || second.Status != appprojection.OutboxSent || second.SourceRevision != 2 {
+		t.Fatalf("second latest = %+v, ok = %v, err = %v", second, ok, err)
 	}
 }
 

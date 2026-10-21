@@ -38,6 +38,10 @@ type BuildWorkSetInput struct {
 	RequiresHousePresence     map[modulecore.TaskID]bool
 	ClassificationReasonCode  string
 	ClassificationReasonCodes map[modulecore.TaskID]string
+	// Assignee is CORE's exact Task.assignee value. When empty it defaults to
+	// ActorID. It is separate because WORLD's canonical ActorID and CORE's
+	// assignee are different owner namespaces and must not be case-folded.
+	Assignee string
 }
 
 // BuildFullWorkSet reads the complete CORE Task/Run set and projects it. A
@@ -53,6 +57,7 @@ func BuildFullWorkSet(ctx context.Context, source TaskRunSource, input BuildWork
 	// A WorkSet is a full active set, not a full history read. Terminal Tasks
 	// and closed Runs are deliberately excluded at the store boundary so the
 	// snapshot does not decode every historical record.
+	assignee := input.assignee()
 	var tasks []domaintask.Task
 	for _, status := range []domaintask.Status{
 		domaintask.StatusQueued,
@@ -60,7 +65,7 @@ func BuildFullWorkSet(ctx context.Context, source TaskRunSource, input BuildWork
 		domaintask.StatusWaiting,
 		domaintask.StatusBlocked,
 	} {
-		batch, err := source.ListTasks(ctx, domaintask.Filter{Status: status, Assignee: input.ActorID})
+		batch, err := source.ListTasks(ctx, domaintask.Filter{Status: status, Assignee: assignee})
 		if err != nil {
 			return domainprojection.WorkSet{}, fmt.Errorf("world projection: list %s tasks: %w", status, err)
 		}
@@ -77,10 +82,18 @@ func BuildFullWorkSet(ctx context.Context, source TaskRunSource, input BuildWork
 
 // BuildWorkSet maps active CORE tasks to WorkSet v2 items. Terminal tasks are
 // absent from the full set; a running task must have exactly one running Run.
+func (input BuildWorkSetInput) assignee() string {
+	if input.Assignee != "" {
+		return input.Assignee
+	}
+	return input.ActorID
+}
+
 func BuildWorkSet(input BuildWorkSetInput) (domainprojection.WorkSet, error) {
 	if input.SourceRevision == 0 {
 		return domainprojection.WorkSet{}, fmt.Errorf("world projection: source revision is required")
 	}
+	assignee := input.assignee()
 	runningByTask := make(map[modulecore.TaskID][]domaintask.Run)
 	for _, run := range input.Runs {
 		if run.Status != domaintask.RunStatusRunning {
@@ -95,7 +108,7 @@ func BuildWorkSet(input BuildWorkSetInput) (domainprojection.WorkSet, error) {
 	items := make([]domainprojection.WorkItem, 0, len(input.Tasks))
 	seen := make(map[modulecore.TaskID]struct{}, len(input.Tasks))
 	for _, task := range input.Tasks {
-		if domaintask.IsTerminal(task.Status) || task.Assignee != input.ActorID {
+		if domaintask.IsTerminal(task.Status) || task.Assignee != assignee {
 			continue
 		}
 		if err := task.Validate(); err != nil {
