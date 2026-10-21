@@ -142,6 +142,7 @@
       "filePath": "node",
       "arguments": [
         "--test",
+        "internal/adapter/viewer/assets/js/speech_eval.test.mjs",
         "internal/adapter/viewer/database_viewers.test.mjs",
         "internal/adapter/viewer/investment_viewer.test.mjs",
         "internal/adapter/viewer/person_related_catalog_viewer.test.mjs",
