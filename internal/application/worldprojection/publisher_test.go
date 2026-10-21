@@ -3,6 +3,7 @@ package worldprojection
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -160,6 +161,71 @@ func TestNewHTTPPublisherRejectsInvalidConfiguration(t *testing.T) {
 	}
 	if _, err := NewHTTPPublisher("https://example.test", "", time.Second); err == nil {
 		t.Fatal("NewHTTPPublisher() accepted an empty credential")
+	}
+}
+
+func TestHTTPPublisherReadsAcceptedHead(t *testing.T) {
+	target, _ := testEnvelope(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s", r.Method)
+		}
+		if r.URL.Path != "/v1/worlds/world-house/timelines/timeline-main/core-projections/mio/full_actor_work_set" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"schema_version":1,"projection":{"actor_id":"mio","actor_instance_id":"instance-mio","projection_kind":"full_actor_work_set","source_epoch":"core-epoch-1","source_revision":3,"digest":"abc123"}}`))
+	}))
+	defer server.Close()
+	publisher, err := NewHTTPPublisher(server.URL, "secret", 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPPublisher() error = %v", err)
+	}
+	head, err := publisher.ReadHead(context.Background(), target, domainprojection.KindWorkSet)
+	if err != nil {
+		t.Fatalf("ReadHead() error = %v", err)
+	}
+	if head.ActorID != "mio" || head.ActorInstanceID != "instance-mio" ||
+		head.SourceEpoch != "core-epoch-1" || head.SourceRevision != 3 || head.Digest != "abc123" {
+		t.Fatalf("head = %+v", head)
+	}
+}
+
+func TestHTTPPublisherDistinguishesMissingHeadAndTransientReadFailure(t *testing.T) {
+	target, _ := testEnvelope(t)
+	for name, tc := range map[string]struct {
+		status    int
+		retryable bool
+		notFound  bool
+	}{
+		"missing":   {status: http.StatusNotFound, notFound: true},
+		"temporary": {status: http.StatusServiceUnavailable, retryable: true},
+		"forbidden": {status: http.StatusForbidden},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			publisher, err := NewHTTPPublisher(server.URL, "secret", 5*time.Second)
+			if err != nil {
+				t.Fatalf("NewHTTPPublisher() error = %v", err)
+			}
+			_, err = publisher.ReadHead(context.Background(), target, domainprojection.KindWorkSet)
+			if tc.notFound {
+				if !errors.Is(err, ErrProjectionHeadNotFound) {
+					t.Fatalf("ReadHead() error = %v, want ErrProjectionHeadNotFound", err)
+				}
+				return
+			}
+			var readErr *HeadReadError
+			if !errors.As(err, &readErr) || readErr.Retryable != tc.retryable {
+				t.Fatalf("ReadHead() error = %#v, retryable want %v", err, tc.retryable)
+			}
+		})
 	}
 }
 

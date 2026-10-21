@@ -60,7 +60,7 @@ func BuildFullWorkSet(ctx context.Context, source TaskRunSource, input BuildWork
 		domaintask.StatusWaiting,
 		domaintask.StatusBlocked,
 	} {
-		batch, err := source.ListTasks(ctx, domaintask.Filter{Status: status})
+		batch, err := source.ListTasks(ctx, domaintask.Filter{Status: status, Assignee: input.ActorID})
 		if err != nil {
 			return domainprojection.WorkSet{}, fmt.Errorf("world projection: list %s tasks: %w", status, err)
 		}
@@ -95,7 +95,7 @@ func BuildWorkSet(input BuildWorkSetInput) (domainprojection.WorkSet, error) {
 	items := make([]domainprojection.WorkItem, 0, len(input.Tasks))
 	seen := make(map[modulecore.TaskID]struct{}, len(input.Tasks))
 	for _, task := range input.Tasks {
-		if domaintask.IsTerminal(task.Status) {
+		if domaintask.IsTerminal(task.Status) || task.Assignee != input.ActorID {
 			continue
 		}
 		if err := task.Validate(); err != nil {

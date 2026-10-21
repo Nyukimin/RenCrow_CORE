@@ -16,6 +16,7 @@ func activeTask(id modulecore.TaskID, status domaintask.Status) domaintask.Task 
 		TaskID:          id,
 		Title:           "assigned work",
 		Route:           domaintask.RouteGeneral,
+		Assignee:        "mio",
 		Status:          status,
 		Priority:        domaintask.PriorityNormal,
 		InterruptPolicy: domaintask.InterruptNotifyDoneOrBlocked,
@@ -100,6 +101,26 @@ func TestBuildWorkSetProjectsActiveTasksAndExcludesTerminal(t *testing.T) {
 	}
 }
 
+func TestBuildWorkSetFiltersToExactActorAssignee(t *testing.T) {
+	mioID := modulecore.NewTaskID()
+	shiroID := modulecore.NewTaskID()
+	unassignedID := modulecore.NewTaskID()
+	mioTask := activeTask(mioID, domaintask.StatusQueued)
+	shiroTask := activeTask(shiroID, domaintask.StatusQueued)
+	shiroTask.Assignee = "shiro"
+	unassigned := activeTask(unassignedID, domaintask.StatusBlocked)
+	unassigned.Assignee = ""
+	input := validBuildInput()
+	input.Tasks = []domaintask.Task{mioTask, shiroTask, unassigned}
+	workSet, err := BuildWorkSet(input)
+	if err != nil {
+		t.Fatalf("BuildWorkSet() error = %v", err)
+	}
+	if len(workSet.ActiveWork) != 1 || workSet.ActiveWork[0].TaskID != string(mioID) {
+		t.Fatalf("active work = %+v, want only %s", workSet.ActiveWork, mioID)
+	}
+}
+
 func TestBuildWorkSetRunningRequiresOneConfirmedRun(t *testing.T) {
 	taskID := modulecore.NewTaskID()
 	input := validBuildInput()
@@ -146,7 +167,8 @@ type fakeTaskRunSource struct {
 func (s fakeTaskRunSource) ListTasks(ctx context.Context, filter domaintask.Filter) ([]domaintask.Task, error) {
 	var result []domaintask.Task
 	for _, task := range s.tasks {
-		if filter.Status == "" || task.Status == filter.Status {
+		if (filter.Status == "" || task.Status == filter.Status) &&
+			(filter.Assignee == "" || task.Assignee == filter.Assignee) {
 			result = append(result, task)
 		}
 	}

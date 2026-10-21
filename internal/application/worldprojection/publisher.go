@@ -41,11 +41,63 @@ func (r PublishResult) Successful() bool {
 	}
 }
 
+// ProjectionHead is the durable accepted state WORLD reports for one
+// destination/Actor/kind. epoch_unchanged is only a completion after this head
+// has been read back and matched to the exact envelope CORE intended to send.
+type ProjectionHead struct {
+	ActorID         string
+	ActorInstanceID string
+	Kind            string
+	SourceEpoch     string
+	SourceRevision  uint64
+	Digest          string
+}
+
+// ErrProjectionHeadNotFound means the destination has no accepted head. It is
+// terminal for the current outbox record because replaying the same bytes
+// cannot create one.
+var ErrProjectionHeadNotFound = errors.New("world projection: accepted head not found")
+
+// HeadReadError classifies a failed head read. Only transport, timeout, and
+// server-side failures are retryable; a malformed or unauthorized response is
+// not.
+type HeadReadError struct {
+	HTTPStatus int
+	Retryable  bool
+	Err        error
+}
+
+func (e *HeadReadError) Error() string {
+	if e == nil {
+		return "world projection: head read failed"
+	}
+	if e.Err != nil {
+		return "world projection: head read failed: " + e.Err.Error()
+	}
+	return fmt.Sprintf("world projection: head read failed with HTTP %d", e.HTTPStatus)
+}
+
+func (e *HeadReadError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // Publisher sends one already-built envelope. It never rebuilds or mutates the
 // payload; retries must send the same bytes and source revision.
 type Publisher interface {
 	Publish(context.Context, domainprojection.Target, string, []byte, bool) (PublishResult, error)
 }
+
+// HeadReader reads back WORLD's accepted projection head. It is required for
+// epoch_unchanged, which acknowledges the current epoch without proving that
+// the submitted revision/digest is the accepted head.
+type HeadReader interface {
+	ReadHead(context.Context, domainprojection.Target, string) (ProjectionHead, error)
+}
+
+var _ HeadReader = (*HTTPPublisher)(nil)
 
 // HTTPPublisher is the authenticated CORE -> WORLD projection writer.
 type HTTPPublisher struct {
@@ -103,11 +155,7 @@ func (p *HTTPPublisher) Publish(ctx context.Context, target domainprojection.Tar
 		return PublishResult{}, errors.New("world projection: envelope size is invalid")
 	}
 
-	u := *p.base
-	u.Path = p.basePath + "/v1/worlds/" + target.WorldID + "/timelines/" + target.TimelineID +
-		"/core-projections/" + target.ActorTransportID + "/" + kind
-	u.RawPath = p.basePath + "/v1/worlds/" + url.PathEscape(target.WorldID) + "/timelines/" +
-		url.PathEscape(target.TimelineID) + "/core-projections/" + url.PathEscape(target.ActorTransportID) + "/" + kind
+	u := p.projectionURL(target, kind)
 	if reconcile {
 		u.RawQuery = "reconcile=true"
 	}
@@ -145,6 +193,88 @@ func (p *HTTPPublisher) Publish(ctx context.Context, target domainprojection.Tar
 		Retryable:  retryableStatus(resp.StatusCode),
 	}
 	return result, fmt.Errorf("world projection: WORLD returned HTTP %d", resp.StatusCode)
+}
+
+func (p *HTTPPublisher) projectionURL(target domainprojection.Target, kind string) *url.URL {
+	u := *p.base
+	u.Path = p.basePath + "/v1/worlds/" + target.WorldID + "/timelines/" + target.TimelineID +
+		"/core-projections/" + target.ActorTransportID + "/" + kind
+	u.RawPath = p.basePath + "/v1/worlds/" + url.PathEscape(target.WorldID) + "/timelines/" +
+		url.PathEscape(target.TimelineID) + "/core-projections/" + url.PathEscape(target.ActorTransportID) + "/" + kind
+	return &u
+}
+
+func (p *HTTPPublisher) ReadHead(ctx context.Context, target domainprojection.Target, kind string) (ProjectionHead, error) {
+	if p == nil || p.client == nil || p.base == nil {
+		return ProjectionHead{}, errors.New("world projection: publisher is not configured")
+	}
+	if ctx == nil {
+		return ProjectionHead{}, errors.New("world projection: context is nil")
+	}
+	if err := target.Validate(); err != nil {
+		return ProjectionHead{}, err
+	}
+	if kind != domainprojection.KindWorkSet && kind != domainprojection.KindLifePolicy {
+		return ProjectionHead{}, errors.New("world projection: unsupported projection kind")
+	}
+	u := p.projectionURL(target, kind)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return ProjectionHead{}, fmt.Errorf("world projection: build head request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.token)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return ProjectionHead{}, &HeadReadError{Retryable: true, Err: err}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAckBodyBytes+1))
+	if err != nil {
+		return ProjectionHead{}, &HeadReadError{HTTPStatus: resp.StatusCode, Retryable: true, Err: err}
+	}
+	if len(body) > maxAckBodyBytes {
+		return ProjectionHead{}, &HeadReadError{HTTPStatus: resp.StatusCode, Err: errors.New("head response is too large")}
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return ProjectionHead{}, ErrProjectionHeadNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return ProjectionHead{}, &HeadReadError{
+			HTTPStatus: resp.StatusCode,
+			Retryable:  retryableStatus(resp.StatusCode),
+			Err:        fmt.Errorf("WORLD returned HTTP %d", resp.StatusCode),
+		}
+	}
+	var parsed struct {
+		SchemaVersion int `json:"schema_version"`
+		Projection    struct {
+			ActorID         string `json:"actor_id"`
+			ActorInstanceID string `json:"actor_instance_id"`
+			ProjectionKind  string `json:"projection_kind"`
+			SourceEpoch     string `json:"source_epoch"`
+			SourceRevision  uint64 `json:"source_revision"`
+			Digest          string `json:"digest"`
+		} `json:"projection"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ProjectionHead{}, &HeadReadError{HTTPStatus: resp.StatusCode, Err: errors.New("head response is not valid JSON")}
+	}
+	if parsed.SchemaVersion != 1 || parsed.Projection.ProjectionKind != kind ||
+		parsed.Projection.ActorID == "" || parsed.Projection.ActorInstanceID == "" ||
+		parsed.Projection.SourceEpoch == "" || parsed.Projection.SourceRevision == 0 ||
+		parsed.Projection.Digest == "" {
+		return ProjectionHead{}, &HeadReadError{HTTPStatus: resp.StatusCode, Err: errors.New("head response schema is invalid")}
+	}
+	return ProjectionHead{
+		ActorID:         parsed.Projection.ActorID,
+		ActorInstanceID: parsed.Projection.ActorInstanceID,
+		Kind:            parsed.Projection.ProjectionKind,
+		SourceEpoch:     parsed.Projection.SourceEpoch,
+		SourceRevision:  parsed.Projection.SourceRevision,
+		Digest:          parsed.Projection.Digest,
+	}, nil
 }
 
 func parseAck(status int, raw []byte) (PublishResult, error) {

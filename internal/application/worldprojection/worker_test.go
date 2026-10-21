@@ -3,6 +3,7 @@ package worldprojection
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -101,6 +102,122 @@ func TestWorkerTreatsRequiresReconcileAsTerminal(t *testing.T) {
 	}
 	if result.Failed != 1 || len(outbox.failed) != 1 || !outbox.failed[0].terminal {
 		t.Fatalf("result = %+v, failures = %+v", result, outbox.failed)
+	}
+}
+
+type fakeHeadReader struct {
+	head  ProjectionHead
+	err   error
+	calls int
+}
+
+func (f *fakeHeadReader) ReadHead(context.Context, domainprojection.Target, string) (ProjectionHead, error) {
+	f.calls++
+	return f.head, f.err
+}
+
+func TestWorkerCompletesEpochUnchangedOnlyAfterHeadMatches(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	record := OutboxRecord{
+		ID: "unchanged", Envelope: []byte("same"), Reconcile: true,
+		Target: domainprojection.Target{
+			WorldID: "world", TimelineID: "timeline", TimelineEpoch: "timeline-epoch",
+			ActorID: "mio", ActorInstanceID: "instance-mio", ActorTransportID: "mio",
+		},
+		Kind: domainprojection.KindWorkSet, SourceEpoch: "core-epoch", SourceRevision: 7, Digest: "digest-7",
+	}
+	head := &fakeHeadReader{head: ProjectionHead{
+		ActorID: "mio", ActorInstanceID: "instance-mio", Kind: domainprojection.KindWorkSet,
+		SourceEpoch: "core-epoch", SourceRevision: 7, Digest: "digest-7",
+	}}
+	outbox := &fakeOutbox{claimed: []OutboxRecord{record}}
+	publisher := &fakePublisher{results: map[string]PublishResult{
+		"same": {Status: "epoch_unchanged", HTTPStatus: http.StatusConflict},
+	}}
+	worker := &Worker{Outbox: outbox, Publisher: publisher, HeadReader: head, Now: func() time.Time { return now }}
+	result, err := worker.Drain(context.Background())
+	if err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if result.Sent != 1 || result.Failed != 0 || head.calls != 1 {
+		t.Fatalf("result = %+v, head calls = %d", result, head.calls)
+	}
+	if len(outbox.completed) != 1 || outbox.completed[0] != "unchanged" {
+		t.Fatalf("completed = %+v", outbox.completed)
+	}
+}
+
+func TestWorkerRejectsEpochUnchangedWithMismatchedHead(t *testing.T) {
+	record := OutboxRecord{
+		ID: "unchanged", Envelope: []byte("same"), Reconcile: true,
+		Target: domainprojection.Target{
+			WorldID: "world", TimelineID: "timeline", TimelineEpoch: "timeline-epoch",
+			ActorID: "mio", ActorInstanceID: "instance-mio", ActorTransportID: "mio",
+		},
+		Kind: domainprojection.KindWorkSet, SourceEpoch: "core-epoch", SourceRevision: 7, Digest: "digest-7",
+	}
+	for name, head := range map[string]ProjectionHead{
+		"revision": {ActorID: "mio", ActorInstanceID: "instance-mio", Kind: domainprojection.KindWorkSet,
+			SourceEpoch: "core-epoch", SourceRevision: 8, Digest: "digest-7"},
+		"digest": {ActorID: "mio", ActorInstanceID: "instance-mio", Kind: domainprojection.KindWorkSet,
+			SourceEpoch: "core-epoch", SourceRevision: 7, Digest: "other"},
+		"instance": {ActorID: "mio", ActorInstanceID: "other-instance", Kind: domainprojection.KindWorkSet,
+			SourceEpoch: "core-epoch", SourceRevision: 7, Digest: "digest-7"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outbox := &fakeOutbox{claimed: []OutboxRecord{record}}
+			publisher := &fakePublisher{results: map[string]PublishResult{
+				"same": {Status: "epoch_unchanged", HTTPStatus: http.StatusConflict},
+			}}
+			worker := &Worker{Outbox: outbox, Publisher: publisher, HeadReader: &fakeHeadReader{head: head}}
+			result, err := worker.Drain(context.Background())
+			if err != nil {
+				t.Fatalf("Drain() error = %v", err)
+			}
+			if result.Sent != 0 || result.Failed != 1 || len(outbox.completed) != 0 {
+				t.Fatalf("result = %+v, completed = %+v", result, outbox.completed)
+			}
+			if len(outbox.failed) != 1 || !outbox.failed[0].terminal {
+				t.Fatalf("failed = %+v", outbox.failed)
+			}
+		})
+	}
+}
+
+func TestWorkerRetriesEpochUnchangedWhenHeadReadIsTransient(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	record := OutboxRecord{ID: "unchanged", Envelope: []byte("same"), Reconcile: true}
+	outbox := &fakeOutbox{claimed: []OutboxRecord{record}}
+	publisher := &fakePublisher{results: map[string]PublishResult{
+		"same": {Status: "epoch_unchanged"},
+	}}
+	worker := &Worker{
+		Outbox: outbox, Publisher: publisher,
+		HeadReader: &fakeHeadReader{err: &HeadReadError{HTTPStatus: http.StatusServiceUnavailable, Retryable: true}},
+		Now:        func() time.Time { return now },
+	}
+	result, err := worker.Drain(context.Background())
+	if err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if result.Retried != 1 || result.Sent != 0 || len(outbox.failed) != 1 || outbox.failed[0].terminal {
+		t.Fatalf("result = %+v, failed = %+v", result, outbox.failed)
+	}
+}
+
+func TestWorkerFailsEpochUnchangedWithoutHeadReader(t *testing.T) {
+	record := OutboxRecord{ID: "unchanged", Envelope: []byte("same"), Reconcile: true}
+	outbox := &fakeOutbox{claimed: []OutboxRecord{record}}
+	publisher := &fakePublisher{results: map[string]PublishResult{
+		"same": {Status: "epoch_unchanged"},
+	}}
+	worker := &Worker{Outbox: outbox, Publisher: publisher}
+	result, err := worker.Drain(context.Background())
+	if err != nil {
+		t.Fatalf("Drain() error = %v", err)
+	}
+	if result.Failed != 1 || result.Sent != 0 || len(outbox.failed) != 1 || !outbox.failed[0].terminal {
+		t.Fatalf("result = %+v, failed = %+v", result, outbox.failed)
 	}
 }
 
