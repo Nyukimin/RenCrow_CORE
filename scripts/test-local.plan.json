@@ -219,6 +219,28 @@
       "timeoutSeconds": 300
     },
     {
+      "name": "routing-classifier-sdk-python",
+      "workingDirectory": ".",
+      "filePath": "python",
+      "arguments": [
+        "cmd/routing-classifier-test-server/test_sdk_worker.py",
+        "-v"
+      ],
+      "testFiles": [
+        "cmd/routing-classifier-test-server/test_sdk_worker.py"
+      ],
+      "tier": "related",
+      "impact": {
+        "paths": [
+          "cmd/routing-classifier-test-server/**"
+        ],
+        "packages": [],
+        "globalPaths": []
+      },
+      "resourceLocks": [],
+      "timeoutSeconds": 300
+    },
+    {
       "name": "full-system-verification-skill-contract",
       "workingDirectory": ".",
       "filePath": "python",
