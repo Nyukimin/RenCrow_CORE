@@ -6,8 +6,6 @@
 package worldprojection
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,7 +105,9 @@ type LifePolicy struct {
 }
 
 // Envelope is a fully built projection. Payload is the exact JSON carried to
-// WORLD; Digest is SHA-256 over those bytes for CORE's own retry bookkeeping.
+// WORLD; Digest is WORLD's canonical payload SHA-256, so CORE can compare its
+// outbox record with the accepted head even when the wire bytes differ in key
+// order or whitespace.
 type Envelope struct {
 	Target  Target
 	Kind    string
@@ -332,12 +332,15 @@ func NewEnvelope(target Target, kind string, payload any) (Envelope, error) {
 	if len(raw) == 0 || len(raw) > MaxEnvelopeBytes {
 		return Envelope{}, fmt.Errorf("%w: payload size is invalid", ErrInvalidProjection)
 	}
-	sum := sha256.Sum256(raw)
+	digest, err := PayloadDigest(raw)
+	if err != nil {
+		return Envelope{}, err
+	}
 	return Envelope{
 		Target:  target,
 		Kind:    kind,
 		Payload: append(json.RawMessage(nil), raw...),
-		Digest:  hex.EncodeToString(sum[:]),
+		Digest:  digest,
 	}, nil
 }
 
@@ -368,8 +371,11 @@ func (e Envelope) Validate() error {
 	if len(e.Payload) == 0 || len(e.Payload) > MaxEnvelopeBytes {
 		return fmt.Errorf("%w: payload size is invalid", ErrInvalidProjection)
 	}
-	sum := sha256.Sum256(e.Payload)
-	if e.Digest != hex.EncodeToString(sum[:]) {
+	digest, err := PayloadDigest(e.Payload)
+	if err != nil {
+		return err
+	}
+	if e.Digest != digest {
 		return fmt.Errorf("%w: payload digest mismatch", ErrInvalidProjection)
 	}
 	switch e.Kind {
