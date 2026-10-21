@@ -1935,11 +1935,13 @@ Actor payloadを送りません。GETはWorld stateを変更しません。
 reader unavailableは503、unknown schema／source／worldやrevision 0などreader contract違反は502を返します。
 どのエラーでもsnapshotやevent payloadを部分送信しません。
 
-## WORLD v1.4 projection／read bridge（計画・未実装）
+## WORLD v1.4 projection／read bridge（CORE read client source実装済み・production route未決定）
 
-この節はWORLD v1.4の接続目標です。R04 Mock World read bridge PoCのfixture／routeを本番WORLD接続へ昇格したり、以下の目標APIが現在稼働しているとみなしたりしません。COREのproduction route登録、WORLD認証API、永続Store、runtime acceptanceは未実装です。
+この節はWORLD v1.4の接続目標と、実装済みのCORE source境界を分けて記録します。R04 Mock World read bridge PoCのfixture／routeを本番WORLD接続へ昇格したり、以下の目標APIが現在稼働しているとみなしたりしません。WORLD R07の認証・永続Store・Snapshot／Event／Stream sourceは実装済みですが、COREのproduction route登録とPublic DTOは未決定です。
 
 接続時はCORE内部の認証済みowner clientがLifePolicyと既存WorkSet v2をWORLDへ投影し、CORE起点でWORLDのSnapshot／Event／Streamを読みます。CORE projection要求には宛先World／Timeline／`timeline_epoch` scopeを必須としますが、投影の最終route pathとDTOはCORE／WORLD両owner間で未確定です。WORLD v1.4資料にあるprojection route表記は暫定案であり、Timeline scopeを省略するpathを現行契約として採用しません。WORLDのSnapshot／Event／Stream route表記も目標形であり、COREの現行Public APIではありません。公開名とDTOは既存sourceとの衝突確認後、両ownerの合意を経て実装時に確定します。COREにWORLD書込みの利用者向けrouteを追加せず、write policyとOutboxをCORE owner境界内に保ちます。
+
+COREのread clientは`internal/adapter/worldread`にsource実装済みです。設定された1つのWorld／Timeline／`timeline_epoch`へBearer credentialで接続し、Snapshotのschema／scope／state hash、whole-transaction Event page、cursorの連続性を検証します。Snapshotは設定Actor allowlistだけを返し、allowlist外Actorのtop-level `actor_id` Eventはpayloadを返さずcursorだけ進めます。scope不一致、欠落、順序飛び、cursor逆行は部分状態を返さず`resync`に分類します。これはsource-level clientであり、Public routeではありません。private-room redaction、Observation配信、CORE側Stream routeは未実装です。
 
 PORTAL/browserはWORLDへ直接接続せず、COREの認証・利用者scopeに従うread bridgeだけを利用します。WORLD reader credential、DB path、private Memory参照をbrowserへ渡しません。WORLDからCOREへのcallbackも行いません。現在記載されている`GET /viewer/world/snapshot`と`GET /viewer/world/stream`は前節のR04 Mock PoC専用であり、本番routeとして公開されません。
 
