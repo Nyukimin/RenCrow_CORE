@@ -182,6 +182,29 @@ task_store:
     # 同じ日の次のsegmentへ切り替える大きさ（byte）。0は8 MiB。
     size_valve_bytes: 0
 
+# CORE -> WORLD v1.4 outbound projection loop. Disabled by default.
+# The credential is read from token_env and must never be written here.
+world_projection:
+  enabled: false
+  base_url: "https://world.example.invalid"
+  token_env: "RENCROW_WORLD_PROJECTION_TOKEN"
+  # Relative paths are resolved against workspace_dir.
+  outbox_path: "data/world_projection/outbox.sqlite"
+  world_id: "rencrow-home"
+  timeline_id: "timeline-main"
+  timeline_epoch: "timeline-epoch-1"
+  source_epoch: "core-epoch-1"
+  interval_seconds: 60
+  valid_for_seconds: 900
+  refresh_before_seconds: 300
+  timeout_seconds: 5
+  actors:
+    - actor_id: "mio"
+      actor_instance_id: "core-instance-mio"
+      actor_transport_id: "mio"
+      # Exact CORE Task.assignee. Omit to use actor_id without case folding.
+      core_assignee: "mio"
+
 # canonical Action store（state/actions）のメモリ上のsnapshot（ログが唯一の正本で、falseに戻せば従来の読み方になる）。
 # 有効にすると、起動時にログ全体を1回だけ読み、以後のtxと読取りは触るrecordだけを扱う。既定はfalse。
 action_store:
