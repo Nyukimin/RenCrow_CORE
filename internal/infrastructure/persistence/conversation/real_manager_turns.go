@@ -14,7 +14,14 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-const conversationTurnFollowerLease = time.Minute
+const (
+	conversationTurnFollowerLease                = time.Minute
+	conversationTurnRedisProjectionTimeout       = 5 * time.Second
+	conversationTurnFollowerWorkTimeout          = 45 * time.Second
+	conversationTurnOutboxBookkeepingReserve     = 10 * time.Second
+	conversationTurnProjectionBookkeepingTimeout = 2 * time.Second
+	conversationTurnMinimumWorkBudget            = 100 * time.Millisecond
+)
 
 // ConversationTurnTargets reports the followers owned by the advanced
 // manager. Callers must not choose these targets; the engine obtains them from
@@ -47,14 +54,10 @@ func (r *RealConversationManager) LoadActiveConversationThread(ctx context.Conte
 	return conversationThreadFromL1Projection(events, domconv.ThreadActive)
 }
 
-type conversationTurnOutboxExcludingClaimer interface {
-	ClaimConversationTurnOutboxExcluding(context.Context, string, time.Time, time.Duration, map[string]struct{}) (*domconv.ConversationTurnOutbox, error)
-	ClaimNextConversationTurnOutboxExcluding(context.Context, time.Time, time.Duration, map[string]struct{}) (*domconv.ConversationTurnOutbox, error)
-}
-
 // CommitConversationTurn is the canonical manager boundary for an EndTurn.
-// L1 commits first; requested followers are then processed through their
-// durable outbox rows and never through the legacy Store path.
+// L1 commits first and the active Redis projection is applied synchronously.
+// Closed-thread followers remain durable but ineligible until the exact public
+// final response has been appended to the canonical event store.
 func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
 	base := failedConversationTurnManagerResult(request, domconv.ConversationTurnErrorUnavailable)
 	if r == nil || r.l1Store == nil {
@@ -69,66 +72,189 @@ func (r *RealConversationManager) CommitConversationTurn(ctx context.Context, re
 		base.ErrorCode = domconv.ConversationTurnErrorInvalid
 		return base, err
 	}
+	// The background recovery worker may replay legacy Redis projection rows.
+	// Keep this acquisition cancellation-aware so a caller can leave while a
+	// recovery pass owns the required projection boundary.
+	if err := r.turnProjectionMu.Lock(ctx); err != nil {
+		return base, err
+	}
+	defer r.turnProjectionMu.Unlock()
 	result, err := store.CommitConversationTurn(ctx, normalized)
 	if err != nil {
 		return result, err
 	}
 	idempotentReplay := result.IdempotentReplay
-	if len(normalized.Targets) == 0 {
+	redisTarget := string(domconv.ConversationTurnTargetRedisProjection)
+	if !conversationTurnTargetRequested(normalized.Targets, domconv.ConversationTurnTargetRedisProjection) || !conversationTurnResultHasTarget(result.PendingTargets, redisTarget) {
 		return result, nil
 	}
-
-	excluded := make(map[string]struct{}, len(normalized.Targets))
-	var firstFollowerErr error
-	for range normalized.Targets {
-		claim, claimErr := claimTurnOutbox(ctx, store, string(normalized.TurnID), time.Now().UTC(), excluded)
-		if claimErr != nil {
-			return result, claimErr
+	redisStarted := time.Now().UTC()
+	claimCtx, claimCancel := context.WithDeadline(ctx, redisStarted.Add(conversationTurnRedisProjectionTimeout))
+	claim, claimErr := store.ClaimConversationTurnOutboxTarget(claimCtx, string(normalized.TurnID), redisTarget, redisStarted, conversationTurnFollowerLease)
+	claimCancel()
+	if claimErr != nil {
+		return result, claimErr
+	}
+	if claim == nil {
+		return result, domconv.ErrConversationTurnUnavailable
+	}
+	if claim.Target != redisTarget {
+		return result, domconv.ErrConversationTurnConflict
+	}
+	workDeadline, hasWorkBudget := conversationTurnWorkDeadline(redisStarted, conversationTurnRedisProjectionTimeout, claim.LeaseExpiresAt, time.Now().UTC())
+	var operationErr error
+	if !hasWorkBudget {
+		operationErr = domconv.ErrConversationTurnUnavailable
+	} else if err := ctx.Err(); err != nil {
+		operationErr = err
+	} else {
+		if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(workDeadline) {
+			workDeadline = callerDeadline
 		}
-		if claim == nil {
-			break
+		if time.Until(workDeadline) < conversationTurnMinimumWorkBudget {
+			operationErr = domconv.ErrConversationTurnUnavailable
+		} else {
+			workCtx, workCancel := context.WithDeadline(ctx, workDeadline)
+			operationErr = r.applyConversationTurnOutbox(workCtx, claim)
+			workCancel()
 		}
-		key := conversationTurnOutboxKey(claim.TurnID, claim.Target)
-		excluded[key] = struct{}{}
-		operationErr := r.applyConversationTurnOutbox(ctx, claim)
-		finishedAt := time.Now().UTC()
-		if operationErr != nil {
-			code := conversationTurnFollowerErrorCode(operationErr)
-			bookCtx, bookCancel := conversationTurnBookkeepingContext()
-			updated, finishErr := store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
-			bookCancel()
-			if finishErr != nil {
-				return updated, finishErr
-			}
-			result = updated
-			if firstFollowerErr == nil {
-				firstFollowerErr = operationErr
-			}
-			continue
-		}
-		bookCtx, bookCancel := conversationTurnBookkeepingContext()
-		updated, finishErr := store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
+	}
+	finishedAt := time.Now().UTC()
+	if operationErr != nil {
+		code := conversationTurnFollowerErrorCode(operationErr)
+		bookCtx, bookCancel := conversationTurnProjectionBookkeepingContext()
+		updated, finishErr := store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
 		bookCancel()
 		if finishErr != nil {
 			return updated, finishErr
 		}
-		result = updated
+		return updated, operationErr
 	}
-	if receipt, receiptErr := store.GetConversationTurnReceipt(ctx, string(normalized.TurnID)); receiptErr == nil {
-		result = receipt
-		result.IdempotentReplay = idempotentReplay
-	} else if firstFollowerErr == nil {
-		return result, receiptErr
+	bookCtx, bookCancel := conversationTurnProjectionBookkeepingContext()
+	updated, finishErr := store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
+	bookCancel()
+	if finishErr != nil {
+		return updated, finishErr
 	}
-	if firstFollowerErr != nil {
-		return result, firstFollowerErr
+	result = updated
+	result.IdempotentReplay = idempotentReplay
+	if conversationTurnResultHasTarget(result.PendingTargets, redisTarget) {
+		return result, domconv.ErrConversationTurnUnavailable
 	}
 	return result, nil
 }
 
-// DrainConversationTurnOutbox replays a bounded global startup batch. Each
-// claimed key is excluded for the rest of this call, so a failure advances to
-// the next target instead of immediately retrying the same failed row.
+func conversationTurnWorkDeadline(started time.Time, timeout time.Duration, leaseExpiresAt, now time.Time) (time.Time, bool) {
+	if started.IsZero() || timeout <= 0 || leaseExpiresAt.IsZero() || now.IsZero() {
+		return time.Time{}, false
+	}
+	deadline := started.Add(timeout)
+	leaseDeadline := leaseExpiresAt.Add(-conversationTurnOutboxBookkeepingReserve)
+	if leaseDeadline.Before(deadline) {
+		deadline = leaseDeadline
+	}
+	if deadline.Sub(now) < conversationTurnMinimumWorkBudget {
+		return time.Time{}, false
+	}
+	return deadline, true
+}
+
+func conversationTurnTargetRequested(targets []domconv.ConversationTurnTarget, target domconv.ConversationTurnTarget) bool {
+	for _, candidate := range targets {
+		if candidate == target {
+			return true
+		}
+	}
+	return false
+}
+
+func conversationTurnResultHasTarget(targets []string, target string) bool {
+	for _, candidate := range targets {
+		if candidate == target {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkConversationTurnResponsePublished records the exact public final event
+// boundary in the selected L1 owner. The caller invokes this only after the
+// canonical event append and normal event projections have succeeded.
+func (r *RealConversationManager) MarkConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID, at time.Time) error {
+	if r == nil || r.l1Store == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	store, ok := r.l1Store.(conversationTurnL1Store)
+	if !ok {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	return store.MarkConversationTurnResponsePublished(ctx, turnID, traceID, sessionID, at)
+}
+
+// ReconcileConversationTurnResponsePublications marks only exact public final
+// envelopes already durable in the canonical EventStore. L1 reply text alone
+// never opens the thread-follower gate.
+func (r *RealConversationManager) ReconcileConversationTurnResponsePublications(ctx context.Context, events interface {
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
+}, limit int) error {
+	if r == nil || r.l1Store == nil || events == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	store, ok := r.l1Store.(conversationTurnL1Store)
+	if !ok {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	if limit <= 0 || limit > 100 {
+		return domconv.ErrConversationTurnInvalid
+	}
+	r.publicationReconcileMu.Lock()
+	defer r.publicationReconcileMu.Unlock()
+	candidates, err := store.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, r.publicationCursor, limit)
+	if err != nil {
+		return err
+	}
+	if len(candidates) == 0 {
+		r.publicationCursor = ""
+		return nil
+	}
+	var firstErr error
+	for _, candidate := range candidates {
+		r.publicationCursor = string(candidate.TurnID)
+		published, err := events.HasPublicConversationFinalResponse(ctx, candidate.TraceID, candidate.TurnID, modulecore.SessionID(candidate.SessionID))
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if !published {
+			continue
+		}
+		if err := store.MarkConversationTurnResponsePublished(ctx, candidate.TurnID, candidate.TraceID, modulecore.SessionID(candidate.SessionID), time.Now().UTC()); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+func hasPublicConversationFinalResponse(events []modulecore.EventEnvelope, traceID modulecore.TraceID, turnID modulecore.TurnID, sessionID modulecore.SessionID) bool {
+	for _, event := range events {
+		if event.TraceID != traceID || event.TurnID != turnID || event.SessionID != sessionID || event.ComponentID != "orchestrator" || event.EventType != "agent.response" || event.Payload == nil {
+			continue
+		}
+		to, ok := event.Payload["to"].(string)
+		if ok && strings.EqualFold(strings.TrimSpace(to), "user") {
+			return true
+		}
+	}
+	return false
+}
+
+// DrainConversationTurnOutbox replays a bounded batch of all eligible targets.
+// It alternates target ownership and excludes each claim for the rest of this
+// pass so a failed remote claim cannot consume attempts repeatedly.
 func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Context, limit int) error {
 	if limit <= 0 {
 		limit = 100
@@ -145,68 +271,112 @@ func (r *RealConversationManager) DrainConversationTurnOutbox(ctx context.Contex
 	}
 	excluded := make(map[string]struct{}, limit)
 	var firstFollowerErr error
-	for processed := 0; processed < limit; processed++ {
-		claim, err := claimNextTurnOutbox(ctx, store, time.Now().UTC(), excluded)
-		if err != nil {
-			return err
+	nextTargetIndex := 0
+	targets := []string{string(domconv.ConversationTurnTargetRedisProjection), string(domconv.ConversationTurnTargetThreadFollowers)}
+	for processed := 0; processed < limit; {
+		var claim *domconv.ConversationTurnOutbox
+		var claimErr error
+		var projectionLocked bool
+		var targetStarted time.Time
+		var targetTimeout time.Duration
+		for attempt := 0; attempt < len(targets); attempt++ {
+			target := targets[nextTargetIndex%len(targets)]
+			nextTargetIndex++
+			if target == string(domconv.ConversationTurnTargetRedisProjection) {
+				if !r.turnProjectionMu.TryLock() {
+					continue
+				}
+				projectionLocked = true
+				targetTimeout = conversationTurnRedisProjectionTimeout
+			} else {
+				targetTimeout = conversationTurnFollowerWorkTimeout
+			}
+			targetStarted = time.Now().UTC()
+			claimCtx, claimCancel := context.WithDeadline(ctx, targetStarted.Add(targetTimeout))
+			claim, claimErr = store.ClaimNextConversationTurnOutboxTargetExcluding(claimCtx, target, targetStarted, conversationTurnFollowerLease, excluded)
+			claimCancel()
+			if claimErr != nil || claim != nil {
+				break
+			}
+			if projectionLocked {
+				r.turnProjectionMu.Unlock()
+				projectionLocked = false
+			}
+		}
+		if claimErr != nil {
+			if projectionLocked {
+				r.turnProjectionMu.Unlock()
+			}
+			return claimErr
 		}
 		if claim == nil {
 			break
 		}
+		processed++
 		key := conversationTurnOutboxKey(claim.TurnID, claim.Target)
 		if _, already := excluded[key]; already {
-			// Custom stores without the exclusion extension may still return a
-			// duplicate. It is left leased and will be recovered by the next
-			// startup call rather than processed twice here.
-			break
+			if projectionLocked {
+				r.turnProjectionMu.Unlock()
+			}
+			return domconv.ErrConversationTurnConflict
 		}
 		excluded[key] = struct{}{}
-		operationErr := r.applyConversationTurnOutbox(ctx, claim)
+		workDeadline, hasWorkBudget := conversationTurnWorkDeadline(targetStarted, targetTimeout, claim.LeaseExpiresAt, time.Now().UTC())
+		var operationErr error
+		if !hasWorkBudget {
+			operationErr = domconv.ErrConversationTurnUnavailable
+		} else if err := ctx.Err(); err != nil {
+			operationErr = err
+		} else {
+			if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(workDeadline) {
+				workDeadline = callerDeadline
+			}
+			if time.Until(workDeadline) < conversationTurnMinimumWorkBudget {
+				operationErr = domconv.ErrConversationTurnUnavailable
+			} else {
+				workCtx, workCancel := context.WithDeadline(ctx, workDeadline)
+				operationErr = r.applyConversationTurnOutbox(workCtx, claim)
+				workCancel()
+			}
+		}
 		finishedAt := time.Now().UTC()
+		bookCtx, bookCancel := conversationTurnBookkeepingContext()
+		if projectionLocked {
+			bookCancel()
+			bookCtx, bookCancel = conversationTurnProjectionBookkeepingContext()
+		}
 		if operationErr != nil {
 			code := conversationTurnFollowerErrorCode(operationErr)
-			bookCtx, bookCancel := conversationTurnBookkeepingContext()
-			_, finishErr := store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
-			bookCancel()
-			if finishErr != nil {
-				return finishErr
-			}
-			if firstFollowerErr == nil {
+			_, claimErr = store.FailConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, code, finishedAt)
+			if claimErr == nil && firstFollowerErr == nil {
 				firstFollowerErr = operationErr
 			}
-			continue
+		} else {
+			_, claimErr = store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
 		}
-		bookCtx, bookCancel := conversationTurnBookkeepingContext()
-		_, completeErr := store.CompleteConversationTurnOutbox(bookCtx, string(claim.TurnID), claim.Target, claim.LeaseToken, finishedAt)
 		bookCancel()
-		if completeErr != nil {
-			err := completeErr
-			return err
+		if projectionLocked {
+			r.turnProjectionMu.Unlock()
+		}
+		if claimErr != nil {
+			return claimErr
 		}
 	}
 	return firstFollowerErr
 }
 
-func claimTurnOutbox(ctx context.Context, store conversationTurnL1Store, turnID string, now time.Time, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
-	if claimer, ok := store.(conversationTurnOutboxExcludingClaimer); ok {
-		return claimer.ClaimConversationTurnOutboxExcluding(ctx, turnID, now, conversationTurnFollowerLease, excluded)
-	}
-	return store.ClaimConversationTurnOutbox(ctx, turnID, now, conversationTurnFollowerLease)
-}
-
 // conversationTurnBookkeepingContext returns a short-lived context detached
 // from the caller. The outbox ledger update must succeed even when the
 // follower's own context already expired; otherwise a timed-out follower can
-// never be marked failed and stays running until the next startup drain.
+// never be marked failed and remains leased until a later worker pass.
 func conversationTurnBookkeepingContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 10*time.Second)
 }
 
-func claimNextTurnOutbox(ctx context.Context, store conversationTurnL1Store, now time.Time, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
-	if claimer, ok := store.(conversationTurnOutboxExcludingClaimer); ok {
-		return claimer.ClaimNextConversationTurnOutboxExcluding(ctx, now, conversationTurnFollowerLease, excluded)
-	}
-	return store.ClaimNextConversationTurnOutbox(ctx, now, conversationTurnFollowerLease)
+// conversationTurnProjectionBookkeepingContext caps the time the manager can
+// retain the Redis projection lock after Redis work has returned.
+func conversationTurnProjectionBookkeepingContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), conversationTurnProjectionBookkeepingTimeout)
 }
 
 func (r *RealConversationManager) applyConversationTurnOutbox(ctx context.Context, outbox *domconv.ConversationTurnOutbox) error {
@@ -401,7 +571,9 @@ func (r *RealConversationManager) applyConversationThreadFollowers(ctx context.C
 			return domconv.ErrConversationTurnUnavailable
 		}
 	}
-	if err := r.redisStore.DeleteThread(ctx, thread.ID); err != nil {
+	redisCtx, redisCancel := context.WithTimeout(ctx, conversationTurnRedisProjectionTimeout)
+	defer redisCancel()
+	if err := r.redisStore.DeleteThread(redisCtx, thread.ID); err != nil {
 		return domconv.ErrConversationTurnUnavailable
 	}
 	return nil

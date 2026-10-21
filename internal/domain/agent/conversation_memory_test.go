@@ -96,7 +96,7 @@ func TestCommitConversationTurnUsesExactTaskIdentityAndFilteredPack(t *testing.T
 	}
 }
 
-func TestCommitConversationTurnPartialOutcomeDoesNotFailTurn(t *testing.T) {
+func TestCommitConversationTurnPropagatesRequiredFollowerFailure(t *testing.T) {
 	engine := &mockConversationEngine{
 		commitTurnFunc: func(_ context.Context, request conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error) {
 			return conversation.ConversationTurnResult{
@@ -107,8 +107,8 @@ func TestCommitConversationTurnPartialOutcomeDoesNotFailTurn(t *testing.T) {
 			}, conversation.ErrConversationTurnUnavailable
 		},
 	}
-	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); err != nil {
-		t.Fatalf("partial outcome must not fail the committed turn: %v", err)
+	if err := commitConversationTurn(context.Background(), engine, newAgentTurnInput(t, "hello", "viewer", "chat-1"), "chat-1", "hello", "hi", conversation.SpeakerMio, nil); !errors.Is(err, conversation.ErrConversationTurnUnavailable) {
+		t.Fatalf("partial outcome with a required Redis follower failure must block turn success, got %v", err)
 	}
 }
 

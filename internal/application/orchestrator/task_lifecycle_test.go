@@ -12,6 +12,7 @@ import (
 	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -322,6 +323,8 @@ func seedRunningTask(manager *recordingTaskLifecycleManager, taskID modulecore.T
 func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testing.T) {
 	manager := newRecordingTaskLifecycleManager()
 	lifecycle := newTaskLifecycle(manager)
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
 	rootID := modulecore.NewTaskID()
 	traceID := modulecore.NewTraceID()
 	messageID := modulecore.NewMessageID()
@@ -334,20 +337,43 @@ func TestTaskLifecycleActivationReusesRootRouteAndAddsActualShiroChild(t *testin
 		ChatID:         "ren",
 		UserMessage:    "今朝のニュースを教えて",
 	}
-	if _, err := lifecycle.createRoot(context.Background(), req); err != nil {
+	if _, err := lifecycle.createRoot(ctx, req); err != nil {
 		t.Fatalf("createRoot: %v", err)
 	}
 	events := newRecordingTaskLifecycleEventPort()
 	events.BindTrace(rootID.String(), traceID)
 	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleMio)
 
-	mioTaskID, err := activation.Activate(context.Background(), routing.RouteCHAT, "mio", "daily news brief")
+	mioTaskID, err := activation.Activate(ctx, routing.RouteCHAT, "mio", "daily news brief")
 	if err != nil {
 		t.Fatalf("activate Mio: %v", err)
 	}
-	shiroTaskID, err := activation.Activate(context.Background(), routing.RouteCHAT, "shiro", "ignored second route content")
+	firstPoints := recorder.Snapshot().PointsMS
+	if _, ok := firstPoints[string(turntiming.PointTaskIdentityBound)]; !ok {
+		t.Fatalf("first activation did not bind task identity: %#v", firstPoints)
+	}
+	if _, ok := firstPoints[string(turntiming.PointTaskExecutionRunStarted)]; ok {
+		t.Fatalf("root activation recorded child-only execution start: %#v", firstPoints)
+	}
+	shiroTaskID, err := activation.Activate(ctx, routing.RouteCHAT, "shiro", "ignored second route content")
 	if err != nil {
 		t.Fatalf("activate Shiro: %v", err)
+	}
+	points := recorder.Snapshot().PointsMS
+	if _, ok := points[string(turntiming.PointTaskExecutionRunStarted)]; ok {
+		t.Fatalf("later child activation filled a child-only checkpoint: %#v", points)
+	}
+	for point, firstValue := range firstPoints {
+		if strings.HasPrefix(point, "task_") && points[point] != firstValue {
+			t.Fatalf("later activation changed first-activation checkpoint %s: first=%v later=%v", point, firstValue, points[point])
+		}
+	}
+	for point := range points {
+		if strings.HasPrefix(point, "task_") {
+			if _, existed := firstPoints[point]; !existed {
+				t.Fatalf("later activation filled checkpoint %s after first activation: %#v", point, points)
+			}
+		}
 	}
 	if mioTaskID != rootID || shiroTaskID == rootID {
 		t.Fatalf("activation tasks = Mio %s Shiro %s root %s", mioTaskID, shiroTaskID, rootID)
@@ -937,6 +963,8 @@ func (m *cancellationContextTaskLifecycleManager) Cancel(ctx context.Context, ta
 type recordingTaskLifecycleEventPort struct {
 	events              []OrchestratorEvent
 	traces              map[modulecore.TaskID]modulecore.TraceID
+	turns               map[modulecore.TaskID]modulecore.TurnID
+	sessions            map[modulecore.TaskID]modulecore.SessionID
 	executionIdentities *eventExecutionIdentityBindings
 	responses           map[modulecore.TaskID]modulecore.MessageID
 	failType            string
@@ -946,6 +974,8 @@ type recordingTaskLifecycleEventPort struct {
 func newRecordingTaskLifecycleEventPort() *recordingTaskLifecycleEventPort {
 	return &recordingTaskLifecycleEventPort{
 		traces:              make(map[modulecore.TaskID]modulecore.TraceID),
+		turns:               make(map[modulecore.TaskID]modulecore.TurnID),
+		sessions:            make(map[modulecore.TaskID]modulecore.SessionID),
 		executionIdentities: newEventExecutionIdentityBindings(),
 		responses:           make(map[modulecore.TaskID]modulecore.MessageID),
 	}
@@ -953,16 +983,21 @@ func newRecordingTaskLifecycleEventPort() *recordingTaskLifecycleEventPort {
 
 func (p *recordingTaskLifecycleEventPort) Publish(eventType, from, to, content, route, taskID, sessionID, channel, chatID string, causationEventID modulecore.EventID, dependencyEventIDs []modulecore.EventID) (OrchestratorEvent, error) {
 	typedTaskID := modulecore.TaskID(taskID)
+	boundSessionID := p.sessions[typedTaskID]
+	if boundSessionID == "" {
+		boundSessionID = modulecore.SessionID(sessionID)
+	}
 	event := OrchestratorEvent{
 		EventID:            modulecore.NewEventID(),
 		TraceID:            p.traces[typedTaskID],
+		TurnID:             p.turns[typedTaskID],
 		Type:               eventType,
 		From:               from,
 		To:                 to,
 		Content:            content,
 		Route:              route,
 		TaskID:             typedTaskID,
-		SessionID:          modulecore.SessionID(sessionID),
+		SessionID:          boundSessionID,
 		Channel:            channel,
 		ChannelAddress:     chatID,
 		CausationEventID:   causationEventID,
@@ -982,6 +1017,13 @@ func (p *recordingTaskLifecycleEventPort) Publish(eventType, from, to, content, 
 
 func (p *recordingTaskLifecycleEventPort) BindTrace(taskID string, traceID modulecore.TraceID) {
 	p.traces[modulecore.TaskID(taskID)] = traceID
+}
+
+func (p *recordingTaskLifecycleEventPort) BindConversationIdentity(taskID string, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID) {
+	id := modulecore.TaskID(taskID)
+	p.turns[id] = turnID
+	p.traces[id] = traceID
+	p.sessions[id] = sessionID
 }
 
 func (p *recordingTaskLifecycleEventPort) ReleaseTrace(taskID string) {

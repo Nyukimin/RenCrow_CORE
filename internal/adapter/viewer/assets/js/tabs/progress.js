@@ -37,6 +37,7 @@ function classifyTaskPhase(ev, current) {
   if (ev.type === 'worker.classified_failure') return {phase: 'retrying', owner: from || 'shiro'};
   if (ev.type === 'agent.error' || ev.type === 'mailbox.error') return {phase: 'error', owner: from || current.owner};
   if (ev.type === 'agent.start') {
+    if (to === 'user') return {phase: 'chatting', owner: from || current.owner};
     if (to === 'shiro') {
       if (content.indexOf('Worker実行') >= 0 || content.indexOf('Patch') >= 0 || content.indexOf('整形') >= 0) {
         return {phase: 'worker_verifying', owner: 'shiro'};
@@ -47,9 +48,9 @@ function classifyTaskPhase(ev, current) {
     if (to === 'mio') return {phase: 'reporting', owner: 'mio'};
   }
   if (ev.type === 'agent.response') {
-    if (from === 'mio' && to === 'user') {
+    if (to === 'user') {
       const lower = content.toLowerCase();
-      return {phase: (lower.indexOf('error') >= 0 || lower.indexOf('失敗') >= 0) ? 'error' : 'done', owner: 'mio'};
+      return {phase: (lower.indexOf('error') >= 0 || lower.indexOf('失敗') >= 0) ? 'error' : 'done', owner: from || current.owner};
     }
     if (from === 'shiro' && to === 'mio') return {phase: 'reporting', owner: 'mio'};
     if (from.indexOf('coder') === 0 && to === 'shiro') return {phase: 'worker_verifying', owner: 'shiro'};
@@ -115,8 +116,8 @@ function deriveProgressData() {
     if ((ev.type === 'agent.error' || ev.type === 'mailbox.error') && String(ev.from || '').toLowerCase().indexOf('coder') === 0) {
       current.latestCoderNote = ev.content || current.latestCoderNote;
     }
-    if (ev.type === 'agent.response' && String(ev.from || '').toLowerCase() === 'mio' && String(ev.to || '').toLowerCase() === 'user') {
-      current.latestChatReport = ev.content || current.latestChatReport;
+    if (ev.type === 'agent.response' && String(ev.to || '').toLowerCase() === 'user') {
+      if (String(ev.from || '').toLowerCase() === 'mio') current.latestChatReport = ev.content || current.latestChatReport;
       current.status = current.phase === 'error' ? 'error' : 'done';
     } else if (ev.type === 'agent.response' && current.status !== 'error') {
       current.status = (current.phase === 'done') ? 'done' : 'running';

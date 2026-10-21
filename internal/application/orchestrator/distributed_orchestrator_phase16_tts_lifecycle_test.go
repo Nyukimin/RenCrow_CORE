@@ -115,7 +115,7 @@ func TestPhase16DistributedTTSLifecycleSkipsRenCrowCMD(t *testing.T) {
 	}
 }
 
-func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
+func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackWithoutPublicDeltas(t *testing.T) {
 	var previous []string
 	var emitted []string
 	lifecycle := newDistributedTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
@@ -146,8 +146,8 @@ func TestPhase16DistributedTTSLifecycleStreamHooksPreservePreviousCallbackAndEmi
 	if len(previous) != 3 || previous[0] != "" || previous[1] != " \t" || previous[2] != "tok" {
 		t.Fatalf("expected previous callback to receive token, got %#v", previous)
 	}
-	if len(emitted) != 3 || emitted[0] != "agent.thinking:" || emitted[1] != "agent.thinking: \t" || emitted[2] != "agent.thinking:tok" {
-		t.Fatalf("expected thinking event for token, got %#v", emitted)
+	if len(emitted) != 0 {
+		t.Fatalf("stream callbacks must not publish durable delta events, got %#v", emitted)
 	}
 	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; !ok {
 		t.Fatal("first text callback was not timed")

@@ -138,7 +138,6 @@ func (l *messageTTSLifecycle) WithStreamHooks(
 		if latency != nil && latency.markFirstToken() {
 			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), taskID, sessionID, channel, chatID, "")
 		}
-		l.emit("agent.thinking", speaker, "user", token, string(route), taskID, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
 	})

@@ -398,7 +398,7 @@ const latestBtn = document.getElementById('latestBtn');
 const toastEl = document.getElementById('toast');
 const thinkingBubbles = {};
 // Browser playback state only. Backend owns TTS completion/ACK truth; this state only tracks this tab's audio queue,
-// current chunk, and local error display until the backend confirms or rejects playback progress.
+// current chunk, and local error display while this tab reports playback progress to the backend.
 const ttsPlayback = {
   queue: [],
   audio: null,
@@ -951,6 +951,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     resetTTSSpeechBubble(centralTTSSpeech);
     return;
   }
+  if (hasCompletedChatResponseForTTS(publicPlaybackRef, messageId)) return;
   if (!chat) return;
 
   const id = String(characterId || '').trim().toLowerCase();
@@ -966,6 +967,7 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     if (speech.el) speech.el.classList.remove('tts-current');
     const el = document.createElement('div');
     el.className = 'msg tts-current' + (id === 'shiro' ? ' shiro' : '');
+    el.dataset.chatTtsProvisional = 'true';
     el.innerHTML =
       '<div class="av" style="background:' + f.c + '18;color:' + f.c + '">' + f.e + '</div>' +
       '<div class="mb"><div class="mh">' +
@@ -996,6 +998,16 @@ function renderChatTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
     if (tid) speech.turnId = tid;
     speech.active = true;
   }
+  if (rid) {
+    speech.publicPlaybackRef = rid;
+    speech.el.dataset.publicPlaybackRef = rid;
+  }
+  const normalizedMessageID = String(messageId || '').trim();
+  if (normalizedMessageID) {
+    speech.messageId = normalizedMessageID;
+    speech.el.dataset.messageId = normalizedMessageID;
+  }
+  if (tid) speech.turnId = tid;
   if (speech.chunkKeys.has(key)) {
     return;
   }
@@ -1136,6 +1148,61 @@ function renderIdleTTSSpeechText(characterId, text, sessionId, chunkIndex, utter
 function resetCentralTTSSpeechBubble() {
   resetTTSSpeechBubble(centralTTSSpeech);
   resetTTSSpeechBubble(idleTTSSpeech);
+}
+
+function hasCompletedChatResponseForTTS(publicPlaybackRef, messageId) {
+  const taskID = String(publicPlaybackRef || '').trim();
+  const responseMessageID = String(messageId || '').trim();
+  if (!taskID && !responseMessageID) return false;
+  const inRecentLogs = (state.logs || []).some((ev) => {
+    if (!ev || ev.type !== 'agent.response' || String(ev.to || '').toLowerCase() !== 'user') return false;
+    return matchesChatTTSResponse(taskID, responseMessageID, ev.task_id, ev.message_id);
+  });
+  if (inRecentLogs) return true;
+  const messages = chat && chat.children ? Array.from(chat.children) : [];
+  return messages.some((el) => {
+    const data = el && el.dataset ? el.dataset : {};
+    if (!el || !el.classList || !el.classList.contains('msg') || el.classList.contains('tts-current')) return false;
+    if (data.eventType !== 'agent.response' || String(data.to || '').toLowerCase() !== 'user') return false;
+    return matchesChatTTSResponse(taskID, responseMessageID, data.taskId, data.messageId);
+  });
+}
+
+function matchesChatTTSResponse(ttsTaskID, ttsMessageID, responseTaskID, responseMessageID) {
+  const ttsMessage = String(ttsMessageID || '').trim();
+  const responseMessage = String(responseMessageID || '').trim();
+  if (ttsMessage && responseMessage) return ttsMessage === responseMessage;
+  const ttsTask = String(ttsTaskID || '').trim();
+  const responseTask = String(responseTaskID || '').trim();
+  return !!(ttsTask && responseTask && ttsTask === responseTask);
+}
+
+function removeCentralTTSSpeechForResponse(taskID, messageID) {
+  const speech = centralTTSSpeech;
+  const responseTaskID = String(taskID || '').trim();
+  const responseMessageID = String(messageID || '').trim();
+  if (!responseTaskID && !responseMessageID) return;
+  const bubbles = chat && chat.children ? Array.from(chat.children) : [];
+  let currentBubbleRemoved = false;
+  bubbles.forEach((bubble) => {
+    const data = bubble && bubble.dataset ? bubble.dataset : {};
+    if (!bubble || data.chatTtsProvisional !== 'true') return;
+    if (!matchesChatTTSResponse(responseTaskID, responseMessageID, data.publicPlaybackRef, data.messageId)) return;
+    if (speech.el === bubble) currentBubbleRemoved = true;
+    bubble.remove();
+  });
+  if (!currentBubbleRemoved) return;
+  speech.el = null;
+  speech.textEl = null;
+  speech.characterId = '';
+  speech.sessionId = '';
+  speech.publicPlaybackRef = '';
+  speech.messageId = '';
+  speech.turnId = '';
+  speech.bubbleKind = '';
+  speech.active = false;
+  speech.preRendered = false;
+  speech.chunkKeys = new Set();
 }
 
 function resetTTSSpeechBubble(speech) {
@@ -2157,10 +2224,11 @@ function updateAgents(ev) {
 
   const from = (ev.from || '').toLowerCase();
   const to = (ev.to || '').toLowerCase();
+  const userFacingStart = ev.type === 'agent.start' && to === 'user';
 
   if (AGENTS.includes(from)) {
     let s = 'running';
-    if (ev.type === 'agent.thinking') s = 'thinking';
+    if (ev.type === 'agent.thinking' || userFacingStart) s = 'thinking';
     if (ev.type === 'agent.response') {
       const c = (ev.content || '').toLowerCase();
       s = (c.includes('error') || c.includes('失敗')) ? 'error' : 'idle';
@@ -2179,7 +2247,7 @@ function updateAgents(ev) {
     // Update character expression based on agent state
     if (from === 'mio' || from === 'shiro') {
       let characterState = 'idle';
-      if (ev.type === 'agent.thinking') {
+      if (ev.type === 'agent.thinking' || userFacingStart) {
         characterState = 'thinking';
       } else if (ev.type === 'agent.response') {
         const c = (ev.content || '').toLowerCase();

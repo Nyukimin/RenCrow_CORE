@@ -656,6 +656,62 @@ func TestListByTraceIDRejectsEnvelopeColumnDrift(t *testing.T) {
 	}
 }
 
+func TestHasPublicConversationFinalResponseFindsLateEventWithoutTraceLimit(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	turnID := modulecore.NewTurnID()
+	sessionID := modulecore.NewSessionID()
+	events := make([]modulecore.EventEnvelope, 1001)
+	for index := range events {
+		events[index] = eventFixture(traceID, "agent.thinking", "orchestrator")
+		events[index].TurnID = turnID
+		events[index].SessionID = sessionID
+	}
+	if err := store.AppendBatch(ctx, events); err != nil {
+		t.Fatalf("AppendBatch noise events: %v", err)
+	}
+	wrongRecipient := eventFixture(traceID, "agent.response", "orchestrator")
+	wrongRecipient.TurnID = turnID
+	wrongRecipient.SessionID = sessionID
+	wrongRecipient.Payload = map[string]any{"to": "agent"}
+	if err := store.Append(ctx, wrongRecipient); err != nil {
+		t.Fatalf("Append wrong-recipient response: %v", err)
+	}
+	wrongTurn := eventFixture(traceID, "agent.response", "orchestrator")
+	wrongTurn.TurnID = modulecore.NewTurnID()
+	wrongTurn.SessionID = sessionID
+	wrongTurn.Payload = map[string]any{"to": "user"}
+	if err := store.Append(ctx, wrongTurn); err != nil {
+		t.Fatalf("Append wrong-turn response: %v", err)
+	}
+	legacyFinal := eventFixture(traceID, "agent.response", "orchestrator")
+	legacyFinal.SessionID = sessionID
+	legacyFinal.Payload = map[string]any{"to": "user"}
+	if err := store.Append(ctx, legacyFinal); err != nil {
+		t.Fatalf("Append legacy response without turn ID: %v", err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, traceID, turnID, sessionID); err != nil || found {
+		t.Fatalf("HasPublicConversationFinalResponse after legacy response without turn ID = %v, %v; want false", found, err)
+	}
+	final := eventFixture(traceID, "agent.response", "orchestrator")
+	final.TurnID = turnID
+	final.SessionID = sessionID
+	final.Payload = map[string]any{"to": " User "}
+	if err := store.Append(ctx, final); err != nil {
+		t.Fatalf("Append exact final: %v", err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, traceID, turnID, sessionID); err != nil || !found {
+		t.Fatalf("HasPublicConversationFinalResponse exact final = %v, %v; want true", found, err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, modulecore.NewTraceID(), turnID, sessionID); err != nil || found {
+		t.Fatalf("HasPublicConversationFinalResponse wrong trace = %v, %v; want false", found, err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, traceID, turnID, modulecore.NewSessionID()); err != nil || found {
+		t.Fatalf("HasPublicConversationFinalResponse wrong session = %v, %v; want false", found, err)
+	}
+}
+
 func newTestStore(t *testing.T) *SQLiteStore {
 	t.Helper()
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "event-store.sqlite"))

@@ -1,0 +1,49 @@
+schema_version: routing-classifier-test/v1
+mode: off
+experiment_id: rencrow-route-laya-v01-example
+
+candidate:
+  endpoint: http://127.0.0.1:18190
+  auth_token_env: RENCROW_CLASSIFIER_TEST_TOKEN
+  timeout_ms: 3000
+  retries: 0
+  expected_family: REPLACE_WITH_PREPARED_FAMILY
+  expected_model_revision: REPLACE_WITH_PINNED_REVISION
+  expected_policy_sha256: REPLACE_WITH_PREPARED_POLICY_SHA256
+
+shadow:
+  sample_rate: 0.1
+  sample_seed: 20261019
+  queue_capacity: 128
+  workers: 1
+  max_job_age_ms: 10000
+  drain_timeout_ms: 2000
+
+reference_worker:
+  python_executable: REPLACE_WITH_VENV_PYTHON_PATH
+  model_directory: REPLACE_WITH_LOCAL_MODEL_DIRECTORY
+  device: cpu
+  dtype: float32
+  intra_op_threads: 4
+  inter_op_threads: 1
+  max_len: 8192
+  head_max_len: 1024
+  hard_timeout_ms: 10000
+  offline_required: true
+
+recording:
+  directory: REPLACE_WITH_PRIVATE_OUTPUT_DIRECTORY
+  include_message_text: false
+  include_raw_model_output: false
+  output_queue_capacity: 128
+  temporary_raw_retention_days: 7
+
+evaluation:
+  random_seed: 20261019
+  warmup_requests: 20
+  latency_repetitions: 5
+  quality_repetitions: 1
+  performance_concurrency: [1, 2, 4]
+  bootstrap_resamples: 2000
+  noninferiority_margin_macro_f1: 0.01
+  critical_regression_allowed_count: 0

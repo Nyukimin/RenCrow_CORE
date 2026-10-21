@@ -110,7 +110,6 @@ func (l *distributedTTSLifecycle) WithStreamHooks(
 		if latency != nil && latency.markFirstToken() {
 			emitLatencyMetric(l.emit, "llm", "first_token", latency.startedAt, string(route), taskIDText, sessionID, channel, chatID, "")
 		}
-		l.emit("agent.thinking", speaker, "user", token, string(route), taskIDText, sessionID, channel, chatID)
 		ttsStream.OnToken(ctx, token)
 		vtuberStream.OnToken(ctx, token)
 	}), &streamBundle{tts: ttsStream, vtuber: vtuberStream}

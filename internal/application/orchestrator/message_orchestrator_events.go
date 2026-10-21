@@ -94,6 +94,10 @@ func (p *messageEventPort) BindTrace(taskID string, traceID modulecore.TraceID) 
 	p.traces.Bind(taskID, traceID)
 }
 
+func (p *messageEventPort) BindConversationIdentity(taskID string, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID) {
+	p.traces.BindConversationIdentity(taskID, turnID, traceID, sessionID)
+}
+
 func (p *messageEventPort) ReleaseTrace(taskID string) {
 	p.traces.Release(taskID)
 }
@@ -133,6 +137,7 @@ func (p *messageEventPort) ReleaseResponseMessageID(taskID string) {
 }
 
 func (p *messageEventPort) emitWithMessageID(ev OrchestratorEvent, messageID string) (OrchestratorEvent, error) {
+	p.traces.Apply(&ev)
 	p.applyExecutionIdentity(&ev)
 	traceID := modulecore.TraceID(ev.TraceID)
 	if p.publicationFail != nil {

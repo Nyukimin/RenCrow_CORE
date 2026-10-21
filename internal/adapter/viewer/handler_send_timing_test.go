@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 func TestHandleSendOptInTimingRecordsAcceptanceAndAsyncStart(t *testing.T) {
@@ -73,6 +74,58 @@ func TestHandleSendOptInTimingRecordsAcceptanceAndAsyncStart(t *testing.T) {
 				t.Fatal("async handler was not called")
 			}
 		})
+	}
+}
+
+func TestHandleSendOptInTimingRecordsParseValidationAndSessionBoundaries(t *testing.T) {
+	points := make(chan map[string]float64, 1)
+	resolverCalled := false
+	h := HandleSendWithAttachmentsAndSessionResolver(func(ctx context.Context, _ SendRequest) (string, error) {
+		if recorder := turntiming.FromContext(ctx); recorder != nil {
+			points <- recorder.Snapshot().PointsMS
+		} else {
+			points <- nil
+		}
+		return "ok", nil
+	}, nil, &fakeAttachmentSaver{}, func(context.Context) (modulecore.SessionID, error) {
+		resolverCalled = true
+		return modulecore.NewSessionID(), nil
+	})
+	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","timings":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !resolverCalled {
+		t.Fatal("canonical session resolver was not called")
+	}
+	select {
+	case got := <-points:
+		orderedPoints := []string{
+			"handler_received",
+			"request_parsed",
+			"handler_validation_ended",
+			"handler_session_started",
+			"handler_session_ended",
+			"accepted",
+			"async_start",
+		}
+		var previousOffset float64
+		for index, point := range orderedPoints {
+			offset, ok := got[point]
+			if !ok {
+				t.Errorf("timing point %q missing: %#v", point, got)
+				continue
+			}
+			if index > 0 && offset < previousOffset {
+				t.Errorf("timing point %q offset=%v precedes prior offset=%v: %#v", point, offset, previousOffset, got)
+			}
+			previousOffset = offset
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async handler was not called")
 	}
 }
 

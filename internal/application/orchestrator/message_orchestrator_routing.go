@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -15,6 +16,11 @@ type routeDecisionCoordinator struct {
 	mio             MioAgent
 	heavyPolicy     domainai.HeavyWorkerPolicy
 	canonicalEvents CanonicalEventRecorder
+}
+
+type routeDecisionResult struct {
+	Decision  routing.Decision
+	ChatDraft *domainagent.MioChatDraft
 }
 
 func newRouteDecisionCoordinator(mio MioAgent) *routeDecisionCoordinator {
@@ -32,19 +38,40 @@ func (c *routeDecisionCoordinator) SetCanonicalEventRecorder(recorder CanonicalE
 }
 
 func (c *routeDecisionCoordinator) Decide(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID) (routing.Decision, error) {
+	result, err := c.DecideWithChatDraft(ctx, input, req, taskID, false)
+	return result.Decision, err
+}
+
+func (c *routeDecisionCoordinator) DecideWithChatDraft(ctx context.Context, input domainconversation.TurnInput, req ProcessMessageRequest, taskID modulecore.TaskID, allowCombined bool) (routeDecisionResult, error) {
 	if recipient, ok := directViewerRecipientForChat(req); ok {
-		return directViewerRecipientDecision(recipient), nil
+		return routeDecisionResult{Decision: directViewerRecipientDecision(recipient)}, nil
 	}
-	decision, err := c.mio.DecideAction(ctx, input)
+	var decision routing.Decision
+	var chatDraft *domainagent.MioChatDraft
+	var err error
+	if combined, ok := c.mio.(interface {
+		DecideActionWithChatDraft(context.Context, domainconversation.TurnInput, bool) (routing.Decision, *domainagent.MioChatDraft, error)
+	}); ok && allowCombined {
+		decision, chatDraft, err = combined.DecideActionWithChatDraft(ctx, input, true)
+	} else {
+		decision, err = c.mio.DecideAction(ctx, input)
+	}
 	if err != nil {
-		return routing.Decision{}, fmt.Errorf("routing decision failed: %w", err)
+		return routeDecisionResult{}, fmt.Errorf("routing decision failed: %w", err)
 	}
+	classifiedRoute := decision.Route
 	decision, pinnedViewerRecipient := pinSelectedViewerRecipientDecision(decision, req)
 	if pinnedViewerRecipient {
-		return decision, nil
+		return routeDecisionResult{Decision: decision}, nil
+	}
+	if chatDraft.Failed() {
+		return routeDecisionResult{Decision: decision, ChatDraft: chatDraft}, nil
 	}
 	decision = c.applyHeavyWorkerPolicy(ctx, decision, req, taskID)
-	return decision, nil
+	if decision.Route != routing.RouteCHAT || decision.Route != classifiedRoute {
+		chatDraft = nil
+	}
+	return routeDecisionResult{Decision: decision, ChatDraft: chatDraft}, nil
 }
 
 // directViewerRecipientForChat returns the explicit Viewer recipient (shiro,

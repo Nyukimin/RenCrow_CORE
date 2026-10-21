@@ -65,7 +65,12 @@ function renderTrustedGeneratedImages(message) {
 
 function addMsgToTimeline(ev) {
   if (ev.type === 'task.notification') { addTaskNotificationToTimeline(ev); return; }
-  if (ev.type === 'agent.response') removeThinking(ev.task_id);
+  if (ev.type === 'agent.response') {
+    removeThinking(ev.task_id);
+    if ((ev.to || '').toLowerCase() === 'user') {
+      removeCentralTTSSpeechForResponse(ev.task_id, ev.message_id);
+    }
+  }
   if (ev.type === 'agent.thinking') { addThinking(ev); return; }
   if (ev.type === 'agent.start') { addThinkingStart(ev); return; }
   if (isCoordinationTraceEvent(ev)) { addCoordinationTraceToTimeline(ev); return; }
@@ -82,7 +87,6 @@ function addMsgToTimeline(ev) {
 
   if (ev.type === 'routing.decision') return;
   if (ev.type === 'agent.response' && (ev.to || '').toLowerCase() !== 'user') return;
-  if (ev.type === 'agent.response' && isTTSSyncedSpeaker(ev.from) && !isViewerLocalFailureMessage(ev) && !isVoiceDirectTimelineResponse(ev)) return;
   if (ev.type === 'idlechat.message' && isTTSSyncedSpeaker(ev.from)) return;
   if (ev.type === 'agent.note' && (ev.to || '').toLowerCase() !== 'user') return;
   if (ev.type === 'message.received' && (ev.from || '').toLowerCase() !== 'user') return;
@@ -103,6 +107,10 @@ function addMsgToTimeline(ev) {
       '<span class="tm">' + ftime(ev.timestamp) + '</span>' +
     '</div><button class="cp" onclick="copyMsg(this)">Copy</button>' +
     '<div class="mc">' + renderTrustedGeneratedImages(displayContent) + '</div></div>';
+  if (ev.task_id) el.dataset.taskId = String(ev.task_id);
+  if (ev.message_id) el.dataset.messageId = String(ev.message_id);
+  el.dataset.eventType = String(ev.type || '');
+  el.dataset.to = String(ev.to || '').toLowerCase();
   el.querySelector('.mc').dataset.raw = ev.content || '';
   chat.appendChild(el);
   trimTimelineNodes();

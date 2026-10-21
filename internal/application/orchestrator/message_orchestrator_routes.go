@@ -12,15 +12,15 @@ import (
 	domainexecution "github.com/Nyukimin/RenCrow_CORE/internal/domain/execution"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/speech"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 	moduletts "github.com/Nyukimin/RenCrow_CORE/modules/tts"
 )
 
-// messageStreamHook binds the LLM token stream of one turn to event, TTS and
-// VTuber forwarding. speaker is the Agent whose model generates the tokens: the
-// agent.thinking events carry it as from, so it must equal the from of the
-// first agent.response of the same turn (docs/06_Public_API仕様.md).
+// messageStreamHook binds the internal LLM token stream of one turn to TTS and
+// VTuber forwarding. speaker is the Agent whose model generates the tokens and
+// is also the from of the final public agent.response (docs/06_Public_API仕様.md).
 type messageStreamHook func(ctx context.Context, route routing.Route, speaker, taskID, sessionID, channel, chatID, ttsSessionID string) (context.Context, *streamBundle)
 
 // messageTTSPusher voices one finished utterance. speaker is the Agent that
@@ -120,6 +120,10 @@ func turnInputMetadata(input domainconversation.TurnInput) (sessionID, channel, 
 }
 
 func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
+	return d.ExecuteTurnInputWithChatDraft(ctx, input, route, taskID, runID, ttsSessionID, nil)
+}
+
+func (d *messageRouteDispatcher) ExecuteTurnInputWithChatDraft(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string, chatDraft *domainagent.MioChatDraft) (string, error) {
 	var err error
 	ctx, err = bindRouteExecutionContext(ctx, input, route, taskID, runID)
 	if err != nil {
@@ -142,7 +146,7 @@ func (d *messageRouteDispatcher) ExecuteTurnInput(ctx context.Context, input dom
 		return d.executeAutonomous(ctx, input, route, taskID, ttsSessionID)
 	}
 
-	return d.executeChatRoute(ctx, input, taskID, ttsSessionID)
+	return d.executeChatRouteWithDraft(ctx, input, taskID, ttsSessionID, chatDraft)
 }
 
 func (d *messageRouteDispatcher) ExecuteDirect(ctx context.Context, input domainconversation.TurnInput, route routing.Route, taskID modulecore.TaskID, runID modulecore.RunID, ttsSessionID string) (string, error) {
@@ -185,10 +189,16 @@ func (d *messageRouteDispatcher) executeDirectForContext(ctx context.Context, in
 }
 
 func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, ttsSessionID string) (string, error) {
+	return d.executeChatRouteWithDraft(ctx, input, taskID, ttsSessionID, nil)
+}
+
+func (d *messageRouteDispatcher) executeChatRouteWithDraft(ctx context.Context, input domainconversation.TurnInput, taskID modulecore.TaskID, ttsSessionID string, chatDraft *domainagent.MioChatDraft) (string, error) {
 	sessionID, channel, chatID := turnInputMetadata(input)
 	taskIDText := taskID.String()
 	speaker := chatSpeakerForTurnInput(input)
+	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationStarted)
 	d.emit("agent.start", speaker, "user", "考え中...", "CHAT", taskIDText, sessionID, channel, chatID)
+	turntiming.Mark(ctx, turntiming.PointAgentStartPublicationEnded)
 	streamCtx, ttsStream := d.withStreamHooks(ctx, routing.RouteCHAT, speaker, taskIDText, sessionID, channel, chatID, ttsSessionID)
 	var speechPlanResult *speech.Result
 	if d.speechPlanEnabled {
@@ -197,11 +207,25 @@ func (d *messageRouteDispatcher) executeChatRoute(ctx context.Context, input dom
 			speechPlanResult = &captured
 		})
 	}
-	resp, err := d.generateChatResponse(streamCtx, input, speaker)
+	var resp string
+	var err error
+	if chatDraft != nil && speaker == "mio" && !d.speechPlanEnabled {
+		chatAgent, ok := d.mio.(interface {
+			ChatWithDraft(context.Context, domainconversation.TurnInput, *domainagent.MioChatDraft) (string, error)
+		})
+		if !ok {
+			ttsStream.Finalize(ctx, "")
+			return "", fmt.Errorf("Mio cannot adopt the prepared CHAT reply")
+		}
+		resp, err = chatAgent.ChatWithDraft(streamCtx, input, chatDraft)
+	} else {
+		resp, err = d.generateChatResponse(streamCtx, input, speaker)
+	}
 	if err != nil {
 		if speechPlanResult != nil {
 			d.logSpeechPlanObservation(string(input.TurnID()), speaker, *speechPlanResult, "")
 		}
+		ttsStream.Finalize(ctx, "")
 		return resp, err
 	}
 	d.emit("agent.response", speaker, "user", resp, "CHAT", taskIDText, sessionID, channel, chatID)

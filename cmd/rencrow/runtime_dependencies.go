@@ -41,6 +41,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
 	xbookmarkworkflowapp "github.com/Nyukimin/RenCrow_CORE/internal/application/xbookmarkworkflow"
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domaincontext "github.com/Nyukimin/RenCrow_CORE/internal/domain/context"
@@ -72,6 +73,7 @@ import (
 	xbookmarkworkflowpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/xbookmarkworkflow"
 	personainfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persona"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/routing/classifierlab"
 	toolsinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/tools"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/transport"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/userhome"
@@ -85,6 +87,8 @@ import (
 // Dependencies はアプリケーション依存関係
 type runtimeCanonicalEventStore interface {
 	modulecore.EventStore
+	ListByTraceID(context.Context, modulecore.TraceID, int) ([]modulecore.EventEnvelope, error)
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
 	Close() error
 }
 
@@ -344,6 +348,8 @@ type Dependencies struct {
 	moduleWorkerExecutor           moduleworker.Executor                       // module contract view of Worker executor
 	moduleHealth                   http.HandlerFunc                            // module boundary health API
 	sttRecorderClose               func(context.Context) error                 // flushes the STT utterance recorder at shutdown (nil until /stt is wired)
+	classifierShadow               *classifierlab.ShadowClassifier             // observation-only classifier worker, nil in off mode
+	classifierShadowCancel         context.CancelFunc                          // stops classifier shadow workers before joining them
 	llmBusyTracker                 *llmBusyTracker                             // runtime LLM execution tracker for IdleChat gating
 	llmGatewayProcess              *os.Process                                 // local RenCrow_LLM process started by CORE
 	webGatherDeps                  func() webGatherCLIDeps                     // web-gather diagnostics dependencies for the Public API
@@ -361,6 +367,22 @@ func configuredNativeCodingAdmission(cfg *config.Config, runtime *delegation.Run
 
 // Shutdown はリソースを解放
 func (d *Dependencies) Shutdown() {
+	if d.classifierShadow != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		closeErr := d.classifierShadow.Close(ctx)
+		if closeErr != nil {
+			log.Printf("Classifier shadow shutdown: %v", closeErr)
+		}
+		cancel()
+		if summary, err := runtimeClassifierTerminationJSON(d.classifierShadow.Stats()); err != nil {
+			log.Printf("Classifier shadow termination stats: %v", err)
+		} else {
+			log.Printf("classifier_shadow_termination=%s", summary)
+		}
+	}
+	if d.classifierShadowCancel != nil {
+		d.classifierShadowCancel()
+	}
 	if d.sttRecorderClose != nil {
 		// The records of utterances that were just relayed are the evidence of an
 		// external effect; give them a bounded moment to reach the stores.
@@ -492,6 +514,14 @@ func prepareAtlasLifecycleService(ctx context.Context, service *backlogapp.Servi
 
 // buildDependencies は依存関係を構築
 func buildDependencies(cfg *config.Config) *Dependencies {
+	classifierTestConfig, err := loadRuntimeClassifierTestConfig()
+	if err != nil {
+		log.Fatalf("Failed to load routing classifier test config: %v", err)
+	}
+	return buildDependenciesWithClassifierTestConfig(cfg, classifierTestConfig)
+}
+
+func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTestConfig classifierlab.Config) *Dependencies {
 	deps := &Dependencies{
 		taskStoreIndex: cfg.TaskStore.Index.Enabled, taskStorePersist: cfg.TaskStore.Index.Persist,
 		taskStoreRotation: cfg.TaskStore.Rotation.Enabled, taskStoreSizeValve: cfg.TaskStore.Rotation.SizeValveBytes,
@@ -572,7 +602,11 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 	aiWorkflowStore := composeRuntimeAIWorkflowStore(buildAIWorkflowStateStore(cfg), canonicalEventStore)
 	llmBusyTracker := newLLMBusyTracker()
 	llmRuntime := buildLLMRuntimeProviders(cfg, aiWorkflowStore, llmBusyTracker, runtimeActionManager, deps.taskManager, deps.transportManager)
-	classifier := routing.NewLLMClassifier(llmRuntime.Chat, cfg.Prompts.Classifier)
+	var classifier domainagent.Classifier
+	classifier, deps.classifierShadow, deps.classifierShadowCancel, err = buildRuntimeClassifier(llmRuntime.Chat, cfg.Prompts.Classifier, classifierTestConfig)
+	if err != nil {
+		log.Fatalf("Failed to initialize routing classifier test shadow: %v", err)
+	}
 	ruleDictionary := routing.NewRuleDictionary()
 	skillLoader := domaincontext.NewSkillsLoader("")
 	runtimeSkillMetadata, skillLoadErr := skillLoader.LoadAllFromDirs(cfg.SkillGovernance.SkillRoots...)
@@ -917,7 +951,7 @@ func buildDependencies(cfg *config.Config) *Dependencies {
 			newBackgroundJobFailureReporter(deps.eventRelay),
 		)
 	}
-	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay)
+	deps.conversationBackgroundStop = startConversationBackgroundJobs(cfg, conversationRuntime, deps.eventRelay, deps.canonicalEventStore)
 	if toolRuntime.ToolMediationRecorder != nil {
 		deps.toolHarnessRecent = viewer.HandleToolHarnessRecent(toolRuntime.ToolMediationRecorder)
 	}

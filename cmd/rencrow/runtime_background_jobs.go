@@ -20,6 +20,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/sourcefetcher"
 	superagentapp "github.com/Nyukimin/RenCrow_CORE/internal/application/superagent"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
 	webgatherinfra "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/webgather"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
@@ -111,20 +112,95 @@ func backgroundJobFailureNotification(job string, errorText string, detail strin
 	return content
 }
 
-func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener) func() {
+func startConversationBackgroundJobs(cfg *config.Config, runtime conversationRuntime, listener orchestrator.EventListener, events interface {
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
+}) func() {
 	reporter := newBackgroundJobFailureReporter(listener)
-	if runtime.L1Store == nil {
+	if runtime.L1Store == nil && runtime.Manager == nil {
 		return func() {}
 	}
-	bootstrapDefaultNewsSources(runtime.L1Store, reporter)
+	if runtime.L1Store != nil {
+		bootstrapDefaultNewsSources(runtime.L1Store, reporter)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	sourceDone := startSourceRegistrySweeper(ctx, cfg, runtime.L1Store, reporter)
-	memoryDone := startMemoryLifecycleJobRunner(ctx, runtime.L1Store, memoryLifecycleJobConfigFromEnv(time.Now), reporter)
+	var sourceDone, memoryDone <-chan struct{}
+	if runtime.L1Store != nil {
+		sourceDone = startSourceRegistrySweeper(ctx, cfg, runtime.L1Store, reporter)
+		memoryDone = startMemoryLifecycleJobRunner(ctx, runtime.L1Store, memoryLifecycleJobConfigFromEnv(time.Now), reporter)
+	} else {
+		sourceDone = closedBackgroundJobDone()
+		memoryDone = closedBackgroundJobDone()
+	}
+	turnDone := startConversationTurnFollowerWorker(ctx, runtime.Manager, events, 5*time.Second)
 	return func() {
 		cancel()
 		<-sourceDone
 		<-memoryDone
+		<-turnDone
 	}
+}
+
+type conversationTurnFollowerBackgroundManager interface {
+	ReconcileConversationTurnResponsePublications(context.Context, interface {
+		HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
+	}, int) error
+	DrainConversationTurnOutbox(context.Context, int) error
+}
+
+func startConversationTurnFollowerWorker(ctx context.Context, manager conversationTurnFollowerBackgroundManager, events interface {
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
+}, interval time.Duration) <-chan struct{} {
+	done := make(chan struct{})
+	if manager == nil || events == nil {
+		close(done)
+		return done
+	}
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	go func() {
+		defer close(done)
+		runPass := func() {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := manager.ReconcileConversationTurnResponsePublications(ctx, events, 100); err != nil && ctx.Err() == nil {
+				code := domconv.ConversationTurnErrorCodeOf(err)
+				if code == "" {
+					code = domconv.ConversationTurnErrorInternal
+				}
+				log.Printf("[ConversationTurn] response publication reconciliation pending error_code=%s", code)
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if err := manager.DrainConversationTurnOutbox(ctx, 100); err != nil && ctx.Err() == nil {
+				code := domconv.ConversationTurnErrorCodeOf(err)
+				if code == "" {
+					code = domconv.ConversationTurnErrorInternal
+				}
+				log.Printf("[ConversationTurn] thread follower retry pending error_code=%s", code)
+			}
+		}
+		runPass()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				runPass()
+			}
+		}
+	}()
+	return done
+}
+
+func closedBackgroundJobDone() <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 func bootstrapDefaultNewsSources(store newsbriefapp.DefaultSourceRegistry, reporter backgroundJobFailureReporter) {

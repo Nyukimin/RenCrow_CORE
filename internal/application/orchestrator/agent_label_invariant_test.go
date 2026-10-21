@@ -12,14 +12,15 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
-// agent.thinking / agent.start / agent.response の from は、その turn で実際に
-// 応答した Agent と一致しなければならない（docs/06_Public_API仕様.md）。
+// agent.start / agent.response の発話者は、その turn で実際に応答した Agent と
+// 一致し、stream delta は public event として発行されない。
 // 以下は route ごとに同じ turn のイベント列を記録し、この不変条件を検証する。
 
 type labelEvent struct {
-	Type string
-	From string
-	To   string
+	Type    string
+	From    string
+	To      string
+	Content string
 }
 
 type labelRecorder struct {
@@ -27,7 +28,7 @@ type labelRecorder struct {
 }
 
 func (r *labelRecorder) emit(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
-	r.events = append(r.events, labelEvent{Type: eventType, From: from, To: to})
+	r.events = append(r.events, labelEvent{Type: eventType, From: from, To: to, Content: content})
 }
 
 func streamTokens(ctx context.Context, tokens ...string) {
@@ -66,15 +67,12 @@ func startResponder(ev labelEvent) string {
 
 func assertAgentLabelInvariant(t *testing.T, events []labelEvent, want string) {
 	t.Helper()
-	var thinking, starts, responses int
+	var deltas, starts, responses int
 	firstResponseFrom := ""
 	for _, ev := range events {
 		switch ev.Type {
 		case "agent.thinking":
-			thinking++
-			if ev.From != want {
-				t.Errorf("agent.thinking from = %q, want %q (events=%v)", ev.From, want, events)
-			}
+			deltas++
 		case "agent.start":
 			starts++
 			if got := startResponder(ev); got != want {
@@ -87,8 +85,8 @@ func assertAgentLabelInvariant(t *testing.T, events []labelEvent, want string) {
 			}
 		}
 	}
-	if thinking == 0 || starts == 0 || responses == 0 {
-		t.Fatalf("incomplete turn: thinking=%d start=%d response=%d events=%v", thinking, starts, responses, events)
+	if deltas != 0 || starts == 0 || responses == 0 {
+		t.Fatalf("turn must have start and final response without durable deltas: deltas=%d start=%d response=%d events=%v", deltas, starts, responses, events)
 	}
 	if firstResponseFrom != want {
 		t.Errorf("first agent.response from = %q, want %q (events=%v)", firstResponseFrom, want, events)
@@ -208,9 +206,8 @@ func TestDistributedRouteDispatcherAgentLabelMatchesResponder(t *testing.T) {
 	}
 }
 
-// WithStreamHooks は呼び出し側が渡した speaker をそのまま thinking の from にする。
-// 固定値や route からの推測へ戻っていないことを両 lifecycle で確認する。
-func TestStreamHooksEmitThinkingFromGivenSpeaker(t *testing.T) {
+// WithStreamHooks must not expose callback deltas regardless of speaker or route.
+func TestStreamHooksDoNotEmitPublicDeltas(t *testing.T) {
 	for _, speaker := range []string{"mio", "shiro", "midori", "kuro"} {
 		t.Run(speaker, func(t *testing.T) {
 			var got []labelEvent
@@ -225,8 +222,8 @@ func TestStreamHooksEmitThinkingFromGivenSpeaker(t *testing.T) {
 				got = nil
 				streamCtx, _ := hook(context.Background(), routing.RouteCHAT, speaker, "tsk_00000000-0000-5000-8000-000000000031", "sess-1", "line", "U123", "")
 				llm.StreamCallbackFromContext(streamCtx)("tok")
-				if len(got) != 1 || got[0].Type != "agent.thinking" || got[0].From != speaker || got[0].To != "user" {
-					t.Fatalf("%s: thinking event = %#v, want from=%s to=user", name, got, speaker)
+				if len(got) != 0 {
+					t.Fatalf("%s: stream callback published durable event for %s: %#v", name, speaker, got)
 				}
 			}
 		})

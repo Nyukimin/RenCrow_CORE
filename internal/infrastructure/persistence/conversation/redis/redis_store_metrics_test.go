@@ -8,6 +8,16 @@ import (
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+func TestRedisStoreOptionsEnableContextTimeouts(t *testing.T) {
+	opts, err := redisClientOptions("redis://localhost:6379/0")
+	if err != nil {
+		t.Fatalf("redisClientOptions: %v", err)
+	}
+	if !opts.ContextTimeoutEnabled {
+		t.Fatal("Redis client does not respect operation context deadlines")
+	}
+}
+
 func newValidRedisThread() *conversation.Thread {
 	return &conversation.Thread{
 		ID:         modulecore.NewThreadID(),

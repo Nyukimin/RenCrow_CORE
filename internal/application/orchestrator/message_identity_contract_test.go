@@ -130,7 +130,9 @@ func TestProcessMessagePreservesIdentityAcrossResponseEventsAndSessionLog(t *tes
 		t.Fatalf("ingress event identity drifted: %+v", events.events[receivedIndex])
 	}
 	if string(events.events[responseIndex].MessageID) != resp.MessageID ||
-		string(events.events[responseIndex].TraceID) != resp.TraceID {
+		string(events.events[responseIndex].TraceID) != resp.TraceID ||
+		string(events.events[responseIndex].TurnID) != resp.TurnID ||
+		string(events.events[responseIndex].SessionID) != resp.SessionID {
 		t.Fatalf("response event identity drifted: response=%+v event=%+v", resp, events.events[responseIndex])
 	}
 

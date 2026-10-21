@@ -1,19 +1,29 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/idlechat"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domconv "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
+const responsePublicationMarkerTimeout = 100 * time.Millisecond
+
 type idleAwareEventListener struct {
-	hub           *viewer.EventHub
-	monitor       *viewer.MonitorStore
-	archive       *viewer.CanonicalEventLog
+	hub            *viewer.EventHub
+	monitor        *viewer.MonitorStore
+	archive        *viewer.CanonicalEventLog
+	responseMarker interface {
+		MarkConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID, time.Time) error
+	}
 	mu            sync.RWMutex
 	publicationMu sync.Mutex
 	idleChat      *idlechat.IdleChatOrchestrator
@@ -49,6 +59,19 @@ func (l *idleAwareEventListener) OnEvent(ev orchestrator.OrchestratorEvent) erro
 		l.hub.OnEvent(ev)
 	}
 	l.publicationMu.Unlock()
+	if l.responseMarker != nil && ev.Type == "agent.response" && strings.EqualFold(strings.TrimSpace(ev.To), "user") &&
+		ev.TurnID.Validate() == nil && ev.TraceID.Validate() == nil && ev.SessionID.Validate() == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), responsePublicationMarkerTimeout)
+		markErr := l.responseMarker.MarkConversationTurnResponsePublished(ctx, ev.TurnID, ev.TraceID, ev.SessionID, time.Now().UTC())
+		cancel()
+		if markErr != nil {
+			code := domconv.ConversationTurnErrorCodeOf(markErr)
+			if code == "" {
+				code = "internal"
+			}
+			log.Printf("[ConversationTurn] response publication marker pending turn_id=%s trace_id=%s error_code=%s", ev.TurnID, ev.TraceID, code)
+		}
+	}
 
 	if shouldStopIdleChatByEvent(ev) {
 		l.mu.RLock()

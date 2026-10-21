@@ -36,6 +36,22 @@ type ConversationTurnOperationIdentity struct {
 	PayloadSHA256 string
 }
 
+// PendingConversationTurnThreadFollower identifies a durable closed-thread
+// follower whose work has not completed. The response marker is evidence of
+// the exact canonical public final event, never evidence inferred from L1.
+type PendingConversationTurnThreadFollower struct {
+	TurnID            modulecore.TurnID
+	TraceID           modulecore.TraceID
+	AgentMessageID    modulecore.MessageID
+	SessionID         string
+	ClosedThreadID    modulecore.ThreadID
+	ResponsePublished bool
+}
+
+func validConversationTurnOutboxTarget(target string) bool {
+	return target == string(domconv.ConversationTurnTargetRedisProjection) || target == string(domconv.ConversationTurnTargetThreadFollowers)
+}
+
 type conversationTurnClaimOperationResult struct {
 	Outbox     *domconv.ConversationTurnOutbox `json:"outbox"`
 	LeaseToken string                          `json:"lease_token,omitempty"`
@@ -214,6 +230,7 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			agent_message_id TEXT NOT NULL CHECK(length(agent_message_id) > 0),
 			status TEXT NOT NULL CHECK(status IN ('completed', 'partial', 'failed')),
 			result_json TEXT NOT NULL CHECK(length(result_json) <= 65536),
+			response_published_at TIMESTAMP,
 			created_at TIMESTAMP NOT NULL,
 			updated_at TIMESTAMP NOT NULL,
 			CHECK (
@@ -272,10 +289,46 @@ func (s *L1SQLiteStore) applyConversationTurnSchema(ctx context.Context) error {
 			return domconv.ErrConversationTurnUnavailable
 		}
 	}
+	if err := ensureConversationTurnPublicationColumn(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return domconv.ErrConversationTurnUnavailable
+	}
 	if err := tx.Commit(); err != nil {
 		return domconv.ErrConversationTurnUnavailable
 	}
 	return nil
+}
+
+func ensureConversationTurnPublicationColumn(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(conversation_turn_receipt)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == "response_published_at" {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `ALTER TABLE conversation_turn_receipt ADD COLUMN response_published_at TIMESTAMP`)
+	return err
 }
 
 func (s *L1SQLiteStore) CommitConversationTurn(ctx context.Context, request domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error) {
@@ -429,6 +482,27 @@ func (s *L1SQLiteStore) ClaimConversationTurnOutbox(ctx context.Context, turnID 
 	return s.claimConversationTurnOutbox(ctx, turnID, now, leaseDuration)
 }
 
+// ClaimConversationTurnOutboxTarget claims only the requested follower target
+// for a single turn. Foreground EndTurn uses this to keep closed-thread work
+// out of its synchronous Redis projection path.
+func (s *L1SQLiteStore) ClaimConversationTurnOutboxTarget(ctx context.Context, turnID, target string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	turnID = strings.TrimSpace(turnID)
+	if turnID == "" || !validConversationTurnOutboxTarget(target) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, nil, target)
+}
+
+// ClaimConversationTurnOutboxTargetForOperation persists the exact target
+// claim receipt in the same transaction as its lease.
+func (s *L1SQLiteStore) ClaimConversationTurnOutboxTargetForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, turnID, target string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	turnID = strings.TrimSpace(turnID)
+	if identity.Operation != "outbox_claim" || turnID == "" || !validConversationTurnOutboxTarget(target) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, &identity, target)
+}
+
 // ClaimConversationTurnOutboxForOperation persists the caller's operation
 // receipt in the same transaction as the lease claim.
 func (s *L1SQLiteStore) ClaimConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, turnID string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
@@ -436,7 +510,7 @@ func (s *L1SQLiteStore) ClaimConversationTurnOutboxForOperation(ctx context.Cont
 	if identity.Operation != "outbox_claim" || turnID == "" {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, &identity)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, &identity, "")
 }
 
 // ClaimConversationTurnOutboxExcluding is used by the bounded foreground
@@ -446,11 +520,12 @@ func (s *L1SQLiteStore) ClaimConversationTurnOutboxExcluding(ctx context.Context
 	if turnID == "" {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, excluded, nil)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, excluded, nil, "")
 }
 
 // ClaimNextConversationTurnOutbox claims the oldest pending or stale-running
-// follower across all turns. It is the bounded startup replay primitive.
+// outbox target across all turns. Background workers use target-scoped claims
+// so Redis projection and thread followers have independent retry ownership.
 func (s *L1SQLiteStore) ClaimNextConversationTurnOutbox(ctx context.Context, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
 	return s.claimConversationTurnOutbox(ctx, "", now, leaseDuration)
 }
@@ -458,10 +533,16 @@ func (s *L1SQLiteStore) ClaimNextConversationTurnOutbox(ctx context.Context, now
 // ClaimNextConversationTurnOutboxForOperation persists the caller's
 // operation receipt in the same transaction as the selected lease.
 func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	return s.ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx, identity, "", now, leaseDuration, nil)
+}
+
+// ClaimNextConversationTurnOutboxTargetExcludingForOperation persists the
+// exact target filter and exclusions with the durable claim receipt.
+func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx context.Context, identity ConversationTurnOperationIdentity, target string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
 	if identity.Operation != "outbox_claim_next" {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
-	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, nil, &identity)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded, &identity, target)
 }
 
 // GetConversationTurnClaimOperationReceipt returns only a claim result bound
@@ -479,20 +560,40 @@ func (s *L1SQLiteStore) GetConversationTurnClaimOperationReceipt(ctx context.Con
 // The normal claim primitive still exposes retryable failed rows to later
 // calls.
 func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxExcluding(ctx context.Context, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
-	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded, nil)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded, nil, "")
+}
+
+// ClaimNextConversationTurnOutboxTargetExcluding is the bounded worker claim
+// used to keep Redis projection work separate from thread followers.
+func (s *L1SQLiteStore) ClaimNextConversationTurnOutboxTargetExcluding(ctx context.Context, target string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
+	if target != "" && !validConversationTurnOutboxTarget(target) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	return s.claimConversationTurnOutboxWithExclusions(ctx, "", now, leaseDuration, excluded, nil, target)
 }
 
 func (s *L1SQLiteStore) claimConversationTurnOutbox(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
-	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, nil)
+	return s.claimConversationTurnOutboxWithExclusions(ctx, turnID, now, leaseDuration, nil, nil, "")
 }
 
-func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}, identity *ConversationTurnOperationIdentity) (*domconv.ConversationTurnOutbox, error) {
+func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}, identity *ConversationTurnOperationIdentity, targetFilter string) (*domconv.ConversationTurnOutbox, error) {
 	if s == nil || s.db == nil {
 		return nil, domconv.ErrConversationTurnUnavailable
 	}
+	if targetFilter != "" && !validConversationTurnOutboxTarget(targetFilter) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	for key := range excluded {
+		parts := strings.SplitN(key, "\x00", 2)
+		if len(parts) != 2 || modulecore.TurnID(parts[0]).Validate() != nil || !validConversationTurnOutboxTarget(parts[1]) {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
+	}
 	if identity != nil {
 		if err := identity.validate(); err != nil || (identity.Operation == "outbox_claim" && turnID == "") ||
-			(identity.Operation == "outbox_claim_next" && turnID != "") {
+			(identity.Operation == "outbox_claim" && targetFilter != "" && !validConversationTurnOutboxTarget(targetFilter)) ||
+			(identity.Operation == "outbox_claim_next" && turnID != "") ||
+			(identity.Operation != "outbox_claim_next" && len(excluded) > 0) {
 			return nil, domconv.ErrConversationTurnInvalid
 		}
 	}
@@ -534,6 +635,10 @@ func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Co
 		where += "turn_id = ? AND "
 		args = append(args, turnID)
 	}
+	if targetFilter != "" {
+		where += "target = ? AND "
+		args = append(args, targetFilter)
+	}
 	if len(excluded) > 0 {
 		keys := make([]string, 0, len(excluded))
 		for key := range excluded {
@@ -554,7 +659,10 @@ func (s *L1SQLiteStore) claimConversationTurnOutboxWithExclusions(ctx context.Co
 		}
 		where += ") AND "
 	}
-	where += `(
+	where += `(target <> 'thread_followers' OR EXISTS (
+		SELECT 1 FROM conversation_turn_receipt r
+		WHERE r.turn_id = conversation_turn_outbox.turn_id AND r.response_published_at IS NOT NULL
+	)) AND (
 	status = 'pending' OR
 	(status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? AND attempts < ?) OR
 	(status = 'failed' AND attempts < ?)
@@ -593,7 +701,10 @@ WHERE turn_id = ? AND target = ? AND (
 	status = 'pending' OR
 	(status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? AND attempts < ?) OR
 	(status = 'failed' AND attempts < ?)
-	)`, domconv.ConversationTurnOutboxRunning, leaseToken, expires, now, outbox.TurnID, outbox.Target, now, domconv.ConversationTurnMaxOutboxAttempts, domconv.ConversationTurnMaxOutboxAttempts)
+	) AND (target <> 'thread_followers' OR EXISTS (
+		SELECT 1 FROM conversation_turn_receipt r
+		WHERE r.turn_id = conversation_turn_outbox.turn_id AND r.response_published_at IS NOT NULL
+	))`, domconv.ConversationTurnOutboxRunning, leaseToken, expires, now, outbox.TurnID, outbox.Target, now, domconv.ConversationTurnMaxOutboxAttempts, domconv.ConversationTurnMaxOutboxAttempts)
 	if err != nil {
 		return rollback(domconv.ConversationTurnErrorInternal)
 	}
@@ -620,8 +731,8 @@ WHERE turn_id = ? AND target = ? AND (
 
 // terminalizeExhaustedConversationTurnOutbox closes stale leases that have
 // already consumed the bounded retry budget. A worker crash must not make an
-// attempts==Max row claimable forever, and the turn receipt must reach the
-// same terminal failed state as an explicit follower failure.
+// attempts==Max row claimable forever. The durable turn receipt remains
+// partial because its L1 transaction committed; only follower delivery ended.
 func terminalizeExhaustedConversationTurnOutbox(ctx context.Context, tx *sql.Tx, now time.Time, turnID string) error {
 	query := `
 SELECT turn_id, target, last_error
@@ -860,6 +971,176 @@ FROM conversation_turn_receipt WHERE turn_id = ?`, turnID).Scan(&traceID, &rootT
 		return domconv.ConversationTurnResult{}, err
 	}
 	return result, nil
+}
+
+// MarkConversationTurnResponsePublished records the canonical-publication
+// boundary for the exact turn/trace/session tuple. Calls that do not correspond to
+// a closed-thread follower are harmless no-ops because many public responses
+// have no deferred thread work.
+func (s *L1SQLiteStore) MarkConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID, at time.Time) error {
+	if turnID.Validate() != nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return domconv.ErrConversationTurnInvalid
+	}
+	if s == nil || s.db == nil {
+		return domconv.ErrConversationTurnUnavailable
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	at = at.UTC()
+	_, err := s.db.ExecContext(ctx, `
+UPDATE conversation_turn_receipt
+SET response_published_at = COALESCE(response_published_at, ?), updated_at = ?
+WHERE turn_id = ? AND trace_id = ? AND session_id = ?
+	AND EXISTS (
+		SELECT 1 FROM conversation_turn_outbox o
+		WHERE o.turn_id = conversation_turn_receipt.turn_id
+			AND o.target = 'thread_followers' AND o.closed_thread_id <> ''
+	)`, at, at, string(turnID), string(traceID), string(sessionID))
+	if err != nil {
+		return domconv.ErrConversationTurnInternal
+	}
+	return nil
+}
+
+// IsConversationTurnResponsePublished reads the exact durable marker used to
+// reconcile an uncertain storage-host response_published call.
+func (s *L1SQLiteStore) IsConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID) (bool, error) {
+	if turnID.Validate() != nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return false, domconv.ErrConversationTurnInvalid
+	}
+	if s == nil || s.db == nil {
+		return false, domconv.ErrConversationTurnUnavailable
+	}
+	var published int
+	err := s.db.QueryRowContext(ctx, `
+SELECT EXISTS (
+	SELECT 1 FROM conversation_turn_receipt r
+	JOIN conversation_turn_outbox o ON o.turn_id = r.turn_id
+	WHERE r.turn_id = ? AND r.trace_id = ? AND r.session_id = ?
+		AND r.response_published_at IS NOT NULL
+		AND o.target = 'thread_followers' AND o.closed_thread_id <> ''
+	)`, string(turnID), string(traceID), string(sessionID)).Scan(&published)
+	if err != nil {
+		return false, domconv.ErrConversationTurnInternal
+	}
+	return published == 1, nil
+}
+
+// ListPendingConversationTurnThreadFollowers returns a bounded deterministic
+// set for Recall and crash-window reconciliation. Completed followers are
+// excluded; the response marker remains visible for retries and restart.
+func (s *L1SQLiteStore) ListPendingConversationTurnThreadFollowers(ctx context.Context, sessionID string, limit int) ([]PendingConversationTurnThreadFollower, error) {
+	if s == nil || s.db == nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID != "" && modulecore.SessionID(sessionID).Validate() != nil {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	query := `
+SELECT r.turn_id, r.trace_id, r.agent_message_id, r.session_id, r.closed_thread_id,
+	CASE WHEN r.response_published_at IS NULL THEN 0 ELSE 1 END
+FROM conversation_turn_receipt r
+JOIN conversation_turn_outbox o ON o.turn_id = r.turn_id
+WHERE o.target = 'thread_followers' AND o.status <> 'completed' AND r.closed_thread_id <> ''`
+	args := make([]interface{}, 0, 2)
+	if sessionID != "" {
+		query += ` AND r.session_id = ?`
+		args = append(args, sessionID)
+	}
+	query += ` ORDER BY r.closed_thread_seq DESC, r.turn_id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, domconv.ErrConversationTurnInternal
+	}
+	defer rows.Close()
+	items := make([]PendingConversationTurnThreadFollower, 0, limit)
+	for rows.Next() {
+		var item PendingConversationTurnThreadFollower
+		var published int
+		if err := rows.Scan(&item.TurnID, &item.TraceID, &item.AgentMessageID, &item.SessionID, &item.ClosedThreadID, &published); err != nil {
+			return nil, domconv.ErrConversationTurnInternal
+		}
+		if item.TurnID.Validate() != nil || item.TraceID.Validate() != nil || item.AgentMessageID.Validate() != nil ||
+			modulecore.SessionID(item.SessionID).Validate() != nil || item.ClosedThreadID.Validate() != nil || (published != 0 && published != 1) {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
+		item.ResponsePublished = published == 1
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, domconv.ErrConversationTurnInternal
+	}
+	return items, nil
+}
+
+// HasConversationTurnReceiptsForSession reports whether a session contains
+// any canonical turn receipt, regardless of follower completion status.
+func (s *L1SQLiteStore) HasConversationTurnReceiptsForSession(ctx context.Context, sessionID string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, domconv.ErrConversationTurnUnavailable
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" || modulecore.SessionID(sessionID).Validate() != nil {
+		return false, domconv.ErrConversationTurnInvalid
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_turn_receipt WHERE session_id = ?)`, sessionID).Scan(&exists); err != nil {
+		return false, domconv.ErrConversationTurnInternal
+	}
+	if exists != 0 && exists != 1 {
+		return false, domconv.ErrConversationTurnInvalid
+	}
+	return exists == 1, nil
+}
+
+// ListUnpublishedConversationTurnThreadFollowersAfter returns one bounded
+// keyset page of receipts that still need exact EventStore reconciliation.
+// Published receipts are excluded so they cannot occupy every recovery page.
+func (s *L1SQLiteStore) ListUnpublishedConversationTurnThreadFollowersAfter(ctx context.Context, afterTurnID string, limit int) ([]PendingConversationTurnThreadFollower, error) {
+	if s == nil || s.db == nil {
+		return nil, domconv.ErrConversationTurnUnavailable
+	}
+	afterTurnID = strings.TrimSpace(afterTurnID)
+	if afterTurnID != "" && modulecore.TurnID(afterTurnID).Validate() != nil {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	if limit <= 0 || limit > 100 {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT r.turn_id, r.trace_id, r.agent_message_id, r.session_id, r.closed_thread_id, 0
+FROM conversation_turn_receipt r
+JOIN conversation_turn_outbox o ON o.turn_id = r.turn_id
+WHERE o.target = 'thread_followers' AND o.status <> 'completed' AND r.closed_thread_id <> ''
+	AND r.response_published_at IS NULL AND r.turn_id > ?
+ORDER BY r.turn_id ASC LIMIT ?`, afterTurnID, limit)
+	if err != nil {
+		return nil, domconv.ErrConversationTurnInternal
+	}
+	defer rows.Close()
+	items := make([]PendingConversationTurnThreadFollower, 0, limit)
+	for rows.Next() {
+		var item PendingConversationTurnThreadFollower
+		var published int
+		if err := rows.Scan(&item.TurnID, &item.TraceID, &item.AgentMessageID, &item.SessionID, &item.ClosedThreadID, &published); err != nil {
+			return nil, domconv.ErrConversationTurnInternal
+		}
+		if item.TurnID.Validate() != nil || item.TraceID.Validate() != nil || item.AgentMessageID.Validate() != nil ||
+			modulecore.SessionID(item.SessionID).Validate() != nil || item.ClosedThreadID.Validate() != nil || published != 0 {
+			return nil, domconv.ErrConversationTurnInvalid
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, domconv.ErrConversationTurnInternal
+	}
+	return items, nil
 }
 
 func validateConversationTurnResultIdentity(result domconv.ConversationTurnResult, turnID modulecore.TurnID, traceID modulecore.TraceID, rootTaskID modulecore.TaskID, userMessageID modulecore.MessageID, agentMessageID modulecore.MessageID, threadID modulecore.ThreadID, threadSeq modulecore.ThreadSeq, threadKind modulecore.ThreadKind, closedID modulecore.ThreadID, closedSeq modulecore.ThreadSeq, closedKind modulecore.ThreadKind) error {
@@ -1337,7 +1618,7 @@ func recomputeConversationTurnReceipt(ctx context.Context, tx *sql.Tx, turnID st
 	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
 		return domconv.ConversationTurnResult{}, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT target, status, attempts, last_error FROM conversation_turn_outbox WHERE turn_id = ? ORDER BY target ASC`, turnID)
+	rows, err := tx.QueryContext(ctx, `SELECT target, status, last_error FROM conversation_turn_outbox WHERE turn_id = ? ORDER BY target ASC`, turnID)
 	if err != nil {
 		return domconv.ConversationTurnResult{}, err
 	}
@@ -1345,11 +1626,9 @@ func recomputeConversationTurnReceipt(ctx context.Context, tx *sql.Tx, turnID st
 	result.PendingTargets = nil
 	result.CompletedTargets = nil
 	allCompleted := true
-	terminalFailure := false
 	for rows.Next() {
 		var target, status, lastError string
-		var attempts int
-		if err := rows.Scan(&target, &status, &attempts, &lastError); err != nil {
+		if err := rows.Scan(&target, &status, &lastError); err != nil {
 			return domconv.ConversationTurnResult{}, err
 		}
 		if status == string(domconv.ConversationTurnOutboxCompleted) {
@@ -1360,20 +1639,12 @@ func recomputeConversationTurnReceipt(ctx context.Context, tx *sql.Tx, turnID st
 			if lastError != "" {
 				result.ErrorCode = domconv.ConversationTurnErrorCode(lastError)
 			}
-			if status == string(domconv.ConversationTurnOutboxFailed) && attempts >= domconv.ConversationTurnMaxOutboxAttempts {
-				terminalFailure = true
-			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return domconv.ConversationTurnResult{}, err
 	}
-	if terminalFailure {
-		result.Status = domconv.ConversationTurnFailed
-		if !validConversationTurnErrorCode(result.ErrorCode) {
-			result.ErrorCode = domconv.ConversationTurnErrorInternal
-		}
-	} else if allCompleted {
+	if allCompleted {
 		result.Status = domconv.ConversationTurnCompleted
 		result.ErrorCode = ""
 	} else {

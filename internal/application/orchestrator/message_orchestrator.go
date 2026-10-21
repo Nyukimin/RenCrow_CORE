@@ -493,12 +493,15 @@ func (o *MessageOrchestrator) ttsEnabled() bool {
 
 // ProcessMessage はメッセージを処理
 func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMessageRequest) (resp ProcessMessageResponse, err error) {
+	turntiming.Mark(ctx, turntiming.PointProcessStarted)
 	latencyStartedAt := time.Now()
 	ctx = contextWithLatencyTrace(ctx, latencyStartedAt)
 	if err := ensureProcessRequestIdentity(&req); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointProcessSessionStarted)
 	sess, req, err := o.sessions.ResolveForRequest(ctx, req, latencyStartedAt.UTC())
+	turntiming.Mark(ctx, turntiming.PointProcessSessionEnded)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -531,7 +534,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		defer o.events.ReleaseTiming(traceID)
 	}
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.message")
-	o.events.BindTrace(rootTaskID.String(), modulecore.TraceID(req.TraceID))
+	o.events.BindConversationIdentity(rootTaskID.String(), modulecore.TurnID(req.TurnID), modulecore.TraceID(req.TraceID), modulecore.SessionID(req.SessionID))
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
 		o.events.ReleaseTrace(rootTaskID.String())
@@ -585,16 +588,21 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, fmt.Errorf("canonical run resume requires configured task lifecycle")
 	}
 	if o.taskLifecycle != nil {
+		turntiming.Mark(ctx, turntiming.PointRootTaskPreparationStarted)
 		if req.CanonicalRunID != "" {
 			attached, attachErr := o.taskLifecycle.attachExisting(ctx, req)
+			turntiming.Mark(ctx, turntiming.PointRootTaskPreparationEnded)
 			if attachErr != nil {
 				return ProcessMessageResponse{}, attachErr
 			}
 			attachedTask = &attached
 		} else {
-			if _, err := o.taskLifecycle.createRootForAssignee(ctx, req, rootAssignee); err != nil {
-				return ProcessMessageResponse{}, err
+			if _, createErr := o.taskLifecycle.createRootForAssignee(ctx, req, rootAssignee); createErr != nil {
+				turntiming.Mark(ctx, turntiming.PointRootTaskPreparationEnded)
+				return ProcessMessageResponse{}, createErr
 			}
+			turntiming.Mark(ctx, turntiming.PointRootTaskCreated)
+			turntiming.Mark(ctx, turntiming.PointRootTaskPreparationEnded)
 		}
 		lifecycleCreated = true
 	}
@@ -615,23 +623,43 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	log.Printf("[MessageOrch] ProcessMessage START: taskID=%s traceID=%s messageID=%s sessionID=%s channel=%s chatID=%s message=%q",
 		taskID.String(), req.TraceID, req.MessageID, req.SessionID, req.Channel, req.ChatID, req.UserMessage)
+	turntiming.Mark(ctx, turntiming.PointInitialEventsStarted)
 	if err := o.events.EmitMessageReceived(req, taskID.String()); err != nil {
+		turntiming.Mark(ctx, turntiming.PointInitialEventsEnded)
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointMessageReceivedEventPublished)
 
 	endChatBusy := o.idleBusyGuards.BeginChat()
 	defer endChatBusy()
 
 	emitLatencyMetric(o.events.Emit, "network", "server_received", latencyStartedAt, "", taskID.String(), req.SessionID, req.Channel, req.ChatID, "")
 	if err := o.events.PublicationError(traceID); err != nil {
+		turntiming.Mark(ctx, turntiming.PointInitialEventsEnded)
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointServerReceivedMetricPublished)
 	writeUserSessionTurn(o.sessionTurnLogger, req)
+	turntiming.Mark(ctx, turntiming.PointSessionTurnLogAttemptEnded)
+	turntiming.Mark(ctx, turntiming.PointInitialEventsEnded)
+	turntiming.Mark(ctx, turntiming.PointPersonaObservationStarted)
 	if err := o.recordPersonaRuntimeObservation(ctx, req); err != nil {
+		turntiming.Mark(ctx, turntiming.PointPersonaObservationEnded)
 		return ProcessMessageResponse{}, err
+	}
+	turntiming.Mark(ctx, turntiming.PointPersonaObservationEnded)
+	turntiming.Mark(ctx, turntiming.PointPreRouteChecksStarted)
+	preRouteChecksEnded := false
+	endPreRouteChecks := func() {
+		if preRouteChecksEnded {
+			return
+		}
+		turntiming.Mark(ctx, turntiming.PointPreRouteChecksEnded)
+		preRouteChecksEnded = true
 	}
 	commandResp, commandHandled, commandErr := o.preRoutingCommands.Handle(ctx, req)
 	if commandHandled {
+		endPreRouteChecks()
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=pre-routing command"); err != nil {
 			return ProcessMessageResponse{}, err
 		}
@@ -647,9 +675,11 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return resp, nil
 	}
 	if commandErr != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, commandErr
 	}
 	if expandedReq, handled, err := o.expandRegisteredSlashCommand(ctx, req); err != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, err
 	} else if handled {
 		req = expandedReq
@@ -657,20 +687,25 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if o.visionRequests != nil {
 		processed, err := o.visionRequests.Process(ctx, req, o.events.Emit)
 		if err != nil {
+			endPreRouteChecks()
 			return ProcessMessageResponse{}, err
 		}
 		req = processed
 		if err := o.events.PublicationError(traceID); err != nil {
+			endPreRouteChecks()
 			return ProcessMessageResponse{}, err
 		}
 	}
 
 	input, taskID, ttsSessionID, err := o.turnInputs.BuildWithTaskID(req, taskID)
 	if err != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointTurnInputBuilt)
 	dailyBriefRequested := isDailyNewsBriefRequest(req.UserMessage)
 	if dailyBriefRequested {
+		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=daily news brief intent"); err != nil {
 			return ProcessMessageResponse{}, err
@@ -693,8 +728,10 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	}
 	if resp, handled, err := o.handleDailyNewsBrief(ctx, req, sess, input, rootTaskID, ttsSessionID, activateDailyShiro); err != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		endPreRouteChecks()
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
@@ -704,6 +741,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	explicitDCI := shouldHandleExplicitDCI(o.dciSearcher, req.UserMessage)
 	if explicitDCI {
+		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteRESEARCH, taskLifecycleShiro, "confidence 100% evidence=explicit DCI trigger"); err != nil {
 			return ProcessMessageResponse{}, err
@@ -713,8 +751,10 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		turntiming.Mark(ctx, turntiming.PointDispatchStarted)
 	}
 	if resp, handled, err := o.handleExplicitDCI(ctx, req, sess, input.WithRoute(routing.RouteRESEARCH), taskID, explicitDCI); err != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, err
 	} else if handled {
+		endPreRouteChecks()
 		if err := o.events.PublicationError(traceID); err != nil {
 			return ProcessMessageResponse{}, err
 		}
@@ -724,6 +764,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	durableResult, durableHandled, durableErr := evaluateDurableStore(ctx, o.durableStoreWorkflow, req)
 	if durableHandled {
+		endPreRouteChecks()
 		turntiming.Mark(ctx, turntiming.PointRouteDecided)
 		if _, err := activateConfiguredTask(routing.RouteCHAT, taskLifecycleMio, "confidence 100% evidence=durable store workflow"); err != nil {
 			return ProcessMessageResponse{}, err
@@ -744,13 +785,18 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return resp, nil
 	}
 	if durableErr != nil {
+		endPreRouteChecks()
 		return ProcessMessageResponse{}, durableErr
 	}
+	endPreRouteChecks()
 
-	decision, err := o.routeDecisions.Decide(ctx, input, req, taskID)
+	combinedChatAllowed := o.routeDispatcher != nil && !o.routeDispatcher.speechPlanEnabled
+	turntiming.Mark(ctx, turntiming.PointRouteDecisionStarted)
+	routeResult, err := o.routeDecisions.DecideWithChatDraft(ctx, input, req, taskID, combinedChatAllowed)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	decision := routeResult.Decision
 	turntiming.Mark(ctx, turntiming.PointRouteDecided)
 	actor, err := actualCoreActorForRequest(decision.Route, req)
 	if err != nil {
@@ -759,7 +805,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if directViewerExecutionActor(req, decision.Route, actor) {
 		ctx = withOrchestrationLLMInitiator(ctx, actor)
 	}
+	turntiming.Mark(ctx, turntiming.PointTaskActivationStarted)
 	preparedTaskID, err := taskActivation.Activate(ctx, decision.Route, actor, fmt.Sprintf("confidence %.0f%% evidence=%s", decision.Confidence*100, routeDecisionEvidenceSummary(decision.Evidence)))
+	turntiming.Mark(ctx, turntiming.PointTaskActivationEnded)
 	rejectAttachedMismatch(err)
 	if preparedTaskID != "" {
 		executionTaskID = preparedTaskID
@@ -769,7 +817,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointLeadRunResolutionStarted)
 	leadRunID, err := resolveLeadAgentRun(ctx, o.taskLifecycle, taskID, o.superAgentRuns, o.superAgentRunController)
+	turntiming.Mark(ctx, turntiming.PointLeadRunResolutionEnded)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -777,22 +827,45 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointRouteMetricPublished)
 
 	input = input.WithRoute(decision.Route)
-	if err := o.recordRouteSkillBootstrap(ctx, req, decision.Route); err != nil {
+	turntiming.Mark(ctx, turntiming.PointSkillBootstrapStarted)
+	err = o.recordRouteSkillBootstrap(ctx, req, decision.Route)
+	turntiming.Mark(ctx, turntiming.PointSkillBootstrapEnded)
+	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
-	if !o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID) {
+	if ttsSessionID != "" {
+		turntiming.Mark(ctx, turntiming.PointTTSSessionSetupStarted)
+	}
+	ttsSessionStarted := o.ttsLifecycle.StartSessionForRoute(ctx, req, taskID, decision, ttsSessionID)
+	if ttsSessionID != "" {
+		turntiming.Mark(ctx, turntiming.PointTTSSessionSetupEnded)
+	}
+	ttsSessionEnded := false
+	if !ttsSessionStarted {
 		// A TTS session that did not start (unresolved speaker or start failure)
 		// receives nothing: the bridge would otherwise open one with its default voice.
 		ttsSessionID = ""
+	} else {
+		defer func() {
+			if ttsSessionEnded {
+				return
+			}
+			endCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			o.ttsLifecycle.EndSession(endCtx, ttsSessionID)
+		}()
 	}
 
 	endWorkerBusy := o.idleBusyGuards.BeginWorker(decision.Route)
 	defer endWorkerBusy()
 
 	leadRunInput := leadAgentRunInputFromRequest(req)
+	turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceStarted)
 	runStartedAt, err := RecordLeadAgentRunStarted(ctx, o.superAgentRuns, leadRunInput, taskID, leadRunID, actor, decision.Route)
+	turntiming.Mark(ctx, turntiming.PointLeadRunPersistenceEnded)
 	if err != nil {
 		return ProcessMessageResponse{}, err
 	}
@@ -803,6 +876,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	}
 	if leadRunID != "" {
 		ctx = appsubagent.WithSuperAgentRuntime(ctx, taskID, leadRunID, actor, runStartedAt.TraceID, runStartedAt.StartedEventID, []string{"session:" + req.SessionID, "route:" + string(decision.Route)}, nil, "return summary-only subagent result to Lead Agent")
+		turntiming.Mark(ctx, turntiming.PointLeadRunContextReady)
 	}
 
 	// 4. ルートに応じて実行
@@ -810,8 +884,9 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 	if err := o.events.PublicationError(traceID); err != nil {
 		return ProcessMessageResponse{}, err
 	}
+	turntiming.Mark(ctx, turntiming.PointDispatchMetricPublished)
 	turntiming.Mark(ctx, turntiming.PointDispatchStarted)
-	response, err := o.routeDispatcher.ExecuteTurnInput(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID)
+	response, err := o.routeDispatcher.ExecuteTurnInputWithChatDraft(ctx, input, decision.Route, taskID, leadRunID, ttsSessionID, routeResult.ChatDraft)
 	if publicationErr := o.events.PublicationError(traceID); publicationErr != nil {
 		if err != nil {
 			return ProcessMessageResponse{}, errors.Join(err, publicationErr)
@@ -831,7 +906,7 @@ func (o *MessageOrchestrator) ProcessMessage(ctx context.Context, req ProcessMes
 		return ProcessMessageResponse{}, err
 	}
 	o.ttsLifecycle.EndSession(ctx, ttsSessionID)
-
+	ttsSessionEnded = true
 	var verificationReport *domainverification.VerificationReport
 	if o.verifier != nil {
 		verification, err := o.verifier.VerifyResponse(ctx, appverification.Request{

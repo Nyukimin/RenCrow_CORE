@@ -11,29 +11,84 @@ import (
 type Point string
 
 const (
-	PointHandlerReceived            Point = "handler_received"
-	PointAccepted                   Point = "accepted"
-	PointAsyncStart                 Point = "async_start"
-	PointRouteDecided               Point = "route_decided"
-	PointDispatchStarted            Point = "dispatch_started"
-	PointBeginTurnStarted           Point = "begin_turn_started"
-	PointBeginTurnEnded             Point = "begin_turn_ended"
-	PointUserMemoryStarted          Point = "user_memory_started"
-	PointUserMemoryEnded            Point = "user_memory_ended"
-	PointRecallStarted              Point = "recall_started"
-	PointRecallEnded                Point = "recall_ended"
-	PointCategoryStarted            Point = "category_started"
-	PointCategoryEnded              Point = "category_ended"
-	PointPromptPreparationStarted   Point = "prompt_preparation_started"
-	PointPromptPreparationEnded     Point = "prompt_preparation_ended"
-	PointGenerationProviderStart    Point = "generation_provider_started"
-	PointGenerationProviderEnd      Point = "generation_provider_ended"
-	PointGatewayRequestStarted      Point = "gateway_request_started"
-	PointGatewayResponseHeaders     Point = "gateway_response_headers"
-	PointFirstTextCallback          Point = "first_text_callback"
-	PointConversationCommitStarted  Point = "conversation_commit_started"
-	PointConversationCommitEnded    Point = "conversation_commit_ended"
-	PointResponsePublicationStarted Point = "response_publication_started"
+	PointHandlerReceived               Point = "handler_received"
+	PointRequestParsed                 Point = "request_parsed"
+	PointHandlerValidationEnded        Point = "handler_validation_ended"
+	PointHandlerSessionStarted         Point = "handler_session_started"
+	PointHandlerSessionEnded           Point = "handler_session_ended"
+	PointAccepted                      Point = "accepted"
+	PointAsyncStart                    Point = "async_start"
+	PointProcessStarted                Point = "process_started"
+	PointProcessSessionStarted         Point = "process_session_started"
+	PointProcessSessionEnded           Point = "process_session_ended"
+	PointRootTaskPreparationStarted    Point = "root_task_preparation_started"
+	PointRootTaskPreparationEnded      Point = "root_task_preparation_ended"
+	PointRootTaskCreated               Point = "root_task_created"
+	PointInitialEventsStarted          Point = "initial_events_started"
+	PointInitialEventsEnded            Point = "initial_events_ended"
+	PointMessageReceivedEventPublished Point = "message_received_event_published"
+	PointServerReceivedMetricPublished Point = "server_received_metric_published"
+	PointSessionTurnLogAttemptEnded    Point = "session_turn_log_attempt_ended"
+	PointPersonaObservationStarted     Point = "persona_observation_started"
+	PointPersonaObservationEnded       Point = "persona_observation_ended"
+	PointPreRouteChecksStarted         Point = "pre_route_checks_started"
+	PointPreRouteChecksEnded           Point = "pre_route_checks_ended"
+	PointTurnInputBuilt                Point = "turn_input_built"
+	PointRouteDecisionStarted          Point = "route_decision_started"
+	PointRouteDecided                  Point = "route_decided"
+	PointClassificationStarted         Point = "classification_started"
+	PointClassificationEnded           Point = "classification_ended"
+	PointTaskActivationStarted         Point = "task_activation_started"
+	PointTaskActivationEnded           Point = "task_activation_ended"
+	PointTaskRoutingEventPublished     Point = "task_routing_event_published"
+	PointTaskExecutionPrepared         Point = "task_execution_prepared"
+	PointTaskAssignmentEventPublished  Point = "task_assignment_event_published"
+	PointTaskAssignmentRecorded        Point = "task_assignment_recorded"
+	PointTaskRootRunStarted            Point = "task_root_run_started"
+	PointTaskExecutionRunStarted       Point = "task_execution_run_started"
+	PointTaskIdentityBound             Point = "task_identity_bound"
+	PointLeadRunResolutionStarted      Point = "lead_run_resolution_started"
+	PointLeadRunResolutionEnded        Point = "lead_run_resolution_ended"
+	PointRouteMetricPublished          Point = "route_metric_published"
+	PointSkillBootstrapStarted         Point = "skill_bootstrap_started"
+	PointSkillBootstrapEnded           Point = "skill_bootstrap_ended"
+	PointTTSSessionSetupStarted        Point = "tts_session_setup_started"
+	PointTTSSessionSetupEnded          Point = "tts_session_setup_ended"
+	PointLeadRunPersistenceStarted     Point = "lead_run_persistence_started"
+	PointLeadRunPersistenceEnded       Point = "lead_run_persistence_ended"
+	PointLeadAgentRunSaved             Point = "lead_agent_run_saved"
+	PointLeadAgentStartEventAppended   Point = "lead_agent_start_event_appended"
+	PointLeadContextPackSaved          Point = "lead_context_pack_saved"
+	PointLeadRunContextReady           Point = "lead_run_context_ready"
+	PointDispatchMetricPublished       Point = "dispatch_metric_published"
+	PointDispatchStarted               Point = "dispatch_started"
+	PointAgentStartPublicationStarted  Point = "agent_start_publication_started"
+	PointAgentStartPublicationEnded    Point = "agent_start_publication_ended"
+	PointAgentInvocationStarted        Point = "agent_invocation_started"
+	PointBeginTurnStarted              Point = "begin_turn_started"
+	PointBeginTurnEnded                Point = "begin_turn_ended"
+	PointUserMemoryStarted             Point = "user_memory_started"
+	PointUserMemoryEnded               Point = "user_memory_ended"
+	PointRecallStarted                 Point = "recall_started"
+	PointRecallEnded                   Point = "recall_ended"
+	PointRecallProjectionStarted       Point = "recall_projection_started"
+	PointRecallProjectionEnded         Point = "recall_projection_ended"
+	PointActiveDomainStarted           Point = "active_domain_started"
+	PointActiveDomainEnded             Point = "active_domain_ended"
+	PointCategoryStarted               Point = "category_started"
+	PointCategoryEnded                 Point = "category_ended"
+	PointPromptPreparationStarted      Point = "prompt_preparation_started"
+	PointPromptAssemblyStarted         Point = "prompt_assembly_started"
+	PointPromptPreparationEnded        Point = "prompt_preparation_ended"
+	PointGenerationRequestReady        Point = "generation_request_ready"
+	PointGenerationProviderStart       Point = "generation_provider_started"
+	PointGenerationProviderEnd         Point = "generation_provider_ended"
+	PointGatewayRequestStarted         Point = "gateway_request_started"
+	PointGatewayResponseHeaders        Point = "gateway_response_headers"
+	PointFirstTextCallback             Point = "first_text_callback"
+	PointConversationCommitStarted     Point = "conversation_commit_started"
+	PointConversationCommitEnded       Point = "conversation_commit_ended"
+	PointResponsePublicationStarted    Point = "response_publication_started"
 )
 
 const SchemaVersion = 1
@@ -147,15 +202,35 @@ func (r *Recorder) Snapshot() Snapshot {
 
 func knownPoint(point Point) bool {
 	switch point {
-	case PointHandlerReceived, PointAccepted, PointAsyncStart, PointRouteDecided,
-		PointDispatchStarted, PointBeginTurnStarted, PointBeginTurnEnded,
-		PointUserMemoryStarted, PointUserMemoryEnded, PointRecallStarted,
-		PointRecallEnded, PointCategoryStarted, PointCategoryEnded,
-		PointPromptPreparationStarted, PointPromptPreparationEnded,
-		PointGenerationProviderStart, PointGenerationProviderEnd,
-		PointGatewayRequestStarted, PointGatewayResponseHeaders,
-		PointFirstTextCallback, PointConversationCommitStarted, PointConversationCommitEnded,
-		PointResponsePublicationStarted:
+	case PointHandlerReceived, PointRequestParsed, PointHandlerValidationEnded,
+		PointHandlerSessionStarted, PointHandlerSessionEnded, PointAccepted, PointAsyncStart,
+		PointProcessStarted, PointProcessSessionStarted, PointProcessSessionEnded,
+		PointRootTaskPreparationStarted, PointRootTaskPreparationEnded, PointRootTaskCreated,
+		PointInitialEventsStarted, PointInitialEventsEnded,
+		PointMessageReceivedEventPublished, PointServerReceivedMetricPublished, PointSessionTurnLogAttemptEnded,
+		PointPersonaObservationStarted, PointPersonaObservationEnded,
+		PointPreRouteChecksStarted, PointPreRouteChecksEnded, PointTurnInputBuilt,
+		PointRouteDecisionStarted, PointRouteDecided, PointClassificationStarted, PointClassificationEnded,
+		PointTaskActivationStarted, PointTaskActivationEnded,
+		PointTaskRoutingEventPublished, PointTaskExecutionPrepared,
+		PointTaskAssignmentEventPublished, PointTaskAssignmentRecorded,
+		PointTaskRootRunStarted, PointTaskExecutionRunStarted, PointTaskIdentityBound,
+		PointLeadRunResolutionStarted, PointLeadRunResolutionEnded,
+		PointRouteMetricPublished, PointSkillBootstrapStarted, PointSkillBootstrapEnded,
+		PointTTSSessionSetupStarted, PointTTSSessionSetupEnded,
+		PointLeadRunPersistenceStarted, PointLeadRunPersistenceEnded,
+		PointLeadAgentRunSaved, PointLeadAgentStartEventAppended, PointLeadContextPackSaved,
+		PointLeadRunContextReady, PointDispatchMetricPublished, PointDispatchStarted,
+		PointAgentStartPublicationStarted, PointAgentStartPublicationEnded, PointAgentInvocationStarted,
+		PointBeginTurnStarted, PointBeginTurnEnded,
+		PointUserMemoryStarted, PointUserMemoryEnded, PointRecallStarted, PointRecallEnded,
+		PointRecallProjectionStarted, PointRecallProjectionEnded,
+		PointActiveDomainStarted, PointActiveDomainEnded,
+		PointCategoryStarted, PointCategoryEnded,
+		PointPromptPreparationStarted, PointPromptAssemblyStarted, PointPromptPreparationEnded,
+		PointGenerationRequestReady, PointGenerationProviderStart, PointGenerationProviderEnd,
+		PointGatewayRequestStarted, PointGatewayResponseHeaders, PointFirstTextCallback,
+		PointConversationCommitStarted, PointConversationCommitEnded, PointResponsePublicationStarted:
 		return true
 	default:
 		return false

@@ -103,6 +103,10 @@ func cmdRun() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
+	classifierTestConfig, err := loadRuntimeClassifierTestConfig()
+	if err != nil {
+		log.Fatalf("Failed to load routing classifier test config: %v", err)
+	}
 
 	log.Printf("RenCrow %s (commit: %s, built: %s)", Version, Commit, BuildDate)
 	log.Printf("Loaded config from: %s", configPath)
@@ -111,7 +115,7 @@ func cmdRun() {
 	llmGatewayStatus := ensureLLMGateway(cfg)
 	logStartupPhase("llm_gateway", llmGatewayStartedAt)
 	dependenciesStartedAt := time.Now()
-	dependencies := buildDependencies(cfg)
+	dependencies := buildDependenciesWithClassifierTestConfig(cfg, classifierTestConfig)
 	logStartupPhase("dependencies_total", dependenciesStartedAt)
 	dependencies.llmGatewayProcess = llmGatewayStatus.Process
 

@@ -52,6 +52,29 @@ func TestRecorderSnapshotIsBoundedAndUsesMonotonicOffsets(t *testing.T) {
 	}
 }
 
+func TestRecorderAcceptsRequestedHotspotPoints(t *testing.T) {
+	recorder := New(time.Now())
+	requested := []Point{
+		"classification_started",
+		"classification_ended",
+		"message_received_event_published",
+		"server_received_metric_published",
+		"session_turn_log_attempt_ended",
+		"lead_agent_run_saved",
+		"lead_agent_start_event_appended",
+		"lead_context_pack_saved",
+	}
+	for _, point := range requested {
+		recorder.Mark(point)
+	}
+	points := recorder.Snapshot().PointsMS
+	for _, point := range requested {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("approved hotspot point %q was discarded: %#v", point, points)
+		}
+	}
+}
+
 func TestGatewayTimingRequiresBodyGenerationContextAndIsFirstWins(t *testing.T) {
 	recorder := New(time.Now())
 	ctx := WithRecorder(context.Background(), recorder)
@@ -77,5 +100,30 @@ func TestGatewayTimingRequiresBodyGenerationContextAndIsFirstWins(t *testing.T) 
 	second := recorder.Snapshot().PointsMS
 	if second[string(PointGatewayRequestStarted)] != requestStarted || second[string(PointGatewayResponseHeaders)] != responseHeaders {
 		t.Fatalf("gateway points were replaced by later request: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestRecorderAcceptsOrchestrationPreparationPoints(t *testing.T) {
+	recorder := New(time.Now())
+	want := []Point{
+		PointRootTaskCreated,
+		PointRouteDecisionStarted,
+		PointTaskActivationStarted,
+		PointTaskActivationEnded,
+		PointLeadRunPersistenceStarted,
+		PointLeadRunPersistenceEnded,
+	}
+	for _, point := range want {
+		recorder.Mark(point)
+	}
+
+	points := recorder.Snapshot().PointsMS
+	for _, point := range want {
+		if _, ok := points[string(point)]; !ok {
+			t.Errorf("approved orchestration point %q was not recorded", point)
+		}
+	}
+	if len(points) != len(want)+1 {
+		t.Fatalf("recorded points=%#v, want handler_received plus %d approved points", points, len(want))
 	}
 }

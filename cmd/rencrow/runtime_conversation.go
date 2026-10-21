@@ -229,13 +229,6 @@ func buildConversationRuntime(
 			engine = engine.WithKnowledgeRelationRecall(cfg.KnowledgeRelation.MaxHops)
 			log.Printf("  Knowledge Relation recall: enabled (max_hops=%d)", cfg.KnowledgeRelation.MaxHops)
 		}
-		if err := realMgr.DrainConversationTurnOutbox(context.Background(), 100); err != nil {
-			code := conversation.ConversationTurnErrorCodeOf(err)
-			if code == "" {
-				code = conversation.ConversationTurnErrorUnavailable
-			}
-			log.Printf("Conversation outbox startup drain failed code=%s; durable L1 receipt retained", code)
-		}
 		if cfg.Conversation.ProfilePromotionEnabledValue() && l1Store != nil && summaryProvider != nil {
 			extractor := conversationpersistence.NewLLMProfileExtractor(summaryProvider).WithMinimumUserMessages(1)
 			profilePromotion = memorypromotionapp.NewService(l1Store, extractor, memorypromotionapp.Options{

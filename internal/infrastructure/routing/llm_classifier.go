@@ -2,9 +2,12 @@ package routing
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
@@ -24,6 +27,169 @@ func NewLLMClassifier(llmProvider llm.LLMProvider, systemPrompt string) *LLMClas
 		llmProvider:  llmProvider,
 		systemPrompt: systemPrompt,
 	}
+}
+
+// ClassifyWithChatReply is the optional one-generation route-and-reply path.
+func (c *LLMClassifier) ClassifyWithChatReply(ctx context.Context, req llm.GenerateRequest) (domainagent.RouteReplyClassification, error) {
+	if c.llmProvider == nil {
+		return domainagent.RouteReplyClassification{}, fmt.Errorf("LLM provider is unavailable")
+	}
+	req.SystemPrompt = ""
+	policyMessage := llm.Message{
+		Role:    "system",
+		Content: strings.TrimSpace(c.systemPrompt + "\n\n" + routeReplyJSONContract),
+		Type:    llm.PromptContextStable,
+		Metadata: map[string]string{
+			"runtime_context_kind": "classifier_route_contract",
+		},
+	}
+	characterPrefix := 0
+	for characterPrefix < len(req.Messages) && req.Messages[characterPrefix].Type == llm.PromptContextCharacter {
+		characterPrefix++
+	}
+	req.Messages = append(req.Messages, llm.Message{})
+	copy(req.Messages[characterPrefix+1:], req.Messages[characterPrefix:len(req.Messages)-1])
+	req.Messages[characterPrefix] = policyMessage
+	req.ResponseFormat = llm.ResponseFormatJSONObject
+	// Combined JSON generation is non-streaming even when Mio's regular CHAT
+	// configuration enables token callbacks. Never expose route JSON to hooks.
+	req.OnToken = nil
+	ensureNoThinking(&req)
+
+	resp, err := c.llmProvider.Generate(ctx, req)
+	if err != nil {
+		return domainagent.RouteReplyClassification{}, fmt.Errorf("LLM route and reply generation failed: %w", err)
+	}
+	decoded, err := decodeRouteReply(resp.Content)
+	if err != nil {
+		return domainagent.RouteReplyClassification{}, err
+	}
+	route, matched := c.parseRouteWithMatch(decoded.Route)
+	if !matched || !strings.EqualFold(strings.TrimSpace(decoded.Route), string(route)) {
+		return domainagent.RouteReplyClassification{}, fmt.Errorf("combined generation returned invalid route field %q", decoded.Route)
+	}
+	if route == routing.RouteCHAT && strings.TrimSpace(decoded.Reply) == "" {
+		return domainagent.RouteReplyClassification{}, fmt.Errorf("combined CHAT generation returned an empty reply")
+	}
+	if route != routing.RouteCHAT && strings.TrimSpace(decoded.Reply) != "" {
+		return domainagent.RouteReplyClassification{}, fmt.Errorf("combined non-CHAT generation returned a reply")
+	}
+	confidence := c.calculateConfidence(route, string(route))
+	reason := fmt.Sprintf("LLM classified as %s", route)
+	decision := routing.NewDecisionWithEvidence(route, confidence,
+		reason, routing.DecisionEvidence{
+			Source:     routing.EvidenceSourceClassifier,
+			Matched:    true,
+			Route:      route,
+			Confidence: confidence,
+			Reason:     reason,
+		})
+	return domainagent.RouteReplyClassification{
+		Decision:   decision,
+		Reply:      decoded.Reply,
+		ReplyValid: route == routing.RouteCHAT,
+		Generation: resp,
+	}, nil
+}
+
+const routeReplyJSONContract = `Use the route policy above without changing its criteria. Return exactly one JSON object with the string fields "route" and "reply". The route field must contain exactly one canonical route name allowed by the route policy above; do not infer the route from the reply text. If the selected route is CHAT, write Mio's direct response in reply using the supplied persona and conversation context. For every other route, reply must be empty. Do not call tools, perform searches, or claim tool-dependent work in this response.`
+
+type routeReplyJSON struct {
+	Route string
+	Reply string
+}
+
+const maxRouteReplyJSONBytes = 64 * 1024
+
+func decodeRouteReply(content string) (routeReplyJSON, error) {
+	if len(content) > maxRouteReplyJSONBytes {
+		return routeReplyJSON{}, fmt.Errorf("combined route/reply response exceeds %d bytes", maxRouteReplyJSONBytes)
+	}
+	decoder := json.NewDecoder(strings.NewReader(content))
+	token, err := decoder.Token()
+	if err != nil {
+		return routeReplyJSON{}, fmt.Errorf("decode combined route/reply JSON: %w", err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return routeReplyJSON{}, fmt.Errorf("combined route/reply response must be one JSON object")
+	}
+	var result routeReplyJSON
+	seen := make(map[string]bool, 2)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return routeReplyJSON{}, fmt.Errorf("decode combined route/reply field: %w", err)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return routeReplyJSON{}, fmt.Errorf("combined route/reply field name must be a string")
+		}
+		if seen[key] {
+			return routeReplyJSON{}, fmt.Errorf("combined route/reply response repeats field %q", key)
+		}
+		seen[key] = true
+		switch key {
+		case "route":
+			result.Route, err = decodeJSONString(decoder)
+		case "reply":
+			result.Reply, err = decodeJSONString(decoder)
+		default:
+			return routeReplyJSON{}, fmt.Errorf("combined route/reply response contains unknown field %q", key)
+		}
+		if err != nil {
+			return routeReplyJSON{}, fmt.Errorf("decode combined route/reply field %q: %w", key, err)
+		}
+	}
+	token, err = decoder.Token()
+	if err != nil {
+		return routeReplyJSON{}, fmt.Errorf("decode combined route/reply object end: %w", err)
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '}' {
+		return routeReplyJSON{}, fmt.Errorf("combined route/reply response has invalid object end")
+	}
+	if !seen["route"] || !seen["reply"] {
+		return routeReplyJSON{}, fmt.Errorf("combined route/reply response must include route and reply fields")
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return routeReplyJSON{}, fmt.Errorf("combined route/reply response contains trailing JSON")
+		}
+		return routeReplyJSON{}, fmt.Errorf("combined route/reply response has trailing content: %w", err)
+	}
+	return result, nil
+}
+
+func decodeJSONString(decoder *json.Decoder) (string, error) {
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if len(trimmed) == 0 || trimmed[0] != '"' {
+		return "", fmt.Errorf("value must be a JSON string")
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func ensureNoThinking(req *llm.GenerateRequest) {
+	options := make(map[string]any, len(req.ProviderOptions)+2)
+	for key, value := range req.ProviderOptions {
+		options[key] = value
+	}
+	options["think"] = false
+	kwargs := make(map[string]any, 1)
+	if existing, ok := options["chat_template_kwargs"].(map[string]any); ok {
+		for key, value := range existing {
+			kwargs[key] = value
+		}
+	}
+	kwargs["enable_thinking"] = false
+	options["chat_template_kwargs"] = kwargs
+	req.ProviderOptions = options
 }
 
 // Classify はタスクを分類

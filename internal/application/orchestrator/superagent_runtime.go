@@ -8,6 +8,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domainsuperagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/superagent"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -122,6 +123,7 @@ func RecordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if err := recorder.SaveAgentRun(ctx, run); err != nil {
 		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent run start: %w", err)
 	}
+	turntiming.Mark(ctx, turntiming.PointLeadAgentRunSaved)
 	event := modulecore.NewEventEnvelope(traceID, "", nil, "superagent", "lead_agent.started", startedAt, map[string]any{
 		"route": string(route), "status": "running",
 	})
@@ -132,6 +134,7 @@ func RecordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if err := recorder.Append(ctx, event); err != nil {
 		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent start event: %w", err)
 	}
+	turntiming.Mark(ctx, turntiming.PointLeadAgentStartEventAppended)
 	pack := domainsuperagent.ContextPack{
 		ArtifactID:      modulecore.NewArtifactID(),
 		Kind:            modulecore.ArtifactKindContextPack,
@@ -153,6 +156,7 @@ func RecordLeadAgentRunStarted(ctx context.Context, recorder SuperAgentRuntimeRe
 	if err := recorder.SaveContextPack(ctx, pack); err != nil {
 		return LeadAgentRunRecord{}, fmt.Errorf("failed to save lead agent context pack: %w", err)
 	}
+	turntiming.Mark(ctx, turntiming.PointLeadContextPackSaved)
 	return LeadAgentRunRecord{StartedAt: startedAt, TraceID: traceID, StartedEventID: event.EventID}, nil
 }
 

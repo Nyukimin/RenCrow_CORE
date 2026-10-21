@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,9 +34,16 @@ type TurnGroupOwner interface {
 	CommitConversationTurn(context.Context, domconv.ConversationTurnRequest) (domconv.ConversationTurnResult, error)
 	GetConversationTurnReceipt(context.Context, string) (domconv.ConversationTurnResult, error)
 	ClaimConversationTurnOutbox(context.Context, string, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
+	ClaimConversationTurnOutboxTarget(context.Context, string, string, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
 	ClaimNextConversationTurnOutbox(context.Context, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
+	ClaimNextConversationTurnOutboxTargetExcluding(context.Context, string, time.Time, time.Duration, map[string]struct{}) (*domconv.ConversationTurnOutbox, error)
 	CompleteConversationTurnOutbox(context.Context, string, string, string, time.Time) (domconv.ConversationTurnResult, error)
 	FailConversationTurnOutbox(context.Context, string, string, string, domconv.ConversationTurnErrorCode, time.Time) (domconv.ConversationTurnResult, error)
+	MarkConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID, time.Time) error
+	IsConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID) (bool, error)
+	HasConversationTurnReceiptsForSession(context.Context, string) (bool, error)
+	ListPendingConversationTurnThreadFollowers(context.Context, string, int) ([]l1sqlite.PendingConversationTurnThreadFollower, error)
+	ListUnpublishedConversationTurnThreadFollowersAfter(context.Context, string, int) ([]l1sqlite.PendingConversationTurnThreadFollower, error)
 	LoadConversationThreadProjection(context.Context, string, modulecore.ThreadID) ([]l1sqlite.L1MemoryEvent, error)
 	LoadActiveConversationThreadProjection(context.Context, string) ([]l1sqlite.L1MemoryEvent, error)
 }
@@ -45,7 +53,9 @@ type TurnGroupOwner interface {
 type TurnGroupRecoveryOwner interface {
 	TurnGroupOwner
 	ClaimConversationTurnOutboxForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, string, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
+	ClaimConversationTurnOutboxTargetForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, string, string, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
 	ClaimNextConversationTurnOutboxForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, time.Time, time.Duration) (*domconv.ConversationTurnOutbox, error)
+	ClaimNextConversationTurnOutboxTargetExcludingForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, string, time.Time, time.Duration, map[string]struct{}) (*domconv.ConversationTurnOutbox, error)
 	CompleteConversationTurnOutboxForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, string, string, string, time.Time) (domconv.ConversationTurnResult, error)
 	FailConversationTurnOutboxForOperation(context.Context, l1sqlite.ConversationTurnOperationIdentity, string, string, string, domconv.ConversationTurnErrorCode, time.Time) (domconv.ConversationTurnResult, error)
 	GetConversationTurnClaimOperationReceipt(context.Context, l1sqlite.ConversationTurnOperationIdentity) (*domconv.ConversationTurnOutbox, bool, error)
@@ -102,6 +112,7 @@ type turnReceiptPayload struct {
 
 type turnClaimPayload struct {
 	TurnID          string        `json:"turn_id"`
+	Target          string        `json:"target,omitempty"`
 	Now             time.Time     `json:"now"`
 	LeaseDurationNS time.Duration `json:"lease_duration_ns"`
 }
@@ -109,6 +120,8 @@ type turnClaimPayload struct {
 type turnClaimNextPayload struct {
 	Now             time.Time     `json:"now"`
 	LeaseDurationNS time.Duration `json:"lease_duration_ns"`
+	Target          string        `json:"target,omitempty"`
+	Excluded        []string      `json:"excluded,omitempty"`
 }
 
 type turnFinishPayload struct {
@@ -133,6 +146,42 @@ type turnProjectionPayload struct {
 
 type turnActiveProjectionPayload struct {
 	SessionID string `json:"session_id"`
+}
+
+type turnSessionHasTurnsResult struct {
+	HasTurns bool `json:"has_turns"`
+}
+
+type turnPendingFollowersPayload struct {
+	SessionID string `json:"session_id,omitempty"`
+	Limit     int    `json:"limit"`
+}
+
+type turnPendingUnpublishedPayload struct {
+	AfterTurnID string `json:"after_turn_id,omitempty"`
+	Limit       int    `json:"limit"`
+}
+
+type turnResponsePublishedPayload struct {
+	TurnID    modulecore.TurnID    `json:"turn_id"`
+	TraceID   modulecore.TraceID   `json:"trace_id"`
+	SessionID modulecore.SessionID `json:"session_id"`
+	At        time.Time            `json:"at"`
+}
+
+type turnResponsePublicationStatusPayload struct {
+	TurnID    modulecore.TurnID    `json:"turn_id"`
+	TraceID   modulecore.TraceID   `json:"trace_id"`
+	SessionID modulecore.SessionID `json:"session_id"`
+}
+
+type turnPendingFollowerDTO struct {
+	TurnID            modulecore.TurnID    `json:"turn_id"`
+	TraceID           modulecore.TraceID   `json:"trace_id"`
+	AgentMessageID    modulecore.MessageID `json:"agent_message_id"`
+	SessionID         string               `json:"session_id"`
+	ClosedThreadID    modulecore.ThreadID  `json:"closed_thread_id"`
+	ResponsePublished bool                 `json:"response_published"`
 }
 
 type turnResultPayload struct {
@@ -168,6 +217,14 @@ type turnOutboxDTO struct {
 
 type turnProjectionResultPayload struct {
 	Events []turnProjectionEventDTO `json:"events"`
+}
+
+type turnPendingFollowersResult struct {
+	Followers []turnPendingFollowerDTO `json:"followers"`
+}
+
+type turnResponsePublishedResult struct {
+	Published bool `json:"published"`
 }
 
 type turnProjectionEventDTO struct {
@@ -249,6 +306,111 @@ func RegisterTurnGroup(h *Handler, store TurnGroupOwner) error {
 		return err
 	}
 
+	if err := h.Register(GroupTurn, "pending_thread_followers", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload turnPendingFollowersPayload
+		if decodeTurnPayload(raw, &payload) != nil || (payload.SessionID != "" && !validTurnSessionID(payload.SessionID)) || payload.Limit <= 0 || payload.Limit > 100 {
+			return nil, rejectTurnPayload("pending_thread_followers", false)
+		}
+		followers, err := store.ListPendingConversationTurnThreadFollowers(ctx, payload.SessionID, payload.Limit)
+		if err != nil {
+			return nil, turnReadError(err)
+		}
+		result := turnPendingFollowersResult{Followers: make([]turnPendingFollowerDTO, 0, len(followers))}
+		for _, follower := range followers {
+			if !validPendingTurnFollower(follower) {
+				return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn owner returned an invalid pending follower")
+			}
+			result.Followers = append(result.Followers, turnPendingFollowerDTO{
+				TurnID: follower.TurnID, TraceID: follower.TraceID, AgentMessageID: follower.AgentMessageID,
+				SessionID: follower.SessionID, ClosedThreadID: follower.ClosedThreadID,
+				ResponsePublished: follower.ResponsePublished,
+			})
+		}
+		return result, nil
+	}); err != nil {
+		return err
+	}
+	if err := h.Register(GroupTurn, "session_has_turns", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload turnActiveProjectionPayload
+		if decodeTurnPayload(raw, &payload) != nil || !validTurnSessionID(payload.SessionID) {
+			return nil, rejectTurnPayload("session_has_turns", false)
+		}
+		hasTurns, err := store.HasConversationTurnReceiptsForSession(ctx, payload.SessionID)
+		if err != nil {
+			return nil, turnReadError(err)
+		}
+		return turnSessionHasTurnsResult{HasTurns: hasTurns}, nil
+	}); err != nil {
+		return err
+	}
+	if err := h.Register(GroupTurn, "unpublished_thread_followers", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		payload, err := decodeTurnPendingUnpublishedPayload(raw)
+		if err != nil {
+			return nil, rejectTurnPayload("unpublished_thread_followers", false)
+		}
+		followers, err := recoveryOwner.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, payload.AfterTurnID, payload.Limit)
+		if err != nil {
+			return nil, turnReadError(err)
+		}
+		result := turnPendingFollowersResult{Followers: make([]turnPendingFollowerDTO, 0, len(followers))}
+		for _, follower := range followers {
+			if !validPendingTurnFollower(follower) || follower.ResponsePublished {
+				return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn owner returned an invalid unpublished follower")
+			}
+			result.Followers = append(result.Followers, turnPendingFollowerDTO{
+				TurnID: follower.TurnID, TraceID: follower.TraceID, AgentMessageID: follower.AgentMessageID,
+				SessionID: follower.SessionID, ClosedThreadID: follower.ClosedThreadID,
+				ResponsePublished: false,
+			})
+		}
+		return result, nil
+	}); err != nil {
+		return err
+	}
+	if err := h.Register(GroupTurn, "response_publication_status", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload turnResponsePublicationStatusPayload
+		if decodeTurnPayload(raw, &payload) != nil || payload.TurnID.Validate() != nil || payload.TraceID.Validate() != nil || payload.SessionID.Validate() != nil {
+			return nil, rejectTurnPayload("response_publication_status", false)
+		}
+		published, err := recoveryOwner.IsConversationTurnResponsePublished(ctx, payload.TurnID, payload.TraceID, payload.SessionID)
+		if err != nil {
+			return nil, turnReadError(err)
+		}
+		return turnResponsePublishedResult{Published: published}, nil
+	}); err != nil {
+		return err
+	}
+
+	if err := h.RegisterRecoverable(GroupTurn, "response_published", func(ctx context.Context, mutation MutationMetadata) (any, error) {
+		payload, err := decodeTurnResponsePublishedPayload(mutation.Payload)
+		if err != nil {
+			return nil, rejectTurnPayload("response_published", true)
+		}
+		if err := recoveryOwner.MarkConversationTurnResponsePublished(ctx, payload.TurnID, payload.TraceID, payload.SessionID, payload.At); err != nil {
+			return nil, turnMutationUnavailable()
+		}
+		published, err := recoveryOwner.IsConversationTurnResponsePublished(ctx, payload.TurnID, payload.TraceID, payload.SessionID)
+		if err != nil {
+			return nil, turnMutationUnavailable()
+		}
+		return turnResponsePublishedResult{Published: published}, nil
+	}, func(ctx context.Context, mutation MutationMetadata) (ReconcileDecision, error) {
+		payload, err := decodeTurnResponsePublishedPayload(mutation.Payload)
+		if err != nil {
+			return ConfirmedNotCommitted(), nil
+		}
+		published, err := recoveryOwner.IsConversationTurnResponsePublished(ctx, payload.TurnID, payload.TraceID, payload.SessionID)
+		if err != nil {
+			return UnknownOutcome(), nil
+		}
+		if !published {
+			return ConfirmedNotCommitted(), nil
+		}
+		return Committed(turnResponsePublishedResult{Published: true}), nil
+	}); err != nil {
+		return err
+	}
+
 	if err := h.RegisterRecoverable(GroupTurn, "outbox_claim", func(ctx context.Context, mutation MutationMetadata) (any, error) {
 		payload, err := decodeTurnClaimPayload(mutation.Payload)
 		if err != nil {
@@ -276,17 +438,44 @@ func RegisterTurnGroup(h *Handler, store TurnGroupOwner) error {
 		return err
 	}
 
+	if err := h.RegisterRecoverable(GroupTurn, "outbox_claim_target", func(ctx context.Context, mutation MutationMetadata) (any, error) {
+		payload, err := decodeTurnClaimTargetPayload(mutation.Payload)
+		if err != nil {
+			return nil, rejectTurnPayload("outbox_claim_target", true)
+		}
+		identity := turnTargetClaimOperationIdentity(mutation)
+		outbox, err := recoveryOwner.ClaimConversationTurnOutboxTargetForOperation(ctx, identity, payload.TurnID, payload.Target, payload.Now, payload.LeaseDurationNS)
+		if err != nil {
+			return nil, turnMutationUnavailable()
+		}
+		if outbox != nil && (!validClaimedTurnOutbox(outbox) || outbox.Target != payload.Target) {
+			return nil, turnMutationUnavailable()
+		}
+		return turnOutboxResultPayload{Outbox: turnOutboxToDTO(outbox)}, nil
+	}, func(ctx context.Context, mutation MutationMetadata) (ReconcileDecision, error) {
+		if _, err := decodeTurnClaimTargetPayload(mutation.Payload); err != nil {
+			return ConfirmedNotCommitted(), nil
+		}
+		outbox, found, err := recoveryOwner.GetConversationTurnClaimOperationReceipt(ctx, turnTargetClaimOperationIdentity(mutation))
+		if err != nil || !found || (outbox != nil && !validClaimedTurnOutbox(outbox)) {
+			return UnknownOutcome(), nil
+		}
+		return Committed(turnOutboxResultPayload{Outbox: turnOutboxToDTO(outbox)}), nil
+	}); err != nil {
+		return err
+	}
+
 	if err := h.RegisterRecoverable(GroupTurn, "outbox_claim_next", func(ctx context.Context, mutation MutationMetadata) (any, error) {
 		payload, err := decodeTurnClaimNextPayload(mutation.Payload)
 		if err != nil {
 			return nil, rejectTurnPayload("outbox_claim_next", true)
 		}
 		identity := turnOperationIdentity(mutation, "outbox_claim_next")
-		outbox, err := recoveryOwner.ClaimNextConversationTurnOutboxForOperation(ctx, identity, payload.Now, payload.LeaseDurationNS)
+		outbox, err := recoveryOwner.ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx, identity, payload.Target, payload.Now, payload.LeaseDurationNS, turnOutboxExcludedSet(payload.Excluded))
 		if err != nil {
 			return nil, turnMutationUnavailable()
 		}
-		if outbox != nil && !validClaimedTurnOutbox(outbox) {
+		if outbox != nil && (!validClaimedTurnOutbox(outbox) || (payload.Target != "" && outbox.Target != payload.Target)) {
 			return nil, turnMutationUnavailable()
 		}
 		return turnOutboxResultPayload{Outbox: turnOutboxToDTO(outbox)}, nil
@@ -440,6 +629,85 @@ func (s *TurnStoreClient) GetConversationTurnReceipt(ctx context.Context, turnID
 	return output.Result, nil
 }
 
+func (s *TurnStoreClient) MarkConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID, at time.Time) error {
+	if turnID.Validate() != nil || traceID.Validate() != nil || sessionID.Validate() != nil || !validTurnTime(at) {
+		return domconv.ErrConversationTurnInvalid
+	}
+	var output turnResponsePublishedResult
+	if err := s.call(ctx, "response_published", turnResponsePublishedPayload{TurnID: turnID, TraceID: traceID, SessionID: sessionID, At: at}, &output); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *TurnStoreClient) IsConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID) (bool, error) {
+	if turnID.Validate() != nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return false, domconv.ErrConversationTurnInvalid
+	}
+	var output turnResponsePublishedResult
+	if err := s.call(ctx, "response_publication_status", turnResponsePublicationStatusPayload{TurnID: turnID, TraceID: traceID, SessionID: sessionID}, &output); err != nil {
+		return false, err
+	}
+	return output.Published, nil
+}
+
+func (s *TurnStoreClient) ListPendingConversationTurnThreadFollowers(ctx context.Context, sessionID string, limit int) ([]l1sqlite.PendingConversationTurnThreadFollower, error) {
+	if (sessionID != "" && !validTurnSessionID(sessionID)) || limit <= 0 || limit > 100 {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	var output turnPendingFollowersResult
+	if err := s.call(ctx, "pending_thread_followers", turnPendingFollowersPayload{SessionID: sessionID, Limit: limit}, &output); err != nil {
+		return nil, err
+	}
+	followers := make([]l1sqlite.PendingConversationTurnThreadFollower, 0, len(output.Followers))
+	for _, dto := range output.Followers {
+		item := l1sqlite.PendingConversationTurnThreadFollower{
+			TurnID: dto.TurnID, TraceID: dto.TraceID, AgentMessageID: dto.AgentMessageID,
+			SessionID: dto.SessionID, ClosedThreadID: dto.ClosedThreadID,
+			ResponsePublished: dto.ResponsePublished,
+		}
+		if !validPendingTurnFollower(item) || (sessionID != "" && item.SessionID != sessionID) {
+			return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn pending follower result is invalid")
+		}
+		followers = append(followers, item)
+	}
+	return followers, nil
+}
+
+func (s *TurnStoreClient) HasConversationTurnReceiptsForSession(ctx context.Context, sessionID string) (bool, error) {
+	if !validTurnSessionID(sessionID) {
+		return false, domconv.ErrConversationTurnInvalid
+	}
+	var output turnSessionHasTurnsResult
+	if err := s.call(ctx, "session_has_turns", turnActiveProjectionPayload{SessionID: sessionID}, &output); err != nil {
+		return false, err
+	}
+	return output.HasTurns, nil
+}
+
+func (s *TurnStoreClient) ListUnpublishedConversationTurnThreadFollowersAfter(ctx context.Context, afterTurnID string, limit int) ([]l1sqlite.PendingConversationTurnThreadFollower, error) {
+	if (afterTurnID != "" && !validTurnID(afterTurnID)) || limit <= 0 || limit > 100 {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	var output turnPendingFollowersResult
+	if err := s.call(ctx, "unpublished_thread_followers", turnPendingUnpublishedPayload{AfterTurnID: afterTurnID, Limit: limit}, &output); err != nil {
+		return nil, err
+	}
+	followers := make([]l1sqlite.PendingConversationTurnThreadFollower, 0, len(output.Followers))
+	for _, dto := range output.Followers {
+		item := l1sqlite.PendingConversationTurnThreadFollower{
+			TurnID: dto.TurnID, TraceID: dto.TraceID, AgentMessageID: dto.AgentMessageID,
+			SessionID: dto.SessionID, ClosedThreadID: dto.ClosedThreadID,
+			ResponsePublished: dto.ResponsePublished,
+		}
+		if !validPendingTurnFollower(item) || item.ResponsePublished || (afterTurnID != "" && string(item.TurnID) <= afterTurnID) {
+			return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn unpublished follower page is invalid")
+		}
+		followers = append(followers, item)
+	}
+	return followers, nil
+}
+
 func (s *TurnStoreClient) ClaimConversationTurnOutbox(ctx context.Context, turnID string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
 	if !validTurnID(turnID) || !validTurnTime(now) || !validTurnLease(leaseDuration) {
 		return nil, domconv.ErrConversationTurnInvalid
@@ -451,15 +719,54 @@ func (s *TurnStoreClient) ClaimConversationTurnOutbox(ctx context.Context, turnI
 	return turnOutboxFromDTO(output.Outbox)
 }
 
-func (s *TurnStoreClient) ClaimNextConversationTurnOutbox(ctx context.Context, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
-	if !validTurnTime(now) || !validTurnLease(leaseDuration) {
+func (s *TurnStoreClient) ClaimConversationTurnOutboxTarget(ctx context.Context, turnID, target string, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	if !validTurnID(turnID) || !validTurnTarget(target) || !validTurnTime(now) || !validTurnLease(leaseDuration) {
 		return nil, domconv.ErrConversationTurnInvalid
 	}
 	var output turnOutboxResultPayload
-	if err := s.call(ctx, "outbox_claim_next", turnClaimNextPayload{Now: now, LeaseDurationNS: leaseDuration}, &output); err != nil {
+	if err := s.call(ctx, "outbox_claim_target", turnClaimPayload{TurnID: turnID, Target: target, Now: now, LeaseDurationNS: leaseDuration}, &output); err != nil {
 		return nil, err
 	}
-	return turnOutboxFromDTO(output.Outbox)
+	claimed, err := turnOutboxFromDTO(output.Outbox)
+	if err != nil || (claimed != nil && claimed.Target != target) {
+		return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn target claim result is invalid")
+	}
+	return claimed, nil
+}
+
+func (s *TurnStoreClient) ClaimNextConversationTurnOutbox(ctx context.Context, now time.Time, leaseDuration time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	return s.ClaimNextConversationTurnOutboxTargetExcluding(ctx, "", now, leaseDuration, nil)
+}
+
+func (s *TurnStoreClient) ClaimNextConversationTurnOutboxTargetExcluding(ctx context.Context, target string, now time.Time, leaseDuration time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
+	if target != "" && !validTurnTarget(target) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	if !validTurnTime(now) || !validTurnLease(leaseDuration) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	keys := make([]string, 0, len(excluded))
+	for key := range excluded {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) > 100 || !validTurnOutboxExclusions(keys) {
+		return nil, domconv.ErrConversationTurnInvalid
+	}
+	var output turnOutboxResultPayload
+	if err := s.call(ctx, "outbox_claim_next", turnClaimNextPayload{Now: now, LeaseDurationNS: leaseDuration, Target: target, Excluded: keys}, &output); err != nil {
+		return nil, err
+	}
+	claimed, err := turnOutboxFromDTO(output.Outbox)
+	if err != nil || (claimed != nil && ((target != "" && claimed.Target != target) || hasTurnOutboxKey(excluded, claimed.TurnID, claimed.Target))) {
+		return nil, NewError(ErrorCodeStoreUnavailable, "conversation turn filtered claim result is invalid")
+	}
+	return claimed, nil
+}
+
+func hasTurnOutboxKey(excluded map[string]struct{}, turnID modulecore.TurnID, target string) bool {
+	_, ok := excluded[string(turnID)+"\x00"+target]
+	return ok
 }
 
 func (s *TurnStoreClient) CompleteConversationTurnOutbox(ctx context.Context, turnID, target, leaseToken string, now time.Time) (domconv.ConversationTurnResult, error) {
@@ -585,18 +892,63 @@ func decodeTurnCommitRequest(raw json.RawMessage) (domconv.ConversationTurnReque
 
 func decodeTurnClaimPayload(raw json.RawMessage) (turnClaimPayload, error) {
 	var payload turnClaimPayload
-	if err := decodeTurnPayload(raw, &payload); err != nil || !validTurnID(payload.TurnID) || !validTurnTime(payload.Now) || !validTurnLease(payload.LeaseDurationNS) {
+	if err := decodeTurnPayload(raw, &payload); err != nil || !validTurnID(payload.TurnID) || payload.Target != "" || !validTurnTime(payload.Now) || !validTurnLease(payload.LeaseDurationNS) {
 		return turnClaimPayload{}, domconv.ErrConversationTurnInvalid
+	}
+	return payload, nil
+}
+
+func decodeTurnClaimTargetPayload(raw json.RawMessage) (turnClaimPayload, error) {
+	var payload turnClaimPayload
+	if err := decodeTurnPayload(raw, &payload); err != nil || !validTurnID(payload.TurnID) || !validTurnTarget(payload.Target) ||
+		!validTurnTime(payload.Now) || !validTurnLease(payload.LeaseDurationNS) {
+		return turnClaimPayload{}, domconv.ErrConversationTurnInvalid
+	}
+	return payload, nil
+}
+
+func decodeTurnPendingUnpublishedPayload(raw json.RawMessage) (turnPendingUnpublishedPayload, error) {
+	var payload turnPendingUnpublishedPayload
+	if err := decodeTurnPayload(raw, &payload); err != nil || (payload.AfterTurnID != "" && !validTurnID(payload.AfterTurnID)) || payload.Limit <= 0 || payload.Limit > 100 {
+		return turnPendingUnpublishedPayload{}, domconv.ErrConversationTurnInvalid
 	}
 	return payload, nil
 }
 
 func decodeTurnClaimNextPayload(raw json.RawMessage) (turnClaimNextPayload, error) {
 	var payload turnClaimNextPayload
-	if err := decodeTurnPayload(raw, &payload); err != nil || !validTurnTime(payload.Now) || !validTurnLease(payload.LeaseDurationNS) {
+	if err := decodeTurnPayload(raw, &payload); err != nil || !validTurnTime(payload.Now) || !validTurnLease(payload.LeaseDurationNS) ||
+		(payload.Target != "" && !validTurnTarget(payload.Target)) || len(payload.Excluded) > 100 || !validTurnOutboxExclusions(payload.Excluded) {
 		return turnClaimNextPayload{}, domconv.ErrConversationTurnInvalid
 	}
 	return payload, nil
+}
+
+func validTurnOutboxExclusions(keys []string) bool {
+	last := ""
+	for _, key := range keys {
+		if !validTurnOutboxKey(key) || (last != "" && key <= last) {
+			return false
+		}
+		last = key
+	}
+	return true
+}
+
+func validTurnOutboxKey(key string) bool {
+	parts := strings.SplitN(key, "\x00", 2)
+	return len(parts) == 2 && validTurnID(parts[0]) && validTurnTarget(parts[1])
+}
+
+func turnOutboxExcludedSet(keys []string) map[string]struct{} {
+	if len(keys) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		set[key] = struct{}{}
+	}
+	return set
 }
 
 func decodeTurnFinishPayload(raw json.RawMessage) (turnFinishPayload, error) {
@@ -617,9 +969,29 @@ func decodeTurnFailPayload(raw json.RawMessage) (turnFailPayload, error) {
 	return payload, nil
 }
 
+func decodeTurnResponsePublishedPayload(raw json.RawMessage) (turnResponsePublishedPayload, error) {
+	var payload turnResponsePublishedPayload
+	if decodeTurnPayload(raw, &payload) != nil || payload.TurnID.Validate() != nil || payload.TraceID.Validate() != nil || payload.SessionID.Validate() != nil || payload.At.IsZero() || !validTurnTime(payload.At) {
+		return turnResponsePublishedPayload{}, domconv.ErrConversationTurnInvalid
+	}
+	return payload, nil
+}
+
+func validPendingTurnFollower(follower l1sqlite.PendingConversationTurnThreadFollower) bool {
+	return follower.TurnID.Validate() == nil && follower.TraceID.Validate() == nil && follower.AgentMessageID.Validate() == nil &&
+		validTurnSessionID(follower.SessionID) && follower.ClosedThreadID.Validate() == nil
+}
+
 func turnOperationIdentity(mutation MutationMetadata, operation string) l1sqlite.ConversationTurnOperationIdentity {
 	return l1sqlite.ConversationTurnOperationIdentity{
 		OpID: mutation.OpID, Operation: operation, PayloadSHA256: payloadHash(GroupTurn, operation, mutation.Payload),
+	}
+}
+
+func turnTargetClaimOperationIdentity(mutation MutationMetadata) l1sqlite.ConversationTurnOperationIdentity {
+	return l1sqlite.ConversationTurnOperationIdentity{
+		OpID: mutation.OpID, Operation: "outbox_claim",
+		PayloadSHA256: payloadHash(GroupTurn, "outbox_claim_target", mutation.Payload),
 	}
 }
 

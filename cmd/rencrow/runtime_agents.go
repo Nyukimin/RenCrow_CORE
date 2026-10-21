@@ -69,7 +69,7 @@ func buildAgentRuntime(
 	workerProvider llm.LLMProvider,
 	heavyProvider llm.LLMProvider,
 	wildProvider llm.LLMProvider,
-	classifier *routing.LLMClassifier,
+	classifier agent.Classifier,
 	ruleDictionary *routing.RuleDictionary,
 	chatToolRunner agent.ToolRunner,
 	workerToolRunner agent.ToolRunner,

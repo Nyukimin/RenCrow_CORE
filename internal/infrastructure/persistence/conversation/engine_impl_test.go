@@ -273,6 +273,11 @@ func TestBeginTurnRecordsApplicableMemoryRecallAndCategoryTiming(t *testing.T) {
 			t.Errorf("timing point %q missing: %#v", point, points)
 		}
 	}
+	for _, point := range []string{"active_domain_started", "active_domain_ended"} {
+		if _, ok := points[point]; !ok {
+			t.Errorf("timing point %q missing: %#v", point, points)
+		}
+	}
 }
 
 func TestBeginTurn_CategoryRecallFailureIsPartialTrace(t *testing.T) {

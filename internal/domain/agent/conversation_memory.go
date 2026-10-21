@@ -116,13 +116,13 @@ func commitConversationTurn(ctx context.Context, engine conversation.Conversatio
 		RecallTraceItems: pack.ToTraceItems(),
 	})
 	turntiming.Mark(ctx, turntiming.PointConversationCommitEnded)
+	if err != nil {
+		return err
+	}
 	if result.Status == conversation.ConversationTurnPartial {
 		log.Printf("[ConversationTurn] partial outcome turn_id=%s pending_targets=%v error_code=%s",
 			result.TurnID, result.PendingTargets, result.ErrorCode)
 		return nil
-	}
-	if err != nil {
-		return err
 	}
 	if result.Status != conversation.ConversationTurnCompleted {
 		return conversation.ErrConversationTurnInternal

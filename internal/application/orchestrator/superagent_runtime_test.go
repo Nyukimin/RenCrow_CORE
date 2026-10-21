@@ -2,10 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -78,6 +81,57 @@ func TestRecordLeadAgentRunRecordsGoalAndCorrelatedTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestRecordLeadAgentRunStartedTimesSuccessfulPersistenceStepsOnly(t *testing.T) {
+	input := LeadAgentRunInput{
+		TraceID:   string(modulecore.NewTraceID()),
+		SessionID: string(modulecore.NewSessionID()),
+		Goal:      "timed goal",
+	}
+	taskID, runID := modulecore.NewTaskID(), modulecore.NewRunID()
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+
+	started, err := RecordLeadAgentRunStarted(ctx, &mockSuperAgentRuntimeRecorder{}, input, taskID, runID, "shiro", routing.RouteOPS)
+	if err != nil {
+		t.Fatalf("RecordLeadAgentRunStarted() error=%v", err)
+	}
+	points := recorder.Snapshot().PointsMS
+	ordered := []string{"lead_agent_run_saved", "lead_agent_start_event_appended", "lead_context_pack_saved"}
+	var previous float64
+	for index, point := range ordered {
+		offset, ok := points[point]
+		if !ok {
+			t.Fatalf("successful start did not record %q: %#v", point, points)
+		}
+		if index > 0 && offset < previous {
+			t.Fatalf("persistence point %q at %v precedes prior point at %v: %#v", point, offset, previous, points)
+		}
+		previous = offset
+	}
+
+	finishRecorder := turntiming.New(time.Now())
+	finishCtx := turntiming.WithRecorder(context.Background(), finishRecorder)
+	if err := RecordLeadAgentRunFinished(finishCtx, &mockSuperAgentRuntimeRecorder{}, input, taskID, runID, "shiro", routing.RouteOPS, started, "completed", "done"); err != nil {
+		t.Fatalf("RecordLeadAgentRunFinished() error=%v", err)
+	}
+	if got := finishRecorder.Snapshot().PointsMS; len(got) != 1 {
+		t.Fatalf("finished run recorded start-only persistence points: %#v", got)
+	}
+}
+
+func TestRecordLeadAgentRunStartedOmitsPersistencePointsWithoutSuccessfulSave(t *testing.T) {
+	input := LeadAgentRunInput{TraceID: string(modulecore.NewTraceID()), SessionID: string(modulecore.NewSessionID()), Goal: "timed goal"}
+	recorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), recorder)
+	_, err := RecordLeadAgentRunStarted(ctx, &mockSuperAgentRuntimeRecorder{err: errors.New("save failed")}, input, modulecore.NewTaskID(), modulecore.NewRunID(), "shiro", routing.RouteOPS)
+	if err == nil {
+		t.Fatal("RecordLeadAgentRunStarted() error=nil, want save failure")
+	}
+	if got := recorder.Snapshot().PointsMS; len(got) != 1 {
+		t.Fatalf("failed save recorded persistence points: %#v", got)
+	}
+}
+
 func TestRecordLeadAgentRunHonorsCompleteResumeCheckpointOnly(t *testing.T) {
 	checkpointID := modulecore.NewCheckpointID()
 	base := LeadAgentRunInput{
@@ -121,9 +175,14 @@ func TestRecordLeadAgentRunHonorsCompleteResumeCheckpointOnly(t *testing.T) {
 }
 
 func TestRecordLeadAgentRunStartedWithoutRecorderOnlyReturnsStartTime(t *testing.T) {
-	started, err := RecordLeadAgentRunStarted(context.Background(), nil, LeadAgentRunInput{}, modulecore.NewTaskID(), modulecore.NewRunID(), "shiro", routing.RouteOPS)
+	timingRecorder := turntiming.New(time.Now())
+	ctx := turntiming.WithRecorder(context.Background(), timingRecorder)
+	started, err := RecordLeadAgentRunStarted(ctx, nil, LeadAgentRunInput{}, modulecore.NewTaskID(), modulecore.NewRunID(), "shiro", routing.RouteOPS)
 	if err != nil || started.StartedAt.IsZero() || started.TraceID != "" || started.StartedEventID != "" {
 		t.Fatalf("started=%+v err=%v", started, err)
+	}
+	if got := timingRecorder.Snapshot().PointsMS; len(got) != 1 {
+		t.Fatalf("nil recorder recorded lead-run persistence points: %#v", got)
 	}
 	if err := RecordLeadAgentRunFinished(context.Background(), nil, LeadAgentRunInput{}, modulecore.NewTaskID(), modulecore.NewRunID(), "shiro", routing.RouteOPS, started, "completed", "done"); err != nil {
 		t.Fatalf("RecordLeadAgentRunFinished() without recorder error=%v", err)

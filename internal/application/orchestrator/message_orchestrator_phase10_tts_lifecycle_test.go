@@ -126,7 +126,7 @@ func TestPhase10TTSLifecycleStreamHooksEmitBackendThroughputMetric(t *testing.T)
 	t.Fatalf("backend throughput metric not emitted: %#v", events)
 }
 
-func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t *testing.T) {
+func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackWithoutPublicDeltas(t *testing.T) {
 	var previous []string
 	var emitted []string
 	lifecycle := newMessageTTSLifecycle(nil, nil, func(eventType, from, to, content, route, taskID, sessionID, channel, chatID string) {
@@ -158,8 +158,8 @@ func TestPhase10TTSLifecycleStreamHooksPreservePreviousCallbackAndEmitThinking(t
 	if len(previous) != 4 || previous[0] != "" || previous[1] != " \t" || previous[2] != "tok" || previous[3] != "en" {
 		t.Fatalf("expected previous callback to receive token, got %#v", previous)
 	}
-	if len(emitted) != 4 || emitted[0] != "agent.thinking:" || emitted[1] != "agent.thinking: \t" || emitted[2] != "agent.thinking:tok" || emitted[3] != "agent.thinking:en" {
-		t.Fatalf("expected thinking event for token, got %#v", emitted)
+	if len(emitted) != 0 {
+		t.Fatalf("stream callbacks must not publish durable delta events, got %#v", emitted)
 	}
 	if _, ok := recorder.Snapshot().PointsMS[string(turntiming.PointFirstTextCallback)]; !ok {
 		t.Fatal("first non-empty text callback was not timed")

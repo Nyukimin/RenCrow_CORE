@@ -81,6 +81,45 @@ func TestEventStoreClientAppendsAndReadsAcrossProtocol(t *testing.T) {
 	}
 }
 
+func TestEventStoreClientListsExactTraceForConversationPublicationRecovery(t *testing.T) {
+	_, store := newEventFixture(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	for _, trace := range []modulecore.TraceID{traceID, modulecore.NewTraceID()} {
+		event := modulecore.NewEventEnvelope(trace, "", nil, "orchestrator", "agent.response", time.Now().UTC(), map[string]any{"to": "user"})
+		if _, err := store.AppendSequenced(ctx, event); err != nil {
+			t.Fatalf("AppendSequenced: %v", err)
+		}
+	}
+	got, err := store.ListByTraceID(ctx, traceID, 10)
+	if err != nil || len(got) != 1 || got[0].TraceID != traceID || got[0].EventType != "agent.response" {
+		t.Fatalf("ListByTraceID=%+v err=%v, want only the requested trace", got, err)
+	}
+}
+
+func TestEventStoreClientChecksBoundConversationFinalAcrossProtocol(t *testing.T) {
+	_, store := newEventFixture(t)
+	ctx := context.Background()
+	traceID := modulecore.NewTraceID()
+	turnID := modulecore.NewTurnID()
+	sessionID := modulecore.NewSessionID()
+	final := modulecore.NewEventEnvelope(traceID, "", nil, "orchestrator", "agent.response", time.Now().UTC(), map[string]any{"to": "User"})
+	final.TurnID = turnID
+	final.SessionID = sessionID
+	if _, err := store.AppendSequenced(ctx, final); err != nil {
+		t.Fatalf("AppendSequenced: %v", err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, traceID, turnID, sessionID); err != nil || !found {
+		t.Fatalf("HasPublicConversationFinalResponse exact event = %v, %v; want true", found, err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, traceID, modulecore.NewTurnID(), sessionID); err != nil || found {
+		t.Fatalf("HasPublicConversationFinalResponse wrong turn = %v, %v; want false", found, err)
+	}
+	if found, err := store.HasPublicConversationFinalResponse(ctx, modulecore.NewTraceID(), turnID, sessionID); err != nil || found {
+		t.Fatalf("HasPublicConversationFinalResponse wrong trace = %v, %v; want false", found, err)
+	}
+}
+
 func TestEventStoreClientAppendPlainImplementsEventAppender(t *testing.T) {
 	_, es := newEventFixture(t)
 	var appender modulecore.EventAppender = es
@@ -224,6 +263,14 @@ func (o *eventRecoveryOwner) GetByID(ctx context.Context, id modulecore.EventID)
 
 func (o *eventRecoveryOwner) ListByComponent(ctx context.Context, componentID string, limit int) ([]modulecore.EventEnvelope, error) {
 	return o.store.ListByComponent(ctx, componentID, limit)
+}
+
+func (o *eventRecoveryOwner) ListByTraceID(ctx context.Context, traceID modulecore.TraceID, limit int) ([]modulecore.EventEnvelope, error) {
+	return o.store.ListByTraceID(ctx, traceID, limit)
+}
+
+func (o *eventRecoveryOwner) HasPublicConversationFinalResponse(ctx context.Context, traceID modulecore.TraceID, turnID modulecore.TurnID, sessionID modulecore.SessionID) (bool, error) {
+	return o.store.HasPublicConversationFinalResponse(ctx, traceID, turnID, sessionID)
 }
 
 type eventRecoveryOwnerConfig struct {

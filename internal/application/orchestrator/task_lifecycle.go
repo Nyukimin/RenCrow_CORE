@@ -13,6 +13,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
+	"github.com/Nyukimin/RenCrow_CORE/internal/turntiming"
 	modulechat "github.com/Nyukimin/RenCrow_CORE/modules/chat"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
@@ -59,6 +60,7 @@ type taskLifecycle struct {
 type taskLifecycleEventPort interface {
 	Publish(eventType, from, to, content, route, taskID, sessionID, channel, chatID string, causationEventID modulecore.EventID, dependencyEventIDs []modulecore.EventID) (OrchestratorEvent, error)
 	BindTrace(taskID string, traceID modulecore.TraceID)
+	BindConversationIdentity(taskID string, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID)
 	ReleaseTrace(taskID string)
 	BindExecutionIdentity(taskID modulecore.TaskID, runID modulecore.RunID, actorKind, actorID string) error
 	ReleaseExecutionIdentity(taskID modulecore.TaskID)
@@ -70,17 +72,18 @@ type taskLifecycleEventPort interface {
 // all ProcessMessage branches. A later real-Agent handoff reuses the original
 // routing decision and adds a child task; it never invents another root.
 type taskLifecycleActivation struct {
-	lifecycle      *taskLifecycle
-	events         taskLifecycleEventPort
-	req            ProcessMessageRequest
-	attachedTask   *domaintask.Task
-	rootTaskID     modulecore.TaskID
-	traceID        modulecore.TraceID
-	routingEventID modulecore.EventID
-	route          routing.Route
-	rootAssignee   string
-	actorTasks     map[string]modulecore.TaskID
-	cleanups       []func()
+	lifecycle       *taskLifecycle
+	events          taskLifecycleEventPort
+	req             ProcessMessageRequest
+	attachedTask    *domaintask.Task
+	rootTaskID      modulecore.TaskID
+	traceID         modulecore.TraceID
+	routingEventID  modulecore.EventID
+	route           routing.Route
+	rootAssignee    string
+	actorTasks      map[string]modulecore.TaskID
+	cleanups        []func()
+	timingActivated bool
 }
 
 func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEventPort, req ProcessMessageRequest, attachedTask *domaintask.Task, rootAssignee string) (*taskLifecycleActivation, func()) {
@@ -102,6 +105,12 @@ func newTaskLifecycleActivation(lifecycle *taskLifecycle, events taskLifecycleEv
 }
 
 func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Route, assignee, routingContent string) (modulecore.TaskID, error) {
+	recordTiming := a != nil && !a.timingActivated
+	if recordTiming {
+		a.timingActivated = true
+		turntiming.Mark(ctx, turntiming.PointTaskActivationStarted)
+		defer turntiming.Mark(ctx, turntiming.PointTaskActivationEnded)
+	}
 	if a == nil || a.events == nil {
 		return "", fmt.Errorf("task lifecycle activation event port is unavailable")
 	}
@@ -146,6 +155,9 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 		if err != nil {
 			return "", err
 		}
+		if recordTiming {
+			turntiming.Mark(ctx, turntiming.PointTaskRoutingEventPublished)
+		}
 		a.routingEventID = routingEvent.EventID
 		a.route = route
 	} else if route != a.route {
@@ -176,10 +188,16 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 		if err != nil {
 			return a.rootTaskID, err
 		}
+		if recordTiming {
+			turntiming.Mark(ctx, turntiming.PointTaskAssignmentEventPublished)
+		}
 		if _, err := a.lifecycle.manager.RecordAssignment(ctx, a.rootTaskID, actor, assignmentEvent.EventID); err != nil {
 			return a.rootTaskID, fmt.Errorf("record attached task assignment: %w", err)
 		}
-		if err := a.bindExecutionIdentity(ctx, a.rootTaskID, actor); err != nil {
+		if recordTiming {
+			turntiming.Mark(ctx, turntiming.PointTaskAssignmentRecorded)
+		}
+		if err := a.bindExecutionIdentity(ctx, a.rootTaskID, actor, recordTiming); err != nil {
 			return a.rootTaskID, err
 		}
 		a.actorTasks[actor] = a.rootTaskID
@@ -187,18 +205,24 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	}
 
 	var taskID modulecore.TaskID
+	executionPrepared := false
 	if len(a.actorTasks) == 0 {
 		taskID, err = a.lifecycle.prepareExecutionForRootAssignee(ctx, a.rootTaskID, route, a.routingEventID, actor, a.rootAssignee)
+		executionPrepared = err == nil
 	} else if actor == a.rootAssignee {
 		taskID = a.rootTaskID
 	} else {
 		taskID, err = a.lifecycle.createExecutionChildForRootAssignee(ctx, a.rootTaskID, route, a.routingEventID, actor, a.rootAssignee)
+		executionPrepared = err == nil
 	}
 	if err != nil {
 		return "", err
 	}
+	if recordTiming && executionPrepared {
+		turntiming.Mark(ctx, turntiming.PointTaskExecutionPrepared)
+	}
 	if taskID != a.rootTaskID {
-		a.events.BindTrace(taskID.String(), a.traceID)
+		a.events.BindConversationIdentity(taskID.String(), modulecore.TurnID(a.req.TurnID), a.traceID, modulecore.SessionID(a.req.SessionID))
 		a.events.BindResponseMessageID(taskID.String(), modulecore.MessageID(a.req.AgentMessageID))
 		childTaskID := taskID
 		a.cleanups = append(a.cleanups, func() {
@@ -217,15 +241,18 @@ func (a *taskLifecycleActivation) Activate(ctx context.Context, route routing.Ro
 	if err != nil {
 		return taskID, err
 	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskAssignmentEventPublished)
+	}
 	if len(a.actorTasks) == 0 {
-		err = a.lifecycle.recordAssignmentAndStart(ctx, a.rootTaskID, taskID, actor, assignmentEvent.EventID)
+		err = a.lifecycle.recordAssignmentAndStartWithTiming(ctx, a.rootTaskID, taskID, actor, assignmentEvent.EventID, recordTiming)
 	} else {
-		err = a.lifecycle.recordChildAssignmentAndStart(ctx, taskID, actor, assignmentEvent.EventID)
+		err = a.lifecycle.recordChildAssignmentAndStartWithTiming(ctx, taskID, actor, assignmentEvent.EventID, recordTiming)
 	}
 	if err != nil {
 		return taskID, err
 	}
-	if err := a.bindExecutionIdentity(ctx, taskID, actor); err != nil {
+	if err := a.bindExecutionIdentity(ctx, taskID, actor, recordTiming); err != nil {
 		return taskID, err
 	}
 	a.actorTasks[actor] = taskID
@@ -242,7 +269,7 @@ func (a *taskLifecycleActivation) userSelectedDirectExecution(route routing.Rout
 	return true
 }
 
-func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, taskID modulecore.TaskID, actor string) error {
+func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, taskID modulecore.TaskID, actor string, recordTiming bool) error {
 	if a == nil || a.lifecycle == nil {
 		return nil
 	}
@@ -283,6 +310,9 @@ func (a *taskLifecycleActivation) bindExecutionIdentity(ctx context.Context, tas
 	}
 	if err := a.events.BindExecutionIdentity(taskID, run.RunID, canonicalExecutionActorKind, canonicalActor); err != nil {
 		return fmt.Errorf("bind execution identity for task %s: %w", taskID, err)
+	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskIdentityBound)
 	}
 	boundTaskID := taskID
 	a.cleanups = append(a.cleanups, func() {
@@ -579,6 +609,10 @@ func (l *taskLifecycle) createExecutionChildForRootAssignee(ctx context.Context,
 }
 
 func (l *taskLifecycle) recordChildAssignmentAndStart(ctx context.Context, taskID modulecore.TaskID, assignee string, assignmentEventID modulecore.EventID) error {
+	return l.recordChildAssignmentAndStartWithTiming(ctx, taskID, assignee, assignmentEventID, true)
+}
+
+func (l *taskLifecycle) recordChildAssignmentAndStartWithTiming(ctx context.Context, taskID modulecore.TaskID, assignee string, assignmentEventID modulecore.EventID, recordTiming bool) error {
 	if l == nil || l.manager == nil {
 		return fmt.Errorf("task lifecycle manager is unavailable")
 	}
@@ -589,13 +623,23 @@ func (l *taskLifecycle) recordChildAssignmentAndStart(ctx context.Context, taskI
 	if _, err := l.manager.RecordAssignment(ctx, taskID, actor, assignmentEventID); err != nil {
 		return fmt.Errorf("record task assignment: %w", err)
 	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskAssignmentRecorded)
+	}
 	if _, err := l.manager.Start(ctx, taskID); err != nil {
 		return fmt.Errorf("start execution task: %w", err)
+	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskExecutionRunStarted)
 	}
 	return nil
 }
 
 func (l *taskLifecycle) recordAssignmentAndStart(ctx context.Context, rootTaskID, executionTaskID modulecore.TaskID, assignee string, assignmentEventID modulecore.EventID) error {
+	return l.recordAssignmentAndStartWithTiming(ctx, rootTaskID, executionTaskID, assignee, assignmentEventID, true)
+}
+
+func (l *taskLifecycle) recordAssignmentAndStartWithTiming(ctx context.Context, rootTaskID, executionTaskID modulecore.TaskID, assignee string, assignmentEventID modulecore.EventID, recordTiming bool) error {
 	if l == nil || l.manager == nil {
 		return fmt.Errorf("task lifecycle manager is unavailable")
 	}
@@ -606,14 +650,23 @@ func (l *taskLifecycle) recordAssignmentAndStart(ctx context.Context, rootTaskID
 	if _, err := l.manager.RecordAssignment(ctx, executionTaskID, actor, assignmentEventID); err != nil {
 		return fmt.Errorf("record task assignment: %w", err)
 	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskAssignmentRecorded)
+	}
 	if _, err := l.manager.Start(ctx, rootTaskID); err != nil {
 		return fmt.Errorf("start root task: %w", err)
+	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskRootRunStarted)
 	}
 	if executionTaskID == rootTaskID {
 		return nil
 	}
 	if _, err := l.manager.Start(ctx, executionTaskID); err != nil {
 		return fmt.Errorf("start execution task: %w", err)
+	}
+	if recordTiming {
+		turntiming.Mark(ctx, turntiming.PointTaskExecutionRunStarted)
 	}
 	return nil
 }

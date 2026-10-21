@@ -96,6 +96,11 @@ func NewMioAgent(
 
 // DecideAction はMioによる委譲判断（4段階優先順位）
 func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (routing.Decision, error) {
+	decision, _, err := m.decideAction(ctx, t, false)
+	return decision, err
+}
+
+func (m *MioAgent) decideAction(ctx context.Context, t conversation.TurnInput, allowCombined bool) (routing.Decision, *MioChatDraft, error) {
 	// 優先度1: 明示コマンド
 	if explicitRoute := m.parseExplicitCommand(t.MessageText()); explicitRoute != "" {
 		return routing.NewDecisionWithEvidence(explicitRoute, 1.0, "Explicit command",
@@ -106,7 +111,7 @@ func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (
 				Confidence: 1.0,
 				Reason:     "explicit command matched",
 			},
-		), nil
+		), nil, nil
 	}
 	// Indexed person-related catalog intents must stay on Mio's CHAT path so
 	// generic creative/knowledge routing cannot bypass the bounded local Tool
@@ -120,7 +125,7 @@ func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (
 				Confidence: 1.0,
 				Reason:     "bounded indexed person-related catalog intent matched",
 			},
-		), nil
+		), nil, nil
 	}
 	evidence := []routing.DecisionEvidence{
 		{
@@ -139,7 +144,7 @@ func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (
 			Confidence: confidence,
 			Reason:     "rule dictionary matched",
 		})
-		return routing.NewDecisionWithEvidence(route, confidence, "Rule dictionary match", evidence...), nil
+		return routing.NewDecisionWithEvidence(route, confidence, "Rule dictionary match", evidence...), nil, nil
 	}
 	evidence = append(evidence, routing.DecisionEvidence{
 		Source:  routing.EvidenceSourceRuleDictionary,
@@ -147,12 +152,20 @@ func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (
 		Reason:  "no rule dictionary match",
 	})
 
+	if allowCombined && m.canUseCombinedChatDraft(ctx, t) {
+		if _, ok := m.classifier.(RouteReplyClassifier); ok {
+			return m.classifyChatWithDraft(ctx, t, evidence)
+		}
+	}
+
 	// 優先度3: 分類器
 	if m.classifier != nil {
+		turntiming.Mark(ctx, turntiming.PointClassificationStarted)
 		classified, err := m.classifier.Classify(ctx, t)
+		turntiming.Mark(ctx, turntiming.PointClassificationEnded)
 		if err == nil && classified.Route != "" && classified.Confidence >= 0.7 {
 			classified.Evidence = append(evidence, classifierEvidence(classified)...)
-			return classified, nil
+			return classified, nil, nil
 		}
 		reason := "classifier returned low confidence"
 		if err != nil {
@@ -184,7 +197,7 @@ func (m *MioAgent) DecideAction(ctx context.Context, t conversation.TurnInput) (
 
 	// 優先度4: 安全側フォールバック（CHAT）
 	// 技術的キーワードがルール辞書で捕捉されなかったメッセージは会話として処理
-	return routing.NewDecisionWithEvidence(routing.RouteCHAT, 0.7, "No rule match, default to CHAT", evidence...), nil
+	return routing.NewDecisionWithEvidence(routing.RouteCHAT, 0.7, "No rule match, default to CHAT", evidence...), nil, nil
 }
 
 func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
@@ -202,30 +215,13 @@ func classifierEvidence(decision routing.Decision) []routing.DecisionEvidence {
 
 // Chat は会話を実行（v5.1: ConversationEngine + 明示指示時のみWeb検索）
 func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, error) {
+	turntiming.Mark(ctx, turntiming.PointAgentInvocationStarted)
 	userMessage := t.MessageText()
 	currentSpeaker := conversationSpeakerForViewerRecipient(t.ViewerRecipient(), conversation.SpeakerMio)
 	speechPlanMode := SpeechPlanCallbackFromContext(ctx) != nil
 
 	// === v5.1: ConversationEngine による RecallPack 生成 ===
-	var messages []llm.Message
-	var recallPack *conversation.RecallPack
-	if m.conversationEngine != nil {
-		var err error
-		turntiming.Mark(ctx, turntiming.PointBeginTurnStarted)
-		recallPack, err = m.conversationEngine.BeginTurn(ctx, t.SessionID(), userMessage)
-		turntiming.Mark(ctx, turntiming.PointBeginTurnEnded)
-		if err != nil {
-			fmt.Printf("WARN: BeginTurn failed: %v\n", err)
-		}
-		if recallPack != nil {
-			filtered := recallPack.FilterForRole("chat")
-			filtered = filtered.WithoutPersonaSystemPrompt()
-			recallPack = &filtered
-			// RecallPack からプロンプトメッセージを生成（system prompt + 過去文脈 + 会話履歴）
-			messages = appendSharedConversationContinuityPrompt(messages, recallPack)
-			messages = append(messages, recallPack.ToPromptMessages()...)
-		}
-	}
+	recallPack, messages := m.beginChatRecall(ctx, t, userMessage)
 	if response, ok := exactSharedRecallAnswer(userMessage, recallPack); ok {
 		if onToken := llm.StreamCallbackFromContext(ctx); onToken != nil {
 			onToken(response)
@@ -312,58 +308,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		}
 	}
 
-	latestOther := ""
-	attributionPrompt := ""
-	if recallPack != nil {
-		selfCtx, otherCtx := buildAttributionContextsFromShort(recallPack.ShortContext, currentSpeaker, 5)
-		latestOther = latestOtherMessageFromShort(recallPack.ShortContext, currentSpeaker)
-		attributionPrompt = fmt.Sprintf(
-			"発言帰属ガード:\n- 現在のAgentは%s。\n- 自分の過去発言(要約): %s\n- 他者の発言(要約): %s\n要件: 他者の発言を自分の新規アイデアとして扱わない。既出アイデアに触れる場合は発言者を明示する。",
-			currentSpeaker,
-			strings.Join(selfCtx, " / "),
-			strings.Join(otherCtx, " / "),
-		)
-	}
-
-	if m.recentContext != nil {
-		if glossaryContext, err := m.recentContext(ctx, 6); err != nil {
-			log.Printf("[Mio] recent context failed: %v", err)
-		} else if strings.TrimSpace(glossaryContext) != "" {
-			messages = append(messages, llm.Message{
-				Role:    "system",
-				Content: glossaryContext + "\n最近の語彙は、断定せず軽い補足として扱ってください。",
-				Type:    llm.PromptContextRecall,
-			})
-		}
-	}
-	if brief, ok := dailyNewsBriefFromContext(ctx); ok {
-		messages = append(messages, llm.Message{
-			Role:    "system",
-			Content: dailyNewsBriefSystemPrompt(brief),
-			Type:    llm.PromptContextRecall,
-		})
-	}
-	if prompt := viewerRecipientSystemPrompt(t.ViewerRecipient(), userMessage); prompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: prompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "recipient_contract"}})
-	}
-	if prompt := m.runtimeMioPromptContext(t); prompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: prompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "runtime_state"}})
-	}
-	if attributionPrompt != "" {
-		messages = append(messages, llm.Message{Role: "system", Content: attributionPrompt, Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "attribution_state"}})
-	}
-	if speechPlanMode {
-		messages = append(messages, llm.Message{Role: "system", Content: speechPlanInstruction(), Type: llm.PromptContextVariable, Metadata: map[string]string{"runtime_context_kind": "speech_plan_contract"}})
-	}
-
-	// ユーザーメッセージを最後に追加
-	currentUserMessage := userMessageWithAttachments(userMessage, t.Attachments())
-	messages = assemblePromptContext(
-		m.systemPromptForViewerRecipient(t.ViewerRecipient()),
-		m.stablePromptContext(ctx, t),
-		messages,
-		currentUserMessage,
-	)
+	messages, latestOther := m.assembleChatPrompt(ctx, t, userMessage, messages, recallPack, speechPlanMode)
 	turntiming.Mark(ctx, turntiming.PointPromptPreparationEnded)
 
 	var streamCallback llm.StreamCallback
@@ -378,6 +323,7 @@ func (m *MioAgent) Chat(ctx context.Context, t conversation.TurnInput) (string, 
 		// provider tokens to the legacy TTS or Avatar stream hooks.
 		req.OnToken = nil
 	}
+	turntiming.Mark(ctx, turntiming.PointGenerationRequestReady)
 
 	generationCtx := turntiming.WithBodyGenerationContext(ctx)
 	turntiming.Mark(ctx, turntiming.PointGenerationProviderStart)

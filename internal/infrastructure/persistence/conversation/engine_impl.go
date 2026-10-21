@@ -160,9 +160,11 @@ func (e *RealConversationEngine) BeginTurn(ctx context.Context, sessionID string
 	}
 
 	activeDomain := ""
+	turntiming.Mark(ctx, turntiming.PointActiveDomainStarted)
 	if thread, threadErr := e.manager.GetActiveThread(ctx, sessionID); threadErr == nil && thread != nil {
 		activeDomain = strings.TrimSpace(thread.Domain)
 	}
+	turntiming.Mark(ctx, turntiming.PointActiveDomainEnded)
 	nativeRecallProvenanceIntent := domconv.HasNativeRecallProvenanceIntent(ctx)
 	categoryL1KnowledgeRecordIDs := map[string]struct{}{}
 	categoryL1KnowledgeSummaries := map[string]struct{}{}

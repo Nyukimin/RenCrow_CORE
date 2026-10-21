@@ -324,8 +324,9 @@ func TestDirectShiroRootKeepsOwnerForLaterActualKuroAndMioHandoffs(t *testing.T)
 	ctx := context.Background()
 	rootID := modulecore.NewTaskID()
 	traceID := modulecore.NewTraceID()
+	turnID := modulecore.NewTurnID()
 	req := ProcessMessageRequest{
-		RootTaskID: string(rootID), TraceID: string(traceID), SessionID: "direct-shiro-handoffs",
+		RootTaskID: string(rootID), TurnID: string(turnID), TraceID: string(traceID), SessionID: "direct-shiro-handoffs",
 		Channel: "viewer", ChatID: "viewer-user", To: taskLifecycleShiro, UserMessage: "hello directly",
 	}
 	manager := newRecordingTaskLifecycleManager()
@@ -334,7 +335,7 @@ func TestDirectShiroRootKeepsOwnerForLaterActualKuroAndMioHandoffs(t *testing.T)
 		t.Fatalf("create direct root: %v", err)
 	}
 	events := newRecordingTaskLifecycleEventPort()
-	events.BindTrace(rootID.String(), traceID)
+	events.BindConversationIdentity(rootID.String(), turnID, traceID, modulecore.SessionID(req.SessionID))
 	activation, cleanup := newTaskLifecycleActivation(lifecycle, events, req, nil, taskLifecycleShiro)
 	defer cleanup()
 
@@ -351,6 +352,13 @@ func TestDirectShiroRootKeepsOwnerForLaterActualKuroAndMioHandoffs(t *testing.T)
 	}
 	if kuroTaskID == rootID || mioTaskID == rootID || kuroTaskID == mioTaskID {
 		t.Fatalf("handoff task IDs = root:%s Kuro:%s Mio:%s", rootID, kuroTaskID, mioTaskID)
+	}
+	final, err := events.Publish("agent.response", taskLifecycleMio, "user", "done", "CHAT", mioTaskID.String(), req.SessionID, req.Channel, req.ChatID, "", nil)
+	if err != nil {
+		t.Fatalf("child public final: %v", err)
+	}
+	if final.TaskID != mioTaskID || final.TurnID != turnID || final.TraceID != traceID || final.SessionID != modulecore.SessionID(req.SessionID) {
+		t.Fatalf("child public final identity = task:%s turn:%s trace:%s session:%s", final.TaskID, final.TurnID, final.TraceID, final.SessionID)
 	}
 	root := manager.tasks[rootID]
 	if root.OwnerID != taskLifecycleShiro || root.Assignee != taskLifecycleShiro {

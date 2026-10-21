@@ -141,7 +141,7 @@ type RedisMetrics struct {
 
 // NewRedisStore は新しいRedisStoreを生成
 func NewRedisStore(redisURL string) (*RedisStore, error) {
-	opts, err := redis.ParseURL(redisURL)
+	opts, err := redisClientOptions(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse redis URL: %w", err)
 	}
@@ -160,6 +160,15 @@ func NewRedisStore(redisURL string) (*RedisStore, error) {
 		ttl:     24 * time.Hour, // デフォルト: 24時間
 		metrics: &RedisMetrics{},
 	}, nil
+}
+
+func redisClientOptions(redisURL string) (*redis.Options, error) {
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, err
+	}
+	opts.ContextTimeoutEnabled = true
+	return opts, nil
 }
 
 // Ping checks the existing Redis connection without creating a new client.

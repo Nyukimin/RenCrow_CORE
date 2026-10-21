@@ -12,8 +12,8 @@ import (
 )
 
 // 不変条件: どの Agent の応答も、先頭に Agent 名ラベル（`[midori] `、重なった
-// `[midori] [midori] `、自分以外の Agent 名）を持たない。agent.thinking の delta、
-// agent.response の本文、読み上げ文（TTS push）は同じ無ラベルの本文から作られる。
+// `[midori] [midori] `、自分以外の Agent 名）を持たない。public event は完成した
+// agent.response のみで、読み上げ文（TTS push）は同じ無ラベル本文から作られる。
 // モデルが履歴の `[speaker] msg` を真似てラベルを出力する状況を、実Agentと
 // ProcessMessage を通した実経路で再現して固定する。
 
@@ -75,32 +75,31 @@ func assertNoSpeakerLabel(t *testing.T, where, text string) {
 	}
 }
 
-func assertLabelFreeTurn(t *testing.T, listener *recordingEventListener, bridge *mockTTSBridge, wantStreamed bool) {
+func assertLabelFreeTurn(t *testing.T, listener *recordingEventListener, bridge *mockTTSBridge) {
 	t.Helper()
-	var thinking, responses []string
+	var deltas, responses, publicResponses []string
 	for _, ev := range listener.events {
 		switch ev.Type {
 		case "agent.thinking":
-			thinking = append(thinking, ev.Content)
+			deltas = append(deltas, ev.Content)
 		case "agent.response":
 			responses = append(responses, ev.Content)
+			if ev.To == "user" {
+				publicResponses = append(publicResponses, ev.Content)
+			}
 		}
 	}
-	if len(responses) == 0 {
-		t.Fatal("no agent.response event")
+	if len(deltas) != 0 {
+		t.Fatalf("stream deltas must not be durable public events: %#v", deltas)
+	}
+	if len(publicResponses) != 1 {
+		t.Fatalf("got %d public agent.response events, want one completed response: %#v", len(publicResponses), publicResponses)
 	}
 	for _, content := range responses {
 		if strings.TrimSpace(content) != labelFreeBody {
 			t.Errorf("agent.response content = %q, want %q", content, labelFreeBody)
 		}
 	}
-	streamed := strings.Join(thinking, "")
-	if wantStreamed {
-		if strings.TrimSpace(streamed) != labelFreeBody {
-			t.Errorf("agent.thinking deltas = %q, want %q", streamed, labelFreeBody)
-		}
-	}
-	assertNoSpeakerLabel(t, "agent.thinking deltas", streamed)
 	if len(bridge.pushes) == 0 {
 		t.Fatal("nothing was voiced")
 	}
@@ -146,7 +145,7 @@ func TestProcessMessageRemovesAgentLabelsFromEventsAndSpeech(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ProcessMessage: %v", err)
 			}
-			assertLabelFreeTurn(t, listener, bridge.mockTTSBridge, false)
+			assertLabelFreeTurn(t, listener, bridge.mockTTSBridge)
 			if len(bridge.plans) != 1 {
 				t.Fatalf("SpeechPlan count = %d, want one typed CHAT handoff", len(bridge.plans))
 			}
@@ -182,5 +181,5 @@ func TestProcessMessageOPSRemovesAgentLabelsFromSpeech(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
 	}
-	assertLabelFreeTurn(t, listener, bridge, false)
+	assertLabelFreeTurn(t, listener, bridge)
 }

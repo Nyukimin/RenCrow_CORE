@@ -46,6 +46,7 @@ class FakeElement {
     return this._className || '';
   }
   appendChild(child) {
+    child.parentNode = this;
     this.children.push(child);
     return child;
   }
@@ -72,7 +73,12 @@ class FakeElement {
   click() {
     if (this.listeners.click) return this.listeners.click({preventDefault() {}});
   }
-  remove() {}
+  remove() {
+    if (this.parentNode && Array.isArray(this.parentNode.children)) {
+      this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+      this.parentNode = null;
+    }
+  }
   removeAttribute(name) {
     delete this.attributes[name];
   }
@@ -151,6 +157,7 @@ globalThis.__viewerAudioHarness = {
   enqueueTTSAudio,
   toggleTTSAudio,
   setCentralTTSSpeechText,
+  addMsgToTimeline,
   addIdleMsgToTimeline,
   addIdleSummaryToTimeline,
   idleLiveRenderTarget,
@@ -161,7 +168,7 @@ globalThis.__viewerAudioHarness = {
   handleViewerActiveControlEvent,
   isIdleChatActiveForTTS,
   idleLiveRenderedLog,
-	};
+};
 `;
 
   const elements = new Map();
@@ -219,6 +226,7 @@ globalThis.__viewerAudioHarness = {
 	  },
     },
     MAX_TIMELINE_NODES: 400,
+    msgCount: 0,
     mainEl: document.querySelector('main'),
     chat: document.getElementById('chat'),
     idleLiveLog: document.getElementById('idleLiveLog'),
@@ -264,6 +272,181 @@ test('tts playback url uses same-origin proxy for absolute audio urls', () => {
   const got = harness.resolveTTSPlaybackURL('http://192.168.1.207:7870/audio/sample.wav', '');
 
   assert.equal(got, '/viewer/tts/audio?url=http%3A%2F%2F192.168.1.207%3A7870%2Faudio%2Fsample.wav');
+});
+
+test('completed Mio and Shiro responses render once when TTS text arrives before or after the response', async (t) => {
+  const responseBody = '完成した応答本文です。';
+  for (const speaker of ['mio', 'shiro']) {
+    for (const order of ['tts-before-response', 'response-before-tts']) {
+      await t.test(speaker + ' / ' + order, async () => {
+        const {harness, elements} = loadAudioHarness();
+        const taskID = 'tsk-chat-' + speaker + '-' + order;
+        const response = {
+          type: 'agent.response',
+          from: speaker,
+          to: 'user',
+          task_id: taskID,
+          message_id: 'msg-' + taskID,
+          content: responseBody,
+          timestamp: liveTimestamp(),
+        };
+        const ttsChunk = {
+          type: 'tts.audio_chunk',
+          content: JSON.stringify({
+            session_id: 'chat-' + taskID,
+            public_playback_ref: taskID,
+            utterance_id: 'utt-' + taskID,
+            message_id: response.message_id,
+            chunk_index: 0,
+            character_id: speaker,
+            text: responseBody,
+            display_text: responseBody,
+            audio_url: '/audio/' + speaker + '.wav',
+          }),
+        };
+        const publishResponse = () => {
+          harness.state.logs.push(response);
+          harness.addMsgToTimeline(response);
+        };
+        const publishTTS = async () => {
+          harness.chatAudioSync.handleEvent(ttsChunk);
+          await Promise.resolve();
+        };
+
+        if (order === 'tts-before-response') {
+          await publishTTS();
+          publishResponse();
+        } else {
+          publishResponse();
+          harness.state.logs = [];
+          await publishTTS();
+        }
+
+        const messages = elements.get('chat').children;
+        assert.equal(messages.length, 1, 'one conversation message should remain');
+        assert.equal(messages[0].className.includes('tts-current'), false, 'canonical response owns the message bubble');
+        assert.equal(messages[0].querySelector('.mc').dataset.raw, responseBody, 'the complete agent.response body should be displayed');
+      });
+    }
+  }
+});
+
+test('message.received with the same task does not suppress provisional Chat TTS text', () => {
+  const {harness, elements} = loadAudioHarness();
+  const taskID = 'tsk-user-input-and-chat-response';
+  const userMessage = {
+    type: 'message.received',
+    from: 'user',
+    to: 'mio',
+    task_id: taskID,
+    message_id: 'msg-user-input',
+    content: '同じtaskの利用者入力です。',
+    timestamp: liveTimestamp(),
+  };
+  harness.state.logs.push(userMessage);
+  harness.addMsgToTimeline(userMessage);
+
+  harness.setCentralTTSSpeechText('mio', '応答の途中です。', 'chat-session', 0, 'utt-0', taskID, 'msg-agent-response');
+
+  assert.equal(elements.get('chat').children.length, 2);
+  assert.equal(elements.get('chat').children[1].querySelector('.mc').textContent, '応答の途中です。');
+});
+
+test('final response removes every matching provisional Chat TTS bubble and preserves unrelated bubbles', () => {
+  const {harness, elements} = loadAudioHarness();
+  const taskID = 'tsk-shared-task';
+  const responseMessageID = 'msg-final-response';
+  harness.setCentralTTSSpeechText('mio', '最初の音声chunkです。', 'chat-session', 0, 'utt-0', taskID, responseMessageID);
+  harness.setCentralTTSSpeechText('mio', '二つ目の独立bubbleです。', 'chat-session', 0, 'utt-1', taskID, responseMessageID);
+  harness.setCentralTTSSpeechText('shiro', '同じtaskの別messageです。', 'other-session', 0, 'utt-other', taskID, 'msg-other-response');
+
+  const response = {
+    type: 'agent.response',
+    from: 'mio',
+    to: 'user',
+    task_id: taskID,
+    message_id: responseMessageID,
+    content: 'canonical final response',
+    timestamp: liveTimestamp(),
+  };
+  harness.state.logs.push(response);
+  harness.addMsgToTimeline(response);
+
+  const messages = elements.get('chat').children;
+  assert.equal(messages.length, 2, 'the canonical response and unrelated provisional bubble should remain');
+  const canonical = messages.find((el) => el.dataset.eventType === 'agent.response');
+  const unrelated = messages.find((el) => el.dataset.chatTtsProvisional === 'true');
+  assert.equal(canonical.querySelector('.mc').dataset.raw, response.content);
+  assert.equal(unrelated.querySelector('.mc').textContent, '同じtaskの別messageです。');
+  assert.equal(unrelated.dataset.messageId, 'msg-other-response');
+});
+
+test('a matching response message ID takes precedence over task ID for both event orders', async (t) => {
+  for (const order of ['response-before-tts', 'tts-before-response']) {
+    await t.test(order, async () => {
+      const {harness, elements} = loadAudioHarness();
+      const taskID = 'tsk-multiple-messages';
+      const response = {
+        type: 'agent.response', from: 'mio', to: 'user', task_id: taskID,
+        message_id: 'msg-response-a', content: 'response A', timestamp: liveTimestamp(),
+      };
+      const publishResponse = () => {
+        harness.state.logs.push(response);
+        harness.addMsgToTimeline(response);
+      };
+      const publishOtherTTS = () => harness.setCentralTTSSpeechText(
+        'mio', '別responseの音声です。', 'chat-session', 0, 'utt-b', taskID, 'msg-response-b',
+      );
+
+      if (order === 'response-before-tts') {
+        publishResponse();
+        publishOtherTTS();
+      } else {
+        publishOtherTTS();
+        publishResponse();
+      }
+
+      const messages = elements.get('chat').children;
+      assert.equal(messages.length, 2, 'a different message in the same task must not be treated as the final response');
+      const canonical = messages.find((el) => el.dataset.eventType === 'agent.response');
+      const provisional = messages.find((el) => el.dataset.chatTtsProvisional === 'true');
+      assert.equal(canonical.querySelector('.mc').dataset.raw, response.content);
+      assert.equal(provisional.querySelector('.mc').textContent, '別responseの音声です。');
+    });
+  }
+});
+
+test('task ID is the fallback correlation when TTS has no message ID', async (t) => {
+  for (const order of ['response-before-tts', 'tts-before-response']) {
+    await t.test(order, async () => {
+      const {harness, elements} = loadAudioHarness();
+      const taskID = 'tsk-message-id-fallback';
+      const response = {
+        type: 'agent.response', from: 'mio', to: 'user', task_id: taskID,
+        message_id: 'msg-final-response', content: 'canonical response', timestamp: liveTimestamp(),
+      };
+      const publishResponse = () => {
+        harness.state.logs.push(response);
+        harness.addMsgToTimeline(response);
+      };
+      const publishTTS = () => harness.setCentralTTSSpeechText(
+        'mio', 'provisional audio text', 'chat-session', 0, 'utt-no-message-id', taskID, '',
+      );
+
+      if (order === 'response-before-tts') {
+        publishResponse();
+        publishTTS();
+      } else {
+        publishTTS();
+        publishResponse();
+      }
+
+      const messages = elements.get('chat').children;
+      assert.equal(messages.length, 1);
+      assert.equal(messages[0].dataset.eventType, 'agent.response');
+      assert.equal(messages[0].querySelector('.mc').dataset.raw, response.content);
+    });
+  }
 });
 
 test('speaker button can turn ready audio off without stopping central chat fallback', async () => {

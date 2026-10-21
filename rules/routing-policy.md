@@ -1,538 +1,106 @@
-# routing-policy.md
+# RenCrow_CORE Routing Policy
 
 ## このファイルの役割
 
-このファイルは、RenCrow におけるルーティング判断の実務ルールを定義する。  
-目的は、ユーザー入力を適切な役割と処理カテゴリへ振り分け、責務の混線を防ぐこと。
+この文書は、現在のCORE実装における「どんな発話が、どのrouteになり、どの実Agentが何をするか」を定義する。製品契約は [`docs/README.md`](../docs/README.md) から `docs/02_機能仕様.md` と `docs/03_キャラクター・エージェント仕様.md` を参照する。実装との不一致を見つけた場合は、実際の判断・実行経路を確認してから契約を更新する。
 
-この文書は「どこへ渡すか」を決める作業ルールである。製品契約は `docs/README.md` から `docs/02_機能仕様.md` と `docs/03_キャラクター・エージェント仕様.md` を参照し、作業制約は `AGENTS.md` と `rules/PROJECT_AGENT.md` に従う。
+routeは処理分類であり、実行権限ではない。認証、利用者scope、安全policy、操作ごとの実行gateは別に適用する。実AgentはMio、Shiro、Kuro、Midori。Coder、Worker、Wild、LLM、provider、runtimeは実装機構またはslotであり、実Agentではない。Coderを選んだ場合もコードrouteの実Actorと作業責任はShiroに残る。
 
----
+## 判断の優先順位
 
-## ルーティングの基本原則
+通常の入力は次の順で処理する。これは現在の `MessageOrchestrator` と `MioAgent.DecideAction` の順序である。
 
-ルーティングでは次を優先する。
+1. **明示宛先のViewer CHAT**: Viewerで `to=shiro|kuro|midori` が選ばれ、メッセージにslash commandがない場合、選択Agentが直接 `CHAT` を処理する。Mioの `DecideAction`、rule dictionary、classifierを呼ばない。これは通常CHATであり、OPSやコード実行を意味しない。`to=mio`、他channel、slash command付きの入力は通常のroute判断へ進む。
+2. **明示slash command**: `/chat`、`/plan`、`/analyze`、`/heavy`、`/ops`、`/research`、`/wild`、`/code`、`/code1`、`/code2`、`/code3`、`/code4` を先頭commandとして解釈する。`/heavy` は `ANALYZE` のalias。command名の直後は終端または空白でなければならない。
+3. **専用カタログ判断**: indexed person-related catalog lookupは、一般的な創作・知識分類より先にMioの `CHAT` pathで扱う。
+4. **RuleDictionary**: 専用条件と自然文keywordを評価する。最初に合致したruleがrouteを確定する。順序は、Codex work path → file referenceを含むcode edit request → keyword rule（`WILD` → `CODE2` → `PLAN` → `ANALYZE` → `OPS` → `CODE3` → `RESEARCH`）→ 明白な挨拶／高確度の通常会話（`CHAT`）。
+5. **Classifier**: rule不一致時にだけ分類する。空route、error、confidence `< 0.7` は採用せず `CHAT` にfallbackする。legacy classifier promptで意味が定義されていないrouteは、parserがroute文字列を受理してもclassifierの意味選択が確立したとは扱わない。
+6. **Deep-dive policy**: route決定後、利用者が深掘りを明示しpolicyが要求を返した場合、元routeが `CHAT`、`PLAN`、`RESEARCH` のときは `ANALYZE` へ昇格できる。これは再分類ではなく、Mio判断後のpolicy処理である。
 
-1. 責務分離を守る
-2. 安全側に倒す
-3. 曖昧な場合は小さく始める
-4. 実行より先に分類を誤らない
-5. 迷ったら `CHAT` に戻す
+明示宛先Viewer CHATはMio判断より前に処理する特例である。slash commandがある場合は会話相手の選択よりcommandを優先する。選択されたruntimeが利用不能な場合、Mioへ黙って切り替えない。
 
-ルーティングは「最も賢そうな LLM を使うこと」ではなく、  
-「その仕事を正しい層に置くこと」を優先する。
+## Routeと実Actorの一覧
 
-### コーディング作業の Safe / Tool Build 判定
+| Route | 実Actor | 現在の処理 |
+| --- | --- | --- |
+| `CHAT` | 通常Mio。Viewerが選択した場合はShiro／Kuro／Midori | Mioまたは選択Agentが会話応答 |
+| `PLAN` | Mio | Mioの計画応答 |
+| `ANALYZE` | Kuro | Kuroが分析し、結果を返す |
+| `OPS` | Shiro | Shiroが運用処理を実行 |
+| `RESEARCH` | Mio | Mioの調査応答 |
+| `CODE` | Shiro | local executorがcoder1 slotを固定選択 |
+| `CODE1` | Shiro | local executorがcoder1 slotへ仕様設計の指示 |
+| `CODE2` | Shiro | local executorがcoder2 slotへ実装指示 |
+| `CODE3` | Shiro | local executorがcoder3 slotへreview/reasoning指示 |
+| `CODE4` | Shiro | local executorがcoder4 slotへ高速試作・実験の指示 |
+| `WILD` | Midori | MidoriがWild処理経路で応答 |
 
-コーディング作業は `rules/PROJECT_AGENT.md` に従い、役割に渡す前に Safe Build Mode / Tool Build Mode を判定する。
+## Route別の入力基準
 
-- Safe Build Mode: 既存コード、既存DB、既存環境、設定、運用、memory、Source Registry、validator、本番系に触る作業。
-- Tool Build Mode: 新規ツール、小物スクリプト、補助アプリ、検証用CLIを既存本体から切り離して作る作業。
-
-横断的に再利用する Tool Build Mode の成果物は `/home/nyukimi/RenCrow/RenCrow_Tools` を正本とする。`RenCrow_CORE/tools/` は既存互換または本体密結合の残置場所であり、新規の横断ツール置き場にしない。
-
-迷った場合は Safe Build Mode とし、追加確認が必要な状態として扱う。Tool Build Mode でも、既存本体に接続する、正式DBへ保存する、memoryを確定する、Source Registryを更新する、設定や環境を変える場合は Safe Build Mode へ切り替える。
-
----
-
-## 役割の定義
-
-### Chat
-担当：
-- ユーザー対話
-- 意図の整理
-- ルーティング判断
-- 結果返却
-- 軽い要約、確認、分類
-
-やらないこと：
-- 大きな実装
-- 破壊的操作
-- 実行の主体化
-- 複雑なコード修正の抱え込み
-
-### Worker
-担当：
-- 実行
-- ファイル編集
-- patch 適用
-- コマンド実行
-- テスト実行
-- 実行結果の記録
-- plan のステップ実施
-
-やらないこと：
-- 設計方針の独断決定
-- 曖昧要件の解釈主導
-- 長い仕様策定
-- 実装案のゼロからの発明
-
-### Coder
-担当：
-- 設計
-- 分析
-- 実装案作成
-- `plan` 生成
-- `patch` 生成
-- リファクタリング案
-- テスト追加案
-- 原因調査
-
-やらないこと：
-- 原則として破壊的操作の直接実行
-- 実行責務の肩代わり
-- 運用判断の最終確定
-
----
-
-## 処理カテゴリ
-
-RenCrow では、入力を以下のカテゴリへ分類する。
-
-- `CHAT`
-- `PLAN`
-- `ANALYZE`
-- `OPS`
-- `RESEARCH`
-- `CODE`
-- `CODE1`
-- `CODE2`
-- `CODE3`
-
----
-
-## カテゴリ定義
+各節はclassifier policy inspectorがrouteごとのcriterionとして読み取る。`CHAT`から`WILD`まで11 routeすべてに節を置き、発話の意味、実Actor、処理を記す。
 
 ### CHAT
-対象：
-- 雑談
-- 方針相談
-- 短い説明
-- 軽い要約
-- 判断保留が適切な曖昧入力
-- どこへ回すべきか未確定の入力
-
-担当：
-- Chat
-
-例：
-- 「これってどう思う？」
-- 「今の構成をざっくり説明して」
-- 「まず何をすべき？」
+雑談、挨拶、高確度の直接質問、曖昧で安全なfallback。通常はMioが応答する。ViewerでShiro、Kuro、Midoriを明示選択しslash commandがない場合は、選択Agentが直接CHATを処理し、Mioの判定を通らない。
 
 ### PLAN
-対象：
-- 作業計画の作成
-- 手順分解
-- 段取り整理
-- 実装前の実行順序整理
-
-担当：
-- 原則 Coder
-- 結果返却は Chat
-
-例：
-- 「この機能追加の実装手順を考えて」
-- 「段階的な移行プランを作って」
+作業計画、手順、プラン、設計、実装順序の整理。RuleDictionary例は「計画」「プラン」「設計して」「アーキテクチャ」。実ActorはMioで、PLAN pathから計画応答を返す。Coderへの割当routeではない。
 
 ### ANALYZE
-対象：
-- 原因調査
-- ログ分析
-- ボトルネック分析
-- コード読解
-- 差分比較
-- 影響範囲の見積もり
-
-除外：
-- 画像解析、画像分析、写真・スクショ・添付画像の内容理解は `ANALYZE` ではなく `WILD` とする。
-
-担当：
-- 原則 Coder
-- 軽い読解だけなら Chat でも可
-
-例：
-- 「このエラーの原因を調べて」
-- 「このモジュールの責務を分析して」
+原因、ログ、挙動、コード、差分、影響の分析。RuleDictionary例は「分析して」「調査して」「解析して」「診断して」「レビューして」。実ActorはKuroで、分析結果を返す。利用者の明示deep-dive要求とpolicy判定もこのrouteを選び得る。
 
 ### OPS
-対象：
-- 実行系操作
-- コマンド実行
-- テスト実行
-- ファイル変更適用
-- 実運用タスク
-- patch 適用
-- ヘルスチェック
-
-担当：
-- Worker
-
-例：
-- 「テストを回して」
-- 「この patch を適用して」
+command、test、build、deploy、health checkなど運用処理の実行。RuleDictionary例は「実行して」「起動して」「デプロイ」「ビルドして」「停止して」「再起動」。実ActorはShiroで、OPS処理を実行する。routeだけで認証や操作許可が付与されることはない。
 
 ### RESEARCH
-対象：
-- 外部情報の調査
-- 比較検討
-- ドキュメント収集
-- 仕様確認
-- 周辺技術の探索
-
-除外：
-- 画像検索は `WILD` とする。画像検索は創作・生成・視覚参照の前処理であり、通常の外部情報調査 `RESEARCH` と混同しない。
-- 通常の画像生成で RenCrow_Image を利用する処理は必ず `WILD` とする。画像生成、画像編集、ControlNet、detailer、workflow 操作を Worker / Coder / Research に流さない。
-- 画像解析、画像分析、添付画像・写真・スクショの内容理解は必ず `WILD` とする。視覚入力の解析は Worker の RAG / 要約とは分ける。
-
-担当：
-- 原則 Coder
-- 結果返却は Chat
-
-例：
-- 「Codex CLI と Claude Code を比較して」
-- 「このライブラリの使い方を調べて」
+外部情報の深い調査、資料収集、仕様確認。RuleDictionary例は「リサーチ」「情報を集」「ドキュメントを探」「ウェブ検索で」「原文を取得」「情報収集」。実ActorはMioで、RESEARCH pathから調査応答を作る。Coderへの割当routeではない。
 
 ### CODE
-対象：
-- 汎用コーディング依頼
-- まだ CODE1/CODE2/CODE3/CODE4 の切り分けが不要な実装依頼
-
-担当：
-- Coder
-- 必要に応じて内部で CODE1/CODE2/CODE3/CODE4 相当へ振り分ける
-
-例：
-- 「この関数を直して」
-- 「ユニットテストを書いて」
+より具体的なcoder routeが指定されていない汎用code依頼。`/code`またはclassifierがroute文字列を返した場合に選ばれ得る。通常の自然文code edit ruleはCODE2へ分類する。実ActorはShiroで、local code executorはcoder1を固定選択する。coder1が未配置・busy、または外部providerの場合はerrorにし、別coderへ自動切替しない。
 
 ### CODE1
-対象：
-- 仕様整理寄り
-- 骨格設計
-- 初期案づくり
-- ラフな plan 生成
-- 発散的アイデア生成
-
-担当：
-- Coder1
-
-例：
-- 「実装前に設計案を複数出して」
-- 「仕様のたたき台を作って」
+仕様設計、初期案、骨格案。`/code1`またはclassifierで選ばれる。実ActorはShiroで、local code executorがcoder1 slotへ仕様設計用の指示を渡す。Coder1はActorではない。
 
 ### CODE2
-対象：
-- 実装寄りのコーディング
-- 安定した修正
-- テスト追加
-- 既存コードへの自然な差分作成
-
-担当：
-- Coder2
-
-例：
-- 「この不具合を最小変更で直して」
-- 「既存スタイルに合わせて実装して」
+既存codeの実装、修正、file edit、test追加。file referenceと編集意図の組合せ、および実装系keywordをRuleDictionaryがこのrouteへ自動分類する。`/code2`またはclassifierでも選ばれる。実ActorはShiroで、local code executorがcoder2 slotへimplementation用の指示を渡す。生成物の実行・適用はCORE/Shiroの実行policyに従う。
 
 ### CODE3
-対象：
-- 高難度の推論
-- 複雑な設計判断
-- 品質重視の修正
-- 長文仕様読解を伴う実装案
-- 微妙な責務分離の判断が必要なタスク
-
-担当：
-- Coder3
-
-例：
-- 「この設計の責務分離が妥当か見て」
-- 「複数仕様を踏まえて安全な修正案を作って」
+高品質なcode reasoning/review、またはbrowser/chrome操作を含むrule対象の依頼。RuleDictionary例は「chrome」「ブラウザ」「画面操作」「スクレイピング」「ページを開」「webを操作」。`/code3`またはclassifierでも選ばれる。実ActorはShiroで、local code executorがcoder3 slotへreview/reasoning用の指示を渡す。自然文browser ruleがあることは、全てのCODE3依頼がbrowser操作という意味ではない。
 
 ### CODE4
-対象：
-- 複数案の比較
-- 実装・差分レビュー
-- 未確定点の整理
-- 採用案の決定材料
-- 完成前の仕上げ
-
-担当：
-- Coder4
-
-例：
-- 「二つの実装案を比較して採用理由を示して」
-- 「この差分の未確定点を潰して仕上げて」
+現在のroute意味は高速な試作・実験的codingであり、`/code4`明示commandで選べる。RuleDictionaryに自然文の専用CODE4規則はない。legacy `prompts/classifier.md` にCODE4の意味定義がない一方、`LLMClassifier.parseRoute`は応答文字列CODE4を受理する。この非対称性のため、classifierがCODE4を意味的に選ぶことは未定義であり、route parserの受理だけから選択可能とはみなさない。CODE4がlocal executorへ渡された場合、実ActorはShiro、slotはcoder4で、指示は高速試作・実験的codingとなる。比較レビューや仕上げのrouteではない。
 
 ### WILD
-対象：
-- 創作
-- 画像検索
-- 画像生成
-- 画像解析
-- 画像分析
-- 画像プロンプト
-- RenCrow_Image を利用する通常の画像生成処理
-- 雰囲気抽出
-- 構図・衣装・質感などの視覚解釈
+物語・文章・創作、画像検索／生成／解析、視覚内容の理解。RuleDictionaryはCodex work pathと創作・画像関連keywordを認識する。`/wild`明示commandでも選べる。legacy `prompts/classifier.md`にWILDの意味定義はないため、classifierの意味選択は定義済みと扱わない。実ActorはMidoriで、Wild処理経路から応答する。画像生成はCOREからRenCrow_Imageの公開contractを通る。Wildは実Actorではない。
 
-担当：
-- Wild
+## Code routeとtopologyの境界
 
-実行方針：
-- RenCrow_Image を利用する通常の画像生成エージェントは Wild 固定とする。
-- 画像解析・画像分析も Wild 固定とし、Worker / ANALYZE / RESEARCH へ流さない。
-- 通常の画像生成は`CORE -> RenCrow_Image -> ForgeNeo / Z-Image`とする。
-- backend endpoint、workflow、model、LoRA、生成parameterはRenCrow_Imageが所有する。
-- Mio、Shiro、Midori、Kuroが文章生成工程の一部としてCodexExe経由のImageGenを利用する場合だけ例外とする。この例外を通常の画像生成routeへ流用しない。
+- local `DefaultCodeExecutor`では汎用`CODE`はlocal `coder1`固定。`CODE1`、`CODE2`、`CODE3`、`CODE4`は指定slotを選ぶ。Coder slotは実Actorではなく、生成提案の実行責任も引き受けない。
+- RuleDictionaryの通常code editは`CODE2`へ自動分類する。browser/chrome関連の自然文ruleは`CODE3`へ分類する。`CODE4`には専用の自然文ruleがないため、`CODE4`の意味から暗黙に自動分類してはならない。
+- `internal/domain/routing/route.go`はCODE4を高速coding／実験として定義するが、legacy classifier promptはCODE4を定義していない。`internal/infrastructure/routing/llm_classifier.go`のparserがCODE4を受理することは、この意味差を解消しない。promptはこの作業範囲では変更しない。
+- 現行distributed pathの`isCodeRoute`は`CODE4`を含まない。localの`CODE4`→`coder4`対応をすべてのtopologyへ一般化せず、distributed pathで常に`coder4`が使用されると保証しない。
+- `OPS`、`CODE`系routeの実Actor責任はShiroに残る。Coder、Worker、transport、provider、modelへの委譲を独立Actorやroute ownerとして記録しない。
 
-例：
-- 「参考画像を検索して」
-- 「Mio の画像を生成して」
-- 「この雰囲気に合う画像プロンプトを作って」
+## 実行安全とコーディング作業
 
----
+route決定後も、認証、利用者scope、安全policy、操作ごとの検証を通す。曖昧な作業を`OPS`へ分類せず、実行語だけで破壊的操作を許可しない。調査・実装・実行を同じrouteの実Actorへ混同させない。
 
-## ルーティング優先順位
+コーディング依頼は [`rules/PROJECT_AGENT.md`](PROJECT_AGENT.md) に従い、役割に渡す前にSafe Build Mode / Tool Build Modeを判定する。
 
-入力のルーティングは次の順で決める。
+- Safe Build Mode: 既存code、既存DB、設定、環境、運用、memory、Source Registry、本番系へ触れる作業。
+- Tool Build Mode: 既存本体から切り離した新規tool、小物script、補助app、検証用CLI。
+- 横断的に再利用するTool Build Modeの成果物は`/home/nyukimi/RenCrow/RenCrow_Tools`を正本とする。`RenCrow_CORE/tools/`は既存互換または本体密結合の残置場所であり、新規の横断tool置き場にしない。
+- 迷う場合はSafe Build Modeとして追加確認が必要な状態にする。Tool Build Modeでも既存本体への接続、正式DBへの保存、memory確定、Source Registry更新、設定変更が必要になればSafe Build Modeへ切り替える。
 
-### 1. 明示コマンド
-最優先。
+## 実装照合の参照先
 
-例：
-- `/chat`
-- `/plan`
-- `/analyze`
-- `/ops`
-- `/research`
-- `/code`
-- `/code1`
-- `/code2`
-- `/code3`
-- `/code4`
+routingを変更する場合は、対応する判断・Actor割当・実行経路を合わせて確認する。
 
-明示指定がある場合、原則それに従う。  
-ただし危険操作や権限制約がある場合は安全側で制御する。
-
-Coder1 / Coder2 / Coder3 / Coder4 の外部 API は `/code1` / `/code2` / `/code3` / `/code4` などの明示指定時のみ使う。汎用 `/code` は外部 Coder を使わず、外部 Coder へ自動切替しない。
-
-### 2. ルール辞書
-明確なキーワード、構文、依頼形式から判断する。
-
-例：
-- 「調べて」→ `RESEARCH`
-- 「原因」→ `ANALYZE`
-- 「実装して」→ `CODE`
-- 「実行して」→ `OPS`
-
-### 3. 分類器
-辞書で決まらない場合、LLM ベース分類器で判定する。
-
-分類器は次を返すことを目指す。
-- category
-- confidence
-- reason
-- ambiguity flags
-
-### 4. 安全側フォールバック
-最後まで曖昧なら `CHAT` に戻す。
-
-これは誤実行防止のため。  
-雑に `OPS` や `CODE` に流さないこと。
-
----
-
-## ルーティング判断の細則
-
-### 原則1: 実行語が入っていても、即 `OPS` にしない
-例：
-- 「この不具合を直して」
-- 「テストが落ちる理由を見て」
-
-これらはまず `ANALYZE` または `CODE` である可能性が高い。  
-いきなり Worker 実行へ流さない。
-
-### 原則2: 曖昧な設計相談は `CHAT` または `PLAN`
-実装に見えても、まず整理が必要なら `PLAN` を優先する。
-
-### 原則3: 複雑修正は Coder を先に通す
-即実行より、`plan` / `patch` を生成してから Worker へ渡す。
-
-### 原則4: 破壊的操作は Worker でも慎重に扱う
-削除、依存変更、設定変更、CI 変更は高リスク。  
-`OPS` であっても確認前提とする。
-
-### 原則5: 調査と実装を混ぜない
-「調査してから直す」は  
-`ANALYZE` → `CODE` → `OPS`  
-の順が基本。最初から全部混ぜない。
-
----
-
-## 推奨ルーティングパターン
-
-### 相談・雑談
-入力  
-→ `CHAT`
-
-### 仕様整理
-入力  
-→ `PLAN`
-
-### 原因調査
-入力  
-→ `ANALYZE`
-
-### 外部調査
-入力  
-→ `RESEARCH`
-
-### 実装案作成
-入力  
-→ `CODE1` または `CODE3`
-
-### 安定実装
-入力  
-→ `CODE2`
-
-### patch 適用・コマンド実行
-入力  
-→ `OPS`
-
----
-
-## 複合タスクの扱い
-
-複合タスクは一発で全部実行しない。  
-段階分解する。
-
-例：
-「このバグの原因を調べて、必要なら直してテストも通して」
-
-推奨分解：
-1. `ANALYZE`
-2. `CODE`
-3. `OPS`
-
-複合タスクを一つのカテゴリへ無理に押し込まないこと。
-
----
-
-## Coder 系の使い分け
-
-### Coder1
-向いている：
-- 初期案
-- 発散
-- 下書き
-- 複数案の生成
-- 仕様のたたき台
-
-### Coder2
-向いている：
-- 実装
-- テスト作成
-- 差分生成
-- 手堅い修正
-- 既存コードへの追従
-
-### Coder3
-向いている：
-- 高品質な設計判断
-- 複雑仕様読解
-- 長文文脈下での修正方針
-- 難しい責務分離
-- 品質優先のコーディング
-
-### Coder4
-向いている：
-- 複数案の比較
-- 差分レビュー
-- 未確定点の整理
-- 採用案と理由の明確化
-- 完成前の仕上げ
-
-使い分けで迷う場合：
-- 発散したい → Coder1
-- 安定実装したい → Coder2
-- 難問を丁寧に解きたい → Coder3
-- 比較して仕上げたい → Coder4
-
----
-
-## Chat が抱え込んではいけないもの
-
-Chat は入口である。  
-そのため次を抱え込んではいけない。
-
-- 複雑な設計判断の本体
-- 大規模なコード生成
-- patch 適用
-- コマンド実行
-- 実行結果の改ざん的要約
-
-Chat は交通整理と返却に集中する。
-
----
-
-## Worker に渡す前の条件
-
-Worker に渡す前に、できるだけ次を満たす。
-
-- 目的が明確
-- 対象ファイルまたは対象操作が明確
-- `plan` または `patch` がある
-- 高リスク操作かどうかが分かっている
-- 実行後に何を確認するかが分かっている
-
-曖昧なまま Worker に投げない。
-
----
-
-## ログに残すべき判断
-
-ルーティング時は少なくとも次を残せる形にする。
-
-- user_input summary
-- selected category
-- selected role
-- confidence
-- route reason
-- fallback の有無
-- job_id
-- session_id
-
-これにより、なぜその役割へ流したかを後から追えるようにする。
-
----
-
-## 禁止事項
-
-- なんとなく高性能そうだから CODE3 に寄せる
-- 実行語だけで即 `OPS` にする
-- 曖昧入力を強引に `CODE` に流す
-- Coder に直接実行させる
-- Chat に設計と実行を両方抱えさせる
-- 調査・設計・実行を無分解で一括処理する
-
----
-
-## 迷ったときのデフォルト
-
-迷った場合は次の順で考える。
-
-1. まず `CHAT`
-2. 次に `PLAN` または `ANALYZE`
-3. 実装が必要なら `CODE`
-4. 実行段階で `OPS`
-
-「まず考える、あとで動く」を優先する。
-
----
-
-## この文書の位置づけ
-
-この文書はルーティング判断の実務ポリシーである。  
-仕様変更時は、`CLAUDE.md`、`AGENTS.md`、関連する実装仕様と整合を取ること。
+- route順序とclassifier閾値: `internal/domain/agent/mio.go` の `MioAgent.DecideAction`
+- 明示command: `internal/domain/agent/mio_persona.go` の `parseExplicitCommand`
+- 自然文規則: `internal/infrastructure/routing/rule_dictionary.go` の `NewRuleDictionary` / `Match`
+- legacy classifier promptとparser: `prompts/classifier.md`、`internal/infrastructure/routing/llm_classifier.go`
+- Viewer宛先とdeep-dive policy: `internal/application/orchestrator/message_orchestrator_routing.go`
+- 実Actor割当: `internal/application/orchestrator/task_lifecycle.go` の `actualCoreActorForRoute`
+- routeごとの実処理: `internal/application/orchestrator/message_orchestrator_routes.go`
+- local coder選択: `internal/application/orchestrator/code_executor_selection.go`
+- distributed route差: `internal/application/orchestrator/distributed_orchestrator_execution.go` と `distributed_orchestrator_coder_selection.go`

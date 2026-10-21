@@ -408,6 +408,57 @@ func (s *SQLiteStore) ListByTraceID(ctx context.Context, traceID modulecore.Trac
 	return events, nil
 }
 
+// HasPublicConversationFinalResponse checks one exact, canonical public final
+// identity without enumerating or truncating the surrounding trace.
+func (s *SQLiteStore) HasPublicConversationFinalResponse(ctx context.Context, traceID modulecore.TraceID, turnID modulecore.TurnID, sessionID modulecore.SessionID) (bool, error) {
+	if err := s.ensureOpen(); err != nil {
+		return false, err
+	}
+	if ctx == nil {
+		return false, errors.New("public final lookup context is required")
+	}
+	if err := traceID.Validate(); err != nil {
+		return false, fmt.Errorf("trace_id: %w", err)
+	}
+	if err := turnID.Validate(); err != nil {
+		return false, fmt.Errorf("turn_id: %w", err)
+	}
+	if err := sessionID.Validate(); err != nil {
+		return false, fmt.Errorf("session_id: %w", err)
+	}
+	row := s.db.QueryRowContext(ctx, `
+		SELECT event_id, event_seq, trace_id, schema_version, event_type, component_id, occurred_at, envelope_json
+		FROM event_envelope
+		WHERE trace_id = ?
+		  AND json_extract(envelope_json, '$.turn_id') = ?
+		  AND json_extract(envelope_json, '$.session_id') = ?
+		  AND event_type = 'agent.response'
+		  AND component_id = 'orchestrator'
+		  AND lower(trim(COALESCE(json_extract(envelope_json, '$.payload.to'), ''))) = 'user'
+		LIMIT 1`, string(traceID), string(turnID), string(sessionID))
+	var storedEventID, storedTraceID, schemaVersion, eventType, componentID, occurredAt, payload string
+	var eventSeq int64
+	if err := row.Scan(&storedEventID, &eventSeq, &storedTraceID, &schemaVersion, &eventType, &componentID, &occurredAt, &payload); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	event, err := decodeStoredEnvelope(storedEventID, eventSeq, storedTraceID, schemaVersion, eventType, componentID, occurredAt, payload)
+	if err != nil {
+		return false, err
+	}
+	if event.TraceID != traceID || event.TurnID != turnID || event.SessionID != sessionID || event.EventType != "agent.response" || event.ComponentID != "orchestrator" || !publicRecipient(event.Payload["to"]) {
+		return false, errors.New("stored public final lookup returned a mismatched envelope")
+	}
+	return true, nil
+}
+
+func publicRecipient(value any) bool {
+	to, ok := value.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(to), "user")
+}
+
 func (s *SQLiteStore) ensureOpen() error {
 	if s == nil || s.db == nil {
 		return errStoreClosed

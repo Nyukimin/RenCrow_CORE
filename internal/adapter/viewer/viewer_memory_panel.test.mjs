@@ -4527,6 +4527,7 @@ test('viewer renders send failures with response body in timeline', async () => 
   const source = `
 let sending = false;
 let viewerAttachments = [];
+let speechCancelGeneration = 0;
 const inp = {value: 'hello', disabled: false, focus() {}};
 const sendBtn = {disabled: false};
 const attachBtn = null;
@@ -4563,7 +4564,7 @@ globalThis.__send = send;
   assert.doesNotMatch(timelineEvents[0].content, /send failed/);
 });
 
-test('viewer timeline renders local send failures from tts synced speakers', () => {
+test('viewer timeline renders local send failures and complete responses from tts synced speakers', () => {
   const timelineJs = fs.readFileSync('internal/adapter/viewer/assets/js/tabs/timeline.js', 'utf8');
   const chatNode = {
     children: [],
@@ -4580,6 +4581,7 @@ function ftime() { return '09:21'; }
 function normalizeViewerDisplayText(value) { return String(value || ''); }
 function fmt(value) { return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 function removeThinking() {}
+function removeCentralTTSSpeechForResponse() {}
 function addThinkingStart() {}
 function addThinking() {}
 function isTTSSyncedSpeaker(agentID) { return String(agentID || '').toLowerCase() === 'mio'; }
@@ -4600,6 +4602,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
       getElementById() { return {remove() {}}; },
       createElement() {
         return {
+          dataset: {},
           className: '',
           _innerHTML: '',
           querySelector(selector) {
@@ -4629,9 +4632,9 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
     content: 'normal tts-synced response',
   });
 
-  assert.equal(chatNode.children.length, 1);
+  assert.equal(chatNode.children.length, 2);
   assert.match(chatNode.children[0].innerHTML, /Viewer send unavailable: HTTP 503: RenCrow_LLM Gateway unavailable/);
-  assert.doesNotMatch(chatNode.children[0].innerHTML, /normal tts-synced response/);
+  assert.match(chatNode.children[1].innerHTML, /normal tts-synced response/);
 });
 
 test('viewer timeline hides voice direct internal prompt user events', () => {
@@ -4651,6 +4654,7 @@ function ftime() { return '09:21'; }
 function normalizeViewerDisplayText(value) { return String(value || ''); }
 function fmt(value) { return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
 function removeThinking() {}
+function removeCentralTTSSpeechForResponse() {}
 function addThinkingStart() {}
 function addThinking() {}
 function isTTSSyncedSpeaker() { return true; }
@@ -4666,6 +4670,7 @@ globalThis.__addMsgToTimeline = addMsgToTimeline;
       getElementById() { return {remove() {}}; },
       createElement() {
         return {
+          dataset: {},
           className: '',
           _innerHTML: '',
           querySelector(selector) {
@@ -4858,7 +4863,7 @@ test('viewer interrupts active chat output before accepting new user input', () 
   const viewerJs = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8');
   assert.match(viewerJs, /function interruptChatOutputForUserInput\(reason\)/);
   assert.match(viewerJs, /resetChat: resetChatInternal/);
-  assert.match(viewerJs, /function resetChatInternal\(reason\)/);
+  assert.match(viewerJs, /function resetChatInternal\(reason, interruptedTurnId\)/);
   assert.match(viewerJs, /function isInterruptedChatOutput\(item\)/);
   assert.match(viewerJs, /if \(isInterruptedChatOutput\(chunk\)\) return/);
 
@@ -5402,6 +5407,38 @@ test('progress derives separate canonical tasks and opens matching event details
   assert.doesNotMatch(nodes.progressBody.innerHTML,/A received/);
 });
 
+test('user-facing agent.start sets the matching task to chatting while delegation stays delegated', () => {
+  const taskID = 'tsk_user_chat_start';
+  const context = vm.createContext({
+    state: {logs: [], agents: {}, openTasks: {}, progressOpenTasks: {}},
+    AGENTS: ['mio', 'shiro'],
+    PROGRESS_RECENT_EVENTS: 8,
+    PROGRESS_DONE_LIMIT: 10,
+    window: {},
+    document: {getElementById() {return new FakeElement();}, createElement() {return new FakeElement();}},
+    esc: String, short: String, agName: String, ftime: String, fdt: String,
+    stateClass: String, errorKindClass: String, ag: id => ({e: '', l: id}),
+  });
+  vm.runInContext(fs.readFileSync('internal/adapter/viewer/assets/js/tabs/progress.js', 'utf8'), context);
+
+  const direct = vm.runInContext(`classifyTaskPhase({type:'agent.start',from:'shiro',to:'user',task_id:'${taskID}'},{phase:'received',owner:'mio'})`, context);
+  assert.equal(direct.phase, 'chatting');
+  assert.equal(direct.owner, 'shiro');
+  context.state.logs = [{type: 'agent.start', from: 'shiro', to: 'user', task_id: taskID, timestamp: '2026-10-18T00:00:00Z'}];
+  const projected = vm.runInContext('deriveProgressData().tasks[0]', context);
+  assert.equal(projected.taskID, taskID);
+  assert.equal(projected.phase, 'chatting');
+  assert.equal(projected.owner, 'shiro');
+  context.state.logs.push({type: 'agent.response', from: 'shiro', to: 'user', task_id: taskID, content: 'Direct response', timestamp: '2026-10-18T00:00:01Z'});
+  const completed = vm.runInContext('deriveProgressData().tasks[0]', context);
+  assert.equal(completed.phase, 'done');
+  assert.equal(completed.owner, 'shiro');
+  assert.equal(completed.status, 'done');
+  const delegated = vm.runInContext(`classifyTaskPhase({type:'agent.start',from:'mio',to:'shiro',task_id:'${taskID}'},{phase:'received',owner:'mio'})`, context);
+  assert.equal(delegated.phase, 'delegated_to_worker');
+  assert.equal(delegated.owner, 'shiro');
+});
+
 
 test('system displays and copies canonical task identity without legacy fallback', () => {
   const taskID = 'tsk_019f1234-5678-7000-8000-000000000001';
@@ -5566,4 +5603,26 @@ this.render = shouldRenderThinking;
   assert.equal(context.render(ev('agent.thinking', 'mio', 'user')), false);
   assert.equal(context.render(ev('agent.start', 'midori', 'user')), true);
   assert.equal(context.render(ev('agent.thinking', 'kuro', 'user')), true);
+});
+
+test('user-facing agent.start puts Mio and Shiro into the thinking character expression', () => {
+  const js = fs.readFileSync('internal/adapter/viewer/assets/js/viewer.js', 'utf8').replace(/\r\n/g, '\n');
+  const expressions = [];
+  const agentStates = {};
+  const context = vm.createContext({
+    state: {agents: {}, openTasks: {mio: {}, shiro: {}}},
+    AGENTS: ['mio', 'shiro'],
+    touchAgent(id, patch) { agentStates[id] = {...(agentStates[id] || {}), ...patch}; },
+    setCharacterExpression(id, expression) { expressions.push({id, expression}); },
+    addOpenTask() {},
+    doneOpenTask() {},
+    short(value) {return String(value || '');},
+  });
+  vm.runInContext(sourceBetween(js, 'function updateAgents(ev)', 'function renderEvidence()'), context);
+
+  for (const id of ['mio', 'shiro']) {
+    vm.runInContext(`updateAgents({type:'agent.start',from:'${id}',to:'user',task_id:'tsk-${id}',timestamp:'2026-10-18T00:00:00Z'})`, context);
+    assert.equal(agentStates[id].state, 'thinking');
+    assert.deepEqual(expressions.at(-1), {id, expression: 'thinking'});
+  }
 });

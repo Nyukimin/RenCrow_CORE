@@ -29,6 +29,37 @@ type shutdownOrderEventStore struct {
 
 var errRecordTest = errors.New("record failed")
 
+type responsePublicationMarkerStub struct {
+	store       *shutdownOrderEventStore
+	calls       int
+	turnID      modulecore.TurnID
+	traceID     modulecore.TraceID
+	sessionID   modulecore.SessionID
+	afterAppend bool
+	delay       time.Duration
+	err         error
+}
+
+func (m *responsePublicationMarkerStub) MarkConversationTurnResponsePublished(ctx context.Context, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID, _ time.Time) error {
+	m.calls++
+	m.turnID = turnID
+	m.traceID = traceID
+	m.sessionID = sessionID
+	m.store.mu.Lock()
+	m.afterAppend = m.store.appends > 0
+	m.store.mu.Unlock()
+	if m.delay > 0 {
+		timer := time.NewTimer(m.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return m.err
+}
+
 func (s *shutdownOrderEventStore) Append(ctx context.Context, event modulecore.EventEnvelope) error {
 	_, err := s.AppendSequenced(ctx, event)
 	return err
@@ -103,6 +134,77 @@ func TestEventRelayPersistsBeforeProjection(t *testing.T) {
 	if got := hub.History()[0].EventSeq; got != 1 {
 		t.Fatalf("projected event_seq=%d, want persisted 1", got)
 	}
+}
+
+func TestEventRelayMarksOnlyDurablyAppendedPublicFinalResponse(t *testing.T) {
+	traceID := modulecore.NewTraceID()
+	turnID := modulecore.NewTurnID()
+	sessionID := modulecore.NewSessionID()
+	messageID := modulecore.NewMessageID()
+	newFinal := func() orchestrator.OrchestratorEvent {
+		event := orchestrator.NewEventWithTraceID(traceID, "agent.response", "mio", "user", "the complete reply", "CHAT", modulecore.NewTaskID().String(), string(sessionID), "viewer", "chat-1")
+		event.TurnID = turnID
+		event.MessageID = messageID
+		return event
+	}
+
+	t.Run("success", func(t *testing.T) {
+		store := &shutdownOrderEventStore{}
+		archive, err := viewer.NewCanonicalEventLog(store)
+		if err != nil {
+			t.Fatalf("NewCanonicalEventLog: %v", err)
+		}
+		marker := &responsePublicationMarkerStub{store: store}
+		relay := &idleAwareEventListener{archive: archive, responseMarker: marker}
+		if err := relay.OnEvent(newFinal()); err != nil {
+			t.Fatalf("OnEvent: %v", err)
+		}
+		if marker.calls != 1 || !marker.afterAppend || marker.turnID != turnID || marker.traceID != traceID || marker.sessionID != sessionID {
+			t.Fatalf("marker=%+v, want exact response marker after append", marker)
+		}
+	})
+
+	t.Run("append failure", func(t *testing.T) {
+		store := &shutdownOrderEventStore{appendErr: errRecordTest}
+		archive, err := viewer.NewCanonicalEventLog(store)
+		if err != nil {
+			t.Fatalf("NewCanonicalEventLog: %v", err)
+		}
+		marker := &responsePublicationMarkerStub{store: store}
+		relay := &idleAwareEventListener{archive: archive, responseMarker: marker}
+		if err := relay.OnEvent(newFinal()); !errors.Is(err, errRecordTest) {
+			t.Fatalf("OnEvent error=%v, want canonical append failure", err)
+		}
+		if marker.calls != 0 {
+			t.Fatalf("marker calls=%d, want none after failed append", marker.calls)
+		}
+	})
+
+	t.Run("marker failure is bounded and does not undo public final", func(t *testing.T) {
+		store := &shutdownOrderEventStore{}
+		archive, err := viewer.NewCanonicalEventLog(store)
+		if err != nil {
+			t.Fatalf("NewCanonicalEventLog: %v", err)
+		}
+		marker := &responsePublicationMarkerStub{store: store, delay: time.Second}
+		relay := &idleAwareEventListener{archive: archive, responseMarker: marker}
+		started := time.Now()
+		if err := relay.OnEvent(newFinal()); err != nil {
+			t.Fatalf("OnEvent after durable final: %v", err)
+		}
+		if elapsed := time.Since(started); elapsed >= 500*time.Millisecond {
+			t.Fatalf("best-effort publication marker took %s, want under 500ms", elapsed)
+		}
+		if marker.calls != 1 || !marker.afterAppend {
+			t.Fatalf("marker=%+v, want one attempt after canonical append", marker)
+		}
+		store.mu.Lock()
+		appends := store.appends
+		store.mu.Unlock()
+		if appends != 1 {
+			t.Fatalf("canonical final appends=%d, want exactly one", appends)
+		}
+	})
 }
 
 func TestEventRelayAppendFailureReturnsErrorAndDoesNotProject(t *testing.T) {

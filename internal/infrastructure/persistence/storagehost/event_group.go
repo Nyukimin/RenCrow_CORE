@@ -20,6 +20,8 @@ const GroupEvent = "event"
 // as operation_unsupported instead of silently degrading.
 type EventGroupOwner interface {
 	modulecore.EventStore
+	ListByTraceID(context.Context, modulecore.TraceID, int) ([]modulecore.EventEnvelope, error)
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
 }
 
 type eventEnvelopePayload struct {
@@ -35,6 +37,17 @@ type eventListPayload struct {
 	Limit       int    `json:"limit"`
 }
 
+type eventListTracePayload struct {
+	TraceID modulecore.TraceID `json:"trace_id"`
+	Limit   int                `json:"limit"`
+}
+
+type eventPublicConversationFinalPayload struct {
+	TraceID   modulecore.TraceID   `json:"trace_id"`
+	TurnID    modulecore.TurnID    `json:"turn_id"`
+	SessionID modulecore.SessionID `json:"session_id"`
+}
+
 type eventResultPayload struct {
 	Event modulecore.EventEnvelope `json:"event"`
 }
@@ -46,6 +59,10 @@ type eventGetResult struct {
 
 type eventListResult struct {
 	Events []modulecore.EventEnvelope `json:"events"`
+}
+
+type eventPublicConversationFinalResult struct {
+	Found bool `json:"found"`
 }
 
 // RegisterEventGroup registers the closed event operations against the owner
@@ -114,7 +131,7 @@ func RegisterEventGroup(h *Handler, store EventGroupOwner) error {
 	}); err != nil {
 		return err
 	}
-	return h.Register(GroupEvent, "list_component", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+	if err := h.Register(GroupEvent, "list_component", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
 		var p eventListPayload
 		if err := decodeEventPayload(raw, &p); err != nil {
 			return nil, NewError(ErrorCodeSchemaRejected, "event list payload rejected")
@@ -122,6 +139,32 @@ func RegisterEventGroup(h *Handler, store EventGroupOwner) error {
 		events, err := store.ListByComponent(ctx, p.ComponentID, p.Limit)
 		if err != nil {
 			return nil, NewError(ErrorCodeStoreUnavailable, "event store read failed")
+		}
+		return eventListResult{Events: events}, nil
+	}); err != nil {
+		return err
+	}
+	if err := h.Register(GroupEvent, "public_conversation_final", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var p eventPublicConversationFinalPayload
+		if err := decodeEventPayload(raw, &p); err != nil || p.TraceID.Validate() != nil || p.TurnID.Validate() != nil || p.SessionID.Validate() != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "public conversation final lookup payload rejected")
+		}
+		found, err := store.HasPublicConversationFinalResponse(ctx, p.TraceID, p.TurnID, p.SessionID)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "public conversation final lookup failed")
+		}
+		return eventPublicConversationFinalResult{Found: found}, nil
+	}); err != nil {
+		return err
+	}
+	return h.Register(GroupEvent, "list_trace", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var p eventListTracePayload
+		if err := decodeEventPayload(raw, &p); err != nil || p.TraceID.Validate() != nil || p.Limit <= 0 || p.Limit > 1000 {
+			return nil, NewError(ErrorCodeSchemaRejected, "event trace lookup payload rejected")
+		}
+		events, err := store.ListByTraceID(ctx, p.TraceID, p.Limit)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "event trace lookup failed")
 		}
 		return eventListResult{Events: events}, nil
 	})
@@ -267,4 +310,45 @@ func (s *EventStoreClient) ListByComponent(ctx context.Context, componentID stri
 		return nil, err
 	}
 	return out.Events, nil
+}
+
+// ListByTraceID reads one exact, ordered trace for bounded crash recovery.
+func (s *EventStoreClient) ListByTraceID(ctx context.Context, traceID modulecore.TraceID, limit int) ([]modulecore.EventEnvelope, error) {
+	if s == nil || s.client == nil {
+		return nil, NewError(ErrorCodeUnreachable, "storage host client is unavailable")
+	}
+	if traceID.Validate() != nil || limit <= 0 || limit > 1000 {
+		return nil, NewError(ErrorCodeSchemaRejected, "event trace lookup payload rejected")
+	}
+	var out eventListResult
+	if err := s.client.Call(ctx, GroupEvent, "list_trace", eventListTracePayload{TraceID: traceID, Limit: limit}, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Events) > limit {
+		return nil, NewError(ErrorCodeStoreUnavailable, "event trace lookup exceeded its bound")
+	}
+	for _, event := range out.Events {
+		if event.TraceID != traceID || modulecore.ValidateEventEnvelope(event) != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "event trace lookup returned an invalid envelope")
+		}
+	}
+	return out.Events, nil
+}
+
+// HasPublicConversationFinalResponse performs an exact bounded lookup on the
+// storage owner; no trace enumeration or trace-size assumption is involved.
+func (s *EventStoreClient) HasPublicConversationFinalResponse(ctx context.Context, traceID modulecore.TraceID, turnID modulecore.TurnID, sessionID modulecore.SessionID) (bool, error) {
+	if s == nil || s.client == nil {
+		return false, NewError(ErrorCodeUnreachable, "storage host client is unavailable")
+	}
+	if traceID.Validate() != nil || turnID.Validate() != nil || sessionID.Validate() != nil {
+		return false, NewError(ErrorCodeSchemaRejected, "public conversation final lookup payload rejected")
+	}
+	var out eventPublicConversationFinalResult
+	if err := s.client.Call(ctx, GroupEvent, "public_conversation_final", eventPublicConversationFinalPayload{
+		TraceID: traceID, TurnID: turnID, SessionID: sessionID,
+	}, &out); err != nil {
+		return false, err
+	}
+	return out.Found, nil
 }

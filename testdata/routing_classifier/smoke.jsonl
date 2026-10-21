@@ -1,0 +1,5 @@
+{"id":"smoke-ja","language":"ja","message":"日本語の通常入力。","boundary":"normal"}
+{"id":"smoke-en","language":"en","message":"A normal English input.","boundary":"normal"}
+{"id":"smoke-mixed","language":"mixed","message":"日本語と English が混在します。","boundary":"normal"}
+{"id":"smoke-long","language":"ja","message":"長文入力境界を確認する合成fixture。","repeat_text":"あ","repeat_count":10000,"suffix":"最後の依頼は重要です。続けてください。","boundary":"long_input"}
+{"id":"smoke-policy-long","language":"en","message":"Synthetic policy explanation budget boundary.","boundary":"policy_long"}

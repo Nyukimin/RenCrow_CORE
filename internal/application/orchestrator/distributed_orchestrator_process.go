@@ -56,7 +56,7 @@ func (o *DistributedOrchestrator) ProcessMessage(ctx context.Context, req Proces
 		defer o.events.ReleaseTiming(traceID)
 	}
 	ctx = withOrchestrationLLMObservation(ctx, rootTaskID, traceID, req.SessionID, "orchestrator.distributed")
-	o.events.BindTrace(rootTaskID.String(), traceID)
+	o.events.BindConversationIdentity(rootTaskID.String(), modulecore.TurnID(req.TurnID), traceID, modulecore.SessionID(req.SessionID))
 	o.events.BindResponseMessageID(rootTaskID.String(), modulecore.MessageID(req.AgentMessageID))
 	defer func() {
 		o.events.ReleaseTrace(rootTaskID.String())

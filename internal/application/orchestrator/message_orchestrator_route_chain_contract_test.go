@@ -63,6 +63,7 @@ func TestMessageOrchestratorOptInTimingIsInlineOnTerminalResponse(t *testing.T) 
 	}
 	orch := NewMessageOrchestrator(repo, mio, &mockShiroAgent{}, nil, nil, nil, nil, nil)
 	attachCanonicalTestTaskOwner(t, orch)
+	orch.SetSuperAgentRuntimeRecorder(&mockSuperAgentRuntimeRecorder{})
 	rec := &recordingEventListener{}
 	orch.SetEventListener(rec)
 
@@ -95,10 +96,64 @@ func TestMessageOrchestratorOptInTimingIsInlineOnTerminalResponse(t *testing.T) 
 			if !ok {
 				t.Fatalf("timing.points_ms has type %T, want object", snapshot["points_ms"])
 			}
-			for _, point := range []string{"route_decided", "dispatch_started", "response_publication_started"} {
-				if _, ok := points[point]; !ok {
+			orderedPoints := []string{
+				"process_started",
+				"process_session_started",
+				"process_session_ended",
+				"root_task_preparation_started",
+				"root_task_created",
+				"root_task_preparation_ended",
+				"initial_events_started",
+				"message_received_event_published",
+				"server_received_metric_published",
+				"session_turn_log_attempt_ended",
+				"initial_events_ended",
+				"persona_observation_started",
+				"persona_observation_ended",
+				"pre_route_checks_started",
+				"turn_input_built",
+				"pre_route_checks_ended",
+				"route_decision_started",
+				"route_decided",
+				"task_activation_started",
+				"task_routing_event_published",
+				"task_execution_prepared",
+				"task_assignment_event_published",
+				"task_assignment_recorded",
+				"task_root_run_started",
+				"task_identity_bound",
+				"task_activation_ended",
+				"lead_run_resolution_started",
+				"lead_run_resolution_ended",
+				"route_metric_published",
+				"skill_bootstrap_started",
+				"skill_bootstrap_ended",
+				"lead_run_persistence_started",
+				"lead_agent_run_saved",
+				"lead_agent_start_event_appended",
+				"lead_context_pack_saved",
+				"lead_run_persistence_ended",
+				"lead_run_context_ready",
+				"dispatch_metric_published",
+				"dispatch_started",
+				"agent_start_publication_started",
+				"agent_start_publication_ended",
+				"response_publication_started",
+			}
+			var previousOffset float64
+			for index, point := range orderedPoints {
+				offset, ok := points[point].(float64)
+				if !ok {
 					t.Errorf("timing point %q missing from terminal response: %#v", point, points)
+					continue
 				}
+				if index > 0 && offset < previousOffset {
+					t.Errorf("timing point %q offset=%v precedes prior point at %v: %#v", point, offset, previousOffset, points)
+				}
+				previousOffset = offset
+			}
+			if _, ok := points["task_execution_run_started"]; ok {
+				t.Errorf("root-only route recorded child execution start: %#v", points)
 			}
 		} else if hasTiming {
 			t.Errorf("timing snapshot leaked onto non-terminal event %s->%s: %#v", event.From, event.To, payload)

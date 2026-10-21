@@ -125,7 +125,7 @@ func buildViewerRuntimeHandlers(
 	}
 	if reportStore, err := executionpersistence.NewJSONLReportStore(reportPath); err != nil {
 		deps.monitorStore = viewer.NewMonitorStore(nil, deps.eventLogStore)
-		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore}
+		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore, responseMarker: realMgr}
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
 		deps.viewerAgentDetail = viewer.HandleMonitorAgentDetail(deps.monitorStore)
@@ -135,7 +135,7 @@ func buildViewerRuntimeHandlers(
 	} else {
 		deps.reportStore = reportStore
 		deps.monitorStore = viewer.NewMonitorStore(reportStore, deps.eventLogStore)
-		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore}
+		deps.eventRelay = &idleAwareEventListener{hub: hub, monitor: deps.monitorStore, archive: deps.eventLogStore, responseMarker: realMgr}
 		deps.viewerStatus = viewer.HandleMonitorStatus(deps.monitorStore)
 		deps.viewerAgents = viewer.HandleMonitorAgents(deps.monitorStore)
 		deps.viewerAgentDetail = viewer.HandleMonitorAgentDetail(deps.monitorStore)

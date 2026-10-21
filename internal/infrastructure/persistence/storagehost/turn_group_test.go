@@ -25,6 +25,17 @@ type turnGroupFixture struct {
 	client *Client
 }
 
+type blockingTurnClaimOwner struct {
+	*l1sqlite.L1SQLiteStore
+	started chan struct{}
+}
+
+func (o *blockingTurnClaimOwner) ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx context.Context, _ l1sqlite.ConversationTurnOperationIdentity, _ string, _ time.Time, _ time.Duration, _ map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
+	close(o.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
 func newTurnGroupFixture(t *testing.T, owner func(*l1sqlite.L1SQLiteStore) TurnGroupOwner) turnGroupFixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -83,8 +94,10 @@ func TestTurnGroupRegistersOnlyClosedTypedOperations(t *testing.T) {
 		t.Fatalf("Contract: %v", err)
 	}
 	want := map[string]bool{
-		"commit": true, "receipt": false, "outbox_claim": true, "outbox_claim_next": true,
+		"commit": true, "receipt": false, "outbox_claim": true, "outbox_claim_target": true, "outbox_claim_next": true,
 		"complete": true, "fail": true, "projection": false, "active_projection": false,
+		"response_published": true, "response_publication_status": false, "pending_thread_followers": false,
+		"unpublished_thread_followers": false, "session_has_turns": false,
 	}
 	got := make(map[string]bool)
 	for _, operation := range info.Operations {
@@ -108,6 +121,96 @@ func TestTurnGroupRegistersOnlyClosedTypedOperations(t *testing.T) {
 	}
 }
 
+func TestTurnStoreClientCancelsRemoteTargetClaimWithRequestContext(t *testing.T) {
+	var owner *blockingTurnClaimOwner
+	fixture := newTurnGroupFixture(t, func(store *l1sqlite.L1SQLiteStore) TurnGroupOwner {
+		owner = &blockingTurnClaimOwner{L1SQLiteStore: store, started: make(chan struct{})}
+		return owner
+	})
+	store := NewTurnStoreClient(fixture.client)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.ClaimNextConversationTurnOutboxTargetExcluding(ctx, string(domconv.ConversationTurnTargetRedisProjection), time.Now().UTC(), time.Minute, nil)
+		done <- err
+	}()
+	select {
+	case <-owner.started:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("remote owner did not enter the target claim")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		assertTurnErrorCode(t, err, ErrorCodeOutcomeUnknown)
+	case <-time.After(time.Second):
+		t.Fatal("remote target claim did not return after context cancellation")
+	}
+}
+
+func TestTurnStoreClientResponsePublicationMarkerGatesPendingThreadFollower(t *testing.T) {
+	fixture := newTurnGroupFixture(t, nil)
+	ctx := context.Background()
+	store := NewTurnStoreClient(fixture.client)
+	var boundary domconv.ConversationTurnRequest
+	sessionID := string(modulecore.NewSessionID())
+	for index := 0; index < 6; index++ {
+		request := newTurnGroupRequest()
+		request.SessionID = sessionID
+		if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+			t.Fatalf("seed %d commit: %v", index, err)
+		}
+		if index == 5 {
+			boundary = newTurnGroupRequest(domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers)
+			boundary.SessionID = request.SessionID
+			boundary.Boundary = true
+			boundary.BoundaryReason = "new topic"
+		}
+	}
+	committed, err := store.CommitConversationTurn(ctx, boundary)
+	if err != nil || committed.ClosedThreadID == "" {
+		t.Fatalf("boundary=%+v err=%v", committed, err)
+	}
+	redisClaim, err := store.ClaimConversationTurnOutboxTarget(ctx, string(boundary.TurnID), string(domconv.ConversationTurnTargetRedisProjection), time.Now().UTC(), time.Minute)
+	if err != nil || redisClaim == nil || redisClaim.Target != string(domconv.ConversationTurnTargetRedisProjection) {
+		t.Fatalf("target-scoped Redis claim=%+v err=%v", redisClaim, err)
+	}
+	if _, err := store.CompleteConversationTurnOutbox(ctx, string(boundary.TurnID), redisClaim.Target, redisClaim.LeaseToken, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatalf("complete target-scoped Redis claim: %v", err)
+	}
+	if claim, err := store.ClaimNextConversationTurnOutbox(ctx, time.Now().UTC().Add(2*time.Second), time.Minute); err != nil || claim != nil {
+		t.Fatalf("unpublished thread follower claim=%+v err=%v", claim, err)
+	}
+	candidates, err := store.ListPendingConversationTurnThreadFollowers(ctx, boundary.SessionID, 100)
+	if err != nil || len(candidates) != 1 || candidates[0].ResponsePublished {
+		t.Fatalf("pending candidates=%+v err=%v", candidates, err)
+	}
+	unpublished, err := store.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, "", 100)
+	if err != nil || len(unpublished) != 1 || unpublished[0].TurnID != boundary.TurnID {
+		t.Fatalf("unpublished reconciliation candidates=%+v err=%v", unpublished, err)
+	}
+	if err := store.MarkConversationTurnResponsePublished(ctx, boundary.TurnID, boundary.TraceID, modulecore.SessionID(boundary.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark response published: %v", err)
+	}
+	unpublished, err = store.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, "", 100)
+	if err != nil || len(unpublished) != 0 {
+		t.Fatalf("published candidate remained in reconciliation page=%+v err=%v", unpublished, err)
+	}
+	redisClaim, err = store.ClaimConversationTurnOutboxTarget(ctx, string(boundary.TurnID), string(domconv.ConversationTurnTargetRedisProjection), time.Now().UTC().Add(3*time.Second), time.Minute)
+	if err != nil || redisClaim != nil {
+		t.Fatalf("target-scoped Redis replay claim=%+v err=%v, want no claim while thread follower is eligible", redisClaim, err)
+	}
+	candidates, err = store.ListPendingConversationTurnThreadFollowers(ctx, boundary.SessionID, 100)
+	if err != nil || len(candidates) != 1 || !candidates[0].ResponsePublished {
+		t.Fatalf("published candidates=%+v err=%v", candidates, err)
+	}
+	claim, err := store.ClaimNextConversationTurnOutbox(ctx, time.Now().UTC().Add(4*time.Second), time.Minute)
+	if err != nil || claim == nil || claim.TurnID != boundary.TurnID || claim.Target != string(domconv.ConversationTurnTargetThreadFollowers) {
+		t.Fatalf("published follower claim=%+v err=%v", claim, err)
+	}
+}
+
 func TestTurnStoreClientUsesRealL1CommitReceiptProjectionAndOutboxLifecycle(t *testing.T) {
 	fixture := newTurnGroupFixture(t, nil)
 	ctx := context.Background()
@@ -117,6 +220,12 @@ func TestTurnStoreClientUsesRealL1CommitReceiptProjectionAndOutboxLifecycle(t *t
 	committed, err := store.CommitConversationTurn(ctx, request)
 	if err != nil {
 		t.Fatalf("CommitConversationTurn: %v", err)
+	}
+	if hasTurns, err := store.HasConversationTurnReceiptsForSession(ctx, request.SessionID); err != nil || !hasTurns {
+		t.Fatalf("remote session typed-turn presence=(%v,%v), want true after commit", hasTurns, err)
+	}
+	if hasTurns, err := store.HasConversationTurnReceiptsForSession(ctx, string(modulecore.NewSessionID())); err != nil || hasTurns {
+		t.Fatalf("remote empty session typed-turn presence=(%v,%v), want false", hasTurns, err)
 	}
 	if committed.Status != domconv.ConversationTurnPartial {
 		t.Fatalf("commit status=%q, want partial while outbox is pending", committed.Status)
@@ -283,8 +392,18 @@ func (o *turnMutationThenErrorOwner) ClaimConversationTurnOutboxForOperation(ctx
 	return result, o.afterCommit("outbox_claim", err)
 }
 
+func (o *turnMutationThenErrorOwner) ClaimConversationTurnOutboxTargetForOperation(ctx context.Context, identity l1sqlite.ConversationTurnOperationIdentity, turnID, target string, now time.Time, lease time.Duration) (*domconv.ConversationTurnOutbox, error) {
+	result, err := o.TurnGroupRecoveryOwner.ClaimConversationTurnOutboxTargetForOperation(ctx, identity, turnID, target, now, lease)
+	return result, o.afterCommit("outbox_claim_target", err)
+}
+
 func (o *turnMutationThenErrorOwner) ClaimNextConversationTurnOutboxForOperation(ctx context.Context, identity l1sqlite.ConversationTurnOperationIdentity, now time.Time, lease time.Duration) (*domconv.ConversationTurnOutbox, error) {
 	result, err := o.TurnGroupRecoveryOwner.ClaimNextConversationTurnOutboxForOperation(ctx, identity, now, lease)
+	return result, o.afterCommit("outbox_claim_next", err)
+}
+
+func (o *turnMutationThenErrorOwner) ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx context.Context, identity l1sqlite.ConversationTurnOperationIdentity, target string, now time.Time, lease time.Duration, excluded map[string]struct{}) (*domconv.ConversationTurnOutbox, error) {
+	result, err := o.TurnGroupRecoveryOwner.ClaimNextConversationTurnOutboxTargetExcludingForOperation(ctx, identity, target, now, lease, excluded)
 	return result, o.afterCommit("outbox_claim_next", err)
 }
 
@@ -338,7 +457,67 @@ func TestTurnGroupOwnerErrorAfterCommitReconcilesRealSQLiteReceipt(t *testing.T)
 	}
 }
 
+func TestTurnStoreClientFilteredClaimsPreserveRemoteRetryBackoff(t *testing.T) {
+	fixture := newTurnGroupFixture(t, nil)
+	ctx := context.Background()
+	first := newTurnGroupRequest(domconv.ConversationTurnTargetRedisProjection)
+	second := newTurnGroupRequest(domconv.ConversationTurnTargetRedisProjection)
+	if first.TurnID > second.TurnID {
+		first, second = second, first
+	}
+	for _, request := range []domconv.ConversationTurnRequest{first, second} {
+		if _, err := fixture.store.CommitConversationTurn(ctx, request); err != nil {
+			t.Fatalf("commit %s: %v", request.TurnID, err)
+		}
+	}
+	client := NewTurnStoreClient(fixture.client)
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	claim, err := client.ClaimNextConversationTurnOutboxTargetExcluding(ctx, string(domconv.ConversationTurnTargetRedisProjection), now, time.Minute, nil)
+	if err != nil || claim == nil || claim.TurnID != first.TurnID {
+		t.Fatalf("remote first claim=%+v err=%v", claim, err)
+	}
+	if _, err := client.FailConversationTurnOutbox(ctx, string(claim.TurnID), claim.Target, claim.LeaseToken, domconv.ConversationTurnErrorUnavailable, now); err != nil {
+		t.Fatalf("remote fail: %v", err)
+	}
+	excluded := map[string]struct{}{string(claim.TurnID) + "\x00" + claim.Target: {}}
+	next, err := client.ClaimNextConversationTurnOutboxTargetExcluding(ctx, claim.Target, now.Add(time.Second), time.Minute, excluded)
+	if err != nil || next == nil || next.TurnID != second.TurnID || next.Attempts != 1 {
+		t.Fatalf("remote filtered next claim=%+v err=%v, want second row attempt 1", next, err)
+	}
+	retry, err := fixture.store.ClaimConversationTurnOutbox(ctx, string(first.TurnID), now.Add(2*time.Second), time.Minute)
+	if err != nil || retry == nil || retry.Attempts != 2 {
+		t.Fatalf("remote failed-row attempts=%+v err=%v, want attempt 2 only on next pass", retry, err)
+	}
+}
+
 func TestTurnGroupClaimMutationsReconcileAtomicSQLiteReceipts(t *testing.T) {
+	t.Run("target claim returns exact committed Redis lease", func(t *testing.T) {
+		fixture, owner := newTurnMutationThenErrorFixture(t, "outbox_claim_target")
+		ctx := context.Background()
+		request := newTurnGroupRequest(domconv.ConversationTurnTargetRedisProjection)
+		if _, err := fixture.store.CommitConversationTurn(ctx, request); err != nil {
+			t.Fatalf("seed turn: %v", err)
+		}
+		client := NewTurnStoreClient(fixture.client)
+		now := time.Now().UTC()
+		_, err := client.ClaimConversationTurnOutboxTarget(ctx, string(request.TurnID), string(domconv.ConversationTurnTargetRedisProjection), now, time.Minute)
+		assertTurnErrorCode(t, err, ErrorCodeOutcomeUnknown)
+		opID := fixture.client.lastOpID
+		identity := turnOperationIdentityFromJournal(t, fixture, opID, "outbox_claim")
+		claimed, err := client.ClaimConversationTurnOutboxTarget(ctx, string(request.TurnID), string(domconv.ConversationTurnTargetRedisProjection), now, time.Minute)
+		if err != nil || claimed == nil || claimed.Target != string(domconv.ConversationTurnTargetRedisProjection) {
+			t.Fatalf("retry target claim=%+v err=%v", claimed, err)
+		}
+		recorded, found, err := fixture.store.GetConversationTurnClaimOperationReceipt(ctx, identity)
+		if err != nil || !found || recorded == nil || recorded.TurnID != claimed.TurnID || recorded.Target != claimed.Target ||
+			recorded.LeaseToken != claimed.LeaseToken || recorded.Attempts != claimed.Attempts {
+			t.Fatalf("durable target claim receipt=%+v found=%v err=%v", recorded, found, err)
+		}
+		if owner.calls.Load() != 1 {
+			t.Fatalf("owner target claim calls=%d, want one after lost result", owner.calls.Load())
+		}
+	})
+
 	t.Run("claim returns the exact committed lease", func(t *testing.T) {
 		fixture, owner := newTurnMutationThenErrorFixture(t, "outbox_claim")
 		ctx := context.Background()

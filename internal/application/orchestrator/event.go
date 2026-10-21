@@ -291,11 +291,17 @@ func NewEventWithTraceID(traceID modulecore.TraceID, eventType, from, to, conten
 
 type eventTraceBindings struct {
 	mu     sync.RWMutex
-	byTask map[string]modulecore.TraceID
+	byTask map[string]eventConversationIdentity
+}
+
+type eventConversationIdentity struct {
+	TurnID    modulecore.TurnID
+	TraceID   modulecore.TraceID
+	SessionID modulecore.SessionID
 }
 
 func newEventTraceBindings() *eventTraceBindings {
-	return &eventTraceBindings{byTask: make(map[string]modulecore.TraceID)}
+	return &eventTraceBindings{byTask: make(map[string]eventConversationIdentity)}
 }
 
 func (b *eventTraceBindings) Bind(taskID string, traceID modulecore.TraceID) {
@@ -303,7 +309,33 @@ func (b *eventTraceBindings) Bind(taskID string, traceID modulecore.TraceID) {
 		return
 	}
 	b.mu.Lock()
-	b.byTask[taskID] = traceID
+	if b.byTask == nil {
+		b.byTask = make(map[string]eventConversationIdentity)
+	}
+	identity := b.byTask[taskID]
+	if identity.TraceID != traceID {
+		identity = eventConversationIdentity{}
+	}
+	identity.TraceID = traceID
+	b.byTask[taskID] = identity
+	b.mu.Unlock()
+}
+
+// BindConversationIdentity propagates the request's canonical public-turn
+// identity through root and delegated execution tasks. Invalid optional
+// fields are ignored for legacy internal callers; request ingress validates
+// the complete tuple before this boundary.
+func (b *eventTraceBindings) BindConversationIdentity(taskID string, turnID modulecore.TurnID, traceID modulecore.TraceID, sessionID modulecore.SessionID) {
+	b.Bind(taskID, traceID)
+	if b == nil || strings.TrimSpace(taskID) == "" || turnID.Validate() != nil || traceID.Validate() != nil || sessionID.Validate() != nil {
+		return
+	}
+	b.mu.Lock()
+	identity := b.byTask[taskID]
+	identity.TurnID = turnID
+	identity.TraceID = traceID
+	identity.SessionID = sessionID
+	b.byTask[taskID] = identity
 	b.mu.Unlock()
 }
 
@@ -319,13 +351,28 @@ func (b *eventTraceBindings) Release(taskID string) {
 func (b *eventTraceBindings) Resolve(taskID string) modulecore.TraceID {
 	if b != nil && strings.TrimSpace(taskID) != "" {
 		b.mu.RLock()
-		traceID := b.byTask[taskID]
+		traceID := b.byTask[taskID].TraceID
 		b.mu.RUnlock()
 		if traceID.Validate() == nil {
 			return traceID
 		}
 	}
 	return modulecore.NewTraceID()
+}
+
+func (b *eventTraceBindings) Apply(ev *OrchestratorEvent) {
+	if b == nil || ev == nil || ev.TaskID.IsZero() {
+		return
+	}
+	b.mu.RLock()
+	identity := b.byTask[ev.TaskID.String()]
+	b.mu.RUnlock()
+	if identity.TurnID.Validate() != nil || identity.TraceID.Validate() != nil || identity.SessionID.Validate() != nil {
+		return
+	}
+	ev.TurnID = identity.TurnID
+	ev.TraceID = identity.TraceID
+	ev.SessionID = identity.SessionID
 }
 
 func isConversationMessageEvent(eventType string) bool {

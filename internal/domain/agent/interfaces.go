@@ -6,6 +6,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/advisor"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/agentprofile"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/routing"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 )
@@ -13,6 +14,22 @@ import (
 // Classifier はタスク分類器のインターフェース
 type Classifier interface {
 	Classify(ctx context.Context, t conversation.TurnInput) (routing.Decision, error)
+}
+
+// RouteReplyClassification keeps a route decision and an optional CHAT reply
+// from one provider generation together until the orchestrator adopts it.
+type RouteReplyClassification struct {
+	Decision   routing.Decision
+	Reply      string
+	ReplyValid bool
+	Generation llm.GenerateResponse
+}
+
+// RouteReplyClassifier is an optional classifier capability for generating a
+// structured route and CHAT reply in one request. The supplied request already
+// contains Mio's prepared persona, RecallPack, and user messages.
+type RouteReplyClassifier interface {
+	ClassifyWithChatReply(ctx context.Context, req llm.GenerateRequest) (RouteReplyClassification, error)
 }
 
 // RuleDictionary はルール辞書のインターフェース

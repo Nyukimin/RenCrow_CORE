@@ -101,17 +101,25 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
+		var timing *turntiming.Recorder
+		if req.Timings {
+			timing = turntiming.New(handlerReceivedAt)
+			timing.Mark(turntiming.PointRequestParsed)
+		}
+		endHandlerValidation := func() {
+			if timing != nil {
+				timing.Mark(turntiming.PointHandlerValidationEnded)
+			}
+		}
 		if strings.TrimSpace(req.Message) == "" && len(attachments) == 0 {
+			endHandlerValidation()
 			log.Printf("[Viewer] HandleSend: empty message and no attachments")
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		var timing *turntiming.Recorder
-		if req.Timings {
-			timing = turntiming.New(handlerReceivedAt)
-		}
 		recipient, err := modulechat.NormalizeViewerRecipient(req.To)
 		if err != nil {
+			endHandlerValidation()
 			log.Printf("[Viewer] HandleSend: invalid recipient: %q", req.To)
 			http.Error(w, "invalid recipient", http.StatusBadRequest)
 			return
@@ -120,29 +128,44 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 		req.ViewerClientID = strings.TrimSpace(req.ViewerClientID)
 		audioOutput, err := normalizeAudioOutputIntent(req.AudioOutput)
 		if err != nil {
+			endHandlerValidation()
 			log.Printf("[Viewer] HandleSend: invalid audio output intent: %q", req.AudioOutput)
 			http.Error(w, "invalid audio_output", http.StatusBadRequest)
 			return
 		}
 		provenance, err := buildViewerRequestProvenance(r, req)
 		if err != nil {
+			endHandlerValidation()
 			log.Printf("[Viewer] HandleSend: invalid request provenance: %v", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		endHandlerValidation()
 		rootTaskID := string(modulecore.NewTaskID())
 		sessionID := ""
 		if resolveSessionID != nil {
+			if timing != nil {
+				timing.Mark(turntiming.PointHandlerSessionStarted)
+			}
 			resolved, err := resolveSessionID(r.Context())
 			if err != nil {
+				if timing != nil {
+					timing.Mark(turntiming.PointHandlerSessionEnded)
+				}
 				log.Printf("[Viewer] HandleSend: canonical session resolution failed: %v", err)
 				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			if err := resolved.Validate(); err != nil {
+				if timing != nil {
+					timing.Mark(turntiming.PointHandlerSessionEnded)
+				}
 				log.Printf("[Viewer] HandleSend: canonical session resolver returned invalid identity: %v", err)
 				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
 				return
+			}
+			if timing != nil {
+				timing.Mark(turntiming.PointHandlerSessionEnded)
 			}
 			sessionID = string(resolved)
 		}

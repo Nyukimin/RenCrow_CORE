@@ -318,6 +318,57 @@ func TestBackgroundJobFailureReporterIgnoresTypedNilListener(t *testing.T) {
 	reporter.Failed("identity", errors.New("source unavailable"), "bounded failure")
 }
 
+type conversationTurnFollowerWorkerStub struct {
+	reconcileCalls atomic.Int32
+	drainCalls     atomic.Int32
+	limits         chan int
+}
+
+func (s *conversationTurnFollowerWorkerStub) ReconcileConversationTurnResponsePublications(_ context.Context, _ interface {
+	HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error)
+}, limit int) error {
+	s.reconcileCalls.Add(1)
+	s.limits <- limit
+	return nil
+}
+
+func (s *conversationTurnFollowerWorkerStub) DrainConversationTurnOutbox(_ context.Context, limit int) error {
+	s.drainCalls.Add(1)
+	s.limits <- limit
+	return nil
+}
+
+type emptyConversationExactFinalReader struct{}
+
+func (emptyConversationExactFinalReader) HasPublicConversationFinalResponse(context.Context, modulecore.TraceID, modulecore.TurnID, modulecore.SessionID) (bool, error) {
+	return false, nil
+}
+
+func TestConversationTurnFollowerWorkerRunsBoundedPassAndJoinsOnStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	manager := &conversationTurnFollowerWorkerStub{limits: make(chan int, 2)}
+	done := startConversationTurnFollowerWorker(ctx, manager, emptyConversationExactFinalReader{}, time.Hour)
+	for i := 0; i < 2; i++ {
+		select {
+		case limit := <-manager.limits:
+			if limit != 100 {
+				t.Fatalf("worker pass limit=%d, want 100", limit)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("worker did not run its immediate bounded pass")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop and join after cancellation")
+	}
+	if manager.reconcileCalls.Load() != 1 || manager.drainCalls.Load() != 1 {
+		t.Fatalf("worker calls reconcile=%d drain=%d, want one bounded pass", manager.reconcileCalls.Load(), manager.drainCalls.Load())
+	}
+}
+
 func TestStartMemoryLifecycleJobReportsFailure(t *testing.T) {
 	runner := &failingMemoryLifecycleRunner{err: errors.New("maintenance failed")}
 	listener := &captureBackgroundJobEventListener{}

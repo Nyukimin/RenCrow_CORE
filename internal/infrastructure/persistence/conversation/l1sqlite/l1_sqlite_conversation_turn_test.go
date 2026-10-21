@@ -286,6 +286,9 @@ func TestConversationTurnThreadBoundaryAndOutboxPayloadIsIDOnly(t *testing.T) {
 	if receipt.ThreadID != result.ThreadID || receipt.ThreadSeq != result.ThreadSeq || receipt.ThreadKind != result.ThreadKind || receipt.ClosedThreadID != result.ClosedThreadID || receipt.ClosedThreadSeq != result.ClosedThreadSeq || receipt.ClosedThreadKind != result.ClosedThreadKind {
 		t.Fatalf("boundary receipt tuple=%q/%d/%q closed=%q/%d/%q, result=%q/%d/%q closed=%q/%d/%q", receipt.ThreadID, receipt.ThreadSeq, receipt.ThreadKind, receipt.ClosedThreadID, receipt.ClosedThreadSeq, receipt.ClosedThreadKind, result.ThreadID, result.ThreadSeq, result.ThreadKind, result.ClosedThreadID, result.ClosedThreadSeq, result.ClosedThreadKind)
 	}
+	if err := store.MarkConversationTurnResponsePublished(ctx, boundary.TurnID, boundary.TraceID, modulecore.SessionID(boundary.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark boundary response published: %v", err)
+	}
 	for i := 0; i < 2; i++ {
 		claim, claimErr := store.ClaimConversationTurnOutbox(ctx, string(boundary.TurnID), time.Now().UTC(), time.Minute)
 		if claimErr != nil || claim == nil {
@@ -365,6 +368,9 @@ func TestConversationTurnOutboxLeaseFailureAndCompletion(t *testing.T) {
 		t.Fatalf("initial=%+v err=%v", initial, err)
 	}
 	assertConversationTurnIdentity(t, request, initial)
+	if err := store.MarkConversationTurnResponsePublished(ctx, request.TurnID, request.TraceID, modulecore.SessionID(request.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark response published: %v", err)
+	}
 	now := time.Date(2026, 8, 16, 0, 0, 0, 0, time.UTC)
 	claim, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
 	if err != nil || claim == nil {
@@ -411,8 +417,8 @@ func TestConversationTurnOutboxLeaseFailureAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("complete remaining: %v", err)
 	}
-	if completed.Status != domconv.ConversationTurnFailed {
-		t.Fatalf("terminal failed target should keep receipt failed: %+v", completed)
+	if completed.Status != domconv.ConversationTurnPartial {
+		t.Fatalf("terminal failed target should keep receipt partial: %+v", completed)
 	}
 	assertConversationTurnIdentity(t, request, completed)
 	var rawLastError string
@@ -421,6 +427,268 @@ func TestConversationTurnOutboxLeaseFailureAndCompletion(t *testing.T) {
 	}
 	if rawLastError != string(domconv.ConversationTurnErrorUnavailable) {
 		t.Fatalf("last_error=%q, want fixed unavailable", rawLastError)
+	}
+}
+
+func TestConversationTurnThreadFollowerWaitsForPublicResponse(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "response-gate.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seed := conversationTurnStoreTestRequest("turn-response-gate-seed", "session-response-gate")
+	if _, err := store.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed CommitConversationTurn: %v", err)
+	}
+	request := conversationTurnStoreTestRequest("turn-response-gate", "session-response-gate")
+	request.Boundary = true
+	request.BoundaryReason = "close old thread"
+	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers}
+	if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+		t.Fatalf("CommitConversationTurn: %v", err)
+	}
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	claim, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
+	if err != nil || claim == nil || claim.Target != string(domconv.ConversationTurnTargetRedisProjection) {
+		t.Fatalf("first claim=%+v err=%v, want required Redis projection", claim, err)
+	}
+	if _, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), claim.Target, claim.LeaseToken, now); err != nil {
+		t.Fatalf("complete Redis projection: %v", err)
+	}
+	claim, err = store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now.Add(time.Second), time.Minute)
+	if err != nil || claim != nil {
+		t.Fatalf("thread follower claim=%+v err=%v before public response, want no claim", claim, err)
+	}
+}
+
+func TestConversationTurnResponsePublicationGatesThreadFollowerAndSurvivesRestart(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "published-response.db")
+	store, err := NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	ctx := context.Background()
+	sessionID := string(modulecore.NewSessionID())
+	for i := 0; i < 6; i++ {
+		request := conversationTurnStoreTestRequest(fmt.Sprintf("publication-seed-%d", i), sessionID)
+		if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+	boundary := conversationTurnStoreTestRequest("publication-boundary", sessionID)
+	boundary.Boundary = true
+	boundary.BoundaryReason = "new topic"
+	boundary.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+	result, err := store.CommitConversationTurn(ctx, boundary)
+	if err != nil || result.ClosedThreadID == "" {
+		t.Fatalf("boundary result=%+v err=%v", result, err)
+	}
+	if claim, err := store.ClaimNextConversationTurnOutbox(ctx, time.Now(), time.Minute); err != nil || claim != nil {
+		t.Fatalf("thread follower was claimable before exact response publication: claim=%+v err=%v", claim, err)
+	}
+	candidates, err := store.ListPendingConversationTurnThreadFollowers(ctx, sessionID, 100)
+	if err != nil || len(candidates) != 1 || candidates[0].ResponsePublished {
+		t.Fatalf("unpublished candidates=%+v err=%v, want one gated receipt", candidates, err)
+	}
+	if err := store.MarkConversationTurnResponsePublished(ctx, boundary.TurnID, boundary.TraceID, modulecore.SessionID(boundary.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark exact response published: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	store, err = NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store.Close()
+	candidates, err = store.ListPendingConversationTurnThreadFollowers(ctx, sessionID, 100)
+	if err != nil || len(candidates) != 1 || !candidates[0].ResponsePublished {
+		t.Fatalf("published candidates after restart=%+v err=%v", candidates, err)
+	}
+	claim, err := store.ClaimNextConversationTurnOutbox(ctx, time.Now(), time.Minute)
+	if err != nil || claim == nil || claim.Target != string(domconv.ConversationTurnTargetThreadFollowers) {
+		t.Fatalf("claim after publication=%+v err=%v, want eligible thread follower", claim, err)
+	}
+}
+
+func TestHasConversationTurnReceiptsForSession(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "session-turn-presence.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID := string(modulecore.NewSessionID())
+	if exists, err := store.HasConversationTurnReceiptsForSession(ctx, sessionID); err != nil || exists {
+		t.Fatalf("empty session typed turns=(%v,%v), want false", exists, err)
+	}
+	request := conversationTurnStoreTestRequest("session-turn-presence", sessionID)
+	if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+		t.Fatalf("CommitConversationTurn: %v", err)
+	}
+	if exists, err := store.HasConversationTurnReceiptsForSession(ctx, sessionID); err != nil || !exists {
+		t.Fatalf("committed session typed turns=(%v,%v), want true", exists, err)
+	}
+}
+
+func TestConversationTurnForegroundTargetClaimCannotTakePublishedThreadFollower(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "target-claim.db")
+	store, err := NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID := string(modulecore.NewSessionID())
+	seed := conversationTurnStoreTestRequest("target-claim-seed", sessionID)
+	if _, err := store.CommitConversationTurn(ctx, seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	request := conversationTurnStoreTestRequest("target-claim-boundary", sessionID)
+	request.Boundary = true
+	request.BoundaryReason = "topic changed"
+	request.Targets = []domconv.ConversationTurnTarget{
+		domconv.ConversationTurnTargetRedisProjection,
+		domconv.ConversationTurnTargetThreadFollowers,
+	}
+	result, err := store.CommitConversationTurn(ctx, request)
+	if err != nil || result.ClosedThreadID == "" {
+		t.Fatalf("boundary=%+v err=%v", result, err)
+	}
+	claim, err := store.ClaimConversationTurnOutboxTarget(ctx, string(request.TurnID), string(domconv.ConversationTurnTargetRedisProjection), time.Now().UTC(), time.Minute)
+	if err != nil || claim == nil || claim.Target != string(domconv.ConversationTurnTargetRedisProjection) {
+		t.Fatalf("foreground redis claim=%+v err=%v", claim, err)
+	}
+	if _, err := store.CompleteConversationTurnOutbox(ctx, string(request.TurnID), claim.Target, claim.LeaseToken, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatalf("complete redis claim: %v", err)
+	}
+	if err := store.MarkConversationTurnResponsePublished(ctx, request.TurnID, request.TraceID, modulecore.SessionID(request.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark exact response: %v", err)
+	}
+	claim, err = store.ClaimConversationTurnOutboxTarget(ctx, string(request.TurnID), string(domconv.ConversationTurnTargetRedisProjection), time.Now().UTC().Add(2*time.Second), time.Minute)
+	if err != nil || claim != nil {
+		t.Fatalf("completed redis target claim=%+v err=%v, want no claim even though thread follower is eligible", claim, err)
+	}
+	claim, err = store.ClaimNextConversationTurnOutbox(ctx, time.Now().UTC().Add(3*time.Second), time.Minute)
+	if err != nil || claim == nil || claim.Target != string(domconv.ConversationTurnTargetThreadFollowers) {
+		t.Fatalf("background thread claim=%+v err=%v", claim, err)
+	}
+}
+
+func TestConversationTurnUnpublishedCandidatePagesDoNotStarveBehindPublishedBacklog(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "candidate-pages.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID := string(modulecore.NewSessionID())
+	var latest domconv.ConversationTurnResult
+	for i := 0; i < 102; i++ {
+		request := conversationTurnStoreTestRequest(fmt.Sprintf("candidate-page-%03d", i), sessionID)
+		request.Boundary = true
+		request.BoundaryReason = "topic changed"
+		request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+		latest, err = store.CommitConversationTurn(ctx, request)
+		if err != nil {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+		if latest.ClosedThreadID != "" {
+			if err := store.MarkConversationTurnResponsePublished(ctx, request.TurnID, request.TraceID, modulecore.SessionID(request.SessionID), time.Now().UTC()); err != nil {
+				t.Fatalf("mark published %d: %v", i, err)
+			}
+		}
+	}
+	lastRequest := conversationTurnStoreTestRequest("candidate-page-unpublished-last", sessionID)
+	lastRequest.Boundary = true
+	lastRequest.BoundaryReason = "topic changed"
+	lastRequest.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+	latest, err = store.CommitConversationTurn(ctx, lastRequest)
+	if err != nil || latest.ClosedThreadID == "" {
+		t.Fatalf("latest boundary=%+v err=%v", latest, err)
+	}
+	other := conversationTurnStoreTestRequest("candidate-page-unpublished-other", sessionID)
+	other.Boundary = true
+	other.BoundaryReason = "topic changed"
+	other.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+	if _, err := store.CommitConversationTurn(ctx, other); err != nil {
+		t.Fatalf("commit second unpublished boundary: %v", err)
+	}
+	first, err := store.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, "", 1)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("first unpublished page=%+v err=%v", first, err)
+	}
+	second, err := store.ListUnpublishedConversationTurnThreadFollowersAfter(ctx, string(first[0].TurnID), 1)
+	if err != nil || len(second) != 1 || second[0].TurnID == first[0].TurnID {
+		t.Fatalf("second unpublished page=%+v err=%v, want distinct next candidate", second, err)
+	}
+	if first[0].TurnID != latest.TurnID && second[0].TurnID != latest.TurnID {
+		t.Fatalf("published backlog starved exact unpublished turn %s; pages=%+v %+v", latest.TurnID, first, second)
+	}
+}
+
+func TestConversationTurnPendingRecallWindowIncludesNewestClosedThread(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "recall-window.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	sessionID := string(modulecore.NewSessionID())
+	var latest domconv.ConversationTurnResult
+	for i := 0; i < 102; i++ {
+		request := conversationTurnStoreTestRequest(fmt.Sprintf("recall-window-%03d", i), sessionID)
+		request.Boundary = true
+		request.BoundaryReason = "topic changed"
+		request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+		latest, err = store.CommitConversationTurn(ctx, request)
+		if err != nil {
+			t.Fatalf("commit %d: %v", i, err)
+		}
+	}
+	request := conversationTurnStoreTestRequest("recall-window-latest", sessionID)
+	request.Boundary = true
+	request.BoundaryReason = "topic changed"
+	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetThreadFollowers}
+	latest, err = store.CommitConversationTurn(ctx, request)
+	if err != nil || latest.ClosedThreadID == "" {
+		t.Fatalf("latest boundary=%+v err=%v", latest, err)
+	}
+	window, err := store.ListPendingConversationTurnThreadFollowers(ctx, sessionID, 100)
+	if err != nil || len(window) != 100 {
+		t.Fatalf("pending Recall window size=%d err=%v", len(window), err)
+	}
+	foundNewest := false
+	for _, follower := range window {
+		foundNewest = foundNewest || follower.ClosedThreadID == latest.ClosedThreadID
+	}
+	if !foundNewest {
+		t.Fatalf("bounded pending Recall window omitted newest closed thread %s", latest.ClosedThreadID)
+	}
+}
+
+func TestConversationTurnSchemaAddsPublicationMarkerToExistingReceiptTable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-receipt.db")
+	store, err := NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	if _, err := store.db.Exec(`ALTER TABLE conversation_turn_receipt DROP COLUMN response_published_at`); err != nil {
+		_ = store.Close()
+		t.Fatalf("prepare legacy schema: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close legacy store: %v", err)
+	}
+	store, err = NewL1SQLiteStore(dbPath)
+	if err != nil {
+		t.Fatalf("reopen legacy store: %v", err)
+	}
+	defer store.Close()
+	var count int
+	if err := store.db.QueryRow(`SELECT count(*) FROM pragma_table_info('conversation_turn_receipt') WHERE name = 'response_published_at'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("publication marker columns=%d err=%v, want migrated column", count, err)
 	}
 }
 
@@ -441,6 +709,9 @@ func TestConversationTurnCompletesOnlyAfterAllOutboxes(t *testing.T) {
 	request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection, domconv.ConversationTurnTargetThreadFollowers}
 	if _, err := store.CommitConversationTurn(ctx, request); err != nil {
 		t.Fatalf("commit: %v", err)
+	}
+	if err := store.MarkConversationTurnResponsePublished(ctx, request.TurnID, request.TraceID, modulecore.SessionID(request.SessionID), time.Now().UTC()); err != nil {
+		t.Fatalf("mark response published: %v", err)
 	}
 	now := time.Now().UTC()
 	first, err := store.ClaimConversationTurnOutbox(ctx, string(request.TurnID), now, time.Minute)
@@ -506,6 +777,40 @@ func TestConversationTurnGlobalClaimOrdersPendingAndReclaimsStale(t *testing.T) 
 	stale, err := store.ClaimNextConversationTurnOutbox(ctx, equalCreated.Add(2*time.Minute), time.Minute)
 	if err != nil || stale == nil || stale.TurnID != wantFirst.TurnID || stale.Attempts != 2 {
 		t.Fatalf("global stale reclaim=%+v err=%v", stale, err)
+	}
+}
+
+func TestConversationTurnTargetClaimExclusionsSkipFailedRowForCurrentDrain(t *testing.T) {
+	store, err := NewL1SQLiteStore(filepath.Join(t.TempDir(), "claim-exclusions.db"))
+	if err != nil {
+		t.Fatalf("NewL1SQLiteStore: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first := conversationTurnStoreTestRequest("turn-exclusion-first", "session-exclusion-first")
+	second := conversationTurnStoreTestRequest("turn-exclusion-second", "session-exclusion-second")
+	for _, request := range []domconv.ConversationTurnRequest{first, second} {
+		request.Targets = []domconv.ConversationTurnTarget{domconv.ConversationTurnTargetRedisProjection}
+		if _, err := store.CommitConversationTurn(ctx, request); err != nil {
+			t.Fatalf("commit %s: %v", request.TurnID, err)
+		}
+	}
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	claim, err := store.ClaimNextConversationTurnOutboxTargetExcluding(ctx, string(domconv.ConversationTurnTargetRedisProjection), now, time.Minute, nil)
+	if err != nil || claim == nil || claim.TurnID != first.TurnID {
+		t.Fatalf("first target claim=%+v err=%v, want first Redis row", claim, err)
+	}
+	if _, err := store.FailConversationTurnOutbox(ctx, string(claim.TurnID), claim.Target, claim.LeaseToken, domconv.ConversationTurnErrorUnavailable, now); err != nil {
+		t.Fatalf("mark first claim failed: %v", err)
+	}
+	excluded := map[string]struct{}{string(claim.TurnID) + "\x00" + claim.Target: {}}
+	next, err := store.ClaimNextConversationTurnOutboxTargetExcluding(ctx, claim.Target, now.Add(time.Second), time.Minute, excluded)
+	if err != nil || next == nil || next.TurnID != second.TurnID || next.Attempts != 1 {
+		t.Fatalf("target claim with failed row excluded=%+v err=%v, want second row attempt 1", next, err)
+	}
+	firstRetry, err := store.ClaimConversationTurnOutbox(ctx, string(first.TurnID), now.Add(2*time.Second), time.Minute)
+	if err != nil || firstRetry == nil || firstRetry.Attempts != 2 {
+		t.Fatalf("first row retry=%+v err=%v, want next pass attempt 2", firstRetry, err)
 	}
 }
 
@@ -809,8 +1114,8 @@ func TestConversationTurnOutboxFailedAttemptsReachTerminalReceipt(t *testing.T) 
 		if attempt < domconv.ConversationTurnMaxOutboxAttempts && result.Status != domconv.ConversationTurnPartial {
 			t.Fatalf("attempt %d result=%+v, want partial", attempt, result)
 		}
-		if attempt == domconv.ConversationTurnMaxOutboxAttempts && (result.Status != domconv.ConversationTurnFailed || result.ErrorCode != domconv.ConversationTurnErrorUnavailable) {
-			t.Fatalf("terminal result=%+v, want failed/unavailable", result)
+		if attempt == domconv.ConversationTurnMaxOutboxAttempts && (result.Status != domconv.ConversationTurnPartial || result.ErrorCode != domconv.ConversationTurnErrorUnavailable) {
+			t.Fatalf("terminal result=%+v, want partial/unavailable receipt after bounded follower failure", result)
 		}
 		now = now.Add(time.Minute)
 	}
@@ -902,8 +1207,8 @@ func TestConversationTurnOutboxExhaustedStaleLeaseBecomesTerminalFailure(t *test
 		t.Fatalf("exhausted stale claim=%+v err=%v, want no claim", claim, err)
 	}
 	receipt, err := store.GetConversationTurnReceipt(ctx, string(request.TurnID))
-	if err != nil || receipt.Status != domconv.ConversationTurnFailed || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
-		t.Fatalf("exhausted stale receipt=%+v err=%v, want failed/unavailable", receipt, err)
+	if err != nil || receipt.Status != domconv.ConversationTurnPartial || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
+		t.Fatalf("exhausted stale receipt=%+v err=%v, want partial/unavailable", receipt, err)
 	}
 	assertConversationTurnIdentity(t, request, receipt)
 }
@@ -959,8 +1264,8 @@ func TestConversationTurnOutboxStaleTerminalizationIsTurnScopedAndBounded(t *tes
 	}
 	for i := range requests {
 		receipt, err := store.GetConversationTurnReceipt(ctx, string(requests[i].TurnID))
-		if err != nil || receipt.Status != domconv.ConversationTurnFailed || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
-			t.Fatalf("receipt %d=%+v err=%v, want terminal failed/unavailable", i, receipt, err)
+		if err != nil || receipt.Status != domconv.ConversationTurnPartial || receipt.ErrorCode != domconv.ConversationTurnErrorUnavailable {
+			t.Fatalf("receipt %d=%+v err=%v, want partial/unavailable after terminal follower failure", i, receipt, err)
 		}
 		assertConversationTurnIdentity(t, requests[i], receipt)
 	}

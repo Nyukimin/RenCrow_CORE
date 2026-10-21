@@ -42,7 +42,9 @@ func compositionFuncName(file string) string {
 	if file == "runtime_viewer_handlers.go" {
 		return "buildViewerRuntimeHandlers"
 	}
-	return "buildDependencies"
+	// buildDependencies is now the config-loading wrapper. The composition
+	// (including the final Atlas service assignment) lives in this function.
+	return "buildDependenciesWithClassifierTestConfig"
 }
 
 // selectorCallPositions returns the positions of calls shaped like
@@ -108,7 +110,7 @@ func TestAtlasDevelopmentEventSinkIsWiredAfterAtlasServiceFinalization(t *testin
 	fset, buildDependencies := parseCompositionFile(t, "runtime_dependencies.go")
 	assignments := atlasServiceAssignPositions(buildDependencies)
 	if len(assignments) == 0 {
-		t.Fatal("no deps.atlasService assignment found in buildDependencies")
+		t.Fatal("no deps.atlasService assignment found in the dependency composition function")
 	}
 	finalAtlasService := assignments[len(assignments)-1]
 	wirings := selectorCallPositions(buildDependencies, "WithDevelopmentEventSink")
@@ -136,7 +138,7 @@ func TestAtlasDevelopmentEventSinkWiringAssumesViewerHandlersRunFirst(t *testing
 	fset, buildDependencies := parseCompositionFile(t, "runtime_dependencies.go")
 	viewerHandlerBuilds := plainCallPositions(buildDependencies, "buildViewerRuntimeHandlers")
 	if len(viewerHandlerBuilds) == 0 {
-		t.Fatal("buildDependencies does not call buildViewerRuntimeHandlers")
+		t.Fatal("the dependency composition function does not call buildViewerRuntimeHandlers")
 	}
 	assignments := atlasServiceAssignPositions(buildDependencies)
 	finalAtlasService := assignments[len(assignments)-1]

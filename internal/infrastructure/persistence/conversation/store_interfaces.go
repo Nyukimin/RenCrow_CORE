@@ -93,9 +93,16 @@ type conversationTurnL1Store interface {
 	CommitConversationTurn(context.Context, conversation.ConversationTurnRequest) (conversation.ConversationTurnResult, error)
 	GetConversationTurnReceipt(context.Context, string) (conversation.ConversationTurnResult, error)
 	ClaimConversationTurnOutbox(context.Context, string, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
+	ClaimConversationTurnOutboxTarget(context.Context, string, string, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
 	ClaimNextConversationTurnOutbox(context.Context, time.Time, time.Duration) (*conversation.ConversationTurnOutbox, error)
+	ClaimNextConversationTurnOutboxTargetExcluding(context.Context, string, time.Time, time.Duration, map[string]struct{}) (*conversation.ConversationTurnOutbox, error)
 	CompleteConversationTurnOutbox(context.Context, string, string, string, time.Time) (conversation.ConversationTurnResult, error)
 	FailConversationTurnOutbox(context.Context, string, string, string, conversation.ConversationTurnErrorCode, time.Time) (conversation.ConversationTurnResult, error)
+	MarkConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID, time.Time) error
+	IsConversationTurnResponsePublished(context.Context, modulecore.TurnID, modulecore.TraceID, modulecore.SessionID) (bool, error)
+	HasConversationTurnReceiptsForSession(context.Context, string) (bool, error)
+	ListPendingConversationTurnThreadFollowers(context.Context, string, int) ([]l1sqlite.PendingConversationTurnThreadFollower, error)
+	ListUnpublishedConversationTurnThreadFollowersAfter(context.Context, string, int) ([]l1sqlite.PendingConversationTurnThreadFollower, error)
 	LoadConversationThreadProjection(context.Context, string, modulecore.ThreadID) ([]l1sqlite.L1MemoryEvent, error)
 	LoadActiveConversationThreadProjection(context.Context, string) ([]l1sqlite.L1MemoryEvent, error)
 }

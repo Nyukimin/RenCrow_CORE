@@ -27,10 +27,58 @@ type RealConversationManager struct {
 	agentStatuses               map[string]*domconv.AgentStatus
 	knowledgeRelationImportHook func(context.Context, l1sqlite.L1KnowledgeItem) error
 	backgroundMu                sync.Mutex
+	turnProjectionMu            turnProjectionLock
+	publicationReconcileMu      sync.Mutex
+	publicationCursor           string
 	threadMu                    sync.Mutex
 	backgroundWG                sync.WaitGroup
 	backgroundClosed            bool
 	backgroundFlushTimeout      time.Duration
+}
+
+// turnProjectionLock serializes the required active Redis projection with
+// background recovery while allowing request cancellation and worker skips.
+type turnProjectionLock struct {
+	init sync.Once
+	gate chan struct{}
+}
+
+func (l *turnProjectionLock) initialize() {
+	l.init.Do(func() { l.gate = make(chan struct{}, 1) })
+}
+
+func (l *turnProjectionLock) Lock(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("projection lock context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.initialize()
+	select {
+	case l.gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-l.gate
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (l *turnProjectionLock) TryLock() bool {
+	l.initialize()
+	select {
+	case l.gate <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (l *turnProjectionLock) Unlock() {
+	<-l.gate
 }
 
 func (r *RealConversationManager) WithKnowledgeRelationImportHook(hook func(context.Context, l1sqlite.L1KnowledgeItem) error) *RealConversationManager {

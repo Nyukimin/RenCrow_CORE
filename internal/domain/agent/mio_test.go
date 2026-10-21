@@ -220,6 +220,64 @@ func TestMioAgentDecideAction_ClassifierWhenNoRuleMatch(t *testing.T) {
 	}
 }
 
+func TestMioAgentDecideActionTimesClassifierCallIncludingErrors(t *testing.T) {
+	for name, classifyErr := range map[string]error{
+		"success": nil,
+		"error":   errors.New("classifier unavailable"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			classifier := &mockClassifier{classifyFunc: func(context.Context, conversation.TurnInput) (routing.Decision, error) {
+				return routing.NewDecision(routing.RouteCHAT, 0.8, "classified"), classifyErr
+			}}
+			mio := NewMioAgent(&mockLLMProvider{}, classifier, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil)
+			recorder := turntiming.New(time.Now())
+			ctx := turntiming.WithRecorder(context.Background(), recorder)
+
+			if _, err := mio.DecideAction(ctx, newAgentTurnInput(t, "route through classifier", "chat", "room-1")); err != nil {
+				t.Fatalf("DecideAction() error=%v", err)
+			}
+
+			points := recorder.Snapshot().PointsMS
+			for _, point := range []turntiming.Point{
+				turntiming.Point("classification_started"),
+				turntiming.Point("classification_ended"),
+			} {
+				if _, ok := points[string(point)]; !ok {
+					t.Errorf("classifier call did not record %q: %#v", point, points)
+				}
+			}
+		})
+	}
+}
+
+func TestMioAgentDecideActionDoesNotTimeSkippedClassifier(t *testing.T) {
+	for name, mio := range map[string]*MioAgent{
+		"nil classifier":   NewMioAgent(&mockLLMProvider{}, nil, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil),
+		"explicit command": NewMioAgent(&mockLLMProvider{}, &mockClassifier{}, &mockRuleDictionary{}, &mockToolRunner{}, &mockMCPClient{}, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			recorder := turntiming.New(time.Now())
+			ctx := turntiming.WithRecorder(context.Background(), recorder)
+			message := "route through classifier"
+			if name == "explicit command" {
+				message = "/chat hello"
+			}
+			if _, err := mio.DecideAction(ctx, newAgentTurnInput(t, message, "chat", "room-1")); err != nil {
+				t.Fatalf("DecideAction() error=%v", err)
+			}
+			points := recorder.Snapshot().PointsMS
+			for _, point := range []turntiming.Point{
+				turntiming.Point("classification_started"),
+				turntiming.Point("classification_ended"),
+			} {
+				if _, ok := points[string(point)]; ok {
+					t.Errorf("skipped classifier recorded %q: %#v", point, points)
+				}
+			}
+		})
+	}
+}
+
 func TestMioAgentDecideAction_DefaultChatWhenClassifierFails(t *testing.T) {
 	classifier := &mockClassifier{
 		classifyFunc: func(ctx context.Context, tk conversation.TurnInput) (routing.Decision, error) {
@@ -669,6 +727,33 @@ func TestMioAgentChatRecordsConversationGenerationAndCommitTiming(t *testing.T) 
 		}
 	}
 	points := recorder.Snapshot().PointsMS
+	orderedPoints := []string{
+		"agent_invocation_started",
+		string(turntiming.PointBeginTurnStarted),
+		string(turntiming.PointBeginTurnEnded),
+		"recall_projection_started",
+		"recall_projection_ended",
+		string(turntiming.PointPromptPreparationStarted),
+		"prompt_assembly_started",
+		string(turntiming.PointPromptPreparationEnded),
+		"generation_request_ready",
+		string(turntiming.PointGenerationProviderStart),
+		string(turntiming.PointGenerationProviderEnd),
+		string(turntiming.PointConversationCommitStarted),
+		string(turntiming.PointConversationCommitEnded),
+	}
+	var previousOffset float64
+	for index, point := range orderedPoints {
+		offset, ok := points[point]
+		if !ok {
+			t.Errorf("timing point %q missing: %#v", point, points)
+			continue
+		}
+		if index > 0 && offset < previousOffset {
+			t.Errorf("timing point %q offset=%v precedes prior offset=%v: %#v", point, offset, previousOffset, points)
+		}
+		previousOffset = offset
+	}
 	for _, point := range []turntiming.Point{
 		turntiming.PointBeginTurnStarted,
 		turntiming.PointBeginTurnEnded,
