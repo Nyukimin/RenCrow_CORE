@@ -45,14 +45,22 @@ func (f *fakeProjectorOutbox) Latest(_ context.Context, _ domainprojection.Targe
 }
 
 type fakeRevisions struct {
-	next  uint64
-	calls int
+	next    uint64
+	calls   int
+	epoch   string
+	durable bool
 }
 
-func (f *fakeRevisions) NextSourceRevision(context.Context, domainprojection.Target, string, string, time.Time) (uint64, error) {
+func (f *fakeRevisions) NextSourceRevision(_ context.Context, _ domainprojection.Target, _ string, sourceEpoch string, _ time.Time) (uint64, error) {
 	f.calls++
 	f.next++
+	f.epoch = sourceEpoch
+	f.durable = true
 	return f.next, nil
+}
+
+func (f *fakeRevisions) CurrentSourceRevision(context.Context, domainprojection.Target, string) (string, uint64, bool, error) {
+	return f.epoch, f.next, f.durable, nil
 }
 
 func newTestProjector(t *testing.T, source *fakeTaskRunSource) (*Projector, *fakeProjectorOutbox, *fakeRevisions) {

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/worldread"
+	appprojection "github.com/Nyukimin/RenCrow_CORE/internal/application/worldprojection"
 	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
 	domainprojection "github.com/Nyukimin/RenCrow_CORE/internal/domain/worldprojection"
 	taskpersistence "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/task"
@@ -37,8 +40,9 @@ func TestWorldProjectionLoopbackIsolatedConnectionWithRealWorld(t *testing.T) {
 	if bin == "" {
 		t.Skip("RENCROW_WORLD_BIN is not set")
 	}
-	baseURL, projectionToken, readToken, stop := startLoopbackRealWorld(t, bin)
-	defer stop()
+	world := startLoopbackRealWorld(t, bin)
+	defer world.stop()
+	baseURL, projectionToken, readToken := world.baseURL, world.projectionToken, world.readToken
 
 	assessmentPath := "/v1/worlds/rencrow-home/timelines/timeline-1/actors/mio/assessment"
 
@@ -148,7 +152,19 @@ func TestWorldProjectionLoopbackIsolatedConnectionWithRealWorld(t *testing.T) {
 	}
 }
 
-func startLoopbackRealWorld(t *testing.T, bin string) (string, string, string, func()) {
+// loopbackRealWorld is one isolated WORLD instance with separated credentials:
+// projection, reconcile, and read each get their own token so a test can prove
+// which capability CORE actually used.
+type loopbackRealWorld struct {
+	baseURL             string
+	projectionToken     string
+	readToken           string
+	projectionOnlyToken string
+	reconcileToken      string
+	stop                func()
+}
+
+func startLoopbackRealWorld(t *testing.T, bin string) loopbackRealWorld {
 	t.Helper()
 	dir := t.TempDir()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -159,6 +175,8 @@ func startLoopbackRealWorld(t *testing.T, bin string) (string, string, string, f
 	_ = listener.Close()
 	projectionToken := "d14-projection-token"
 	readToken := "d14-read-token"
+	projectionOnlyToken := "d06-projection-only-token"
+	reconcileToken := "d06-reconcile-token"
 	sum := func(token string) string {
 		digest := sha256.Sum256([]byte(token))
 		return hex.EncodeToString(digest[:])
@@ -169,13 +187,16 @@ func startLoopbackRealWorld(t *testing.T, bin string) (string, string, string, f
   "scope": {"world_id": "rencrow-home", "timeline_id": "timeline-1", "timeline_epoch": "epoch-e2e"},
   "tokens": [
     {"id": "core", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection", "projection_reconcile"]},
-    {"id": "core-read", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["read"]}
+    {"id": "core-read", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["read"]},
+    {"id": "core-projection-only", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection"]},
+    {"id": "core-reconcile", "publisher_id": "core-publisher", "sha256": %q, "scopes": ["projection_reconcile"]}
   ],
   "core_projection_actors": [{"actor_id": "mio", "actor_instance_id": "core-instance-mio"}],
   "page": {"max_events": 500, "max_bytes": 2097152},
   "sse": {"heartbeat_seconds": 2, "poll_millis": 50},
   "initial_state": {"actors": {"mio": {"room_id": "1f-living"}}, "resources": {"chair": 1}}
-}`, port, filepath.Join(dir, "world.db"), sum(projectionToken), sum(readToken))
+}`, port, filepath.Join(dir, "world.db"), sum(projectionToken), sum(readToken),
+		sum(projectionOnlyToken), sum(reconcileToken))
 	configPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -203,10 +224,122 @@ func startLoopbackRealWorld(t *testing.T, bin string) (string, string, string, f
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return baseURL, projectionToken, readToken, func() {
-		_ = command.Process.Kill()
-		_ = command.Wait()
+	return loopbackRealWorld{
+		baseURL:             baseURL,
+		projectionToken:     projectionToken,
+		readToken:           readToken,
+		projectionOnlyToken: projectionOnlyToken,
+		reconcileToken:      reconcileToken,
+		stop: func() {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		},
 	}
+}
+
+// TestWorldProjectionLoopbackSourceEpochSwitchUsesReconcileCredential is the
+// D-06 credential separation trial on the real WORLD contract over an isolated
+// loopback port: the ordinary projection route never opens a new source epoch,
+// the projection credential cannot reconcile, and only the separate reconcile
+// credential re-baselines the epoch at revision 1.
+func TestWorldProjectionLoopbackSourceEpochSwitchUsesReconcileCredential(t *testing.T) {
+	bin := strings.TrimSpace(os.Getenv("RENCROW_WORLD_BIN"))
+	if bin == "" {
+		t.Skip("RENCROW_WORLD_BIN is not set")
+	}
+	world := startLoopbackRealWorld(t, bin)
+	defer world.stop()
+
+	target := domainprojection.Target{
+		WorldID: "rencrow-home", TimelineID: "timeline-1", TimelineEpoch: "epoch-e2e",
+		ActorID: "mio", ActorInstanceID: "core-instance-mio", ActorTransportID: "mio",
+	}
+	publisher, err := appprojection.NewHTTPPublisherWithReconcile(
+		world.baseURL, world.projectionOnlyToken, world.reconcileToken, 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPPublisherWithReconcile() error = %v", err)
+	}
+	ctx := context.Background()
+
+	first := loopbackWorkSetEnvelope(t, target, "core-epoch-d06-a", 1)
+	if result, err := publisher.Publish(ctx, target, domainprojection.KindWorkSet, first, false); err != nil || !result.Successful() {
+		t.Fatalf("first projection = %+v, err = %v", result, err)
+	}
+
+	// The normal projection route refuses to open a second epoch silently.
+	second := loopbackWorkSetEnvelope(t, target, "core-epoch-d06-b", 1)
+	refused, err := publisher.Publish(ctx, target, domainprojection.KindWorkSet, second, false)
+	if err != nil {
+		t.Fatalf("epoch switch publish error = %v", err)
+	}
+	if !refused.RequiresReconcile {
+		t.Fatalf("epoch switch without reconcile = %+v", refused)
+	}
+
+	// A projection-only credential may never reconcile, and CORE fails closed
+	// before sending it.
+	projectionOnly, err := appprojection.NewHTTPPublisher(world.baseURL, world.projectionOnlyToken, 5*time.Second)
+	if err != nil {
+		t.Fatalf("NewHTTPPublisher() error = %v", err)
+	}
+	if _, err := projectionOnly.Publish(ctx, target, domainprojection.KindWorkSet, second, true); !errors.Is(err, appprojection.ErrReconcileCredentialNotConfigured) {
+		t.Fatalf("projection-only reconcile error = %v", err)
+	}
+	// WORLD enforces the same boundary independently.
+	headPath := "/v1/worlds/rencrow-home/timelines/timeline-1/core-projections/mio/" + domainprojection.KindWorkSet
+	if status := putLoopbackEnvelope(t, world.baseURL+headPath+"?reconcile=true", world.projectionOnlyToken, second); status != http.StatusForbidden {
+		t.Fatalf("projection-only reconcile status = %d", status)
+	}
+
+	// The separate reconcile credential re-baselines the epoch at revision 1,
+	// and the projection credential reads the new head back.
+	accepted, err := publisher.Publish(ctx, target, domainprojection.KindWorkSet, second, true)
+	if err != nil || !accepted.Successful() {
+		t.Fatalf("reconcile publish = %+v, err = %v", accepted, err)
+	}
+	head, err := publisher.ReadHead(ctx, target, domainprojection.KindWorkSet)
+	if err != nil {
+		t.Fatalf("ReadHead() error = %v", err)
+	}
+	if head.SourceEpoch != "core-epoch-d06-b" || head.SourceRevision != 1 {
+		t.Fatalf("head after reconcile = %+v", head)
+	}
+}
+
+func loopbackWorkSetEnvelope(t *testing.T, target domainprojection.Target, epoch string, revision uint64) []byte {
+	t.Helper()
+	work, err := domainprojection.NewWorkSet(
+		target.WorldID, target.ActorID, epoch, revision, time.Now().UTC().Add(15*time.Minute),
+		[]domainprojection.WorkItem{})
+	if err != nil {
+		t.Fatalf("NewWorkSet() error = %v", err)
+	}
+	envelope, err := domainprojection.NewEnvelope(target, domainprojection.KindWorkSet, work)
+	if err != nil {
+		t.Fatalf("NewEnvelope() error = %v", err)
+	}
+	raw, err := envelope.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	return raw
+}
+
+func putLoopbackEnvelope(t *testing.T, url, token string, envelope []byte) int {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(envelope))
+	if err != nil {
+		t.Fatalf("NewRequest(%s) error = %v", url, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		t.Fatalf("PUT(%s) error = %v", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return resp.StatusCode
 }
 
 func getLoopbackJSON(t *testing.T, url, token string, wantStatus int) map[string]any {

@@ -21,6 +21,11 @@ const (
 // explicit reconcile and is never inferred by the projector.
 type SourceRevisionStore interface {
 	NextSourceRevision(context.Context, domainprojection.Target, string, string, time.Time) (uint64, error)
+	// CurrentSourceRevision reports the durable source epoch and highest
+	// allocated revision for one destination/kind. found is false when CORE has
+	// never projected that destination, which is initialized by a normal full
+	// projection instead of a reconcile.
+	CurrentSourceRevision(context.Context, domainprojection.Target, string) (string, uint64, bool, error)
 }
 
 // OutboxHistory reads the newest durable outbox record for a destination. The
@@ -44,6 +49,13 @@ type ProjectionActor struct {
 // state-based: it reads one complete Task/Run view, compares it with the last
 // durable outbox record, and only then allocates a new source revision. A
 // crash between a Task update and this call is recovered by the next snapshot.
+// ErrSourceEpochSwitchNotAuthorized means CORE's configured source epoch no
+// longer matches the durable source epoch while reconciliation is disabled.
+// The source epoch switch is a separately authorized action (D-06), so the pass
+// stops without enqueueing and without spending a revision in the old epoch.
+var ErrSourceEpochSwitchNotAuthorized = errors.New(
+	"world projection: source epoch switch requires an authorized reconcile")
+
 type Projector struct {
 	Source           TaskRunSource
 	LifePolicySource LifePolicySource
@@ -55,6 +67,11 @@ type Projector struct {
 	TimelineID       string
 	TimelineEpoch    string
 	SourceEpoch      string
+	// ReconcileEnabled authorizes CORE to switch the source epoch for a
+	// destination that already has a durable projection. Without it an epoch
+	// change fails closed, because the WORLD side requires the separately
+	// scoped reconcile credential and a plain republish would hide the switch.
+	ReconcileEnabled bool
 	ValidFor         time.Duration
 	RefreshBefore    time.Duration
 	Now              func() time.Time
@@ -127,14 +144,20 @@ func (p *Projector) Sync(ctx context.Context) (SyncResult, error) {
 			return result, err
 		}
 
-		skip, err := p.isCurrent(ctx, target, contentDigest, now, refreshBefore)
+		switching, err := p.sourceEpochSwitch(ctx, target, domainprojection.KindWorkSet)
 		if err != nil {
 			return result, err
+		}
+		skip := false
+		if !switching {
+			if skip, err = p.isCurrent(ctx, target, contentDigest, now, refreshBefore); err != nil {
+				return result, err
+			}
 		}
 		if skip {
 			result.Skipped++
 		} else {
-			revision, err := p.Revisions.NextSourceRevision(ctx, target, domainprojection.KindWorkSet, p.SourceEpoch, now)
+			revision, reconcile, err := p.allocateRevision(ctx, target, domainprojection.KindWorkSet, switching, now)
 			if err != nil {
 				return result, fmt.Errorf("world projection: allocate %s revision: %w", actor.ActorID, err)
 			}
@@ -152,13 +175,14 @@ func (p *Projector) Sync(ctx context.Context) (SyncResult, error) {
 				return result, err
 			}
 			record := OutboxRecord{
-				ID:             projectionRecordID(target, domainprojection.KindWorkSet, revision),
+				ID:             projectionRecordID(target, domainprojection.KindWorkSet, p.SourceEpoch, revision),
 				Target:         target,
 				Kind:           domainprojection.KindWorkSet,
 				Envelope:       raw,
 				Digest:         envelope.Digest,
 				SourceEpoch:    p.SourceEpoch,
 				SourceRevision: revision,
+				Reconcile:      reconcile,
 				CreatedAt:      now,
 			}
 			if err := p.Outbox.Enqueue(ctx, record, now); err != nil {
@@ -197,14 +221,20 @@ func (p *Projector) syncLifePolicy(ctx context.Context, target domainprojection.
 	if err != nil {
 		return false, err
 	}
-	skip, err := p.isCurrentLifePolicy(ctx, target, contentDigest, now, refreshBefore)
+	switching, err := p.sourceEpochSwitch(ctx, target, domainprojection.KindLifePolicy)
 	if err != nil {
 		return false, err
+	}
+	skip := false
+	if !switching {
+		if skip, err = p.isCurrentLifePolicy(ctx, target, contentDigest, now, refreshBefore); err != nil {
+			return false, err
+		}
 	}
 	if skip {
 		return false, nil
 	}
-	revision, err := p.Revisions.NextSourceRevision(ctx, target, domainprojection.KindLifePolicy, p.SourceEpoch, now)
+	revision, reconcile, err := p.allocateRevision(ctx, target, domainprojection.KindLifePolicy, switching, now)
 	if err != nil {
 		return false, fmt.Errorf("world projection: allocate %s life policy revision: %w", actor.ActorID, err)
 	}
@@ -223,19 +253,56 @@ func (p *Projector) syncLifePolicy(ctx context.Context, target domainprojection.
 		return false, err
 	}
 	record := OutboxRecord{
-		ID:             projectionRecordID(target, domainprojection.KindLifePolicy, revision),
+		ID:             projectionRecordID(target, domainprojection.KindLifePolicy, p.SourceEpoch, revision),
 		Target:         target,
 		Kind:           domainprojection.KindLifePolicy,
 		Envelope:       raw,
 		Digest:         envelope.Digest,
 		SourceEpoch:    p.SourceEpoch,
 		SourceRevision: revision,
+		Reconcile:      reconcile,
 		CreatedAt:      now,
 	}
 	if err := p.Outbox.Enqueue(ctx, record, now); err != nil {
 		return false, fmt.Errorf("world projection: enqueue %s life policy revision %d: %w", actor.ActorID, revision, err)
 	}
 	return true, nil
+}
+
+// sourceEpochSwitch reports whether CORE's configured source epoch moved past
+// the durable source epoch for one destination/kind. Only an authorized
+// reconcile may cross that boundary.
+func (p *Projector) sourceEpochSwitch(ctx context.Context, target domainprojection.Target, kind string) (bool, error) {
+	epoch, _, found, err := p.Revisions.CurrentSourceRevision(ctx, target, kind)
+	if err != nil {
+		return false, fmt.Errorf("world projection: read %s %s source epoch: %w", target.ActorID, kind, err)
+	}
+	if !found || epoch == p.SourceEpoch {
+		return false, nil
+	}
+	if !p.ReconcileEnabled {
+		return false, fmt.Errorf("world projection: actor %s kind %s durable source epoch %q, configured %q: %w",
+			target.ActorID, kind, epoch, p.SourceEpoch, ErrSourceEpochSwitchNotAuthorized)
+	}
+	return true, nil
+}
+
+// allocateRevision returns the revision and the reconcile flag for one
+// projection. A switch restarts at revision 1 through the domain rule, so it
+// never allocates a revision in the retired epoch.
+func (p *Projector) allocateRevision(ctx context.Context, target domainprojection.Target, kind string, switching bool, now time.Time) (uint64, bool, error) {
+	if switching {
+		reset, err := domainprojection.ResetSourceRevision(p.SourceEpoch)
+		if err != nil {
+			return 0, false, err
+		}
+		return reset.Revision, true, nil
+	}
+	revision, err := p.Revisions.NextSourceRevision(ctx, target, kind, p.SourceEpoch, now)
+	if err != nil {
+		return 0, false, err
+	}
+	return revision, false, nil
 }
 
 func (p *Projector) target(actor ProjectionActor) (domainprojection.Target, error) {
@@ -400,7 +467,11 @@ func decodeLifePolicyRecord(record OutboxRecord) (domainprojection.LifePolicy, e
 	return policy, nil
 }
 
-func projectionRecordID(target domainprojection.Target, kind string, revision uint64) string {
+// projectionRecordID is the durable identity of one projection attempt. A
+// source epoch switch restarts revisions at 1, so the epoch is part of the
+// identity; otherwise the new epoch's revision 1 would collide with the
+// retired epoch's row.
+func projectionRecordID(target domainprojection.Target, kind, sourceEpoch string, revision uint64) string {
 	return target.WorldID + "/" + target.TimelineID + "/" + target.TimelineEpoch + "/" +
-		target.ActorID + "/" + kind + "/" + strconv.FormatUint(revision, 10)
+		target.ActorID + "/" + kind + "/" + sourceEpoch + "/" + strconv.FormatUint(revision, 10)
 }

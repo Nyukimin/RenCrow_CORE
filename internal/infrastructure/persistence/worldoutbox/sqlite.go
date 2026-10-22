@@ -214,21 +214,32 @@ func (s *SQLiteStore) Enqueue(ctx context.Context, record appprojection.OutboxRe
 	defer tx.Rollback()
 
 	var (
-		currentEpoch    string
 		currentRevision uint64
 		currentDigest   string
 	)
-	err = tx.QueryRowContext(ctx, `SELECT source_epoch, source_revision, digest
+	haveRecord := true
+	err = tx.QueryRowContext(ctx, `SELECT source_revision, digest
 		FROM world_projection_outbox
 		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?
 		ORDER BY rowid DESC LIMIT 1`,
 		record.Target.WorldID, record.Target.TimelineID, record.Target.TimelineEpoch,
-		record.Target.ActorID, record.Kind).Scan(&currentEpoch, &currentRevision, &currentDigest)
-	switch {
-	case errors.Is(err, sql.ErrNoRows):
-	case err != nil:
+		record.Target.ActorID, record.Kind).Scan(&currentRevision, &currentDigest)
+	if errors.Is(err, sql.ErrNoRows) {
+		haveRecord = false
+		err = nil
+	}
+	if err != nil {
 		return err
-	case currentEpoch != record.SourceEpoch:
+	}
+	// The durable source counter owns which epoch is current. The newest outbox
+	// row is only the fallback for a missing counter row, so an epoch change is
+	// never accepted implicitly just because a destination has no row yet.
+	epoch, _, err := readSourceRevision(ctx, tx, record.Target, record.Kind, "")
+	if err != nil {
+		return err
+	}
+	switch {
+	case epoch != "" && epoch != record.SourceEpoch:
 		if !record.Reconcile {
 			return appprojection.ErrEpochChangeRequiresReconcile
 		}
@@ -242,9 +253,16 @@ func (s *SQLiteStore) Enqueue(ctx context.Context, record appprojection.OutboxRe
 			appprojection.OutboxPending, appprojection.OutboxInFlight, appprojection.OutboxFailed); err != nil {
 			return err
 		}
-	case record.SourceRevision < currentRevision:
+		// An authenticated reconcile is the only authorized epoch switch, so it
+		// moves the durable source counter in the same transaction. Later
+		// allocations continue from the new epoch instead of rejecting forever.
+		if err := advanceSourceRevision(ctx, tx, record.Target, record.Kind,
+			record.SourceEpoch, record.SourceRevision, now); err != nil {
+			return err
+		}
+	case haveRecord && record.SourceRevision < currentRevision:
 		return appprojection.ErrStaleRevision
-	case record.SourceRevision == currentRevision:
+	case haveRecord && record.SourceRevision == currentRevision:
 		if record.Digest != currentDigest {
 			return appprojection.ErrRevisionConflict
 		}
@@ -322,29 +340,7 @@ func (s *SQLiteStore) NextSourceRevision(ctx context.Context, target domainproje
 		return 0, err
 	}
 	defer tx.Rollback()
-	var currentEpoch string
-	var currentRevision uint64
-	err = tx.QueryRowContext(ctx, `SELECT source_epoch, source_revision
-		FROM world_projection_source_revision
-		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
-		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
-		Scan(&currentEpoch, &currentRevision)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The outbox is the committed delivery history; recover from its newest
-		// revision if the counter row is missing (a partially applied migration or
-		// a repaired database). This can only move forward.
-		err = tx.QueryRowContext(ctx, `SELECT source_epoch, source_revision
-			FROM world_projection_outbox
-			WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?
-			ORDER BY source_revision DESC, rowid DESC LIMIT 1`,
-			target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
-			Scan(&currentEpoch, &currentRevision)
-		if errors.Is(err, sql.ErrNoRows) {
-			currentEpoch = sourceEpoch
-			currentRevision = 0
-			err = nil
-		}
-	}
+	currentEpoch, currentRevision, err := readSourceRevision(ctx, tx, target, kind, sourceEpoch)
 	if err != nil {
 		return 0, err
 	}
@@ -355,20 +351,96 @@ func (s *SQLiteStore) NextSourceRevision(ctx context.Context, target domainproje
 		return 0, errors.New("world projection outbox: source revision exhausted")
 	}
 	next := currentRevision + 1
-	if _, err := tx.ExecContext(ctx, `INSERT INTO world_projection_source_revision
-		(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(world_id, timeline_id, timeline_epoch, actor_id, kind)
-		DO UPDATE SET source_epoch = excluded.source_epoch, source_revision = excluded.source_revision,
-			updated_at = excluded.updated_at`,
-		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind,
-		sourceEpoch, next, formatTime(now)); err != nil {
+	if err := advanceSourceRevision(ctx, tx, target, kind, sourceEpoch, next, now); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return next, nil
+}
+
+// CurrentSourceRevision reports the durable source epoch and the highest
+// allocated revision for one destination/kind. The projector uses it to detect
+// that CORE's configured source epoch moved, which is the D-06 source epoch
+// switch and is only ever performed through the authenticated reconcile path.
+func (s *SQLiteStore) CurrentSourceRevision(ctx context.Context, target domainprojection.Target, kind string) (string, uint64, bool, error) {
+	if s == nil || s.db == nil {
+		return "", 0, false, errors.New("world projection outbox: store is closed")
+	}
+	if err := target.Validate(); err != nil {
+		return "", 0, false, err
+	}
+	if kind != domainprojection.KindWorkSet && kind != domainprojection.KindLifePolicy {
+		return "", 0, false, errors.New("world projection outbox: unsupported projection kind")
+	}
+	ctx = defaultContext(ctx)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", 0, false, err
+	}
+	defer tx.Rollback()
+	epoch, revision, err := readSourceRevision(ctx, tx, target, kind, "")
+	if err != nil {
+		return "", 0, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", 0, false, err
+	}
+	if epoch == "" {
+		return "", 0, false, nil
+	}
+	return epoch, revision, true, nil
+}
+
+// sourceRevisionQuerier is satisfied by both *sql.DB and *sql.Tx so the counter
+// read has one definition.
+type sourceRevisionQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// readSourceRevision reads the durable counter for one destination/kind. When
+// the counter row is missing (a partially applied migration or a repaired
+// database) it recovers from the committed outbox history, which can only move
+// forward. When there is no history at all it reports no epoch; defaultEpoch is
+// used only by the allocator, which treats an unused destination as revision 0.
+func readSourceRevision(ctx context.Context, q sourceRevisionQuerier, target domainprojection.Target, kind, defaultEpoch string) (string, uint64, error) {
+	var epoch string
+	var revision uint64
+	err := q.QueryRowContext(ctx, `SELECT source_epoch, source_revision
+		FROM world_projection_source_revision
+		WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?`,
+		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
+		Scan(&epoch, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = q.QueryRowContext(ctx, `SELECT source_epoch, source_revision
+			FROM world_projection_outbox
+			WHERE world_id = ? AND timeline_id = ? AND timeline_epoch = ? AND actor_id = ? AND kind = ?
+			ORDER BY source_revision DESC, rowid DESC LIMIT 1`,
+			target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind).
+			Scan(&epoch, &revision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return defaultEpoch, 0, nil
+		}
+	}
+	if err != nil {
+		return "", 0, err
+	}
+	return epoch, revision, nil
+}
+
+// advanceSourceRevision is the single write path for the durable counter, so
+// allocation and an authenticated epoch switch cannot drift apart.
+func advanceSourceRevision(ctx context.Context, tx *sql.Tx, target domainprojection.Target, kind, sourceEpoch string, revision uint64, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO world_projection_source_revision
+		(world_id, timeline_id, timeline_epoch, actor_id, kind, source_epoch, source_revision, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(world_id, timeline_id, timeline_epoch, actor_id, kind)
+		DO UPDATE SET source_epoch = excluded.source_epoch, source_revision = excluded.source_revision,
+			updated_at = excluded.updated_at`,
+		target.WorldID, target.TimelineID, target.TimelineEpoch, target.ActorID, kind,
+		sourceEpoch, revision, formatTime(now))
+	return err
 }
 
 func (s *SQLiteStore) Claim(ctx context.Context, now time.Time, limit int) ([]appprojection.OutboxRecord, error) {

@@ -910,10 +910,15 @@ type LLMFitNodeConfig struct {
 // It is disabled by default. The credential is read from TokenEnv at startup
 // and is never stored in YAML.
 type WorldProjectionConfig struct {
-	Enabled              bool                         `yaml:"enabled"`
-	LifePolicyEnabled    *bool                        `yaml:"life_policy_enabled"`
-	BaseURL              string                       `yaml:"base_url"`
-	TokenEnv             string                       `yaml:"token_env"`
+	Enabled           bool   `yaml:"enabled"`
+	LifePolicyEnabled *bool  `yaml:"life_policy_enabled"`
+	BaseURL           string `yaml:"base_url"`
+	TokenEnv          string `yaml:"token_env"`
+	// ReconcileEnabled authorizes CORE to switch the projection source epoch
+	// (D-06). It is closed by default and needs ReconcileTokenEnv, which must
+	// name a different environment variable than TokenEnv.
+	ReconcileEnabled     bool                         `yaml:"reconcile_enabled"`
+	ReconcileTokenEnv    string                       `yaml:"reconcile_token_env"`
 	OutboxPath           string                       `yaml:"outbox_path"`
 	WorldID              string                       `yaml:"world_id"`
 	TimelineID           string                       `yaml:"timeline_id"`
@@ -932,6 +937,13 @@ type WorldProjectionConfig struct {
 // WorkSet-only behaviour must set life_policy_enabled: false.
 func (c WorldProjectionConfig) IsLifePolicyEnabled() bool {
 	return c.LifePolicyEnabled == nil || *c.LifePolicyEnabled
+}
+
+// IsReconcileEnabled reports whether CORE may re-baseline the projection
+// source epoch. The default is disabled because an epoch switch discards the
+// revision history of the retired epoch on the destination.
+func (c WorldProjectionConfig) IsReconcileEnabled() bool {
+	return c.ReconcileEnabled
 }
 
 // WorldProjectionActorConfig maps one WORLD Actor to CORE's Task.assignee.

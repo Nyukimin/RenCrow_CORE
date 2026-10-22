@@ -99,17 +99,41 @@ type HeadReader interface {
 
 var _ HeadReader = (*HTTPPublisher)(nil)
 
+// ErrReconcileCredentialNotConfigured means a reconcile publish was requested
+// but this publisher holds no separate reconcile credential. Reconcile is a
+// distinct capability, so CORE never falls back to the projection credential.
+var ErrReconcileCredentialNotConfigured = errors.New("world projection: reconcile credential is not configured")
+
 // HTTPPublisher is the authenticated CORE -> WORLD projection writer.
 type HTTPPublisher struct {
-	base     *url.URL
-	token    string
-	client   *http.Client
-	basePath string
+	base  *url.URL
+	token string
+	// reconcileToken authorizes an explicit source epoch switch. It stays empty
+	// for a projection-only publisher, which then fails closed on reconcile.
+	reconcileToken string
+	client         *http.Client
+	basePath       string
 }
 
 // NewHTTPPublisher validates a base URL and credential. Redirects are not
 // followed so a bearer credential cannot be forwarded to another origin.
+// The resulting publisher can project but never reconcile.
 func NewHTTPPublisher(baseURL, credential string, timeout time.Duration) (*HTTPPublisher, error) {
+	return newHTTPPublisher(baseURL, credential, "", timeout)
+}
+
+// NewHTTPPublisherWithReconcile additionally authorizes an explicit source
+// epoch switch with a separate credential. Reusing the projection credential
+// is rejected so one leaked WORLD token cannot both project and re-baseline
+// CORE's projection history.
+func NewHTTPPublisherWithReconcile(baseURL, credential, reconcileCredential string, timeout time.Duration) (*HTTPPublisher, error) {
+	if reconcileCredential == "" {
+		return nil, errors.New("world projection: reconcile credential is required")
+	}
+	return newHTTPPublisher(baseURL, credential, reconcileCredential, timeout)
+}
+
+func newHTTPPublisher(baseURL, credential, reconcileCredential string, timeout time.Duration) (*HTTPPublisher, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		return nil, errors.New("world projection: base URL is required")
@@ -125,10 +149,19 @@ func NewHTTPPublisher(baseURL, credential string, timeout time.Duration) (*HTTPP
 	if credential == "" || strings.TrimSpace(credential) != credential || strings.ContainsAny(credential, "\r\n") {
 		return nil, errors.New("world projection: credential is invalid")
 	}
+	if reconcileCredential != "" {
+		if strings.TrimSpace(reconcileCredential) != reconcileCredential || strings.ContainsAny(reconcileCredential, "\r\n") {
+			return nil, errors.New("world projection: reconcile credential is invalid")
+		}
+		if reconcileCredential == credential {
+			return nil, errors.New("world projection: reconcile credential must differ from the projection credential")
+		}
+	}
 	return &HTTPPublisher{
-		base:     parsed,
-		token:    credential,
-		basePath: strings.TrimRight(parsed.Path, "/"),
+		base:           parsed,
+		token:          credential,
+		reconcileToken: reconcileCredential,
+		basePath:       strings.TrimRight(parsed.Path, "/"),
 		client: &http.Client{
 			Timeout: timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
@@ -154,6 +187,13 @@ func (p *HTTPPublisher) Publish(ctx context.Context, target domainprojection.Tar
 	if len(envelope) == 0 || len(envelope) > domainprojection.MaxEnvelopeBytes {
 		return PublishResult{}, errors.New("world projection: envelope size is invalid")
 	}
+	token := p.token
+	if reconcile {
+		if p.reconcileToken == "" {
+			return PublishResult{}, ErrReconcileCredentialNotConfigured
+		}
+		token = p.reconcileToken
+	}
 
 	u := p.projectionURL(target, kind)
 	if reconcile {
@@ -165,7 +205,7 @@ func (p *HTTPPublisher) Publish(ctx context.Context, target domainprojection.Tar
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := p.client.Do(req)
 	if err != nil {

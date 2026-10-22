@@ -47,6 +47,24 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 	if token == "" {
 		return fmt.Errorf("WORLD projection: credential environment %s is empty", tokenEnv)
 	}
+	// D-06: an authorized source epoch switch is a separate capability, so it
+	// needs its own credential. Reusing the projection credential would let one
+	// leaked WORLD token both project and re-baseline CORE's history.
+	reconcileEnabled := settings.IsReconcileEnabled()
+	reconcileTokenEnv := strings.TrimSpace(settings.ReconcileTokenEnv)
+	var reconcileToken string
+	if reconcileEnabled {
+		if reconcileTokenEnv == "" {
+			return errors.New("WORLD projection: reconcile is enabled but reconcile_token_env is empty")
+		}
+		if reconcileTokenEnv == tokenEnv {
+			return errors.New("WORLD projection: reconcile_token_env must differ from token_env")
+		}
+		reconcileToken = os.Getenv(reconcileTokenEnv)
+		if reconcileToken == "" {
+			return fmt.Errorf("WORLD projection: reconcile credential environment %s is empty", reconcileTokenEnv)
+		}
+	}
 	if strings.TrimSpace(settings.WorldID) == "" || strings.TrimSpace(settings.TimelineID) == "" ||
 		strings.TrimSpace(settings.TimelineEpoch) == "" || strings.TrimSpace(settings.SourceEpoch) == "" {
 		return errors.New("WORLD projection: world_id, timeline_id, timeline_epoch, and source_epoch are required")
@@ -82,7 +100,16 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 	if err != nil {
 		return fmt.Errorf("WORLD projection: open outbox: %w", err)
 	}
-	publisher, err := appprojection.NewHTTPPublisher(baseURL, token, worldProjectionDuration(settings.TimeoutSeconds, defaultWorldProjectionTimeout))
+	// Only an explicitly enabled reconcile carries the second credential, so a
+	// deployment that never authorized an epoch switch cannot reconcile by
+	// accident.
+	publisherTimeout := worldProjectionDuration(settings.TimeoutSeconds, defaultWorldProjectionTimeout)
+	var publisher *appprojection.HTTPPublisher
+	if reconcileEnabled {
+		publisher, err = appprojection.NewHTTPPublisherWithReconcile(baseURL, token, reconcileToken, publisherTimeout)
+	} else {
+		publisher, err = appprojection.NewHTTPPublisher(baseURL, token, publisherTimeout)
+	}
 	if err != nil {
 		_ = store.Close()
 		return err
@@ -100,6 +127,7 @@ func startWorldProjection(cfg *config.Config, deps *Dependencies) error {
 		SourceEpoch:      settings.SourceEpoch,
 		ValidFor:         worldProjectionDuration(settings.ValidForSeconds, defaultWorldProjectionValidFor),
 		RefreshBefore:    worldProjectionDuration(settings.RefreshBeforeSeconds, defaultWorldProjectionRefreshBefore),
+		ReconcileEnabled: reconcileEnabled,
 	}
 	worker := &appprojection.Worker{Outbox: store, Publisher: publisher, HeadReader: publisher}
 	notify := make(chan struct{}, 1)

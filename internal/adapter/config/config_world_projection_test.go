@@ -18,3 +18,16 @@ func TestWorldProjectionLifePolicyDefaultsToEnabled(t *testing.T) {
 		t.Fatal("explicit true was ignored")
 	}
 }
+
+// D-06: an authorized source epoch switch stays closed by default. Enabling it
+// is a deployment decision and requires its own credential environment name.
+func TestWorldProjectionReconcileDefaultsToDisabled(t *testing.T) {
+	settings := WorldProjectionConfig{}
+	if settings.IsReconcileEnabled() {
+		t.Fatal("source epoch switch must default to disabled")
+	}
+	settings.ReconcileEnabled = true
+	if !settings.IsReconcileEnabled() {
+		t.Fatal("explicit true was ignored")
+	}
+}

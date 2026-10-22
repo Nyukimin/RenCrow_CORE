@@ -53,6 +53,8 @@ func TestHTTPPublisherSendsExactProjection(t *testing.T) {
 		if r.URL.RawQuery != "reconcile=true" {
 			t.Errorf("query = %s", r.URL.RawQuery)
 		}
+		// D-06: a reconcile write carries the reconcile credential, never the
+		// projection credential.
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Errorf("Authorization = %q", got)
 		}
@@ -71,7 +73,7 @@ func TestHTTPPublisherSendsExactProjection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	publisher, err := NewHTTPPublisher(server.URL, "secret", 5*time.Second)
+	publisher, err := NewHTTPPublisherWithReconcile(server.URL, "projection-secret", "secret", 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewHTTPPublisher() error = %v", err)
 	}
