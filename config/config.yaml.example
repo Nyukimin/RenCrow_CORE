@@ -563,7 +563,9 @@ image:
     # Shared Movie output ownership key; this is not an authenticated user scope.
     actor_id: "user:yukimi"
 
+      - "192.168.1.206"
 vtuber:
+      - "192.168.1.31"
   enabled: false
   tick_interval_ms: 100
   connect_timeout_ms: 3000
