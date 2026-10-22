@@ -531,7 +531,7 @@ test('a connection that closes while the Viewer is speaking ends the utterance i
 test('viewer.html changes the version of the scripts that changed, so a cached Viewer cannot keep the old decision', () => {
   const html = fs.readFileSync('internal/adapter/viewer/viewer.html', 'utf8');
   assert.match(html, /stt_utterance_utils\.js\?v=20261015-stt-relay-align35"/);
-  assert.match(html, /viewer\.js\?v=[^"]*stt-relay-align35"/);
+  assert.match(html, /viewer\.js\?v=[^"]*stt-relay-align35(-[^"]*)?"/);
 });
 
 // The decision in stt_utterance_utils.js is tested on its own; this drives the
