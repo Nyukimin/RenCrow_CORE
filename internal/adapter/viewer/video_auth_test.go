@@ -6,13 +6,17 @@ import (
 	"testing"
 )
 
-func TestVideoActorIDAllowsConfiguredLANClientWithoutIdentityHeaders(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
-	req.RemoteAddr = "192.168.1.204:43210"
-	req.Host = videoTestHost
-	actorID, ok := videoAccessConfig().videoOwnerID(req)
-	if !ok || actorID != videoTestActor {
-		t.Fatalf("LAN request actorID=%q allowed=%t, want shared Movie owner %q", actorID, ok, videoTestActor)
+func TestVideoOwnerAllowsConfiguredLANClientsWithoutIdentityHeaders(t *testing.T) {
+	for _, sourceIP := range []string{"192.168.1.204", "192.168.1.207"} {
+		t.Run(sourceIP, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
+			req.RemoteAddr = sourceIP + ":43210"
+			req.Host = videoTestHost
+			actorID, ok := videoAccessConfig().videoOwnerID(req)
+			if !ok || actorID != videoTestActor {
+				t.Fatalf("LAN request actorID=%q allowed=%t, want shared Movie owner %q", actorID, ok, videoTestActor)
+			}
+		})
 	}
 }
 
@@ -131,6 +135,10 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "http://attacker.example") }},
 		{name: "spoofed Tailscale identity", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "yukimi@example.com") }},
 		{name: "proxy header", edit: func(r *http.Request) { r.Header.Set("X-Forwarded-For", "192.168.1.204") }},
+		{name: "forwarded address cannot override socket", edit: func(r *http.Request) {
+			r.RemoteAddr = "192.168.1.205:43210"
+			r.Header.Set("X-Forwarded-For", "192.168.1.204")
+		}},
 	}
 	for _, route := range routes {
 		for _, edit := range edits {

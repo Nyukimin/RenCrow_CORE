@@ -1212,7 +1212,8 @@ RenCrow_Imageがunavailableの場合は明示的な503を返します。
 `GET /viewer/image/video/options?mode=t2v|i2v`はRenCrow_Imageの同じmode指定options routeを中継します。`mode`省略時は`t2v`です。
 返すmodel、aspect ratio一覧とdefault、megapixels、duration、stepsはImage ownerの値を使います。COREはoptionsの形とmodeを検証します。
 options routeを含むすべてのMovie routeは、有効化時に実socketのremote IPv4、完全一致Host、HTTP Originを検査します。
-remote IPv4は`image.video_browser.allowed_client_ipv4`の単一のprivate IPv4と一致する必要があります。POST/DELETEではOriginを
+remote IPv4は`image.video_browser.allowed_client_ipv4`のいずれかのprivate IPv4と一致する必要があります。production allowlistは
+`192.168.1.204`と`192.168.1.207`です。配列の各entryは一台のcanonical IPv4です。POST/DELETEではOriginを
 一つ必須とし、GETでOriginがある場合も単一の設定済みOriginとの完全一致を要求します。`Forwarded`、`X-Forwarded-*`、
 `Tailscale-*` headerがあるrequestは拒否します。これらの検査はアクセス境界であり、利用者認証ではありません。
 専用credential、cookie、browser session用routeはありません。

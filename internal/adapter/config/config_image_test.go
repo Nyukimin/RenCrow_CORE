@@ -64,7 +64,7 @@ func validImageVideoBrowserConfig() ImageConfig {
 			Enabled:           true,
 			Host:              "192.168.1.206:18790",
 			Origin:            "http://192.168.1.206:18790",
-			AllowedClientIPv4: "192.168.1.204",
+			AllowedClientIPv4: []string{"192.168.1.204", "192.168.1.207"},
 			ActorID:           "user:yukimi",
 		},
 	}
@@ -93,10 +93,13 @@ func TestImageVideoBrowserValidationRequiresExactPrivateLANTarget(t *testing.T) 
 		}},
 		{name: "invalid actor kind", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "lan:yukimi" }},
 		{name: "empty actor", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "" }},
-		{name: "missing allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "" }},
-		{name: "public allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "8.8.8.8" }},
-		{name: "IPv6 allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "fd00::1" }},
-		{name: "noncanonical allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "192.168.001.204" }},
+		{name: "empty allowed clients", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = nil }},
+		{name: "empty allowed client entry", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{""} }},
+		{name: "duplicate allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{"192.168.1.204", "192.168.1.204"} }},
+		{name: "public allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{"8.8.8.8"} }},
+		{name: "IPv6 allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{"fd00::1"} }},
+		{name: "noncanonical allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{"192.168.001.204"} }},
+		{name: "CIDR allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = []string{"192.168.1.0/24"} }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -123,7 +126,9 @@ image:
     allow_generation: true
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
-    allowed_client_ipv4: "192.168.1.204"
+    allowed_client_ipv4:
+      - "192.168.1.204"
+      - "192.168.1.207"
     actor_id: "user:yukimi"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
@@ -135,12 +140,36 @@ image:
 	}
 	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration ||
 		cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
-		cfg.Image.VideoBrowser.AllowedClientIPv4 != "192.168.1.204" ||
+		strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ",") != "192.168.1.204,192.168.1.207" ||
 		cfg.Image.VideoBrowser.Host != "192.168.1.206:18790" ||
 		cfg.Image.VideoBrowser.Origin != "http://192.168.1.206:18790" {
-		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t host=%q client=%q actor_id=%q",
+		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t host=%q clients=%q actor_id=%q",
 			cfg.Image.VideoBrowser.Enabled, cfg.Image.VideoBrowser.AllowGeneration,
-			cfg.Image.VideoBrowser.Host, cfg.Image.VideoBrowser.AllowedClientIPv4, cfg.Image.VideoBrowser.ActorID)
+			cfg.Image.VideoBrowser.Host, strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ","), cfg.Image.VideoBrowser.ActorID)
+	}
+}
+
+func TestLoadConfigImageVideoBrowserRejectsScalarAllowedClient(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "image-video-scalar-client.yaml")
+	content := `
+server:
+  port: 8080
+image:
+  enabled: true
+  base_url: "http://127.0.0.1:8780"
+  timeout_ms: 450000
+  video_browser:
+    enabled: true
+    host: "192.168.1.206:18790"
+    origin: "http://192.168.1.206:18790"
+    allowed_client_ipv4: "192.168.1.204"
+    actor_id: "user:yukimi"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadConfig(configPath); err == nil {
+		t.Fatal("LoadConfig accepted a scalar allowed_client_ipv4; want an IPv4 sequence")
 	}
 }
 
@@ -157,7 +186,7 @@ image:
     enabled: true
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
-    allowed_client_ipv4: "192.168.1.204"
+    allowed_client_ipv4: ["192.168.1.204", "192.168.1.207"]
     actor_id: "user:yukimi"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
@@ -248,9 +277,9 @@ image:
     enabled: true
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
-    allowed_client_ipv4: "192.168.1.204"
+    allowed_client_ipv4: ["192.168.1.204"]
     actor_id: "user:yukimi"
-    allowed_client_ipv4: "192.168.1.205"
+    allowed_client_ipv4: ["192.168.1.207"]
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)

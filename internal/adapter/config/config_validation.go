@@ -1119,9 +1119,19 @@ func validateImageVideoBrowserConfig(image ImageConfig) error {
 	if !videoBrowserActorIDPattern.MatchString(video.ActorID) {
 		return fmt.Errorf("image.video_browser.actor_id must be one canonical user Movie output owner ID")
 	}
-	clientIP, err := netip.ParseAddr(video.AllowedClientIPv4)
-	if err != nil || !clientIP.Is4() || !clientIP.IsPrivate() || clientIP.String() != video.AllowedClientIPv4 {
-		return fmt.Errorf("image.video_browser.allowed_client_ipv4 must be one canonical private IPv4 address")
+	if len(video.AllowedClientIPv4) == 0 {
+		return fmt.Errorf("image.video_browser.allowed_client_ipv4 must contain at least one canonical private IPv4 address")
+	}
+	seenClientIPs := make(map[string]struct{}, len(video.AllowedClientIPv4))
+	for _, rawClientIP := range video.AllowedClientIPv4 {
+		clientIP, parseErr := netip.ParseAddr(rawClientIP)
+		if parseErr != nil || !clientIP.Is4() || !clientIP.IsPrivate() || clientIP.String() != rawClientIP {
+			return fmt.Errorf("image.video_browser.allowed_client_ipv4 entries must be canonical private IPv4 addresses")
+		}
+		if _, duplicate := seenClientIPs[rawClientIP]; duplicate {
+			return fmt.Errorf("image.video_browser.allowed_client_ipv4 entries must be unique")
+		}
+		seenClientIPs[rawClientIP] = struct{}{}
 	}
 	return nil
 }

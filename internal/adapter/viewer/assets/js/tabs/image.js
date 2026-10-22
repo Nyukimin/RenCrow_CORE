@@ -884,7 +884,7 @@
         currentVideoID = '';
         clearSavedVideoJob(id);
         resetVideoPlayer();
-        videoStatus.textContent = 'この動画ジョブは見つからないか、現在の利用者から参照できません。';
+        videoStatus.textContent = 'この動画ジョブは見つかりません。';
         setStatus('not found', false);
         revealVideoResult();
         return;

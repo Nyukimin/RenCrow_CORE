@@ -20,7 +20,7 @@ func (c VideoBrowserAccessConfig) videoOwnerID(r *http.Request) (string, bool) {
 
 func (c VideoBrowserAccessConfig) videoRequestAllowed(r *http.Request) bool {
 	if r == nil || !c.Enabled || !videoBrowserActorIDPattern.MatchString(c.ActorID) ||
-		c.Host == "" || c.Origin == "" || c.AllowedClientIPv4 == "" || r.Host != c.Host ||
+		c.Host == "" || c.Origin == "" || len(c.AllowedClientIPv4) == 0 || r.Host != c.Host ||
 		!videoRemoteAddrIsAllowed(r.RemoteAddr, c.AllowedClientIPv4) || hasVideoProxyIdentityHeader(r.Header) {
 		return false
 	}
@@ -35,17 +35,25 @@ func (c VideoBrowserAccessConfig) videoRequestAllowed(r *http.Request) bool {
 	return true
 }
 
-func videoRemoteAddrIsAllowed(raw, allowedIPv4 string) bool {
+func videoRemoteAddrIsAllowed(raw string, allowedIPv4 []string) bool {
 	host, port, err := net.SplitHostPort(raw)
 	if err != nil {
 		return false
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.String() != allowedIPv4 {
+	if err != nil || !ip.Is4() || !ip.IsPrivate() {
 		return false
 	}
 	portNumber, err := strconv.ParseUint(port, 10, 16)
-	return err == nil && portNumber != 0
+	if err != nil || portNumber == 0 {
+		return false
+	}
+	for _, candidate := range allowedIPv4 {
+		if ip.String() == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func hasVideoProxyIdentityHeader(header http.Header) bool {

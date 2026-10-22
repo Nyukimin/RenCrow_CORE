@@ -66,7 +66,7 @@ func (g *fakeVideoGateway) OpenVideo(_ context.Context, _ string, actorID, range
 func videoAccessConfig() VideoBrowserAccessConfig {
 	return VideoBrowserAccessConfig{
 		Enabled: true, AllowGeneration: true, Host: videoTestHost, Origin: videoTestOrigin,
-		AllowedClientIPv4: videoTestClientIPv4, ActorID: videoTestActor,
+		AllowedClientIPv4: []string{videoTestClientIPv4, "192.168.1.207"}, ActorID: videoTestActor,
 	}
 }
 

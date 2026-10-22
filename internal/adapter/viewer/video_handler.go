@@ -53,7 +53,7 @@ type VideoBrowserAccessConfig struct {
 	AllowGeneration   bool
 	Host              string
 	Origin            string
-	AllowedClientIPv4 string
+	AllowedClientIPv4 []string
 	ActorID           string
 }
 
