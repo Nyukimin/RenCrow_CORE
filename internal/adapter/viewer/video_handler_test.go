@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	videoTestHost   = "llm-rx6800.tailb07d8d.ts.net:8444"
-	videoTestOrigin = "https://llm-rx6800.tailb07d8d.ts.net:8444"
-	videoTestLogin  = "yukimi@example.com"
-	videoTestActor  = "user:yukimi"
+	videoTestHost       = "192.168.1.206:18790"
+	videoTestOrigin     = "http://192.168.1.206:18790"
+	videoTestClientIPv4 = "192.168.1.204"
+	videoTestActor      = "user:yukimi"
 )
 
 type fakeVideoGateway struct {
@@ -63,10 +63,10 @@ func (g *fakeVideoGateway) OpenVideo(_ context.Context, _ string, actorID, range
 	return g.media, nil
 }
 
-func videoAuthConfig() VideoBrowserAuthConfig {
-	return VideoBrowserAuthConfig{
+func videoAccessConfig() VideoBrowserAccessConfig {
+	return VideoBrowserAccessConfig{
 		Enabled: true, AllowGeneration: true, Host: videoTestHost, Origin: videoTestOrigin,
-		ActorID: videoTestActor, TailscaleUserLogin: videoTestLogin,
+		AllowedClientIPv4: videoTestClientIPv4, ActorID: videoTestActor,
 	}
 }
 
@@ -101,18 +101,17 @@ func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string
 	return req, body.String()
 }
 
-func TestHandleVideoOptionsRequiresTailscaleLoginAndUsesModeOptions(t *testing.T) {
+func TestHandleVideoOptionsUsesModeOptionsForConfiguredLANClient(t *testing.T) {
 	options := domainimage.VideoOptionsResponse{
 		Model: "video-i2v-v1", Mode: "i2v", AspectRatios: []string{"1:1 (Square)", "9:16 (Portrait Widescreen)"},
 		DefaultAspectRatio: "1:1 (Square)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
 	}
 	gateway := &fakeVideoGateway{videoOptions: options}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
 	req.Host = videoTestHost
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 	rec := httptest.NewRecorder()
-	HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoOptions(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" {
 		t.Fatalf("status=%d calls=%d mode=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, rec.Body.String())
 	}
@@ -125,46 +124,29 @@ func TestHandleVideoOptionsRequiresTailscaleLoginAndUsesModeOptions(t *testing.T
 	}
 }
 
-func TestHandleVideoOptionsRequiresOneExactTailscaleLogin(t *testing.T) {
-	cases := []struct {
-		name  string
-		login []string
-	}{
-		{name: "missing"},
-		{name: "wrong", login: []string{"other@example.com"}},
-		{name: "duplicate", login: []string{videoTestLogin, videoTestLogin}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gateway := &fakeVideoGateway{videoOptions: domainimage.VideoOptionsResponse{
-				Model: "video-t2v-v1", Mode: "t2v", AspectRatios: []string{"16:9 (Widescreen)"},
-				DefaultAspectRatio: "16:9 (Widescreen)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
-			}}
-			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=t2v", nil)
-			req.RemoteAddr = "127.0.0.1:43210"
-			req.Host = videoTestHost
-			for _, value := range tc.login {
-				req.Header.Add("Tailscale-User-Login", value)
-			}
-			rec := httptest.NewRecorder()
-			HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
-			if rec.Code != http.StatusNotFound || gateway.optionsCalls != 0 {
-				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.optionsCalls, rec.Body.String())
-			}
-		})
+func TestHandleVideoOptionsReturns404WhenDisabled(t *testing.T) {
+	gateway := &fakeVideoGateway{}
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=t2v", nil)
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
+	req.Host = videoTestHost
+	access := videoAccessConfig()
+	access.Enabled = false
+	rec := httptest.NewRecorder()
+	HandleVideoOptions(gateway, access).ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound || gateway.optionsCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.optionsCalls, rec.Body.String())
 	}
 }
 
-func TestHandleVideoGenerateMapsExactTailscaleLoginWithoutBrowserSession(t *testing.T) {
+func TestHandleVideoGenerateUsesSharedMovieOwnerWithoutBrowserSession(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
 	req.Host = videoTestHost
 	req.Header.Set("Origin", videoTestOrigin)
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 	req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 || gateway.createActor != videoTestActor {
 		t.Fatalf("status=%d calls=%d actor=%q body=%s", rec.Code, gateway.createCalls, gateway.createActor, rec.Body.String())
 	}
@@ -179,15 +161,14 @@ func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
 	}{
 		{name: "unsupported mode", url: "/viewer/image/video/options?mode=other", want: http.StatusBadRequest},
 		{name: "duplicate mode", url: "/viewer/image/video/options?mode=t2v&mode=i2v", want: http.StatusBadRequest},
-		{name: "LAN request", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }, want: http.StatusNotFound},
+		{name: "wrong LAN source", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }, want: http.StatusNotFound},
 		{name: "wrong host", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.Host = "attacker.example" }, want: http.StatusNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
-			req.RemoteAddr = "127.0.0.1:43210"
+			req.RemoteAddr = videoTestClientIPv4 + ":43210"
 			req.Host = videoTestHost
-			req.Header.Set("Tailscale-User-Login", videoTestLogin)
 			if tc.edit != nil {
 				tc.edit(req)
 			}
@@ -196,7 +177,7 @@ func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
 				DefaultAspectRatio: "16:9 (Widescreen)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
 			}}
 			rec := httptest.NewRecorder()
-			HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+			HandleVideoOptions(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 			if rec.Code != tc.want || gateway.optionsCalls != 0 {
 				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.optionsCalls, rec.Body.String())
 			}
@@ -204,12 +185,11 @@ func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
 	}
 }
 
-func authenticatedVideoRequest(t *testing.T, req *http.Request) *http.Request {
+func allowedLANVideoRequest(t *testing.T, req *http.Request) *http.Request {
 	t.Helper()
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
 	req.Host = videoTestHost
 	req.Header.Set("Origin", videoTestOrigin)
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 	req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
 	return req
 }
@@ -217,9 +197,9 @@ func authenticatedVideoRequest(t *testing.T, req *http.Request) *http.Request {
 func TestHandleVideoGenerateAcceptsExistingIdempotentJobStatus(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_existing", Status: "running"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	var accepted domainimage.VideoGenerationAccepted
 	if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &accepted) != nil || accepted.Status != "running" {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -230,9 +210,9 @@ func TestHandleVideoGenerateAcceptsBoundedPNGForI2V(t *testing.T) {
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 'I', 'H', 'D', 'R'}
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_i2v", Status: "queued"}}
 	req, _ := videoRequest(t, "i2v", png)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 {
 		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
 	}
@@ -261,10 +241,10 @@ func TestHandleVideoGenerateRejectsOversizedImageBeforeGateway(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/generations", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	gateway := &fakeVideoGateway{}
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge || gateway.createCalls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
 	}
@@ -273,9 +253,9 @@ func TestHandleVideoGenerateRejectsOversizedImageBeforeGateway(t *testing.T) {
 func TestHandleVideoGenerateUsesCOREAuthenticatedActorAndIdempotencyKey(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
@@ -292,9 +272,9 @@ func TestHandleVideoGenerateForwardsExactAspectRatio(t *testing.T) {
 	const aspectRatio = "9:16 (Portrait Widescreen)"
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_portrait", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil, aspectRatio)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 || gateway.createReq.AspectRatio != aspectRatio {
 		t.Fatalf("status=%d calls=%d aspect=%q body=%s", rec.Code, gateway.createCalls, gateway.createReq.AspectRatio, rec.Body.String())
 	}
@@ -302,10 +282,10 @@ func TestHandleVideoGenerateForwardsExactAspectRatio(t *testing.T) {
 
 func TestHandleVideoGenerateRejectsOversizedAspectRatioBeforeGateway(t *testing.T) {
 	req, _ := videoRequest(t, "t2v", nil, strings.Repeat("x", maxVideoAspectRatioBytes+1))
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	gateway := &fakeVideoGateway{}
 	rec := httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusRequestEntityTooLarge || gateway.createCalls != 0 {
 		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
 	}
@@ -316,23 +296,23 @@ func TestHandleVideoGenerateRejectsUntrustedRequestsBeforeGateway(t *testing.T) 
 		name string
 		edit func(*http.Request)
 	}{
-		{name: "direct LAN", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }},
+		{name: "wrong LAN source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }},
 		{name: "wrong host", edit: func(r *http.Request) { r.Host = "attacker.example" }},
 		{name: "missing origin", edit: func(r *http.Request) { r.Header.Del("Origin") }},
 		{name: "null origin", edit: func(r *http.Request) { r.Header.Set("Origin", "null") }},
-		{name: "spoofed funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
+		{name: "Tailscale identity", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "yukimi@example.com") }},
+		{name: "Tailscale Funnel", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
+		{name: "Forwarded proxy header", edit: func(r *http.Request) { r.Header.Set("Forwarded", "for=192.168.1.204") }},
+		{name: "X-Forwarded proxy header", edit: func(r *http.Request) { r.Header.Set("X-Forwarded-For", "192.168.1.204") }},
 		{name: "duplicate origin", edit: func(r *http.Request) { r.Header.Add("Origin", videoTestOrigin) }},
-		{name: "missing login", edit: func(r *http.Request) { r.Header.Del("Tailscale-User-Login") }},
-		{name: "wrong login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "other@example.com") }},
-		{name: "duplicate login", edit: func(r *http.Request) { r.Header.Add("Tailscale-User-Login", videoTestLogin) }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 			req, _ := videoRequest(t, "t2v", nil)
-			tt.edit(authenticatedVideoRequest(t, req))
+			tt.edit(allowedLANVideoRequest(t, req))
 			rec := httptest.NewRecorder()
-			HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+			HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 			if rec.Code != http.StatusNotFound || gateway.createCalls != 0 {
 				t.Fatalf("status=%d createCalls=%d body=%q", rec.Code, gateway.createCalls, rec.Body.String())
 			}
@@ -354,9 +334,9 @@ func TestHandleVideoGenerateValidatesModeSpecificInputs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 			req, _ := videoRequest(t, tt.mode, tt.image)
-			authenticatedVideoRequest(t, req)
+			allowedLANVideoRequest(t, req)
 			rec := httptest.NewRecorder()
-			HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+			HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 			if rec.Code != http.StatusBadRequest || gateway.createCalls != 0 {
 				t.Fatalf("status=%d createCalls=%d body=%q", rec.Code, gateway.createCalls, rec.Body.String())
 			}
@@ -371,9 +351,9 @@ func TestHandleVideoStatusRewritesUpstreamMediaURL(t *testing.T) {
 		Video: &domainimage.VideoArtifact{URL: "/v1/videos/vid_abc.mp4", SHA256: strings.Repeat("a", 64), SizeBytes: 12, ContentType: "video/mp4"},
 	}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/generations/vid_abc", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	HandleVideoStatus(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoStatus(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK || gateway.statusCalls != 1 || gateway.statusActor != videoTestActor {
 		t.Fatalf("status=%d calls=%d actor=%q body=%s", rec.Code, gateway.statusCalls, gateway.statusActor, rec.Body.String())
@@ -394,10 +374,10 @@ func TestHandleVideoResultForwardsActorAndRange(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader("video")),
 	}}
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/vid_abc.mp4", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	req.Header.Set("Range", "bytes=0-4")
 	rec := httptest.NewRecorder()
-	HandleVideoResult(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoResult(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusPartialContent || gateway.mediaCalls != 1 || gateway.mediaActor != videoTestActor || gateway.mediaRange != "bytes=0-4" {
 		t.Fatalf("status=%d calls=%d actor=%q range=%q", rec.Code, gateway.mediaCalls, gateway.mediaActor, gateway.mediaRange)
@@ -410,20 +390,20 @@ func TestHandleVideoResultForwardsActorAndRange(t *testing.T) {
 func TestHandleVideoGenerateRequiresExplicitCOREPermission(t *testing.T) {
 	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
 	req, _ := videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	rec := httptest.NewRecorder()
-	auth := videoAuthConfig()
-	auth.AllowGeneration = false
-	HandleVideoGenerate(gateway, auth).ServeHTTP(rec, req)
+	access := videoAccessConfig()
+	access.AllowGeneration = false
+	HandleVideoGenerate(gateway, access).ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || gateway.createCalls != 0 {
 		t.Fatalf("policy-disabled status=%d createCalls=%d", rec.Code, gateway.createCalls)
 	}
 
 	req, _ = videoRequest(t, "t2v", nil)
-	authenticatedVideoRequest(t, req)
+	allowedLANVideoRequest(t, req)
 	req.Header.Add("Idempotency-Key", "second")
 	rec = httptest.NewRecorder()
-	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest || gateway.createCalls != 0 {
 		t.Fatalf("duplicate key status=%d createCalls=%d", rec.Code, gateway.createCalls)
 	}
@@ -433,10 +413,10 @@ func TestHandleVideoStatusRejectsCrossOriginAndInvalidID(t *testing.T) {
 	for _, path := range []string{"/viewer/image/video/generations/../secret", "/viewer/image/video/generations/vid_abc/extra"} {
 		gateway := &fakeVideoGateway{}
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		authenticatedVideoRequest(t, req)
+		allowedLANVideoRequest(t, req)
 		req.Header.Set("Origin", "https://attacker.example")
 		rec := httptest.NewRecorder()
-		HandleVideoStatus(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+		HandleVideoStatus(gateway, videoAccessConfig()).ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound || gateway.statusCalls != 0 {
 			t.Fatalf("path=%s status=%d calls=%d", path, rec.Code, gateway.statusCalls)
 		}

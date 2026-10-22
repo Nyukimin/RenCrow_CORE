@@ -87,12 +87,12 @@ type ImageConfig struct {
 }
 
 type ImageVideoBrowserConfig struct {
-	Enabled            bool   `yaml:"enabled"`
-	AllowGeneration    bool   `yaml:"allow_generation"`
-	Host               string `yaml:"host"`
-	Origin             string `yaml:"origin"`
-	ActorID            string `yaml:"actor_id"`
-	TailscaleUserLogin string `yaml:"tailscale_user_login"`
+	Enabled           bool   `yaml:"enabled"`
+	AllowGeneration   bool   `yaml:"allow_generation"`
+	Host              string `yaml:"host"`
+	Origin            string `yaml:"origin"`
+	AllowedClientIPv4 string `yaml:"allowed_client_ipv4"`
+	ActorID           string `yaml:"actor_id"`
 }
 
 func (c *ImageVideoBrowserConfig) UnmarshalYAML(node *yaml.Node) error {

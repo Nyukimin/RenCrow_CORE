@@ -6,53 +6,74 @@ import (
 	"testing"
 )
 
-func TestVideoActorIDMapsOneExactTailscaleLoginToConfiguredUser(t *testing.T) {
+func TestVideoActorIDAllowsConfiguredLANClientWithoutIdentityHeaders(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = "192.168.1.204:43210"
 	req.Host = videoTestHost
-	req.Header.Set("Tailscale-User-Login", videoTestLogin)
-
-	actorID, ok := videoAuthConfig().videoActorID(req)
+	actorID, ok := videoAccessConfig().videoOwnerID(req)
 	if !ok || actorID != videoTestActor {
-		t.Fatalf("actorID=%q authenticated=%t", actorID, ok)
+		t.Fatalf("LAN request actorID=%q allowed=%t, want shared Movie owner %q", actorID, ok, videoTestActor)
 	}
 }
 
-func TestVideoActorIDRejectsMissingOrNonExactLoginHeader(t *testing.T) {
+func TestVideoActorIDRejectsUnconfiguredSourceHostOriginAndIdentityHeaders(t *testing.T) {
 	cases := []struct {
-		name  string
-		login []string
+		name string
+		edit func(*http.Request)
 	}{
-		{name: "missing"},
-		{name: "empty", login: []string{""}},
-		{name: "wrong", login: []string{"other@example.com"}},
-		{name: "case changed", login: []string{"Yukimi@example.com"}},
-		{name: "duplicate", login: []string{videoTestLogin, videoTestLogin}},
-		{name: "comma joined", login: []string{videoTestLogin + ", " + videoTestLogin}},
+		{name: "wrong private source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.205:43210" }},
+		{name: "public source", edit: func(r *http.Request) { r.RemoteAddr = "8.8.8.8:43210" }},
+		{name: "IPv6 mapped source", edit: func(r *http.Request) { r.RemoteAddr = "[::ffff:192.168.1.204]:43210" }},
+		{name: "malformed source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.204" }},
+		{name: "wrong host", edit: func(r *http.Request) { r.Host = "192.168.1.205:18790" }},
+		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "http://attacker.example") }},
+		{name: "duplicate origin", edit: func(r *http.Request) {
+			r.Header.Set("Origin", videoTestOrigin)
+			r.Header.Add("Origin", videoTestOrigin)
+		}},
+		{name: "Tailscale login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "yukimi@example.com") }},
+		{name: "Tailscale Funnel", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
+		{name: "Forwarded", edit: func(r *http.Request) { r.Header.Set("Forwarded", "for=192.168.1.204") }},
+		{name: "X-Forwarded-For", edit: func(r *http.Request) { r.Header.Set("X-Forwarded-For", "192.168.1.204") }},
+		{name: "X-Forwarded-Proto", edit: func(r *http.Request) { r.Header.Set("X-Forwarded-Proto", "http") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
-			req.RemoteAddr = "127.0.0.1:43210"
+			req.RemoteAddr = "192.168.1.204:43210"
 			req.Host = videoTestHost
-			for _, value := range tc.login {
-				req.Header.Add("Tailscale-User-Login", value)
-			}
-			if _, ok := videoAuthConfig().videoActorID(req); ok {
-				t.Fatal("request unexpectedly authenticated")
+			tc.edit(req)
+			if actorID, ok := videoAccessConfig().videoOwnerID(req); ok {
+				t.Fatalf("request unexpectedly allowed with actor %q", actorID)
 			}
 		})
 	}
 }
 
-func TestVideoActorIDRejectsDuplicateHeaderNamesWithDifferentCase(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
-	req.Host = videoTestHost
-	req.Header["Tailscale-User-Login"] = []string{videoTestLogin}
-	req.Header["tailscale-user-login"] = []string{videoTestLogin}
-	if _, ok := videoAuthConfig().videoActorID(req); ok {
-		t.Fatal("request with duplicate case-variant login headers unexpectedly authenticated")
+func TestVideoActorIDRequiresOneExactHTTPOriginForPostAndDelete(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		cases := []struct {
+			name    string
+			origins []string
+		}{
+			{name: "missing"},
+			{name: "wrong scheme", origins: []string{"https://" + videoTestHost}},
+			{name: "wrong host", origins: []string{"http://192.168.1.205:18790"}},
+			{name: "duplicate", origins: []string{videoTestOrigin, videoTestOrigin}},
+		}
+		for _, tc := range cases {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(method, "/viewer/image/video/generations", nil)
+				req.RemoteAddr = "192.168.1.204:43210"
+				req.Host = videoTestHost
+				for _, origin := range tc.origins {
+					req.Header.Add("Origin", origin)
+				}
+				if _, ok := videoAccessConfig().videoOwnerID(req); ok {
+					t.Fatal("request unexpectedly allowed")
+				}
+			})
+		}
 	}
 }
 
@@ -68,7 +89,7 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=t2v", nil)
 			},
 			handler: func(g *fakeVideoGateway) http.HandlerFunc {
-				return HandleVideoOptions(g, videoAuthConfig())
+				return HandleVideoOptions(g, videoAccessConfig())
 			},
 		},
 		{
@@ -79,7 +100,7 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 				return req
 			},
 			handler: func(g *fakeVideoGateway) http.HandlerFunc {
-				return HandleVideoGenerate(g, videoAuthConfig())
+				return HandleVideoGenerate(g, videoAccessConfig())
 			},
 		},
 		{
@@ -88,7 +109,7 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/generations/vid_abc", nil)
 			},
 			handler: func(g *fakeVideoGateway) http.HandlerFunc {
-				return HandleVideoStatus(g, videoAuthConfig())
+				return HandleVideoStatus(g, videoAccessConfig())
 			},
 		},
 		{
@@ -97,7 +118,7 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/vid_abc.mp4", nil)
 			},
 			handler: func(g *fakeVideoGateway) http.HandlerFunc {
-				return HandleVideoResult(g, videoAuthConfig())
+				return HandleVideoResult(g, videoAccessConfig())
 			},
 		},
 	}
@@ -105,22 +126,19 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 		name string
 		edit func(*http.Request)
 	}{
-		{name: "missing login", edit: func(r *http.Request) { r.Header.Del("Tailscale-User-Login") }},
-		{name: "wrong login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "other@example.com") }},
-		{name: "duplicate login", edit: func(r *http.Request) { r.Header.Add("Tailscale-User-Login", videoTestLogin) }},
-		{name: "LAN request", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }},
+		{name: "wrong source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.205:43000" }},
 		{name: "wrong host", edit: func(r *http.Request) { r.Host = "attacker.example" }},
-		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "https://attacker.example") }},
-		{name: "Funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
+		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "http://attacker.example") }},
+		{name: "spoofed Tailscale identity", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "yukimi@example.com") }},
+		{name: "proxy header", edit: func(r *http.Request) { r.Header.Set("X-Forwarded-For", "192.168.1.204") }},
 	}
 	for _, route := range routes {
 		for _, edit := range edits {
 			t.Run(route.name+"/"+edit.name, func(t *testing.T) {
 				gateway := &fakeVideoGateway{}
 				req := route.request(t)
-				req.RemoteAddr = "127.0.0.1:43210"
+				req.RemoteAddr = "192.168.1.204:43210"
 				req.Host = videoTestHost
-				req.Header.Set("Tailscale-User-Login", videoTestLogin)
 				if req.Method == http.MethodPost {
 					req.Header.Set("Origin", videoTestOrigin)
 				}
@@ -131,33 +149,6 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 					gateway.statusCalls != 0 || gateway.mediaCalls != 0 {
 					t.Fatalf("status=%d calls options=%d generate=%d status=%d mp4=%d body=%q",
 						rec.Code, gateway.optionsCalls, gateway.createCalls, gateway.statusCalls, gateway.mediaCalls, rec.Body.String())
-				}
-			})
-		}
-	}
-}
-
-func TestVideoActorIDRequiresOneExactHTTPSOriginForPostAndDelete(t *testing.T) {
-	for _, method := range []string{http.MethodPost, http.MethodDelete} {
-		cases := []struct {
-			name    string
-			origins []string
-		}{
-			{name: "missing"},
-			{name: "wrong", origins: []string{"http://llm-rx6800.tailb07d8d.ts.net:8444"}},
-			{name: "duplicate", origins: []string{videoTestOrigin, videoTestOrigin}},
-		}
-		for _, tc := range cases {
-			t.Run(method+"/"+tc.name, func(t *testing.T) {
-				req := httptest.NewRequest(method, "/viewer/image/video/generations", nil)
-				req.RemoteAddr = "127.0.0.1:43210"
-				req.Host = videoTestHost
-				req.Header.Set("Tailscale-User-Login", videoTestLogin)
-				for _, origin := range tc.origins {
-					req.Header.Add("Origin", origin)
-				}
-				if _, ok := videoAuthConfig().videoActorID(req); ok {
-					t.Fatal("request unexpectedly authenticated")
 				}
 			})
 		}

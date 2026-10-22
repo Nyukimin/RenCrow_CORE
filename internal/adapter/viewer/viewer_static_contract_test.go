@@ -1382,7 +1382,7 @@ func TestViewerAtlasCapturesOwnerInputBeforeBusyRender(t *testing.T) {
 	}
 }
 
-func TestViewerStaticContractMovieUsesServeIdentityAndCOREProxy(t *testing.T) {
+func TestViewerStaticContractMovieUsesLanViewerOriginAndCOREProxy(t *testing.T) {
 	htmlData, err := os.ReadFile("viewer.html")
 	if err != nil {
 		t.Fatalf("read viewer.html: %v", err)
@@ -1446,7 +1446,7 @@ func TestViewerStaticContractMovieUsesServeIdentityAndCOREProxy(t *testing.T) {
 		`Sign out`,
 	} {
 		if strings.Contains(html, forbidden) {
-			t.Fatalf("Movie must rely on the existing Serve session and omit browser authentication UI %q", forbidden)
+			t.Fatalf("Movie must omit browser authentication UI %q", forbidden)
 		}
 	}
 	if strings.Contains(html, `id="imageOutputKind"`) || strings.Contains(html, `id="videoOptions"`) {
@@ -1524,7 +1524,7 @@ func TestViewerStaticContractMovieUsesServeIdentityAndCOREProxy(t *testing.T) {
 		t.Fatal("video UI must use same-origin CORE routes and never set actor identity or call Image directly")
 	}
 	if strings.Count(movieJS, `credentials: 'same-origin'`) != 3 {
-		t.Fatal("Movie options, generation, and status requests must use the existing same-origin Serve identity")
+		t.Fatal("Movie options, generation, and status requests must use the LAN Viewer origin without a browser credential flow")
 	}
 	if !strings.Contains(movieJS, `optionsError.hidden = false`) || !strings.Contains(movieJS, `showError(requestError && requestError.message`) {
 		t.Fatal("Movie must display options and generation server errors in the UI")
@@ -1645,7 +1645,7 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 	if validation < 0 || controlsEnabled <= validation {
 		t.Fatal("Image controls must stay disabled until the options response passes validation")
 	}
-	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-serve-session`) {
+	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-lan-http-sha256`) {
 		t.Fatal("Image controls script cache key was not updated")
 	}
 	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-movie-serve-session`) {

@@ -3,50 +3,57 @@ package viewer
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 var videoBrowserActorIDPattern = regexp.MustCompile(`^user:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
-func (c VideoBrowserAuthConfig) videoActorID(r *http.Request) (string, bool) {
+func (c VideoBrowserAccessConfig) videoOwnerID(r *http.Request) (string, bool) {
 	if !c.videoRequestAllowed(r) {
-		return "", false
-	}
-	login, ok := singleHeaderValue(r.Header, "Tailscale-User-Login")
-	if !ok || login != c.TailscaleUserLogin {
 		return "", false
 	}
 	return c.ActorID, true
 }
 
-func (c VideoBrowserAuthConfig) videoRequestAllowed(r *http.Request) bool {
+func (c VideoBrowserAccessConfig) videoRequestAllowed(r *http.Request) bool {
 	if r == nil || !c.Enabled || !videoBrowserActorIDPattern.MatchString(c.ActorID) ||
-		c.TailscaleUserLogin == "" || c.Host == "" || c.Origin == "" ||
-		!videoLoopbackRemoteAddr(r.RemoteAddr) || r.Host != c.Host ||
-		hasHeaderName(r.Header, "Tailscale-Funnel-Request") {
+		c.Host == "" || c.Origin == "" || c.AllowedClientIPv4 == "" || r.Host != c.Host ||
+		!videoRemoteAddrIsAllowed(r.RemoteAddr, c.AllowedClientIPv4) || hasVideoProxyIdentityHeader(r.Header) {
 		return false
 	}
 	originValues := headerValuesCaseInsensitive(r.Header, "Origin")
 	requiresOrigin := r.Method == http.MethodPost || r.Method == http.MethodDelete
-	if requiresOrigin && len(originValues) != 1 {
+	if requiresOrigin && (len(originValues) != 1 || originValues[0] != c.Origin) {
 		return false
 	}
-	if len(originValues) > 0 && (len(originValues) != 1 || originValues[0] == "null" || originValues[0] != c.Origin) {
+	if len(originValues) > 0 && (len(originValues) != 1 || originValues[0] != c.Origin) {
 		return false
 	}
 	return true
 }
 
-func videoLoopbackRemoteAddr(raw string) bool {
+func videoRemoteAddrIsAllowed(raw, allowedIPv4 string) bool {
 	host, port, err := net.SplitHostPort(raw)
-	if err != nil || host == "" {
+	if err != nil {
+		return false
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !ip.Is4() || !ip.IsPrivate() || ip.String() != allowedIPv4 {
 		return false
 	}
 	portNumber, err := strconv.ParseUint(port, 10, 16)
-	if err != nil || portNumber == 0 {
-		return false
+	return err == nil && portNumber != 0
+}
+
+func hasVideoProxyIdentityHeader(header http.Header) bool {
+	for name := range header {
+		lower := strings.ToLower(name)
+		if lower == "forwarded" || strings.HasPrefix(lower, "x-forwarded-") || strings.HasPrefix(lower, "tailscale-") {
+			return true
+		}
 	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return false
 }

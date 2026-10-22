@@ -4,15 +4,15 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
@@ -1095,36 +1095,33 @@ func validateImageVideoBrowserConfig(image ImageConfig) error {
 		return fmt.Errorf("image.video_browser.enabled requires image.enabled=true")
 	}
 	if video.Host == "" || strings.TrimSpace(video.Host) != video.Host {
-		return fmt.Errorf("image.video_browser.host must be an exact HTTPS Serve host")
+		return fmt.Errorf("image.video_browser.host must be an exact private IPv4 host:port")
 	}
 	hostURL, err := url.Parse("//" + video.Host)
 	if err != nil || hostURL.Host != video.Host || hostURL.User != nil ||
-		hostURL.Path != "" || hostURL.RawQuery != "" || hostURL.Fragment != "" ||
-		hostURL.Port() == "" || !strings.HasSuffix(strings.ToLower(hostURL.Hostname()), ".ts.net") {
-		return fmt.Errorf("image.video_browser.host must be an exact Tailscale Serve host with a port")
+		hostURL.Path != "" || hostURL.RawQuery != "" || hostURL.Fragment != "" {
+		return fmt.Errorf("image.video_browser.host must be an exact private IPv4 host:port")
+	}
+	hostname, port, err := net.SplitHostPort(video.Host)
+	if err != nil {
+		return fmt.Errorf("image.video_browser.host must be an exact private IPv4 host:port")
+	}
+	serverIP, err := netip.ParseAddr(hostname)
+	portNumber, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || !serverIP.Is4() || !serverIP.IsPrivate() || serverIP.String() != hostname || portErr != nil || portNumber == 0 {
+		return fmt.Errorf("image.video_browser.host must be an exact private IPv4 host:port")
 	}
 	origin, err := url.Parse(video.Origin)
-	if err != nil || origin.Scheme != "https" || origin.Host != video.Host ||
-		origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
-		return fmt.Errorf("image.video_browser.origin must exactly match host over HTTPS")
+	if err != nil || origin.Scheme != "http" || origin.Host != video.Host ||
+		origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" || origin.String() != video.Origin {
+		return fmt.Errorf("image.video_browser.origin must exactly match host over HTTP")
 	}
 	if !videoBrowserActorIDPattern.MatchString(video.ActorID) {
-		return fmt.Errorf("image.video_browser.actor_id must be one canonical user actor ID")
+		return fmt.Errorf("image.video_browser.actor_id must be one canonical user Movie output owner ID")
 	}
-	if !validVideoBrowserTailscaleLogin(video.TailscaleUserLogin) {
-		return fmt.Errorf("image.video_browser.tailscale_user_login must be an exact non-empty login without whitespace, controls, or commas")
+	clientIP, err := netip.ParseAddr(video.AllowedClientIPv4)
+	if err != nil || !clientIP.Is4() || !clientIP.IsPrivate() || clientIP.String() != video.AllowedClientIPv4 {
+		return fmt.Errorf("image.video_browser.allowed_client_ipv4 must be one canonical private IPv4 address")
 	}
 	return nil
-}
-
-func validVideoBrowserTailscaleLogin(value string) bool {
-	if value == "" || len(value) > 320 || strings.TrimSpace(value) != value || !utf8.ValidString(value) {
-		return false
-	}
-	for _, character := range value {
-		if unicode.IsSpace(character) || unicode.IsControl(character) || character == ',' {
-			return false
-		}
-	}
-	return true
 }

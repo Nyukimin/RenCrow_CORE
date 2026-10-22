@@ -90,7 +90,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `GET /viewer/image/options`, `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewer Image画面のmodel options取得、画像生成と結果表示 |
 | `GET /viewer/image/edit/options`, `POST /viewer/image/edit` | Image画面のPose／服装参照の利用可否取得と、人物画像・参照画像を使うQwen Image Edit生成 |
 | `GET /viewer/image/video/options?mode=...` | Debug Viewer Movie画面のmode別model、aspect ratio、固定parameter取得 |
-| `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | Tailscale Serve identityに基づくActor-scoped動画生成・状態poll・Range対応MP4 proxy |
+| `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | 許可済みLAN IPv4からのMovie生成・状態poll・Range対応MP4 proxy。利用者認証は行わない |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
 | `POST /internal/assistant/notifications/line` | localhostのRenCrow_ASSISTANT専用LINE push transport |
@@ -1211,24 +1211,22 @@ RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
 `GET /viewer/image/video/options?mode=t2v|i2v`はRenCrow_Imageの同じmode指定options routeを中継します。`mode`省略時は`t2v`です。
 返すmodel、aspect ratio一覧とdefault、megapixels、duration、stepsはImage ownerの値を使います。COREはoptionsの形とmodeを検証します。
-options routeを含むすべてのMovie routeは、loopback socket、完全一致Host、Funnel拒否、単一の完全一致
-`Tailscale-User-Login`を検査します。loginはprotected configの`image.video_browser.tailscale_user_login`と照合し、
-一致した場合に既存canonical user `actor_id`へmapします。headerを付与されない接続元からのrequest、空値、複数header、login不一致は拒否します。
-GETでOriginがある場合も単一の設定済みHTTPS Originと完全一致する必要があります。POST/DELETEではOriginを必須とします。
+options routeを含むすべてのMovie routeは、有効化時に実socketのremote IPv4、完全一致Host、HTTP Originを検査します。
+remote IPv4は`image.video_browser.allowed_client_ipv4`の単一のprivate IPv4と一致する必要があります。POST/DELETEではOriginを
+一つ必須とし、GETでOriginがある場合も単一の設定済みOriginとの完全一致を要求します。`Forwarded`、`X-Forwarded-*`、
+`Tailscale-*` headerがあるrequestは拒否します。これらの検査はアクセス境界であり、利用者認証ではありません。
 専用credential、cookie、browser session用routeはありません。
 
 `POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、`seed`、任意の`aspect_ratio`
-とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`とCOREが確定したActor IDをImage Gatewayへ
+とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`と設定済みshared Movie output owner keyをImage Gatewayへ
 送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。
 `GET /viewer/image/video/generations/{id}`は`queued|running|succeeded|failed`と、成功時のvideo metadataまたは
 安全なerrorを返します。Image ownerのMP4 URLはCORE内の`/viewer/image/video/{id}.mp4`へ書き換えます。
-MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。COREはgeneration／job／mediaを
-認証前にupstreamへforwardせず、actor scopeを状態照会とMP4 Range取得にも適用します。aspect ratioは64 bytesまでを正確に中継し、
-許可値の検証はRenCrow_Imageが所有します。新規生成は
-認証のほか`image.video_browser.allow_generation=true`も必要です。現行Global Policy routeはstatusとdecision記録の
-projectionであり、Tailscale login単位の汎用動画生成authorizationを評価しません。BrowserはActor headerを送らず、
-tag/device identityをActorへ変換しません。`:8444`はtailnet-only Serve専用でFunnelを無効にします。`:8443` Funnelは
-`/webhook/line`だけを公開します。`Tailscale-Funnel-Request`があれば拒否しますが、このheaderはServe経由の証明ではありません。
+MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。COREはallowlist検査前に
+upstreamへforwardしません。`image.video_browser.actor_id`（production `user:yukimi`）はMovie jobの共有所有先を示す
+固定keyで、authenticated user identityや一般user-private scopeではありません。aspect ratioは64 bytesまでを正確に中継し、
+許可値の検証はRenCrow_Imageが所有します。新規生成には`image.video_browser.allow_generation=true`も必要です。
+この設定は既定でfalseです。
 
 `POST /viewer/send`で`to=midori`を指定した画像生成依頼も、同じCORE-to-RenCrow_Image contractを
 使用します。成功時はMidoriの利用者向け`agent.response`へ

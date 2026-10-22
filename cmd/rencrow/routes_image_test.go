@@ -36,7 +36,7 @@ func TestRegisterImageRoutesServesConfiguredOptionsOnCanonicalViewerPath(t *test
 	}
 }
 
-func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathWithLogin(t *testing.T) {
+func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathFromAllowedLANClient(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/videos/options" || r.URL.Query().Get("mode") != "i2v" {
 			http.Error(w, "wrong Image video options route", http.StatusNotFound)
@@ -51,19 +51,18 @@ func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathWithLogin(t *testi
 	}))
 	defer server.Close()
 
-	const host = "llm-rx6800.tailb07d8d.ts.net:8444"
+	const host = "192.168.1.206:18790"
 	mux := http.NewServeMux()
 	registerImageRoutes(mux, &config.Config{Image: config.ImageConfig{
 		Enabled: true, BaseURL: server.URL, TimeoutMS: 1000,
 		VideoBrowser: config.ImageVideoBrowserConfig{
-			Enabled: true, AllowGeneration: true, Host: host, Origin: "https://" + host,
-			ActorID: "user:yukimi", TailscaleUserLogin: "yukimi@example.com",
+			Enabled: true, AllowGeneration: true, Host: host, Origin: "http://" + host,
+			AllowedClientIPv4: "192.168.1.204", ActorID: "user:yukimi",
 		},
 	}})
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = "192.168.1.204:43210"
 	req.Host = host
-	req.Header.Set("Tailscale-User-Login", "yukimi@example.com")
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, req)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"i2v"`) ||
@@ -73,19 +72,18 @@ func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathWithLogin(t *testi
 }
 
 func TestRegisterImageRoutesRemovesVideoSessionEndpoint(t *testing.T) {
-	const host = "llm-rx6800.tailb07d8d.ts.net:8444"
+	const host = "192.168.1.206:18790"
 	mux := http.NewServeMux()
 	registerImageRoutes(mux, &config.Config{Image: config.ImageConfig{
 		VideoBrowser: config.ImageVideoBrowserConfig{
-			Enabled: true, Host: host, Origin: "https://" + host,
-			ActorID: "user:yukimi", TailscaleUserLogin: "yukimi@example.com",
+			Enabled: true, Host: host, Origin: "http://" + host,
+			AllowedClientIPv4: "192.168.1.204", ActorID: "user:yukimi",
 		},
 	}})
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/session", nil)
-	req.RemoteAddr = "127.0.0.1:43210"
+	req.RemoteAddr = "192.168.1.204:43210"
 	req.Host = host
-	req.Header.Set("Origin", "https://"+host)
-	req.Header.Set("Tailscale-User-Login", "yukimi@example.com")
+	req.Header.Set("Origin", "http://"+host)
 	if _, pattern := mux.Handler(req); pattern != "/viewer/image/video/" {
 		t.Fatalf("video session path matched %q, want only the generic video result route", pattern)
 	}

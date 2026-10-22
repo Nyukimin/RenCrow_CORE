@@ -550,15 +550,16 @@ image:
   enabled: true
   base_url: "http://127.0.0.1:8780"
   timeout_ms: 600000
-  # Enable only on tailnet-only Serve :8444; Funnel must be disabled on this port.
-  # Keep the exact Tailscale-User-Login allowlist value in protected runtime config.
+  # Movie uses an explicit LAN IPv4 allowlist and is disabled unless enabled below.
+  # The client IP is an access filter, not proof of a user's identity.
   video_browser:
     enabled: false
     allow_generation: false
-    host: "llm-rx6800.tailb07d8d.ts.net:8444"
-    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    host: "192.168.1.206:18790"
+    origin: "http://192.168.1.206:18790"
+    allowed_client_ipv4: "192.168.1.204"
+    # Shared Movie output ownership key; this is not an authenticated user scope.
     actor_id: "user:yukimi"
-    tailscale_user_login: "user@example.com"
 
 vtuber:
   enabled: false

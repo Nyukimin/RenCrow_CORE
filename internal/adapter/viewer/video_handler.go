@@ -47,18 +47,19 @@ type VideoOptionsGateway interface {
 	VideoOptions(context.Context, string) (domainimage.VideoOptionsResponse, error)
 }
 
-type VideoBrowserAuthConfig struct {
-	Enabled            bool
-	AllowGeneration    bool
-	Host               string
-	Origin             string
-	ActorID            string
-	TailscaleUserLogin string
+// VideoBrowserAccessConfig gates Movie routes to one LAN client. ActorID is the shared Movie output owner key.
+type VideoBrowserAccessConfig struct {
+	Enabled           bool
+	AllowGeneration   bool
+	Host              string
+	Origin            string
+	AllowedClientIPv4 string
+	ActorID           string
 }
 
-func HandleVideoOptions(gateway VideoOptionsGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
+func HandleVideoOptions(gateway VideoOptionsGateway, access VideoBrowserAccessConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := auth.videoActorID(r); !ok {
+		if _, ok := access.videoOwnerID(r); !ok {
 			http.NotFound(w, r)
 			return
 		}
@@ -108,9 +109,9 @@ func HandleVideoOptions(gateway VideoOptionsGateway, auth VideoBrowserAuthConfig
 	}
 }
 
-func HandleVideoGenerate(gateway VideoGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
+func HandleVideoGenerate(gateway VideoGateway, access VideoBrowserAccessConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		actorID, ok := auth.videoActorID(r)
+		actorID, ok := access.videoOwnerID(r)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -119,7 +120,7 @@ func HandleVideoGenerate(gateway VideoGateway, auth VideoBrowserAuthConfig) http
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !auth.AllowGeneration {
+		if !access.AllowGeneration {
 			writeVideoError(w, http.StatusForbidden, "VIDEO_GENERATION_DISABLED", "Video generation is disabled by CORE policy.")
 			return
 		}
@@ -154,9 +155,9 @@ func HandleVideoGenerate(gateway VideoGateway, auth VideoBrowserAuthConfig) http
 	}
 }
 
-func HandleVideoStatus(gateway VideoGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
+func HandleVideoStatus(gateway VideoGateway, access VideoBrowserAccessConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		actorID, ok := auth.videoActorID(r)
+		actorID, ok := access.videoOwnerID(r)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -190,9 +191,9 @@ func HandleVideoStatus(gateway VideoGateway, auth VideoBrowserAuthConfig) http.H
 	}
 }
 
-func HandleVideoResult(gateway VideoGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
+func HandleVideoResult(gateway VideoGateway, access VideoBrowserAccessConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		actorID, ok := auth.videoActorID(r)
+		actorID, ok := access.videoOwnerID(r)
 		if !ok {
 			http.NotFound(w, r)
 			return

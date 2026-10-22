@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -15,6 +16,7 @@ const viewerCSS = fs.readFileSync(path.join(repoRoot, 'internal/adapter/viewer/a
 const deskCSS = fs.readFileSync(path.join(repoRoot, 'internal/adapter/viewer/assets/css/tabs/desk.css'), 'utf8');
 const imageCSS = fs.readFileSync(path.join(repoRoot, 'internal/adapter/viewer/assets/css/tabs/image.css'), 'utf8');
 const origin = 'https://image-video-idempotency.test';
+const insecureOrigin = 'http://image-video-idempotency.test';
 const pendingKey = 'rencrow.image.video.pendingRequest';
 const jobKey = 'rencrow.image.video.lastJobId';
 const maxImageUploadBytes = 20 * 1024 * 1024;
@@ -124,8 +126,8 @@ function fixtureHTML() {
 }
 
 async function installRoutes(page, actions, calls, options = {}) {
+  const routeOrigin = options.origin || origin;
   const serverJobs = new Map();
-  const serveAccess = options.serveAccess || {options: true, generation: true, status: true};
   const sessionRequests = [];
   const statusRequests = [];
   const generationRequests = [];
@@ -133,7 +135,7 @@ async function installRoutes(page, actions, calls, options = {}) {
   const imageCalls = [];
   const videoOptionRequests = [];
   if (options.savedJob) serverJobs.set('saved', options.savedJob);
-  await page.route(`${origin}/**`, async (route) => {
+  await page.route(`${routeOrigin}/**`, async (route) => {
     const request = route.request();
     const requestURL = new URL(request.url());
     if (requestURL.pathname.startsWith('/viewer/image/video/')) {
@@ -204,7 +206,7 @@ async function installRoutes(page, actions, calls, options = {}) {
     if (requestURL.pathname === '/viewer/image/video/options' && request.method() === 'GET') {
       const requestedMode = requestURL.searchParams.get('mode');
       videoOptionRequests.push({mode: requestedMode, origin: requestURL.origin});
-      if (!serveAccess.options) {
+      if (options.videoOptions404) {
         await route.fulfill({status: 404, body: ''});
         return;
       }
@@ -241,14 +243,6 @@ async function installRoutes(page, actions, calls, options = {}) {
     }
     if (requestURL.pathname === '/viewer/image/video/generations' && request.method() === 'POST') {
       generationRequests.push({method: request.method(), path: requestURL.pathname, origin: requestURL.origin});
-      if (!serveAccess.generation) {
-        await route.fulfill({
-          status: 404,
-          contentType: 'application/json',
-          body: JSON.stringify({message: 'Tailscale Serve identity is required.'}),
-        });
-        return;
-      }
       const pendingRaw = await page.evaluate((key) => localStorage.getItem(key), pendingKey);
       const requestIdempotencyKey = request.headers()['idempotency-key'] || '';
       let jobID = serverJobs.get(requestIdempotencyKey);
@@ -279,10 +273,6 @@ async function installRoutes(page, actions, calls, options = {}) {
     const statusPrefix = '/viewer/image/video/generations/';
     if (requestURL.pathname.startsWith(statusPrefix) && request.method() === 'GET') {
       const jobID = requestURL.pathname.slice(statusPrefix.length);
-      if (!serveAccess.status) {
-        await route.fulfill({status: 404, contentType: 'application/json', body: '{}'});
-        return;
-      }
       statusRequests.push(jobID);
       if (!Array.from(serverJobs.values()).includes(jobID)) {
         await route.fulfill({status: 404, contentType: 'application/json', body: '{}'});
@@ -307,7 +297,7 @@ async function showMoviePanel(page) {
   });
 }
 
-async function assertMovieUsesServeIdentity(page, routes) {
+async function assertMovieUsesViewerOrigin(page, routes) {
   for (const selector of ['#videoAuthPanel', '#videoCredential', '#videoLoginForm', '#videoLoginButton', '#videoLogoutButton', '#videoAuthStatus']) {
     assert.equal(await page.locator(selector).count(), 0, `Movie has no browser-auth UI: ${selector}`);
   }
@@ -477,8 +467,8 @@ async function testT2VRetry(browser) {
   const routes = await installRoutes(page, ['drop', 'accept'], calls);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
-  await assertMovieUsesServeIdentity(page, routes);
-  assert.deepEqual(routes.videoOptionRequests[0], {mode: 't2v', origin}, 'T2V options use the existing Serve identity on the Viewer origin');
+  await assertMovieUsesViewerOrigin(page, routes);
+  assert.deepEqual(routes.videoOptionRequests[0], {mode: 't2v', origin}, 'T2V options use the Viewer origin');
   assert.equal(await page.locator('#movieModel').textContent(), 'hunyuan-video-t2v');
   assert.equal(await page.locator('#movieMegapixels').textContent(), '0.2');
   assert.equal(await page.locator('#movieDurationSeconds').textContent(), '5');
@@ -495,7 +485,7 @@ async function testT2VRetry(browser) {
   assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey, 'T2V retry must reuse its persisted key');
   assert.equal(calls[0].jobID, calls[1].jobID, 'lost 202 retry must recover the accepted T2V job');
   assert.equal(routes.serverJobs.size, 1, 'same T2V key must not create a duplicate job');
-  await assertMovieUsesServeIdentity(page, routes);
+  await assertMovieUsesViewerOrigin(page, routes);
   assert.deepEqual(routes.generationRequests, [
     {method: 'POST', path: '/viewer/image/video/generations', origin},
     {method: 'POST', path: '/viewer/image/video/generations', origin},
@@ -522,6 +512,105 @@ async function testT2VRetry(browser) {
   assert.notEqual(calls[2].idempotencyKey, calls[1].idempotencyKey, 'changing aspect ratio creates a distinct idempotency key');
   assert.match(calls[2].body.toString('latin1'), /name="aspect_ratio"\r\n\r\n1:1 \(Square\)\r\n/);
   assert.equal(routes.generationRequests.length, 3, 'a changed aspect ratio submits one distinct generation on the Viewer origin');
+  await context.close();
+}
+
+async function testInsecureHTTPVideoFingerprintsAndRetries(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const calls = [];
+  const routes = await installRoutes(page, ['drop', 'accept', 'drop', 'accept', 'accept'], calls, {origin: insecureOrigin});
+  await page.goto(insecureOrigin, {waitUntil: 'domcontentloaded'});
+  assert.deepEqual(await page.evaluate(() => ({
+    secure: window.isSecureContext,
+    randomValues: Boolean(window.crypto && window.crypto.getRandomValues),
+    subtleDigest: Boolean(window.crypto && window.crypto.subtle && window.crypto.subtle.digest),
+  })), {secure: false, randomValues: true, subtleDigest: false}, 'the fixture exercises an ordinary non-secure HTTP origin');
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+
+  const t2vPrompt = 'A paper boat crossing a quiet lake';
+  await prepareVideo(page, 't2v', t2vPrompt);
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, false);
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, true);
+  const expectedT2VFingerprint = createHash('sha256').update(JSON.stringify({
+    version: 2,
+    mode: 't2v',
+    prompt: t2vPrompt,
+    seed: 42,
+    aspect_ratio: '16:9 (Widescreen)',
+    image_sha256: '',
+  })).digest('hex');
+  assert.equal(calls.length, 2, 'T2V submission and retry both work over insecure HTTP');
+  assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey);
+  assert.equal(calls[0].pending.fingerprint, expectedT2VFingerprint, 'T2V fingerprint equals the canonical SHA-256 digest');
+  assert.equal(calls[1].pending.fingerprint, expectedT2VFingerprint);
+
+  const i2vPrompt = 'A red kite rising above the coast';
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03, 0x04]);
+  await prepareVideo(page, 'i2v', i2vPrompt);
+  await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'hunyuan-video-i2v');
+  await page.locator('#movieInputImage').setInputFiles({
+    name: 'http-start.png',
+    mimeType: 'image/png',
+    buffer: imageBytes,
+  });
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, false);
+
+  await page.reload({waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await prepareVideo(page, 'i2v', i2vPrompt);
+  await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'hunyuan-video-i2v');
+  await page.locator('#movieInputImage').setInputFiles({
+    name: 'http-start.png',
+    mimeType: 'image/png',
+    buffer: imageBytes,
+  });
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, true);
+
+  const imageSha256 = createHash('sha256').update(imageBytes).digest('hex');
+  const expectedI2VFingerprint = createHash('sha256').update(JSON.stringify({
+    version: 2,
+    mode: 'i2v',
+    prompt: i2vPrompt,
+    seed: 42,
+    aspect_ratio: '1:1 (Square)',
+    image_sha256: imageSha256,
+  })).digest('hex');
+  assert.equal(calls.length, 4, 'I2V submission and reload retry both work over insecure HTTP');
+  assert.equal(calls[2].idempotencyKey, calls[3].idempotencyKey);
+  assert.equal(calls[2].pending.fingerprint, expectedI2VFingerprint, 'I2V fingerprint includes the exact image byte digest');
+  assert.equal(calls[3].pending.fingerprint, expectedI2VFingerprint);
+
+  const maxImageBytes = Buffer.alloc(maxImageUploadBytes, 0x5a);
+  await page.locator('#movieInputImage').setInputFiles({
+    name: 'http-start-max.png',
+    mimeType: 'image/png',
+    buffer: maxImageBytes,
+  });
+  const previousJobID = await page.evaluate((key) => localStorage.getItem(key), jobKey);
+  await page.click('#movieGenerateBtn');
+  await page.waitForFunction(({jobKey, pendingKey, previousJobID}) =>
+    localStorage.getItem(jobKey) !== previousJobID && localStorage.getItem(pendingKey) === null,
+  {jobKey, pendingKey, previousJobID});
+  const maxImageSha256 = createHash('sha256').update(maxImageBytes).digest('hex');
+  const expectedMaxImageFingerprint = createHash('sha256').update(JSON.stringify({
+    version: 2,
+    mode: 'i2v',
+    prompt: i2vPrompt,
+    seed: 42,
+    aspect_ratio: '1:1 (Square)',
+    image_sha256: maxImageSha256,
+  })).digest('hex');
+  assert.equal(calls.length, 5, 'a 20 MiB I2V image can be fingerprinted and submitted over insecure HTTP');
+  assert.equal(calls[4].pending.fingerprint, expectedMaxImageFingerprint, 'maximum-size image fingerprint matches canonical SHA-256');
+  assert.ok(routes.videoOptionRequests.some((request) => request.mode === 't2v'));
+  assert.ok(routes.videoOptionRequests.some((request) => request.mode === 'i2v'));
+  assert.ok(routes.videoOptionRequests.every((request) => request.origin === insecureOrigin));
+  assert.ok(routes.generationRequests.every((request) => request.origin === insecureOrigin));
   await context.close();
 }
 
@@ -601,7 +690,7 @@ async function testI2VReloadRetryAndImageChange(browser) {
   const routes = await installRoutes(page, ['drop', 'drop', 'accept'], calls);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
-  await assertMovieUsesServeIdentity(page, routes);
+  await assertMovieUsesViewerOrigin(page, routes);
   await prepareVideo(page, 'i2v', 'A paper boat crossing a quiet lake');
   const imageA = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03]);
   await page.locator('#movieInputImage').setInputFiles({
@@ -667,68 +756,48 @@ async function testSavedJobResumesWithoutBrowserLogin(browser) {
   await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('queued'));
   assert.deepEqual(routes.statusRequests, ['vid_saved'], 'saved job resumes on startup after options succeed');
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'polling preserves the saved job id');
-  await assertMovieUsesServeIdentity(page, routes);
+  await assertMovieUsesViewerOrigin(page, routes);
   await context.close();
 }
 
-async function testSavedJobWaitsForServeOptionsAndRetries(browser) {
+async function testSavedJobWaitsForVideoOptionsAndRetries(browser) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const calls = [];
-  const serveAccess = {options: false, generation: true, status: true};
-  const routes = await installRoutes(page, [], calls, {savedJob: 'vid_saved', serveAccess});
+  const videoOptionsUnavailable = {t2v: true};
+  const routes = await installRoutes(page, [], calls, {savedJob: 'vid_saved', videoOptionsUnavailable});
   await page.addInitScript((key) => localStorage.setItem(key, 'vid_saved'), jobKey);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await showMoviePanel(page);
   await page.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
-  assert.match(await page.locator('#movieOptionsError').textContent(), /この接続ではMovieの利用者を確認できない可能性があります/);
-  assert.deepEqual(routes.statusRequests, [], 'saved status is not requested while Serve identity blocks options');
-  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'options denial preserves the saved job id');
+  assert.match(await page.locator('#movieOptionsError').textContent(), /options temporarily unavailable/);
+  assert.deepEqual(routes.statusRequests, [], 'saved status is not requested while video options are unavailable');
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'options failure preserves the saved job id');
 
-  serveAccess.options = true;
+  videoOptionsUnavailable.t2v = false;
   await page.click('#movieOptionsRetry');
   await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('queued'));
   assert.deepEqual(routes.statusRequests, ['vid_saved'], 'successful options retry resumes the existing job');
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved');
-  await assertMovieUsesServeIdentity(page, routes);
+  await assertMovieUsesViewerOrigin(page, routes);
   await context.close();
 }
 
-async function testServeAuthorizationErrorsAreVisible(browser) {
+async function testMovieOptions404ShowsLanGuidance(browser) {
   const optionsContext = await browser.newContext();
   const optionsPage = await optionsContext.newPage();
-  const optionsRoutes = await installRoutes(optionsPage, [], [], {
-    serveAccess: {options: false, generation: true, status: true},
-  });
+  const optionsRoutes = await installRoutes(optionsPage, [], [], {videoOptions404: true});
   await optionsPage.goto(origin, {waitUntil: 'domcontentloaded'});
   await showMoviePanel(optionsPage);
   await optionsPage.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
   const optionsError = await optionsPage.locator('#movieOptionsError').textContent();
   assert.match(optionsError, /HTTP 404/);
-  assert.match(optionsError, /この接続ではMovieの利用者を確認できない可能性があります/);
-  assert.match(optionsError, /Tailscaleのユーザーアカウントに紐づく端末/);
-  assert.match(optionsError, /タグ付き端末/);
-  assert.match(optionsError, /接続先やサーバー設定による404の場合もある/);
+  assert.match(optionsError, /設定されたLAN内のIPv4アドレスから利用できます/);
+  assert.match(optionsError, /ViewerのURLとCOREのLAN接続設定を確認してください/);
   assert.equal(await optionsPage.locator('#movieOptionsRetry').isVisible(), true, 'plain 404 offers an options retry');
   assert.equal(await optionsPage.locator('#movieGenerateBtn').isDisabled(), true, 'generation stays unavailable when server options are denied');
-  await assertMovieUsesServeIdentity(optionsPage, optionsRoutes);
+  await assertMovieUsesViewerOrigin(optionsPage, optionsRoutes);
   await optionsContext.close();
-
-  const generationContext = await browser.newContext();
-  const generationPage = await generationContext.newPage();
-  const generationRoutes = await installRoutes(generationPage, [], [], {
-    serveAccess: {options: true, generation: false, status: true},
-  });
-  await generationPage.goto(origin, {waitUntil: 'domcontentloaded'});
-  await showMoviePanel(generationPage);
-  await generationPage.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
-  await prepareVideo(generationPage, 't2v', 'A request denied by the Serve identity gate');
-  await generationPage.click('#movieGenerateBtn');
-  await generationPage.waitForFunction(() => !document.getElementById('movieError').hidden);
-  assert.match(await generationPage.locator('#movieError').textContent(), /Tailscale Serve identity is required/);
-  assert.equal(generationRoutes.generationRequests.length, 1, 'the UI sends the request to CORE and displays its error response');
-  await assertMovieUsesServeIdentity(generationPage, generationRoutes);
-  await generationContext.close();
 }
 
 async function testRapidDoubleClickSubmitsOnlyOnceWithoutSessionCheck(browser) {
@@ -746,7 +815,7 @@ async function testRapidDoubleClickSubmitsOnlyOnceWithoutSessionCheck(browser) {
   await waitForSubmissionResult(page, true);
   assert.equal(calls.length, 1, 'rapid clicks submit one generation request without a session-check delay');
   assert.equal(routes.generationRequests.length, 1);
-  await assertMovieUsesServeIdentity(page, routes);
+  await assertMovieUsesViewerOrigin(page, routes);
   await context.close();
 }
 
@@ -756,13 +825,14 @@ try {
   await testNonComfyOptionsFallbackAndUnavailableEdits(browser);
   await testMovieOptionsAreModeSpecific(browser);
   await testT2VRetry(browser);
+  await testInsecureHTTPVideoFingerprintsAndRetries(browser);
   await testT2VReloadOptionsFailureRetryPreservesAspect(browser);
   await testI2VReloadRetryAndImageChange(browser);
   await testSavedJobResumesWithoutBrowserLogin(browser);
-  await testSavedJobWaitsForServeOptionsAndRetries(browser);
-  await testServeAuthorizationErrorsAreVisible(browser);
+  await testSavedJobWaitsForVideoOptionsAndRetries(browser);
+  await testMovieOptions404ShowsLanGuidance(browser);
   await testRapidDoubleClickSubmitsOnlyOnceWithoutSessionCheck(browser);
-  process.stdout.write('PASS: Image T2I/Pose/Clothing, non-Comfy fallback, upload boundary, responsive layout, and Movie Serve/idempotency flows\n');
+  process.stdout.write('PASS: Image T2I/Pose/Clothing, non-Comfy fallback, upload boundary, responsive layout, and Movie LAN/idempotency flows\n');
 } finally {
   await browser.close();
 }

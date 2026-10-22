@@ -61,16 +61,16 @@ func validImageVideoBrowserConfig() ImageConfig {
 	return ImageConfig{
 		Enabled: true,
 		VideoBrowser: ImageVideoBrowserConfig{
-			Enabled:            true,
-			Host:               "llm-rx6800.tailb07d8d.ts.net:8444",
-			Origin:             "https://llm-rx6800.tailb07d8d.ts.net:8444",
-			ActorID:            "user:yukimi",
-			TailscaleUserLogin: "Yukimi+viewer@example.com",
+			Enabled:           true,
+			Host:              "192.168.1.206:18790",
+			Origin:            "http://192.168.1.206:18790",
+			AllowedClientIPv4: "192.168.1.204",
+			ActorID:           "user:yukimi",
 		},
 	}
 }
 
-func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
+func TestImageVideoBrowserValidationRequiresExactPrivateLANTarget(t *testing.T) {
 	valid := validImageVideoBrowserConfig()
 	if err := validateImageVideoBrowserConfig(valid); err != nil {
 		t.Fatalf("valid config: %v", err)
@@ -80,16 +80,23 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 		edit func(*ImageConfig)
 	}{
 		{name: "image disabled", edit: func(c *ImageConfig) { c.Enabled = false }},
-		{name: "host origin mismatch", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "https://other.tailb07d8d.ts.net:8444" }},
-		{name: "http origin", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "http://llm-rx6800.tailb07d8d.ts.net:8444" }},
-		{name: "non tailscale host", edit: func(c *ImageConfig) { c.VideoBrowser.Host = "example.com:8444" }},
-		{name: "invalid actor kind", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "tailscale:yukimi" }},
+		{name: "host origin mismatch", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "http://192.168.1.205:18790" }},
+		{name: "https origin", edit: func(c *ImageConfig) { c.VideoBrowser.Origin = "https://192.168.1.206:18790" }},
+		{name: "non IPv4 host", edit: func(c *ImageConfig) { c.VideoBrowser.Host = "viewer.example.com:18790" }},
+		{name: "public host", edit: func(c *ImageConfig) {
+			c.VideoBrowser.Host = "8.8.8.8:18790"
+			c.VideoBrowser.Origin = "http://8.8.8.8:18790"
+		}},
+		{name: "invalid host port", edit: func(c *ImageConfig) {
+			c.VideoBrowser.Host = "192.168.1.206:abc"
+			c.VideoBrowser.Origin = "http://192.168.1.206:abc"
+		}},
+		{name: "invalid actor kind", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "lan:yukimi" }},
 		{name: "empty actor", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "" }},
-		{name: "missing login", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "" }},
-		{name: "login with spaces", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user name@example.com" }},
-		{name: "login with comma", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user@example.com,other@example.com" }},
-		{name: "login with control", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user@example.com\n" }},
-		{name: "login too long", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = strings.Repeat("a", 321) }},
+		{name: "missing allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "" }},
+		{name: "public allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "8.8.8.8" }},
+		{name: "IPv6 allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "fd00::1" }},
+		{name: "noncanonical allowed client", edit: func(c *ImageConfig) { c.VideoBrowser.AllowedClientIPv4 = "192.168.001.204" }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,7 +109,7 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadConfigImageVideoBrowserReadsExactLoginConfig(t *testing.T) {
+func TestLoadConfigImageVideoBrowserReadsLANConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "image-video.yaml")
 	content := `
 server:
@@ -114,10 +121,10 @@ image:
   video_browser:
     enabled: true
     allow_generation: true
-    host: "llm-rx6800.tailb07d8d.ts.net:8444"
-    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    host: "192.168.1.206:18790"
+    origin: "http://192.168.1.206:18790"
+    allowed_client_ipv4: "192.168.1.204"
     actor_id: "user:yukimi"
-    tailscale_user_login: "Yukimi+viewer@example.com"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -128,10 +135,12 @@ image:
 	}
 	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration ||
 		cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
-		cfg.Image.VideoBrowser.TailscaleUserLogin != "Yukimi+viewer@example.com" {
-		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t actor_id=%q login=%q",
+		cfg.Image.VideoBrowser.AllowedClientIPv4 != "192.168.1.204" ||
+		cfg.Image.VideoBrowser.Host != "192.168.1.206:18790" ||
+		cfg.Image.VideoBrowser.Origin != "http://192.168.1.206:18790" {
+		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t host=%q client=%q actor_id=%q",
 			cfg.Image.VideoBrowser.Enabled, cfg.Image.VideoBrowser.AllowGeneration,
-			cfg.Image.VideoBrowser.ActorID, cfg.Image.VideoBrowser.TailscaleUserLogin)
+			cfg.Image.VideoBrowser.Host, cfg.Image.VideoBrowser.AllowedClientIPv4, cfg.Image.VideoBrowser.ActorID)
 	}
 }
 
@@ -146,10 +155,10 @@ image:
   timeout_ms: 450000
   video_browser:
     enabled: true
-    host: "llm-rx6800.tailb07d8d.ts.net:8444"
-    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    host: "192.168.1.206:18790"
+    origin: "http://192.168.1.206:18790"
+    allowed_client_ipv4: "192.168.1.204"
     actor_id: "user:yukimi"
-    tailscale_user_login: "yukimi@example.com"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -160,6 +169,27 @@ image:
 	}
 	if cfg.Image.VideoBrowser.AllowGeneration {
 		t.Fatal("video generation permission must default closed")
+	}
+}
+
+func TestLoadConfigImageVideoBrowserDefaultsDisabled(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "image-video-default.yaml")
+	content := `
+server:
+  port: 8080
+session:
+  storage_dir: "./sessions"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Image.VideoBrowser.Enabled || cfg.Image.VideoBrowser.AllowGeneration {
+		t.Fatalf("Movie access defaults must be disabled: enabled=%t allow_generation=%t",
+			cfg.Image.VideoBrowser.Enabled, cfg.Image.VideoBrowser.AllowGeneration)
 	}
 }
 
@@ -185,8 +215,10 @@ image:
 	}{
 		{name: "enabled credential", enabled: "true", key: "credential_sha256"},
 		{name: "enabled cookie key", enabled: "true", key: "cookie_hmac_key_hex"},
+		{name: "enabled Tailscale login", enabled: "true", key: "tailscale_user_login"},
 		{name: "disabled credential", enabled: "false", key: "credential_sha256"},
 		{name: "disabled cookie key", enabled: "false", key: "cookie_hmac_key_hex"},
+		{name: "disabled Tailscale login", enabled: "false", key: "tailscale_user_login"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -214,16 +246,16 @@ image:
   timeout_ms: 450000
   video_browser:
     enabled: true
-    host: "llm-rx6800.tailb07d8d.ts.net:8444"
-    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    host: "192.168.1.206:18790"
+    origin: "http://192.168.1.206:18790"
+    allowed_client_ipv4: "192.168.1.204"
     actor_id: "user:yukimi"
-    tailscale_user_login: "yukimi@example.com"
-    tailscale_user_login: "other@example.com"
+    allowed_client_ipv4: "192.168.1.205"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "tailscale_user_login") {
-		t.Fatalf("LoadConfig error = %v, want duplicate login rejection", err)
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "allowed_client_ipv4") {
+		t.Fatalf("LoadConfig error = %v, want duplicate allowed client rejection", err)
 	}
 }
