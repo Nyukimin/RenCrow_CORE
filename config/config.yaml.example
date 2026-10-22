@@ -558,14 +558,11 @@ image:
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
     allowed_client_ipv4:
-      - "192.168.1.204"
-      - "192.168.1.207"
+      - "192.168.1.206"
     # Shared Movie output ownership key; this is not an authenticated user scope.
     actor_id: "user:yukimi"
 
-      - "192.168.1.206"
 vtuber:
-      - "192.168.1.31"
   enabled: false
   tick_interval_ms: 100
   connect_timeout_ms: 3000

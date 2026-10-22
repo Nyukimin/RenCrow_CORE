@@ -57,19 +57,27 @@ func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathFromAllowedLANClie
 		Enabled: true, BaseURL: server.URL, TimeoutMS: 1000,
 		VideoBrowser: config.ImageVideoBrowserConfig{
 			Enabled: true, AllowGeneration: true, Host: host, Origin: "http://" + host,
-			AllowedClientIPv4: []string{"192.168.1.204", "192.168.1.207"}, ActorID: "user:yukimi",
+			AllowedClientIPv4: []string{"192.168.1.206"}, ActorID: "user:yukimi",
 		},
 	}})
+	allowed := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
+	allowed.RemoteAddr = "192.168.1.206:43210"
+	allowed.Host = host
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, allowed)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"i2v"`) ||
+		!strings.Contains(response.Body.String(), `"default_aspect_ratio":"1:1 (Square)"`) {
+		t.Fatalf("GET video options from allowed source status=%d body=%q", response.Code, response.Body.String())
+	}
 	for _, sourceIP := range []string{"192.168.1.204", "192.168.1.207"} {
-		t.Run(sourceIP, func(t *testing.T) {
+		t.Run("reject browser source "+sourceIP, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
 			req.RemoteAddr = sourceIP + ":43210"
 			req.Host = host
 			response := httptest.NewRecorder()
 			mux.ServeHTTP(response, req)
-			if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"i2v"`) ||
-				!strings.Contains(response.Body.String(), `"default_aspect_ratio":"1:1 (Square)"`) {
-				t.Fatalf("GET video options from %s status=%d body=%q", sourceIP, response.Code, response.Body.String())
+			if response.Code != http.StatusNotFound {
+				t.Fatalf("GET video options from rejected source %s status=%d body=%q", sourceIP, response.Code, response.Body.String())
 			}
 		})
 	}
@@ -81,11 +89,11 @@ func TestRegisterImageRoutesRemovesVideoSessionEndpoint(t *testing.T) {
 	registerImageRoutes(mux, &config.Config{Image: config.ImageConfig{
 		VideoBrowser: config.ImageVideoBrowserConfig{
 			Enabled: true, Host: host, Origin: "http://" + host,
-			AllowedClientIPv4: []string{"192.168.1.204", "192.168.1.207"}, ActorID: "user:yukimi",
+			AllowedClientIPv4: []string{"192.168.1.206"}, ActorID: "user:yukimi",
 		},
 	}})
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/session", nil)
-	req.RemoteAddr = "192.168.1.204:43210"
+	req.RemoteAddr = "192.168.1.206:43210"
 	req.Host = host
 	req.Header.Set("Origin", "http://"+host)
 	if _, pattern := mux.Handler(req); pattern != "/viewer/image/video/" {

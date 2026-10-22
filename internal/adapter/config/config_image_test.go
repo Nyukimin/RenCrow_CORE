@@ -64,7 +64,7 @@ func validImageVideoBrowserConfig() ImageConfig {
 			Enabled:           true,
 			Host:              "192.168.1.206:18790",
 			Origin:            "http://192.168.1.206:18790",
-			AllowedClientIPv4: []string{"192.168.1.204", "192.168.1.207"},
+			AllowedClientIPv4: []string{"192.168.1.206"},
 			ActorID:           "user:yukimi",
 		},
 	}
@@ -112,6 +112,14 @@ func TestImageVideoBrowserValidationRequiresExactPrivateLANTarget(t *testing.T) 
 	}
 }
 
+func TestImageVideoBrowserValidationKeepsPrivateIPv4AllowlistConfigurable(t *testing.T) {
+	candidate := validImageVideoBrowserConfig()
+	candidate.VideoBrowser.AllowedClientIPv4 = []string{"10.24.8.15", "172.20.0.6"}
+	if err := validateImageVideoBrowserConfig(candidate); err != nil {
+		t.Fatalf("valid configured RFC1918 clients: %v", err)
+	}
+}
+
 func TestLoadConfigImageVideoBrowserReadsLANConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "image-video.yaml")
 	content := `
@@ -127,8 +135,7 @@ image:
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
     allowed_client_ipv4:
-      - "192.168.1.204"
-      - "192.168.1.207"
+      - "192.168.1.206"
     actor_id: "user:yukimi"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
@@ -140,7 +147,7 @@ image:
 	}
 	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration ||
 		cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
-		strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ",") != "192.168.1.204,192.168.1.207" ||
+		strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ",") != "192.168.1.206" ||
 		cfg.Image.VideoBrowser.Host != "192.168.1.206:18790" ||
 		cfg.Image.VideoBrowser.Origin != "http://192.168.1.206:18790" {
 		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t host=%q clients=%q actor_id=%q",
@@ -186,7 +193,7 @@ image:
     enabled: true
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
-    allowed_client_ipv4: ["192.168.1.204", "192.168.1.207"]
+    allowed_client_ipv4: ["192.168.1.206"]
     actor_id: "user:yukimi"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
