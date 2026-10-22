@@ -205,11 +205,7 @@ async function installRoutes(page, actions, calls, options = {}) {
       const requestedMode = requestURL.searchParams.get('mode');
       videoOptionRequests.push({mode: requestedMode, origin: requestURL.origin});
       if (!serveAccess.options) {
-        await route.fulfill({
-          status: 404,
-          contentType: 'application/json',
-          body: JSON.stringify({message: 'Tailscale Serve identity is required.'}),
-        });
+        await route.fulfill({status: 404, body: ''});
         return;
       }
       if (options.videoOptionsUnavailable && options.videoOptionsUnavailable[requestedMode]) {
@@ -685,7 +681,7 @@ async function testSavedJobWaitsForServeOptionsAndRetries(browser) {
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await showMoviePanel(page);
   await page.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
-  assert.match(await page.locator('#movieOptionsError').textContent(), /Tailscale Serve identity is required/);
+  assert.match(await page.locator('#movieOptionsError').textContent(), /この接続ではMovieの利用者を確認できない可能性があります/);
   assert.deepEqual(routes.statusRequests, [], 'saved status is not requested while Serve identity blocks options');
   assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'options denial preserves the saved job id');
 
@@ -707,7 +703,13 @@ async function testServeAuthorizationErrorsAreVisible(browser) {
   await optionsPage.goto(origin, {waitUntil: 'domcontentloaded'});
   await showMoviePanel(optionsPage);
   await optionsPage.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
-  assert.match(await optionsPage.locator('#movieOptionsError').textContent(), /Tailscale Serve identity is required/);
+  const optionsError = await optionsPage.locator('#movieOptionsError').textContent();
+  assert.match(optionsError, /HTTP 404/);
+  assert.match(optionsError, /この接続ではMovieの利用者を確認できない可能性があります/);
+  assert.match(optionsError, /Tailscaleのユーザーアカウントに紐づく端末/);
+  assert.match(optionsError, /タグ付き端末/);
+  assert.match(optionsError, /接続先やサーバー設定による404の場合もある/);
+  assert.equal(await optionsPage.locator('#movieOptionsRetry').isVisible(), true, 'plain 404 offers an options retry');
   assert.equal(await optionsPage.locator('#movieGenerateBtn').isDisabled(), true, 'generation stays unavailable when server options are denied');
   await assertMovieUsesServeIdentity(optionsPage, optionsRoutes);
   await optionsContext.close();

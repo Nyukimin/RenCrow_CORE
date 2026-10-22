@@ -658,9 +658,12 @@
     } catch (requestError) {
       if (revision !== videoOptionsRevision) return null;
       optionsStatus.textContent = 'Video options unavailable';
-      optionsError.textContent = requestError && requestError.message
-        ? `動画設定を読み込めませんでした: ${requestError.message}`
-        : '動画設定を読み込めませんでした。';
+      const errorMessage = requestError && requestError.message ? requestError.message : '';
+      optionsError.textContent = errorMessage === 'HTTP 404'
+        ? '動画設定を読み込めませんでした (HTTP 404)。この接続ではMovieの利用者を確認できない可能性があります。Tailscaleのユーザーアカウントに紐づく端末から開いてください。タグ付き端末などユーザー情報が付かない接続では利用できません。接続先やサーバー設定による404の場合もあるため、再試行しても続く場合は管理者に確認してください。'
+        : errorMessage
+          ? `動画設定を読み込めませんでした: ${errorMessage}`
+          : '動画設定を読み込めませんでした。';
       optionsError.hidden = false;
       optionsRetry.hidden = false;
       setBusy(false);
