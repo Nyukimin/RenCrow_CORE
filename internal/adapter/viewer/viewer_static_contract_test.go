@@ -1382,7 +1382,7 @@ func TestViewerAtlasCapturesOwnerInputBeforeBusyRender(t *testing.T) {
 	}
 }
 
-func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
+func TestViewerStaticContractMovieUsesServeIdentityAndCOREProxy(t *testing.T) {
 	htmlData, err := os.ReadFile("viewer.html")
 	if err != nil {
 		t.Fatalf("read viewer.html: %v", err)
@@ -1429,13 +1429,24 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 		`id="videoProgress"`,
 		`id="videoResult" controls`,
 		`id="videoDownload"`,
-		`id="videoAuthPanel"`,
-		`id="videoCredential" class="desk-input" type="password"`,
-		`id="videoLoginForm"`,
-		`id="videoLogoutButton"`,
 	} {
 		if !strings.Contains(html, needle) {
 			t.Fatalf("video UI is missing %q", needle)
+		}
+	}
+	for _, forbidden := range []string{
+		`id="videoAuthPanel"`,
+		`id="videoCredential"`,
+		`id="videoLoginForm"`,
+		`id="videoLoginButton"`,
+		`id="videoLogoutButton"`,
+		`id="videoAuthStatus"`,
+		`Browser credential`,
+		`Sign in`,
+		`Sign out`,
+	} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("Movie must rely on the existing Serve session and omit browser authentication UI %q", forbidden)
 		}
 	}
 	if strings.Contains(html, `id="imageOutputKind"`) || strings.Contains(html, `id="videoOptions"`) {
@@ -1448,9 +1459,12 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 	moviePanel := html[moviePanelStart:]
 	movieAsideStart := strings.Index(moviePanel, `<aside`)
 	movieAsideEnd := strings.Index(moviePanel, `</aside>`)
-	videoAuthPanel := strings.Index(moviePanel, `id="videoAuthPanel"`)
-	if movieAsideStart < 0 || movieAsideEnd <= movieAsideStart || videoAuthPanel < movieAsideStart || videoAuthPanel > movieAsideEnd {
-		t.Fatal("Movie authentication controls must stay with the Movie form in the left column")
+	movieFormIndex := strings.Index(moviePanel, `id="movieGenerationForm"`)
+	if movieAsideStart < 0 || movieAsideEnd <= movieAsideStart || movieFormIndex < movieAsideStart || movieFormIndex > movieAsideEnd {
+		t.Fatal("Movie controls must stay in the left column")
+	}
+	if !strings.Contains(moviePanel, `class="desk-main movie-main"`) || !strings.Contains(moviePanel, `id="videoResultPanel"`) {
+		t.Fatal("Movie generation status and result must stay in the right column")
 	}
 	if !strings.Contains(viewerJS, `movie: document.getElementById('panel-movie')`) {
 		t.Fatal("Movie must be registered in the existing Viewer tab switch map")
@@ -1469,10 +1483,14 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 	for _, needle := range []string{
 		`/viewer/image/video/options?mode=`,
 		`/viewer/image/video/generations`,
-		`/viewer/image/video/session`,
+		`/viewer/image/video/generations/${encodeURIComponent(id)}`,
 		`/viewer/image/video/${id}.mp4`,
 		`rencrow.image.video.lastJobId`,
+		`rencrow.image.video.pendingRequest`,
 		`localStorage.setItem(savedVideoJobKey, id)`,
+		`async function resumePendingVideoRequest()`,
+		`function loadVideoOptionsAndResume(requestedMode = mode.value`,
+		`if (options) resumeSavedVideoState();`,
 		`payload.status === 'succeeded'`,
 		`payload.status === 'failed'`,
 	} {
@@ -1480,20 +1498,39 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 			t.Fatalf("video UI is missing %q", needle)
 		}
 	}
-	loginStart := strings.Index(js, "async function signInVideo(event)")
-	logoutStart := strings.Index(js, "async function signOutVideo()")
-	if loginStart < 0 || logoutStart <= loginStart {
-		t.Fatal("video UI must provide a browser credential sign-in flow")
+	movieInitStart := strings.Index(js, "(function initMovieTab()")
+	if movieInitStart < 0 {
+		t.Fatal("Movie tab JavaScript initializer is missing")
 	}
-	login := js[loginStart:logoutStart]
-	if strings.Contains(login, "localStorage") || strings.Contains(login, "sessionStorage") || strings.Contains(login, "console.") {
-		t.Fatal("video browser credential must not be persisted or logged")
+	movieJS := js[movieInitStart:]
+	if strings.Count(movieJS, `loadVideoOptionsAndResume(mode.value`) != 2 {
+		t.Fatal("Movie startup and options retry must resume saved state only after options succeed")
 	}
-	if !strings.Contains(login, "credentials: 'same-origin'") || !strings.Contains(login, "videoCredential.value = ''") {
-		t.Fatal("video sign-in must use same-origin credentials and clear the credential field")
+	for _, forbidden := range []string{
+		`/viewer/image/video/session`,
+		`videoAuthenticated`,
+		`videoAuth`,
+		`videoCredential`,
+		`checkVideoSession`,
+		`signInVideo`,
+		`signOutVideo`,
+		`authenticated`,
+	} {
+		if strings.Contains(movieJS, forbidden) {
+			t.Fatalf("Movie must not implement browser credential or video-session checks: found %q", forbidden)
+		}
 	}
 	if strings.Contains(js, "X-RenCrow-Actor-ID") || strings.Contains(js, "/v1/videos/") || strings.Contains(js, "127.0.0.1:8780") {
 		t.Fatal("video UI must use same-origin CORE routes and never set actor identity or call Image directly")
+	}
+	if strings.Count(movieJS, `credentials: 'same-origin'`) != 3 {
+		t.Fatal("Movie options, generation, and status requests must use the existing same-origin Serve identity")
+	}
+	if !strings.Contains(movieJS, `optionsError.hidden = false`) || !strings.Contains(movieJS, `showError(requestError && requestError.message`) {
+		t.Fatal("Movie must display options and generation server errors in the UI")
+	}
+	if strings.Contains(css, `.video-auth`) {
+		t.Fatal("Movie browser authentication styles must be removed")
 	}
 	videoSubmitStart := strings.Index(js, "async function generateVideo()")
 	if videoSubmitStart < 0 {
@@ -1608,10 +1645,10 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 	if validation < 0 || controlsEnabled <= validation {
 		t.Fatal("Image controls must stay disabled until the options response passes validation")
 	}
-	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-image-mode-radios`) {
+	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-serve-session`) {
 		t.Fatal("Image controls script cache key was not updated")
 	}
-	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-image-mode-radios`) {
+	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-movie-serve-session`) {
 		t.Fatal("Image controls stylesheet cache key was not updated")
 	}
 }

@@ -56,18 +56,22 @@ func TestImageGatewayValidationRejectsNonAbsoluteURL(t *testing.T) {
 		t.Fatalf("Validate error = %v, want image.base_url", err)
 	}
 }
-func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
-	valid := ImageConfig{
+
+func validImageVideoBrowserConfig() ImageConfig {
+	return ImageConfig{
 		Enabled: true,
 		VideoBrowser: ImageVideoBrowserConfig{
-			Enabled:          true,
-			Host:             "llm-rx6800.tailb07d8d.ts.net:8444",
-			Origin:           "https://llm-rx6800.tailb07d8d.ts.net:8444",
-			ActorID:          "user:yukimi",
-			CredentialSHA256: strings.Repeat("a", 64),
-			CookieHMACKeyHex: strings.Repeat("b", 64),
+			Enabled:            true,
+			Host:               "llm-rx6800.tailb07d8d.ts.net:8444",
+			Origin:             "https://llm-rx6800.tailb07d8d.ts.net:8444",
+			ActorID:            "user:yukimi",
+			TailscaleUserLogin: "Yukimi+viewer@example.com",
 		},
 	}
+}
+
+func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
+	valid := validImageVideoBrowserConfig()
 	if err := validateImageVideoBrowserConfig(valid); err != nil {
 		t.Fatalf("valid config: %v", err)
 	}
@@ -81,9 +85,11 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 		{name: "non tailscale host", edit: func(c *ImageConfig) { c.VideoBrowser.Host = "example.com:8444" }},
 		{name: "invalid actor kind", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "tailscale:yukimi" }},
 		{name: "empty actor", edit: func(c *ImageConfig) { c.VideoBrowser.ActorID = "" }},
-		{name: "invalid credential verifier", edit: func(c *ImageConfig) { c.VideoBrowser.CredentialSHA256 = "not-a-sha256" }},
-		{name: "missing cookie key", edit: func(c *ImageConfig) { c.VideoBrowser.CookieHMACKeyHex = "" }},
-		{name: "short cookie key", edit: func(c *ImageConfig) { c.VideoBrowser.CookieHMACKeyHex = strings.Repeat("b", 62) }},
+		{name: "missing login", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "" }},
+		{name: "login with spaces", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user name@example.com" }},
+		{name: "login with comma", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user@example.com,other@example.com" }},
+		{name: "login with control", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = "user@example.com\n" }},
+		{name: "login too long", edit: func(c *ImageConfig) { c.VideoBrowser.TailscaleUserLogin = strings.Repeat("a", 321) }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,11 +102,7 @@ func TestImageVideoBrowserValidationRequiresExactServeIdentity(t *testing.T) {
 	}
 }
 
-func TestLoadConfigImageVideoBrowserReadsCredentialSessionConfig(t *testing.T) {
-	credentialHash := strings.Repeat("a", 64)
-	cookieKey := strings.Repeat("b", 64)
-	t.Setenv("RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256", credentialHash)
-	t.Setenv("RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX", cookieKey)
+func TestLoadConfigImageVideoBrowserReadsExactLoginConfig(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "image-video.yaml")
 	content := `
 server:
@@ -115,8 +117,7 @@ image:
     host: "llm-rx6800.tailb07d8d.ts.net:8444"
     origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
     actor_id: "user:yukimi"
-    credential_sha256: "${RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256}"
-    cookie_hmac_key_hex: "${RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX}"
+    tailscale_user_login: "Yukimi+viewer@example.com"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -125,15 +126,16 @@ image:
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration || cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
-		cfg.Image.VideoBrowser.CredentialSHA256 != credentialHash || cfg.Image.VideoBrowser.CookieHMACKeyHex != cookieKey {
-		t.Fatal("video browser credential session config was not loaded")
+	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration ||
+		cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
+		cfg.Image.VideoBrowser.TailscaleUserLogin != "Yukimi+viewer@example.com" {
+		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t actor_id=%q login=%q",
+			cfg.Image.VideoBrowser.Enabled, cfg.Image.VideoBrowser.AllowGeneration,
+			cfg.Image.VideoBrowser.ActorID, cfg.Image.VideoBrowser.TailscaleUserLogin)
 	}
 }
 
 func TestLoadConfigImageVideoGenerationPermissionDefaultsClosed(t *testing.T) {
-	t.Setenv("RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256", strings.Repeat("a", 64))
-	t.Setenv("RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX", strings.Repeat("b", 64))
 	configPath := filepath.Join(t.TempDir(), "image-video-policy.yaml")
 	content := `
 server:
@@ -147,8 +149,7 @@ image:
     host: "llm-rx6800.tailb07d8d.ts.net:8444"
     origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
     actor_id: "user:yukimi"
-    credential_sha256: "${RENCROW_VIDEO_BROWSER_CREDENTIAL_SHA256}"
-    cookie_hmac_key_hex: "${RENCROW_VIDEO_BROWSER_COOKIE_HMAC_KEY_HEX}"
+    tailscale_user_login: "yukimi@example.com"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -159,5 +160,70 @@ image:
 	}
 	if cfg.Image.VideoBrowser.AllowGeneration {
 		t.Fatal("video generation permission must default closed")
+	}
+}
+
+func TestLoadConfigImageVideoBrowserRejectsRemovedSessionKeysRegardlessOfEnabled(t *testing.T) {
+	content := `
+server:
+  port: 8080
+image:
+  enabled: true
+  base_url: "http://127.0.0.1:8780"
+  timeout_ms: 450000
+  video_browser:
+    enabled: ENABLED
+    host: "llm-rx6800.tailb07d8d.ts.net:8444"
+    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    actor_id: "user:yukimi"
+    RETIRED_KEY: "value"
+`
+	cases := []struct {
+		name    string
+		enabled string
+		key     string
+	}{
+		{name: "enabled credential", enabled: "true", key: "credential_sha256"},
+		{name: "enabled cookie key", enabled: "true", key: "cookie_hmac_key_hex"},
+		{name: "disabled credential", enabled: "false", key: "credential_sha256"},
+		{name: "disabled cookie key", enabled: "false", key: "cookie_hmac_key_hex"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "image-video-retired-auth.yaml")
+			configContent := strings.Replace(content, "ENABLED", tt.enabled, 1)
+			configContent = strings.Replace(configContent, "RETIRED_KEY", tt.key, 1)
+			if err := os.WriteFile(configPath, []byte(configContent), 0o600); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), tt.key) {
+				t.Fatalf("LoadConfig error = %v, want retired key %q rejection", err, tt.key)
+			}
+		})
+	}
+}
+
+func TestLoadConfigImageVideoBrowserRejectsDuplicateFields(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "image-video-duplicate.yaml")
+	content := `
+server:
+  port: 8080
+image:
+  enabled: true
+  base_url: "http://127.0.0.1:8780"
+  timeout_ms: 450000
+  video_browser:
+    enabled: true
+    host: "llm-rx6800.tailb07d8d.ts.net:8444"
+    origin: "https://llm-rx6800.tailb07d8d.ts.net:8444"
+    actor_id: "user:yukimi"
+    tailscale_user_login: "yukimi@example.com"
+    tailscale_user_login: "other@example.com"
+`
+	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := LoadConfig(configPath); err == nil || !strings.Contains(err.Error(), "tailscale_user_login") {
+		t.Fatalf("LoadConfig error = %v, want duplicate login rejection", err)
 	}
 }

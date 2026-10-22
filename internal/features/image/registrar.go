@@ -8,7 +8,6 @@ type Routes struct {
 	EditOptions   http.HandlerFunc
 	Edit          http.HandlerFunc
 	Result        http.HandlerFunc
-	VideoSession  http.HandlerFunc
 	VideoOptions  http.HandlerFunc
 	VideoGenerate http.HandlerFunc
 	VideoStatus   http.HandlerFunc
@@ -33,9 +32,6 @@ func RegisterRoutes(mux *http.ServeMux, routes Routes) {
 	}
 	if routes.Result != nil {
 		mux.HandleFunc("/viewer/image/result", routes.Result)
-	}
-	if routes.VideoSession != nil {
-		mux.HandleFunc("/viewer/image/video/session", routes.VideoSession)
 	}
 	if routes.VideoOptions != nil {
 		mux.HandleFunc("/viewer/image/video/options", routes.VideoOptions)

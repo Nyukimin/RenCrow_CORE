@@ -48,18 +48,17 @@ type VideoOptionsGateway interface {
 }
 
 type VideoBrowserAuthConfig struct {
-	Enabled          bool
-	AllowGeneration  bool
-	Host             string
-	Origin           string
-	ActorID          string
-	CredentialSHA256 string
-	CookieHMACKeyHex string
+	Enabled            bool
+	AllowGeneration    bool
+	Host               string
+	Origin             string
+	ActorID            string
+	TailscaleUserLogin string
 }
 
 func HandleVideoOptions(gateway VideoOptionsGateway, auth VideoBrowserAuthConfig) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !auth.videoRequestAllowed(r) {
+		if _, ok := auth.videoActorID(r); !ok {
 			http.NotFound(w, r)
 			return
 		}

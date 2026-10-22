@@ -17,7 +17,6 @@ const imageCSS = fs.readFileSync(path.join(repoRoot, 'internal/adapter/viewer/as
 const origin = 'https://image-video-idempotency.test';
 const pendingKey = 'rencrow.image.video.pendingRequest';
 const jobKey = 'rencrow.image.video.lastJobId';
-const credential = 'browser-test-credential-0123456789abcdef0123456789abcdef';
 const maxImageUploadBytes = 20 * 1024 * 1024;
 const resultPNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
 
@@ -32,12 +31,12 @@ function fixtureHTML() {
   <section class="desk-screen desk-workspace image-workspace">
     <aside class="desk-side image-side">
       <form id="imageGenerationForm" class="daily-desk-card image-prompt-card" novalidate>
-        <label for="imageMode">Mode</label>
-        <select id="imageMode" class="desk-select">
-          <option value="t2i">Text to Image</option>
-          <option value="pose" disabled>Pose (unavailable)</option>
-          <option value="clothing" disabled>Clothing (unavailable)</option>
-        </select>
+        <fieldset id="imageModeOptions" class="image-mode-options">
+          <legend>Mode</legend>
+          <label><input id="imageModeT2I" type="radio" name="imageMode" value="t2i" checked><span>Text to Image</span></label>
+          <label><input id="imageModePose" type="radio" name="imageMode" value="pose" disabled><span>Pose</span></label>
+          <label><input id="imageModeClothing" type="radio" name="imageMode" value="clothing" disabled><span>Clothing</span></label>
+        </fieldset>
         <p id="imageEditOptionsStatus" role="status" aria-live="polite"></p>
         <label id="imagePromptLabel" for="imagePrompt">Prompt</label>
         <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000"></textarea>
@@ -105,14 +104,6 @@ function fixtureHTML() {
           <input id="movieSeed" value="42">
           <button id="movieGenerateBtn" type="submit">Generate video</button>
         </form>
-        <section id="videoAuthPanel">
-          <form id="videoLoginForm">
-            <input id="videoCredential" type="password">
-            <button id="videoLoginButton" type="submit">Sign in</button>
-          </form>
-          <button id="videoLogoutButton" type="button" hidden>Sign out</button>
-          <p id="videoAuthStatus"></p>
-        </section>
       </aside>
       <section class="desk-main movie-main">
         <div id="movieStatus"></div>
@@ -134,15 +125,20 @@ function fixtureHTML() {
 
 async function installRoutes(page, actions, calls, options = {}) {
   const serverJobs = new Map();
-  let authenticated = Boolean(options.authenticated);
-  const loginRequests = [];
+  const serveAccess = options.serveAccess || {options: true, generation: true, status: true};
+  const sessionRequests = [];
   const statusRequests = [];
+  const generationRequests = [];
+  const videoRequests = [];
   const imageCalls = [];
   const videoOptionRequests = [];
   if (options.savedJob) serverJobs.set('saved', options.savedJob);
   await page.route(`${origin}/**`, async (route) => {
     const request = route.request();
     const requestURL = new URL(request.url());
+    if (requestURL.pathname.startsWith('/viewer/image/video/')) {
+      videoRequests.push({method: request.method(), path: requestURL.pathname, origin: requestURL.origin});
+    }
     if (requestURL.pathname === '/' && request.method() === 'GET') {
       await route.fulfill({status: 200, contentType: 'text/html', body: fixtureHTML()});
       return;
@@ -207,7 +203,15 @@ async function installRoutes(page, actions, calls, options = {}) {
     }
     if (requestURL.pathname === '/viewer/image/video/options' && request.method() === 'GET') {
       const requestedMode = requestURL.searchParams.get('mode');
-      videoOptionRequests.push({mode: requestedMode, authenticated});
+      videoOptionRequests.push({mode: requestedMode, origin: requestURL.origin});
+      if (!serveAccess.options) {
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({message: 'Tailscale Serve identity is required.'}),
+        });
+        return;
+      }
       if (options.videoOptionsUnavailable && options.videoOptionsUnavailable[requestedMode]) {
         await route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({message: 'options temporarily unavailable'})});
         return;
@@ -234,36 +238,19 @@ async function installRoutes(page, actions, calls, options = {}) {
       await route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(payload)});
       return;
     }
-    if (requestURL.pathname === '/viewer/image/video/session' && request.method() === 'GET') {
-      const sessionAtRequestStart = authenticated;
-      if (options.sessionDelayMs) await new Promise((resolve) => setTimeout(resolve, options.sessionDelayMs));
-      const sessionForResponse = options.snapshotSession ? sessionAtRequestStart : authenticated;
-      await route.fulfill({
-        status: sessionForResponse ? 200 : 401,
-        contentType: 'application/json',
-        body: JSON.stringify({authenticated: sessionForResponse}),
-      });
-      return;
-    }
-    if (requestURL.pathname === '/viewer/image/video/session' && request.method() === 'POST') {
-      const payload = JSON.parse(request.postData() || '{}');
-      loginRequests.push(payload);
-      authenticated = payload.credential === credential;
-      await route.fulfill({
-        status: authenticated ? 200 : 401,
-        contentType: 'application/json',
-        body: JSON.stringify({authenticated}),
-      });
-      return;
-    }
-    if (requestURL.pathname === '/viewer/image/video/session' && request.method() === 'DELETE') {
-      authenticated = false;
-      await route.fulfill({status: 204, body: ''});
+    if (requestURL.pathname === '/viewer/image/video/session') {
+      sessionRequests.push({method: request.method(), path: requestURL.pathname});
+      await route.fulfill({status: 410, contentType: 'application/json', body: JSON.stringify({message: 'Video session API was removed.'})});
       return;
     }
     if (requestURL.pathname === '/viewer/image/video/generations' && request.method() === 'POST') {
-      if (!authenticated) {
-        await route.fulfill({status: 404, contentType: 'application/json', body: '{}'});
+      generationRequests.push({method: request.method(), path: requestURL.pathname, origin: requestURL.origin});
+      if (!serveAccess.generation) {
+        await route.fulfill({
+          status: 404,
+          contentType: 'application/json',
+          body: JSON.stringify({message: 'Tailscale Serve identity is required.'}),
+        });
         return;
       }
       const pendingRaw = await page.evaluate((key) => localStorage.getItem(key), pendingKey);
@@ -296,7 +283,7 @@ async function installRoutes(page, actions, calls, options = {}) {
     const statusPrefix = '/viewer/image/video/generations/';
     if (requestURL.pathname.startsWith(statusPrefix) && request.method() === 'GET') {
       const jobID = requestURL.pathname.slice(statusPrefix.length);
-      if (!authenticated) {
+      if (!serveAccess.status) {
         await route.fulfill({status: 404, contentType: 'application/json', body: '{}'});
         return;
       }
@@ -314,18 +301,7 @@ async function installRoutes(page, actions, calls, options = {}) {
     }
     await route.abort();
   });
-  return {serverJobs, loginRequests, statusRequests, imageCalls, videoOptionRequests};
-}
-
-async function signInVideo(page) {
-  await showMoviePanel(page);
-  await page.locator('#videoCredential').fill(credential);
-  await page.click('#videoLoginButton');
-  await page.waitForFunction(() => document.getElementById('videoAuthStatus').textContent === '動画を利用できます。');
-  assert.equal(await page.locator('#videoCredential').inputValue(), '', 'credential field is cleared after login');
-  assert.equal(await page.evaluate(() => location.href.includes('browser-test-credential')), false, 'credential is not in the URL');
-  assert.equal(await page.evaluate(() => Object.values(localStorage).some((value) => value.includes('browser-test-credential'))), false, 'credential is not in localStorage');
-  assert.equal(await page.evaluate(() => Object.values(sessionStorage).some((value) => value.includes('browser-test-credential'))), false, 'credential is not in sessionStorage');
+  return {serverJobs, sessionRequests, statusRequests, generationRequests, videoRequests, imageCalls, videoOptionRequests};
 }
 
 async function showMoviePanel(page) {
@@ -333,6 +309,14 @@ async function showMoviePanel(page) {
     document.getElementById('panel-image').classList.remove('active');
     document.getElementById('panel-movie').classList.add('active');
   });
+}
+
+async function assertMovieUsesServeIdentity(page, routes) {
+  for (const selector of ['#videoAuthPanel', '#videoCredential', '#videoLoginForm', '#videoLoginButton', '#videoLogoutButton', '#videoAuthStatus']) {
+    assert.equal(await page.locator(selector).count(), 0, `Movie has no browser-auth UI: ${selector}`);
+  }
+  assert.deepEqual(routes.sessionRequests, [], 'Movie never calls its removed session API');
+  assert.ok(routes.videoRequests.every((request) => request.origin === origin), 'Movie options, generation, and status stay on the Viewer origin');
 }
 
 async function waitForSubmissionResult(page, accepted) {
@@ -362,13 +346,13 @@ async function testImageModesAndUploads(browser) {
   page.on('console', (message) => {
     if (message.type() === 'error') browserErrors.push(message.text());
   });
-  const routes = await installRoutes(page, [], [], {authenticated: true});
+  const routes = await installRoutes(page, [], [], {});
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await page.waitForFunction(() => document.getElementById('imageOptionsStatus').textContent.includes('画像モデルを利用できます'));
-  await page.waitForFunction(() => !document.querySelector('#imageMode option[value="pose"]').disabled);
+  await page.waitForFunction(() => !document.getElementById('imageModePose').disabled);
 
-  assert.equal(await page.locator('#imageMode').inputValue(), 't2i');
-  assert.equal(await page.locator('#imageMode option[value="clothing"]').isDisabled(), false);
+  assert.equal(await page.locator('#imageModeT2I').isChecked(), true);
+  assert.equal(await page.locator('#imageModeClothing').isDisabled(), false);
   assert.equal(await page.locator('#imageModel').inputValue(), 'moss_profile');
   assert.equal(await page.locator('#imageLoraStrength').isVisible(), true, 'MOSS LoRA control follows advertised features');
   assert.equal(await page.locator('#imageFaceDetailerField').isVisible(), true, 'MOSS FaceDetailer control follows advertised features');
@@ -403,9 +387,9 @@ async function testImageModesAndUploads(browser) {
 
   const person = {name: 'person.png', mimeType: 'image/png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3])};
   const poseReference = {name: 'pose-reference.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 1, 2, 3])};
-  await page.selectOption('#imageMode', 'pose');
+  await page.check('#imageModePose');
   assert.match(await page.locator('#imageEditModelLabel').textContent(), /Qwen Image Edit 2511/);
-  assert.equal(await page.locator('#imageReferenceImageLabel').textContent(), 'Pose reference (PNG or JPEG)');
+  assert.equal(await page.locator('#imageReferenceImageLabel').textContent(), 'ポーズ参照画像');
   await page.fill('#imagePrompt', 'Use the reference body pose');
   await page.fill('#imageSeed', '-1');
   await page.locator('#imagePersonImage').setInputFiles(person);
@@ -424,9 +408,9 @@ async function testImageModesAndUploads(browser) {
   assert.match(await page.locator('#imageResultMeta').textContent(), /Image edit \/ pose/);
 
   const clothingReference = {name: 'coat.jpg', mimeType: 'image/jpeg', buffer: Buffer.from([0xff, 0xd8, 0xff, 4, 5, 6])};
-  await page.selectOption('#imageMode', 'clothing');
+  await page.check('#imageModeClothing');
   assert.match(await page.locator('#imageEditModelLabel').textContent(), /Qwen Image Edit 2511/);
-  assert.equal(await page.locator('#imageReferenceImageLabel').textContent(), 'Clothing reference (PNG or JPEG)');
+  assert.equal(await page.locator('#imageReferenceImageLabel').textContent(), '着せたい服の画像');
   await page.fill('#imagePrompt', 'Use the coat from the reference');
   await page.fill('#imageSeed', '7');
   await page.locator('#imagePersonImage').setInputFiles(person);
@@ -473,11 +457,11 @@ async function testNonComfyOptionsFallbackAndUnavailableEdits(browser) {
   });
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await page.waitForFunction(() => document.getElementById('imageOptionsStatus').textContent.includes('non_comfy_default'));
-  await page.waitForFunction(() => document.getElementById('imageEditOptionsStatus').textContent.includes('not configured'));
+  await page.waitForFunction(() => document.getElementById('imageEditOptionsStatus').textContent.includes('画像編集workflowが設定されていない'));
   assert.equal(await page.locator('#imageDynamicOptions').isVisible(), false, 'empty model list hides model-specific controls');
   assert.equal(await page.locator('#imageGenerateBtn').isDisabled(), false, 'valid empty models fallback still allows T2I');
-  assert.equal(await page.locator('#imageMode option[value="pose"]').isDisabled(), true);
-  assert.equal(await page.locator('#imageMode option[value="clothing"]').isDisabled(), true);
+  assert.equal(await page.locator('#imageModePose').isDisabled(), true);
+  assert.equal(await page.locator('#imageModeClothing').isDisabled(), true);
 
   await page.fill('#imagePrompt', 'Default backend profile image');
   await page.fill('#imageSeed', '9');
@@ -497,12 +481,12 @@ async function testT2VRetry(browser) {
   const routes = await installRoutes(page, ['drop', 'accept'], calls);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
-  assert.equal(routes.videoOptionRequests[0].authenticated, false, 'video options are available before browser login');
+  await assertMovieUsesServeIdentity(page, routes);
+  assert.deepEqual(routes.videoOptionRequests[0], {mode: 't2v', origin}, 'T2V options use the existing Serve identity on the Viewer origin');
   assert.equal(await page.locator('#movieModel').textContent(), 'hunyuan-video-t2v');
   assert.equal(await page.locator('#movieMegapixels').textContent(), '0.2');
   assert.equal(await page.locator('#movieDurationSeconds').textContent(), '5');
   assert.equal(await page.locator('#movieSteps').textContent(), '8');
-  await signInVideo(page);
   await prepareVideo(page, 't2v', 'A paper boat crossing a quiet lake');
   await page.selectOption('#movieAspectRatio', '4:3 (Standard)');
   await page.click('#movieGenerateBtn');
@@ -515,7 +499,11 @@ async function testT2VRetry(browser) {
   assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey, 'T2V retry must reuse its persisted key');
   assert.equal(calls[0].jobID, calls[1].jobID, 'lost 202 retry must recover the accepted T2V job');
   assert.equal(routes.serverJobs.size, 1, 'same T2V key must not create a duplicate job');
-  assert.deepEqual(routes.loginRequests, [{credential}], 'login submits the credential to the session endpoint');
+  await assertMovieUsesServeIdentity(page, routes);
+  assert.deepEqual(routes.generationRequests, [
+    {method: 'POST', path: '/viewer/image/video/generations', origin},
+    {method: 'POST', path: '/viewer/image/video/generations', origin},
+  ], 'the initial generation and retry stay on the Viewer origin');
   for (const call of calls) {
     assert.ok(call.pending, 'pending key must be persisted before POST');
     assert.equal(call.pending.key, call.idempotencyKey);
@@ -537,6 +525,7 @@ async function testT2VRetry(browser) {
   assert.equal(calls.length, 3);
   assert.notEqual(calls[2].idempotencyKey, calls[1].idempotencyKey, 'changing aspect ratio creates a distinct idempotency key');
   assert.match(calls[2].body.toString('latin1'), /name="aspect_ratio"\r\n\r\n1:1 \(Square\)\r\n/);
+  assert.equal(routes.generationRequests.length, 3, 'a changed aspect ratio submits one distinct generation on the Viewer origin');
   await context.close();
 }
 
@@ -546,7 +535,6 @@ async function testT2VReloadOptionsFailureRetryPreservesAspect(browser) {
   const calls = [];
   const videoOptionsUnavailable = {t2v: false};
   const routes = await installRoutes(page, ['drop', 'accept'], calls, {
-    authenticated: true,
     videoOptionsUnavailable,
   });
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
@@ -594,12 +582,12 @@ async function testMovieOptionsAreModeSpecific(browser) {
   assert.equal(await page.locator('#movieMode').inputValue(), 't2v');
   assert.equal(await page.locator('#movieModel').textContent(), 'hunyuan-video-t2v');
   assert.equal(await page.locator('#movieAspectRatio').inputValue(), '16:9 (Widescreen)');
-  assert.deepEqual(routes.videoOptionRequests[0], {mode: 't2v', authenticated: false});
+  assert.deepEqual(routes.videoOptionRequests[0], {mode: 't2v', origin});
 
   await page.selectOption('#movieMode', 'i2v');
   await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'hunyuan-video-i2v');
   assert.equal(await page.locator('#movieAspectRatio').inputValue(), '1:1 (Square)');
-  assert.deepEqual(routes.videoOptionRequests.at(-1), {mode: 'i2v', authenticated: false});
+  assert.deepEqual(routes.videoOptionRequests.at(-1), {mode: 'i2v', origin});
   const layout = await page.locator('.movie-workspace').evaluate((node) => ({
     columns: getComputedStyle(node).gridTemplateColumns.split(' ').length,
     documentWidth: document.documentElement.scrollWidth,
@@ -616,7 +604,8 @@ async function testI2VReloadRetryAndImageChange(browser) {
   const calls = [];
   const routes = await installRoutes(page, ['drop', 'drop', 'accept'], calls);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
-  await signInVideo(page);
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await assertMovieUsesServeIdentity(page, routes);
   await prepareVideo(page, 'i2v', 'A paper boat crossing a quiet lake');
   const imageA = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03]);
   await page.locator('#movieInputImage').setInputFiles({
@@ -671,7 +660,7 @@ async function testI2VReloadRetryAndImageChange(browser) {
   await context.close();
 }
 
-async function testLoginRequiredAndSavedJobResumesAfterAuthentication(browser) {
+async function testSavedJobResumesWithoutBrowserLogin(browser) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const calls = [];
@@ -679,46 +668,83 @@ async function testLoginRequiredAndSavedJobResumesAfterAuthentication(browser) {
   await page.addInitScript((key) => localStorage.setItem(key, 'vid_saved'), jobKey);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
   await showMoviePanel(page);
-  await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('認証すると保存した動画'));
-  assert.deepEqual(routes.statusRequests, [], 'saved job is not queried before authentication');
-  await signInVideo(page);
   await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('queued'));
-  assert.deepEqual(routes.statusRequests, ['vid_saved'], 'saved job resumes after successful login');
-  assert.equal(await page.locator('#videoLogoutButton').isVisible(), true, 'sign-out is visible while authenticated');
-  await page.click('#videoLogoutButton');
-  await page.waitForFunction(() => document.getElementById('videoAuthStatus').textContent.includes('サインアウトしました'));
-  assert.equal(await page.locator('#videoLoginForm').isVisible(), true, 'login form returns after sign-out');
-  assert.equal(await page.locator('#videoLogoutButton').isVisible(), false, 'sign-out hides after sign-out');
-  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'sign-out preserves the saved job for the next login');
+  assert.deepEqual(routes.statusRequests, ['vid_saved'], 'saved job resumes on startup after options succeed');
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'polling preserves the saved job id');
+  await assertMovieUsesServeIdentity(page, routes);
   await context.close();
 }
 
-async function testDelayedSessionDoubleClickSubmitsOnlyOnce(browser) {
+async function testSavedJobWaitsForServeOptionsAndRetries(browser) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const calls = [];
-  await installRoutes(page, ['accept'], calls, {authenticated: true, sessionDelayMs: 100});
+  const serveAccess = {options: false, generation: true, status: true};
+  const routes = await installRoutes(page, [], calls, {savedJob: 'vid_saved', serveAccess});
+  await page.addInitScript((key) => localStorage.setItem(key, 'vid_saved'), jobKey);
   await page.goto(origin, {waitUntil: 'domcontentloaded'});
-  await prepareVideo(page, 't2v', 'One job after a delayed session check');
+  await showMoviePanel(page);
+  await page.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
+  assert.match(await page.locator('#movieOptionsError').textContent(), /Tailscale Serve identity is required/);
+  assert.deepEqual(routes.statusRequests, [], 'saved status is not requested while Serve identity blocks options');
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved', 'options denial preserves the saved job id');
+
+  serveAccess.options = true;
+  await page.click('#movieOptionsRetry');
+  await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('queued'));
+  assert.deepEqual(routes.statusRequests, ['vid_saved'], 'successful options retry resumes the existing job');
+  assert.equal(await page.evaluate((key) => localStorage.getItem(key), jobKey), 'vid_saved');
+  await assertMovieUsesServeIdentity(page, routes);
+  await context.close();
+}
+
+async function testServeAuthorizationErrorsAreVisible(browser) {
+  const optionsContext = await browser.newContext();
+  const optionsPage = await optionsContext.newPage();
+  const optionsRoutes = await installRoutes(optionsPage, [], [], {
+    serveAccess: {options: false, generation: true, status: true},
+  });
+  await optionsPage.goto(origin, {waitUntil: 'domcontentloaded'});
+  await showMoviePanel(optionsPage);
+  await optionsPage.waitForFunction(() => !document.getElementById('movieOptionsRetry').hidden);
+  assert.match(await optionsPage.locator('#movieOptionsError').textContent(), /Tailscale Serve identity is required/);
+  assert.equal(await optionsPage.locator('#movieGenerateBtn').isDisabled(), true, 'generation stays unavailable when server options are denied');
+  await assertMovieUsesServeIdentity(optionsPage, optionsRoutes);
+  await optionsContext.close();
+
+  const generationContext = await browser.newContext();
+  const generationPage = await generationContext.newPage();
+  const generationRoutes = await installRoutes(generationPage, [], [], {
+    serveAccess: {options: true, generation: false, status: true},
+  });
+  await generationPage.goto(origin, {waitUntil: 'domcontentloaded'});
+  await showMoviePanel(generationPage);
+  await generationPage.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await prepareVideo(generationPage, 't2v', 'A request denied by the Serve identity gate');
+  await generationPage.click('#movieGenerateBtn');
+  await generationPage.waitForFunction(() => !document.getElementById('movieError').hidden);
+  assert.match(await generationPage.locator('#movieError').textContent(), /Tailscale Serve identity is required/);
+  assert.equal(generationRoutes.generationRequests.length, 1, 'the UI sends the request to CORE and displays its error response');
+  await assertMovieUsesServeIdentity(generationPage, generationRoutes);
+  await generationContext.close();
+}
+
+async function testRapidDoubleClickSubmitsOnlyOnceWithoutSessionCheck(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const calls = [];
+  const routes = await installRoutes(page, ['accept'], calls);
+  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await prepareVideo(page, 't2v', 'One job after a rapid double click');
   await page.locator('#movieGenerateBtn').evaluate((button) => {
     button.click();
     button.click();
   });
   await waitForSubmissionResult(page, true);
-  assert.equal(calls.length, 1, 'rapid clicks while session validation is pending submit one generation request');
-  await context.close();
-}
-
-async function testLateInitialSessionDoesNotUndoLogin(browser) {
-  const context = await browser.newContext();
-  const page = await context.newPage();
-  const calls = [];
-  await installRoutes(page, [], calls, {sessionDelayMs: 600, snapshotSession: true});
-  await page.goto(origin, {waitUntil: 'domcontentloaded'});
-  await signInVideo(page);
-  await page.waitForTimeout(650);
-  assert.equal(await page.locator('#videoLoginForm').isVisible(), false, 'late unauthenticated startup response cannot undo successful login');
-  assert.equal(await page.locator('#videoLogoutButton').isVisible(), true, 'authenticated sign-out remains visible after the stale response');
+  assert.equal(calls.length, 1, 'rapid clicks submit one generation request without a session-check delay');
+  assert.equal(routes.generationRequests.length, 1);
+  await assertMovieUsesServeIdentity(page, routes);
   await context.close();
 }
 
@@ -730,10 +756,11 @@ try {
   await testT2VRetry(browser);
   await testT2VReloadOptionsFailureRetryPreservesAspect(browser);
   await testI2VReloadRetryAndImageChange(browser);
-  await testLoginRequiredAndSavedJobResumesAfterAuthentication(browser);
-  await testDelayedSessionDoubleClickSubmitsOnlyOnce(browser);
-  await testLateInitialSessionDoesNotUndoLogin(browser);
-  process.stdout.write('PASS: Image T2I/Pose/Clothing, non-Comfy fallback, upload boundary, responsive layout, and Movie auth/idempotency flows\n');
+  await testSavedJobResumesWithoutBrowserLogin(browser);
+  await testSavedJobWaitsForServeOptionsAndRetries(browser);
+  await testServeAuthorizationErrorsAreVisible(browser);
+  await testRapidDoubleClickSubmitsOnlyOnceWithoutSessionCheck(browser);
+  process.stdout.write('PASS: Image T2I/Pose/Clothing, non-Comfy fallback, upload boundary, responsive layout, and Movie Serve/idempotency flows\n');
 } finally {
   await browser.close();
 }

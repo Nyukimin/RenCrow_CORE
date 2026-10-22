@@ -1,176 +1,163 @@
 package viewer
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 )
 
-func videoSessionRequest(method string, body string) *http.Request {
-	req := httptest.NewRequest(method, "/viewer/image/video/session", strings.NewReader(body))
+func TestVideoActorIDMapsOneExactTailscaleLoginToConfiguredUser(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Host = videoTestHost
-	req.Header.Set("Origin", videoTestOrigin)
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return req
-}
+	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 
-func TestHandleVideoSessionLoginAndLogoutUseSecureScopedCookie(t *testing.T) {
-	auth := videoAuthConfig()
-	rec := httptest.NewRecorder()
-	HandleVideoSession(auth).ServeHTTP(rec, videoSessionRequest(http.MethodPost, `{"credential":"`+videoTestToken+`"}`))
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), videoTestToken) {
-		t.Fatalf("login status=%d body=%q", rec.Code, rec.Body.String())
-	}
-	if rec.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("login Cache-Control=%q", rec.Header().Get("Cache-Control"))
-	}
-	cookies := rec.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("login set %d cookies, want one", len(cookies))
-	}
-	cookie := cookies[0]
-	if cookie.Name != videoSessionCookieName || cookie.Value == "" || cookie.Path != videoSessionCookiePath ||
-		cookie.Domain != "" || !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge <= 0 {
-		t.Fatalf("session cookie attributes are incomplete: name=%q path=%q domain=%q secure=%t httpOnly=%t sameSite=%d maxAge=%d", cookie.Name, cookie.Path, cookie.Domain, cookie.Secure, cookie.HttpOnly, cookie.SameSite, cookie.MaxAge)
-	}
-
-	statusReq := videoSessionRequest(http.MethodGet, "")
-	statusReq.Header.Del("Origin")
-	statusReq.AddCookie(cookie)
-	statusRec := httptest.NewRecorder()
-	HandleVideoSession(auth).ServeHTTP(statusRec, statusReq)
-	var session struct {
-		Authenticated bool `json:"authenticated"`
-	}
-	if statusRec.Code != http.StatusOK || json.Unmarshal(statusRec.Body.Bytes(), &session) != nil || !session.Authenticated {
-		t.Fatalf("session status=%d body=%q", statusRec.Code, statusRec.Body.String())
-	}
-
-	logoutReq := videoSessionRequest(http.MethodDelete, "")
-	logoutReq.AddCookie(cookie)
-	logoutRec := httptest.NewRecorder()
-	HandleVideoSession(auth).ServeHTTP(logoutRec, logoutReq)
-	cleared := logoutRec.Result().Cookies()
-	if logoutRec.Code != http.StatusNoContent || len(cleared) != 1 || cleared[0].Name != videoSessionCookieName ||
-		cleared[0].Path != videoSessionCookiePath || !cleared[0].Secure || !cleared[0].HttpOnly || cleared[0].MaxAge >= 0 {
-		t.Fatalf("logout status=%d cookies=%+v", logoutRec.Code, cleared)
+	actorID, ok := videoAuthConfig().videoActorID(req)
+	if !ok || actorID != videoTestActor {
+		t.Fatalf("actorID=%q authenticated=%t", actorID, ok)
 	}
 }
 
-func TestHandleVideoSessionRejectsWrongCredential(t *testing.T) {
-	req := videoSessionRequest(http.MethodPost, `{"credential":"`+strings.Repeat("x", 40)+`"}`)
-	rec := httptest.NewRecorder()
-	HandleVideoSession(videoAuthConfig()).ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized || rec.Header().Get("Set-Cookie") != "" || strings.Contains(rec.Body.String(), "wrong-token") {
-		t.Fatalf("wrong credential status=%d cookie=%q body=%q", rec.Code, rec.Header().Get("Set-Cookie"), rec.Body.String())
-	}
-}
-
-func TestHandleVideoSessionRejectsUntrustedRoute(t *testing.T) {
+func TestVideoActorIDRejectsMissingOrNonExactLoginHeader(t *testing.T) {
 	cases := []struct {
-		name string
-		edit func(*http.Request)
+		name  string
+		login []string
 	}{
-		{name: "wrong host", edit: func(r *http.Request) { r.Host = "attacker.example" }},
-		{name: "LAN request", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.207:43210" }},
-		{name: "missing HTTPS origin", edit: func(r *http.Request) { r.Header.Del("Origin") }},
-		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "https://attacker.example") }},
-		{name: "duplicate origin", edit: func(r *http.Request) { r.Header.Add("Origin", videoTestOrigin) }},
-		{name: "Funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
+		{name: "missing"},
+		{name: "empty", login: []string{""}},
+		{name: "wrong", login: []string{"other@example.com"}},
+		{name: "case changed", login: []string{"Yukimi@example.com"}},
+		{name: "duplicate", login: []string{videoTestLogin, videoTestLogin}},
+		{name: "comma joined", login: []string{videoTestLogin + ", " + videoTestLogin}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			req := videoSessionRequest(http.MethodPost, `{"credential":"`+videoTestToken+`"}`)
-			tc.edit(req)
-			rec := httptest.NewRecorder()
-			HandleVideoSession(videoAuthConfig()).ServeHTTP(rec, req)
-			if rec.Code != http.StatusNotFound || rec.Header().Get("Set-Cookie") != "" {
-				t.Fatalf("untrusted request status=%d Set-Cookie=%q", rec.Code, rec.Header().Get("Set-Cookie"))
+			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
+			req.RemoteAddr = "127.0.0.1:43210"
+			req.Host = videoTestHost
+			for _, value := range tc.login {
+				req.Header.Add("Tailscale-User-Login", value)
+			}
+			if _, ok := videoAuthConfig().videoActorID(req); ok {
+				t.Fatal("request unexpectedly authenticated")
 			}
 		})
 	}
 }
 
-func TestVideoRoutesRejectInvalidSessionBeforeGateway(t *testing.T) {
-	auth := videoAuthConfig()
-	otherUser := videoAuthConfig()
-	otherUser.ActorID = "user:other"
-	expired, err := auth.signVideoSession(time.Now().Add(-time.Minute).Unix(), []byte(strings.Repeat("n", 32)))
-	if err != nil {
-		t.Fatalf("sign expired session: %v", err)
+func TestVideoActorIDRejectsDuplicateHeaderNamesWithDifferentCase(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Host = videoTestHost
+	req.Header["Tailscale-User-Login"] = []string{videoTestLogin}
+	req.Header["tailscale-user-login"] = []string{videoTestLogin}
+	if _, ok := videoAuthConfig().videoActorID(req); ok {
+		t.Fatal("request with duplicate case-variant login headers unexpectedly authenticated")
 	}
-	otherUserCookie, err := otherUser.newSessionCookie(time.Now())
-	if err != nil {
-		t.Fatalf("create other-user session: %v", err)
-	}
-	validCookie, err := auth.newSessionCookie(time.Now())
-	if err != nil {
-		t.Fatalf("create valid session: %v", err)
-	}
-	parts := strings.Split(validCookie.Value, ".")
-	if len(parts) != 4 || parts[3] == "" {
-		t.Fatal("test session cookie has unexpected format")
-	}
-	firstSignatureByte := byte('x')
-	if parts[3][0] == firstSignatureByte {
-		firstSignatureByte = 'y'
-	}
-	parts[3] = string(firstSignatureByte) + parts[3][1:]
-	tampered := strings.Join(parts, ".")
-	invalidCookies := []struct {
-		name  string
-		value string
-	}{
-		{name: "unauthenticated"},
-		{name: "tampered", value: tampered},
-		{name: "expired", value: expired},
-		{name: "other actor", value: otherUserCookie.Value},
-	}
+}
+
+func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 	routes := []struct {
-		name   string
-		method string
-		path   string
+		name    string
+		request func(*testing.T) *http.Request
+		handler func(*fakeVideoGateway) http.HandlerFunc
 	}{
-		{name: "generate", method: http.MethodPost, path: "/viewer/image/video/generations"},
-		{name: "status", method: http.MethodGet, path: "/viewer/image/video/generations/vid_abc"},
-		{name: "media", method: http.MethodGet, path: "/viewer/image/video/vid_abc.mp4"},
+		{
+			name: "options",
+			request: func(_ *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=t2v", nil)
+			},
+			handler: func(g *fakeVideoGateway) http.HandlerFunc {
+				return HandleVideoOptions(g, videoAuthConfig())
+			},
+		},
+		{
+			name: "generate",
+			request: func(t *testing.T) *http.Request {
+				req, _ := videoRequest(t, "t2v", nil)
+				req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
+				return req
+			},
+			handler: func(g *fakeVideoGateway) http.HandlerFunc {
+				return HandleVideoGenerate(g, videoAuthConfig())
+			},
+		},
+		{
+			name: "status",
+			request: func(_ *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/generations/vid_abc", nil)
+			},
+			handler: func(g *fakeVideoGateway) http.HandlerFunc {
+				return HandleVideoStatus(g, videoAuthConfig())
+			},
+		},
+		{
+			name: "mp4",
+			request: func(_ *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/viewer/image/video/vid_abc.mp4", nil)
+			},
+			handler: func(g *fakeVideoGateway) http.HandlerFunc {
+				return HandleVideoResult(g, videoAuthConfig())
+			},
+		},
+	}
+	edits := []struct {
+		name string
+		edit func(*http.Request)
+	}{
+		{name: "missing login", edit: func(r *http.Request) { r.Header.Del("Tailscale-User-Login") }},
+		{name: "wrong login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "other@example.com") }},
+		{name: "duplicate login", edit: func(r *http.Request) { r.Header.Add("Tailscale-User-Login", videoTestLogin) }},
+		{name: "LAN request", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }},
+		{name: "wrong host", edit: func(r *http.Request) { r.Host = "attacker.example" }},
+		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "https://attacker.example") }},
+		{name: "Funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
 	}
 	for _, route := range routes {
-		for _, invalid := range invalidCookies {
-			t.Run(route.name+"/"+invalid.name, func(t *testing.T) {
+		for _, edit := range edits {
+			t.Run(route.name+"/"+edit.name, func(t *testing.T) {
 				gateway := &fakeVideoGateway{}
-				var req *http.Request
-				if route.name == "generate" {
-					req, _ = videoRequest(t, "t2v", nil)
-				} else {
-					req = httptest.NewRequest(route.method, route.path, nil)
-				}
+				req := route.request(t)
 				req.RemoteAddr = "127.0.0.1:43210"
 				req.Host = videoTestHost
-				req.Header.Set("Origin", videoTestOrigin)
-				if route.name == "media" {
-					req.Header.Set("Range", "bytes=0-4")
+				req.Header.Set("Tailscale-User-Login", videoTestLogin)
+				if req.Method == http.MethodPost {
+					req.Header.Set("Origin", videoTestOrigin)
 				}
-				if invalid.value != "" {
-					req.Header.Set("Cookie", videoSessionCookieName+"="+invalid.value)
-				}
+				edit.edit(req)
 				rec := httptest.NewRecorder()
-				switch route.name {
-				case "generate":
-					HandleVideoGenerate(gateway, auth).ServeHTTP(rec, req)
-				case "status":
-					HandleVideoStatus(gateway, auth).ServeHTTP(rec, req)
-				case "media":
-					HandleVideoResult(gateway, auth).ServeHTTP(rec, req)
+				route.handler(gateway).ServeHTTP(rec, req)
+				if rec.Code != http.StatusNotFound || gateway.optionsCalls != 0 || gateway.createCalls != 0 ||
+					gateway.statusCalls != 0 || gateway.mediaCalls != 0 {
+					t.Fatalf("status=%d calls options=%d generate=%d status=%d mp4=%d body=%q",
+						rec.Code, gateway.optionsCalls, gateway.createCalls, gateway.statusCalls, gateway.mediaCalls, rec.Body.String())
 				}
-				if rec.Code != http.StatusNotFound || gateway.createCalls != 0 || gateway.statusCalls != 0 || gateway.mediaCalls != 0 {
-					t.Fatalf("status=%d gateway calls create=%d status=%d media=%d", rec.Code, gateway.createCalls, gateway.statusCalls, gateway.mediaCalls)
+			})
+		}
+	}
+}
+
+func TestVideoActorIDRequiresOneExactHTTPSOriginForPostAndDelete(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		cases := []struct {
+			name    string
+			origins []string
+		}{
+			{name: "missing"},
+			{name: "wrong", origins: []string{"http://llm-rx6800.tailb07d8d.ts.net:8444"}},
+			{name: "duplicate", origins: []string{videoTestOrigin, videoTestOrigin}},
+		}
+		for _, tc := range cases {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(method, "/viewer/image/video/generations", nil)
+				req.RemoteAddr = "127.0.0.1:43210"
+				req.Host = videoTestHost
+				req.Header.Set("Tailscale-User-Login", videoTestLogin)
+				for _, origin := range tc.origins {
+					req.Header.Add("Origin", origin)
+				}
+				if _, ok := videoAuthConfig().videoActorID(req); ok {
+					t.Fatal("request unexpectedly authenticated")
 				}
 			})
 		}

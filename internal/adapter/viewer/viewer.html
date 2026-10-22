@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-image-mode-radios">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-movie-serve-session">
 </head>
 <body class="theme-modern">
 <header>
@@ -283,23 +283,6 @@
           <p class="image-profile-note">固定値はRenCrow_Imageの設定を表示します。Negative promptは使用しません。</p>
           <button id="movieGenerateBtn" class="desk-primary-btn" type="submit">Generate video</button>
         </form>
-        <section id="videoAuthPanel" class="daily-desk-card video-auth" aria-label="動画利用者認証">
-          <div>
-            <strong>動画の利用者認証</strong>
-            <p class="image-profile-note">認証情報はこの画面のメモリだけで扱います。Cookieの期限は12時間です。</p>
-          </div>
-          <form id="videoLoginForm" class="video-auth-form">
-            <label for="videoCredential">Browser credential</label>
-            <input id="videoCredential" class="desk-input" type="password" autocomplete="off" minlength="32" maxlength="512" spellcheck="false" required>
-            <div class="video-auth-actions">
-              <button id="videoLoginButton" class="desk-primary-btn" type="submit">Sign in</button>
-            </div>
-          </form>
-          <div class="video-auth-actions">
-            <button id="videoLogoutButton" class="desk-primary-btn video-auth-logout" type="button" hidden>Sign out</button>
-          </div>
-          <p id="videoAuthStatus" class="image-profile-note" role="status" aria-live="polite">動画を使うには認証してください。</p>
-        </section>
       </aside>
       <section class="desk-main movie-main" aria-labelledby="movieResultTitle">
         <div class="desk-head compact">
@@ -308,7 +291,7 @@
             <h3 id="movieResultTitle">動画生成結果</h3>
           </div>
         </div>
-        <div id="videoResultEmpty" class="daily-desk-card image-empty">認証して動画を生成すると、状態と再生結果をここに表示します。</div>
+        <div id="videoResultEmpty" class="daily-desk-card image-empty">動画を生成すると、状態と再生結果をここに表示します。</div>
         <section id="videoResultPanel" class="video-result" aria-live="polite" hidden>
           <div class="daily-desk-card video-progress-card">
             <div id="videoJobStatus">ready</div>
@@ -1843,7 +1826,7 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
-<script src="/viewer/assets/js/tabs/image.js?v=20261022-image-mode-radios" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-serve-session" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>

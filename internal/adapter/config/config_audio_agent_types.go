@@ -1,5 +1,13 @@
 package config
 
+import (
+	"fmt"
+	"reflect"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
 type VerificationConfig struct {
 	Enabled      bool   `yaml:"enabled"`
 	Mode         string `yaml:"mode"`          // dry_run|revise
@@ -79,13 +87,42 @@ type ImageConfig struct {
 }
 
 type ImageVideoBrowserConfig struct {
-	Enabled          bool   `yaml:"enabled"`
-	AllowGeneration  bool   `yaml:"allow_generation"`
-	Host             string `yaml:"host"`
-	Origin           string `yaml:"origin"`
-	ActorID          string `yaml:"actor_id"`
-	CredentialSHA256 string `yaml:"credential_sha256"`
-	CookieHMACKeyHex string `yaml:"cookie_hmac_key_hex"`
+	Enabled            bool   `yaml:"enabled"`
+	AllowGeneration    bool   `yaml:"allow_generation"`
+	Host               string `yaml:"host"`
+	Origin             string `yaml:"origin"`
+	ActorID            string `yaml:"actor_id"`
+	TailscaleUserLogin string `yaml:"tailscale_user_login"`
+}
+
+func (c *ImageVideoBrowserConfig) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("image.video_browser must be a mapping")
+	}
+	fields := reflect.TypeOf(*c)
+	allowed := make(map[string]struct{}, fields.NumField())
+	for index := 0; index < fields.NumField(); index++ {
+		name, _, _ := strings.Cut(fields.Field(index).Tag.Get("yaml"), ",")
+		if name != "" && name != "-" {
+			allowed[name] = struct{}{}
+		}
+	}
+	seen := make(map[string]struct{}, len(allowed))
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		key := node.Content[index]
+		if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
+			return fmt.Errorf("image.video_browser field names must be strings")
+		}
+		if _, ok := allowed[key.Value]; !ok {
+			return fmt.Errorf("image.video_browser.%s is unsupported", key.Value)
+		}
+		if _, duplicate := seen[key.Value]; duplicate {
+			return fmt.Errorf("image.video_browser.%s is duplicated", key.Value)
+		}
+		seen[key.Value] = struct{}{}
+	}
+	type imageVideoBrowserConfig ImageVideoBrowserConfig
+	return node.Decode((*imageVideoBrowserConfig)(c))
 }
 
 type TTSCommandConfig struct {

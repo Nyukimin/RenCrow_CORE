@@ -373,13 +373,12 @@ func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
 	videoAuth := viewer.VideoBrowserAuthConfig{}
 	if cfg != nil {
 		videoAuth = viewer.VideoBrowserAuthConfig{
-			Enabled:          cfg.Image.VideoBrowser.Enabled,
-			AllowGeneration:  cfg.Image.VideoBrowser.AllowGeneration,
-			Host:             cfg.Image.VideoBrowser.Host,
-			Origin:           cfg.Image.VideoBrowser.Origin,
-			ActorID:          cfg.Image.VideoBrowser.ActorID,
-			CredentialSHA256: cfg.Image.VideoBrowser.CredentialSHA256,
-			CookieHMACKeyHex: cfg.Image.VideoBrowser.CookieHMACKeyHex,
+			Enabled:            cfg.Image.VideoBrowser.Enabled,
+			AllowGeneration:    cfg.Image.VideoBrowser.AllowGeneration,
+			Host:               cfg.Image.VideoBrowser.Host,
+			Origin:             cfg.Image.VideoBrowser.Origin,
+			ActorID:            cfg.Image.VideoBrowser.ActorID,
+			TailscaleUserLogin: cfg.Image.VideoBrowser.TailscaleUserLogin,
 		}
 	}
 	imagefeature.RegisterRoutes(mux, imagefeature.Routes{
@@ -388,7 +387,6 @@ func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
 		EditOptions:   viewer.HandleImageEditOptions(imageEditOptionsGateway),
 		Edit:          viewer.HandleImageEdit(imageEditGateway),
 		Result:        viewer.HandleImageResult(imageGateway),
-		VideoSession:  viewer.HandleVideoSession(videoAuth),
 		VideoOptions:  viewer.HandleVideoOptions(videoOptionsGateway, videoAuth),
 		VideoGenerate: viewer.HandleVideoGenerate(videoGateway, videoAuth),
 		VideoStatus:   viewer.HandleVideoStatus(videoGateway, videoAuth),

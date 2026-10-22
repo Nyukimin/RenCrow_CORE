@@ -3,8 +3,6 @@ package viewer
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -12,7 +10,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 )
@@ -20,7 +17,7 @@ import (
 const (
 	videoTestHost   = "llm-rx6800.tailb07d8d.ts.net:8444"
 	videoTestOrigin = "https://llm-rx6800.tailb07d8d.ts.net:8444"
-	videoTestToken  = "video-test-credential-0123456789abcdef"
+	videoTestLogin  = "yukimi@example.com"
 	videoTestActor  = "user:yukimi"
 )
 
@@ -67,11 +64,9 @@ func (g *fakeVideoGateway) OpenVideo(_ context.Context, _ string, actorID, range
 }
 
 func videoAuthConfig() VideoBrowserAuthConfig {
-	credentialHash := sha256.Sum256([]byte(videoTestToken))
 	return VideoBrowserAuthConfig{
 		Enabled: true, AllowGeneration: true, Host: videoTestHost, Origin: videoTestOrigin,
-		ActorID: videoTestActor, CredentialSHA256: hex.EncodeToString(credentialHash[:]),
-		CookieHMACKeyHex: strings.Repeat("b", 64),
+		ActorID: videoTestActor, TailscaleUserLogin: videoTestLogin,
 	}
 }
 
@@ -106,7 +101,7 @@ func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string
 	return req, body.String()
 }
 
-func TestHandleVideoOptionsIsAvailableBeforeLoginAndUsesModeOptions(t *testing.T) {
+func TestHandleVideoOptionsRequiresTailscaleLoginAndUsesModeOptions(t *testing.T) {
 	options := domainimage.VideoOptionsResponse{
 		Model: "video-i2v-v1", Mode: "i2v", AspectRatios: []string{"1:1 (Square)", "9:16 (Portrait Widescreen)"},
 		DefaultAspectRatio: "1:1 (Square)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
@@ -115,6 +110,7 @@ func TestHandleVideoOptionsIsAvailableBeforeLoginAndUsesModeOptions(t *testing.T
 	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Host = videoTestHost
+	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 	rec := httptest.NewRecorder()
 	HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" {
@@ -126,6 +122,51 @@ func TestHandleVideoOptionsIsAvailableBeforeLoginAndUsesModeOptions(t *testing.T
 	var got domainimage.VideoOptionsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Model != options.Model || got.Mode != options.Mode || got.DefaultAspectRatio != options.DefaultAspectRatio {
 		t.Fatalf("options=%+v err=%v", got, err)
+	}
+}
+
+func TestHandleVideoOptionsRequiresOneExactTailscaleLogin(t *testing.T) {
+	cases := []struct {
+		name  string
+		login []string
+	}{
+		{name: "missing"},
+		{name: "wrong", login: []string{"other@example.com"}},
+		{name: "duplicate", login: []string{videoTestLogin, videoTestLogin}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gateway := &fakeVideoGateway{videoOptions: domainimage.VideoOptionsResponse{
+				Model: "video-t2v-v1", Mode: "t2v", AspectRatios: []string{"16:9 (Widescreen)"},
+				DefaultAspectRatio: "16:9 (Widescreen)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
+			}}
+			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=t2v", nil)
+			req.RemoteAddr = "127.0.0.1:43210"
+			req.Host = videoTestHost
+			for _, value := range tc.login {
+				req.Header.Add("Tailscale-User-Login", value)
+			}
+			rec := httptest.NewRecorder()
+			HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+			if rec.Code != http.StatusNotFound || gateway.optionsCalls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.optionsCalls, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleVideoGenerateMapsExactTailscaleLoginWithoutBrowserSession(t *testing.T) {
+	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_abc", Status: "queued"}}
+	req, _ := videoRequest(t, "t2v", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Host = videoTestHost
+	req.Header.Set("Origin", videoTestOrigin)
+	req.Header.Set("Tailscale-User-Login", videoTestLogin)
+	req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 || gateway.createActor != videoTestActor {
+		t.Fatalf("status=%d calls=%d actor=%q body=%s", rec.Code, gateway.createCalls, gateway.createActor, rec.Body.String())
 	}
 }
 
@@ -146,6 +187,7 @@ func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
 			req.RemoteAddr = "127.0.0.1:43210"
 			req.Host = videoTestHost
+			req.Header.Set("Tailscale-User-Login", videoTestLogin)
 			if tc.edit != nil {
 				tc.edit(req)
 			}
@@ -167,11 +209,7 @@ func authenticatedVideoRequest(t *testing.T, req *http.Request) *http.Request {
 	req.RemoteAddr = "127.0.0.1:43210"
 	req.Host = videoTestHost
 	req.Header.Set("Origin", videoTestOrigin)
-	cookie, err := videoAuthConfig().newSessionCookie(time.Now())
-	if err != nil {
-		t.Fatalf("create test session cookie: %v", err)
-	}
-	req.AddCookie(cookie)
+	req.Header.Set("Tailscale-User-Login", videoTestLogin)
 	req.Header.Set("Idempotency-Key", "9d08d01b-1a7d-4fce-9da3-aeb0a1528ea1")
 	return req
 }
@@ -284,7 +322,9 @@ func TestHandleVideoGenerateRejectsUntrustedRequestsBeforeGateway(t *testing.T) 
 		{name: "null origin", edit: func(r *http.Request) { r.Header.Set("Origin", "null") }},
 		{name: "spoofed funnel marker", edit: func(r *http.Request) { r.Header.Set("Tailscale-Funnel-Request", "true") }},
 		{name: "duplicate origin", edit: func(r *http.Request) { r.Header.Add("Origin", videoTestOrigin) }},
-		{name: "missing session", edit: func(r *http.Request) { r.Header.Del("Cookie") }},
+		{name: "missing login", edit: func(r *http.Request) { r.Header.Del("Tailscale-User-Login") }},
+		{name: "wrong login", edit: func(r *http.Request) { r.Header.Set("Tailscale-User-Login", "other@example.com") }},
+		{name: "duplicate login", edit: func(r *http.Request) { r.Header.Add("Tailscale-User-Login", videoTestLogin) }},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

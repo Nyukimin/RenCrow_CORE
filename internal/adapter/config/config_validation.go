@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	domainscheduler "github.com/Nyukimin/RenCrow_CORE/internal/domain/scheduler"
 )
@@ -1081,8 +1083,7 @@ func validateNonEmptyList(name string, values []string) error {
 }
 
 var (
-	videoBrowserActorIDPattern   = regexp.MustCompile(`^user:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
-	videoBrowserSecretHexPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	videoBrowserActorIDPattern = regexp.MustCompile(`^user:[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 )
 
 func validateImageVideoBrowserConfig(image ImageConfig) error {
@@ -1110,11 +1111,20 @@ func validateImageVideoBrowserConfig(image ImageConfig) error {
 	if !videoBrowserActorIDPattern.MatchString(video.ActorID) {
 		return fmt.Errorf("image.video_browser.actor_id must be one canonical user actor ID")
 	}
-	if !videoBrowserSecretHexPattern.MatchString(video.CredentialSHA256) {
-		return fmt.Errorf("image.video_browser.credential_sha256 must be 64 lowercase hexadecimal characters")
-	}
-	if !videoBrowserSecretHexPattern.MatchString(video.CookieHMACKeyHex) {
-		return fmt.Errorf("image.video_browser.cookie_hmac_key_hex must be 64 lowercase hexadecimal characters")
+	if !validVideoBrowserTailscaleLogin(video.TailscaleUserLogin) {
+		return fmt.Errorf("image.video_browser.tailscale_user_login must be an exact non-empty login without whitespace, controls, or commas")
 	}
 	return nil
+}
+
+func validVideoBrowserTailscaleLogin(value string) bool {
+	if value == "" || len(value) > 320 || strings.TrimSpace(value) != value || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsSpace(character) || unicode.IsControl(character) || character == ',' {
+			return false
+		}
+	}
+	return true
 }
