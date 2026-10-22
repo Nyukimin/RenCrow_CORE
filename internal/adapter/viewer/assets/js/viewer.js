@@ -1285,6 +1285,7 @@ const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'd
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
+  movie: document.getElementById('panel-movie'),
   develop: document.getElementById('panel-develop'),
   instructions: document.getElementById('panel-instructions'),
   backlog: document.getElementById('panel-backlog'),

@@ -1391,12 +1391,40 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read image.js: %v", err)
 	}
+	viewerJSData, err := os.ReadFile("assets/js/viewer.js")
+	if err != nil {
+		t.Fatalf("read viewer.js: %v", err)
+	}
+	cssData, err := os.ReadFile("assets/css/tabs/image.css")
+	if err != nil {
+		t.Fatalf("read image.css: %v", err)
+	}
 	html, js := string(htmlData), string(jsData)
+	viewerJS := string(viewerJSData)
+	css := string(cssData)
 	for _, needle := range []string{
-		`id="imageOutputKind"`,
+		`data-tab="image"`,
+		`data-tab="movie"`,
+		`<option value="movie">Movie</option>`,
+		`id="panel-image"`,
+		`id="panel-movie"`,
+		`id="imageGenerationForm"`,
+		`id="imagePrompt"`,
+		`id="imageStatus"`,
+		`id="imageResultFigure"`,
+		`id="movieGenerationForm"`,
+		`id="moviePrompt"`,
+		`id="movieStatus"`,
+		`id="movieSeed"`,
+		`id="movieAspectRatio"`,
+		`id="movieOptionsStatus"`,
+		`id="movieModel"`,
+		`id="movieMegapixels"`,
+		`id="movieDurationSeconds"`,
+		`id="movieSteps"`,
 		`<option value="t2v">`,
 		`<option value="i2v">`,
-		`id="videoInputImage"`,
+		`id="movieInputImage"`,
 		`accept="image/png,image/jpeg`,
 		`id="videoProgress"`,
 		`id="videoResult" controls`,
@@ -1405,13 +1433,41 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 		`id="videoCredential" class="desk-input" type="password"`,
 		`id="videoLoginForm"`,
 		`id="videoLogoutButton"`,
-		`0.2 MP・5秒・8 steps`,
 	} {
 		if !strings.Contains(html, needle) {
 			t.Fatalf("video UI is missing %q", needle)
 		}
 	}
+	if strings.Contains(html, `id="imageOutputKind"`) || strings.Contains(html, `id="videoOptions"`) {
+		t.Fatal("Image and Movie must not share an output selector or conditional form")
+	}
+	moviePanelStart := strings.Index(html, `<section id="panel-movie"`)
+	if moviePanelStart < 0 {
+		t.Fatal("Movie panel is missing")
+	}
+	moviePanel := html[moviePanelStart:]
+	movieAsideStart := strings.Index(moviePanel, `<aside`)
+	movieAsideEnd := strings.Index(moviePanel, `</aside>`)
+	videoAuthPanel := strings.Index(moviePanel, `id="videoAuthPanel"`)
+	if movieAsideStart < 0 || movieAsideEnd <= movieAsideStart || videoAuthPanel < movieAsideStart || videoAuthPanel > movieAsideEnd {
+		t.Fatal("Movie authentication controls must stay with the Movie form in the left column")
+	}
+	if !strings.Contains(viewerJS, `movie: document.getElementById('panel-movie')`) {
+		t.Fatal("Movie must be registered in the existing Viewer tab switch map")
+	}
 	for _, needle := range []string{
+		`.image-workspace,`,
+		`.movie-workspace {`,
+		`grid-template-columns: minmax(320px, 420px) minmax(0, 1fr)`,
+		`@media (max-width: 820px)`,
+		`grid-template-columns: 1fr`,
+	} {
+		if !strings.Contains(css, needle) {
+			t.Fatalf("Image and Movie layout is missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`/viewer/image/video/options?mode=`,
 		`/viewer/image/video/generations`,
 		`/viewer/image/video/session`,
 		`/viewer/image/video/${id}.mp4`,
@@ -1439,8 +1495,93 @@ func TestViewerStaticContractVideoUsesAuthenticatedCOREProxy(t *testing.T) {
 	if strings.Contains(js, "X-RenCrow-Actor-ID") || strings.Contains(js, "/v1/videos/") || strings.Contains(js, "127.0.0.1:8780") {
 		t.Fatal("video UI must use same-origin CORE routes and never set actor identity or call Image directly")
 	}
-	videoSubmit := js[strings.Index(js, "async function generateVideo()"):strings.Index(js, "generateButton.addEventListener")]
+	videoSubmitStart := strings.Index(js, "async function generateVideo()")
+	if videoSubmitStart < 0 {
+		t.Fatal("Movie form generation handler is missing")
+	}
+	videoSubmitEnd := strings.Index(js[videoSubmitStart:], "form.addEventListener('submit'")
+	if videoSubmitEnd < 0 {
+		t.Fatal("Movie form submit handler is missing")
+	}
+	videoSubmit := js[videoSubmitStart : videoSubmitStart+videoSubmitEnd]
 	if strings.Contains(videoSubmit, "negative_prompt") || strings.Contains(videoSubmit, "negativePrompt") {
 		t.Fatal("video UI must not submit the image negative prompt")
+	}
+}
+
+func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) {
+	htmlData, err := os.ReadFile("viewer.html")
+	if err != nil {
+		t.Fatalf("read viewer.html: %v", err)
+	}
+	jsData, err := os.ReadFile("assets/js/tabs/image.js")
+	if err != nil {
+		t.Fatalf("read image.js: %v", err)
+	}
+	html, js := string(htmlData), string(jsData)
+	for _, needle := range []string{
+		`id="imageGenerationForm" class="daily-desk-card image-prompt-card" novalidate`,
+		`id="imageMode"`,
+		`<option value="t2i">Text to Image</option>`,
+		`<option value="pose" disabled>Pose (unavailable)</option>`,
+		`<option value="clothing" disabled>Clothing (unavailable)</option>`,
+		`id="imageEditOptionsStatus"`,
+		`id="imagePromptLabel" for="imagePrompt"`,
+		`id="imagePrompt"`,
+		`id="imageNegativePrompt"`,
+		`id="imageSeed"`,
+		`id="imageOptionsStatus"`,
+		`id="imageOptionsError" class="image-options-error" role="alert" hidden`,
+		`id="imageOptionsRetry"`,
+		`id="imageDynamicOptions" class="image-dynamic-options" disabled hidden`,
+		`id="imageModel"`,
+		`id="imageWidth"`,
+		`id="imageHeight"`,
+		`id="imageSteps"`,
+		`id="imageCfgScale"`,
+		`id="imageLoraStrength"`,
+		`id="imageFaceDetailer"`,
+		`id="imageEditInputs"`,
+		`id="imageEditModelLabel"`,
+		`Qwen Image Edit 2511`,
+		`id="imagePersonImage"`,
+		`id="imageReferenceImage"`,
+		`id="imageGenerateBtn" class="desk-primary-btn" type="submit" disabled`,
+	} {
+		if !strings.Contains(html, needle) {
+			t.Fatalf("Image controls are missing %q", needle)
+		}
+	}
+	for _, needle := range []string{
+		`fetch('/viewer/image/options'`,
+		`fetch('/viewer/image/edit/options'`,
+		`method: 'GET'`,
+		`credentials: 'same-origin'`,
+		`validateOptions(payload)`,
+		`validateEditOptions(payload)`,
+		`requestBody.model = selectedModel.id`,
+		`requestBody.face_detailer = faceDetailerInput.checked`,
+		`requestBody.lora_strength = readNumberInput`,
+		`JSON.stringify(requestBody)`,
+		`new FormData()`,
+		`formData.append('operation', operation)`,
+		`fetch(isEdit ? '/viewer/image/edit' : '/viewer/image/generate'`,
+		`maxImageUploadBytes = 20 * 1024 * 1024`,
+		`optionsRetry.addEventListener('click', loadOptions)`,
+	} {
+		if !strings.Contains(js, needle) {
+			t.Fatalf("Image options behavior is missing %q", needle)
+		}
+	}
+	validation := strings.Index(js, `const validatedOptions = validateOptions(payload)`)
+	controlsEnabled := strings.Index(js, `optionsReady = true`)
+	if validation < 0 || controlsEnabled <= validation {
+		t.Fatal("Image controls must stay disabled until the options response passes validation")
+	}
+	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-aspect-options`) {
+		t.Fatal("Image controls script cache key was not updated")
+	}
+	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-movie-aspect-options`) {
+		t.Fatal("Image controls stylesheet cache key was not updated")
 	}
 }

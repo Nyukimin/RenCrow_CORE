@@ -52,7 +52,7 @@ func TestClientCreateVideoGenerationUsesActorScopedMultipartContract(t *testing.
 				return
 			}
 			switch part.FormName() {
-			case "mode", "prompt", "seed":
+			case "mode", "prompt", "seed", "aspect_ratio":
 				value, readErr := io.ReadAll(part)
 				if readErr != nil {
 					http.Error(w, "bad field", http.StatusBadRequest)
@@ -72,6 +72,7 @@ func TestClientCreateVideoGenerationUsesActorScopedMultipartContract(t *testing.
 			}
 		}
 		if fields["mode"] != "i2v" || fields["prompt"] != "a red kite over the sea" || fields["seed"] != "42" ||
+			fields["aspect_ratio"] != "9:16 (Portrait Widescreen)" ||
 			gotImageType != "image/png" || string(gotImage) != string(imageBytes) {
 			http.Error(w, fmt.Sprintf("wrong form: %v %q %q", fields, gotImageType, gotImage), http.StatusBadRequest)
 			return
@@ -87,13 +88,63 @@ func TestClientCreateVideoGenerationUsesActorScopedMultipartContract(t *testing.
 		t.Fatalf("NewClient: %v", err)
 	}
 	accepted, err := client.CreateVideoGeneration(context.Background(), domainimage.VideoGenerateRequest{
-		Mode: "i2v", Prompt: "a red kite over the sea", Seed: 42, Image: imageBytes, ImageType: "image/png",
+		Mode: "i2v", Prompt: "a red kite over the sea", Seed: 42,
+		AspectRatio: "9:16 (Portrait Widescreen)", Image: imageBytes, ImageType: "image/png",
 	}, videoClientTestActor, videoClientTestKey)
 	if err != nil {
 		t.Fatalf("CreateVideoGeneration: %v", err)
 	}
 	if accepted.ID != "vid_abc" || accepted.Status != "queued" {
 		t.Fatalf("accepted=%+v", accepted)
+	}
+}
+
+func TestClientVideoOptionsUsesCanonicalRouteAndModeQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/videos/options" || r.URL.Query().Get("mode") != "i2v" {
+			http.Error(w, "wrong video options route", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("X-RenCrow-Actor-ID") != "" {
+			http.Error(w, "options must not require an actor", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"video-i2v-v1","mode":"i2v","aspect_ratios":["1:1 (Square)","9:16 (Portrait Widescreen)"],"default_aspect_ratio":"1:1 (Square)","megapixels":0.2,"duration_seconds":5,"steps":8}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	options, err := client.VideoOptions(context.Background(), "i2v")
+	if err != nil {
+		t.Fatalf("VideoOptions: %v", err)
+	}
+	if options.Model != "video-i2v-v1" || options.Mode != "i2v" || options.DefaultAspectRatio != "1:1 (Square)" ||
+		options.Megapixels != 0.2 || options.DurationSeconds != 5 || options.Steps != 8 || len(options.AspectRatios) != 2 {
+		t.Fatalf("options=%+v", options)
+	}
+}
+
+func TestClientVideoOptionsRejectsInvalidModeAndMalformedResponse(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"model":"video-i2v-v1","mode":"t2v","aspect_ratios":["1:1 (Square)"],"default_aspect_ratio":"16:9 (Widescreen)","megapixels":0.2,"duration_seconds":5,"steps":8}`)
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := client.VideoOptions(context.Background(), "unknown"); err == nil || requests != 0 {
+		t.Fatalf("unsupported mode made request=%d err=%v", requests, err)
+	}
+	if _, err := client.VideoOptions(context.Background(), "i2v"); err == nil || requests != 1 {
+		t.Fatalf("malformed options response requests=%d err=%v", requests, err)
 	}
 }
 

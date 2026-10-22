@@ -25,18 +25,27 @@ const (
 )
 
 type fakeVideoGateway struct {
-	accepted    domainimage.VideoGenerationAccepted
-	status      domainimage.VideoGenerationStatus
-	media       *http.Response
-	createCalls int
-	statusCalls int
-	mediaCalls  int
-	createReq   domainimage.VideoGenerateRequest
-	createActor string
-	createKey   string
-	statusActor string
-	mediaActor  string
-	mediaRange  string
+	accepted     domainimage.VideoGenerationAccepted
+	status       domainimage.VideoGenerationStatus
+	videoOptions domainimage.VideoOptionsResponse
+	media        *http.Response
+	optionsCalls int
+	optionsMode  string
+	createCalls  int
+	statusCalls  int
+	mediaCalls   int
+	createReq    domainimage.VideoGenerateRequest
+	createActor  string
+	createKey    string
+	statusActor  string
+	mediaActor   string
+	mediaRange   string
+}
+
+func (g *fakeVideoGateway) VideoOptions(_ context.Context, mode string) (domainimage.VideoOptionsResponse, error) {
+	g.optionsCalls++
+	g.optionsMode = mode
+	return g.videoOptions, nil
 }
 
 func (g *fakeVideoGateway) CreateVideoGeneration(_ context.Context, request domainimage.VideoGenerateRequest, actorID, key string) (domainimage.VideoGenerationAccepted, error) {
@@ -66,12 +75,17 @@ func videoAuthConfig() VideoBrowserAuthConfig {
 	}
 }
 
-func videoRequest(t *testing.T, mode string, image []byte) (*http.Request, string) {
+func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string) (*http.Request, string) {
 	t.Helper()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	for name, value := range map[string]string{"mode": mode, "prompt": "blue bird flying over a quiet lake", "seed": "42"} {
 		if err := writer.WriteField(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(aspectRatio) > 0 {
+		if err := writer.WriteField("aspect_ratio", aspectRatio[0]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -90,6 +104,62 @@ func videoRequest(t *testing.T, mode string, image []byte) (*http.Request, strin
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/generations", body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req, body.String()
+}
+
+func TestHandleVideoOptionsIsAvailableBeforeLoginAndUsesModeOptions(t *testing.T) {
+	options := domainimage.VideoOptionsResponse{
+		Model: "video-i2v-v1", Mode: "i2v", AspectRatios: []string{"1:1 (Square)", "9:16 (Portrait Widescreen)"},
+		DefaultAspectRatio: "1:1 (Square)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
+	}
+	gateway := &fakeVideoGateway{videoOptions: options}
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
+	req.RemoteAddr = "127.0.0.1:43210"
+	req.Host = videoTestHost
+	rec := httptest.NewRecorder()
+	HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" {
+		t.Fatalf("status=%d calls=%d mode=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" || strings.Contains(rec.Body.String(), "authenticated") {
+		t.Fatalf("unexpected headers or auth requirement: headers=%v body=%s", rec.Header(), rec.Body.String())
+	}
+	var got domainimage.VideoOptionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Model != options.Model || got.Mode != options.Mode || got.DefaultAspectRatio != options.DefaultAspectRatio {
+		t.Fatalf("options=%+v err=%v", got, err)
+	}
+}
+
+func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		edit func(*http.Request)
+		want int
+	}{
+		{name: "unsupported mode", url: "/viewer/image/video/options?mode=other", want: http.StatusBadRequest},
+		{name: "duplicate mode", url: "/viewer/image/video/options?mode=t2v&mode=i2v", want: http.StatusBadRequest},
+		{name: "LAN request", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }, want: http.StatusNotFound},
+		{name: "wrong host", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.Host = "attacker.example" }, want: http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.url, nil)
+			req.RemoteAddr = "127.0.0.1:43210"
+			req.Host = videoTestHost
+			if tc.edit != nil {
+				tc.edit(req)
+			}
+			gateway := &fakeVideoGateway{videoOptions: domainimage.VideoOptionsResponse{
+				Model: "video-t2v-v1", Mode: "t2v", AspectRatios: []string{"16:9 (Widescreen)"},
+				DefaultAspectRatio: "16:9 (Widescreen)", Megapixels: 0.2, DurationSeconds: 5, Steps: 8,
+			}}
+			rec := httptest.NewRecorder()
+			HandleVideoOptions(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+			if rec.Code != tc.want || gateway.optionsCalls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.optionsCalls, rec.Body.String())
+			}
+		})
+	}
 }
 
 func authenticatedVideoRequest(t *testing.T, req *http.Request) *http.Request {
@@ -177,6 +247,29 @@ func TestHandleVideoGenerateUsesCOREAuthenticatedActorAndIdempotencyKey(t *testi
 	}
 	if gateway.createReq.Mode != "t2v" || gateway.createReq.Prompt != "blue bird flying over a quiet lake" || gateway.createReq.Seed != 42 || len(gateway.createReq.Image) != 0 {
 		t.Fatalf("request=%+v", gateway.createReq)
+	}
+}
+
+func TestHandleVideoGenerateForwardsExactAspectRatio(t *testing.T) {
+	const aspectRatio = "9:16 (Portrait Widescreen)"
+	gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_portrait", Status: "queued"}}
+	req, _ := videoRequest(t, "t2v", nil, aspectRatio)
+	authenticatedVideoRequest(t, req)
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || gateway.createCalls != 1 || gateway.createReq.AspectRatio != aspectRatio {
+		t.Fatalf("status=%d calls=%d aspect=%q body=%s", rec.Code, gateway.createCalls, gateway.createReq.AspectRatio, rec.Body.String())
+	}
+}
+
+func TestHandleVideoGenerateRejectsOversizedAspectRatioBeforeGateway(t *testing.T) {
+	req, _ := videoRequest(t, "t2v", nil, strings.Repeat("x", maxVideoAspectRatioBytes+1))
+	authenticatedVideoRequest(t, req)
+	gateway := &fakeVideoGateway{}
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAuthConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || gateway.createCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
 	}
 }
 

@@ -87,7 +87,9 @@ path、Config、secret、validator内部errorを開示しない。
 | `WS /stt` | Viewer・PORTAL・probeの音声入力。COREは音声を貯めず、RenCrow_STTの音声ストリーム（`GET /v1/audio/stream`）へ接続ごとに1本中継し、話し終わりの判定と認識はRenCrow_STTが行う（[WS /stt](#ws-stt)） |
 | `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
-| `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewerの画像生成と結果表示 |
+| `GET /viewer/image/options`, `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewer Image画面のmodel options取得、画像生成と結果表示 |
+| `GET /viewer/image/edit/options`, `POST /viewer/image/edit` | Image画面のPose／服装参照の利用可否取得と、人物画像・参照画像を使うQwen Image Edit生成 |
+| `GET /viewer/image/video/options?mode=...` | Debug Viewer Movie画面のmode別model、aspect ratio、固定parameter取得 |
 | `POST /viewer/image/video/session`, `GET /viewer/image/video/session`, `DELETE /viewer/image/video/session`, `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | tailnet-only Tailscale Serve上のbrowser session、Actor-scoped動画生成・状態poll・Range対応MP4 proxy |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
@@ -1194,27 +1196,37 @@ COREは`VISION_PROVIDER_UNAVAILABLE`、`VISION_MODEL_NOT_READY`、
 `VISION_DECODE_FAILED`、`VISION_INFERENCE_TIMEOUT`、`VISION_EMPTY_RESULT`を
 同じ`trace_id`の終端errorとしてclientへ通知します。
 
-Debug Viewerの画像生成は`POST /viewer/image/generate`へ
-`{"prompt":"...", "negative_prompt":"", "seed":-1}`を送ります。
-COREは同じrequestをRenCrow_Imageの`POST /v1/images/generations`へ転送し、
-responseのopaqueなimage IDだけを保持して
-`GET /viewer/image/result?id=...`からPNGを中継します。
-ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
+Debug ViewerのImage画面は`GET /viewer/image/options`で利用可能なmodel一覧を取得します。COREは
+RenCrow_Imageの`GET /v1/images/options`が返すvalidated options（既定model、model IDとengine、既定値、
+parameter limits、modelごとのfeature対応）を検査して返します。Viewerはこのresponseに基づき設定欄を構成します。
+optionsを取得できない場合は生成操作を無効にし、利用不能を表示します。
+
+画像生成は`POST /viewer/image/generate`へJSONを送ります。`prompt`を必須とし、`negative_prompt`、`seed`、
+および任意の`model`、`width`、`height`、`steps`、`cfg_scale`、`face_detailer`、`lora_strength`を受け付けます。
+`face_detailer`と`lora_strength`は対応modelでのみ送信します。COREは同じrequestをRenCrow_Imageの
+`POST /v1/images/generations`へ転送します。modelのallowlistと各model固有のparameter範囲はRenCrow_Imageが
+所有し、検証します。COREはresponseのopaqueなimage IDだけを保持し、`GET /viewer/image/result?id=...`からPNGを
+中継します。ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
 RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
-Videoパネルは`POST /viewer/image/video/session`でJSON `{credential}`を送ってbrowser sessionを作り、
+`GET /viewer/image/video/options?mode=t2v|i2v`はRenCrow_Imageの同じmode指定options routeを中継します。`mode`省略時は`t2v`です。
+返すmodel、aspect ratio一覧とdefault、megapixels、duration、stepsはImage ownerの値を使います。COREはoptionsの形とmodeを検証します。
+options取得はsession login前にも行えますが、他のvideo routeと同じloopback、完全一致Host、Funnel拒否境界を通します。
+
+Movie画面は`POST /viewer/image/video/session`でJSON `{credential}`を送ってbrowser sessionを作り、
 `GET`でsession確認、`DELETE`でlogoutします。成功時は12時間有効なSecure、HttpOnly、SameSite=Strict、host-only
 cookieをPath `/viewer/image/video`へ設定します。credential verifierと独立したcookie HMAC keyはprotected CORE configに
 置き、credentialはURLやbrowser storageへ保存しません。sessionは明示設定した`user:yukimi` Actorに結び付きます。
 
-`POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、
-`seed`とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`とCOREが確定したActor IDをImage Gatewayへ
+`POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、`seed`、任意の`aspect_ratio`
+とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`とCOREが確定したActor IDをImage Gatewayへ
 送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。
 `GET /viewer/image/video/generations/{id}`は`queued|running|succeeded|failed`と、成功時のvideo metadataまたは
 安全なerrorを返します。Image ownerのMP4 URLはCORE内の`/viewer/image/video/{id}.mp4`へ書き換えます。
-MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。全video routeはloopback
-socket、完全一致Host、valid sessionを要求し、POST/DELETEはさらに単一の完全一致HTTPS Originを要求します。
-COREは認証前にupstreamへforwardせず、actor scopeを状態照会とMP4 Range取得にも適用します。新規生成は
+MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。options routeはloopback
+socketと完全一致Hostを要求し、session login前に利用できます。session、generation、status、MP4 routeは有効なsessionも要求し、
+POST/DELETEはさらに単一の完全一致HTTPS Originを要求します。COREはgeneration／job／mediaを認証前にupstreamへforwardせず、actor scopeを状態照会とMP4 Range取得にも適用します。aspect ratioは64 bytesまでを正確に中継し、
+許可値の検証はRenCrow_Imageが所有します。新規生成は
 認証のほか`image.video_browser.allow_generation=true`も必要です。現行Global Policy routeはstatusとdecision記録の
 projectionであり、動画browser credential単位の動画生成authorizationを評価しません。BrowserはActor headerを送らず、
 tag/device identityをActorへ変換しません。`:8444`はtailnet-only Serve専用でFunnelを無効にします。`:8443` Funnelは

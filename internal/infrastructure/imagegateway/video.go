@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	domainimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/imagegeneration"
 )
@@ -53,6 +54,11 @@ func (c *Client) CreateVideoGeneration(
 	} {
 		if err := writer.WriteField(name, value); err != nil {
 			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video request field: %w", err)
+		}
+	}
+	if request.AspectRatio != "" {
+		if err := writer.WriteField("aspect_ratio", request.AspectRatio); err != nil {
+			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video aspect ratio: %w", err)
 		}
 	}
 	if request.Mode == "i2v" {
@@ -106,6 +112,44 @@ func (c *Client) CreateVideoGeneration(
 		return domainimage.VideoGenerationAccepted{}, fmt.Errorf("RenCrow_Image returned an invalid video generation response")
 	}
 	return accepted, nil
+}
+
+func (c *Client) VideoOptions(ctx context.Context, mode string) (domainimage.VideoOptionsResponse, error) {
+	if mode == "" {
+		mode = "t2v"
+	}
+	if !domainimage.IsVideoMode(mode) {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("invalid video mode")
+	}
+	query := url.Values{"mode": []string{mode}}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/videos/options?"+query.Encode(), nil)
+	if err != nil {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("create video options request: %w", err)
+	}
+	request.Header.Set("Accept", "application/json")
+	response, err := c.doVideoRequest(request)
+	if err != nil {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("RenCrow_Image video options request failed: %w", err)
+	}
+	defer response.Body.Close()
+	payload, err := readVideoJSONResponse(response.Body)
+	if err != nil {
+		return domainimage.VideoOptionsResponse{}, err
+	}
+	if response.StatusCode != http.StatusOK {
+		return domainimage.VideoOptionsResponse{}, parseVideoServiceError(response.StatusCode, payload)
+	}
+	if !validJSONContentType(response.Header.Get("Content-Type")) {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("RenCrow_Image video options have unsupported content type")
+	}
+	options, err := decodeVideoOptions(payload)
+	if err != nil {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("decode RenCrow_Image video options: %w", err)
+	}
+	if !domainimage.IsValidVideoOptions(options, mode) {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("RenCrow_Image returned invalid video options")
+	}
+	return options, nil
 }
 
 func (c *Client) GetVideoGeneration(
@@ -197,6 +241,25 @@ func readVideoJSONResponse(body io.Reader) ([]byte, error) {
 	return payload, nil
 }
 
+func decodeVideoOptions(payload []byte) (domainimage.VideoOptionsResponse, error) {
+	if !utf8.Valid(payload) {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("response is not UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var options domainimage.VideoOptionsResponse
+	if err := decoder.Decode(&options); err != nil {
+		return domainimage.VideoOptionsResponse{}, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return domainimage.VideoOptionsResponse{}, fmt.Errorf("unexpected trailing JSON value")
+		}
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("trailing response data: %w", err)
+	}
+	return options, nil
+}
+
 func parseVideoServiceError(status int, payload []byte) error {
 	var details videoServiceErrorPayload
 	_ = json.Unmarshal(payload, &details)
@@ -212,8 +275,11 @@ func parseVideoServiceError(status int, payload []byte) error {
 }
 
 func validateVideoRequest(request domainimage.VideoGenerateRequest) error {
-	if request.Mode != "t2v" && request.Mode != "i2v" {
+	if !domainimage.IsVideoMode(request.Mode) {
 		return fmt.Errorf("invalid video mode")
+	}
+	if request.AspectRatio != "" && !domainimage.IsValidVideoAspectRatio(request.AspectRatio) {
+		return fmt.Errorf("invalid video aspect ratio")
 	}
 	if strings.TrimSpace(request.Prompt) == "" || len(request.Prompt) > 8<<10 {
 		return fmt.Errorf("invalid video prompt")

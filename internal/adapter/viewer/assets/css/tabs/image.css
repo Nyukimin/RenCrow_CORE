@@ -1,8 +1,10 @@
-body[data-viewer-tab="image"] .input-bar {
+body[data-viewer-tab="image"] .input-bar,
+body[data-viewer-tab="movie"] .input-bar {
   display: none;
 }
 
-.image-workspace {
+.image-workspace,
+.movie-workspace {
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
 }
 
@@ -13,6 +15,96 @@ body[data-viewer-tab="image"] .input-bar {
 .image-prompt-card {
   display: grid;
   gap: var(--space-3, 12px);
+}
+
+.image-prompt-card select,
+.image-edit-inputs input[type="file"] {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.image-edit-options-status {
+  overflow-wrap: anywhere;
+}
+
+.image-text-to-image-controls,
+.image-edit-inputs {
+  display: grid;
+  gap: var(--space-2, 8px);
+  min-width: 0;
+}
+
+.image-edit-inputs[hidden],
+.image-text-to-image-controls[hidden] {
+  display: none !important;
+}
+
+.image-dynamic-options {
+  border: 0;
+  display: grid;
+  gap: var(--space-2, 8px);
+  margin: 0;
+  min-inline-size: 0;
+  padding: 0;
+}
+
+.image-dynamic-options[hidden],
+.image-dynamic-options [hidden] {
+  display: none !important;
+}
+
+.image-dynamic-options > label:not(.image-checkbox-option) {
+  color: var(--rc-text-muted, #a6afbf);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.image-dimension-fields {
+  align-items: center;
+  display: grid;
+  gap: var(--space-2, 8px);
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.image-dimension-fields label {
+  color: var(--rc-text-muted, #a6afbf);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.image-checkbox-option {
+  align-items: center;
+  color: var(--rc-text-muted, #a6afbf);
+  display: flex;
+  font-size: 12px;
+  font-weight: 650;
+  gap: var(--space-2, 8px);
+}
+
+.image-checkbox-option input {
+  accent-color: var(--rc-accent-cyan, #4dd8ff);
+  height: 16px;
+  margin: 0;
+  width: 16px;
+}
+
+.image-options-error {
+  border: 1px solid var(--rc-accent-rose, #ff5f7a);
+  border-radius: 8px;
+  color: var(--rc-accent-rose, #ff5f7a);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  padding: 10px;
+}
+
+.image-options-error[hidden],
+.image-options-retry[hidden] {
+  display: none !important;
+}
+
+.image-options-retry {
+  justify-self: start;
 }
 
 .image-prompt-card label {
@@ -38,7 +130,16 @@ body[data-viewer-tab="image"] .input-bar {
   margin: 0;
 }
 
+#imageEditOptionsStatus,
+#imageOptionsStatus {
+  overflow-wrap: anywhere;
+}
+
 .image-main {
+  min-width: 0;
+}
+
+.movie-main {
   min-width: 0;
 }
 
@@ -46,7 +147,7 @@ body[data-viewer-tab="image"] .input-bar {
   align-items: start;
   display: grid;
   gap: var(--space-3, 12px);
-  margin-bottom: var(--space-3, 12px);
+  margin-bottom: 0;
 }
 
 .video-auth[hidden] {
@@ -124,30 +225,47 @@ body[data-viewer-tab="image"] .input-bar {
   padding-top: var(--space-3, 12px);
 }
 
-#imageStatus.is-live {
+#imageStatus.is-live,
+#movieStatus.is-live {
   border-color: var(--rc-accent-cyan, #4dd8ff);
   color: var(--rc-accent-cyan, #4dd8ff);
 }
 
-.video-options {
-  display: grid;
-  gap: var(--space-3, 12px);
+.video-input-image-row[hidden] {
+  display: none !important;
 }
 
-.video-options[hidden],
-#imageOnlyOptions[hidden],
-.video-input-image-row[hidden] {
+.video-fixed-settings {
+  background: var(--rc-surface-soft, #1f2633);
+  border: 1px solid var(--rc-border-muted, #202633);
+  border-radius: 6px;
+  display: grid;
+  gap: 6px 10px;
+  grid-template-columns: minmax(78px, auto) minmax(0, 1fr);
+  margin: 0;
+  padding: 10px;
+}
+
+.video-fixed-settings dt {
+  color: var(--rc-text-muted, #a6afbf);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.video-fixed-settings dd {
+  color: var(--rc-text, #eef2f8);
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.video-fixed-settings [hidden] {
   display: none !important;
 }
 
 .video-input-image-row {
   display: grid;
   gap: var(--space-2, 8px);
-}
-
-.image-main.is-video-output #imageResultEmpty,
-.image-main.is-video-output #imageResultFigure {
-  display: none !important;
 }
 
 .video-result[hidden] {
@@ -190,7 +308,8 @@ body[data-viewer-tab="image"] .input-bar {
 }
 
 @media (max-width: 820px) {
-  .image-workspace {
+  .image-workspace,
+  .movie-workspace {
     grid-template-columns: 1fr;
   }
 

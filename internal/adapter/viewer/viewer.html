@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261020-image-workspace">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-movie-aspect-options">
 </head>
 <body class="theme-modern">
 <header>
@@ -46,6 +46,7 @@
       <option value="home">Home</option>
       <option value="timeline">Chat</option>
       <option value="image">Image</option>
+      <option value="movie">Movie</option>
       <option value="develop">Develop</option>
       <option value="instructions">Instructions</option>
       <option value="backlog">Backlog</option>
@@ -84,6 +85,7 @@
     <button class="tab-btn active" data-tab="home">Home</button>
     <button class="tab-btn" data-tab="timeline">Chat</button>
     <button class="tab-btn" data-tab="image">Image</button>
+    <button class="tab-btn" data-tab="movie">Movie</button>
     <button class="tab-btn" data-tab="develop">Develop</button>
     <button class="tab-btn" data-tab="instructions">Instructions</button>
     <button class="tab-btn" data-tab="backlog">Backlog</button>
@@ -168,54 +170,120 @@
 
   <section id="panel-image" class="panel">
     <div class="desk-screen desk-workspace image-workspace">
-      <aside class="desk-side image-side" aria-label="Image and video generation controls">
+      <aside class="desk-side image-side" aria-label="Image generation controls">
         <div class="desk-brand">
           <div class="desk-kicker">RenCrow Image</div>
-          <h2 class="daily-desk-title">画像・動画を生成</h2>
+          <h2 class="daily-desk-title">画像を生成</h2>
         </div>
         <div id="imageStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">ready</div>
-        <section class="daily-desk-card image-prompt-card">
-          <label for="imageOutputKind">Output</label>
-          <select id="imageOutputKind" class="desk-select">
-            <option value="image">Image</option>
-            <option value="video">Video</option>
+        <form id="imageGenerationForm" class="daily-desk-card image-prompt-card" novalidate>
+          <label for="imageMode">Mode</label>
+          <select id="imageMode" class="desk-select">
+            <option value="t2i">Text to Image</option>
+            <option value="pose" disabled>Pose (unavailable)</option>
+            <option value="clothing" disabled>Clothing (unavailable)</option>
           </select>
-          <label for="imagePrompt">Prompt</label>
-          <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="描きたい画像・動画を入力"></textarea>
-          <div id="imageOnlyOptions">
+          <p id="imageEditOptionsStatus" class="image-profile-note image-edit-options-status" role="status" aria-live="polite">Pose and Clothing modes are checking availability.</p>
+          <label id="imagePromptLabel" for="imagePrompt">Prompt</label>
+          <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="描きたい画像を入力"></textarea>
+          <div id="imageEditInputs" class="image-edit-inputs" hidden>
+            <p id="imageEditModelLabel" class="image-profile-note"><strong>Model:</strong> Qwen Image Edit 2511</p>
+            <label for="imagePersonImage">Person image (PNG or JPEG)</label>
+            <input id="imagePersonImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+            <label id="imageReferenceImageLabel" for="imageReferenceImage">Reference image (PNG or JPEG)</label>
+            <input id="imageReferenceImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+            <span class="image-profile-note">各画像は最大20 MiBです。</span>
+          </div>
+          <div id="imageTextToImageControls" class="image-text-to-image-controls">
             <label for="imageNegativePrompt">Negative prompt</label>
             <textarea id="imageNegativePrompt" class="daily-desk-input image-negative-prompt" rows="2" maxlength="8000"></textarea>
-            <label for="imageSeed">Seed</label>
-            <input id="imageSeed" class="desk-input" type="number" value="-1" step="1">
-            <p class="image-profile-note">画像生成は現在のプロファイル設定を使用します。</p>
           </div>
-          <div id="videoOptions" class="video-options" hidden>
-            <label for="videoMode">Video mode</label>
-            <select id="videoMode" class="desk-select">
-              <option value="t2v">Text to video</option>
-              <option value="i2v">Image to video</option>
-            </select>
-            <div id="videoInputImageRow" class="video-input-image-row" hidden>
-              <label for="videoInputImage">Starting image (PNG or JPEG)</label>
-              <input id="videoInputImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
-              <span class="image-profile-note">最大20 MiB</span>
+          <label for="imageSeed">Seed</label>
+          <input id="imageSeed" class="desk-input" type="number" value="-1" min="-1" max="9007199254740991" step="1">
+          <p id="imageOptionsStatus" class="image-profile-note" role="status" aria-live="polite">画像モデル設定を読み込み中です。</p>
+          <div id="imageOptionsError" class="image-options-error" role="alert" hidden></div>
+          <button id="imageOptionsRetry" class="ctl-btn image-options-retry" type="button" hidden>モデル設定を再読み込み</button>
+          <fieldset id="imageDynamicOptions" class="image-dynamic-options" disabled hidden>
+            <label for="imageModel">Model</label>
+            <select id="imageModel" class="desk-input"></select>
+            <div class="image-dimension-fields">
+              <label for="imageWidth">Width</label>
+              <input id="imageWidth" class="desk-input" type="number" required>
+              <label for="imageHeight">Height</label>
+              <input id="imageHeight" class="desk-input" type="number" required>
             </div>
-            <label for="videoSeed">Seed</label>
-            <input id="videoSeed" class="desk-input" type="number" value="42" min="0" max="9007199254740991" step="1">
-            <p class="image-profile-note">動画設定: 0.2 MP・5秒・8 steps。Negative promptは使用しません。</p>
-          </div>
-          <button id="imageGenerateBtn" class="desk-primary-btn" type="button">Generate image</button>
-        </section>
+            <label for="imageSteps">Steps</label>
+            <input id="imageSteps" class="desk-input" type="number" required>
+            <label for="imageCfgScale">CFG scale</label>
+            <input id="imageCfgScale" class="desk-input" type="number" required>
+            <label id="imageLoraStrengthField" for="imageLoraStrength" hidden>MOSS DMD LoRA strength</label>
+            <input id="imageLoraStrength" class="desk-input" type="number" hidden>
+            <label id="imageFaceDetailerField" class="image-checkbox-option" for="imageFaceDetailer" hidden>
+              <input id="imageFaceDetailer" type="checkbox">
+              <span>FaceDetailer</span>
+            </label>
+          </fieldset>
+          <button id="imageGenerateBtn" class="desk-primary-btn" type="submit" disabled>Generate image</button>
+        </form>
       </aside>
       <section class="desk-main image-main" aria-labelledby="imageResultTitle">
         <div class="desk-head compact">
           <div>
-            <div class="desk-kicker" id="imageResultKicker">Generated image</div>
+            <div class="desk-kicker">Generated image</div>
             <h3 id="imageResultTitle">生成結果</h3>
           </div>
           <div id="imageResultMeta" class="daily-desk-muted" aria-live="polite"></div>
         </div>
-        <section id="videoAuthPanel" class="daily-desk-card video-auth" aria-label="動画利用者認証" hidden>
+        <div id="imageResultEmpty" class="daily-desk-card image-empty">
+          プロンプトを書いてGenerate imageを押すと、生成結果をここに表示します。
+        </div>
+        <figure id="imageResultFigure" class="image-result" aria-live="polite" hidden>
+          <img id="imageResult" alt="RenCrow_Imageで生成した画像">
+          <figcaption id="imageResultPrompt"></figcaption>
+        </figure>
+        <div id="imageError" class="daily-desk-card image-error" role="alert" hidden></div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-movie" class="panel">
+    <div class="desk-screen desk-workspace movie-workspace">
+      <aside class="desk-side image-side" aria-label="Movie generation controls">
+        <div class="desk-brand">
+          <div class="desk-kicker">RenCrow Movie</div>
+          <h2 class="daily-desk-title">動画を生成</h2>
+        </div>
+        <div id="movieStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">ready</div>
+        <form id="movieGenerationForm" class="daily-desk-card image-prompt-card">
+          <label for="moviePrompt">Prompt</label>
+          <textarea id="moviePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="作りたい動画を入力"></textarea>
+          <label for="movieMode">Video mode</label>
+          <select id="movieMode" class="desk-select">
+            <option value="t2v">Text to video</option>
+            <option value="i2v">Image to video</option>
+          </select>
+          <label for="movieAspectRatio">Aspect ratio</label>
+          <select id="movieAspectRatio" class="desk-select" disabled></select>
+          <p id="movieOptionsStatus" class="image-profile-note" role="status" aria-live="polite">Loading video options…</p>
+          <div id="movieOptionsError" class="image-options-error" role="alert" hidden></div>
+          <button id="movieOptionsRetry" class="desk-primary-btn image-options-retry" type="button" hidden>Retry video options</button>
+          <dl class="video-fixed-settings" aria-label="Image owner video settings">
+            <dt>Model</dt><dd id="movieModel">—</dd>
+            <dt>Resolution</dt><dd><span id="movieMegapixels">—</span> MP</dd>
+            <dt>Duration</dt><dd><span id="movieDurationSeconds">—</span> s</dd>
+            <dt>Steps</dt><dd id="movieSteps">—</dd>
+          </dl>
+          <div id="movieInputImageRow" class="video-input-image-row" hidden>
+            <label for="movieInputImage">Starting image (PNG or JPEG)</label>
+            <input id="movieInputImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
+            <span class="image-profile-note">最大20 MiB</span>
+          </div>
+          <label for="movieSeed">Seed</label>
+          <input id="movieSeed" class="desk-input" type="number" value="42" min="0" max="9007199254740991" step="1">
+          <p class="image-profile-note">固定値はRenCrow_Imageの設定を表示します。Negative promptは使用しません。</p>
+          <button id="movieGenerateBtn" class="desk-primary-btn" type="submit">Generate video</button>
+        </form>
+        <section id="videoAuthPanel" class="daily-desk-card video-auth" aria-label="動画利用者認証">
           <div>
             <strong>動画の利用者認証</strong>
             <p class="image-profile-note">認証情報はこの画面のメモリだけで扱います。Cookieの期限は12時間です。</p>
@@ -232,13 +300,15 @@
           </div>
           <p id="videoAuthStatus" class="image-profile-note" role="status" aria-live="polite">動画を使うには認証してください。</p>
         </section>
-        <div id="imageResultEmpty" class="daily-desk-card image-empty">
-          プロンプトを書いてGenerateを押すと、生成結果をここに表示します。
+      </aside>
+      <section class="desk-main movie-main" aria-labelledby="movieResultTitle">
+        <div class="desk-head compact">
+          <div>
+            <div class="desk-kicker">Generated video</div>
+            <h3 id="movieResultTitle">動画生成結果</h3>
+          </div>
         </div>
-        <figure id="imageResultFigure" class="image-result" aria-live="polite" hidden>
-          <img id="imageResult" alt="RenCrow_Imageで生成した画像">
-          <figcaption id="imageResultPrompt"></figcaption>
-        </figure>
+        <div id="videoResultEmpty" class="daily-desk-card image-empty">認証して動画を生成すると、状態と再生結果をここに表示します。</div>
         <section id="videoResultPanel" class="video-result" aria-live="polite" hidden>
           <div class="daily-desk-card video-progress-card">
             <div id="videoJobStatus">ready</div>
@@ -247,7 +317,7 @@
           <video id="videoResult" controls preload="metadata" playsinline aria-label="生成した動画" hidden></video>
           <a id="videoDownload" class="desk-primary-btn video-download" href="#" download hidden>Download MP4</a>
         </section>
-        <div id="imageError" class="daily-desk-card image-error" role="alert" hidden></div>
+        <div id="movieError" class="daily-desk-card image-error" role="alert" hidden></div>
       </section>
     </div>
   </section>
@@ -1773,10 +1843,10 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
-<script src="/viewer/assets/js/tabs/image.js?v=20261021-image-video" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-aspect-options" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
-<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35" defer></script>
+<script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>
 <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
 </body>
 </html>
