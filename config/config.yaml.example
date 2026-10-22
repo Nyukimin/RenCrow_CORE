@@ -558,7 +558,7 @@ image:
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
     allowed_client_ipv4:
-      - "192.168.1.206"
+      - "192.168.1.203"
     # Shared Movie output ownership key; this is not an authenticated user scope.
     actor_id: "user:yukimi"
 

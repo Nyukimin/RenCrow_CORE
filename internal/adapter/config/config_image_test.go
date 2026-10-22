@@ -64,7 +64,7 @@ func validImageVideoBrowserConfig() ImageConfig {
 			Enabled:           true,
 			Host:              "192.168.1.206:18790",
 			Origin:            "http://192.168.1.206:18790",
-			AllowedClientIPv4: []string{"192.168.1.206"},
+			AllowedClientIPv4: []string{"192.168.1.203"},
 			ActorID:           "user:yukimi",
 		},
 	}
@@ -135,7 +135,7 @@ image:
     host: "192.168.1.206:18790"
     origin: "http://192.168.1.206:18790"
     allowed_client_ipv4:
-      - "192.168.1.206"
+      - "192.168.1.203"
     actor_id: "user:yukimi"
 `
 	if err := os.WriteFile(configPath, []byte(content), 0o600); err != nil {
@@ -147,7 +147,7 @@ image:
 	}
 	if !cfg.Image.VideoBrowser.Enabled || !cfg.Image.VideoBrowser.AllowGeneration ||
 		cfg.Image.VideoBrowser.ActorID != "user:yukimi" ||
-		strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ",") != "192.168.1.206" ||
+		strings.Join(cfg.Image.VideoBrowser.AllowedClientIPv4, ",") != "192.168.1.203" ||
 		cfg.Image.VideoBrowser.Host != "192.168.1.206:18790" ||
 		cfg.Image.VideoBrowser.Origin != "http://192.168.1.206:18790" {
 		t.Fatalf("unexpected video browser config: enabled=%t allow_generation=%t host=%q clients=%q actor_id=%q",

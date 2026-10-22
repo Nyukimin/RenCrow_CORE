@@ -17,7 +17,7 @@ import (
 const (
 	videoTestHost       = "192.168.1.206:18790"
 	videoTestOrigin     = "http://192.168.1.206:18790"
-	videoTestClientIPv4 = "192.168.1.206"
+	videoTestClientIPv4 = "192.168.1.203"
 	videoTestActor      = "user:yukimi"
 )
 
@@ -296,7 +296,8 @@ func TestHandleVideoGenerateRejectsUntrustedRequestsBeforeGateway(t *testing.T) 
 		name string
 		edit func(*http.Request)
 	}{
-		{name: "unapproved browser source 192.168.1.204", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.204:43000" }},
+		{name: "coding host is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.204:43000" }},
+		{name: "Viewer interface host is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.206:43000" }},
 		{name: "ComfyUI backend is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.207:43000" }},
 		{name: "wrong LAN source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }},
 		{name: "wrong host", edit: func(r *http.Request) { r.Host = "attacker.example" }},

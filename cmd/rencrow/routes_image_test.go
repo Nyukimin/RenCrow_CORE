@@ -57,11 +57,11 @@ func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathFromAllowedLANClie
 		Enabled: true, BaseURL: server.URL, TimeoutMS: 1000,
 		VideoBrowser: config.ImageVideoBrowserConfig{
 			Enabled: true, AllowGeneration: true, Host: host, Origin: "http://" + host,
-			AllowedClientIPv4: []string{"192.168.1.206"}, ActorID: "user:yukimi",
+			AllowedClientIPv4: []string{"192.168.1.203"}, ActorID: "user:yukimi",
 		},
 	}})
 	allowed := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
-	allowed.RemoteAddr = "192.168.1.206:43210"
+	allowed.RemoteAddr = "192.168.1.203:43210"
 	allowed.Host = host
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, allowed)
@@ -69,7 +69,7 @@ func TestRegisterImageRoutesProxiesVideoOptionsOnCanonicalPathFromAllowedLANClie
 		!strings.Contains(response.Body.String(), `"default_aspect_ratio":"1:1 (Square)"`) {
 		t.Fatalf("GET video options from allowed source status=%d body=%q", response.Code, response.Body.String())
 	}
-	for _, sourceIP := range []string{"192.168.1.204", "192.168.1.207"} {
+	for _, sourceIP := range []string{"192.168.1.204", "192.168.1.206", "192.168.1.207"} {
 		t.Run("reject browser source "+sourceIP, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v", nil)
 			req.RemoteAddr = sourceIP + ":43210"
@@ -89,11 +89,11 @@ func TestRegisterImageRoutesRemovesVideoSessionEndpoint(t *testing.T) {
 	registerImageRoutes(mux, &config.Config{Image: config.ImageConfig{
 		VideoBrowser: config.ImageVideoBrowserConfig{
 			Enabled: true, Host: host, Origin: "http://" + host,
-			AllowedClientIPv4: []string{"192.168.1.206"}, ActorID: "user:yukimi",
+			AllowedClientIPv4: []string{"192.168.1.203"}, ActorID: "user:yukimi",
 		},
 	}})
 	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/session", nil)
-	req.RemoteAddr = "192.168.1.206:43210"
+	req.RemoteAddr = "192.168.1.203:43210"
 	req.Host = host
 	req.Header.Set("Origin", "http://"+host)
 	if _, pattern := mux.Handler(req); pattern != "/viewer/image/video/" {

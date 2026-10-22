@@ -7,7 +7,7 @@ import (
 )
 
 func TestVideoOwnerAllowsConfiguredLANClientsWithoutIdentityHeaders(t *testing.T) {
-	for _, sourceIP := range []string{"192.168.1.206"} {
+	for _, sourceIP := range []string{"192.168.1.203"} {
 		t.Run(sourceIP, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
 			req.RemoteAddr = sourceIP + ":43210"
@@ -25,12 +25,13 @@ func TestVideoActorIDRejectsUnconfiguredSourceHostOriginAndIdentityHeaders(t *te
 		name string
 		edit func(*http.Request)
 	}{
-		{name: "unapproved browser source 192.168.1.204", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.204:43210" }},
+		{name: "coding host is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.204:43210" }},
+		{name: "Viewer interface host is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.206:43210" }},
 		{name: "ComfyUI backend is not a browser source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.207:43210" }},
 		{name: "wrong private source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.205:43210" }},
 		{name: "public source", edit: func(r *http.Request) { r.RemoteAddr = "8.8.8.8:43210" }},
-		{name: "IPv6 mapped source", edit: func(r *http.Request) { r.RemoteAddr = "[::ffff:192.168.1.206]:43210" }},
-		{name: "malformed source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.206" }},
+		{name: "IPv6 mapped source", edit: func(r *http.Request) { r.RemoteAddr = "[::ffff:192.168.1.203]:43210" }},
+		{name: "malformed source", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.203" }},
 		{name: "wrong host", edit: func(r *http.Request) { r.Host = "192.168.1.205:18790" }},
 		{name: "wrong origin", edit: func(r *http.Request) { r.Header.Set("Origin", "http://attacker.example") }},
 		{name: "duplicate origin", edit: func(r *http.Request) {
@@ -46,7 +47,7 @@ func TestVideoActorIDRejectsUnconfiguredSourceHostOriginAndIdentityHeaders(t *te
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options", nil)
-			req.RemoteAddr = "192.168.1.206:43210"
+			req.RemoteAddr = "192.168.1.203:43210"
 			req.Host = videoTestHost
 			tc.edit(req)
 			if actorID, ok := videoAccessConfig().videoOwnerID(req); ok {
@@ -70,7 +71,7 @@ func TestVideoActorIDRequiresOneExactHTTPOriginForPostAndDelete(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(method+"/"+tc.name, func(t *testing.T) {
 				req := httptest.NewRequest(method, "/viewer/image/video/generations", nil)
-				req.RemoteAddr = "192.168.1.206:43210"
+				req.RemoteAddr = "192.168.1.203:43210"
 				req.Host = videoTestHost
 				for _, origin := range tc.origins {
 					req.Header.Add("Origin", origin)
@@ -147,7 +148,7 @@ func TestVideoRoutesRejectUntrustedRequestsBeforeGateway(t *testing.T) {
 			t.Run(route.name+"/"+edit.name, func(t *testing.T) {
 				gateway := &fakeVideoGateway{}
 				req := route.request(t)
-				req.RemoteAddr = "192.168.1.206:43210"
+				req.RemoteAddr = "192.168.1.203:43210"
 				req.Host = videoTestHost
 				if req.Method == http.MethodPost {
 					req.Header.Set("Origin", videoTestOrigin)
