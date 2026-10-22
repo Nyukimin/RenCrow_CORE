@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/tabs/prompt-logs.css?v=20260806-prompt-logs-panel">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
-<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-movie-aspect-options">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-image-mode-radios">
 </head>
 <body class="theme-modern">
 <header>
@@ -177,20 +177,20 @@
         </div>
         <div id="imageStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">ready</div>
         <form id="imageGenerationForm" class="daily-desk-card image-prompt-card" novalidate>
-          <label for="imageMode">Mode</label>
-          <select id="imageMode" class="desk-select">
-            <option value="t2i">Text to Image</option>
-            <option value="pose" disabled>Pose (unavailable)</option>
-            <option value="clothing" disabled>Clothing (unavailable)</option>
-          </select>
-          <p id="imageEditOptionsStatus" class="image-profile-note image-edit-options-status" role="status" aria-live="polite">Pose and Clothing modes are checking availability.</p>
+          <fieldset id="imageModeOptions" class="image-mode-options">
+            <legend>モード</legend>
+            <label class="image-mode-option"><input id="imageModeT2I" type="radio" name="imageMode" value="t2i" checked><span>画像生成</span></label>
+            <label class="image-mode-option"><input id="imageModePose" type="radio" name="imageMode" value="pose" disabled><span>ポーズ参照</span></label>
+            <label class="image-mode-option"><input id="imageModeClothing" type="radio" name="imageMode" value="clothing" disabled><span>服画像で着せ替え</span></label>
+          </fieldset>
+          <p id="imageEditOptionsStatus" class="image-profile-note image-edit-options-status" role="status" aria-live="polite">ポーズ参照と服画像で着せ替えの利用可否を確認しています。</p>
           <label id="imagePromptLabel" for="imagePrompt">Prompt</label>
           <textarea id="imagePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="描きたい画像を入力"></textarea>
           <div id="imageEditInputs" class="image-edit-inputs" hidden>
             <p id="imageEditModelLabel" class="image-profile-note"><strong>Model:</strong> Qwen Image Edit 2511</p>
-            <label for="imagePersonImage">Person image (PNG or JPEG)</label>
+            <label for="imagePersonImage">人物画像</label>
             <input id="imagePersonImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
-            <label id="imageReferenceImageLabel" for="imageReferenceImage">Reference image (PNG or JPEG)</label>
+            <label id="imageReferenceImageLabel" for="imageReferenceImage">ポーズ参照画像</label>
             <input id="imageReferenceImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
             <span class="image-profile-note">各画像は最大20 MiBです。</span>
           </div>
@@ -1843,7 +1843,7 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
-<script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-aspect-options" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20261022-image-mode-radios" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>

@@ -1519,12 +1519,24 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 		t.Fatalf("read image.js: %v", err)
 	}
 	html, js := string(htmlData), string(jsData)
+	formStart := strings.Index(html, `id="imageGenerationForm"`)
+	if formStart < 0 {
+		t.Fatal("Image generation form is missing")
+	}
+	formEndOffset := strings.Index(html[formStart:], `</form>`)
+	if formEndOffset < 0 {
+		t.Fatal("Image generation form is not closed")
+	}
+	imageForm := html[formStart : formStart+formEndOffset]
 	for _, needle := range []string{
 		`id="imageGenerationForm" class="daily-desk-card image-prompt-card" novalidate`,
-		`id="imageMode"`,
-		`<option value="t2i">Text to Image</option>`,
-		`<option value="pose" disabled>Pose (unavailable)</option>`,
-		`<option value="clothing" disabled>Clothing (unavailable)</option>`,
+		`<fieldset id="imageModeOptions" class="image-mode-options">`,
+		`id="imageModeT2I" type="radio" name="imageMode" value="t2i" checked`,
+		`id="imageModePose" type="radio" name="imageMode" value="pose" disabled`,
+		`id="imageModeClothing" type="radio" name="imageMode" value="clothing" disabled`,
+		`<span>画像生成</span>`,
+		`<span>ポーズ参照</span>`,
+		`<span>服画像で着せ替え</span>`,
 		`id="imageEditOptionsStatus"`,
 		`id="imagePromptLabel" for="imagePrompt"`,
 		`id="imagePrompt"`,
@@ -1544,13 +1556,26 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 		`id="imageEditInputs"`,
 		`id="imageEditModelLabel"`,
 		`Qwen Image Edit 2511`,
+		`<label for="imagePersonImage">人物画像</label>`,
 		`id="imagePersonImage"`,
+		`<label id="imageReferenceImageLabel" for="imageReferenceImage">ポーズ参照画像</label>`,
 		`id="imageReferenceImage"`,
 		`id="imageGenerateBtn" class="desk-primary-btn" type="submit" disabled`,
 	} {
-		if !strings.Contains(html, needle) {
+		if !strings.Contains(imageForm, needle) {
 			t.Fatalf("Image controls are missing %q", needle)
 		}
+	}
+	if strings.Contains(imageForm, `<select id="imageMode"`) {
+		t.Fatal("Image mode must use the visible native radio group, not a select")
+	}
+	if strings.Count(imageForm, `name="imageMode"`) != 3 {
+		t.Fatal("Image mode must expose exactly three native choices")
+	}
+	if strings.Count(imageForm, `type="file"`) != 2 ||
+		strings.Count(imageForm, `id="imagePersonImage"`) != 1 ||
+		strings.Count(imageForm, `id="imageReferenceImage"`) != 1 {
+		t.Fatal("Image edit modes must reuse exactly one person and one reference upload input")
 	}
 	for _, needle := range []string{
 		`fetch('/viewer/image/options'`,
@@ -1565,6 +1590,11 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 		`JSON.stringify(requestBody)`,
 		`new FormData()`,
 		`formData.append('operation', operation)`,
+		`appendImageFile(formData, 'person', personImageInput.files[0], '人物画像')`,
+		`operation === 'pose' ? 'ポーズ参照画像' : '着せたい服の画像'`,
+		`editInputs.hidden = !isEdit`,
+		`modeInputs.forEach((modeInput) => modeInput.addEventListener('change'`,
+		`option.disabled = generationBusy || (operation !== 't2i' && (!editOptionsReady || !editOperations.has(operation)));`,
 		`fetch(isEdit ? '/viewer/image/edit' : '/viewer/image/generate'`,
 		`maxImageUploadBytes = 20 * 1024 * 1024`,
 		`optionsRetry.addEventListener('click', loadOptions)`,
@@ -1578,10 +1608,10 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 	if validation < 0 || controlsEnabled <= validation {
 		t.Fatal("Image controls must stay disabled until the options response passes validation")
 	}
-	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-aspect-options`) {
+	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-image-mode-radios`) {
 		t.Fatal("Image controls script cache key was not updated")
 	}
-	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-movie-aspect-options`) {
+	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-image-mode-radios`) {
 		t.Fatal("Image controls stylesheet cache key was not updated")
 	}
 }

@@ -2,7 +2,7 @@
 
 (function initImageTab() {
   const form = document.getElementById('imageGenerationForm');
-  const modeSelect = document.getElementById('imageMode');
+  const modeInputs = form ? Array.from(form.querySelectorAll('input[name="imageMode"]')) : [];
   const promptLabel = document.getElementById('imagePromptLabel');
   const prompt = document.getElementById('imagePrompt');
   const negativePrompt = document.getElementById('imageNegativePrompt');
@@ -34,7 +34,9 @@
   const resultPrompt = document.getElementById('imageResultPrompt');
   const resultMeta = document.getElementById('imageResultMeta');
   const error = document.getElementById('imageError');
-  if (!form || !modeSelect || !promptLabel || !prompt || !textToImageControls || !seed || !editOptionsStatus ||
+  const modeOptions = new Map(modeInputs.map((modeInput) => [modeInput.value, modeInput]));
+  if (!form || modeInputs.length !== 3 || !modeOptions.has('t2i') || !modeOptions.has('pose') || !modeOptions.has('clothing') ||
+      !promptLabel || !prompt || !textToImageControls || !seed || !editOptionsStatus ||
       !editInputs || !personImageInput || !referenceImageInput || !referenceImageLabel || !dynamicOptions ||
       !modelSelect || !widthInput || !heightInput || !stepsInput || !cfgScaleInput || !loraStrengthField ||
       !loraStrengthInput || !faceDetailerField || !faceDetailerInput || !generateButton || !status || !image ||
@@ -44,11 +46,6 @@
   const maxImageEditPromptBytes = 8 * 1024;
   const profileIDPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
   const allowedEditOperations = new Set(['pose', 'clothing']);
-  const editModeOptions = new Map(
-    Array.from(modeSelect.options)
-      .filter((option) => allowedEditOperations.has(option.value))
-      .map((option) => [option.value, option]),
-  );
   let modelOptions = [];
   let selectedModel = null;
   let defaultModel = '';
@@ -58,7 +55,8 @@
   let generationBusy = false;
 
   function activeMode() {
-    return modeSelect.value;
+    const selectedMode = modeInputs.find((modeInput) => modeInput.checked);
+    return selectedMode ? selectedMode.value : '';
   }
 
   function modeReady() {
@@ -90,15 +88,16 @@
     dynamicOptions.disabled = generationBusy || !isTextToImage || !optionsReady || modelOptions.length === 0;
     personImageInput.disabled = generationBusy || !isEdit;
     referenceImageInput.disabled = generationBusy || !isEdit;
-    referenceImageLabel.textContent = operation === 'pose' ? 'Pose reference (PNG or JPEG)' : 'Clothing reference (PNG or JPEG)';
-    modeSelect.disabled = generationBusy;
+    referenceImageLabel.textContent = operation === 'pose' ? 'ポーズ参照画像' : '着せたい服の画像';
+    for (const [operation, option] of modeOptions) {
+      option.disabled = generationBusy || (operation !== 't2i' && (!editOptionsReady || !editOperations.has(operation)));
+    }
     generateButton.disabled = generationBusy || !modeReady();
     generateButton.textContent = generationBusy ? 'Generating...' : (isEdit ? 'Edit image' : 'Generate image');
   }
 
   function setBusy(busy) {
     generationBusy = busy;
-    modeSelect.disabled = busy;
     prompt.disabled = busy;
     if (negativePrompt) negativePrompt.disabled = busy;
     seed.disabled = busy;
@@ -307,8 +306,8 @@
     if (promptBytes > maxImageEditPromptBytes) throw new Error('編集promptは8 KiB以内で入力してください。');
     const formData = new FormData();
     formData.append('operation', operation);
-    appendImageFile(formData, 'person', personImageInput.files[0], 'Person image');
-    appendImageFile(formData, 'reference', referenceImageInput.files[0], operation === 'pose' ? 'Pose reference' : 'Clothing reference');
+    appendImageFile(formData, 'person', personImageInput.files[0], '人物画像');
+    appendImageFile(formData, 'reference', referenceImageInput.files[0], operation === 'pose' ? 'ポーズ参照画像' : '着せたい服の画像');
     formData.append('prompt', promptText);
     formData.append('seed', String(readSeed()));
     return formData;
@@ -387,11 +386,7 @@
   async function loadEditOptions() {
     editOptionsReady = false;
     editOperations = new Set();
-    editOptionsStatus.textContent = 'Pose / Clothingの設定を確認しています。';
-    for (const [operation, option] of editModeOptions) {
-      option.disabled = true;
-      option.textContent = operation === 'pose' ? 'Pose (unavailable)' : 'Clothing (unavailable)';
-    }
+    editOptionsStatus.textContent = 'ポーズ参照と服画像で着せ替えの利用可否を確認しています。';
     updateModeUI();
 
     try {
@@ -404,21 +399,15 @@
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       editOperations = validateEditOptions(payload);
       editOptionsReady = true;
-      for (const [operation, option] of editModeOptions) {
-        const enabled = editOperations.has(operation);
-        option.disabled = !enabled;
-        option.textContent = operation === 'pose'
-          ? (enabled ? 'Pose' : 'Pose (unavailable)')
-          : (enabled ? 'Clothing' : 'Clothing (unavailable)');
-      }
+      const availableModes = Array.from(editOperations, (operation) => operation === 'pose' ? 'ポーズ参照' : '服画像で着せ替え');
       editOptionsStatus.textContent = editOperations.size > 0
-        ? `${Array.from(editOperations, (operation) => operation === 'pose' ? 'Pose' : 'Clothing').join(' / ')} mode is available.`
-        : 'Image editing is not configured.';
+        ? `${availableModes.join(' / ')}を利用できます。`
+        : '画像編集workflowが設定されていません。';
       updateModeUI();
     } catch (_) {
       editOperations = new Set();
       editOptionsReady = false;
-      editOptionsStatus.textContent = 'Pose and Clothing are unavailable because the Image edit workflows are not configured.';
+      editOptionsStatus.textContent = '画像編集workflowが設定されていないため、ポーズ参照と服画像で着せ替えは利用できません。';
       updateModeUI();
     }
   }
@@ -490,11 +479,12 @@
     event.preventDefault();
     generateImage();
   });
-  modeSelect.addEventListener('change', () => {
+  modeInputs.forEach((modeInput) => modeInput.addEventListener('change', () => {
+    if (!modeInput.checked) return;
     error.hidden = true;
     updateModeUI();
     setStatus(modeReady() ? 'ready' : 'options unavailable', false);
-  });
+  }));
   modelSelect.addEventListener('change', () => {
     selectModel(modelSelect.value, true);
     updateModeUI();
