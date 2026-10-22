@@ -178,7 +178,10 @@ func startRealWorldRead(t *testing.T, bin string) (string, string, func()) {
 	sum := sha256.Sum256([]byte(token))
 	// The scope override exists only to run the E2E under a controlled
 	// authorization fault. The default is the real read/write/stream set.
-	scopes := `["read", "write", "stream"]`
+	// The projection scopes and the Actor binding exist so one real WORLD
+	// instance also carries the CORE WorkSet/LifePolicy heads that the
+	// assessment route reads. They stay out of the read scope override.
+	scopes := `["read", "write", "stream", "projection", "projection_reconcile"]`
 	if override := strings.TrimSpace(os.Getenv("RENCROW_WORLD_READ_E2E_SCOPES")); override != "" {
 		scopes = override
 	}
@@ -187,6 +190,7 @@ func startRealWorldRead(t *testing.T, bin string) (string, string, func()) {
   "store_path": %q,
   "scope": {"world_id": "rencrow-home", "timeline_id": "timeline-1", "timeline_epoch": "epoch-e2e"},
   "tokens": [{"id": "core-reader", "sha256": %q, "scopes": %s}],
+  "core_projection_actors": [{"actor_id": "mio", "actor_instance_id": "core-instance-mio"}],
   "page": {"max_events": 500, "max_bytes": 2097152},
   "sse": {"heartbeat_seconds": 2, "poll_millis": 50},
   "allow_probe_action": true,
