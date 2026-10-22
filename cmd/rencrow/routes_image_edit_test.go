@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"image"
 	"image/png"
@@ -20,6 +22,8 @@ import (
 func TestRegisterImageRoutesProxiesImageEditAndReturnsCoreResultURL(t *testing.T) {
 	person := routeImagePNG(t, 2, 2)
 	reference := routeImagePNG(t, 3, 2)
+	generated := routeImagePNG(t, 32, 32)
+	generatedSHA256 := sha256.Sum256(generated)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/images/edits/options" {
 			w.Header().Set("Content-Type", "application/json")
@@ -53,13 +57,14 @@ func TestRegisterImageRoutesProxiesImageEditAndReturnsCoreResultURL(t *testing.T
 				return
 			}
 		}
-		if strings.Join(fields, ",") != "operation,person,reference,seed" || string(values["operation"]) != "clothing" ||
-			!bytes.Equal(values["person"], person) || !bytes.Equal(values["reference"], reference) || string(values["seed"]) != "12" {
+		if strings.Join(fields, ",") != "operation,person,reference,prompt,seed" || string(values["operation"]) != "clothing" ||
+			!bytes.Equal(values["person"], person) || !bytes.Equal(values["reference"], reference) ||
+			string(values["prompt"]) != "match the reference outfit" || string(values["seed"]) != "12" {
 			http.Error(w, "wrong image edit contract", http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"ok":true,"id":"img_route_edit","profile":"clothing","image":{"id":"img_route_edit","content_type":"image/png","width":32,"height":32}}`)
+		fmt.Fprintf(w, `{"ok":true,"id":"img_route_edit","created":1761091200,"profile":"qwen-image-edit-2511-int8","prompt":"match the reference outfit","operation":"clothing","image":{"id":"img_route_edit","path":"/v1/images/img_route_edit.png","content_type":"image/png","width":32,"height":32,"sha256":"%s","size_bytes":%d}}`, hex.EncodeToString(generatedSHA256[:]), len(generated))
 	}))
 	defer server.Close()
 
@@ -112,6 +117,7 @@ func routeImageEditMultipart(t *testing.T, person, reference []byte) (io.Reader,
 	writeText("operation", "clothing")
 	writeFile("person", "person.png", person)
 	writeFile("reference", "reference.png", reference)
+	writeText("prompt", "match the reference outfit")
 	writeText("seed", "12")
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close multipart: %v", err)
