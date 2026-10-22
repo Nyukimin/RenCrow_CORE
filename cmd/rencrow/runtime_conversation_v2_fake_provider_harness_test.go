@@ -393,7 +393,7 @@ func TestResponseFirstV2FixedFakeProviderFrameworkHarness(t *testing.T) {
 		submissionID := fmt.Sprintf("response-first-fixed-harness-%02d", index+1)
 		body, err := json.Marshal(map[string]any{
 			"protocol_version": 2, "message": responseFirstFixedHarnessInput,
-			"client_submission_id": submissionID, "to": "mio", "user_id": "untrusted-body-user",
+			"client_submission_id": submissionID, "to": "mio", "user_id": responseFirstActorID,
 		})
 		if err != nil {
 			t.Fatalf("encode Viewer v2 request %d: %v", index+1, err)
