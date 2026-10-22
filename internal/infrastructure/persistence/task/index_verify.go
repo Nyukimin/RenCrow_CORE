@@ -491,7 +491,7 @@ func describeSidecar(root string, layout layoutInfo) string {
 		}
 		return "unusable: " + rebuildCorrupt
 	}
-	if (header.Version == sidecarVersionV2) != layout.v2 {
+	if (!layout.v2 && header.Version != sidecarVersionV1) || (layout.v2 && header.Version == sidecarVersionV1) {
 		return "unusable: " + rebuildLayout
 	}
 	return "usable"

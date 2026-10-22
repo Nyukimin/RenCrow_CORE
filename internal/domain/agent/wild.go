@@ -72,9 +72,32 @@ func (w *WildAgent) WithImageGenerator(generator ImageGenerator) *WildAgent {
 	return w
 }
 
+// ExecutePrivateWork executes a Task-owned Midori assignment without reading or
+// committing the legacy public conversation. Image generation is exposed only
+// when the Task owner granted its exact capability; text generation remains
+// available without external-effect capabilities.
+func (w *WildAgent) ExecutePrivateWork(ctx context.Context, input conversation.TurnInput, allowedCapabilities []string) (string, error) {
+	capabilities, err := validatePrivateWorkEntry(ctx, input, "midori", allowedCapabilities)
+	if err != nil {
+		return "", err
+	}
+
+	private := *w
+	private.conversationEngine = nil
+	allowImageGeneration := hasPrivateCapability(capabilities, privateCapabilityImageGenerate)
+	if !allowImageGeneration {
+		private.imageGenerator = nil
+	}
+	return private.generate(ctx, input, allowImageGeneration)
+}
+
 func (w *WildAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {
+	return w.generate(ctx, t, true)
+}
+
+func (w *WildAgent) generate(ctx context.Context, t conversation.TurnInput, allowImageGeneration bool) (string, error) {
 	userMessage := stripWildCommand(t.MessageText())
-	if isImageGenerationRequest(userMessage) {
+	if allowImageGeneration && isImageGenerationRequest(userMessage) {
 		if w.imageGenerator == nil {
 			return "", ErrImageGeneratorUnavailable
 		}

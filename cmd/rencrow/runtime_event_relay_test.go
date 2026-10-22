@@ -23,6 +23,7 @@ type shutdownOrderEventStore struct {
 	appendErr             error
 	appendErrOnce         bool
 	appendHook            func(int)
+	events                []modulecore.EventEnvelope
 	hub                   *viewer.EventHub
 	projectedBeforeAppend bool
 }
@@ -98,12 +99,49 @@ func (s *shutdownOrderEventStore) AppendSequenced(_ context.Context, event modul
 	}
 	s.appends++
 	sequence := s.appends
+	event.EventSeq = modulecore.EventSeq(sequence)
+	s.events = append(s.events, event)
 	s.mu.Unlock()
 	if hook != nil {
 		hook(call)
 	}
-	event.EventSeq = modulecore.EventSeq(sequence)
 	return event, nil
+}
+
+func (s *shutdownOrderEventStore) ReadComponentPage(ctx context.Context, component string, after, through modulecore.EventSeq, limit int) ([]modulecore.EventEnvelope, modulecore.EventSeq, error) {
+	if ctx == nil {
+		return nil, 0, errors.New("event replay context is required")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, err
+	}
+	if after < 0 || through < 0 || limit <= 0 {
+		return nil, 0, errors.New("invalid event replay query")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest modulecore.EventSeq
+	for _, event := range s.events {
+		if event.ComponentID == component && event.EventSeq > latest {
+			latest = event.EventSeq
+		}
+	}
+	if through == 0 {
+		through = latest
+	}
+	if after > through || through > latest {
+		return nil, 0, errors.New("event replay cursor is outside the canonical window")
+	}
+	page := make([]modulecore.EventEnvelope, 0, limit)
+	for _, event := range s.events {
+		if event.ComponentID == component && event.EventSeq > after && event.EventSeq <= through {
+			page = append(page, event)
+			if len(page) == limit {
+				break
+			}
+		}
+	}
+	return page, through, nil
 }
 
 func TestEventRelayPersistsBeforeProjection(t *testing.T) {

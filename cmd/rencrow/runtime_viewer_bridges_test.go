@@ -40,7 +40,8 @@ func (p viewerBridgeCaptureProcessor) ProcessMessage(_ context.Context, req orch
 func TestViewerBridgeResolvesProductionCanonicalSessionBeforeAcceptance(t *testing.T) {
 	repo := sessionpersistence.NewJSONSessionRepository(t.TempDir())
 	processor := viewerBridgeCaptureProcessor{requests: make(chan orchestrator.ProcessMessageRequest, 1)}
-	factories := buildViewerBridgeHandlers(&config.Config{}, &Dependencies{}, "", ttsEntryRuntime{}, repo)
+	deps := &Dependencies{canonicalEventStore: openViewerBridgeAdmissionStore(t)}
+	factories := buildViewerBridgeHandlers(&config.Config{}, deps, "", ttsEntryRuntime{}, repo)
 	handler := factories.ViewerSendFromOrch(processor)
 
 	req := httptest.NewRequest(http.MethodPost, "/viewer/send", strings.NewReader(`{"message":"hello","to":"mio"}`))
@@ -88,9 +89,10 @@ func TestViewerBridgeCancellationUsesSharedRegistryAndLatchesBeforeSpeechStart(t
 		start:  make(chan struct{}),
 		result: make(chan error, 1),
 	}
+	deps := &Dependencies{canonicalEventStore: openViewerBridgeAdmissionStore(t)}
 	factories := buildViewerBridgeHandlers(
 		&config.Config{},
-		&Dependencies{},
+		deps,
 		"",
 		ttsEntryRuntime{},
 		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
@@ -169,9 +171,10 @@ func TestViewerBridgePlaybackProgressUsesAcceptedTurnAndActiveAudioOwner(t *test
 		ready:   make(chan struct{}),
 		started: make(chan error, 1),
 	}
+	deps := &Dependencies{canonicalEventStore: openViewerBridgeAdmissionStore(t)}
 	factories := buildViewerBridgeHandlers(
 		&config.Config{},
-		&Dependencies{},
+		deps,
 		"",
 		ttsEntryRuntime{},
 		sessionpersistence.NewJSONSessionRepository(t.TempDir()),
@@ -260,7 +263,10 @@ func TestViewerAsyncErrorEventKeepsAcceptedIngressTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCanonicalEventLog() error = %v", err)
 	}
-	deps := &Dependencies{eventRelay: &idleAwareEventListener{archive: archive}}
+	deps := &Dependencies{
+		eventRelay:          &idleAwareEventListener{archive: archive},
+		canonicalEventStore: openViewerBridgeAdmissionStore(t),
+	}
 	factories := buildViewerBridgeHandlers(&config.Config{}, deps, "", ttsEntryRuntime{}, sessionpersistence.NewJSONSessionRepository(t.TempDir()))
 	handler := factories.ViewerSendFromOrch(viewerBridgeErrorProcessor{})
 

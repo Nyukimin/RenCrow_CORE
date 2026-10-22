@@ -90,10 +90,11 @@ var startedRunLedger = map[string]startedRunEntry{
 	// Closed by the function's own means: classified by reading the code, with no
 	// behavioral test of the early-failure paths. They use their own bounded
 	// finalization budgets, not the shared API.
-	"internal/application/heartbeat/worker_lifecycle.go:beginWorker":          {startedRunCloses, "its own failures go through failBeforeWorker -> finishWorker; after it returns, its callers call finish (not reviewed here)"},
-	"cmd/rencrow/runtime_agent_ops_legacy.go:admitLegacyOPS":                  {startedRunClosedByCaller, "the handler closes through finalizeLegacyOPS, with a deferred close for panics"},
-	"cmd/rencrow/runtime_agent_ops_dci_identity.go:admitAgentOpsDCIExecution": {startedRunCloses, "closes the Run when WithIdentity fails; the caller closes after execution"},
-	"internal/application/superagent/run_queue_scheduler.go:startRun":         {startedRunClosedByCaller, "RunOnce interrupts the issued Run when the lease attach fails; a later failure (the claimed trace write) leaves it until the lease expires and the Run is re-issued, so the hold is bounded by the lease"},
+	"internal/application/heartbeat/worker_lifecycle.go:beginWorker":               {startedRunCloses, "its own failures go through failBeforeWorker -> finishWorker; after it returns, its callers call finish (not reviewed here)"},
+	"internal/application/conversationruntime/delegated_execution.go:executeLease": {startedRunCloses, "post-start pre-report failures complete the exact active Run as waiting before retry; TestDelegatedTaskExecutorRetriesUncommittedReportWithCheckpointSuccessor proves slot release and a source-bound successor"},
+	"cmd/rencrow/runtime_agent_ops_legacy.go:admitLegacyOPS":                       {startedRunClosedByCaller, "the handler closes through finalizeLegacyOPS, with a deferred close for panics"},
+	"cmd/rencrow/runtime_agent_ops_dci_identity.go:admitAgentOpsDCIExecution":      {startedRunCloses, "closes the Run when WithIdentity fails; the caller closes after execution"},
+	"internal/application/superagent/run_queue_scheduler.go:startRun":              {startedRunClosedByCaller, "RunOnce interrupts the issued Run when the lease attach fails; a later failure (the claimed trace write) leaves it until the lease expires and the Run is re-issued, so the hold is bounded by the lease"},
 
 	// Known gaps. Neither is reachable with the real Task owner, which validates
 	// the Run it returns before it returns it: they act only when the owner's

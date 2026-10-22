@@ -22,7 +22,8 @@ import (
 var (
 	_ domainsession.SessionRepository = (*SessionRepositoryClient)(nil)
 	_ interface {
-		LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, error)
+		LoadCanonical(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, bool, error)
+		LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
 	} = (*SessionRepositoryClient)(nil)
 )
 
@@ -77,15 +78,49 @@ type countedCanonicalSessionOwner struct {
 	*session.JSONSessionRepository
 	lookups   int
 	createdID string
+	created   bool
 }
 
-func (o *countedCanonicalSessionOwner) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*domainsession.Session, error) {
+func (o *countedCanonicalSessionOwner) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*domainsession.Session, bool, error) {
 	o.lookups++
-	value, err := o.JSONSessionRepository.LoadOrCreateCanonical(ctx, logicalDate, address, createdAt)
+	value, created, err := o.JSONSessionRepository.LoadOrCreateCanonical(ctx, logicalDate, address, createdAt)
 	if err == nil {
 		o.createdID = value.ID()
+		o.created = created
 	}
-	return value, err
+	return value, created, err
+}
+
+type canonicalReadSessionOwner struct {
+	*session.JSONSessionRepository
+	lookups int
+	value   *domainsession.Session
+	found   bool
+	err     error
+}
+
+type countedReservationSessionOwner struct {
+	*session.JSONSessionRepository
+	reservations int
+	reads        int
+}
+
+func (o *countedReservationSessionOwner) ReserveCanonicalV2(ctx context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (*domainsession.Session, bool, error) {
+	o.reservations++
+	return o.JSONSessionRepository.ReserveCanonicalV2(ctx, logicalDate, address, ownerID, createdAt)
+}
+
+func (o *countedReservationSessionOwner) LoadCanonicalWithCreationIntent(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error) {
+	o.reads++
+	return o.JSONSessionRepository.LoadCanonicalWithCreationIntent(ctx, logicalDate, address)
+}
+
+func (o *canonicalReadSessionOwner) LoadCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*domainsession.Session, bool, error) {
+	o.lookups++
+	if o.err != nil || o.value != nil || o.found {
+		return o.value, o.found, o.err
+	}
+	return o.JSONSessionRepository.LoadCanonical(ctx, logicalDate, address)
 }
 
 func newSessionGroupOwner(t *testing.T) *session.JSONSessionRepository {
@@ -200,16 +235,242 @@ func TestSessionGroupLoadOrCreateCanonicalReusesLookupIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	createdAt := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	first, err := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
+	first, firstCreated, err := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
 	if err != nil {
 		t.Fatalf("first LoadOrCreateCanonical: %v", err)
 	}
-	second, err := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt.Add(time.Hour))
+	if !firstCreated {
+		t.Fatal("first LoadOrCreateCanonical created=false, want true")
+	}
+	second, secondCreated, err := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("second LoadOrCreateCanonical: %v", err)
 	}
+	if secondCreated {
+		t.Fatal("second LoadOrCreateCanonical created=true, want false")
+	}
 	if first.ID() == "" || first.ID() != second.ID() {
 		t.Fatalf("same canonical lookup returned IDs %q and %q", first.ID(), second.ID())
+	}
+}
+
+func TestSessionGroupLoadCanonicalReportsAbsentAndPresent(t *testing.T) {
+	owner := newSessionGroupOwner(t)
+	fixture := newSessionGroupFixture(t, owner)
+	address, err := conversation.NewChannelAddress("line", "U123")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	missing, found, err := fixture.client.LoadCanonical(context.Background(), "2026-10-03", address)
+	if err != nil || found || missing != nil {
+		t.Fatalf("LoadCanonical before creation=(%v,%t,%v), want (nil,false,nil)", missing, found, err)
+	}
+	created, wasCreated, err := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC))
+	if err != nil || !wasCreated {
+		t.Fatalf("LoadOrCreateCanonical=(%v,%t,%v), want newly-created session", created, wasCreated, err)
+	}
+	got, found, err := fixture.client.LoadCanonical(context.Background(), "2026-10-03", address)
+	if err != nil || !found || got == nil || got.ID() != created.ID() {
+		t.Fatalf("LoadCanonical after creation=(%v,%t,%v), want session %q", got, found, err, created.ID())
+	}
+}
+
+func TestSessionGroupCanonicalReservationReadAndOwnerCheck(t *testing.T) {
+	owner := newSessionGroupOwner(t)
+	fixture := newSessionGroupFixture(t, owner)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, intent, found, err := fixture.client.LoadCanonicalWithCreationIntent(context.Background(), "2026-10-03", address)
+	if err != nil || found || value != nil || intent != nil {
+		t.Fatalf("reservation lookup before creation=(%v,%+v,%t,%v), want absent", value, intent, found, err)
+	}
+
+	created, wasCreated, err := fixture.client.ReserveCanonicalV2(context.Background(), "2026-10-03", address, "ren", time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil || !wasCreated {
+		t.Fatalf("ReserveCanonicalV2=(%v,%t,%v), want newly created reservation", created, wasCreated, err)
+	}
+	loaded, intent, found, err := fixture.client.LoadCanonicalWithCreationIntent(context.Background(), "2026-10-03", address)
+	if err != nil || !found || loaded == nil || loaded.ID() != created.ID() || intent == nil || intent.Runtime != "v2" || intent.OwnerID != "ren" {
+		t.Fatalf("reservation lookup after creation=(%v,%+v,%t,%v), want session and matching intent", loaded, intent, found, err)
+	}
+	if reserved, err := fixture.client.IsCanonicalV2Reserved(context.Background(), created.ID(), "ren"); err != nil || !reserved {
+		t.Fatalf("IsCanonicalV2Reserved(same owner)=(%t,%v), want true", reserved, err)
+	}
+	if reserved, err := fixture.client.IsCanonicalV2Reserved(context.Background(), created.ID(), "other"); err != nil || reserved {
+		t.Fatalf("IsCanonicalV2Reserved(other owner)=(%t,%v), want false", reserved, err)
+	}
+}
+
+func TestSessionGroupCanonicalReservationReadRejectsInvalidAndMismatchedOwnerResults(t *testing.T) {
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := newSessionGroupOwner(t)
+	fixture := newSessionGroupFixture(t, owner)
+	if _, _, _, err := fixture.client.LoadCanonicalWithCreationIntent(context.Background(), "not-a-date", address); err == nil {
+		t.Fatal("reservation read accepted an invalid logical date")
+	} else {
+		var storageErr *Error
+		if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeSchemaRejected {
+			t.Fatalf("invalid reservation lookup error=%v, want schema_rejected", err)
+		}
+	}
+
+	badOwner := &canonicalReservationReplyOwner{
+		JSONSessionRepository: owner,
+		value:                 newStorageHostSession(t),
+		intent:                &domainsession.CreationIntent{Runtime: "legacy", OwnerID: "ren"},
+		found:                 true,
+	}
+	fixture = newSessionGroupFixture(t, badOwner)
+	if _, _, _, err := fixture.client.LoadCanonicalWithCreationIntent(context.Background(), "2026-10-03", address); err == nil {
+		t.Fatal("reservation read accepted an invalid intent and mismatched identity")
+	}
+}
+
+type canonicalReservationReplyOwner struct {
+	*session.JSONSessionRepository
+	value  *domainsession.Session
+	intent *domainsession.CreationIntent
+	found  bool
+}
+
+func (o *canonicalReservationReplyOwner) LoadCanonicalWithCreationIntent(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error) {
+	return o.value, o.intent, o.found, nil
+}
+
+func TestSessionGroupReserveCanonicalV2RecoversLostResponseFromSameOwnerReservation(t *testing.T) {
+	owner := &countedReservationSessionOwner{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, owner)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	committedOpID := ""
+	fixture.client.client.sendHook = func() error {
+		fixture.client.client.sendHook = nil
+		entries := fixture.handler.journal.entries()
+		if len(entries) != 1 || entries[0].Status != journalStatusDone || entries[0].Op != "reserve_canonical_v2" {
+			t.Errorf("journal at lost reservation response=%+v, want committed reservation", entries)
+			return errConnectionResetAfterSend
+		}
+		committedOpID = entries[0].OpID
+		if err := fixture.handler.journal.complete(entries[0].OpID, []byte(`{"found":true,"session":{"id":"bad-result"}}`)); err != nil {
+			t.Errorf("replace stored reservation result: %v", err)
+		}
+		return errConnectionResetAfterSend
+	}
+
+	value, created, err := fixture.client.ReserveCanonicalV2(context.Background(), "2026-10-03", address, "ren", createdAt)
+	if err != nil || created || value == nil {
+		t.Fatalf("ReserveCanonicalV2 after lost response=(%v,%t,%v), want read-confirmed reservation", value, created, err)
+	}
+	if owner.reservations != 1 || owner.reads != 1 {
+		t.Fatalf("owner reserve/read counts=%d/%d, want one mutation and one read-only reconciliation", owner.reservations, owner.reads)
+	}
+	entries := fixture.handler.journal.entries()
+	if len(entries) != 1 || entries[0].OpID != committedOpID {
+		t.Fatalf("reservation reconciliation used a different or repeated op_id: %+v", entries)
+	}
+	if reserved, checkErr := owner.IsCanonicalV2Reserved(context.Background(), value.ID(), "ren"); checkErr != nil || !reserved {
+		t.Fatalf("owner reservation evidence=(%t,%v), want exact owner reservation", reserved, checkErr)
+	}
+}
+
+func TestSessionGroupSaveCannotMutateOrOverwriteV2CreationIntent(t *testing.T) {
+	owner := &countedSessionOwner{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, owner)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, _, err := fixture.client.ReserveCanonicalV2(context.Background(), "2026-10-03", address, "ren", time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ReserveCanonicalV2: %v", err)
+	}
+	if err := fixture.client.Save(context.Background(), reserved); err == nil {
+		t.Fatal("storagehost Save overwrote a v2-reserved session")
+	}
+	if owner.saves != 1 {
+		t.Fatalf("owner Save calls=%d, want one rejected attempt", owner.saves)
+	}
+
+	dto, err := sessionRecordFromDomain(reserved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := marshalSessionMessage(sessionSavePayload{Session: dto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["session"], &record); err != nil {
+		t.Fatal(err)
+	}
+	record["creation_intent"] = json.RawMessage(`{"runtime":"legacy","owner_id":"ren"}`)
+	envelope["session"], err = json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutatedPayload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fixture.client.client.Call(context.Background(), GroupSession, "save", json.RawMessage(mutatedPayload), nil)
+	var storageErr *Error
+	if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeSchemaRejected {
+		t.Fatalf("Save payload with a forged creation_intent error=%v, want schema_rejected", err)
+	}
+	if owner.saves != 1 {
+		t.Fatalf("owner Save calls after forged payload=%d, want no execution beyond the rejected valid DTO", owner.saves)
+	}
+	value, intent, found, err := fixture.client.LoadCanonicalWithCreationIntent(context.Background(), "2026-10-03", address)
+	if err != nil || !found || value.ID() != reserved.ID() || intent == nil || intent.Runtime != "v2" || intent.OwnerID != "ren" {
+		t.Fatalf("reservation after rejected Save=(%v,%+v,%t,%v), want immutable original intent", value, intent, found, err)
+	}
+}
+
+func TestSessionGroupLoadCanonicalRejectsInvalidLookupAndMismatchedOwnerReply(t *testing.T) {
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	countedOwner := &canonicalReadSessionOwner{JSONSessionRepository: newSessionGroupOwner(t)}
+	fixture := newSessionGroupFixture(t, countedOwner)
+	if _, _, err := fixture.client.LoadCanonical(context.Background(), "not-a-date", address); err == nil {
+		t.Fatal("LoadCanonical accepted an invalid logical date")
+	} else {
+		var storageErr *Error
+		if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeSchemaRejected {
+			t.Fatalf("invalid lookup error=%v, want schema_rejected", err)
+		}
+	}
+	if countedOwner.lookups != 0 {
+		t.Fatalf("invalid lookup reached owner %d times, want zero", countedOwner.lookups)
+	}
+	entries := fixture.handler.journal.entries()
+	if len(entries) != 0 {
+		t.Fatalf("invalid lookup retained operations: %+v", entries)
+	}
+
+	countedOwner.value = newStorageHostSession(t)
+	countedOwner.found = true
+	if _, _, err := fixture.client.LoadCanonical(context.Background(), "2026-10-03", address); err == nil {
+		t.Fatal("LoadCanonical accepted a mismatched owner reply")
+	} else {
+		var storageErr *Error
+		if !errors.As(err, &storageErr) || storageErr.Code != ErrorCodeStoreUnavailable {
+			t.Fatalf("mismatched owner reply error=%v, want store_unavailable", err)
+		}
 	}
 }
 
@@ -272,7 +533,7 @@ func TestSessionGroupCanonicalResultDecodeFailureIsNonRepeatable(t *testing.T) {
 		return errConnectionResetAfterSend
 	}
 
-	_, firstErr := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
+	_, _, firstErr := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
 	var firstStorageErr *Error
 	if !errors.As(firstErr, &firstStorageErr) || firstStorageErr.Code != ErrorCodeOutcomeUnknown {
 		t.Errorf("first canonical call error=%v, want outcome_unknown", firstErr)
@@ -288,7 +549,7 @@ func TestSessionGroupCanonicalResultDecodeFailureIsNonRepeatable(t *testing.T) {
 	}
 	t.Logf("owner commit confirmed for session %q after typed result failure", owner.createdID)
 
-	_, retryErr := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
+	_, _, retryErr := fixture.client.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt)
 	var retryStorageErr *Error
 	if !errors.As(retryErr, &retryStorageErr) || retryStorageErr.Code != ErrorCodeOutcomeUnknown {
 		t.Errorf("canonical retry error=%v, want outcome_unknown", retryErr)
@@ -350,11 +611,15 @@ func TestSessionGroupContractIsClosedAndRejectsPathOperations(t *testing.T) {
 		t.Fatalf("Contract: %v", err)
 	}
 	want := map[string]bool{
-		"save":                     true,
-		"load":                     false,
-		"exists":                   false,
-		"delete":                   true,
-		"load_or_create_canonical": true,
+		"save":                       true,
+		"load":                       false,
+		"exists":                     false,
+		"delete":                     true,
+		"load_canonical":             false,
+		"load_canonical_reservation": false,
+		"load_or_create_canonical":   true,
+		"reserve_canonical_v2":       true,
+		"is_v2_reserved":             false,
 	}
 	for _, spec := range contract.Operations {
 		if spec.Group != GroupSession {

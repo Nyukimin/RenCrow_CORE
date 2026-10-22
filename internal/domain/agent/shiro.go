@@ -81,6 +81,44 @@ func (s *ShiroAgent) WithAgentPolicyService(service AgentPolicyService) *ShiroAg
 	return s
 }
 
+// ExecutePrivateWork executes a Task-owned Shiro assignment without opening or
+// committing a legacy public conversation turn. Tool, advisor, and native
+// coding routes are available only when the Task owner granted their exact
+// capabilities. The provider receives the original Task Run context so its
+// Action, policy, and fence owners remain in force.
+func (s *ShiroAgent) ExecutePrivateWork(ctx context.Context, input conversation.TurnInput, allowedCapabilities []string) (string, error) {
+	capabilities, err := validatePrivateWorkEntry(ctx, input, "shiro", allowedCapabilities)
+	if err != nil {
+		return "", err
+	}
+
+	private := *s
+	private.conversation = nil
+	private.lightMemory = nil
+	private.mcpClient = nil
+	// SubagentManager has no per-call capability contract for its internal Tool
+	// set, so private work cannot expose it through this entry point.
+	private.subagentManager = nil
+	if !hasPrivateCapability(capabilities, privateCapabilityAdvisorRequest) {
+		private.advisorService = nil
+	}
+	if !hasPrivateCapability(capabilities, privateCapabilityNativeCoding) {
+		private.nativeCoding = nil
+		if input.BackendSelection() == conversation.BackendShiroNativeCodingV1 {
+			return "", fmt.Errorf("%w: selected native backend requires %q: %w", ErrPrivateWorkCapabilityDenied, privateCapabilityNativeCoding, ErrNativeCodingRejected)
+		}
+	}
+	if s.toolRunner == nil || !hasPrivateCapability(capabilities, privateCapabilityCodexRun) {
+		private.toolRunner = nil
+	} else {
+		private.toolRunner = capabilityScopedToolRunner{
+			inner:   s.toolRunner,
+			allowed: map[string]struct{}{privateCapabilityCodexRun: {}},
+		}
+	}
+	return private.Execute(ctx, input)
+}
+
 // Execute はWorkerタスクを実行
 // v1.0: SubagentManager が設定されている場合は ReActLoop を使ってツールを自律的に選択・実行する
 func (s *ShiroAgent) Execute(ctx context.Context, t conversation.TurnInput) (string, error) {

@@ -1,0 +1,8 @@
+{
+  "schema_version": "mio.turn.v1",
+  "kind": "delegate",
+  "user_message": {
+    "to": "user",
+    "text": "I’ll ask Shiro."
+  }
+}

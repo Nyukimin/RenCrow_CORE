@@ -136,6 +136,7 @@ func cmdRun() {
 
 	mux := http.NewServeMux()
 	registerLocalPprofRoutes(mux)
+	registerResponseFirstTimingRoutes(mux, dependencies.responseFirst)
 
 	// Live Viewer
 	sttRuntime := buildSTTRuntime(cfg, dependencies.taskManager, dependencies.actionManager, dependencies.transportManager)

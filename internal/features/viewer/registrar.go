@@ -37,6 +37,7 @@ type BaseRoutes struct {
 	Live2DAsset                  http.HandlerFunc
 	Live2DEmotionControl         http.HandlerFunc
 	Events                       http.HandlerFunc
+	ConversationEventsV2         http.HandlerFunc
 	RecipientSelection           http.HandlerFunc
 	DebugSystem                  http.HandlerFunc
 	DocsSearch                   http.HandlerFunc
@@ -97,6 +98,7 @@ func RegisterBaseRoutes(mux *http.ServeMux, deps Dependencies) {
 	registerRoute(mux, "/viewer/live2d/asset", base.Live2DAsset)
 	registerRoute(mux, "/viewer/live2d/emotion", base.Live2DEmotionControl)
 	registerRoute(mux, "/viewer/events", base.Events)
+	registerRoute(mux, "/viewer/conversation/events", base.ConversationEventsV2)
 	registerRoute(mux, "/viewer/recipient-selection", base.RecipientSelection)
 	registerRoute(mux, "/viewer/debug/system", base.DebugSystem)
 	registerRoute(mux, "/viewer/docs/search", base.DocsSearch)

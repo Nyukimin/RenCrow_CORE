@@ -535,7 +535,7 @@ func (s *SQLiteStore) migrate() error {
 			return err
 		}
 	}
-	return nil
+	return s.migrateLiveJournal()
 }
 
 func (s *SQLiteStore) validateExistingEventEnvelopeSchema() error {

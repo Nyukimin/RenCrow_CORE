@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -87,6 +88,14 @@ func HandleSendWithAttachmentsAndSessionResolver(handler MessageHandler, onError
 // HandleSendWithSpeechCancellation accepts asynchronous Viewer turns with a
 // per-turn speech cancellation capability owned by the shared registry.
 func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry) http.HandlerFunc {
+	return HandleSendWithProtocolV2(handler, onError, saver, resolveSessionID, cancellations, nil)
+}
+
+func handleSendLegacyWithSpeechCancellation(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry) http.HandlerFunc {
+	return handleSendLegacyWithSpeechCancellationAndAdmission(handler, onError, saver, resolveSessionID, cancellations, nil)
+}
+
+func handleSendLegacyWithSpeechCancellationAndAdmission(handler MessageHandler, onError MessageErrorHandler, saver AttachmentSaver, resolveSessionID SessionIDResolver, cancellations *SpeechCancellationRegistry, admission *SessionProtocolAdmission) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		handlerReceivedAt := time.Now()
 		if r.Method != http.MethodPost {
@@ -169,6 +178,11 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 			}
 			sessionID = string(resolved)
 		}
+		if admission != nil && sessionID == "" {
+			log.Printf("[Viewer] HandleSend: session protocol admission requires canonical session identity")
+			http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		messageID := string(modulecore.NewMessageID())
 		agentMessageID := string(modulecore.NewMessageID())
 		turnID := string(modulecore.NewTurnID())
@@ -204,6 +218,21 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 			effectiveMessage = defaultAttachmentMessage(attachments)
 		}
 		sendReq.Message = effectiveMessage
+		var releaseAdmission func()
+		if admission != nil {
+			releaseAdmission, err = admission.AdmitLegacy(r.Context(), modulecore.SessionID(sessionID))
+			if err != nil {
+				if releaseSpeechCancellation != nil {
+					releaseSpeechCancellation()
+				}
+				if errors.Is(err, ErrSessionProtocolConflict) {
+					http.Error(w, "session protocol conflict", http.StatusConflict)
+				} else {
+					http.Error(w, "session protocol state unavailable", http.StatusServiceUnavailable)
+				}
+				return
+			}
+		}
 		log.Printf("[Viewer] HandleSend: accepted root_task_id=%s trace_id=%s message_id=%s viewer_client_id=%q recipient=%s attachment_count=%d message_len=%d %s",
 			rootTaskID, traceID, messageID, req.ViewerClientID, recipient, len(attachments), len([]rune(effectiveMessage)), provenance.LogFields())
 		log.Printf("[Viewer] HandleSend: message received: %q", req.Message)
@@ -213,6 +242,9 @@ func HandleSendWithSpeechCancellation(handler MessageHandler, onError MessageErr
 
 		// Process asynchronously — events flow back via SSE.
 		go func() {
+			if releaseAdmission != nil {
+				defer releaseAdmission()
+			}
 			if releaseSpeechCancellation != nil {
 				defer releaseSpeechCancellation()
 			}

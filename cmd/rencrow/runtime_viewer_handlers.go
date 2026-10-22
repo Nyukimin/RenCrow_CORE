@@ -122,6 +122,7 @@ func buildViewerRuntimeHandlers(
 		}
 		deps.eventLogStore = eventLogStore
 		hub.SetReplayReader(eventLogStore)
+		hub.SetSessionPublicReplayReader(eventLogStore)
 	}
 	if reportStore, err := executionpersistence.NewJSONLReportStore(reportPath); err != nil {
 		deps.monitorStore = viewer.NewMonitorStore(nil, deps.eventLogStore)

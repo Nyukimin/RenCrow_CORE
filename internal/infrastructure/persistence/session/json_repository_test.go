@@ -46,13 +46,19 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(
 		t.Fatal(err)
 	}
 	createdAt := time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC)
-	first, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt)
+	first, firstCreated, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt)
 	if err != nil {
 		t.Fatalf("first LoadOrCreateCanonical: %v", err)
 	}
-	second, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt.Add(time.Hour))
+	if !firstCreated {
+		t.Fatal("first LoadOrCreateCanonical created=false, want true")
+	}
+	second, secondCreated, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, createdAt.Add(time.Hour))
 	if err != nil {
 		t.Fatalf("second LoadOrCreateCanonical: %v", err)
+	}
+	if secondCreated {
+		t.Fatal("second LoadOrCreateCanonical created=true, want false")
 	}
 	if first.ID() != second.ID() {
 		t.Fatalf("same lookup attributes produced %q and %q", first.ID(), second.ID())
@@ -61,9 +67,12 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalUsesExplicitLookupAttributes(
 		t.Fatalf("created SessionID: %v", err)
 	}
 
-	nextDate, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-04", address, createdAt.Add(24*time.Hour))
+	nextDate, nextDateCreated, err := repo.LoadOrCreateCanonical(context.Background(), "2026-09-04", address, createdAt.Add(24*time.Hour))
 	if err != nil {
 		t.Fatalf("date boundary LoadOrCreateCanonical: %v", err)
+	}
+	if !nextDateCreated {
+		t.Fatal("date boundary LoadOrCreateCanonical created=false, want true")
 	}
 	if nextDate.ID() == first.ID() {
 		t.Fatal("date boundary reused the prior SessionID")
@@ -78,35 +87,46 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalIsConcurrentSafe(t *testing.T
 		t.Fatal(err)
 	}
 	const workers = 32
-	ids := make(chan string, workers)
+	type result struct {
+		id      string
+		created bool
+	}
+	results := make(chan result, workers)
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			item, loadErr := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, time.Now().UTC())
+			item, created, loadErr := repo.LoadOrCreateCanonical(context.Background(), "2026-09-03", address, time.Now().UTC())
 			if loadErr != nil {
 				errs <- loadErr
 				return
 			}
-			ids <- item.ID()
+			results <- result{id: item.ID(), created: created}
 		}()
 	}
 	wg.Wait()
-	close(ids)
+	close(results)
 	close(errs)
 	for err := range errs {
 		t.Fatalf("LoadOrCreateCanonical: %v", err)
 	}
 	var want string
-	for id := range ids {
+	createdCount := 0
+	for item := range results {
 		if want == "" {
-			want = id
+			want = item.id
 		}
-		if id != want {
-			t.Fatalf("concurrent IDs include %q and %q", want, id)
+		if item.id != want {
+			t.Fatalf("concurrent IDs include %q and %q", want, item.id)
 		}
+		if item.created {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("concurrent created provenance count=%d, want exactly one", createdCount)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -114,6 +134,220 @@ func TestJSONSessionRepositoryLoadOrCreateCanonicalIsConcurrentSafe(t *testing.T
 	}
 	if len(entries) != 1 {
 		t.Fatalf("session files = %d, want 1", len(entries))
+	}
+}
+
+func TestJSONSessionRepositoryReserveCanonicalV2IsAtomicReusableAndExclusive(t *testing.T) {
+	dir := t.TempDir()
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	repo := NewJSONSessionRepository(dir)
+	first, created, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-03", address, "ren", createdAt)
+	if err != nil {
+		t.Fatalf("ReserveCanonicalV2: %v", err)
+	}
+	if !created {
+		t.Fatal("first reservation created=false, want true")
+	}
+	second, created, err := NewJSONSessionRepository(dir).ReserveCanonicalV2(context.Background(), "2026-10-03", address, "ren", createdAt.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("retry ReserveCanonicalV2 after repository restart: %v", err)
+	}
+	if created || first.ID() != second.ID() {
+		t.Fatalf("retry reservation=(%q,%t), want same ID %q and created=false", second.ID(), created, first.ID())
+	}
+	reserved, err := repo.IsCanonicalV2Reserved(context.Background(), first.ID(), "ren")
+	if err != nil || !reserved {
+		t.Fatalf("IsCanonicalV2Reserved(same owner)=(%t,%v), want true", reserved, err)
+	}
+	reserved, err = repo.IsCanonicalV2Reserved(context.Background(), first.ID(), "another-owner")
+	if err != nil || reserved {
+		t.Fatalf("IsCanonicalV2Reserved(other owner)=(%t,%v), want false", reserved, err)
+	}
+	if _, _, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-03", address, "another-owner", createdAt); err == nil {
+		t.Fatal("ReserveCanonicalV2 reused a reservation owned by another owner")
+	}
+	if _, _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-10-03", address, createdAt); err == nil {
+		t.Fatal("legacy LoadOrCreateCanonical reused a v2 reservation")
+	}
+	if err := repo.Save(context.Background(), second); err == nil {
+		t.Fatal("Save modified a v2-reserved session")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, first.ID()+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &record); err != nil {
+		t.Fatal(err)
+	}
+	var intent struct {
+		Runtime string `json:"runtime"`
+		OwnerID string `json:"owner_id"`
+	}
+	if err := json.Unmarshal(record["creation_intent"], &intent); err != nil {
+		t.Fatalf("creation_intent: %v", err)
+	}
+	if intent.Runtime != "v2" || intent.OwnerID != "ren" {
+		t.Fatalf("creation_intent=%+v, want runtime v2 / owner ren", intent)
+	}
+}
+
+func TestJSONSessionRepositoryReserveCanonicalV2NeverPromotesLegacyJSON(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdAt := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+	legacy, created, err := repo.LoadOrCreateCanonical(context.Background(), "2026-10-04", address, createdAt)
+	if err != nil || !created {
+		t.Fatalf("create legacy canonical session=(%v,%t,%v)", legacy, created, err)
+	}
+	if _, _, err := repo.ReserveCanonicalV2(context.Background(), "2026-10-04", address, "ren", createdAt); err == nil {
+		t.Fatal("ReserveCanonicalV2 promoted an existing empty legacy JSON session")
+	}
+	reserved, err := repo.IsCanonicalV2Reserved(context.Background(), legacy.ID(), "ren")
+	if err != nil || reserved {
+		t.Fatalf("legacy session reservation=(%t,%v), want false", reserved, err)
+	}
+	loaded, err := repo.Load(context.Background(), legacy.ID())
+	if err != nil {
+		t.Fatalf("legacy JSON should remain loadable after refused promotion: %v", err)
+	}
+	if loaded.ID() != legacy.ID() {
+		t.Fatalf("legacy session identity changed: got %q want %q", loaded.ID(), legacy.ID())
+	}
+}
+
+func TestJSONSessionRepositoryReserveCanonicalV2ConcurrentCreationProvenance(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 32
+	type result struct {
+		id      string
+		created bool
+	}
+	results := make(chan result, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			value, created, reserveErr := repo.ReserveCanonicalV2(context.Background(), "2026-10-05", address, "ren", time.Now().UTC())
+			if reserveErr != nil {
+				errs <- reserveErr
+				return
+			}
+			results <- result{id: value.ID(), created: created}
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("ReserveCanonicalV2: %v", err)
+	}
+	wantID := ""
+	createdCount := 0
+	for item := range results {
+		if wantID == "" {
+			wantID = item.id
+		}
+		if item.id != wantID {
+			t.Fatalf("concurrent reservation IDs include %q and %q", wantID, item.id)
+		}
+		if item.created {
+			createdCount++
+		}
+	}
+	if createdCount != 1 {
+		t.Fatalf("concurrent created provenance count=%d, want exactly one", createdCount)
+	}
+}
+
+func TestJSONSessionRepositoryLegacyCreateAndV2ReserveCannotBothAdmit(t *testing.T) {
+	repo := NewJSONSessionRepository(t.TempDir())
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	type outcome struct {
+		created bool
+		err     error
+	}
+	legacyDone := make(chan outcome, 1)
+	v2Done := make(chan outcome, 1)
+	createdAt := time.Date(2026, 10, 6, 0, 0, 0, 0, time.UTC)
+	go func() {
+		<-start
+		_, created, createErr := repo.LoadOrCreateCanonical(context.Background(), "2026-10-06", address, createdAt)
+		legacyDone <- outcome{created: created, err: createErr}
+	}()
+	go func() {
+		<-start
+		_, created, reserveErr := repo.ReserveCanonicalV2(context.Background(), "2026-10-06", address, "ren", createdAt)
+		v2Done <- outcome{created: created, err: reserveErr}
+	}()
+	close(start)
+	legacy := <-legacyDone
+	v2 := <-v2Done
+	if legacy.err == nil && v2.err == nil {
+		t.Fatal("legacy creation and v2 reservation both succeeded for one natural key")
+	}
+	if legacy.err != nil && v2.err != nil {
+		t.Fatalf("both session admissions failed: legacy=%v v2=%v", legacy.err, v2.err)
+	}
+	value, intent, found, err := repo.LoadCanonicalWithCreationIntent(context.Background(), "2026-10-06", address)
+	if err != nil || !found || value == nil {
+		t.Fatalf("canonical session after admission race=(%v,%+v,%t,%v), want exactly one session", value, intent, found, err)
+	}
+	if legacy.err == nil && intent != nil {
+		t.Fatalf("legacy creation won but session has a v2 intent: %+v", intent)
+	}
+	if v2.err == nil && (intent == nil || intent.Runtime != "v2" || intent.OwnerID != "ren") {
+		t.Fatalf("v2 reservation won but intent is %+v", intent)
+	}
+}
+
+func TestJSONSessionRepositoryLoadCanonicalIsReadOnlyAndResolvesNaturalKey(t *testing.T) {
+	dir := t.TempDir()
+	repo := NewJSONSessionRepository(dir)
+	address, err := conversation.NewChannelAddress("viewer", "viewer-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	missing, found, err := repo.LoadCanonical(ctx, "2026-09-03", address)
+	if err != nil || found || missing != nil {
+		t.Fatalf("LoadCanonical before creation=(%v,%t,%v), want (nil,false,nil)", missing, found, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("read-only lookup created %d files, want none", len(entries))
+	}
+
+	want, created, err := repo.LoadOrCreateCanonical(ctx, "2026-09-03", address, time.Date(2026, 9, 3, 0, 0, 0, 0, time.UTC))
+	if err != nil || !created {
+		t.Fatalf("LoadOrCreateCanonical=(%v,%t,%v), want newly-created session", want, created, err)
+	}
+	got, found, err := repo.LoadCanonical(ctx, "2026-09-03", address)
+	if err != nil || !found || got == nil || got.ID() != want.ID() {
+		t.Fatalf("LoadCanonical after creation=(%v,%t,%v), want session %q", got, found, err, want.ID())
 	}
 }
 
@@ -255,8 +489,11 @@ func TestJSONSessionRepositoryRejectsLegacySessionContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
+	if _, _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
 		t.Fatal("legacy Session was skipped by canonical lookup")
+	}
+	if _, _, err := repo.LoadCanonical(context.Background(), "2026-03-01", address); err == nil {
+		t.Fatal("legacy Session was skipped by read-only canonical lookup")
 	}
 }
 
@@ -275,7 +512,7 @@ func TestJSONSessionRepositoryRejectsCanonicalRecordWithLegacyIdentityFields(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
+	if _, _, err := repo.LoadOrCreateCanonical(context.Background(), "2026-03-01", address, time.Now().UTC()); err == nil {
 		t.Fatal("canonical lookup accepted legacy nested channel_address fields")
 	}
 }

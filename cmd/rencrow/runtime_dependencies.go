@@ -105,6 +105,7 @@ type Dependencies struct {
 	canonicalEventStore            runtimeCanonicalEventStore                  // canonical append-only Event Store
 	reportStore                    *executionpersistence.JSONLReportStore      // execution evidence store
 	eventRelay                     *idleAwareEventListener                     // viewer + idlechat stop relay
+	responseFirst                  *responseFirstConversationRuntime           // direct Viewer response-first v2 runtime
 	viewerStatus                   http.HandlerFunc                            // viewer status API
 	viewerAgents                   http.HandlerFunc                            // viewer agents API
 	viewerAgentDetail              http.HandlerFunc                            // viewer agent detail API
@@ -130,6 +131,7 @@ type Dependencies struct {
 	viewerPromptDebug              http.HandlerFunc                            // LLM prompt boundary debug API
 	viewerAuditSummary             http.HandlerFunc                            // viewer audit summary API
 	viewerSend                     http.HandlerFunc                            // viewer message sender
+	viewerConversationEventsV2     http.HandlerFunc                            // owner/session-scoped response-first v2 public SSE
 	viewerSpeechCancel             http.HandlerFunc                            // per-turn Viewer SpeechPlan cancellation
 	viewerSpeechProgress           http.HandlerFunc                            // turn-scoped Viewer playback pacing progress
 	agentOps                       http.HandlerFunc                            // local authenticated Agent OPS ingress
@@ -1733,6 +1735,7 @@ func buildDependenciesWithClassifierTestConfig(cfg *config.Config, classifierTes
 		vtuberBridge,
 		bridges,
 		verificationRuntime,
+		conversationRuntime.ChatL1Store,
 	)
 	nativeCodingAdmission, err := configuredNativeCodingAdmission(cfg, deps.nativeCoding)
 	if err != nil {

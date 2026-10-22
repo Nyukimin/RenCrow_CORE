@@ -23,7 +23,7 @@ const (
 	concatCopyChunk        = 1 << 20
 )
 
-// ConcatFile is the outcome of a concat for one of the six log files.
+// ConcatFile is the outcome of a concat for one Task data file.
 type ConcatFile struct {
 	Name string `json:"name"`
 	// FrozenSize is what segment 0's file held when it was frozen; AppendedBytes
@@ -37,7 +37,7 @@ type ConcatFile struct {
 // ConcatReport describes a layout concat. It names directories and counts bytes;
 // it never carries the content of a record.
 type ConcatReport struct {
-	// State is "layout_v1" (the store is not on layout v2: nothing to do), "plan"
+	// State is "layout_v1" (the store is not segmented: nothing to do), "plan"
 	// (what a concat would do) or "done".
 	State    string       `json:"state"`
 	Segments int          `json:"segments"`
@@ -49,8 +49,8 @@ type ConcatReport struct {
 	DurationMs       int64  `json:"duration_ms"`
 }
 
-// ConcatTaskLayout returns a store on layout v2 to layout v1 (spec 10.4, R1),
-// offline. For each of the six log files, the files of the segments are appended
+// ConcatTaskLayout returns a segmented store to layout v1 (spec 10.4, R1),
+// offline. For each data file, the files of the segments are appended
 // to segment 0's file in ordinal order, so that file holds what the store would
 // hold had it never rotated; then logs/ and LAYOUT are renamed aside and the
 // store is layout v1 again. Without apply it only describes what it would do.
@@ -165,6 +165,9 @@ func concatTaskLayout(ctx context.Context, root string, apply bool, failpoint fu
 				return report, err
 			}
 			path := filepath.Join(root, name)
+			if err := ensureConcatDestination(path, name, layout.frozen[f], now[f]); err != nil {
+				return report, err
+			}
 			if err := appendSegmentsToFile(path, name, layout.frozen[f], now[f], segSizes, f, dirs, func(stage string) { fire(stage) }); err != nil {
 				return report, err
 			}
@@ -253,6 +256,38 @@ func settleSegmentsForConcat(ctx context.Context, root string, dirs []string) er
 		if recoverErr := store.Recover(ctx); recoverErr != nil {
 			return fmt.Errorf("repair the WAL of segment %s: %w", filepath.Base(dir), recoverErr)
 		}
+	}
+	return nil
+}
+
+// ensureConcatDestination creates the report journal that a v2 store never had
+// in segment 0. The file is safe to create only while its frozen and current
+// sizes are both zero; all other missing files keep their existing failure path.
+func ensureConcatDestination(path, name string, frozen, current int64) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if name != taskDelegationReportFilename {
+		return nil
+	}
+	if frozen != 0 || current != 0 {
+		return fmt.Errorf("%w: missing segment 0 file %s has frozen size %d and current size %d", ErrSealedSegmentChanged, name, frozen, current)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, writableDataFilePerm)
+	if err != nil {
+		return fmt.Errorf("create empty segment 0 report journal: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync empty segment 0 report journal: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close empty segment 0 report journal: %w", err)
+	}
+	if err := jsonlbatch.SyncDirectory(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("sync segment 0 report journal directory: %w", err)
 	}
 	return nil
 }

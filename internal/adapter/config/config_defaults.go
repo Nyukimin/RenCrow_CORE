@@ -20,6 +20,9 @@ func defaultOwnerStorage(currentStorage, sqlitePath string) string {
 
 // setDefaults はデフォルト値を設定
 func (c *Config) setDefaults() {
+	if strings.TrimSpace(c.ConversationRuntime.Version) == "" {
+		c.ConversationRuntime.Version = "legacy"
+	}
 	c.Storage.Host.setStorageHostDefaults()
 	if c.PersonRelatedCatalog.SummaryWorker.Interval == "" {
 		c.PersonRelatedCatalog.SummaryWorker.Interval = "5m"

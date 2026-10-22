@@ -416,7 +416,7 @@ func newLocalTaskExecutionFenceID() (string, error) {
 
 func taskBatchReaderFilenames(root string) ([]string, error) {
 	filenames := []string{stateFilename, runFilename, contextFilename, notificationsFilename}
-	for _, optional := range []string{taskOperationReceiptFilename, taskExecutionFenceFilename} {
+	for _, optional := range []string{taskOperationReceiptFilename, taskExecutionFenceFilename, taskDelegationReportFilename} {
 		if _, err := os.Lstat(filepath.Join(root, optional)); err == nil {
 			filenames = append(filenames, optional)
 		} else if !errors.Is(err, os.ErrNotExist) {

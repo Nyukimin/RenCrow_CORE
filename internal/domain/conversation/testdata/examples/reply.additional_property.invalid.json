@@ -1,0 +1,9 @@
+{
+  "schema_version": "mio.turn.v1",
+  "kind": "reply",
+  "user_message": {
+    "to": "user",
+    "text": "The answer is ready.",
+    "debug": true
+  }
+}

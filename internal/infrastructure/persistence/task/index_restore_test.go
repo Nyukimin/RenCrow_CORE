@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +92,239 @@ func TestRestoreFromSidecarGivesTheIndexOfAFullBuild(t *testing.T) {
 	if stats.Checkpoints != 0 {
 		t.Fatalf("an unchanged restore rewrote the sidecar (%d checkpoints)", stats.Checkpoints)
 	}
+}
+
+func TestRestoreLegacyV2LayoutAndSixFileSidecarPreservesTaskAndRunHistory(t *testing.T) {
+	root := t.TempDir()
+	clock := newTestClock("2026-10-22T12:00:00Z")
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{
+		Index: true, Persist: true, Rotation: true, RotationSizeValve: 1,
+		checkpoint: manualPolicy(), now: clock.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	populate(t, store, 0, 8)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	writeLegacyV2LayoutAndSidecar(t, root)
+
+	reopened, err := NewJSONLStoreWithOptions(root, OpenOptions{Index: true, Persist: true, checkpoint: manualPolicy()})
+	if err != nil {
+		t.Fatalf("open v2 LAYOUT and sidecar: %v", err)
+	}
+	stats, ok := reopened.IndexStats()
+	if !ok || stats.Source != sourceSidecar || stats.RebuildReason != "" {
+		t.Fatalf("index source=%q reason=%q, want preserved legacy sidecar", stats.Source, stats.RebuildReason)
+	}
+	if _, err := reopened.GetTask(context.Background(), indexedTestTask(0, indexTestNow).TaskID); err != nil {
+		t.Fatalf("legacy v2 Task record was lost: %v", err)
+	}
+	if _, err := reopened.GetRun(context.Background(), indexedTestRun(indexedTestTask(0, indexTestNow), 0, 1, indexTestNow).RunID); err != nil {
+		t.Fatalf("legacy v2 Run record was lost: %v", err)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, reopened, root)
+	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	finalLayout, err := os.ReadFile(layoutPath(root))
+	if err != nil || !strings.HasPrefix(string(finalLayout), layoutVersionLineV2+"\n") {
+		t.Fatalf("opening old store rewrote LAYOUT: %q err=%v", finalLayout, err)
+	}
+}
+
+func TestLegacyV2RestoreChecksEveryClosedSixFileSizeBeforeRebuild(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		modifiedSegment  int
+		reportMismatchAt int
+		newTaskNumber    int
+	}{
+		{name: "original file and report differ in same segment", modifiedSegment: 0, reportMismatchAt: 0, newTaskNumber: 900},
+		{name: "later original file differs after earlier report mismatch", modifiedSegment: 1, reportMismatchAt: 0, newTaskNumber: 901},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			segments := buildLegacyV2Fixture(t, root, 3)
+			appendFixtureBytes(t, filepath.Join(segmentDir(root, segments[tc.reportMismatchAt]), taskDelegationReportFilename), []byte("{}\n"))
+			changedTask, err := json.Marshal(indexedTestTask(tc.newTaskNumber, indexTestNow))
+			if err != nil {
+				t.Fatal(err)
+			}
+			appendFixtureBytes(t, filepath.Join(segmentDir(root, segments[tc.modifiedSegment]), stateFilename), append(changedTask, '\n'))
+
+			store, err := NewJSONLStoreWithOptions(root, OpenOptions{Index: true, Persist: true, checkpoint: manualPolicy()})
+			if store != nil {
+				_ = store.Close()
+			}
+			if !errors.Is(err, ErrSealedSegmentChanged) {
+				t.Fatalf("open with changed historical file and unrecorded report bytes: %v, want ErrSealedSegmentChanged", err)
+			}
+		})
+	}
+}
+
+func TestLegacyV2RestoreRebuildsForReportOnlyClosedSegmentChange(t *testing.T) {
+	root := t.TempDir()
+	segments := buildLegacyV2Fixture(t, root, 3)
+	appendFixtureBytes(t, filepath.Join(segmentDir(root, segments[0]), taskDelegationReportFilename), []byte("{}\n"))
+
+	store, err := NewJSONLStoreWithOptions(root, OpenOptions{Index: true, Persist: true, checkpoint: manualPolicy()})
+	if err != nil {
+		t.Fatalf("open after report-only change: %v", err)
+	}
+	stats, ok := store.IndexStats()
+	if !ok || stats.Source != sourceRebuilt || stats.RebuildReason != rebuildVersion {
+		t.Fatalf("index source=%q reason=%q, want rebuilt/version", stats.Source, stats.RebuildReason)
+	}
+	requireSegmentedStoreEqualsFullBuild(t, store, root)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// buildLegacyV2Fixture makes real six-file segment directories under an old
+// six-size LAYOUT and six-size sidecar. The v3 generator supplies Task history,
+// then the conversion below removes the seventh file from disk as old v2 did.
+func buildLegacyV2Fixture(t testing.TB, root string, segmentCount int) []string {
+	t.Helper()
+	stageOneStore(t, root, 1)
+	clock := newTestClock("2026-10-13T08:00:00Z")
+	store, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, 0, nil))
+	if err != nil {
+		t.Fatalf("open rotating fixture store: %v", err)
+	}
+	for i := 0; i < segmentCount; i++ {
+		clock.Set(time.Date(2026, time.October, 13+i, 8, 0, 0, 0, time.UTC).Format(time.RFC3339))
+		populate(t, store, i+1, i+2)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	writeLegacyV2LayoutAndSidecar(t, root)
+	segments := segmentNames(t, root)
+	if len(segments) != segmentCount {
+		t.Fatalf("legacy fixture segments=%v, want %d", segments, segmentCount)
+	}
+	for _, dir := range append([]string{root}, segmentPaths(root, segments)...) {
+		if _, err := os.Stat(filepath.Join(dir, taskDelegationReportFilename)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy v2 fixture contains the v3 report file in %s: %v", dir, err)
+		}
+	}
+	return segments
+}
+
+func segmentPaths(root string, segments []string) []string {
+	paths := make([]string, 0, len(segments))
+	for _, name := range segments {
+		paths = append(paths, segmentDir(root, name))
+	}
+	return paths
+}
+
+func writeLegacyV2LayoutAndSidecar(t testing.TB, root string) {
+	t.Helper()
+	layout, err := os.ReadFile(layoutPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(layout), "\n"), "\n")
+	if len(lines) != 9 || lines[0] != layoutVersionLine {
+		t.Fatalf("unexpected v3 LAYOUT: %q", layout)
+	}
+	legacyLayout := append([]string{layoutVersionLineV2}, lines[1:7]...)
+	legacyLayout = append(legacyLayout, layoutEndLine)
+	if err := os.WriteFile(layoutPath(root), []byte(strings.Join(legacyLayout, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	path := sidecarPathFor(root, true)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacySidecar, err := downgradeV3SidecarToV2(data)
+	if err != nil {
+		t.Fatalf("encode six-file v2 sidecar: %v", err)
+	}
+	if err := os.WriteFile(path, legacySidecar, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacyLayoutInfo, err := readLayout(root)
+	if err != nil || !legacyLayoutInfo.v2 || legacyLayoutInfo.version != 2 {
+		t.Fatalf("fixture LAYOUT is not legacy v2: %+v err=%v", legacyLayoutInfo, err)
+	}
+	legacySidecarData, err := os.ReadFile(path)
+	if err != nil || binary.LittleEndian.Uint16(legacySidecarData[4:6]) != sidecarVersionV2 {
+		t.Fatalf("fixture sidecar is not legacy v2: err=%v", err)
+	}
+
+	names, err := listSegmentDirs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range append([]string{root}, segmentPaths(root, names)...) {
+		if err := os.Remove(filepath.Join(dir, taskDelegationReportFilename)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("remove v3 report file from legacy fixture %s: %v", dir, err)
+		}
+	}
+}
+
+func appendFixtureBytes(t testing.TB, path string, data []byte) {
+	t.Helper()
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Chmod(path, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// downgradeV3SidecarToV2 removes the report-journal size from every closed
+// segment to model the six-file version 2 sidecar shipped before reports.
+func downgradeV3SidecarToV2(data []byte) ([]byte, error) {
+	if len(data) < sidecarHeaderFixed+sidecarTrailerLen || binary.LittleEndian.Uint16(data[4:6]) != sidecarVersionV3 {
+		return nil, errors.New("input is not a v3 sidecar")
+	}
+	closed := int(binary.LittleEndian.Uint32(data[sidecarHeaderFixed:]))
+	oldEntryLength := sidecarNameLen + 8*sizedFileCount + 8*int(kindCount)
+	newEntryLength := sidecarNameLen + 8*(sizedFileCount-1) + 8*int(kindCount)
+	entriesStart := sidecarHeaderFixed + 4
+	entriesEnd := entriesStart + closed*oldEntryLength
+	if entriesEnd > len(data)-sidecarTrailerLen {
+		return nil, errors.New("v3 sidecar segment table is truncated")
+	}
+	out := append([]byte(nil), data[:entriesStart]...)
+	for i := 0; i < closed; i++ {
+		start := entriesStart + i*oldEntryLength
+		entry := data[start : start+oldEntryLength]
+		reportSizeOffset := sidecarNameLen + 8*(sizedFileCount-1)
+		if binary.LittleEndian.Uint64(entry[reportSizeOffset:]) != 0 {
+			return nil, fmt.Errorf("closed segment %d has report bytes", i)
+		}
+		out = append(out, entry[:reportSizeOffset]...)
+		out = append(out, entry[reportSizeOffset+8:]...)
+	}
+	if len(out) != entriesStart+closed*newEntryLength {
+		return nil, errors.New("unexpected converted segment table length")
+	}
+	out = append(out, data[entriesEnd:len(data)-sidecarTrailerLen]...)
+	out = append(out, data[len(data)-sidecarTrailerLen:]...)
+	binary.LittleEndian.PutUint16(out[4:6], sidecarVersionV2)
+	binary.LittleEndian.PutUint64(out[sidecarHeaderFixed-8:], uint64(len(out)))
+	return resealSidecar(out), nil
 }
 
 func TestRestoreReplaysTheLogWrittenAfterTheSidecar(t *testing.T) {

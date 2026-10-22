@@ -13,21 +13,23 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/segmentname"
 )
 
-// Layout v2 splits the log into segments (spec 3, 4.1-4.2): the six files in the
+// Layout v2 splits the log into segments (spec 3, 4.1-4.2): the six original files in the
 // store root become segment 0 and are frozen; writes go to logs/<YYYYMMDD>-<NN>/,
 // one segment per UTC day, and to a further segment of the same day when the
 // current one outgrows the size valve. A closed segment is never written again.
+// Layout v3 adds the Task-owned delegation report journal to those sealed files.
 //
 // LAYOUT is the version marker and the one durable record of what segment 0 held
 // when it was frozen. A store without it is layout v1: the files in the root,
 // writable, exactly as before segments existed.
 const (
-	layoutFilename    = "LAYOUT"
-	layoutVersionLine = "tasks-layout/v2"
-	layoutEndLine     = "end"
-	layoutFrozenWord  = "frozen"
-	logsDirName       = "logs"
-	segmentLegacyName = "legacy" // the name of segment 0 (the files in the root)
+	layoutFilename      = "LAYOUT"
+	layoutVersionLineV2 = "tasks-layout/v2"
+	layoutVersionLine   = "tasks-layout/v3"
+	layoutEndLine       = "end"
+	layoutFrozenWord    = "frozen"
+	logsDirName         = "logs"
+	segmentLegacyName   = "legacy" // the name of segment 0 (the files in the root)
 
 	// DefaultRotationSizeValve is the size of a segment's log files beyond which
 	// the next write starts another segment of the same day (decision D3). The
@@ -37,7 +39,7 @@ const (
 
 	maxSegmentOrdinal    = 1<<16 - 1
 	maxSegmentsPerDay    = 99
-	sizedFileCount       = 6 // the five indexed files and the execution fence log
+	sizedFileCount       = 7 // five indexed files, fences, and Task-owned reports
 	segmentNameLen       = len("20060102-01")
 	sealedSegmentPerm    = 0o444
 	writableDataFilePerm = 0o644
@@ -49,10 +51,10 @@ const (
 // follow).
 var sizedFilenames = [sizedFileCount]string{
 	stateFilename, runFilename, contextFilename, notificationsFilename,
-	taskOperationReceiptFilename, taskExecutionFenceFilename,
+	taskOperationReceiptFilename, taskExecutionFenceFilename, taskDelegationReportFilename,
 }
 
-const fenceSizeIndex = sizedFileCount - 1
+const fenceSizeIndex = sizedFileCount - 2
 
 var (
 	// ErrUnknownLayout means LAYOUT names a version this build does not know (or
@@ -70,8 +72,9 @@ var (
 
 // layoutInfo is what LAYOUT says. The zero value is layout v1 (no LAYOUT file).
 type layoutInfo struct {
-	v2 bool
-	// frozen is the size of each of segment 0's six files when it was frozen.
+	v2      bool
+	version int
+	// A v2 LAYOUT predates the report file and therefore leaves its size at zero.
 	frozen [sizedFileCount]int64
 }
 
@@ -88,16 +91,15 @@ func formatLayout(frozen [sizedFileCount]int64) []byte {
 	return b.Bytes()
 }
 
-// parseLayout reads LAYOUT strictly. Anything but the exact v2 text is an
-// unknown layout: a later version writes another first line and this build
-// refuses it.
+// parseLayout reads known LAYOUT versions strictly. A v2 store has no report
+// journal bytes in segment 0; its seventh frozen size is therefore zero.
 func parseLayout(data []byte) (layoutInfo, error) {
 	text := string(data)
 	if !strings.HasSuffix(text, "\n") {
 		return layoutInfo{}, fmt.Errorf("%w: LAYOUT is not newline terminated", ErrUnknownLayout)
 	}
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if len(lines) == 0 || lines[0] != layoutVersionLine {
+	if len(lines) == 0 || (lines[0] != layoutVersionLineV2 && lines[0] != layoutVersionLine) {
 		first := ""
 		if len(lines) > 0 {
 			first = lines[0]
@@ -105,13 +107,17 @@ func parseLayout(data []byte) (layoutInfo, error) {
 				first = first[:40]
 			}
 		}
-		return layoutInfo{}, fmt.Errorf("%w: LAYOUT version %q is not %q", ErrUnknownLayout, first, layoutVersionLine)
+		return layoutInfo{}, fmt.Errorf("%w: LAYOUT version %q is not supported", ErrUnknownLayout, first)
 	}
-	if len(lines) != sizedFileCount+2 || lines[len(lines)-1] != layoutEndLine {
+	version, fileCount := 3, sizedFileCount
+	if lines[0] == layoutVersionLineV2 {
+		version, fileCount = 2, sizedFileCount-1
+	}
+	if len(lines) != fileCount+2 || lines[len(lines)-1] != layoutEndLine {
 		return layoutInfo{}, fmt.Errorf("%w: LAYOUT is incomplete (%d lines)", ErrUnknownLayout, len(lines))
 	}
-	info := layoutInfo{v2: true}
-	for i, name := range sizedFilenames {
+	info := layoutInfo{v2: true, version: version}
+	for i, name := range sizedFilenames[:fileCount] {
 		fields := strings.Fields(lines[1+i])
 		if len(fields) != 3 || fields[0] != layoutFrozenWord || fields[1] != name {
 			return layoutInfo{}, fmt.Errorf("%w: LAYOUT line %d is not a frozen record of %s", ErrUnknownLayout, i+2, name)

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,83 +58,232 @@ func channelAddressFromDTO(dto *channelAddressDTO) (conversation.ChannelAddress,
 	return address, nil
 }
 
-// LoadOrCreateCanonical resolves a daily conversation using explicit lookup
-// attributes. SessionID remains opaque and is generated only when no matching
-// canonical session exists.
-func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+// LoadCanonical resolves an existing daily conversation using explicit lookup
+// attributes without creating or changing any session state.
+func (r *JSONSessionRepository) LoadCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*session.Session, bool, error) {
+	value, _, found, err := r.LoadCanonicalWithCreationIntent(ctx, logicalDate, address)
+	return value, found, err
+}
+
+// LoadCanonicalWithCreationIntent is the read-only natural-key owner lookup
+// used to reconcile an uncertain v2 reservation. The intent is read from the
+// same JSON record as the canonical identity.
+func (r *JSONSessionRepository) LoadCanonicalWithCreationIntent(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*session.Session, *session.CreationIntent, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if err := ctx.Err(); err != nil {
-		return nil, err
+	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
+		return nil, nil, false, err
 	}
-	if err := session.ValidateLogicalDate(logicalDate); err != nil {
-		return nil, fmt.Errorf("invalid canonical session lookup: %w", err)
+	matchedID, err := r.findCanonicalSessionID(ctx, logicalDate, address)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	if err := address.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid canonical session lookup: %w", err)
+	if matchedID == "" {
+		return nil, nil, false, nil
+	}
+	value, err := r.load(ctx, matchedID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	intentDTO, err := r.creationIntent(ctx, matchedID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	var intent *session.CreationIntent
+	if intentDTO != nil {
+		intent = intentDTO
+	}
+	return value, intent, true, nil
+}
+
+// LoadOrCreateCanonical resolves a daily conversation using explicit lookup
+// attributes. SessionID remains opaque and is generated only when no matching
+// canonical session exists. The returned created flag is decided under the
+// same repository lock as the lookup and write.
+func (r *JSONSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
+		return nil, false, err
 	}
 	if createdAt.IsZero() {
-		return nil, fmt.Errorf("invalid canonical session lookup: created_at is required")
+		return nil, false, fmt.Errorf("invalid canonical session lookup: created_at is required")
 	}
+	matchedID, err := r.findCanonicalSessionID(ctx, logicalDate, address)
+	if err != nil {
+		return nil, false, err
+	}
+	if matchedID != "" {
+		intent, err := r.creationIntent(ctx, matchedID)
+		if err != nil {
+			return nil, false, err
+		}
+		if intent != nil {
+			return nil, false, fmt.Errorf("canonical session is reserved for response-first v2")
+		}
+		value, err := r.load(ctx, matchedID)
+		if err != nil {
+			return nil, false, err
+		}
+		return value, false, nil
+	}
+	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := r.save(ctx, created); err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
+}
+
+// ReserveCanonicalV2 creates the canonical JSON identity and its immutable
+// response-first intent in one repository critical section and atomic file
+// replacement. An existing same-owner reservation is reusable after retry or
+// restart. Any pre-existing unreserved JSON session remains legacy and cannot
+// be promoted.
+func (r *JSONSessionRepository) ReserveCanonicalV2(ctx context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (*session.Session, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := validateCanonicalLookup(ctx, logicalDate, address); err != nil {
+		return nil, false, err
+	}
+	if strings.TrimSpace(ownerID) == "" || ownerID != strings.TrimSpace(ownerID) {
+		return nil, false, fmt.Errorf("invalid response-first v2 reservation: owner_id is required and normalized")
+	}
+	if createdAt.IsZero() {
+		return nil, false, fmt.Errorf("invalid response-first v2 reservation: created_at is required")
+	}
+
+	matchedID, err := r.findCanonicalSessionID(ctx, logicalDate, address)
+	if err != nil {
+		return nil, false, err
+	}
+	if matchedID != "" {
+		intent, err := r.creationIntent(ctx, matchedID)
+		if err != nil {
+			return nil, false, err
+		}
+		if intent == nil {
+			return nil, false, fmt.Errorf("canonical session already exists without a response-first v2 reservation")
+		}
+		if intent.Runtime != "v2" || intent.OwnerID != ownerID {
+			return nil, false, fmt.Errorf("canonical response-first v2 reservation owner does not match")
+		}
+		value, err := r.load(ctx, matchedID)
+		if err != nil {
+			return nil, false, err
+		}
+		return value, false, nil
+	}
+
+	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := os.Stat(r.getFilePath(created.ID())); err == nil {
+		return nil, false, fmt.Errorf("canonical response-first v2 session_id collision")
+	} else if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("check canonical response-first v2 session_id: %w", err)
+	}
+	dto := r.toDTO(created)
+	dto.CreationIntent = &session.CreationIntent{Runtime: "v2", OwnerID: ownerID}
+	if err := r.saveDTO(ctx, created, dto); err != nil {
+		return nil, false, err
+	}
+	return created, true, nil
+}
+
+// IsCanonicalV2Reserved verifies a reservation by opaque SessionID and owner.
+// It is read-only and deliberately returns false for missing, legacy, or
+// differently-owned sessions.
+func (r *JSONSessionRepository) IsCanonicalV2Reserved(ctx context.Context, id, ownerID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := modulecore.SessionID(id).Validate(); err != nil {
+		return false, fmt.Errorf("invalid canonical session_id: %w", err)
+	}
+	if strings.TrimSpace(ownerID) == "" || ownerID != strings.TrimSpace(ownerID) {
+		return false, fmt.Errorf("invalid response-first v2 reservation lookup: owner_id is required and normalized")
+	}
+	intent, err := r.creationIntent(ctx, id)
+	if err != nil {
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return intent != nil && intent.Runtime == "v2" && intent.OwnerID == ownerID, nil
+}
+
+func validateCanonicalLookup(ctx context.Context, logicalDate string, address conversation.ChannelAddress) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := session.ValidateLogicalDate(logicalDate); err != nil {
+		return fmt.Errorf("invalid canonical session lookup: %w", err)
+	}
+	if err := address.Validate(); err != nil {
+		return fmt.Errorf("invalid canonical session lookup: %w", err)
+	}
+	return nil
+}
+
+func (r *JSONSessionRepository) findCanonicalSessionID(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (string, error) {
 	entries, err := os.ReadDir(r.baseDir)
 	if err != nil {
-		return nil, fmt.Errorf("read session directory: %w", err)
+		return "", fmt.Errorf("read session directory: %w", err)
 	}
 	matchedID := ""
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return "", err
 		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		raw, readErr := os.ReadFile(filepath.Join(r.baseDir, entry.Name()))
 		if readErr != nil {
-			return nil, fmt.Errorf("read session identity: %w", readErr)
+			return "", fmt.Errorf("read session identity: %w", readErr)
 		}
 		if err := rejectLegacySessionIdentityFields(raw); err != nil {
-			return nil, err
+			return "", err
 		}
 		var probe sessionIdentityProbe
 		if err := json.Unmarshal(raw, &probe); err != nil {
-			return nil, fmt.Errorf("decode session identity: %w", err)
+			return "", fmt.Errorf("decode session identity: %w", err)
 		}
 		if probe.ID == "" && probe.LogicalDate == "" && probe.ChannelAddress == nil {
 			continue
 		}
 		if probe.ID == "" || probe.LogicalDate == "" || probe.ChannelAddress == nil {
-			return nil, fmt.Errorf("canonical session identity is incomplete")
+			return "", fmt.Errorf("canonical session identity is incomplete")
 		}
 		candidateAddress, err := channelAddressFromDTO(probe.ChannelAddress)
 		if err != nil {
-			return nil, fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
+			return "", fmt.Errorf("canonical ChannelAddress is invalid: %w", err)
 		}
 		if err := session.ValidateLogicalDate(probe.LogicalDate); err != nil {
-			return nil, fmt.Errorf("canonical logical_date is invalid: %w", err)
+			return "", fmt.Errorf("canonical logical_date is invalid: %w", err)
 		}
 		if err := modulecore.SessionID(probe.ID).Validate(); err != nil {
-			return nil, fmt.Errorf("canonical session_id is invalid: %w", err)
+			return "", fmt.Errorf("canonical session_id is invalid: %w", err)
 		}
 		if probe.LogicalDate != logicalDate || candidateAddress != address {
 			continue
 		}
 		if matchedID != "" && matchedID != probe.ID {
-			return nil, fmt.Errorf("multiple canonical sessions match lookup attributes")
+			return "", fmt.Errorf("multiple canonical sessions match lookup attributes")
 		}
 		matchedID = probe.ID
 	}
-	if matchedID != "" {
-		return r.load(ctx, matchedID)
-	}
-	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
-	if err != nil {
-		return nil, err
-	}
-	if err := r.save(ctx, created); err != nil {
-		return nil, err
-	}
-	return created, nil
+	return matchedID, nil
 }
 
 // NewJSONSessionRepository は新しいJSONSessionRepositoryを作成
@@ -145,13 +295,14 @@ func NewJSONSessionRepository(baseDir string) *JSONSessionRepository {
 
 // sessionDTO はJSONシリアライズ用のDTO
 type sessionDTO struct {
-	ID             string                 `json:"id"`
-	LogicalDate    string                 `json:"logical_date"`
-	ChannelAddress *channelAddressDTO     `json:"channel_address"`
-	History        []turnInputDTO         `json:"history"`
-	Memory         map[string]interface{} `json:"memory"`
-	CreatedAt      time.Time              `json:"created_at"`
-	UpdatedAt      time.Time              `json:"updated_at"`
+	ID             string                  `json:"id"`
+	LogicalDate    string                  `json:"logical_date"`
+	ChannelAddress *channelAddressDTO      `json:"channel_address"`
+	CreationIntent *session.CreationIntent `json:"creation_intent,omitempty"`
+	History        []turnInputDTO          `json:"history"`
+	Memory         map[string]interface{}  `json:"memory"`
+	CreatedAt      time.Time               `json:"created_at"`
+	UpdatedAt      time.Time               `json:"updated_at"`
 }
 
 // turnInputDTO is the JSON projection for one canonical conversation input.
@@ -184,7 +335,33 @@ func (r *JSONSessionRepository) save(ctx context.Context, sess *session.Session)
 	if err := validateCanonicalSession(sess); err != nil {
 		return err
 	}
-	dto := r.toDTO(sess)
+	intent, err := r.creationIntent(ctx, sess.ID())
+	if err != nil && !errors.Is(err, session.ErrSessionNotFound) {
+		return err
+	}
+	if intent != nil {
+		return fmt.Errorf("cannot save a response-first v2 reserved session through the legacy session contract")
+	}
+	return r.saveDTO(ctx, sess, r.toDTO(sess))
+}
+
+func (r *JSONSessionRepository) saveDTO(ctx context.Context, sess *session.Session, dto *sessionDTO) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateCanonicalSession(sess); err != nil {
+		return err
+	}
+	if dto == nil || dto.ID != sess.ID() || dto.LogicalDate != sess.LogicalDate() {
+		return fmt.Errorf("session DTO identity does not match the canonical Session")
+	}
+	address, err := channelAddressFromDTO(dto.ChannelAddress)
+	if err != nil || address != sess.ChannelAddress() {
+		return fmt.Errorf("session DTO channel address does not match the canonical Session")
+	}
+	if err := validateCreationIntent(dto.CreationIntent); err != nil {
+		return err
+	}
 
 	data, err := json.MarshalIndent(dto, "", "  ")
 	if err != nil {
@@ -253,12 +430,72 @@ func (r *JSONSessionRepository) load(ctx context.Context, id string) (*session.S
 	if err := json.Unmarshal(data, &dto); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session: %w", err)
 	}
+	intent, err := creationIntentFromJSON(data)
+	if err != nil {
+		return nil, err
+	}
+	dto.CreationIntent = intent
 
 	result, err := r.fromDTO(&dto)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconstruct session: %w", err)
 	}
 	return result, nil
+}
+
+func (r *JSONSessionRepository) creationIntent(ctx context.Context, id string) (*session.CreationIntent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(r.getFilePath(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("session %s: %w", id, session.ErrSessionNotFound)
+		}
+		return nil, fmt.Errorf("failed to read session creation intent: %w", err)
+	}
+	return creationIntentFromJSON(data)
+}
+
+func creationIntentFromJSON(data []byte) (*session.CreationIntent, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, fmt.Errorf("decode session creation intent: %w", err)
+	}
+	raw, exists := fields["creation_intent"]
+	if !exists {
+		return nil, nil
+	}
+	var intentFields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &intentFields); err != nil || len(intentFields) != 2 {
+		return nil, fmt.Errorf("session creation_intent is invalid")
+	}
+	if _, ok := intentFields["runtime"]; !ok {
+		return nil, fmt.Errorf("session creation_intent.runtime is required")
+	}
+	if _, ok := intentFields["owner_id"]; !ok {
+		return nil, fmt.Errorf("session creation_intent.owner_id is required")
+	}
+	var intent session.CreationIntent
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&intent); err != nil {
+		return nil, fmt.Errorf("session creation_intent is invalid: %w", err)
+	}
+	if err := validateCreationIntent(&intent); err != nil {
+		return nil, err
+	}
+	return &intent, nil
+}
+
+func validateCreationIntent(intent *session.CreationIntent) error {
+	if intent == nil {
+		return nil
+	}
+	if intent.Runtime != "v2" || strings.TrimSpace(intent.OwnerID) == "" || intent.OwnerID != strings.TrimSpace(intent.OwnerID) {
+		return fmt.Errorf("session creation_intent is not a canonical response-first v2 reservation")
+	}
+	return nil
 }
 
 func rejectLegacySessionIdentityFields(data []byte) error {

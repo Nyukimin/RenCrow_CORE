@@ -582,6 +582,9 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injection_event_trace ON prompt_injection_
 	if err := s.applyConversationTurnSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.applyCanonicalConversationProjectionSchema(ctx); err != nil {
+		return err
+	}
 	if err := s.validateCanonicalThreadSchema(ctx); err != nil {
 		return err
 	}

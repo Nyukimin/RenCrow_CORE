@@ -2,6 +2,7 @@ package viewer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -135,6 +136,74 @@ func TestHandleSSE_DoesNotDuplicateEventBetweenSnapshotAndLive(t *testing.T) {
 	}
 	if got := hub.ClientCount(); got != 0 {
 		t.Fatalf("client count after disconnect = %d, want 0", got)
+	}
+}
+
+func TestEventHubPublishLiveGuardsMonotonicSequenceAndDeduplicatesLatest(t *testing.T) {
+	hub := NewEventHub(10)
+	first := orchestrator.NewEvent("agent.response", "mio", "user", "first", "CHAT", "", "", "viewer", "user")
+	first.EventSeq = 1
+	if published, err := hub.PublishLive(first); err != nil || !published {
+		t.Fatalf("PublishLive(first) = (%t, %v), want (true, nil)", published, err)
+	}
+	if published, err := hub.PublishLive(first); err != nil || published {
+		t.Fatalf("PublishLive(retry) = (%t, %v), want (false, nil) for exact retry", published, err)
+	}
+
+	third := orchestrator.NewEvent("agent.response", "mio", "user", "third", "CHAT", "", "", "viewer", "user")
+	third.EventSeq = 3 // Component sequences may have gaps occupied by private events.
+	if published, err := hub.PublishLive(third); err != nil || !published {
+		t.Fatalf("PublishLive(sequence gap) = (%t, %v), want (true, nil)", published, err)
+	}
+	second := orchestrator.NewEvent("agent.response", "mio", "user", "second", "CHAT", "", "", "viewer", "user")
+	second.EventSeq = 2
+	if published, err := hub.PublishLive(second); published || !errors.Is(err, errEventHubLiveSequenceNotIncreasing) {
+		t.Fatalf("PublishLive(out of order) = (%t, %v), want monotonic sequence error", published, err)
+	}
+
+	history := hub.History()
+	if len(history) != 2 || history[0].EventSeq != 1 || history[1].EventSeq != 3 {
+		t.Fatalf("history after duplicate and out-of-order publish=%+v, want sequences 1 and 3", history)
+	}
+}
+
+func TestHandleSSEAdvancesLiveCursorOnlyAfterSuccessfulFrame(t *testing.T) {
+	hub := NewEventHub(10)
+	first := sequencedEvent("entry.stage", "first live", 1)
+	second := sequencedEvent("entry.stage", "second live", 2)
+	firstData, err := json.Marshal(first)
+	if err != nil {
+		t.Fatalf("marshal first live event: %v", err)
+	}
+	secondData, err := json.Marshal(second)
+	if err != nil {
+		t.Fatalf("marshal second live event: %v", err)
+	}
+	hub.SetClientCountListener(func(count int) {
+		if count != 1 {
+			return
+		}
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		for ch := range hub.clients {
+			ch <- firstData
+			ch <- firstData
+			ch <- secondData
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil).WithContext(ctx)
+	rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 3}
+	hub.HandleSSE(rec, req)
+
+	body := rec.Body.String()
+	if got := strings.Count(body, "id: 1\n"); got != 1 {
+		t.Fatalf("live EventSeq 1 appeared %d times after a successful frame, want once: %q", got, body)
+	}
+	if got := strings.Count(body, "id: 2\n"); got != 1 {
+		t.Fatalf("live EventSeq 2 appeared %d times, want once: %q", got, body)
 	}
 }
 
@@ -415,6 +484,217 @@ func TestHandleSSERejectsInvalidLastEventID(t *testing.T) {
 				t.Fatalf("invalid cursor %q subscribed a client", value)
 			}
 		})
+	}
+}
+
+func TestHandleSSE_HidesResponseFirstMessagesFromGlobalStreamReplayAndLive(t *testing.T) {
+	newV2Event := func(seq int64, visibility string) orchestrator.OrchestratorEvent {
+		event := orchestrator.NewEvent("agent.response", "mio", "user", "v2-private-to-global-stream", "CHAT", "", "v2-session", "viewer", "viewer-user")
+		event.EventSeq = modulecore.EventSeq(seq)
+		event.SessionID = modulecore.NewSessionID()
+		event.MessageID = modulecore.NewMessageID()
+		event.TurnID = modulecore.NewTurnID()
+		event.Kind = "reply"
+		event.Visibility = visibility
+		return event
+	}
+
+	for _, visibility := range []string{"public", "private"} {
+		for _, delivery := range []string{"replay", "live"} {
+			t.Run(delivery+"/"+visibility, func(t *testing.T) {
+				hub := NewEventHub(10)
+				if delivery == "replay" {
+					hub.OnEvent(newV2Event(1, visibility))
+					req := httptest.NewRequest(http.MethodGet, "/viewer/events", nil)
+					ctx, cancel := context.WithCancel(req.Context())
+					defer cancel()
+					rec := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+					hub.HandleSSE(rec, req.WithContext(ctx))
+					if strings.Contains(rec.Body.String(), "v2-private-to-global-stream") {
+						t.Fatalf("global replay exposed a %s response-first message: %s", visibility, rec.Body.String())
+					}
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				hub.SetClientCountListener(func(count int) {
+					if count == 1 {
+						hub.OnEvent(newV2Event(1, visibility))
+					}
+				})
+				req := httptest.NewRequest(http.MethodGet, "/viewer/events?from=now", nil).WithContext(ctx)
+				rec := httptest.NewRecorder()
+				hub.HandleSSE(rec, req)
+				if strings.Contains(rec.Body.String(), "v2-private-to-global-stream") {
+					t.Fatalf("global live stream exposed a %s response-first message: %s", visibility, rec.Body.String())
+				}
+			})
+		}
+	}
+}
+
+func TestHandleSessionPublicSSEReplaysCommittedMessagesOnceAfterRestart(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog after restart: %v", err)
+	}
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(archive)
+
+	request := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events", nil)
+	ctx, cancel := context.WithCancel(request.Context())
+	defer cancel()
+	request = request.WithContext(ctx)
+	response := &cancelAfterFlushWriter{ResponseRecorder: httptest.NewRecorder(), cancel: cancel, cancelOn: 1}
+	hub.HandleSessionPublicSSE(response, request, fixture.scope)
+
+	body := response.Body.String()
+	for _, messageID := range []modulecore.MessageID{fixture.inputMessageID, fixture.reply.MessageID, fixture.clarification.MessageID} {
+		if got := strings.Count(body, `"message_id":"`+string(messageID)+`"`); got != 1 {
+			t.Errorf("message %s appeared %d times in restart replay, want once: %s", messageID, got, body)
+		}
+	}
+	for _, event := range []modulecore.EventEnvelope{fixture.reply, fixture.clarification} {
+		if got := strings.Count(body, "id: "+strconv.FormatInt(int64(event.EventSeq), 10)+"\n"); got != 1 {
+			t.Errorf("event sequence %d appeared %d times, want once", event.EventSeq, got)
+		}
+	}
+	if strings.Contains(body, "PRIVATE_SENTINEL") || strings.Contains(body, "other session") {
+		t.Fatalf("owner-scoped stream exposed private or other-session content: %s", body)
+	}
+	if got := hub.ClientCount(); got != 0 {
+		t.Fatalf("subscriber count after disconnect=%d, want 0", got)
+	}
+}
+
+func TestHandleSessionPublicSSEAuthorizesLiveEventsAgainstPublicIndex(t *testing.T) {
+	fixture := seedSessionPublicReplayFixture(t)
+	store, err := eventstore.NewSQLiteStore(fixture.path)
+	if err != nil {
+		t.Fatalf("reopen EventStore: %v", err)
+	}
+	defer store.Close()
+	archive, err := NewCanonicalEventLog(store)
+	if err != nil {
+		t.Fatalf("NewCanonicalEventLog: %v", err)
+	}
+	publicEvent, found, err := archive.GetByEventID(context.Background(), fixture.reply.EventID)
+	if err != nil || !found {
+		t.Fatalf("load public live event found=%t err=%v", found, err)
+	}
+	privateEvent := orchestrator.NewEvent("conversation.clarification_question", "mio", "shiro", "PRIVATE_SENTINEL", "CHAT", "", string(fixture.scope.SessionID), "viewer", "viewer-user")
+	privateEvent.EventID, privateEvent.EventSeq = fixture.private.EventID, fixture.private.EventSeq
+	privateEvent.SessionID, privateEvent.TurnID, privateEvent.MessageID = fixture.scope.SessionID, fixture.private.TurnID, fixture.private.MessageID
+	privateEvent.Visibility, privateEvent.Kind = "private", "clarification_question"
+
+	hub := NewEventHub(10)
+	hub.SetSessionPublicReplayReader(archive)
+	hub.SetClientCountListener(func(count int) {
+		if count == 1 {
+			hub.OnEvent(publicEvent)
+			hub.OnEvent(privateEvent)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/viewer/conversation/events?from=now", nil).WithContext(ctx)
+	response := httptest.NewRecorder()
+	hub.HandleSessionPublicSSE(response, request, fixture.scope)
+	body := response.Body.String()
+	if !strings.Contains(body, "public answer") {
+		t.Fatalf("owner-scoped live stream omitted indexed public message: %s", body)
+	}
+	if strings.Contains(body, "PRIVATE_SENTINEL") {
+		t.Fatalf("owner-scoped live stream exposed a private event: %s", body)
+	}
+}
+
+type sessionPublicReplayFixture struct {
+	path           string
+	scope          SessionPublicReplayScope
+	inputMessageID modulecore.MessageID
+	reply          modulecore.EventEnvelope
+	clarification  modulecore.EventEnvelope
+	private        modulecore.EventEnvelope
+}
+
+func seedSessionPublicReplayFixture(t *testing.T) sessionPublicReplayFixture {
+	t.Helper()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "session-public-restart.sqlite")
+	store, err := eventstore.NewSQLiteStore(path)
+	if err != nil {
+		t.Fatalf("create EventStore: %v", err)
+	}
+	sessionID, turnID, traceID := modulecore.NewSessionID(), modulecore.NewTurnID(), modulecore.NewTraceID()
+	occurredAt := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	input := modulecore.NewEventEnvelope(traceID, "", nil, "orchestrator", "conversation.user_message", occurredAt, map[string]any{
+		"from": "user", "source_actor_id": "viewer-user", "to": "mio", "kind": "user_message", "text": "public input", "content": "public input", "visibility": "public",
+	})
+	input.SessionID, input.TurnID, input.MessageID = sessionID, turnID, modulecore.NewMessageID()
+	accepted, err := store.AcceptTurn(ctx, eventstore.AcceptInput{
+		OperationID: "accept-session-public-replay", OwnerID: "owner-1", RuntimeVersion: "v2",
+		ClientSubmissionID: "submission-session-public-replay", ActorID: "viewer-user", TriggerKind: "user_message",
+		GenerationEpoch: 1, CreateNewSession: true, InputEvent: input,
+		InputMessage: eventstore.MessageIndex{
+			MessageID: input.MessageID, EventID: input.EventID, SessionID: sessionID, TurnID: turnID,
+			FromActor: "viewer-user", ToKind: "agent", ToActor: "mio", Kind: "user_message", Visibility: "public",
+		},
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("AcceptTurn: %v", err)
+	}
+	input = accepted.InputEvent
+	reply := modulecore.NewEventEnvelope(traceID, input.EventID, nil, "orchestrator", "agent.response", occurredAt.Add(time.Second), map[string]any{
+		"from": "mio", "source_actor_id": "mio", "to": "user", "kind": "reply", "reply_to_message_id": string(input.MessageID), "text": "public answer", "content": "public answer", "visibility": "public",
+	})
+	reply.SessionID, reply.TurnID, reply.MessageID = sessionID, turnID, modulecore.NewMessageID()
+	clarification := modulecore.NewEventEnvelope(traceID, input.EventID, nil, "orchestrator", "agent.response", occurredAt.Add(2*time.Second), map[string]any{
+		"from": "mio", "source_actor_id": "mio", "to": "user", "kind": "clarification_prompt", "delegation_id": string(modulecore.NewRequestID()),
+		"reply_to_message_id": string(input.MessageID), "availability": "free", "text": "public question", "content": "public question", "visibility": "public",
+	})
+	clarification.SessionID, clarification.TurnID, clarification.MessageID = sessionID, turnID, modulecore.NewMessageID()
+	private := modulecore.NewEventEnvelope(traceID, input.EventID, nil, "conversation_runtime", "conversation.clarification_question", occurredAt.Add(3*time.Second), map[string]any{
+		"from": "mio", "source_actor_id": "mio", "to": "shiro", "kind": "clarification_question", "text": "PRIVATE_SENTINEL", "content": "PRIVATE_SENTINEL", "visibility": "private",
+	})
+	private.SessionID, private.TurnID, private.MessageID = sessionID, turnID, modulecore.NewMessageID()
+	private.ActorKind, private.ActorID = "agent", "mio"
+	batch, err := store.CommitTurnBundle(ctx, eventstore.CommitInput{
+		OperationID: "commit-session-public-replay", SessionID: sessionID, TurnID: turnID, GenerationEpoch: 1, ResultState: "completed",
+		Events: []modulecore.EventEnvelope{reply, clarification, private},
+		MessageIndexes: []eventstore.MessageIndex{
+			{MessageID: reply.MessageID, EventID: reply.EventID, SessionID: sessionID, TurnID: turnID, FromActor: "mio", ToKind: "user", ToActor: "owner-1", Kind: "reply", ReplyToMessageID: input.MessageID, Visibility: "public"},
+			{MessageID: clarification.MessageID, EventID: clarification.EventID, SessionID: sessionID, TurnID: turnID, FromActor: "mio", ToKind: "user", ToActor: "owner-1", Kind: "clarification_prompt", ReplyToMessageID: input.MessageID, Visibility: "public"},
+			{MessageID: private.MessageID, EventID: private.EventID, SessionID: sessionID, TurnID: turnID, FromActor: "mio", ToKind: "agent", ToActor: "shiro", Kind: "clarification_question", Visibility: "private"},
+		},
+	})
+	if err != nil {
+		_ = store.Close()
+		t.Fatalf("CommitTurnBundle: %v", err)
+	}
+	if len(batch.Events) != 3 {
+		_ = store.Close()
+		t.Fatalf("committed event count=%d, want 3", len(batch.Events))
+	}
+	reply, clarification = batch.Events[0], batch.Events[1]
+	state, found, err := store.ReadSessionState(ctx, sessionID, "owner-1")
+	if err != nil || !found {
+		_ = store.Close()
+		t.Fatalf("ReadSessionState found=%t err=%v", found, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close EventStore before restart: %v", err)
+	}
+	return sessionPublicReplayFixture{
+		path: path, scope: SessionPublicReplayScope{SessionID: sessionID, OwnerID: "owner-1", ActorID: "viewer-user", CutoverSeq: state.CutoverSeq},
+		inputMessageID: input.MessageID, reply: reply, clarification: clarification, private: batch.Events[2],
 	}
 }
 

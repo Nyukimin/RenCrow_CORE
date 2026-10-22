@@ -456,9 +456,31 @@ func newBuildEventStoreFixtureWithSourceMutation(t *testing.T, mutate func(*test
 	if mutate != nil {
 		mutate(t, eventStorePath)
 	}
+	return prepareBuildEventStoreFixture(t, sourceRoot, eventStorePath)
+}
 
+func newLegacyBuildEventStoreFixture(t *testing.T) buildEventStoreFixture {
+	t.Helper()
+	sourceRoot := makeTestSnapshot(t, "legacy-build-event-store-source")
+	eventStorePath := filepath.Join(sourceRoot, "source-event-store")
+	db := openTestDB(t, eventStorePath)
+	traceID := modulecore.NewTraceID()
+	root := modulecore.NewRootEventEnvelope("orchestrator", "conversation.message.received", time.Date(2026, 8, 31, 1, 0, 0, 0, time.UTC), map[string]any{"kind": "root"})
+	root.TraceID = traceID
+	child := modulecore.NewEventEnvelope(traceID, root.EventID, nil, "orchestrator", "conversation.message.completed", root.OccurredAt.Add(time.Second), map[string]any{"kind": "child"})
+	insertEventStoreTestEvent(t, db, root, traceID)
+	insertEventStoreTestEvent(t, db, child, traceID)
+	mustExec(t, db, `INSERT INTO event_dependency(event_id,dependency_event_id,relation_type) VALUES(?,?,?)`, string(child.EventID), string(root.EventID), "causation")
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return prepareBuildEventStoreFixture(t, sourceRoot, eventStorePath)
+}
+
+func prepareBuildEventStoreFixture(t *testing.T, sourceRoot, eventStorePath string) buildEventStoreFixture {
+	t.Helper()
 	snapshotRoot := filepath.Join(t.TempDir(), "captured")
-	_, err = Capture(context.Background(), CaptureOptions{
+	_, err := Capture(context.Background(), CaptureOptions{
 		SnapshotDir: snapshotRoot, LiveDCI: filepath.Join(sourceRoot, "source-dci"), LiveDCIJSONL: filepath.Join(sourceRoot, "source-dci-jsonl"),
 		LiveEventStore: eventStorePath, LiveL1: filepath.Join(sourceRoot, "source-l1"), LiveArchive: filepath.Join(sourceRoot, "source-archive"),
 	})

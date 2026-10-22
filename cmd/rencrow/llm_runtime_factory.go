@@ -14,11 +14,13 @@ import (
 )
 
 type primaryLLMProviders struct {
-	Chat       llm.LLMProvider
-	Worker     llm.LLMProvider
-	ChatWorker llm.LLMProvider
-	Heavy      llm.LLMProvider
-	Wild       llm.LLMProvider
+	Chat         llm.LLMProvider
+	Worker       llm.LLMProvider
+	ChatWorker   llm.LLMProvider
+	Heavy        llm.LLMProvider
+	Wild         llm.LLMProvider
+	Conversation *llmmiddleware.ConversationProvider
+	Readback     map[string]*llmmiddleware.ConversationProvider
 }
 
 func buildPrimaryLLMProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder) primaryLLMProviders {
@@ -38,10 +40,17 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 	if envName := strings.TrimSpace(cfg.LLMGateway.APIKeyEnv); envName != "" {
 		apiKey = strings.TrimSpace(os.Getenv(envName))
 	}
-	provider := func(role, alias, agentID string) llm.LLMProvider {
+	gatewayProvider := func(role, alias, agentID string) llm.LLMProvider {
 		raw := rencrowllm.NewGatewayProviderWithOptions(apiKey, alias, baseURL, timeout).
 			WithRenCrowExecution(agentID, role, alias)
-		return wrapPrimaryLLMProvider(cfg, role, enforceThinkingPolicyForRole(role, raw), recorder)
+		return enforceThinkingPolicyForRole(role, raw)
+	}
+	provider := func(role, alias, agentID string) llm.LLMProvider {
+		return wrapPrimaryLLMProvider(cfg, role, gatewayProvider(role, alias, agentID), recorder)
+	}
+	conversationProvider := func(agentID, role, alias string) *llmmiddleware.ConversationProvider {
+		return llmmiddleware.NewConversationProvider(
+			gatewayProvider(role, alias, agentID), agentID+"-readback", contextBudgetPolicyForConfig(cfg))
 	}
 	log.Printf("RenCrow_LLM Gateway enabled (base_url=%s)", baseURL)
 	return primaryLLMProviders{
@@ -50,6 +59,13 @@ func buildGatewayPrimaryLLMProviders(cfg *config.Config, recorder llmmiddleware.
 		ChatWorker: provider("chatworker", "shiro", "shiro"),
 		Heavy:      provider("heavy", "kuro", "kuro"),
 		Wild:       provider("wild", "midori", "midori"),
+		Conversation: llmmiddleware.NewConversationProvider(
+			gatewayProvider("chat", "mio", "mio"), "mio-conversation", contextBudgetPolicyForConfig(cfg)),
+		Readback: map[string]*llmmiddleware.ConversationProvider{
+			"shiro":  conversationProvider("shiro", "chatworker", "shiro"),
+			"kuro":   conversationProvider("kuro", "heavy", "kuro"),
+			"midori": conversationProvider("midori", "wild", "midori"),
+		},
 	}
 }
 
@@ -65,17 +81,20 @@ func enforceThinkingPolicyForRole(role string, provider llm.LLMProvider) llm.LLM
 }
 
 func wrapPrimaryLLMProvider(cfg *config.Config, name string, provider llm.LLMProvider, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder) llm.LLMProvider {
-	policy := domainai.ContextBudgetPolicy{}
-	if cfg != nil {
-		policy = domainai.ContextBudgetPolicy{
-			MaxContextTokens: cfg.AIWorkflow.ContextBudgetTokens,
-			WarnAtRatio:      cfg.AIWorkflow.ContextBudgetWarnRatio,
-			StopAtRatio:      cfg.AIWorkflow.ContextBudgetStopRatio,
-		}
-	}
-	budgeted := llmmiddleware.NewContextBudgetProvider(provider, name, policy, contextBudgetRecorder)
+	budgeted := llmmiddleware.NewContextBudgetProvider(provider, name, contextBudgetPolicyForConfig(cfg), contextBudgetRecorder)
 	// Prompt receipt is inside DateTimeProvider so it observes the exact
 	// messages after the request-time JST instruction has been injected.
 	receipt := llmmiddleware.NewPromptReceiptProvider(budgeted, name)
 	return llmmiddleware.NewRawLogProvider(llmmiddleware.NewDateTimeProvider(receipt), name)
+}
+
+func contextBudgetPolicyForConfig(cfg *config.Config) domainai.ContextBudgetPolicy {
+	if cfg == nil {
+		return domainai.ContextBudgetPolicy{}
+	}
+	return domainai.ContextBudgetPolicy{
+		MaxContextTokens: cfg.AIWorkflow.ContextBudgetTokens,
+		WarnAtRatio:      cfg.AIWorkflow.ContextBudgetWarnRatio,
+		StopAtRatio:      cfg.AIWorkflow.ContextBudgetStopRatio,
+	}
 }

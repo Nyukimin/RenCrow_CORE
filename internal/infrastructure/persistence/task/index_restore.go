@@ -149,7 +149,7 @@ func restoreTaskIndex(root string, layout layoutInfo, refs []segmentRef, allowMi
 		}
 		return nil, 0, &unusableSidecar{reason, decodeErr.Error()}, nil
 	}
-	if (h.Version == sidecarVersionV2) != layout.v2 {
+	if (!layout.v2 && h.Version != sidecarVersionV1) || (layout.v2 && h.Version == sidecarVersionV1) {
 		return nil, 0, &unusableSidecar{rebuildLayout, fmt.Sprintf("sidecar version %d, store layout v2=%v", h.Version, layout.v2)}, nil
 	}
 	ix.root = root
@@ -219,14 +219,29 @@ func (ix *taskIndex) attachSegments(layout layoutInfo, refs []segmentRef) (*unus
 		ix.segs[i].dir = refs[i].dir
 		ix.fc.setDir(refs[i].ord, refs[i].dir)
 	}
+	missingReportSizeSegment := ""
 	for i := 1; i < int(ix.cur); i++ {
 		actual, err := segmentFileSizes(ix.segs[i].dir)
 		if err != nil {
 			return nil, err
 		}
+		if ix.sidecarVersion == sidecarVersionV2 {
+			for f := 0; f < sizedFileCount-1; f++ {
+				if actual[f] != ix.segs[i].size[f] {
+					return nil, fmt.Errorf("%w: segment %s original files are %v bytes, it was %v when the index recorded it as closed", ErrSealedSegmentChanged, ix.segs[i].name, actual[:sizedFileCount-1], ix.segs[i].size[:sizedFileCount-1])
+				}
+			}
+			if actual[sizedFileCount-1] != ix.segs[i].size[sizedFileCount-1] && missingReportSizeSegment == "" {
+				missingReportSizeSegment = ix.segs[i].name
+			}
+			continue
+		}
 		if actual != ix.segs[i].size {
 			return nil, fmt.Errorf("%w: segment %s is %v bytes, it was %v when the index recorded it as closed", ErrSealedSegmentChanged, ix.segs[i].name, actual, ix.segs[i].size)
 		}
+	}
+	if missingReportSizeSegment != "" {
+		return &unusableSidecar{rebuildVersion, fmt.Sprintf("legacy sidecar does not record the report journal size of segment %s", missingReportSizeSegment)}, nil
 	}
 	return nil, nil
 }

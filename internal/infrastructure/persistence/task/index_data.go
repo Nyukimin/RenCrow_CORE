@@ -221,6 +221,9 @@ type taskIndex struct {
 	lines   [kindCount]int64
 	// layoutV2 is true when the store is on layout v2 (a LAYOUT file exists).
 	layoutV2 bool
+	// sidecarVersion records whether a restored sidecar knows about the report
+	// journal size. Version 2 predates that unindexed log file.
+	sidecarVersion uint16
 	// allowMissing lets a log file be absent (a reader opened before the writer
 	// created it); an absent file is an empty one.
 	allowMissing bool

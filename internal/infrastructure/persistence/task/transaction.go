@@ -25,7 +25,7 @@ var (
 )
 
 func taskBatchFilenames() []string {
-	return []string{stateFilename, runFilename, contextFilename, notificationsFilename, taskOperationReceiptFilename, taskExecutionFenceFilename}
+	return []string{stateFilename, runFilename, contextFilename, notificationsFilename, taskOperationReceiptFilename, taskExecutionFenceFilename, taskDelegationReportFilename}
 }
 
 // Transaction executes one Manager mutation against a pending append view.

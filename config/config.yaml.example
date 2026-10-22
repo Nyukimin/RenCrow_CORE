@@ -406,6 +406,10 @@ idle_chat:
     # aka:
     #   think: true
 
+# Viewer会話ターン経路。隔離構成で明示的にv2を選んだ場合だけresponse-firstを使用。
+conversation_runtime:
+  version: legacy # legacy (default) / v2
+
 # 会話LLM v5.0: 3層記憶（短期Redis・中期SQLite archive・長期Qdrant）
 conversation:
   enabled: false

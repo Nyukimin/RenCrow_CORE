@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
+	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
@@ -82,7 +84,8 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 		Live2DCharacterEmbed:         viewer.HandleLive2DCharacterEmbed,
 		Live2DAsset:                  viewer.HandleLive2DAsset,
 		Live2DEmotionControl:         viewer.HandleLive2DEmotionControl,
-		Events:                       dependencies.eventHub.HandleSSE,
+		Events:                       viewerGlobalEventsHandler(cfg, dependencies),
+		ConversationEventsV2:         dependencies.viewerConversationEventsV2,
 		RecipientSelection:           viewer.HandleRecipientSelection(dependencies.eventHub.OnEvent),
 		DebugSystem:                  viewer.HandleDebugSystemSnapshot(debugSystemOpts),
 		DocsSearch:                   viewer.HandleDocsSearch(),
@@ -114,6 +117,44 @@ func registerViewerBaseRoutes(mux *http.ServeMux, cfg *config.Config, dependenci
 	avatarfeature.RegisterRoutes(mux, avatarfeature.Dependencies{Routes: avatarfeature.Routes{
 		CharacterRuntime: dependencies.characterRuntime,
 	}})
+}
+
+func viewerGlobalEventsHandler(cfg *config.Config, dependencies *Dependencies) http.HandlerFunc {
+	if dependencies == nil || dependencies.eventHub == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "Viewer event stream is unavailable", http.StatusServiceUnavailable)
+		})
+	}
+	ownerID := conversationRuntimeUserID(cfg)
+	reader, readerOK := dependencies.canonicalEventStore.(viewerSessionRuntimeVersionReader)
+	return func(w http.ResponseWriter, r *http.Request) {
+		dependencies.eventHub.HandleSSEWithFilter(w, r, func(ctx context.Context, event orchestrator.OrchestratorEvent) (bool, error) {
+			if viewer.IsResponseFirstViewerEvent(event) {
+				return false, nil
+			}
+			if event.SessionID.Validate() != nil {
+				return true, nil
+			}
+			if !readerOK || ownerID == "" {
+				return false, fmt.Errorf("owner-checked Viewer session version reader is unavailable")
+			}
+			state, found, err := reader.ReadSessionState(ctx, event.SessionID, ownerID)
+			if err != nil {
+				return false, fmt.Errorf("resolve owner-checked Viewer session version: %w", err)
+			}
+			if !found {
+				return true, nil
+			}
+			switch state.RuntimeVersion {
+			case "v2":
+				return false, nil
+			case "v1", "legacy":
+				return true, nil
+			default:
+				return false, fmt.Errorf("unknown Viewer session runtime version %q", state.RuntimeVersion)
+			}
+		})
+	}
 }
 
 func viewerDataCapabilityProvider(dependencies *Dependencies) viewer.DataCapabilityCatalogProvider {

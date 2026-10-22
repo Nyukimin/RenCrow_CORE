@@ -10,6 +10,7 @@ import (
 	appnewsbrief "github.com/Nyukimin/RenCrow_CORE/internal/application/newsbrief"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/service"
+	domainagent "github.com/Nyukimin/RenCrow_CORE/internal/domain/agent"
 	domainai "github.com/Nyukimin/RenCrow_CORE/internal/domain/aiworkflow"
 	capdomain "github.com/Nyukimin/RenCrow_CORE/internal/domain/capability"
 	domainsession "github.com/Nyukimin/RenCrow_CORE/internal/domain/session"
@@ -30,9 +31,62 @@ func buildOrchestratorRuntime(
 	vtuberBridge orchestrator.VTuberBridge,
 	bridges viewerBridgeFactories,
 	verificationRuntime verificationRuntime,
+	selectedChatL1Owner any,
 ) {
 	deps.viewerSpeechCancel = bridges.SpeechCancel
 	deps.viewerSpeechProgress = bridges.SpeechProgress
+	deps.responseFirst = nil
+	if cfg != nil && strings.EqualFold(strings.TrimSpace(cfg.ConversationRuntime.Version), "v2") {
+		store, storeOK := deps.canonicalEventStore.(responseFirstJournalStore)
+		_, projectionL1OK := selectedChatL1Owner.(responseFirstCanonicalProjectionL1)
+		if !storeOK || !projectionL1OK || agents.Mio == nil || llmRuntime.Conversation == nil || deps.eventRelay == nil || deps.taskManager == nil {
+			log.Printf("response-first Viewer v2 unavailable: canonical EventStore, selected Chat L1 projection owner, Mio, conversation provider, event relay, and TaskManager are required")
+		} else {
+			readbackProviders := make(map[string]domainagent.ConversationGenerationProvider, len(responseFirstReadbackAssigneeOrder))
+			for _, assignee := range responseFirstReadbackAssigneeOrder {
+				if provider := llmRuntime.Readback[assignee]; provider != nil {
+					readbackProviders[assignee] = responseFirstConversationProvider{provider: provider, name: assignee}
+				}
+			}
+			readbackWiring := responseFirstReadbackWiringFor(cfg, readbackProviders)
+			responseFirst, runtimeErr := newResponseFirstConversationRuntimeWithProjection(
+				store, agents.Mio, responseFirstConversationProvider{provider: llmRuntime.Conversation},
+				deps.eventRelay, conversationRuntimeUserID(cfg), selectedChatL1Owner, readbackWiring,
+			)
+			if runtimeErr == nil {
+				reservationReader, ok := sessionRepo.(responseFirstReservationReader)
+				if !ok {
+					runtimeErr = fmt.Errorf("response-first v2 session reservation owner is unavailable")
+				} else {
+					responseFirst.reservations = reservationReader
+				}
+			}
+			if runtimeErr == nil {
+				runtimeErr = responseFirst.configureTaskReport(
+					deps.taskManager, responseFirstAssigneeIDs(readbackWiring.Assignees), agents.Shiro, agents.Wild,
+				)
+			}
+			if runtimeErr == nil {
+				responseFirst.processing, runtimeErr = newResponseFirstV2ProcessingFromEnvironment()
+			}
+			if runtimeErr != nil {
+				log.Printf("response-first Viewer v2 unavailable: %v", runtimeErr)
+			} else {
+				deps.responseFirst = responseFirst
+				if responseFirst.processing != nil {
+					responseFirst.processing.backgroundDrainStop = responseFirst.startResponseFirstDrainWithStatus()
+				}
+				previousStop := deps.conversationBackgroundStop
+				deps.conversationBackgroundStop = func() {
+					responseFirst.stopV2Foreground()
+					if previousStop != nil {
+						previousStop()
+					}
+				}
+				log.Printf("response-first Viewer v2 enabled; delegation readback dispatcher=%t", responseFirst.dispatcher != nil)
+			}
+		}
+	}
 	newsCollector := appnewsbrief.NewToolCollectorWithProvider(agents.WorkerTools, configuredNewsSearchProvider(cfg))
 	visionAnalyzer, visionOptions, err := buildVisionRuntime(cfg, deps.taskManager, deps.actionManager, deps.transportManager)
 	if err != nil {
@@ -70,6 +124,7 @@ func buildOrchestratorRuntime(
 		}
 		deps.moduleChatService = modulebridge.NewRuntimeChatService(deps.distOrch, agents.Mio)
 		deps.viewerSend = bridges.ViewerSendFromOrch(deps.distOrch)
+		deps.viewerConversationEventsV2 = bridges.V2ConversationEvents
 		deps.repairRunner = newAsyncRepairTaskRunner(deps.distOrch, deps.eventRelay)
 		deps.entryHandler = bridges.EntryFromOrch(deps.distOrch)
 		deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(deps.distOrch)
@@ -197,6 +252,7 @@ func buildOrchestratorRuntime(
 	buildChannelRuntimeHandlers(cfg, deps, orch)
 	deps.moduleChatService = modulebridge.NewRuntimeChatService(orch, agents.Mio)
 	deps.viewerSend = bridges.ViewerSendFromOrch(orch)
+	deps.viewerConversationEventsV2 = bridges.V2ConversationEvents
 	deps.repairRunner = newAsyncRepairTaskRunner(orch, deps.eventRelay)
 	deps.entryHandler = bridges.EntryFromOrch(orch)
 	deps.chromeBridge, deps.chromeBridgeStatus, deps.chromeBridgeEvents = bridges.ChromeBridgeFromOrch(orch)

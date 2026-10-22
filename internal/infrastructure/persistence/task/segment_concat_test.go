@@ -3,12 +3,17 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	domainconversation "github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
+	domaintask "github.com/Nyukimin/RenCrow_CORE/internal/domain/task"
+	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
 // Return to layout v1 (spec 10.4 R1, 14.1 R-11, AC-14).
@@ -159,6 +164,137 @@ func TestConcatReturnsTheStoreToLayoutV1WithEveryLineInOrder(t *testing.T) {
 		}
 	}
 	requireSegmentedStoreEqualsFullBuild(t, again, root)
+}
+
+func TestConcatLegacyV2WithoutReportFileThenRestartPreservesTaskRunAndReport(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	segments := buildLegacyV2Fixture(t, root, 3)
+	if len(segments) != 3 {
+		t.Fatalf("legacy v2 segments=%v, want 3", segments)
+	}
+	reportPath := filepath.Join(root, taskDelegationReportFilename)
+	if _, err := os.Stat(reportPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy v2 segment 0 has a report file: %v", err)
+	}
+
+	clock := newTestClock("2026-10-15T08:00:00Z")
+	store, err := NewJSONLStoreWithOptions(root, rotationOptions(clock, 0, nil))
+	if err != nil {
+		t.Fatalf("open legacy v2 store: %v", err)
+	}
+	taskID := indexedTestTask(2, indexTestNow).TaskID
+	task, err := store.GetTask(ctx, taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := indexedTestRun(task, 2, 1, indexTestNow).RunID
+	run, err := store.GetRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("fixture Run status=%s, want succeeded", run.Status)
+	}
+	report := saveConcatFixtureReport(t, store, task, run)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(reportPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("writing the report created a segment 0 report file: %v", err)
+	}
+
+	if _, err := ConcatTaskLayout(ctx, root, true); err != nil {
+		t.Fatalf("concat authentic six-file v2 store with a new segment report: %v", err)
+	}
+	if _, err := os.Stat(reportPath); err != nil {
+		t.Fatalf("concat did not create the report destination: %v", err)
+	}
+
+	restarted, err := NewJSONLStoreWithOptions(root, OpenOptions{Index: true, Persist: true, checkpoint: manualPolicy()})
+	if err != nil {
+		t.Fatalf("restart after concat: %v", err)
+	}
+	defer restarted.Close()
+	restoredTask, err := restarted.GetTask(ctx, taskID)
+	if err != nil || restoredTask.Status != domaintask.StatusSucceeded {
+		t.Fatalf("Task after concat/restart: status=%s err=%v", restoredTask.Status, err)
+	}
+	restoredRun, err := restarted.GetRun(ctx, runID)
+	if err != nil || restoredRun.Status != domaintask.RunStatusSucceeded {
+		t.Fatalf("Run after concat/restart: status=%s err=%v", restoredRun.Status, err)
+	}
+	reports, err := restarted.ListPendingTaskDelegationReports(ctx)
+	if err != nil || len(reports) != 1 || reports[0].ReportID != report.ReportID || reports[0].Envelope.Result != report.Envelope.Result {
+		t.Fatalf("report after concat/restart: %#v err=%v", reports, err)
+	}
+}
+
+func TestConcatRejectsMissingNonzeroFrozenReportFile(t *testing.T) {
+	root := t.TempDir()
+	buildLegacyV2Fixture(t, root, 3)
+	layout, err := readLayout(root)
+	if err != nil || !layout.v2 {
+		t.Fatalf("read legacy v2 layout: %+v err=%v", layout, err)
+	}
+	layout.frozen[sizedFileCount-1] = 1
+	if err := os.WriteFile(layoutPath(root), formatLayout(layout.frozen), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, taskDelegationReportFilename)
+	if _, err := ConcatTaskLayout(context.Background(), root, true); !errors.Is(err, ErrSealedSegmentChanged) {
+		t.Fatalf("concat with missing nonzero frozen report file: %v, want ErrSealedSegmentChanged", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("concat created a missing nonzero frozen report file: %v", err)
+	}
+}
+
+func saveConcatFixtureReport(t *testing.T, store *JSONLStore, current domaintask.Task, run domaintask.Run) domaintask.DelegationReport {
+	t.Helper()
+	ctx := context.Background()
+	reportID := modulecore.NewResponseID()
+	generation, err := store.WriterGeneration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current.Status = domaintask.StatusSucceeded
+	current.UpdatedAt = time.Now().UTC()
+	operationID := "delegation-report:" + string(reportID)
+	report := domaintask.DelegationReport{
+		ReportID: reportID, TaskID: current.TaskID, RunID: run.RunID,
+		TaskStatus: domaintask.StatusSucceeded, TrustedSender: "shiro",
+		Envelope: domainconversation.ReportEnvelope{
+			ReportID: reportID, ReportRevision: 1,
+			DelegationID: modulecore.NewRequestID(), DelegationRevision: 1,
+			WorkTaskID: current.TaskID, WorkRunID: run.RunID,
+			Status:  domainconversation.ReportStatusSucceeded,
+			Summary: "completed", Result: "report survives concat",
+		},
+		OperationID: operationID, RequestHash: strings.Repeat("a", 64),
+		WriterGeneration: generation, State: domaintask.DelegationReportPending,
+		CreatedAt: time.Now().UTC().UnixNano(),
+	}
+	result, err := json.Marshal(struct {
+		ReportID       modulecore.ResponseID `json:"report_id"`
+		ReportRevision uint64                `json:"report_revision"`
+		TaskID         modulecore.TaskID     `json:"task_id"`
+		RunID          modulecore.RunID      `json:"run_id"`
+	}{ReportID: reportID, ReportRevision: report.Envelope.ReportRevision, TaskID: current.TaskID, RunID: run.RunID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.ExecuteIdempotentTaskOperationWithReport(ctx, current.TaskID, reportID, operationID, strings.Repeat("a", 64),
+		func(tx domaintask.Store) (domaintask.DelegationReport, json.RawMessage, error) {
+			if err := tx.SaveTask(ctx, current); err != nil {
+				return domaintask.DelegationReport{}, nil, err
+			}
+			return report, result, nil
+		})
+	if err != nil {
+		t.Fatalf("persist report in legacy v2 store: %v", err)
+	}
+	return report
 }
 
 func TestConcatOfAV1StoreChangesNothing(t *testing.T) {

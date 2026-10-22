@@ -243,7 +243,7 @@ func portalChatInteractionAllowed(method, path string) bool {
 		return true
 	}
 	if method == http.MethodGet {
-		return path == "/viewer/tts/audio" || path == "/stt"
+		return path == "/viewer/tts/audio" || path == "/viewer/conversation/events" || path == "/stt"
 	}
 	if method != http.MethodPost {
 		return false

@@ -132,10 +132,18 @@ func TestSidecarRejectsEveryDamagedForm(t *testing.T) {
 }
 
 func TestSidecarOfAnotherVersionIsNotAccepted(t *testing.T) {
-	live := sharedCorpus(t)
+	live := newTaskIndex(t.TempDir())
+	live.layoutV2 = true
+	live.cur = 1
+	live.segs = append(live.segs, segInfo{name: "20261022-01"})
+	t.Cleanup(func() { _ = live.close() })
 	data := encodeSidecar(live.snapshot())
+	_, header, err := decodeSidecar(data)
+	if err != nil || header.Version != sidecarVersionV3 {
+		t.Fatalf("decode current v3 sidecar: version=%d err=%v", header.Version, err)
+	}
 	for name, mutate := range map[string]func([]byte){
-		"future version": func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 3) }, // 2 is the sidecar of layout v2
+		"future version": func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 4) },
 		"version zero":   func(b []byte) { binary.LittleEndian.PutUint16(b[4:], 0) },
 		"unknown flags":  func(b []byte) { binary.LittleEndian.PutUint16(b[6:], 1) },
 	} {

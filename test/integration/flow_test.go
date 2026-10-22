@@ -100,20 +100,20 @@ func (m *mockSessionRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
-func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, error) {
+func (m *mockSessionRepository) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*session.Session, bool, error) {
 	for _, existing := range m.sessions {
 		if existing.LogicalDate() == logicalDate && existing.ChannelAddress() == address {
-			return existing, nil
+			return existing, false, nil
 		}
 	}
 	created, err := session.NewCanonicalSession(modulecore.NewSessionID(), logicalDate, address, createdAt)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := m.Save(ctx, created); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return created, nil
+	return created, true, nil
 }
 
 type mockClassifier struct{}

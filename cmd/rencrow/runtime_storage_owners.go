@@ -194,8 +194,12 @@ func runtimeStorageHostOwnerRequiredOperations() []storagehost.OperationSpec {
 
 		{Group: storagehost.GroupSession, Op: "delete", Mutating: true},
 		{Group: storagehost.GroupSession, Op: "exists", Mutating: false},
+		{Group: storagehost.GroupSession, Op: "load_canonical", Mutating: false},
+		{Group: storagehost.GroupSession, Op: "load_canonical_reservation", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "load", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "load_or_create_canonical", Mutating: true},
+		{Group: storagehost.GroupSession, Op: "reserve_canonical_v2", Mutating: true},
+		{Group: storagehost.GroupSession, Op: "is_v2_reserved", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "save", Mutating: true},
 
 		{Group: storagehost.GroupTask, Op: "commit", Mutating: true},

@@ -48,6 +48,7 @@ const (
 	sidecarEndMagic    = "ISTR"
 	sidecarVersionV1   = 1
 	sidecarVersionV2   = 2
+	sidecarVersionV3   = 3
 	sidecarNameLen     = 24
 	sidecarLegacyName  = segmentLegacyName
 	sidecarHeaderFixed = 4 + 2 + 2 + 2 + 2 + sidecarNameLen + 8*int(kindCount)*2 + 4*6 + 8*3
@@ -212,7 +213,7 @@ func encodeSidecar(snap *indexSnapshot) []byte {
 
 	e.buf = append(e.buf, sidecarMagic...)
 	if snap.layoutV2 {
-		e.u16(sidecarVersionV2)
+		e.u16(sidecarVersionV3)
 	} else {
 		e.u16(sidecarVersionV1)
 	}
@@ -470,7 +471,7 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	h.Version = binary.LittleEndian.Uint16(data[4:])
 	h.Flags = binary.LittleEndian.Uint16(data[6:])
 	kinds := binary.LittleEndian.Uint16(data[10:])
-	if (h.Version != sidecarVersionV1 && h.Version != sidecarVersionV2) || h.Flags != 0 || int(kinds) != int(kindCount) {
+	if (h.Version != sidecarVersionV1 && h.Version != sidecarVersionV2 && h.Version != sidecarVersionV3) || h.Flags != 0 || int(kinds) != int(kindCount) {
 		return nil, h, fmt.Errorf("%w: version %d flags %#x kinds %d", errSidecarVersion, h.Version, h.Flags, kinds)
 	}
 	if string(data[len(data)-4:]) != sidecarEndMagic {
@@ -502,7 +503,7 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	if totalLen != uint64(len(data)) {
 		return nil, h, sidecarCorruptf("recorded length %d, file has %d", totalLen, len(data))
 	}
-	v2 := h.Version == sidecarVersionV2
+	v2 := h.Version >= sidecarVersionV2
 	if !v2 && (h.OwnOrdinal != 0 || h.OwnName != sidecarLegacyName) {
 		return nil, h, sidecarCorruptf("sidecar belongs to segment %d %q", h.OwnOrdinal, h.OwnName)
 	}
@@ -520,6 +521,7 @@ func decodeSidecar(data []byte) (*taskIndex, sidecarHeader, error) {
 	}
 
 	ix := newTaskIndex("")
+	ix.sidecarVersion = h.Version
 	if v2 {
 		ix.layoutV2 = true
 		ix.cur = h.OwnOrdinal
@@ -652,7 +654,12 @@ func decodeSegmentTable(d *sidecarDecoder, h *sidecarHeader) ([]segInfo, error) 
 	if h.OwnOrdinal == 0 || uint32(h.OwnOrdinal) != closed {
 		return nil, sidecarCorruptf("the open segment has ordinal %d but %d closed segments are listed", h.OwnOrdinal, closed)
 	}
-	if int(closed) > d.remaining()/sidecarSegEntryLen {
+	segmentFileCount := sizedFileCount
+	if h.Version == sidecarVersionV2 {
+		segmentFileCount--
+	}
+	segmentEntryLength := sidecarNameLen + 8*segmentFileCount + 8*int(kindCount)
+	if int(closed) > d.remaining()/segmentEntryLength {
 		return nil, sidecarCorruptf("segment table does not fit in the file")
 	}
 	segs := make([]segInfo, 0, closed+1)
@@ -660,7 +667,7 @@ func decodeSegmentTable(d *sidecarDecoder, h *sidecarHeader) ([]segInfo, error) 
 	for i := uint32(0); i < closed; i++ {
 		var seg segInfo
 		seg.name = string(bytes.TrimRight(d.take(sidecarNameLen), "\x00"))
-		for k := range seg.size {
+		for k := 0; k < segmentFileCount; k++ {
 			seg.size[k] = d.i64()
 		}
 		for k := range seg.lines {

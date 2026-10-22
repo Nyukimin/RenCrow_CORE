@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 
@@ -37,6 +38,25 @@ func (h *HeavyAgent) WithConversationEngine(engine conversation.ConversationEngi
 func (h *HeavyAgent) WithStableRuntimeContext(content string) *HeavyAgent {
 	h.stableRuntimeContext = strings.TrimSpace(content)
 	return h
+}
+
+// ExecutePrivateWork executes a Task-owned Kuro assignment without recording a
+// legacy public conversation turn. The current Kuro Gateway binding can run
+// Codex with full access, so the existing provider is never called unless the
+// Task owner supplied the exact full-access capability. This method does not
+// create or infer that grant.
+func (h *HeavyAgent) ExecutePrivateWork(ctx context.Context, input conversation.TurnInput, allowedCapabilities []string) (string, error) {
+	capabilities, err := validatePrivateWorkEntry(ctx, input, "kuro", allowedCapabilities)
+	if err != nil {
+		return "", err
+	}
+	if !hasPrivateCapability(capabilities, privateCapabilityKuroCodexFullAccess) {
+		return "", fmt.Errorf("%w: Kuro requires %s", ErrPrivateWorkCapabilityDenied, privateCapabilityKuroCodexFullAccess)
+	}
+
+	private := *h
+	private.conversationEngine = nil
+	return private.Generate(ctx, input)
 }
 
 func (h *HeavyAgent) Generate(ctx context.Context, t conversation.TurnInput) (string, error) {

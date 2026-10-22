@@ -166,17 +166,25 @@ func (m *Manager) CreateAndStartRun(ctx context.Context, draft domaintask.Task, 
 	var started domaintask.Task
 	var run domaintask.Run
 	err := m.taskTransaction(ctx, draft.TaskID, func(txManager *Manager) error {
-		created, err := txManager.createInTransaction(ctx, draft, shared)
-		if err != nil {
-			return err
-		}
-		started, run, err = txManager.startWithReason(ctx, created.TaskID, domaintask.RunStartReasonFirst)
+		var err error
+		started, run, err = txManager.createAndStartRunInTransaction(ctx, draft, shared)
 		return err
 	})
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err
 	}
 	return started, run, nil
+}
+
+// createAndStartRunInTransaction is the Task-owner path shared by the normal
+// per-Task transaction and a global idempotent operation. The caller owns the
+// transaction boundary; this helper never opens a nested TaskTransaction.
+func (m *Manager) createAndStartRunInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, domaintask.Run, error) {
+	created, err := m.createInTransaction(ctx, draft, shared)
+	if err != nil {
+		return domaintask.Task{}, domaintask.Run{}, err
+	}
+	return m.startWithReason(ctx, created.TaskID, domaintask.RunStartReasonFirst)
 }
 
 func (m *Manager) createInTransaction(ctx context.Context, draft domaintask.Task, shared domaintask.SharedRoleContext) (domaintask.Task, error) {
@@ -451,7 +459,7 @@ func (m *Manager) startWithReasonAndCheckpointAndTrace(ctx context.Context, task
 	if domaintask.IsTerminal(task.Status) {
 		started, err = m.reopenTerminalTask(ctx, task)
 	} else {
-		started, err = m.updateStatus(ctx, taskID, domaintask.StatusRunning, "", "", nil)
+		started, err = m.updateStatusInTransaction(ctx, taskID, domaintask.StatusRunning, "", "", nil)
 	}
 	if err != nil {
 		return domaintask.Task{}, domaintask.Run{}, err

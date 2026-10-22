@@ -1,0 +1,22 @@
+{
+  "schema_version": "mio.turn.v1",
+  "kind": "delegate",
+  "user_message": {
+    "to": "user",
+    "text": "I’ll ask Shiro to investigate."
+  },
+  "delegation": {
+    "to": "shiro",
+    "goal": "Investigate the save delay",
+    "instruction": "Measure the save path and report the evidence.",
+    "constraints": [
+      {
+        "key": "keep_model",
+        "text": "Do not change the model.",
+        "source_message_ids": ["msg_00000000-0000-7000-8000-000000000101"]
+      }
+    ],
+    "expected_output": "A report with measurements and evidence.",
+    "source_message_ids": ["msg_00000000-0000-7000-8000-000000000101"]
+  }
+}

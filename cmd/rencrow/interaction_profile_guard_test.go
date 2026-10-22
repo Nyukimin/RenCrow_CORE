@@ -28,6 +28,22 @@ func TestInteractionProfileGuardEnforcesKnownClientCapabilities(t *testing.T) {
 			want:   http.StatusForbidden,
 		},
 		{
+			name:    "portal chat can read its owner scoped v2 conversation stream",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-chat",
+			method:  http.MethodGet,
+			path:    "/viewer/conversation/events",
+			want:    http.StatusNoContent,
+		},
+		{
+			name:    "portal idlechat cannot read the v2 Chat stream",
+			client:  "RenCrow_PORTAL",
+			profile: "portal-idlechat",
+			method:  http.MethodGet,
+			path:    "/viewer/conversation/events",
+			want:    http.StatusForbidden,
+		},
+		{
 			name:    "portal chat can send",
 			client:  "RenCrow_PORTAL",
 			profile: "portal-chat",

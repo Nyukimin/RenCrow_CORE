@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/attachment"
@@ -32,7 +34,11 @@ const (
 // lookup operation. The storage host delegates all state decisions to it.
 type SessionGroupOwner interface {
 	domainsession.SessionRepository
-	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, error)
+	LoadCanonical(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, bool, error)
+	LoadCanonicalWithCreationIntent(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error)
+	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
+	ReserveCanonicalV2(context.Context, string, conversation.ChannelAddress, string, time.Time) (*domainsession.Session, bool, error)
+	IsCanonicalV2Reserved(context.Context, string, string) (bool, error)
 }
 
 type sessionAddressDTO struct {
@@ -94,8 +100,32 @@ type sessionCanonicalLookupPayload struct {
 	CreatedAt      time.Time          `json:"created_at"`
 }
 
+type sessionCanonicalReadPayload struct {
+	LogicalDate    string             `json:"logical_date"`
+	ChannelAddress *sessionAddressDTO `json:"channel_address"`
+}
+
+type sessionCanonicalReservePayload struct {
+	LogicalDate    string             `json:"logical_date"`
+	ChannelAddress *sessionAddressDTO `json:"channel_address"`
+	OwnerID        string             `json:"owner_id"`
+	CreatedAt      time.Time          `json:"created_at"`
+}
+
+type sessionReservationIDPayload struct {
+	ID      string `json:"id"`
+	OwnerID string `json:"owner_id"`
+}
+
+type sessionCanonicalReservationResult struct {
+	Found          bool                          `json:"found"`
+	Session        *sessionRecordDTO             `json:"session,omitempty"`
+	CreationIntent *domainsession.CreationIntent `json:"creation_intent,omitempty"`
+}
+
 type sessionLoadResult struct {
 	Found   bool              `json:"found"`
+	Created bool              `json:"created"`
 	Session *sessionRecordDTO `json:"session,omitempty"`
 }
 
@@ -103,13 +133,19 @@ type sessionExistsResult struct {
 	Exists bool `json:"exists"`
 }
 
+type sessionReservationResult struct {
+	Reserved bool `json:"reserved"`
+}
+
 // sessionLoadResultDecoder validates and reconstructs a typed domain result
 // inside Client.Call's decode boundary. For mutating canonical lookup, any
 // failure here remains outcome-unknown with the same op_id.
 type sessionLoadResultDecoder struct {
 	found                  bool
+	created                bool
 	session                *domainsession.Session
 	requireFound           bool
+	allowCreated           bool
 	expectedID             string
 	expectedLogicalDate    string
 	expectedChannelAddress *conversation.ChannelAddress
@@ -127,11 +163,18 @@ func (result *sessionLoadResultDecoder) UnmarshalJSON(raw []byte) error {
 	if _, ok := fields["found"]; !ok {
 		return errors.New("session result is missing found")
 	}
+	if _, ok := fields["created"]; !ok {
+		return errors.New("session result is missing created")
+	}
+	if wire.Created && !result.allowCreated {
+		return errors.New("session result claims creation for a read operation")
+	}
 	if !wire.Found {
-		if result.requireFound || wire.Session != nil {
+		if result.requireFound || wire.Session != nil || wire.Created {
 			return errors.New("session result is incomplete")
 		}
 		result.found = false
+		result.created = false
 		result.session = nil
 		return nil
 	}
@@ -152,6 +195,7 @@ func (result *sessionLoadResultDecoder) UnmarshalJSON(raw []byte) error {
 		return errors.New("canonical session address does not match the request")
 	}
 	result.found = true
+	result.created = wire.Created
 	result.session = value
 	return nil
 }
@@ -171,6 +215,77 @@ func (result *sessionExistsResultDecoder) UnmarshalJSON(raw []byte) error {
 		return errors.New("session exists result is missing exists")
 	}
 	result.exists = wire.Exists
+	return nil
+}
+
+type sessionReservationResultDecoder struct{ reserved bool }
+
+func (result *sessionReservationResultDecoder) UnmarshalJSON(raw []byte) error {
+	var wire sessionReservationResult
+	if err := decodeSessionMessage(raw, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return errors.New("session reservation result is not JSON")
+	}
+	if _, ok := fields["reserved"]; !ok {
+		return errors.New("session reservation result is missing reserved")
+	}
+	result.reserved = wire.Reserved
+	return nil
+}
+
+type sessionCanonicalReservationResultDecoder struct {
+	found                  bool
+	session                *domainsession.Session
+	creationIntent         *domainsession.CreationIntent
+	expectedLogicalDate    string
+	expectedChannelAddress *conversation.ChannelAddress
+}
+
+func (result *sessionCanonicalReservationResultDecoder) UnmarshalJSON(raw []byte) error {
+	var wire sessionCanonicalReservationResult
+	if err := decodeSessionMessage(raw, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return errors.New("session reservation lookup result is not JSON")
+	}
+	if _, ok := fields["found"]; !ok {
+		return errors.New("session reservation lookup result is missing found")
+	}
+	if !wire.Found {
+		if wire.Session != nil || wire.CreationIntent != nil {
+			return errors.New("absent session reservation lookup contains a session or intent")
+		}
+		result.found = false
+		result.session = nil
+		result.creationIntent = nil
+		return nil
+	}
+	if _, ok := fields["session"]; !ok || wire.Session == nil {
+		return errors.New("session reservation lookup result is missing its session")
+	}
+	value, err := wire.Session.toDomain()
+	if err != nil {
+		return errors.New("session reservation lookup result cannot be reconstructed")
+	}
+	if result.expectedLogicalDate != "" && value.LogicalDate() != result.expectedLogicalDate {
+		return errors.New("canonical session date does not match the reservation lookup")
+	}
+	if result.expectedChannelAddress != nil && value.ChannelAddress() != *result.expectedChannelAddress {
+		return errors.New("canonical session address does not match the reservation lookup")
+	}
+	if wire.CreationIntent != nil {
+		if wire.CreationIntent.Runtime != "v2" || wire.CreationIntent.OwnerID == "" || strings.TrimSpace(wire.CreationIntent.OwnerID) != wire.CreationIntent.OwnerID {
+			return errors.New("session reservation lookup returned an invalid creation intent")
+		}
+	}
+	result.found = true
+	result.session = value
+	result.creationIntent = wire.CreationIntent
 	return nil
 }
 
@@ -245,18 +360,24 @@ func RegisterSessionGroup(h *Handler, store SessionGroupOwner) error {
 	}); err != nil {
 		return fmt.Errorf("register session delete: %w", err)
 	}
-	if err := h.Register(GroupSession, "load_or_create_canonical", true, func(ctx context.Context, raw json.RawMessage) (any, error) {
-		var payload sessionCanonicalLookupPayload
+	if err := h.Register(GroupSession, "load_canonical", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalReadPayload
 		if err := decodeSessionMessage(raw, &payload); err != nil {
-			return nil, sessionPayloadRejected("canonical session lookup payload rejected")
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical session read payload rejected")
 		}
 		address, err := payload.ChannelAddress.toDomain()
-		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil || payload.CreatedAt.IsZero() {
-			return nil, sessionPayloadRejected("canonical session lookup payload rejected")
+		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical session read payload rejected")
 		}
-		value, err := store.LoadOrCreateCanonical(ctx, payload.LogicalDate, address, payload.CreatedAt)
+		value, found, err := store.LoadCanonical(ctx, payload.LogicalDate, address)
 		if err != nil {
-			return nil, uncertainSessionOwnerError("canonical lookup")
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner canonical read failed")
+		}
+		if !found {
+			if value != nil {
+				return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a session for an absent canonical lookup")
+			}
+			return sessionLoadResult{Found: false}, nil
 		}
 		if value == nil || value.LogicalDate() != payload.LogicalDate || value.ChannelAddress() != address {
 			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a mismatched canonical session")
@@ -267,6 +388,100 @@ func RegisterSessionGroup(h *Handler, store SessionGroupOwner) error {
 		}
 		return sessionLoadResult{Found: true, Session: dto}, nil
 	}); err != nil {
+		return fmt.Errorf("register canonical session read: %w", err)
+	}
+	if err := h.Register(GroupSession, "load_canonical_reservation", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalReadPayload
+		if err := decodeSessionMessage(raw, &payload); err != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical reservation read payload rejected")
+		}
+		address, err := payload.ChannelAddress.toDomain()
+		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil {
+			return nil, NewError(ErrorCodeSchemaRejected, "canonical reservation read payload rejected")
+		}
+		value, intent, found, err := store.LoadCanonicalWithCreationIntent(ctx, payload.LogicalDate, address)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner canonical reservation read failed")
+		}
+		if !found {
+			if value != nil || intent != nil {
+				return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a reservation for an absent canonical lookup")
+			}
+			return sessionCanonicalReservationResult{Found: false}, nil
+		}
+		if value == nil || value.LogicalDate() != payload.LogicalDate || value.ChannelAddress() != address {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a mismatched canonical reservation")
+		}
+		if intent != nil && (intent.Runtime != "v2" || intent.OwnerID == "" || strings.TrimSpace(intent.OwnerID) != intent.OwnerID) {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid canonical reservation intent")
+		}
+		dto, err := sessionRecordFromDomain(value)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid canonical reservation session")
+		}
+		return sessionCanonicalReservationResult{Found: true, Session: dto, CreationIntent: intent}, nil
+	}); err != nil {
+		return fmt.Errorf("register canonical reservation read: %w", err)
+	}
+	if err := h.Register(GroupSession, "is_v2_reserved", false, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionReservationIDPayload
+		if err := decodeSessionMessage(raw, &payload); err != nil || validateSessionID(payload.ID) != nil || payload.OwnerID == "" || strings.TrimSpace(payload.OwnerID) != payload.OwnerID {
+			return nil, NewError(ErrorCodeSchemaRejected, "session reservation lookup payload rejected")
+		}
+		reserved, err := store.IsCanonicalV2Reserved(ctx, payload.ID, payload.OwnerID)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner reservation lookup failed")
+		}
+		return sessionReservationResult{Reserved: reserved}, nil
+	}); err != nil {
+		return fmt.Errorf("register session reservation lookup: %w", err)
+	}
+	if err := h.Register(GroupSession, "reserve_canonical_v2", true, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalReservePayload
+		if err := decodeSessionMessage(raw, &payload); err != nil {
+			return nil, sessionPayloadRejected("canonical v2 reservation payload rejected")
+		}
+		address, err := payload.ChannelAddress.toDomain()
+		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil || payload.CreatedAt.IsZero() || payload.OwnerID == "" || strings.TrimSpace(payload.OwnerID) != payload.OwnerID {
+			return nil, sessionPayloadRejected("canonical v2 reservation payload rejected")
+		}
+		value, created, err := store.ReserveCanonicalV2(ctx, payload.LogicalDate, address, payload.OwnerID, payload.CreatedAt)
+		if err != nil {
+			return nil, uncertainSessionOwnerError("canonical v2 reservation")
+		}
+		if value == nil || value.LogicalDate() != payload.LogicalDate || value.ChannelAddress() != address {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a mismatched canonical v2 reservation")
+		}
+		dto, err := sessionRecordFromDomain(value)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid canonical v2 reservation")
+		}
+		return sessionLoadResult{Found: true, Created: created, Session: dto}, nil
+	}); err != nil {
+		return fmt.Errorf("register canonical v2 reservation: %w", err)
+	}
+	if err := h.Register(GroupSession, "load_or_create_canonical", true, func(ctx context.Context, raw json.RawMessage) (any, error) {
+		var payload sessionCanonicalLookupPayload
+		if err := decodeSessionMessage(raw, &payload); err != nil {
+			return nil, sessionPayloadRejected("canonical session lookup payload rejected")
+		}
+		address, err := payload.ChannelAddress.toDomain()
+		if err != nil || domainsession.ValidateLogicalDate(payload.LogicalDate) != nil || payload.CreatedAt.IsZero() {
+			return nil, sessionPayloadRejected("canonical session lookup payload rejected")
+		}
+		value, created, err := store.LoadOrCreateCanonical(ctx, payload.LogicalDate, address, payload.CreatedAt)
+		if err != nil {
+			return nil, uncertainSessionOwnerError("canonical lookup")
+		}
+		if value == nil || value.LogicalDate() != payload.LogicalDate || value.ChannelAddress() != address {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned a mismatched canonical session")
+		}
+		dto, err := sessionRecordFromDomain(value)
+		if err != nil {
+			return nil, NewError(ErrorCodeStoreUnavailable, "session owner returned an invalid session")
+		}
+		return sessionLoadResult{Found: true, Created: created, Session: dto}, nil
+	}); err != nil {
 		return fmt.Errorf("register canonical session lookup: %w", err)
 	}
 	return nil
@@ -274,16 +489,25 @@ func RegisterSessionGroup(h *Handler, store SessionGroupOwner) error {
 
 // SessionRepositoryClient implements the existing session repository and
 // canonical lookup contracts over the storage host protocol.
-type SessionRepositoryClient struct{ client *Client }
+type SessionRepositoryClient struct {
+	client *Client
+
+	reservationMu  sync.Mutex
+	reservationOps map[string]*Operation
+}
 
 func NewSessionRepositoryClient(c *Client) *SessionRepositoryClient {
-	return &SessionRepositoryClient{client: c}
+	return &SessionRepositoryClient{client: c, reservationOps: make(map[string]*Operation)}
 }
 
 var (
 	_ domainsession.SessionRepository = (*SessionRepositoryClient)(nil)
 	_ interface {
-		LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, error)
+		LoadCanonical(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, bool, error)
+		LoadCanonicalWithCreationIntent(context.Context, string, conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error)
+		LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*domainsession.Session, bool, error)
+		ReserveCanonicalV2(context.Context, string, conversation.ChannelAddress, string, time.Time) (*domainsession.Session, bool, error)
+		IsCanonicalV2Reserved(context.Context, string, string) (bool, error)
 	} = (*SessionRepositoryClient)(nil)
 )
 
@@ -332,23 +556,124 @@ func (s *SessionRepositoryClient) Delete(ctx context.Context, id string) error {
 	return s.call(ctx, "delete", sessionIDPayload{ID: id}, nil)
 }
 
+// LoadCanonical resolves the owner's existing natural lookup without causing
+// the owner to create or mutate a session.
+func (s *SessionRepositoryClient) LoadCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*domainsession.Session, bool, error) {
+	if domainsession.ValidateLogicalDate(logicalDate) != nil || address.Validate() != nil {
+		return nil, false, NewError(ErrorCodeSchemaRejected, "canonical session read rejected")
+	}
+	addressDTO := sessionAddressFromDomain(address)
+	request := sessionCanonicalReadPayload{LogicalDate: logicalDate, ChannelAddress: &addressDTO}
+	result := sessionLoadResultDecoder{
+		expectedLogicalDate:    logicalDate,
+		expectedChannelAddress: &address,
+	}
+	if err := s.call(ctx, "load_canonical", request, &result); err != nil {
+		return nil, false, err
+	}
+	return result.session, result.found, nil
+}
+
+// LoadCanonicalWithCreationIntent reads the natural-key session and immutable
+// reservation metadata from the owner without creating session state.
+func (s *SessionRepositoryClient) LoadCanonicalWithCreationIntent(ctx context.Context, logicalDate string, address conversation.ChannelAddress) (*domainsession.Session, *domainsession.CreationIntent, bool, error) {
+	if domainsession.ValidateLogicalDate(logicalDate) != nil || address.Validate() != nil {
+		return nil, nil, false, NewError(ErrorCodeSchemaRejected, "canonical reservation read rejected")
+	}
+	addressDTO := sessionAddressFromDomain(address)
+	request := sessionCanonicalReadPayload{LogicalDate: logicalDate, ChannelAddress: &addressDTO}
+	result := sessionCanonicalReservationResultDecoder{
+		expectedLogicalDate: logicalDate, expectedChannelAddress: &address,
+	}
+	if err := s.call(ctx, "load_canonical_reservation", request, &result); err != nil {
+		return nil, nil, false, err
+	}
+	return result.session, result.creationIntent, result.found, nil
+}
+
 // LoadOrCreateCanonical resolves the owner's existing natural lookup and
-// returns its opaque, storage-assigned SessionID.
-func (s *SessionRepositoryClient) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*domainsession.Session, error) {
+// returns its opaque, storage-assigned SessionID plus atomic creation provenance.
+func (s *SessionRepositoryClient) LoadOrCreateCanonical(ctx context.Context, logicalDate string, address conversation.ChannelAddress, createdAt time.Time) (*domainsession.Session, bool, error) {
 	if domainsession.ValidateLogicalDate(logicalDate) != nil || address.Validate() != nil || createdAt.IsZero() {
-		return nil, NewError(ErrorCodeSchemaRejected, "canonical session lookup rejected")
+		return nil, false, NewError(ErrorCodeSchemaRejected, "canonical session lookup rejected")
 	}
 	addressDTO := sessionAddressFromDomain(address)
 	request := sessionCanonicalLookupPayload{LogicalDate: logicalDate, ChannelAddress: &addressDTO, CreatedAt: createdAt}
 	result := sessionLoadResultDecoder{
 		requireFound:           true,
+		allowCreated:           true,
 		expectedLogicalDate:    logicalDate,
 		expectedChannelAddress: &address,
 	}
 	if err := s.call(ctx, "load_or_create_canonical", request, &result); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return result.session, nil
+	return result.session, result.created, nil
+}
+
+// ReserveCanonicalV2 records a JSON-owner creation intent before EventStore
+// acceptance. If the mutation's result is uncertain, it first queries that
+// operation's own op_id, then trusts only an exact read-only owner reservation
+// for the same natural key and owner. An absent or mismatched owner result is
+// never treated as proof that the mutation did not execute.
+func (s *SessionRepositoryClient) ReserveCanonicalV2(ctx context.Context, logicalDate string, address conversation.ChannelAddress, ownerID string, createdAt time.Time) (*domainsession.Session, bool, error) {
+	if s == nil || s.client == nil || domainsession.ValidateLogicalDate(logicalDate) != nil || address.Validate() != nil || ownerID == "" || strings.TrimSpace(ownerID) != ownerID || createdAt.IsZero() {
+		return nil, false, NewError(ErrorCodeSchemaRejected, "canonical v2 reservation rejected")
+	}
+	addressDTO := sessionAddressFromDomain(address)
+	request := sessionCanonicalReservePayload{
+		LogicalDate: logicalDate, ChannelAddress: &addressDTO, OwnerID: ownerID, CreatedAt: createdAt,
+	}
+	body, err := marshalSessionMessage(request)
+	if err != nil {
+		return nil, false, err
+	}
+
+	s.reservationMu.Lock()
+	defer s.reservationMu.Unlock()
+	key := string(body)
+	op := s.reservationOps[key]
+	if op == nil {
+		op = s.client.NewOperation(GroupSession, "reserve_canonical_v2", request)
+		s.reservationOps[key] = op
+	}
+	result := sessionLoadResultDecoder{
+		requireFound: true, allowCreated: true,
+		expectedLogicalDate: logicalDate, expectedChannelAddress: &address,
+	}
+	if err := s.client.Do(ctx, op, &result); err == nil {
+		delete(s.reservationOps, key)
+		return result.session, result.created, nil
+	} else {
+		op.mu.Lock()
+		op.pending = true
+		op.mu.Unlock()
+		// A failed mutating exchange is not a retry authorization. Resolve this
+		// exact op_id first; if its receipt remains uncertain, consult the
+		// read-only canonical owner metadata below.
+		if opErr := s.client.resolveOperation(ctx, op, &result); opErr == nil {
+			delete(s.reservationOps, key)
+			return result.session, result.created, nil
+		}
+		value, intent, found, readErr := s.LoadCanonicalWithCreationIntent(ctx, logicalDate, address)
+		if readErr == nil && found && value != nil && intent != nil && intent.Runtime == "v2" && intent.OwnerID == ownerID {
+			return value, false, nil
+		}
+		return nil, false, NewError(ErrorCodeOutcomeUnknown, "canonical v2 reservation outcome remains uncertain")
+	}
+}
+
+// IsCanonicalV2Reserved performs the read-only owner check used by v1/v2
+// admission and EventStore acceptance authorization.
+func (s *SessionRepositoryClient) IsCanonicalV2Reserved(ctx context.Context, id, ownerID string) (bool, error) {
+	if validateSessionID(id) != nil || ownerID == "" || strings.TrimSpace(ownerID) != ownerID {
+		return false, NewError(ErrorCodeSchemaRejected, "session reservation lookup rejected")
+	}
+	var result sessionReservationResultDecoder
+	if err := s.call(ctx, "is_v2_reserved", sessionReservationIDPayload{ID: id, OwnerID: ownerID}, &result); err != nil {
+		return false, err
+	}
+	return result.reserved, nil
 }
 
 func (s *SessionRepositoryClient) call(ctx context.Context, op string, payload any, out any) error {

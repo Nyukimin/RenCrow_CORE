@@ -10,7 +10,7 @@ import (
 func TestLayoutRoundTripsAndRefusesAnythingElse(t *testing.T) {
 	frozen := [sizedFileCount]int64{10, 0, 3, 4, 5, 6}
 	data := formatLayout(frozen)
-	if !strings.HasPrefix(string(data), "tasks-layout/v2\n") || !strings.HasSuffix(string(data), "\nend\n") {
+	if !strings.HasPrefix(string(data), "tasks-layout/v3\n") || !strings.HasSuffix(string(data), "\nend\n") {
 		t.Fatalf("LAYOUT text = %q", data)
 	}
 	info, err := parseLayout(data)
@@ -19,8 +19,8 @@ func TestLayoutRoundTripsAndRefusesAnythingElse(t *testing.T) {
 	}
 	for name, bad := range map[string]string{
 		"empty":            "",
-		"other version":    "tasks-layout/v3\n",
-		"version only":     "tasks-layout/v2\n",
+		"other version":    "tasks-layout/v4\n",
+		"version only":     "tasks-layout/v3\n",
 		"no end":           strings.TrimSuffix(string(data), "end\n"),
 		"no final newline": strings.TrimSuffix(string(data), "\n"),
 		"wrong file":       strings.Replace(string(data), "task_run.jsonl", "task_runs.jsonl", 1),
@@ -31,6 +31,24 @@ func TestLayoutRoundTripsAndRefusesAnythingElse(t *testing.T) {
 		if _, err := parseLayout([]byte(bad)); err == nil {
 			t.Errorf("parseLayout accepted %s", name)
 		}
+	}
+}
+
+func TestParseLayoutV2PreservesOriginalSixFilesAndDefaultsReportSize(t *testing.T) {
+	data := []byte("tasks-layout/v2\n" +
+		"frozen task_state.jsonl 10\n" +
+		"frozen task_run.jsonl 20\n" +
+		"frozen task_context.jsonl 30\n" +
+		"frozen task_notifications.jsonl 40\n" +
+		"frozen task_operation_receipts.jsonl 50\n" +
+		"frozen task_execution_fences.jsonl 60\n" +
+		"end\n")
+	info, err := parseLayout(data)
+	if err != nil {
+		t.Fatalf("parseLayout v2: %v", err)
+	}
+	if !info.v2 || info.version != 2 || info.frozen != [sizedFileCount]int64{10, 20, 30, 40, 50, 60, 0} {
+		t.Fatalf("v2 layout info = %+v", info)
 	}
 }
 

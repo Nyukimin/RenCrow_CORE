@@ -1,0 +1,21 @@
+{
+  "schema_version": "mio.turn.v1",
+  "kind": "delegate",
+  "user_message": {
+    "to": "user",
+    "text": "I’ll ask Shiro."
+  },
+  "delegation": {
+    "to": "shiro",
+    "goal": "Investigate",
+    "instruction": "Measure the delay.",
+    "constraints": [
+      {
+        "key": "keep_model",
+        "text": "Do not change the model."
+      }
+    ],
+    "expected_output": "Evidence",
+    "source_message_ids": []
+  }
+}

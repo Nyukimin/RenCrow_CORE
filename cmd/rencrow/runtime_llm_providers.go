@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
@@ -8,6 +9,7 @@ import (
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/actionmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/taskmanager"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/transportmanager"
+	"github.com/Nyukimin/RenCrow_CORE/internal/domain/conversation"
 	"github.com/Nyukimin/RenCrow_CORE/internal/domain/llm"
 	llmmiddleware "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/llm/middleware"
 	modulellm "github.com/Nyukimin/RenCrow_CORE/modules/llm"
@@ -15,6 +17,8 @@ import (
 
 type llmRuntimeProviders struct {
 	Primary            primaryLLMProviders
+	Conversation       *llmmiddleware.ConversationProvider
+	Readback           map[string]*llmmiddleware.ConversationProvider
 	Chat               llm.LLMProvider
 	Worker             llm.LLMProvider
 	ChatWorker         llm.LLMProvider
@@ -30,19 +34,32 @@ type llmRuntimeProviders struct {
 
 func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddleware.ContextBudgetRecorder, busyTracker *llmBusyTracker, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager) llmRuntimeProviders {
 	primaryProviders := buildPrimaryLLMProviders(cfg, contextBudgetRecorder)
-	primaryProviders = primaryLLMProviders{
-		Chat:       trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
-		Worker:     trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
-		ChatWorker: trackLLMProvider("chatworker", primaryProviders.ChatWorker, busyTracker),
-		Heavy:      trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
-		Wild:       trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
+	conversationSlot := conversationLLMExecutionSlot{tracker: busyTracker}
+	if primaryProviders.Conversation != nil {
+		primaryProviders.Conversation = primaryProviders.Conversation.WithExecutionSlot(conversationSlot)
+	}
+	for assignee, provider := range primaryProviders.Readback {
+		if provider != nil {
+			primaryProviders.Readback[assignee] = provider.WithExecutionSlot(conversationSlot)
+		}
 	}
 	primaryProviders = primaryLLMProviders{
-		Chat:       requireActionOwnedLLMProvider("chat", primaryProviders.Chat, actions, tasks, transport),
-		Worker:     requireActionOwnedLLMProvider("worker", primaryProviders.Worker, actions, tasks, transport),
-		ChatWorker: requireActionOwnedLLMProvider("chatworker", primaryProviders.ChatWorker, actions, tasks, transport),
-		Heavy:      requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks, transport),
-		Wild:       requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
+		Chat:         trackLLMProvider("chat", primaryProviders.Chat, busyTracker),
+		Worker:       trackLLMProvider("worker", primaryProviders.Worker, busyTracker),
+		ChatWorker:   trackLLMProvider("chatworker", primaryProviders.ChatWorker, busyTracker),
+		Heavy:        trackLLMProvider("heavy", primaryProviders.Heavy, busyTracker),
+		Wild:         trackLLMProvider("wild", primaryProviders.Wild, busyTracker),
+		Conversation: primaryProviders.Conversation,
+		Readback:     primaryProviders.Readback,
+	}
+	primaryProviders = primaryLLMProviders{
+		Chat:         requireActionOwnedLLMProvider("chat", primaryProviders.Chat, actions, tasks, transport),
+		Worker:       requireActionOwnedLLMProvider("worker", primaryProviders.Worker, actions, tasks, transport),
+		ChatWorker:   requireActionOwnedLLMProvider("chatworker", primaryProviders.ChatWorker, actions, tasks, transport),
+		Heavy:        requireActionOwnedLLMProvider("heavy", primaryProviders.Heavy, actions, tasks, transport),
+		Wild:         requireActionOwnedLLMProvider("wild", primaryProviders.Wild, actions, tasks, transport),
+		Conversation: primaryProviders.Conversation,
+		Readback:     primaryProviders.Readback,
 	}
 	workerToolProvider, ok := primaryProviders.Worker.(llm.ToolCallingProvider)
 	if !ok {
@@ -52,6 +69,8 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 	moduleProviders := modulebridge.NewLLMRoleProviders(primaryProviders.Chat, primaryProviders.Worker, primaryProviders.Heavy, primaryProviders.Wild)
 	return llmRuntimeProviders{
 		Primary:            primaryProviders,
+		Conversation:       primaryProviders.Conversation,
+		Readback:           primaryProviders.Readback,
 		Chat:               primaryProviders.Chat,
 		Worker:             primaryProviders.Worker,
 		ChatWorker:         primaryProviders.ChatWorker,
@@ -64,6 +83,18 @@ func buildLLMRuntimeProviders(cfg *config.Config, contextBudgetRecorder llmmiddl
 		Coder4:             coder4Adapter,
 		ModuleProviders:    wrapModuleLLMProvidersWithHealthChecks(cfg, moduleProviders),
 	}
+}
+
+type conversationLLMExecutionSlot struct {
+	tracker *llmBusyTracker
+}
+
+func (slot conversationLLMExecutionSlot) AcquireConversation(ctx context.Context, _ conversation.ConversationScope) (context.Context, func(), error) {
+	release, ok := slot.tracker.TryBegin(ctx, "chat")
+	if !ok {
+		return nil, nil, context.Canceled
+	}
+	return ctx, release, nil
 }
 
 func requireActionOwnedLLMProvider(role string, provider llm.LLMProvider, actions *actionmanager.Manager, tasks *taskmanager.Manager, transport *transportmanager.Manager) llm.LLMProvider {

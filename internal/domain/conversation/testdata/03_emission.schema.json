@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rencrow.invalid/schemas/mio.turn.v1",
+  "title": "Mio turn emission v1",
+  "description": "The structural contract for a single mio.turn.v1 reply or delegation. CORE still validates byte limits, authorization, source scope, and other runtime policy.",
+  "type": "object",
+  "required": ["schema_version", "kind", "user_message"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mio.turn.v1"
+    },
+    "kind": {
+      "enum": ["reply", "delegate"]
+    },
+    "user_message": {
+      "$ref": "#/$defs/user_message"
+    },
+    "delegation": {
+      "$ref": "#/$defs/delegation"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {"const": "reply"}
+        },
+        "required": ["kind"]
+      },
+      "then": {
+        "not": {"required": ["delegation"]}
+      },
+      "else": {
+        "required": ["delegation"]
+      }
+    }
+  ],
+  "$defs": {
+    "non_blank_text": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "user_message": {
+      "type": "object",
+      "required": ["to", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "to": {"const": "user"},
+        "text": {
+          "$ref": "#/$defs/non_blank_text",
+          "maxLength": 16384,
+          "description": "JSON Schema counts characters. ParseAgentEmission enforces the 16 KiB UTF-8 byte limit."
+        }
+      }
+    },
+    "source_message_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "maxItems": 32,
+      "description": "Each source ID is also checked for canonical identity and PromptSnapshot authorization at runtime. The 32-item limit applies to all delegation source arrays combined, which JSON Schema cannot express."
+    },
+    "constraint": {
+      "type": "object",
+      "required": ["key", "text", "source_message_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {"$ref": "#/$defs/non_blank_text"},
+        "text": {"$ref": "#/$defs/non_blank_text"},
+        "source_message_ids": {"$ref": "#/$defs/source_message_ids"}
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "required": [
+        "to",
+        "goal",
+        "instruction",
+        "constraints",
+        "expected_output",
+        "source_message_ids"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "to": {
+          "$ref": "#/$defs/non_blank_text",
+          "description": "The configured Agent allowlist is checked at runtime."
+        },
+        "goal": {"$ref": "#/$defs/non_blank_text"},
+        "instruction": {
+          "$ref": "#/$defs/non_blank_text",
+          "maxLength": 16384,
+          "description": "JSON Schema counts characters. ParseAgentEmission enforces the 16 KiB UTF-8 byte limit."
+        },
+        "constraints": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/constraint"},
+          "uniqueItems": true,
+          "description": "Constraint keys must be unique; CORE enforces uniqueness by key at runtime."
+        },
+        "expected_output": {"$ref": "#/$defs/non_blank_text"},
+        "source_message_ids": {"$ref": "#/$defs/source_message_ids"}
+      }
+    }
+  }
+}

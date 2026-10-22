@@ -235,34 +235,42 @@ func (t *eventPublicationFailureTracker) End(traceID modulecore.TraceID) error {
 
 // OrchestratorEvent represents a significant event in message processing
 type OrchestratorEvent struct {
-	EventID            modulecore.EventID    `json:"event_id"`              // globally unique immutable event identity
-	EventSeq           modulecore.EventSeq   `json:"event_seq,omitempty"`   // canonical store-owned append sequence
-	Type               string                `json:"type"`                  // message.received, routing.decision, agent.start, agent.response
-	From               string                `json:"from"`                  // source agent
-	To                 string                `json:"to,omitempty"`          // target agent
-	Content            string                `json:"content"`               // message content
-	RawContent         string                `json:"raw_content,omitempty"` // unedited model output for diagnostics
-	MessageID          modulecore.MessageID  `json:"message_id,omitempty"`  // globally unique identity of one logical message
-	TurnIndex          int                   `json:"turn_index,omitempty"`  // stable turn order within a session
-	TurnID             modulecore.TurnID     `json:"turn_id,omitempty"`     // canonical conversation turn identity
-	Category           string                `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
-	Strategy           string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
-	Route              string                `json:"route,omitempty"`       // routing category
-	TaskID             modulecore.TaskID     `json:"task_id,omitempty"`     // durable root or child execution task
-	RunID              modulecore.RunID      `json:"run_id,omitempty"`      // owner-issued execution Run; absent before Run issuance
-	ActorKind          string                `json:"actor_kind,omitempty"`  // canonical execution actor kind
-	ActorID            string                `json:"actor_id,omitempty"`    // actual CORE Agent identity
-	TraceID            modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
-	CausationEventID   modulecore.EventID    `json:"causation_event_id,omitempty"`
-	DependencyEventIDs []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
-	SessionID          modulecore.SessionID  `json:"session_id,omitempty"`      // session identifier
-	ThreadID           modulecore.ThreadID   `json:"thread_id,omitempty"`       // canonical conversation/work thread identifier
-	ThreadSeq          modulecore.ThreadSeq  `json:"thread_seq,omitempty"`      // canonical thread sequence within the session
-	ThreadKind         modulecore.ThreadKind `json:"thread_kind,omitempty"`     // canonical thread kind
-	Channel            string                `json:"channel,omitempty"`         // channel identifier
-	ChannelAddress     string                `json:"channel_address,omitempty"` // external channel address (canonical replacement for legacy chat id)
-	Timestamp          string                `json:"timestamp"`
-	Timing             *turntiming.Snapshot  `json:"timing,omitempty"`
+	EventID                      modulecore.EventID    `json:"event_id"`             // globally unique immutable event identity
+	EventSeq                     modulecore.EventSeq   `json:"event_seq,omitempty"`  // canonical store-owned append sequence
+	Type                         string                `json:"type"`                 // message.received, routing.decision, agent.start, agent.response
+	From                         string                `json:"from"`                 // source agent
+	To                           string                `json:"to,omitempty"`         // target agent
+	Content                      string                `json:"content"`              // message content
+	Kind                         string                `json:"kind,omitempty"`       // conversation response kind
+	Visibility                   string                `json:"visibility,omitempty"` // public/private message boundary
+	ClientSubmissionID           string                `json:"client_submission_id,omitempty"`
+	ResponseToTurnID             modulecore.TurnID     `json:"response_to_turn_id,omitempty"`
+	ResponseToClientSubmissionID string                `json:"response_to_client_submission_id,omitempty"`
+	Availability                 string                `json:"availability,omitempty"`
+	ReplyToMessageID             modulecore.MessageID  `json:"reply_to_message_id,omitempty"`
+	DelegationID                 modulecore.RequestID  `json:"delegation_id,omitempty"`
+	RawContent                   string                `json:"raw_content,omitempty"` // unedited model output for diagnostics
+	MessageID                    modulecore.MessageID  `json:"message_id,omitempty"`  // globally unique identity of one logical message
+	TurnIndex                    int                   `json:"turn_index,omitempty"`  // stable turn order within a session
+	TurnID                       modulecore.TurnID     `json:"turn_id,omitempty"`     // canonical conversation turn identity
+	Category                     string                `json:"category,omitempty"`    // domain-specific category (e.g. IdleChat topic category)
+	Strategy                     string                `json:"strategy,omitempty"`    // domain-specific strategy (e.g. IdleChat topic strategy)
+	Route                        string                `json:"route,omitempty"`       // routing category
+	TaskID                       modulecore.TaskID     `json:"task_id,omitempty"`     // durable root or child execution task
+	RunID                        modulecore.RunID      `json:"run_id,omitempty"`      // owner-issued execution Run; absent before Run issuance
+	ActorKind                    string                `json:"actor_kind,omitempty"`  // canonical execution actor kind
+	ActorID                      string                `json:"actor_id,omitempty"`    // actual CORE Agent identity
+	TraceID                      modulecore.TraceID    `json:"trace_id,omitempty"`    // root interaction correlation identifier
+	CausationEventID             modulecore.EventID    `json:"causation_event_id,omitempty"`
+	DependencyEventIDs           []modulecore.EventID  `json:"dependency_event_ids,omitempty"`
+	SessionID                    modulecore.SessionID  `json:"session_id,omitempty"`      // session identifier
+	ThreadID                     modulecore.ThreadID   `json:"thread_id,omitempty"`       // canonical conversation/work thread identifier
+	ThreadSeq                    modulecore.ThreadSeq  `json:"thread_seq,omitempty"`      // canonical thread sequence within the session
+	ThreadKind                   modulecore.ThreadKind `json:"thread_kind,omitempty"`     // canonical thread kind
+	Channel                      string                `json:"channel,omitempty"`         // channel identifier
+	ChannelAddress               string                `json:"channel_address,omitempty"` // external channel address (canonical replacement for legacy chat id)
+	Timestamp                    string                `json:"timestamp"`
+	Timing                       *turntiming.Snapshot  `json:"timing,omitempty"`
 }
 
 // NewEvent creates a new OrchestratorEvent with the current timestamp

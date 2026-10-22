@@ -3,6 +3,7 @@ package viewer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -34,8 +35,13 @@ type EventHub struct {
 	history             []orchestrator.OrchestratorEvent
 	maxHist             int
 	replayReader        EventReplayReader
+	sessionReplayReader SessionPublicEventReplayReader
 	clientCountListener func(int)
+	lastLiveEventSeq    modulecore.EventSeq
+	lastLiveEventID     modulecore.EventID
 }
+
+var errEventHubLiveSequenceNotIncreasing = errors.New("live EventSeq is not increasing")
 
 // NewEventHub creates a new EventHub with the given history capacity.
 func NewEventHub(maxHistory int) *EventHub {
@@ -47,6 +53,12 @@ func NewEventHub(maxHistory int) *EventHub {
 
 // OnEvent projects an event to the Viewer history and SSE clients.
 func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
+	if ev.EventSeq > 0 {
+		if _, err := h.PublishLive(ev); err != nil {
+			log.Printf("[EventHub] OnEvent: live sequence rejected: %v", err)
+		}
+		return
+	}
 	data, err := json.Marshal(ev)
 	if err != nil {
 		log.Printf("[EventHub] OnEvent: marshal error: %v", err)
@@ -54,6 +66,51 @@ func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 	}
 
 	h.mu.Lock()
+	clientDropped := h.appendEventLocked(ev, data)
+	clientCount := len(h.clients)
+	h.mu.Unlock()
+	h.logPublishedEvent(ev, clientDropped, clientCount)
+}
+
+// PublishLive appends one canonical sequenced event and fans it out only when
+// its sequence advances. An exact retry of the latest event is a successful
+// no-op so recovery cannot enqueue it twice.
+func (h *EventHub) PublishLive(ev orchestrator.OrchestratorEvent) (bool, error) {
+	if h == nil {
+		return false, errors.New("event hub is required")
+	}
+	if ev.EventSeq <= 0 {
+		return false, errors.New("live event must have a positive EventSeq")
+	}
+	data, err := json.Marshal(ev)
+	if err != nil {
+		return false, fmt.Errorf("marshal live event: %w", err)
+	}
+
+	h.mu.Lock()
+	if ev.EventSeq < h.lastLiveEventSeq {
+		last := h.lastLiveEventSeq
+		h.mu.Unlock()
+		return false, fmt.Errorf("%w: got %d after %d", errEventHubLiveSequenceNotIncreasing, ev.EventSeq, last)
+	}
+	if ev.EventSeq == h.lastLiveEventSeq {
+		lastID := h.lastLiveEventID
+		h.mu.Unlock()
+		if ev.EventID == lastID {
+			return false, nil
+		}
+		return false, fmt.Errorf("%w: EventSeq %d already belongs to event %s", errEventHubLiveSequenceNotIncreasing, ev.EventSeq, lastID)
+	}
+	h.lastLiveEventSeq = ev.EventSeq
+	h.lastLiveEventID = ev.EventID
+	clientDropped := h.appendEventLocked(ev, data)
+	clientCount := len(h.clients)
+	h.mu.Unlock()
+	h.logPublishedEvent(ev, clientDropped, clientCount)
+	return true, nil
+}
+
+func (h *EventHub) appendEventLocked(ev orchestrator.OrchestratorEvent, data []byte) bool {
 	h.history = append(h.history, ev)
 	if h.maxHist <= 0 {
 		h.history = nil
@@ -70,9 +127,10 @@ func (h *EventHub) OnEvent(ev orchestrator.OrchestratorEvent) {
 			clientDropped = true
 		}
 	}
-	clientCount := len(h.clients)
-	h.mu.Unlock()
+	return clientDropped
+}
 
+func (h *EventHub) logPublishedEvent(ev orchestrator.OrchestratorEvent, clientDropped bool, clientCount int) {
 	if clientDropped {
 		log.Printf("[EventHub] disconnect: client too slow (remaining clients=%d)", clientCount)
 		h.notifyClientCountChanged(clientCount)
@@ -99,6 +157,14 @@ func (h *EventHub) SetClientCountListener(listener func(int)) {
 func (h *EventHub) SetReplayReader(reader EventReplayReader) {
 	h.mu.Lock()
 	h.replayReader = reader
+	h.mu.Unlock()
+}
+
+// SetSessionPublicReplayReader configures the durable public-message reader
+// used by the owner/session-scoped response-first Viewer stream.
+func (h *EventHub) SetSessionPublicReplayReader(reader SessionPublicEventReplayReader) {
+	h.mu.Lock()
+	h.sessionReplayReader = reader
 	h.mu.Unlock()
 }
 

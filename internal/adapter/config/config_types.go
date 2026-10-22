@@ -24,7 +24,8 @@ type Config struct {
 	IdleChat    IdleChatConfig    `yaml:"idle_chat"`
 
 	// === v5.0 追加フィールド ===
-	Conversation ConversationConfig `yaml:"conversation"`
+	Conversation        ConversationConfig        `yaml:"conversation"`
+	ConversationRuntime ConversationRuntimeConfig `yaml:"conversation_runtime"`
 
 	// === RenCrow_LLM Gateway client ===
 	LLMGateway LLMGatewayConfig `yaml:"llm_gateway"`
@@ -495,6 +496,12 @@ type ConversationConfig struct {
 	ProfilePromotionTimeoutSeconds   int    `yaml:"profile_promotion_timeout_seconds"`
 	ProfilePromotionBatchMessages    int    `yaml:"profile_promotion_batch_messages"`
 	ProfilePromotionMaxAttempts      int    `yaml:"profile_promotion_max_attempts"`
+}
+
+// ConversationRuntimeConfig selects the Viewer conversation turn protocol.
+// Legacy remains the default until response-first v2 is explicitly enabled.
+type ConversationRuntimeConfig struct {
+	Version string `yaml:"version"`
 }
 
 func (c ConversationConfig) ProfilePromotionEnabledValue() bool {

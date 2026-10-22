@@ -168,6 +168,9 @@ func (s *JSONLStore) rotationTarget(now time.Time) (name, reason string) {
 	if info, err := os.Stat(filepath.Join(cur.dir, taskExecutionFenceFilename)); err == nil {
 		size += info.Size()
 	}
+	if info, err := os.Stat(filepath.Join(cur.dir, taskDelegationReportFilename)); err == nil {
+		size += info.Size()
+	}
 	day, sequence := segmentname.Day(cur.name), segmentname.Sequence(cur.name)
 	s.rot.observeClock(cur.name, day, segmentname.UTCDay(s.rot.now()))
 	if today := segmentname.UTCDay(now); today > day {

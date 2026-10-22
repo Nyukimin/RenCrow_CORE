@@ -11,7 +11,7 @@ import (
 )
 
 type canonicalSessionRepository interface {
-	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*session.Session, error)
+	LoadOrCreateCanonical(context.Context, string, conversation.ChannelAddress, time.Time) (*session.Session, bool, error)
 }
 
 type messageSessionLifecycle struct {
@@ -49,7 +49,7 @@ func (l *messageSessionLifecycle) ResolveForRequest(ctx context.Context, req Pro
 	if !ok {
 		return nil, req, fmt.Errorf("canonical session repository is unavailable")
 	}
-	sess, err := repo.LoadOrCreateCanonical(ctx, now.UTC().Format("2006-01-02"), address, now.UTC())
+	sess, _, err := repo.LoadOrCreateCanonical(ctx, now.UTC().Format("2006-01-02"), address, now.UTC())
 	if err != nil {
 		return nil, req, fmt.Errorf("resolve canonical session: %w", err)
 	}

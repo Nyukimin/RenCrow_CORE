@@ -133,8 +133,12 @@ func TestRuntimeStorageOwnersRequiredManifestIsExact(t *testing.T) {
 		{Group: storagehost.GroupMovieCatalog, Op: "viewer_stats", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "delete", Mutating: true},
 		{Group: storagehost.GroupSession, Op: "exists", Mutating: false},
+		{Group: storagehost.GroupSession, Op: "load_canonical", Mutating: false},
+		{Group: storagehost.GroupSession, Op: "load_canonical_reservation", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "load", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "load_or_create_canonical", Mutating: true},
+		{Group: storagehost.GroupSession, Op: "reserve_canonical_v2", Mutating: true},
+		{Group: storagehost.GroupSession, Op: "is_v2_reserved", Mutating: false},
 		{Group: storagehost.GroupSession, Op: "save", Mutating: true},
 		{Group: storagehost.GroupTask, Op: "commit", Mutating: true},
 		{Group: storagehost.GroupTask, Op: "fence_acquire", Mutating: true},
@@ -186,8 +190,8 @@ func TestRuntimeStorageOwnersRequiredManifestIsExact(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("runtime owner manifest mismatch:\n got: %#v\nwant: %#v", got, want)
 	}
-	if len(got) != 99 {
-		t.Fatalf("runtime owner manifest has %d operations, want the 99-operation stable owner manifest", len(got))
+	if len(got) != 103 {
+		t.Fatalf("runtime owner manifest has %d operations, want the 103-operation stable owner manifest", len(got))
 	}
 }
 

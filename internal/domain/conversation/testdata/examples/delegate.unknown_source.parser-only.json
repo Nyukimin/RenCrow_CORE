@@ -1,0 +1,16 @@
+{
+  "schema_version": "mio.turn.v1",
+  "kind": "delegate",
+  "user_message": {
+    "to": "user",
+    "text": "I’ll ask Shiro."
+  },
+  "delegation": {
+    "to": "shiro",
+    "goal": "Investigate",
+    "instruction": "Measure the delay.",
+    "constraints": [],
+    "expected_output": "Evidence",
+    "source_message_ids": ["msg_00000000-0000-7000-8000-000000000102"]
+  }
+}

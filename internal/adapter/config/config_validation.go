@@ -19,6 +19,11 @@ import (
 
 // Validate は設定の妥当性を検証
 func (c *Config) Validate() error {
+	switch strings.ToLower(strings.TrimSpace(c.ConversationRuntime.Version)) {
+	case "", "legacy", "v2":
+	default:
+		return fmt.Errorf("conversation_runtime.version must be 'legacy' or 'v2'")
+	}
 	if c.Distributed.Enabled && c.TTS.SpeechPlanEnabled {
 		return fmt.Errorf("tts.speech_plan_enabled=true is not supported when distributed.enabled=true")
 	}

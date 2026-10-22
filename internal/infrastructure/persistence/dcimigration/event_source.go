@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/eventstore"
 	modulecore "github.com/Nyukimin/RenCrow_CORE/modules/core"
 )
 
@@ -63,27 +64,8 @@ func loadEventStore(ctx context.Context, path string) (map[string]struct{}, Sour
 }
 
 func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, SourceCounts, []string, error) {
-	if err := checkUserVersion(ctx, db, 0); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "canonical Event Store schema version: %v", err)
-	}
-	tables, err := schemaUserTables(ctx, db)
-	if err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "inspect canonical Event Store tables: %v", err)
-	}
-	if err := requireTableSet(tables, []string{"event_envelope", "event_dependency"}, true); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "%v", err)
-	}
-	if err := inspectTable(ctx, db, "event_envelope", eventStoreSpecs["event_envelope"]); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "canonical Event Store envelope schema: %v", err)
-	}
-	if err := inspectCompositePrimaryKey(ctx, db, "event_dependency", []string{"event_id", "dependency_event_id"}); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "canonical Event Store dependency schema: %v", err)
-	}
-	if err := inspectTableWithoutPrimaryValidation(ctx, db, "event_dependency", eventStoreSpecs["event_dependency"]); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "canonical Event Store dependency schema: %v", err)
-	}
-	if err := inspectEventDependencyForeignKeys(ctx, db); err != nil {
-		return nil, SourceCounts{}, nil, newCodedError("unknown_schema", "%v", err)
+	if err := inspectCanonicalEventStoreSchema(ctx, db); err != nil {
+		return nil, SourceCounts{}, nil, err
 	}
 	ids := make(map[string]struct{})
 	traces := make(map[string]string)
@@ -210,6 +192,39 @@ func queryEventStore(ctx context.Context, db *sql.DB) (map[string]struct{}, Sour
 		return nil, SourceCounts{}, nil, newCodedError("event_dependency_mismatch", "canonical Event Store dependencies do not match envelope references")
 	}
 	return ids, count, lines, nil
+}
+
+func inspectCanonicalEventStoreSchema(ctx context.Context, db *sql.DB) error {
+	if err := checkUserVersion(ctx, db, 0); err != nil {
+		return newCodedError("unknown_schema", "canonical Event Store schema version: %v", err)
+	}
+	tables, err := schemaUserTables(ctx, db)
+	if err != nil {
+		return newCodedError("unknown_schema", "inspect canonical Event Store tables: %v", err)
+	}
+	legacyTables := []string{"event_envelope", "event_dependency"}
+	if err := requireTableSet(tables, legacyTables, true); err != nil {
+		currentTables := append(append([]string(nil), legacyTables...), eventstore.LiveJournalTableNames()...)
+		if currentErr := requireTableSet(tables, currentTables, true); currentErr != nil {
+			return newCodedError("unknown_schema", "canonical Event Store tables: %v", currentErr)
+		}
+		if err := eventstore.ValidateLiveJournalSchema(ctx, db); err != nil {
+			return newCodedError("unknown_schema", "canonical Event Store live journal schema: %v", err)
+		}
+	}
+	if err := inspectTable(ctx, db, "event_envelope", eventStoreSpecs["event_envelope"]); err != nil {
+		return newCodedError("unknown_schema", "canonical Event Store envelope schema: %v", err)
+	}
+	if err := inspectCompositePrimaryKey(ctx, db, "event_dependency", []string{"event_id", "dependency_event_id"}); err != nil {
+		return newCodedError("unknown_schema", "canonical Event Store dependency schema: %v", err)
+	}
+	if err := inspectTableWithoutPrimaryValidation(ctx, db, "event_dependency", eventStoreSpecs["event_dependency"]); err != nil {
+		return newCodedError("unknown_schema", "canonical Event Store dependency schema: %v", err)
+	}
+	if err := inspectEventDependencyForeignKeys(ctx, db); err != nil {
+		return newCodedError("unknown_schema", "%v", err)
+	}
+	return nil
 }
 
 func validateExistingEventIdentity(eventID string, eventSeq int64, traceID, schemaVersion, eventType, componentID, occurredAt, envelopeJSON string) (modulecore.EventEnvelope, error) {

@@ -387,26 +387,7 @@ func readBuildEventStore(ctx context.Context, db *sql.DB, rejectDCI bool) (build
 	if err := ctx.Err(); err != nil {
 		return buildEventStoreRows{}, err
 	}
-	if err := checkUserVersion(ctx, db, 0); err != nil {
-		return buildEventStoreRows{}, err
-	}
-	tables, err := schemaUserTables(ctx, db)
-	if err != nil {
-		return buildEventStoreRows{}, err
-	}
-	if err := requireTableSet(tables, []string{"event_envelope", "event_dependency"}, true); err != nil {
-		return buildEventStoreRows{}, err
-	}
-	if err := inspectTable(ctx, db, "event_envelope", eventStoreSpecs["event_envelope"]); err != nil {
-		return buildEventStoreRows{}, err
-	}
-	if err := inspectCompositePrimaryKey(ctx, db, "event_dependency", []string{"event_id", "dependency_event_id"}); err != nil {
-		return buildEventStoreRows{}, err
-	}
-	if err := inspectTableWithoutPrimaryValidation(ctx, db, "event_dependency", eventStoreSpecs["event_dependency"]); err != nil {
-		return buildEventStoreRows{}, err
-	}
-	if err := inspectEventDependencyForeignKeys(ctx, db); err != nil {
+	if err := inspectCanonicalEventStoreSchema(ctx, db); err != nil {
 		return buildEventStoreRows{}, err
 	}
 
