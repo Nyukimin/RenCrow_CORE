@@ -1424,7 +1424,10 @@ func TestViewerStaticContractMovieUsesLanViewerOriginAndCOREProxy(t *testing.T) 
 		`id="movieSteps"`,
 		`<option value="t2v">`,
 		`<option value="i2v">`,
+		`<option value="v2v" hidden disabled>`,
+		`id="movieInputVideo"`,
 		`id="movieInputImage"`,
+		`id="movieMaxVideoBytes"`,
 		`accept="image/png,image/jpeg`,
 		`id="videoProgress"`,
 		`id="videoResult" controls`,
@@ -1481,7 +1484,8 @@ func TestViewerStaticContractMovieUsesLanViewerOriginAndCOREProxy(t *testing.T) 
 		}
 	}
 	for _, needle := range []string{
-		`/viewer/image/video/options?mode=`,
+		`new URLSearchParams({mode: requestedMode})`,
+		`query.set('task', 'lip_sync')`,
 		`/viewer/image/video/generations`,
 		`/viewer/image/video/generations/${encodeURIComponent(id)}`,
 		`/viewer/image/video/${id}.mp4`,
@@ -1489,6 +1493,10 @@ func TestViewerStaticContractMovieUsesLanViewerOriginAndCOREProxy(t *testing.T) 
 		`rencrow.image.video.pendingRequest`,
 		`localStorage.setItem(savedVideoJobKey, id)`,
 		`async function resumePendingVideoRequest()`,
+		`async function v2vRequestFingerprint(taskValue, videoMode, videoFile, audioFile)`,
+		`video_sha256: videoSha256`,
+		`pending.version === 4`,
+		`videoOptions.maxVideoBytes`,
 		`function loadVideoOptionsAndResume(requestedMode = mode.value`,
 		`if (options) resumeSavedVideoState();`,
 		`payload.status === 'succeeded'`,
@@ -1645,7 +1653,7 @@ func TestViewerStaticContractImageControlsFollowAdvertisedOptions(t *testing.T) 
 	if validation < 0 || controlsEnabled <= validation {
 		t.Fatal("Image controls must stay disabled until the options response passes validation")
 	}
-	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-lan-http-sha256`) {
+	if !strings.Contains(html, `/viewer/assets/js/tabs/image.js?v=20261022-movie-lipsync-task-audio-retry`) {
 		t.Fatal("Image controls script cache key was not updated")
 	}
 	if !strings.Contains(html, `/viewer/assets/css/tabs/image.css?v=20261022-movie-serve-session`) {

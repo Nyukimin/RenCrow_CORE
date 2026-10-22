@@ -3,6 +3,7 @@ package viewer
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -28,6 +29,7 @@ type fakeVideoGateway struct {
 	media        *http.Response
 	optionsCalls int
 	optionsMode  string
+	optionsTask  string
 	createCalls  int
 	statusCalls  int
 	mediaCalls   int
@@ -39,9 +41,10 @@ type fakeVideoGateway struct {
 	mediaRange   string
 }
 
-func (g *fakeVideoGateway) VideoOptions(_ context.Context, mode string) (domainimage.VideoOptionsResponse, error) {
+func (g *fakeVideoGateway) VideoOptions(_ context.Context, mode, task string) (domainimage.VideoOptionsResponse, error) {
 	g.optionsCalls++
 	g.optionsMode = mode
+	g.optionsTask = task
 	return g.videoOptions, nil
 }
 
@@ -71,6 +74,10 @@ func videoAccessConfig() VideoBrowserAccessConfig {
 }
 
 func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string) (*http.Request, string) {
+	return videoRequestWithTask(t, mode, "", image, nil, aspectRatio...)
+}
+
+func videoRequestWithTask(t *testing.T, mode, task string, image, audio []byte, aspectRatio ...string) (*http.Request, string) {
 	t.Helper()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -79,8 +86,22 @@ func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string
 			t.Fatal(err)
 		}
 	}
+	if task != "" {
+		if err := writer.WriteField("task", task); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if len(aspectRatio) > 0 {
 		if err := writer.WriteField("aspect_ratio", aspectRatio[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if audio != nil {
+		part, err := writer.CreateFormFile("audio", "speech.wav")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(audio); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -101,6 +122,63 @@ func videoRequest(t *testing.T, mode string, image []byte, aspectRatio ...string
 	return req, body.String()
 }
 
+func testPCM16WAV() []byte {
+	wav := make([]byte, 46)
+	copy(wav[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(wav[4:8], uint32(len(wav)-8))
+	copy(wav[8:12], "WAVE")
+	copy(wav[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(wav[16:20], 16)
+	binary.LittleEndian.PutUint16(wav[20:22], 1)
+	binary.LittleEndian.PutUint16(wav[22:24], 1)
+	binary.LittleEndian.PutUint32(wav[24:28], 16000)
+	binary.LittleEndian.PutUint32(wav[28:32], 32000)
+	binary.LittleEndian.PutUint16(wav[32:34], 2)
+	binary.LittleEndian.PutUint16(wav[34:36], 16)
+	copy(wav[36:40], "data")
+	binary.LittleEndian.PutUint32(wav[40:44], 2)
+	wav[44], wav[45] = 0, 0
+	return wav
+}
+
+func testMP4Header() []byte {
+	return []byte{0, 0, 0, 16, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 2, 0}
+}
+
+func videoV2VRequest(t *testing.T, video, audio []byte) (*http.Request, string) {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("mode", domainimage.VideoModeV2V); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("task", domainimage.VideoTaskLipSync); err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string][]byte{"video": video, "audio": audio} {
+		part, err := writer.CreateFormFile(name, name+map[string]string{"video": ".mp4", "audio": ".wav"}[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/generations", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return req, body.String()
+}
+
+func v2vVideoOptions(maxVideoBytes int64) domainimage.VideoOptionsResponse {
+	return domainimage.VideoOptionsResponse{
+		Task: domainimage.VideoTaskLipSync, Model: "MuseTalk 1.5", Mode: domainimage.VideoModeV2V,
+		DurationSeconds: 10, MaxVideoBytes: maxVideoBytes, MaxAudioBytes: domainimage.MaxVideoAudioBytes,
+	}
+}
+
 func TestHandleVideoOptionsUsesModeOptionsForConfiguredLANClient(t *testing.T) {
 	options := domainimage.VideoOptionsResponse{
 		Model: "video-i2v-v1", Mode: "i2v", AspectRatios: []string{"1:1 (Square)", "9:16 (Portrait Widescreen)"},
@@ -112,8 +190,8 @@ func TestHandleVideoOptionsUsesModeOptionsForConfiguredLANClient(t *testing.T) {
 	req.Host = videoTestHost
 	rec := httptest.NewRecorder()
 	HandleVideoOptions(gateway, videoAccessConfig()).ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" {
-		t.Fatalf("status=%d calls=%d mode=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, rec.Body.String())
+	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" || gateway.optionsTask != "" {
+		t.Fatalf("status=%d calls=%d mode=%q task=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, gateway.optionsTask, rec.Body.String())
 	}
 	if rec.Header().Get("Cache-Control") != "no-store" || strings.Contains(rec.Body.String(), "authenticated") {
 		t.Fatalf("unexpected headers or auth requirement: headers=%v body=%s", rec.Header(), rec.Body.String())
@@ -121,6 +199,52 @@ func TestHandleVideoOptionsUsesModeOptionsForConfiguredLANClient(t *testing.T) {
 	var got domainimage.VideoOptionsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Model != options.Model || got.Mode != options.Mode || got.DefaultAspectRatio != options.DefaultAspectRatio {
 		t.Fatalf("options=%+v err=%v", got, err)
+	}
+}
+
+func TestHandleVideoOptionsUsesLipSyncTaskOptions(t *testing.T) {
+	options := domainimage.VideoOptionsResponse{
+		Task:  "lip_sync",
+		Model: "video-i2v-v1", Mode: "i2v", AspectRatios: []string{"1:1 (Square)"},
+		DefaultAspectRatio: "1:1 (Square)", Megapixels: 0.2, DurationSeconds: 10, Steps: 8,
+	}
+	gateway := &fakeVideoGateway{videoOptions: options}
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?mode=i2v&task=lip_sync", nil)
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
+	req.Host = videoTestHost
+	rec := httptest.NewRecorder()
+	HandleVideoOptions(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != "i2v" || gateway.optionsTask != "lip_sync" {
+		t.Fatalf("status=%d calls=%d mode=%q task=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, gateway.optionsTask, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"task":"lip_sync"`) || !strings.Contains(rec.Body.String(), `"duration_seconds":10`) {
+		t.Fatalf("lip-sync options response=%s", rec.Body.String())
+	}
+}
+
+func TestHandleVideoOptionsReturnsV2VContractWithoutDummyFields(t *testing.T) {
+	options := v2vVideoOptions(domainimage.MaxVideoV2VBytes)
+	gateway := &fakeVideoGateway{videoOptions: options}
+	req := httptest.NewRequest(http.MethodGet, "/viewer/image/video/options?task=lip_sync&mode=v2v", nil)
+	req.RemoteAddr = videoTestClientIPv4 + ":43210"
+	req.Host = videoTestHost
+	rec := httptest.NewRecorder()
+	HandleVideoOptions(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || gateway.optionsCalls != 1 || gateway.optionsMode != domainimage.VideoModeV2V || gateway.optionsTask != domainimage.VideoTaskLipSync {
+		t.Fatalf("status=%d calls=%d mode=%q task=%q body=%s", rec.Code, gateway.optionsCalls, gateway.optionsMode, gateway.optionsTask, rec.Body.String())
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(rec.Body.Bytes(), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"aspect_ratios", "default_aspect_ratio", "megapixels", "steps"} {
+		if _, exists := fields[forbidden]; exists {
+			t.Fatalf("V2V options included dummy field %q: %s", forbidden, rec.Body.String())
+		}
+	}
+	if len(fields) != 6 || fields["task"] == nil || fields["model"] == nil || fields["mode"] == nil || fields["duration_seconds"] == nil ||
+		fields["max_video_bytes"] == nil || fields["max_audio_bytes"] == nil {
+		t.Fatalf("unexpected V2V option fields: %s", rec.Body.String())
 	}
 }
 
@@ -161,6 +285,9 @@ func TestHandleVideoOptionsRejectsInvalidModeAndUntrustedRequest(t *testing.T) {
 	}{
 		{name: "unsupported mode", url: "/viewer/image/video/options?mode=other", want: http.StatusBadRequest},
 		{name: "duplicate mode", url: "/viewer/image/video/options?mode=t2v&mode=i2v", want: http.StatusBadRequest},
+		{name: "unsupported task", url: "/viewer/image/video/options?mode=t2v&task=v2v", want: http.StatusBadRequest},
+		{name: "duplicate task", url: "/viewer/image/video/options?mode=t2v&task=lip_sync&task=lip_sync", want: http.StatusBadRequest},
+		{name: "empty task", url: "/viewer/image/video/options?mode=t2v&task=", want: http.StatusBadRequest},
 		{name: "wrong LAN source", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.RemoteAddr = "192.168.1.50:43000" }, want: http.StatusNotFound},
 		{name: "wrong host", url: "/viewer/image/video/options?mode=t2v", edit: func(r *http.Request) { r.Host = "attacker.example" }, want: http.StatusNotFound},
 	}
@@ -218,6 +345,150 @@ func TestHandleVideoGenerateAcceptsBoundedPNGForI2V(t *testing.T) {
 	}
 	if gateway.createReq.ImageType != "image/png" || !bytes.Equal(gateway.createReq.Image, png) {
 		t.Fatalf("image type=%q bytes=%x", gateway.createReq.ImageType, gateway.createReq.Image)
+	}
+}
+
+func TestHandleVideoGenerateAcceptsLipSyncAudioForT2VAndI2V(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		mode  string
+		image []byte
+	}{
+		{name: "T2V", mode: "t2v"},
+		{name: "I2V", mode: "i2v", image: []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 'I', 'H', 'D', 'R'}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			gateway := &fakeVideoGateway{accepted: domainimage.VideoGenerationAccepted{ID: "vid_lip_sync", Status: "queued"}}
+			audio := testPCM16WAV()
+			req, _ := videoRequestWithTask(t, testCase.mode, "lip_sync", testCase.image, audio, "9:16 (Portrait Widescreen)")
+			allowedLANVideoRequest(t, req)
+			rec := httptest.NewRecorder()
+			HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+			if rec.Code != http.StatusAccepted || gateway.createCalls != 1 {
+				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
+			}
+			if gateway.createReq.Task != domainimage.VideoTaskLipSync || !bytes.Equal(gateway.createReq.Audio, audio) {
+				t.Fatalf("task=%q audio=%x", gateway.createReq.Task, gateway.createReq.Audio)
+			}
+			if gateway.createReq.Mode != testCase.mode || gateway.createReq.AspectRatio != "9:16 (Portrait Widescreen)" {
+				t.Fatalf("request=%+v", gateway.createReq)
+			}
+		})
+	}
+}
+
+func TestHandleVideoGenerateAcceptsV2VWithOnlyVideoAndAudio(t *testing.T) {
+	video, audio := testMP4Header(), testPCM16WAV()
+	gateway := &fakeVideoGateway{
+		accepted:     domainimage.VideoGenerationAccepted{ID: "vid_v2v", Status: "queued"},
+		videoOptions: v2vVideoOptions(domainimage.MaxVideoV2VBytes),
+	}
+	req, _ := videoV2VRequest(t, video, audio)
+	allowedLANVideoRequest(t, req)
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted || gateway.optionsCalls != 1 || gateway.createCalls != 1 {
+		t.Fatalf("status=%d options=%d create=%d body=%s", rec.Code, gateway.optionsCalls, gateway.createCalls, rec.Body.String())
+	}
+	request := gateway.createReq
+	if request.Task != domainimage.VideoTaskLipSync || request.Mode != domainimage.VideoModeV2V || !bytes.Equal(request.Video, video) ||
+		!bytes.Equal(request.Audio, audio) || request.Prompt != "" || request.Seed != 0 || request.AspectRatio != "" ||
+		len(request.Image) != 0 || request.ImageType != "" || gateway.createActor != videoTestActor {
+		t.Fatalf("unexpected V2V request: %+v actor=%q", request, gateway.createActor)
+	}
+}
+
+func TestHandleVideoGenerateRejectsV2VAboveImageOptionLimit(t *testing.T) {
+	video, audio := testMP4Header(), testPCM16WAV()
+	gateway := &fakeVideoGateway{videoOptions: v2vVideoOptions(int64(len(video) - 1))}
+	req, _ := videoV2VRequest(t, video, audio)
+	allowedLANVideoRequest(t, req)
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || gateway.optionsCalls != 1 || gateway.createCalls != 0 {
+		t.Fatalf("status=%d options=%d create=%d body=%s", rec.Code, gateway.optionsCalls, gateway.createCalls, rec.Body.String())
+	}
+}
+
+func TestHandleVideoGenerateRejectsInvalidV2VMediaAndIrrelevantFields(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		video []byte
+		field string
+	}{
+		{name: "invalid MP4 header", video: []byte("not mp4")},
+		{name: "prompt is not part of V2V", video: testMP4Header(), field: "prompt"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testCase.field != "" {
+				body := &bytes.Buffer{}
+				writer := multipart.NewWriter(body)
+				_ = writer.WriteField("mode", domainimage.VideoModeV2V)
+				_ = writer.WriteField("task", domainimage.VideoTaskLipSync)
+				_ = writer.WriteField(testCase.field, "ignored")
+				videoPart, _ := writer.CreateFormFile("video", "input.mp4")
+				_, _ = videoPart.Write(testCase.video)
+				audioPart, _ := writer.CreateFormFile("audio", "input.wav")
+				_, _ = audioPart.Write(testPCM16WAV())
+				_ = writer.Close()
+				req := httptest.NewRequest(http.MethodPost, "/viewer/image/video/generations", body)
+				req.Header.Set("Content-Type", writer.FormDataContentType())
+				allowedLANVideoRequest(t, req)
+				rec := httptest.NewRecorder()
+				gateway := &fakeVideoGateway{}
+				HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+				if rec.Code != http.StatusBadRequest || gateway.optionsCalls != 0 || gateway.createCalls != 0 {
+					t.Fatalf("status=%d options=%d create=%d body=%s", rec.Code, gateway.optionsCalls, gateway.createCalls, rec.Body.String())
+				}
+				return
+			}
+			req, _ := videoV2VRequest(t, testCase.video, testPCM16WAV())
+			allowedLANVideoRequest(t, req)
+			rec := httptest.NewRecorder()
+			gateway := &fakeVideoGateway{}
+			HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || gateway.optionsCalls != 0 || gateway.createCalls != 0 {
+				t.Fatalf("status=%d options=%d create=%d body=%s", rec.Code, gateway.optionsCalls, gateway.createCalls, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleVideoGenerateRejectsMalformedOrUnexpectedLipSyncAudio(t *testing.T) {
+	malformed := testPCM16WAV()
+	copy(malformed[:4], "NOPE")
+	for _, testCase := range []struct {
+		name  string
+		task  string
+		audio []byte
+	}{
+		{name: "malformed WAV", task: "lip_sync", audio: malformed},
+		{name: "audio without lip-sync task", audio: testPCM16WAV()},
+		{name: "lip-sync without audio", task: "lip_sync"},
+		{name: "unknown task", task: "v2v", audio: testPCM16WAV()},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			gateway := &fakeVideoGateway{}
+			req, _ := videoRequestWithTask(t, "t2v", testCase.task, nil, testCase.audio)
+			allowedLANVideoRequest(t, req)
+			rec := httptest.NewRecorder()
+			HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest || gateway.createCalls != 0 {
+				t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandleVideoGenerateRejectsOversizedLipSyncAudioBeforeGateway(t *testing.T) {
+	audio := make([]byte, 20<<20+1)
+	req, _ := videoRequestWithTask(t, "t2v", "lip_sync", nil, audio)
+	allowedLANVideoRequest(t, req)
+	gateway := &fakeVideoGateway{}
+	rec := httptest.NewRecorder()
+	HandleVideoGenerate(gateway, videoAccessConfig()).ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || gateway.createCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, gateway.createCalls, rec.Body.String())
 	}
 }
 

@@ -255,31 +255,55 @@
         </div>
         <div id="movieStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">ready</div>
         <form id="movieGenerationForm" class="daily-desk-card image-prompt-card">
-          <label for="moviePrompt">Prompt</label>
-          <textarea id="moviePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="作りたい動画を入力"></textarea>
+          <div id="moviePromptRow" class="movie-input-control">
+            <label id="moviePromptLabel" for="moviePrompt">Prompt</label>
+            <textarea id="moviePrompt" class="daily-desk-input image-prompt" rows="5" maxlength="8000" placeholder="作りたい動画を入力"></textarea>
+          </div>
+          <fieldset id="movieTaskOptions" class="image-mode-options">
+            <legend>Generation type</legend>
+            <label><input type="radio" name="movieTask" value="h3" checked><span>Video (H3)</span></label>
+            <label><input type="radio" name="movieTask" value="lip_sync"><span>Speech or singing with audio sync</span></label>
+          </fieldset>
           <label for="movieMode">Video mode</label>
           <select id="movieMode" class="desk-select">
             <option value="t2v">Text to video</option>
             <option value="i2v">Image to video</option>
+            <option value="v2v" hidden disabled>Video to video</option>
           </select>
-          <label for="movieAspectRatio">Aspect ratio</label>
-          <select id="movieAspectRatio" class="desk-select" disabled></select>
+          <div id="movieAspectRatioRow" class="movie-input-control">
+            <label id="movieAspectRatioLabel" for="movieAspectRatio">Aspect ratio</label>
+            <select id="movieAspectRatio" class="desk-select" disabled></select>
+          </div>
           <p id="movieOptionsStatus" class="image-profile-note" role="status" aria-live="polite">Loading video options…</p>
           <div id="movieOptionsError" class="image-options-error" role="alert" hidden></div>
           <button id="movieOptionsRetry" class="desk-primary-btn image-options-retry" type="button" hidden>Retry video options</button>
           <dl class="video-fixed-settings" aria-label="Image owner video settings">
             <dt>Model</dt><dd id="movieModel">—</dd>
-            <dt>Resolution</dt><dd><span id="movieMegapixels">—</span> MP</dd>
-            <dt>Duration</dt><dd><span id="movieDurationSeconds">—</span> s</dd>
-            <dt>Steps</dt><dd id="movieSteps">—</dd>
+            <dt id="movieResolutionLabel">Resolution</dt><dd id="movieResolutionValue"><span id="movieMegapixels">—</span> MP</dd>
+            <dt id="movieDurationLabel">Duration</dt><dd><span id="movieDurationSeconds">—</span> s</dd>
+            <dt id="movieStepsLabel">Steps</dt><dd id="movieStepsValue"><span id="movieSteps">—</span></dd>
+            <dt id="movieMaxVideoBytesLabel" hidden>Max source video</dt><dd id="movieMaxVideoBytes" hidden>—</dd>
+            <dt id="movieMaxAudioBytesLabel" hidden>Max audio</dt><dd id="movieMaxAudioBytes" hidden>—</dd>
           </dl>
+          <div id="movieInputVideoRow" class="video-input-image-row" hidden>
+            <label for="movieInputVideo">Source video (MP4)</label>
+            <input id="movieInputVideo" class="desk-input" type="file" accept="video/mp4,.mp4">
+            <span id="movieInputVideoLimit" class="image-profile-note">MP4 source video</span>
+          </div>
           <div id="movieInputImageRow" class="video-input-image-row" hidden>
             <label for="movieInputImage">Starting image (PNG or JPEG)</label>
             <input id="movieInputImage" class="desk-input" type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg">
             <span class="image-profile-note">最大20 MiB</span>
           </div>
-          <label for="movieSeed">Seed</label>
-          <input id="movieSeed" class="desk-input" type="number" value="42" min="0" max="9007199254740991" step="1">
+          <div id="movieInputAudioRow" class="video-input-image-row" hidden>
+            <label id="movieInputAudioLabel" for="movieInputAudio">Speech or singing audio (WAV PCM)</label>
+            <input id="movieInputAudio" class="desk-input" type="file" accept="audio/wav,audio/x-wav,.wav">
+            <span id="movieInputAudioLimit" class="image-profile-note">2〜10秒、最大20 MiB。音声の長さは生成側で確認します。</span>
+          </div>
+          <div id="movieSeedRow" class="movie-input-control">
+            <label id="movieSeedLabel" for="movieSeed">Seed</label>
+            <input id="movieSeed" class="desk-input" type="number" value="42" min="0" max="9007199254740991" step="1">
+          </div>
           <p class="image-profile-note">固定値はRenCrow_Imageの設定を表示します。Negative promptは使用しません。</p>
           <button id="movieGenerateBtn" class="desk-primary-btn" type="submit">Generate video</button>
         </form>
@@ -1826,7 +1850,7 @@
 <script src="/viewer/assets/js/tabs/sessions.js?v=20260510-tabs-sessions" defer></script>
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
-<script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-lan-http-sha256" defer></script>
+<script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-lipsync-task-audio-retry" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>

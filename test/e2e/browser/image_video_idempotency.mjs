@@ -22,6 +22,24 @@ const jobKey = 'rencrow.image.video.lastJobId';
 const maxImageUploadBytes = 20 * 1024 * 1024;
 const resultPNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL/nwAAAABJRU5ErkJggg==', 'base64');
 
+function pcmWav(sample = 0) {
+  const wav = Buffer.alloc(46);
+  wav.write('RIFF', 0, 'ascii');
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write('WAVEfmt ', 8, 'ascii');
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36, 'ascii');
+  wav.writeUInt32LE(2, 40);
+  wav.writeUInt16LE(sample, 44);
+  return wav;
+}
+
 function fixtureHTML() {
   const script = imageScript.replaceAll('</script', '<\\/script');
   const style = `${viewerCSS}\n${deskCSS}\n${imageCSS}`;
@@ -87,23 +105,30 @@ function fixtureHTML() {
     <div class="desk-screen desk-workspace movie-workspace">
       <aside class="desk-side">
         <form id="movieGenerationForm" class="daily-desk-card image-prompt-card">
-          <label for="moviePrompt">Prompt</label>
-          <textarea id="moviePrompt"></textarea>
+          <div id="moviePromptRow" class="movie-input-control"><label id="moviePromptLabel" for="moviePrompt">Prompt</label><textarea id="moviePrompt"></textarea></div>
+          <fieldset id="movieTaskOptions" class="image-mode-options">
+            <legend>Generation type</legend>
+            <label><input type="radio" name="movieTask" value="h3" checked><span>Video (H3)</span></label>
+            <label><input type="radio" name="movieTask" value="lip_sync"><span>Speech or singing with audio sync</span></label>
+          </fieldset>
           <label for="movieMode">Video mode</label>
-          <select id="movieMode"><option value="t2v">T2V</option><option value="i2v">I2V</option></select>
+          <select id="movieMode"><option value="t2v">T2V</option><option value="i2v">I2V</option><option value="v2v" hidden disabled>V2V</option></select>
           <p id="movieOptionsStatus" role="status" aria-live="polite">Loading video options</p>
           <div id="movieOptionsError" role="alert" hidden></div>
           <button id="movieOptionsRetry" type="button" hidden>Retry options</button>
-          <label for="movieAspectRatio">Aspect ratio</label>
-          <select id="movieAspectRatio" disabled></select>
+          <div id="movieAspectRatioRow" class="movie-input-control"><label id="movieAspectRatioLabel" for="movieAspectRatio">Aspect ratio</label><select id="movieAspectRatio" disabled></select></div>
           <dl class="video-fixed-settings">
             <dt>Model</dt><dd id="movieModel">—</dd>
-            <dt>Resolution</dt><dd><span id="movieMegapixels">—</span> MP</dd>
-            <dt>Duration</dt><dd><span id="movieDurationSeconds">—</span> s</dd>
-            <dt>Steps</dt><dd id="movieSteps">—</dd>
+            <dt id="movieResolutionLabel">Resolution</dt><dd id="movieResolutionValue"><span id="movieMegapixels">—</span> MP</dd>
+            <dt id="movieDurationLabel">Duration</dt><dd><span id="movieDurationSeconds">—</span> s</dd>
+            <dt id="movieStepsLabel">Steps</dt><dd id="movieStepsValue"><span id="movieSteps">—</span></dd>
+            <dt id="movieMaxVideoBytesLabel" hidden>Max source video</dt><dd id="movieMaxVideoBytes" hidden>—</dd>
+            <dt id="movieMaxAudioBytesLabel" hidden>Max audio</dt><dd id="movieMaxAudioBytes" hidden>—</dd>
           </dl>
+          <div id="movieInputVideoRow" hidden><label for="movieInputVideo">Source video</label><input id="movieInputVideo" type="file" accept="video/mp4,.mp4"><span id="movieInputVideoLimit"></span></div>
           <div id="movieInputImageRow"><input id="movieInputImage" type="file" accept="image/png,image/jpeg"></div>
-          <input id="movieSeed" value="42">
+          <div id="movieInputAudioRow" hidden><label id="movieInputAudioLabel" for="movieInputAudio">Speech or singing audio (WAV PCM)</label><input id="movieInputAudio" type="file" accept="audio/wav,audio/x-wav,.wav"><span id="movieInputAudioLimit">2〜10秒、最大20 MiB。音声の長さは生成側で確認します。</span></div>
+          <div id="movieSeedRow"><label id="movieSeedLabel" for="movieSeed">Seed</label><input id="movieSeed" value="42"></div>
           <button id="movieGenerateBtn" type="submit">Generate video</button>
         </form>
       </aside>
@@ -205,12 +230,13 @@ async function installRoutes(page, actions, calls, options = {}) {
     }
     if (requestURL.pathname === '/viewer/image/video/options' && request.method() === 'GET') {
       const requestedMode = requestURL.searchParams.get('mode');
-      videoOptionRequests.push({mode: requestedMode, origin: requestURL.origin});
+      const requestedTask = requestURL.searchParams.get('task') || '';
+      videoOptionRequests.push({mode: requestedMode, ...(requestedTask ? {task: requestedTask} : {}), origin: requestURL.origin});
       if (options.videoOptions404) {
         await route.fulfill({status: 404, body: ''});
         return;
       }
-      if (options.videoOptionsUnavailable && options.videoOptionsUnavailable[requestedMode]) {
+      if (options.videoOptionsUnavailable && options.videoOptionsUnavailable[requestedTask ? `${requestedTask}_${requestedMode}` : requestedMode]) {
         await route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({message: 'options temporarily unavailable'})});
         return;
       }
@@ -226,9 +252,25 @@ async function installRoutes(page, actions, calls, options = {}) {
           default_aspect_ratio: '1:1 (Square)', megapixels: 0.2, duration_seconds: 5, steps: 8,
         },
       };
-      const payload = options.videoOptions && options.videoOptions[requestedMode]
-        ? options.videoOptions[requestedMode]
-        : defaults[requestedMode];
+      const lipSyncDefaults = {
+        t2v: {
+          task: 'lip_sync', model: 'hunyuan-video-lipsync-t2v', mode: 't2v',
+          aspect_ratios: ['1:1 (Square)', '9:16 (Portrait Widescreen)', '16:9 (Widescreen)'],
+          default_aspect_ratio: '16:9 (Widescreen)', megapixels: 0.2, duration_seconds: 10, steps: 8,
+        },
+        i2v: {
+          task: 'lip_sync', model: 'hunyuan-video-lipsync-i2v', mode: 'i2v',
+          aspect_ratios: ['1:1 (Square)', '9:16 (Portrait Widescreen)'],
+          default_aspect_ratio: '1:1 (Square)', megapixels: 0.2, duration_seconds: 10, steps: 8,
+        },
+        v2v: {
+          task: 'lip_sync', model: 'MuseTalk 1.5', mode: 'v2v',
+          duration_seconds: 10, max_video_bytes: 1024 * 1024, max_audio_bytes: 20 * 1024 * 1024,
+        },
+      };
+      const payload = requestedTask
+        ? (options.lipSyncVideoOptions && options.lipSyncVideoOptions[requestedMode]) || lipSyncDefaults[requestedMode]
+        : (options.videoOptions && options.videoOptions[requestedMode]) || defaults[requestedMode];
       if (!payload) {
         await route.fulfill({status: 400, contentType: 'application/json', body: JSON.stringify({message: 'invalid mode'})});
         return;
@@ -319,9 +361,12 @@ async function waitForSubmissionResult(page, accepted) {
 
 async function prepareVideo(page, mode, promptText) {
   await showMoviePanel(page);
+  if (mode === 'v2v') await page.locator('#movieTaskOptions label').nth(1).click();
   await page.selectOption('#movieMode', mode);
-  await page.fill('#moviePrompt', promptText);
-  await page.fill('#movieSeed', '42');
+  if (mode !== 'v2v') {
+    await page.fill('#moviePrompt', promptText);
+    await page.fill('#movieSeed', '42');
+  }
 }
 
 async function testImageModesAndUploads(browser) {
@@ -495,7 +540,8 @@ async function testT2VRetry(browser) {
     assert.equal(call.pending.key, call.idempotencyKey);
     assert.match(call.pending.fingerprint, /^[0-9a-f]{64}$/);
     assert.equal(call.pending.mode, 't2v');
-    assert.equal(call.pending.version, 2);
+    assert.equal(call.pending.version, 3);
+    assert.equal(call.pending.task, 'h3');
     assert.equal(call.pending.aspect_ratio, '4:3 (Standard)');
     assert.match(call.body.toString('latin1'), /name="aspect_ratio"\r\n\r\n4:3 \(Standard\)\r\n/);
     assert.match(call.contentType, /^multipart\/form-data;/);
@@ -535,12 +581,14 @@ async function testInsecureHTTPVideoFingerprintsAndRetries(browser) {
   await page.click('#movieGenerateBtn');
   await waitForSubmissionResult(page, true);
   const expectedT2VFingerprint = createHash('sha256').update(JSON.stringify({
-    version: 2,
+    version: 3,
+    task: 'h3',
     mode: 't2v',
     prompt: t2vPrompt,
     seed: 42,
     aspect_ratio: '16:9 (Widescreen)',
     image_sha256: '',
+    audio_sha256: '',
   })).digest('hex');
   assert.equal(calls.length, 2, 'T2V submission and retry both work over insecure HTTP');
   assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey);
@@ -573,12 +621,14 @@ async function testInsecureHTTPVideoFingerprintsAndRetries(browser) {
 
   const imageSha256 = createHash('sha256').update(imageBytes).digest('hex');
   const expectedI2VFingerprint = createHash('sha256').update(JSON.stringify({
-    version: 2,
+    version: 3,
+    task: 'h3',
     mode: 'i2v',
     prompt: i2vPrompt,
     seed: 42,
     aspect_ratio: '1:1 (Square)',
     image_sha256: imageSha256,
+    audio_sha256: '',
   })).digest('hex');
   assert.equal(calls.length, 4, 'I2V submission and reload retry both work over insecure HTTP');
   assert.equal(calls[2].idempotencyKey, calls[3].idempotencyKey);
@@ -598,12 +648,14 @@ async function testInsecureHTTPVideoFingerprintsAndRetries(browser) {
   {jobKey, pendingKey, previousJobID});
   const maxImageSha256 = createHash('sha256').update(maxImageBytes).digest('hex');
   const expectedMaxImageFingerprint = createHash('sha256').update(JSON.stringify({
-    version: 2,
+    version: 3,
+    task: 'h3',
     mode: 'i2v',
     prompt: i2vPrompt,
     seed: 42,
     aspect_ratio: '1:1 (Square)',
     image_sha256: maxImageSha256,
+    audio_sha256: '',
   })).digest('hex');
   assert.equal(calls.length, 5, 'a 20 MiB I2V image can be fingerprinted and submitted over insecure HTTP');
   assert.equal(calls[4].pending.fingerprint, expectedMaxImageFingerprint, 'maximum-size image fingerprint matches canonical SHA-256');
@@ -745,6 +797,177 @@ async function testI2VReloadRetryAndImageChange(browser) {
   await context.close();
 }
 
+async function testLipSyncI2VRetryIncludesAudioBytes(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const calls = [];
+  const routes = await installRoutes(page, ['drop', 'accept', 'accept'], calls);
+  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await showMoviePanel(page);
+  await assertMovieUsesViewerOrigin(page, routes);
+  assert.deepEqual(
+    await page.locator('#movieMode option').evaluateAll((options) => options.filter((option) => !option.hidden && !option.disabled).map((option) => option.value)),
+    ['t2v', 'i2v'],
+    'H3 exposes T2V and I2V while keeping V2V unavailable outside audio sync',
+  );
+
+  await page.locator('#movieTaskOptions label').nth(1).click();
+  await page.selectOption('#movieMode', 'i2v');
+  await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'hunyuan-video-lipsync-i2v');
+  assert.equal(await page.locator('#movieInputAudioRow').isVisible(), true, 'audio input appears for speech and singing sync');
+  assert.equal(await page.locator('#movieDurationLabel').textContent(), 'Audio max duration');
+  assert.equal(await page.locator('#movieDurationSeconds').textContent(), '10', 'audio mode displays the owner maximum duration');
+  assert.ok(routes.videoOptionRequests.some((request) => request.task === 'lip_sync' && request.mode === 'i2v'));
+
+  const prompt = 'A paper boat singing across a quiet lake';
+  const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03, 0x04]);
+  const audioA = pcmWav(7);
+  const audioB = pcmWav(8);
+  await page.fill('#moviePrompt', prompt);
+  await page.fill('#movieSeed', '42');
+  await page.locator('#movieInputImage').setInputFiles({name: 'start.png', mimeType: 'image/png', buffer: imageBytes});
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioA});
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, false);
+
+  await page.reload({waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('開始画像、音声'));
+  await prepareVideo(page, 'i2v', prompt);
+  await page.locator('#movieTaskOptions label').nth(1).click();
+  await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'hunyuan-video-lipsync-i2v');
+  await page.locator('#movieInputImage').setInputFiles({name: 'start.png', mimeType: 'image/png', buffer: imageBytes});
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioA});
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, true);
+
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioB});
+  const previousJobID = await page.evaluate((key) => localStorage.getItem(key), jobKey);
+  await page.click('#movieGenerateBtn');
+  await page.waitForFunction(({key, previousJobID, pendingKey}) =>
+    localStorage.getItem(key) !== previousJobID && localStorage.getItem(pendingKey) === null,
+  {key: jobKey, previousJobID, pendingKey});
+
+  assert.equal(calls.length, 3, 'lip-sync I2V submission, retry, and changed-audio request complete');
+  assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey, 'retry with identical audio bytes reuses the request key');
+  assert.equal(calls[0].jobID, calls[1].jobID, 'lost 202 retry returns the same lip-sync job');
+  assert.notEqual(calls[1].idempotencyKey, calls[2].idempotencyKey, 'changed audio bytes produce a new request key');
+  assert.notEqual(calls[1].pending.fingerprint, calls[2].pending.fingerprint, 'audio bytes participate in the retry fingerprint');
+  assert.equal(routes.serverJobs.size, 2, 'same audio reuses one job; changed audio creates a distinct job');
+
+  const imageSha256 = createHash('sha256').update(imageBytes).digest('hex');
+  const audioSha256 = createHash('sha256').update(audioA).digest('hex');
+  const expectedFingerprint = createHash('sha256').update(JSON.stringify({
+    version: 3,
+    task: 'lip_sync',
+    mode: 'i2v',
+    prompt,
+    seed: 42,
+    aspect_ratio: '1:1 (Square)',
+    image_sha256: imageSha256,
+    audio_sha256: audioSha256,
+  })).digest('hex');
+  for (const call of calls) {
+    assert.equal(call.pending.version, 3);
+    assert.equal(call.pending.task, 'lip_sync');
+    assert.match(call.pending.fingerprint, /^[0-9a-f]{64}$/);
+    assert.match(call.body.toString('latin1'), /name="task"\r\n\r\nlip_sync\r\n/);
+    assert.match(call.body.toString('latin1'), /name="mode"\r\n\r\ni2v\r\n/);
+    assert.ok(call.body.includes(Buffer.from('start.png')), 'I2V start image stays in the multipart request');
+    assert.ok(call.body.includes(Buffer.from('speech.wav')), 'WAV audio stays in the multipart request');
+  }
+  assert.equal(calls[0].pending.fingerprint, expectedFingerprint, 'canonical retry digest includes exact WAV bytes');
+  assert.equal(calls[1].pending.fingerprint, expectedFingerprint);
+  await assertMovieUsesViewerOrigin(page, routes);
+  await context.close();
+}
+
+async function testLipSyncV2VRetryFingerprintsBothMediaFiles(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const calls = [];
+  const routes = await installRoutes(page, ['drop', 'accept', 'accept', 'accept'], calls);
+  await page.goto(origin, {waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('movieOptionsStatus').textContent.includes('available'));
+  await prepareVideo(page, 'v2v', '');
+  await page.waitForFunction(() => document.getElementById('movieModel').textContent === 'MuseTalk 1.5');
+
+  assert.ok(routes.videoOptionRequests.some((request) => request.task === 'lip_sync' && request.mode === 'v2v'));
+  assert.equal(await page.locator('#movieDurationLabel').textContent(), 'Duration limit');
+  assert.equal(await page.locator('#movieDurationSeconds').textContent(), '10');
+  assert.match(await page.locator('#movieMaxVideoBytes').textContent(), /1 MiB/);
+  assert.match(await page.locator('#movieMaxAudioBytes').textContent(), /20 MiB/);
+  for (const selector of ['#moviePromptRow', '#movieSeedRow', '#movieAspectRatioRow', '#movieInputImageRow']) {
+    assert.equal(await page.locator(selector).isVisible(), false, `V2V hides irrelevant control ${selector}`);
+  }
+  assert.equal(await page.locator('#movieInputVideoRow').isVisible(), true, 'V2V shows its MP4 source input');
+  assert.equal(await page.locator('#movieInputAudioRow').isVisible(), true, 'V2V shows its audio input');
+  assert.equal(await page.locator('#movieResolutionLabel').isVisible(), false, 'V2V omits resolution settings');
+  assert.equal(await page.locator('#movieStepsLabel').isVisible(), false, 'V2V omits step settings');
+  assert.equal(await page.locator('#movieMode option[value="v2v"]').isDisabled(), false, 'audio sync enables the V2V mode');
+
+  const videoA = Buffer.from([0, 0, 0, 16, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0, 0, 2, 0]);
+  const videoB = Buffer.from([...videoA, 1]);
+  const audioA = pcmWav(3);
+  const audioB = pcmWav(4);
+  const oversizedVideo = Buffer.concat([videoA, Buffer.alloc(1024 * 1024)]);
+  await page.locator('#movieInputVideo').setInputFiles({name: 'source-large.mp4', mimeType: 'video/mp4', buffer: oversizedVideo});
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioA});
+  await page.click('#movieGenerateBtn');
+  await page.waitForFunction(() => document.getElementById('movieError').textContent.includes('MP4'));
+  assert.equal(routes.generationRequests.length, 0, 'source video above the owner option cap is stopped before POST');
+
+  await page.locator('#movieInputVideo').setInputFiles({name: 'source-a.mp4', mimeType: 'video/mp4', buffer: videoA});
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, false);
+  const expectedFingerprint = (sourceVideo, audio) => createHash('sha256').update(JSON.stringify({
+    version: 4,
+    task: 'lip_sync',
+    mode: 'v2v',
+    video_sha256: createHash('sha256').update(sourceVideo).digest('hex'),
+    audio_sha256: createHash('sha256').update(audio).digest('hex'),
+  })).digest('hex');
+  assert.equal(calls[0].pending.version, 4);
+  assert.equal(calls[0].pending.fingerprint, expectedFingerprint(videoA, audioA));
+  for (const forbiddenField of ['prompt', 'seed', 'aspect_ratio', 'image']) {
+    assert.equal(calls[0].body.includes(Buffer.from(`name="${forbiddenField}"`)), false, `V2V omits ${forbiddenField}`);
+  }
+  for (const requiredField of ['mode', 'task', 'video', 'audio']) {
+    assert.ok(calls[0].body.includes(Buffer.from(`name="${requiredField}"`)), `V2V includes ${requiredField}`);
+  }
+
+  await page.reload({waitUntil: 'domcontentloaded'});
+  await page.waitForFunction(() => document.getElementById('videoJobStatus').textContent.includes('同じMP4動画とWAV音声'));
+  await showMoviePanel(page);
+  await page.locator('#movieInputVideo').setInputFiles({name: 'source-a.mp4', mimeType: 'video/mp4', buffer: videoA});
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioA});
+  await page.click('#movieGenerateBtn');
+  await waitForSubmissionResult(page, true);
+  assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey, 'same video and audio retry reuses its key');
+  assert.equal(calls[0].jobID, calls[1].jobID, 'uncertain retry returns the same job');
+
+  await page.locator('#movieInputVideo').setInputFiles({name: 'source-b.mp4', mimeType: 'video/mp4', buffer: videoB});
+  const previousVideoJobID = await page.evaluate((key) => localStorage.getItem(key), jobKey);
+  await page.click('#movieGenerateBtn');
+  await page.waitForFunction(({key, pendingKey, previousJobID}) =>
+    localStorage.getItem(key) !== null && localStorage.getItem(key) !== previousJobID && localStorage.getItem(pendingKey) === null,
+  {key: jobKey, pendingKey, previousJobID: previousVideoJobID});
+  assert.notEqual(calls[1].idempotencyKey, calls[2].idempotencyKey, 'changed video bytes produce a new key');
+  assert.equal(calls[2].pending.fingerprint, expectedFingerprint(videoB, audioA));
+
+  await page.locator('#movieInputAudio').setInputFiles({name: 'speech.wav', mimeType: 'audio/wav', buffer: audioB});
+  const previousAudioJobID = await page.evaluate((key) => localStorage.getItem(key), jobKey);
+  await page.click('#movieGenerateBtn');
+  await page.waitForFunction(({key, pendingKey, previousJobID}) =>
+    localStorage.getItem(key) !== null && localStorage.getItem(key) !== previousJobID && localStorage.getItem(pendingKey) === null,
+  {key: jobKey, pendingKey, previousJobID: previousAudioJobID});
+  assert.notEqual(calls[2].idempotencyKey, calls[3].idempotencyKey, 'changed audio bytes produce a new key');
+  assert.equal(calls[3].pending.fingerprint, expectedFingerprint(videoB, audioB));
+  assert.equal(routes.serverJobs.size, 3, 'same media bytes reuse one job; changed video or audio creates a distinct job');
+  await assertMovieUsesViewerOrigin(page, routes);
+  await context.close();
+}
+
 async function testSavedJobResumesWithoutBrowserLogin(browser) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -828,6 +1051,8 @@ try {
   await testInsecureHTTPVideoFingerprintsAndRetries(browser);
   await testT2VReloadOptionsFailureRetryPreservesAspect(browser);
   await testI2VReloadRetryAndImageChange(browser);
+  await testLipSyncI2VRetryIncludesAudioBytes(browser);
+  await testLipSyncV2VRetryFingerprintsBothMediaFiles(browser);
   await testSavedJobResumesWithoutBrowserLogin(browser);
   await testSavedJobWaitsForVideoOptionsAndRetries(browser);
   await testMovieOptions404ShowsLanGuidance(browser);

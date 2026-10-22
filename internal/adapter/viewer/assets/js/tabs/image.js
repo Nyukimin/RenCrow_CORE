@@ -502,18 +502,39 @@
 
 (function initMovieTab() {
   const form = document.getElementById('movieGenerationForm');
+  const promptRow = document.getElementById('moviePromptRow');
   const prompt = document.getElementById('moviePrompt');
+  const taskInputs = Array.from(document.querySelectorAll('input[name="movieTask"]'));
   const mode = document.getElementById('movieMode');
+  const v2vModeOption = mode && mode.querySelector('option[value="v2v"]');
   const aspectRatio = document.getElementById('movieAspectRatio');
+  const aspectRatioRow = document.getElementById('movieAspectRatioRow');
   const optionsStatus = document.getElementById('movieOptionsStatus');
   const optionsError = document.getElementById('movieOptionsError');
   const optionsRetry = document.getElementById('movieOptionsRetry');
   const movieModel = document.getElementById('movieModel');
   const movieMegapixels = document.getElementById('movieMegapixels');
   const movieDurationSeconds = document.getElementById('movieDurationSeconds');
+  const movieDurationLabel = document.getElementById('movieDurationLabel');
   const movieSteps = document.getElementById('movieSteps');
+  const movieResolutionLabel = document.getElementById('movieResolutionLabel');
+  const movieResolutionValue = document.getElementById('movieResolutionValue');
+  const movieStepsLabel = document.getElementById('movieStepsLabel');
+  const movieStepsValue = document.getElementById('movieStepsValue');
+  const movieMaxVideoBytesLabel = document.getElementById('movieMaxVideoBytesLabel');
+  const movieMaxVideoBytes = document.getElementById('movieMaxVideoBytes');
+  const movieMaxAudioBytesLabel = document.getElementById('movieMaxAudioBytesLabel');
+  const movieMaxAudioBytes = document.getElementById('movieMaxAudioBytes');
+  const inputVideoRow = document.getElementById('movieInputVideoRow');
+  const inputVideo = document.getElementById('movieInputVideo');
+  const inputVideoLimit = document.getElementById('movieInputVideoLimit');
   const inputImageRow = document.getElementById('movieInputImageRow');
   const inputImage = document.getElementById('movieInputImage');
+  const inputAudioRow = document.getElementById('movieInputAudioRow');
+  const inputAudio = document.getElementById('movieInputAudio');
+  const inputAudioLabel = document.getElementById('movieInputAudioLabel');
+  const inputAudioLimit = document.getElementById('movieInputAudioLimit');
+  const seedRow = document.getElementById('movieSeedRow');
   const seed = document.getElementById('movieSeed');
   const generateButton = document.getElementById('movieGenerateBtn');
   const status = document.getElementById('movieStatus');
@@ -524,14 +545,22 @@
   const videoProgress = document.getElementById('videoProgress');
   const video = document.getElementById('videoResult');
   const download = document.getElementById('videoDownload');
-  if (!form || !prompt || !mode || !aspectRatio || !optionsStatus || !optionsError || !optionsRetry ||
-      !movieModel || !movieMegapixels || !movieDurationSeconds || !movieSteps || !generateButton || !status || !video) return;
+  if (!form || !promptRow || !prompt || taskInputs.length !== 2 || !taskInputs.some((input) => input.value === 'h3') ||
+      !taskInputs.some((input) => input.value === 'lip_sync') || !mode || !v2vModeOption || !aspectRatio || !aspectRatioRow || !optionsStatus ||
+      !optionsError || !optionsRetry || !movieModel || !movieMegapixels || !movieDurationSeconds ||
+      !movieDurationLabel || !movieSteps || !movieResolutionLabel || !movieResolutionValue || !movieStepsLabel || !movieStepsValue ||
+      !movieMaxVideoBytesLabel || !movieMaxVideoBytes || !movieMaxAudioBytesLabel || !movieMaxAudioBytes ||
+      !inputVideoRow || !inputVideo || !inputVideoLimit || !inputImageRow || !inputImage || !inputAudioRow || !inputAudio ||
+      !inputAudioLabel || !inputAudioLimit || !seedRow || !generateButton || !status || !video) return;
 
   const savedVideoJobKey = 'rencrow.image.video.lastJobId';
   const savedVideoPendingKey = 'rencrow.image.video.pendingRequest';
   const videoJobPattern = /^vid_[A-Za-z0-9_-]{1,128}$/;
   const maxVideoImageBytes = 20 * 1024 * 1024;
+  const maxVideoAudioBytes = 20 * 1024 * 1024;
+  const maxVideoV2VBytes = 100 * 1024 * 1024;
   const maxVideoAspectRatioBytes = 64;
+  const defaultAudioLimitNote = inputAudioLimit.textContent;
   let currentVideoID = '';
   let pollTimer = 0;
   let videoSubmitBusy = false;
@@ -552,11 +581,14 @@
 
   function setBusy(busy, label) {
     generateButton.disabled = busy || !videoOptionsReady;
-    prompt.disabled = busy;
+    prompt.disabled = busy || mode.value === 'v2v';
+    for (const input of taskInputs) input.disabled = busy;
     mode.disabled = busy;
-    if (inputImage) inputImage.disabled = busy;
-    if (seed) seed.disabled = busy;
-    aspectRatio.disabled = busy || !videoOptionsReady;
+    inputVideo.disabled = busy || mode.value !== 'v2v';
+    if (inputImage) inputImage.disabled = busy || mode.value !== 'i2v';
+    inputAudio.disabled = busy || selectedVideoTask() !== 'lip_sync';
+    if (seed) seed.disabled = busy || mode.value === 'v2v';
+    aspectRatio.disabled = busy || !videoOptionsReady || mode.value === 'v2v';
     generateButton.textContent = label || (busy ? 'Generating...' : 'Generate video');
     if (busy) setStatus('generating', true);
   }
@@ -567,7 +599,36 @@
   }
 
   function updateVideoModeInputs() {
-    inputImageRow.hidden = mode.value !== 'i2v';
+    const lipSync = selectedVideoTask() === 'lip_sync';
+    v2vModeOption.hidden = !lipSync;
+    v2vModeOption.disabled = !lipSync;
+    if (!lipSync && mode.value === 'v2v') mode.value = 't2v';
+    const v2v = mode.value === 'v2v';
+    promptRow.hidden = v2v;
+    prompt.disabled = videoSubmitBusy || v2v;
+    aspectRatioRow.hidden = v2v;
+    aspectRatio.disabled = videoSubmitBusy || !videoOptionsReady || v2v;
+    inputVideoRow.hidden = !v2v;
+    inputVideo.disabled = videoSubmitBusy || !v2v;
+    inputImageRow.hidden = v2v || mode.value !== 'i2v';
+    inputImage.disabled = videoSubmitBusy || v2v || mode.value !== 'i2v';
+    inputAudioRow.hidden = !lipSync;
+    inputAudio.disabled = videoSubmitBusy || !lipSync;
+    seedRow.hidden = v2v;
+    seed.disabled = videoSubmitBusy || v2v;
+    movieResolutionLabel.hidden = v2v;
+    movieResolutionValue.hidden = v2v;
+    movieStepsLabel.hidden = v2v;
+    movieStepsValue.hidden = v2v;
+    movieMaxVideoBytesLabel.hidden = !v2v;
+    movieMaxVideoBytes.hidden = !v2v;
+    movieMaxAudioBytesLabel.hidden = !v2v;
+    movieMaxAudioBytes.hidden = !v2v;
+  }
+
+  function selectedVideoTask() {
+    const selected = taskInputs.find((input) => input.checked);
+    return selected ? selected.value : 'h3';
   }
 
   function validAspectRatio(value) {
@@ -575,10 +636,38 @@
       value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
   }
 
-  function validateVideoOptions(payload, requestedMode) {
+  function formatVideoByteLimit(bytes) {
+    const mib = bytes / (1024 * 1024);
+    const formattedMib = Number.isInteger(mib) ? String(mib) : mib.toFixed(2);
+    return `${formattedMib} MiB (${new Intl.NumberFormat().format(bytes)} bytes)`;
+  }
+
+  function validateVideoOptions(payload, requestedMode, requestedTask) {
     if (!payload || typeof payload !== 'object' || payload.mode !== requestedMode ||
+        (requestedTask === 'lip_sync' ? payload.task !== 'lip_sync' : Object.prototype.hasOwnProperty.call(payload, 'task')) ||
         typeof payload.model !== 'string' || !payload.model.trim() || payload.model.trim() !== payload.model ||
-        payload.model.length > 128 || !Array.isArray(payload.aspect_ratios) || payload.aspect_ratios.length < 1 ||
+        payload.model.length > 128) {
+      throw new Error('動画モデル設定が正しくありません。');
+    }
+    if (requestedMode === 'v2v') {
+      const hasIrrelevantFields = ['aspect_ratios', 'default_aspect_ratio', 'megapixels', 'steps']
+        .some((field) => Object.prototype.hasOwnProperty.call(payload, field));
+      if (requestedTask !== 'lip_sync' || payload.model !== 'MuseTalk 1.5' || hasIrrelevantFields ||
+          payload.duration_seconds !== 10 || !Number.isSafeInteger(payload.max_video_bytes) ||
+          payload.max_video_bytes < 1 || payload.max_video_bytes > maxVideoV2VBytes ||
+          payload.max_audio_bytes !== maxVideoAudioBytes) {
+        throw new Error('動画モデル設定が正しくありません。');
+      }
+      return {
+        model: payload.model,
+        mode: payload.mode,
+        task: requestedTask,
+        durationSeconds: payload.duration_seconds,
+        maxVideoBytes: payload.max_video_bytes,
+        maxAudioBytes: payload.max_audio_bytes,
+      };
+    }
+    if (!['t2v', 'i2v'].includes(requestedMode) || !Array.isArray(payload.aspect_ratios) || payload.aspect_ratios.length < 1 ||
         payload.aspect_ratios.length > 32 || !validAspectRatio(payload.default_aspect_ratio) ||
         !Number.isFinite(payload.megapixels) || payload.megapixels <= 0 || payload.megapixels > 64 ||
         !Number.isSafeInteger(payload.duration_seconds) || payload.duration_seconds < 1 || payload.duration_seconds > 3600 ||
@@ -594,6 +683,7 @@
     return {
       model: payload.model,
       mode: payload.mode,
+      task: requestedTask,
       aspectRatios: [...payload.aspect_ratios],
       defaultAspectRatio: payload.default_aspect_ratio,
       megapixels: payload.megapixels,
@@ -602,7 +692,7 @@
     };
   }
 
-  async function loadVideoOptions(requestedMode = mode.value, preferredAspect = '') {
+  async function loadVideoOptions(requestedMode = mode.value, preferredAspect = '', requestedTask = selectedVideoTask()) {
     const revision = ++videoOptionsRevision;
     videoOptionsReady = false;
     videoOptions = null;
@@ -614,11 +704,19 @@
     movieModel.textContent = '—';
     movieMegapixels.textContent = '—';
     movieDurationSeconds.textContent = '—';
+    movieDurationLabel.textContent = requestedMode === 'v2v'
+      ? 'Duration limit'
+      : requestedTask === 'lip_sync' ? 'Audio max duration' : 'Duration';
     movieSteps.textContent = '—';
+    movieMaxVideoBytes.textContent = '—';
+    movieMaxAudioBytes.textContent = '—';
+    updateVideoModeInputs();
     setBusy(false);
 
     try {
-      const response = await fetch(`/viewer/image/video/options?mode=${encodeURIComponent(requestedMode)}`, {
+      const query = new URLSearchParams({mode: requestedMode});
+      if (requestedTask === 'lip_sync') query.set('task', 'lip_sync');
+      const response = await fetch(`/viewer/image/video/options?${query.toString()}`, {
         method: 'GET',
         cache: 'no-store',
         credentials: 'same-origin',
@@ -629,30 +727,41 @@
         const message = payload && typeof payload.message === 'string' ? payload.message : `HTTP ${response.status}`;
         throw new Error(message);
       }
-      const options = validateVideoOptions(payload, requestedMode);
-      if (revision !== videoOptionsRevision || mode.value !== requestedMode) return null;
+      const options = validateVideoOptions(payload, requestedMode, requestedTask);
+      if (revision !== videoOptionsRevision || mode.value !== requestedMode || selectedVideoTask() !== requestedTask) return null;
       videoOptions = options;
-      const choices = options.aspectRatios.map((value) => {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = value;
-        return option;
-      });
-      const selectedAspect = preferredAspect && validAspectRatio(preferredAspect) ? preferredAspect : options.defaultAspectRatio;
-      if (preferredAspect && !options.aspectRatios.includes(preferredAspect)) {
-        const previous = document.createElement('option');
-        previous.value = preferredAspect;
-        previous.textContent = `${preferredAspect} (previous request)`;
-        choices.push(previous);
+      if (requestedMode === 'v2v') {
+        movieMaxVideoBytes.textContent = formatVideoByteLimit(options.maxVideoBytes);
+        movieMaxAudioBytes.textContent = formatVideoByteLimit(options.maxAudioBytes);
+        inputVideoLimit.textContent = `MP4 · up to ${formatVideoByteLimit(options.maxVideoBytes)}`;
+        inputAudioLabel.textContent = 'Audio input (WAV PCM)';
+        inputAudioLimit.textContent = `WAV PCM · up to ${formatVideoByteLimit(options.maxAudioBytes)}`;
+      } else {
+        const choices = options.aspectRatios.map((value) => {
+          const option = document.createElement('option');
+          option.value = value;
+          option.textContent = value;
+          return option;
+        });
+        const selectedAspect = preferredAspect && validAspectRatio(preferredAspect) ? preferredAspect : options.defaultAspectRatio;
+        if (preferredAspect && !options.aspectRatios.includes(preferredAspect)) {
+          const previous = document.createElement('option');
+          previous.value = preferredAspect;
+          previous.textContent = `${preferredAspect} (previous request)`;
+          choices.push(previous);
+        }
+        aspectRatio.replaceChildren(...choices);
+        aspectRatio.value = selectedAspect;
+        inputAudioLabel.textContent = 'Speech or singing audio (WAV PCM)';
+        inputAudioLimit.textContent = defaultAudioLimitNote;
       }
-      aspectRatio.replaceChildren(...choices);
-      aspectRatio.value = selectedAspect;
       movieModel.textContent = options.model;
-      movieMegapixels.textContent = String(options.megapixels);
+      if (requestedMode !== 'v2v') movieMegapixels.textContent = String(options.megapixels);
       movieDurationSeconds.textContent = String(options.durationSeconds);
-      movieSteps.textContent = String(options.steps);
+      if (requestedMode !== 'v2v') movieSteps.textContent = String(options.steps);
       videoOptionsReady = true;
-      optionsStatus.textContent = `Video options available · ${options.mode}`;
+      optionsStatus.textContent = `Video options available · ${options.mode}${requestedTask === 'lip_sync' ? ' · audio sync' : ''}`;
+      updateVideoModeInputs();
       setBusy(false);
       return options;
     } catch (requestError) {
@@ -774,7 +883,7 @@
     return sha256HexFallback(value);
   }
 
-  async function videoRequestFingerprint(videoMode, promptText, seedValue, file) {
+  async function version2VideoRequestFingerprint(videoMode, promptText, seedValue, file) {
     const imageSha256 = file ? await sha256Hex(await file.arrayBuffer()) : '';
     const normalizedRequest = JSON.stringify({
       version: 2,
@@ -783,6 +892,35 @@
       seed: seedValue,
       aspect_ratio: aspectRatio.value,
       image_sha256: imageSha256,
+    });
+    return sha256Hex(new TextEncoder().encode(normalizedRequest));
+  }
+
+  async function videoRequestFingerprint(taskValue, videoMode, promptText, seedValue, imageFile, audioFile) {
+    const imageSha256 = imageFile ? await sha256Hex(await imageFile.arrayBuffer()) : '';
+    const audioSha256 = audioFile ? await sha256Hex(await audioFile.arrayBuffer()) : '';
+    const normalizedRequest = JSON.stringify({
+      version: 3,
+      task: taskValue,
+      mode: videoMode,
+      prompt: promptText,
+      seed: seedValue,
+      aspect_ratio: aspectRatio.value,
+      image_sha256: imageSha256,
+      audio_sha256: audioSha256,
+    });
+    return sha256Hex(new TextEncoder().encode(normalizedRequest));
+  }
+
+  async function v2vRequestFingerprint(taskValue, videoMode, videoFile, audioFile) {
+    const videoSha256 = await sha256Hex(await videoFile.arrayBuffer());
+    const audioSha256 = await sha256Hex(await audioFile.arrayBuffer());
+    const normalizedRequest = JSON.stringify({
+      version: 4,
+      task: taskValue,
+      mode: videoMode,
+      video_sha256: videoSha256,
+      audio_sha256: audioSha256,
     });
     return sha256Hex(new TextEncoder().encode(normalizedRequest));
   }
@@ -805,12 +943,15 @@
       if (!serialized) return null;
       const pending = JSON.parse(serialized);
       const validLegacyRequest = pending && pending.version === 1 && !Object.prototype.hasOwnProperty.call(pending, 'aspect_ratio');
-      const validCurrentRequest = pending && pending.version === 2 && validAspectRatio(pending.aspect_ratio);
-      if ((!validLegacyRequest && !validCurrentRequest) ||
+      const validVersion2Request = pending && pending.version === 2 && validAspectRatio(pending.aspect_ratio);
+      const validCurrentRequest = pending && pending.version === 3 && validAspectRatio(pending.aspect_ratio) &&
+        ['h3', 'lip_sync'].includes(pending.task) && ['t2v', 'i2v'].includes(pending.mode);
+      const validV2VRequest = pending && pending.version === 4 && pending.task === 'lip_sync' && pending.mode === 'v2v';
+      if ((!validLegacyRequest && !validVersion2Request && !validCurrentRequest && !validV2VRequest) ||
           !/^[0-9a-f]{32}$/.test(pending.key || '') ||
           !/^[0-9a-f]{64}$/.test(pending.fingerprint || '') ||
-          !['t2v', 'i2v'].includes(pending.mode) ||
-          !Number.isSafeInteger(pending.seed) || pending.seed < 0 || pending.seed > 9007199254740991) {
+          (pending.version !== 4 && (!['t2v', 'i2v'].includes(pending.mode) ||
+            !Number.isSafeInteger(pending.seed) || pending.seed < 0 || pending.seed > 9007199254740991))) {
         window.localStorage.removeItem(savedVideoPendingKey);
         return null;
       }
@@ -971,13 +1112,16 @@
   async function resumePendingVideoRequest() {
     const pending = loadPendingVideoRequest();
     if (!pending) return false;
+    const pendingTask = pending.version >= 3 ? pending.task : 'h3';
+    for (const input of taskInputs) input.checked = input.value === pendingTask;
     mode.value = pending.mode;
-    seed.value = String(pending.seed);
+    if (pending.version !== 4) seed.value = String(pending.seed);
     updateVideoModeInputs();
-    const options = videoOptions && videoOptions.mode === pending.mode
+    const hasAspectRatio = pending.version === 2 || pending.version === 3;
+    const options = videoOptions && videoOptions.mode === pending.mode && videoOptions.task === pendingTask
       ? videoOptions
-      : await loadVideoOptions(pending.mode, pending.version === 2 ? pending.aspect_ratio : '');
-    if (pending.version === 2 && options) {
+      : await loadVideoOptions(pending.mode, hasAspectRatio ? pending.aspect_ratio : '', pendingTask);
+    if (hasAspectRatio && options) {
       if (!Array.from(aspectRatio.options).some((option) => option.value === pending.aspect_ratio)) {
         const previous = document.createElement('option');
         previous.value = pending.aspect_ratio;
@@ -987,9 +1131,15 @@
       aspectRatio.value = pending.aspect_ratio;
     }
     resetVideoPlayer();
-    videoStatus.textContent = pending.mode === 'i2v'
-      ? '前回の送信結果が不明です。同じプロンプト、縦横比、Seedを入力し、同じ開始画像を選び直して安全に再試行できます。'
-      : '前回の送信結果が不明です。同じプロンプト、縦横比、Seedで再試行できます。';
+    videoStatus.textContent = pending.version === 4
+      ? '前回の送信結果が不明です。同じMP4動画とWAV音声を選び直して安全に再試行できます。'
+      : pendingTask === 'lip_sync'
+      ? pending.mode === 'i2v'
+        ? '前回の送信結果が不明です。同じプロンプト、縦横比、Seed、開始画像、音声を選び直して安全に再試行できます。'
+        : '前回の送信結果が不明です。同じプロンプト、縦横比、Seed、音声を選び直して安全に再試行できます。'
+      : pending.mode === 'i2v'
+        ? '前回の送信結果が不明です。同じプロンプト、縦横比、Seedを入力し、同じ開始画像を選び直して安全に再試行できます。'
+        : '前回の送信結果が不明です。同じプロンプト、縦横比、Seedで再試行できます。';
     revealVideoResult();
     setStatus('submission uncertain', true);
     return true;
@@ -1000,8 +1150,8 @@
     return true;
   }
 
-  function loadVideoOptionsAndResume(requestedMode = mode.value, preferredAspect = '') {
-    return loadVideoOptions(requestedMode, preferredAspect).then((options) => {
+  function loadVideoOptionsAndResume(requestedMode = mode.value, preferredAspect = '', requestedTask = selectedVideoTask()) {
+    return loadVideoOptions(requestedMode, preferredAspect, requestedTask).then((options) => {
       if (options) resumeSavedVideoState();
       return options;
     });
@@ -1016,26 +1166,34 @@
   }
 
   async function generateVideo() {
-    const promptText = prompt.value.trim();
-    if (!promptText) {
-      showError('プロンプトを入力してください。');
-      prompt.focus();
-      return;
-    }
-    const seedValue = Number(seed.value);
-    if (seed.value.trim() === '' || !Number.isSafeInteger(seedValue) || seedValue < 0 || seedValue > 9007199254740991) {
-      showError('動画Seedは0以上の整数で入力してください。');
-      seed.focus();
-      return;
-    }
     const videoMode = mode.value;
-    if (!['t2v', 'i2v'].includes(videoMode)) {
+    const taskValue = selectedVideoTask();
+    const isV2V = videoMode === 'v2v';
+    if (!['t2v', 'i2v', 'v2v'].includes(videoMode) || (isV2V && taskValue !== 'lip_sync')) {
       showError('動画モードを選び直してください。');
       mode.focus();
       return;
     }
-    const aspectRatioValue = aspectRatio.value;
-    if (!videoOptionsReady || !videoOptions || videoOptions.mode !== videoMode || !validAspectRatio(aspectRatioValue)) {
+    if (!['h3', 'lip_sync'].includes(taskValue)) {
+      showError('動画生成の種類を選び直してください。');
+      return;
+    }
+    const promptText = isV2V ? '' : prompt.value.trim();
+    if (!isV2V && !promptText) {
+      showError('プロンプトを入力してください。');
+      prompt.focus();
+      return;
+    }
+    const seedValue = isV2V ? 0 : Number(seed.value);
+    if (!isV2V && (seed.value.trim() === '' || !Number.isSafeInteger(seedValue) || seedValue < 0 || seedValue > 9007199254740991)) {
+      showError('動画Seedは0以上の整数で入力してください。');
+      seed.focus();
+      return;
+    }
+    const aspectRatioValue = isV2V ? '' : aspectRatio.value;
+    const requestTask = taskValue === 'lip_sync' ? 'lip_sync' : '';
+    if (!videoOptionsReady || !videoOptions || videoOptions.mode !== videoMode || videoOptions.task !== taskValue ||
+        (!isV2V && !validAspectRatio(aspectRatioValue))) {
       showError('選択した動画モードの設定を読み込んでください。');
       return;
     }
@@ -1045,9 +1203,35 @@
       inputImage.focus();
       return;
     }
+    const videoFile = isV2V ? inputVideo.files[0] : null;
+    if (isV2V && !videoFile) {
+      showError('Video to videoではMP4動画を選択してください。');
+      inputVideo.focus();
+      return;
+    }
+    if (videoFile && (videoFile.size === 0 || videoFile.size > videoOptions.maxVideoBytes ||
+        (!['video/mp4', 'application/mp4'].includes(videoFile.type) && !/\.mp4$/i.test(videoFile.name)))) {
+      showError(`動画は${formatVideoByteLimit(videoOptions.maxVideoBytes)}以下のMP4を選択してください。`);
+      inputVideo.focus();
+      return;
+    }
     if (file && (file.size > maxVideoImageBytes || !['image/png', 'image/jpeg'].includes(file.type) && !/\.(png|jpe?g)$/i.test(file.name))) {
       showError('開始画像は20 MiB以下のPNGまたはJPEGを選択してください。');
       inputImage.focus();
+      return;
+    }
+    const audioFile = requestTask ? inputAudio.files[0] : null;
+    const wavType = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave'].includes(audioFile && audioFile.type);
+    if (requestTask && !audioFile) {
+      showError('音声同期ではWAV PCM音声を選択してください。');
+      inputAudio.focus();
+      return;
+    }
+    const maxAudioBytes = isV2V ? videoOptions.maxAudioBytes : maxVideoAudioBytes;
+    if (audioFile && (audioFile.size === 0 || audioFile.size > maxAudioBytes ||
+        (!wavType && !/\.wav$/i.test(audioFile.name)))) {
+      showError(`音声は${formatVideoByteLimit(maxAudioBytes)}以下のWAVファイルを選択してください。`);
+      inputAudio.focus();
       return;
     }
 
@@ -1058,21 +1242,31 @@
     resetVideoPlayer();
     let requestSubmitted = false;
     try {
-      const fingerprint = await videoRequestFingerprint(videoMode, promptText, seedValue, file);
+      const fingerprint = isV2V
+        ? await v2vRequestFingerprint(taskValue, videoMode, videoFile, audioFile)
+        : await videoRequestFingerprint(taskValue, videoMode, promptText, seedValue, file, audioFile);
       const previous = loadPendingVideoRequest();
-      const legacyFingerprint = previous && previous.version === 1
+      const version2Fingerprint = !isV2V && previous && previous.version === 2 && taskValue === 'h3'
+        ? await version2VideoRequestFingerprint(videoMode, promptText, seedValue, file)
+        : '';
+      const legacyFingerprint = !isV2V && previous && previous.version === 1 && taskValue === 'h3'
         ? await legacyVideoRequestFingerprint(videoMode, promptText, seedValue, file)
         : '';
-      const matchesCurrentRequest = previous && previous.version === 2 && previous.fingerprint === fingerprint &&
+      const matchesCurrentRequest = !isV2V && previous && previous.version === 3 && previous.fingerprint === fingerprint &&
+        previous.task === taskValue && previous.mode === videoMode && previous.aspect_ratio === aspectRatioValue;
+      const matchesV2VRequest = isV2V && previous && previous.version === 4 && previous.fingerprint === fingerprint &&
+        previous.task === taskValue && previous.mode === videoMode;
+      const matchesVersion2Request = previous && previous.version === 2 && previous.fingerprint === version2Fingerprint &&
         previous.mode === videoMode && previous.aspect_ratio === aspectRatioValue;
       const matchesLegacyRequest = previous && previous.version === 1 && previous.fingerprint === legacyFingerprint &&
         previous.mode === videoMode && aspectRatioValue === videoOptions.defaultAspectRatio;
-      if (!videoOptions.aspectRatios.includes(aspectRatioValue) && !matchesCurrentRequest) {
+      const matchesExistingRequest = matchesCurrentRequest || matchesV2VRequest || matchesVersion2Request || matchesLegacyRequest;
+      if (!isV2V && !videoOptions.aspectRatios.includes(aspectRatioValue) && !matchesExistingRequest) {
         throw new Error('選択した縦横比は現在の動画設定で利用できません。');
       }
-      const pending = matchesCurrentRequest || matchesLegacyRequest
-        ? previous
-        : {version: 2, key: makeIdempotencyKey(), fingerprint, mode: videoMode, seed: seedValue, aspect_ratio: aspectRatioValue};
+      const pending = matchesExistingRequest ? previous : isV2V
+        ? {version: 4, key: makeIdempotencyKey(), fingerprint, task: taskValue, mode: videoMode}
+        : {version: 3, key: makeIdempotencyKey(), fingerprint, task: taskValue, mode: videoMode, seed: seedValue, aspect_ratio: aspectRatioValue};
       if (pending !== previous) {
         // Persist before POST so a lost 202 can be retried with the same key.
         savePendingVideoRequest(pending);
@@ -1080,10 +1274,16 @@
 
       const request = new FormData();
       request.append('mode', videoMode);
-      request.append('prompt', promptText);
-      request.append('seed', String(seedValue));
-      if (!matchesLegacyRequest) request.append('aspect_ratio', aspectRatioValue);
-      if (file) request.append('image', file, file.name);
+      if (requestTask) request.append('task', requestTask);
+      if (isV2V) {
+        request.append('video', videoFile, videoFile.name);
+      } else {
+        request.append('prompt', promptText);
+        request.append('seed', String(seedValue));
+        if (pending.version !== 1) request.append('aspect_ratio', aspectRatioValue);
+        if (file) request.append('image', file, file.name);
+      }
+      if (audioFile) request.append('audio', audioFile, audioFile.name);
 
       window.clearTimeout(pollTimer);
       currentVideoID = '';
@@ -1133,13 +1333,20 @@
     }
   });
   mode.addEventListener('change', updateVideoModeInputs);
-  mode.addEventListener('change', () => loadVideoOptions(mode.value));
+  mode.addEventListener('change', () => loadVideoOptions(mode.value, '', selectedVideoTask()));
+  for (const input of taskInputs) {
+    input.addEventListener('change', () => {
+      updateVideoModeInputs();
+      loadVideoOptions(mode.value, '', selectedVideoTask());
+    });
+  }
   optionsRetry.addEventListener('click', () => {
     const pending = loadPendingVideoRequest();
-    const preferredAspect = pending && pending.version === 2 && pending.mode === mode.value
+    const preferredAspect = pending && (pending.version === 2 || pending.version === 3) && pending.mode === mode.value &&
+      (pending.version !== 3 || pending.task === selectedVideoTask())
       ? pending.aspect_ratio
       : '';
-    loadVideoOptionsAndResume(mode.value, preferredAspect);
+    loadVideoOptionsAndResume(mode.value, preferredAspect, selectedVideoTask());
   });
 
   updateVideoModeInputs();

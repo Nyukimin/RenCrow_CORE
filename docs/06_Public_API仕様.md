@@ -89,7 +89,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `GET /viewer/image/options`, `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewer Image画面のmodel options取得、画像生成と結果表示 |
 | `GET /viewer/image/edit/options`, `POST /viewer/image/edit` | Image画面のPose／服装参照の利用可否取得と、人物画像・参照画像を使うQwen Image Edit生成 |
-| `GET /viewer/image/video/options?mode=...` | Debug Viewer Movie画面のmode別model、aspect ratio、固定parameter取得 |
+| `GET /viewer/image/video/options?mode=...&task=lip_sync` | Debug Viewer Movie画面のmode別model、aspect ratio、固定parameterまたはV2V media limits取得。`task`省略時は既存H3、指定時は音声同期options |
 | `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | 許可済みLAN IPv4からのMovie生成・状態poll・Range対応MP4 proxy。利用者認証は行わない |
 | `POST /viewer/recipient-selection` | client-localなchat recipient選択の通知event |
 | `POST /webhook/line` | LINE Messaging API Webhook。署名必須の正規path |
@@ -1210,16 +1210,16 @@ optionsを取得できない場合は生成操作を無効にし、利用不能�
 RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
 `GET /viewer/image/video/options?mode=t2v|i2v`はRenCrow_Imageの同じmode指定options routeを中継します。`mode`省略時は`t2v`です。
-返すmodel、aspect ratio一覧とdefault、megapixels、duration、stepsはImage ownerの値を使います。COREはoptionsの形とmodeを検証します。
+既存H3ではtaskを省略し、音声同期では`task=lip_sync`を指定します。音声同期T2V／I2V optionsは通常のmodel、aspect ratio一覧とdefault、megapixels、duration、stepsに`task:"lip_sync"`を加えて返します。音声同期の`duration_seconds:10`は音声の最大時間です。
+`task=lip_sync&mode=v2v`は`task`、`mode`、`model:"MuseTalk 1.5"`、`duration_seconds:10`、`max_video_bytes`、`max_audio_bytes:20971520`だけを返し、aspect ratio、megapixels、stepsは含めません。`max_video_bytes`は1から100 MiBまでです。COREはoptionsの形、mode、task、limitsを検証します。
 options routeを含むすべてのMovie routeは、有効化時に実socketのremote IPv4、完全一致Host、HTTP Originを検査します。
-remote IPv4は`image.video_browser.allowed_client_ipv4`のいずれかのprivate IPv4と一致する必要があります。production allowlistはbrowser端末の`192.168.1.203`だけです。Host／OriginはViewer interfaceの`192.168.1.206:18790`です。`.203`のbrowserから`.206`のCORE／Viewer／Image Gatewayへ接続し、Image GatewayはSSH tunnelで`.207`のComfyUIへ動画生成を依頼します。`.204`はcoding用、`.207`は生成実行hostであり、どちらもbrowser source allowlistには含めません。配列の各entryは一台のcanonical IPv4です。POST/DELETEではOriginを
+remote IPv4は`image.video_browser.allowed_client_ipv4`のいずれかのprivate IPv4と一致する必要があります。production allowlistはbrowser端末の`192.168.1.203`だけです。Host／OriginはViewer interfaceの`192.168.1.206:18790`です。`.203`のbrowserから`.206`のCORE／Viewer／Image Gatewayへ接続します。Image Gatewayは内部tunnel経由で生成backendを呼び、音声同期T2V／I2VはComfyUI LTX2.5、V2V音声同期はMuseTalk 1.5を使います。V2Vはsource動画を保ったまま音声を差し替えるComfyUI workflowがないため、MuseTalk 1.5を使います。`.204`はcoding用、`.207`は生成実行hostであり、どちらもbrowser source allowlistには含めません。配列の各entryは一台のcanonical IPv4です。POST/DELETEではOriginを
 一つ必須とし、GETでOriginがある場合も単一の設定済みOriginとの完全一致を要求します。`Forwarded`、`X-Forwarded-*`、
 `Tailscale-*` headerがあるrequestは拒否します。これらの検査はアクセス境界であり、利用者認証ではありません。
 専用credential、cookie、browser session用routeはありません。
 
 `POST /viewer/image/video/generations`がmultipartの`mode=t2v|i2v`、`prompt`、`seed`、任意の`aspect_ratio`
-とI2V時のPNG/JPEG `image`を受け、単一の`Idempotency-Key`と設定済みshared Movie output owner keyをImage Gatewayへ
-送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。
+とI2V時のPNG/JPEG `image`を受けます。既存H3ではtaskを省略し、音声同期T2V／I2Vでは`task=lip_sync`とWAV PCM `audio`を追加します。V2Vは`task=lip_sync`、`mode=v2v`、MP4 `video`、WAV PCM `audio`だけを受け、prompt、seed、aspect ratio、imageを拒否します。COREは各画像／音声を20 MiB、V2V videoを最大100 MiBまでに制限し、画像形式、MP4の先頭`ftyp` box、RIFF/WAVE PCM構造を検証します。V2V POSTごとにImage optionsの`max_video_bytes`を再取得して適用します。実際の音声durationと動画media semantic判定はRenCrow_Imageが所有します。COREは単一の`Idempotency-Key`と設定済みshared Movie output owner keyをImage Gatewayへ送ります。新規jobは`202 {id,status:"queued"}`、同じIdempotency-Keyの再送は同じIDと現在statusを返します。ViewerのH3／A2V pending retry fingerprintはtask、mode、prompt、seed、aspect ratioと画像／音声の正確なbyte digestを含みます。V2V fingerprintはtask、mode、source videoとaudioの正確なbyte digestを含みます。
 `GET /viewer/image/video/generations/{id}`は`queued|running|succeeded|failed`と、成功時のvideo metadataまたは
 安全なerrorを返します。Image ownerのMP4 URLはCORE内の`/viewer/image/video/{id}.mp4`へ書き換えます。
 MP4 routeは`Range`を1つだけ転送し、200/206/416のbyte range contractを維持します。COREはallowlist検査前に

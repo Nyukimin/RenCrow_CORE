@@ -47,18 +47,31 @@ func (c *Client) CreateVideoGeneration(
 
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	for name, value := range map[string]string{
-		"mode":   request.Mode,
-		"prompt": request.Prompt,
-		"seed":   strconv.FormatInt(request.Seed, 10),
-	} {
-		if err := writer.WriteField(name, value); err != nil {
-			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video request field: %w", err)
+	if request.Mode == domainimage.VideoModeV2V {
+		for name, value := range map[string]string{"mode": request.Mode, "task": request.Task} {
+			if err := writer.WriteField(name, value); err != nil {
+				return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video request field: %w", err)
+			}
 		}
-	}
-	if request.AspectRatio != "" {
-		if err := writer.WriteField("aspect_ratio", request.AspectRatio); err != nil {
-			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video aspect ratio: %w", err)
+	} else {
+		for name, value := range map[string]string{
+			"mode":   request.Mode,
+			"prompt": request.Prompt,
+			"seed":   strconv.FormatInt(request.Seed, 10),
+		} {
+			if err := writer.WriteField(name, value); err != nil {
+				return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video request field: %w", err)
+			}
+		}
+		if request.Task != "" {
+			if err := writer.WriteField("task", request.Task); err != nil {
+				return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video task: %w", err)
+			}
+		}
+		if request.AspectRatio != "" {
+			if err := writer.WriteField("aspect_ratio", request.AspectRatio); err != nil {
+				return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video aspect ratio: %w", err)
+			}
 		}
 	}
 	if request.Mode == "i2v" {
@@ -77,6 +90,34 @@ func (c *Client) CreateVideoGeneration(
 		}
 		if _, err := part.Write(request.Image); err != nil {
 			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video image part: %w", err)
+		}
+	}
+	if request.Mode == domainimage.VideoModeV2V {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+			"name": "video", "filename": "input.mp4",
+		}))
+		header.Set("Content-Type", "video/mp4")
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("create source video part: %w", err)
+		}
+		if _, err := part.Write(request.Video); err != nil {
+			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write source video part: %w", err)
+		}
+	}
+	if request.Task == domainimage.VideoTaskLipSync {
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
+			"name": "audio", "filename": "input.wav",
+		}))
+		header.Set("Content-Type", "audio/wav")
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("create video audio part: %w", err)
+		}
+		if _, err := part.Write(request.Audio); err != nil {
+			return domainimage.VideoGenerationAccepted{}, fmt.Errorf("write video audio part: %w", err)
 		}
 	}
 	if err := writer.Close(); err != nil {
@@ -114,14 +155,17 @@ func (c *Client) CreateVideoGeneration(
 	return accepted, nil
 }
 
-func (c *Client) VideoOptions(ctx context.Context, mode string) (domainimage.VideoOptionsResponse, error) {
+func (c *Client) VideoOptions(ctx context.Context, mode, task string) (domainimage.VideoOptionsResponse, error) {
 	if mode == "" {
 		mode = "t2v"
 	}
-	if !domainimage.IsVideoMode(mode) {
-		return domainimage.VideoOptionsResponse{}, fmt.Errorf("invalid video mode")
+	if !domainimage.IsVideoModeForTask(mode, task) {
+		return domainimage.VideoOptionsResponse{}, fmt.Errorf("invalid video options request")
 	}
 	query := url.Values{"mode": []string{mode}}
+	if task != "" {
+		query.Set("task", task)
+	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/videos/options?"+query.Encode(), nil)
 	if err != nil {
 		return domainimage.VideoOptionsResponse{}, fmt.Errorf("create video options request: %w", err)
@@ -146,10 +190,34 @@ func (c *Client) VideoOptions(ctx context.Context, mode string) (domainimage.Vid
 	if err != nil {
 		return domainimage.VideoOptionsResponse{}, fmt.Errorf("decode RenCrow_Image video options: %w", err)
 	}
-	if !domainimage.IsValidVideoOptions(options, mode) {
+	if mode == domainimage.VideoModeV2V {
+		if err := validateV2VVideoOptionsShape(payload); err != nil {
+			return domainimage.VideoOptionsResponse{}, fmt.Errorf("RenCrow_Image returned invalid V2V video options: %w", err)
+		}
+	}
+	if !domainimage.IsValidVideoOptions(options, mode, task) {
 		return domainimage.VideoOptionsResponse{}, fmt.Errorf("RenCrow_Image returned invalid video options")
 	}
 	return options, nil
+}
+
+func validateV2VVideoOptionsShape(payload []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return err
+	}
+	expected := map[string]struct{}{
+		"task": {}, "model": {}, "mode": {}, "duration_seconds": {}, "max_video_bytes": {}, "max_audio_bytes": {},
+	}
+	if len(fields) != len(expected) {
+		return fmt.Errorf("unexpected V2V option fields")
+	}
+	for name := range expected {
+		if _, found := fields[name]; !found {
+			return fmt.Errorf("missing V2V option field %q", name)
+		}
+	}
+	return nil
 }
 
 func (c *Client) GetVideoGeneration(
@@ -275,8 +343,19 @@ func parseVideoServiceError(status int, payload []byte) error {
 }
 
 func validateVideoRequest(request domainimage.VideoGenerateRequest) error {
-	if !domainimage.IsVideoMode(request.Mode) {
-		return fmt.Errorf("invalid video mode")
+	if !domainimage.IsVideoModeForTask(request.Mode, request.Task) {
+		return fmt.Errorf("invalid video task or mode")
+	}
+	if request.Mode == domainimage.VideoModeV2V {
+		if request.Task != domainimage.VideoTaskLipSync || request.Prompt != "" || request.Seed != 0 || request.AspectRatio != "" ||
+			len(request.Image) != 0 || request.ImageType != "" || !domainimage.IsValidVideoMP4(request.Video) ||
+			len(request.Video) > domainimage.MaxVideoV2VBytes || !domainimage.IsValidVideoPCMWave(request.Audio) {
+			return fmt.Errorf("invalid V2V input video or audio")
+		}
+		return nil
+	}
+	if len(request.Video) != 0 {
+		return fmt.Errorf("video input requires V2V lip-sync mode")
 	}
 	if request.AspectRatio != "" && !domainimage.IsValidVideoAspectRatio(request.AspectRatio) {
 		return fmt.Errorf("invalid video aspect ratio")
@@ -294,6 +373,13 @@ func validateVideoRequest(request domainimage.VideoGenerateRequest) error {
 		}
 	} else if len(request.Image) != 0 || request.ImageType != "" {
 		return fmt.Errorf("text-to-video request cannot include an image")
+	}
+	if request.Task == domainimage.VideoTaskLipSync {
+		if !domainimage.IsValidVideoPCMWave(request.Audio) {
+			return fmt.Errorf("invalid video audio")
+		}
+	} else if len(request.Audio) != 0 {
+		return fmt.Errorf("H3 video request cannot include audio")
 	}
 	return nil
 }

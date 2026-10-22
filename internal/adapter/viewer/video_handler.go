@@ -21,7 +21,7 @@ import (
 const (
 	maxVideoPromptBytes      = 8 << 10
 	maxVideoImageBytes       = 20 << 20
-	maxVideoMultipartBytes   = maxVideoImageBytes + 64<<10
+	maxVideoMultipartBytes   = domainimage.MaxVideoV2VBytes + domainimage.MaxVideoAudioBytes + (64 << 10)
 	maxVideoJSONBytes        = 1 << 20
 	maxVideoErrorMessageLen  = 500
 	maxVideoRangeHeaderLen   = 256
@@ -38,13 +38,14 @@ var (
 )
 
 type VideoGateway interface {
+	VideoOptionsGateway
 	CreateVideoGeneration(context.Context, domainimage.VideoGenerateRequest, string, string) (domainimage.VideoGenerationAccepted, error)
 	GetVideoGeneration(context.Context, string, string) (domainimage.VideoGenerationStatus, error)
 	OpenVideo(context.Context, string, string, string) (*http.Response, error)
 }
 
 type VideoOptionsGateway interface {
-	VideoOptions(context.Context, string) (domainimage.VideoOptionsResponse, error)
+	VideoOptions(context.Context, string, string) (domainimage.VideoOptionsResponse, error)
 }
 
 // VideoBrowserAccessConfig gates Movie routes to one LAN client. ActorID is the shared Movie output owner key.
@@ -69,12 +70,12 @@ func HandleVideoOptions(gateway VideoOptionsGateway, access VideoBrowserAccessCo
 			return
 		}
 		query, err := url.ParseQuery(r.URL.RawQuery)
-		if err != nil || len(query) > 1 {
+		if err != nil || len(query) > 2 {
 			writeVideoError(w, http.StatusBadRequest, "VIDEO_INVALID_REQUEST", "Invalid video options request.")
 			return
 		}
 		for key, values := range query {
-			if key != "mode" || len(values) != 1 {
+			if (key != "mode" && key != "task") || len(values) != 1 {
 				writeVideoError(w, http.StatusBadRequest, "VIDEO_INVALID_REQUEST", "Invalid video options request.")
 				return
 			}
@@ -83,7 +84,15 @@ func HandleVideoOptions(gateway VideoOptionsGateway, access VideoBrowserAccessCo
 		if values, found := query["mode"]; found {
 			mode = values[0]
 		}
-		if !domainimage.IsVideoMode(mode) {
+		task := ""
+		if values, found := query["task"]; found {
+			task = values[0]
+			if task == "" {
+				writeVideoError(w, http.StatusBadRequest, "VIDEO_INVALID_REQUEST", "Invalid video options request.")
+				return
+			}
+		}
+		if !domainimage.IsVideoModeForTask(mode, task) {
 			writeVideoError(w, http.StatusBadRequest, "VIDEO_INVALID_REQUEST", "Invalid video options request.")
 			return
 		}
@@ -91,17 +100,12 @@ func HandleVideoOptions(gateway VideoOptionsGateway, access VideoBrowserAccessCo
 			writeVideoError(w, http.StatusServiceUnavailable, "VIDEO_UNAVAILABLE", "Video generation is unavailable.")
 			return
 		}
-		options, err := gateway.VideoOptions(r.Context(), mode)
+		options, err := gateway.VideoOptions(r.Context(), mode, task)
 		if err != nil {
-			status := http.StatusBadGateway
-			var serviceError *imagegateway.ServiceError
-			if errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusServiceUnavailable {
-				status = http.StatusServiceUnavailable
-			}
-			writeVideoError(w, status, "VIDEO_OPTIONS_UNAVAILABLE", "Video options are unavailable.")
+			writeVideoError(w, videoOptionsErrorStatus(err), "VIDEO_OPTIONS_UNAVAILABLE", "Video options are unavailable.")
 			return
 		}
-		if !domainimage.IsValidVideoOptions(options, mode) {
+		if !domainimage.IsValidVideoOptions(options, mode, task) {
 			writeVideoError(w, http.StatusBadGateway, "VIDEO_INVALID_RESPONSE", "Video generation service returned invalid options.")
 			return
 		}
@@ -142,6 +146,21 @@ func HandleVideoGenerate(gateway VideoGateway, access VideoBrowserAccessConfig) 
 			writeVideoError(w, http.StatusBadRequest, "VIDEO_INVALID_REQUEST", "Invalid video generation request.")
 			return
 		}
+		if request.Mode == domainimage.VideoModeV2V {
+			options, err := gateway.VideoOptions(r.Context(), request.Mode, request.Task)
+			if err != nil {
+				writeVideoError(w, videoOptionsErrorStatus(err), "VIDEO_OPTIONS_UNAVAILABLE", "Video options are unavailable.")
+				return
+			}
+			if !domainimage.IsValidVideoOptions(options, request.Mode, request.Task) {
+				writeVideoError(w, http.StatusBadGateway, "VIDEO_INVALID_RESPONSE", "Video generation service returned invalid options.")
+				return
+			}
+			if int64(len(request.Video)) > options.MaxVideoBytes {
+				writeVideoError(w, http.StatusRequestEntityTooLarge, "VIDEO_UPLOAD_TOO_LARGE", "The video request exceeds an input size limit.")
+				return
+			}
+		}
 		accepted, err := gateway.CreateVideoGeneration(r.Context(), request, actorID, idempotencyKey)
 		if err != nil {
 			writeVideoGatewayError(w, err)
@@ -153,6 +172,14 @@ func HandleVideoGenerate(gateway VideoGateway, access VideoBrowserAccessConfig) 
 		}
 		writeImageJSON(w, http.StatusAccepted, accepted)
 	}
+}
+
+func videoOptionsErrorStatus(err error) int {
+	var serviceError *imagegateway.ServiceError
+	if errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusServiceUnavailable {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadGateway
 }
 
 func HandleVideoStatus(gateway VideoGateway, access VideoBrowserAccessConfig) http.HandlerFunc {
@@ -328,11 +355,15 @@ func parseVideoGenerateRequest(w http.ResponseWriter, r *http.Request) (domainim
 	if err != nil {
 		return domainimage.VideoGenerateRequest{}, err
 	}
-	fields := make(map[string]string, 4)
-	fieldsSeen := make(map[string]bool, 4)
+	fields := make(map[string]string, 5)
+	fieldsSeen := make(map[string]bool, 5)
 	var imageData []byte
 	var imageType string
 	imageSeen := false
+	var audioData []byte
+	audioSeen := false
+	var videoData []byte
+	videoSeen := false
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -343,7 +374,7 @@ func parseVideoGenerateRequest(w http.ResponseWriter, r *http.Request) (domainim
 		}
 		name := part.FormName()
 		switch name {
-		case "mode", "prompt", "seed", "aspect_ratio":
+		case "mode", "task", "prompt", "seed", "aspect_ratio":
 			if part.FileName() != "" || fieldsSeen[name] {
 				_ = part.Close()
 				return domainimage.VideoGenerateRequest{}, fmt.Errorf("duplicate or invalid %s field", name)
@@ -351,6 +382,8 @@ func parseVideoGenerateRequest(w http.ResponseWriter, r *http.Request) (domainim
 			limit := int64(maxVideoPromptBytes)
 			if name == "mode" {
 				limit = 8
+			} else if name == "task" {
+				limit = 16
 			} else if name == "seed" {
 				limit = 32
 			} else if name == "aspect_ratio" {
@@ -378,16 +411,57 @@ func parseVideoGenerateRequest(w http.ResponseWriter, r *http.Request) (domainim
 			if imageType != "image/png" && imageType != "image/jpeg" {
 				return domainimage.VideoGenerateRequest{}, fmt.Errorf("unsupported image media type")
 			}
+		case "video":
+			if videoSeen || part.FileName() == "" {
+				_ = part.Close()
+				return domainimage.VideoGenerateRequest{}, fmt.Errorf("duplicate or invalid video field")
+			}
+			videoSeen = true
+			videoData, err = readVideoPart(part, domainimage.MaxVideoV2VBytes)
+			_ = part.Close()
+			if err != nil {
+				return domainimage.VideoGenerateRequest{}, err
+			}
+			if !domainimage.IsValidVideoMP4(videoData) {
+				return domainimage.VideoGenerateRequest{}, fmt.Errorf("unsupported or malformed video media type")
+			}
+		case "audio":
+			if audioSeen || part.FileName() == "" {
+				_ = part.Close()
+				return domainimage.VideoGenerateRequest{}, fmt.Errorf("duplicate or invalid audio field")
+			}
+			audioSeen = true
+			audioData, err = readVideoPart(part, domainimage.MaxVideoAudioBytes)
+			_ = part.Close()
+			if err != nil {
+				return domainimage.VideoGenerateRequest{}, err
+			}
+			if !domainimage.IsValidVideoPCMWave(audioData) {
+				return domainimage.VideoGenerateRequest{}, fmt.Errorf("unsupported or malformed audio media type")
+			}
 		default:
 			_ = part.Close()
 			return domainimage.VideoGenerateRequest{}, fmt.Errorf("unknown multipart field")
 		}
 	}
 	mode := fields["mode"]
+	task := fields["task"]
+	if !domainimage.IsVideoModeForTask(mode, task) {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("invalid task or mode")
+	}
+	if mode == domainimage.VideoModeV2V {
+		if fieldsSeen["prompt"] || fieldsSeen["seed"] || fieldsSeen["aspect_ratio"] || imageSeen || !videoSeen || !audioSeen {
+			return domainimage.VideoGenerateRequest{}, fmt.Errorf("V2V requires only a source video and audio")
+		}
+		return domainimage.VideoGenerateRequest{Task: task, Mode: mode, Video: videoData, Audio: audioData}, nil
+	}
+	if videoSeen {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("video input requires V2V lip-sync mode")
+	}
 	prompt := strings.TrimSpace(fields["prompt"])
 	aspectRatio := fields["aspect_ratio"]
-	if !domainimage.IsVideoMode(mode) || prompt == "" || len(prompt) > maxVideoPromptBytes || !utf8.ValidString(prompt) {
-		return domainimage.VideoGenerateRequest{}, fmt.Errorf("invalid mode or prompt")
+	if prompt == "" || len(prompt) > maxVideoPromptBytes || !utf8.ValidString(prompt) {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("invalid task, mode, or prompt")
 	}
 	if fieldsSeen["aspect_ratio"] && !domainimage.IsValidVideoAspectRatio(aspectRatio) {
 		return domainimage.VideoGenerateRequest{}, fmt.Errorf("invalid aspect ratio")
@@ -402,8 +476,17 @@ func parseVideoGenerateRequest(w http.ResponseWriter, r *http.Request) (domainim
 	if mode == "t2v" && imageSeen {
 		return domainimage.VideoGenerateRequest{}, fmt.Errorf("t2v does not accept an image")
 	}
+	if task == domainimage.VideoTaskLipSync && !audioSeen {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("lip-sync requires audio")
+	}
+	if fieldsSeen["task"] && task == "" {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("empty task is invalid")
+	}
+	if task == "" && audioSeen {
+		return domainimage.VideoGenerateRequest{}, fmt.Errorf("audio requires lip-sync task")
+	}
 	return domainimage.VideoGenerateRequest{
-		Mode: mode, Prompt: prompt, Seed: seed, AspectRatio: aspectRatio, Image: imageData, ImageType: imageType,
+		Task: task, Mode: mode, Prompt: prompt, Seed: seed, AspectRatio: aspectRatio, Image: imageData, ImageType: imageType, Audio: audioData,
 	}, nil
 }
 
