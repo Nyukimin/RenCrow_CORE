@@ -194,20 +194,24 @@ func readBridgeConsumerViolations(root string) ([]string, error) {
 }
 
 // walkProductionGo visits production Go sources (non-test files) under root,
-// skipping vendored, cached, generated, and tool trees.
+// skipping vendored, cached, generated, and tool trees. The test runner keeps
+// its build cache and receipts under a case-varying tmp tree, and that tree
+// holds generated `_testmain.go` files that import the package under test, so
+// those trees are skipped by name (case-insensitive) and by the leading
+// underscore or dot Go itself ignores.
 func walkProductionGo(root string, visit func(rel string, content string) error) error {
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.IsDir() {
-			switch entry.Name() {
-			case ".git", ".gotmp", "Tmp", "bin", "dist", "node_modules", "vendor":
+			if skipNonSourceDir(entry.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == "_testmain.go" {
 			return nil
 		}
 		info, err := entry.Info()
@@ -257,4 +261,18 @@ func coreRepoRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// skipNonSourceDir reports a directory that never holds repository source:
+// tool caches, test runner trees, vendored dependencies, and the leading
+// underscore or dot trees Go excludes from package resolution.
+func skipNonSourceDir(name string) bool {
+	if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+		return true
+	}
+	switch strings.ToLower(name) {
+	case "bin", "dist", "gocache", "gomodcache", "node_modules", "playwright", "test-results", "test-runtime", "tmp", "vendor", "work":
+		return true
+	}
+	return false
 }
