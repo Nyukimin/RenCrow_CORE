@@ -52,5 +52,6 @@ func backupConfigValues(backup config.BackupConfig, memory config.MemoryStorageC
 		workspaceDir,
 		defaultTaskStorePath(workspaceDir),
 		defaultActionStorePath(workspaceDir),
+		databases.CharImageHistory,
 	}
 }

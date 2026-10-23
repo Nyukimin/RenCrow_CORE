@@ -49,6 +49,45 @@ func TestBuildDurableStoreRuntimeRejectsUnknownManifestFields(t *testing.T) {
 	}
 }
 
+func TestCharImageHistoryHasValidatedTypedS1StorageProposal(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "config", "durable-stores.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := decodeDurableStoreManifest(data)
+	if err != nil {
+		t.Fatalf("decode durable store manifest: %v", err)
+	}
+	var store *domainstore.StoreManifest
+	for index := range manifest.Stores {
+		if manifest.Stores[index].StoreID == "core.charimage.history.v1" {
+			store = &manifest.Stores[index]
+			break
+		}
+	}
+	if store == nil {
+		t.Fatal("CharImage history store is missing from the canonical manifest")
+	}
+	proposal := domainstore.StorageProposal{
+		ProposalID:       "core.charimage.history.v1",
+		RequirementID:    "core.charimage.history.v1",
+		OwnerModule:      "RenCrow_CORE",
+		Class:            domainstore.ClassNewStore,
+		ChangeClass:      domainstore.ChangeS1,
+		ProposalRevision: 1,
+		TargetStoreID:    store.StoreID,
+		Manifest:         *store,
+		ValidationPassed: domainstore.ValidateManifest(manifest) == nil,
+	}
+	if !proposal.ValidationPassed || proposal.Class != domainstore.ClassNewStore || proposal.ChangeClass != domainstore.ChangeS1 ||
+		proposal.OwnerModule != "RenCrow_CORE" || proposal.Manifest.AuthoritativeWriter != "rencrow-core" ||
+		proposal.Manifest.CanonicalConfigKeys[0] != "storage.databases.charimage_history" ||
+		proposal.Manifest.SchemaRevision != "charimage-history/v1" || proposal.Manifest.FallbackPolicy != "fail_closed" ||
+		!reflect.DeepEqual(proposal.Manifest.Readers, []string{"RenCrow_CORE /viewer/charimage/history"}) {
+		t.Fatalf("CharImage history proposal failed S1 validation: %+v", proposal)
+	}
+}
+
 func TestBuildDurableStoreRuntimeUsesSelectedOwnerWithoutLocalFallback(t *testing.T) {
 	root := t.TempDir()
 	store := &runtimeDurableWorkflowStoreStub{}

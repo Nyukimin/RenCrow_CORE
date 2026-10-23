@@ -161,6 +161,9 @@ storage:
     # Chat起点Durable Store workflowを有効にする場合は、owner rootである
     # /srv/rencrow/db/core配下の絶対pathを指定する。
     durable_store_workflow: ""
+    # CharImage履歴のS1 SQLite store。productionでは
+    # /srv/rencrow/db/core/databases/charimage_history.db を指定する。
+    charimage_history: "/srv/rencrow/db/core/databases/charimage_history.db"
 
 durable_store:
   enabled: false

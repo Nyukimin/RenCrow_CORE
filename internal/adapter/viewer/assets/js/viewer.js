@@ -1285,6 +1285,7 @@ const memoryDbTabs = new Set(['memory', 'memory-archive', 'knowledge-memory', 'd
 const panels = {
   home: document.getElementById('panel-home'),
   image: document.getElementById('panel-image'),
+  charimage: document.getElementById('panel-charimage'),
   movie: document.getElementById('panel-movie'),
   develop: document.getElementById('panel-develop'),
   instructions: document.getElementById('panel-instructions'),
@@ -1418,6 +1419,7 @@ function switchTab(tab) {
     updateSTTInputIndicators();
   }
   if (tab === 'timeline' && timelineAutoFollow) scrollToBottom(true);
+  if (tab === 'charimage' && typeof window.refreshCharImageTab === 'function') window.refreshCharImageTab();
   if (tab === 'investment' && typeof refreshInvestmentData === 'function') refreshInvestmentData();
   if (tab === 'collection' && typeof refreshCollectionData === 'function') refreshCollectionData();
   if (tab === 'news-pack' && typeof refreshNewsPack === 'function') refreshNewsPack();

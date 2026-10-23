@@ -222,6 +222,7 @@ type DatabasePathsConfig struct {
 	AIWorkflow           string `yaml:"ai_workflow"`
 	KnowledgeMemory      string `yaml:"knowledge_memory"`
 	DurableStoreWorkflow string `yaml:"durable_store_workflow"`
+	CharImageHistory     string `yaml:"charimage_history"`
 }
 
 // BackupConfig は外部backup runnerが参照する物理保存先と世代数を定義する。

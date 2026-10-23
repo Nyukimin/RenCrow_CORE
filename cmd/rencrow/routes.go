@@ -11,14 +11,17 @@ import (
 
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/config"
 	"github.com/Nyukimin/RenCrow_CORE/internal/adapter/viewer"
+	appcharimage "github.com/Nyukimin/RenCrow_CORE/internal/application/charimage"
 	moviecatalogapp "github.com/Nyukimin/RenCrow_CORE/internal/application/moviecatalog"
 	"github.com/Nyukimin/RenCrow_CORE/internal/application/orchestrator"
+	domaincharimage "github.com/Nyukimin/RenCrow_CORE/internal/domain/charimage"
 	domaintool "github.com/Nyukimin/RenCrow_CORE/internal/domain/tool"
 	agentfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/agent"
 	aiworkflowfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/aiworkflow"
 	avatarfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/avatar"
 	backlogfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/backlog"
 	channelsfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/channels"
+	charimagefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/charimage"
 	chatfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/chat"
 	corefeature "github.com/Nyukimin/RenCrow_CORE/internal/features/core"
 	gamesfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/games"
@@ -43,6 +46,7 @@ import (
 	webfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/web"
 	workstreamfeature "github.com/Nyukimin/RenCrow_CORE/internal/features/workstream"
 	"github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/imagegateway"
+	charimagehistory "github.com/Nyukimin/RenCrow_CORE/internal/infrastructure/persistence/charimage"
 	modulestt "github.com/Nyukimin/RenCrow_CORE/modules/stt"
 )
 
@@ -432,6 +436,32 @@ func registerImageRoutes(mux *http.ServeMux, cfg *config.Config) {
 		VideoGenerate: viewer.HandleVideoGenerate(videoGateway, videoAccess),
 		VideoStatus:   viewer.HandleVideoStatus(videoGateway, videoAccess),
 		VideoResult:   viewer.HandleVideoResult(videoGateway, videoAccess),
+	})
+	registerCharImageRoutes(mux, cfg, imageGateway)
+}
+
+func registerCharImageRoutes(mux *http.ServeMux, cfg *config.Config, gateway appcharimage.ImageGateway) {
+	catalog, err := domaincharimage.LoadEmbeddedCatalog()
+	var service *appcharimage.Service
+	if err != nil {
+		log.Printf("CharImage catalog unavailable: %v", err)
+	} else {
+		var history appcharimage.HistoryStore
+		if cfg != nil && strings.TrimSpace(cfg.Storage.Databases.CharImageHistory) != "" {
+			store, err := charimagehistory.NewSQLiteStore(cfg.Storage.Databases.CharImageHistory)
+			if err != nil {
+				log.Printf("CharImage history unavailable: %v", err)
+			} else {
+				history = store
+			}
+		}
+		service = appcharimage.NewService(catalog, gateway, history)
+	}
+	charimagefeature.RegisterRoutes(mux, charimagefeature.Routes{
+		Characters: viewer.HandleCharImageCharacters(service),
+		Compose:    viewer.HandleCharImageCompose(service),
+		Generate:   viewer.HandleCharImageGenerate(service),
+		History:    viewer.HandleCharImageHistory(service),
 	})
 }
 

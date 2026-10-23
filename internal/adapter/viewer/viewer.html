@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/viewer/assets/css/tabs/desk.css?v=20260729-games-launch-2-movie-single-row-list">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/collection.css?v=20260721-daily-collection">
 <link rel="stylesheet" href="/viewer/assets/css/tabs/image.css?v=20261022-movie-serve-session">
+<link rel="stylesheet" href="/viewer/assets/css/tabs/charimage.css?v=20261023-charimage-tab">
 </head>
 <body class="theme-modern">
 <header>
@@ -46,6 +47,7 @@
       <option value="home">Home</option>
       <option value="timeline">Chat</option>
       <option value="image">Image</option>
+      <option value="charimage">CharImage</option>
       <option value="movie">Movie</option>
       <option value="develop">Develop</option>
       <option value="instructions">Instructions</option>
@@ -85,6 +87,7 @@
     <button class="tab-btn active" data-tab="home">Home</button>
     <button class="tab-btn" data-tab="timeline">Chat</button>
     <button class="tab-btn" data-tab="image">Image</button>
+    <button class="tab-btn" data-tab="charimage">CharImage</button>
     <button class="tab-btn" data-tab="movie">Movie</button>
     <button class="tab-btn" data-tab="develop">Develop</button>
     <button class="tab-btn" data-tab="instructions">Instructions</button>
@@ -242,6 +245,132 @@
           <figcaption id="imageResultPrompt"></figcaption>
         </figure>
         <div id="imageError" class="daily-desk-card image-error" role="alert" hidden></div>
+      </section>
+    </div>
+  </section>
+
+  <section id="panel-charimage" class="panel">
+    <div class="desk-screen desk-workspace charimage-workspace">
+      <aside class="desk-side charimage-side" aria-label="CharImage generation controls">
+        <div class="desk-brand">
+          <div class="desk-kicker">RenCrow CharImage · MOSS</div>
+          <h2 class="daily-desk-title">キャラクター画像を生成</h2>
+        </div>
+        <p id="charImageStatus" class="desk-status-pill" role="status" aria-live="polite" aria-atomic="true">読み込み待ち</p>
+        <div id="charImageError" class="charimage-error" role="alert" hidden></div>
+        <button id="charImageRetry" class="ctl-btn" type="button" hidden>一覧を再読み込み</button>
+
+        <section class="charimage-character-block" aria-labelledby="charImageCharacterLabel">
+          <label id="charImageCharacterLabel" for="charImageCharacter">Character <span id="charImageCount" class="charimage-count"></span></label>
+          <select id="charImageCharacter" class="desk-select" disabled>
+            <option value="">キャラクターを読み込み中…</option>
+          </select>
+          <div class="charimage-identity">
+            <div class="charimage-identity-head">
+              <h3 id="charImageName">-</h3>
+              <span id="charImageCharacterStatus" class="charimage-character-status">-</span>
+            </div>
+            <p id="charImageNameEn" class="charimage-name-en"></p>
+            <p id="charImageTagline" class="charimage-tagline">キャラクターを選ぶと紹介が表示されます。</p>
+          </div>
+          <details class="charimage-fixed-info">
+            <summary>固定情報</summary>
+            <dl>
+              <dt>Character core</dt><dd id="charImageCharacterCore">-</dd>
+              <dt>2D render</dt><dd id="charImageRender2D">-</dd>
+              <dt>3D render</dt><dd id="charImageRender3D">-</dd>
+            </dl>
+            <p id="charImageSourceNotes" class="charimage-source-notes"></p>
+          </details>
+        </section>
+
+        <fieldset class="charimage-mode-options">
+          <legend>Render mode</legend>
+          <div class="charimage-mode-switch" role="group" aria-label="Render mode">
+            <button class="charimage-mode-button active" type="button" data-charimage-mode="2d" aria-pressed="true">2D</button>
+            <button class="charimage-mode-button" type="button" data-charimage-mode="3d" aria-pressed="false">3D</button>
+          </div>
+        </fieldset>
+
+        <div class="charimage-scene-control">
+          <label for="charImageSceneVariant">Scene variant</label>
+          <textarea id="charImageSceneVariant" class="daily-desk-input" rows="4" maxlength="8000" placeholder="背景・場面の差分を入力"></textarea>
+          <button id="charImageUseDefaultScene" class="ctl-btn" type="button" disabled>Use Default Scene</button>
+        </div>
+
+        <fieldset id="charImageParameters" class="charimage-parameters" disabled>
+          <legend>MOSS parameters</legend>
+          <p id="charImageOptionsStatus" class="charimage-muted" role="status" aria-live="polite">モデル設定を読み込み中です。</p>
+          <div id="charImageOptionsError" class="charimage-error" role="alert" hidden></div>
+          <label for="charImageSeed">Seed</label>
+          <input id="charImageSeed" class="desk-input" type="number" value="-1" min="-1" max="9007199254740991" step="1">
+          <div class="charimage-dimensions">
+            <label for="charImageWidth">Width</label>
+            <input id="charImageWidth" class="desk-input" type="number" required>
+            <label for="charImageHeight">Height</label>
+            <input id="charImageHeight" class="desk-input" type="number" required>
+          </div>
+          <label for="charImageSteps">Steps</label>
+          <input id="charImageSteps" class="desk-input" type="number" required>
+          <label for="charImageCfgScale">CFG scale</label>
+          <input id="charImageCfgScale" class="desk-input" type="number" required>
+          <label id="charImageLoraLabel" for="charImageLoraStrength" hidden>LoRA strength</label>
+          <input id="charImageLoraStrength" class="desk-input" type="number" hidden>
+          <label id="charImageFaceDetailerLabel" class="charimage-checkbox" for="charImageFaceDetailer" hidden>
+            <input id="charImageFaceDetailer" type="checkbox">
+            <span>FaceDetailer</span>
+          </label>
+        </fieldset>
+        <button id="charImageOptionsRetry" class="ctl-btn charimage-options-retry" type="button" hidden>設定を再読み込み</button>
+        <button id="charImageGenerate" class="desk-primary-btn" type="button" disabled>Generate</button>
+      </aside>
+
+      <section class="desk-main charimage-main" aria-labelledby="charImageResultTitle">
+        <div class="desk-head compact charimage-result-head">
+          <div>
+            <div class="desk-kicker">Server-composed prompt · MOSS Image SFT</div>
+            <h3 id="charImageResultTitle">生成結果</h3>
+          </div>
+          <p id="charImageResultMeta" class="daily-desk-muted" aria-live="polite"></p>
+        </div>
+
+        <section id="charImagePreviewSection" class="charimage-preview" aria-labelledby="charImagePreviewTitle" aria-busy="false">
+          <div class="charimage-section-heading">
+            <h4 id="charImagePreviewTitle">Prompt preview</h4>
+            <span id="charImagePreviewStatus" class="charimage-muted" role="status" aria-live="polite">選択内容をサーバーで合成します。</span>
+          </div>
+          <pre id="charImagePromptPreview" class="charimage-prompt-preview">キャラクターを読み込み中です。</pre>
+          <details id="charImagePromptParts" class="charimage-prompt-parts" hidden>
+            <summary>合成内容</summary>
+            <dl>
+              <dt>Character core</dt><dd id="charImagePreviewCore"></dd>
+              <dt>Render profile</dt><dd id="charImagePreviewProfile"></dd>
+              <dt>Scene variant</dt><dd id="charImagePreviewScene"></dd>
+            </dl>
+          </details>
+        </section>
+
+        <div id="charImageResultEmpty" class="daily-desk-card charimage-result-empty">
+          Characterとsceneを選び、Generateを押すと生成結果を表示します。
+        </div>
+        <figure id="charImageResultFigure" class="charimage-result-figure" aria-live="polite" hidden>
+          <img id="charImageResult" alt="CharImage generation result">
+          <figcaption id="charImageResultPrompt"></figcaption>
+        </figure>
+        <div id="charImageGenerationError" class="charimage-error" role="alert" hidden></div>
+
+        <section class="charimage-history" aria-labelledby="charImageHistoryTitle">
+          <div class="charimage-section-heading">
+            <div>
+              <div class="desk-kicker">CORE durable history</div>
+              <h4 id="charImageHistoryTitle">Recent generations</h4>
+            </div>
+            <button id="charImageHistoryRefresh" class="ctl-btn" type="button">Refresh</button>
+          </div>
+          <div id="charImageHistoryError" class="charimage-error" role="alert" hidden></div>
+          <p id="charImageHistoryEmpty" class="charimage-muted">履歴を読み込んでいます。</p>
+          <div id="charImageHistoryList" class="charimage-history-list" aria-live="polite"></div>
+        </section>
       </section>
     </div>
   </section>
@@ -1851,6 +1980,7 @@
 <script src="/viewer/assets/js/tabs/tasks.js?v=20260510-tabs-tasks" defer></script>
 <script src="/viewer/assets/js/tabs/games.js?v=20260729-agent-launch" defer></script>
 <script src="/viewer/assets/js/tabs/image.js?v=20261022-movie-lipsync-task-audio-retry" defer></script>
+<script src="/viewer/assets/js/tabs/charimage.js?v=20261023-charimage-tab" defer></script>
 <script src="/viewer/assets/js/stt_test_record_utils.js?v=20260609-stt-test-record" defer></script>
 <script src="/viewer/assets/js/stt_utterance_utils.js?v=20261015-stt-relay-align35" defer></script>
 <script src="/viewer/assets/js/viewer.js?v=20260806-prompt-logs-panel-memory-db-accordion-db-capability-catalog-atlas-user-memory-paging-stt-relay-align35-movie-tab-map" defer></script>

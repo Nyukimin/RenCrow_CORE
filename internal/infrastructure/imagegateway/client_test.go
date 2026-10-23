@@ -32,7 +32,7 @@ func TestClientGenerateUsesRenCrowImageContract(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"ok":true,"id":"img_1","profile":"forge_zimage_4060","prompt":"青い鳥","image":{"id":"img_1","path":"/v1/images/img_1.png","content_type":"image/png","width":768,"height":768}}`)
+		fmt.Fprint(w, `{"ok":true,"id":"img_1","profile":"forge_zimage_4060","prompt":"青い鳥","image":{"id":"img_1","path":"/v1/images/img_1.png","content_type":"image/png","width":768,"height":768,"sha256":"0000000000000000000000000000000000000000000000000000000000000000","size_bytes":123}}`)
 	}))
 	defer server.Close()
 
@@ -61,6 +61,30 @@ func TestClientGenerateUsesRenCrowImageContract(t *testing.T) {
 	}
 	if !result.OK || result.ID != "img_1" || result.Image.Width != 768 {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestClientGenerateAcceptsImageResultsWithoutOptionalIntegrityMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/images/generations" {
+			http.Error(w, "wrong route", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true,"id":"img_legacy","profile":"legacy-profile","prompt":"legacy prompt","image":{"id":"img_legacy","path":"/v1/images/img_legacy.png","content_type":"image/png","width":512,"height":512}}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	result, err := client.Generate(context.Background(), domainimage.GenerateRequest{Prompt: "legacy prompt"})
+	if err != nil {
+		t.Fatalf("Generate without optional integrity metadata: %v", err)
+	}
+	if !result.OK || result.ID != "img_legacy" || result.Image.SHA256 != "" || result.Image.SizeBytes != 0 {
+		t.Fatalf("unexpected legacy result: %+v", result)
 	}
 }
 

@@ -88,6 +88,7 @@ path、Config、secret、validator内部errorを開示しない。
 | `WS /voice-chat` | Viewerの`input_audio`音声入力。COREがRenCrow LLM Gatewayへ送り、同期した受付owner receiptを返してから応答eventを投影する（`/voice-chat-ws`は互換alias） |
 | `POST /stt/chat-input` | CMDまたはPORTAL Chatが送る`multipart/form-data`の`file`（WAV）をRenCrow_STT経由で文字起こしし、Chat入力用envelopeを返す。Tailscale Serve経由のPORTAL ChatはPORTALが確定した匿名化済み認証Actorを1値だけ要求する |
 | `GET /viewer/image/options`, `POST /viewer/image/generate`, `GET /viewer/image/result?id=...` | Debug Viewer Image画面のmodel options取得、画像生成と結果表示 |
+| `GET /viewer/charimage/characters`, `POST /viewer/charimage/compose`, `POST /viewer/charimage/generate`, `GET /viewer/charimage/history` | CORE CharImage catalog、決定的prompt preview、MOSS profileの生成、durable履歴 |
 | `GET /viewer/image/edit/options`, `POST /viewer/image/edit` | Image画面のPose／服装参照の利用可否取得と、人物画像・参照画像を使うQwen Image Edit生成 |
 | `GET /viewer/image/video/options?mode=...&task=lip_sync` | Debug Viewer Movie画面のmode別model、aspect ratio、固定parameterまたはV2V media limits取得。`task`省略時は既存H3、指定時は音声同期options |
 | `POST /viewer/image/video/generations`, `GET /viewer/image/video/generations/{id}`, `GET /viewer/image/video/{id}.mp4` | 許可済みLAN IPv4からのMovie生成・状態poll・Range対応MP4 proxy。利用者認証は行わない |
@@ -1209,6 +1210,23 @@ optionsを取得できない場合は生成操作を無効にし、利用不能�
 中継します。ViewerとCOREはRenCrow_Imageへの接続とopaqueな生成IDを扱います。
 RenCrow_Imageがunavailableの場合は明示的な503を返します。
 
+CharImageの一覧`GET /viewer/charimage/characters`は`{ok,model,characters}`を返します。
+各characterには`id`、`name_ja`、`name_en`、`status`、`tagline_ja`、`source_notes_ja`、
+`fixed:{character_core_en,render_2d_en,render_3d_en}`、`default_scene_en`を含めます。
+`POST /viewer/charimage/compose`と`POST /viewer/charimage/generate`は
+`character_id`、`render_mode`（`2d|3d`）、`scene_variant_text`を受け付けます。
+compose responseは`character_id`、`render_mode`、character core、mode render profile、effective scene、
+`final_prompt`を返します。blank sceneにはcatalogのdefaultを使い、決定順はcore + scene + mode render +
+仕様固定quality tailです。precomposed promptとnegative promptは送信しません。
+
+Generateは`seed`、`width`、`height`、`steps`、`cfg_scale`、`face_detailer`、`lora_strength`を任意で受け取り、
+Image optionsで`moss-image-sft-8-steps-dmd`を確認してから既存`POST /v1/images/generations`を一度呼びます。
+成功responseはImage result metadataと`/viewer/image/result?id=<opaque-image-id>`を含みます。
+外部生成成功後にhistory保存が失敗した場合、503で`status:"partial"`、`retryable:false`、
+`error_code:"CHARIMAGE_HISTORY_SAVE_FAILED"`と同じImage metadataを返します。clientは自動再送しません。
+履歴`GET /viewer/charimage/history`は最大100件を新しい順に返します。履歴保存には
+`storage.databases.charimage_history`を使い、未設定／unavailableでは生成前にfail-closedします。
+
 `GET /viewer/image/video/options?mode=t2v|i2v`はRenCrow_Imageの同じmode指定options routeを中継します。`mode`省略時は`t2v`です。
 既存H3ではtaskを省略し、音声同期では`task=lip_sync`を指定します。音声同期T2V／I2V optionsは通常のmodel、aspect ratio一覧とdefault、megapixels、duration、stepsに`task:"lip_sync"`を加えて返します。音声同期の`duration_seconds:10`は音声の最大時間です。
 `task=lip_sync&mode=v2v`は`task`、`mode`、`model:"MuseTalk 1.5"`、`duration_seconds:10`、`max_video_bytes`、`max_audio_bytes:20971520`だけを返し、aspect ratio、megapixels、stepsは含めません。`max_video_bytes`は1から100 MiBまでです。COREはoptionsの形、mode、task、limitsを検証します。
@@ -1577,6 +1595,7 @@ capabilityで制限します。
 /viewer/capabilities
 /viewer/evidence/{recent,detail,summary}
 /viewer/source-registry、/viewer/knowledge-memory
+/viewer/modules/llm/diagnostics
 /viewer/debug/system
 /viewer/channels、/viewer/channels/probe
 /viewer/memory/profile-promotions
@@ -1587,6 +1606,18 @@ capabilityで制限します。
 疎通結果、`GET /viewer/web-gather/doctor`はweb-gatherの依存構成の診断結果を返します。
 `GET /viewer/memory/profile-promotions`はProfilePromotionの全row集計、limited job詳細、
 retryable／orphan failed件数、DB pool統計を返します。いずれも読み取り専用です。
+`GET /viewer/modules/llm/diagnostics`はLLM role/provider healthに加え、legacy `/viewer/send`の
+`timings=true`で実行されたPrimary.Chat Gateway HTTP request-write診断を返します。`chat` roleの
+`gateway_request_write`は最大64件のRAM-only sampleとcapacity超過で未記録になった件数
+`dropped`を含みます。最初の64件を保持し、超過分で上書きしません。各sampleには同じHTTP requestの
+`request_id`と`Do`開始UTC時刻を含みます。`httptrace.WroteRequest`が成功した場合だけ
+UTC時刻と両点間の単調時計によるnanosecondsが追加されます。request／response bodyや認証情報は
+含まず、再起動で消えます。responseは`Cache-Control: no-store`です。
+`gateway_request_write`はsocket peerのloopback IPとloopback Host authorityを両方確認できた
+direct-local GETだけへ返します。remote／proxy requestではこのfieldだけを省略し、既存のhealth情報は返します。
+Conversation/v2が使う別のGateway provider instanceはこの canary diagnosticsの対象外です。
+このローカルの書込完了時刻はGateway ingress receiptそのものではなく、host間比較には
+別途clock calibrationとその不確かさの考慮が必要です。
 
 CMDのmemory診断・再試行用の正規CLI名は`rencrowctl memory status`と
 `rencrowctl memory retry-failed`として実装され、前者は`cmd-diagnostics`、後者は

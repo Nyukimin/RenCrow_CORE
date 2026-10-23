@@ -91,7 +91,7 @@ assert_contains "${backup_runner}" \
   '! mountpoint -q "${mount_target}"' \
   "unmounted paths must remain rejected"
 assert_contains "${backup_runner}" \
-  'if (( ${#backup_config[@]} != 24 )); then' \
+	'if (( ${#backup_config[@]} != 25 )); then' \
   "backup-values must contain the raw source cohort field and the workspace store roots"
 assert_contains "${backup_runner}" \
   'core_port=${backup_config[20]}' \
@@ -109,8 +109,14 @@ assert_contains "${backup_runner}" \
   'raw_source_dir=${backup_config[12]}' \
   "raw source field index must follow cold export"
 assert_contains "${backup_runner}" \
-  'snapshot_format_version=4' \
-  "ordinary backups must retain the Common Raw cohort format"
+	'snapshot_format_version=5' \
+	"new backups must include the CharImage history cohort"
+assert_contains "${backup_runner}" \
+	'charimage_history=${backup_config[24]}' \
+	"CharImage history path must come from canonical CORE config"
+assert_contains "${checker}" \
+	'${format_version} != 5' \
+	"restore check must accept the CharImage cohort format while retaining older formats"
 assert_contains "${backup_runner}" \
   '"format_version=${snapshot_format_version}"' \
   "backup manifest must publish the selected cohort format"
@@ -484,12 +490,13 @@ mkdir -p \
   "${test_root}/source/state/sessions" \
   "${test_root}/source/state/memory" \
   "${test_root}/source/state/exports/parquet" \
+  "${test_root}/source/state/databases" \
   "${test_root}/source/state/raw-source/objects/sha256" \
   "${test_root}/source/external-memory/redis" \
   "${test_root}/source/external-memory/qdrant" \
   "${test_root}/snapshot"
 
-"${RENCROW_TEST_PYTHON:-python3}" - "${test_root}/source/state/l1.db" "${test_root}/source/state/l2.db" "${test_root}/source/state/raw-source" <<'PY'
+"${RENCROW_TEST_PYTHON:-python3}" - "${test_root}/source/state/l1.db" "${test_root}/source/state/l2.db" "${test_root}/source/state/raw-source" "${test_root}/source/state/databases/charimage_history.db" <<'PY'
 import hashlib
 import json
 import os
@@ -527,6 +534,19 @@ for path in sys.argv[1:3]:
         connection.execute("INSERT INTO l1_raw_record VALUES (?, ?, ?, ?, ?, ?)", ("object", None, object_ref, object_hash, len(object_content), json.dumps([{"source_asset_id": "asset-1", "object_ref": asset_ref, "sha256": asset_hash, "size": len(asset_content), "media_type": "application/octet-stream"}])))
     connection.commit()
     connection.close()
+history = sqlite3.connect(sys.argv[4])
+history.executescript("""
+    CREATE TABLE charimage_history (
+        id TEXT PRIMARY KEY NOT NULL, created_at TEXT NOT NULL, character_id TEXT NOT NULL,
+        render_mode TEXT NOT NULL, scene_variant_text TEXT NOT NULL, scene_variant_effective TEXT NOT NULL,
+        final_prompt TEXT NOT NULL, profile TEXT NOT NULL, image_id TEXT NOT NULL, image_sha256 TEXT NOT NULL,
+        image_size_bytes INTEGER NOT NULL, image_content_type TEXT NOT NULL, image_width INTEGER NOT NULL,
+        image_height INTEGER NOT NULL, catalog_revision TEXT NOT NULL
+    );
+    PRAGMA user_version=1;
+""")
+history.commit()
+history.close()
 PY
 
 printf 'REDIS0011-test-rdb' > "${test_root}/source/external-memory/redis/dump.rdb"
@@ -538,7 +558,7 @@ tar -C "${test_root}/source" -czf "${test_root}/snapshot/rencrow-state.tar.gz" s
   sha256sum rencrow-state.tar.gz > SHA256SUMS
 )
 cat > "${test_root}/snapshot/manifest.txt" <<EOF
-format_version=4
+format_version=5
 core_name=state
 session_relative=sessions
 operation_memory_relative=memory
@@ -546,6 +566,7 @@ cold_export_relative=exports/parquet
 raw_source_relative=raw-source
 conversation_l1_relative=l1.db
 conversation_archive_relative=l2.db
+charimage_history_relative=databases/charimage_history.db
 redis_export=external-memory/redis/dump.rdb
 qdrant_export=external-memory/qdrant/full.snapshot
 qdrant_sha256=${qdrant_sha256}
@@ -553,20 +574,41 @@ EOF
 
 if ! "${checker}" "${test_root}/snapshot" >"${test_root}/success.out" 2>&1; then
   cat "${test_root}/success.out" >&2
-  echo "[NG] valid format_version=4 snapshot was rejected" >&2
+  echo "[NG] valid format_version=5 snapshot was rejected" >&2
   exit 1
 fi
 grep -Fq '[OK] snapshot is checksum-valid, extractable, and restorable:' "${test_root}/success.out"
 assert_no_restore_scratch "${test_root}/snapshot" "successful restore validation"
 
+missing_charimage_snapshot=${test_root}/format5-missing-charimage-db
+mkdir -p "${missing_charimage_snapshot}"
+cp "${test_root}/snapshot/rencrow-state.tar.gz" "${missing_charimage_snapshot}/rencrow-state.tar.gz"
+cp "${test_root}/snapshot/SHA256SUMS" "${missing_charimage_snapshot}/SHA256SUMS"
+sed 's#^charimage_history_relative=.*$#charimage_history_relative=databases/missing.db#' \
+  "${test_root}/snapshot/manifest.txt" > "${missing_charimage_snapshot}/manifest.txt"
+if "${checker}" "${missing_charimage_snapshot}" >"${test_root}/missing-charimage.out" 2>&1; then
+  echo "[NG] format_version=5 snapshot without CharImage database was accepted" >&2
+  exit 1
+fi
+assert_no_restore_scratch "${missing_charimage_snapshot}" "missing CharImage database rejection"
+
+legacy_v4_snapshot=${test_root}/legacy-v4
+mkdir -p "${legacy_v4_snapshot}"
+cp "${test_root}/snapshot/rencrow-state.tar.gz" "${legacy_v4_snapshot}/rencrow-state.tar.gz"
+sed -e 's/^format_version=5$/format_version=4/' -e '/^charimage_history_relative=/d' \
+  "${test_root}/snapshot/manifest.txt" > "${legacy_v4_snapshot}/manifest.txt"
+(cd "${legacy_v4_snapshot}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
+"${checker}" "${legacy_v4_snapshot}"
+assert_no_restore_scratch "${legacy_v4_snapshot}" "legacy format_version=4 success"
+
 v5_snapshot=${test_root}/format5-unsupported
 mkdir -p "${v5_snapshot}"
 cp "${test_root}/snapshot/rencrow-state.tar.gz" "${v5_snapshot}/rencrow-state.tar.gz"
 cp "${test_root}/snapshot/SHA256SUMS" "${v5_snapshot}/SHA256SUMS"
-sed 's/^format_version=4$/format_version=5/' \
+sed 's/^format_version=5$/format_version=6/' \
   "${test_root}/snapshot/manifest.txt" > "${v5_snapshot}/manifest.txt"
 if "${checker}" "${v5_snapshot}"; then
-  echo "[NG] unsupported format_version=5 manifest was accepted" >&2
+  echo "[NG] unsupported format_version=6 manifest was accepted" >&2
   exit 1
 fi
 assert_no_restore_scratch "${v5_snapshot}" "unsupported-format rejection"
@@ -1415,7 +1457,7 @@ echo "[OK] supervisor interruption reaped the SQLite worker tree"
 legacy_snapshot=${test_root}/legacy-v3
 mkdir -p "${legacy_snapshot}"
 cp "${test_root}/snapshot/rencrow-state.tar.gz" "${legacy_snapshot}/rencrow-state.tar.gz"
-sed -e 's/^format_version=4$/format_version=3/' -e '/^raw_source_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_snapshot}/manifest.txt"
+sed -e 's/^format_version=5$/format_version=3/' -e '/^raw_source_relative=/d' -e '/^charimage_history_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_snapshot}/manifest.txt"
 (cd "${legacy_snapshot}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
 "${checker}" "${legacy_snapshot}"
 assert_no_restore_scratch "${legacy_snapshot}" "legacy format_version=3 success"
@@ -1423,7 +1465,7 @@ assert_no_restore_scratch "${legacy_snapshot}" "legacy format_version=3 success"
 legacy_v2_snapshot=${test_root}/legacy-v2
 mkdir -p "${legacy_v2_snapshot}"
 cp "${test_root}/snapshot/rencrow-state.tar.gz" "${legacy_v2_snapshot}/rencrow-state.tar.gz"
-sed -e 's/^format_version=4$/format_version=2/' -e '/^raw_source_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_v2_snapshot}/manifest.txt"
+sed -e 's/^format_version=5$/format_version=2/' -e '/^raw_source_relative=/d' -e '/^charimage_history_relative=/d' "${test_root}/snapshot/manifest.txt" > "${legacy_v2_snapshot}/manifest.txt"
 (cd "${legacy_v2_snapshot}" && sha256sum rencrow-state.tar.gz > SHA256SUMS)
 "${checker}" "${legacy_v2_snapshot}"
 assert_no_restore_scratch "${legacy_v2_snapshot}" "legacy format_version=2 success"

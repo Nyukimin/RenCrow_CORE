@@ -86,6 +86,8 @@ type ImageResult struct {
 	ContentType string `json:"content_type"`
 	Width       int    `json:"width"`
 	Height      int    `json:"height"`
+	SHA256      string `json:"sha256"`
+	SizeBytes   int64  `json:"size_bytes"`
 }
 
 type GenerateResult struct {

@@ -61,6 +61,7 @@ cold_export_relative=$(manifest_value cold_export_relative)
 raw_source_relative=$(manifest_value raw_source_relative)
 conversation_l1_relative=$(manifest_value conversation_l1_relative)
 conversation_archive_relative=$(manifest_value conversation_archive_relative)
+charimage_history_relative=$(manifest_value charimage_history_relative)
 redis_export=$(manifest_value redis_export)
 qdrant_export=$(manifest_value qdrant_export)
 qdrant_sha256=$(manifest_value qdrant_sha256)
@@ -68,8 +69,12 @@ workspace_stores_archive=$(manifest_value workspace_stores_archive)
 task_store_relative=$(manifest_value task_store_relative)
 action_store_relative=$(manifest_value action_store_relative)
 
-if [[ ( ${format_version} != 2 && ${format_version} != 3 && ${format_version} != 4 ) || -z ${core_name} || ${core_name} == */* ]]; then
+if [[ ( ${format_version} != 2 && ${format_version} != 3 && ${format_version} != 4 && ${format_version} != 5 ) || -z ${core_name} || ${core_name} == */* ]]; then
   echo "[NG] unsupported or unsafe snapshot manifest" >&2
+  exit 1
+fi
+if [[ ${format_version} == 5 ]] && [[ -z ${charimage_history_relative} ]]; then
+  echo "[NG] CharImage history path is required in format 5 snapshots" >&2
   exit 1
 fi
 
@@ -183,7 +188,7 @@ tar -xzf "${archive}" -C "${restore_root}"
 core_restore=${restore_root}/${core_name}
 
 required_relatives=("${session_relative}" "${operation_memory_relative}" "${cold_export_relative}")
-if [[ ${format_version} == 4 ]]; then
+if [[ ${format_version} == 4 || ${format_version} == 5 ]]; then
   required_relatives+=("${raw_source_relative}")
 fi
 for relative in "${required_relatives[@]}"; do
@@ -202,14 +207,24 @@ for relative in "${conversation_l1_relative}" "${conversation_archive_relative}"
     exit 1
   fi
 done
+if [[ ${format_version} == 5 ]]; then
+  if ! safe_relative "${charimage_history_relative}" || [[ ${charimage_history_relative} == . || ! -f ${core_restore}/${charimage_history_relative} || -L ${core_restore}/${charimage_history_relative} ]]; then
+    echo "[NG] CharImage history database is missing or unsafe in snapshot" >&2
+    exit 1
+  fi
+fi
 
 sqlite_timeout_marker=${restore_root}/.sqlite-integrity-timeout
+sqlite_database_paths=("${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}")
+if [[ ${format_version} == 5 ]]; then
+  sqlite_database_paths+=("${core_restore}/${charimage_history_relative}")
+fi
 set +e
 # python3 is the existing operational interpreter and supervises the configured
 # worker. RENCROW_TEST_PYTHON remains the worker executable, so its startup is
 # covered by the deadline instead of starting the supervisor itself.
 python3 - "${current_bash_executable}" "${python_bin}" "${sqlite_integrity_timeout}" "${sqlite_timeout_marker}" "${sqlite_supervision_marker}" \
-  "${core_restore}/${conversation_l1_relative}" "${core_restore}/${conversation_archive_relative}" <<'PY'
+  "${sqlite_database_paths[@]}" <<'PY'
 import os
 import signal
 import stat
@@ -224,6 +239,7 @@ deadline = time.monotonic() + timeout_seconds
 
 worker_script = r'''import sqlite3
 import sys
+from pathlib import Path
 
 for path in sys.argv[1:]:
     if not path or "/../" in path:
@@ -231,7 +247,7 @@ for path in sys.argv[1:]:
     with open(path, "rb") as handle:
         if handle.read(16) != b"SQLite format 3\x00":
             raise SystemExit(f"not a SQLite database: {path}")
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    connection = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)
     try:
         result = connection.execute("PRAGMA integrity_check").fetchone()
     finally:
@@ -1100,7 +1116,38 @@ if (( sqlite_integrity_status != 0 )); then
   exit "${sqlite_integrity_status}"
 fi
 
-if [[ ${format_version} == 4 ]]; then
+if [[ ${format_version} == 5 ]]; then
+  "${python_bin}" - "${core_restore}/${charimage_history_relative}" <<'PY'
+import os
+import sqlite3
+import sys
+from pathlib import Path
+
+path = sys.argv[1]
+if os.path.islink(path) or not os.path.isfile(path):
+    raise SystemExit("CharImage history readback failed: database is not a regular file")
+connection = sqlite3.connect(Path(path).absolute().as_uri() + "?mode=ro", uri=True)
+try:
+    version = connection.execute("PRAGMA user_version").fetchone()
+    if version != (1,):
+        raise SystemExit("CharImage history readback failed: unsupported schema version")
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(charimage_history)")}
+    required = {
+        "id", "created_at", "character_id", "render_mode", "scene_variant_text",
+        "scene_variant_effective", "final_prompt", "profile", "image_id", "image_sha256",
+        "image_size_bytes", "image_content_type", "image_width", "image_height", "catalog_revision",
+    }
+    if not required.issubset(columns):
+        raise SystemExit("CharImage history readback failed: required columns are missing")
+    connection.execute("SELECT id, created_at, character_id, render_mode, final_prompt, image_id FROM charimage_history LIMIT 1").fetchone()
+    connection.execute("SELECT COUNT(*) FROM charimage_history").fetchone()
+finally:
+    connection.close()
+print("[OK] CharImage history schema and readback verified")
+PY
+fi
+
+if [[ ${format_version} == 4 || ${format_version} == 5 ]]; then
   "${python_bin}" - "${core_restore}/${conversation_l1_relative}" "${core_restore}/${raw_source_relative}" <<'PY'
 import hashlib
 import json
@@ -1108,6 +1155,7 @@ import os
 import re
 import sqlite3
 import sys
+from pathlib import Path
 
 l1_path, raw_root = sys.argv[1:]
 sha256_pattern = re.compile(r"^[0-9a-f]{64}$")
@@ -1167,7 +1215,7 @@ if os.path.islink(raw_root) or not os.path.isdir(raw_root):
     fail()
 
 try:
-    connection = sqlite3.connect(f"file:{l1_path}?mode=ro", uri=True)
+    connection = sqlite3.connect(Path(l1_path).absolute().as_uri() + "?mode=ro", uri=True)
     try:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         required_tables = {"l1_raw_source_manifest", "l1_raw_record", "l1_raw_state_event", "l1_raw_projection_receipt"}

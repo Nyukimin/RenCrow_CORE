@@ -317,6 +317,8 @@ func decodeEditResult(payload []byte, expectedOperation string) (domainimage.Gen
 			ContentType: response.Image.ContentType,
 			Width:       response.Image.Width,
 			Height:      response.Image.Height,
+			SHA256:      response.Image.SHA256,
+			SizeBytes:   response.Image.SizeBytes,
 		},
 	}, nil
 }

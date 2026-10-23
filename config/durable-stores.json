@@ -57,6 +57,30 @@
       "proposal_revision": 1,
       "changed_dimensions": ["storage_plan", "recovery_plan"],
       "lifecycle_status": "implemented"
+    },
+    {
+      "store_id": "core.charimage.history.v1",
+      "owner_module": "RenCrow_CORE",
+      "store_kind": "sqlite",
+      "durability_class": "durable",
+      "data_classes": ["charimage_history"],
+      "canonical_config_keys": ["storage.databases.charimage_history"],
+      "production_root_template": "/srv/rencrow/db/core",
+      "authoritative_writer": "rencrow-core",
+      "readers": ["RenCrow_CORE /viewer/charimage/history"],
+      "schema_revision": "charimage-history/v1",
+      "migration_owner": "RenCrow_CORE",
+      "retention_policy": "until explicit deletion policy",
+      "backup_profile": "core-snapshot/v1",
+      "restore_check": "sqlite-integrity-readback/v1",
+      "rpo": "PT6H",
+      "rto": "PT1H",
+      "sensitivity": "private",
+      "fallback_policy": "fail_closed",
+      "change_class": "S1",
+      "proposal_revision": 1,
+      "changed_dimensions": ["storage_plan", "recovery_plan"],
+      "lifecycle_status": "implemented"
     }
   ]
 }

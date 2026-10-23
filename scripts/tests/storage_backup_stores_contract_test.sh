@@ -52,8 +52,8 @@ line_of() {
 
 # ---- the runner's source contract -------------------------------------------
 assert_contains "${backup_runner}" \
-  'if (( ${#backup_config[@]} != 24 )); then' \
-  "backup-values must carry the workspace and both store roots (24 values)"
+	'if (( ${#backup_config[@]} != 25 )); then' \
+	"backup-values must carry the workspace, both store roots, and CharImage history path (25 values)"
 assert_contains "${backup_runner}" \
   'workspace_dir=${backup_config[21]}' \
   "the workspace root must come from the CORE config, not from a literal"

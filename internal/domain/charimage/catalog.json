@@ -1,0 +1,323 @@
+{
+  "characters": [
+    {
+      "default_scene_en": "At a small kitchen table late at night, she holds up a forkful of freshly cooked noodles with a quietly triumphant, inviting smile. A blue ceramic bowl of noodles topped with a fried egg sits in the foreground. Frame her from the waist up at eye level; a warm pendant lamp illuminates the food, her cheeks, and the gold ornaments, with a calm window and soft darkness behind her.",
+      "fixed": {
+        "character_core_en": "SERA is an adult woman in her early thirties with a softly rounded yet elegant face, warm brown eyes, luminous chestnut hair gathered into a loose low updo, and a naturally curving mature figure. She has a refined, welcoming gaze and subtle gold floral hair jewelry with delicate matching earrings. Her signature outfit is an ivory blouse with a wine-red neck ribbon and a softly draped skirt in coordinated warm tones. Her visual personality combines table manners and unabashed enjoyment of simple food.",
+        "render_2d_en": "Illustrate in polished 2D character art with delicate expressive lines, painterly warm shadows, clear eyes, appetizing hand-painted food, soft fabric folds, and a refined domestic color palette.",
+        "render_3d_en": "Render as an appealing high-end 3D character with carefully sculpted adult facial proportions, individual chestnut hair strands gathered into a believable updo, warm subsurface skin shading, satin-gold jewelry, woven ivory cloth, ceramic glaze, and realistic steam and food materials."
+      },
+      "id": "01_sera",
+      "name_en": "SERA",
+      "name_ja": "セラ",
+      "source_notes_ja": "髪飾りは原案のフォーク型と現画像の花型で不一致。今回は画像基準の花型を暫定採用。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "夜食を、最高に上品に正当化する女"
+    },
+    {
+      "default_scene_en": "On a wet city sidewalk just after rain, she steps past a shallow puddle while turning her head slightly toward the viewer, one shopping bag hanging loosely by her side. Use a full-body three-quarter street-fashion composition at a moderate camera height so the striking blue boots remain clearly visible. Reflections of storefronts color the pavement beneath soft overcast daylight.",
+      "fixed": {
+        "character_core_en": "SENA is an adult woman in her mid twenties with a long graceful neck, tall slender proportions, a precisely cut chin-length black bob, composed dark eyes, and a confident, self-chosen sense of style. Her key outfit is an oversized ivory tailored jacket over a black top, fluid black wide-leg trousers, small silver earrings, and sharply pointed cobalt-blue boots. Her sophistication feels personal rather than performative; the black bob, poised posture, and independently assessing gaze are stable identity features.",
+        "render_2d_en": "Create a stylish 2D fashion illustration with crisp black contours, clean elegant silhouettes, restrained highlights, graphic reflections, strong garment shape language, and precise boot shapes.",
+        "render_3d_en": "Create a premium 3D fashion-character render with tailored jacket structure, naturally weighted trouser cloth, realistic cobalt leather boots, subtle silver jewelry, a glossy but controlled bob hairstyle, and believable wet pavement reflections."
+      },
+      "id": "02_sena",
+      "name_en": "SENA",
+      "name_ja": "セナ",
+      "source_notes_ja": "青い靴は基準デザインの強い識別点。ただし衣装変更で色が永続固定と確定したわけではない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "自分の機嫌を、自分の美意識で取る女"
+    },
+    {
+      "default_scene_en": "In the middle of a small rehearsal studio, he practices a dramatic reaching gesture toward an imagined audience, one foot forward and the other planted, with a concentrated expression beginning to turn into an irresistible grin. Present a dynamic three-quarter full-body view with the entire gesture readable. Cool stage-blue reflections mingle with warm practice-room light.",
+      "fixed": {
+        "character_core_en": "YURA is a charismatic adult male stage performer with a slim athletic physique, ash-blond hair swept into long layered bangs, luminous aqua-blue eyes, fine handsome facial features, and an unabashedly self-admiring smile. He wears a pearl-white stage shirt with an open collar, an ornate sapphire-blue and pearl-toned performance jacket detailed with silver trims, slim black trousers, and polished stage shoes. His silhouette is graceful and slightly theatrical, yet his adult proportions and hardworking physicality remain clear.",
+        "render_2d_en": "Make a vivid 2D stage-character illustration using elegant flowing line work, dynamic cloth shapes, bright expressive aqua eyes, selectively sparkling costume detail, and crisp directional highlights.",
+        "render_3d_en": "Make an ornate stylized 3D performer render with physically grounded satin and metallic costume materials, properly articulated fingers, layered blond hair, realistic movement in the jacket, and soft theatrical stage lighting."
+      },
+      "id": "03_yura",
+      "name_en": "YURA",
+      "name_ja": "ユラ",
+      "source_notes_ja": "表情や失敗描写でも幼児化しない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "努力まで堂々と見せる、自分大好きな王子"
+    },
+    {
+      "default_scene_en": "In a cluttered yet purposeful workshop at dusk, he delicately adjusts a tiny brass mechanism between his large fingertips while leaning over an old wooden workbench. Show a medium shot angled slightly from the side, with enough of both hands and the mechanism visible to make the action understandable. A single practical desk lamp lights the brass and his thoughtful face; workshop shelving recedes into a warm shadow.",
+      "fixed": {
+        "character_core_en": "GAKU is a broad-shouldered adult man in his late thirties with muscular arms, large capable hands, short untidy black hair, a little rough stubble, strong brows, and a face that softens when he concentrates. He wears a charcoal work tank top and worn muted-orange overalls tied around his waist. A few functional brass tools belong naturally with him. His defining contrast is immense physical strength paired with extremely careful, affectionate craftsmanship.",
+        "render_2d_en": "Draw expressive 2D character art with robust anatomy, confident ink contours, tactile hand-painted wood and brass, warmly simplified workshop shapes, and fine attention around the fingers and machine.",
+        "render_3d_en": "Render a high-quality 3D character with sculpted shoulder and arm mass, realistic rough workwear, short stubble, detailed functional brass joints and screws, and precise contact between the fingers and the mechanism."
+      },
+      "id": "04_gaku",
+      "name_en": "GAKU",
+      "name_ja": "ガク",
+      "source_notes_ja": "意味のない歯車装飾で機械を埋めず、作業対象を判読可能にする。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "好きと言う前に、変なものを作ってしまう男"
+    },
+    {
+      "default_scene_en": "At the end of a stone training courtyard, she catches her breath after winning a sparring match, one gloved hand opening toward a fallen opponent just outside the frame. She smirks with measured pride, with her cape turning to reveal the yellow lining. Use a full-body low three-quarter composition, late-afternoon directional sunlight, and long shadows across the flagstones.",
+      "fixed": {
+        "character_core_en": "HAZUMI is a beautiful and formidable adult woman with short jet-black hair, piercing amber eyes, sharply angled brows, an athletic upper body, and sculpted strong shoulders and arms. She wears a fitted black tactical costume with discreet gold fittings, sturdy gloves, and a dramatic cape with an unmistakable bright yellow lining. Her posture conveys self-possession and a desire to make victory look beautiful. Maintain mature feminine anatomy rather than an adolescent silhouette.",
+        "render_2d_en": "Produce energetic 2D action-character illustration with strong black silhouettes, precisely composed yellow accents, confident anatomy, clear cape motion, and controlled cinematic cel shading.",
+        "render_3d_en": "Produce a premium stylized 3D action render with layered fitted armor textiles, metallic gold trims, naturally draping yellow-lined cape material, carefully sculpted athletic muscles, and credible grounded contact with the stone courtyard."
+      },
+      "id": "05_hazumi",
+      "name_en": "HAZUMI",
+      "name_ja": "ハズミ",
+      "source_notes_ja": "助ける場面も『勝ち方の美しさ』という性格の核を維持。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "自分の勝利を、誰より美しくしたい悪役"
+    },
+    {
+      "default_scene_en": "On a small intimate theater stage, she delivers a final dramatic line toward a single empty-looking front-row seat, one hand resting over her chest as a curtain pools behind her. Capture a three-quarter knee-up composition with an earnest rather than exaggerated expression. Amber footlights illuminate her face and red sleeves while the rest of the stage falls into theatrical shadow.",
+      "fixed": {
+        "character_core_en": "MIRA is an expressive adult theatrical woman with abundant reddish-brown wavy hair, warm animated eyes, gold floral hair ornaments, and a presence that fills a stage even without a crowd. Her distinctive costume combines a cream blouse, voluminous red sleeves, deep red wide-leg trousers, and practical stage boots. Her face is able to move from dazzling confidence to private nervousness while remaining recognizably the same grown woman.",
+        "render_2d_en": "Use lush 2D theater illustration with sweeping wave-shaped hair lines, elegant red drapery, painterly warm spotlight gradients, expressive adult eyes, and deliberate stage composition.",
+        "render_3d_en": "Use a sophisticated 3D character render with groomed dense wavy hair, layered theatrical fabrics, subtle skin translucency, soft volumetric stage beams, and a believable small theater set."
+      },
+      "id": "06_mira",
+      "name_en": "MIRA",
+      "name_ja": "ミラ",
+      "source_notes_ja": "演じている役と本人を区別。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "観客が一人でも、本気で主役を張る女"
+    },
+    {
+      "default_scene_en": "Inside a familiar neighborhood café, he turns from a table to offer an amused, slightly conspiratorial glance, holding a hand-marked schedule while his battered bag rests on the next chair. Compose as a relaxed waist-up character portrait, with gentle morning light from the café window and warm practical interior tones.",
+      "fixed": {
+        "character_core_en": "ROKU is a mature man of about forty-nine with short messy black hair silvering at the temples, a neat rough beard, age lines around kind observant eyes, a naturally solid adult frame, and an easy old-friend confidence. He wears a dark navy knit top, charcoal trousers, a practical wristwatch, and a worn brown leather shoulder bag. He looks dependable without becoming stiff or overly youthful.",
+        "render_2d_en": "Render warm 2D adult-character illustration with natural facial age lines, subtle knit texture, an approachable brush-and-ink finish, and soft interior light.",
+        "render_3d_en": "Render grounded semi-realistic 3D character art with well-observed older facial anatomy, gray temples, subtle stubble, natural knit fabric and scuffed leather, using gentle physically based window lighting."
+      },
+      "id": "07_roku",
+      "name_en": "ROKU",
+      "name_ja": "ロク",
+      "source_notes_ja": "49歳らしい年齢表現を保持。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "段取りだけは完璧な、49歳の悪友"
+    },
+    {
+      "default_scene_en": "In a sunlit living room, she turns a spontaneous dance step while holding one side of her orange coat open, delighted with the motion. Show a full-body composition with ample space around her arms, purple fabric flowing in a clear direction, and soft golden light glancing across her silver hair and expressive mature face.",
+      "fixed": {
+        "character_core_en": "KIKYO is a stylish sixty-eight-year-old woman with short silvery-white hair, confident red lipstick, visible age lines at the eyes, mouth, neck, and hands, and remarkable upright posture. She wears richly colored flowing purple clothing, a vivid orange overcoat, prominent rings, and elegant shoes. Her presence is daring, lively, and glamorous precisely as an older woman; her age must remain visible in every medium.",
+        "render_2d_en": "Illustrate as elegant 2D character art with confident mature face line work, flowing orange and purple shapes, expressive age-appropriate hands, joyful movement, and carefully restrained warm shading.",
+        "render_3d_en": "Render as a detailed 3D elder character with faithfully sculpted wrinkles and aged skin, natural silver hair, richly layered fabrics, realistic jewelry and hand anatomy, and graceful physical balance mid-step."
+      },
+      "id": "08_kikyo",
+      "name_en": "KIKYO",
+      "name_ja": "キキョウ",
+      "source_notes_ja": "年齢を消して若返らせない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "68歳、まだ『これから』が多すぎる女"
+    },
+    {
+      "default_scene_en": "On a station platform in the blue hour, she waits alone holding a plain paper cup of coffee, pausing to watch a train leave beyond the glass. Frame her in a thoughtful medium three-quarter shot at eye level. Cool outdoor light meets a warm station reflection on her cheeks and her navy coat, with the background softly out of focus.",
+      "fixed": {
+        "character_core_en": "SAYO is an adult woman in her early thirties with a quiet, inward-looking expression, a reddish-brown short bob, intentionally mismatched earrings, composed eyes, and a restrained small smile. She wears a long dark navy coat over a cream ribbed high-neck knit, dark trousers, and practical shoes. Her recognizable identity is a poised, mature reserve with space between herself and others rather than overt melodrama.",
+        "render_2d_en": "Draw restrained 2D cinematic illustration with finely controlled emotion, nuanced blue-gray palette, clean bob silhouette, delicate eye-line work, and understated reflective highlights.",
+        "render_3d_en": "Render an intimate high-end 3D character portrait with lifelike coat drape, fine ribbed knit material, believable earrings, subtle adult facial micro-expression, shallow depth of field, and glass reflections."
+      },
+      "id": "09_sayo",
+      "name_en": "SAYO",
+      "name_ja": "サヨ",
+      "source_notes_ja": "別れや感情を涙や大げさな表情に固定しない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "引き止めないのに、別れた日を忘れない女"
+    },
+    {
+      "default_scene_en": "At a wooden table in a sunny bookshop café, he leans forward to offer a playful move in a tabletop game, smiling at someone across from him. The game board and one reaching hand are readable in the foreground. Compose at medium distance with a lively three-quarter camera angle, soft daylight, and gentle colorful accents from books behind him.",
+      "fixed": {
+        "character_core_en": "NICO is an approachable adult man with short wavy chestnut-brown hair, warm brown eyes, expressive dimples when smiling, relaxed shoulders, and quick observant glances. He wears a cream buttoned shirt decorated with teal and rusty-orange geometric patterns, sleeves casually rolled to the forearm, and navy trousers. His distinctive appeal lies in drawing people into games and interactions rather than posing as a distant fashion model.",
+        "render_2d_en": "Make friendly lively 2D character illustration with expressive hand gestures, recognizable patterned clothing, clear board-game arrangement, natural dimpled smile, and painterly sunny color.",
+        "render_3d_en": "Make a charming realistic-stylized 3D scene with natural hand contact on game pieces, carefully modeled facial dimples, woven patterned shirt, wood textures, and inviting bounced daylight."
+      },
+      "id": "10_nico",
+      "name_en": "NICO",
+      "name_ja": "ニコ",
+      "source_notes_ja": "容姿のモデル写真だけにせず、遊び相手との関係が見える絵にする。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "いつの間にか、全員を自分の遊びに巻き込む男"
+    },
+    {
+      "default_scene_en": "After office hours in a quiet corporate corridor, she pauses beside a meeting-room door, holding a closed folder as she notices something unfair happening inside. Her expression is tired but alert, one eyebrow barely raised. Use a three-quarter medium shot with the charcoal suit and glasses clearly visible, cool office ceiling light moderated by warm light from the meeting room.",
+      "fixed": {
+        "character_core_en": "RITSU is an adult professional woman in her mid thirties with dark hair tied into a low practical ponytail, intelligent slightly tired eyes, a composed mature face, and slim rectangular glasses. Her standard work outfit is a charcoal tailored suit over a muted rose blouse; her at-home alternative is an oversized oatmeal-colored top with navy trousers. Her facial structure, age, and sober intelligence stay consistent between work and home.",
+        "render_2d_en": "Use expressive but grounded 2D workplace character illustration with thin precise eyewear lines, controlled adult facial design, understated rose and charcoal tones, and subtle cinematic shadow shapes.",
+        "render_3d_en": "Use an observant semi-realistic 3D character render with accurate glasses alignment and refraction, practical tied hair, convincing tailored suiting, subtle skin detail, and natural office lighting."
+      },
+      "id": "11_ritsu",
+      "name_en": "RITSU",
+      "name_ja": "リツ",
+      "source_notes_ja": "眼鏡は一組だけ。職場と自宅で同一の顔と体格を維持。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "定時に帰りたいのに、理不尽が気になってしまう女"
+    },
+    {
+      "default_scene_en": "Alone at a microphone in a dark rehearsal room, IO begins singing softly after the final joke has faded away, hands lightly resting on the microphone stand. Use a knee-up eye-level frame with a quiet direct gaze and a single delicate blue rim light against a dim, uncluttered rehearsal background.",
+      "fixed": {
+        "character_core_en": "IO is a slim adult performer with a consistent androgynous presentation, a dark ash-colored shag haircut brushing the jaw, blue-gray eyes, a single silver ear cuff, and a thoughtful fine-featured face. Everyday clothing can be a roomy charcoal-gray hoodie, while the signature stage outfit is a long midnight-blue jacket with silver accents over a black high-neck top. IO's body and facial features remain the same regardless of casual or stage setting.",
+        "render_2d_en": "Make sensitive 2D music-character illustration with fine expressive eye lines, flowing ash hair shapes, understated silver highlights, blue-black shadow design, and an intimate quiet emotional focus.",
+        "render_3d_en": "Make a polished 3D performer portrait with realistically groomed shag hair, layered blue jacket materials, a metal ear cuff, convincing microphone stand contact, softly scattered stage light, and stable androgynous facial geometry."
+      },
+      "id": "12_io",
+      "name_en": "IO",
+      "name_ja": "イオ",
+      "source_notes_ja": "性別表現をシーンによって変えない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "普段は冗談ばかり、本音は歌にしか出せない人"
+    },
+    {
+      "default_scene_en": "Inside a messy sunlit art studio, he stands at a worktable assembling textured papers into a collage, the vermilion sleeve on his own left arm clearly visible beside the pale materials. Show a three-quarter waist-up viewpoint angled toward the table, with his hand actively placing a paper piece and afternoon side light revealing the texture of the work.",
+      "fixed": {
+        "character_core_en": "NOE is a slender adult male artist with angular jaw and nose, attentive eyes, long thoughtful fingers, and dark hair tucked behind one ear. He wears a quiet limestone-gray collarless artist shirt with exactly his own left sleeve colored vivid vermilion, paired with black trousers. His identity centers on concentrated work and tangible materials, with the single red left sleeve as an asymmetrical visual signature.",
+        "render_2d_en": "Use textured 2D artist-character illustration with expressive graphite-like edges, layered paper brush marks, restrained grayscale color broken by one vermilion sleeve, and accurate left-right orientation.",
+        "render_3d_en": "Use a tactile 3D artist render with high-detail paper fibers, matte cloth, clean anatomy for long fingers, naturally imperfect work surfaces, and the vivid vermilion sleeve clearly on the character's anatomical left arm."
+      },
+      "id": "13_noe",
+      "name_en": "NOE",
+      "name_ja": "ノエ",
+      "source_notes_ja": "朱色は本人の左袖のみ。画像の反転で左右を変えない。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "『きれい』で終わる作品を、残したくない青年"
+    },
+    {
+      "default_scene_en": "In a lamplit study, she pinches a small clue card gently between two fingers while leaning back in thought, eyes focusing beyond the card as an insight arrives. Compose a tight waist-up portrait with the emerald scarf, silver-rimmed glasses, and card all distinguishable. Warm desk light balances cool window shadows in the room.",
+      "fixed": {
+        "character_core_en": "TOWA is an adult woman detective with a dark short bob, amber eyes, fine silver-framed glasses, a narrow emerald-green scarf, and an alert, composed face. She wears a pale blouse beneath a fitted dark jacket with matching trousers. Small investigation cards are part of her props. She enjoys the theatrical reveal of a clue, but her intelligence shows first in what she notices and how she looks.",
+        "render_2d_en": "Create a refined 2D mystery illustration with crisp graphic shadows, precise spectacle rims, careful hand and card gestures, expressive amber eyes, and a small sharp emerald color accent.",
+        "render_3d_en": "Create an atmospheric stylized 3D detective portrait with polished but subtle glass reflections, layered scarf fabric, precisely modeled card grip, physically based study lighting, and mature facial expression."
+      },
+      "id": "14_towa",
+      "name_en": "TOWA",
+      "name_ja": "トワ",
+      "source_notes_ja": "眼鏡だけで識別を済ませず、視線・スカーフ・知的な動作を組み合わせる。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "答えより先に、種明かしの演出を考える探偵"
+    },
+    {
+      "default_scene_en": "Under an old station awning at night, he extends his white-gloved right hand in a quiet guiding gesture while his bare left hand holds a single unnumbered brass key close to his coat. Frame him from the knees up, with both hands visible and the correct sides apparent. Golden station lamps gleam on wet pavement and light mist drifts behind him.",
+      "fixed": {
+        "character_core_en": "TORU is an enigmatic adult male guide with a slim elongated silhouette, straight black hair marked by one distinct silver streak, gray-green eyes, and a distant patient demeanor. He wears a long dark forest-green uniform coat over a white collar and dark tie with neat black shoes. His anatomical right hand always has a white glove; his anatomical left hand is always bare. His distinctive brass key has a plain unnumbered bow.",
+        "render_2d_en": "Draw atmospheric 2D supernatural travel illustration with a long dark-green silhouette, highly legible asymmetrical hand treatment, restrained eye color, crisp cloth contours, and soft amber-blue nighttime illumination.",
+        "render_3d_en": "Render a sophisticated 3D mystery character with naturally weighted uniform cloth, realistic coat details and one metal brass key, carefully differentiated right white glove and bare left hand, realistic hair with a single silver streak, and cinematic damp-night lighting."
+      },
+      "id": "15_toru",
+      "name_en": "TORU",
+      "name_ja": "トオル",
+      "source_notes_ja": "手袋は本人の右手のみ。左手は素手。鍵は一つ。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "人を帰す案内人なのに、自分の帰り道だけ知らない"
+    },
+    {
+      "default_scene_en": "In a softly lit room crowded with discarded treasures, he gently presents a chipped porcelain cup as if it were the greatest prize in the world. Use a three-quarter medium-full composition that keeps his beak, bird legs, crown, asymmetric gloves, and large leather bag readable. Warm amber lantern light catches individual blue-black feathers and worn leather.",
+      "fixed": {
+        "character_core_en": "BARON is a fully nonhuman aristocratic crow-like collector with layered black-to-indigo feathers, a long pointed black beak, amber eyes, avian legs and tail, and a battered tiny crown. He wears an aged dark tailcoat over a rich burgundy waistcoat and carries an oversized weathered leather collector's bag. His anatomical right glove is ivory and his anatomical left glove is reddish brown. He treasures damaged everyday objects more than dazzling jewels.",
+        "render_2d_en": "Render richly designed 2D dark-fantasy character illustration with readable raven anatomy, textured feather strokes, elegant tailcoat contours, theatrical warm highlights, and clear glove color asymmetry.",
+        "render_3d_en": "Render a premium 3D avian character with true crow head and leg anatomy, layered groomed black-and-indigo feathers, worn embroidered fabrics, scuffed leather bag, chipped ceramic surfaces, and correct right-ivory left-russet gloves."
+      },
+      "id": "16_baron",
+      "name_en": "BARON",
+      "name_ja": "ガラクタ男爵",
+      "source_notes_ja": "カラスの頭と脚を必ず残す。右アイボリー手袋、左赤茶手袋。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "捨てられるものにだけ、異常な価値を見いだす収集家"
+    },
+    {
+      "default_scene_en": "Standing heroically on top of an ordinary wooden clothing button, he raises one little arm to proclaim ownership of an entire living-room table. Place a pencil and a teaspoon nearby as unmistakable scale references. Use a macro eye-level viewpoint at his tiny height, with warm morning daylight and a softly blurred normal-sized living room behind him.",
+      "fixed": {
+        "character_core_en": "KOROMU is a tiny nonhuman king exactly three centimeters tall, made of a slightly rough matte ink-black teardrop-shaped body with no visible nose or mouth. Two simple gold oval eyes, extremely short arms and legs, a small crooked gold crown, and a bright red cape visibly made of folded paper define the character. His entire figure should fit against the scale of a human fingertip, a button, or a pencil.",
+        "render_2d_en": "Use charming detailed 2D storybook illustration with simple iconic mascot shapes, precise micro-scale props, a clear red paper cape silhouette, matte ink texture, and warm delicate watercolor-like shadows.",
+        "render_3d_en": "Use a convincing macro 3D character render with exact miniature proportions, matte lightly rough black surface, subtly folded paper cape, small metallic crooked crown, believable wooden button and metal spoon scale, and realistic shallow depth of field."
+      },
+      "id": "17_koromu",
+      "name_en": "KOROMU",
+      "name_ja": "コロム",
+      "source_notes_ja": "身長は3cm。マントは紙。普通のサイズの小物を入れ縮尺を伝える。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "身長三センチで、部屋を征服したい王"
+    },
+    {
+      "default_scene_en": "In a cozy room in afternoon sunshine, NANAME studies an ordinary human sneaker as if it were a ceremonial object, tilting its round body with sincere curiosity. Show a low three-quarter full-body view with all three separate legs and cream feet unobstructed, one mitten-hand pointing toward the shoe, and the amber pouch visible on the back. Gentle window light glows through the translucent face window.",
+      "fixed": {
+        "character_core_en": "NANAME is a peculiar friendly nonhuman alien with a rounded dull-blue body, exactly two short mitten-like arms, and exactly three distinct short legs ending in cream-colored feet. A translucent many-sided visor-like window occupies the face, holding only two small glowing eyes in a dark interior; there is no visible mouth or nose. A warm amber backpack pouch stores cards and curious collected objects. The three legs and the simple face window are defining geometry.",
+        "render_2d_en": "Use clean imaginative 2D creature illustration with clearly separated triple-leg silhouettes, simple readable blue shapes, luminous facial window, restrained golden household colors, and expressive body language without human facial features.",
+        "render_3d_en": "Render a stylized 3D alien figure with genuinely three modeled and visible legs, molded matte blue shell, translucent beveled visor with two inner lights, cream-colored feet, textured amber pouch, soft contact shadows, and plausible physical balance."
+      },
+      "id": "18_naname",
+      "name_en": "NANAME",
+      "name_ja": "ナナメ",
+      "source_notes_ja": "脚3本を必ず可視化。顔窓の六角形は原案と現画像に差異があるので、多角形のまま暫定。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "人間の暮らしを、少し間違って覚える宇宙人"
+    },
+    {
+      "default_scene_en": "In a moonlit garden beneath wet trees, she attempts a grand frightening entrance from behind a stone lantern, only to hesitate halfway out of hiding. Compose a medium-wide vertical scene showing the whole hooded silhouette and its long trailing mist, with the tiny star eyes visible within the black face void. Lavender vapor catches silver moonlight and warm lantern spill.",
+      "fixed": {
+        "character_core_en": "FUWARI is a female-coded supernatural being made of a tall purple-black hooded shadow, winglike dark shapes, and curling clouds of pale lavender mist. Where a human face would be there is only a deep black void containing exactly two small star-shaped luminous eyes. A suggestion of feminine posture emerges from the shadow and vapor, while the lower half dissolves into drifting fog rather than legs. She is a ghostly presence, not a human wearing a costume.",
+        "render_2d_en": "Illustrate as evocative 2D dark-fantasy painting with flowing purple-black silhouette shapes, hand-painted smoke ribbons, precisely two luminous star eyes, and gentle storybook mystery rather than conventional human anatomy.",
+        "render_3d_en": "Render a cinematic 3D volumetric apparition built from translucent layered fog, shadow volumes, subtle featherlike forms, physically plausible scattered moonlight, and a truly empty black facial void with only two star lights."
+      },
+      "id": "19_fuwari",
+      "name_en": "FUWARI",
+      "name_ja": "フワリ",
+      "source_notes_ja": "人間の顔、鼻、口、脚を作らない。霧と影が本体。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "有名な怪異になりたいのに、不意打ちが苦手な怪異"
+    },
+    {
+      "default_scene_en": "On a flower-lined neighborhood path, MIKORO stands solemnly beside the giant retro microphone to report the important discovery of a sleeping cat. Compose a low medium-full frame at the mascot's height, with the entire yellow egg silhouette, navy forelock, simple eyes, coral scarf, and silver microphone clearly visible. Soft late-afternoon sunlight warms the flowers and the cat beyond the microphone.",
+      "fixed": {
+        "character_core_en": "MIKORO is a small nonhuman public-relations mascot with a pale butter-yellow egg-shaped body, navy finlike forelock, two short line-shaped eyes, one tiny straight horizontal mouth, small hands, and short feet. The design includes a cropped navy jacket and a coral-colored scarf. An oversized silver vintage reporter microphone, nearly the same size as the mascot, is an essential signature prop. The face remains neutral; emotion is carried by posture and situation.",
+        "render_2d_en": "Make delightful 2D mascot editorial illustration with graphic egg geometry, exactly simple horizontal face marks, clear navy-and-coral accents, polished silver microphone highlights, and restrained playful composition.",
+        "render_3d_en": "Make an appealing tactile 3D mascot render with a softly matte butter-yellow body, crisp molded finlike tuft, simple inset face marks, finely woven scarf, compact navy jacket, and an accurately sized brushed-metal microphone."
+      },
+      "id": "20_mikoro",
+      "name_en": "MIKORO",
+      "name_ja": "ミコロ",
+      "source_notes_ja": "笑い目・涙目・眉毛は追加しない。感情は姿勢で表現。",
+      "status": "existing_concept_unconfirmed",
+      "tagline_ja": "街の小さな出来事を、国家的ニュースとして伝える広報官"
+    },
+    {
+      "default_scene_en": "On a modest concert stage during a rehearsal, she leans toward the imaginary first row with a bright encouraging smile and one hand extended in a welcoming gesture. Frame a full-body three-quarter view, making the pink-and-white layered costume and both boots visible. Rose-pink stage lights mingle with gentle white follow-spot illumination.",
+      "fixed": {
+        "character_core_en": "MOMOKA is an adult aspiring idol around twenty-one, with soft chestnut-brown hair arranged in half-twin sections, prominent pink hair bows, warm brown eyes, rounded cheeks balanced by an unmistakably adult face and jawline, and lively feminine stage presence. Her signature stage outfit uses pink and white with puffed short sleeves, carefully layered ruffled skirts, and matching performance boots. Her charm is earnest, warm, and classically sweet rather than childlike.",
+        "render_2d_en": "Create sparkling 2D idol illustration with cheerful but adult facial proportions, crisp layered pink costume shapes, flowing ribbon accents, expressive eyes, and precise stage-performance anatomy.",
+        "render_3d_en": "Create a polished 3D idol render with physically modeled skirt layers and ribbons, natural adult skin shading, soft chestnut hair strands, accurate stage boots, and subtle rosy theatrical lighting."
+      },
+      "id": "21_momoka",
+      "name_en": "MOMOKA",
+      "name_ja": "モモカ",
+      "source_notes_ja": "追加候補で未採用。21歳の成人性を保つ。",
+      "status": "candidate_unapproved",
+      "tagline_ja": "王道のかわいさを磨き、センターを目指すアイドル"
+    },
+    {
+      "default_scene_en": "During a rehearsal under cool stage lights, she holds the finishing position of a technically precise dance turn, one leg grounded and the other extended, arms elegantly balanced. Use a complete full-body frontal three-quarter composition with natural joint positions and visible feet. Ice-blue edge lights reflect off the silver costume details; a gentle genuine smile begins to soften her concentrated expression.",
+      "fixed": {
+        "character_core_en": "REI is an adult dance idol around twenty-three with a tall athletic dancer's silhouette, long legs, a toned waist, powerful thighs, an elongated oval face, straight brows, dark steel-gray eyes, and a high long black ponytail. Her signature performance outfit combines white, ice-blue, and silver, with structured stage shorts, an asymmetric skirt panel, and ankle-height dance boots. Her physical precision and poised restraint sharply distinguish her from MOMOKA's softer sweetness.",
+        "render_2d_en": "Draw dynamic 2D dance-idol character illustration with strong elegant anatomical rhythm, precise foot placement, distinct asymmetric skirt geometry, long ponytail motion, and clean ice-blue light accents.",
+        "render_3d_en": "Render a premium 3D dance character with well-observed adult athletic musculature, accurate balance and ankle articulation, real cloth weight in the asymmetric skirt panel, structured silver-white costume materials, and clean studio-stage lighting."
+      },
+      "id": "22_rei",
+      "name_en": "REI",
+      "name_ja": "レイ",
+      "source_notes_ja": "追加候補で未採用。長身・体格・顔をモモカと混同しない。",
+      "status": "candidate_unapproved",
+      "tagline_ja": "精密な身体表現と、応援で緩む表情を持つダンスアイドル"
+    }
+  ],
+  "model": "moss-image-sft-8-steps-dmd",
+  "principle_ja": "固定記述と各モード用の固定スタイルを維持し、scene変数だけを差し替える。10分割のわけわけ観点は設計上の検査軸であり、MOSSへの最終入力は自然文。",
+  "prompt_format": "English positive natural language; one standalone image; negative omitted",
+  "render_modes": [
+    "2d",
+    "3d"
+  ],
+  "schema_version": "1.0.0",
+  "scope": "first-look reference prompts, not evaluated with generation",
+  "source_model_label": "MOSS Image SFT 8 Steps DMD",
+  "status_notes_ja": "20件は既存案で最終採用済みとは限らない。21,22は未採用候補。"
+}

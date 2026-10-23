@@ -45,7 +45,7 @@ if [[ ! -x ${rencrow_binary} ]]; then
 fi
 
 mapfile -t backup_config < <(RENCROW_CONFIG="${config_file}" "${rencrow_binary}" config backup-values)
-if (( ${#backup_config[@]} != 24 )); then
+if (( ${#backup_config[@]} != 25 )); then
   echo "[NG] failed to load complete backup config from ${config_file}" >&2
   exit 1
 fi
@@ -75,6 +75,7 @@ workspace_dir=${backup_config[21]}
 workspace_dir=${workspace_dir%/}
 task_store_root=${backup_config[22]}
 action_store_root=${backup_config[23]}
+charimage_history=${backup_config[24]}
 workspace_stores_name=workspace-stores.tar.gz
 lock_file=/home/nyukimi/.cache/rencrow-storage-backup.lock
 backup_mount=/srv/rencrow/backup
@@ -132,6 +133,7 @@ cold_export_relative=$(relative_to_core "${cold_export_dir}")
 raw_source_relative=$(relative_to_core "${raw_source_dir}")
 conversation_l1_relative=$(relative_to_core "${conversation_l1}")
 conversation_archive_relative=$(relative_to_core "${conversation_archive}")
+charimage_history_relative=$(relative_to_core "${charimage_history}")
 
 if [[ ${mode} == config ]]; then
   printf '%s\n' \
@@ -143,6 +145,7 @@ if [[ ${mode} == config ]]; then
     "knowledge_versions=${knowledge_versions}" \
     "memory=session:${session_dir},operation:${operation_memory_dir},cold:${cold_export_dir}" \
     "raw_source=${raw_source_dir}" \
+    "charimage_history=${charimage_history}" \
     "workspace_stores=task:${task_store_root},action:${action_store_root}" \
     "redis=enabled:${redis_enabled},container:${redis_container}" \
     "qdrant=enabled:${qdrant_enabled},base_url:${qdrant_base_url}" \
@@ -152,6 +155,10 @@ fi
 
 if [[ ! -d ${raw_source_dir} ]]; then
   echo "[NG] configured Common Raw source directory is missing: ${raw_source_dir}" >&2
+  exit 1
+fi
+if [[ ! -f ${charimage_history} || -L ${charimage_history} ]]; then
+  echo "[NG] configured CharImage history database is missing or not a regular file: ${charimage_history}" >&2
   exit 1
 fi
 
@@ -415,7 +422,7 @@ core_masked_by_backup=false
 qdrant_snapshot_name=
 qdrant_snapshot_checksum=
 core_snapshot_partial_parent=
-snapshot_format_version=4
+snapshot_format_version=5
 declare -A module_writer_was_active=()
 declare -A module_writer_masked=()
 
@@ -668,6 +675,7 @@ printf '%s\n' \
   "raw_source_relative=${raw_source_relative}" \
   "conversation_l1_relative=${conversation_l1_relative}" \
   "conversation_archive_relative=${conversation_archive_relative}" \
+  "charimage_history_relative=${charimage_history_relative}" \
   "redis_export=$([[ ${redis_enabled} == true ]] && printf 'external-memory/redis/dump.rdb' || printf 'disabled')" \
   "qdrant_export=$([[ ${qdrant_enabled} == true ]] && printf 'external-memory/qdrant/%s' "${qdrant_snapshot_name}" || printf 'disabled')" \
   "qdrant_sha256=$([[ ${qdrant_enabled} == true ]] && printf '%s' "${qdrant_snapshot_checksum}" || printf 'disabled')" \

@@ -114,6 +114,10 @@ func (c BackupConfig) configured() bool {
 }
 
 func (c *Config) validateBackupConfig() error {
+	charImageHistory := strings.TrimSpace(c.Storage.Databases.CharImageHistory)
+	if charImageHistory != "" && !configPathIsAbs(charImageHistory) {
+		return fmt.Errorf("storage.databases.charimage_history must be an absolute path")
+	}
 	if rawSourceDir := strings.TrimSpace(c.Storage.Memory.RawSourceDir); rawSourceDir != "" {
 		if !configPathIsAbs(rawSourceDir) {
 			return fmt.Errorf("storage.memory.raw_source_dir must be an absolute path")
@@ -124,6 +128,9 @@ func (c *Config) validateBackupConfig() error {
 	}
 	if !c.Backup.configured() {
 		return nil
+	}
+	if charImageHistory == "" {
+		return fmt.Errorf("storage.databases.charimage_history is required when backup is configured")
 	}
 	requiredPaths := []struct {
 		key   string
@@ -220,6 +227,7 @@ func (c *Config) validateBackupConfig() error {
 		{"storage.databases.ai_workflow", c.Storage.Databases.AIWorkflow},
 		{"storage.databases.knowledge_memory", c.Storage.Databases.KnowledgeMemory},
 		{"storage.databases.durable_store_workflow", c.Storage.Databases.DurableStoreWorkflow},
+		{"storage.databases.charimage_history", c.Storage.Databases.CharImageHistory},
 	}
 	for _, configuredPath := range storagePaths {
 		storagePath := strings.TrimSpace(configuredPath.value)

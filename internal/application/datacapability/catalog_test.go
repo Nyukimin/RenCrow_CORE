@@ -81,11 +81,16 @@ func TestCatalogContainsEveryKnownStoreWithoutPaths(t *testing.T) {
 	if entry, _ := catalog.Describe("knowledge_memory"); entry.Status != KnowledgeMemoryStatusUnavailable || entry.Reason != KnowledgeMemoryReasonDatabaseUnavailable {
 		t.Fatalf("knowledge=%#v", entry)
 	}
+	if entry, _ := catalog.Describe("charimage_history"); !entry.OwnerRouteOnly || entry.PhysicalKey != "" || entry.Status != "unavailable" {
+		t.Fatalf("CharImage history must remain Viewer-route-only: %#v", entry)
+	}
 }
 
 func TestCatalogPhysicalKeysExactlyMatchDatabasePathsConfig(t *testing.T) {
 	catalog := Build(allConfiguredStoreStates())
 	want := databasePathsConfigYAMLKeys(t)
+	// CharImage history is private and only its owner Viewer route may read it.
+	delete(want, "charimage_history")
 
 	got := make(map[string]struct{}, len(catalog.All()))
 	for _, entry := range catalog.All() {

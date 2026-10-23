@@ -212,6 +212,8 @@ func TestDataCapabilityCatalogPhysicalStoresCoverDatabasePathsConfigFields(t *te
 			want[key] = true
 		}
 	}
+	// CharImage history is private and exposed only through its owner Viewer route.
+	delete(want, "charimage_history")
 	got := map[string]bool{}
 	for _, key := range datacapability.KnownStoreKeys() {
 		entry, err := datacapability.Build(nil).Describe(key)

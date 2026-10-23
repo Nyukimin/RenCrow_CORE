@@ -68,6 +68,48 @@ workspace_dir: "/state/workspace"
 	}
 }
 
+func TestCharImageHistoryPathIsAbsoluteAndRequiredForConfiguredBackup(t *testing.T) {
+	base := func(history string) *Config {
+		return &Config{
+			Storage: StorageConfig{
+				Memory: MemoryStorageConfig{
+					SessionDir: "/state/sessions", OperationMemoryDir: "/state/memory",
+					ColdExportDir: "/state/exports/parquet", RawSourceDir: "/state/raw-source",
+				},
+				Databases: DatabasePathsConfig{ConversationL1: "/state/l1.db", ConversationArchive: "/state/archive.db", CharImageHistory: history},
+			},
+			Backup: BackupConfig{
+				CoreSource: "/state", CoreSnapshotRoot: "/backup/snapshots", KnowledgeSource: "/knowledge",
+				KnowledgeMirror: "/mirror/knowledge", KnowledgeVersions: "/mirror/versions",
+				RecentKeep: 1, DailyKeep: 1, WeeklyKeep: 1, MonthlyKeep: 1,
+			},
+		}
+	}
+	for _, tc := range []struct {
+		name    string
+		history string
+		want    string
+	}{
+		{name: "missing", want: "storage.databases.charimage_history is required when backup is configured"},
+		{name: "relative", history: "data/history.db", want: "storage.databases.charimage_history must be an absolute path"},
+		{name: "outside core", history: "/other/history.db", want: "storage.databases.charimage_history must be inside backup.core_source"},
+		{name: "valid", history: "/state/databases/charimage_history.db"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := base(tc.history).validateBackupConfig()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("validateBackupConfig() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateBackupConfig() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadConfigRejectsRetiredViewerEventLog(t *testing.T) {
 	path := writeStorageTestConfig(t, `
 server:
@@ -128,7 +170,7 @@ func TestLoadConfigRawSourceDirIsAbsoluteNonRootAndBackupCohortRequired(t *testi
 		return &Config{
 			Storage: StorageConfig{
 				Memory:    MemoryStorageConfig{SessionDir: "/state/sessions", OperationMemoryDir: "/state/memory", ColdExportDir: "/state/exports/parquet", RawSourceDir: raw},
-				Databases: DatabasePathsConfig{ConversationL1: "/state/l1.db", ConversationArchive: "/state/l2.db"},
+				Databases: DatabasePathsConfig{ConversationL1: "/state/l1.db", ConversationArchive: "/state/l2.db", CharImageHistory: "/state/charimage_history.db"},
 			},
 			Backup: BackupConfig{CoreSource: "/state", CoreSnapshotRoot: "/backup/core-snapshots", KnowledgeSource: "/knowledge", KnowledgeMirror: "/mirror/knowledge", KnowledgeVersions: "/mirror/versions", RecentKeep: 28, DailyKeep: 14, WeeklyKeep: 8, MonthlyKeep: 12},
 		}
@@ -268,6 +310,9 @@ func TestLoadConfigBackupRequiresCompleteDestinations(t *testing.T) {
 	path := writeStorageTestConfig(t, `
 server:
   port: 8080
+storage:
+  databases:
+    charimage_history: "/state/databases/charimage_history.db"
 backup:
   core_source: "/state"
   core_snapshot_root: "/backup/core-snapshots"
@@ -288,6 +333,8 @@ storage:
     operation_memory_dir: "/state/memory"
     cold_export_dir: "/state/exports/parquet"
     raw_source_dir: "/state/raw-source"
+  databases:
+    charimage_history: "/state/databases/charimage_history.db"
 backup:
   core_source: "/state"
   core_snapshot_root: "/backup/core-snapshots"
@@ -315,6 +362,8 @@ storage:
     operation_memory_dir: "/state/memory"
     cold_export_dir: "/state/exports/parquet"
     raw_source_dir: "/state/raw-source"
+  databases:
+    charimage_history: "/state/databases/charimage_history.db"
 backup:
   core_source: "/state"
   core_snapshot_root: "/backup/core-snapshots"
