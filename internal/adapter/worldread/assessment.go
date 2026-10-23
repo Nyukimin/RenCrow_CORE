@@ -212,7 +212,48 @@ func validateAssessmentMeaning(dto *assessmentDTO) error {
 		return fmt.Errorf("%w: new_activity_allowed=%v does not match blocked_reason %q", ErrContract,
 			dto.NewActivityAllowed, dto.BlockedReason)
 	}
+	if err := validatePolicyPermission(dto); err != nil {
+		return err
+	}
 	return validateWorkPresentation(dto.WorkSetState, dto.WorkPresentation)
+}
+
+// validatePolicyPermission binds the new-activity permission to the LifePolicy
+// state exactly as WORLD derives it (D-09, D-10). A missing policy means CORE
+// published no current permission, so nothing is permitted and the block reason
+// is fixed. An expired policy keeps only its explicit fallback subset, and a
+// fresh policy that permits nothing names whether nothing was allowed or nothing
+// is registered. Reading a grant from any other combination would let CORE start
+// a life activity the current LifePolicy does not allow, so each case fails as
+// ErrContract.
+func validatePolicyPermission(dto *assessmentDTO) error {
+	granted := len(*dto.PermittedActivityIDs) > 0
+	if dto.NewActivityAllowed != granted {
+		return fmt.Errorf("%w: new_activity_allowed=%v does not follow from %d permitted activity ID(s)",
+			ErrContract, dto.NewActivityAllowed, len(*dto.PermittedActivityIDs))
+	}
+	switch dto.PolicyState {
+	case "missing":
+		if granted {
+			return fmt.Errorf("%w: a missing life policy permits %q; a new activity requires a current policy",
+				ErrContract, (*dto.PermittedActivityIDs)[0])
+		}
+		if dto.BlockedReason != "policy_missing" {
+			return fmt.Errorf("%w: a missing life policy blocks with %q, got %q",
+				ErrContract, "policy_missing", dto.BlockedReason)
+		}
+	case "expired":
+		if !granted && dto.BlockedReason != "policy_expired_no_fallback" {
+			return fmt.Errorf("%w: an expired life policy without a registered fallback blocks with %q, got %q",
+				ErrContract, "policy_expired_no_fallback", dto.BlockedReason)
+		}
+	case "fresh":
+		if !granted && dto.BlockedReason != "no_allowed_activity" && dto.BlockedReason != "no_registered_activity" {
+			return fmt.Errorf("%w: a fresh life policy that permits nothing blocks with no_allowed_activity or no_registered_activity, got %q",
+				ErrContract, dto.BlockedReason)
+		}
+	}
+	return nil
 }
 
 func validateWorkPresentation(workSetState string, presentation *workPresentationDTO) error {

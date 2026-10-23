@@ -385,3 +385,100 @@ func TestAssessmentRejectsContradictoryAssessment(t *testing.T) {
 		})
 	}
 }
+
+// deniedAssessmentBody builds an assessment whose new-activity permission is
+// closed for one policy state, with the WORLD reason and lists that state
+// publishes.
+func deniedAssessmentBody(policyState string, reason string, permitted []any) map[string]any {
+	body := validAssessmentBody()
+	body["work_set_state"] = "empty"
+	body["policy_state"] = policyState
+	body["work_presentation"] = map[string]any{
+		"kind":              "none",
+		"presence_task_ids": []any{},
+		"running_task_ids":  []any{},
+		"queued_task_ids":   []any{},
+		"waiting_task_ids":  []any{},
+	}
+	body["permitted_activity_ids"] = permitted
+	body["executable_activity_ids"] = []any{}
+	body["new_activity_allowed"] = false
+	body["blocked_reason"] = reason
+	return body
+}
+
+// D-09, D-10: a LifePolicy that is missing, expired without a registered
+// fallback, or holds no registered activity never opens a new life activity.
+// WORLD publishes that as one closed reason vocabulary tied to the policy state
+// plus an empty permitted set, so CORE fails closed on a route that grants a new
+// activity without a permitted candidate, names a reason WORLD never produces,
+// or keeps a permitted candidate while reporting the policy as missing.
+func TestAssessmentRejectsPermissionThePolicyCannotGrant(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+	}{
+		{name: "missing policy still grants a new activity", body: func() map[string]any {
+			body := deniedAssessmentBody("missing", "", []any{"idle"})
+			body["executable_activity_ids"] = []any{"idle"}
+			body["new_activity_allowed"] = true
+			return body
+		}()},
+		{name: "granted without a permitted activity", body: func() map[string]any {
+			body := deniedAssessmentBody("fresh", "", []any{})
+			body["new_activity_allowed"] = true
+			return body
+		}()},
+		{name: "unknown blocked reason", body: deniedAssessmentBody("missing", "policy_absent", []any{})},
+		{name: "missing policy keeps a permitted activity", body: deniedAssessmentBody("missing", "policy_missing", []any{"idle"})},
+		{name: "expired policy names the missing reason", body: deniedAssessmentBody("expired", "policy_missing", []any{})},
+		{name: "expired fallback denial names the missing reason", body: deniedAssessmentBody("expired", "no_registered_activity", []any{})},
+		{name: "fresh policy names an expired reason", body: deniedAssessmentBody("fresh", "policy_expired_no_fallback", []any{})},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, _, _, _ := newAssessmentServer(t, test.body, http.StatusOK)
+			client := mustAssessmentClient(t, server.URL, "mio")
+
+			assessment, err := client.Assessment(context.Background(), "mio")
+			if !errors.Is(err, ErrContract) {
+				t.Fatalf("Assessment() error = %v, assessment = %+v; want ErrContract", err, assessment)
+			}
+			if assessment.NewActivityAllowed || len(assessment.PermittedActivityIDs) != 0 || assessment.BlockedReason != "" {
+				t.Fatalf("a denied policy must not return a partially read value: %+v", assessment)
+			}
+		})
+	}
+}
+
+// TestAssessmentReadsWorldDenials is the fail direction's counterpart: every
+// denial WORLD really publishes stays readable, so the D-09 guard above cannot
+// turn a legitimate `blocked` into a contract error.
+func TestAssessmentReadsWorldDenials(t *testing.T) {
+	tests := []struct {
+		name        string
+		policyState string
+		reason      string
+		permitted   []any
+	}{
+		{name: "policy missing", policyState: "missing", reason: "policy_missing", permitted: []any{}},
+		{name: "expired without fallback", policyState: "expired", reason: "policy_expired_no_fallback", permitted: []any{}},
+		{name: "fresh without allowed activity", policyState: "fresh", reason: "no_allowed_activity", permitted: []any{}},
+		{name: "fresh without registered activity", policyState: "fresh", reason: "no_registered_activity", permitted: []any{}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, _, _, _ := newAssessmentServer(t, deniedAssessmentBody(test.policyState, test.reason, test.permitted), http.StatusOK)
+			client := mustAssessmentClient(t, server.URL, "mio")
+
+			assessment, err := client.Assessment(context.Background(), "mio")
+			if err != nil {
+				t.Fatalf("Assessment() error = %v", err)
+			}
+			if assessment.NewActivityAllowed || assessment.BlockedReason != test.reason ||
+				assessment.PolicyState != test.policyState || len(assessment.PermittedActivityIDs) != 0 {
+				t.Fatalf("assessment = %+v; want a readable denial %q", assessment, test.reason)
+			}
+		})
+	}
+}
